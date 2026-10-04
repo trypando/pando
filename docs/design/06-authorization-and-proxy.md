@@ -354,7 +354,8 @@ var Verbs = []Verb{
     // Install-scoped: held through a grant with no app (§2.1).
     "install.view", "install.users.manage", "install.policy.manage",
     "install.adapters.manage", "install.audit.read", "install.backup.manage",
-    "install.tokens.manage", "install.deploys.approve", "app.create",
+    "install.tokens.manage", "install.deploys.approve", "install.upgrade",
+    "app.create",
 
     // Install-scoped: each one app verb on every app (issue #81). See below.
     "install.apps.view", "install.apps.logs.read", "install.apps.deploy",

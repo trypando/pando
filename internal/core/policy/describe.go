@@ -61,6 +61,12 @@ var descriptions = map[string]string{
 		"installation that has no internet access or may not call out.",
 	"update_channel": "Which Pando releases the update check offers: stable (releases only) or prerelease " +
 		"(release candidates too).",
+	"upgrade_in_place": "Let Pando upgrade itself to a newer release from the Updates screen. Needs Pando's image " +
+		"set to a moving tag such as trypando/pando:latest; usually set in the deployment's configuration.",
+	"auto_upgrade_patches": "Upgrade to new patch releases automatically inside maintenance_window. Takes a " +
+		"database copy for rollback but not a full backup. Needs upgrade_in_place.",
+	"maintenance_window": `When automatic upgrades may start, in UTC: weekdays, a start time and a length, such as ` +
+		`"sun,wed 02:00 2h" or "daily 03:30 1h".`,
 }
 
 // Describe says what a policy field does, in the Policy screen's words.

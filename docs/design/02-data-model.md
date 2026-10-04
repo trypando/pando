@@ -182,6 +182,8 @@ CREATE TABLE roles (
 would take away something an administrator gave on purpose. It adds `app.egress.tighten` to Owner and
 Operator and `install.deploys.approve` to Administrator. `app.deploy.approve` joins the catalog in no
 built-in role (R-155). The trigger is disabled for the length of the migration and re-enabled in it.
+Migration 000042 does the same for `install.upgrade` (R-356), the Administrator's alone, and adds it to
+a stored policy's `agent_disabled_verbs` as `policy.Default()` does.
 
 **[D]** A role is scoped. A role carrying install verbs granted on a single app is nonsense, and a role carrying app verbs granted install-wide is worse. `administrator` is the only install-scoped built-in; custom roles (R-082) are composed within one scope.
 

@@ -40,6 +40,7 @@ export const InstallVerb = {
   TokensManage: 'install.tokens.manage',
   /** Approve any deploy that needs approval, on any app (R-155). */
   DeploysApprove: 'install.deploys.approve',
+  Upgrade: 'install.upgrade',
   AppCreate: 'app.create',
 } as const;
 
