@@ -30,3 +30,7 @@ coverage.out
 *.test
 /gen-api-types
 vulns.json
+
+# Python bytecode. Scorecard flags any committed binary (Binary-Artifacts).
+__pycache__/
+*.py[cod]
