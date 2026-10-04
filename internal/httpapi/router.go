@@ -31,6 +31,7 @@ import (
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/log"
 )
@@ -195,6 +196,15 @@ type Server struct {
 	// and one that cannot archive look the same from here, and both are true.
 	AuditArchives AuditArchives
 
+	// Updates is whether a newer Pando is released (R-351). Nil answers that
+	// the check is not running, which is true.
+	Updates Updates
+
+	// Version is this binary's version, sent to signed-in callers as
+	// Pando-Version so a CLI can tell it is out of step (R-353). Never to an
+	// anonymous one: a version is a map of which advisories apply.
+	Version string
+
 	// Backups records what has been backed up; Backup does the backing up
 	// (R-212). Two fields because they are two concerns: the record has to
 	// survive the thing it records, which is R-204's whole point.
@@ -248,6 +258,11 @@ type AuditReader interface {
 type AuditArchives interface {
 	List(ctx context.Context) ([]audit.ArchiveRecord, error)
 	Open(ctx context.Context, archiveID string) (audit.ArchiveRecord, io.ReadCloser, error)
+}
+
+// Updates reports what the update check knows.
+type Updates interface {
+	Status(ctx context.Context) (update.Status, error)
 }
 
 // SpecDefaults supplies the install's defaults for a spec.
@@ -336,6 +351,7 @@ func (s *Server) Routes() http.Handler {
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(Authenticate(s.Authent))
+		r.Use(s.versionHeader)
 
 		r.Post("/sessions", s.handleLogin)
 		r.Delete("/sessions", s.handleLogout)
@@ -537,6 +553,9 @@ func (s *Server) Routes() http.Handler {
 		// log, a month at a time.
 		r.Get("/audit/archives", s.handleListAuditArchives)
 		r.Get("/audit/archives/{archiveID}", s.handleGetAuditArchive)
+
+		// Whether a newer Pando is released, and how to upgrade (R-351).
+		r.Get("/updates", s.handleGetUpdates)
 
 		// Backup and disaster recovery (Sequence D). Verify is its own route
 		// rather than a flag on restore, because a flag is a thing somebody
