@@ -19,14 +19,10 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
@@ -145,12 +141,14 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		}
 	}
 
-	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
+	// The client negotiates the API version by default, which is what lets it
+	// talk to Podman's older one.
+	opts := []client.Opt{client.FromEnv}
 	if a.config.Host != "" {
 		opts = append(opts, client.WithHost(a.config.Host))
 	}
 
-	cli, err := client.NewClientWithOpts(opts...)
+	cli, err := client.New(opts...)
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not set up the connection to Docker.", err)
 	}
@@ -162,7 +160,7 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 	if a.cli == nil {
 		return errs.New(errs.AdapterUnavailable, "The Docker runtime has not been set up.")
 	}
-	if _, err := a.cli.Ping(ctx); err != nil {
+	if _, err := a.cli.Ping(ctx, client.PingOptions{}); err != nil {
 		return errs.Wrap(errs.AdapterUnavailable, "Docker is not responding.", err)
 	}
 
@@ -171,7 +169,7 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 		// verifyRuntime), so asking it which runtimes it has proves nothing.
 		// Refused here, where the planner turns it into a readable refusal
 		// before anything is created, rather than at the first container.
-		if v, err := a.cli.ServerVersion(ctx); err == nil && isPodman(v) {
+		if v, err := a.cli.ServerVersion(ctx, client.ServerVersionOptions{}); err == nil && isPodman(v) {
 			return errs.Newf(errs.AdapterUnavailable,
 				"The Docker runtime is set to start apps with %q, and this is Podman, whose Docker-compatible API does not apply a container runtime.",
 				a.config.OCIRuntime).
@@ -179,11 +177,11 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 					"To run apps under gVisor or Kata, use Docker with the runtime registered in /etc/docker/daemon.json.")
 		}
 
-		info, err := a.cli.Info(ctx)
+		res, err := a.cli.Info(ctx, client.InfoOptions{})
 		if err != nil {
 			return errs.Wrap(errs.AdapterUnavailable, "Could not ask Docker which container runtimes it has.", err)
 		}
-		if _, ok := info.Runtimes[a.config.OCIRuntime]; !ok {
+		if _, ok := res.Info.Runtimes[a.config.OCIRuntime]; !ok {
 			return errs.Newf(errs.AdapterUnavailable,
 				"The Docker runtime is set to start apps with %q, and Docker has no container runtime by that name.",
 				a.config.OCIRuntime).
@@ -318,13 +316,13 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	capacity := api.Capacity{Reported: time.Now().UTC()}
 
-	info, err := a.cli.Info(ctx)
+	res, err := a.cli.Info(ctx, client.InfoOptions{})
 	if err != nil {
 		return api.Capacity{}, errs.Wrap(errs.AdapterUnavailable, "Could not read how much room Docker has.", err)
 	}
 
-	capacity.TotalCPUMillis = info.NCPU * 1000
-	capacity.TotalMemoryBytes = info.MemTotal
+	capacity.TotalCPUMillis = res.Info.NCPU * 1000
+	capacity.TotalMemoryBytes = res.Info.MemTotal
 	if a.config.TotalCPUMillis > 0 {
 		capacity.TotalCPUMillis = a.config.TotalCPUMillis
 	}
@@ -433,7 +431,7 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		}
 		if matches {
 			if !strings.HasPrefix(existing.State, "running") {
-				if err := a.cli.ContainerStart(ctx, existing.ID, container.StartOptions{}); err != nil {
+				if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
 					return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start %q.", w.Name), err)
 				}
 			}
@@ -453,9 +451,9 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		env = append(env, k+"="+v)
 	}
 
-	exposed := nat.PortSet{}
+	exposed := network.PortSet{}
 	for _, port := range w.Ports {
-		p, err := nat.NewPort(protocolOf(port.Protocol), fmt.Sprint(port.Number))
+		p, err := containerPort(port.Number, port.Protocol)
 		if err != nil {
 			return errs.Wrap(errs.ValidInvalid, fmt.Sprintf("%d is not a usable port.", port.Number), err)
 		}
@@ -536,7 +534,9 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		},
 	}
 
-	created, err := a.cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: name,
+	})
 	if err != nil {
 		return createFailure(w, err)
 	}
@@ -558,7 +558,7 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		}
 	}
 
-	if err := a.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+	if _, err := a.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start %q.", w.Name), err)
 	}
 	return nil
@@ -628,7 +628,8 @@ func (a *Adapter) placeFile(ctx context.Context, containerID string, f api.FileP
 		return err
 	}
 
-	return a.cli.CopyToContainer(ctx, containerID, "/", &buf, container.CopyToContainerOptions{})
+	_, err := a.cli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{DestinationPath: "/", Content: &buf})
+	return err
 }
 
 // ancestors lists a directory and everything above it, outermost first, so a
@@ -681,22 +682,22 @@ func createFailure(w api.WorkloadPlan, err error) error {
 
 // Observe reports what exists. It never remediates (design 05 §2.1).
 func (a *Adapter) Observe(ctx context.Context, ref api.BundleRef) (api.ObservedBundle, error) {
-	containers, err := a.cli.ContainerList(ctx, container.ListOptions{
+	containers, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", labelBundle+"="+ref.BundleID)),
+		Filters: make(client.Filters).Add("label", labelBundle+"="+ref.BundleID),
 	})
 	if err != nil {
 		return api.ObservedBundle{}, errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
 	}
 
-	observed := api.ObservedBundle{Exists: len(containers) > 0}
-	for _, c := range containers {
+	observed := api.ObservedBundle{Exists: len(containers.Items) > 0}
+	for _, c := range containers.Items {
 		if isGateway(c.Labels) {
 			// Pando's, not the app's: it is not a workload the plan names,
 			// and reporting it as one would be drift nothing could fix.
 			continue
 		}
-		inspect, err := a.cli.ContainerInspect(ctx, c.ID)
+		inspect, err := a.cli.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
 		if err != nil {
 			// A container that vanished between list and inspect is drift the
 			// reconciler should see, not an error that aborts the whole
@@ -707,40 +708,40 @@ func (a *Adapter) Observe(ctx context.Context, ref api.BundleRef) (api.ObservedB
 		w := api.ObservedWorkload{
 			Name:    c.Labels[labelWorkload],
 			Present: true,
-			Running: inspect.State.Running,
+			Running: inspect.Container.State.Running,
 
 			// Docker reports both at once: a crash-looping container inspects
 			// as Running=true, Restarting=true. Reporting only Running would
 			// tell the reconciler a looping app is fine.
-			Restarting: inspect.State.Restarting,
+			Restarting: inspect.Container.State.Restarting,
 
-			ImageDigest:  inspect.Image,
-			RestartCount: inspect.RestartCount,
+			ImageDigest:  inspect.Container.Image,
+			RestartCount: inspect.Container.RestartCount,
 		}
-		if started, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt); err == nil {
+		if started, err := time.Parse(time.RFC3339Nano, inspect.Container.State.StartedAt); err == nil {
 			w.StartedAt = started
 		}
-		if !inspect.State.Running {
-			code := inspect.State.ExitCode
+		if !inspect.Container.State.Running {
+			code := inspect.Container.State.ExitCode
 			w.ExitCode = &code
 		}
 
 		// Healthy stays nil when there is no health check. "No signal" and
 		// "unhealthy" are different states and must not collapse (R-221): an
 		// app with no health check is running, not perpetually degraded.
-		if reportsHealth(inspect.State.Health) {
-			healthy := inspect.State.Health.Status == "healthy"
+		if reportsHealth(inspect.Container.State.Health) {
+			healthy := inspect.Container.State.Health.Status == "healthy"
 			w.Healthy = &healthy
 		}
 
 		observed.Workloads = append(observed.Workloads, w)
 	}
 
-	volumes, err := a.cli.VolumeList(ctx, volume.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", labelBundle+"="+ref.BundleID)),
+	volumes, err := a.cli.VolumeList(ctx, client.VolumeListOptions{
+		Filters: make(client.Filters).Add("label", labelBundle+"="+ref.BundleID),
 	})
 	if err == nil {
-		for _, v := range volumes.Volumes {
+		for _, v := range volumes.Items {
 			observed.Volumes = append(observed.Volumes, api.ObservedVolume{
 				VolumeID: v.Labels["io.pando.volume"],
 				Present:  true,
@@ -753,15 +754,15 @@ func (a *Adapter) Observe(ctx context.Context, ref api.BundleRef) (api.ObservedB
 }
 
 func (a *Adapter) Stop(ctx context.Context, ref api.BundleRef) error {
-	containers, err := a.cli.ContainerList(ctx, container.ListOptions{
+	containers, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", labelBundle+"="+ref.BundleID)),
+		Filters: make(client.Filters).Add("label", labelBundle+"="+ref.BundleID),
 	})
 	if err != nil {
 		return errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
 	}
-	for _, c := range containers {
-		if err := a.cli.ContainerStop(ctx, c.ID, container.StopOptions{}); err != nil {
+	for _, c := range containers.Items {
+		if _, err := a.cli.ContainerStop(ctx, c.ID, client.ContainerStopOptions{}); err != nil {
 			return errs.Wrap(errs.AdapterFailed, "Could not stop the app.", err)
 		}
 	}
@@ -773,14 +774,14 @@ func (a *Adapter) Stop(ctx context.Context, ref api.BundleRef) error {
 // Volumes are kept unless explicitly asked otherwise: they outlive the apps
 // that mount them (R-204), and destroying them is a separate, deliberate act.
 func (a *Adapter) Destroy(ctx context.Context, ref api.BundleRef, opts api.DestroyOptions) error {
-	containers, err := a.cli.ContainerList(ctx, container.ListOptions{
+	containers, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", labelBundle+"="+ref.BundleID)),
+		Filters: make(client.Filters).Add("label", labelBundle+"="+ref.BundleID),
 	})
 	if err != nil {
 		return errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
 	}
-	for _, c := range containers {
+	for _, c := range containers.Items {
 		if err := a.removeContainer(ctx, c.ID); err != nil {
 			return err
 		}
@@ -796,22 +797,22 @@ func (a *Adapter) Destroy(ctx context.Context, ref api.BundleRef, opts api.Destr
 	// the builder put on them rather than by name. Without force: an image some
 	// other container still uses is kept, and one that fails to go is not a
 	// reason to fail the teardown (issue #55).
-	if images, err := a.cli.ImageList(ctx, image.ListOptions{
+	if images, err := a.cli.ImageList(ctx, client.ImageListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", api.ImageLabelBundle+"="+ref.BundleID)),
+		Filters: make(client.Filters).Add("label", api.ImageLabelBundle+"="+ref.BundleID),
 	}); err == nil {
-		for _, img := range images {
-			_, _ = a.cli.ImageRemove(ctx, img.ID, image.RemoveOptions{PruneChildren: true})
+		for _, img := range images.Items {
+			_, _ = a.cli.ImageRemove(ctx, img.ID, client.ImageRemoveOptions{PruneChildren: true})
 		}
 	}
 
 	if !opts.KeepVolumes {
-		volumes, err := a.cli.VolumeList(ctx, volume.ListOptions{
-			Filters: filters.NewArgs(filters.Arg("label", labelBundle+"="+ref.BundleID)),
+		volumes, err := a.cli.VolumeList(ctx, client.VolumeListOptions{
+			Filters: make(client.Filters).Add("label", labelBundle+"="+ref.BundleID),
 		})
 		if err == nil {
-			for _, v := range volumes.Volumes {
-				_ = a.cli.VolumeRemove(ctx, v.Name, false)
+			for _, v := range volumes.Items {
+				_, _ = a.cli.VolumeRemove(ctx, v.Name, client.VolumeRemoveOptions{})
 			}
 		}
 	}
@@ -843,7 +844,7 @@ func (a *Adapter) Destroy(ctx context.Context, ref api.BundleRef, opts api.Destr
 		// holding Pando is left behind on purpose — not a failure, because the
 		// teardown did succeed at everything that costs the host something to
 		// keep.
-		_ = a.cli.NetworkRemove(ctx, name)
+		_, _ = a.cli.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
 	}
 	return nil
 }
@@ -866,20 +867,20 @@ func (a *Adapter) Destroy(ctx context.Context, ref api.BundleRef, opts api.Destr
 // bundle it does not own is another install's on the same Docker host, and is
 // left alone; nil owns everything.
 func (a *Adapter) ReclaimNetworks(ctx context.Context, owns func(bundleID string) bool) (int, error) {
-	networks, err := a.cli.NetworkList(ctx, network.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", labelManaged+"=true")),
+	networks, err := a.cli.NetworkList(ctx, client.NetworkListOptions{
+		Filters: make(client.Filters).Add("label", labelManaged+"=true"),
 	})
 	if err != nil {
 		return 0, errs.Wrap(errs.AdapterUnavailable, "Could not list the app networks.", err)
 	}
 
 	reclaimed := 0
-	for _, n := range networks {
+	for _, n := range networks.Items {
 		// Inspect rather than trusting the list: NetworkList does not populate
 		// Containers, so the list alone cannot tell an empty network from a
 		// busy one.
-		full, err := a.cli.NetworkInspect(ctx, n.ID, network.InspectOptions{})
-		if err != nil || len(full.Containers) > 0 {
+		full, err := a.cli.NetworkInspect(ctx, n.ID, client.NetworkInspectOptions{})
+		if err != nil || len(full.Network.Containers) > 0 {
 			continue
 		}
 		// Empty is not the same as unused. A stopped container is not an
@@ -887,11 +888,11 @@ func (a *Adapter) ReclaimNetworks(ctx context.Context, owns func(bundleID string
 		// left the app's containers pointing at a network that no longer
 		// existed, unable to start again (issue #55). Only a network no
 		// container belongs to, running or not, is reclaimed.
-		bundle := full.Labels[labelBundle]
-		if !ownedBundle(owns, bundle) || a.networkHasContainers(ctx, bundle, full.Name) {
+		bundle := full.Network.Labels[labelBundle]
+		if !ownedBundle(owns, bundle) || a.networkHasContainers(ctx, bundle, full.Network.Name) {
 			continue
 		}
-		if err := a.cli.NetworkRemove(ctx, n.ID); err == nil {
+		if _, err := a.cli.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{}); err == nil {
 			reclaimed++
 		}
 	}
@@ -917,14 +918,14 @@ func ownedBundle(owns func(string) bool, bundle string) bool {
 // one it left is exactly what this exists to collect. A container whose
 // networks the daemon did not list counts as on every one.
 func (a *Adapter) networkHasContainers(ctx context.Context, bundleID, networkName string) bool {
-	list, err := a.cli.ContainerList(ctx, container.ListOptions{
+	list, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", labelBundle+"="+bundleID)),
+		Filters: make(client.Filters).Add("label", labelBundle+"="+bundleID),
 	})
 	if err != nil {
 		return true
 	}
-	for _, c := range list {
+	for _, c := range list.Items {
 		if c.NetworkSettings == nil || len(c.NetworkSettings.Networks) == 0 {
 			return true
 		}
@@ -959,24 +960,24 @@ func (a *Adapter) networkHasContainers(ctx context.Context, bundleID, networkNam
 //
 // owns is as for ReclaimNetworks: another install's app network is not joined.
 func (a *Adapter) RejoinNetworks(ctx context.Context, owns func(bundleID string) bool) (int, error) {
-	networks, err := a.cli.NetworkList(ctx, network.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", labelManaged+"=true")),
+	networks, err := a.cli.NetworkList(ctx, client.NetworkListOptions{
+		Filters: make(client.Filters).Add("label", labelManaged+"=true"),
 	})
 	if err != nil {
 		return 0, errs.Wrap(errs.AdapterUnavailable, "Could not list the app networks.", err)
 	}
 
 	joined := 0
-	for _, n := range networks {
+	for _, n := range networks.Items {
 		// NetworkList does not populate Containers, so an inspect is the only
 		// way to tell a network with workloads on it from an empty one left by
 		// a stopped app. An empty one is not worth an endpoint: the app's next
 		// deploy attaches us, and until then there is nothing to reach.
-		full, err := a.cli.NetworkInspect(ctx, n.ID, network.InspectOptions{})
-		if err != nil || len(full.Containers) == 0 || !ownedBundle(owns, full.Labels[labelBundle]) {
+		full, err := a.cli.NetworkInspect(ctx, n.ID, client.NetworkInspectOptions{})
+		if err != nil || len(full.Network.Containers) == 0 || !ownedBundle(owns, full.Network.Labels[labelBundle]) {
 			continue
 		}
-		if full.Labels[labelEgressNetwork] == egressNetworkOutbound {
+		if full.Network.Labels[labelEgressNetwork] == egressNetworkOutbound {
 			// The network an egress gateway leaves through holds nothing
 			// Pando's proxy reaches (egress.go).
 			continue
@@ -993,7 +994,7 @@ func (a *Adapter) RejoinNetworks(ctx context.Context, owns func(bundleID string)
 
 func (a *Adapter) CreateVolume(ctx context.Context, req api.VolumeRequest) (api.VolumeHandle, error) {
 	name := volumeName(req.BundleID, req.VolumeID)
-	_, err := a.cli.VolumeCreate(ctx, volume.CreateOptions{
+	_, err := a.cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 		Name: name,
 		Labels: map[string]string{
 			labelBundle:       req.BundleID,
@@ -1008,7 +1009,7 @@ func (a *Adapter) CreateVolume(ctx context.Context, req api.VolumeRequest) (api.
 }
 
 func (a *Adapter) DestroyVolume(ctx context.Context, h api.VolumeHandle) error {
-	if err := a.cli.VolumeRemove(ctx, h.Handle, false); err != nil {
+	if _, err := a.cli.VolumeRemove(ctx, h.Handle, client.VolumeRemoveOptions{}); err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not remove the storage.", err)
 	}
 	return nil
@@ -1031,9 +1032,9 @@ func (a *Adapter) ImportImage(ctx context.Context, r io.Reader) (string, error) 
 	if err != nil {
 		return "", errs.Wrap(errs.AdapterFailed, "Could not load the built image.", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { _ = resp.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp)
 	if err != nil {
 		return "", errs.Wrap(errs.AdapterFailed, "Could not load the built image.", err)
 	}
@@ -1095,7 +1096,7 @@ func (a *Adapter) Logs(ctx context.Context, ref api.WorkloadRef, opts api.LogOpt
 		return nil, errs.Newf(errs.NotFound, "There is nothing running called %q.", ref.Workload)
 	}
 
-	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true, Follow: opts.Follow}
+	logOpts := client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: opts.Follow}
 	if !opts.Since.IsZero() {
 		logOpts.Since = opts.Since.Format(time.RFC3339)
 	}
@@ -1161,9 +1162,9 @@ func (a *Adapter) Exec(ctx context.Context, ref api.WorkloadRef, req api.ExecReq
 		env = append(env, k+"="+v)
 	}
 
-	created, err := a.cli.ContainerExecCreate(ctx, c.ID, container.ExecOptions{
+	created, err := a.cli.ExecCreate(ctx, c.ID, client.ExecCreateOptions{
 		Cmd:          req.Command,
-		Tty:          req.TTY,
+		TTY:          req.TTY,
 		Env:          env,
 		AttachStdin:  true,
 		AttachStdout: true,
@@ -1173,12 +1174,12 @@ func (a *Adapter) Exec(ctx context.Context, ref api.WorkloadRef, req api.ExecReq
 		return nil, errs.Wrap(errs.AdapterFailed, "Could not open a terminal in the app.", err)
 	}
 
-	attached, err := a.cli.ContainerExecAttach(ctx, created.ID, container.ExecAttachOptions{Tty: req.TTY})
+	attached, err := a.cli.ExecAttach(ctx, created.ID, client.ExecAttachOptions{TTY: req.TTY})
 	if err != nil {
 		return nil, errs.Wrap(errs.AdapterFailed, "Could not open a terminal in the app.", err)
 	}
 
-	return &execSession{cli: a.cli, execID: created.ID, hijacked: attached}, nil
+	return &execSession{cli: a.cli, execID: created.ID, hijacked: attached.HijackedResponse}, nil
 }
 
 // Upstream is the workload's container name on its bundle network (R-023).
@@ -1208,11 +1209,11 @@ var _ api.RuntimeAdapter = (*Adapter)(nil)
 func (a *Adapter) ensureNetwork(ctx context.Context, bundleID string, restricted bool) (string, error) {
 	name := workloadNetworkName(bundleID, restricted)
 
-	existing, err := a.cli.NetworkList(ctx, network.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("name", name)),
+	existing, err := a.cli.NetworkList(ctx, client.NetworkListOptions{
+		Filters: make(client.Filters).Add("name", name),
 	})
 	if err == nil {
-		for _, n := range existing {
+		for _, n := range existing.Items {
 			if n.Name == name {
 				if restricted && !n.Internal {
 					// A network by this name with a route out is not one
@@ -1248,7 +1249,7 @@ func (a *Adapter) ensureNetwork(ctx context.Context, bundleID string, restricted
 	// matters for R-025 is that each bundle gets its own network, so no app
 	// can reach another's. A restricted bundle's has none, and its only way
 	// out is the gateway (R-187).
-	opts := network.CreateOptions{
+	opts := client.NetworkCreateOptions{
 		Driver: "bridge",
 		Labels: map[string]string{labelBundle: bundleID, labelManaged: "true"},
 	}
@@ -1295,7 +1296,7 @@ func (a *Adapter) attachProxy(ctx context.Context, networkID string) error {
 		container = host
 	}
 
-	err := a.cli.NetworkConnect(ctx, networkID, container, nil)
+	_, err := a.cli.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{Container: container})
 	switch {
 	case err == nil:
 		return nil
@@ -1405,7 +1406,7 @@ func pullTransient(err error) bool {
 }
 
 func (a *Adapter) pullOnce(ctx context.Context, ref string) error {
-	rc, err := a.cli.ImagePull(ctx, ref, image.PullOptions{})
+	rc, err := a.cli.ImagePull(ctx, ref, client.ImagePullOptions{})
 	if err != nil {
 		return err
 	}
@@ -1451,20 +1452,17 @@ type containerSummary struct {
 }
 
 func (a *Adapter) findContainer(ctx context.Context, bundleID, workload string) (*containerSummary, error) {
-	list, err := a.cli.ContainerList(ctx, container.ListOptions{
-		All: true,
-		Filters: filters.NewArgs(
-			filters.Arg("label", labelBundle+"="+bundleID),
-			filters.Arg("label", labelWorkload+"="+workload),
-		),
+	list, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: make(client.Filters).Add("label", labelBundle+"="+bundleID).Add("label", labelWorkload+"="+workload),
 	})
 	if err != nil {
 		return nil, errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
 	}
-	if len(list) == 0 {
+	if len(list.Items) == 0 {
 		return nil, nil
 	}
-	return &containerSummary{ID: list[0].ID, State: list[0].State, Labels: list[0].Labels}, nil
+	return &containerSummary{ID: list.Items[0].ID, State: string(list.Items[0].State), Labels: list.Items[0].Labels}, nil
 }
 
 // matchesPlan reports whether a running container already satisfies the plan.
@@ -1480,31 +1478,31 @@ func (a *Adapter) findContainer(ctx context.Context, bundleID, workload string) 
 // network (egress.go), and a container still on the old one is on a network
 // with the wrong route out.
 func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.WorkloadPlan, networkName string, env map[string]string) (bool, error) {
-	inspect, err := a.cli.ContainerInspect(ctx, containerID)
+	inspect, err := a.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return false, errs.Wrap(errs.AdapterUnavailable, "Could not read the app's configuration.", err)
 	}
-	if inspect.Config == nil {
+	if inspect.Container.Config == nil {
 		return false, nil
 	}
-	if !sameImage(inspect.Config.Image, w.Image) {
+	if !sameImage(inspect.Container.Config.Image, w.Image) {
 		return false, nil
 	}
-	if inspect.Config.Labels[labelFiles] != fileDigest(w.Files) {
+	if inspect.Container.Config.Labels[labelFiles] != fileDigest(w.Files) {
 		return false, nil
 	}
-	if inspect.HostConfig != nil && !a.runsUnder(inspect.HostConfig.Runtime) {
+	if inspect.Container.HostConfig != nil && !a.runsUnder(inspect.Container.HostConfig.Runtime) {
 		return false, nil
 	}
 
-	if inspect.NetworkSettings != nil && inspect.NetworkSettings.Networks != nil {
-		if _, ok := inspect.NetworkSettings.Networks[networkName]; !ok {
+	if inspect.Container.NetworkSettings != nil && inspect.Container.NetworkSettings.Networks != nil {
+		if _, ok := inspect.Container.NetworkSettings.Networks[networkName]; !ok {
 			return false, nil
 		}
 	}
 
 	existing := map[string]string{}
-	for _, kv := range inspect.Config.Env {
+	for _, kv := range inspect.Container.Config.Env {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			existing[k] = v
 		}
@@ -1526,7 +1524,7 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 // it, so it held nothing anybody could reach. RemoveVolumes takes only those;
 // the named volumes Pando manages are kept (R-204).
 func (a *Adapter) removeContainer(ctx context.Context, id string) error {
-	err := a.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true, RemoveVolumes: true})
+	_, err := a.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 	if err != nil && !cerrdefs.IsNotFound(err) {
 		return errs.Wrap(errs.AdapterFailed, "Could not remove the old container.", err)
 	}
@@ -1576,11 +1574,11 @@ func (a *Adapter) settled(ctx context.Context, bundleID, workload string) bool {
 	if err != nil || c == nil {
 		return true
 	}
-	inspect, err := a.cli.ContainerInspect(ctx, c.ID)
-	if err != nil || inspect.State == nil || !inspect.State.Running || !reportsHealth(inspect.State.Health) {
+	inspect, err := a.cli.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
+	if err != nil || inspect.Container.State == nil || !inspect.Container.State.Running || !reportsHealth(inspect.Container.State.Health) {
 		return true
 	}
-	return inspect.State.Health.Status == "healthy"
+	return inspect.Container.State.Health.Status == "healthy"
 }
 
 // ordered sorts workloads so dependencies start first (R-096).
@@ -1663,6 +1661,13 @@ func protocolOf(p string) string {
 		return p
 	}
 	return "tcp"
+}
+
+// containerPort is a port number and protocol as the engine names it. Parsed
+// rather than built, so a number outside 1-65535 is refused instead of
+// wrapping into some other port.
+func containerPort(number int, protocol string) (network.Port, error) {
+	return network.ParsePort(strconv.Itoa(number) + "/" + protocolOf(protocol))
 }
 
 func bundleNetworkName(bundleID string) string { return "pando-" + bundleID }

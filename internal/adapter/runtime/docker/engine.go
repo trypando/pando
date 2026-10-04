@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/distribution/reference"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"github.com/trypando/pando/internal/errs"
 )
@@ -62,7 +62,7 @@ func reportsHealth(h *container.Health) bool {
 
 // isPodman reports whether the engine behind the API is Podman, which names
 // itself among the version's components.
-func isPodman(v types.Version) bool {
+func isPodman(v client.ServerVersionResult) bool {
 	for _, c := range v.Components {
 		if strings.Contains(strings.ToLower(c.Name), "podman") {
 			return true
@@ -86,14 +86,14 @@ func (a *Adapter) verifyRuntime(ctx context.Context, containerID, workload strin
 	if want == "" {
 		return nil
 	}
-	inspect, err := a.cli.ContainerInspect(ctx, containerID)
+	res, err := a.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		_ = a.removeContainer(context.WithoutCancel(ctx), containerID)
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not check how %q was set up.", workload), err)
 	}
 	got := ""
-	if inspect.HostConfig != nil {
-		got = inspect.HostConfig.Runtime
+	if res.Container.HostConfig != nil {
+		got = res.Container.HostConfig.Runtime
 	}
 	if got == want {
 		return nil

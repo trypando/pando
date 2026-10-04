@@ -6,7 +6,8 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // defaultNetworkPool is where app networks take their addresses from. [P]
@@ -53,7 +54,7 @@ func (a *Adapter) networkPool() (netip.Prefix, bool) {
 // free block. Docker still has the last word — a block taken by something
 // outside this process is refused as overlapping — so a refusal moves on to the
 // next block rather than failing the deploy.
-func (a *Adapter) createNetwork(ctx context.Context, name string, opts network.CreateOptions) (network.CreateResponse, error) {
+func (a *Adapter) createNetwork(ctx context.Context, name string, opts client.NetworkCreateOptions) (client.NetworkCreateResult, error) {
 	pool, ok := a.networkPool()
 	if !ok {
 		return a.cli.NetworkCreate(ctx, name, opts)
@@ -71,7 +72,7 @@ func (a *Adapter) createNetwork(ctx context.Context, name string, opts network.C
 	tried := 0
 	for block := range freeBlocks(pool, used) {
 		withBlock := opts
-		withBlock.IPAM = &network.IPAM{Driver: "default", Config: []network.IPAMConfig{{Subnet: block.String()}}}
+		withBlock.IPAM = &network.IPAM{Driver: "default", Config: []network.IPAMConfig{{Subnet: block}}}
 		created, err := a.cli.NetworkCreate(ctx, name, withBlock)
 		if err == nil {
 			return created, nil
@@ -103,15 +104,15 @@ func blockTaken(err error) bool {
 
 // usedSubnets lists every IPv4 subnet any Docker network on this host holds.
 func (a *Adapter) usedSubnets(ctx context.Context) ([]netip.Prefix, error) {
-	networks, err := a.cli.NetworkList(ctx, network.ListOptions{})
+	networks, err := a.cli.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
 		return nil, err
 	}
 	var used []netip.Prefix
-	for _, n := range networks {
+	for _, n := range networks.Items {
 		for _, c := range n.IPAM.Config {
-			if p, err := netip.ParsePrefix(c.Subnet); err == nil && p.Addr().Is4() {
-				used = append(used, p.Masked())
+			if c.Subnet.IsValid() && c.Subnet.Addr().Is4() {
+				used = append(used, c.Subnet.Masked())
 			}
 		}
 	}

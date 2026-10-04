@@ -13,9 +13,9 @@ import (
 	"strings"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/egress"
@@ -151,7 +151,7 @@ func (a *Adapter) egressGateway(ctx context.Context) gatewayImage {
 		}
 		id = host
 	}
-	self, err := a.cli.ContainerInspect(ctx, id)
+	self, err := a.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	switch {
 	case err == nil:
 	case cerrdefs.IsNotFound(err):
@@ -167,15 +167,15 @@ func (a *Adapter) egressGateway(ctx context.Context) gatewayImage {
 	// have Pando in it. The shipped image runs it through entrypoint.sh, so
 	// it is an argument rather than the path.
 	binary := ""
-	for _, arg := range append([]string{self.Path}, self.Args...) {
+	for _, arg := range append([]string{self.Container.Path}, self.Container.Args...) {
 		if path.IsAbs(arg) && path.Base(arg) == "pando" {
 			binary = arg
 			break
 		}
 	}
-	ref := self.Image
-	if ref == "" && self.Config != nil {
-		ref = self.Config.Image
+	ref := self.Container.Image
+	if ref == "" && self.Container.Config != nil {
+		ref = self.Container.Config.Image
 	}
 	if binary == "" || ref == "" {
 		return gatewayImage{}
@@ -262,7 +262,7 @@ func (a *Adapter) ensureOutboundNetwork(ctx context.Context, bundleID string) (s
 	} else if ok {
 		return n.ID, nil
 	}
-	created, err := a.createNetwork(ctx, name, network.CreateOptions{
+	created, err := a.createNetwork(ctx, name, client.NetworkCreateOptions{
 		Driver: "bridge",
 		Labels: map[string]string{
 			labelBundle: bundleID, labelManaged: "true", labelEgressNetwork: egressNetworkOutbound,
@@ -276,13 +276,13 @@ func (a *Adapter) ensureOutboundNetwork(ctx context.Context, bundleID string) (s
 
 // findNetwork looks a network up by its exact name.
 func (a *Adapter) findNetwork(ctx context.Context, name string) (network.Summary, bool, error) {
-	list, err := a.cli.NetworkList(ctx, network.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("name", name)),
+	list, err := a.cli.NetworkList(ctx, client.NetworkListOptions{
+		Filters: make(client.Filters).Add("name", name),
 	})
 	if err != nil {
 		return network.Summary{}, false, errs.Wrap(errs.AdapterUnavailable, "Could not list Docker networks.", err)
 	}
-	for _, n := range list {
+	for _, n := range list.Items {
 		// The name filter matches substrings: "pando-x" finds
 		// "pando-x-internal" too.
 		if n.Name == name {
@@ -312,7 +312,7 @@ func (a *Adapter) ensureGateway(ctx context.Context, p api.BundlePlan, img gatew
 		}
 		if ok {
 			if !strings.HasPrefix(existing.State, "running") {
-				if err := a.cli.ContainerStart(ctx, existing.ID, container.StartOptions{}); err != nil {
+				if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
 					return errs.Wrap(errs.AdapterFailed, "Could not start this app's egress gateway.", err)
 				}
 			}
@@ -376,15 +376,17 @@ func (a *Adapter) ensureGateway(ctx context.Context, p api.BundlePlan, img gatew
 			internalNetworkName(p.BundleID): {NetworkID: internalID, Aliases: []string{gatewayAlias}},
 		},
 	}
-	created, err := a.cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, gatewayContainerName(p.BundleID))
+	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: gatewayContainerName(p.BundleID),
+	})
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not create this app's egress gateway.", err)
 	}
-	if err := a.cli.NetworkConnect(ctx, outboundID, created.ID, nil); err != nil {
+	if _, err := a.cli.NetworkConnect(ctx, outboundID, client.NetworkConnectOptions{Container: created.ID}); err != nil {
 		_ = a.removeContainer(ctx, created.ID)
 		return errs.Wrap(errs.AdapterFailed, "Could not connect this app's egress gateway to the network it leaves through.", err)
 	}
-	if err := a.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+	if _, err := a.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not start this app's egress gateway.", err)
 	}
 	return nil
@@ -394,16 +396,16 @@ func (a *Adapter) ensureGateway(ctx context.Context, p api.BundlePlan, img gatew
 // plan: same image and rules, and on both of this bundle's networks — a
 // network removed and created again by hand is a different network.
 func (a *Adapter) gatewayMatches(ctx context.Context, id, bundleID, digest string) (bool, error) {
-	inspect, err := a.cli.ContainerInspect(ctx, id)
+	inspect, err := a.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	if err != nil {
 		return false, errs.Wrap(errs.AdapterUnavailable, "Could not read this app's egress gateway.", err)
 	}
-	if inspect.Config == nil || inspect.Config.Labels[labelEgressDigest] != digest {
+	if inspect.Container.Config == nil || inspect.Container.Config.Labels[labelEgressDigest] != digest {
 		return false, nil
 	}
-	if inspect.NetworkSettings != nil && inspect.NetworkSettings.Networks != nil {
+	if inspect.Container.NetworkSettings != nil && inspect.Container.NetworkSettings.Networks != nil {
 		for _, name := range []string{internalNetworkName(bundleID), outboundNetworkName(bundleID)} {
-			if _, ok := inspect.NetworkSettings.Networks[name]; !ok {
+			if _, ok := inspect.Container.NetworkSettings.Networks[name]; !ok {
 				return false, nil
 			}
 		}
@@ -412,20 +414,17 @@ func (a *Adapter) gatewayMatches(ctx context.Context, id, bundleID, digest strin
 }
 
 func (a *Adapter) findGateway(ctx context.Context, bundleID string) (*containerSummary, error) {
-	list, err := a.cli.ContainerList(ctx, container.ListOptions{
-		All: true,
-		Filters: filters.NewArgs(
-			filters.Arg("label", labelBundle+"="+bundleID),
-			filters.Arg("label", labelRole+"="+roleEgressGateway),
-		),
+	list, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: make(client.Filters).Add("label", labelBundle+"="+bundleID).Add("label", labelRole+"="+roleEgressGateway),
 	})
 	if err != nil {
 		return nil, errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
 	}
-	if len(list) == 0 {
+	if len(list.Items) == 0 {
 		return nil, nil
 	}
-	return &containerSummary{ID: list[0].ID, State: list[0].State, Labels: list[0].Labels}, nil
+	return &containerSummary{ID: list.Items[0].ID, State: string(list.Items[0].State), Labels: list.Items[0].Labels}, nil
 }
 
 // removeGateway removes a bundle's gateway and its outbound network, left
@@ -449,11 +448,11 @@ func (a *Adapter) removeGateway(ctx context.Context, bundleID string) error {
 // something is — Pando's own container included, which is never detached
 // (see Destroy). ReclaimNetworks collects that one after the next restart.
 func (a *Adapter) removeIdleNetwork(ctx context.Context, name string) {
-	full, err := a.cli.NetworkInspect(ctx, name, network.InspectOptions{})
-	if err != nil || len(full.Containers) > 0 {
+	full, err := a.cli.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
+	if err != nil || len(full.Network.Containers) > 0 {
 		return
 	}
-	_ = a.cli.NetworkRemove(ctx, full.ID)
+	_, _ = a.cli.NetworkRemove(ctx, full.Network.ID, client.NetworkRemoveOptions{})
 }
 
 // isGateway reports a container that is a bundle's egress gateway rather than

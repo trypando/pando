@@ -3,16 +3,14 @@ package docker
 import (
 	"context"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 )
 
 // execSession adapts Docker's hijacked connection to api.ExecSession.
 type execSession struct {
 	cli      *client.Client
 	execID   string
-	hijacked types.HijackedResponse
+	hijacked client.HijackedResponse
 }
 
 func (s *execSession) Read(p []byte) (int, error)  { return s.hijacked.Reader.Read(p) }
@@ -24,10 +22,11 @@ func (s *execSession) Close() error {
 }
 
 func (s *execSession) Resize(rows, cols uint16) error {
-	return s.cli.ContainerExecResize(context.Background(), s.execID, container.ResizeOptions{
+	_, err := s.cli.ExecResize(context.Background(), s.execID, client.ExecResizeOptions{
 		Height: uint(rows),
 		Width:  uint(cols),
 	})
+	return err
 }
 
 // ExitCode reports the session's exit code once it has finished.
@@ -36,7 +35,7 @@ func (s *execSession) Resize(rows, cols uint16) error {
 // "not finished" from "finished with 0" — collapsing those would report success
 // for a session still in progress.
 func (s *execSession) ExitCode() (int, bool) {
-	inspect, err := s.cli.ContainerExecInspect(context.Background(), s.execID)
+	inspect, err := s.cli.ExecInspect(context.Background(), s.execID, client.ExecInspectOptions{})
 	if err != nil || inspect.Running {
 		return 0, false
 	}

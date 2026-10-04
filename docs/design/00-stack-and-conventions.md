@@ -78,7 +78,7 @@ functionally; only the first-run experience differs.
 | JWT | `go-jose/v4` | Assertion signing (R-052), JWKS (R-057) |
 | Config | `spf13/viper` | YAML + env + flags, per R-271. The YAML file can also fix host policy fields and declare adapters with their AI function assignments, read-only elsewhere while declared (§02 2.5, §10 7.1) |
 | CLI | `spf13/cobra` | |
-| Container runtime | `docker/docker` client | Local runtime + builder adapters |
+| Container runtime | `moby/moby/client` + `moby/moby/api` | Local runtime + image-scanner adapters. `docker/docker` stopped at v28.5.2 and gets no fixes. The client is pre-1.0 and a minor release can change its API, so bumping it needs `make test-integration`, not only a green build |
 | BuildKit | `moby/buildkit` client | R-111 |
 | Proxy | `net/http/httputil.ReverseProxy` | Wrap, don't adopt. See §1.3 |
 | Testing | stdlib + `testify/require` | |

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -207,7 +207,7 @@ func (w *world) connectNetwork(rw http.ResponseWriter, r *http.Request) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	n := w.netByRef(pathID(r, "networks"))
-	var req network.ConnectOptions
+	var req network.ConnectRequest
 	require.NoError(w.t, json.NewDecoder(r.Body).Decode(&req))
 	c := w.ctrByRef(req.Container)
 	if n == nil || c == nil {

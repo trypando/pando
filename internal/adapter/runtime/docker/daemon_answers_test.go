@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -25,8 +25,8 @@ type networkRequest struct {
 	}
 }
 
-func networkRequestOptions() network.CreateOptions {
-	return network.CreateOptions{Driver: "bridge", Labels: map[string]string{labelManaged: "true"}}
+func networkRequestOptions() client.NetworkCreateOptions {
+	return client.NetworkCreateOptions{Driver: "bridge", Labels: map[string]string{labelManaged: "true"}}
 }
 
 func (n networkRequest) subnet() string {

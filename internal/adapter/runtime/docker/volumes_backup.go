@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
@@ -47,8 +48,8 @@ func (a *Adapter) SnapshotVolume(ctx context.Context, h api.VolumeHandle, dst io
 
 	// Reading, so the mount is read-only. A tar that can write to the volume it
 	// is reading is a tar that can corrupt the thing being backed up.
-	created, err := a.cli.ContainerCreate(ctx,
-		&container.Config{
+	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
 			Image: helperImage,
 			// `.` rather than `/volume` so paths in the archive are relative,
 			// which is what lets restore extract into a different volume.
@@ -57,14 +58,15 @@ func (a *Adapter) SnapshotVolume(ctx context.Context, h api.VolumeHandle, dst io
 			AttachStderr:    true,
 			NetworkDisabled: true,
 		},
-		&container.HostConfig{
+		HostConfig: &container.HostConfig{
 			Mounts: []mount.Mount{{
 				Type: mount.TypeVolume, Source: h.Handle, Target: snapshotMount, ReadOnly: true,
 			}},
 			AutoRemove:  false, // removed below, after the exit code is read
 			CapDrop:     []string{"ALL"},
 			SecurityOpt: []string{"no-new-privileges"},
-		}, nil, nil, "")
+		},
+	})
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not start the storage backup.", err)
 	}
@@ -87,8 +89,8 @@ func (a *Adapter) RestoreVolume(ctx context.Context, h api.VolumeHandle, src io.
 		return err
 	}
 
-	created, err := a.cli.ContainerCreate(ctx,
-		&container.Config{
+	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
 			Image: helperImage,
 			// Empty, then extract. Both in one shell so the window where the
 			// volume is empty is as short as possible and never spans a
@@ -103,14 +105,15 @@ func (a *Adapter) RestoreVolume(ctx context.Context, h api.VolumeHandle, src io.
 			StdinOnce:       true,
 			NetworkDisabled: true,
 		},
-		&container.HostConfig{
+		HostConfig: &container.HostConfig{
 			Mounts: []mount.Mount{{
 				Type: mount.TypeVolume, Source: h.Handle, Target: snapshotMount,
 			}},
 			AutoRemove:  false,
 			CapDrop:     []string{"ALL"},
 			SecurityOpt: []string{"no-new-privileges"},
-		}, nil, nil, "")
+		},
+	})
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not start the storage restore.", err)
 	}
@@ -126,7 +129,7 @@ func (a *Adapter) RestoreVolume(ctx context.Context, h api.VolumeHandle, src io.
 // contains part of a volume — which verifies against its own manifest perfectly,
 // because the manifest was written from the same short stream.
 func (a *Adapter) streamHelper(ctx context.Context, id string, stdout io.Writer, stdin io.Reader, verb string) error {
-	attached, err := a.cli.ContainerAttach(ctx, id, container.AttachOptions{
+	attached, err := a.cli.ContainerAttach(ctx, id, client.ContainerAttachOptions{
 		Stream: true, Stdin: stdin != nil, Stdout: true, Stderr: true,
 	})
 	if err != nil {
@@ -134,7 +137,7 @@ func (a *Adapter) streamHelper(ctx context.Context, id string, stdout io.Writer,
 	}
 	defer attached.Close()
 
-	if err := a.cli.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+	if _, err := a.cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not %s this app's storage.", verb), err)
 	}
 
@@ -156,16 +159,16 @@ func (a *Adapter) streamHelper(ctx context.Context, id string, stdout io.Writer,
 		copyDone <- err
 	}()
 
-	waitC, errC := a.cli.ContainerWait(ctx, id, container.WaitConditionNotRunning)
+	wait := a.cli.ContainerWait(ctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 
 	if err := <-copyDone; err != nil {
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not %s this app's storage.", verb), err)
 	}
 
 	select {
-	case err := <-errC:
+	case err := <-wait.Error:
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not %s this app's storage.", verb), err)
-	case status := <-waitC:
+	case status := <-wait.Result:
 		if status.StatusCode != 0 {
 			return errs.Newf(errs.AdapterFailed,
 				"Pando could not %s this app's storage: the helper exited with status %d.",
@@ -185,6 +188,6 @@ func (a *Adapter) streamHelper(ctx context.Context, id string, stdout io.Writer,
 // created it. Failures are ignored — a leaked helper is untidy, and reporting
 // it over the real error would bury the reason the backup failed.
 func (a *Adapter) removeQuietly(ctx context.Context, id string) {
-	_ = a.cli.ContainerRemove(context.WithoutCancel(ctx), id,
-		container.RemoveOptions{Force: true})
+	_, _ = a.cli.ContainerRemove(context.WithoutCancel(ctx), id,
+		client.ContainerRemoveOptions{Force: true})
 }

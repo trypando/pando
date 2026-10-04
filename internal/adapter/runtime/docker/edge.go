@@ -11,11 +11,9 @@ import (
 	"strings"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
@@ -81,7 +79,7 @@ func (a *Adapter) ApplyEdge(ctx context.Context, p api.EdgePlan) error {
 		}
 		if matches {
 			if !strings.HasPrefix(existing.State, "running") {
-				if err := a.cli.ContainerStart(ctx, existing.ID, container.StartOptions{}); err != nil {
+				if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
 					return edgeStartFailure(p, err)
 				}
 			}
@@ -106,15 +104,15 @@ func (a *Adapter) ApplyEdge(ctx context.Context, p api.EdgePlan) error {
 	}
 	sort.Strings(env)
 
-	exposed := nat.PortSet{}
-	published := nat.PortMap{}
+	exposed := network.PortSet{}
+	published := network.PortMap{}
 	for _, port := range p.Ports {
-		cp, err := nat.NewPort(protocolOf(port.Protocol), strconv.Itoa(port.Container))
+		cp, err := containerPort(port.Container, port.Protocol)
 		if err != nil {
 			return errs.Wrap(errs.ValidInvalid, fmt.Sprintf("%d is not a usable port.", port.Container), err)
 		}
 		exposed[cp] = struct{}{}
-		published[cp] = append(published[cp], nat.PortBinding{HostPort: strconv.Itoa(port.Host)})
+		published[cp] = append(published[cp], network.PortBinding{HostPort: strconv.Itoa(port.Host)})
 	}
 
 	cfg := &container.Config{
@@ -153,11 +151,13 @@ func (a *Adapter) ApplyEdge(ctx context.Context, p api.EdgePlan) error {
 		},
 	}
 
-	created, err := a.cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, edgeContainerName(p.Name))
+	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: edgeContainerName(p.Name),
+	})
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not create the %s edge.", p.Name), err)
 	}
-	if err := a.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+	if _, err := a.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		// Left in place rather than removed: the next pass retries the start,
 		// and an operator reading `docker ps -a` sees what failed.
 		return edgeStartFailure(p, err)
@@ -220,15 +220,15 @@ func (a *Adapter) RemoveEdge(ctx context.Context, name string) error {
 
 // Edges names every edge this runtime has.
 func (a *Adapter) Edges(ctx context.Context) ([]string, error) {
-	list, err := a.cli.ContainerList(ctx, container.ListOptions{
+	list, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", labelEdge)),
+		Filters: make(client.Filters).Add("label", labelEdge),
 	})
 	if err != nil {
 		return nil, errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
 	}
-	names := make([]string, 0, len(list))
-	for _, c := range list {
+	names := make([]string, 0, len(list.Items))
+	for _, c := range list.Items {
 		if n := c.Labels[labelEdge]; n != "" {
 			names = append(names, n)
 		}
@@ -239,14 +239,14 @@ func (a *Adapter) Edges(ctx context.Context) ([]string, error) {
 
 // EdgeVolumes is every volume an edge owns, for the full-host backup.
 func (a *Adapter) EdgeVolumes(ctx context.Context) ([]api.VolumeHandle, error) {
-	list, err := a.cli.VolumeList(ctx, volume.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", labelEdge)),
+	list, err := a.cli.VolumeList(ctx, client.VolumeListOptions{
+		Filters: make(client.Filters).Add("label", labelEdge),
 	})
 	if err != nil {
 		return nil, errs.Wrap(errs.AdapterUnavailable, "Could not list the edge's storage.", err)
 	}
-	out := make([]api.VolumeHandle, 0, len(list.Volumes))
-	for _, v := range list.Volumes {
+	out := make([]api.VolumeHandle, 0, len(list.Items))
+	for _, v := range list.Items {
 		out = append(out, api.VolumeHandle{Handle: v.Name})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Handle < out[j].Handle })
@@ -254,30 +254,30 @@ func (a *Adapter) EdgeVolumes(ctx context.Context) ([]api.VolumeHandle, error) {
 }
 
 func (a *Adapter) findEdge(ctx context.Context, name string) (*containerSummary, error) {
-	list, err := a.cli.ContainerList(ctx, container.ListOptions{
+	list, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", labelEdge+"="+name)),
+		Filters: make(client.Filters).Add("label", labelEdge+"="+name),
 	})
 	if err != nil {
 		return nil, errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
 	}
-	if len(list) == 0 {
+	if len(list.Items) == 0 {
 		return nil, nil
 	}
-	return &containerSummary{ID: list[0].ID, State: list[0].State, Labels: list[0].Labels}, nil
+	return &containerSummary{ID: list.Items[0].ID, State: string(list.Items[0].State), Labels: list.Items[0].Labels}, nil
 }
 
 // edgeMatches reports whether a container already satisfies the plan.
 func (a *Adapter) edgeMatches(ctx context.Context, id string, p api.EdgePlan, digest string) (bool, error) {
-	inspect, err := a.cli.ContainerInspect(ctx, id)
+	inspect, err := a.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	if err != nil {
 		return false, errs.Wrap(errs.AdapterUnavailable, "Could not read the edge's configuration.", err)
 	}
-	if inspect.Config == nil || inspect.Config.Labels[labelEdgeDigest] != digest {
+	if inspect.Container.Config == nil || inspect.Container.Config.Labels[labelEdgeDigest] != digest {
 		return false, nil
 	}
 	existing := map[string]string{}
-	for _, kv := range inspect.Config.Env {
+	for _, kv := range inspect.Container.Config.Env {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			existing[k] = v
 		}
@@ -338,7 +338,7 @@ func (a *Adapter) edgeBinds(ctx context.Context, p api.EdgePlan) ([]string, erro
 			// Created explicitly, with labels, rather than left to Docker to
 			// make on first mount: the label is how EdgeVolumes finds it for
 			// the full-host backup (R-212). Idempotent.
-			if _, err := a.cli.VolumeCreate(ctx, volume.CreateOptions{
+			if _, err := a.cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 				Name:   source,
 				Labels: map[string]string{labelEdge: p.Name, labelManaged: "true"},
 			}); err != nil {
@@ -392,11 +392,11 @@ func (a *Adapter) inspectSelf(ctx context.Context) *container.InspectResponse {
 		}
 		id = host
 	}
-	got, err := a.cli.ContainerInspect(ctx, id)
+	got, err := a.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil
 	}
-	return &got
+	return &got.Container
 }
 
 // ensureEdgeNetwork makes the network edges share with Pando and joins Pando
@@ -404,13 +404,13 @@ func (a *Adapter) inspectSelf(ctx context.Context) *container.InspectResponse {
 // cannot be joined — the edge then reaches it on the host instead.
 func (a *Adapter) ensureEdgeNetwork(ctx context.Context, alias string) (string, bool, error) {
 	var networkID string
-	existing, err := a.cli.NetworkList(ctx, network.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("name", edgeNetwork)),
+	existing, err := a.cli.NetworkList(ctx, client.NetworkListOptions{
+		Filters: make(client.Filters).Add("name", edgeNetwork),
 	})
 	if err != nil {
 		return "", false, errs.Wrap(errs.AdapterUnavailable, "Could not list Docker networks.", err)
 	}
-	for _, n := range existing {
+	for _, n := range existing.Items {
 		if n.Name == edgeNetwork {
 			networkID = n.ID
 		}
@@ -418,7 +418,7 @@ func (a *Adapter) ensureEdgeNetwork(ctx context.Context, alias string) (string, 
 	if networkID == "" {
 		// Not through createNetwork's pool: this is one network for the whole
 		// install, not one per app, and Docker's default pool has room for it.
-		created, err := a.cli.NetworkCreate(ctx, edgeNetwork, network.CreateOptions{
+		created, err := a.cli.NetworkCreate(ctx, edgeNetwork, client.NetworkCreateOptions{
 			Driver: "bridge",
 			Labels: map[string]string{labelEdge: "true", labelManaged: "true"},
 		})
@@ -441,7 +441,9 @@ func (a *Adapter) ensureEdgeNetwork(ctx context.Context, alias string) (string, 
 	if alias != "" {
 		aliases = []string{alias}
 	}
-	err = a.cli.NetworkConnect(ctx, networkID, self, &network.EndpointSettings{Aliases: aliases})
+	_, err = a.cli.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{
+		Container: self, EndpointConfig: &network.EndpointSettings{Aliases: aliases},
+	})
 	switch {
 	case err == nil, strings.Contains(err.Error(), "already exists"):
 		return networkID, true, nil
