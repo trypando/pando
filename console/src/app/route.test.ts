@@ -14,6 +14,7 @@ describe('route', () => {
     { view: 'admin', section: 'accounts', userID: 'usr_01' },
     { view: 'admin', section: 'audit' },
     { view: 'admin', section: 'approvals' },
+    { view: 'admin', section: 'updates' },
     { view: 'admin', section: 'audit', query: 'involving=usr_01&when=7d' },
     { view: 'admin', section: 'sign-in' },
     { view: 'admin', section: 'sign-in', query: 'provider=idp_01&test=abc' },

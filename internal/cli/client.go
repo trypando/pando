@@ -25,6 +25,8 @@ type Client struct {
 	BaseURL string
 	Token   string
 	HTTP    *http.Client
+	// Warn receives the version-skew warning (R-353). Nil says nothing.
+	Warn io.Writer
 }
 
 // Credentials are what `pando login` stores.
@@ -151,6 +153,7 @@ func New(urlOverride string) (*Client, error) {
 		// streams a database dump plus every volume. Neither is a quick call
 		// and neither should be cut off by a default nobody chose.
 		HTTP: &http.Client{Timeout: 10 * time.Minute},
+		Warn: os.Stderr,
 	}, nil
 }
 
@@ -200,6 +203,7 @@ func (c *Client) Do(method, path string, body, out any) error {
 	if err != nil {
 		return fmt.Errorf("reaching %s: %w", c.BaseURL, err)
 	}
+	warnSkew(c.Warn, c.BaseURL, resp)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
@@ -246,6 +250,7 @@ func (c *Client) Stream(method, path string, body any) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reaching %s: %w", c.BaseURL, err)
 	}
+	warnSkew(c.Warn, c.BaseURL, resp)
 	if resp.StatusCode >= 400 {
 		defer func() { _ = resp.Body.Close() }()
 		apiErr := &APIError{Status: resp.StatusCode}

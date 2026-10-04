@@ -196,6 +196,43 @@ type Document struct {
 	// sign-in, whatever each provider is set to. People then need an account
 	// first — pushed by SCIM, or linked by an administrator.
 	DisableJITProvisioning bool `json:"disable_jit_provisioning,omitempty"`
+
+	// DisableUpdateCheck stops Pando asking GitHub whether a newer release
+	// exists (R-349). Default false — on — so an install learns about a
+	// security release without anyone remembering to look; off sends no
+	// request at all, for an air-gapped install or one that may not call out.
+	DisableUpdateCheck bool `json:"disable_update_check,omitempty"`
+
+	// UpdateChannel is which releases the check offers (R-350): stable, the
+	// default, or prerelease, which also offers release candidates.
+	UpdateChannel UpdateChannel `json:"update_channel,omitempty"`
+}
+
+// UpdateChannel is which releases the update check offers (R-350).
+type UpdateChannel string
+
+const (
+	// UpdateChannelStable offers releases only.
+	UpdateChannelStable UpdateChannel = "stable"
+	// UpdateChannelPrerelease also offers release candidates.
+	UpdateChannelPrerelease UpdateChannel = "prerelease"
+)
+
+// Valid refuses a value that is neither. Empty is unset, which is stable.
+func (c UpdateChannel) Valid() error {
+	switch c {
+	case "", UpdateChannelStable, UpdateChannelPrerelease:
+		return nil
+	}
+	return fmt.Errorf("%q is not an update_channel setting; use stable or prerelease", string(c))
+}
+
+// Channel is the update channel in force, stable when unset.
+func (d Document) Channel() UpdateChannel {
+	if d.UpdateChannel == "" {
+		return UpdateChannelStable
+	}
+	return d.UpdateChannel
 }
 
 // What InsecureAction may say.
@@ -530,6 +567,9 @@ func (d Document) ValidateRules() error {
 	}
 	if d.DeployApprovalExpiryHours < 0 {
 		return fmt.Errorf("deploy_approval_expiry_hours is %d; use a number of hours, or 0 for requests that wait until somebody answers", d.DeployApprovalExpiryHours)
+	}
+	if err := d.UpdateChannel.Valid(); err != nil {
+		return err
 	}
 	return d.ValidateAuditRetention()
 }

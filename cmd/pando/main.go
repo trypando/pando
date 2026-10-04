@@ -63,6 +63,7 @@ import (
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/detect"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/httpapi"
@@ -127,6 +128,7 @@ func rootCmd() *cobra.Command {
 	// one, and a client of the API like any other (R-261) — internal/cli
 	// imports no core package, so a command that needed something the API
 	// cannot do would not compile rather than quietly growing a shortcut.
+	cli.Version = buildVersion
 	root.AddCommand(cli.Commands()...)
 	return root
 }
@@ -591,8 +593,24 @@ func serve(ctx context.Context, configPath string) error {
 		Clock:         clock.System{},
 	}
 
+	// Whether a newer Pando is released (R-349). Started with the other loops
+	// below; host policy can turn it off, and then it sends nothing.
+	updates := &update.Checker{
+		Source: update.NewGitHub(buildVersion),
+		Settings: func(ctx context.Context) (update.Settings, error) {
+			doc, err := policyStore.Load(ctx)
+			return update.SettingsFrom(doc), err
+		},
+		Current: buildVersion,
+		Install: update.DetectInstall(),
+		Clock:   clock.System{},
+		Logger:  logger,
+	}
+
 	apiHandler := (&httpapi.Server{
-		Edges: edges,
+		Updates: updates,
+		Version: buildVersion,
+		Edges:   edges,
 		// Changing where a configured app is reached (R-162, R-163).
 		Address: &address.Service{
 			Registry:       registry,
@@ -802,6 +820,8 @@ func serve(ctx context.Context, configPath string) error {
 	// is how long the list can show one that has already run out, not how
 	// long one can be approved late.
 	go approvals.RunExpiry(loopCtx, time.Minute)
+
+	go updates.Run(loopCtx)
 
 	// Port-mode apps answer at the root of their own port (design 03 §4.2).
 	//

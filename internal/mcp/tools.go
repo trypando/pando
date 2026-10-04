@@ -609,6 +609,17 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_get_updates",
+		Description: "Whether a newer Pando is released: the version the server runs, the latest on " +
+			"the update channel, and each version in between with its changelog, security fixes " +
+			"and breaking changes marked, plus the command that upgrades the server. The check is " +
+			"host policy (disable_update_check, update_channel).",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/updates", nil, nil
+		},
+	},
+	{
 		Name: "pando_get_config",
 		Description: "The configuration the Pando server started with: every non-secret setting, " +
 			"its value and where it was set (an environment variable, the config file, or the " +

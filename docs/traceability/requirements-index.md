@@ -9,10 +9,10 @@ specify it, the phase that builds it, and the tests that prove it. Test coverage
 
 | | Count | Of total |
 |---|---:|---:|
-| Requirements | 255 | — |
-| Specified in a design doc | 215 | 84% |
-| Assigned to a phase | 137 | 53% |
-| Covered by a named test | 174 | 68% |
+| Requirements | 261 | — |
+| Specified in a design doc | 220 | 84% |
+| Assigned to a phase | 137 | 52% |
+| Covered by a named test | 180 | 68% |
 
 A requirement with no design reference is not necessarily a gap — it may be philosophy (R-002),
 a non-goal (R-010–R-016), or deferred (R-290+). A requirement with no *test* is either
@@ -216,7 +216,7 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-347** | D | The live audit log is bounded in time, and nothing leaves it unarchived. | 16.3 Audit | 00, 02, 04, 06 | — | `TestR347_AMonthPastRetentionIsArchivedVerifiedAndRemoved`, `TestR347_AnArchiveAlreadyWrittenIsUsedIfItStillVerifies`, `TestR347_AnArchiveIsCheckedAgainstItsManifest`, `TestR347_AnArchivedMonthIsListedAndDownloadedThroughTheAPI`, `TestR347_AnExportedArchiveIsOpenedFromWhereItWasWritten`, `TestR347_ArchivesGoWherePolicySays`, `TestR347_LongerRetentionKeepsMore`, `TestR347_NothingLeavesWhenTheArchiveCannotBeWritten`, `TestR347_RetentionRunsAtStartAndThenOnItsInterval`, `TestR347_TheCLIDownloadsAnArchiveAndChecksItsDigest`, `TestR347_TheCLIListsArchivedMonths`, `TestR347_TurningArchivingOffKeepsEverything` |
 | **R-348** | P | Default retention is three months, which is also the floor: host policy may lengthen it and… | 16.3 Audit | 02, 06 | — | `TestR348_AMonthOfTheAuditLogIsReprotectedOnRestart`, `TestR348_ARestoreIsReprotectedAtOnce`, `TestR348_NoMonthLeavesBeforeTheFloorOrWithoutItsArchive`, `TestR348_PolicyRefusesRetentionUnderTheFloor`, `TestR348_RetentionHasAFloorOfThreeMonths`, `TestR348_StartupRefusesAnAuditPartitionTheAppRoleCanDeleteFrom`, `TestR348_TheApplicationRoleStillCannotRemoveAuditEvents` |
 | **R-230** | D | Notification is an adapter category. | 16.4 Notifications | — | — | — |
-| **R-231** | D V1 | Default is console-only. | 16.4 Notifications | 03, 08 | 10 | `TestR231_NotifyRecordsRatherThanSends` |
+| **R-231** | D V1 | Default is console-only. | 16.4 Notifications | 00, 03, 08 | 10 | `TestR231_NotifyRecordsRatherThanSends` |
 | **R-232** | D LATER | Built-in adapters for SMTP and SendGrid. | 16.4 Notifications | 03, 08 | 10 | — |
 | **R-240** | D | Default CPU, memory, and disk limits are set at the host. | 17. Resources and Capacity | 01 | — | `TestR240_TheHostSetsMemoryAndDiskForEveryNewApp`, `TestR240_TheHostSetsWhatEveryNewAppIsGiven` |
 | **R-241** | D | Per-app override is available, gated by `app.resources.override`. | 17. Resources and Capacity | 01 | 02 | — |
@@ -249,6 +249,12 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-272** | D | The general pattern, applied throughout: a setting has a permissive default; host policy can… | 20. Configuration and Policy | 01, 04, 06, 09, 10 | 01, 06 | `TestR272_AVerbNoRuleMentionsIsUntouched`, `TestR272_HostPolicyIsAFloorForAdministratorsToo`, `TestR272_PolicyDeniesAnAppVerbHeldInstallWide`, `TestR272_PolicyIsAFloorAndDeniesTheOwnerToo` |
 | **R-273** | D LATER | Premade setting profiles for common postures (hobbyist, hardened, regulated), usable as-is or… | 20. Configuration and Policy | — | — | — |
 | **R-274** | D | Host policy may be applied to an install with running apps. | 20. Configuration and Policy | 01, 02, 03, 04, 05 | 02, 03 | `TestR274_PolicyIsReadableAndWritableBehindItsOwnVerbs`, `TestR274_ReadingPolicyAndChangingItAreDifferentPrivileges`, `TestR274_TheDocumentIsReloadedForEveryEvaluation` |
+| **R-349** | D | Pando checks whether a newer release of itself is published. | Updating Pando itself *(issue #53)* | 00 | — | `TestR349_TheUpdateCheckIsOnByDefaultAndOffSendsNothing` |
+| **R-350** | D | Host policy `update_channel` chooses which releases the check offers: `stable`, the default,… | Updating Pando itself *(issue #53)* | — | — | `TestR350_AnUpdateChannelThatIsNotOneIsRefused`, `TestR350_TheChannelDecidesWhetherReleaseCandidatesAreOffered` |
+| **R-351** | D | Every surface shows the version running, the latest on the channel, and each version in… | Updating Pando itself *(issue #53)* | 00 | — | `TestR351_PandoUpdatesShowsEachStateOfTheCheck`, `TestR351_StatusListsEachVersionBetweenWithSecurityAndBreakingMarked`, `TestR351_UpdatesAreServedToWhoeverMayViewTheInstallation` |
+| **R-352** | D | An available update says how to upgrade this installation, as a command and a sentence. | Updating Pando itself *(issue #53)* | 00 | — | `TestR352_AnAvailableUpdateSaysHowToUpgradeThisInstall` |
+| **R-353** | D | The CLI warns, once per run and never as a refusal, when it and the server it reached differ… | Updating Pando itself *(issue #53)* | 00 | — | `TestR353_ACLIOutOfStepWithItsServerSaysSoOnce`, `TestR353_TheServerVersionGoesOnlyToSignedInCallers` |
+| **R-354** | D | Pando does not start against a database a newer version migrated. | Updating Pando itself *(issue #53)* | 00 | — | `TestR354_ADatabaseANewerPandoMigratedIsRefused` |
 | **R-280** | D | Losing access to an app destroys that user's per-app data (relevant to per-user instances, §22). | 21. Data Destruction | 02 | — | — |
 | **R-281** | D | Losing access to Pando means losing access to every app the user had. | 21. Data Destruction | — | — | — |
 | **R-282** | D | Suspended is not deleted (R-049). | 21. Data Destruction | 02, 04 | 01 | — |
@@ -308,6 +314,7 @@ Check each against the categories above before treating it as a gap.
 - **R-263** (19. Surfaces) — End users — people who were granted use of an app and nothing else — do not need the console.
 - **R-266** (19. Surfaces) — Sharing an app sends no message.
 - **R-273** (20. Configuration and Policy) — Premade setting profiles for common postures (hobbyist, hardened, regulated), usable as-is or…
+- **R-350** (Updating Pando itself *(issue #53)*) — Host policy `update_channel` chooses which releases the check offers: `stable`, the default,…
 - **R-281** (21. Data Destruction) — Losing access to Pando means losing access to every app the user had.
 - **R-283** (21. Data Destruction) — An option to back up before destroying exists, off by default.
 - **R-284** (21. Data Destruction) — Because the correct value differs by install, this belongs to host policy, not per-app…

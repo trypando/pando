@@ -92,6 +92,30 @@ So: Pando implements the identity-aware proxy itself, on `httputil.ReverseProxy`
 
 This must be stated in every routing adapter's contract, because an adapter author's instinct will be to point Traefik straight at the container.
 
+### 1.4 Updating Pando itself (issue #53)
+
+**Knowing a release exists [D]** (R-349 – R-351). `internal/core/update.Checker` runs beside the other loops in `serve`. At startup and every six hours **[P]** it reads `https://api.github.com/repos/trypando/pando/releases`. It reads that list because the release workflow already writes it: each release body is exactly that version's CHANGELOG.md section (`release.yml`), and `prerelease` is set for a tag with a suffix. A second feed would be one more thing to keep in step. The request sends a User-Agent of `pando/<version>` and nothing else.
+
+- **What is kept, and where.** Only the last list fetched and when, in memory. A restart checks again, so there is nothing to migrate.
+- **How the channel applies.** The channel filters that list when it is read rather than when it is fetched, so changing it in policy needs no new request.
+- **When it is off.** The policy is read at every tick. While `disable_update_check` is set, nothing is sent.
+- **Security and breaking marks.** `Security` means the section's `### Security` subsection says something other than "No new advisories.". `Breaking` follows docs/releasing.md: a MAJOR bump, or before 1.0 a MINOR one.
+
+Both settings are ordinary host policy fields, so they can be fixed in the config file or as `PANDO_POLICY_DISABLE_UPDATE_CHECK` / `PANDO_POLICY_UPDATE_CHANNEL`, and are then read-only everywhere (R-271). There is no separate console toggle that could disagree with the deployment's own configuration.
+
+**How to upgrade [D]** (R-352). The server ships only as the container image (`internal/reference/install.go`), so the server-side instructions have two cases:
+
+- **Inside a container** (`/.dockerenv`): the release's Compose file plus `docker compose up -d`, or the image tag to set wherever infrastructure-as-code deploys Pando.
+- **Anywhere else:** the release archive.
+
+Package and Homebrew installs carry the CLI. Its upgrade command is chosen from the CLI's own executable path, in `internal/cli/skew.go`.
+
+**Skew [D]** (R-353). The server sends `Pando-Version` only to signed-in callers. The CLI compares MAJOR.MINOR, because a PATCH release changes no interface, and warns once per run on stderr. Stdout is left alone, which keeps `pando mcp` working.
+
+**Refusing a downgrade [D]** (R-354). Before `Up`, the migration step compares the database's schema version with the newest embedded migration. If the database's is higher, it refuses, naming both versions. Without this an older image put back by a Compose file or IaC failed with "Database migration failed." and crash-looped, and with it the proxy, so every app was unreachable for a reason nobody could read. Migrations run forward only, and going back is a restore.
+
+**Not here yet.** The **in-place upgrade** is the second half of issue #53: a signed image verified with cosign, a backup first, a helper container that replaces Pando's, and a rollback that is always restore-from-backup, never down migrations. It is opt-in through the deployment configuration (a host policy field like the two above). The reason is drift: a version pinned in a Compose file or IaC puts the old image back on the next apply, so the person who owns that configuration has to decide. Every app is unreachable while Pando restarts, because the proxy is in-process (§1.3), so the upgrade will keep that window short by pulling and verifying the new image before stopping the old one. An **"update available" notification** waits for the console to have somewhere to show notifications (R-231; issue #50).
+
 ---
 
 ## 2. Repository layout [P]

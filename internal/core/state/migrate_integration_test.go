@@ -104,6 +104,25 @@ func TestADirtySchemaIsRefusedWithWhatToDo(t *testing.T) {
 	require.ErrorContains(t, err, "marked dirty")
 }
 
+// TestR354_ADatabaseANewerPandoMigratedIsRefused asserts R-354: an older
+// Pando — put back by a Compose file or IaC that still names it — refuses a
+// database a newer one migrated, saying so, instead of "migration failed".
+func TestR354_ADatabaseANewerPandoMigratedIsRefused(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ownerURL, _ := statetest.Database(t)
+	asOwner(t, ownerURL, `UPDATE schema_migrations SET version = version + 1000`)
+
+	err := state.Migrate(ctx, ownerURL)
+	require.Error(t, err)
+	require.Contains(t, errs.As(err).Message, "migrated by a newer version of Pando")
+	require.Contains(t, errs.As(err).Remedy, "restore the backup taken before the upgrade")
+
+	// Refused before AppRole is touched, like a dirty schema.
+	_, err = state.PrepareTemplate(ctx, ownerURL)
+	require.ErrorContains(t, err, "migrated by a newer version of Pando")
+}
+
 // asOwner runs one statement against a database as its owner.
 func asOwner(t *testing.T, ownerURL, stmt string) {
 	t.Helper()

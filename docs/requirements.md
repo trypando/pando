@@ -867,6 +867,20 @@ R-106 describes and is not an error.
 
 **R-274 [D]** Host policy may be applied to an install with running apps. **[O-10]** — behavior when newly-applied policy is violated by an existing app is unresolved: block deploys, force a change, or report.
 
+### Updating Pando itself *(issue #53)*
+
+**R-349 [D]** **Pando checks whether a newer release of itself is published.** It reads the GitHub release list of `trypando/pando` at startup and every six hours **[P]**, sending only its version, in the User-Agent. On by default; host policy `disable_update_check` turns it off, and off sends no request at all, for an install with no internet access or one that may not call out. Like any policy setting it may be fixed at startup (R-271).
+
+**R-350 [D]** Host policy `update_channel` chooses which releases the check offers: `stable`, the default, or `prerelease`, which also offers release candidates (a tag with a suffix, docs/releasing.md).
+
+**R-351 [D]** Every surface shows the version running, the latest on the channel, and each version in between with its CHANGELOG.md section. A version whose Security section names an advisory is marked, and so is one that may break what the version before it did: a MAJOR bump, or before 1.0 a MINOR one. Reading this needs `install.view`. The API serves it at `GET /updates`; the console, `pando updates` and MCP read that. A development build is told the latest release and never that it is behind.
+
+**R-352 [D]** An available update says how to upgrade **this** installation, as a command and a sentence. For a server in a container: the release's Compose file and `docker compose up -d`, or the image to set where infrastructure-as-code deploys Pando, since otherwise the next apply puts the old version back. For the CLI: the command for how it was installed — the Homebrew cask, a Linux package, `go install`, or an archive. Upgrading the running server from inside Pando is opt-in through the deployment configuration and is not yet built (issue #53).
+
+**R-353 [D]** The CLI warns, once per run and never as a refusal, when it and the server it reached differ in MAJOR or MINOR version, with how to bring them into step. The server sends its version as `Pando-Version` on responses to signed-in callers only: which version an install runs says which advisories apply to it.
+
+**R-354 [D]** **Pando does not start against a database a newer version migrated.** It refuses before migrating, naming both schema versions, and says to run the newer version or restore the backup taken before the upgrade. Migrations run forward only; going back to an older version is a restore.
+
 ---
 
 ## 21. Data Destruction

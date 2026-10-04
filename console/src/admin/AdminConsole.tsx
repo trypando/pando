@@ -38,6 +38,7 @@ import { filtersFrom, linkQuery } from '../install/audit';
 import { Identity } from '../install/Identity';
 import { SignIn } from '../install/SignIn';
 import { Backups } from '../install/Backups';
+import { Updates, useUpdates } from '../install/Updates';
 import { Audit, Installation, Policy } from '../install/Installation';
 import { statusLabel, statusSymbol } from '../ui/status';
 import { AppOnboarding } from './AppOnboarding';
@@ -151,6 +152,11 @@ export function AdminConsole({
 
   const rows = apps.data?.apps ?? [];
 
+  // Whether a newer Pando is released (R-351), behind install.view like the
+  // rest of the installation's state. The sidebar counts the versions behind.
+  const updates = useUpdates(canView);
+  const behind = updates.data?.available ? (updates.data.releases?.length ?? 0) : 0;
+
   // Apps only for somebody who administers one. A person who reached this
   // console for the API screen alone has no apps to manage, and a list of none
   // offering to add one they cannot create is a screen that answers 403.
@@ -184,6 +190,7 @@ export function AdminConsole({
   if (canView || canManagePolicy) items.push({ value: 'policy', label: 'Policy' });
   if (canManageBackups) items.push({ value: 'backups', label: 'Backups' });
   if (canReadAudit) items.push({ value: 'audit', label: 'Audit log' });
+  if (canView) items.push({ value: 'updates', label: 'Updates', trailing: behind > 0 ? <Badge count={behind} /> : undefined });
 
   // Last, and for everyone. The API is the product (R-261) and an agent holding
   // a token is an ordinary principal (R-262), so the manual and the way to mint
@@ -341,6 +348,7 @@ export function AdminConsole({
         {section === 'adapters' && <Installation />}
         {section === 'policy' && <Policy canEdit={canManagePolicy} />}
         {section === 'backups' && <Backups />}
+        {section === 'updates' && <Updates onPolicy={() => setSection('policy')} />}
         {section === 'audit' && (
           <Audit
             // Filters carried in from a link, such as an account's page. Each

@@ -175,8 +175,13 @@ A change is done when:
    Run `make requirements-coverage` to see which R-IDs have tests. A requirement with no test is
    either philosophy, deferred, or a gap — and you should say which in your report.
 2. `make check` passes: build, vet, golangci-lint (including the adapter import rule), unit tests.
-3. Your phase file's *Done when* condition is met, or you state exactly which part is not.
-4. Any `[P]` default you overrode is noted, with the reason, in the design doc — not only in the code.
+3. **On a pull request, every check is green — CI and Codecov included.** After opening a PR or
+   pushing to one, wait for `gh pr checks <n>` to settle; do not report the work done before it has.
+   `codecov/patch` fails when new lines are covered less than the base branch is, so new code needs
+   tests, not only a passing `make check`. A failure the change did not cause is shown to also fail on
+   `main`, by its run, and said so in the report.
+4. Your phase file's *Done when* condition is met, or you state exactly which part is not.
+5. Any `[P]` default you overrode is noted, with the reason, in the design doc — not only in the code.
 
 Integration tests use `testcontainers-go` against real Postgres and real Docker. The four sequences
 in design 07 are the integration-level acceptance criteria: **if those four pass end to end, v1

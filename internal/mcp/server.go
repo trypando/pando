@@ -38,6 +38,9 @@ type Server struct {
 	// this does is stop the agent wasting a turn on a call it cannot make.
 	ToolsDisabled map[string]bool
 
+	// Version is reported as serverInfo.version. Empty reports "dev".
+	Version string
+
 	out  *json.Encoder
 	mu   sync.Mutex
 	name string
@@ -94,7 +97,7 @@ func (s *Server) dispatch(ctx context.Context, req request) {
 		s.reply(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 			"protocolVersion": protocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "pando", "version": "dev"},
+			"serverInfo":      map[string]any{"name": "pando", "version": s.version()},
 		}})
 
 	case "notifications/initialized", "initialized":
@@ -191,4 +194,11 @@ func (s *Server) tools() []map[string]any {
 		})
 	}
 	return out
+}
+
+func (s *Server) version() string {
+	if s.Version == "" {
+		return "dev"
+	}
+	return s.Version
 }

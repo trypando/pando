@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
+	"github.com/golang-migrate/migrate/v4/source"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -316,6 +318,15 @@ func migrateUp(ctx context.Context, ownerURL string) (uint, error) {
 	// connected to it (issue #31).
 	defer func() { _, _ = m.Close() }()
 
+	// A database a newer Pando migrated is refused before anything touches it
+	// (R-354). Up would fail on it anyway — it has no file for the version it
+	// finds — but with "Database migration failed", which says nothing about
+	// the cause: an older image put back by a Compose file or IaC that still
+	// names the version this database was upgraded from.
+	if err := refuseNewerSchema(m, src); err != nil {
+		return 0, err
+	}
+
 	// A dirty schema is refused by Up itself, so it is recognized here. It used
 	// to be checked after Up, on a path Up never let it reach, which reported
 	// "migration failed" without the one thing worth knowing.
@@ -336,6 +347,48 @@ func migrateUp(ctx context.Context, ownerURL string) (uint, error) {
 
 	log.From(ctx).Info("migrations applied", zap.Uint("version", version))
 	return version, nil
+}
+
+// refuseNewerSchema refuses a database whose schema version is past the newest
+// migration this binary carries: a newer Pando migrated it (R-354).
+func refuseNewerSchema(m *migrate.Migrate, src source.Driver) error {
+	current, _, err := m.Version()
+	if errors.Is(err, migrate.ErrNilVersion) {
+		return nil
+	}
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not read the database schema version.", err)
+	}
+	newest, err := newestMigration(src)
+	if err != nil {
+		return err
+	}
+	if current <= newest {
+		return nil
+	}
+	return errs.New(errs.Internal,
+		fmt.Sprintf("This database was migrated by a newer version of Pando: its schema is at version %d, and this Pando knows versions up to %d. Pando does not start against a database a newer version has migrated.", current, newest)).
+		WithRemedy("Run the Pando version this database was upgraded to, or a newer one. If Pando was upgraded and then put back by a Compose file or infrastructure-as-code that still names the older version, change the version there. To go back to the older version, restore the backup taken before the upgrade.").
+		WithDetail("schema_version", current).
+		WithDetail("supported_schema_version", newest)
+}
+
+// newestMigration is the highest version among the embedded migrations.
+func newestMigration(src source.Driver) (uint, error) {
+	v, err := src.First()
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Could not read the embedded migrations.", err)
+	}
+	for {
+		next, err := src.Next(v)
+		if errors.Is(err, os.ErrNotExist) {
+			return v, nil
+		}
+		if err != nil {
+			return 0, errs.Wrap(errs.Internal, "Could not read the embedded migrations.", err)
+		}
+		v = next
+	}
 }
 
 // provisionRole creates or updates one of Pando's restricted roles and returns
