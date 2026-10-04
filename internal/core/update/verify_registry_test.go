@@ -2,6 +2,7 @@ package update_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -66,4 +67,12 @@ func TestR357_AnImageWithoutItsOwnSignatureIsRefused(t *testing.T) {
 
 	_, err = v.Verify(context.Background(), "0.9.9")
 	require.ErrorContains(t, err, "could not find")
+
+	_, err = v.Verify(context.Background(), "not a version!")
+	require.Error(t, err)
+
+	// No trusted root, no verdict: the signature is never taken on trust.
+	v.Trusted = func(context.Context) (root.TrustedMaterial, error) { return nil, errors.New("TUF mirror unreachable") }
+	_, err = v.Verify(context.Background(), "0.4.0")
+	require.ErrorContains(t, err, "TUF mirror unreachable")
 }
