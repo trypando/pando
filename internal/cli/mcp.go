@@ -34,6 +34,7 @@ func MCPCommand() *cobra.Command {
 			}
 
 			s := &mcp.Server{
+				Version: Version,
 				Call: func(_ context.Context, method, path string, body, out any) error {
 					if raw, ok := body.(mcp.Bytes); ok {
 						return c.sendBytes(method, path, raw.ContentType, raw.Data, out)

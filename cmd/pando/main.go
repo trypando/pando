@@ -128,6 +128,7 @@ func rootCmd() *cobra.Command {
 	// one, and a client of the API like any other (R-261) — internal/cli
 	// imports no core package, so a command that needed something the API
 	// cannot do would not compile rather than quietly growing a shortcut.
+	cli.Version = buildVersion
 	root.AddCommand(cli.Commands()...)
 	return root
 }
