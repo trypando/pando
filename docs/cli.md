@@ -1090,6 +1090,32 @@ changelog of every version in between, with security fixes and breaking changes 
 Then the command that upgrades the server. The check is host policy: disable_update_check
 turns it off and update_channel chooses stable or prerelease (`pando policy set`).
 
+### `upgrade`
+
+Upgrade the Pando server in place to a newer release
+
+```
+pando upgrade [version]
+```
+
+Upgrades the server to the latest release, or to the version given. Pando verifies the
+image's signature, takes a full backup (or not, with --skip-backup), and starts a helper
+that replaces Pando's container and puts the previous version back if the new one does
+not start. Every app is unreachable while Pando restarts. Needs install.upgrade, and
+upgrade_in_place on in host policy. `pando upgrade last` shows how the last one went.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--skip-backup` |  | upgrade without taking a full backup first (recorded in the audit log) |
+
+#### `upgrade last`
+
+Show how the most recent in-place upgrade went
+
+```
+pando upgrade last
+```
+
 ### `user`
 
 Work with accounts

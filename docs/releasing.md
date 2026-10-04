@@ -145,6 +145,51 @@ An older Pando refuses to start against a database a newer one migrated (R-354),
 older version means restoring the backup taken before the upgrade. Take one first:
 `pando backup create`, or **Backups** in the console.
 
+### In place, from the console or `pando upgrade`
+
+Pando can replace its own container (R-355 – R-361, design 00 §1.4). It is off until the deployment
+allows it, because a version named in `docker-compose.yml` or infrastructure-as-code puts the old image
+back on its next apply. To turn it on, set the image to a moving tag and the policy where Pando is
+deployed:
+
+```yaml
+services:
+  pando:
+    image: trypando/pando:latest   # or 0.3 for its patches, or 1 for 1.x
+    environment:
+      PANDO_POLICY_UPGRADE_IN_PLACE: "true"
+```
+
+Then **Updates → Upgrade**, or `pando upgrade`, needing `install.upgrade`:
+
+1. The new image's signature is verified against `image.yml`'s identity, as under *Verifying the
+   image* above. An image that does not verify is not run.
+2. A full backup is taken with a passphrase you give, unless you skip it explicitly; the audit log
+   records that you did.
+3. A helper started from the running image stops Pando, copies its database, starts the new version
+   with the same configuration, and waits up to five minutes for it to be ready.
+4. If it is not ready, the helper puts the database copy and the previous version back. Down
+   migrations are never used. The outcome is on the Updates screen and in `pando upgrade last`.
+5. If it is, the moving tag is pointed at the new image, so the next `docker compose up` keeps it. The
+   database copy is dropped after 24 hours healthy; going back after that is a backup restore.
+
+Every app is unreachable while Pando restarts, usually for under a minute, because every request to
+an app passes through Pando. Apps keep running.
+
+An external Postgres account needs `CREATEDB` for the copy; without it the in-place upgrade is refused
+by name and the upgrade is done by changing the image.
+
+**Automatically.** With `auto_upgrade_patches` and a `maintenance_window` such as `sun 02:00 2h`
+(UTC), Pando installs new patch releases of the running minor line on its own. Nobody is there to give
+a passphrase, so it takes the database copy and no full backup; keep taking your own.
+
+### The CLI
+
+`pando self-update` replaces a CLI installed from a release archive or with `go install`, after
+checking `checksums.txt` against `release.yml`'s signature and the archive against `checksums.txt`.
+For Homebrew and the Linux packages it prints the package manager's command instead. The CLI warns
+when it and the server differ in major or minor version.
+
 ## Security releases
 
 A release that fixes a vulnerability follows the normal process, plus:

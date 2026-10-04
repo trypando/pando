@@ -139,12 +139,12 @@ func (s *Service) PlanFor(ctx context.Context, version string) (Plan, error) {
 	rt, err := s.Runtime(ctx)
 	if err != nil {
 		no("Pando could not reach its runtime to check how it is running: " + err.Error())
-		return s.finishPlan(p), nil
+		return s.finishPlan(p), nil //nolint:nilerr // the plan reports it as a reason, not a failure
 	}
 	caps, err := rt.Capabilities(ctx)
 	if err != nil {
 		no("Pando could not read its runtime's capabilities: " + err.Error())
-		return s.finishPlan(p), nil
+		return s.finishPlan(p), nil //nolint:nilerr // the plan reports it as a reason, not a failure
 	}
 	up, ok := rt.(api.SelfUpgrader)
 	if !caps.SupportsSelfUpgrade || !ok {

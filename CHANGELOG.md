@@ -21,6 +21,18 @@ Unreleased above it. -->
 
 ### Added
 
+- In-place upgrades (#53). Pando can upgrade itself from the **Updates** screen, `POST /upgrade` or
+  `pando upgrade`: it verifies the new image's signature against Pando's release workflow, takes a full
+  backup (or records that you skipped it), and starts a helper that replaces Pando's container, waits
+  for the new version to be ready, and puts the previous version and its database back if it is not.
+  Off until the deployment turns it on: set the image to a moving tag such as `trypando/pando:latest`
+  and `PANDO_POLICY_UPGRADE_IN_PLACE: "true"`, or use **Let Pando upgrade itself** on the Policy screen.
+  New permission `install.upgrade`, held by Administrator and denied to agent tokens by default. Host
+  policy gains `upgrade_in_place`, `auto_upgrade_patches` and `maintenance_window` for automatic patch
+  upgrades. `pando upgrade last` and `GET /upgrade/last` say how the last one went.
+- `pando self-update` replaces a CLI installed from a release archive or with `go install`, after
+  checking the release's signature. Holders of `install.upgrade` are notified once of each new release.
+
 - Update checks (#53). Pando asks GitHub at startup and every six hours whether a newer release is
   out, sending only its version. The new **Updates** screen, `GET /updates`, `pando updates` and MCP's
   `pando_get_updates` show the version running, the latest release, and the changelog of every version

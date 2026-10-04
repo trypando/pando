@@ -127,7 +127,7 @@ func (u *selfUpdater) run(cmd *cobra.Command, version string, prerelease bool) e
 		return err
 	}
 	if err := u.verify(ctx, sums, bundle); err != nil {
-		return fmt.Errorf("Pando %s's checksums.txt did not verify as signed by Pando's release workflow, so nothing was replaced: %w", version, err)
+		return fmt.Errorf("the checksums.txt of Pando %s did not verify as signed by Pando's release workflow, so nothing was replaced: %w", version, err)
 	}
 	want, err := checksumOf(sums, archive)
 	if err != nil {
