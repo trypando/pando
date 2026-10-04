@@ -491,7 +491,14 @@ func TestR243_CapacityIsAdapterReported(t *testing.T) {
 	require.NoError(t, err)
 	require.Positive(t, capacity.TotalCPUMillis)
 	require.Positive(t, capacity.TotalMemoryBytes)
+	require.GreaterOrEqual(t, capacity.RunningWorkloads, 0)
+	require.NotEmpty(t, capacity.Details["server_version"], "what else the daemon says is passed through")
 	require.False(t, capacity.Reported.IsZero())
+
+	inUse, err := adapter(t).InUse(context.Background())
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, inUse.CPUMillis, 0)
+	require.False(t, inUse.Reported.IsZero())
 }
 
 // R-254: capabilities are data, and the class is reported honestly — a policy

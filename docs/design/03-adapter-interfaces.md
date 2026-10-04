@@ -95,6 +95,11 @@ type RuntimeAdapter interface {
     // Capacity is adapter-reported, never host-inspected (R-243).
     Capacity(ctx context.Context) (Capacity, error)
 
+    // What every workload on the runtime is using now, summed (R-245). Apart
+    // from Capacity because it samples, and the planner calls Capacity on
+    // every plan. Only when ReportsUsage.
+    InUse(ctx context.Context) (InUse, error)
+
     // Apply converges the named bundle toward the plan. Idempotent:
     // calling it with an already-satisfied plan must be a no-op.
     Apply(ctx context.Context, p BundlePlan) (BundleHandle, error)
@@ -314,17 +319,24 @@ audited (R-086's standard).
 
 ```go
 type Capacity struct {
-    TotalCPUMillis   int
+    TotalCPUMillis   int   // 0: not known, and the planner does not check it
     TotalMemoryBytes int64
     TotalDiskBytes   int64
-    UsedCPUMillis    int
-    UsedMemoryBytes  int64
-    UsedDiskBytes    int64
+    RunningWorkloads int   // -1: not known
+    Details          map[string]any // the runtime's own shape, shown, never interpreted
     Reported         time.Time
+}
+
+type InUse struct {
+    CPUMillis   int
+    MemoryBytes int64
+    Reported    time.Time
 }
 ```
 
 **[D]** R-243. The local Docker adapter reports its own machine; a clustered adapter reports its cluster. Core does not read `/proc` and has no concept of a host.
+
+**[P]** The common fields are the readings every runtime reports in the same shape, so the console can say how much room is left without knowing which runtime answered (issue #88). Anything else goes in `Details`, which the console shows as it came. Live use is its own call, `InUse`, rather than `Used*` fields on `Capacity`. Sampling CPU takes about a second, and the planner reads `Capacity` on every plan without needing it. The `Used*` fields, which no adapter ever filled, are gone. `GET /capacity` reports each runtime's totals beside what Pando has committed on it, which is the planner's own R-242 arithmetic, and live use where the runtime reports usage.
 
 ---
 

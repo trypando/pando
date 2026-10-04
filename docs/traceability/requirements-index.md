@@ -220,8 +220,8 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-232** | D LATER | Built-in adapters for SMTP and SendGrid. | 16.4 Notifications | 03, 08 | 10 | — |
 | **R-240** | D | Default CPU, memory, and disk limits are set at the host. | 17. Resources and Capacity | 01 | — | `TestR240_TheHostSetsMemoryAndDiskForEveryNewApp`, `TestR240_TheHostSetsWhatEveryNewAppIsGiven` |
 | **R-241** | D | Per-app override is available, gated by `app.resources.override`. | 17. Resources and Capacity | 01 | 02 | — |
-| **R-242** | D | Pando tracks total allocation against host capacity and must refuse a deploy that would… | 17. Resources and Capacity | 00, 04, 05, 07 | 03 | `TestR242_CapacityWouldOversubscribeBlocksDeploy` |
-| **R-243** | D | Capacity is adapter-reported, not host-inspected. | 17. Resources and Capacity | 03, 04 | 03, 04 | `TestR243_CapacityIsAdapterReported` |
+| **R-242** | D | Pando tracks total allocation against host capacity and must refuse a deploy that would… | 17. Resources and Capacity | 00, 03, 04, 05, 07 | 03 | `TestR242_CapacityWouldOversubscribeBlocksDeploy` |
+| **R-243** | D | Capacity is adapter-reported, not host-inspected. | 17. Resources and Capacity | 03, 04 | 03, 04 | `TestR243_CapacityIsAdapterReported`, `TestR243_CapacityReportsTheSameReadingsForEveryRuntime` |
 | **R-245** | P | An app's parts show what they are using now: CPU, memory and disk for each workload, and each… | 17. Resources and Capacity | 03 | — | `TestR245_AppUsageShowsEachPartBesideItsLimits`, `TestR245_CPUIsCountedAsDockerStatsCountsIt`, `TestR245_CPUIsSampledTwiceWhenTheEngineDoesNotDiff`, `TestR245_MemoryLeavesOutReclaimableCache`, `TestR245_UsageFollowsTheSpec`, `TestR245_UsageIsReadFromTheRuntime` |
 | **R-244** | P LATER | Per-user quotas (max apps, max disk) as a policy knob. | 17. Resources and Capacity | — | — | — |
 | **R-250** | D | The app declares requirements; adapters translate. | 18. Adapters | 03 | 03 | — |
