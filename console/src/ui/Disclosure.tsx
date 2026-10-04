@@ -7,14 +7,21 @@ export function Disclosure({
   show,
   hide,
   hidden = false,
+  initiallyOpen = false,
+  forceOpen = false,
   children,
 }: {
   show: string;
   hide: string;
   hidden?: boolean;
+  /** Starts open, when what is under it has something worth seeing. */
+  initiallyOpen?: boolean;
+  /** Held open, such as while what is under it has a problem to fix. */
+  forceOpen?: boolean;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [opened, setOpen] = useState(initiallyOpen);
+  const open = opened || forceOpen;
   if (hidden) return null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>

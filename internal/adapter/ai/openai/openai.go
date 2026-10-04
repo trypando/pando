@@ -209,8 +209,8 @@ func Info() api.KindInfo {
 		Fields: []api.Field{
 			{Key: "api_key", Label: "API key", Type: "string", Help: "An OpenAI API key. Stored encrypted and never shown again. Leave empty to use OPENAI_API_KEY from Pando’s environment.", Credential: true, Placeholder: "sk-…"},
 			{Key: "model", Label: "Model", Type: "string", Help: "The model each function uses unless its assignment names another.", Default: DefaultModel},
-			{Key: "base_url", Label: "Base URL", Type: "string", Help: "A gateway or proxy in front of the OpenAI API. Empty is the API itself.", Default: "https://api.openai.com/v1"},
-			{Key: "api_key_env", Label: "API key variable", Type: "string", Help: "The environment variable to read the key from, instead of a stored one.", Default: "OPENAI_API_KEY"},
+			{Key: "base_url", Label: "Base URL", Type: "string", Help: "A gateway or proxy in front of the OpenAI API. Empty is the API itself.", Default: "https://api.openai.com/v1", Advanced: true},
+			{Key: "api_key_env", Label: "API key variable", Type: "string", Help: "The environment variable to read the key from, instead of a stored one.", Default: "OPENAI_API_KEY", Advanced: true},
 		},
 	}
 }

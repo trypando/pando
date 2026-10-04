@@ -1707,13 +1707,13 @@ func Info() api.KindInfo {
 		Description: "Runs apps as containers on a Docker host.",
 		IDPrefix:    "rt_",
 		Fields: []api.Field{
-			{Key: "host", Label: "Docker host", Type: "string", Help: "The Docker endpoint. Empty uses the environment, which the bundled Compose file relies on.", Default: "DOCKER_HOST, or the local socket"},
-			{Key: "total_cpu_millis", Label: "CPU available", Type: "int", Help: "Thousandths of a core Pando may allocate.", Default: "The whole machine"},
-			{Key: "total_memory_bytes", Label: "Memory available", Type: "int", Help: "Bytes Pando may allocate.", Default: "The whole machine"},
-			{Key: "total_disk_bytes", Label: "Disk available", Type: "int", Help: "Bytes of disk Pando may allocate."},
-			{Key: "network_pool", Label: "App network range", Type: "string", Help: "The IPv4 range each app's private network takes 64 addresses from. \"off\" uses Docker's own pool, which holds about 30 networks.", Default: defaultNetworkPool},
-			{Key: "egress_gateway_image", Label: "Egress gateway image", Type: "string", Help: "The image an app's egress gateway runs from when its egress rules restrict anything: any image with Pando's binary at /usr/local/bin/pando. Without one, and with Pando not running in a container, apps whose egress is restricted cannot be deployed.", Default: "The image Pando's own container runs"},
-			{Key: "oci_runtime", Label: "Container runtime", Type: "string", Help: "The runtime Docker starts apps with, by the name it is registered under in daemon.json. \"runsc\" (gVisor) or a Kata runtime makes this a sandboxed runtime, which host policy can require; the port and file-write checks when an app is added then cannot see inside the sandbox, so Pando asks for the port instead.", Default: "Docker's default, runc"},
+			{Key: "host", Label: "Docker host", Type: "string", Help: "The Docker endpoint. Empty uses the environment, which the bundled Compose file relies on.", Default: "DOCKER_HOST, or the local socket", Advanced: true},
+			{Key: "total_cpu_millis", Label: "CPU available", Type: "int", Help: "Thousandths of a core Pando may allocate.", Default: "The whole machine", Advanced: true},
+			{Key: "total_memory_bytes", Label: "Memory available", Type: "int", Help: "Bytes Pando may allocate.", Default: "The whole machine", Advanced: true},
+			{Key: "total_disk_bytes", Label: "Disk available", Type: "int", Help: "Bytes of disk Pando may allocate.", Default: "No limit", Advanced: true},
+			{Key: "network_pool", Label: "App network range", Type: "string", Help: "The IPv4 range each app's private network takes 64 addresses from. \"off\" uses Docker's own pool, which holds about 30 networks.", Default: defaultNetworkPool, Advanced: true},
+			{Key: "egress_gateway_image", Label: "Egress gateway image", Type: "string", Help: "The image an app's egress gateway runs from when its egress rules restrict anything: any image with Pando's binary at /usr/local/bin/pando. Without one, and with Pando not running in a container, apps whose egress is restricted cannot be deployed.", Default: "The image Pando's own container runs", Advanced: true},
+			{Key: "oci_runtime", Label: "Container runtime", Type: "string", Help: "The runtime Docker starts apps with, by the name it is registered under in daemon.json. \"runsc\" (gVisor) or a Kata runtime makes this a sandboxed runtime, which host policy can require; the port and file-write checks when an app is added then cannot see inside the sandbox, so Pando asks for the port instead.", Default: "Docker's default, runc", Advanced: true},
 		},
 	}
 }

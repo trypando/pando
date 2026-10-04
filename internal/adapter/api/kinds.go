@@ -1,5 +1,7 @@
 package api
 
+import "fmt"
+
 // KindInfo describes a kind of adapter this build of Pando can run: what it is
 // called, what it is for, and the settings configuring one takes.
 //
@@ -66,6 +68,14 @@ type Field struct {
 
 	Required bool `json:"required,omitempty"`
 
+	// Advanced marks a setting most people never change: a form asks for it
+	// under "Advanced settings" rather than beside the ones that matter, and
+	// the CLI lists it under its own heading. It means less common, not
+	// restricted — anyone who may configure the adapter may set it. An advanced
+	// setting is never required, never a credential, and states its Default,
+	// so leaving every one empty sets the adapter up (Validate).
+	Advanced bool `json:"advanced,omitempty"`
+
 	// Credential marks a secret such as an API key. It is sent in the create
 	// request's write-only "credentials", stored encrypted, and never shown
 	// again (R-190) — never in "config", which the database refuses it in.
@@ -94,4 +104,33 @@ type Option struct {
 type Condition struct {
 	Key    string   `json:"key"`
 	Values []string `json:"values"`
+}
+
+// Validate checks what a kind says about its settings that a form relies on.
+//
+// An advanced setting is one a form puts out of the way, so it must be safe to
+// leave empty: not required, and with its default stated, so someone who never
+// opens "Advanced settings" can still see what they get. Not a credential
+// either: the CLI asks for secrets as it adds an adapter, and asks only for the
+// basic settings.
+func (k KindInfo) Validate() error {
+	seen := map[string]bool{}
+	for _, f := range k.Fields {
+		if seen[f.Key] {
+			return fmt.Errorf("%s/%s has two settings named %q", k.Category, k.Kind, f.Key)
+		}
+		seen[f.Key] = true
+		if !f.Advanced {
+			continue
+		}
+		switch {
+		case f.Required:
+			return fmt.Errorf("%s/%s setting %q is both required and advanced: a required setting belongs among the basic ones", k.Category, k.Kind, f.Key)
+		case f.Credential:
+			return fmt.Errorf("%s/%s setting %q is a credential marked advanced: the CLI asks for credentials only among the basic settings", k.Category, k.Kind, f.Key)
+		case f.Default == "" && f.Type != "bool":
+			return fmt.Errorf("%s/%s setting %q is advanced and states no default: say what leaving it empty does", k.Category, k.Kind, f.Key)
+		}
+	}
+	return nil
 }

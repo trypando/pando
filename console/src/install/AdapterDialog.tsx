@@ -13,8 +13,10 @@ import { Banner, Button, Checkbox, Dialog, Input, Radio, Select } from '@design'
 import { api } from '@api/client';
 import { Quiet, refusal } from './Accounts';
 import { FieldSkeleton, Loading } from '../ui/Loading';
+import { Disclosure } from '../ui/Disclosure';
 import {
   adapterRequest,
+  advancedChanged,
   blankForm,
   boolValue,
   categoryLabel,
@@ -164,6 +166,20 @@ export function AdapterDialog({
   const settings = (kind?.fields ?? []).filter((f) => !f.credential);
   const missingKind = existing && kinds.isSuccess && !kind;
 
+  const visible = kind && form ? (kind.fields ?? []).filter((f) => isShown(kind, f, form.values)) : [];
+  const basic = visible.filter((f) => !f.advanced);
+  const advanced = visible.filter((f) => f.advanced);
+  const fieldInput = (f: KindField) => (
+    <FieldInput
+      key={f.key}
+      field={f}
+      value={form?.values[f.key]}
+      stored={existing ? stored.includes(f.key) : undefined}
+      error={shown(f.key)}
+      onChange={(v) => setValue(f.key, v)}
+    />
+  );
+
   return (
     <Dialog
       open
@@ -268,18 +284,22 @@ export function AdapterDialog({
                 />
                 <Input label="Name" value={form.name} onChange={(e) => edit({ name: e.target.value })} />
 
-                {(kind.fields ?? [])
-                  .filter((f) => isShown(kind, f, form.values))
-                  .map((f) => (
-                  <FieldInput
-                    key={f.key}
-                    field={f}
-                    value={form.values[f.key]}
-                    stored={existing ? stored.includes(f.key) : undefined}
-                    error={shown(f.key)}
-                    onChange={(v) => setValue(f.key, v)}
-                  />
-                ))}
+                {basic.map(fieldInput)}
+
+                {/* Less common settings, each with a default, a click away
+                    rather than beside the ones that matter. Open from the
+                    start when one is set to something else, so nothing
+                    configured is hidden. */}
+                <Disclosure
+                  key={chosen}
+                  show="Advanced settings"
+                  hide="Hide advanced settings"
+                  hidden={advanced.length === 0}
+                  initiallyOpen={advancedChanged(kind, form.values)}
+                  forceOpen={advanced.some((f) => shown(f.key))}
+                >
+                  {advanced.map(fieldInput)}
+                </Disclosure>
 
                 {/* An AI adapter has no default: it handles the functions
                     chosen on it (R-259). A new one is not running until Pando

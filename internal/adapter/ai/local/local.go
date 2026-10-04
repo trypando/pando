@@ -212,7 +212,7 @@ func Info() api.KindInfo {
 			{Key: "base_url", Label: "Server URL", Type: "string", Help: "The server’s OpenAI-compatible address, ending in /v1. The default is Ollama on the machine running Pando’s container.", Default: DefaultBaseURL},
 			{Key: "model", Label: "Model", Type: "string", Required: true, Help: "The model each function uses unless its assignment names another, as the server names it.", Placeholder: "qwen2.5:7b"},
 			{Key: "api_key", Label: "API key", Type: "string", Help: "Only if your server asks for one. Stored encrypted and never shown again.", Credential: true},
-			{Key: "timeout_seconds", Label: "Timeout, in seconds", Type: "int", Help: "How long one request may take. Local models are slower than hosted ones.", Default: "300"},
+			{Key: "timeout_seconds", Label: "Timeout, in seconds", Type: "int", Help: "How long one request may take. Local models are slower than hosted ones.", Default: "300", Advanced: true},
 		},
 	}
 }

@@ -97,6 +97,9 @@ a secret setting such as an API key is asked for without echoing it, so it never
 your shell history (piped in when stdin is not a terminal). Adding with an existing --id
 changes that adapter. Pando loads adapters at startup: restart it afterwards.
 
+With a kind named, --help lists its settings and their defaults, the advanced ones under
+their own heading. Advanced settings take --set like any other.
+
   pando adapter add ai/anthropic --set model=claude-sonnet-5
 
 | Flag | Default | What it does |
