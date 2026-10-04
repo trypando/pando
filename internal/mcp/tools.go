@@ -620,6 +620,30 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_plan_upgrade",
+		Description: "Whether Pando can upgrade itself in place to a version, and if not, every reason " +
+			"with what to change; which versions in between may break something, with their upgrade " +
+			"notes. Starting an upgrade is not offered here: it takes a backup passphrase, and agents " +
+			"do not hold install.upgrade by default.",
+		Schema: schema(map[string]any{"version": str("The version to upgrade to, such as 0.4.0, from pando_get_updates.")}, "version"),
+		request: func(args map[string]any) (string, string, any, error) {
+			v, err := stringArg(args, "version", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", "/upgrade?version=" + url.QueryEscape(v), nil, nil
+		},
+	},
+	{
+		Name: "pando_get_last_upgrade",
+		Description: "The most recent in-place upgrade of Pando: from and to which version, whether it " +
+			"succeeded or was rolled back and why, with the new version's last log lines when it was.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/upgrade/last", nil, nil
+		},
+	},
+	{
 		Name: "pando_get_config",
 		Description: "The configuration the Pando server started with: every non-secret setting, " +
 			"its value and where it was set (an environment variable, the config file, or the " +

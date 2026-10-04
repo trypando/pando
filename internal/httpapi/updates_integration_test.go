@@ -9,9 +9,67 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/update"
+	"github.com/trypando/pando/internal/core/upgrade"
 	"github.com/trypando/pando/internal/httpapi"
 )
+
+type fakeUpgrades struct {
+	started []upgrade.Request
+	by      []authz.Principal
+}
+
+func (f *fakeUpgrades) PlanFor(_ context.Context, v string) (upgrade.Plan, error) {
+	return upgrade.Plan{Current: "0.3.1", Target: v, Possible: true, Reasons: []string{}, Breaking: []update.Release{}}, nil
+}
+func (f *fakeUpgrades) Start(_ context.Context, p authz.Principal, req upgrade.Request) (upgrade.Outcome, error) {
+	f.started = append(f.started, req)
+	f.by = append(f.by, p)
+	return upgrade.Outcome{ID: "upg_1", From: "0.3.1", To: req.Version, State: upgrade.StateRunning}, nil
+}
+func (f *fakeUpgrades) Last(context.Context) (*upgrade.Outcome, error) {
+	return &upgrade.Outcome{ID: "upg_1", State: upgrade.StateSucceeded}, nil
+}
+
+// TestR356_UpgradingIsInstallUpgradeAndAgentsDoNotHoldIt asserts R-356 at the
+// API: an administrator may, someone holding nothing may not, and an agent's
+// token may not by default — even its owner's — because policy.Default()
+// denies install.upgrade to agents.
+func TestR356_UpgradingIsInstallUpgradeAndAgentsDoNotHoldIt(t *testing.T) {
+	i := newInstall(t)
+	fake := &fakeUpgrades{}
+	i.Server.Upgrades = fake
+	admin := i.admin()
+
+	r := i.do(admin, http.MethodGet, "/upgrade?version=0.4.0", nil)
+	require.Equal(t, http.StatusOK, r.Code, r.String())
+	r = i.do(admin, http.MethodGet, "/upgrade", nil)
+	require.Equal(t, http.StatusBadRequest, r.Code, "a plan needs a version")
+	r = i.do(admin, http.MethodGet, "/upgrade/last", nil)
+	require.Equal(t, http.StatusOK, r.Code, r.String())
+
+	r = i.do(admin, http.MethodPost, "/upgrade", map[string]any{"version": "0.4.0", "passphrase": "a long passphrase"})
+	require.Equal(t, http.StatusAccepted, r.Code, r.String())
+	require.Equal(t, "0.4.0", fake.started[0].Version)
+	require.Equal(t, "a long passphrase", fake.started[0].Passphrase.Reveal())
+	require.Equal(t, i.AdminID, fake.by[0].ID)
+
+	nobody := i.user("nobody")
+	r = i.do(nobody, http.MethodPost, "/upgrade", map[string]any{"version": "0.4.0", "skip_backup": true})
+	require.Equal(t, http.StatusForbidden, r.Code, r.String())
+	r = i.do(nobody, http.MethodGet, "/upgrade?version=0.4.0", nil)
+	require.Equal(t, http.StatusForbidden, r.Code, r.String())
+
+	agent := i.tokenFor(admin)
+	r = i.do(agent, http.MethodPost, "/upgrade", map[string]any{"version": "0.4.0", "skip_backup": true})
+	require.Equal(t, http.StatusForbidden, r.Code, r.String())
+	require.Len(t, fake.started, 1, "only the administrator's request reached the service")
+
+	i.Server.Upgrades = nil
+	r = i.do(admin, http.MethodGet, "/upgrade/last", nil)
+	require.Equal(t, http.StatusInternalServerError, r.Code)
+}
 
 type fakeUpdates struct{ st update.Status }
 
