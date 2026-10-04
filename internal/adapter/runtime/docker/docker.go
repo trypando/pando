@@ -320,9 +320,10 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	if err != nil {
 		return api.Capacity{}, errs.Wrap(errs.AdapterUnavailable, "Could not read how much room Docker has.", err)
 	}
+	info := res.Info
 
-	capacity.TotalCPUMillis = res.Info.NCPU * 1000
-	capacity.TotalMemoryBytes = res.Info.MemTotal
+	capacity.TotalCPUMillis = info.NCPU * 1000
+	capacity.TotalMemoryBytes = info.MemTotal
 	if a.config.TotalCPUMillis > 0 {
 		capacity.TotalCPUMillis = a.config.TotalCPUMillis
 	}

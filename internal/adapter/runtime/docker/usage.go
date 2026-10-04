@@ -79,8 +79,8 @@ func (a *Adapter) Usage(ctx context.Context, ref api.BundleRef) (api.BundleUsage
 // report the same sum, as they report the same machine. Read in parallel, so
 // it takes about a second however many there are.
 func (a *Adapter) InUse(ctx context.Context) (api.InUse, error) {
-	containers, err := a.cli.ContainerList(ctx, container.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", labelBundle), filters.Arg("status", "running")),
+	containers, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
+		Filters: make(client.Filters).Add("label", labelBundle).Add("status", "running"),
 	})
 	if err != nil {
 		return api.InUse{}, errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
@@ -91,7 +91,7 @@ func (a *Adapter) InUse(ctx context.Context) (api.InUse, error) {
 		wg  sync.WaitGroup
 		out = api.InUse{Reported: time.Now().UTC()}
 	)
-	for _, c := range containers {
+	for _, c := range containers.Items {
 		// The egress gateway is Pando's own, and a trial run is not an app yet.
 		if isGateway(c.Labels) || c.Labels[labelTrial] != "" {
 			continue
