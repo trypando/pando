@@ -10,10 +10,10 @@
 // text (design 08 §1.3), they are held to R-105 and paraphrasing them here
 // would undo that.
 
-import { useState } from 'react';
 import { Card, Icon, InlineCode, Tag } from '@design';
 
 import type { Amendment, Outcome } from '@api/types.gen';
+import { Disclosure } from '../ui/Disclosure';
 import { describeAmendment, filesRead, screeningVisible } from './screeningText';
 
 export function Screening({ outcome }: { outcome: Outcome | undefined }) {
@@ -152,42 +152,6 @@ function Change({
         )}
       </div>
     </li>
-  );
-}
-
-function Disclosure({
-  show,
-  hide,
-  hidden,
-  children,
-}: {
-  show: string;
-  hide: string;
-  hidden: boolean;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  if (hidden) return null;
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-      <button
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-        style={{
-          alignSelf: 'flex-start',
-          border: 'none',
-          background: 'transparent',
-          padding: 0,
-          cursor: 'pointer',
-          font: 'var(--type-body-ui)',
-          color: 'var(--ink-secondary)',
-          textAlign: 'left',
-        }}
-      >
-        {open ? hide : show}
-      </button>
-      {open && children}
-    </div>
   );
 }
 

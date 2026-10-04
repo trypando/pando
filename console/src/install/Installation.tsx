@@ -16,7 +16,6 @@ import {
   Input,
   Radio,
   Select,
-  Skeleton,
   StatusIndicator,
   Switch,
   Tag,
@@ -26,6 +25,7 @@ import {
 import { api } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { AdapterDialog } from './AdapterDialog';
+import { Capacity } from './Capacity';
 import { useAIFunctionOn } from './AIFunctions';
 import { RestartButton } from './Restart';
 import { categoryLabel, categoryNote, orderCategories } from './adapters';
@@ -54,6 +54,7 @@ import {
   looseningRule,
 } from './policyEgress';
 import { ListField } from '../ui/ListField';
+import { useNarrow } from '../ui/narrow';
 
 /** Where the config file declares an adapter, in words. */
 function declaredAt(row: AdapterRow): string {
@@ -92,10 +93,6 @@ export function Installation() {
     queryFn: () => api.get<{ adapters: AdapterRow[]; restart_needed?: boolean } | AdapterRow[]>('/adapters'),
   });
   const restartNeeded = !Array.isArray(adapters.data) && adapters.data?.restart_needed === true;
-  const capacity = useQuery({
-    queryKey: ['capacity'],
-    queryFn: () => api.get<unknown>('/capacity'),
-  });
 
   const rows = normalize(adapters.data).map((r) => ({ ...r, id: r.id ?? r.ref ?? '' }));
   // Every kind this build can run: the adapters' proper names, and which
@@ -196,35 +193,8 @@ export function Installation() {
         />
       )}
 
-      <h4 style={{ font: 'var(--type-h4)', margin: 'var(--space-6) 0 var(--space-3)' }}>
-        Capacity
-      </h4>
-      {/* Machine output, shown verbatim in mono. Capacity is per runtime
-          adapter and its shape is the adapter's, not Pando's, so prettifying it
-          here would be Pando inventing a schema it does not own (R-243). */}
-      {capacity.isPending ? (
-        // The block's shape: the answer is machine output of the adapter's
-        // own shape, so its length cannot be known, only that it is a block.
-        <div role="status" aria-label="Loading">
-          <Skeleton height="10rem" />
-        </div>
-      ) : capacity.isError ? (
-        <Quiet>{messageOf(capacity.error)}</Quiet>
-      ) : (
-        <pre
-          style={{
-            font: 'var(--type-code-sm)',
-            background: 'var(--paper-sunken)',
-            border: 'var(--border-width) solid var(--rule)',
-            borderRadius: 'var(--radius-sm)',
-            padding: 'var(--space-4)',
-            overflowX: 'auto',
-            margin: 0,
-          }}
-        >
-          {JSON.stringify(capacity.data, null, 2)}
-        </pre>
-      )}
+      {/* Each runtime by the name its kind goes by, as in the table above. */}
+      <Capacity names={Object.fromEntries(grouped.map((r) => [r.id, r.kindName]))} />
     </Screen>
   );
 }
@@ -883,100 +853,198 @@ function Fixed({ field, children }: { field: string; children: React.ReactNode }
   );
 }
 
-/** How a source reads in the table. */
-function sourceLabel(src: Source): string {
-  if (src.kind === 'env') return src.name ?? 'environment';
-  if (src.kind === 'file') return src.name ?? 'config file';
-  return 'Default';
+/**
+ * The startup settings by area, in the order someone setting Pando up meets
+ * them. A key not listed falls into its prefix's area, or Other, so a new
+ * setting is never missing from the table — only, until it is listed here,
+ * from the right place in it.
+ */
+const SETTING_AREAS: Array<{ name: string; prefix?: string; keys: string[] }> = [
+  { name: 'Server', keys: ['server.addr', 'server.work_dir', 'server.shutdown_timeout'] },
+  {
+    name: 'Public addresses',
+    keys: ['server.external_url', 'server.base_domain', 'server.issuer', 'server.proxy_upstream'],
+  },
+  { name: 'Routing', keys: ['server.routing_mode', 'server.port_range_start', 'server.port_range_end'] },
+  { name: 'Database', prefix: 'database.', keys: ['database.connect_timeout'] },
+  { name: 'App defaults', prefix: 'apps.', keys: ['apps.cpu_millis', 'apps.memory_bytes', 'apps.disk_bytes'] },
+  {
+    name: 'Reconciler',
+    prefix: 'reconciler.',
+    keys: ['reconciler.backoff', 'reconciler.failure_threshold', 'reconciler.failure_window', 'reconciler.gc_interval'],
+  },
+  { name: 'Logging', prefix: 'log.', keys: ['log.level', 'log.development'] },
+];
+
+/** Where in SETTING_AREAS a key goes: its area's index, and its place in it. */
+export function settingArea(key: string): { area: string; rank: number } {
+  for (const [i, a] of SETTING_AREAS.entries()) {
+    const at = a.keys.indexOf(key);
+    if (at >= 0) return { area: a.name, rank: i * 100 + at };
+  }
+  for (const [i, a] of SETTING_AREAS.entries()) {
+    if (a.prefix && key.startsWith(a.prefix)) return { area: a.name, rank: i * 100 + 99 };
+  }
+  return { area: 'Other', rank: SETTING_AREAS.length * 100 };
 }
+
+const STARTUP_GRID = 'minmax(0,3fr) minmax(0,2fr) minmax(12ch,1fr)';
 
 /**
  * Every other setting Pando started with — the ones that are not policy and
- * that no screen edits — with its value and where it came from. Read-only by
- * nature: these are read once at startup. Secrets are never listed (R-194).
+ * that no screen edits — grouped by area, with its value and where it came
+ * from. A value something set reads in full ink with its source as a tag; a
+ * default reads quietly, so the few that were set stand out. Secrets are never
+ * listed (R-194): the server leaves them out.
  */
 function StartupSettings({ config }: { config?: StartupConfig }) {
   // POST /restart's verb: the same restart applies a saved adapter.
   const canRestart = useInstallVerb(InstallVerb.AdaptersManage);
+  // At phone width a row stacks — the setting on its own line, its value and
+  // source under it — rather than scrolling sideways: the value and where it
+  // came from are the point, and a sideways scroll hides both.
+  const narrow = useNarrow();
   if (!config) return null;
-  const rows = config.settings.map((s) => ({
-    id: s.key,
-    key: s.key,
-    value: s.value === '' || s.value === null ? '—' : String(s.value),
-    source: s.source,
-    env: s.env,
-  }));
+
+  const rows = config.settings
+    .map((s) => ({ ...s, ...settingArea(s.key) }))
+    .sort((a, b) => a.rank - b.rank || a.key.localeCompare(b.key));
+  const set = rows.filter((r) => r.source.kind !== 'default').length;
+  const code = { font: 'var(--type-code-sm)' } as const;
+  const line = {
+    display: 'grid',
+    gridTemplateColumns: narrow ? 'minmax(0,1fr) auto' : STARTUP_GRID,
+    alignItems: 'center',
+    gap: narrow ? 'var(--space-1) var(--space-3)' : 'var(--space-4)',
+    padding: narrow ? 'var(--space-2) var(--space-3)' : '0 var(--space-3)',
+  } as const;
+
   return (
     <PolicySection
       heading="Startup configuration"
-      note="Read once when Pando starts. Under each setting is what sets it."
+      note={
+        set === 0
+          ? 'Read once when Pando starts. Every setting is at its default.'
+          : `Read once when Pando starts. ${set} of ${rows.length} are set; the rest are defaults.`
+      }
     >
-      {/* How to change one, concretely: which file to edit and which command
-          applies it. The command is the part people get wrong — a Compose
-          restart keeps the old environment. */}
-      <ul style={{ margin: 0, paddingLeft: 'var(--space-5)', font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-        <li>
-          <strong style={{ color: 'var(--ink)' }}>An environment variable</strong> (PANDO_…): with Docker Compose,
-          set it under <code style={{ font: 'var(--type-code-sm)' }}>environment:</code> on the{' '}
-          <code style={{ font: 'var(--type-code-sm)' }}>pando</code> service in{' '}
-          <code style={{ font: 'var(--type-code-sm)' }}>docker-compose.yml</code>, then run{' '}
-          <code style={{ font: 'var(--type-code-sm)' }}>docker compose up -d pando</code>.{' '}
-          <code style={{ font: 'var(--type-code-sm)' }}>docker compose restart</code> keeps the old environment.
-        </li>
-        <li>
-          <strong style={{ color: 'var(--ink)' }}>A file</strong>:{' '}
+      <div className={narrow ? undefined : 'pando-table'} role="table" aria-label="Startup configuration">
+        <div
+          role="row"
+          style={{
+            ...line,
+            // Stacked rows say what each part is by where it sits.
+            display: narrow ? 'none' : 'grid',
+            minHeight: 'var(--control-console)',
+            background: 'var(--paper-sunken)',
+            borderTop: 'var(--border-width) solid var(--rule)',
+            borderBottom: 'var(--border-width) solid var(--rule)',
+          }}
+        >
+          {['Setting', 'Value', 'Set by'].map((h) => (
+            <span key={h} role="columnheader" style={{ font: 'var(--type-label)', color: 'var(--ink-secondary)' }}>
+              {h}
+            </span>
+          ))}
+        </div>
+        {rows.map((row, i) => {
+          const isDefault = row.source.kind === 'default';
+          const empty = row.value === '' || row.value === null || row.value === undefined;
+          return (
+            <div key={row.key} role="rowgroup">
+              {rows[i - 1]?.area !== row.area && (
+                // The same quiet band as the adapters table's categories.
+                <div
+                  role="row"
+                  style={{
+                    padding: 'var(--space-4) var(--space-3) var(--space-1)',
+                    font: 'var(--type-caption)',
+                    color: 'var(--ink-secondary)',
+                    borderBottom: 'var(--border-width) solid var(--rule)',
+                  }}
+                >
+                  {row.area}
+                </div>
+              )}
+              <div
+                role="row"
+                style={{ ...line, minHeight: 'var(--row-height)', borderBottom: 'var(--border-width) solid var(--rule)' }}
+              >
+                <span
+                  role="cell"
+                  style={{ ...code, color: 'var(--ink)', overflowWrap: 'anywhere', gridColumn: narrow ? '1 / -1' : undefined }}
+                >
+                  {row.key}
+                </span>
+                <span
+                  role="cell"
+                  style={{ ...code, color: isDefault ? 'var(--ink-secondary)' : 'var(--ink)', overflowWrap: 'anywhere' }}
+                >
+                  {empty ? '—' : String(row.value)}
+                </span>
+                <span role="cell">
+                  <SetBy source={row.source} env={row.env} />
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* How to change one, after the table it is about. The Compose command
+          stays in plain sight: a restart keeps the old environment, and that
+          is the mistake people make. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', marginTop: 'var(--space-4)' }}>
+        <p style={{ margin: 0, font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', maxWidth: '72ch' }}>
+          To change a setting, set it where <strong style={{ color: 'var(--ink)' }}>Set by</strong> says, then
+          restart Pando. Hover a source for the exact variable or file. With Docker Compose, set{' '}
+          <code style={code}>PANDO_…</code> variables under <code style={code}>environment:</code> on the{' '}
+          <code style={code}>pando</code> service and run <code style={code}>docker compose up -d pando</code>;{' '}
+          <code style={code}>docker compose restart</code> keeps the old environment.{' '}
           {config.file ? (
             <>
-              edit <code style={{ font: 'var(--type-code-sm)' }}>{config.file}</code>, then restart Pando with the
-              button below or <code style={{ font: 'var(--type-code-sm)' }}>pando restart</code>.
+              Settings from a file are in <code style={code}>{config.file}</code>; the environment wins over it.
             </>
           ) : (
             <>
-              none is in use. Start Pando with <code style={{ font: 'var(--type-code-sm)' }}>pando serve --config &lt;path&gt;</code>{' '}
-              to read one; the environment still wins over it.
+              No config file is in use. Start Pando with <code style={code}>pando serve --config &lt;path&gt;</code>{' '}
+              to read one.
             </>
           )}
-        </li>
-        <li>
-          <strong style={{ color: 'var(--ink)' }}>Default</strong>: not set anywhere. Set the variable shown to change it.
-        </li>
-      </ul>
-      {canRestart && (
-        <div style={{ marginTop: 'var(--space-3)' }}>
-          <RestartButton />
-        </div>
-      )}
-      <Table
-        columns={[
-          {
-            key: 'key',
-            header: 'Setting',
-            width: 'minmax(0,3fr)',
-            // Where it is set, under its name: an env var or a file path is
-            // the one thing here that has to be read in full, and a column of
-            // its own beside the value is too narrow for either.
-            render: (row: { key: string; source: Source; env: string }) => (
-              <div style={{ display: 'flex', flexDirection: 'column', padding: 'var(--space-2) 0', whiteSpace: 'normal' }}>
-                <span style={{ font: 'var(--type-code-sm)', color: 'var(--ink)' }}>{row.key}</span>
-                <span style={{ font: 'var(--type-code-sm)', color: 'var(--ink-secondary)', overflowWrap: 'anywhere' }}>
-                  {row.source.kind === 'default' ? `Default · set with ${row.env}` : sourceLabel(row.source)}
-                </span>
-              </div>
-            ),
-          },
-          {
-            key: 'value',
-            header: 'Value',
-            width: 'minmax(0,2fr)',
-            mono: true,
-            render: (row: { value: string }) => (
-              <span style={{ whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{row.value}</span>
-            ),
-          },
-        ]}
-        rows={rows}
-      />
+        </p>
+        {canRestart && (
+          <div>
+            <RestartButton />
+          </div>
+        )}
+      </div>
     </PolicySection>
+  );
+}
+
+/** Where a setting came from, as a tag; the exact variable or file on hover
+ *  or focus. A default is plain words, quieter than a tag, since it is what
+ *  most rows are. */
+function SetBy({ source, env }: { source: Source; env: string }) {
+  if (source.kind === 'default') {
+    return (
+      <Tooltip content={`Not set. Set ${env} to change it.`}>
+        <span tabIndex={0} style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', cursor: 'help' }}>
+          Default
+        </span>
+      </Tooltip>
+    );
+  }
+  const exact =
+    source.kind === 'env'
+      ? (source.name ?? env)
+      : `${source.name ?? 'the config file'}${source.key ? `, at ${source.key}` : ''}`;
+  return (
+    <Tooltip content={exact}>
+      <span tabIndex={0} aria-label={`${source.kind === 'env' ? 'Environment' : 'File'}: ${exact}`} style={{ cursor: 'help' }}>
+        <Tag tone="contour">{source.kind === 'env' ? 'Environment' : 'File'}</Tag>
+      </span>
+    </Tooltip>
   );
 }
 

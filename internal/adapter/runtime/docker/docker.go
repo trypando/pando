@@ -332,6 +332,24 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 		capacity.TotalMemoryBytes = a.config.TotalMemoryBytes
 	}
 	capacity.TotalDiskBytes = a.config.TotalDiskBytes
+	capacity.RunningWorkloads = info.ContainersRunning
+
+	// The rest of what the daemon says about itself, for whoever is looking
+	// at why it is short of room. Docker's names, not Pando's (R-243).
+	capacity.Details = map[string]any{
+		"server_version":     info.ServerVersion,
+		"operating_system":   info.OperatingSystem,
+		"kernel_version":     info.KernelVersion,
+		"storage_driver":     info.Driver,
+		"docker_root_dir":    info.DockerRootDir,
+		"containers":         info.Containers,
+		"containers_running": info.ContainersRunning,
+		"containers_stopped": info.ContainersStopped,
+		"images":             info.Images,
+	}
+	if a.config.OCIRuntime != "" {
+		capacity.Details["oci_runtime"] = a.config.OCIRuntime
+	}
 
 	return capacity, nil
 }
