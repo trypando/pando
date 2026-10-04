@@ -47,4 +47,13 @@ func TestR245_UsageIsReadFromTheRuntime(t *testing.T) {
 	require.LessOrEqual(t, web.CPUMillis, 650, "the limit holds, give or take a sample")
 	require.Equal(t, int64(64<<20), web.MemoryLimitBytes)
 	require.Greater(t, web.MemoryBytes, int64(0))
+
+	// The runtime-wide sum the Capacity screen shows counts this workload. At
+	// least it: other tests may have workloads running on the same daemon.
+	var inUse api.InUse
+	require.Eventually(t, func() bool {
+		inUse, err = a.InUse(ctx)
+		return err == nil && inUse.CPUMillis > 200 && inUse.MemoryBytes > 0
+	}, 30*time.Second, time.Second, "last reading: %+v", inUse)
+	require.False(t, inUse.Reported.IsZero())
 }
