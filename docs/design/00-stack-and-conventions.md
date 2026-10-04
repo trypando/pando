@@ -57,6 +57,12 @@ requires and **verify them at startup, failing loudly** rather than silently run
 that can be rewritten. A degraded-but-running mode is not acceptable here: the whole value of the
 grant is that it holds without anyone checking.
 
+**[D] The in-place upgrade adds one privilege, and only for itself** (R-359). Its rollback copies Pando's
+database with `CREATE DATABASE … TEMPLATE`, which needs `CREATEDB` (or ownership of a template). The
+bundled Compose file's account is a superuser and has it. On an external database without it, Pando
+still runs; the in-place upgrade is refused before anything starts, naming the privilege, and the
+upgrade is done by changing the image (R-352).
+
 **[P]** Both services start at once, so Pando must tolerate Postgres not yet accepting connections —
 connect with bounded retry at startup rather than assuming readiness. This is the standard Compose
 race and the standard fix.
