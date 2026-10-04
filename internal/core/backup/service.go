@@ -44,6 +44,13 @@ type Service struct {
 	// WorkDir is where the bundle is assembled before being encrypted and
 	// streamed out. A DR bundle does not fit in memory.
 	WorkDir string
+
+	// Regrant re-applies the database's grant policy after a restore. Nil
+	// skips it. pg_restore recreates every table and function with the
+	// owner's default privileges, which hand the application role UPDATE
+	// and DELETE on every month of the audit log until something revokes
+	// them (R-027).
+	Regrant func(ctx context.Context) error
 }
 
 // StateSource is what the service needs from the state store.

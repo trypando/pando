@@ -38,6 +38,12 @@ var descriptions = map[string]string{
 		"backed up before the app or its volumes are deleted.",
 	"max_token_lifetime_days": "Longest a token may live, in days. 0 means no limit.",
 	"max_log_disk_bytes":      "Total disk for app logs across every app, in bytes. 0 means no limit.",
+	"audit_retention_months": "How many months the audit log keeps before an older month is archived and removed " +
+		"from the live log. 0 means 3, which is also the least it may be.",
+	"audit_archive": "Where a month of the audit log goes once it is past retention: keep (archived under Pando's " +
+		"own directory), export (to a backup destination), or off (nothing is archived, so nothing is removed).",
+	"audit_archive_destination": "The backup destination, by adapter ID, that audit archives are exported to when " +
+		"audit_archive is export. Empty means the default backup destination.",
 	"disable_ai_screening": "Turn off AI screening of deployment plans: AI is never sent a repository to " +
 		"repair a plan or answer detection's questions.",
 	"disable_anonymous_use_audit": "Don't record visits from people who aren't signed in: app.use is written " +

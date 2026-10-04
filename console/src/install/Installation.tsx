@@ -22,7 +22,7 @@ import {
   Tooltip,
 } from '@design';
 
-import { api } from '@api/client';
+import { api, base } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { AdapterDialog } from './AdapterDialog';
 import { Capacity } from './Capacity';
@@ -225,6 +225,11 @@ interface PolicyDoc {
 
   agent_disabled_verbs?: string[];
   max_log_disk_bytes?: number;
+
+  // Audit retention (R-347, R-348).
+  audit_retention_months?: number;
+  audit_archive?: string;
+  audit_archive_destination?: string;
 
   // The security score (R-313 – R-316).
   min_security_score?: number;
@@ -748,6 +753,69 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               }
             />
           </Fixed>
+        </PolicySection>
+
+        <PolicySection
+          heading="Audit log"
+          note="How long the audit log keeps events before a month is archived and removed from the live log. Nothing leaves until its archive is written and checked."
+        >
+          {/* R-348: three months is the floor, held by the database as well
+              as here, so a shorter number is refused rather than saved. */}
+          <Fixed field="audit_retention_months">
+            <Input
+              label="Months to keep"
+              type="number"
+              min={3}
+              disabled={locked('audit_retention_months') || current.audit_archive === 'off'}
+              value={String(current.audit_retention_months || 3)}
+              helper="At least 3. Older months are archived once a day and stay downloadable from the Audit log screen."
+              onChange={(e) => edit({ audit_retention_months: Math.max(3, Math.round(Number(e.target.value) || 3)) })}
+            />
+          </Fixed>
+          <Fixed field="audit_archive">
+            <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
+                Where archived months go
+              </legend>
+              {(
+                [
+                  ['keep', 'Kept by Pando', "Compressed and stored in Pando's own data directory."],
+                  ['export', 'Exported to a backup destination', 'Compressed and written to a backup destination, like a backup.'],
+                  ['off', 'Not archived', 'Nothing is archived, so nothing leaves the audit log and it keeps growing.'],
+                ] as const
+              ).map(([value, label, description]) => (
+                <Radio
+                  key={value}
+                  name="audit_archive"
+                  value={value}
+                  label={label}
+                  description={description}
+                  checked={(current.audit_archive || 'keep') === value}
+                  disabled={locked('audit_archive')}
+                  onChange={() =>
+                    edit(
+                      value === 'export'
+                        ? { audit_archive: value }
+                        : { audit_archive: value, audit_archive_destination: undefined },
+                    )
+                  }
+                />
+              ))}
+            </fieldset>
+          </Fixed>
+          {current.audit_archive === 'export' && (
+            <Fixed field="audit_archive_destination">
+              <Input
+                label="Backup destination"
+                mono
+                placeholder="The default backup destination"
+                disabled={locked('audit_archive_destination')}
+                value={current.audit_archive_destination ?? ''}
+                helper="A backup adapter's ID, from the Adapters screen. Leave empty for the default one."
+                onChange={(e) => edit({ audit_archive_destination: e.target.value.trim() || undefined })}
+              />
+            </Fixed>
+          )}
         </PolicySection>
 
         <StartupSettings config={startup.data} />
@@ -1517,6 +1585,8 @@ export function Audit({
       />
 
       <LoadOlder log={log} />
+
+      <ArchivedMonths />
     </Screen>
   );
 }
@@ -1579,6 +1649,67 @@ export function AuditTable({
       ]}
       rows={events}
     />
+  );
+}
+
+interface AuditArchive {
+  id: string;
+  month: string;
+  adapter_ref?: string;
+  row_count: number;
+  size_bytes: number;
+  sha256: string;
+}
+
+/**
+ * Months past retention (R-347): archived, checked, and removed from the live
+ * log, so the table above no longer finds them. Each downloads as gzipped JSON
+ * lines from the same endpoint the CLI uses.
+ */
+function ArchivedMonths() {
+  const archives = useQuery({
+    queryKey: ['audit-archives'],
+    queryFn: () => api.get<{ archives: AuditArchive[] }>('/audit/archives'),
+  });
+  const rows = archives.data?.archives ?? [];
+  return (
+    <section style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-6)', borderTop: 'var(--border-width) solid var(--rule)' }}>
+      <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-1)' }}>Archived months</h4>
+      <Quiet>Events older than the retention set in Policy. Each download is the month's events, one per line.</Quiet>
+      {archives.isError && <Quiet>{messageOf(archives.error)}</Quiet>}
+      <div style={{ marginTop: 'var(--space-4)' }}>
+        <Table
+          dense
+          loading={archives.isPending}
+          skeletonRows={2}
+          empty={<EmptyState heading="No months archived">Months are archived once they are older than the retention set in Policy.</EmptyState>}
+          columns={[
+            { key: 'month', header: 'Month', width: '10ch', mono: true },
+            { key: 'row_count', header: 'Events', width: '12ch', render: (row: AuditArchive) => row.row_count.toLocaleString() },
+            { key: 'adapter_ref', header: 'Kept by', width: 'minmax(0,20ch)', mono: true, render: (row: AuditArchive) => row.adapter_ref || 'Pando' },
+            {
+              key: 'sha256',
+              header: 'SHA-256',
+              width: 'minmax(0,1fr)',
+              mono: true,
+              muted: true,
+              render: (row: AuditArchive) => <Tooltip content={row.sha256}>{row.sha256.slice(0, 16) + '…'}</Tooltip>,
+            },
+            {
+              key: 'id',
+              header: '',
+              width: '12ch',
+              render: (row: AuditArchive) => (
+                <a href={`${base}/audit/archives/${encodeURIComponent(row.id)}`} download>
+                  Download
+                </a>
+              ),
+            },
+          ]}
+          rows={rows}
+        />
+      </div>
+    </section>
   );
 }
 

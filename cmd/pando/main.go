@@ -382,6 +382,19 @@ func serve(ctx context.Context, configPath string) error {
 		WorkDir:       cfg.Server.WorkDir,
 	}
 
+	// pg_restore recreates every table and function with the owner's default
+	// privileges, which hand the application role UPDATE and DELETE on each
+	// month of the audit log until the next start re-grants. Re-granting
+	// straight after the restore closes that window (R-027, R-348).
+	backupService.Regrant = func(ctx context.Context) error { return state.Regrant(ctx, cfg.Database.URL) }
+
+	// Audit retention (R-347, R-348). Archives are kept under Pando's own
+	// directory, or exported to a backup destination, as host policy says.
+	auditStores, err := auditArchiveStores(ctx, cfg.Server.AuditArchiveDir, registry)
+	if err != nil {
+		return err
+	}
+
 	deployments := state.NewDeployments(db)
 	logStore := deploy.NewLogStore()
 	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps)
@@ -676,6 +689,7 @@ func serve(ctx context.Context, configPath string) error {
 		PolicyOverlay: policyOverlay,
 		Startup:       cfg,
 		AuditLog:      audit.NewReader(db.Pool),
+		AuditArchives: &audit.Archives{Pool: db.Pool, Stores: auditStores},
 
 		Groups:       state.NewGroups(db),
 		Roles:        state.NewRoles(db),
@@ -768,6 +782,19 @@ func serve(ctx context.Context, configPath string) error {
 		// An app whose deploys now need approval stops auto-deploying
 		// (R-158).
 		Policy: policyStore,
+	}).Run(loopCtx)
+
+	// Audit retention, daily (R-347). As the archiver role, which is the only
+	// one that can remove a month, and only one archived and old enough.
+	go (&audit.Archiver{
+		Pool:   db.Archiver(),
+		Stores: auditStores,
+		Retention: func(ctx context.Context) (audit.Retention, error) {
+			doc, err := policyStore.Load(ctx)
+			return doc.AuditRetention(), err
+		},
+		Clock:  clock.System{},
+		Logger: logger,
 	}).Run(loopCtx)
 
 	// Deploy requests nobody answered in time expire (R-156), once a minute.
@@ -1624,4 +1651,39 @@ func adapterKinds() []adapterapi.KindInfo {
 		servicesdocker.Info(),
 		notifyconsole.Info(),
 	}
+}
+
+// auditArchiveStores is where audit archives go (R-347): a directory of
+// Pando's own, written the way the local backup destination writes a bundle —
+// to a temporary name, renamed when whole — or a configured backup
+// destination, resolved by reference like a backup's.
+func auditArchiveStores(ctx context.Context, dir string, registry *adapterapi.Registry) (audit.Stores, error) {
+	kept := backuplocal.New()
+	cfgJSON, err := json.Marshal(map[string]string{"path": dir})
+	if err != nil {
+		return audit.Stores{}, err
+	}
+	if err := kept.Configure(ctx, cfgJSON); err != nil {
+		return audit.Stores{}, err
+	}
+	return audit.Stores{
+		Kept: kept,
+		Export: func(ref string) (audit.Store, string, error) {
+			if ref == "" {
+				var ok bool
+				if ref, ok = registry.Default(adapterapi.CategoryBackup); !ok {
+					return nil, "", errs.New(errs.Internal,
+						"Host policy exports audit archives to the default backup destination, and this installation has none.").
+						WithRemedy("Configure a backup destination, name one in audit_archive_destination, or set audit_archive to keep.")
+				}
+			}
+			dest, ok := registry.Backup(ref)
+			if !ok {
+				return nil, "", errs.Newf(errs.Internal,
+					"Host policy exports audit archives to the backup destination %q, which is not running.", ref).
+					WithRemedy("Configure that backup destination, or change audit_archive_destination in host policy.")
+			}
+			return dest, ref, nil
+		},
+	}, nil
 }

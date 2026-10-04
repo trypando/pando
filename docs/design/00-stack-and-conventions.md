@@ -50,7 +50,8 @@ binary, and Compose is an install method rather than a change to the artifact.
 
 **[D] The external-database path carries a privilege contract.** Pando's audit guarantee (R-027) is a
 database grant: a restricted application role with `INSERT` on `audit_events` and no `UPDATE` or
-`DELETE`. Creating that role requires administrative rights, which Pando has on a cluster it was
+`DELETE`, and a second restricted role, `pando_audit_archiver`, that removes months past retention only
+through an owner-defined function (R-347, design 02 §2.6). Creating those roles requires administrative rights, which Pando has on a cluster it was
 handed fresh and may not have on someone else's. So the external path must document the privileges it
 requires and **verify them at startup, failing loudly** rather than silently running with an audit log
 that can be rewritten. A degraded-but-running mode is not acceptable here: the whole value of the

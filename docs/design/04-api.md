@@ -355,6 +355,8 @@ PUT  /api/v1/policy                       R-274; see O-10; install.policy.manage
 GET  /api/v1/config                       startup settings and their sources; fixed policy fields (R-271); install.view
 POST /api/v1/policy:preview               what this policy would block, unsaved; install.policy.manage
 GET  /api/v1/audit                        ?action= (prefix, repeatable: any matches) &principal_id= &principal_kind= &app_id= &target_kind= &target_id= &involving= &since= &until= (RFC 3339) &before= ; install.audit.read
+GET  /api/v1/audit/archives               months past retention, each with its manifest (R-347); install.audit.read
+GET  /api/v1/audit/archives/{id}          one archived month, gzipped JSON lines; Repr-Digest carries its SHA-256; install.audit.read
 GET  /api/v1/ai/functions                 each AI function, its adapter and model, on or off, and its source (R-259); install.view
 PUT  /api/v1/ai/functions/{function}      {adapter_id, model?}; refused while another adapter holds it (R-259); install.adapters.manage
 DELETE /api/v1/ai/functions/{function}    turn a function off; install.adapters.manage
@@ -527,7 +529,12 @@ rather than a second opinion about authorization (R-261).
 | `pando_ai_draft_access` | `POST /ai/access/draft` |
 | `pando_ai_draft_host_rules` | `POST /ai/policy/draft` |
 | `pando_ai_search_audit` | `POST /ai/audit/search` |
+| `pando_list_audit_archives` | `GET /audit/archives` |
 | `pando_ai_ask_reference` | `POST /ai/reference/answer` |
+
+**[D]** `GET /audit/archives/{id}` has no tool. A tool's result is JSON text, and an archive is a gzip
+file; base64 inside a tool result would be a capability the CLI and console do not need. The list tool
+names the endpoint and `pando audit archives download`, which an agent holding a token can use.
 
 **[D]** The AI drafting tools are listed because a draft changes nothing: applying it is a separate
 call the agent may not be able to make. The policy draft is `pando_ai_draft_host_rules`, not a name

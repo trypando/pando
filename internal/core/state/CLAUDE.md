@@ -22,7 +22,9 @@ a migration simpler.
 | Constraint | Enforces |
 |---|---|
 | Trigger rejecting `UPDATE`/`DELETE` on `spec_revisions` | R-152 — rollback is always to something that provably existed |
-| `REVOKE UPDATE, DELETE` on `audit_events` from the app role | R-027 — the audit log is not rewritable, by adapters *or* core |
+| `REVOKE UPDATE, DELETE` on `audit_events` **and every partition of it** from the app role | R-027 — the audit log is not rewritable, by adapters *or* core. A month is a table; `applyGrants` revokes on each one at every start |
+| `audit_drop_month`, executable by `pando_audit_archiver` only | R-347, R-348 — the only way an event leaves the log: a whole month, three months old at least, with a recorded archive of every row. The floor is a literal in the function; changing it is a migration |
+| App role has `SELECT` only on `audit_archives` | R-348 — the drop function trusts that record, so the role serving traffic must not be able to write it |
 | Trigger protecting `roles` rows with `builtin = true` | R-081 — built-in roles change only by migration |
 | `host_policy.id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1)` | R-015 — one install, one org; nobody accidentally builds multi-tenancy |
 | `volumes.app_id … ON DELETE RESTRICT` | R-204 — an app cannot be deleted out from under its volumes |

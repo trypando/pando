@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -39,10 +40,10 @@ import (
 const templateName = "pando_template"
 
 var (
-	once        sync.Once
-	clusterURL  string
-	appPassword secret.Value
-	setupErr    error
+	once       sync.Once
+	clusterURL string
+	passwords  state.Passwords
+	setupErr   error
 
 	nextDatabase atomic.Int64
 )
@@ -67,7 +68,7 @@ func Database(t testing.TB) (string, secret.Value) {
 	t.Helper()
 	ctx := context.Background()
 
-	once.Do(func() { clusterURL, appPassword, setupErr = setup(ctx) })
+	once.Do(func() { clusterURL, passwords, setupErr = setup(ctx) })
 	if setupErr != nil {
 		t.Fatalf("starting the test Postgres: %v", setupErr)
 	}
@@ -76,11 +77,23 @@ func Database(t testing.TB) (string, secret.Value) {
 	if err := exec(ctx, clusterURL, `CREATE DATABASE "`+name+`" TEMPLATE `+templateName); err != nil {
 		t.Fatalf("copying the test database: %v", err)
 	}
-	return withDatabase(clusterURL, name), appPassword
+	return withDatabase(clusterURL, name), passwords.App
+}
+
+// Archiver connects to a database Database made, as the audit archiver role
+// (R-348). The pool is closed when the test ends.
+func Archiver(t testing.TB, ownerURL string) *pgxpool.Pool {
+	t.Helper()
+	pool, err := state.ConnectArchiver(context.Background(), ownerURL, passwords.Archiver)
+	if err != nil {
+		t.Fatalf("connecting to the test database as the archiver: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
 }
 
 // setup starts the container and prepares the template every test copies.
-func setup(ctx context.Context) (string, secret.Value, error) {
+func setup(ctx context.Context) (string, state.Passwords, error) {
 	container, err := postgres.Run(ctx, "postgres:17-alpine",
 		postgres.WithDatabase("pando"),
 		postgres.WithUsername("pando"),
@@ -94,33 +107,33 @@ func setup(ctx context.Context) (string, secret.Value, error) {
 				WithStartupTimeout(90*time.Second)),
 	)
 	if err != nil {
-		return "", secret.Value{}, err
+		return "", state.Passwords{}, err
 	}
 	// Not terminated here: the container lives as long as the test binary,
 	// and Ryuk reaps it afterwards.
 	base, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		return "", secret.Value{}, err
+		return "", state.Passwords{}, err
 	}
 
 	if err := exec(ctx, base, `CREATE DATABASE `+templateName); err != nil {
-		return "", secret.Value{}, err
+		return "", state.Passwords{}, err
 	}
-	password, err := state.PrepareTemplate(ctx, withDatabase(base, templateName))
+	prepared, err := state.PrepareTemplate(ctx, withDatabase(base, templateName))
 	if err != nil {
-		return "", secret.Value{}, err
+		return "", state.Passwords{}, err
 	}
 	// A copy cannot be made while anything is connected to the template, so
 	// nothing is allowed to be, and a backend still on its way out is ended
 	// rather than waited for.
 	if err := exec(ctx, base, `ALTER DATABASE `+templateName+` WITH ALLOW_CONNECTIONS false`); err != nil {
-		return "", secret.Value{}, err
+		return "", state.Passwords{}, err
 	}
 	if err := exec(ctx, base, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
 		WHERE datname = '`+templateName+`' AND pid <> pg_backend_pid()`); err != nil {
-		return "", secret.Value{}, err
+		return "", state.Passwords{}, err
 	}
-	return base, password, nil
+	return base, prepared, nil
 }
 
 func exec(ctx context.Context, dsn, stmt string) error {

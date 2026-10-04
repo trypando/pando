@@ -24,6 +24,7 @@ resolution both here and in the requirements or design doc that owns it.
 | **O-18** | Where a signed apt repository is hosted, so `apt install pando` works without downloading a file first | Costs money or custody of a signing key; neither is an engineering call | Not blocking — the `.deb` is already published |
 | **O-23** | Whether the Cloudflare adapter configures Cloudflare Access in front of an app | A product decision about a second gate Pando does not control; the adapter ships without it | Not blocking — design 03 §4.5 |
 | **O-24** | Whether a stopped app keeps a daily backup, and whether an app that has gone unbacked-up is notified | R-211 says "daily, 7 retained" and does not say what happens while an app is stopped; the sweep backs up only running and degraded apps | Not blocking — issue #87 |
+| **O-27** | What happens to audit archives once written (issue #60) | Retention itself is decided (R-347, R-348); what an archive is owed after that is a product call about custody, disk and evidence, and none of it blocks retention | Not blocking — design 02 §2.6 |
 
 **O-4** has a `[P]` fallback that preserves R-103: default `Required: false` for anything the file
 gives a sample value for, and let the trial run settle it — a slot whose absence crashes the trial run
@@ -38,6 +39,27 @@ slot, so a `.env.example` with eleven variables produced eleven "dependencies" o
 offering to connect to something that already exists. Untyped keys are variables now, declared empty
 on the app, and O-4 applies to what is left: of the keys that really are dependencies, which are
 required.
+
+**O-27** is what issue #60 left open once retention shipped. Two of its questions were answered
+with a `[P]` default so retention could land, and can be overridden: **three months is a floor as well
+as a default** (R-348) — held by the database function that removes a month, which is what makes "the
+running server cannot erase recent history" true rather than a policy setting — and **archived events
+are downloadable, not searchable**: the console lists archived months on the Audit log screen with a
+download for each. Four remain:
+
+- **Do archives kept by Pando age out?** Today they are kept indefinitely. They are compressed, about
+  a tenth of the rows' size, but unbounded, and R-224 is about exactly that. The options are a second
+  retention period for archives, counting them against a disk budget, or leaving long-term custody to
+  `export`. Deleting an archive deletes audit history, so it should not be a default anybody slides
+  into.
+- **Does the DR bundle include them?** The bundle has the database, which records every archive, but
+  not the archive files. A restored install lists archives it cannot serve until the directory is
+  copied across.
+- **Are archived months searchable?** That means loading an archive back into something queryable,
+  which is either a second store or a temporary table, and a reason to keep the archives small.
+- **Should events be hash-chained?** An archive's digest proves it was not changed after it was
+  written. It does not prove the month was complete when it was written; a chain over the live log
+  would, and would matter most once archives leave the host.
 
 **O-18** exists because a `.deb` attached to a release and an apt repository are different products.
 The release build publishes `.deb`, `.rpm` and `.apk` packages, which install with

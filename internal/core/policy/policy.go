@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
@@ -116,6 +117,23 @@ type Document struct {
 	// is recreating containers, which the reconciler may not do on a schedule
 	// because an unrelated app turned chatty.
 	MaxLogDiskBytes int64 `json:"max_log_disk_bytes,omitempty"`
+
+	// Audit retention (R-347, R-348). The live audit log keeps
+	// AuditRetentionMonths whole months; an older month is archived, the
+	// archive read back and checked, and only then is the month removed.
+	//
+	// Zero is three months. Fewer than three is refused here, and the
+	// database refuses it again: the floor is held by the function that
+	// removes a month, so nothing the running server can write lowers it.
+	// More is anyone's choice.
+	//
+	// AuditArchive is where an archive goes: keep (empty, the default) under
+	// Pando's own directory, export to a backup destination — the default
+	// one, or AuditArchiveDestination — or off, which archives nothing and so
+	// removes nothing, the log growing as it did before retention existed.
+	AuditRetentionMonths    int               `json:"audit_retention_months,omitempty"`
+	AuditArchive            audit.ArchiveMode `json:"audit_archive,omitempty"`
+	AuditArchiveDestination string            `json:"audit_archive_destination,omitempty"`
 
 	// DisableAIScreening forbids AI screening of deployment plans install-wide
 	// (R-336). Default false, like everything else here: Pando ships permissive
@@ -513,5 +531,31 @@ func (d Document) ValidateRules() error {
 	if d.DeployApprovalExpiryHours < 0 {
 		return fmt.Errorf("deploy_approval_expiry_hours is %d; use a number of hours, or 0 for requests that wait until somebody answers", d.DeployApprovalExpiryHours)
 	}
+	return d.ValidateAuditRetention()
+}
+
+// ValidateAuditRetention refuses retention under the floor and a mode that is
+// not one (R-348). Written for the administrator who typed it (R-105).
+func (d Document) ValidateAuditRetention() error {
+	if d.AuditRetentionMonths != 0 && d.AuditRetentionMonths < audit.MinRetentionMonths {
+		return fmt.Errorf("audit_retention_months is %d; the audit log keeps at least %d months, so use %d or more (0 also means %d)",
+			d.AuditRetentionMonths, audit.MinRetentionMonths, audit.MinRetentionMonths, audit.DefaultRetentionMonths)
+	}
+	if err := d.AuditArchive.Valid(); err != nil {
+		return err
+	}
+	if d.AuditArchiveDestination != "" && d.AuditArchive != audit.ArchiveExport {
+		return fmt.Errorf("audit_archive_destination is set to %q, but audit_archive is not export, so nothing would be sent there; set audit_archive to export or clear the destination",
+			d.AuditArchiveDestination)
+	}
 	return nil
+}
+
+// AuditRetention is what the audit archiver reads (R-347).
+func (d Document) AuditRetention() audit.Retention {
+	return audit.Retention{
+		Months:      d.AuditRetentionMonths,
+		Archive:     d.AuditArchive,
+		Destination: d.AuditArchiveDestination,
+	}
 }

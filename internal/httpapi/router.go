@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -189,6 +190,11 @@ type Server struct {
 	// log and an unreadable one are very different answers.
 	AuditLog AuditReader
 
+	// AuditArchives lists and serves the months retention has archived
+	// (R-347). Nil answers an empty list: an install with nothing archived
+	// and one that cannot archive look the same from here, and both are true.
+	AuditArchives AuditArchives
+
 	// Backups records what has been backed up; Backup does the backing up
 	// (R-212). Two fields because they are two concerns: the record has to
 	// survive the thing it records, which is R-204's whole point.
@@ -236,6 +242,12 @@ type PolicyDocument interface {
 // AuditReader queries the audit log.
 type AuditReader interface {
 	List(ctx context.Context, q audit.Query) ([]audit.Record, error)
+}
+
+// AuditArchives lists and opens audit archives.
+type AuditArchives interface {
+	List(ctx context.Context) ([]audit.ArchiveRecord, error)
+	Open(ctx context.Context, archiveID string) (audit.ArchiveRecord, io.ReadCloser, error)
 }
 
 // SpecDefaults supplies the install's defaults for a spec.
@@ -519,6 +531,12 @@ func (s *Server) Routes() http.Handler {
 		// The audit log (R-227). Its own verb: it records what everyone did,
 		// including inside apps they own.
 		r.Get("/audit", s.handleListAudit)
+
+		// Months past retention, archived and removed from the live log
+		// (R-347). Behind the same verb as the log itself: an archive is the
+		// log, a month at a time.
+		r.Get("/audit/archives", s.handleListAuditArchives)
+		r.Get("/audit/archives/{archiveID}", s.handleGetAuditArchive)
 
 		// Backup and disaster recovery (Sequence D). Verify is its own route
 		// rather than a flag on restore, because a flag is a thing somebody

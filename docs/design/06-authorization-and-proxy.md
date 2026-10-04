@@ -512,3 +512,14 @@ Visits are remembered in memory, so a restart may record a visit twice and never
 **[D]** Audit is written before the privileged action, not after (§04 2.6). An exec session that fails to open is still recorded as attempted.
 
 **[D]** Database-level enforcement: the application role has `INSERT` on `audit_events` and no `UPDATE` or `DELETE`. R-027 says no adapter can rewrite the audit log; this makes it true of core as well, which is stronger and costs nothing.
+
+**[D] Retention does not loosen this (R-347, issue #60).** The log is bounded by removing whole
+months past retention, and the application role still cannot remove anything: it holds no `UPDATE`,
+`DELETE` or `TRUNCATE` on the table or on any monthly partition of it, cannot execute the functions
+that make and drop a month, and cannot write the record of archives those functions trust. Removal is
+done by a separate role, `pando_audit_archiver`, through one owner-defined function that refuses a
+month younger than three months (R-348) or without a recorded, verified archive of every row it holds,
+and that records the removal in the log itself. So "the running server cannot rewrite history" now
+reads: it cannot change any event, cannot remove one younger than the floor, and cannot remove an
+older one without an archive holding it. Startup verifies all of this, as it verifies ownership.
+Design 02 §2.6.

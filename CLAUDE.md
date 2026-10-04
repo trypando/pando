@@ -46,7 +46,8 @@ one of these harder to enforce, the change is wrong.
 | Rule | Requirement | Mechanism | Where |
 |---|---|---|---|
 | Adapters never touch authz, audit, or state | R-027 | CI import lint (`.golangci.yml` depguard) | design 03 §9 |
-| The audit log cannot be rewritten | R-027 | DB grant: no `UPDATE`/`DELETE` on `audit_events` | design 02 §2.6, 06 §6 |
+| The audit log cannot be rewritten | R-027 | DB grant: no `UPDATE`/`DELETE` on `audit_events` or any of its monthly partitions; startup refuses otherwise | design 02 §2.6, 06 §6 |
+| Retention removes only old, archived months | R-347, R-348 | Only `audit_drop_month` removes events: owner-defined, executable by `pando_audit_archiver` alone, refuses a month under three months old or without a recorded archive of every row | design 02 §2.6 |
 | Secrets never reach a log line | R-194 | `secret.Value` renders `[redacted]` in every marshaler | design 00 §3.3 |
 | Adapter credentials are never stored in the clear | R-190 | `adapter_credentials` and `identity_adapter_credentials` hold ciphertext only; CHECKs refuse `credentials` in `adapter_configs.config` and any secret key in `identity_adapters.config` | design 10 §7, 02 §2.1 |
 | A redirect sign-in finishes only in the browser that started it | R-043 | Flow bound to a cookie digest; one-time handoff code; `TestR043_ASignInFinishesOnlyInTheBrowserThatStartedIt` | design 06 §3.2 |

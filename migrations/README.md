@@ -12,6 +12,7 @@ miss the thing they catch. When you write a migration, these are not optional ex
 | DDL | Enforces |
 |---|---|
 | `REVOKE UPDATE, DELETE ON audit_events` from the app role | R-027 — the audit log is not rewritable |
+| `audit_drop_month` refusing a month under three months old or with no archive of every row; `audit_ensure_partition` revoking `UPDATE`/`DELETE` on each new partition | R-347, R-348 — retention removes only old, archived months, and a partition is not a way around R-027 |
 | Trigger rejecting `UPDATE`/`DELETE` on `spec_revisions` | R-152 — rollback is always to something that provably existed |
 | Trigger protecting `roles` where `builtin = true` | R-081 — built-in roles change only by migration |
 | `host_policy.id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1)` | R-015 — one install, one org |

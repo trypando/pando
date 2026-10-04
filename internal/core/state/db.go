@@ -43,6 +43,17 @@ import (
 // and cannot grant itself anything (R-027).
 const AppRole = "pando_app"
 
+// ArchiverRole is the Postgres role audit retention runs as (R-348).
+//
+// Retention removes months of audit events, which the application role must
+// never be able to do (R-027). So it is a third role: it owns nothing, reads
+// the log, records archives, and may call the two functions that make and
+// drop a month's partition. Those functions run as the owner and refuse, in
+// the database, a month younger than the floor or one without an archive of
+// every row — so this role cannot remove recent history either, and nothing
+// else can remove any.
+const ArchiverRole = "pando_audit_archiver"
+
 // DB is a connection to the state store, held as the application role.
 type DB struct {
 	*pgxpool.Pool
@@ -51,10 +62,18 @@ type DB struct {
 	// migrations run. A DR bundle carries it so a restore can refuse a bundle
 	// from a newer schema rather than half-applying it (R-215).
 	schemaVersion uint
+
+	// archiver is a pool held as ArchiverRole, for audit retention and
+	// nothing else. Nil on a copy connected for a test.
+	archiver *pgxpool.Pool
 }
 
 // SchemaVersion is the migration version this database is at.
 func (db *DB) SchemaVersion() uint { return db.schemaVersion }
+
+// Archiver is the pool held as ArchiverRole, or nil when this connection has
+// none (R-348). Only audit retention uses it.
+func (db *DB) Archiver() *pgxpool.Pool { return db.archiver }
 
 // ConnectOptions configures the bootstrap sequence.
 type ConnectOptions struct {
@@ -104,7 +123,7 @@ func Connect(ctx context.Context, opts ConnectOptions) (*DB, error) {
 		return nil, err
 	}
 
-	appPassword, err := provisionAppRole(ctx, owner)
+	passwords, err := provisionRoles(ctx, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -115,12 +134,78 @@ func Connect(ctx context.Context, opts ConnectOptions) (*DB, error) {
 		return nil, err
 	}
 
-	db, err := connectAsApp(ctx, opts.OwnerURL, appPassword, version)
+	db, err := connectAsApp(ctx, opts.OwnerURL, passwords.App, version)
 	if err != nil {
+		return nil, err
+	}
+	db.archiver, err = ConnectArchiver(ctx, opts.OwnerURL, passwords.Archiver)
+	if err != nil {
+		db.Close()
 		return nil, err
 	}
 	l.Info("state store ready", zap.String("role", AppRole))
 	return db, nil
+}
+
+// Passwords are the ones provisionRoles gave Pando's two restricted roles.
+type Passwords struct {
+	App      secret.Value
+	Archiver secret.Value
+}
+
+// provisionRoles creates or updates AppRole and ArchiverRole.
+func provisionRoles(ctx context.Context, owner *pgxpool.Pool) (Passwords, error) {
+	app, err := provisionRole(ctx, owner, AppRole)
+	if err != nil {
+		return Passwords{}, err
+	}
+	archiver, err := provisionRole(ctx, owner, ArchiverRole)
+	if err != nil {
+		return Passwords{}, err
+	}
+	return Passwords{App: app, Archiver: archiver}, nil
+}
+
+// ConnectArchiver opens a small pool held as ArchiverRole (R-348).
+//
+// Two connections: retention is one loop doing one month at a time.
+func ConnectArchiver(ctx context.Context, ownerURL string, password secret.Value) (*pgxpool.Pool, error) {
+	archiverURL, err := withCredentials(ownerURL, ArchiverRole, password)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := pgxpool.ParseConfig(archiverURL)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "The database connection URL is malformed.", err)
+	}
+	cfg.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not connect to the state database as the audit archiver role.", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, errs.Wrap(errs.Internal, "Could not connect to the state database as the audit archiver role.", err)
+	}
+	return pool, nil
+}
+
+// Regrant applies the grant policy again and verifies it, as a start does.
+//
+// For after a DR restore (R-212): pg_restore recreates every table, partition
+// and function, and a recreated table arrives with the owner's default
+// privileges — which hand the application role UPDATE and DELETE — until the
+// next start re-applies the policy. This closes that window instead.
+func Regrant(ctx context.Context, ownerURL string) error {
+	owner, err := waitForPostgres(ctx, ownerURL, 60*time.Second)
+	if err != nil {
+		return err
+	}
+	defer owner.Close()
+	if err := applyGrants(ctx, owner); err != nil {
+		return err
+	}
+	return verifyAuditImmutability(ctx, owner)
 }
 
 // connectAsApp opens the pool the rest of the process uses, held as AppRole.
@@ -253,13 +338,14 @@ func migrateUp(ctx context.Context, ownerURL string) (uint, error) {
 	return version, nil
 }
 
-// provisionAppRole creates or updates AppRole and returns its password.
+// provisionRole creates or updates one of Pando's restricted roles and returns
+// its password.
 //
 // The password is regenerated on every start and never persisted. Pando is the
 // only thing that connects as this role, and it holds the value only for the
 // life of the process — so there is one less secret at rest, and a leaked
 // password expires at the next restart.
-func provisionAppRole(ctx context.Context, owner *pgxpool.Pool) (secret.Value, error) {
+func provisionRole(ctx context.Context, owner *pgxpool.Pool, role string) (secret.Value, error) {
 	password, err := randomPassword()
 	if err != nil {
 		return secret.Value{}, err
@@ -277,13 +363,13 @@ func provisionAppRole(ctx context.Context, owner *pgxpool.Pool) (secret.Value, e
 				ALTER ROLE %s LOGIN PASSWORD %s;
 			END IF;
 		END
-		$$;`, AppRole, AppRole, quoteLiteral(password.Reveal()), AppRole, quoteLiteral(password.Reveal()))
+		$$;`, role, role, quoteLiteral(password.Reveal()), role, quoteLiteral(password.Reveal()))
 
 	if _, err := owner.Exec(ctx, stmt); err != nil {
 		return secret.Value{}, errs.Wrap(errs.Internal,
-			"Pando could not create the restricted database role it serves traffic as.",
+			"Pando could not create a restricted database role it runs as.",
 			err).
-			WithDetail("role", AppRole).
+			WithDetail("role", role).
 			WithRemedy("Pando needs a database account that can CREATE ROLE and GRANT. If you set PANDO_DATABASE_URL to an existing database, grant those privileges or point Pando at a database it owns. This is required: without a separate role, the audit log cannot be made tamper-proof.")
 	}
 	return password, nil
@@ -307,11 +393,41 @@ func applyGrants(ctx context.Context, owner *pgxpool.Pool) error {
 		// nothing.
 		fmt.Sprintf(`REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM %s`, AppRole),
 
+		// The record of what was archived is the archiver's to write and
+		// nobody's to change. audit_drop_month trusts it, so a role that could
+		// insert into it could vouch for an archive that does not exist.
+		fmt.Sprintf(`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON audit_archives FROM %s`, AppRole),
+
+		// R-348. The archiver reads the log and records archives, and may
+		// call the two functions that make and drop a month. Nothing else:
+		// it holds no UPDATE or DELETE anywhere, and the drop function
+		// enforces the floor and the archive whoever calls it.
+		fmt.Sprintf(`GRANT USAGE ON SCHEMA public TO %s`, ArchiverRole),
+		fmt.Sprintf(`GRANT SELECT ON audit_events TO %s`, ArchiverRole),
+		fmt.Sprintf(`GRANT SELECT, INSERT ON audit_archives TO %s`, ArchiverRole),
+		`REVOKE ALL ON FUNCTION audit_ensure_partition(date) FROM PUBLIC`,
+		`REVOKE ALL ON FUNCTION audit_drop_month(date, bigint, text) FROM PUBLIC`,
+		fmt.Sprintf(`GRANT EXECUTE ON FUNCTION audit_ensure_partition(date) TO %s`, ArchiverRole),
+		fmt.Sprintf(`GRANT EXECUTE ON FUNCTION audit_drop_month(date, bigint, text) TO %s`, ArchiverRole),
+
 		// Deny by default for tables added later: a new table is unreachable
 		// until the next start re-runs the GRANT above, rather than arriving
 		// with whatever PUBLIC happens to have.
 		fmt.Sprintf(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s`, AppRole),
 		fmt.Sprintf(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %s`, AppRole),
+	}
+
+	// Each month of the audit log is a partition, and a partition is a table:
+	// the GRANT ON ALL TABLES above reached every one of them, and DELETE on
+	// a partition is DELETE on the audit log (R-027). Revoked here on every
+	// start, after that grant, so the order of the two can never be wrong.
+	parts, err := auditPartitions(ctx, owner)
+	if err != nil {
+		return err
+	}
+	for _, part := range parts {
+		stmts = append(stmts, fmt.Sprintf(`REVOKE UPDATE, DELETE, TRUNCATE ON %s FROM %s`,
+			pgx.Identifier{part}.Sanitize(), AppRole))
 	}
 
 	for _, stmt := range stmts {
@@ -322,6 +438,21 @@ func applyGrants(ctx context.Context, owner *pgxpool.Pool) error {
 		}
 	}
 	return nil
+}
+
+// auditPartitions names every partition of audit_events.
+func auditPartitions(ctx context.Context, owner *pgxpool.Pool) ([]string, error) {
+	rows, err := owner.Query(ctx, `
+		SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
+		WHERE i.inhparent = 'public.audit_events'::regclass ORDER BY c.relname`)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Pando could not list the audit log's partitions.", err)
+	}
+	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Pando could not list the audit log's partitions.", err)
+	}
+	return names, nil
 }
 
 // verifyAuditImmutability refuses to start if the audit log is rewritable.
@@ -362,6 +493,80 @@ func verifyAuditImmutability(ctx context.Context, owner *pgxpool.Pool) error {
 			WithDetail("can_delete", canDelete).
 			WithRemedy("This usually means the application role owns the audit_events table. An owner can grant itself UPDATE at any time, so revoking it is not enough — Pando must connect as an account that does not own its schema. Refer to the external-database setup notes.")
 	}
+	return verifyRetentionIsTheArchiversAlone(ctx, owner)
+}
+
+// verifyRetentionIsTheArchiversAlone refuses to start if the role serving
+// traffic could remove audit events some other way than through the table
+// (R-348): through a month's partition, through the functions that drop one,
+// by becoming the archiver, or by vouching for an archive that was never
+// written.
+func verifyRetentionIsTheArchiversAlone(ctx context.Context, owner *pgxpool.Pool) error {
+	refuse := func(why string, detail ...any) error {
+		e := errs.New(errs.Internal, "Pando's audit log is not tamper-proof: "+why).
+			WithDetail("role", AppRole).
+			WithRemedy("Pando must connect as an account that does not own its schema, and the audit log's partitions and retention functions must belong to the schema owner. Starting Pando with its own database account re-applies these permissions; refer to the external-database setup notes.")
+		for i := 0; i+1 < len(detail); i += 2 {
+			e = e.WithDetail(fmt.Sprint(detail[i]), detail[i+1])
+		}
+		return e
+	}
+
+	rows, err := owner.Query(ctx, `
+		SELECT c.relname, pg_get_userbyid(c.relowner) = $1,
+		       has_table_privilege($1, c.oid, 'UPDATE') OR has_table_privilege($1, c.oid, 'DELETE')
+		           OR has_table_privilege($1, c.oid, 'TRUNCATE')
+		FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
+		WHERE i.inhparent = 'public.audit_events'::regclass`, AppRole)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not verify that its audit log is tamper-proof.", err)
+	}
+	type partition struct {
+		name      string
+		owns, can bool
+	}
+	parts, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (partition, error) {
+		var p partition
+		return p, r.Scan(&p.name, &p.owns, &p.can)
+	})
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not verify that its audit log is tamper-proof.", err)
+	}
+	for _, p := range parts {
+		if p.owns || p.can {
+			return refuse("the account it serves traffic as can modify or remove a month of audit records.",
+				"partition", p.name, "owns", p.owns)
+		}
+	}
+
+	var dropOwned, canDrop, canEnsure, isArchiver, canVouch bool
+	err = owner.QueryRow(ctx, `
+		SELECT
+			pg_get_userbyid(d.proowner) = $1 OR pg_get_userbyid(e.proowner) = $1,
+			has_function_privilege($1, d.oid, 'EXECUTE'),
+			has_function_privilege($1, e.oid, 'EXECUTE'),
+			CASE WHEN EXISTS (SELECT FROM pg_roles WHERE rolname = $2)
+			     THEN pg_has_role($1, $2, 'MEMBER') ELSE false END,
+			has_table_privilege($1, 'public.audit_archives', 'INSERT')
+				OR has_table_privilege($1, 'public.audit_archives', 'UPDATE')
+				OR has_table_privilege($1, 'public.audit_archives', 'DELETE')
+		FROM pg_proc d, pg_proc e
+		WHERE d.oid = 'public.audit_drop_month(date, bigint, text)'::regprocedure
+		  AND e.oid = 'public.audit_ensure_partition(date)'::regprocedure`,
+		AppRole, ArchiverRole).Scan(&dropOwned, &canDrop, &canEnsure, &isArchiver, &canVouch)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not verify that its audit log is tamper-proof.", err)
+	}
+	switch {
+	case dropOwned:
+		return refuse("the account it serves traffic as owns the functions that remove months of audit records, and could rewrite them.")
+	case canDrop || canEnsure:
+		return refuse("the account it serves traffic as may call the functions that make and remove months of audit records.")
+	case isArchiver:
+		return refuse("the account it serves traffic as is a member of the audit archiver role.")
+	case canVouch:
+		return refuse("the account it serves traffic as can write the record of audit archives, which decides what may be removed.")
+	}
 	return nil
 }
 
@@ -369,6 +574,9 @@ func verifyAuditImmutability(ctx context.Context, owner *pgxpool.Pool) error {
 func (db *DB) Close() {
 	if db != nil && db.Pool != nil {
 		db.Pool.Close()
+	}
+	if db != nil && db.archiver != nil {
+		db.archiver.Close()
 	}
 }
 
