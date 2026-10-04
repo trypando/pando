@@ -72,6 +72,44 @@ func (a *Adapter) Usage(ctx context.Context, ref api.BundleRef) (api.BundleUsage
 	return out, nil
 }
 
+// InUse sums what every app workload on the daemon is using now (R-245).
+//
+// Pando's workloads only, found by their bundle label: the figure to read
+// beside what Pando has committed to them. Two adapters on one daemon each
+// report the same sum, as they report the same machine. Read in parallel, so
+// it takes about a second however many there are.
+func (a *Adapter) InUse(ctx context.Context) (api.InUse, error) {
+	containers, err := a.cli.ContainerList(ctx, container.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("label", labelBundle), filters.Arg("status", "running")),
+	})
+	if err != nil {
+		return api.InUse{}, errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
+	}
+
+	var (
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		out = api.InUse{Reported: time.Now().UTC()}
+	)
+	for _, c := range containers {
+		// The egress gateway is Pando's own, and a trial run is not an app yet.
+		if isGateway(c.Labels) || c.Labels[labelTrial] != "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cpu, memory := a.sample(ctx, c.ID)
+			mu.Lock()
+			out.CPUMillis += cpu
+			out.MemoryBytes += memory
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return out, nil
+}
+
 func (a *Adapter) workloadUsage(ctx context.Context, id, name string) api.WorkloadUsage {
 	u := api.WorkloadUsage{Workload: name, DiskBytes: -1}
 
@@ -90,17 +128,21 @@ func (a *Adapter) workloadUsage(ctx context.Context, id, name string) api.Worklo
 		u.CPULimitMillis = int(inspect.HostConfig.NanoCPUs / 1_000_000)
 		u.MemoryLimitBytes = inspect.HostConfig.Memory
 	}
-	if !u.Running {
-		return u
+	if u.Running {
+		u.CPUMillis, u.MemoryBytes = a.sample(ctx, id)
 	}
+	return u
+}
 
+// sample is a running container's CPU, in thousandths of a core, and memory.
+func (a *Adapter) sample(ctx context.Context, id string) (cpu int, memory int64) {
 	s, ok := a.readStats(ctx, id)
 	if !ok {
-		return u
+		return 0, 0
 	}
 
-	u.CPUMillis = cpuMillis(s)
-	u.MemoryBytes = memoryInUse(s.MemoryStats)
+	cpu = cpuMillis(s)
+	memory = memoryInUse(s.MemoryStats)
 
 	// Docker's one-shot reading carries the previous sample to diff against.
 	// Podman's does not — no preread, no previous CPU — and diffed against
@@ -110,15 +152,15 @@ func (a *Adapter) workloadUsage(ctx context.Context, id, name string) api.Worklo
 	if s.PreRead.IsZero() && s.PreCPUStats.CPUUsage.TotalUsage == 0 {
 		select {
 		case <-ctx.Done():
-			return u
+			return cpu, memory
 		case <-time.After(statsSampleGap):
 		}
 		if next, ok := a.readStats(ctx, id); ok {
-			u.CPUMillis = cpuMillisBetween(s, next)
-			u.MemoryBytes = memoryInUse(next.MemoryStats)
+			cpu = cpuMillisBetween(s, next)
+			memory = memoryInUse(next.MemoryStats)
 		}
 	}
-	return u
+	return cpu, memory
 }
 
 // cpuMillisBetween is the CPU a container used between two readings Pando took

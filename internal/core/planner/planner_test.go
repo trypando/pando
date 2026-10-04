@@ -35,6 +35,7 @@ func (f *fakeRuntime) Capabilities(context.Context) (api.RuntimeCapabilities, er
 	return f.caps, nil
 }
 func (f *fakeRuntime) Capacity(context.Context) (api.Capacity, error) { return f.capacity, nil }
+func (f *fakeRuntime) InUse(context.Context) (api.InUse, error)       { return api.InUse{}, nil }
 
 func (f *fakeRuntime) Apply(context.Context, api.BundlePlan) (api.BundleHandle, error) {
 	return api.BundleHandle{}, nil

@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -300,40 +302,81 @@ func (s *Server) handleListAdapters(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, body)
 }
 
-// handleCapacity aggregates what the runtime adapters report (R-243).
+// handleCapacity aggregates what the runtime adapters report (R-243), beside
+// what Pando has committed to apps on each — the planner's own arithmetic
+// (R-242), so the screen and a refused deploy always agree.
+//
+// A total of 0 is a runtime that does not know it. in_use_* is present only
+// when the runtime reports usage (R-245); sampling it takes about a second,
+// so the runtimes are read in parallel.
 func (s *Server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireInstall(w, r, authz.InstallView); !ok {
 		return
 	}
 
-	out := make([]map[string]any, 0)
-	for _, ref := range s.Registry.ByCategory(api.CategoryRuntime) {
+	refs := s.Registry.ByCategory(api.CategoryRuntime)
+	out := make([]map[string]any, len(refs))
+	failed := make([]error, len(refs))
+	var wg sync.WaitGroup
+	for i, ref := range refs {
 		rt, ok := s.Registry.Runtime(ref)
 		if !ok {
 			continue
 		}
-		capacity, err := rt.Capacity(r.Context())
-		if err != nil {
-			out = append(out, map[string]any{"adapter_ref": ref, "status": "unreachable"})
-			continue
-		}
-		allocated, err := s.Allocations.AllocatedOn(r.Context(), ref, "")
-		if err != nil {
-			Error(w, r, err)
+		wg.Add(1)
+		go func(ctx context.Context) {
+			defer wg.Done()
+			// A runtime that does not answer is an entry saying so, not a
+			// failed request: the others still have something to say.
+			capacity, err := rt.Capacity(ctx)
+			if err != nil {
+				out[i] = map[string]any{"adapter_ref": ref, "status": "unreachable"}
+				return
+			}
+			out[i], failed[i] = s.runtimeCapacity(ctx, ref, rt, capacity)
+		}(r.Context())
+	}
+	wg.Wait()
+
+	runtimes := make([]map[string]any, 0, len(refs))
+	for i := range refs {
+		if failed[i] != nil {
+			Error(w, r, failed[i])
 			return
 		}
-		out = append(out, map[string]any{
-			"adapter_ref":            ref,
-			"total_cpu_millis":       capacity.TotalCPUMillis,
-			"total_memory_bytes":     capacity.TotalMemoryBytes,
-			"total_disk_bytes":       capacity.TotalDiskBytes,
-			"allocated_cpu_millis":   allocated.CPUMillis,
-			"allocated_memory_bytes": allocated.MemoryBytes,
-			"allocated_disk_bytes":   allocated.DiskBytes,
-			"reported":               capacity.Reported,
-		})
+		if out[i] != nil {
+			runtimes = append(runtimes, out[i])
+		}
 	}
-	JSON(w, http.StatusOK, map[string]any{"runtimes": out})
+	JSON(w, http.StatusOK, map[string]any{"runtimes": runtimes})
+}
+
+// runtimeCapacity is one answering runtime's entry in GET /capacity.
+func (s *Server) runtimeCapacity(ctx context.Context, ref string, rt api.RuntimeAdapter, capacity api.Capacity) (map[string]any, error) {
+	allocated, err := s.Allocations.AllocatedOn(ctx, ref, "")
+	if err != nil {
+		return nil, err
+	}
+	entry := map[string]any{
+		"adapter_ref":            ref,
+		"status":                 "ok",
+		"total_cpu_millis":       capacity.TotalCPUMillis,
+		"total_memory_bytes":     capacity.TotalMemoryBytes,
+		"total_disk_bytes":       capacity.TotalDiskBytes,
+		"allocated_cpu_millis":   allocated.CPUMillis,
+		"allocated_memory_bytes": allocated.MemoryBytes,
+		"allocated_disk_bytes":   allocated.DiskBytes,
+		"running_workloads":      capacity.RunningWorkloads,
+		"details":                capacity.Details,
+		"reported":               capacity.Reported,
+	}
+	if caps, err := rt.Capabilities(ctx); err == nil && caps.ReportsUsage {
+		if inUse, err := rt.InUse(ctx); err == nil {
+			entry["in_use_cpu_millis"] = inUse.CPUMillis
+			entry["in_use_memory_bytes"] = inUse.MemoryBytes
+		}
+	}
+	return entry, nil
 }
 
 // declaredAdapters are the adapters the config file declares (R-271).

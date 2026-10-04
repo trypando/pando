@@ -175,6 +175,12 @@ type RuntimeAdapter interface {
 	// cluster. Core does not read /proc and has no concept of a host.
 	Capacity(ctx context.Context) (Capacity, error)
 
+	// InUse reports what every workload on the runtime is using right now,
+	// summed. Apart from Capacity because sampling CPU takes the runtime about
+	// a second, and the planner calls Capacity on every plan without needing
+	// it. Only called when ReportsUsage is true.
+	InUse(ctx context.Context) (InUse, error)
+
 	// Apply converges the bundle toward the plan. Idempotent: calling it with an
 	// already-satisfied plan is a no-op.
 	Apply(ctx context.Context, p BundlePlan) (BundleHandle, error)
@@ -601,15 +607,35 @@ type VolumeUsage struct {
 	Bytes    int64
 }
 
-// Capacity is what the adapter reports about itself (R-243).
+// Capacity is what the adapter reports about itself (R-243): the readings
+// every runtime gives in the same shape, so the console and the planner can
+// read them without knowing which runtime answered, and Details for the rest.
+//
+// A total of 0 means the runtime does not know it. The planner then does not
+// check that resource, and the console says it is not reported rather than
+// drawing an empty meter.
 type Capacity struct {
 	TotalCPUMillis   int
 	TotalMemoryBytes int64
 	TotalDiskBytes   int64
-	UsedCPUMillis    int
-	UsedMemoryBytes  int64
-	UsedDiskBytes    int64
-	Reported         time.Time
+
+	// RunningWorkloads is how many workloads are running now, Pando's or
+	// not; -1 when the runtime cannot say.
+	RunningWorkloads int
+
+	// Details is anything else the runtime reports about itself, in its own
+	// shape — version, storage driver. Shown as it is, never interpreted:
+	// Pando does not own its schema.
+	Details map[string]any
+
+	Reported time.Time
+}
+
+// InUse is what a runtime's workloads are using now, summed (R-245).
+type InUse struct {
+	CPUMillis   int
+	MemoryBytes int64
+	Reported    time.Time
 }
 
 // ExecRequest opens a session in a workload.
