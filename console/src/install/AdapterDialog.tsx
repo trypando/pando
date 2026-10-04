@@ -292,7 +292,7 @@ export function AdapterDialog({
                     configured is hidden. */}
                 <Disclosure
                   key={chosen}
-                  show="Advanced settings"
+                  show="Show advanced settings"
                   hide="Hide advanced settings"
                   hidden={advanced.length === 0}
                   initiallyOpen={advancedChanged(kind, form.values)}
