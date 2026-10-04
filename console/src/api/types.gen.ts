@@ -249,6 +249,8 @@ export interface Document {
   ignore_unfixable_findings?: boolean;
   disable_password_sign_in?: boolean;
   disable_jit_provisioning?: boolean;
+  disable_update_check?: boolean;
+  update_channel?: string;
 }
 
 export interface BackupAttempt {
@@ -324,6 +326,21 @@ export interface Group {
   linked_from?: (string[] | null);
   links_to?: (string[] | null);
   created_at: string;
+}
+
+export interface Status {
+  current: string;
+  development: boolean;
+  enabled: boolean;
+  channel: string;
+  checked_at?: string;
+  error?: string;
+  latest?: string;
+  available: boolean;
+  releases: (Release[] | null);
+  security: boolean;
+  breaking: boolean;
+  upgrade?: Upgrade;
 }
 
 export interface Source {
@@ -629,6 +646,23 @@ export interface SignInOutcome {
   remedy?: string;
   groups?: (string[] | null);
   groups_from: string;
+}
+
+export interface Release {
+  version: string;
+  prerelease: boolean;
+  published_at: string;
+  url: string;
+  notes: string;
+  security: boolean;
+  breaking: boolean;
+}
+
+export interface Upgrade {
+  version: string;
+  image?: string;
+  command: string;
+  instructions: string;
 }
 
 export interface Applied {

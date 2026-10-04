@@ -125,6 +125,26 @@ docker buildx imagetools inspect trypando/pando:0.3.1 --format '{{ json .Provena
 To run exactly what you verified, pin the digest `cosign verify` printed in place of the tag in
 `docker-compose.yml`: `image: trypando/pando@sha256:…`.
 
+## What running installations read from a release
+
+Every installation with the update check on reads this repository's GitHub release list
+(R-349 – R-351, design 00 §1.4). It depends on three things a release already does, so changing any
+of them changes what installations show:
+
+- **The release body is the version's `CHANGELOG.md` section.** It is shown as the changelog on the
+  Updates screen and in `pando updates`.
+- **The Security subsection says exactly `No new advisories.` when there are none.** Anything else
+  there marks the release as a security fix on every installation behind it.
+- **A tag with a suffix is a prerelease.** Only installations on the `prerelease` channel are offered
+  one.
+
+## Upgrading and going back
+
+Upgrading is moving to a newer image or binary; migrations run at startup. Migrations run forward only.
+An older Pando refuses to start against a database a newer one migrated (R-354), so going back to an
+older version means restoring the backup taken before the upgrade. Take one first:
+`pando backup create`, or **Backups** in the console.
+
 ## Security releases
 
 A release that fixes a vulnerability follows the normal process, plus:

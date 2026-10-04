@@ -21,6 +21,18 @@ Unreleased above it. -->
 
 ### Added
 
+- Update checks (#53). Pando asks GitHub at startup and every six hours whether a newer release is
+  out, sending only its version. The new **Updates** screen, `GET /updates`, `pando updates` and MCP's
+  `pando_get_updates` show the version running, the latest release, and the changelog of every version
+  in between, with security fixes and breaking changes marked, then the command that upgrades this
+  installation. Host policy gains `disable_update_check`, which stops the check and every request it
+  sends, and `update_channel` (`stable` or `prerelease`), on the Policy screen under **Updates**.
+  The CLI warns when it and the server differ in major or minor version, and names the command that
+  upgrades it the way it was installed. Upgrading from inside Pando is not part of this release.
+- Pando refuses to start against a database a newer version of Pando migrated, and says to run that
+  version or restore the backup taken before the upgrade. It used to fail with "Database migration
+  failed." and restart in a loop, leaving every app unreachable.
+
 - Audit log retention (#60). The live audit log keeps **three months** by default; an older month is
   archived as gzipped JSON lines with a manifest (row count, first and last event, time range, SHA-256),
   read back and checked, and only then removed — and the removal is itself an audit event. Archives are

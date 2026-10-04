@@ -23,7 +23,8 @@ export type Section =
   | 'policy'
   | 'backups'
   | 'audit'
-  | 'approvals';
+  | 'approvals'
+  | 'updates';
 
 export interface Route {
   /** Settings is its own page, not a section of the admin console: it is
@@ -52,6 +53,7 @@ const SECTIONS: Section[] = [
   'backups',
   'audit',
   'approvals',
+  'updates',
 ];
 
 /** Reads a route out of a path. Anything unrecognized is the launcher. */

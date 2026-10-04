@@ -1077,6 +1077,19 @@ Revoke a token
 pando token revoke <token-id>
 ```
 
+### `updates`
+
+Show whether a newer Pando is released, what changed, and how to upgrade
+
+```
+pando updates
+```
+
+Shows the version the server runs, the latest release on the update channel, and the
+changelog of every version in between, with security fixes and breaking changes marked.
+Then the command that upgrades the server. The check is host policy: disable_update_check
+turns it off and update_channel chooses stable or prerelease (`pando policy set`).
+
 ### `user`
 
 Work with accounts

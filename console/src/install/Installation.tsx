@@ -242,6 +242,10 @@ interface PolicyDoc {
 
   disable_password_sign_in?: boolean;
   disable_jit_provisioning?: boolean;
+
+  // The update check (R-349, R-350).
+  disable_update_check?: boolean;
+  update_channel?: string;
 }
 
 interface Violation {
@@ -816,6 +820,46 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               />
             </Fixed>
           )}
+        </PolicySection>
+
+        <PolicySection
+          heading="Updates"
+          note="Whether Pando checks GitHub for newer releases. The Updates screen shows what it finds and how to upgrade."
+        >
+          {/* R-349: on by default; off sends no request at all. */}
+          <Fixed field="disable_update_check">
+            <Switch
+              checked={current.disable_update_check ?? false}
+              disabled={locked('disable_update_check')}
+              label="Don't check for newer Pando releases"
+              description="Pando asks GitHub at startup and every six hours, sending only its version. Turn this on for an installation with no internet access, or one that may not call out."
+              onChange={(e) => edit({ disable_update_check: e.target.checked })}
+            />
+          </Fixed>
+          <Fixed field="update_channel">
+            <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
+                Releases to offer
+              </legend>
+              {(
+                [
+                  ['stable', 'Stable', 'Releases only.'],
+                  ['prerelease', 'Include release candidates', 'Release candidates too, such as 1.0.0-rc.1, for trying a version before it is released.'],
+                ] as const
+              ).map(([value, label, description]) => (
+                <Radio
+                  key={value}
+                  name="update_channel"
+                  value={value}
+                  label={label}
+                  description={description}
+                  checked={(current.update_channel || 'stable') === value}
+                  disabled={locked('update_channel') || (current.disable_update_check ?? false)}
+                  onChange={() => edit({ update_channel: value })}
+                />
+              ))}
+            </fieldset>
+          </Fixed>
         </PolicySection>
 
         <StartupSettings config={startup.data} />

@@ -30,6 +30,7 @@ import (
 	"github.com/trypando/pando/internal/core/security"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/detect"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/reference"
@@ -82,6 +83,9 @@ var exported = []any{
 	idp.Problem{},
 	state.Identity{},
 	state.Group{},
+
+	// Whether a newer Pando is released (R-351), on the Updates screen.
+	update.Status{},
 }
 
 func main() {
