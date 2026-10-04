@@ -176,6 +176,38 @@ func (s *AuthzStore) DeployApprovers(ctx context.Context, appID string) ([]strin
 	return out, rows.Err()
 }
 
+// InstallVerbHolders returns the active people holding an install verb,
+// directly or through a group. For telling them something — an update is
+// available (R-362) — never for deciding what they may do: that is the
+// authorizer's, which also applies host policy.
+func (s *AuthzStore) InstallVerbHolders(ctx context.Context, verb authz.Verb) ([]string, error) {
+	rows, err := s.db.Query(ctx, `
+		WITH holding AS (
+		    SELECT g.principal_kind, g.principal_id
+		    FROM grants g JOIN roles r ON r.id = g.role_id
+		    WHERE g.plane = 'control' AND g.app_id IS NULL AND $1 = ANY (r.verbs)
+		)
+		SELECT u.id FROM users u
+		WHERE u.status = 'active' AND u.deleted_at IS NULL
+		  AND (u.id IN (SELECT principal_id FROM holding WHERE principal_kind = 'user')
+		    OR u.id IN (SELECT m.user_id FROM effective_group_members m
+		                JOIN holding h ON h.principal_kind = 'group' AND h.principal_id = m.group_id))
+		ORDER BY u.id`, string(verb))
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not read who holds "+string(verb)+".", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			return nil, errs.Wrap(errs.Internal, "Could not read who holds "+string(verb)+".", err)
+		}
+		out = append(out, userID)
+	}
+	return out, rows.Err()
+}
+
 // IsOwner reports whether userID is the app's owner of record (R-031).
 func (s *AuthzStore) IsOwner(ctx context.Context, appID, userID string) (bool, error) {
 	if userID == "" {

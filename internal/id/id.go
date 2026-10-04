@@ -44,6 +44,9 @@ const (
 	// AuditArchive is one archived month of the audit log (R-347).
 	AuditArchive Kind = "aar"
 
+	// Upgrade is one in-place upgrade of Pando itself (R-359).
+	Upgrade Kind = "upg"
+
 	// Adapter configs are prefixed by category, so a log line naming one says
 	// which kind of adapter it is (design 02 §2.5).
 	AdapterRuntime  Kind = "rt"

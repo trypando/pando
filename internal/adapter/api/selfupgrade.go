@@ -43,4 +43,8 @@ type SelfUpgrader interface {
 	// StartHelper starts the helper and returns its ID. Pando is stopped by
 	// the helper shortly after this returns.
 	StartHelper(ctx context.Context, spec HelperSpec) (string, error)
+
+	// RemoveHelpers removes helpers that have finished, once the Pando that
+	// started next has read what they recorded.
+	RemoveHelpers(ctx context.Context) error
 }

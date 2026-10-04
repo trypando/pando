@@ -1035,6 +1035,11 @@ const (
 	// NotifyDeployApproval: a deploy is waiting for somebody's approval, or
 	// a request somebody made was answered (R-159).
 	NotifyDeployApproval NotificationKind = "deploy_approval"
+	// NotifyUpdateAvailable: a newer Pando is released (R-362), once per
+	// version. NotifyUpgradeFailed: an in-place upgrade did not finish and
+	// the previous version was put back, or could not be (R-359).
+	NotifyUpdateAvailable NotificationKind = "update_available"
+	NotifyUpgradeFailed   NotificationKind = "upgrade_failed"
 )
 
 // NotifyAdapter delivers notifications.
