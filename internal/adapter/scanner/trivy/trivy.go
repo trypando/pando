@@ -28,12 +28,10 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
@@ -94,11 +92,11 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		a.config.TimeoutSeconds = 600
 	}
 
-	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
+	opts := []client.Opt{client.FromEnv}
 	if a.config.Host != "" {
 		opts = append(opts, client.WithHost(a.config.Host))
 	}
-	cli, err := client.NewClientWithOpts(opts...)
+	cli, err := client.New(opts...)
 	if err != nil {
 		return errs.Wrap(errs.AdapterUnavailable, "Could not reach the container runtime to scan with.", err)
 	}
@@ -110,7 +108,7 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 	if a.cli == nil {
 		return errs.New(errs.AdapterUnavailable, "The scanner is not configured.")
 	}
-	if _, err := a.cli.Ping(ctx); err != nil {
+	if _, err := a.cli.Ping(ctx, client.PingOptions{}); err != nil {
 		return errs.Wrap(errs.AdapterUnavailable, "The scanner cannot reach the container runtime.", err)
 	}
 	return nil
@@ -175,14 +173,14 @@ func (a *Adapter) scannerName() string {
 }
 
 func (a *Adapter) ensureCache(ctx context.Context) error {
-	_, err := a.cli.VolumeInspect(ctx, cacheVolume)
+	_, err := a.cli.VolumeInspect(ctx, cacheVolume, client.VolumeInspectOptions{})
 	if err == nil {
 		return nil
 	}
 	if !cerrdefs.IsNotFound(err) {
 		return errs.Wrap(errs.AdapterFailed, "Could not prepare the scanner's cache.", err)
 	}
-	if _, err := a.cli.VolumeCreate(ctx, volume.CreateOptions{Name: cacheVolume}); err != nil {
+	if _, err := a.cli.VolumeCreate(ctx, client.VolumeCreateOptions{Name: cacheVolume}); err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not prepare the scanner's cache.", err)
 	}
 	return nil
@@ -275,7 +273,7 @@ func (a *Adapter) ensureImage(ctx context.Context) error {
 		return nil
 	}
 
-	rc, err := a.cli.ImagePull(ctx, a.config.Image, image.PullOptions{})
+	rc, err := a.cli.ImagePull(ctx, a.config.Image, client.ImagePullOptions{})
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed,
 			"Could not fetch the scanner image "+a.config.Image+".", err).
@@ -306,15 +304,15 @@ func (a *Adapter) runWith(ctx context.Context, entrypoint, cmd []string, file co
 		return nil, err
 	}
 
-	created, err := a.cli.ContainerCreate(ctx,
-		&container.Config{
+	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
 			Image:        a.config.Image,
 			Entrypoint:   entrypoint,
 			Cmd:          cmd,
 			AttachStdout: true,
 			AttachStderr: true,
 		},
-		&container.HostConfig{
+		HostConfig: &container.HostConfig{
 			// The database cache, and nothing else of the host's. No socket, no
 			// app volume, no app network.
 			Mounts: []mount.Mount{{
@@ -323,13 +321,14 @@ func (a *Adapter) runWith(ctx context.Context, entrypoint, cmd []string, file co
 			AutoRemove:  false,
 			CapDrop:     []string{"ALL"},
 			SecurityOpt: []string{"no-new-privileges"},
-		}, nil, nil, "")
+		},
+	})
 	if err != nil {
 		return nil, errs.Wrap(errs.AdapterFailed, "Could not start the scanner.", err)
 	}
 	defer func() {
-		_ = a.cli.ContainerRemove(context.WithoutCancel(ctx), created.ID,
-			container.RemoveOptions{Force: true, RemoveVolumes: true})
+		_, _ = a.cli.ContainerRemove(context.WithoutCancel(ctx), created.ID,
+			client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 	}()
 
 	if file.body != nil {
@@ -337,17 +336,17 @@ func (a *Adapter) runWith(ctx context.Context, entrypoint, cmd []string, file co
 		if err != nil {
 			return nil, err
 		}
-		if err := a.cli.CopyToContainer(ctx, created.ID, "/", wrapped, container.CopyToContainerOptions{}); err != nil {
+		if _, err := a.cli.CopyToContainer(ctx, created.ID, client.CopyToContainerOptions{DestinationPath: "/", Content: wrapped}); err != nil {
 			return nil, errs.Wrap(errs.AdapterFailed, "Could not give the scanner the image to scan.", err)
 		}
 	}
 	if archive != nil {
-		if err := a.cli.CopyToContainer(ctx, created.ID, "/", archive, container.CopyToContainerOptions{}); err != nil {
+		if _, err := a.cli.CopyToContainer(ctx, created.ID, client.CopyToContainerOptions{DestinationPath: "/", Content: archive}); err != nil {
 			return nil, errs.Wrap(errs.AdapterFailed, "Could not give the scanner the source to scan.", err)
 		}
 	}
 
-	attached, err := a.cli.ContainerAttach(ctx, created.ID, container.AttachOptions{
+	attached, err := a.cli.ContainerAttach(ctx, created.ID, client.ContainerAttachOptions{
 		Stream: true, Stdout: true, Stderr: true,
 	})
 	if err != nil {
@@ -355,7 +354,7 @@ func (a *Adapter) runWith(ctx context.Context, entrypoint, cmd []string, file co
 	}
 	defer attached.Close()
 
-	if err := a.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+	if _, err := a.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return nil, errs.Wrap(errs.AdapterFailed, "Could not start the scanner.", err)
 	}
 
@@ -369,16 +368,16 @@ func (a *Adapter) runWith(ctx context.Context, entrypoint, cmd []string, file co
 		copyDone <- err
 	}()
 
-	waitC, errC := a.cli.ContainerWait(ctx, created.ID, container.WaitConditionNotRunning)
+	wait := a.cli.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 
 	if err := <-copyDone; err != nil {
 		return nil, errs.Wrap(errs.AdapterFailed, "Could not read the scanner's report.", err)
 	}
 
 	select {
-	case err := <-errC:
+	case err := <-wait.Error:
 		return nil, errs.Wrap(errs.AdapterFailed, "The scanner did not finish.", err)
-	case status := <-waitC:
+	case status := <-wait.Result:
 		if status.StatusCode != 0 {
 			return nil, errs.Newf(errs.AdapterFailed,
 				"The scanner exited with status %d: %s", status.StatusCode, tail(stderr.String()))

@@ -6,8 +6,7 @@ import (
 	"encoding/hex"
 	"strings"
 
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
+	"github.com/moby/moby/client"
 )
 
 // Pulled images are owned through tags, so that Docker does the counting.
@@ -91,10 +90,10 @@ func (a *Adapter) claimImage(ctx context.Context, ref string, claim imageClaim, 
 	}
 	repo := ownedRepo(ref)
 	if pulled {
-		_ = a.cli.ImageTag(ctx, ref, repo+":"+pulledMarker)
+		_, _ = a.cli.ImageTag(ctx, client.ImageTagOptions{Source: ref, Target: repo + ":" + pulledMarker})
 	}
 	if tag, ok := bundleTag(claim.Bundle); ok {
-		_ = a.cli.ImageTag(ctx, ref, repo+":"+tag)
+		_, _ = a.cli.ImageTag(ctx, client.ImageTagOptions{Source: ref, Target: repo + ":" + tag})
 	}
 }
 
@@ -105,20 +104,20 @@ func (a *Adapter) releaseImages(ctx context.Context, bundleID string) {
 	if !ok {
 		return
 	}
-	claimed, err := a.cli.ImageList(ctx, image.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("reference", pulledRepo+"/*:"+tag)),
+	claimed, err := a.cli.ImageList(ctx, client.ImageListOptions{
+		Filters: make(client.Filters).Add("reference", pulledRepo+"/*:"+tag),
 	})
 	if err != nil {
 		return
 	}
-	for _, img := range claimed {
+	for _, img := range claimed.Items {
 		for _, rt := range img.RepoTags {
 			rt = familiarRef(rt) // Podman reports "localhost/pando-pulled/…"
 			repo, t, found := strings.Cut(rt, ":")
 			if !found || t != tag || !strings.HasPrefix(repo, pulledRepo+"/") {
 				continue
 			}
-			if _, err := a.cli.ImageRemove(ctx, rt, image.RemoveOptions{}); err != nil {
+			if _, err := a.cli.ImageRemove(ctx, rt, client.ImageRemoveOptions{}); err != nil {
 				continue
 			}
 			a.removeIfUnclaimed(ctx, img.ID, repo)
@@ -138,11 +137,11 @@ func (a *Adapter) removeIfUnclaimed(ctx context.Context, imageID, repo string) {
 	}
 	// The marker first: if the image turns out to be in use, what is left is an
 	// image with no marker, which is never removed — the safe direction.
-	if _, err := a.cli.ImageRemove(ctx, repo+":"+pulledMarker, image.RemoveOptions{}); err != nil {
+	if _, err := a.cli.ImageRemove(ctx, repo+":"+pulledMarker, client.ImageRemoveOptions{}); err != nil {
 		return
 	}
 	for _, ref := range refs {
-		_, _ = a.cli.ImageRemove(ctx, ref, image.RemoveOptions{PruneChildren: true})
+		_, _ = a.cli.ImageRemove(ctx, ref, client.ImageRemoveOptions{PruneChildren: true})
 	}
 }
 

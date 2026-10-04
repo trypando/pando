@@ -158,11 +158,9 @@ sign, they do not encrypt.
 - **Dependency vulnerabilities.** `govulncheck` on every push and daily, Dependabot for Go modules,
   npm, GitHub Actions and Docker base images. Findings that are understood and accepted are listed,
   with the reasoning, in [`.github/govulncheck-allowlist.txt`](.github/govulncheck-allowlist.txt);
-  anything not in that file fails the build. Everything accepted today is the same finding wearing
-  six advisory numbers: Moby **daemon** vulnerabilities, with no fixed release, in code that the
-  client library Pando imports does not contain. That file also records the Dependabot alerts
-  dismissed for the same reason, so the reasoning is reviewable in the repository rather than only
-  in the Security tab.
+  anything not in that file fails the build. Nothing is accepted today. The file also records, as
+  comments, findings that need no entry because govulncheck reports them as not called, so the
+  reasoning is reviewable in the repository rather than only in the Security tab.
 - **Secret scanning.** `gitleaks` over the full history on every push, in addition to GitHub's own
   push protection.
 - **Dynamic analysis.** The whole test suite runs under the Go race detector. Native Go fuzzing

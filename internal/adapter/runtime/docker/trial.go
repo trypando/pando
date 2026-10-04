@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
@@ -48,7 +48,9 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 	if err != nil {
 		return api.TrialResult{}, err
 	}
-	defer func() { _ = a.cli.NetworkRemove(context.WithoutCancel(ctx), networkID) }()
+	defer func() {
+		_, _ = a.cli.NetworkRemove(context.WithoutCancel(ctx), networkID, client.NetworkRemoveOptions{})
+	}()
 
 	if err := a.ensureImage(ctx, req.Image, forTrial); err != nil {
 		return api.TrialResult{}, err
@@ -84,7 +86,7 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 }
 
 func (a *Adapter) trialNetwork(ctx context.Context, trialID string) (string, error) {
-	created, err := a.createNetwork(ctx, "pando-trial-"+trialID, network.CreateOptions{
+	created, err := a.createNetwork(ctx, "pando-trial-"+trialID, client.NetworkCreateOptions{
 		Driver:   "bridge",
 		Internal: false, // the app may legitimately need to fetch something to start
 		Labels:   map[string]string{labelManaged: "true", labelTrial: trialID},
@@ -102,8 +104,8 @@ func (a *Adapter) startTrialContainer(ctx context.Context, req api.TrialRequest,
 	}
 	sort.Strings(env)
 
-	created, err := a.cli.ContainerCreate(ctx,
-		&container.Config{
+	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
 			Image:      req.Image,
 			Cmd:        req.Command,
 			Entrypoint: req.Entrypoint,
@@ -111,7 +113,7 @@ func (a *Adapter) startTrialContainer(ctx context.Context, req api.TrialRequest,
 			Env:        env,
 			Labels:     map[string]string{labelManaged: "true", labelTrial: req.TrialID},
 		},
-		&container.HostConfig{
+		HostConfig: &container.HostConfig{
 			// Never restart. A trial that crashes has produced its result, and
 			// restarting would turn "this app needs a database" into a loop.
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
@@ -129,12 +131,13 @@ func (a *Adapter) startTrialContainer(ctx context.Context, req api.TrialRequest,
 			// #55) — and a trial leaves no anonymous volume behind.
 			Tmpfs: tmpfsFor(a.imageVolumes(ctx, req.Image)),
 		},
-		&network.NetworkingConfig{
+		NetworkingConfig: &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				networkID: {NetworkID: networkID},
 			},
 		},
-		nil, "pando-trial-"+req.TrialID)
+		Name: "pando-trial-" + req.TrialID,
+	})
 	if err != nil {
 		return "", errs.Wrap(errs.AdapterFailed, "Could not create the trial container.", err)
 	}
@@ -142,7 +145,7 @@ func (a *Adapter) startTrialContainer(ctx context.Context, req api.TrialRequest,
 		return "", err
 	}
 
-	if err := a.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+	if _, err := a.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		_ = a.removeContainer(context.WithoutCancel(ctx), created.ID)
 		return "", errs.Wrap(errs.AdapterFailed, "Could not start the trial container.", err)
 	}
@@ -166,7 +169,7 @@ func (a *Adapter) watch(ctx context.Context, id string, timeout time.Duration) a
 	defer cancel()
 
 	result := api.TrialResult{}
-	waitC, errC := a.cli.ContainerWait(deadline, id, container.WaitConditionNotRunning)
+	wait := a.cli.ContainerWait(deadline, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 
 	// The first tick is also the settle period: a container asked about the
 	// instant it starts can report "running" before its process has had a
@@ -176,13 +179,13 @@ func (a *Adapter) watch(ctx context.Context, id string, timeout time.Duration) a
 
 	for {
 		select {
-		case body := <-waitC:
+		case body := <-wait.Result:
 			code := int(body.StatusCode)
 			result.ExitCode = &code
 			result.Started = a.everStarted(ctx, id)
 			return result
 
-		case <-errC:
+		case <-wait.Error:
 			return result
 
 		case <-deadline.Done():
@@ -257,12 +260,12 @@ const portPollInterval = 2 * time.Second
 // is usually a bad image or command, the second is usually a missing dependency
 // (R-107). Reading StartedAt rather than Running keeps them apart after exit.
 func (a *Adapter) everStarted(ctx context.Context, id string) bool {
-	inspect, err := a.cli.ContainerInspect(ctx, id)
-	if err != nil || inspect.State == nil {
+	inspect, err := a.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil || inspect.Container.State == nil {
 		return false
 	}
-	return inspect.State.Running || (inspect.State.StartedAt != "" &&
-		!strings.HasPrefix(inspect.State.StartedAt, "0001-01-01"))
+	return inspect.Container.State.Running || (inspect.Container.State.StartedAt != "" &&
+		!strings.HasPrefix(inspect.Container.State.StartedAt, "0001-01-01"))
 }
 
 // observePorts reads the trial container's listening sockets (R-097).
@@ -280,35 +283,36 @@ func (a *Adapter) observePorts(ctx context.Context, targetID string) (routable, 
 		return nil, nil, false
 	}
 
-	created, err := a.cli.ContainerCreate(ctx,
-		&container.Config{
+	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
 			Image: trialImage,
 			Cmd:   []string{"sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null"},
 			Labels: map[string]string{
 				labelManaged: "true", labelTrial: "observer",
 			},
 		},
-		&container.HostConfig{
+		HostConfig: &container.HostConfig{
 			// Sharing the target's network namespace is the whole mechanism:
 			// the sidecar sees the app's sockets without the app's image
 			// needing anything in it. It shares nothing else — not the process
 			// namespace, not the filesystem.
 			NetworkMode:   container.NetworkMode("container:" + targetID),
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
-		}, nil, nil, "")
+		},
+	})
 	if err != nil {
 		return nil, nil, false
 	}
 	defer func() { _ = a.removeContainer(context.WithoutCancel(ctx), created.ID) }()
 
-	if err := a.cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
+	if _, err := a.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return nil, nil, false
 	}
 
-	wait, errC := a.cli.ContainerWait(ctx, created.ID, container.WaitConditionNotRunning)
+	wait := a.cli.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	select {
-	case <-wait:
-	case <-errC:
+	case <-wait.Result:
+	case <-wait.Error:
 		return nil, nil, false
 	case <-ctx.Done():
 		return nil, nil, false
@@ -413,13 +417,13 @@ func classifyAddress(hexAddr string) addrClass {
 // until the second deploy, then silently discards everything while reporting
 // healthy.
 func (a *Adapter) observeWrites(ctx context.Context, id string, declared []string) []string {
-	changes, err := a.cli.ContainerDiff(ctx, id)
+	changes, err := a.cli.ContainerDiff(ctx, id, client.ContainerDiffOptions{})
 	if err != nil {
 		return nil
 	}
 
 	dirs := map[string]bool{}
-	for _, change := range changes {
+	for _, change := range changes.Changes {
 		p := change.Path
 		if isExpectedWrite(p) || underAny(p, declared) {
 			continue
@@ -489,7 +493,7 @@ func underAny(p string, prefixes []string) bool {
 
 // trialLogs reads a container's output, combined and demultiplexed.
 func (a *Adapter) trialLogs(ctx context.Context, id string) string {
-	rc, err := a.cli.ContainerLogs(ctx, id, container.LogsOptions{
+	rc, err := a.cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{
 		ShowStdout: true, ShowStderr: true, Tail: strconv.Itoa(trialLogLines),
 	})
 	if err != nil {
@@ -541,23 +545,23 @@ func demultiplex(raw []byte) string {
 // Called at startup: a trial interrupted by Pando restarting would otherwise
 // leave a running copy of someone's app with nothing tracking it.
 func (a *Adapter) CleanupTrials(ctx context.Context) error {
-	containers, err := a.cli.ContainerList(ctx, container.ListOptions{
+	containers, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", labelTrial)),
+		Filters: make(client.Filters).Add("label", labelTrial),
 	})
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not list leftover trial containers.", err)
 	}
-	for _, c := range containers {
+	for _, c := range containers.Items {
 		_ = a.removeContainer(ctx, c.ID)
 	}
 
-	networks, err := a.cli.NetworkList(ctx, network.ListOptions{Filters: filters.NewArgs(filters.Arg("label", labelTrial))})
+	networks, err := a.cli.NetworkList(ctx, client.NetworkListOptions{Filters: make(client.Filters).Add("label", labelTrial)})
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not list leftover trial networks.", err)
 	}
-	for _, n := range networks {
-		_ = a.cli.NetworkRemove(ctx, n.ID)
+	for _, n := range networks.Items {
+		_, _ = a.cli.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{})
 	}
 	return nil
 }

@@ -7,10 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
@@ -30,22 +28,22 @@ const volumeSizesFor = time.Minute
 // parts the app has. A stopped container reports no CPU or memory, only the
 // disk it wrote.
 func (a *Adapter) Usage(ctx context.Context, ref api.BundleRef) (api.BundleUsage, error) {
-	containers, err := a.cli.ContainerList(ctx, container.ListOptions{
+	listed, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", labelBundle+"="+ref.BundleID)),
+		Filters: make(client.Filters).Add("label", labelBundle+"="+ref.BundleID),
 	})
 	if err != nil {
 		return api.BundleUsage{}, errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
 	}
 
 	// The egress gateway is Pando's, not one of the app's workloads (egress.go).
-	workloads := containers[:0]
-	for _, c := range containers {
+	workloads := listed.Items[:0]
+	for _, c := range listed.Items {
 		if !isGateway(c.Labels) {
 			workloads = append(workloads, c)
 		}
 	}
-	containers = workloads
+	containers := workloads
 
 	out := api.BundleUsage{Reported: time.Now().UTC(), Workloads: make([]api.WorkloadUsage, len(containers))}
 	var wg sync.WaitGroup
@@ -58,12 +56,12 @@ func (a *Adapter) Usage(ctx context.Context, ref api.BundleRef) (api.BundleUsage
 	}
 	wg.Wait()
 
-	vols, err := a.cli.VolumeList(ctx, volume.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", labelBundle+"="+ref.BundleID)),
+	vols, err := a.cli.VolumeList(ctx, client.VolumeListOptions{
+		Filters: make(client.Filters).Add("label", labelBundle+"="+ref.BundleID),
 	})
 	if err == nil {
 		sizes := a.volumeSizes(ctx)
-		for _, v := range vols.Volumes {
+		for _, v := range vols.Items {
 			size, known := sizes[v.Name]
 			if !known {
 				size = -1
@@ -81,8 +79,8 @@ func (a *Adapter) Usage(ctx context.Context, ref api.BundleRef) (api.BundleUsage
 // report the same sum, as they report the same machine. Read in parallel, so
 // it takes about a second however many there are.
 func (a *Adapter) InUse(ctx context.Context) (api.InUse, error) {
-	containers, err := a.cli.ContainerList(ctx, container.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", labelBundle), filters.Arg("status", "running")),
+	containers, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
+		Filters: make(client.Filters).Add("label", labelBundle).Add("status", "running"),
 	})
 	if err != nil {
 		return api.InUse{}, errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
@@ -93,7 +91,7 @@ func (a *Adapter) InUse(ctx context.Context) (api.InUse, error) {
 		wg  sync.WaitGroup
 		out = api.InUse{Reported: time.Now().UTC()}
 	)
-	for _, c := range containers {
+	for _, c := range containers.Items {
 		// The egress gateway is Pando's own, and a trial run is not an app yet.
 		if isGateway(c.Labels) || c.Labels[labelTrial] != "" {
 			continue
@@ -117,10 +115,11 @@ func (a *Adapter) workloadUsage(ctx context.Context, id, name string) api.Worklo
 
 	// With sizes: SizeRw is what the container wrote to its own layer, which
 	// is the disk it uses outside its volumes.
-	inspect, _, err := a.cli.ContainerInspectWithRaw(ctx, id, true)
+	res, err := a.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{Size: true})
 	if err != nil {
 		return u
 	}
+	inspect := res.Container
 	u.Running = inspect.State != nil && inspect.State.Running
 	if inspect.SizeRw != nil {
 		u.DiskBytes = *inspect.SizeRw
@@ -188,7 +187,10 @@ func cpuMillisBetween(first, second container.StatsResponse) int {
 const statsSampleGap = time.Second
 
 func (a *Adapter) readStats(ctx context.Context, id string) (container.StatsResponse, bool) {
-	stats, err := a.cli.ContainerStats(ctx, id, false)
+	// One reading, with the daemon's previous sample to diff against. Without
+	// IncludePreviousSample the client asks for one-shot, which leaves PreCPUStats
+	// empty on Docker too and sends every reading down the Podman path above.
+	stats, err := a.cli.ContainerStats(ctx, id, client.ContainerStatsOptions{IncludePreviousSample: true})
 	if err != nil {
 		return container.StatsResponse{}, false
 	}
@@ -244,13 +246,15 @@ func (a *Adapter) volumeSizes(ctx context.Context) map[string]int64 {
 	if a.volumeSizesAt.After(time.Now().Add(-volumeSizesFor)) {
 		return a.volumeSizesCache
 	}
-	du, err := a.cli.DiskUsage(ctx, types.DiskUsageOptions{Types: []types.DiskUsageObject{types.VolumeObject}})
+	// Verbose, because from API 1.52 the per-volume list comes back only when
+	// asked for; without it every volume read as an unknown size.
+	du, err := a.cli.DiskUsage(ctx, client.DiskUsageOptions{Volumes: true, Verbose: true})
 	if err != nil {
 		return a.volumeSizesCache
 	}
 	sizes := map[string]int64{}
-	for _, v := range du.Volumes {
-		if v != nil && v.UsageData != nil && v.UsageData.Size >= 0 {
+	for _, v := range du.Volumes.Items {
+		if v.UsageData != nil && v.UsageData.Size >= 0 {
 			sizes[v.Name] = v.UsageData.Size
 		}
 	}
