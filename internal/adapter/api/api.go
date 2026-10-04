@@ -75,6 +75,13 @@ type RuntimeCapabilities struct {
 	// than a failure after the build has already run.
 	SupportsImageImport bool
 
+	// SupportsSelfUpgrade means this runtime runs Pando itself and can start
+	// the helper that replaces it (R-355, R-359): the adapter implements
+	// SelfUpgrader. Data, never a type assertion (R-254), so the Updates
+	// screen can say why an in-place upgrade is not possible rather than
+	// discovering it halfway.
+	SupportsSelfUpgrade bool
+
 	// MaxWorkloadsPerBundle is 0 for unlimited.
 	MaxWorkloadsPerBundle int
 
