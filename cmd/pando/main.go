@@ -124,6 +124,7 @@ func rootCmd() *cobra.Command {
 	// Pando's own image, never by a person (R-187).
 	root.AddCommand(egressGatewayCmd())
 	root.AddCommand(upgradeHelperCmd())
+	root.AddCommand(cli.SelfUpdateCmd())
 
 	// The client half (design 04 §4). In the same binary because Pando ships as
 	// one, and a client of the API like any other (R-261) — internal/cli
