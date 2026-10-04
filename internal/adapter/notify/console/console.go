@@ -117,7 +117,7 @@ func Info() api.KindInfo {
 		Description: "Shows notifications in the console.",
 		IDPrefix:    "ntf_",
 		Fields: []api.Field{
-			{Key: "retain_days", Label: "Keep for", Type: "int", Help: "Days a notification is kept.", Default: "30"},
+			{Key: "retain_days", Label: "Keep for", Type: "int", Help: "Days a notification is kept.", Default: "30", Advanced: true},
 		},
 	}
 }

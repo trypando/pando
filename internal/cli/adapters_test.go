@@ -40,3 +40,31 @@ func TestAnAdapterCanBeAddedFromTheCLI(t *testing.T) {
 	require.ErrorContains(t, run(t, api, "", "adapter", "add", "ai/openai").err, "no ai adapter")
 	require.ErrorContains(t, run(t, api, "\n", "adapter", "add", "ai/anthropic", "--set", "timeout_seconds=soon").err, "whole number")
 }
+
+var trivyKind = map[string]any{"kinds": []map[string]any{{
+	"category": "scanner", "kind": "trivy", "name": "Trivy", "id_prefix": "scan_",
+	"fields": []map[string]any{
+		{"key": "severity", "label": "Severity", "type": "string"},
+		{"key": "timeout_seconds", "label": "Timeout", "type": "int", "default": "600", "advanced": true},
+	},
+}}}
+
+// R-261: advanced settings stay available from the CLI. They take --set like
+// any other, `adapter kinds` lists them apart, and help for a named kind
+// lists them under their own heading with their defaults (issue #85).
+func TestR261_AdvancedSettingsAreListedApartAndStillSet(t *testing.T) {
+	api := newAPI(t).reply("GET /adapters/kinds", trivyKind)
+
+	kinds := run(t, api, "", "adapter", "kinds")
+	require.NoError(t, kinds.err, kinds.errOut)
+	require.Contains(t, kinds.out, "ADVANCED")
+	require.Regexp(t, `scanner/trivy\s+severity\s+timeout_seconds`, kinds.out)
+
+	help := run(t, api, "", "adapter", "add", "scanner/trivy", "--help")
+	require.NoError(t, help.err, help.errOut)
+	require.Regexp(t, `(?s)Settings, each --set KEY=VALUE:\s+severity.*Advanced settings.*:\s+timeout_seconds\s+Timeout \(default: 600\)`, help.out)
+
+	got := run(t, api, "", "adapter", "add", "scanner/trivy", "--set", "timeout_seconds=900")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, api.bodyFor("POST /adapters"), `"config":{"timeout_seconds":900}`)
+}

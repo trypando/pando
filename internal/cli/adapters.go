@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -46,9 +47,9 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "KIND\tSETTINGS\tWHAT IT IS")
+			fmt.Fprintln(w, "KIND\tSETTINGS\tADVANCED\tWHAT IT IS")
 			for _, k := range kinds {
-				var keys []string
+				var basic, advanced []string
 				for _, f := range k.Fields {
 					key := f.Key
 					if f.Credential {
@@ -57,12 +58,17 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 					if f.Required {
 						key += "*"
 					}
-					keys = append(keys, key)
+					if f.Advanced {
+						advanced = append(advanced, key)
+					} else {
+						basic = append(basic, key)
+					}
 				}
-				fmt.Fprintf(w, "%s/%s\t%s\t%s\n", k.Category, k.Kind, strings.Join(keys, ", "), k.Description)
+				fmt.Fprintf(w, "%s/%s\t%s\t%s\t%s\n", k.Category, k.Kind, orDash(basic), orDash(advanced), k.Description)
 			}
 			_ = w.Flush()
-			fmt.Fprintln(cmd.OutOrStdout(), "\n* required. A secret setting is asked for when you add the adapter, not typed on the command line.")
+			fmt.Fprintln(cmd.OutOrStdout(), "\n* required. A secret setting is asked for when you add the adapter, not typed on the command line.\n"+
+				"Advanced settings have defaults most installations keep. `pando adapter add <category>/<kind> --help` lists each one's.")
 			return nil
 		},
 	})
@@ -77,6 +83,8 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 			"a secret setting such as an API key is asked for without echoing it, so it never lands in\n" +
 			"your shell history (piped in when stdin is not a terminal). Adding with an existing --id\n" +
 			"changes that adapter. Pando loads adapters at startup: restart it afterwards.\n\n" +
+			"With a kind named, --help lists its settings and their defaults, the advanced ones under\n" +
+			"their own heading. Advanced settings take --set like any other.\n\n" +
 			"  pando adapter add ai/anthropic --set model=claude-sonnet-5",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -180,8 +188,81 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 	add.Flags().StringVar(&name, "name", "", "what the console calls it (default: the kind's name)")
 	add.Flags().StringArrayVar(&set, "set", nil, "a setting, KEY=VALUE; repeat for more")
 	add.Flags().BoolVar(&isDefault, "default", true, "make it the default adapter of its category")
+
+	// Help for a named kind lists its settings after the flags, the basic ones
+	// first and the advanced ones under their own heading, each with its
+	// default. The settings come from the server, so without one this is the
+	// ordinary help.
+	usage := add.HelpFunc()
+	add.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		usage(cmd, args)
+		named := cmd.Flags().Args()
+		if len(named) == 0 {
+			return
+		}
+		category, kind, _ := strings.Cut(named[0], "/")
+		c, err := client()
+		if err != nil {
+			return
+		}
+		kinds, err := adapterKinds(c)
+		if err != nil {
+			return
+		}
+		for i := range kinds {
+			if kinds[i].Category == category && kinds[i].Kind == kind {
+				printSettings(cmd.OutOrStdout(), &kinds[i])
+			}
+		}
+	})
 	cmd.AddCommand(add)
 	return cmd
+}
+
+// printSettings lists a kind's settings for `pando adapter add <kind> --help`.
+func printSettings(out io.Writer, k *kindInfo) {
+	section := func(title string, advanced bool) {
+		var rows []string
+		for _, f := range k.Fields {
+			if f.Advanced != advanced {
+				continue
+			}
+			var notes []string
+			switch {
+			case f.Credential:
+				notes = append(notes, "secret, asked for when you add it")
+			case f.Required:
+				notes = append(notes, "required")
+			}
+			if f.Default != "" {
+				notes = append(notes, "default: "+f.Default)
+			}
+			row := "  " + f.Key + "\t" + f.Label
+			if len(notes) > 0 {
+				row += " (" + strings.Join(notes, "; ") + ")"
+			}
+			rows = append(rows, row)
+		}
+		if len(rows) == 0 {
+			return
+		}
+		fmt.Fprintf(out, "\n%s:\n", title)
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		for _, r := range rows {
+			fmt.Fprintln(w, r)
+		}
+		_ = w.Flush()
+	}
+	fmt.Fprintf(out, "\n%s/%s: %s\n", k.Category, k.Kind, k.Name)
+	section("Settings, each --set KEY=VALUE", false)
+	section("Advanced settings, each left at its default unless set", true)
+}
+
+func orDash(keys []string) string {
+	if len(keys) == 0 {
+		return "-"
+	}
+	return strings.Join(keys, ", ")
 }
 
 type kindInfo struct {
@@ -196,6 +277,8 @@ type kindInfo struct {
 		Type       string `json:"type"`
 		Required   bool   `json:"required"`
 		Credential bool   `json:"credential"`
+		Advanced   bool   `json:"advanced"`
+		Default    string `json:"default"`
 	} `json:"fields"`
 }
 

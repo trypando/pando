@@ -37,6 +37,20 @@ export interface KindField {
   multiline?: boolean;
   /** Shown only while another setting has one of these values. */
   shown_when?: { key: string; values: string[] };
+  /** A setting most people never change, asked for under "Advanced
+   *  settings". Never required, and always with a default. */
+  advanced?: boolean;
+}
+
+/** Whether any advanced setting is set to something other than its default,
+ *  so a form opens them rather than hiding what is configured. */
+export function advancedChanged(kind: AdapterKind, values: Record<string, string | boolean>): boolean {
+  return (kind.fields ?? []).some((f) => {
+    if (!f.advanced || !(f.key in values)) return false;
+    if (f.type === 'bool') return boolValue(f, values[f.key]) !== (f.default === 'true');
+    const text = String(values[f.key]).trim();
+    return text !== '' && text !== f.default;
+  });
 }
 
 /** A bool setting as it stands: what was set, or the kind's default. */

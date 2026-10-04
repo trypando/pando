@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   adapterRequest,
+  advancedChanged,
   blankForm,
   boolValue,
   categoryLabel,
@@ -182,5 +183,31 @@ describe('settings that depend on others', () => {
     const form = { ...blankForm(traefik, true), values: { certificates: 'dns', dns_provider: ' ovh ' } };
     expect(adapterRequest(traefik, form).config.dns_provider).toBe('ovh');
     expect(effectiveText(field('certificates'), undefined)).toBe('none');
+  });
+});
+
+describe('advanced settings', () => {
+  const scanner: AdapterKind = {
+    ...trivy,
+    fields: [
+      { key: 'timeout_seconds', label: 'Timeout', type: 'int', default: '600', advanced: true },
+      { key: 'offline', label: 'Offline', type: 'bool', advanced: true },
+      { key: 'note', label: 'Note', type: 'string' },
+    ],
+  };
+
+  it('opens them when one is set to something other than its default', () => {
+    expect(advancedChanged(scanner, {})).toBe(false);
+    expect(advancedChanged(scanner, { timeout_seconds: '600', note: 'x' })).toBe(false);
+    expect(advancedChanged(scanner, { timeout_seconds: ' ' })).toBe(false);
+    expect(advancedChanged(scanner, { timeout_seconds: '900' })).toBe(true);
+    expect(advancedChanged(scanner, { offline: false })).toBe(false);
+    expect(advancedChanged(scanner, { offline: true })).toBe(true);
+  });
+
+  it('can be left empty: a kind is added from its basic settings alone', () => {
+    const form = blankForm(scanner, true);
+    expect(formProblems(scanner, form)).toEqual({});
+    expect(adapterRequest(scanner, form).config).toEqual({});
   });
 });

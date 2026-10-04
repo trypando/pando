@@ -403,7 +403,7 @@ func Info() api.KindInfo {
 		Description: "Builds images from source in an isolated BuildKit daemon.",
 		IDPrefix:    "bld_",
 		Fields: []api.Field{
-			{Key: "address", Label: "BuildKit address", Type: "string", Help: "Where the BuildKit daemon listens. PANDO_BUILDKIT_ADDRESS is used when this is empty.", Default: "tcp://buildkit:1234"},
+			{Key: "address", Label: "BuildKit address", Type: "string", Help: "Where the BuildKit daemon listens. PANDO_BUILDKIT_ADDRESS is used when this is empty.", Default: "tcp://buildkit:1234", Advanced: true},
 		},
 	}
 }

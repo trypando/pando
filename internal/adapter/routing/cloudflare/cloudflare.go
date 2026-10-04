@@ -563,10 +563,10 @@ func Info() api.KindInfo {
 			{Key: "console_hostname", Label: "Console hostname", Type: "string",
 				Help: "Where the console is served, and the hostname apps on a path are served under. Empty is the zone itself.", Placeholder: "pando.example.com"},
 			{Key: "tunnel_id", Label: "Existing tunnel", Type: "string",
-				Help:        "Leave empty and Pando creates a tunnel of its own. Or give a tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
-				Placeholder: "6ff42ae2-765d-4adf-8112-31c55c1551ef"},
+				Help:    "Leave empty and Pando creates a tunnel of its own. Or give a tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
+				Default: "A tunnel of Pando's own", Placeholder: "6ff42ae2-765d-4adf-8112-31c55c1551ef", Advanced: true},
 			{Key: "image", Label: "cloudflared image", Type: "string", Default: DefaultImage,
-				Help: "Set to run a different cloudflared release than this Pando ships with."},
+				Help: "Set to run a different cloudflared release than this Pando ships with.", Advanced: true},
 		},
 	}
 }
