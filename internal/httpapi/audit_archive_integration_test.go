@@ -36,6 +36,18 @@ func TestR347_AnArchivedMonthIsListedAndDownloadedThroughTheAPI(t *testing.T) {
 	i := newInstall(t)
 	admin := i.admin()
 
+	// Before anything is archived, or on an install wired without archives,
+	// the list is empty rather than an error, and no ID finds anything.
+	var none struct {
+		Archives []audit.ArchiveRecord `json:"archives"`
+	}
+	empty := i.do(admin, http.MethodGet, "/audit/archives", nil)
+	require.Equal(t, http.StatusOK, empty.Code, empty.String())
+	empty.JSON(t, &none)
+	require.NotNil(t, none.Archives)
+	require.Empty(t, none.Archives)
+	require.Equal(t, http.StatusNotFound, i.do(admin, http.MethodGet, "/audit/archives/aar_01HQ8ZZZZZZZZZZZZZZZZZZZZZ", nil).Code)
+
 	owner, err := pgx.Connect(ctx, i.ownerURL)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = owner.Close(ctx) })
@@ -109,6 +121,8 @@ func TestR347_AnArchivedMonthIsListedAndDownloadedThroughTheAPI(t *testing.T) {
 
 	missing := i.do(admin, http.MethodGet, "/audit/archives/aar_01HQ8ZZZZZZZZZZZZZZZZZZZZZ", nil)
 	require.Equal(t, http.StatusNotFound, missing.Code, missing.String())
+	malformed := i.do(admin, http.MethodGet, "/audit/archives/not-an-archive", nil)
+	require.Equal(t, http.StatusNotFound, malformed.Code, malformed.String())
 }
 
 func jsonString(s string) string {

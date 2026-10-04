@@ -88,6 +88,9 @@ func TestR347_AnArchiveIsCheckedAgainstItsManifest(t *testing.T) {
 	st.put(rec.ObjectName, good)
 	require.NoError(t, audit.Verify(ctx, st, rec), "a whole archive verifies")
 
+	err := audit.Verify(ctx, newMemStore(), rec)
+	require.Equal(t, errs.NotFound, errs.CodeOf(err), "an archive that is not there is not there")
+
 	for name, tc := range map[string]struct {
 		bytes []byte
 		rec   audit.ArchiveRecord
@@ -107,6 +110,10 @@ func TestR347_AnArchiveIsCheckedAgainstItsManifest(t *testing.T) {
 			rec:   rec, says: "out of order",
 		},
 		"not gzip": {bytes: []byte("plain text\n"), rec: rec, says: "not a gzip file"},
+		"not audit events": {
+			bytes: func() []byte { b, _ := archiveOf(t, "plain text", "more", "text"); return b }(),
+			rec:   rec, says: "line 1 is not an audit event",
+		},
 		"a different digest recorded": {
 			bytes: good,
 			rec:   func() audit.ArchiveRecord { r := rec; r.SHA256 = "00" + r.SHA256[2:]; return r }(),

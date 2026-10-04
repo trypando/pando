@@ -140,9 +140,6 @@ type ArchiveRecord struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// Kept reports whether Pando keeps this archive itself.
-func (r ArchiveRecord) Kept() bool { return r.AdapterRef == "" }
-
 // ManifestName is the manifest's object name beside an archive.
 func ManifestName(objectName string) string { return objectName + ".manifest.json" }
 
@@ -398,46 +395,34 @@ func (a *Archiver) write(ctx context.Context, tx pgx.Tx, st Store, rec *ArchiveR
 		return errs.Wrap(errs.Internal, fmt.Sprintf("Pando could not write the audit archive for %s.", rec.Month), err)
 	}
 
-	w, err := st.Writer(ctx, rec.ObjectName)
-	if err != nil {
-		return failed(err)
-	}
 	digest := sha256.New()
 	size := &counter{}
-	gz := gzip.NewWriter(io.MultiWriter(w, digest, size))
-
-	rows, err := tx.Query(ctx, `
-		SELECT row_to_json(e)::text FROM audit_events e
-		WHERE occurred_at >= $1 AND occurred_at < $2 ORDER BY id`, lo, hi)
-	if err != nil {
-		_ = w.Close()
-		return failed(err)
-	}
 	var written int64
-	for rows.Next() {
-		var line string
-		if err := rows.Scan(&line); err != nil {
-			rows.Close()
-			_ = w.Close()
-			return failed(err)
+	err := writeObject(ctx, st, rec.ObjectName, func(w io.Writer) error {
+		gz := gzip.NewWriter(io.MultiWriter(w, digest, size))
+		rows, err := tx.Query(ctx, `
+			SELECT row_to_json(e)::text FROM audit_events e
+			WHERE occurred_at >= $1 AND occurred_at < $2 ORDER BY id`, lo, hi)
+		if err != nil {
+			return err
 		}
-		if _, err := io.WriteString(gz, line+"\n"); err != nil {
-			rows.Close()
-			_ = w.Close()
-			return failed(err)
+		defer rows.Close()
+		for rows.Next() {
+			var line string
+			if err := rows.Scan(&line); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(gz, line+"\n"); err != nil {
+				return err
+			}
+			written++
 		}
-		written++
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		_ = w.Close()
-		return failed(err)
-	}
-	if err := gz.Close(); err != nil {
-		_ = w.Close()
-		return failed(err)
-	}
-	if err := w.Close(); err != nil {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return gz.Close()
+	})
+	if err != nil {
 		return failed(err)
 	}
 	if written != rec.RowCount {
@@ -447,21 +432,31 @@ func (a *Archiver) write(ctx context.Context, tx pgx.Tx, st Store, rec *ArchiveR
 	rec.SHA256 = hex.EncodeToString(digest.Sum(nil))
 
 	manifest, err := json.MarshalIndent(rec, "", "  ")
+	if err == nil {
+		err = writeObject(ctx, st, ManifestName(rec.ObjectName), func(w io.Writer) error {
+			_, err := w.Write(append(manifest, '\n'))
+			return err
+		})
+	}
 	if err != nil {
-		return failed(err)
-	}
-	mw, err := st.Writer(ctx, ManifestName(rec.ObjectName))
-	if err != nil {
-		return failed(err)
-	}
-	if _, err := mw.Write(append(manifest, '\n')); err != nil {
-		_ = mw.Close()
-		return failed(err)
-	}
-	if err := mw.Close(); err != nil {
 		return failed(err)
 	}
 	return nil
+}
+
+// writeObject writes one object with fill, and closes it whether or not fill
+// succeeded: a store that writes atomically keeps nothing that was not closed
+// cleanly after a whole write.
+func writeObject(ctx context.Context, st Store, name string, fill func(io.Writer) error) error {
+	w, err := st.Writer(ctx, name)
+	if err != nil {
+		return err
+	}
+	if err := fill(w); err != nil {
+		_ = w.Close()
+		return err
+	}
+	return w.Close()
 }
 
 // Verify reads an archive back and checks it against its record: the stored

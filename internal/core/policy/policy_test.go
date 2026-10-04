@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/spec"
@@ -286,4 +287,31 @@ func TestR076_PublicSharingIsAllowedPasscodeOnlyOrNone(t *testing.T) {
 	require.ErrorContains(t, err, "allowed, passcode_only or none")
 	_, err = policy.NewOverlay([]policy.Setting{{Key: "public_sharing", Value: "passcode_only"}})
 	require.NoError(t, err)
+}
+
+// TestR348_PolicyRefusesRetentionUnderTheFloor asserts R-348 where an
+// administrator types it: fewer than three months, a mode that is not one,
+// and a destination that nothing would be sent to are each refused, saying
+// what to use instead. What the archiver reads is what was saved.
+func TestR348_PolicyRefusesRetentionUnderTheFloor(t *testing.T) {
+	for _, ok := range []policy.Document{
+		{},
+		{AuditRetentionMonths: 3},
+		{AuditRetentionMonths: 24, AuditArchive: audit.ArchiveExport, AuditArchiveDestination: "bk_s3"},
+		{AuditArchive: audit.ArchiveOff},
+	} {
+		require.NoError(t, ok.ValidateRules(), "%+v", ok)
+	}
+
+	err := policy.Document{AuditRetentionMonths: 1}.ValidateRules()
+	require.ErrorContains(t, err, "at least 3 months")
+	err = policy.Document{AuditRetentionMonths: -2}.ValidateRules()
+	require.ErrorContains(t, err, "at least 3 months")
+	err = policy.Document{AuditArchive: "shred"}.ValidateRules()
+	require.ErrorContains(t, err, "keep, export or off")
+	err = policy.Document{AuditArchive: audit.ArchiveKeep, AuditArchiveDestination: "bk_s3"}.ValidateRules()
+	require.ErrorContains(t, err, "set audit_archive to export")
+
+	got := policy.Document{AuditRetentionMonths: 6, AuditArchive: audit.ArchiveExport, AuditArchiveDestination: "bk_s3"}.AuditRetention()
+	require.Equal(t, audit.Retention{Months: 6, Archive: audit.ArchiveExport, Destination: "bk_s3"}, got)
 }
