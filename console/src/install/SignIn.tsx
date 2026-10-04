@@ -18,6 +18,7 @@ import { Quiet, Screen, refusal } from './Accounts';
 import { FieldInput } from './AdapterDialog';
 import { isShown } from './adapters';
 import { LineSkeleton, Loading } from '../ui/Loading';
+import { Term } from '../ui/Term';
 import {
   groupsText,
   outcomeText,
@@ -324,15 +325,6 @@ function ProviderCard({
         />
       )}
     </Card>
-  );
-}
-
-function Term({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <>
-      <dt style={{ font: 'var(--type-label)', color: 'var(--ink)' }}>{label}</dt>
-      <dd style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>{children}</dd>
-    </>
   );
 }
 

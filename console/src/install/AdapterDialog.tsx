@@ -12,6 +12,7 @@ import { Banner, Button, Checkbox, Dialog, Input, Radio, Select } from '@design'
 
 import { api } from '@api/client';
 import { Quiet, refusal } from './Accounts';
+import { Term } from '../ui/Term';
 import { FieldSkeleton, Loading } from '../ui/Loading';
 import { Disclosure } from '../ui/Disclosure';
 import {
@@ -212,14 +213,24 @@ export function AdapterDialog({
           </Quiet>
         ) : (
           <>
+            {/* Changing an adapter, its category, kind and ID are fixed: a
+                different kind or ID would be a different adapter, and is added
+                as one. So they are stated, not offered as fields. */}
+            {existing ? (
+              <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: 'var(--space-2) var(--space-4)', margin: 0 }}>
+                <Term label="Category">{categoryLabel(existing.category)}</Term>
+                <Term label="Adapter">{kind?.name ?? existing.kind}</Term>
+                <Term label="ID">
+                  <code style={{ font: 'var(--type-code)' }}>{existing.id}</code>
+                </Term>
+              </dl>
+            ) : (
+            <>
             {/* Category first, then the adapter within it: the question someone
-                arrives with is "I need a builder", not a list of every kind. Both
-                fixed when changing: a different kind under the same ID would be
-                a different adapter, and is added as one. */}
+                arrives with is "I need a builder", not a list of every kind. */}
             <div>
               <Select
                 label="Category"
-                disabled={Boolean(existing)}
                 value={category}
                 options={[
                   ...(category ? [] : [{ value: '', label: 'Choose a category' }]),
@@ -242,7 +253,6 @@ export function AdapterDialog({
               <div>
                 <Select
                   label="Adapter"
-                  disabled={Boolean(existing)}
                   value={chosen}
                   options={[
                     ...(chosen ? [] : [{ value: '', label: 'Choose an adapter' }]),
@@ -261,6 +271,8 @@ export function AdapterDialog({
                 )}
               </div>
             )}
+            </>
+            )}
 
             {kind && form && (
               <>
@@ -271,17 +283,16 @@ export function AdapterDialog({
                   </Banner>
                 )}
 
-                <Input
-                  label="ID"
-                  mono
-                  // Fixed when changing: saving under another ID adds a second
-                  // adapter rather than renaming this one.
-                  disabled={Boolean(existing)}
-                  value={form.id}
-                  helper="How specs and the CLI refer to this adapter. It can't be changed later."
-                  error={shown('id')}
-                  onChange={(e) => edit({ id: e.target.value })}
-                />
+                {!existing && (
+                  <Input
+                    label="ID"
+                    mono
+                    value={form.id}
+                    helper="How specs and the CLI refer to this adapter. It can't be changed later."
+                    error={shown('id')}
+                    onChange={(e) => edit({ id: e.target.value })}
+                  />
+                )}
                 <Input label="Name" value={form.name} onChange={(e) => edit({ name: e.target.value })} />
 
                 {basic.map(fieldInput)}
