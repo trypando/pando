@@ -464,6 +464,34 @@ Lists what was done on this installation, newest first. The filters combine.
 | `--target-kind` |  | what kind of thing it was done to, e.g. user, role, app |
 | `--until` |  | up to this time, or this long ago |
 
+#### `audit archives`
+
+List the months of the audit log archived past retention
+
+```
+pando audit archives
+```
+
+Months older than host policy's audit_retention_months are archived, checked, and removed
+from the live log, so `pando audit` no longer finds them. This lists the archives; download
+one with `pando audit archives download <id>`.
+
+##### `audit archives download`
+
+Download one archived month, checking it against its digest
+
+```
+pando audit archives download <archive-id>
+```
+
+Saves the archive — gzipped JSON lines, one audit event per line — to --output, or to
+audit-<month>.jsonl.gz in the current directory. The SHA-256 is checked against the archive's
+manifest as it arrives, and a file that does not match is removed rather than kept.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `-o`, `--output` |  | where to save it; - writes to standard output |
+
 ### `backup`
 
 Back up and restore this installation

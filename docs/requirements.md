@@ -751,6 +751,10 @@ without touching core (O-6 resolved).
 
 **R-229 [P]** Actions taken by a delegated token are recorded under the owning user, annotated with the token. Actions by an account-level token are recorded under the token's own name (R-060).
 
+**R-347 [D]** **The live audit log is bounded in time, and nothing leaves it unarchived.** A calendar month past the retention period is written out as a compressed archive with a manifest — row count, first and last event, time range, size and SHA-256 — read back and checked against it, recorded, and only then removed from the live log. The removal is itself an audit event naming the month, the row count and the digest. Archives are kept by Pando under its own data directory or exported to a backup destination (R-217), as host policy says, and can be listed and downloaded through the API (R-261). Turning archiving off archives nothing and so removes nothing. This is R-224 applied to the one log that had no bound; it does not loosen R-027 or R-226: the role serving traffic still cannot update or delete an audit event, and removal is done by a separate role that can do nothing else. Archives carry what the rows carry, which never includes a secret value (R-194).
+
+**R-348 [P]** Default retention is **three months**, which is also the **floor**: host policy may lengthen it and may not shorten it, and the function that removes a month refuses one that ended less than three months ago, whatever policy says, so nothing the running server can write lowers it. Archives are kept by Pando by default. **[O-27]**
+
 ### 16.4 Notifications
 
 **R-230 [D]** Notification is an adapter category.
@@ -980,6 +984,7 @@ tells a deployer nothing they can act on.
 | **O-10** | ~~Retroactive policy application~~ | **Resolved.** Running apps are untouched; the next deploy fails at plan time with `POLICY_*`. Report now, block on next deploy. Design 05 §3. |
 | **O-19** | What "bad code practice" covers | The first scanner reports vulnerable dependencies, leaked secrets and misconfiguration. Static analysis of the app's own code — a different class of tool, per-language, and noisy — is not in the score yet. R-311, design 09 §2. |
 | **O-20** | Whether a score ages | A scan from three weeks ago describes three-week-old vulnerability data, and nothing rescans an app that has not been deployed since. A scheduled rescan is the obvious answer and needs a decision about what it costs on a small host. It also decides how old a scan a deploy may reuse (R-312, issue #84): today there is no limit, and whether a scanner database update invalidates reuse is part of the same question. Design 09 §4.1, §5. |
+| **O-27** | What happens to audit archives once written | Retention is decided (R-347, R-348). Still open: whether archives kept by Pando are themselves aged out or counted against a disk budget, whether the DR bundle includes them, whether archived events stay searchable in the console rather than only downloadable, and whether events are hash-chained so an exported archive is provably complete. Design 02 §2.6. |
 
 ---
 

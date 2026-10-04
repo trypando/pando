@@ -145,6 +145,11 @@ func (s *Service) apply(ctx context.Context, bundle io.Reader, v Verified) (Rest
 			if err := s.restoreDatabase(ctx, tr); err != nil {
 				return result, err
 			}
+			if s.Regrant != nil {
+				if err := s.Regrant(ctx); err != nil {
+					return result, err
+				}
+			}
 
 		case header.Name == SecretsKey:
 			if err := s.restoreSecretsKey(tr); err != nil {

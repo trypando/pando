@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"strconv"
 	"time"
 
@@ -106,6 +110,136 @@ func auditCmd(client func() (*Client, error)) *cobra.Command {
 	f.StringVar(&until, "until", "", "up to this time, or this long ago")
 	f.IntVar(&limit, "limit", 0, "how many events (default 100, at most 500)")
 	f.StringVar(&before, "before", "", "the page before this cursor, as printed after a full page")
+
+	cmd.AddCommand(auditArchivesCmd(client))
+	return cmd
+}
+
+// auditArchive is one archived month, as GET /audit/archives lists it.
+type auditArchive struct {
+	ID         string    `json:"id"`
+	Month      string    `json:"month"`
+	AdapterRef string    `json:"adapter_ref"`
+	RowCount   int64     `json:"row_count"`
+	FirstAt    time.Time `json:"first_at"`
+	LastAt     time.Time `json:"last_at"`
+	SizeBytes  int64     `json:"size_bytes"`
+	SHA256     string    `json:"sha256"`
+}
+
+// auditArchivesCmd lists and downloads the months retention has archived
+// (R-347).
+func auditArchivesCmd(client func() (*Client, error)) *cobra.Command {
+	list := func(c *Client) ([]auditArchive, error) {
+		var out struct {
+			Archives []auditArchive `json:"archives"`
+		}
+		err := c.Do("GET", "/audit/archives", nil, &out)
+		return out.Archives, err
+	}
+
+	cmd := &cobra.Command{
+		Use:   "archives",
+		Short: "List the months of the audit log archived past retention",
+		Long: "Months older than host policy's audit_retention_months are archived, checked, and removed\n" +
+			"from the live log, so `pando audit` no longer finds them. This lists the archives; download\n" +
+			"one with `pando audit archives download <id>`.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			archives, err := list(c)
+			if err != nil {
+				return err
+			}
+			if len(archives) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No months have been archived.")
+				return nil
+			}
+			t := table(cmd.OutOrStdout(), "ID", "MONTH", "EVENTS", "SIZE", "KEPT BY", "SHA-256")
+			for _, a := range archives {
+				where := "Pando"
+				if a.AdapterRef != "" {
+					where = a.AdapterRef
+				}
+				fmt.Fprintf(t, "%s\t%s\t%d\t%s\t%s\t%s\n", a.ID, a.Month, a.RowCount, size(a.SizeBytes), where, a.SHA256)
+			}
+			return t.Flush()
+		},
+	}
+
+	var output string
+	download := &cobra.Command{
+		Use:   "download <archive-id>",
+		Short: "Download one archived month, checking it against its digest",
+		Long: "Saves the archive — gzipped JSON lines, one audit event per line — to --output, or to\n" +
+			"audit-<month>.jsonl.gz in the current directory. The SHA-256 is checked against the archive's\n" +
+			"manifest as it arrives, and a file that does not match is removed rather than kept.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			archives, err := list(c)
+			if err != nil {
+				return err
+			}
+			var rec *auditArchive
+			for i := range archives {
+				if archives[i].ID == args[0] {
+					rec = &archives[i]
+				}
+			}
+			if rec == nil {
+				return fmt.Errorf("there is no audit archive %q; `pando audit archives` lists them", args[0])
+			}
+
+			body, err := c.Stream("GET", "/audit/archives/"+url.PathEscape(rec.ID), nil)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = body.Close() }()
+
+			path := output
+			if path == "" {
+				path = "audit-" + rec.Month + ".jsonl.gz"
+			}
+			dst := cmd.OutOrStdout()
+			var file *os.File
+			if path != "-" {
+				if file, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err != nil {
+					return err
+				}
+				dst = file
+			}
+			digest := sha256.New()
+			n, err := io.Copy(io.MultiWriter(dst, digest), body)
+			if file != nil {
+				if cerr := file.Close(); err == nil {
+					err = cerr
+				}
+			}
+			if err == nil && hex.EncodeToString(digest.Sum(nil)) != rec.SHA256 {
+				err = fmt.Errorf("the download's SHA-256 does not match the archive's manifest (%s); try again", rec.SHA256)
+			}
+			if err != nil {
+				if file != nil {
+					_ = os.Remove(path)
+				}
+				return err
+			}
+			if file != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Saved %s: %d events from %s, %s, SHA-256 %s.\n",
+					path, rec.RowCount, rec.Month, size(n), rec.SHA256)
+			}
+			return nil
+		},
+	}
+	download.Flags().StringVarP(&output, "output", "o", "", "where to save it; - writes to standard output")
+	cmd.AddCommand(download)
 	return cmd
 }
 

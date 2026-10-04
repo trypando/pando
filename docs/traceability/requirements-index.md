@@ -9,10 +9,10 @@ specify it, the phase that builds it, and the tests that prove it. Test coverage
 
 | | Count | Of total |
 |---|---:|---:|
-| Requirements | 253 | — |
-| Specified in a design doc | 213 | 84% |
-| Assigned to a phase | 137 | 54% |
-| Covered by a named test | 172 | 67% |
+| Requirements | 255 | — |
+| Specified in a design doc | 215 | 84% |
+| Assigned to a phase | 137 | 53% |
+| Covered by a named test | 174 | 68% |
 
 A requirement with no design reference is not necessarily a gap — it may be philosophy (R-002),
 a non-goal (R-010–R-016), or deferred (R-290+). A requirement with no *test* is either
@@ -213,6 +213,8 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-227** | P | Auditable events: every spec mutation, every grant change, every deploy and every step of a… | 16.3 Audit | 06, 07, 10 | — | `TestR227_ADeniedRequestIsNotAUse`, `TestR227_ATokenIsOneVisitPerWindow`, `TestR227_AnonymousUseIsRecordedUnlessPolicyTurnsItOff`, `TestR227_AppUseIsRecordedOncePerVisit`, `TestR227_TheAuditLogFindsEverythingToDoWithOneAccount`, `TestR227_TheAuditLogIsBehindItsOwnVerb`, `TestR227_TheAuditLogIsReadableBehindItsOwnVerb`, `TestR227_TheRestoreIsRecordedInTheInstallItProduced` |
 | **R-228** | P | Exec sessions are audited as a distinct event type — principal, app, workload, start and end. | 16.3 Audit | 03 | — | — |
 | **R-229** | P | Actions taken by a delegated token are recorded under the owning user, annotated with the token. | 16.3 Audit | 02, 04 | 01, 10 | — |
+| **R-347** | D | The live audit log is bounded in time, and nothing leaves it unarchived. | 16.3 Audit | 00, 02, 04, 06 | — | `TestR347_AMonthPastRetentionIsArchivedVerifiedAndRemoved`, `TestR347_AnArchiveAlreadyWrittenIsUsedIfItStillVerifies`, `TestR347_AnArchiveIsCheckedAgainstItsManifest`, `TestR347_AnArchivedMonthIsListedAndDownloadedThroughTheAPI`, `TestR347_AnExportedArchiveIsOpenedFromWhereItWasWritten`, `TestR347_ArchivesGoWherePolicySays`, `TestR347_LongerRetentionKeepsMore`, `TestR347_NothingLeavesWhenTheArchiveCannotBeWritten`, `TestR347_RetentionRunsAtStartAndThenOnItsInterval`, `TestR347_TheCLIDownloadsAnArchiveAndChecksItsDigest`, `TestR347_TheCLIListsArchivedMonths`, `TestR347_TurningArchivingOffKeepsEverything` |
+| **R-348** | P | Default retention is three months, which is also the floor: host policy may lengthen it and… | 16.3 Audit | 02, 06 | — | `TestR348_AMonthOfTheAuditLogIsReprotectedOnRestart`, `TestR348_ARestoreIsReprotectedAtOnce`, `TestR348_NoMonthLeavesBeforeTheFloorOrWithoutItsArchive`, `TestR348_PolicyRefusesRetentionUnderTheFloor`, `TestR348_RetentionHasAFloorOfThreeMonths`, `TestR348_StartupRefusesAnAuditPartitionTheAppRoleCanDeleteFrom`, `TestR348_TheApplicationRoleStillCannotRemoveAuditEvents` |
 | **R-230** | D | Notification is an adapter category. | 16.4 Notifications | — | — | — |
 | **R-231** | D V1 | Default is console-only. | 16.4 Notifications | 03, 08 | 10 | `TestR231_NotifyRecordsRatherThanSends` |
 | **R-232** | D LATER | Built-in adapters for SMTP and SendGrid. | 16.4 Notifications | 03, 08 | 10 | — |

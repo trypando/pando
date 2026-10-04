@@ -23,31 +23,31 @@ import (
 // it and are set once.
 
 // PrepareTemplate migrates, grants and verifies a database to be copied, and
-// returns the password it gave AppRole.
+// returns the passwords it gave AppRole and ArchiverRole.
 //
 // Nothing may be connected to the database when it is copied, so the caller
 // makes its copies after this returns and never connects to it again.
-func PrepareTemplate(ctx context.Context, ownerURL string) (secret.Value, error) {
+func PrepareTemplate(ctx context.Context, ownerURL string) (Passwords, error) {
 	owner, err := waitForPostgres(ctx, ownerURL, 60*time.Second)
 	if err != nil {
-		return secret.Value{}, err
+		return Passwords{}, err
 	}
 	defer owner.Close()
 
 	if _, err := migrateUp(ctx, ownerURL); err != nil {
-		return secret.Value{}, err
+		return Passwords{}, err
 	}
-	password, err := provisionAppRole(ctx, owner)
+	passwords, err := provisionRoles(ctx, owner)
 	if err != nil {
-		return secret.Value{}, err
+		return Passwords{}, err
 	}
 	if err := applyGrants(ctx, owner); err != nil {
-		return secret.Value{}, err
+		return Passwords{}, err
 	}
 	if err := verifyAuditImmutability(ctx, owner); err != nil {
-		return secret.Value{}, err
+		return Passwords{}, err
 	}
-	return password, nil
+	return passwords, nil
 }
 
 // ConnectCopy connects as AppRole to a copy of a database PrepareTemplate

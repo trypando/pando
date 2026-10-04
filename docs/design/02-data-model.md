@@ -464,7 +464,7 @@ than in the app's spec so that the app's owner cannot remove it (R-154).
 
 ```sql
 CREATE TABLE audit_events (
-    id            bigserial PRIMARY KEY,
+    id            bigint NOT NULL DEFAULT nextval('audit_events_id_seq'),
     occurred_at   timestamptz NOT NULL DEFAULT now(),
     principal_kind text NOT NULL,             -- user | token | system | anonymous
     principal_id  text,
@@ -474,10 +474,27 @@ CREATE TABLE audit_events (
     target_kind   text,
     target_id     text,
     request_id    text,
-    detail        jsonb NOT NULL DEFAULT '{}'
-);
+    detail        jsonb NOT NULL DEFAULT '{}',
+    PRIMARY KEY (id, occurred_at)             -- a partitioned table's key includes the partition key
+) PARTITION BY RANGE (occurred_at);           -- one partition per UTC month: audit_events_2026_09
+CREATE TABLE audit_events_default PARTITION OF audit_events DEFAULT;
 CREATE INDEX ON audit_events (app_id, occurred_at DESC);
 CREATE INDEX ON audit_events (principal_id, occurred_at DESC);
+
+CREATE TABLE audit_archives (                -- one archived month (R-347)
+    id          text PRIMARY KEY,             -- aar_...
+    month       date NOT NULL,                -- first day of the month
+    adapter_ref text,                         -- NULL: kept by Pando; else the backup adapter
+    object_name text NOT NULL,
+    row_count   bigint NOT NULL, first_id bigint NOT NULL, last_id bigint NOT NULL,
+    first_at    timestamptz NOT NULL, last_at timestamptz NOT NULL,
+    size_bytes  bigint NOT NULL, sha256 text NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Owner-defined, SECURITY DEFINER, executable by pando_audit_archiver only.
+audit_ensure_partition(month date) RETURNS text
+audit_drop_month(month date, expected_rows bigint, archive_sha256 text) RETURNS bigint
 ```
 
 **[D] `app.use`** is the highest-volume action: one row per visit to an app (design 06 §6), with
@@ -503,6 +520,61 @@ serves traffic as a separate `pando_app` that owns nothing, and it verifies both
 refusing to run if the audit table is owned by the role serving traffic.
 
 **[D]** `detail` never contains a secret value. The `secret.Value` type from §00 3.3 makes this structural.
+
+**[D] Retention removes whole months, and only through one function (R-347, issue #60).** The log is
+partitioned by UTC calendar month, so a month past retention leaves as one `DROP TABLE` rather than as
+row deletes, and leaves no partial month. The daily pass (`audit.Archiver`, as `pando_audit_archiver`):
+
+1. Makes the partitions for this month and the next two (`audit_ensure_partition`). A month with no
+   partition still takes writes, in `audit_events_default` — an archiver that had not run must not
+   make every audit write fail, because the write comes before the privileged action (§04 2.6). Rows
+   already there move into the new partition unchanged, in the same transaction.
+2. For each month that ended at least `audit_retention_months` ago, writes the archive — gzipped JSON
+   lines, one `row_to_json` per event in `id` order, times in UTC — and a manifest beside it
+   (`<name>.manifest.json`), from one repeatable-read snapshot.
+3. Reads the archive back and checks it against the manifest: size, SHA-256, that it decompresses,
+   and that it holds `row_count` events in increasing `id` from `first_id` to `last_id`.
+4. Records it in `audit_archives`.
+5. Calls `audit_drop_month`, which locks the log against writes, counts the month again, and drops it
+   only if the count, the id range and the digest match a recorded archive — writing `audit.archive`
+   with the month, rows and digest in the same transaction.
+
+A failure anywhere before step 5 leaves the month in the live log, and the next pass picks up an
+archive already written if it still verifies. An event that lands in an old month after it was
+archived — a restore, a backdated insert — is a count mismatch the drop refuses, and the next pass
+writes a new archive holding it.
+
+**[D] Who may remove a month.** Three roles, not two. `pando_app` keeps `INSERT` and `SELECT` and
+nothing else — on the table **and on every partition**, because a partition is a table and `DELETE` on
+one is `DELETE` on the audit log; `state.applyGrants` revokes it from each partition on every start, and
+`audit_ensure_partition` revokes it from a new one before it is visible. `pando_audit_archiver` owns
+nothing, reads the log, inserts into `audit_archives`, and may execute the two functions; it holds no
+`UPDATE` or `DELETE` either. The functions belong to the schema owner and enforce, whoever calls them:
+
+- **the floor** — a month that ended less than three months ago is refused (R-348). It is a literal in
+  the function, so changing it is a migration, like a built-in role's verbs (R-081);
+- **the archive** — a month with events is refused unless `audit_archives` holds one with that many
+  rows, that id range and that digest. Only the archiver can write that table, so the role serving
+  traffic cannot vouch for an archive that was never written.
+
+Startup refuses to serve (`verifyRetentionIsTheArchiversAlone`) if `pando_app` owns or can modify any
+partition, owns or can execute either function, is a member of the archiver role, or can write
+`audit_archives`. A DR restore re-applies the grants straight after `pg_restore` rather than at the
+next start (`backup.Service.Regrant`), because restored tables arrive with the owner's default
+privileges.
+
+**[P] Retention is host policy** (`policy.Document`):
+
+| Field | Meaning |
+|---|---|
+| `audit_retention_months` | months the live log keeps; 0 is 3, and fewer than 3 is refused (R-348) |
+| `audit_archive` | `keep` (unset) under `server.audit_archive_dir`, default `/var/lib/pando/audit-archives`; `export` to a backup destination; `off` archives nothing, so removes nothing |
+| `audit_archive_destination` | the backup adapter an export goes to; empty is the default one. Refused unless `audit_archive` is `export` |
+
+An archive is resolved by its recorded `adapter_ref` and never looked for elsewhere, like a backup
+(§2.8). `GET /audit/archives` lists them and `GET /audit/archives/{id}` serves one, behind
+`install.audit.read`. What an archive is owed after it is written — ageing out, the DR bundle,
+search, hash chaining — is O-27.
 
 ### 2.7 Sessions
 

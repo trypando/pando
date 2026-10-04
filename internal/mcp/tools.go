@@ -597,6 +597,18 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_list_audit_archives",
+		Description: "The months of the audit log past retention, archived and removed from the live " +
+			"log: each month's row count, first and last event, time range, size, SHA-256 digest, " +
+			"and where it is kept. Events in these months are not in pando_list_audit; the archive " +
+			"itself is a gzip download from GET /api/v1/audit/archives/{id}, or `pando audit " +
+			"archives download`.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/audit/archives", nil, nil
+		},
+	},
+	{
 		Name: "pando_get_config",
 		Description: "The configuration the Pando server started with: every non-secret setting, " +
 			"its value and where it was set (an environment variable, the config file, or the " +

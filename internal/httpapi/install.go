@@ -2,13 +2,18 @@ package httpapi
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/audit"
@@ -16,6 +21,8 @@ import (
 	corepolicy "github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/id"
+	"github.com/trypando/pando/internal/log"
 )
 
 // InstallVerbs reports the installation-wide verbs a principal holds.
@@ -538,6 +545,62 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 		next = strconv.FormatInt(events[len(events)-1].ID, 10)
 	}
 	JSON(w, http.StatusOK, map[string]any{"events": events, "next_before": next})
+}
+
+// handleListAuditArchives lists the months retention has archived (R-347):
+// each with its manifest — row count, first and last event, time range, size
+// and SHA-256 digest — and where it is kept.
+func (s *Server) handleListAuditArchives(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireInstall(w, r, authz.InstallAuditRead); !ok {
+		return
+	}
+	archives := []audit.ArchiveRecord{}
+	if s.AuditArchives != nil {
+		var err error
+		if archives, err = s.AuditArchives.List(r.Context()); err != nil {
+			Error(w, r, err)
+			return
+		}
+	}
+	JSON(w, http.StatusOK, map[string]any{"archives": archives})
+}
+
+// handleGetAuditArchive downloads one archive: gzipped JSON lines, one audit
+// event per line, as the live log held it (R-347). The digest is sent too, so
+// a client can check what it received against the manifest.
+//
+// Not audited, like reading the log: the read is the verb's whole purpose, and
+// an entry per download would be the log recording itself being read.
+func (s *Server) handleGetAuditArchive(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireInstall(w, r, authz.InstallAuditRead); !ok {
+		return
+	}
+	archiveID := chi.URLParam(r, "archiveID")
+	if s.AuditArchives == nil || !id.Is(id.AuditArchive, archiveID) {
+		Error(w, r, errs.Newf(errs.NotFound, "There is no audit archive %q.", archiveID).
+			WithRemedy("GET /api/v1/audit/archives lists the archives this installation holds."))
+		return
+	}
+	rec, body, err := s.AuditArchives.Open(r.Context(), archiveID)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	defer func() { _ = body.Close() }()
+
+	h := w.Header()
+	h.Set("Content-Type", "application/gzip")
+	h.Set("Content-Length", strconv.FormatInt(rec.SizeBytes, 10))
+	h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", "audit-"+rec.Month+".jsonl.gz"))
+	h.Set("X-Content-Type-Options", "nosniff")
+	if sum, err := hex.DecodeString(rec.SHA256); err == nil {
+		h.Set("Repr-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(sum)+":")
+	}
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, body); err != nil {
+		log.From(r.Context()).Warn("audit archive download ended early",
+			zap.String("archive_id", rec.ID), zap.Error(err))
+	}
 }
 
 // handleGetConfig reports the configuration Pando started with (R-271): every

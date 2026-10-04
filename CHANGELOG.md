@@ -21,6 +21,18 @@ Unreleased above it. -->
 
 ### Added
 
+- Audit log retention (#60). The live audit log keeps **three months** by default; an older month is
+  archived as gzipped JSON lines with a manifest (row count, first and last event, time range, SHA-256),
+  read back and checked, and only then removed — and the removal is itself an audit event. Archives are
+  kept under `/var/lib/pando/audit-archives` (`server.audit_archive_dir`) or exported to a backup
+  destination. Host policy gains `audit_retention_months` (at least 3), `audit_archive` (`keep`,
+  `export` or `off`) and `audit_archive_destination`, on the Policy screen under **Audit log**.
+  Archived months are listed and downloaded from the **Audit log** screen, `GET /audit/archives`,
+  `pando audit archives` and `pando audit archives download`, and listed by MCP's
+  `pando_list_audit_archives`. The account Pando serves traffic as still cannot change or remove any
+  audit event: a month is removed by a separate database role, through a function that refuses one
+  under three months old or without a verified archive.
+
 - Single sign-on and provisioning (#51). Connect an identity provider over **OpenID Connect** or
   **SAML 2.0** on the new **Sign-in** screen, with presets for Okta, Microsoft Entra ID, Google
   Workspace, Keycloak and Authentik; test it with a real sign-in that shows every claim the provider
@@ -140,6 +152,14 @@ Unreleased above it. -->
   backup" only when one was taken.
 
 ### Upgrade notes
+
+- **Audit events older than three months leave the live log** at the first daily pass after
+  upgrading, archived under `/var/lib/pando/audit-archives` first. To keep everything in the live
+  log, start the upgraded server with `PANDO_POLICY_AUDIT_ARCHIVE=off` (or `audit_archive: off` in
+  host policy) and nothing is archived or removed. Migration 000041 partitions `audit_events` by
+  month by copying it, which takes a while on a large log, and adds a second restricted database
+  role, `pando_audit_archiver`; an external database must let Pando's account create it, as it
+  already creates `pando_app`.
 
 - Migration 000040 replaces `install.apps.manage` with its thirteen `install.apps.*` verbs in every role
   that held it, custom roles included, adds `install.apps.logs.read` wherever `install.apps.view` was,

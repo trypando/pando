@@ -187,6 +187,12 @@ type Server struct {
 	// of space partway through a backup is how an install discovers it has no
 	// backups.
 	WorkDir string `mapstructure:"work_dir"`
+
+	// AuditArchiveDir is where Pando keeps audit archives itself, when host
+	// policy's audit_archive is keep, the default (R-347). Beside the rest
+	// of Pando's data, on the same volume, so the archives are on the disk
+	// R-224 is about rather than somewhere nobody counts.
+	AuditArchiveDir string `mapstructure:"audit_archive_dir"`
 }
 
 type Database struct {
@@ -218,6 +224,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("server.port_range_start", 9000)
 	v.SetDefault("server.port_range_end", 9999)
 	v.SetDefault("server.work_dir", "/var/lib/pando/work")
+	v.SetDefault("server.audit_archive_dir", "/var/lib/pando/audit-archives")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.development", false)
 
@@ -293,7 +300,9 @@ var boundEnv = map[string]string{
 	"server.addr":           "PANDO_SERVER_ADDR",
 	"server.routing_mode":   "PANDO_SERVER_ROUTING_MODE",
 	"server.work_dir":       "PANDO_SERVER_WORK_DIR",
-	"log.level":             "PANDO_LOG_LEVEL",
+
+	"server.audit_archive_dir": "PANDO_SERVER_AUDIT_ARCHIVE_DIR",
+	"log.level":                "PANDO_LOG_LEVEL",
 
 	// Not PANDO_BOOTSTRAP_ADMIN_PASSWORD, which is what the replacer would
 	// derive — this is the one setting an operator types from memory at the

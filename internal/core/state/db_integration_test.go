@@ -270,3 +270,35 @@ func TestConnectRetriesUntilPostgresIsReady(t *testing.T) {
 	require.WithinDuration(t, start.Add(3*time.Second), time.Now(), 5*time.Second)
 	require.Contains(t, err.Error(), "could not reach its state database")
 }
+
+// TestR348_AMonthOfTheAuditLogIsReprotectedOnRestart asserts that the grant
+// policy reaches every partition of the audit log, not only the table: a month
+// is a table, and DELETE on it is DELETE on the audit log. A start puts back a
+// grant that drifted, and the archiver role Connect hands back can make a
+// month and cannot delete from one (R-027, R-348).
+func TestR348_AMonthOfTheAuditLogIsReprotectedOnRestart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ownerURL := startPostgres(t)
+
+	db, err := state.Connect(ctx, state.ConnectOptions{OwnerURL: ownerURL})
+	require.NoError(t, err)
+	require.NotNil(t, db.Archiver(), "a server is handed the archiver's pool")
+	_, err = db.Archiver().Exec(ctx, `SELECT audit_ensure_partition('2025-01-01')`)
+	require.NoError(t, err)
+	_, err = db.Archiver().Exec(ctx, `DELETE FROM audit_events_2025_01`)
+	require.Error(t, err, "the archiver deletes nothing itself")
+	db.Close()
+
+	owner, err := pgxpool.New(ctx, ownerURL)
+	require.NoError(t, err)
+	_, err = owner.Exec(ctx, fmt.Sprintf(`GRANT UPDATE, DELETE ON audit_events_2025_01 TO %s`, state.AppRole))
+	require.NoError(t, err)
+	owner.Close()
+
+	db2, err := state.Connect(ctx, state.ConnectOptions{OwnerURL: ownerURL})
+	require.NoError(t, err)
+	t.Cleanup(db2.Close)
+	_, err = db2.Exec(ctx, `DELETE FROM audit_events_2025_01`)
+	require.Error(t, err, "a drifted grant on a month should have been revoked on restart")
+}

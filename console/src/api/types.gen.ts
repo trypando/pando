@@ -238,6 +238,9 @@ export interface Document {
   require_backup_before_destroy?: boolean;
   max_token_lifetime_days?: number;
   max_log_disk_bytes?: number;
+  audit_retention_months?: number;
+  audit_archive?: string;
+  audit_archive_destination?: string;
   disable_ai_screening?: boolean;
   disable_anonymous_use_audit?: boolean;
   min_security_score?: number;
