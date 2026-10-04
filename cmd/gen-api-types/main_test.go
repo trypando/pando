@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/trypando/pando/internal/core/policy"
+	"github.com/trypando/pando/internal/reference"
 )
 
 // render emits the declarations for one type, the way generate() does for the
@@ -119,10 +122,11 @@ func TestOpaqueBytesAndInterfacesBecomeUnknown(t *testing.T) {
 // must be made to handle that rather than trusting it.
 func TestAFieldThatCanBeAbsentIsOptional(t *testing.T) {
 	type shapes struct {
-		Always   string  `json:"always"`
-		Omitted  string  `json:"omitted,omitempty"`
-		Pointer  *string `json:"pointer"`
-		Both     *int    `json:"both,omitempty"`
+		Always   string    `json:"always"`
+		Omitted  string    `json:"omitted,omitempty"`
+		Pointer  *string   `json:"pointer"`
+		Both     *int      `json:"both,omitempty"`
+		Zero     time.Time `json:"zero,omitzero"`
 		Untagged string
 	}
 
@@ -131,6 +135,7 @@ func TestAFieldThatCanBeAbsentIsOptional(t *testing.T) {
 	require.Contains(t, out, "omitted?: string;")
 	require.Contains(t, out, "pointer?: string;")
 	require.Contains(t, out, "both?: number;")
+	require.Contains(t, out, "zero?: string;", "omitzero leaves a zero time out of the JSON")
 	require.Contains(t, out, "Untagged: string;", "an untagged field keeps its Go name")
 }
 
@@ -235,4 +240,19 @@ func TestEnqueueIgnoresWhatIsNotAStructAndWhatIsAlreadyDone(t *testing.T) {
 	g.enqueue(reflect.TypeOf(once{}))
 	g.enqueue(reflect.TypeOf(once{}))
 	require.Len(t, g.queue, 1, "a type queued twice is written once")
+}
+
+// Two exported types of one name would become two TypeScript interfaces of
+// one name, which TypeScript merges silently. policy.Document and
+// reference.Document were merged that way until the generator refused it.
+func TestTwoTypesOfOneNameAreRefusedRatherThanMerged(t *testing.T) {
+	_, err := generate()
+	require.NoError(t, err, "the exported list has no collisions left")
+
+	type Document struct{ A string }
+	g := &generator{done: map[reflect.Type]bool{}}
+	require.NoError(t, g.writeInterface(reflect.TypeOf(policy.Document{})))
+	require.NoError(t, g.writeInterface(reflect.TypeOf(reference.Document{})))
+	require.ErrorContains(t, g.writeInterface(reflect.TypeOf(Document{})), "both called Document")
+	require.Contains(t, g.buf.String(), "export interface PolicyDocument {")
 }

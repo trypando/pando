@@ -19,7 +19,7 @@ export interface App {
   created_at: string;
   updated_at: string;
   deleted_at?: string;
-  routing: Routing;
+  routing?: Routing;
   address?: string;
   security_score?: number;
   security_verdict?: string;
@@ -134,7 +134,7 @@ export interface Proposal {
   blocked?: Error;
   trial_log?: string;
   commit?: string;
-  trial: TrialObservation;
+  trial?: TrialObservation;
   screening?: Outcome;
   conversation?: (Turn[] | null);
 }
@@ -218,7 +218,7 @@ export interface Report {
   ignoring_unfixable: boolean;
 }
 
-export interface Document {
+export interface PolicyDocument {
   source_allowlist?: (string[] | null);
   disabled_verbs?: (string[] | null);
   agent_disabled_verbs?: (string[] | null);
@@ -251,6 +251,9 @@ export interface Document {
   disable_jit_provisioning?: boolean;
   disable_update_check?: boolean;
   update_channel?: string;
+  upgrade_in_place?: boolean;
+  auto_upgrade_patches?: boolean;
+  maintenance_window?: string;
 }
 
 export interface BackupAttempt {
@@ -341,6 +344,37 @@ export interface Status {
   security: boolean;
   breaking: boolean;
   upgrade?: Upgrade;
+}
+
+export interface Plan {
+  current: string;
+  target: string;
+  possible: boolean;
+  reasons: (string[] | null);
+  image?: string;
+  tag?: string;
+  breaking: (Release[] | null);
+  note: string;
+}
+
+export interface Attempt {
+  id: string;
+  from: string;
+  to: string;
+  image: string;
+  tag?: string;
+  started_at: string;
+  started_by: string;
+  automatic: boolean;
+  backup_id?: string;
+  skip_backup: boolean;
+  state: string;
+  finished_at?: string;
+  reason?: string;
+  logs?: string;
+  snapshot_at?: string;
+  snapshot_gone: boolean;
+  recorded: boolean;
 }
 
 export interface Source {
@@ -581,8 +615,8 @@ export interface Standing {
   verdict: string;
   score?: number;
   threshold: number;
-  scanned: string;
-  stop_at: string;
+  scanned?: string;
+  stop_at?: string;
 }
 
 export interface Scan {

@@ -494,10 +494,5 @@ func (s *Server) requireBackup(w http.ResponseWriter, r *http.Request) (authz.Pr
 	return p, rec, true
 }
 
-// minPassphraseLength is the only rule, and it is longer than a password's.
-//
-// A password protects an account somebody can regain by other means; this
-// protects every secret in the installation and there is no other means. No
-// composition requirements, for the same reason as elsewhere: they produce
-// shorter, more guessable secrets and a note on a monitor.
-const minPassphraseLength = 16
+// minPassphraseLength is backup.MinPassphraseLength, which says why.
+const minPassphraseLength = backup.MinPassphraseLength

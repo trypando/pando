@@ -32,6 +32,7 @@ import (
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/update"
+	"github.com/trypando/pando/internal/core/upgrade"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/log"
 )
@@ -200,6 +201,10 @@ type Server struct {
 	// the check is not running, which is true.
 	Updates Updates
 
+	// Upgrades is the in-place upgrade (R-355 – R-362). Nil answers that it
+	// is not set up.
+	Upgrades Upgrades
+
 	// Version is this binary's version, sent to signed-in callers as
 	// Pando-Version so a CLI can tell it is out of step (R-353). Never to an
 	// anonymous one: a version is a map of which advisories apply.
@@ -258,6 +263,13 @@ type AuditReader interface {
 type AuditArchives interface {
 	List(ctx context.Context) ([]audit.ArchiveRecord, error)
 	Open(ctx context.Context, archiveID string) (audit.ArchiveRecord, io.ReadCloser, error)
+}
+
+// Upgrades plans, starts and reports in-place upgrades.
+type Upgrades interface {
+	PlanFor(ctx context.Context, version string) (upgrade.Plan, error)
+	Start(ctx context.Context, p authz.Principal, req upgrade.Request) (upgrade.Attempt, error)
+	Last(ctx context.Context) (*upgrade.Attempt, error)
 }
 
 // Updates reports what the update check knows.
@@ -556,6 +568,12 @@ func (s *Server) Routes() http.Handler {
 
 		// Whether a newer Pando is released, and how to upgrade (R-351).
 		r.Get("/updates", s.handleGetUpdates)
+
+		// Upgrading Pando in place (R-355 – R-360): what it would do, the
+		// last one's outcome, and starting one.
+		r.Get("/upgrade", s.handleGetUpgradePlan)
+		r.Get("/upgrade/last", s.handleGetLastUpgrade)
+		r.Post("/upgrade", s.handleStartUpgrade)
 
 		// Backup and disaster recovery (Sequence D). Verify is its own route
 		// rather than a flag on restore, because a flag is a thing somebody

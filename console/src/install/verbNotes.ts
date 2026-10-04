@@ -29,6 +29,7 @@ export const VERB_NOTES: Record<string, string> = {
   'install.apps.delete': 'Delete any app.',
   'install.tokens.manage': 'Create, list and revoke service tokens.',
   'install.deploys.approve': 'Approve or reject any deploy that needs approval, on any app, including their own.',
+  'install.upgrade': 'Upgrade Pando itself to a newer release, from the Updates screen.',
   'app.create': 'Add new apps.',
 
   'app.view': 'See the app and its settings.',

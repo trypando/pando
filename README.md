@@ -105,7 +105,11 @@ the Postgres and BuildKit it needs beside it. Open **http://localhost:8080**.
 The compose file pins the image to its release. To upgrade, download the newer release's
 `docker-compose.yml` over it and run `docker compose up -d` again; your apps and data are kept in
 named volumes. Pando checks for new releases itself and shows them, with their changelogs and the
-command to run, on the console's **Updates** screen and in `pando updates`. An installation without
+command to run, on the console's **Updates** screen and in `pando updates`. It can also upgrade itself
+in place, verifying the release's signature and putting the previous version back if the new one does
+not start; that is off until you set the image to a moving tag such as `trypando/pando:latest` and
+`PANDO_POLICY_UPGRADE_IN_PLACE: "true"` in the compose file, as
+[`docs/releasing.md`](docs/releasing.md#in-place-from-the-console-or-pando-upgrade) describes. An installation without
 internet access turns the check off with `PANDO_POLICY_DISABLE_UPDATE_CHECK=true`. Take a backup
 before upgrading: an older Pando does not start against a database a newer one migrated, so going
 back means restoring it. Postgres is only reachable from the other containers, and its password defaults to

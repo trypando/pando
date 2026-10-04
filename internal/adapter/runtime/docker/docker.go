@@ -290,6 +290,10 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		// reaches the runtime without a registry.
 		SupportsImageImport: true,
 
+		// Only when Pando is itself a container on this daemon: then it can
+		// start the helper that replaces it (R-359).
+		SupportsSelfUpgrade: a.inspectSelf(ctx) != nil,
+
 		MaxWorkloadsPerBundle: 0,
 
 		// The trial run (R-097). Port observation works on any image, including

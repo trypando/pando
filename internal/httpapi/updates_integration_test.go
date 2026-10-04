@@ -9,9 +9,95 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/update"
+	"github.com/trypando/pando/internal/core/upgrade"
+	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/httpapi"
 )
+
+type fakeUpgrades struct {
+	started []upgrade.Request
+	by      []authz.Principal
+}
+
+func (f *fakeUpgrades) PlanFor(_ context.Context, v string) (upgrade.Plan, error) {
+	return upgrade.Plan{Current: "0.3.1", Target: v, Possible: true, Reasons: []string{}, Breaking: []update.Release{}}, nil
+}
+func (f *fakeUpgrades) Start(_ context.Context, p authz.Principal, req upgrade.Request) (upgrade.Attempt, error) {
+	f.started = append(f.started, req)
+	f.by = append(f.by, p)
+	return upgrade.Attempt{ID: "upg_1", From: "0.3.1", To: req.Version, State: upgrade.StateRunning}, nil
+}
+func (f *fakeUpgrades) Last(context.Context) (*upgrade.Attempt, error) {
+	return &upgrade.Attempt{ID: "upg_1", State: upgrade.StateSucceeded}, nil
+}
+
+// TestR356_UpgradingIsInstallUpgradeAndAgentsDoNotHoldIt asserts R-356 at the
+// API: an administrator may, someone holding nothing may not, and an agent's
+// token may not by default — even its owner's — because policy.Default()
+// denies install.upgrade to agents.
+func TestR356_UpgradingIsInstallUpgradeAndAgentsDoNotHoldIt(t *testing.T) {
+	i := newInstall(t)
+	fake := &fakeUpgrades{}
+	i.Server.Upgrades = fake
+	admin := i.admin()
+
+	r := i.do(admin, http.MethodGet, "/upgrade?version=0.4.0", nil)
+	require.Equal(t, http.StatusOK, r.Code, r.String())
+	r = i.do(admin, http.MethodGet, "/upgrade", nil)
+	require.Equal(t, http.StatusBadRequest, r.Code, "a plan needs a version")
+	r = i.do(admin, http.MethodGet, "/upgrade/last", nil)
+	require.Equal(t, http.StatusOK, r.Code, r.String())
+
+	r = i.do(admin, http.MethodPost, "/upgrade", map[string]any{"version": "0.4.0", "passphrase": "a long passphrase"})
+	require.Equal(t, http.StatusAccepted, r.Code, r.String())
+	require.Equal(t, "0.4.0", fake.started[0].Version)
+	require.Equal(t, "a long passphrase", fake.started[0].Passphrase.Reveal())
+	require.Equal(t, i.AdminID, fake.by[0].ID)
+
+	nobody := i.user("nobody")
+	r = i.do(nobody, http.MethodPost, "/upgrade", map[string]any{"version": "0.4.0", "skip_backup": true})
+	require.Equal(t, http.StatusForbidden, r.Code, r.String())
+	r = i.do(nobody, http.MethodGet, "/upgrade?version=0.4.0", nil)
+	require.Equal(t, http.StatusForbidden, r.Code, r.String())
+
+	agent := i.tokenFor(admin)
+	r = i.do(agent, http.MethodPost, "/upgrade", map[string]any{"version": "0.4.0", "skip_backup": true})
+	require.Equal(t, http.StatusForbidden, r.Code, r.String())
+	require.Len(t, fake.started, 1, "only the administrator's request reached the service")
+
+	r = i.do(admin, http.MethodPost, "/upgrade", "not an object")
+	require.Equal(t, http.StatusBadRequest, r.Code, r.String())
+	require.Contains(t, r.String(), "skip_backup", "the refusal shows the body it wants")
+
+	i.Server.Upgrades = &failingUpgrades{}
+	r = i.do(admin, http.MethodGet, "/upgrade?version=0.4.0", nil)
+	require.Equal(t, http.StatusBadRequest, r.Code, r.String())
+	r = i.do(admin, http.MethodPost, "/upgrade", map[string]any{"version": "0.4.0", "skip_backup": true})
+	require.Equal(t, http.StatusBadRequest, r.Code, r.String())
+	require.Contains(t, r.String(), "cannot upgrade itself")
+	r = i.do(admin, http.MethodGet, "/upgrade/last", nil)
+	require.Equal(t, http.StatusInternalServerError, r.Code, r.String())
+
+	i.Server.Upgrades = nil
+	r = i.do(admin, http.MethodGet, "/upgrade/last", nil)
+	require.Equal(t, http.StatusInternalServerError, r.Code)
+}
+
+// failingUpgrades refuses everything, as the service does when an upgrade is
+// not possible.
+type failingUpgrades struct{}
+
+func (failingUpgrades) PlanFor(context.Context, string) (upgrade.Plan, error) {
+	return upgrade.Plan{}, errs.New(errs.ValidInvalid, "Pando cannot plan an upgrade to that version.")
+}
+func (failingUpgrades) Start(context.Context, authz.Principal, upgrade.Request) (upgrade.Attempt, error) {
+	return upgrade.Attempt{}, errs.New(errs.ValidInvalid, "Pando cannot upgrade itself to 0.4.0: in-place upgrades are off.")
+}
+func (failingUpgrades) Last(context.Context) (*upgrade.Attempt, error) {
+	return nil, errs.New(errs.Internal, "The last upgrade's outcome does not parse.")
+}
 
 type fakeUpdates struct{ st update.Status }
 

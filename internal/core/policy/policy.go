@@ -206,6 +206,24 @@ type Document struct {
 	// UpdateChannel is which releases the check offers (R-350): stable, the
 	// default, or prerelease, which also offers release candidates.
 	UpdateChannel UpdateChannel `json:"update_channel,omitempty"`
+
+	// UpgradeInPlace lets Pando replace its own container with a newer
+	// release (R-355). Off by default, against R-270 on purpose: a version
+	// named in a Compose file or infrastructure-as-code is put back by its
+	// next apply, so whoever owns that configuration turns this on — usually
+	// there, as PANDO_POLICY_UPGRADE_IN_PLACE, which also locks it here.
+	UpgradeInPlace bool `json:"upgrade_in_place,omitempty"`
+
+	// AutoUpgradePatches upgrades to a new patch release of the running minor
+	// line inside MaintenanceWindow, with nobody present (R-361). Needs
+	// UpgradeInPlace and a window.
+	AutoUpgradePatches bool `json:"auto_upgrade_patches,omitempty"`
+
+	// MaintenanceWindow is when an automatic upgrade may start, in UTC:
+	// weekdays, a start time and a length, as "sun,wed 02:00 2h" (R-361).
+	// One string so that it reads the same in the config file, an
+	// environment variable and the API.
+	MaintenanceWindow string `json:"maintenance_window,omitempty"`
 }
 
 // UpdateChannel is which releases the update check offers (R-350).
@@ -320,6 +338,9 @@ func Default() Document {
 			// the second pair of eyes being nobody's.
 			string(authz.InstallDeploysApprove),
 			string(authz.AppDeployApprove),
+
+			// Replacing the server everything runs behind (R-356).
+			string(authz.InstallUpgrade),
 		},
 	}
 }
@@ -569,6 +590,9 @@ func (d Document) ValidateRules() error {
 		return fmt.Errorf("deploy_approval_expiry_hours is %d; use a number of hours, or 0 for requests that wait until somebody answers", d.DeployApprovalExpiryHours)
 	}
 	if err := d.UpdateChannel.Valid(); err != nil {
+		return err
+	}
+	if err := d.ValidateUpgrades(); err != nil {
 		return err
 	}
 	return d.ValidateAuditRetention()

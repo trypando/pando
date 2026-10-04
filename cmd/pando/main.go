@@ -123,6 +123,8 @@ func rootCmd() *cobra.Command {
 	// Hidden: started by the Docker runtime in front of a restricted app, from
 	// Pando's own image, never by a person (R-187).
 	root.AddCommand(egressGatewayCmd())
+	root.AddCommand(upgradeHelperCmd())
+	root.AddCommand(cli.SelfUpdateCmd())
 
 	// The client half (design 04 §4). In the same binary because Pando ships as
 	// one, and a client of the API like any other (R-261) — internal/cli
@@ -607,10 +609,18 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:  logger,
 	}
 
+	// Upgrading in place (R-355 – R-362).
+	upgrades := newUpgradeService(upgradeDeps{
+		cfg: cfg, updates: updates, registry: registry,
+		policy:  func(ctx context.Context) (corepolicy.Document, error) { return policyStore.Load(ctx) },
+		backups: backups, backup: backupService, authzStore: authzStore, auditor: auditor, logger: logger,
+	})
+
 	apiHandler := (&httpapi.Server{
-		Updates: updates,
-		Version: buildVersion,
-		Edges:   edges,
+		Updates:  updates,
+		Upgrades: upgrades,
+		Version:  buildVersion,
+		Edges:    edges,
 		// Changing where a configured app is reached (R-162, R-163).
 		Address: &address.Service{
 			Registry:       registry,
@@ -822,6 +832,7 @@ func serve(ctx context.Context, configPath string) error {
 	go approvals.RunExpiry(loopCtx, time.Minute)
 
 	go updates.Run(loopCtx)
+	go upgrades.Run(loopCtx)
 
 	// Port-mode apps answer at the root of their own port (design 03 §4.2).
 	//

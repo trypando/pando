@@ -123,6 +123,30 @@ func TestR354_ADatabaseANewerPandoMigratedIsRefused(t *testing.T) {
 	require.ErrorContains(t, err, "migrated by a newer version of Pando")
 }
 
+// TestR356_TheAdministratorHoldsInstallUpgradeAndAgentsDoNot asserts
+// migration 000042: the built-in Administrator gains install.upgrade (R-081
+// says only a migration may), and a stored policy denies it to agents as
+// policy.Default() does.
+func TestR356_TheAdministratorHoldsInstallUpgradeAndAgentsDoNot(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ownerURL, _ := statetest.Database(t)
+
+	conn, err := pgx.Connect(ctx, ownerURL)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close(ctx) }()
+
+	var held bool
+	require.NoError(t, conn.QueryRow(ctx,
+		`SELECT 'install.upgrade' = ANY (verbs) FROM roles WHERE id = 'role_administrator'`).Scan(&held))
+	require.True(t, held)
+
+	var elsewhere int
+	require.NoError(t, conn.QueryRow(ctx,
+		`SELECT count(*) FROM roles WHERE id <> 'role_administrator' AND 'install.upgrade' = ANY (verbs)`).Scan(&elsewhere))
+	require.Zero(t, elsewhere, "no other built-in role holds it")
+}
+
 // asOwner runs one statement against a database as its owner.
 func asOwner(t *testing.T, ownerURL, stmt string) {
 	t.Helper()

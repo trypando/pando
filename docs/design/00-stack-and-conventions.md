@@ -57,6 +57,12 @@ requires and **verify them at startup, failing loudly** rather than silently run
 that can be rewritten. A degraded-but-running mode is not acceptable here: the whole value of the
 grant is that it holds without anyone checking.
 
+**[D] The in-place upgrade adds one privilege, and only for itself** (R-359). Its rollback copies Pando's
+database with `CREATE DATABASE … TEMPLATE`, which needs `CREATEDB` (or ownership of a template). The
+bundled Compose file's account is a superuser and has it. On an external database without it, Pando
+still runs; the in-place upgrade is refused before anything starts, naming the privilege, and the
+upgrade is done by changing the image (R-352).
+
 **[P]** Both services start at once, so Pando must tolerate Postgres not yet accepting connections —
 connect with bounded retry at startup rather than assuming readiness. This is the standard Compose
 race and the standard fix.
@@ -114,7 +120,46 @@ Package and Homebrew installs carry the CLI. Its upgrade command is chosen from 
 
 **Refusing a downgrade [D]** (R-354). Before `Up`, the migration step compares the database's schema version with the newest embedded migration. If the database's is higher, it refuses, naming both versions. Without this an older image put back by a Compose file or IaC failed with "Database migration failed." and crash-looped, and with it the proxy, so every app was unreachable for a reason nobody could read. Migrations run forward only, and going back is a restore.
 
-**Not here yet.** The **in-place upgrade** is the second half of issue #53: a signed image verified with cosign, a backup first, a helper container that replaces Pando's, and a rollback that is always restore-from-backup, never down migrations. It is opt-in through the deployment configuration (a host policy field like the two above). The reason is drift: a version pinned in a Compose file or IaC puts the old image back on the next apply, so the person who owns that configuration has to decide. Every app is unreachable while Pando restarts, because the proxy is in-process (§1.3), so the upgrade will keep that window short by pulling and verifying the new image before stopping the old one. An **"update available" notification** waits for the console to have somewhere to show notifications (R-231; issue #50).
+**Upgrading in place [D]** (R-355 – R-362). The second half of issue #53.
+
+- **Opt-in, and only where the deployment cannot undo it** (R-355). Host policy `upgrade_in_place` is off by default. That goes against R-270, on purpose: a version named in a Compose file or IaC puts the old image back on its next apply. The owner of that configuration usually sets `PANDO_POLICY_UPGRADE_IN_PLACE=true` there, which also locks the switch on the Policy screen (R-271).
+  - The deployment's image must be a moving tag that covers the target. `latest` covers any release, a minor line (`0.3`) covers its patches, and a major (`1`) covers 1.x. Those are the tags `image.yml` publishes.
+  - Pando reads its own image reference from the runtime (`SelfUpgrader.Self`) and refuses an exact version or a digest, saying which image to set.
+  - The helper points the moving tag at the new image locally, only after the new version is healthy. A later `docker compose up` then resolves the tag to what is running. Had the tag moved first and a rollback followed, the next `compose up` would start the version that failed.
+- **Order of operations** (`internal/core/upgrade.Service.Start`):
+  1. Plan. Every refusal is collected, not just the first.
+  2. Confirm breaking versions by typing the target (R-360).
+  3. Verify the image (R-357, below). This happens before the backup, so a backup is never spent on an image Pando would refuse.
+  4. Take the full backup with the person's passphrase, or record that they skipped it (R-358).
+  5. Pull by digest while Pando is still up, so a registry failure leaves Pando running.
+  6. Write the attempt to `<work_dir>/upgrade/outcome.json`.
+  7. Start the helper.
+- **Verification** (R-357). cosign 3 attaches a Sigstore bundle to the image's index digest as an OCI 1.1 referrer, with no legacy `.sig` tag.
+  - `update.ImageVerifier` resolves the tag to that digest and fetches the referrer (go-containerregistry). sigstore-go then checks it against `image.yml`'s identity from docs/releasing.md and Sigstore's public-good trusted root.
+  - The trusted root is fetched through TUF and cached under `<work_dir>/sigstore`.
+  - The digest is what runs from then on.
+  - The tests verify what 0.3.0 actually published, offline against a pinned root. That tests the identity and format against the release workflow's real output, not a fixture written to match expectations.
+- **The helper** (R-359). A container cannot replace itself. The helper is Pando's current image, started by ID, so the code doing the replacing is the version already trusted. It runs `pando upgrade-helper` with Pando's mounts, which carry the data directory and the runtime socket, and Pando's networks, which reach Postgres by the URL's host name. It runs these steps:
+  1. Stop Pando and rename it aside.
+  2. Copy the database: `CREATE DATABASE <db>_pre_upgrade TEMPLATE <db>`, `state.Snapshot`.
+  3. Create the new container with the old configuration and the new image. Environment variables and labels the old image set are dropped, as Watchtower does, so the new image's own defaults apply.
+  4. Wait for `/readyz`. It answers only after migrations and the audit-log check pass.
+  5. On success: move the tag and remove the old container.
+  6. On failure: keep the new version's last log lines, discard it, restore the copy, then rename and start the old container. The restore comes first because the old version refuses a migrated database (R-354).
+
+  The container steps are the Docker adapter's (`docker.Replacer`). The copy is the state store's, because an adapter never touches state (R-027). The helper composes them, and `upgrade.RunHelper` is tested at each failure point.
+- **Compared with Watchtower and Portainer.** Both recreate a container from its own inspect output under a new image, which is what this does. Watchtower does not check that the new container became healthy and has no rollback. Portainer's agent replaces itself the same way, through a helper. Neither copies a database: they have none of their own.
+- **The outcome** is the file. The Pando that starts next, new or restored, records it in the audit log once (`upgrade.succeeded`, `upgrade.rolled_back`, `upgrade.failed`). On failure it sends `upgrade_failed` to `install.upgrade` holders and removes the finished helper. After 24 hours healthy **[P]** it drops the copy. There is no "roll back days later" action: that would remove every audit event since the upgrade (R-027) and leave the state store describing apps that no longer match what runs. Going back after the soak is the full-backup restore.
+- **The copy needs `CREATEDB`.** An account without it is refused by name before anything starts (§1.1).
+- **Every app is unreachable while Pando restarts**, usually for under a minute, because the proxy is in Pando (§1.3, R-023). Apps keep running. `RejoinNetworks` reattaches the new container to each running app's network at startup.
+  - The window is kept short: verification, the backup and the pull all happen before Pando stops.
+  - It is stated in the plan's `note`, which the console's dialog and `pando upgrade` both show.
+- **Scheduled patch upgrades** (R-361). `auto_upgrade_patches` with `maintenance_window` (`"sun,wed 02:00 2h"`, UTC, one string so it reads the same in the config file, an environment variable and the API).
+  - The loop looks every five minutes. Inside the window it upgrades to the newest stable patch of the running minor line, and never to a version an earlier attempt failed to reach.
+  - It takes no full backup, because nobody is there to give a passphrase (R-213). The database copy is its rollback, and the Policy screen says so.
+- **`update_available`** (R-362) goes to `install.upgrade` holders through the notify adapters once per version, with the version last announced kept beside the outcome. Today only the console adapter exists and it stores without displaying (R-231). The Updates screen's badge carries it until issue #50 delivers notifications elsewhere.
+- **`pando self-update`** (R-363) replaces an archive or `go install` CLI after checking `checksums.txt.sigstore.json` against `release.yml`'s identity and the archive against `checksums.txt`. A CLI installed by Homebrew or a Linux package is left to that package manager. It is a root command beside `version`, not one of the API's commands, because it acts on the binary and not on an installation (R-261).
+- **Agents do not upgrade by default.** `install.upgrade` is in `policy.Default().AgentDisabledVerbs`, and migration 000042 adds it to a stored policy. MCP offers the plan and the last outcome but not starting one, which takes a passphrase.
 
 ---
 
