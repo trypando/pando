@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/trypando/pando/internal/adapter/identity/local"
 	"github.com/trypando/pando/internal/core/authz"
@@ -542,6 +543,19 @@ func (u *Users) EnsureLocalAdapter(ctx context.Context) error {
 		INSERT INTO identity_adapters (id, kind, name)
 		VALUES ($1, $2, 'Local users')
 		ON CONFLICT (id) DO NOTHING`, LocalAdapterID, local.Kind)
+	// Two first claims at once both insert it. ON CONFLICT (id) arbitrates
+	// only the primary key, so the second can trip the name's unique index
+	// before the key's and fail where it should have found the row. Not a
+	// target-less DO NOTHING: that would also pass over another adapter
+	// holding the name, leaving no local adapter at all.
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "23505" {
+		var exists bool
+		if qerr := u.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM identity_adapters WHERE id = $1)`,
+			LocalAdapterID).Scan(&exists); qerr == nil && exists {
+			return nil
+		}
+	}
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not set up local accounts.", err)
 	}

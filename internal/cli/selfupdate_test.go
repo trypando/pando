@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -170,6 +172,50 @@ func TestR363_SelfUpdateReplacesTheBinaryOnlyAfterTheSignatureAndChecksumHold(t 
 		require.Contains(t, out, "brew upgrade --cask trypando/tap/pando")
 		require.Empty(t, r.fetched)
 	})
+}
+
+func TestSelfUpdateDownloadsSayWhatFailed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/missing" {
+			http.NotFound(w, r)
+			return
+		}
+		require.Contains(t, r.Header.Get("User-Agent"), "pando/")
+		_, _ = w.Write([]byte("release bytes"))
+	}))
+	t.Cleanup(srv.Close)
+
+	b, err := httpDownload(context.Background(), srv.URL+"/checksums.txt")
+	require.NoError(t, err)
+	require.Equal(t, "release bytes", string(b))
+
+	_, err = httpDownload(context.Background(), srv.URL+"/missing")
+	require.ErrorContains(t, err, "404")
+
+	_, err = httpDownload(context.Background(), "http://127.0.0.1:1/unreachable")
+	require.Error(t, err)
+
+	_, err = checksumOf([]byte("abc  pando_0.4.0_linux_amd64.tar.gz\n"), "pando_0.4.0_darwin_arm64.tar.gz")
+	require.ErrorContains(t, err, "for this platform")
+
+	require.Error(t, replaceExecutable(filepath.Join(t.TempDir(), "no-such-dir", "pando"), []byte("x")),
+		"a directory that cannot be written to replaces nothing")
+
+	cmd := SelfUpdateCmd()
+	require.Equal(t, "self-update [version]", cmd.Use)
+	require.NotNil(t, cmd.Flag("prerelease"))
+}
+
+func TestAReleaseListThatCannotBeReadIsSaid(t *testing.T) {
+	r, _ := newRelease(t, "0.4.0", nil)
+	u, _ := updater(t, r, nil)
+	u.releases = func(context.Context) ([]update.Release, error) { return nil, errors.New("rate limited") }
+	_, err := runSelfUpdate(t, u, "", false)
+	require.ErrorContains(t, err, "could not read Pando's releases")
+
+	u.releases = func(context.Context) ([]update.Release, error) { return nil, nil }
+	_, err = runSelfUpdate(t, u, "", false)
+	require.ErrorContains(t, err, "no Pando release is published")
 }
 
 func TestAnArchiveWithoutPandoInItIsRefused(t *testing.T) {

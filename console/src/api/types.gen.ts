@@ -19,7 +19,7 @@ export interface App {
   created_at: string;
   updated_at: string;
   deleted_at?: string;
-  routing: Routing;
+  routing?: Routing;
   address?: string;
   security_score?: number;
   security_verdict?: string;
@@ -134,7 +134,7 @@ export interface Proposal {
   blocked?: Error;
   trial_log?: string;
   commit?: string;
-  trial: TrialObservation;
+  trial?: TrialObservation;
   screening?: Outcome;
   conversation?: (Turn[] | null);
 }
@@ -369,10 +369,10 @@ export interface Attempt {
   backup_id?: string;
   skip_backup: boolean;
   state: string;
-  finished_at: string;
+  finished_at?: string;
   reason?: string;
   logs?: string;
-  snapshot_at: string;
+  snapshot_at?: string;
   snapshot_gone: boolean;
   recorded: boolean;
 }
@@ -615,8 +615,8 @@ export interface Standing {
   verdict: string;
   score?: number;
   threshold: number;
-  scanned: string;
-  stop_at: string;
+  scanned?: string;
+  stop_at?: string;
 }
 
 export interface Scan {

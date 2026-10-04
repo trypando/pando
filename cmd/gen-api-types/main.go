@@ -245,10 +245,12 @@ func (g *generator) fieldsOf(t reflect.Type) ([]string, error) {
 			return nil, fmt.Errorf("%s.%s: %w", t.Name(), f.Name, err)
 		}
 
-		// A pointer or an omitempty field may be absent from the JSON, and the
-		// console must be made to handle that rather than trusting it.
+		// A pointer, an omitempty or an omitzero field may be absent from the
+		// JSON, and the console must be made to handle that rather than
+		// trusting it. omitzero is how a time.Time is left out: omitempty
+		// never omits a struct.
 		optional := ""
-		if strings.Contains(opts, "omitempty") || f.Type.Kind() == reflect.Pointer {
+		if strings.Contains(opts, "omitempty") || strings.Contains(opts, "omitzero") || f.Type.Kind() == reflect.Pointer {
 			optional = "?"
 		}
 

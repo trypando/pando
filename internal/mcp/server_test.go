@@ -274,6 +274,11 @@ func TestEachToolMapsToItsEndpoint(t *testing.T) {
 		{"pando_rename_app", `{"app_id":"app_01HQ8","name":"Notes"}`, "PATCH", "/apps/app_01HQ8"},
 		{"pando_list_my_apps", `{}`, "GET", "/me/apps"},
 		{"pando_get_config", `{}`, "GET", "/config"},
+
+		// Issue #53: updates and the in-place upgrade's plan and outcome.
+		{"pando_get_updates", `{}`, "GET", "/updates"},
+		{"pando_plan_upgrade", `{"version":"0.4.0"}`, "GET", "/upgrade?version=0.4.0"},
+		{"pando_get_last_upgrade", `{}`, "GET", "/upgrade/last"},
 		{"pando_list_audit", `{"principal_id":"usr_1","target_kind":"app","since":"2026-09-21T00:00:00Z"}`, "GET",
 			"/audit?principal_id=usr_1&since=2026-09-21T00%3A00%3A00Z&target_kind=app"},
 		{"pando_list_audit", `{"principal_kind":"system","target_id":"app_1","until":"2026-09-22T00:00:00Z","before":"41"}`, "GET",

@@ -122,10 +122,11 @@ func TestOpaqueBytesAndInterfacesBecomeUnknown(t *testing.T) {
 // must be made to handle that rather than trusting it.
 func TestAFieldThatCanBeAbsentIsOptional(t *testing.T) {
 	type shapes struct {
-		Always   string  `json:"always"`
-		Omitted  string  `json:"omitted,omitempty"`
-		Pointer  *string `json:"pointer"`
-		Both     *int    `json:"both,omitempty"`
+		Always   string    `json:"always"`
+		Omitted  string    `json:"omitted,omitempty"`
+		Pointer  *string   `json:"pointer"`
+		Both     *int      `json:"both,omitempty"`
+		Zero     time.Time `json:"zero,omitzero"`
 		Untagged string
 	}
 
@@ -134,6 +135,7 @@ func TestAFieldThatCanBeAbsentIsOptional(t *testing.T) {
 	require.Contains(t, out, "omitted?: string;")
 	require.Contains(t, out, "pointer?: string;")
 	require.Contains(t, out, "both?: number;")
+	require.Contains(t, out, "zero?: string;", "omitzero leaves a zero time out of the JSON")
 	require.Contains(t, out, "Untagged: string;", "an untagged field keeps its Go name")
 }
 
