@@ -23,13 +23,13 @@ type fakeUpgrades struct {
 func (f *fakeUpgrades) PlanFor(_ context.Context, v string) (upgrade.Plan, error) {
 	return upgrade.Plan{Current: "0.3.1", Target: v, Possible: true, Reasons: []string{}, Breaking: []update.Release{}}, nil
 }
-func (f *fakeUpgrades) Start(_ context.Context, p authz.Principal, req upgrade.Request) (upgrade.Outcome, error) {
+func (f *fakeUpgrades) Start(_ context.Context, p authz.Principal, req upgrade.Request) (upgrade.Attempt, error) {
 	f.started = append(f.started, req)
 	f.by = append(f.by, p)
-	return upgrade.Outcome{ID: "upg_1", From: "0.3.1", To: req.Version, State: upgrade.StateRunning}, nil
+	return upgrade.Attempt{ID: "upg_1", From: "0.3.1", To: req.Version, State: upgrade.StateRunning}, nil
 }
-func (f *fakeUpgrades) Last(context.Context) (*upgrade.Outcome, error) {
-	return &upgrade.Outcome{ID: "upg_1", State: upgrade.StateSucceeded}, nil
+func (f *fakeUpgrades) Last(context.Context) (*upgrade.Attempt, error) {
+	return &upgrade.Attempt{ID: "upg_1", State: upgrade.StateSucceeded}, nil
 }
 
 // TestR356_UpgradingIsInstallUpgradeAndAgentsDoNotHoldIt asserts R-356 at the

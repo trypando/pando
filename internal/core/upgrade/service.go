@@ -12,6 +12,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
+	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/update"
@@ -179,13 +180,13 @@ func (s *Service) finishPlan(p Plan) Plan {
 
 // Start begins an upgrade and returns once the helper is running; the helper
 // stops this process shortly after (R-359).
-func (s *Service) Start(ctx context.Context, p authz.Principal, req Request) (Outcome, error) {
+func (s *Service) Start(ctx context.Context, p authz.Principal, req Request) (Attempt, error) {
 	plan, err := s.PlanFor(ctx, req.Version)
 	if err != nil {
-		return Outcome{}, err
+		return Attempt{}, err
 	}
 	if !plan.Possible {
-		return Outcome{}, errs.New(errs.ValidInvalid, fmt.Sprintf("Pando cannot upgrade itself to %s: %s", plan.Target, strings.Join(plan.Reasons, " "))).
+		return Attempt{}, errs.New(errs.ValidInvalid, fmt.Sprintf("Pando cannot upgrade itself to %s: %s", plan.Target, strings.Join(plan.Reasons, " "))).
 			WithDetail("reasons", plan.Reasons)
 	}
 	if len(plan.Breaking) > 0 && strings.TrimPrefix(req.ConfirmBreaking, "v") != plan.Target {
@@ -193,13 +194,13 @@ func (s *Service) Start(ctx context.Context, p authz.Principal, req Request) (Ou
 		for i, r := range plan.Breaking {
 			versions[i] = r.Version
 		}
-		return Outcome{}, errs.New(errs.ValidInvalid,
+		return Attempt{}, errs.New(errs.ValidInvalid,
 			fmt.Sprintf("Upgrading to %s crosses %s, which may break something that works now (R-360).", plan.Target, strings.Join(versions, ", "))).
 			WithRemedy(fmt.Sprintf("Read the Upgrade notes of each, then confirm by sending confirm_breaking: %q.", plan.Target)).
 			WithDetail("breaking", versions)
 	}
 
-	o := Outcome{
+	o := Attempt{
 		ID: id.New(id.Upgrade), From: plan.Current, To: plan.Target, Tag: plan.Tag,
 		StartedAt: s.Clock.Now(), StartedBy: p.ID, Automatic: req.Automatic, State: StateRunning,
 	}
@@ -215,7 +216,7 @@ func (s *Service) Start(ctx context.Context, p authz.Principal, req Request) (Ou
 	digest, err := s.Verify(ctx, plan.Target)
 	if err != nil {
 		event("upgrade.refused", map[string]any{"from": o.From, "to": o.To, "reason": "signature"})
-		return Outcome{}, errs.Wrap(errs.ValidInvalid,
+		return Attempt{}, errs.Wrap(errs.ValidInvalid,
 			fmt.Sprintf("Pando %s's image did not verify as signed by Pando's release workflow, so Pando will not run it: %s", plan.Target, err), err)
 	}
 	o.Image = Repository + "@" + digest
@@ -229,13 +230,17 @@ func (s *Service) Start(ctx context.Context, p authz.Principal, req Request) (Ou
 		event("upgrade.backup_skipped", map[string]any{"from": o.From, "to": o.To})
 	default:
 		if req.Passphrase.Reveal() == "" {
-			return Outcome{}, errs.New(errs.ValidInvalid, "An upgrade takes a full backup first, and it needs a passphrase, which Pando does not keep.").
+			return Attempt{}, errs.New(errs.ValidInvalid, "An upgrade takes a full backup first, and it needs a passphrase, which Pando does not keep.").
 				WithRemedy("Send a passphrase, or skip the backup explicitly with skip_backup: true.")
+		}
+		if len(req.Passphrase.Reveal()) < backup.MinPassphraseLength {
+			return Attempt{}, errs.Newf(errs.ValidInvalid, "A backup passphrase needs at least %d characters.", backup.MinPassphraseLength).
+				WithRemedy("Pando never stores this passphrase, so choose something you can find again after the machine is gone.")
 		}
 		backupID, err := s.Backup(ctx, p, req.Passphrase)
 		if err != nil {
 			event("upgrade.refused", map[string]any{"from": o.From, "to": o.To, "reason": "backup"})
-			return Outcome{}, errs.Wrap(errs.As(err).Code,
+			return Attempt{}, errs.Wrap(errs.As(err).Code,
 				"The backup taken before the upgrade failed, so Pando did not upgrade: "+errs.As(err).Message, err).
 				WithRemedy("Fix the backup and try again, or skip it explicitly.")
 		}
@@ -244,20 +249,20 @@ func (s *Service) Start(ctx context.Context, p authz.Principal, req Request) (Ou
 
 	rt, err := s.Runtime(ctx)
 	if err != nil {
-		return Outcome{}, err
+		return Attempt{}, err
 	}
 	up := rt.(api.SelfUpgrader) // PlanFor checked SupportsSelfUpgrade
 	self, err := up.Self(ctx)
 	if err != nil {
-		return Outcome{}, err
+		return Attempt{}, err
 	}
 	if err := up.PullImage(ctx, o.Image); err != nil {
-		return Outcome{}, err
+		return Attempt{}, err
 	}
 
 	path := OutcomePath(s.WorkDir)
 	if err := WriteOutcome(path, o); err != nil {
-		return Outcome{}, errs.Wrap(errs.Internal, "Could not record the upgrade before starting it.", err)
+		return Attempt{}, errs.Wrap(errs.Internal, "Could not record the upgrade before starting it.", err)
 	}
 	if _, err := up.StartHelper(ctx, api.HelperSpec{
 		Args: []string{"upgrade-helper",
@@ -282,7 +287,7 @@ func (s *Service) Start(ctx context.Context, p authz.Principal, req Request) (Ou
 }
 
 // Last is the most recent upgrade's outcome, or nil.
-func (s *Service) Last(context.Context) (*Outcome, error) {
+func (s *Service) Last(context.Context) (*Attempt, error) {
 	return ReadOutcome(OutcomePath(s.WorkDir))
 }
 

@@ -89,7 +89,7 @@ func upgradeCmd(client func() (*Client, error)) *cobra.Command {
 				body["passphrase"] = passphrase
 			}
 
-			var o upgrade.Outcome
+			var o upgrade.Attempt
 			if err := c.Do("POST", "/upgrade", body, &o); err != nil {
 				return err
 			}
@@ -109,7 +109,7 @@ func upgradeCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			var out struct {
-				Upgrade *upgrade.Outcome `json:"upgrade"`
+				Upgrade *upgrade.Attempt `json:"upgrade"`
 			}
 			if err := c.Do("GET", "/upgrade/last", nil, &out); err != nil {
 				return err

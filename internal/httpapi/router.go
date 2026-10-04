@@ -268,8 +268,8 @@ type AuditArchives interface {
 // Upgrades plans, starts and reports in-place upgrades.
 type Upgrades interface {
 	PlanFor(ctx context.Context, version string) (upgrade.Plan, error)
-	Start(ctx context.Context, p authz.Principal, req upgrade.Request) (upgrade.Outcome, error)
-	Last(ctx context.Context) (*upgrade.Outcome, error)
+	Start(ctx context.Context, p authz.Principal, req upgrade.Request) (upgrade.Attempt, error)
+	Last(ctx context.Context) (*upgrade.Attempt, error)
 }
 
 // Updates reports what the update check knows.

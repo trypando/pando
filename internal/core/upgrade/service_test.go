@@ -199,6 +199,9 @@ func TestR358_APersonsUpgradeTakesAFullBackupUnlessTheySkipItOutLoud(t *testing.
 	_, err := h.svc.Start(ctx, admin, upgrade.Request{Version: "0.3.2"})
 	require.ErrorContains(t, err, "needs a passphrase")
 	require.Empty(t, h.rt.helpers)
+	_, err = h.svc.Start(ctx, admin, upgrade.Request{Version: "0.3.2", Passphrase: secret.New("short")})
+	require.ErrorContains(t, err, "at least 16 characters", "the same rule as any backup")
+	require.Zero(t, h.backups)
 
 	o, err := h.svc.Start(ctx, admin, upgrade.Request{Version: "0.3.2", Passphrase: secret.New("a long passphrase")})
 	require.NoError(t, err)
@@ -248,7 +251,7 @@ func TestR356_TheNextPandoRecordsHowTheUpgradeWentOnce(t *testing.T) {
 	h := newHarness(t)
 	h.svc.Version = "0.3.2"
 	h.updates.st = update.Status{Current: "0.3.2", Enabled: true}
-	require.NoError(t, upgrade.WriteOutcome(upgrade.OutcomePath(h.svc.WorkDir), upgrade.Outcome{
+	require.NoError(t, upgrade.WriteOutcome(upgrade.OutcomePath(h.svc.WorkDir), upgrade.Attempt{
 		ID: "upg_1", From: "0.3.1", To: "0.3.2", State: upgrade.StateSucceeded,
 		SnapshotAt: h.clock.Now(), FinishedAt: h.clock.Now(),
 	}))
@@ -267,7 +270,7 @@ func TestR356_TheNextPandoRecordsHowTheUpgradeWentOnce(t *testing.T) {
 
 	// A rollback is recorded and the holders of install.upgrade are told.
 	h = newHarness(t)
-	require.NoError(t, upgrade.WriteOutcome(upgrade.OutcomePath(h.svc.WorkDir), upgrade.Outcome{
+	require.NoError(t, upgrade.WriteOutcome(upgrade.OutcomePath(h.svc.WorkDir), upgrade.Attempt{
 		ID: "upg_2", From: "0.3.1", To: "0.4.0", State: upgrade.StateRolledBack, Reason: "0.4.0 did not start",
 	}))
 	h.updates.st.Available = false
@@ -280,7 +283,7 @@ func TestR356_TheNextPandoRecordsHowTheUpgradeWentOnce(t *testing.T) {
 	// A helper that died without a word stops blocking, and says so.
 	h = newHarness(t)
 	h.updates.st.Available = false
-	require.NoError(t, upgrade.WriteOutcome(upgrade.OutcomePath(h.svc.WorkDir), upgrade.Outcome{
+	require.NoError(t, upgrade.WriteOutcome(upgrade.OutcomePath(h.svc.WorkDir), upgrade.Attempt{
 		ID: "upg_3", To: "0.4.0", State: upgrade.StateRunning, StartedAt: h.clock.Now(),
 	}))
 	h.clock.Advance(time.Hour)

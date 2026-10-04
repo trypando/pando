@@ -95,6 +95,14 @@ type VolumeRef struct {
 	Handle     string
 }
 
+// MinPassphraseLength is the only rule, and it is longer than a password's.
+//
+// A password protects an account somebody can regain by other means; this
+// protects every secret in the installation and there is no other means. No
+// composition requirements, for the same reason as elsewhere: they produce
+// shorter, more guessable secrets and a note on a monitor.
+const MinPassphraseLength = 16
+
 // CreateRequest asks for a bundle.
 type CreateRequest struct {
 	// Passphrase is supplied at backup time and never stored (R-213). Losing it

@@ -41,10 +41,10 @@ type fakeDB struct{ s *fakeSwap }
 func (d fakeDB) Snapshot(ctx context.Context) error { return d.s.Snapshot(ctx) }
 func (d fakeDB) Restore(ctx context.Context) error  { return d.s.RestoreDatabase(ctx) }
 
-func runHelper(t *testing.T, fail map[string]error) (upgrade.Outcome, []string) {
+func runHelper(t *testing.T, fail map[string]error) (upgrade.Attempt, []string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "upgrade", "outcome.json")
-	require.NoError(t, upgrade.WriteOutcome(path, upgrade.Outcome{
+	require.NoError(t, upgrade.WriteOutcome(path, upgrade.Attempt{
 		ID: "upg_1", From: "0.3.1", To: "0.4.0", Image: "trypando/pando@sha256:new",
 		Tag: "trypando/pando:latest", State: upgrade.StateRunning,
 	}))

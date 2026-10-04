@@ -26,8 +26,8 @@ const (
 	StateFailed     = "failed"
 )
 
-// Outcome is one upgrade, as far as it got.
-type Outcome struct {
+// Attempt is one upgrade, as far as it got.
+type Attempt struct {
 	ID           string    `json:"id"`
 	From         string    `json:"from"`
 	To           string    `json:"to"`
@@ -52,7 +52,7 @@ type Outcome struct {
 func OutcomePath(workDir string) string { return filepath.Join(workDir, "upgrade", "outcome.json") }
 
 // ReadOutcome reads the last upgrade's outcome; nil when there has been none.
-func ReadOutcome(path string) (*Outcome, error) {
+func ReadOutcome(path string) (*Attempt, error) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -60,7 +60,7 @@ func ReadOutcome(path string) (*Outcome, error) {
 	if err != nil {
 		return nil, err
 	}
-	var o Outcome
+	var o Attempt
 	if err := json.Unmarshal(b, &o); err != nil {
 		return nil, fmt.Errorf("the last upgrade's outcome at %s does not parse: %w", path, err)
 	}
@@ -68,7 +68,7 @@ func ReadOutcome(path string) (*Outcome, error) {
 }
 
 // WriteOutcome replaces the outcome atomically, so a reader never sees half.
-func WriteOutcome(path string, o Outcome) error {
+func WriteOutcome(path string, o Attempt) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -103,14 +103,14 @@ type Database interface {
 // RunHelper replaces Pando (R-359) and records how it went at path. It puts
 // the previous version back on its own at every step after which the new one
 // might have touched anything — and says so plainly when it cannot.
-func RunHelper(ctx context.Context, path string, swap Swap, db Database, readyTimeout time.Duration, clk clock.Clock) Outcome {
+func RunHelper(ctx context.Context, path string, swap Swap, db Database, readyTimeout time.Duration, clk clock.Clock) Attempt {
 	o, err := ReadOutcome(path)
 	if err != nil || o == nil {
-		o = &Outcome{State: StateFailed, Reason: "The upgrade helper started without an upgrade to run."}
+		o = &Attempt{State: StateFailed, Reason: "The upgrade helper started without an upgrade to run."}
 		_ = WriteOutcome(path, *o)
 		return *o
 	}
-	finish := func(state, reason string) Outcome {
+	finish := func(state, reason string) Attempt {
 		o.State, o.Reason, o.FinishedAt = state, reason, clk.Now()
 		_ = WriteOutcome(path, *o)
 		return *o
