@@ -11,6 +11,7 @@ import {
   Banner,
   Button,
   Checkbox,
+  CodeBlock,
   EmptyState,
   Icon,
   Input,
@@ -246,6 +247,11 @@ interface PolicyDoc {
   // The update check (R-349, R-350).
   disable_update_check?: boolean;
   update_channel?: string;
+
+  // The in-place upgrade (R-355, R-361).
+  upgrade_in_place?: boolean;
+  auto_upgrade_patches?: boolean;
+  maintenance_window?: string;
 }
 
 interface Violation {
@@ -860,6 +866,50 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               ))}
             </fieldset>
           </Fixed>
+
+          {/* R-355: off by default, and usually decided in the deployment
+              rather than here — a pinned version is put back by its next
+              apply, so whoever owns that configuration turns this on. */}
+          <Fixed field="upgrade_in_place">
+            <Switch
+              checked={current.upgrade_in_place ?? false}
+              disabled={locked('upgrade_in_place')}
+              label="Let Pando upgrade itself"
+              description="Adds an Upgrade button to the Updates screen. Pando verifies the new release's signature, takes a backup, and puts the previous version back if the new one doesn't start."
+              onChange={(e) => edit({ upgrade_in_place: e.target.checked })}
+            />
+          </Fixed>
+          <InPlaceSetup />
+
+          {/* R-361: with nobody there, no passphrase, so no full backup. */}
+          <Fixed field="auto_upgrade_patches">
+            <Switch
+              checked={current.auto_upgrade_patches ?? false}
+              disabled={locked('auto_upgrade_patches') || !(current.upgrade_in_place ?? false)}
+              label="Install patch releases automatically"
+              description="Inside the maintenance window below, a new patch of the running version (0.3.1 to 0.3.2, never 0.4.0). Pando keeps a copy of its database to roll back to, but takes no full backup: nobody is there to give its passphrase. Keep taking your own."
+              onChange={(e) =>
+                edit(
+                  e.target.checked && !current.maintenance_window
+                    ? { auto_upgrade_patches: true, maintenance_window: 'sun 02:00 2h' }
+                    : { auto_upgrade_patches: e.target.checked },
+                )
+              }
+            />
+          </Fixed>
+          {(current.auto_upgrade_patches || current.maintenance_window) && (
+            <Fixed field="maintenance_window">
+              <Input
+                label="Maintenance window, in UTC"
+                mono
+                placeholder="sun 02:00 2h"
+                disabled={locked('maintenance_window')}
+                value={current.maintenance_window ?? ''}
+                helper="Weekdays, a start time and a length in hours: sun,wed 02:00 2h, or daily 03:30 1h. Every app is unreachable for under a minute while Pando restarts."
+                onChange={(e) => edit({ maintenance_window: e.target.value || undefined })}
+              />
+            </Fixed>
+          )}
         </PolicySection>
 
         <StartupSettings config={startup.data} />
@@ -961,6 +1011,33 @@ function Fixed({ field, children }: { field: string; children: React.ReactNode }
           {setIn(src)}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * How to turn the in-place upgrade on where Pando is deployed (R-355), shown
+ * beside the switch: the image has to be a moving tag, or the next apply of
+ * the deployment puts the old version back, and the setting itself is best
+ * made there too, where it locks this switch.
+ */
+function InPlaceSetup() {
+  const lines = [
+    'services:',
+    '  pando:',
+    '    image: trypando/pando:latest',
+    '    environment:',
+    '      PANDO_POLICY_UPGRADE_IN_PLACE: "true"',
+  ];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+      <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
+        Pando's image has to be a moving tag that covers the new version: latest, a minor line such as 0.3 for its
+        patches, or a major such as 1. If Pando's docker-compose.yml or infrastructure-as-code names an exact version,
+        its next apply puts the old version back, and Pando refuses to start against the upgraded database. To decide
+        this in the deployment, set it there, where it also locks this switch:
+      </p>
+      <CodeBlock title="docker-compose.yml" lines={lines} copyable dense />
     </div>
   );
 }
