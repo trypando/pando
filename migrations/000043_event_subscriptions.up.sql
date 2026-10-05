@@ -153,9 +153,12 @@ CREATE TRIGGER backup_attempts_failed_event
 CREATE TABLE subscriptions (
     id            text PRIMARY KEY,          -- sub_...
 
-    -- A person. Deliveries are authorized as them, every time (R-368), so a
-    -- subscription is worth no more than its owner's live grants.
-    owner_id      text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- A person, or an account token (R-060), never both. Deliveries are
+    -- authorized as the owner every time (R-368), so a subscription is worth
+    -- no more than its owner's live grants. A delegated token's subscription
+    -- belongs to the person it acts for (R-058).
+    owner_user_id  text REFERENCES users(id) ON DELETE CASCADE,
+    owner_token_id text REFERENCES tokens(id) ON DELETE CASCADE,
 
     -- NULL subscribes install-wide, which needs install.events.manage.
     app_id        text REFERENCES apps(id) ON DELETE CASCADE,
@@ -166,6 +169,16 @@ CREATE TABLE subscriptions (
     destination   text NOT NULL CHECK (destination IN ('webhook', 'notify')),
     url           text,
     adapter_id    text,
+
+    -- How a webhook is sent, for a receiver that expects a particular
+    -- request (R-375). The body template is rendered per event; empty sends
+    -- Pando's own envelope. Header names are listed here so they can be
+    -- shown; their values may be credentials and are kept sealed in
+    -- subscription_secrets.
+    method           text NOT NULL DEFAULT 'POST' CHECK (method IN ('POST', 'PUT', 'PATCH')),
+    content_type     text NOT NULL DEFAULT 'application/json',
+    payload_template text NOT NULL DEFAULT '',
+    header_names     text[] NOT NULL DEFAULT '{}',
 
     description   text NOT NULL DEFAULT '',
 
@@ -182,23 +195,29 @@ CREATE TABLE subscriptions (
     updated_at    timestamptz NOT NULL DEFAULT now(),
 
     CONSTRAINT subscriptions_webhook_has_url CHECK ((destination = 'webhook') = (url IS NOT NULL)),
-    CONSTRAINT subscriptions_notify_has_adapter CHECK ((destination = 'notify') = (adapter_id IS NOT NULL))
+    CONSTRAINT subscriptions_notify_has_adapter CHECK ((destination = 'notify') = (adapter_id IS NOT NULL)),
+    CONSTRAINT subscriptions_one_owner CHECK ((owner_user_id IS NULL) <> (owner_token_id IS NULL))
 );
 
-CREATE INDEX subscriptions_owner_idx ON subscriptions (owner_id);
+CREATE INDEX subscriptions_owner_user_idx ON subscriptions (owner_user_id);
+CREATE INDEX subscriptions_owner_token_idx ON subscriptions (owner_token_id);
 CREATE INDEX subscriptions_app_idx ON subscriptions (app_id);
 
--- A webhook's signing key, sealed by the secrets adapter (R-371, R-190). The
--- subscription row has no column a key could be put in, and this one holds
--- ciphertext or an external reference, never the key.
-CREATE TABLE subscription_signing_keys (
-    subscription_id text PRIMARY KEY REFERENCES subscriptions(id) ON DELETE CASCADE,
+-- A webhook's secrets, sealed by the secrets adapter (R-371, R-375, R-190):
+-- its signing key, and the value of each custom header, which is where a
+-- receiver's credential goes. The subscription row has no column either could
+-- be put in, and this one holds ciphertext or an external reference, never
+-- the value.
+CREATE TABLE subscription_secrets (
+    subscription_id text NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    field           text NOT NULL CHECK (field = 'signing_key' OR field LIKE 'header:%'),
     adapter_ref     text NOT NULL,
     ciphertext      bytea,
     external_ref    text,
     version         integer NOT NULL DEFAULT 1,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (subscription_id, field),
     CHECK (ciphertext IS NOT NULL OR external_ref IS NOT NULL)
 );
 

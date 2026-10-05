@@ -81,11 +81,11 @@ func TestR372_TheDialerChecksTheAddressItConnectsTo(t *testing.T) {
 
 	key := secret.New("whsec_x")
 	env := Envelope{ID: "evt_1", Type: "subscription.test"}
-	refused := post(context.Background(), newClient(false), srv.URL, key, "dlv_1", env, time.Now())
+	refused := post(context.Background(), newClient(false), webhookRequest{URL: srv.URL, Key: key, DeliveryID: "dlv_1", Event: env.Type, EventID: env.ID}, time.Now())
 	require.False(t, refused.OK())
 	require.Contains(t, refused.Message(), "allow_private_webhooks")
 
-	allowed := post(context.Background(), newClient(true), srv.URL, key, "dlv_1", env, time.Now())
+	allowed := post(context.Background(), newClient(true), webhookRequest{URL: srv.URL, Key: key, DeliveryID: "dlv_1", Event: env.Type, EventID: env.ID}, time.Now())
 	require.True(t, allowed.OK(), allowed.Message())
 }
 
@@ -99,7 +99,7 @@ func TestARedirectIsNotFollowed(t *testing.T) {
 	}))
 	defer outer.Close()
 
-	res := post(context.Background(), newClient(true), outer.URL, secret.New("k"), "dlv_1", Envelope{}, time.Now())
+	res := post(context.Background(), newClient(true), webhookRequest{URL: outer.URL, Key: secret.New("k"), DeliveryID: "dlv_1"}, time.Now())
 	require.Equal(t, http.StatusTemporaryRedirect, res.StatusCode)
 	require.False(t, res.OK(), "a redirect is a failed delivery")
 }

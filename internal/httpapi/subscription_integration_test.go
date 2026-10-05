@@ -198,7 +198,7 @@ func TestR371_TheSigningKeyIsStoredSealed(t *testing.T) {
 
 	var ciphertext []byte
 	require.NoError(t, i.db.QueryRow(context.Background(),
-		`SELECT ciphertext FROM subscription_signing_keys WHERE subscription_id = $1`, sub.ID).Scan(&ciphertext))
+		`SELECT ciphertext FROM subscription_secrets WHERE subscription_id = $1 AND field = 'signing_key'`, sub.ID).Scan(&ciphertext))
 	require.NotEmpty(t, ciphertext)
 	require.NotContains(t, string(ciphertext), sub.SigningKey)
 

@@ -142,10 +142,10 @@ func (s *Events) Get(ctx context.Context, eventID string) (Event, bool, error) {
 //
 // An event route cannot decide about is left for the next pass rather than
 // marked routed: a database hiccup must not lose an event (R-366).
-func (s *Events) Route(ctx context.Context, limit int, route func(context.Context, Event) ([]string, error)) (int, error) {
+func (s *Events) Route(ctx context.Context, limit int, route func(context.Context, Event) ([]string, error)) ([]Event, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return 0, errs.Wrap(errs.Internal, "Could not route events.", err)
+		return nil, errs.Wrap(errs.Internal, "Could not route events.", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -156,23 +156,23 @@ func (s *Events) Route(ctx context.Context, limit int, route func(context.Contex
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED`, limit)
 	if err != nil {
-		return 0, errs.Wrap(errs.Internal, "Could not route events.", err)
+		return nil, errs.Wrap(errs.Internal, "Could not route events.", err)
 	}
 	var pending []Event
 	for rows.Next() {
 		e, err := scanEvent(rows)
 		if err != nil {
 			rows.Close()
-			return 0, errs.Wrap(errs.Internal, "Could not route events.", err)
+			return nil, errs.Wrap(errs.Internal, "Could not route events.", err)
 		}
 		pending = append(pending, e)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, errs.Wrap(errs.Internal, "Could not route events.", err)
+		return nil, errs.Wrap(errs.Internal, "Could not route events.", err)
 	}
 
-	routed := 0
+	var routed []Event
 	for _, e := range pending {
 		subs, err := route(ctx, e)
 		if err != nil {
@@ -184,16 +184,16 @@ func (s *Events) Route(ctx context.Context, limit int, route func(context.Contex
 				VALUES ($1, $2, $3, now())
 				ON CONFLICT (subscription_id, event_id) DO NOTHING`,
 				id.New(id.Delivery), sub, e.ID); err != nil {
-				return 0, errs.Wrap(errs.Internal, "Could not queue a delivery.", err)
+				return nil, errs.Wrap(errs.Internal, "Could not queue a delivery.", err)
 			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE events SET routed_at = now() WHERE id = $1`, e.ID); err != nil {
-			return 0, errs.Wrap(errs.Internal, "Could not route events.", err)
+			return nil, errs.Wrap(errs.Internal, "Could not route events.", err)
 		}
-		routed++
+		routed = append(routed, e)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, errs.Wrap(errs.Internal, "Could not route events.", err)
+		return nil, errs.Wrap(errs.Internal, "Could not route events.", err)
 	}
 	return routed, nil
 }
@@ -223,15 +223,28 @@ const (
 
 // Subscription is which events, about what, sent where (R-367).
 type Subscription struct {
-	ID                  string     `json:"id"`
-	OwnerID             string     `json:"owner_id"`
-	OwnerName           string     `json:"owner_name,omitempty"`
-	AppID               string     `json:"app_id,omitempty"`
-	AppName             string     `json:"app_name,omitempty"`
-	Events              []string   `json:"events"`
-	Destination         string     `json:"destination"`
-	URL                 string     `json:"url,omitempty"`
-	AdapterID           string     `json:"adapter_id,omitempty"`
+	ID string `json:"id"`
+
+	// OwnerID is the person who owns it; OwnerTokenID the account token, for
+	// one an account token made (R-060). Exactly one is set.
+	OwnerID      string `json:"owner_id,omitempty"`
+	OwnerTokenID string `json:"owner_token_id,omitempty"`
+	OwnerName    string `json:"owner_name,omitempty"`
+
+	AppID       string   `json:"app_id,omitempty"`
+	AppName     string   `json:"app_name,omitempty"`
+	Events      []string `json:"events"`
+	Destination string   `json:"destination"`
+	URL         string   `json:"url,omitempty"`
+	AdapterID   string   `json:"adapter_id,omitempty"`
+
+	// How a webhook is sent (R-375). Header values are sealed in
+	// subscription_secrets; only their names are here.
+	Method          string   `json:"method,omitempty"`
+	ContentType     string   `json:"content_type,omitempty"`
+	PayloadTemplate string   `json:"payload_template,omitempty"`
+	HeaderNames     []string `json:"header_names,omitempty"`
+
 	Description         string     `json:"description"`
 	Enabled             bool       `json:"enabled"`
 	DisabledReason      string     `json:"disabled_reason,omitempty"`
@@ -247,33 +260,53 @@ type Subscriptions struct{ db *DB }
 
 func NewSubscriptions(db *DB) *Subscriptions { return &Subscriptions{db: db} }
 
-const subscriptionColumns = `s.id, s.owner_id, coalesce(nullif(u.display_name, ''), u.email, u.external_id, ''),
+const subscriptionColumns = `s.id, coalesce(s.owner_user_id, ''), coalesce(s.owner_token_id, ''),
+	coalesce(nullif(u.display_name, ''), u.email, u.external_id, t.name, ''),
 	coalesce(s.app_id, ''), coalesce(a.name, ''), s.events, s.destination, coalesce(s.url, ''),
-	coalesce(s.adapter_id, ''), s.description, s.enabled, s.disabled_reason, s.failing_since,
+	coalesce(s.adapter_id, ''), s.method, s.content_type, s.payload_template, s.header_names,
+	s.description, s.enabled, s.disabled_reason, s.failing_since,
 	s.consecutive_failures, s.created_by, s.created_at, s.updated_at`
 
 const subscriptionFrom = ` FROM subscriptions s
-	JOIN users u ON u.id = s.owner_id
+	LEFT JOIN users u ON u.id = s.owner_user_id
+	LEFT JOIN tokens t ON t.id = s.owner_token_id
 	LEFT JOIN apps a ON a.id = s.app_id`
 
 func scanSubscription(row pgx.Row) (Subscription, error) {
 	var s Subscription
-	err := row.Scan(&s.ID, &s.OwnerID, &s.OwnerName, &s.AppID, &s.AppName, &s.Events, &s.Destination,
-		&s.URL, &s.AdapterID, &s.Description, &s.Enabled, &s.DisabledReason, &s.FailingSince,
+	err := row.Scan(&s.ID, &s.OwnerID, &s.OwnerTokenID, &s.OwnerName, &s.AppID, &s.AppName, &s.Events,
+		&s.Destination, &s.URL, &s.AdapterID, &s.Method, &s.ContentType, &s.PayloadTemplate, &s.HeaderNames,
+		&s.Description, &s.Enabled, &s.DisabledReason, &s.FailingSince,
 		&s.ConsecutiveFailures, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
 	if s.Events == nil {
 		s.Events = []string{}
+	}
+	if s.Destination != DestinationWebhook {
+		s.Method, s.ContentType = "", ""
 	}
 	return s, err
 }
 
 // Create stores a subscription. s.ID must be set.
 func (s *Subscriptions) Create(ctx context.Context, sub Subscription) (Subscription, error) {
+	method, contentType := sub.Method, sub.ContentType
+	if method == "" {
+		method = "POST"
+	}
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	headers := sub.HeaderNames
+	if headers == nil {
+		headers = []string{}
+	}
 	if _, err := s.db.Exec(ctx, `
-		INSERT INTO subscriptions (id, owner_id, app_id, events, destination, url, adapter_id, description, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		sub.ID, sub.OwnerID, nullable(sub.AppID), sub.Events, sub.Destination, nullable(sub.URL),
-		nullable(sub.AdapterID), sub.Description, sub.CreatedBy); err != nil {
+		INSERT INTO subscriptions (id, owner_user_id, owner_token_id, app_id, events, destination, url, adapter_id,
+		                           method, content_type, payload_template, header_names, description, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		sub.ID, nullable(sub.OwnerID), nullable(sub.OwnerTokenID), nullable(sub.AppID), sub.Events, sub.Destination,
+		nullable(sub.URL), nullable(sub.AdapterID), method, contentType, sub.PayloadTemplate, headers,
+		sub.Description, sub.CreatedBy); err != nil {
 		return Subscription{}, errs.Wrap(errs.Internal, "Could not save the subscription.", err)
 	}
 	got, _, err := s.Get(ctx, sub.ID)
@@ -294,6 +327,8 @@ func (s *Subscriptions) Get(ctx context.Context, subscriptionID string) (Subscri
 
 // SubscriptionFilter narrows a list. Empty fields do not narrow.
 type SubscriptionFilter struct {
+	// OwnerID is a person's ID or an account token's: both columns are
+	// matched, and the two kinds of ID cannot collide.
 	OwnerID string
 	AppID   string
 
@@ -307,7 +342,7 @@ type SubscriptionFilter struct {
 // List returns subscriptions, newest first.
 func (s *Subscriptions) List(ctx context.Context, f SubscriptionFilter) ([]Subscription, error) {
 	rows, err := s.db.Query(ctx, `SELECT `+subscriptionColumns+subscriptionFrom+`
-		WHERE ($1 = '' OR s.owner_id = $1)
+		WHERE ($1 = '' OR s.owner_user_id = $1 OR s.owner_token_id = $1)
 		  AND ($2 = '' OR s.app_id = $2)
 		  AND (NOT $3 OR s.app_id IS NULL)
 		  AND (NOT $4 OR s.enabled)
@@ -329,19 +364,29 @@ func (s *Subscriptions) List(ctx context.Context, f SubscriptionFilter) ([]Subsc
 
 // SubscriptionPatch is a partial update. Nil fields are left alone.
 type SubscriptionPatch struct {
-	Events      *[]string
-	URL         *string
-	AdapterID   *string
-	Description *string
-	Enabled     *bool
+	Events          *[]string
+	URL             *string
+	AdapterID       *string
+	Description     *string
+	Enabled         *bool
+	Method          *string
+	ContentType     *string
+	PayloadTemplate *string
+	HeaderNames     *[]string
 }
 
 // Update applies a patch. Turning a subscription on clears the record of its
 // failures, so an endpoint somebody fixed starts with a clean slate.
 func (s *Subscriptions) Update(ctx context.Context, subscriptionID string, p SubscriptionPatch) (Subscription, error) {
-	var events []string
+	var events, headers []string
 	if p.Events != nil {
 		events = *p.Events
+	}
+	if p.HeaderNames != nil {
+		headers = *p.HeaderNames
+		if headers == nil {
+			headers = []string{}
+		}
 	}
 	_, err := s.db.Exec(ctx, `
 		UPDATE subscriptions SET
@@ -353,6 +398,10 @@ func (s *Subscriptions) Update(ctx context.Context, subscriptionID string, p Sub
 			disabled_reason = CASE WHEN $10 AND $11 THEN '' ELSE disabled_reason END,
 			failing_since = CASE WHEN $10 AND $11 THEN NULL ELSE failing_since END,
 			consecutive_failures = CASE WHEN $10 AND $11 THEN 0 ELSE consecutive_failures END,
+			method = CASE WHEN $12 THEN $13 ELSE method END,
+			content_type = CASE WHEN $14 THEN $15 ELSE content_type END,
+			payload_template = CASE WHEN $16 THEN $17 ELSE payload_template END,
+			header_names = CASE WHEN $18 THEN $19 ELSE header_names END,
 			updated_at = now()
 		WHERE id = $1`,
 		subscriptionID,
@@ -360,7 +409,11 @@ func (s *Subscriptions) Update(ctx context.Context, subscriptionID string, p Sub
 		p.URL != nil, deref(p.URL),
 		p.AdapterID != nil, deref(p.AdapterID),
 		p.Description != nil, deref(p.Description),
-		p.Enabled != nil, p.Enabled != nil && *p.Enabled)
+		p.Enabled != nil, p.Enabled != nil && *p.Enabled,
+		p.Method != nil, deref(p.Method),
+		p.ContentType != nil, deref(p.ContentType),
+		p.PayloadTemplate != nil, deref(p.PayloadTemplate),
+		p.HeaderNames != nil, headers)
 	if err != nil {
 		return Subscription{}, errs.Wrap(errs.Internal, "Could not update the subscription.", err)
 	}
@@ -613,80 +666,115 @@ func (s *Deliveries) Redeliver(ctx context.Context, deliveryID, by string) error
 	return nil
 }
 
-// --- signing keys ----------------------------------------------------------
+// --- subscription secrets --------------------------------------------------
 
-// SigningKeys stores webhook signing keys, sealed by the secrets adapter
-// (R-371, R-190). The same arrangement as AdapterCredentials: ciphertext or an
-// external reference, never the key, and no column on the subscription a key
-// could be put in.
-type SigningKeys struct {
+// SigningKeyField is the field a webhook's signing key is kept under.
+const SigningKeyField = "signing_key"
+
+// HeaderField is the field a custom header's value is kept under.
+func HeaderField(name string) string { return "header:" + name }
+
+// SubscriptionSecrets stores a webhook's secrets — its signing key and the
+// values of its custom headers — sealed by the secrets adapter (R-371, R-375,
+// R-190). The same arrangement as AdapterCredentials: ciphertext or an
+// external reference, never the value, and no column on the subscription a
+// value could be put in.
+type SubscriptionSecrets struct {
 	db         *DB
 	adapter    api.SecretsAdapter
 	adapterRef string
 }
 
-func NewSigningKeys(db *DB, adapter api.SecretsAdapter, adapterRef string) *SigningKeys {
-	return &SigningKeys{db: db, adapter: adapter, adapterRef: adapterRef}
+func NewSubscriptionSecrets(db *DB, adapter api.SecretsAdapter, adapterRef string) *SubscriptionSecrets {
+	return &SubscriptionSecrets{db: db, adapter: adapter, adapterRef: adapterRef}
 }
 
-// signingKeyRef scopes a key to its subscription. "subscription:" cannot
-// collide with an app ID or an adapter's scope, so one sealed key cannot be
-// replayed as another kind of secret.
-func signingKeyRef(subscriptionID string) api.SecretRef {
-	return api.SecretRef{AppID: "subscription:" + subscriptionID, Key: "signing_key"}
+// subscriptionSecretRef scopes a secret to its subscription. "subscription:"
+// cannot collide with an app ID or an adapter's scope, so one sealed value
+// cannot be replayed as another kind of secret.
+func subscriptionSecretRef(subscriptionID, field string) api.SecretRef {
+	return api.SecretRef{AppID: "subscription:" + subscriptionID, Key: field}
 }
 
-// Put stores or replaces a subscription's key.
-func (k *SigningKeys) Put(ctx context.Context, subscriptionID string, v secret.Value) error {
+// Put stores or replaces one secret.
+func (k *SubscriptionSecrets) Put(ctx context.Context, subscriptionID, field string, v secret.Value) error {
 	if k == nil || k.adapter == nil {
 		return errs.New(errs.StateInvalid,
-			"Pando has no secrets adapter configured, so it cannot keep a webhook's signing key.").
+			"Pando has no secrets adapter configured, so it cannot keep a webhook's signing key or headers.").
 			WithRemedy("Configure a secrets adapter, restart Pando, and try again.")
 	}
-	stored, err := k.adapter.Put(ctx, signingKeyRef(subscriptionID), v)
+	stored, err := k.adapter.Put(ctx, subscriptionSecretRef(subscriptionID, field), v)
 	if err != nil {
 		return err
 	}
 	_, err = k.db.Exec(ctx, `
-		INSERT INTO subscription_signing_keys AS t (subscription_id, adapter_ref, ciphertext, external_ref)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (subscription_id) DO UPDATE SET
+		INSERT INTO subscription_secrets AS t (subscription_id, field, adapter_ref, ciphertext, external_ref)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (subscription_id, field) DO UPDATE SET
 			adapter_ref = EXCLUDED.adapter_ref, ciphertext = EXCLUDED.ciphertext,
 			external_ref = EXCLUDED.external_ref, version = t.version + 1, updated_at = now()`,
-		subscriptionID, k.adapterRef, stored.Ciphertext, nullable(stored.Handle))
+		subscriptionID, field, k.adapterRef, stored.Ciphertext, nullable(stored.Handle))
 	if err != nil {
-		return errs.Wrap(errs.Internal, "Could not store the signing key.", err)
+		return errs.Wrap(errs.Internal, "Could not store the webhook's secret.", err)
 	}
 	return nil
 }
 
-// Get opens a subscription's key, for signing one delivery.
-func (k *SigningKeys) Get(ctx context.Context, subscriptionID string) (secret.Value, bool, error) {
-	var ciphertext []byte
-	var handle *string
-	err := k.db.QueryRow(ctx, `
-		SELECT ciphertext, external_ref FROM subscription_signing_keys WHERE subscription_id = $1`,
-		subscriptionID).Scan(&ciphertext, &handle)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return secret.Value{}, false, nil
+// DeleteHeaders removes every stored header value, before a new set is put.
+func (k *SubscriptionSecrets) DeleteHeaders(ctx context.Context, subscriptionID string) error {
+	if _, err := k.db.Exec(ctx,
+		`DELETE FROM subscription_secrets WHERE subscription_id = $1 AND field LIKE 'header:%'`, subscriptionID); err != nil {
+		return errs.Wrap(errs.Internal, "Could not replace the webhook's headers.", err)
 	}
+	return nil
+}
+
+// All opens every secret a subscription has, keyed by field, for one send.
+func (k *SubscriptionSecrets) All(ctx context.Context, subscriptionID string) (map[string]secret.Value, error) {
+	rows, err := k.db.Query(ctx, `
+		SELECT field, ciphertext, external_ref FROM subscription_secrets WHERE subscription_id = $1`, subscriptionID)
 	if err != nil {
-		return secret.Value{}, false, errs.Wrap(errs.Internal, "Could not read the signing key.", err)
+		return nil, errs.Wrap(errs.Internal, "Could not read the webhook's secrets.", err)
+	}
+	type sealed struct {
+		field      string
+		ciphertext []byte
+		handle     *string
+	}
+	var all []sealed
+	for rows.Next() {
+		var s sealed
+		if err := rows.Scan(&s.field, &s.ciphertext, &s.handle); err != nil {
+			rows.Close()
+			return nil, errs.Wrap(errs.Internal, "Could not read the webhook's secrets.", err)
+		}
+		all = append(all, s)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not read the webhook's secrets.", err)
+	}
+	out := make(map[string]secret.Value, len(all))
+	if len(all) == 0 {
+		return out, nil
 	}
 	if k.adapter == nil {
-		return secret.Value{}, false, errs.New(errs.StateInvalid,
-			"A webhook's signing key is stored and no secrets adapter is configured to open it.")
+		return nil, errs.New(errs.StateInvalid,
+			"A webhook's secrets are stored and no secrets adapter is configured to open them.")
 	}
-	ref := signingKeyRef(subscriptionID)
-	stored := api.StoredRef{AppID: ref.AppID, Key: ref.Key, Ciphertext: ciphertext}
-	if handle != nil {
-		stored.Handle = *handle
+	for _, s := range all {
+		ref := subscriptionSecretRef(subscriptionID, s.field)
+		stored := api.StoredRef{AppID: ref.AppID, Key: ref.Key, Ciphertext: s.ciphertext}
+		if s.handle != nil {
+			stored.Handle = *s.handle
+		}
+		v, err := k.adapter.Get(ctx, stored)
+		if err != nil {
+			return nil, err
+		}
+		out[s.field] = v
 	}
-	v, err := k.adapter.Get(ctx, stored)
-	if err != nil {
-		return secret.Value{}, false, err
-	}
-	return v, true, nil
+	return out, nil
 }
 
 // --- preferences -----------------------------------------------------------

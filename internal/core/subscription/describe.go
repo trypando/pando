@@ -13,6 +13,20 @@ import (
 
 func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
 
+// LinkFor is where in the console an event is seen: the app's page for an app
+// event, the Events screen otherwise. Empty when Pando does not know its own
+// address (external_url).
+func LinkFor(externalURL, appID string) string {
+	base := strings.TrimRight(strings.TrimSpace(externalURL), "/")
+	if base == "" {
+		return ""
+	}
+	if appID != "" {
+		return base + "/admin/apps/" + appID + "/events"
+	}
+	return base + "/admin/events"
+}
+
 // Describe is an event as a message a person reads: a subject naming what
 // happened and to what, and the event's fields under it. Notify adapters lay
 // these out for their platform; none of them has to know the catalog.

@@ -10,6 +10,7 @@ package subscription
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"strings"
 
@@ -60,7 +61,10 @@ type Service struct {
 	Subscriptions *state.Subscriptions
 	Deliveries    *state.Deliveries
 	Events        *state.Events
-	Keys          *state.SigningKeys
+	Keys          *state.SubscriptionSecrets
+
+	// ExternalURL is how a browser reaches Pando, for links. Empty sends none.
+	ExternalURL string
 	Prefs         *state.NotificationPreferences
 
 	Authz    Authorizer
@@ -103,6 +107,13 @@ type CreateRequest struct {
 	URL         string   `json:"url,omitempty"`
 	AdapterID   string   `json:"adapter_id,omitempty"`
 	Description string   `json:"description,omitempty"`
+
+	// How a webhook is sent (R-375). Header values are secret.Value: they
+	// are read from the request, sealed, and never written back out.
+	Method          string                  `json:"method,omitempty"`
+	ContentType     string                  `json:"content_type,omitempty"`
+	Headers         map[string]secret.Value `json:"headers,omitempty"`
+	PayloadTemplate string                  `json:"payload_template,omitempty"`
 }
 
 // Created is a subscription as it was made, with its signing key — shown this
@@ -122,16 +133,25 @@ func (k *secretOnce) MarshalJSON() ([]byte, error) { return jsonMarshal(k.v.Reve
 // Reveal returns the key, for the CLI's own tests and nothing else.
 func (k *secretOnce) Reveal() string { return k.v.Reveal() }
 
-// owner is who a new subscription belongs to: a person. A delegated token
-// makes one for its owner (R-058); an account token has no person to answer
-// for its deliveries, so it cannot.
-func owner(p authz.Principal) (string, error) {
-	if p.UserID == "" {
-		return "", errs.New(errs.PermDenied,
-			"A subscription belongs to a person, and this request was made by an account token that has none. "+
-				"Use a delegated token, or sign in, to create one.")
+// ownerOf is who a new subscription belongs to: the person, for a person or a
+// delegated token acting for one (R-058), or an account token itself
+// (R-060), which is bounded by its own grants like any principal.
+func ownerOf(p authz.Principal) (userID, tokenID string, err error) {
+	switch {
+	case p.UserID != "":
+		return p.UserID, "", nil
+	case p.Kind == authz.KindToken && p.TokenID != "":
+		return "", p.TokenID, nil
 	}
-	return p.UserID, nil
+	return "", "", errs.New(errs.PermDenied, "A subscription needs an owner. Sign in, or use an API token.")
+}
+
+// owns reports whether p is the subscription's owner.
+func owns(p authz.Principal, sub state.Subscription) bool {
+	if sub.OwnerID != "" {
+		return p.UserID == sub.OwnerID
+	}
+	return p.Kind == authz.KindToken && p.UserID == "" && p.TokenID == sub.OwnerTokenID
 }
 
 // mayCreate is the R-368 check: seeing the app for an app subscription, the
@@ -175,8 +195,10 @@ func checkEvents(patterns []string) ([]string, error) {
 }
 
 // checkDestination validates where a subscription sends and returns the
-// normalized URL.
-func (s *Service) checkDestination(ctx context.Context, destination, rawURL, adapterID string) (string, error) {
+// normalized URL. A notification adapter that reaches people needs a person
+// to reach: an account token's subscription may send to a webhook or a
+// channel, and not to an inbox or an email address it does not have.
+func (s *Service) checkDestination(ctx context.Context, destination, rawURL, adapterID string, tokenOwned bool) (string, error) {
 	switch destination {
 	case state.DestinationWebhook:
 		allow := false
@@ -192,9 +214,15 @@ func (s *Service) checkDestination(ctx context.Context, destination, rawURL, ada
 		if s.Registry == nil {
 			return "", errs.New(errs.StateInvalid, "Pando has no notification adapters configured.")
 		}
-		if _, ok := s.Registry.Notify(adapterID); !ok {
+		a, ok := s.Registry.Notify(adapterID)
+		if !ok {
 			return "", errs.Newf(errs.ValidInvalid,
-				"%q is not a notification adapter configured on this installation. Valid answers are the IDs listed by GET /api/v1/adapters under notify.", adapterID)
+				"%q is not a notification adapter configured on this installation. Valid answers are the destinations GET /api/v1/events lists.", adapterID)
+		}
+		if tokenOwned && a.Capabilities().Audience == api.AudiencePeople {
+			return "", errs.Newf(errs.ValidInvalid,
+				"%s sends to people, and this subscription belongs to an account token, which is not a person and has no inbox or email address. "+
+					"Send to a webhook or a channel such as Slack, or make the subscription signed in as a person.", adapterID)
 		}
 		return "", nil
 	default:
@@ -203,9 +231,64 @@ func (s *Service) checkDestination(ctx context.Context, destination, rawURL, ada
 	}
 }
 
+// requestOptions validates how a webhook is sent. They are refused on a
+// notify subscription, where the adapter decides the request.
+type requestOptions struct {
+	method, contentType, template string
+	headerNames                   []string
+	headers                       map[string]secret.Value
+}
+
+func checkRequestOptions(destination, method, contentType, template string, headers map[string]secret.Value) (requestOptions, error) {
+	if destination != state.DestinationWebhook {
+		if method != "" || contentType != "" || template != "" || len(headers) > 0 {
+			return requestOptions{}, errs.New(errs.ValidInvalid,
+				"Method, content type, headers and a body template are for a webhook. A notification adapter lays out its own message.")
+		}
+		return requestOptions{}, nil
+	}
+	m, err := checkMethod(method)
+	if err != nil {
+		return requestOptions{}, err
+	}
+	ct, err := checkContentType(contentType)
+	if err != nil {
+		return requestOptions{}, err
+	}
+	if err := checkTemplate(template, ct); err != nil {
+		return requestOptions{}, err
+	}
+	plain := make(map[string]string, len(headers))
+	for k, v := range headers {
+		plain[k] = v.Reveal()
+	}
+	names, canonical, err := checkHeaders(plain)
+	if err != nil {
+		return requestOptions{}, err
+	}
+	sealed := make(map[string]secret.Value, len(canonical))
+	for k, v := range canonical {
+		sealed[k] = secret.New(v)
+	}
+	return requestOptions{method: m, contentType: ct, template: template, headerNames: names, headers: sealed}, nil
+}
+
+// putHeaders replaces a webhook's header values with these.
+func (s *Service) putHeaders(ctx context.Context, subscriptionID string, headers map[string]secret.Value) error {
+	if err := s.Keys.DeleteHeaders(ctx, subscriptionID); err != nil {
+		return err
+	}
+	for name, value := range headers {
+		if err := s.Keys.Put(ctx, subscriptionID, state.HeaderField(name), value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Create makes a subscription. A webhook gets a signing key, returned here once.
 func (s *Service) Create(ctx context.Context, p authz.Principal, req CreateRequest) (Created, error) {
-	ownerID, err := owner(p)
+	ownerUser, ownerToken, err := ownerOf(p)
 	if err != nil {
 		return Created{}, err
 	}
@@ -216,14 +299,19 @@ func (s *Service) Create(ctx context.Context, p authz.Principal, req CreateReque
 	if err != nil {
 		return Created{}, err
 	}
-	target, err := s.checkDestination(ctx, req.Destination, req.URL, req.AdapterID)
+	target, err := s.checkDestination(ctx, req.Destination, req.URL, req.AdapterID, ownerToken != "")
+	if err != nil {
+		return Created{}, err
+	}
+	opts, err := checkRequestOptions(req.Destination, req.Method, req.ContentType, req.PayloadTemplate, req.Headers)
 	if err != nil {
 		return Created{}, err
 	}
 
 	sub := state.Subscription{
-		ID: id.New(id.Subscription), OwnerID: ownerID, AppID: req.AppID, Events: names,
+		ID: id.New(id.Subscription), OwnerID: ownerUser, OwnerTokenID: ownerToken, AppID: req.AppID, Events: names,
 		Destination: req.Destination, Description: strings.TrimSpace(req.Description), CreatedBy: p.ID,
+		Method: opts.method, ContentType: opts.contentType, PayloadTemplate: opts.template, HeaderNames: opts.headerNames,
 	}
 	if req.Destination == state.DestinationWebhook {
 		sub.URL = target
@@ -231,8 +319,10 @@ func (s *Service) Create(ctx context.Context, p authz.Principal, req CreateReque
 		sub.AdapterID = req.AdapterID
 	}
 
+	// The audit names headers and never their values.
 	s.audit(ctx, p, "subscription.create", sub, map[string]any{
 		"events": names, "destination": sub.Destination, "url": sub.URL, "adapter_id": sub.AdapterID,
+		"method": sub.Method, "headers": sub.HeaderNames, "templated": sub.PayloadTemplate != "",
 	})
 	created, err := s.Subscriptions.Create(ctx, sub)
 	if err != nil {
@@ -242,10 +332,14 @@ func (s *Service) Create(ctx context.Context, p authz.Principal, req CreateReque
 	if created.Destination == state.DestinationWebhook {
 		key, err := NewKey()
 		if err == nil {
-			err = s.Keys.Put(ctx, created.ID, key)
+			err = s.Keys.Put(ctx, created.ID, state.SigningKeyField, key)
+		}
+		if err == nil {
+			err = s.putHeaders(ctx, created.ID, opts.headers)
 		}
 		if err != nil {
-			// A webhook nobody can verify is not one to keep.
+			// A webhook nobody can verify, or missing the headers its
+			// receiver needs, is not one to keep.
 			_ = s.Subscriptions.Delete(ctx, created.ID)
 			return Created{}, err
 		}
@@ -265,10 +359,7 @@ func (s *Service) visible(ctx context.Context, p authz.Principal, subscriptionID
 	if !ok {
 		return state.Subscription{}, notFound()
 	}
-	if p.UserID != "" && sub.OwnerID == p.UserID {
-		return sub, nil
-	}
-	if p.Kind == authz.KindSystem {
+	if owns(p, sub) || p.Kind == authz.KindSystem {
 		return sub, nil
 	}
 	if ok, err := s.Authz.AllowsInstall(ctx, p, authz.InstallEventsManage); err == nil && ok {
@@ -297,24 +388,39 @@ func (s *Service) List(ctx context.Context, p authz.Principal, req ListRequest) 
 		if err := s.Authz.CheckInstall(ctx, p, authz.InstallEventsManage); err != nil {
 			return nil, err
 		}
-	} else {
-		if p.UserID == "" {
-			return []state.Subscription{}, nil
-		}
-		f.OwnerID = p.UserID
+		return s.Subscriptions.List(ctx, f)
+	}
+	user, token, err := ownerOf(p)
+	if err != nil {
+		return []state.Subscription{}, nil
+	}
+	f.OwnerID = user
+	if token != "" {
+		f.OwnerID = token
 	}
 	return s.Subscriptions.List(ctx, f)
 }
 
 // UpdateRequest changes a subscription. Nil fields are left alone. The
 // destination's kind and the app are fixed: a different one is a different
-// subscription.
+// subscription. Headers, when given, replace every header the webhook had.
 type UpdateRequest struct {
-	Events      *[]string `json:"events,omitempty"`
-	URL         *string   `json:"url,omitempty"`
-	AdapterID   *string   `json:"adapter_id,omitempty"`
-	Description *string   `json:"description,omitempty"`
-	Enabled     *bool     `json:"enabled,omitempty"`
+	Events          *[]string                `json:"events,omitempty"`
+	URL             *string                  `json:"url,omitempty"`
+	AdapterID       *string                  `json:"adapter_id,omitempty"`
+	Description     *string                  `json:"description,omitempty"`
+	Enabled         *bool                    `json:"enabled,omitempty"`
+	Method          *string                  `json:"method,omitempty"`
+	ContentType     *string                  `json:"content_type,omitempty"`
+	Headers         *map[string]secret.Value `json:"headers,omitempty"`
+	PayloadTemplate *string                  `json:"payload_template,omitempty"`
+}
+
+func or(p *string, fallback string) string {
+	if p == nil {
+		return fallback
+	}
+	return *p
 }
 
 // Update changes a subscription.
@@ -338,7 +444,7 @@ func (s *Service) Update(ctx context.Context, p authz.Principal, subscriptionID 
 			return state.Subscription{}, errs.New(errs.ValidInvalid,
 				"This subscription sends through a notification adapter, so it has no URL to change. Change adapter_id instead, or make a webhook subscription.")
 		}
-		target, err := s.checkDestination(ctx, sub.Destination, *req.URL, "")
+		target, err := s.checkDestination(ctx, sub.Destination, *req.URL, "", sub.OwnerTokenID != "")
 		if err != nil {
 			return state.Subscription{}, err
 		}
@@ -350,16 +456,40 @@ func (s *Service) Update(ctx context.Context, p authz.Principal, subscriptionID 
 			return state.Subscription{}, errs.New(errs.ValidInvalid,
 				"This subscription is a webhook, so it has no notification adapter to change. Change url instead.")
 		}
-		if _, err := s.checkDestination(ctx, sub.Destination, "", *req.AdapterID); err != nil {
+		if _, err := s.checkDestination(ctx, sub.Destination, "", *req.AdapterID, sub.OwnerTokenID != ""); err != nil {
 			return state.Subscription{}, err
 		}
 		patch.AdapterID = req.AdapterID
 		detail["adapter_id"] = *req.AdapterID
 	}
+
+	var headers map[string]secret.Value
+	if req.Method != nil || req.ContentType != nil || req.PayloadTemplate != nil || req.Headers != nil {
+		if req.Headers != nil {
+			headers = *req.Headers
+		}
+		opts, err := checkRequestOptions(sub.Destination, or(req.Method, sub.Method), or(req.ContentType, sub.ContentType),
+			or(req.PayloadTemplate, sub.PayloadTemplate), headers)
+		if err != nil {
+			return state.Subscription{}, err
+		}
+		patch.Method, patch.ContentType, patch.PayloadTemplate = &opts.method, &opts.contentType, &opts.template
+		detail["method"], detail["templated"] = opts.method, opts.template != ""
+		if req.Headers != nil {
+			patch.HeaderNames = &opts.headerNames
+			headers = opts.headers
+			detail["headers"] = opts.headerNames
+		}
+	}
 	if req.Enabled != nil {
 		detail["enabled"] = *req.Enabled
 	}
 	s.audit(ctx, p, "subscription.update", sub, detail)
+	if req.Headers != nil {
+		if err := s.putHeaders(ctx, sub.ID, headers); err != nil {
+			return state.Subscription{}, err
+		}
+	}
 	return s.Subscriptions.Update(ctx, sub.ID, patch)
 }
 
@@ -390,7 +520,7 @@ func (s *Service) RotateKey(ctx context.Context, p authz.Principal, subscription
 		return Created{}, err
 	}
 	s.audit(ctx, p, "subscription.key.rotate", sub, nil)
-	if err := s.Keys.Put(ctx, sub.ID, key); err != nil {
+	if err := s.Keys.Put(ctx, sub.ID, state.SigningKeyField, key); err != nil {
 		return Created{}, err
 	}
 	return Created{Subscription: sub, SigningKey: &secretOnce{key}}, nil
@@ -430,7 +560,9 @@ func (s *Service) ListDeliveries(ctx context.Context, p authz.Principal, subscri
 // DeliveryDetail is one delivery, every attempt at it, and what was sent.
 type DeliveryDetail struct {
 	state.Delivery
-	Payload Envelope `json:"payload"`
+	// Payload is the body as it is sent: JSON when it is JSON, otherwise
+	// the text of a templated body.
+	Payload any `json:"payload"`
 }
 
 // Delivery returns one delivery in full.
@@ -451,8 +583,21 @@ func (s *Service) Delivery(ctx context.Context, p authz.Principal, subscriptionI
 		return DeliveryDetail{}, err
 	}
 	out := DeliveryDetail{Delivery: d}
-	if ok {
-		out.Payload = envelopeOf(e, appOf(ctx, s.Apps, e.AppID))
+	if !ok {
+		return out, nil
+	}
+	if sub.Destination != state.DestinationWebhook {
+		out.Payload = envelopeOf(e, appOf(ctx, s.Apps, e.AppID), LinkFor(s.ExternalURL, e.AppID))
+		return out, nil
+	}
+	body, err := bodyFor(sub, e, appOf(ctx, s.Apps, e.AppID), LinkFor(s.ExternalURL, e.AppID))
+	switch {
+	case err != nil:
+		out.Payload = err.Error()
+	case json.Valid(body):
+		out.Payload = json.RawMessage(body)
+	default:
+		out.Payload = string(body)
 	}
 	return out, nil
 }

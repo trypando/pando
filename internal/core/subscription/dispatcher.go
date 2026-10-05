@@ -42,7 +42,22 @@ type Dispatcher struct {
 	Events        *state.Events
 	Subscriptions *state.Subscriptions
 	Deliveries    *state.Deliveries
-	Keys          *state.SigningKeys
+	Keys          *state.SubscriptionSecrets
+
+	// Tokens resolves an account token that owns a subscription (R-060).
+	Tokens interface {
+		Active(ctx context.Context, tokenID string) (state.Token, bool, error)
+	}
+
+	// ExternalURL is how a browser reaches Pando, for the link in each
+	// delivery. Empty sends none.
+	ExternalURL string
+
+	// Who Pando's own failure notifications go to (announce.go). Each is
+	// optional; without one, those people are not told.
+	Deployments Deployments
+	Holders     VerbHolders
+	TokenOwners TokenOwners
 
 	Authz    Authorizer
 	Policy   PolicyLoader
@@ -149,20 +164,21 @@ func (d *Dispatcher) Pass(ctx context.Context) bool {
 	if err != nil {
 		d.logger().Warn("could not route events", zap.Error(err))
 	}
+	d.announce(ctx, routed)
 	sent, err := d.deliver(ctx)
 	if err != nil {
 		d.logger().Warn("could not send deliveries", zap.Error(err))
 	}
-	return routed > 0 || sent > 0
+	return len(routed) > 0 || sent > 0
 }
 
 // route queues a delivery for every enabled subscription an event matches.
 // Authorization is not decided here but at send time (R-368), so a grant
 // revoked between the two still stops the delivery.
-func (d *Dispatcher) route(ctx context.Context) (int, error) {
+func (d *Dispatcher) route(ctx context.Context) ([]state.Event, error) {
 	subs, err := d.Subscriptions.List(ctx, state.SubscriptionFilter{EnabledOnly: true})
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	return d.Events.Route(ctx, 100, func(_ context.Context, e state.Event) ([]string, error) {
 		return Matching(subs, e), nil
@@ -241,15 +257,7 @@ func (d *Dispatcher) send(ctx context.Context, dl state.Delivery) {
 	var result Result
 	switch sub.Destination {
 	case state.DestinationWebhook:
-		key, ok, err := d.Keys.Get(ctx, sub.ID)
-		switch {
-		case err != nil:
-			result = Result{Err: sentence("Pando could not open this webhook's signing key: " + err.Error())}
-		case !ok:
-			result = Result{Err: sentence("This webhook has no signing key. Rotate it to make one.")}
-		default:
-			result = post(ctx, d.client(ctx), sub.URL, key, dl.ID, envelopeOf(e, app), d.now())
-		}
+		result = d.webhook(ctx, sub, dl, e, app)
 	case state.DestinationNotify:
 		result = d.notify(ctx, sub, e, app)
 	}
@@ -296,20 +304,10 @@ func (d *Dispatcher) send(ctx context.Context, dl state.Delivery) {
 // left, was suspended, or lost sight of the app gets nothing, and the
 // delivery log says so.
 func (d *Dispatcher) authorized(ctx context.Context, sub state.Subscription) (string, bool) {
-	user, ok, err := d.Users.ByID(ctx, sub.OwnerID)
-	if err != nil {
-		return "Pando could not check the subscription's owner, so it did not send this.", false
+	p, reason, ok := d.ownerPrincipal(ctx, sub)
+	if !ok {
+		return reason, false
 	}
-	if !ok || user.Status != "active" {
-		return "Not sent: the subscription's owner is no longer an active account.", false
-	}
-	groups, err := d.Groups.GroupsForUser(ctx, user.ID)
-	if err != nil {
-		return "Pando could not check the subscription's owner, so it did not send this.", false
-	}
-	p := authz.Principal{Kind: authz.KindUser, ID: user.ID, UserID: user.ID, Groups: groups,
-		AdapterID: user.AdapterID, Status: user.Status}
-
 	if sub.AppID == "" {
 		if ok, err := d.Authz.AllowsInstall(ctx, p, authz.InstallEventsManage); err != nil || !ok {
 			return "Not sent: the subscription's owner no longer holds install.events.manage, which an install-wide subscription needs.", false
@@ -320,6 +318,66 @@ func (d *Dispatcher) authorized(ctx context.Context, sub state.Subscription) (st
 		return "Not sent: the subscription's owner can no longer see this app.", false
 	}
 	return "", true
+}
+
+// ownerPrincipal is the subscription's owner as authorization sees them: a
+// person and their live groups, or an account token that is neither revoked
+// nor expired (R-060, R-368).
+func (d *Dispatcher) ownerPrincipal(ctx context.Context, sub state.Subscription) (authz.Principal, string, bool) {
+	const unchecked = "Pando could not check the subscription's owner, so it did not send this."
+	if sub.OwnerTokenID != "" {
+		if d.Tokens == nil {
+			return authz.Principal{}, unchecked, false
+		}
+		tok, ok, err := d.Tokens.Active(ctx, sub.OwnerTokenID)
+		if err != nil {
+			return authz.Principal{}, unchecked, false
+		}
+		if !ok {
+			return authz.Principal{}, "Not sent: the account token that owns this subscription was revoked or has expired.", false
+		}
+		return authz.Principal{Kind: authz.KindToken, ID: tok.ID, TokenID: tok.ID}, "", true
+	}
+	user, ok, err := d.Users.ByID(ctx, sub.OwnerID)
+	if err != nil {
+		return authz.Principal{}, unchecked, false
+	}
+	if !ok || user.Status != "active" {
+		return authz.Principal{}, "Not sent: the subscription's owner is no longer an active account.", false
+	}
+	groups, err := d.Groups.GroupsForUser(ctx, user.ID)
+	if err != nil {
+		return authz.Principal{}, unchecked, false
+	}
+	return authz.Principal{Kind: authz.KindUser, ID: user.ID, UserID: user.ID, Groups: groups,
+		AdapterID: user.AdapterID, Status: user.Status}, "", true
+}
+
+// webhook makes one attempt at a webhook delivery: the subscription's
+// secrets opened, its body rendered, signed and sent (R-369, R-375).
+func (d *Dispatcher) webhook(ctx context.Context, sub state.Subscription, dl state.Delivery, e state.Event, app *EnvelopeApp) Result {
+	secrets, err := d.Keys.All(ctx, sub.ID)
+	if err != nil {
+		return Result{Err: sentence("Pando could not open this webhook's signing key and headers: " + err.Error())}
+	}
+	key, ok := secrets[state.SigningKeyField]
+	if !ok {
+		return Result{Err: sentence("This webhook has no signing key. Rotate it to make one.")}
+	}
+	headers := map[string]string{}
+	for _, name := range sub.HeaderNames {
+		if v, ok := secrets[state.HeaderField(name)]; ok {
+			headers[name] = v.Reveal()
+		}
+	}
+	body, err := bodyFor(sub, e, app, LinkFor(d.ExternalURL, e.AppID))
+	if err != nil {
+		return Result{Err: err}
+	}
+	return post(ctx, d.client(ctx), webhookRequest{
+		URL: sub.URL, Method: sub.Method, ContentType: sub.ContentType, Headers: headers, Body: body,
+		Key: key, DeliveryID: dl.ID, Event: e.Name, EventID: e.ID,
+	}, d.now())
 }
 
 // notify sends an event through a notification adapter. One that reaches
@@ -333,6 +391,7 @@ func (d *Dispatcher) notify(ctx context.Context, sub state.Subscription, e state
 		return Result{Err: sentence("The notification adapter " + sub.AdapterID + " is not configured on this installation any more. Choose another, or delete this subscription.")}
 	}
 	n := Describe(e, app)
+	n.Link = LinkFor(d.ExternalURL, e.AppID)
 	if adapter.Capabilities().Audience == api.AudiencePeople {
 		r := api.Recipient{UserID: sub.OwnerID}
 		if user, ok, err := d.Users.ByID(ctx, sub.OwnerID); err == nil && ok {

@@ -9,7 +9,7 @@ ALTER TABLE roles ENABLE TRIGGER roles_builtin_immutable;
 DROP TABLE notification_preferences;
 DROP TABLE delivery_attempts;
 DROP TABLE event_deliveries;
-DROP TABLE subscription_signing_keys;
+DROP TABLE subscription_secrets;
 DROP TABLE subscriptions;
 
 DROP TRIGGER backup_attempts_failed_event ON backup_attempts;

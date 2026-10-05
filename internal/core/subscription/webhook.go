@@ -45,6 +45,10 @@ type Envelope struct {
 	App        *EnvelopeApp   `json:"app,omitempty"`
 	Actor      Actor          `json:"actor"`
 	Data       map[string]any `json:"data"`
+
+	// Link is where in the console to look, when Pando's external_url is
+	// set (R-369).
+	Link string `json:"link,omitempty"`
 }
 
 // EnvelopeApp names the app an event is about.
@@ -62,7 +66,7 @@ type Actor struct {
 }
 
 // envelopeOf builds the body for one event.
-func envelopeOf(e state.Event, app *EnvelopeApp) Envelope {
+func envelopeOf(e state.Event, app *EnvelopeApp, link string) Envelope {
 	data := e.Data
 	if data == nil {
 		data = map[string]any{}
@@ -70,7 +74,7 @@ func envelopeOf(e state.Event, app *EnvelopeApp) Envelope {
 	return Envelope{
 		ID: e.ID, Type: e.Name, OccurredAt: e.OccurredAt.UTC(), App: app,
 		Actor: Actor{Kind: e.ActorKind, ID: e.ActorID, OnBehalfOf: e.OnBehalfOf},
-		Data:  data,
+		Data:  data, Link: link,
 	}
 }
 
@@ -144,24 +148,48 @@ func (r Result) Message() string {
 	}
 }
 
-// post sends one signed delivery.
-func post(ctx context.Context, client *http.Client, target string, key secret.Value, deliveryID string, env Envelope, now time.Time) Result {
-	body, err := jsonMarshal(env)
-	if err != nil {
-		return Result{Err: err}
+// webhookRequest is one delivery as it goes on the wire.
+type webhookRequest struct {
+	URL         string
+	Method      string
+	ContentType string
+	// Headers are the subscription's own, already opened (R-375). Pando's
+	// headers are set after them and cannot be overridden: a custom header
+	// never carries a Pando- name, which is refused when it is saved.
+	Headers    map[string]string
+	Body       []byte
+	Key        secret.Value
+	DeliveryID string
+	Event      string
+	EventID    string
+}
+
+// post sends one signed delivery. The signature is over the body exactly as
+// sent, whether that is Pando's envelope or a subscription's own template.
+func post(ctx context.Context, client *http.Client, w webhookRequest, now time.Time) Result {
+	method := w.Method
+	if method == "" {
+		method = http.MethodPost
+	}
+	contentType := w.ContentType
+	if contentType == "" {
+		contentType = "application/json"
 	}
 	ts := now.Unix()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, w.URL, bytes.NewReader(w.Body))
 	if err != nil {
 		return Result{Err: sentence("The webhook address could not be used: " + err.Error())}
 	}
-	req.Header.Set("Content-Type", "application/json")
+	for name, value := range w.Headers {
+		req.Header.Set(name, value)
+	}
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("User-Agent", "Pando-Webhooks/1")
-	req.Header.Set(HeaderEvent, env.Type)
-	req.Header.Set(HeaderEventID, env.ID)
-	req.Header.Set(HeaderDelivery, deliveryID)
+	req.Header.Set(HeaderEvent, w.Event)
+	req.Header.Set(HeaderEventID, w.EventID)
+	req.Header.Set(HeaderDelivery, w.DeliveryID)
 	req.Header.Set(HeaderTimestamp, strconv.FormatInt(ts, 10))
-	req.Header.Set(HeaderSignature, Sign(key, ts, body))
+	req.Header.Set(HeaderSignature, Sign(w.Key, ts, w.Body))
 
 	start := time.Now()
 	resp, err := client.Do(req)
