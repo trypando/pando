@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -72,14 +73,37 @@ func code(c *int) string {
 }
 
 func eventsCmd(client func() (*Client, error)) *cobra.Command {
-	return &cobra.Command{
+	var app string
+	cmd := &cobra.Command{
 		Use:   "events",
-		Short: "List the events a subscription can name",
+		Short: "List the events a subscription can name, or an app's recent events with --app",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := client()
 			if err != nil {
 				return err
+			}
+			if app != "" {
+				var out struct {
+					Events []struct {
+						ID         string `json:"id"`
+						Type       string `json:"type"`
+						OccurredAt string `json:"occurred_at"`
+						Subject    string `json:"subject"`
+					} `json:"events"`
+				}
+				if err := c.Do("GET", "/apps/"+url.PathEscape(app)+"/events", nil, &out); err != nil {
+					return err
+				}
+				if len(out.Events) == 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "Nothing has happened to this app recently.")
+					return nil
+				}
+				t := table(cmd.OutOrStdout(), "WHEN", "EVENT", "WHAT HAPPENED")
+				for _, e := range out.Events {
+					fmt.Fprintf(t, "%s\t%s\t%s\n", e.OccurredAt, e.Type, e.Subject)
+				}
+				return t.Flush()
 			}
 			var out struct {
 				Events []struct {
@@ -98,6 +122,51 @@ func eventsCmd(client func() (*Client, error)) *cobra.Command {
 			return t.Flush()
 		},
 	}
+	cmd.Flags().StringVar(&app, "app", "", "Show this app's recent events (its ID) instead of the catalog")
+	return cmd
+}
+
+// requestFlags are a webhook's request options (R-375), shared by create
+// and update.
+type requestFlags struct {
+	method, contentType, templateFile string
+	headers                           []string
+}
+
+func (f *requestFlags) register(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&f.method, "method", "", "The webhook's HTTP method: POST (the default), PUT or PATCH")
+	cmd.Flags().StringVar(&f.contentType, "content-type", "", "The body's content type; application/json by default")
+	cmd.Flags().StringArrayVar(&f.headers, "header", nil, `A header to send, "Name: value", repeatable. Values are stored encrypted and never shown again`)
+	cmd.Flags().StringVar(&f.templateFile, "template-file", "", "A file holding the body template, in Go template syntax; docs/events.md says what it is given")
+}
+
+// apply adds the options that were given to a request body.
+func (f *requestFlags) apply(cmd *cobra.Command, body map[string]any) error {
+	if cmd.Flags().Changed("method") {
+		body["method"] = f.method
+	}
+	if cmd.Flags().Changed("content-type") {
+		body["content_type"] = f.contentType
+	}
+	if cmd.Flags().Changed("header") {
+		headers := map[string]string{}
+		for _, h := range f.headers {
+			name, value, ok := strings.Cut(h, ":")
+			if !ok || strings.TrimSpace(name) == "" {
+				return fmt.Errorf("%q is not a header. Give it as \"Name: value\", such as \"Authorization: Bearer abc\"", h)
+			}
+			headers[strings.TrimSpace(name)] = strings.TrimSpace(value)
+		}
+		body["headers"] = headers
+	}
+	if f.templateFile != "" {
+		b, err := os.ReadFile(f.templateFile)
+		if err != nil {
+			return fmt.Errorf("could not read the template file: %w", err)
+		}
+		body["payload_template"] = string(b)
+	}
+	return nil
 }
 
 func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
@@ -155,6 +224,7 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 	cmd.AddCommand(list)
 
 	var createApp, createURL, createAdapter, createDescription string
+	var createRequest, updateRequest requestFlags
 	var createEvents []string
 	create := &cobra.Command{
 		Use:   "create",
@@ -178,6 +248,9 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 			} else {
 				body["destination"], body["adapter_id"] = "notify", createAdapter
 			}
+			if err := createRequest.apply(cmd, body); err != nil {
+				return err
+			}
 			var out subscriptionView
 			if err := c.Do("POST", "/subscriptions", body, &out); err != nil {
 				return err
@@ -196,6 +269,7 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 	create.Flags().StringVar(&createURL, "url", "", "Post each event to this webhook URL")
 	create.Flags().StringVar(&createAdapter, "adapter", "", "Send each event through this notification adapter")
 	create.Flags().StringVar(&createDescription, "description", "", "What this subscription is for")
+	createRequest.register(create)
 	_ = create.MarkFlagRequired("events")
 	cmd.AddCommand(create)
 
@@ -260,6 +334,9 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 			if disable {
 				body["enabled"] = false
 			}
+			if err := updateRequest.apply(cmd, body); err != nil {
+				return err
+			}
 			if len(body) == 0 {
 				return fmt.Errorf("nothing to change: give --events, --url, --adapter, --description, --enable or --disable")
 			}
@@ -281,6 +358,7 @@ func subscriptionsCmd(client func() (*Client, error)) *cobra.Command {
 	update.Flags().StringVar(&updDescription, "description", "", "A new description")
 	update.Flags().BoolVar(&enable, "enable", false, "Turn it on, clearing its record of failures")
 	update.Flags().BoolVar(&disable, "disable", false, "Turn it off")
+	updateRequest.register(update)
 	cmd.AddCommand(update)
 
 	cmd.AddCommand(&cobra.Command{
@@ -487,5 +565,82 @@ func notificationsCmd(client func() (*Client, error)) *cobra.Command {
 	}
 	prefs.Flags().StringArrayVar(&set, "set", nil, "kind:channel=on|off, repeatable")
 	cmd.AddCommand(prefs)
+
+	// The inbox (R-377): what Pando told you on the console.
+	var unread bool
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "Your notifications, newest first",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			path := "/me/notifications"
+			if unread {
+				path += "?unread=true"
+			}
+			var out struct {
+				Notifications []struct {
+					ID        string  `json:"id"`
+					AppName   string  `json:"app_name"`
+					Subject   string  `json:"subject"`
+					ReadAt    *string `json:"read_at"`
+					CreatedAt string  `json:"created_at"`
+				} `json:"notifications"`
+				Unread int `json:"unread"`
+			}
+			if err := c.Do("GET", path, nil, &out); err != nil {
+				return err
+			}
+			if len(out.Notifications) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No notifications.")
+				return nil
+			}
+			t := table(cmd.OutOrStdout(), "ID", "WHEN", "", "WHAT")
+			for _, n := range out.Notifications {
+				mark := ""
+				if n.ReadAt == nil {
+					mark = "new"
+				}
+				fmt.Fprintf(t, "%s\t%s\t%s\t%s\n", n.ID, n.CreatedAt, mark, n.Subject)
+			}
+			if err := t.Flush(); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "\n%d unread.\n", out.Unread)
+			return nil
+		},
+	}
+	list.Flags().BoolVar(&unread, "unread", false, "Only the ones you have not read")
+	cmd.AddCommand(list)
+
+	var all bool
+	read := &cobra.Command{
+		Use:   "read [notification-id]",
+		Short: "Mark a notification read, or every one with --all",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if all == (len(args) == 1) {
+				return fmt.Errorf("give a notification's ID, or --all")
+			}
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			path := "/me/notifications/read"
+			if !all {
+				path = "/me/notifications/" + url.PathEscape(args[0]) + "/read"
+			}
+			if err := c.Do("POST", path, map[string]any{}, nil); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Marked read.")
+			return nil
+		},
+	}
+	read.Flags().BoolVar(&all, "all", false, "Mark every notification read")
+	cmd.AddCommand(read)
 	return cmd
 }

@@ -271,6 +271,11 @@ CREATE TABLE notification_preferences (
     PRIMARY KEY (user_id, kind, channel)
 );
 
+-- The inbox (R-377): a console notification carries where to look and, when
+-- it tells of an event, which one.
+ALTER TABLE notifications ADD COLUMN link text;
+ALTER TABLE notifications ADD COLUMN event_id text;
+
 -- install.events.manage: install-wide subscriptions, and everybody's. The
 -- Administrator's, and in no other built-in role. Built-in roles change only by
 -- migration (R-081).

@@ -66,7 +66,7 @@ func (s *Service) Destinations() []Destination {
 func personOnly(p authz.Principal) error {
 	if p.UserID == "" {
 		return errs.New(errs.PermDenied,
-			"Notification preferences belong to a person, and this request was made by an account token that has none.")
+			"Notifications and their preferences belong to a person, and this request was made by an account token that has none.")
 	}
 	return nil
 }

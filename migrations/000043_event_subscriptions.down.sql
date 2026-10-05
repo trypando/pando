@@ -6,6 +6,9 @@ WHERE 'install.events.manage' = ANY (verbs);
 
 ALTER TABLE roles ENABLE TRIGGER roles_builtin_immutable;
 
+ALTER TABLE notifications DROP COLUMN event_id;
+ALTER TABLE notifications DROP COLUMN link;
+
 DROP TABLE notification_preferences;
 DROP TABLE delivery_attempts;
 DROP TABLE event_deliveries;

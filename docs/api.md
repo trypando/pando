@@ -146,8 +146,12 @@ one verb says nothing about another (R-082).
 | `GET /api/v1/subscriptions/{subscriptionID}/deliveries` |  | A subscription's deliveries, newest first: each event, its `status` (pending, succeeded, failed), attempts and last error. `before` and `limit` page; `next_before` continues (R-369). |
 | `GET /api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}` |  | One delivery: every attempt at it (`attempt_log`) and the `payload` sent. |
 | `POST /api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}/redeliver` |  | Send a delivery again now, with the whole retry schedule ahead of it. |
+| `GET /api/v1/me/notifications` |  | Your notifications inbox, newest first: what Pando told you on the console, each with `kind`, `subject`, `body`, `app_name`, `link` and `read_at`, and `unread`, how many are unread in all. `unread=true` lists only those; `before` and `limit` page (R-377). |
+| `POST /api/v1/me/notifications/{notificationID}/read` |  | Mark one of your notifications read. |
+| `POST /api/v1/me/notifications/read` |  | Mark every one of your notifications read. |
 | `GET /api/v1/notification-preferences` |  | Which of Pando's own notifications reach you, on which channel: every `kind`, every `channel` that reaches people (the console, email), and your `choices` with defaults filled in (R-373). |
 | `PUT /api/v1/notification-preferences` |  | Set your notification preferences: `choices`, each a `kind`, a `channel` and `enabled`. Choices not sent keep their current value. |
+| `GET /api/v1/apps/{appID}/events` | `app.view` | The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days (R-378). |
 
 ### Secrets
 

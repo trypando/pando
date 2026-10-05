@@ -115,6 +115,9 @@ var routeDocs = []reference.Route{
 	{Method: "GET", Path: "/api/v1/subscriptions/{subscriptionID}/deliveries", Group: "Events", Summary: "A subscription's deliveries, newest first: each event, its `status` (pending, succeeded, failed), attempts and last error. `before` and `limit` page; `next_before` continues (R-369)."},
 	{Method: "GET", Path: "/api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}", Group: "Events", Summary: "One delivery: every attempt at it (`attempt_log`) and the `payload` sent."},
 	{Method: "POST", Path: "/api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}/redeliver", Group: "Events", Summary: "Send a delivery again now, with the whole retry schedule ahead of it."},
+	{Method: "GET", Path: "/api/v1/me/notifications", Group: "Events", Summary: "Your notifications inbox, newest first: what Pando told you on the console, each with `kind`, `subject`, `body`, `app_name`, `link` and `read_at`, and `unread`, how many are unread in all. `unread=true` lists only those; `before` and `limit` page (R-377)."},
+	{Method: "POST", Path: "/api/v1/me/notifications/{notificationID}/read", Group: "Events", Summary: "Mark one of your notifications read."},
+	{Method: "POST", Path: "/api/v1/me/notifications/read", Group: "Events", Summary: "Mark every one of your notifications read."},
 	{Method: "GET", Path: "/api/v1/notification-preferences", Group: "Events", Summary: "Which of Pando's own notifications reach you, on which channel: every `kind`, every `channel` that reaches people (the console, email), and your `choices` with defaults filled in (R-373)."},
 	{Method: "PUT", Path: "/api/v1/notification-preferences", Group: "Events", Summary: "Set your notification preferences: `choices`, each a `kind`, a `channel` and `enabled`. Choices not sent keep their current value."},
 
@@ -131,6 +134,7 @@ var routeDocs = []reference.Route{
 	{Method: "POST", Path: "/api/v1/apps/{appID}/security/scan", Group: "Security", Summary: "Scan the app now. A write, not a refresh: the score decides whether the next deploy is allowed (R-312, R-314).", Verb: string(authz.AppDeploy)},
 
 	// --- sharing ----------------------------------------------------------
+	{Method: "GET", Path: "/api/v1/apps/{appID}/events", Group: "Events", Summary: "The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days (R-378).", Verb: string(authz.AppView)},
 	{Method: "GET", Path: "/api/v1/apps/{appID}/grants", Group: "Sharing", Summary: "Who can reach this app, and who can administer it — two planes, listed separately (R-070, R-071).", Verb: string(authz.AppView)},
 	{Method: "POST", Path: "/api/v1/apps/{appID}/grants", Group: "Sharing", Summary: "Share the app with a user, a group, a token, or with everyone. The anonymous grant is a real row, refused where host policy forbids it (R-075, R-076).", Verb: string(authz.AppGrantsManage)},
 	{Method: "PATCH", Path: "/api/v1/apps/{appID}/grants/{grantID}", Group: "Sharing", Summary: "Change the role a grant for managing the app carries (`role_id`), one update so the person is never left with nothing in between; or, on the grant to everyone, set `passcode` (\"\" removes it). A new passcode asks everyone let in by the old one again (R-075a).", Verb: string(authz.AppGrantsManage)},

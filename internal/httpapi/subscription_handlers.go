@@ -199,6 +199,78 @@ func (s *Server) handleRedeliver(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusAccepted, d)
 }
 
+// handleAppEvents is an app's recent events, for anyone who can see it (R-378).
+func (s *Server) handleAppEvents(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.requireControl(w, r, authz.AppView)
+	if !ok {
+		return
+	}
+	if s.Subscriptions == nil {
+		Error(w, r, errs.New(errs.StateInvalid, "Events are not available on this server."))
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	list, next, err := s.Subscriptions.Feed(r.Context(), app.ID, r.URL.Query().Get("before"), limit)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"events": list, "next_before": next})
+}
+
+// --- the inbox (R-377) -------------------------------------------------------
+
+func (s *Server) inbox(w http.ResponseWriter, r *http.Request) (authz.Principal, bool) {
+	p := PrincipalFrom(r.Context())
+	if p.Kind == authz.KindAnonymous {
+		Error(w, r, errs.New(errs.AuthRequired, "You need to sign in."))
+		return p, false
+	}
+	if s.Inbox == nil {
+		Error(w, r, errs.New(errs.StateInvalid, "The notification inbox is not available on this server."))
+		return p, false
+	}
+	return p, true
+}
+
+func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.inbox(w, r)
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	page, err := s.Inbox.List(r.Context(), p, r.URL.Query().Get("unread") == "true", r.URL.Query().Get("before"), limit)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	JSON(w, http.StatusOK, page)
+}
+
+func (s *Server) handleReadNotification(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.inbox(w, r)
+	if !ok {
+		return
+	}
+	if err := s.Inbox.MarkRead(r.Context(), p, chi.URLParam(r, "notificationID")); err != nil {
+		Error(w, r, err)
+		return
+	}
+	JSON(w, http.StatusNoContent, nil)
+}
+
+func (s *Server) handleReadAllNotifications(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.inbox(w, r)
+	if !ok {
+		return
+	}
+	if err := s.Inbox.MarkAllRead(r.Context(), p); err != nil {
+		Error(w, r, err)
+		return
+	}
+	JSON(w, http.StatusNoContent, nil)
+}
+
 func (s *Server) handleGetNotificationPreferences(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.signedIn(w, r)
 	if !ok {

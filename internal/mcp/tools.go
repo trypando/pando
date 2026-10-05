@@ -821,11 +821,15 @@ var toolList = []tool{
 			"With app_id it is about one app; without, it is install-wide and needs install.events.manage. " +
 			"A webhook's signing key is in the result once; tell the person to keep it.",
 		Schema: schema(map[string]any{
-			"events":      str("Comma-separated event names or patterns, such as deploy.failed,app.state_changed."),
-			"app_id":      str("The app. Omit for install-wide."),
-			"url":         str("The webhook URL to post to. Give this or adapter_id."),
-			"adapter_id":  str("A notification adapter's ID. Give this or url."),
-			"description": str("What the subscription is for. Optional."),
+			"events":           str("Comma-separated event names or patterns, such as deploy.failed,app.state_changed."),
+			"app_id":           str("The app. Omit for install-wide."),
+			"url":              str("The webhook URL to post to. Give this or adapter_id."),
+			"adapter_id":       str("A notification adapter's ID. Give this or url."),
+			"description":      str("What the subscription is for. Optional."),
+			"method":           str("A webhook's HTTP method: POST, PUT or PATCH. Optional."),
+			"content_type":     str("A webhook's content type. Optional; application/json by default."),
+			"headers":          str("A webhook's own headers, one \"Name: value\" per line, such as an Authorization its receiver needs. Optional."),
+			"payload_template": str("A webhook's body as a Go template, such as {\"text\": {{json .Subject}}}. Optional; Pando's envelope by default."),
 		}, "events"),
 		request: func(args map[string]any) (string, string, any, error) {
 			names, err := stringArg(args, "events", true)
@@ -845,6 +849,9 @@ var toolList = []tool{
 			} else {
 				body["destination"], body["adapter_id"] = "notify", adapter
 			}
+			if err := requestOptions(args, body); err != nil {
+				return "", "", nil, err
+			}
 			return "POST", "/subscriptions", body, nil
 		},
 	},
@@ -852,12 +859,16 @@ var toolList = []tool{
 		Name:        "pando_update_subscription",
 		Description: "Change a subscription's events, url, adapter_id or description, or turn it on or off with enabled (true or false).",
 		Schema: schema(map[string]any{
-			"subscription_id": str("The subscription's ID, sub_…."),
-			"events":          str("Comma-separated event names or patterns. Optional."),
-			"url":             str("A new webhook URL. Optional."),
-			"adapter_id":      str("A new notification adapter. Optional."),
-			"description":     str("A new description. Optional."),
-			"enabled":         str("true or false. Optional."),
+			"subscription_id":  str("The subscription's ID, sub_…."),
+			"events":           str("Comma-separated event names or patterns. Optional."),
+			"url":              str("A new webhook URL. Optional."),
+			"adapter_id":       str("A new notification adapter. Optional."),
+			"description":      str("A new description. Optional."),
+			"enabled":          str("true or false. Optional."),
+			"method":           str("A webhook's HTTP method: POST, PUT or PATCH. Optional."),
+			"content_type":     str("A webhook's content type. Optional."),
+			"headers":          str("Replace a webhook's headers: one \"Name: value\" per line. Optional."),
+			"payload_template": str("A webhook's body as a Go template. Optional."),
 		}, "subscription_id"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, err := stringArg(args, "subscription_id", true)
@@ -881,6 +892,9 @@ var toolList = []tool{
 			case "":
 			default:
 				return "", "", nil, fmt.Errorf("enabled is true or false, not %q", v)
+			}
+			if err := requestOptions(args, body); err != nil {
+				return "", "", nil, err
 			}
 			return "PATCH", "/subscriptions/" + url.PathEscape(id), body, nil
 		},
@@ -960,6 +974,41 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name:        "pando_list_app_events",
+		Description: "An app's recent events, newest first: deploys, state and health changes, scans, shares, backups. Each says what happened in a sentence.",
+		Schema:      schema(map[string]any{"app_id": str("The app's ID.")}, "app_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", appPath(id, "/events"), nil, nil
+		},
+	},
+	{
+		Name:        "pando_list_notifications",
+		Description: "Your notifications inbox, newest first, and how many are unread. unread=true lists only those.",
+		Schema:      schema(map[string]any{"unread": str("true to list only unread notifications. Optional.")}),
+		request: func(args map[string]any) (string, string, any, error) {
+			if v, _ := stringArg(args, "unread", false); v == "true" {
+				return "GET", "/me/notifications?unread=true", nil, nil
+			}
+			return "GET", "/me/notifications", nil, nil
+		},
+	},
+	{
+		Name:        "pando_mark_notifications_read",
+		Description: "Mark one of your notifications read, by notification_id, or every one when it is omitted.",
+		Schema:      schema(map[string]any{"notification_id": str("The notification's ID, ntf_…. Omit to mark every one read.")}),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, _ := stringArg(args, "notification_id", false)
+			if id == "" {
+				return "POST", "/me/notifications/read", map[string]any{}, nil
+			}
+			return "POST", "/me/notifications/" + url.PathEscape(id) + "/read", map[string]any{}, nil
+		},
+	},
+	{
 		Name:        "pando_get_notification_preferences",
 		Description: "Which of Pando's own notifications reach you, on each channel that reaches people, such as the console and email.",
 		Schema:      schema(map[string]any{}),
@@ -996,6 +1045,32 @@ var toolList = []tool{
 			}}, nil
 		},
 	},
+}
+
+// requestOptions adds a webhook's request options to a body (R-375).
+func requestOptions(args map[string]any, body map[string]any) error {
+	for arg, field := range map[string]string{"method": "method", "content_type": "content_type", "payload_template": "payload_template"} {
+		if v, _ := stringArg(args, arg, false); v != "" {
+			body[field] = v
+		}
+	}
+	raw, _ := stringArg(args, "headers", false)
+	if raw == "" {
+		return nil
+	}
+	headers := map[string]string{}
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		name, value, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%q is not a header; give one \"Name: value\" per line", line)
+		}
+		headers[strings.TrimSpace(name)] = strings.TrimSpace(value)
+	}
+	body["headers"] = headers
+	return nil
 }
 
 // splitList reads a comma-separated argument.

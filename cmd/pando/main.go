@@ -718,6 +718,7 @@ func serve(ctx context.Context, configPath string) error {
 		Approvals:   approvals,
 
 		Subscriptions: subscriptions,
+		Inbox:         &subscription.Inbox{Store: notifications},
 		Notifier:      notifyRouter,
 		Logs:          logStore,
 		Secrets:       secrets,

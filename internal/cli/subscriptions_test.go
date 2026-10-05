@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -62,4 +63,51 @@ func TestR373_NotificationPreferencesSetOneChoice(t *testing.T) {
 
 	got = run(t, newAPI(t), "", "notifications", "preferences", "--set", "app_shared=on")
 	require.ErrorContains(t, got.err, "kind:channel=on")
+}
+
+func TestR375_CreateSendsTheWebhooksRequestOptions(t *testing.T) {
+	tmpl := t.TempDir() + "/body.tmpl"
+	require.NoError(t, os.WriteFile(tmpl, []byte(`{"text": {{json .Subject}}}`), 0o600))
+
+	api := newAPI(t).reply("POST /subscriptions", map[string]any{"id": "sub_01", "destination": "webhook", "url": "https://example.com/hook"})
+	got := run(t, api, "", "subscriptions", "create", "--events", "deploy.failed", "--url", "https://example.com/hook",
+		"--method", "PUT", "--header", "Authorization: Bearer abc", "--header", "X-Team: ops", "--template-file", tmpl)
+	require.NoError(t, got.err)
+	require.JSONEq(t, `{"app_id":"","events":["deploy.failed"],"destination":"webhook","url":"https://example.com/hook",
+		"description":"","method":"PUT","headers":{"Authorization":"Bearer abc","X-Team":"ops"},
+		"payload_template":"{\"text\": {{json .Subject}}}"}`, api.bodyFor("POST /subscriptions"))
+
+	got = run(t, newAPI(t), "", "subscriptions", "create", "--events", "*", "--url", "https://x", "--header", "nocolon")
+	require.ErrorContains(t, got.err, "Name: value")
+}
+
+func TestR377_NotificationsListAndRead(t *testing.T) {
+	api := newAPI(t).reply("GET /me/notifications", map[string]any{
+		"notifications": []map[string]any{{"id": "ntf_01", "subject": "billing has failed", "created_at": "2026-10-04T12:00:00Z"}},
+		"unread":        1,
+	})
+	got := run(t, api, "", "notifications", "list", "--unread")
+	require.NoError(t, got.err)
+	require.Contains(t, got.out, "billing has failed")
+	require.Contains(t, got.out, "1 unread")
+
+	api = newAPI(t).reply("POST /me/notifications/read", nil)
+	got = run(t, api, "", "notifications", "read", "--all")
+	require.NoError(t, got.err)
+
+	api = newAPI(t).reply("POST /me/notifications/ntf_01/read", nil)
+	got = run(t, api, "", "notifications", "read", "ntf_01")
+	require.NoError(t, got.err)
+
+	got = run(t, newAPI(t), "", "notifications", "read")
+	require.ErrorContains(t, got.err, "--all")
+}
+
+func TestR378_EventsForAnApp(t *testing.T) {
+	api := newAPI(t).reply("GET /apps/app_01HQ8/events", map[string]any{
+		"events": []map[string]any{{"id": "evt_1", "type": "deploy.failed", "occurred_at": "2026-10-04T12:00:00Z", "subject": "notes: a deploy failed"}},
+	})
+	got := run(t, api, "", "events", "--app", "app_01HQ8")
+	require.NoError(t, got.err)
+	require.Contains(t, got.out, "notes: a deploy failed")
 }

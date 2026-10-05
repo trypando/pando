@@ -23,6 +23,7 @@ import (
 	identitylocal "github.com/trypando/pando/internal/adapter/identity/local"
 	identityoidc "github.com/trypando/pando/internal/adapter/identity/oidc"
 	identitysaml "github.com/trypando/pando/internal/adapter/identity/saml"
+	notifyconsole "github.com/trypando/pando/internal/adapter/notify/console"
 	secretslocal "github.com/trypando/pando/internal/adapter/secrets/local"
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/approval"
@@ -296,9 +297,12 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 	channel := &fakeNotify{kind: "slack", audience: adapterapi.AudienceChannel}
 	require.NoError(t, registry.Register("ntf_people", people))
 	require.NoError(t, registry.Register("ntf_channel", channel))
+	// And the real console adapter, recording into the inbox (R-377).
+	require.NoError(t, registry.Register("ntf_console", notifyconsole.New(state.NewNotifications(db))))
 	prefs := state.NewNotificationPreferences(db)
 	router := subscription.Router{Registry: registry, Preferences: prefs, Users: users}
 	srv.Notifier = router
+	srv.Inbox = &subscription.Inbox{Store: state.NewNotifications(db)}
 	srv.Subscriptions = &subscription.Service{
 		Subscriptions: state.NewSubscriptions(db),
 		Deliveries:    state.NewDeliveries(db),

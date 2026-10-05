@@ -135,6 +135,33 @@ func (s *Events) Get(ctx context.Context, eventID string) (Event, bool, error) {
 	return e, true, nil
 }
 
+// ForApp returns an app's recent events, newest first, older than the event
+// ID before when one is given (R-378). As long as the outbox keeps them: this
+// is a feed, and the audit log is the history.
+func (s *Events) ForApp(ctx context.Context, appID, before string, limit int) ([]Event, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT `+eventColumns+` FROM events
+		WHERE app_id = $1 AND name <> 'subscription.test' AND ($2 = '' OR id < $2)
+		ORDER BY id DESC
+		LIMIT $3`, appID, before, limit)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not read the app's events.", err)
+	}
+	defer rows.Close()
+	out := []Event{}
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, errs.Wrap(errs.Internal, "Could not read the app's events.", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // Route takes up to limit events nobody has routed yet, oldest first, asks
 // route which subscriptions each one goes to, and queues a delivery for each,
 // all in one transaction. Another Pando routing at the same time skips the

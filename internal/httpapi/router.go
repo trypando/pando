@@ -121,6 +121,9 @@ type Server struct {
 	// preferences (issue #50). Nil answers that they are unavailable.
 	Subscriptions *subscription.Service
 
+	// Inbox is the console notifications a person reads (R-377).
+	Inbox *subscription.Inbox
+
 	// Notifier sends Pando's own notifications to the people they name, as
 	// their preferences allow. Optional.
 	Notifier interface {
@@ -618,6 +621,9 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/deliveries/{deliveryID}/redeliver", s.handleRedeliver)
 			})
 		})
+		r.Get("/me/notifications", s.handleListNotifications)
+		r.Post("/me/notifications/read", s.handleReadAllNotifications)
+		r.Post("/me/notifications/{notificationID}/read", s.handleReadNotification)
 		r.Get("/notification-preferences", s.handleGetNotificationPreferences)
 		r.Put("/notification-preferences", s.handlePutNotificationPreferences)
 
@@ -725,6 +731,9 @@ func (s *Server) Routes() http.Handler {
 
 				// People and groups to share with, for whoever may share it.
 				r.Get("/principals", s.handleSharePrincipals)
+
+				// The app's recent events (R-378).
+				r.Get("/events", s.handleAppEvents)
 
 				r.Route("/grants", func(r chi.Router) {
 					r.Get("/", s.handleListGrants)

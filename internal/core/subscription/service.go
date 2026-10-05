@@ -627,6 +627,41 @@ func (s *Service) Redeliver(ctx context.Context, p authz.Principal, subscription
 	return got, err
 }
 
+// FeedItem is one event in an app's feed: what the envelope carries, and the
+// same event described for a person.
+type FeedItem struct {
+	Envelope
+	Subject string                  `json:"subject"`
+	Body    string                  `json:"body,omitempty"`
+	Fields  []api.NotificationField `json:"fields,omitempty"`
+}
+
+// Feed is an app's recent events, for anyone who can see the app (R-378).
+// The handler has already checked app.view.
+func (s *Service) Feed(ctx context.Context, appID, before string, limit int) ([]FeedItem, string, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	list, err := s.Events.ForApp(ctx, appID, before, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	app := appOf(ctx, s.Apps, appID)
+	out := make([]FeedItem, 0, len(list))
+	for _, e := range list {
+		n := Describe(e, app)
+		out = append(out, FeedItem{
+			Envelope: envelopeOf(e, app, LinkFor(s.ExternalURL, appID)),
+			Subject:  n.Subject, Body: n.Body, Fields: n.Fields,
+		})
+	}
+	next := ""
+	if len(list) == limit {
+		next = list[len(list)-1].ID
+	}
+	return out, next, nil
+}
+
 // appOf names the app an event is about, for the envelope. An app that cannot
 // be read is named by its ID alone rather than holding the delivery up.
 func appOf(ctx context.Context, apps Apps, appID string) *EnvelopeApp {

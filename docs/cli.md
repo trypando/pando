@@ -573,11 +573,15 @@ generated an app cannot commit and push, but it can run a command.
 
 ### `events`
 
-List the events a subscription can name
+List the events a subscription can name, or an app's recent events with --app
 
 ```
 pando events
 ```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--app` |  | Show this app's recent events (its ID) instead of the catalog |
 
 ### `exec`
 
@@ -906,6 +910,18 @@ Choose which of Pando's notifications reach you, and where
 pando notifications
 ```
 
+#### `notifications list`
+
+Your notifications, newest first
+
+```
+pando notifications list
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--unread` |  | Only the ones you have not read |
+
 #### `notifications preferences`
 
 Show your notification preferences, or change them with --set
@@ -923,6 +939,18 @@ Show which of Pando's own notifications reach you on each channel.
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--set` | `[]` | kind:channel=on|off, repeatable |
+
+#### `notifications read`
+
+Mark a notification read, or every one with --all
+
+```
+pando notifications read [notification-id]
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--all` |  | Mark every notification read |
 
 ### `plan`
 
@@ -1114,8 +1142,12 @@ A webhook's signing key is printed once. Keep it: Pando signs every delivery wit
 | --- | --- | --- |
 | `--adapter` |  | Send each event through this notification adapter |
 | `--app` |  | The app's ID; omit for install-wide |
+| `--content-type` |  | The body's content type; application/json by default |
 | `--description` |  | What this subscription is for |
 | `--events` | `[]` | Events to send: names, prefixes such as deploy.*, or * |
+| `--header` | `[]` | A header to send, "Name: value", repeatable. Values are stored encrypted and never shown again |
+| `--method` |  | The webhook's HTTP method: POST (the default), PUT or PATCH |
+| `--template-file` |  | A file holding the body template, in Go template syntax; docs/events.md says what it is given |
 | `--url` |  | Post each event to this webhook URL |
 
 #### `subscriptions delete`
@@ -1198,10 +1230,14 @@ pando subscriptions update <subscription-id>
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--adapter` |  | A new notification adapter |
+| `--content-type` |  | The body's content type; application/json by default |
 | `--description` |  | A new description |
 | `--disable` |  | Turn it off |
 | `--enable` |  | Turn it on, clearing its record of failures |
 | `--events` | `[]` | Replace the events it sends |
+| `--header` | `[]` | A header to send, "Name: value", repeatable. Values are stored encrypted and never shown again |
+| `--method` |  | The webhook's HTTP method: POST (the default), PUT or PATCH |
+| `--template-file` |  | A file holding the body template, in Go template syntax; docs/events.md says what it is given |
 | `--url` |  | A new webhook URL |
 
 ### `token`
