@@ -97,7 +97,7 @@ RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-
 # builds, and pinned so the same repository produces the same plan a year from
 # now. It only ever *generates* — `nixpacks build --out` writes a Dockerfile and
 # does not build, so no container runtime socket is involved anywhere (R-112).
-FROM --platform=$BUILDPLATFORM dhi.io/alpine-base:3.24-dev@sha256:e8ea5cd1031f302d73920e38c0c9ff4090368f5ddbbfae519de9ea24865464bd AS nixpacks
+FROM --platform=$BUILDPLATFORM dhi.io/alpine-base:3.24-dev@sha256:eb950d88a309a402e2a731ba80bf9067378580becb611aa699ffb87594cd320b AS nixpacks
 ARG NIXPACKS_VERSION=1.41.0
 ARG TARGETARCH
 RUN apk add --no-cache curl tar \
@@ -127,7 +127,7 @@ RUN apk add --no-cache curl tar \
 # lists what the image actually holds: a scanner reads it to know what is
 # installed, and an entry for a package manager that is not there is a finding
 # about nothing.
-FROM dhi.io/alpine-base:3.24-dev@sha256:e8ea5cd1031f302d73920e38c0c9ff4090368f5ddbbfae519de9ea24865464bd AS packages
+FROM dhi.io/alpine-base:3.24-dev@sha256:eb950d88a309a402e2a731ba80bf9067378580becb611aa699ffb87594cd320b AS packages
 RUN apk add --no-cache postgresql17-client su-exec tzdata \
     && apk del --no-cache apk-tools \
     && mkdir /staging \
@@ -135,7 +135,7 @@ RUN apk add --no-cache postgresql17-client su-exec tzdata \
          /sbin/su-exec /usr/share/zoneinfo 2>/dev/null \
        | tar -xf - -C /staging
 
-FROM dhi.io/alpine-base:3.24@sha256:b18ee573885f54237cd93329a542d526a5aeed79463e5d1f759c4f09269f2ab9
+FROM dhi.io/alpine-base:3.24@sha256:a741d4f1ccaf31f9394a36477e50df4620a8030dbff3d9a2ea8e84672b683ada
 COPY --from=packages /staging/ /
 
 # The runtime base's own non-root user, nonroot (65532), runs the server. The
