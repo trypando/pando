@@ -199,6 +199,14 @@ jobs:
             go-integration-${{ runner.os }}-
       # Runners have Docker, so testcontainers works without extra setup.
       - run: make test-integration COVERPROFILE=coverage.integration.out
+        env:
+          # No Ryuk reaper here. It removes containers a run leaves behind,
+          # and a runner is thrown away after the job, so on CI it guards
+          # nothing — and it was two ways to fail a package that had nothing
+          # wrong with it: attaching to a reaper as it shut down, and the
+          # reaper's own host port being taken (statetest.Postgres). Local
+          # runs keep it, because there it is what cleans up.
+          TESTCONTAINERS_RYUK_DISABLED: 'true'
 
       # Uploaded under its own flag rather than merged into the unit profile.
       #

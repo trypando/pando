@@ -12,11 +12,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/core/state/statetest"
 )
 
 // startPostgres brings up a real Postgres and returns an owner connection URL.
@@ -28,15 +27,7 @@ func startPostgres(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()
 
-	container, err := postgres.Run(ctx, "postgres:17-alpine",
-		postgres.WithDatabase("pando"),
-		postgres.WithUsername("pando"),
-		postgres.WithPassword("test-password"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(60*time.Second)),
-	)
+	container, err := statetest.Postgres(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
 

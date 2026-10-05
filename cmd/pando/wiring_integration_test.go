@@ -13,8 +13,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -51,15 +49,7 @@ func connectedURL(t *testing.T) (*state.DB, string) {
 	t.Helper()
 	ctx := context.Background()
 
-	container, err := postgres.Run(ctx, "postgres:17-alpine",
-		postgres.WithDatabase("pando"),
-		postgres.WithUsername("pando"),
-		postgres.WithPassword("test-password"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(90*time.Second)),
-	)
+	container, err := statetest.Postgres(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
 
