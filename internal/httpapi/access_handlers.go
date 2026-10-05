@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	adapterapi "github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
@@ -99,10 +100,46 @@ func (s *Server) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 		Detail: map[string]any{
 			"plane":          req.Plane,
 			"principal_kind": req.PrincipalKind,
+			"principal_id":   req.PrincipalID,
+			"role_id":        req.RoleID,
 			"passcode":       digest != "",
 		},
 	})
+	s.tellSharedWith(r, app, req.Plane, req.PrincipalKind, req.PrincipalID)
 	JSON(w, http.StatusCreated, grant)
+}
+
+// tellSharedWith sends an app_shared notification to a person given use of an
+// app (R-266, as amended by issue #50). Off by default on every channel: the
+// launcher tile is the notification, and this reaches only someone who turned
+// it on for a channel that reaches them elsewhere, such as email. A group is
+// not expanded — each member's tile appears all the same.
+func (s *Server) tellSharedWith(r *http.Request, app state.App, plane, kind, principalID string) {
+	if s.Notifier == nil || plane != "data" || kind != "user" || principalID == "" {
+		return
+	}
+	who := "Somebody"
+	if p := PrincipalFrom(r.Context()); p.UserID != "" && s.Users != nil {
+		if u, ok, err := s.Users.ByID(r.Context(), p.UserID); err == nil && ok {
+			who = firstNonEmpty(u.DisplayName, u.Email, "Somebody")
+		}
+	}
+	_ = s.Notifier.Notify(r.Context(), adapterapi.Notification{
+		Kind:       adapterapi.NotifyAppShared,
+		AppID:      app.ID,
+		Recipients: []adapterapi.Recipient{{UserID: principalID}},
+		Subject:    who + " shared " + app.Name + " with you",
+		Body:       app.Name + " is in your launcher.",
+	})
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (s *Server) handleListGrants(w http.ResponseWriter, r *http.Request) {

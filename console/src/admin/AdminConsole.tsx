@@ -38,6 +38,7 @@ import { filtersFrom, linkQuery } from '../install/audit';
 import { Identity } from '../install/Identity';
 import { SignIn } from '../install/SignIn';
 import { Backups } from '../install/Backups';
+import { Events } from '../install/Events';
 import { Updates, useUpdates } from '../install/Updates';
 import { Audit, Installation, Policy } from '../install/Installation';
 import { statusLabel, statusSymbol } from '../ui/status';
@@ -118,6 +119,7 @@ export function AdminConsole({
   const canReadAudit = useInstallVerb(InstallVerb.AuditRead);
   const canManageBackups = useInstallVerb(InstallVerb.BackupManage);
   const canApproveAll = useInstallVerb(InstallVerb.DeploysApprove);
+  const canManageEvents = useInstallVerb(InstallVerb.EventsManage);
 
   // Deploys waiting for approval (R-154). Asked by anybody who administers an
   // app, not only by holders of install.deploys.approve: app.deploy.approve is
@@ -190,6 +192,9 @@ export function AdminConsole({
   if (canView || canManagePolicy) items.push({ value: 'policy', label: 'Policy' });
   if (canManageBackups) items.push({ value: 'backups', label: 'Backups' });
   if (canReadAudit) items.push({ value: 'audit', label: 'Audit log' });
+  // Anybody who administers an app may subscribe to its events (R-368);
+  // install.events.manage adds install-wide ones and everybody's.
+  if (administrative || canManageEvents) items.push({ value: 'events', label: 'Events' });
   if (canView) items.push({ value: 'updates', label: 'Updates', trailing: behind > 0 ? <Badge count={behind} /> : undefined });
 
   // Last, and for everyone. The API is the product (R-261) and an agent holding
@@ -348,6 +353,7 @@ export function AdminConsole({
         {section === 'adapters' && <Installation />}
         {section === 'policy' && <Policy canEdit={canManagePolicy} />}
         {section === 'backups' && <Backups />}
+        {section === 'events' && <Events canManageAll={canManageEvents} apps={rows} />}
         {section === 'updates' && <Updates onPolicy={() => setSection('policy')} />}
         {section === 'audit' && (
           <Audit

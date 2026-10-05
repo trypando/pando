@@ -244,6 +244,9 @@ interface PolicyDoc {
   disable_password_sign_in?: boolean;
   disable_jit_provisioning?: boolean;
 
+  // Event subscription webhooks (R-372).
+  allow_private_webhooks?: boolean;
+
   // The update check (R-349, R-350).
   disable_update_check?: boolean;
   update_channel?: string;
@@ -826,6 +829,22 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               />
             </Fixed>
           )}
+        </PolicySection>
+
+        <PolicySection
+          heading="Event webhooks"
+          note="Where a subscription's webhook may send. Anybody who can see an app can subscribe to it, so this decides whether that reaches into this installation's own network."
+        >
+          {/* R-372: off by default. */}
+          <Fixed field="allow_private_webhooks">
+            <Switch
+              checked={current.allow_private_webhooks ?? false}
+              disabled={locked('allow_private_webhooks')}
+              label="Let webhooks reach private addresses"
+              description="The local network, this host, and link-local addresses such as a cloud metadata service. Leave this off unless your webhook receivers run inside your network."
+              onChange={(e) => edit({ allow_private_webhooks: e.target.checked })}
+            />
+          </Fixed>
         </PolicySection>
 
         <PolicySection

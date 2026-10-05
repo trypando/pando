@@ -194,6 +194,7 @@ export interface Document {
   cli: (Command[] | null);
   mcp: (ToolDoc[] | null);
   errors: (CodeDoc[] | null);
+  events: (Def[] | null);
   connect: Connect;
   install: Install;
 }
@@ -250,6 +251,7 @@ export interface PolicyDocument {
   disable_password_sign_in?: boolean;
   disable_jit_provisioning?: boolean;
   disable_update_check?: boolean;
+  allow_private_webhooks?: boolean;
   update_channel?: string;
   upgrade_in_place?: boolean;
   auto_upgrade_patches?: boolean;
@@ -592,6 +594,14 @@ export interface CodeDoc {
   meaning: string;
 }
 
+export interface Def {
+  name: string;
+  scope: string;
+  source: string;
+  summary: string;
+  fields: (Field[] | null);
+}
+
 export interface Connect {
   server_env: string;
   token_env: string;
@@ -793,6 +803,11 @@ export interface Flag {
   shorthand?: string;
   description: string;
   default?: string;
+}
+
+export interface Field {
+  name: string;
+  description: string;
 }
 
 export interface Amendment {

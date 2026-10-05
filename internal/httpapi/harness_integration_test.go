@@ -43,6 +43,7 @@ import (
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/state/statetest"
+	"github.com/trypando/pando/internal/core/subscription"
 	"github.com/trypando/pando/internal/httpapi"
 	"github.com/trypando/pando/internal/reference"
 	"github.com/trypando/pando/internal/secret"
@@ -79,6 +80,12 @@ type install struct {
 	Volumes     *state.Volumes
 	Adapters    *state.Adapters
 	PolicyStore *state.Policy
+
+	// Dispatcher sends what subscriptions route; a test calls Pass. People
+	// and Channel are the notify adapters it and the router send through.
+	Dispatcher *subscription.Dispatcher
+	People     *fakeNotify
+	Channel    *fakeNotify
 
 	// Restarts counts POST /restart's calls to Server.Restart.
 	Restarts *atomic.Int32
@@ -283,7 +290,45 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Clock: clock.System{},
 	}
 
+	// Event subscriptions (issue #50), with two notify adapters that record
+	// what they are given: one reaching people, one posting to a channel.
+	people := &fakeNotify{kind: "console", audience: adapterapi.AudiencePeople}
+	channel := &fakeNotify{kind: "slack", audience: adapterapi.AudienceChannel}
+	require.NoError(t, registry.Register("ntf_people", people))
+	require.NoError(t, registry.Register("ntf_channel", channel))
+	prefs := state.NewNotificationPreferences(db)
+	router := subscription.Router{Registry: registry, Preferences: prefs, Users: users}
+	srv.Notifier = router
+	srv.Subscriptions = &subscription.Service{
+		Subscriptions: state.NewSubscriptions(db),
+		Deliveries:    state.NewDeliveries(db),
+		Events:        state.NewEvents(db),
+		Keys:          state.NewSigningKeys(db, secretsAdapter, "sec_local"),
+		Prefs:         prefs,
+		Authz:         authorizer,
+		Policy:        effectivePolicy,
+		Apps:          apps,
+		Registry:      registry,
+		Audit:         httpapi.AuditFunc(auditor),
+		Clock:         clock.System{},
+	}
+	dispatcher := &subscription.Dispatcher{
+		Events:        srv.Subscriptions.Events,
+		Subscriptions: srv.Subscriptions.Subscriptions,
+		Deliveries:    srv.Subscriptions.Deliveries,
+		Keys:          srv.Subscriptions.Keys,
+		Authz:         authorizer,
+		Policy:        effectivePolicy,
+		Apps:          apps,
+		Users:         users,
+		Groups:        authzStore,
+		Registry:      registry,
+		Notifier:      router,
+		Audit:         httpapi.AuditFunc(auditor),
+	}
+
 	return &install{
+		Dispatcher: dispatcher, People: people, Channel: channel,
 		t: t, handler: srv.Routes(), db: db, ownerURL: dbURL, Server: srv, Restarts: restarts,
 		Apps: apps, Users: users, Grants: grants, Sessions: sessions, Tokens: tokens,
 		Secrets: secrets, Volumes: volumes, Adapters: adapters, PolicyStore: policyStore,

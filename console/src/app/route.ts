@@ -24,6 +24,7 @@ export type Section =
   | 'backups'
   | 'audit'
   | 'approvals'
+  | 'events'
   | 'updates';
 
 export interface Route {
@@ -53,6 +54,7 @@ const SECTIONS: Section[] = [
   'backups',
   'audit',
   'approvals',
+  'events',
   'updates',
 ];
 

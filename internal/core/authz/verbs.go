@@ -75,6 +75,11 @@ const (
 	// part of managing policy or adapters.
 	InstallUpgrade Verb = "install.upgrade"
 
+	// InstallEventsManage subscribes to events install-wide and manages
+	// anybody's subscriptions (R-368). An install-wide subscription hears about
+	// every app and about sign-ins, which is why seeing one app is not enough.
+	InstallEventsManage Verb = "install.events.manage"
+
 	// AppCreate is install-scoped despite its name: there is no app yet when it
 	// is checked. Sequence A step 1 has always called it install-level.
 	AppCreate Verb = "app.create"
@@ -143,6 +148,7 @@ var Verbs = []Verb{
 	InstallTokensManage,
 	InstallDeploysApprove,
 	InstallUpgrade,
+	InstallEventsManage,
 	AppCreate,
 
 	AppView,
@@ -247,7 +253,7 @@ func InstallScoped(v Verb) bool {
 	switch v {
 	case InstallView, InstallUsersManage, InstallPolicyManage,
 		InstallAdaptersManage, InstallAuditRead, InstallBackupManage,
-		InstallTokensManage, InstallDeploysApprove, InstallUpgrade, AppCreate:
+		InstallTokensManage, InstallDeploysApprove, InstallUpgrade, InstallEventsManage, AppCreate:
 		return true
 	default:
 		_, ok := everyApp[v]

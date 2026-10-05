@@ -32,6 +32,8 @@ var meanings = map[Code]string{
 
 	PolicySourceNotAllowed:        "Host policy does not allow apps from this source (R-092).",
 	PolicyExecDisabled:            "Host policy has turned off terminal access, including for an app's owner (R-085).",
+	PolicyWebhookPrivateAddress:   "A webhook points at a private, loopback or link-local address, and host policy does not allow that (R-372).",
+	ValidUnknownEvent:             "A subscription names an event, or a pattern, that matches no event in the catalog (R-364).",
 	PolicyAnonymousGrantForbidden: "Host policy does not allow apps to be shared with everyone (R-076).",
 
 	ValidInvalid:         "The request or spec is malformed.",

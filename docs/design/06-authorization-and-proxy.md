@@ -355,7 +355,7 @@ var Verbs = []Verb{
     "install.view", "install.users.manage", "install.policy.manage",
     "install.adapters.manage", "install.audit.read", "install.backup.manage",
     "install.tokens.manage", "install.deploys.approve", "install.upgrade",
-    "app.create",
+    "install.events.manage", "app.create",
 
     // Install-scoped: each one app verb on every app (issue #81). See below.
     "install.apps.view", "install.apps.logs.read", "install.apps.deploy",
@@ -474,6 +474,13 @@ their own apps, and touch no other setting": creating an app writes the creator 
 verb in the role mentions apps they did not make, and none reaches users, policy, adapters, backups or
 the audit log. In the console, a Creator's admin sidebar has Apps and the API screen everyone gets,
 and nothing else, because the sidebar is drawn per verb.
+
+**[D] `install.events.manage` subscribes install-wide and manages anybody's subscriptions** (R-368,
+issue #50). Administrator holds it. It is not an `everyApp` counterpart — there is no app verb it stands
+for: an app subscription needs `app.view`, which counts its install counterpart like any `CheckControl`
+question, while an install-wide subscription also hears sign-ins, policy changes and adapter health, which
+seeing every app does not cover. A delivery is authorized as the subscription's owner when it is sent, with
+`Allows` / `AllowsInstall`, so it audits nothing and a revoked grant stops the next delivery. Design 11 §4.
 
 **[D]** Built-in roles (R-081) are seeded by migration and trigger-protected. When a new verb is introduced in a later Pando version, a migration adds it to the appropriate built-in roles. That is the upgrade mechanism R-081 promises, and it is the only sanctioned way built-in role contents change.
 

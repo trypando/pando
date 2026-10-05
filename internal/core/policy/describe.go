@@ -59,6 +59,9 @@ var descriptions = map[string]string{
 		"whatever the provider is set to. People need an account from SCIM or an administrator first.",
 	"disable_update_check": "Don't check GitHub for newer Pando releases. Off sends no request at all, for an " +
 		"installation that has no internet access or may not call out.",
+	"allow_private_webhooks": "Let event subscription webhooks send to private addresses — the local network, " +
+		"loopback, and link-local addresses such as a cloud metadata service. Off by default, because anyone who " +
+		"can see an app can subscribe to it.",
 	"update_channel": "Which Pando releases the update check offers: stable (releases only) or prerelease " +
 		"(release candidates too).",
 	"upgrade_in_place": "Let Pando upgrade itself to a newer release from the Updates screen. Needs Pando's image " +

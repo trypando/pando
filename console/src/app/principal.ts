@@ -41,6 +41,8 @@ export const InstallVerb = {
   /** Approve any deploy that needs approval, on any app (R-155). */
   DeploysApprove: 'install.deploys.approve',
   Upgrade: 'install.upgrade',
+  /** Install-wide event subscriptions, and everybody's (R-368). */
+  EventsManage: 'install.events.manage',
   AppCreate: 'app.create',
 } as const;
 

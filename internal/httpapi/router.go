@@ -31,6 +31,7 @@ import (
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/core/subscription"
 	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/core/upgrade"
 	"github.com/trypando/pando/internal/errs"
@@ -115,6 +116,16 @@ type Server struct {
 	// Approvals starts every deploy, and asks for, records and acts on the
 	// approval of those that need one (R-154 – R-159).
 	Approvals *approval.Service
+
+	// Subscriptions manages event subscriptions and notification
+	// preferences (issue #50). Nil answers that they are unavailable.
+	Subscriptions *subscription.Service
+
+	// Notifier sends Pando's own notifications to the people they name, as
+	// their preferences allow. Optional.
+	Notifier interface {
+		Notify(ctx context.Context, n api.Notification) error
+	}
 
 	Logs       *deploy.LogStore
 	Secrets    *state.Secrets
@@ -588,6 +599,27 @@ func (s *Server) Routes() http.Handler {
 		// Deploys waiting for approval, across every app the caller may view
 		// (R-154): what an approver works through.
 		r.Get("/approvals", s.handleListApprovals)
+
+		// Events and subscriptions to them (issue #50): the catalog, what is
+		// subscribed and where it goes, every delivery and every attempt at
+		// one, and which of Pando's own notifications reach the caller.
+		r.Get("/events", s.handleListEvents)
+		r.Route("/subscriptions", func(r chi.Router) {
+			r.Get("/", s.handleListSubscriptions)
+			r.Post("/", s.handleCreateSubscription)
+			r.Route("/{subscriptionID}", func(r chi.Router) {
+				r.Get("/", s.handleGetSubscription)
+				r.Patch("/", s.handlePatchSubscription)
+				r.Delete("/", s.handleDeleteSubscription)
+				r.Post("/signing-key", s.handleRotateSigningKey)
+				r.Post("/test", s.handleTestSubscription)
+				r.Get("/deliveries", s.handleListDeliveries)
+				r.Get("/deliveries/{deliveryID}", s.handleGetDelivery)
+				r.Post("/deliveries/{deliveryID}/redeliver", s.handleRedeliver)
+			})
+		})
+		r.Get("/notification-preferences", s.handleGetNotificationPreferences)
+		r.Put("/notification-preferences", s.handlePutNotificationPreferences)
 
 		r.Route("/apps", func(r chi.Router) {
 			r.Get("/", s.handleListApps)

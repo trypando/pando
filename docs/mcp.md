@@ -83,4 +83,15 @@ boundary (O-12), and offering a tool policy will refuse wastes the agent's turn.
 | `pando_ai_draft_host_rules` | Propose changes to the installation's host policy from a description: the document as it would be saved, and each change. Nothing is saved. Settings fixed in the startup configuration are declined, naming where they are set. | `description` |
 | `pando_ai_search_audit` | Ask a question of the audit log, such as "which apps did Ben Meeker create last month?". Returns a short summary and the filters used, which pando_list_audit takes as-is. | `question` |
 | `pando_ai_ask_reference` | Ask how to do something with Pando. Answered from Pando's API, CLI and MCP reference, citing the endpoints, commands and tools it relies on. Describes; does nothing. | `question` |
+| `pando_list_events` | List the events a subscription can name: each event's name, whether it is about one app or the whole installation, and its data fields. | none |
+| `pando_list_subscriptions` | List your event subscriptions: what each listens for, where it sends, and whether it is on. app_id narrows to one app. | `app_id` (optional) |
+| `pando_create_subscription` | Subscribe to events and send them to a webhook (url) or through a notification adapter such as Slack or email (adapter_id). events is a comma-separated list of event names, prefixes such as deploy.*, or *; pando_list_events lists them. With app_id it is about one app; without, it is install-wide and needs install.events.manage. A webhook's signing key is in the result once; tell the person to keep it. | `adapter_id` (optional), `app_id` (optional), `description` (optional), `events`, `url` (optional) |
+| `pando_update_subscription` | Change a subscription's events, url, adapter_id or description, or turn it on or off with enabled (true or false). | `adapter_id` (optional), `description` (optional), `enabled` (optional), `events` (optional), `subscription_id`, `url` (optional) |
+| `pando_delete_subscription` | Delete a subscription, its signing key and its delivery log. | `subscription_id` |
+| `pando_test_subscription` | Send a test event to one subscription, whatever its filter says, to check its endpoint. Returns the delivery; read it with pando_get_delivery. | `subscription_id` |
+| `pando_list_deliveries` | A subscription's recent deliveries, newest first: each event, whether it arrived, how many attempts it took, and the last error. | `subscription_id` |
+| `pando_get_delivery` | One delivery: every attempt at it, with the status code and error each got, and the payload sent. | `delivery_id`, `subscription_id` |
+| `pando_redeliver` | Send a delivery again now, with the whole retry schedule ahead of it. | `delivery_id`, `subscription_id` |
+| `pando_get_notification_preferences` | Which of Pando's own notifications reach you, on each channel that reaches people, such as the console and email. | none |
+| `pando_set_notification_preference` | Turn one of Pando's notifications on or off for you on one channel. kind and channel are as pando_get_notification_preferences lists them. | `channel`, `enabled`, `kind` |
 

@@ -22,6 +22,7 @@ import (
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/core/subscription"
 	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/core/upgrade"
 	"github.com/trypando/pando/internal/errs"
@@ -38,6 +39,7 @@ type upgradeDeps struct {
 	backup     *backup.Service
 	authzStore *state.AuthzStore
 	auditor    *audit.Writer
+	notify     subscription.Router
 	logger     *zap.Logger
 }
 
@@ -97,7 +99,7 @@ func newUpgradeService(d upgradeDeps) *upgrade.Service {
 			return d.authzStore.InstallVerbHolders(ctx, authz.InstallUpgrade)
 		},
 		DropSnapshot: func(ctx context.Context) error { return state.DropSnapshot(ctx, d.cfg.Database.URL) },
-		Notify:       registryNotifier{registry: d.registry, logger: d.logger}.Notify,
+		Notify:       d.notify.Notify,
 		Audit:        write,
 		DatabaseURL:  secret.New(d.cfg.Database.URL),
 		WorkDir:      d.cfg.Server.WorkDir,

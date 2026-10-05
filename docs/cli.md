@@ -571,6 +571,14 @@ generated an app cannot commit and push, but it can run a command.
 | `--app` |  | deploy a directory as an existing app, instead of creating one |
 | `--env` | `[]` | KEY=VALUE, set when a new directory's setup is accepted; repeat for more (e.g. --env API_URL=https://api) |
 
+### `events`
+
+List the events a subscription can name
+
+```
+pando events
+```
+
 ### `exec`
 
 Run a command inside a running app
@@ -890,6 +898,32 @@ every action lands in the audit log under the token's owner. The most dangerous
 actions — running commands in apps, reading secret values, changing who has access —
 are refused by host policy for tokens by default, and are not offered as tools.
 
+### `notifications`
+
+Choose which of Pando's notifications reach you, and where
+
+```
+pando notifications
+```
+
+#### `notifications preferences`
+
+Show your notification preferences, or change them with --set
+
+```
+pando notifications preferences
+```
+
+Show which of Pando's own notifications reach you on each channel.
+
+--set kind:channel=on|off changes one, and may be repeated, for example:
+
+  pando notifications preferences --set app_shared:ntf_smtp=on --set deploy_approval:ntf_console=off
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--set` | `[]` | kind:channel=on|off, repeatable |
+
 ### `plan`
 
 Show what a deploy would do, without doing it
@@ -1052,6 +1086,123 @@ pando slot set <app> <key>
 | `--bind` |  | bind to an existing service |
 | `--literal` |  | use this value directly |
 | `--provision` |  | let Pando create the service |
+
+### `subscriptions`
+
+Send Pando's events to a webhook, Slack, Teams, Discord, email or ntfy
+
+```
+pando subscriptions
+```
+
+#### `subscriptions create`
+
+Subscribe to events on one app, or install-wide
+
+```
+pando subscriptions create
+```
+
+Subscribe to events and send them to a webhook (--url) or through a notification adapter (--adapter).
+
+--events takes event names, prefixes such as deploy.*, or * for everything; `pando events` lists them.
+Without --app the subscription is install-wide, which needs install.events.manage.
+
+A webhook's signing key is printed once. Keep it: Pando signs every delivery with it and cannot show it again.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--adapter` |  | Send each event through this notification adapter |
+| `--app` |  | The app's ID; omit for install-wide |
+| `--description` |  | What this subscription is for |
+| `--events` | `[]` | Events to send: names, prefixes such as deploy.*, or * |
+| `--url` |  | Post each event to this webhook URL |
+
+#### `subscriptions delete`
+
+Delete a subscription and its delivery log
+
+```
+pando subscriptions delete <subscription-id>
+```
+
+#### `subscriptions deliveries`
+
+A subscription's recent deliveries
+
+```
+pando subscriptions deliveries <subscription-id>
+```
+
+#### `subscriptions delivery`
+
+One delivery and every attempt at it
+
+```
+pando subscriptions delivery <subscription-id> <delivery-id>
+```
+
+#### `subscriptions list`
+
+Your subscriptions, or everybody's with --everyone
+
+```
+pando subscriptions list
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--app` |  | Only subscriptions about this app (its ID) |
+| `--everyone` |  | Every person's subscriptions (needs install.events.manage) |
+
+#### `subscriptions redeliver`
+
+Send a delivery again now
+
+```
+pando subscriptions redeliver <subscription-id> <delivery-id>
+```
+
+#### `subscriptions rotate-key`
+
+Replace a webhook's signing key and print the new one, once
+
+```
+pando subscriptions rotate-key <subscription-id>
+```
+
+#### `subscriptions show`
+
+One subscription
+
+```
+pando subscriptions show <subscription-id>
+```
+
+#### `subscriptions test`
+
+Send a test event to one subscription
+
+```
+pando subscriptions test <subscription-id>
+```
+
+#### `subscriptions update`
+
+Change a subscription, or turn it on or off
+
+```
+pando subscriptions update <subscription-id>
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--adapter` |  | A new notification adapter |
+| `--description` |  | A new description |
+| `--disable` |  | Turn it off |
+| `--enable` |  | Turn it on, clearing its record of failures |
+| `--events` | `[]` | Replace the events it sends |
+| `--url` |  | A new webhook URL |
 
 ### `token`
 

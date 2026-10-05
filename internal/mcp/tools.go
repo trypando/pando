@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"strings"
 )
 
 // The tool catalog (design 04 §3).
@@ -786,6 +787,226 @@ var toolList = []tool{
 			return "POST", "/ai/reference/answer", map[string]string{"question": q}, nil
 		},
 	},
+
+	// Event subscriptions (issue #50). Rotating a webhook's signing key is
+	// not here: it returns a key, and a tool that hands out a credential is
+	// one O-12 keeps from agents. The console and CLI rotate one.
+	{
+		Name:        "pando_list_events",
+		Description: "List the events a subscription can name: each event's name, whether it is about one app or the whole installation, and its data fields.",
+		Schema:      schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/events", nil, nil
+		},
+	},
+	{
+		Name:        "pando_list_subscriptions",
+		Description: "List your event subscriptions: what each listens for, where it sends, and whether it is on. app_id narrows to one app.",
+		Schema:      schema(map[string]any{"app_id": str("Only subscriptions about this app. Optional.")}),
+		request: func(args map[string]any) (string, string, any, error) {
+			app, err := stringArg(args, "app_id", false)
+			if err != nil {
+				return "", "", nil, err
+			}
+			if app != "" {
+				return "GET", "/subscriptions?app_id=" + url.QueryEscape(app), nil, nil
+			}
+			return "GET", "/subscriptions", nil, nil
+		},
+	},
+	{
+		Name: "pando_create_subscription",
+		Description: "Subscribe to events and send them to a webhook (url) or through a notification adapter such as Slack or email (adapter_id). " +
+			"events is a comma-separated list of event names, prefixes such as deploy.*, or *; pando_list_events lists them. " +
+			"With app_id it is about one app; without, it is install-wide and needs install.events.manage. " +
+			"A webhook's signing key is in the result once; tell the person to keep it.",
+		Schema: schema(map[string]any{
+			"events":      str("Comma-separated event names or patterns, such as deploy.failed,app.state_changed."),
+			"app_id":      str("The app. Omit for install-wide."),
+			"url":         str("The webhook URL to post to. Give this or adapter_id."),
+			"adapter_id":  str("A notification adapter's ID. Give this or url."),
+			"description": str("What the subscription is for. Optional."),
+		}, "events"),
+		request: func(args map[string]any) (string, string, any, error) {
+			names, err := stringArg(args, "events", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			app, _ := stringArg(args, "app_id", false)
+			hook, _ := stringArg(args, "url", false)
+			adapter, _ := stringArg(args, "adapter_id", false)
+			desc, _ := stringArg(args, "description", false)
+			if (hook == "") == (adapter == "") {
+				return "", "", nil, fmt.Errorf("give exactly one of url (a webhook) or adapter_id (a notification adapter)")
+			}
+			body := map[string]any{"events": splitList(names), "app_id": app, "description": desc}
+			if hook != "" {
+				body["destination"], body["url"] = "webhook", hook
+			} else {
+				body["destination"], body["adapter_id"] = "notify", adapter
+			}
+			return "POST", "/subscriptions", body, nil
+		},
+	},
+	{
+		Name:        "pando_update_subscription",
+		Description: "Change a subscription's events, url, adapter_id or description, or turn it on or off with enabled (true or false).",
+		Schema: schema(map[string]any{
+			"subscription_id": str("The subscription's ID, sub_…."),
+			"events":          str("Comma-separated event names or patterns. Optional."),
+			"url":             str("A new webhook URL. Optional."),
+			"adapter_id":      str("A new notification adapter. Optional."),
+			"description":     str("A new description. Optional."),
+			"enabled":         str("true or false. Optional."),
+		}, "subscription_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "subscription_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			body := map[string]any{}
+			for _, k := range []string{"url", "adapter_id", "description"} {
+				if v, _ := stringArg(args, k, false); v != "" {
+					body[k] = v
+				}
+			}
+			if v, _ := stringArg(args, "events", false); v != "" {
+				body["events"] = splitList(v)
+			}
+			switch v, _ := stringArg(args, "enabled", false); v {
+			case "true":
+				body["enabled"] = true
+			case "false":
+				body["enabled"] = false
+			case "":
+			default:
+				return "", "", nil, fmt.Errorf("enabled is true or false, not %q", v)
+			}
+			return "PATCH", "/subscriptions/" + url.PathEscape(id), body, nil
+		},
+	},
+	{
+		Name:        "pando_delete_subscription",
+		Description: "Delete a subscription, its signing key and its delivery log.",
+		Schema:      schema(map[string]any{"subscription_id": str("The subscription's ID.")}, "subscription_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "subscription_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "DELETE", "/subscriptions/" + url.PathEscape(id), nil, nil
+		},
+	},
+	{
+		Name:        "pando_test_subscription",
+		Description: "Send a test event to one subscription, whatever its filter says, to check its endpoint. Returns the delivery; read it with pando_get_delivery.",
+		Schema:      schema(map[string]any{"subscription_id": str("The subscription's ID.")}, "subscription_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "subscription_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "POST", "/subscriptions/" + url.PathEscape(id) + "/test", map[string]any{}, nil
+		},
+	},
+	{
+		Name:        "pando_list_deliveries",
+		Description: "A subscription's recent deliveries, newest first: each event, whether it arrived, how many attempts it took, and the last error.",
+		Schema:      schema(map[string]any{"subscription_id": str("The subscription's ID.")}, "subscription_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "subscription_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", "/subscriptions/" + url.PathEscape(id) + "/deliveries", nil, nil
+		},
+	},
+	{
+		Name:        "pando_get_delivery",
+		Description: "One delivery: every attempt at it, with the status code and error each got, and the payload sent.",
+		Schema: schema(map[string]any{
+			"subscription_id": str("The subscription's ID."),
+			"delivery_id":     str("The delivery's ID, dlv_…."),
+		}, "subscription_id", "delivery_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "subscription_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			dlv, err := stringArg(args, "delivery_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", "/subscriptions/" + url.PathEscape(id) + "/deliveries/" + url.PathEscape(dlv), nil, nil
+		},
+	},
+	{
+		Name:        "pando_redeliver",
+		Description: "Send a delivery again now, with the whole retry schedule ahead of it.",
+		Schema: schema(map[string]any{
+			"subscription_id": str("The subscription's ID."),
+			"delivery_id":     str("The delivery's ID."),
+		}, "subscription_id", "delivery_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "subscription_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			dlv, err := stringArg(args, "delivery_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "POST", "/subscriptions/" + url.PathEscape(id) + "/deliveries/" + url.PathEscape(dlv) + "/redeliver", map[string]any{}, nil
+		},
+	},
+	{
+		Name:        "pando_get_notification_preferences",
+		Description: "Which of Pando's own notifications reach you, on each channel that reaches people, such as the console and email.",
+		Schema:      schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/notification-preferences", nil, nil
+		},
+	},
+	{
+		Name:        "pando_set_notification_preference",
+		Description: "Turn one of Pando's notifications on or off for you on one channel. kind and channel are as pando_get_notification_preferences lists them.",
+		Schema: schema(map[string]any{
+			"kind":    str("The notification, such as app_shared."),
+			"channel": str("The channel's adapter ID, such as ntf_console."),
+			"enabled": str("true or false."),
+		}, "kind", "channel", "enabled"),
+		request: func(args map[string]any) (string, string, any, error) {
+			kind, err := stringArg(args, "kind", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			channel, err := stringArg(args, "channel", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			enabled, err := stringArg(args, "enabled", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			if enabled != "true" && enabled != "false" {
+				return "", "", nil, fmt.Errorf("enabled is true or false, not %q", enabled)
+			}
+			return "PUT", "/notification-preferences", map[string]any{"choices": []map[string]any{
+				{"kind": kind, "channel": channel, "enabled": enabled == "true"},
+			}}, nil
+		},
+	},
+}
+
+// splitList reads a comma-separated argument.
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 var toolsByName = func() map[string]tool {

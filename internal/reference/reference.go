@@ -26,6 +26,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/trypando/pando/internal/cli"
+	"github.com/trypando/pando/internal/core/events"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/mcp"
 )
@@ -37,6 +38,7 @@ type Document struct {
 	CLI     []Command      `json:"cli"`
 	MCP     []mcp.ToolDoc  `json:"mcp"`
 	Errors  []errs.CodeDoc `json:"errors"`
+	Events  []events.Def   `json:"events"`
 	Connect Connect        `json:"connect"`
 	Install Install        `json:"install"`
 }
@@ -122,6 +124,7 @@ func Build(routes []Route) Document {
 		CLI:    Commands(),
 		MCP:    mcp.Catalog(),
 		Errors: errs.Catalog(),
+		Events: events.Catalog(),
 		Connect: Connect{
 			ServerEnv: cli.EnvServer,
 			TokenEnv:  cli.EnvToken,

@@ -183,7 +183,8 @@ would take away something an administrator gave on purpose. It adds `app.egress.
 Operator and `install.deploys.approve` to Administrator. `app.deploy.approve` joins the catalog in no
 built-in role (R-155). The trigger is disabled for the length of the migration and re-enabled in it.
 Migration 000042 does the same for `install.upgrade` (R-356), the Administrator's alone, and adds it to
-a stored policy's `agent_disabled_verbs` as `policy.Default()` does.
+a stored policy's `agent_disabled_verbs` as `policy.Default()` does. Migration 000043 adds
+`install.events.manage` (R-368) to Administrator alone; agents may hold it.
 
 **[D]** A role is scoped. A role carrying install verbs granted on a single app is nonsense, and a role carrying app verbs granted install-wide is worse. `administrator` is the only install-scoped built-in; custom roles (R-082) are composed within one scope.
 
@@ -682,6 +683,25 @@ for a week (issue #87). Shown on the app and on the Backups screen.
 **[D]** A per-app backup is encrypted under the **install's own secrets key**, not a supplied passphrase. R-213 governs the DR bundle and its reasoning does not carry over: it exists because a restore onto a fresh machine cannot unwrap keys held by the machine that died, and because shipping the key inside the bundle makes it plaintext for anyone holding the file. An app backup is restored in place, onto this install (R-206), so the machine that can read it is the machine that wrote it. The alternative — prompting for a passphrase on every app deletion — is a prompt people learn to type "password" into, which is weaker than the key already protecting every secret in the install. Pando keeps this copy; the copy inside the bundle is the one being checked against it.
 
 ---
+
+### 2.9 Events and subscriptions (issue #50)
+
+Migration 000043. Design in [11-events-and-subscriptions.md](11-events-and-subscriptions.md).
+
+| Table | Holds | Constraints that matter |
+|---|---|---|
+| `events` | The outbox: name, app, actor, catalogued `data`, `routed_at` | No FK on `app_id` — `app.deleted` outlives the app. A CHECK on the name's shape. IDs from `pando_ulid()`, the shape `internal/id` makes |
+| `subscriptions` | Owner, app (NULL = install-wide), filter, destination | `owner_id` cascades: a subscription is a person's. `webhook` ⇔ `url`, `notify` ⇔ `adapter_id`, as CHECKs. **No column a signing key could go in** (R-371) |
+| `subscription_signing_keys` | The secrets adapter's ciphertext or external reference | Same shape as `adapter_credentials`; a CHECK that one of the two is set |
+| `event_deliveries` | One event to one subscription; status, attempts, next attempt | `UNIQUE (subscription_id, event_id)` — routing twice queues once |
+| `delivery_attempts` | Every attempt: when, status code, error, duration | Cascades with its delivery |
+| `notification_preferences` | A person's choice per kind and channel | A missing row is the default |
+
+**[D] Four triggers write events**, because each column has more than one writer and a trigger is the one
+place they all pass through: `apps.state` → `app.state_changed`; `deployments.status` reaching
+`succeeded`/`failed` → `deploy.*`; a `backups` insert → `backup.created`; a `backup_attempts` row with
+outcome `failed` → `backup.failed`. The audit writer adds a fifth path for catalogued actions, in the same
+transaction as the audit row (R-365).
 
 ## 3. Things deliberately not in the schema
 
