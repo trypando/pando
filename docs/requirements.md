@@ -793,10 +793,13 @@ made. Subscriptions are managed from the API, CLI, MCP and console (R-261); a te
 to one subscription whatever its filter says.
 
 **R-368 [D]** **A subscription is worth no more than its owner's access, checked at every delivery.**
-A subscription belongs to a person. Subscribing to an app needs `app.view` on it; subscribing
-install-wide, and seeing or changing anybody else's subscriptions, needs `install.events.manage`, held by
-Administrator. Every delivery is authorized as the owner at the moment it is sent, so an owner who
-loses sight of the app, loses the verb, or is suspended stops receiving, and the delivery log says why.
+A subscription belongs to a person, or to an account token (R-060), which is bounded by its own grants
+like any principal; a delegated token's belongs to the person it acts for (R-058). Subscribing to an app
+needs `app.view` on it; subscribing install-wide, and seeing or changing anybody else's subscriptions,
+needs `install.events.manage`, held by Administrator. Every delivery is authorized as the owner at the
+moment it is sent, so an owner who loses sight of the app, loses the verb, is suspended, or — for a
+token — is revoked or expires stops receiving, and the delivery log says why. A token is not a person:
+its subscription may send to a webhook or a channel, never to a destination that reaches people.
 
 **R-369 [D]** **A webhook delivery is signed, retried and recorded.** Pando posts the event as JSON with
 an HMAC-SHA256 signature over a timestamp and the body, the timestamp, the event's name and ID, and the
@@ -830,6 +833,28 @@ a kind they have not chosen for follows its default.
 Microsoft Teams, Discord and ntfy. Each formats a notification for its platform. A channel adapter's
 webhook URL, an ntfy topic and an SMTP password are credentials, stored like any adapter credential
 (R-190). Pushover and other platforms are a new adapter each, by pull request (R-253).
+
+**R-375 [D]** **A webhook sends the request its receiver expects.** A webhook subscription may choose its
+method (POST, PUT or PATCH) and content type, carry headers of its own, and render its body from a
+template given the event and its description; empty sends Pando's envelope. Header values may be
+credentials and are kept as the signing key is (R-371): sealed, named but never shown again. A header
+Pando or the transport sets — `Pando-*`, `Host`, `Content-Type` and the like — cannot be set, so a
+receiver can always trust the signature, which is computed over the body actually sent. A template is
+checked against a sample event when it is saved, and a JSON content type needs it to produce JSON.
+
+**R-376 [D]** **A failed deploy and a failed backup tell the people they concern.** Pando's own
+`deploy_failed` goes to the app's owner and to whoever started the deploy — the person behind a delegated
+token, nobody for Pando itself or an account token; `backup_failed` goes to the app's owner and to
+everybody holding `install.backup.manage`. Each person is told once, on the channels R-373 allows.
+
+**R-377 [D]** **The console has an inbox.** What the console notify adapter records is listed to the
+person it is for, newest first, with a count of those unread beside Settings on every screen; one or all
+can be marked read, by that person alone. A notification links to where in the console to look, when
+Pando knows its own address (`external_url`). Every surface reaches it (R-261).
+
+**R-378 [D]** **An app shows its own events.** Anyone who can see an app reads its recent events, as a
+webhook receives them and as a person reads them, and manages its subscriptions, from the app's own
+Events tab and `GET /apps/{id}/events`. The feed holds what the outbox keeps (R-366).
 
 ---
 

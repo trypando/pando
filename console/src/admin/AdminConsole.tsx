@@ -39,6 +39,7 @@ import { Identity } from '../install/Identity';
 import { SignIn } from '../install/SignIn';
 import { Backups } from '../install/Backups';
 import { Events } from '../install/Events';
+import { InboxButton } from '../ui/Inbox';
 import { Updates, useUpdates } from '../install/Updates';
 import { Audit, Installation, Policy } from '../install/Installation';
 import { statusLabel, statusSymbol } from '../ui/status';
@@ -47,6 +48,7 @@ import { DetectionReview } from './DetectionReview';
 import { Sharing } from './Sharing';
 import { AppOverview } from './AppOverview';
 import { Logs } from './Logs';
+import { AppEvents } from './AppEvents';
 import { Resources } from './Resources';
 import { AddApp } from './AddApp';
 import { Reference } from './Reference';
@@ -232,10 +234,13 @@ export function AdminConsole({
           </button>
           {/* Where the launcher has it: opposite the logo. Settings belong to
               the person, not to anything this sidebar administers, so they
-              are not one of its items. */}
-          <IconButton label="Settings" onClick={onSettings}>
-            <Icon name="settings" size={16} />
-          </IconButton>
+              are not one of its items. The inbox is the person's too. */}
+          <span style={{ display: 'inline-flex', gap: 'var(--space-1)' }}>
+            <InboxButton />
+            <IconButton label="Settings" onClick={onSettings}>
+              <Icon name="settings" size={16} />
+            </IconButton>
+          </span>
         </div>
       }
       items={items}
@@ -287,9 +292,12 @@ export function AdminConsole({
                 <Logo size={20} />
               </button>
             </span>
-            <IconButton label="Settings" onClick={onSettings}>
-              <Icon name="settings" size={16} />
-            </IconButton>
+            <span style={{ display: 'inline-flex', gap: 'var(--space-1)' }}>
+              <InboxButton />
+              <IconButton label="Settings" onClick={onSettings}>
+                <Icon name="settings" size={16} />
+              </IconButton>
+            </span>
           </header>
           {menuOpen && (
             <div role="dialog" aria-modal="true" aria-label="Admin menu" style={{ position: 'fixed', inset: 0, zIndex: 20 }}>
@@ -704,6 +712,8 @@ function AppScreen({
   const tabs = [
     { value: 'overview', label: 'Overview' },
     ...(can(verbs, AppVerb.LogsRead) ? [{ value: 'logs', label: 'Logs' }] : []),
+    // Anyone who can see the app reads its events and may subscribe (R-378).
+    { value: 'events', label: 'Events' },
     { value: 'sharing', label: 'Sharing' },
     { value: 'resources', label: 'Settings' },
     ...(can(verbs, AppVerb.Exec) ? [{ value: 'terminal', label: 'Terminal' }] : []),
@@ -850,6 +860,7 @@ function AppScreen({
           {tab === 'sharing' && <Sharing appID={app.data.id} appName={app.data.name} />}
           {tab === 'overview' && <AppOverview app={app.data} onGo={setTab} />}
           {tab === 'logs' && <Logs app={app.data} workload={focus} />}
+          {tab === 'events' && <AppEvents app={app.data} />}
           {tab === 'resources' && <Resources appID={app.data.id} focus={focus} />}
           {tab === 'terminal' && <Terminal appID={app.data.id} />}
         </div>

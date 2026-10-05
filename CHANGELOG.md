@@ -37,6 +37,15 @@ Unreleased above it. -->
 - Notification preferences, under **Settings**: which of Pando's own notifications reach you, on the
   console and by email. "An app was shared with you" is off by default; the launcher tile is still the
   notification.
+- A notifications inbox: a bell beside Settings with the number unread, `pando notifications list` and
+  `GET /api/v1/me/notifications`. Console notifications were recorded before and shown nowhere.
+- Each app has an **Events** tab: its recent events, and its subscriptions. Also `pando events --app` and
+  `GET /api/v1/apps/{id}/events`.
+- A webhook can send the request its receiver expects: method, content type, headers of its own (stored
+  encrypted, for an API key the receiver needs) and a body template. Deliveries, notifications and the
+  inbox link to the app when `external_url` is set.
+- A failed deploy tells the app's owner and whoever started it; a failed backup tells the owner and
+  whoever manages backups. An account token can own a subscription, within its own grants.
 
 - In-place upgrades (#53). Pando can upgrade itself from the **Updates** screen, `POST /upgrade` or
   `pando upgrade`: it verifies the new image's signature against Pando's release workflow, takes a full

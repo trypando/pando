@@ -32,6 +32,7 @@ import type { App } from '@api/types.gen';
 import { Quiet, Screen, messageOf } from './Accounts';
 import { Table } from '../ui/Table';
 import { relative } from '../ui/time';
+import { Disclosure } from '../ui/Disclosure';
 
 interface EventDef {
   name: string;
@@ -62,6 +63,11 @@ interface Subscription {
   consecutive_failures: number;
   created_at: string;
   signing_key?: string;
+  owner_token_id?: string;
+  method?: string;
+  content_type?: string;
+  payload_template?: string;
+  header_names?: string[];
 }
 
 interface Delivery {
@@ -107,21 +113,7 @@ function useCatalog() {
 }
 
 export function Events({ canManageAll, apps }: { canManageAll: boolean; apps: App[] }) {
-  const [everyone, setEveryone] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [created, setCreated] = useState<Subscription | null>(null);
-  const [open, setOpen] = useState<string | null>(null);
-
-  const catalog = useCatalog();
-  const subs = useQuery({
-    queryKey: ['subscriptions', everyone],
-    queryFn: () =>
-      api.get<{ subscriptions: Subscription[] }>(everyone ? '/subscriptions?everyone=true' : '/subscriptions'),
-  });
-
-  const destinations = catalog.data?.destinations ?? [];
-  const rows = subs.data?.subscriptions ?? [];
-
   return (
     <Screen
       heading="Events"
@@ -134,9 +126,54 @@ export function Events({ canManageAll, apps }: { canManageAll: boolean; apps: Ap
       <Quiet>
         Send what happens in Pando — deploys, failures, sign-ins, backups — to a webhook, or to Slack,
         Teams, Discord, email or ntfy. Which of Pando&rsquo;s own notifications reach you is under
-        Settings.
+        Settings. Each app&rsquo;s own events are on its Events tab.
       </Quiet>
+      <Subscriptions
+        apps={apps}
+        canManageAll={canManageAll}
+        creating={creating}
+        onCreating={setCreating}
+      />
+    </Screen>
+  );
+}
 
+/**
+ * Subscriptions, as a table with the dialogs that make, show and change one.
+ * The Events screen shows the caller's across the installation; an app's
+ * Events tab passes `app` and shows that app's, and makes new ones about it.
+ */
+export function Subscriptions({
+  apps,
+  app,
+  canManageAll,
+  creating,
+  onCreating,
+}: {
+  apps: App[];
+  app?: App;
+  canManageAll: boolean;
+  creating: boolean;
+  onCreating: (open: boolean) => void;
+}) {
+  const [everyone, setEveryone] = useState(false);
+  const [created, setCreated] = useState<Subscription | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+
+  const catalog = useCatalog();
+  const query = new URLSearchParams();
+  if (everyone) query.set('everyone', 'true');
+  if (app) query.set('app_id', app.id);
+  const subs = useQuery({
+    queryKey: ['subscriptions', everyone, app?.id ?? ''],
+    queryFn: () => api.get<{ subscriptions: Subscription[] }>(`/subscriptions${query.size ? `?${query}` : ''}`),
+  });
+
+  const destinations = catalog.data?.destinations ?? [];
+  const rows = subs.data?.subscriptions ?? [];
+
+  return (
+    <>
       {canManageAll && (
         <Checkbox
           label="Show everybody's subscriptions"
@@ -154,7 +191,7 @@ export function Events({ canManageAll, apps }: { canManageAll: boolean; apps: Ap
           <EmptyState
             heading="No subscriptions yet"
             action={
-              <Button variant="primary" onClick={() => setCreating(true)}>
+              <Button variant="primary" onClick={() => onCreating(true)}>
                 New subscription
               </Button>
             }
@@ -163,12 +200,16 @@ export function Events({ canManageAll, apps }: { canManageAll: boolean; apps: Ap
           </EmptyState>
         }
         columns={[
-          {
-            key: 'about',
-            header: 'About',
-            width: 'minmax(0,20ch)',
-            render: (row: Subscription) => (row.app_id ? row.app_name || row.app_id : 'Whole installation'),
-          },
+          ...(app
+            ? []
+            : [
+                {
+                  key: 'about',
+                  header: 'About',
+                  width: 'minmax(0,20ch)',
+                  render: (row: Subscription) => (row.app_id ? row.app_name || row.app_id : 'Whole installation'),
+                },
+              ]),
           {
             key: 'events',
             header: 'Events',
@@ -204,13 +245,14 @@ export function Events({ canManageAll, apps }: { canManageAll: boolean; apps: Ap
 
       {creating && (
         <CreateSubscription
-          apps={apps}
+          apps={app ? [app] : apps}
+          fixedApp={app}
           canManageAll={canManageAll}
           catalog={catalog.data?.events ?? []}
           destinations={destinations}
-          onClose={() => setCreating(false)}
+          onClose={() => onCreating(false)}
           onCreated={(s) => {
-            setCreating(false);
+            onCreating(false);
             if (s.signing_key) setCreated(s);
           }}
         />
@@ -224,7 +266,7 @@ export function Events({ canManageAll, apps }: { canManageAll: boolean; apps: Ap
           onKey={(s) => setCreated(s)}
         />
       )}
-    </Screen>
+    </>
   );
 }
 
@@ -246,6 +288,7 @@ function groupsOf(catalog: EventDef[]): [string, EventDef[]][] {
 
 function CreateSubscription({
   apps,
+  fixedApp,
   canManageAll,
   catalog,
   destinations,
@@ -253,6 +296,8 @@ function CreateSubscription({
   onCreated,
 }: {
   apps: App[];
+  /** Made from an app's own Events tab: about that app, without asking. */
+  fixedApp?: App;
   canManageAll: boolean;
   catalog: EventDef[];
   destinations: Destination[];
@@ -260,7 +305,8 @@ function CreateSubscription({
   onCreated: (s: Subscription) => void;
 }) {
   const queries = useQueryClient();
-  const [appID, setAppID] = useState(canManageAll ? '' : (apps[0]?.id ?? ''));
+  const [appID, setAppID] = useState(fixedApp?.id ?? (canManageAll ? '' : (apps[0]?.id ?? '')));
+  const [request, setRequest] = useState<RequestOptions>(DEFAULT_REQUEST);
   const [chosen, setChosen] = useState<string[]>([]);
   const [kind, setKind] = useState<'webhook' | 'notify'>('webhook');
   const [url, setURL] = useState('');
@@ -287,6 +333,7 @@ function CreateSubscription({
         url: kind === 'webhook' ? url : undefined,
         adapter_id: kind === 'notify' ? adapterID : undefined,
         description,
+        ...(kind === 'webhook' ? requestBody(request, true) : {}),
       }),
     onSuccess: (s) => {
       void queries.invalidateQueries({ queryKey: ['subscriptions'] });
@@ -300,7 +347,9 @@ function CreateSubscription({
   ];
 
   const ready =
-    chosen.length > 0 && (kind === 'webhook' ? url.trim() !== '' : adapterID !== '') && aboutOptions.length > 0;
+    chosen.length > 0 &&
+    (kind === 'webhook' ? url.trim() !== '' && !parseHeaders(request.headers).problem : adapterID !== '') &&
+    (Boolean(fixedApp) || aboutOptions.length > 0);
 
   return (
     <Dialog
@@ -323,20 +372,22 @@ function CreateSubscription({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
         {create.isError && <Banner tone="failed">{messageOf(create.error)}</Banner>}
 
-        <Select
-          label="About"
-          value={appID}
-          options={aboutOptions}
-          helper={
-            appID
-              ? 'Events about this app. You hear about them while you can see the app.'
-              : 'Every app, and the installation itself: sign-ins, policy, adapters, upgrades.'
-          }
-          onChange={(e) => {
-            setAppID(e.target.value);
-            setChosen([]);
-          }}
-        />
+        {!fixedApp && (
+          <Select
+            label="About"
+            value={appID}
+            options={aboutOptions}
+            helper={
+              appID
+                ? 'Events about this app. You hear about them while you can see the app.'
+                : 'Every app, and the installation itself: sign-ins, policy, adapters, upgrades.'
+            }
+            onChange={(e) => {
+              setAppID(e.target.value);
+              setChosen([]);
+            }}
+          />
+        )}
 
         <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
@@ -411,6 +462,11 @@ function CreateSubscription({
               helper="Pando retries for about a day if it does not answer with a 2xx status."
               onChange={(e) => setURL(e.target.value)}
             />
+          ) : null}
+          {kind === 'webhook' ? (
+            <Disclosure show="Change the request" hide="Hide the request">
+              <RequestFields value={request} onChange={setRequest} />
+            </Disclosure>
           ) : (
             <Select
               label="Channel"
@@ -476,6 +532,7 @@ function SubscriptionDetail({
   const queries = useQueryClient();
   const [openDelivery, setOpenDelivery] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const sub = useQuery({
     queryKey: ['subscription', id],
@@ -537,9 +594,14 @@ function SubscriptionDetail({
               </Button>
             )}
             {s.destination === 'webhook' && (
-              <Button variant="secondary" disabled={rotate.isPending} onClick={() => rotate.mutate()}>
-                Rotate signing key
-              </Button>
+              <>
+                <Button variant="secondary" onClick={() => setEditing(true)}>
+                  Change the request
+                </Button>
+                <Button variant="secondary" disabled={rotate.isPending} onClick={() => rotate.mutate()}>
+                  Rotate signing key
+                </Button>
+              </>
             )}
             <Button variant="secondary" disabled={setEnabled.isPending} onClick={() => setEnabled.mutate(!s.enabled)}>
               {s.enabled ? 'Turn off' : 'Turn on'}
@@ -587,6 +649,21 @@ function SubscriptionDetail({
                     s.adapter_id ?? '',
                   )}
             </dd>
+            {s.destination === 'webhook' && (
+              <>
+                <dt style={{ color: 'var(--ink-secondary)' }}>Request</dt>
+                <dd style={{ margin: 0, display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)' }}>
+                  <Tag mono>{s.method || 'POST'}</Tag>
+                  <Tag mono>{s.content_type || 'application/json'}</Tag>
+                  {(s.header_names ?? []).map((h) => (
+                    <Tag key={h} mono>
+                      {h}
+                    </Tag>
+                  ))}
+                  {s.payload_template ? <Tag>Own body</Tag> : <Tag>Pando&rsquo;s event</Tag>}
+                </dd>
+              </>
+            )}
             <dt style={{ color: 'var(--ink-secondary)' }}>Owner</dt>
             <dd style={{ margin: 0 }}>{s.owner_name || s.owner_id}</dd>
             <dt style={{ color: 'var(--ink-secondary)' }}>ID</dt>
@@ -633,6 +710,7 @@ function SubscriptionDetail({
           rows={deliveries.data?.deliveries ?? []}
         />
         {openDelivery && <DeliveryDetail subscriptionID={id} deliveryID={openDelivery} onChange={refresh} />}
+        {editing && s && <EditRequest sub={s} onClose={() => setEditing(false)} onSaved={refresh} />}
       </div>
     </Dialog>
   );
@@ -726,5 +804,166 @@ function DeliveryDetail({
       />
       <CodeBlock title="Payload" dense copyable lines={JSON.stringify(delivery.payload, null, 2)} />
     </section>
+  );
+}
+
+/** How a webhook is sent (R-375), as a form edits it. */
+export interface RequestOptions {
+  method: string;
+  contentType: string;
+  /** "Name: value" lines. */
+  headers: string;
+  template: string;
+}
+
+export const DEFAULT_REQUEST: RequestOptions = { method: 'POST', contentType: 'application/json', headers: '', template: '' };
+
+/** Reads "Name: value" lines into headers, or says which line is wrong. */
+export function parseHeaders(text: string): { headers: Record<string, string>; problem?: string } {
+  const headers: Record<string, string> = {};
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue;
+    const at = line.indexOf(':');
+    const name = at < 0 ? '' : line.slice(0, at).trim();
+    if (!name) return { headers, problem: `"${line.trim()}" is not a header. Write one per line as Name: value.` };
+    headers[name] = line.slice(at + 1).trim();
+  }
+  return { headers };
+}
+
+/** The request body fields for these options. Headers only when asked to send them. */
+export function requestBody(opts: RequestOptions, withHeaders: boolean): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    method: opts.method,
+    content_type: opts.contentType,
+    payload_template: opts.template,
+  };
+  if (withHeaders) body.headers = parseHeaders(opts.headers).headers;
+  return body;
+}
+
+function RequestFields({
+  value,
+  onChange,
+  headerNote,
+}: {
+  value: RequestOptions;
+  onChange: (next: RequestOptions) => void;
+  headerNote?: string;
+}) {
+  const problem = parseHeaders(value.headers).problem;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,12ch) minmax(0,1fr)', gap: 'var(--space-3)' }}>
+        <Select
+          label="Method"
+          value={value.method}
+          options={['POST', 'PUT', 'PATCH']}
+          onChange={(e) => onChange({ ...value, method: e.target.value })}
+        />
+        <Input
+          label="Content type"
+          value={value.contentType}
+          mono
+          onChange={(e) => onChange({ ...value, contentType: e.target.value })}
+        />
+      </div>
+      <Input
+        as="textarea"
+        rows={3}
+        mono
+        spellCheck={false}
+        autoComplete="off"
+        label="Headers"
+        value={value.headers}
+        placeholder="Authorization: Bearer …"
+        helper={
+          headerNote ??
+          'One per line, as Name: value — for a receiver that needs a key. Stored encrypted and never shown again.'
+        }
+        error={problem}
+        onChange={(e) => onChange({ ...value, headers: e.target.value })}
+      />
+      <Input
+        as="textarea"
+        rows={5}
+        mono
+        spellCheck={false}
+        label="Body"
+        value={value.template}
+        placeholder={'{"text": {{json .Subject}}, "link": {{json .Link}}}'}
+        helper="Leave empty to send Pando's event as JSON. Otherwise a Go template, given .Type, .Subject, .Body, .Link, .App.Name, .Data and .Envelope; use json to put a value in JSON. Checked when you save."
+        onChange={(e) => onChange({ ...value, template: e.target.value })}
+      />
+    </div>
+  );
+}
+
+/** Changes how a webhook is sent. Header values are never shown back, so
+ *  the headers field starts empty and replaces every header only if it is
+ *  changed. */
+function EditRequest({ sub, onClose, onSaved }: { sub: Subscription; onClose: () => void; onSaved: () => void }) {
+  const [value, setValue] = useState<RequestOptions>({
+    method: sub.method || 'POST',
+    contentType: sub.content_type || 'application/json',
+    headers: '',
+    template: sub.payload_template ?? '',
+  });
+  const [removeHeaders, setRemoveHeaders] = useState(false);
+  const replaceHeaders = removeHeaders || value.headers.trim() !== '';
+  const save = useMutation({
+    mutationFn: () =>
+      api.patch<Subscription>(
+        `/subscriptions/${sub.id}`,
+        requestBody(removeHeaders ? { ...value, headers: '' } : value, replaceHeaders),
+      ),
+    onSuccess: () => {
+      onSaved();
+      onClose();
+    },
+  });
+  const names = sub.header_names ?? [];
+  return (
+    <Dialog
+      open
+      width={720}
+      title="Change the request"
+      description={`How Pando sends each event to ${sub.url}.`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={save.isPending || Boolean(parseHeaders(value.headers).problem)}
+            onClick={() => save.mutate()}
+          >
+            {save.isPending ? 'Saving' : 'Save'}
+          </Button>
+        </>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        {save.isError && <Banner tone="failed">{messageOf(save.error)}</Banner>}
+        <RequestFields
+          value={value}
+          onChange={setValue}
+          headerNote={
+            names.length > 0
+              ? `Sent now: ${names.join(', ')}. Their values are not shown. Type here to replace every header; leave it empty to keep them.`
+              : undefined
+          }
+        />
+        {names.length > 0 && (
+          <Checkbox
+            label="Remove every header"
+            checked={removeHeaders}
+            onChange={(e) => setRemoveHeaders(e.target.checked)}
+          />
+        )}
+      </div>
+    </Dialog>
   );
 }

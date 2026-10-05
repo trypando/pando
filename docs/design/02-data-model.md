@@ -691,11 +691,12 @@ Migration 000043. Design in [11-events-and-subscriptions.md](11-events-and-subsc
 | Table | Holds | Constraints that matter |
 |---|---|---|
 | `events` | The outbox: name, app, actor, catalogued `data`, `routed_at` | No FK on `app_id` — `app.deleted` outlives the app. A CHECK on the name's shape. IDs from `pando_ulid()`, the shape `internal/id` makes |
-| `subscriptions` | Owner, app (NULL = install-wide), filter, destination | `owner_id` cascades: a subscription is a person's. `webhook` ⇔ `url`, `notify` ⇔ `adapter_id`, as CHECKs. **No column a signing key could go in** (R-371) |
-| `subscription_signing_keys` | The secrets adapter's ciphertext or external reference | Same shape as `adapter_credentials`; a CHECK that one of the two is set |
+| `subscriptions` | Owner, app (NULL = install-wide), filter, destination, a webhook's method, content type, header names and body template | `owner_user_id` or `owner_token_id`, exactly one, each cascading. `webhook` ⇔ `url`, `notify` ⇔ `adapter_id`, as CHECKs. **No column a signing key could go in** (R-371) |
+| `subscription_secrets` | A webhook's signing key and each custom header's value, as the secrets adapter's ciphertext or external reference | Same shape as `adapter_credentials`; `field` is `signing_key` or `header:<Name>`; a CHECK that one of ciphertext or reference is set |
 | `event_deliveries` | One event to one subscription; status, attempts, next attempt | `UNIQUE (subscription_id, event_id)` — routing twice queues once |
 | `delivery_attempts` | Every attempt: when, status code, error, duration | Cascades with its delivery |
 | `notification_preferences` | A person's choice per kind and channel | A missing row is the default |
+| `notifications` (amended) | Gains `link` and `event_id`, for the inbox (R-377) | — |
 
 **[D] Four triggers write events**, because each column has more than one writer and a trigger is the one
 place they all pass through: `apps.state` → `app.state_changed`; `deployments.status` reaching

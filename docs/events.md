@@ -83,6 +83,23 @@ the host itself, a cloud metadata service — unless host policy's `allow_privat
 on (R-372). The check is made on the address actually connected to, and redirects are not
 followed.
 
+### Shaping the request
+
+For a receiver that expects a particular request, a webhook may set `method` (POST, PUT or
+PATCH), `content_type`, `headers` of its own — for an API key the receiver needs; values are
+stored encrypted and never shown again — and `payload_template`, the body as a Go template.
+Pando's `Pando-*` headers are always sent and cannot be set, and the signature covers the body
+actually sent. A template is given `.ID`, `.Type`, `.OccurredAt`, `.App` (`.ID`, `.Name`,
+`.Slug`), `.Actor`, `.Data`, `.Subject`, `.Body`, `.Fields`, `.Link` and `.Envelope`, and the
+functions `json` (a value as JSON) and `default`. For a chat tool that takes a `text` field:
+
+```
+{"text": {{json .Subject}}, "url": {{json .Link}}}
+```
+
+A template is checked against a sample event when it is saved, and a JSON content type needs
+it to produce JSON. `link` points into the console when Pando's `external_url` is set.
+
 ## Events
 
 | Event | About | What happened | Data |

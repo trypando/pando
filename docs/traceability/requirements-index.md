@@ -9,10 +9,10 @@ specify it, the phase that builds it, and the tests that prove it. Test coverage
 
 | | Count | Of total |
 |---|---:|---:|
-| Requirements | 281 | — |
-| Specified in a design doc | 240 | 85% |
+| Requirements | 285 | — |
+| Specified in a design doc | 244 | 85% |
 | Assigned to a phase | 137 | 48% |
-| Covered by a named test | 202 | 71% |
+| Covered by a named test | 206 | 72% |
 
 A requirement with no design reference is not necessarily a gap — it may be philosophy (R-002),
 a non-goal (R-010–R-016), or deferred (R-290+). A requirement with no *test* is either
@@ -66,7 +66,7 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-057** | P | Signing keys are published at a JWKS endpoint. | 5.4 Identity assertion to apps | 00, 04, 06 | 05 | `TestR057_RotationOverlapsRatherThanCutsOver`, `TestR057_TheJWKSEndpointIsUnauthenticatedAndCacheable` |
 | **R-058** | D | Delegated tokens. | 5.5 Tokens (non-human principals) | 02, 04, 06, 11 | 01 | `TestR058_ATokenActsAsItsOwner`, `TestR058_LoginExchangesASessionForAStoredToken` |
 | **R-059** | D | A delegated token's access is continuously derived from its owner's live grants, never frozen… | 5.5 Tokens (non-human principals) | 02, 06 | 01 | `TestR059_DelegatedTokenIsOrphanedByItsOwnersDeletion`, `TestR059_OrphanedDelegatedTokenEndToEnd` |
-| **R-060** | D | Account-level tokens. | 5.5 Tokens (non-human principals) | 02, 06 | 01 | `TestR060_AServiceTokenCannotMintAnotherToken`, `TestR060_AServiceTokenIsItsOwnPrincipalAndTakesAnInstallVerbToMint`, `TestR060_AccountTokenHoldsItsOwnInstallGrant`, `TestR060_AccountTokenIsItsOwnPrincipal`, `TestR060_ServiceTokensHaveTheirOwnVerb` |
+| **R-060** | D | Account-level tokens. | 5.5 Tokens (non-human principals) | 02, 06, 11 | 01 | `TestR060_AServiceTokenCannotMintAnotherToken`, `TestR060_AServiceTokenIsItsOwnPrincipalAndTakesAnInstallVerbToMint`, `TestR060_AccountTokenHoldsItsOwnInstallGrant`, `TestR060_AccountTokenIsItsOwnPrincipal`, `TestR060_ServiceTokensHaveTheirOwnVerb` |
 | **R-061** | D | Account-level tokens have an expiry. | 5.5 Tokens (non-human principals) | 02 | — | — |
 | **R-062** | P | Tokens record a last-used timestamp so stale credentials are reviewable. | 5.5 Tokens (non-human principals) | 02 | — | — |
 | **R-063** | P | Token secrets are displayed once at creation and never retrievable afterward. | 5.5 Tokens (non-human principals) | 02, 04 | 01 | `TestR063_TokenSecretIsShownOnceAndStoredHashed` |
@@ -222,13 +222,17 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-365** | D | Events come from what Pando already records, and from nowhere a person could skip. | 16.5 Events and subscriptions *(issue #50)* | 02, 11 | — | `TestR365_AnAuditedActionAndItsEventAreOneWrite`, `TestR365_StateChangesReachTheOutboxThroughTriggers` |
 | **R-366** | D | Delivery is at least once and survives a restart. | 16.5 Events and subscriptions *(issue #50)* | 11 | — | `TestR366_ADeliveryOutlivesAPandoThatStoppedMidSend` |
 | **R-367** | D | A subscription is a filter and a destination. | 16.5 Events and subscriptions *(issue #50)* | — | — | `TestR367_ATestDeliveryGoesToOneSubscriptionOnly`, `TestR367_MatchingFollowsFilterScopeAndTime`, `TestR367_SubscriptionsCreateSendsTheFilterAndPrintsTheKeyOnce` |
-| **R-368** | D | A subscription is worth no more than its owner's access, checked at every delivery. | 16.5 Events and subscriptions *(issue #50)* | 02, 06, 11 | — | `TestR368_ASubscriptionIsWorthNoMoreThanItsOwnersAccess`, `TestR368_TheAdministratorHoldsInstallEventsManage` |
+| **R-368** | D | A subscription is worth no more than its owner's access, checked at every delivery. | 16.5 Events and subscriptions *(issue #50)* | 02, 06, 11 | — | `TestR368_ASubscriptionIsWorthNoMoreThanItsOwnersAccess`, `TestR368_AnAccountTokenOwnsWhatItsGrantsAllow`, `TestR368_TheAdministratorHoldsInstallEventsManage` |
 | **R-369** | D | A webhook delivery is signed, retried and recorded. | 16.5 Events and subscriptions *(issue #50)* | 11 | — | `TestR369_AFailedDeliveryIsRetriedAndCanBeSentAgain`, `TestR369_AWebhookDeliveryIsSignedAndRecorded`, `TestR369_DeliveriesAndRedeliverCallTheirEndpoints`, `TestR369_SignAndVerifyAgree` |
 | **R-370** | D | An endpoint that keeps failing is turned off, and its owner is told. | 16.5 Events and subscriptions *(issue #50)* | 11 | — | `TestR370_AnEndpointFailingForADayIsTurnedOffAndItsOwnerTold` |
 | **R-371** | D | A webhook's signing key is a secret. | 16.5 Events and subscriptions *(issue #50)* | 02 | — | `TestR371_TheSigningKeyIsStoredSealed` |
 | **R-372** | D | A webhook cannot reach into Pando's own network by default. | 16.5 Events and subscriptions *(issue #50)* | 11 | — | `TestR372_AWebhookToAPrivateAddressIsRefusedUnlessPolicyAllowsIt`, `TestR372_CheckURLRefusesPrivateTargets`, `TestR372_TheDialerChecksTheAddressItConnectsTo` |
 | **R-373** | D | Pando's own notifications go to people, as each person chooses. | 16.5 Events and subscriptions *(issue #50)* | 03, 11 | — | `TestR373_NotificationPreferencesSetOneChoice`, `TestR373_PandosOwnNotificationsFollowEachPersonsChoices` |
 | **R-374** | D | Built-in notify adapters for the platforms people use. | 16.5 Events and subscriptions *(issue #50)* | 03, 11 | — | `TestR374_AChannelSubscriptionSendsThroughItsAdapter`, `TestR374_ChatAdaptersAreChannelsAndKeepTheURLSecret`, `TestR374_NtfyPublishesToItsTopic` |
+| **R-375** | D | A webhook sends the request its receiver expects. | 16.5 Events and subscriptions *(issue #50)* | 04, 11 | — | `TestR375_ARequestOptionThatCannotWorkIsRefusedWhenSaved`, `TestR375_AWebhookSendsTheRequestItsReceiverExpects`, `TestR375_CreateSendsTheWebhooksRequestOptions` |
+| **R-376** | D | A failed deploy and a failed backup tell the people they concern. | 16.5 Events and subscriptions *(issue #50)* | 11 | — | `TestR376_AFailedDeployTellsTheOwnerAndWhoeverStartedIt` |
+| **R-377** | D | The console has an inbox. | 16.5 Events and subscriptions *(issue #50)* | 02, 11 | — | `TestR377_NotificationsListAndRead`, `TestR377_TheInboxShowsWhatPandoToldYouOnTheConsole` |
+| **R-378** | D | An app shows its own events. | 16.5 Events and subscriptions *(issue #50)* | 11 | — | `TestR378_AnAppShowsItsOwnEvents`, `TestR378_EventsForAnApp` |
 | **R-240** | D | Default CPU, memory, and disk limits are set at the host. | 17. Resources and Capacity | 01 | — | `TestR240_TheHostSetsMemoryAndDiskForEveryNewApp`, `TestR240_TheHostSetsWhatEveryNewAppIsGiven` |
 | **R-241** | D | Per-app override is available, gated by `app.resources.override`. | 17. Resources and Capacity | 01 | 02 | — |
 | **R-242** | D | Pando tracks total allocation against host capacity and must refuse a deploy that would… | 17. Resources and Capacity | 00, 03, 04, 05, 07 | 03 | `TestR242_CapacityWouldOversubscribeBlocksDeploy` |

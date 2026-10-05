@@ -72,18 +72,22 @@ Three writers, one table (R-365):
 ## 4. Subscriptions
 
 ```sql
-subscriptions (id sub_…, owner_id → users, app_id → apps NULL, events text[], destination webhook|notify,
-               url, adapter_id, description, enabled, disabled_reason, failing_since, consecutive_failures, …)
-subscription_signing_keys (subscription_id, adapter_ref, ciphertext, external_ref, version, …)
+subscriptions (id sub_…, owner_user_id → users | owner_token_id → tokens, app_id → apps NULL, events text[],
+               destination webhook|notify, url, adapter_id, method, content_type, payload_template,
+               header_names text[], description, enabled, disabled_reason, failing_since, consecutive_failures, …)
+subscription_secrets (subscription_id, field signing_key|header:<Name>, adapter_ref, ciphertext, external_ref, …)
 event_deliveries (id dlv_…, subscription_id, event_id, status pending|succeeded|failed, attempts,
                   next_attempt_at, last_*, redelivered_by, round_base, UNIQUE (subscription_id, event_id))
 delivery_attempts (delivery_id, attempt, attempted_at, status_code, error, duration_ms)
 notification_preferences (user_id, kind, channel, enabled)
 ```
 
-**[D] A subscription belongs to a person.** Deliveries are authorized as that person when they are sent
-(R-368), which needs a person to authorize. An account token cannot make one; a delegated token makes one
-for its owner (R-058).
+**[D] A subscription belongs to a person or to an account token.** Deliveries are authorized as the owner
+when they are sent (R-368). A delegated token makes one for the person it acts for (R-058); an account
+token owns its own (R-060), bounded by its own grants like any principal, and authorized at send time as
+itself — refused once it is revoked or expired (`Tokens.Active`). A token is not a person: it has no inbox
+and no email address, so its subscription may send to a webhook or a channel adapter and never to an
+adapter whose audience is people.
 
 **[D] Authorization (R-368):**
 
@@ -180,17 +184,65 @@ is on by default except `app_shared` (R-266): the launcher tile is the notificat
 someone who asks. `GET /notification-preferences` returns every kind on every people channel with defaults
 filled in, so a client shows the answer rather than computing it.
 
-The router replaces `registryNotifier`. It also fixes three gaps that predate this work: the reconciler's
+The router replaces `registryNotifier`. It also fixes gaps that predate this work: the reconciler's
 `Notifier` was never set in `main`, so `app_failed` was never sent; the security pass wrote
 `policy_violation` straight to the console store, past the registry; and nothing sent `deploy_failed` or
-`backup_failed` (still true of those two as Pando's own notifications — the events `deploy.failed` and
-`backup.failed` reach anyone who subscribes).
+`backup_failed` (§10).
 
-## 9. Surfaces
+## 9. Webhook requests (R-375)
+
+A receiver that expects a particular request — an API key in a header, a body shaped for a chat tool or
+an incident service — gets it without a relay in between.
+
+- **Method** POST, PUT or PATCH. **Content type** anything with a `/`; `application/json` by default.
+- **Headers** of the subscription's own, at most 20, each one line of at most 4 KB. A header Pando or the
+  transport sets is refused: every `Pando-*` (so the signature is always Pando's), and `Host`,
+  `Content-Type`, `Content-Length`, `User-Agent`, `Connection` and the other hop-by-hop names. Values are
+  sealed in `subscription_secrets` under `header:<Name>`; `header_names` on the row lets a screen say what is
+  sent without showing a value. Changing headers replaces the whole set.
+- **Body template**, Go `text/template`, given `.ID`, `.Type`, `.OccurredAt`, `.App`, `.Actor`, `.Data`,
+  `.Subject`, `.Body`, `.Fields`, `.Link` and `.Envelope`, with `json` (a value as JSON) and `default`.
+  Empty sends the envelope. Rendered at send time, capped at 256 KB; the signature covers the rendered
+  body. Checked at save time by rendering a sample `deploy.failed`, and with a JSON content type the
+  result must be JSON, so a mistake is a 400 rather than a delivery log of failures.
+
+`text/template` runs no code a template author supplies beyond these functions, and a template sees only
+the event a subscription's owner may already see.
+
+## 10. Failure notifications (R-376)
+
+`deploy_failed` and `backup_failed` are sent from the outbox, after each routing pass, rather than from the
+code that failed, so a deploy that fails anywhere tells the same people the same way:
+
+| Kind | Recipients |
+|---|---|
+| `deploy_failed` | The app's owner; whoever created the deployment — a person, or the person a delegated token acts for. Not Pando itself, not an account token. |
+| `backup_failed` | The app's owner; everyone holding `install.backup.manage`. |
+
+Recipients are de-duplicated and go through the router, so preferences and channel audience apply. A Pando
+that stops between routing and sending loses the notification and not the event, which subscriptions still
+receive.
+
+## 11. The inbox and an app's events (R-377, R-378)
+
+The console adapter has always recorded notifications; nothing displayed them. `GET /me/notifications`
+lists a person's, newest first, with an unread count; one or all are marked read, by that person alone,
+with the user ID in the `WHERE` clause. The console shows a bell beside Settings on the launcher and the
+admin console, with the count, polling every minute. `notifications` gains `link` and `event_id`.
+
+`GET /apps/{id}/events` (`app.view`) is the app's events from the outbox, newest first, each as the
+envelope and as `Describe` reads it. The console's app view has an **Events** tab with the feed and the
+app's subscriptions; a subscription made there is about the app without asking.
+
+**Links.** When `server.external_url` is set, a delivery's envelope, a template's `.Link`, a notification
+and the inbox carry `<external_url>/admin/apps/<id>/events`, or `/admin/events` for an install event.
+Unset, they carry none rather than a guess.
+
+## 12. Surfaces
 
 | Surface | |
 |---|---|
-| API | `GET /events`, `/subscriptions` CRUD, `/signing-key`, `/test`, `/deliveries`, `/redeliver`, `/notification-preferences` (design 04 §2.10) |
-| CLI | `pando events`, `pando subscriptions …`, `pando notifications preferences` |
+| API | `GET /events`, `/subscriptions` CRUD, `/signing-key`, `/test`, `/deliveries`, `/redeliver`, `/notification-preferences`, `/me/notifications`, `/apps/{id}/events` (design 04 §2.8a) |
+| CLI | `pando events [--app]`, `pando subscriptions …` (with `--method`, `--content-type`, `--header`, `--template-file`), `pando notifications preferences|list|read` |
 | MCP | Every endpoint but rotating a signing key, which returns a credential (O-12) |
-| Console | **Events** in the admin sidebar for anyone who administers an app; **Notifications** under Settings; **Event webhooks** on the Policy screen |
+| Console | **Events** in the admin sidebar for anyone who administers an app; an **Events** tab on each app; the inbox bell; **Notifications** under Settings; **Event webhooks** on the Policy screen |

@@ -441,7 +441,16 @@ GET    /subscriptions/{id}/deliveries/{deliveryID}       attempt_log and payload
 POST   /subscriptions/{id}/deliveries/{deliveryID}/redeliver
 GET    /notification-preferences                         kinds × channels, defaults filled in
 PUT    /notification-preferences                         {choices: [{kind, channel, enabled}]}
+GET    /me/notifications                                 the inbox; ?unread=true, ?before=&limit=; unread count
+POST   /me/notifications/{id}/read
+POST   /me/notifications/read                            every one
+GET    /apps/{id}/events                                 the app's recent events (app.view)
 ```
+
+A webhook subscription takes `method`, `content_type`, `headers` (an object of name to value, write-only,
+replaced whole on PATCH) and `payload_template` (R-375); the subscription returns `header_names` and never
+a value. An account token may own a subscription (`owner_token_id`) and may not send it to an adapter that
+reaches people.
 
 **[D]** A subscription somebody may not manage is `404`, not `403`: its existence is not something to
 confirm to whoever guesses an ID. Creating one on an app the caller cannot see is `404` for the same

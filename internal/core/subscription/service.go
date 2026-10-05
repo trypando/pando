@@ -65,7 +65,7 @@ type Service struct {
 
 	// ExternalURL is how a browser reaches Pando, for links. Empty sends none.
 	ExternalURL string
-	Prefs         *state.NotificationPreferences
+	Prefs       *state.NotificationPreferences
 
 	Authz    Authorizer
 	Policy   PolicyLoader
@@ -392,7 +392,7 @@ func (s *Service) List(ctx context.Context, p authz.Principal, req ListRequest) 
 	}
 	user, token, err := ownerOf(p)
 	if err != nil {
-		return []state.Subscription{}, nil
+		return nil, err
 	}
 	f.OwnerID = user
 	if token != "" {
