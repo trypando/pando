@@ -61,6 +61,11 @@ func New(sink Sink) *Adapter { return &Adapter{sink: sink} }
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryNotify }
 
+// Capabilities: the console reaches the people a notification names.
+func (a *Adapter) Capabilities() api.NotifyCapabilities {
+	return api.NotifyCapabilities{Audience: api.AudiencePeople}
+}
+
 func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	cfg := Config{RetainDays: 30}
 	if len(raw) > 0 {

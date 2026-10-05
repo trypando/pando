@@ -23,6 +23,9 @@ type Notification struct {
 	ID        string     `json:"id"`
 	UserID    string     `json:"user_id"`
 	AppID     string     `json:"app_id,omitempty"`
+	AppName   string     `json:"app_name,omitempty"`
+	Link      string     `json:"link,omitempty"`
+	EventID   string     `json:"event_id,omitempty"`
 	Kind      string     `json:"kind"`
 	Subject   string     `json:"subject"`
 	Body      string     `json:"body,omitempty"`
@@ -47,10 +50,10 @@ func (n *Notifications) Record(ctx context.Context, msg api.Notification, retain
 			continue
 		}
 		_, err := n.db.Exec(ctx, `
-			INSERT INTO notifications (id, user_id, app_id, kind, subject, body, retain_until)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			INSERT INTO notifications (id, user_id, app_id, kind, subject, body, retain_until, link, event_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 			id.New(id.Notification), r.UserID, nullable(msg.AppID),
-			string(msg.Kind), msg.Subject, msg.Body, retain)
+			string(msg.Kind), msg.Subject, msg.Body, retain, nullable(msg.Link), nullable(msg.EventID))
 		if err != nil {
 			return errs.Wrap(errs.Internal, "Could not record the notification.", err)
 		}
@@ -58,17 +61,20 @@ func (n *Notifications) Record(ctx context.Context, msg api.Notification, retain
 	return nil
 }
 
-// ListForUser returns a user's notifications, newest first.
-func (n *Notifications) ListForUser(ctx context.Context, userID string, unreadOnly bool) ([]Notification, error) {
-	query := `
-		SELECT id, user_id, coalesce(app_id, ''), kind, subject, body, read_at, created_at
-		FROM notifications WHERE user_id = $1`
-	if unreadOnly {
-		query += ` AND read_at IS NULL`
+// ListForUser returns a user's notifications, newest first: up to limit,
+// older than the notification ID before when one is given (a cursor).
+func (n *Notifications) ListForUser(ctx context.Context, userID string, unreadOnly bool, before string, limit int) ([]Notification, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
 	}
-	query += ` ORDER BY created_at DESC LIMIT 200`
-
-	rows, err := n.db.Query(ctx, query, userID)
+	rows, err := n.db.Query(ctx, `
+		SELECT nt.id, nt.user_id, coalesce(nt.app_id, ''), coalesce(a.name, ''), nt.kind, nt.subject, nt.body,
+		       coalesce(nt.link, ''), coalesce(nt.event_id, ''), nt.read_at, nt.created_at
+		FROM notifications nt LEFT JOIN apps a ON a.id = nt.app_id
+		WHERE nt.user_id = $1 AND (NOT $2 OR nt.read_at IS NULL) AND ($3 = '' OR nt.id < $3)
+		  AND (nt.retain_until IS NULL OR nt.retain_until > now())
+		ORDER BY nt.id DESC
+		LIMIT $4`, userID, unreadOnly, before, limit)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not read your notifications.", err)
 	}
@@ -77,13 +83,34 @@ func (n *Notifications) ListForUser(ctx context.Context, userID string, unreadOn
 	out := make([]Notification, 0)
 	for rows.Next() {
 		var rec Notification
-		if err := rows.Scan(&rec.ID, &rec.UserID, &rec.AppID, &rec.Kind,
-			&rec.Subject, &rec.Body, &rec.ReadAt, &rec.CreatedAt); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.UserID, &rec.AppID, &rec.AppName, &rec.Kind,
+			&rec.Subject, &rec.Body, &rec.Link, &rec.EventID, &rec.ReadAt, &rec.CreatedAt); err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not read your notifications.", err)
 		}
 		out = append(out, rec)
 	}
 	return out, rows.Err()
+}
+
+// Unread counts a user's unread notifications, for the inbox's badge.
+func (n *Notifications) Unread(ctx context.Context, userID string) (int, error) {
+	var count int
+	err := n.db.QueryRow(ctx, `
+		SELECT count(*) FROM notifications
+		WHERE user_id = $1 AND read_at IS NULL AND (retain_until IS NULL OR retain_until > now())`, userID).Scan(&count)
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Could not count your notifications.", err)
+	}
+	return count, nil
+}
+
+// MarkAllRead marks every one of a user's notifications read.
+func (n *Notifications) MarkAllRead(ctx context.Context, userID string) error {
+	if _, err := n.db.Exec(ctx,
+		`UPDATE notifications SET read_at = now() WHERE user_id = $1 AND read_at IS NULL`, userID); err != nil {
+		return errs.Wrap(errs.Internal, "Could not mark your notifications as read.", err)
+	}
+	return nil
 }
 
 // MarkRead marks one notification read, for its owner only.

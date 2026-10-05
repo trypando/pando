@@ -47,6 +47,12 @@ const (
 	// Upgrade is one in-place upgrade of Pando itself (R-359).
 	Upgrade Kind = "upg"
 
+	// Event, Subscription and Delivery are the outbox, a subscription to it,
+	// and one event sent to one subscription (issue #50, R-366).
+	Event        Kind = "evt"
+	Subscription Kind = "sub"
+	Delivery     Kind = "dlv"
+
 	// Adapter configs are prefixed by category, so a log line naming one says
 	// which kind of adapter it is (design 02 §2.5).
 	AdapterRuntime  Kind = "rt"

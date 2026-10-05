@@ -203,6 +203,13 @@ type Document struct {
 	// request at all, for an air-gapped install or one that may not call out.
 	DisableUpdateCheck bool `json:"disable_update_check,omitempty"`
 
+	// AllowPrivateWebhooks lets an event subscription's webhook reach a
+	// private, loopback or link-local address (R-372). Default false: anybody
+	// who can see an app can subscribe to it, and a webhook that may point
+	// anywhere is a way to make Pando send requests into its own network — to
+	// a cloud metadata address, or to the database it runs on.
+	AllowPrivateWebhooks bool `json:"allow_private_webhooks,omitempty"`
+
 	// UpdateChannel is which releases the check offers (R-350): stable, the
 	// default, or prerelease, which also offers release candidates.
 	UpdateChannel UpdateChannel `json:"update_channel,omitempty"`

@@ -80,6 +80,10 @@ gating.
 - **An audit log that cannot be rewritten.** Every action is recorded with who did it, and the
   database role Pando runs as holds no `UPDATE` or `DELETE` on that table, so neither Pando nor an
   adapter can alter it after the fact.
+- **Events, sent where you will see them.** Subscribe to deploys, failures, sign-ins, grants, backups
+  and the rest — on one app, or the whole installation — and Pando posts each to a webhook, signed so
+  the receiver can check it, or to Slack, Microsoft Teams, Discord, email or ntfy. Failed deliveries are
+  retried and recorded, and can be sent again. The catalog is [`docs/events.md`](docs/events.md).
 - **Isolation between apps.** Each app runs on its own private network and publishes nothing to the
   host. Builds run in a rootless builder with no access to a container runtime socket.
 - **One way in.** All traffic reaches applications through Pando's proxy, which authenticates the
@@ -196,8 +200,8 @@ on the app's page. Twenty ports are published by default; `PANDO_APP_PORT_START`
 only need to open apps, and an admin interface for people who deploy and configure them.
 
 The admin interface covers apps and their configuration, sharing and access, environment variables
-and secrets, host policy, user accounts, groups and roles, backups, the audit log, and a terminal
-into any running container.
+and secrets, host policy, user accounts, groups and roles, backups, the audit log, event
+subscriptions, and a terminal into any running container.
 
 ## CLI
 
@@ -221,7 +225,7 @@ pando rollback notes                        # to the previous configuration
 pando export notes                          # the app's full spec, as JSON
 ```
 
-Also `pando backup`, `pando policy` and `pando token`. Run `pando <command> --help` for details, and
+Also `pando backup`, `pando policy`, `pando token` and `pando subscriptions`. Run `pando <command> --help` for details, and
 `--server` to talk to an installation other than the one you logged into. Every command, with its
 flags: [`docs/cli.md`](docs/cli.md).
 

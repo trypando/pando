@@ -155,6 +155,31 @@ func (t *Tokens) Authenticate(ctx context.Context, presented secret.Value) (Toke
 	return tok, nil
 }
 
+// Active returns a token that is neither revoked nor expired, by ID alone.
+//
+// For authorizing work a token set going rather than a request it is making
+// now — an account token's event subscription (R-368) — where there is no
+// secret to present. Not a way to authenticate.
+func (t *Tokens) Active(ctx context.Context, tokenID string) (Token, bool, error) {
+	var tok Token
+	var owner *string
+	err := t.db.QueryRow(ctx, `
+		SELECT id, kind, name, owner_user_id, expires_at
+		FROM tokens
+		WHERE id = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())`, tokenID).
+		Scan(&tok.ID, &tok.Kind, &tok.Name, &owner, &tok.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Token{}, false, nil
+	}
+	if err != nil {
+		return Token{}, false, errs.Wrap(errs.Internal, "Could not read the token.", err)
+	}
+	if owner != nil {
+		tok.OwnerUserID = *owner
+	}
+	return tok, true, nil
+}
+
 // Revoke revokes a token.
 func (t *Tokens) Revoke(ctx context.Context, tokenID string) error {
 	_, err := t.db.Exec(ctx,

@@ -949,19 +949,28 @@ is a thing an operator discovers at restore time.
 ```go
 type NotifyAdapter interface {
     Adapter
+    Capabilities() NotifyCapabilities // Audience: people | channel
     Notify(ctx context.Context, n Notification) error
 }
 
 type Notification struct {
-    Kind      NotificationKind // app_failed | deploy_failed | policy_violation | backup_failed
-    AppID     string
-    Recipients []Recipient
-    Subject   string
-    Body      string
+    Kind       NotificationKind // Pando's own (app_failed, deploy_approval, app_shared, …) or an event name
+    AppID      string
+    Recipients []Recipient      // empty for a channel
+    Subject    string
+    Body       string
+    EventID    string           // evt_…, when it tells of an event
+    Fields     []NotificationField
+    Link       string
 }
 ```
 
-**[D]** v1 ships console-only (R-231). The interface exists so SMTP and SendGrid (R-232) drop in without touching core.
+**[D]** The console is the default (R-231). Email, Slack, Microsoft Teams, Discord and ntfy ship
+built in (R-232, R-374, issue #50). An adapter's **audience** is capabilities data (R-254): one that reaches
+**people** gets Pando's own notifications, filtered by each person's preferences; one that posts to a
+**channel** hears only from event subscriptions, because a message meant for one person must not land in a
+room (R-373). The kinds, the router and the subscriptions that send events through these adapters are in
+[11-events-and-subscriptions.md](11-events-and-subscriptions.md).
 
 ---
 
@@ -1048,7 +1057,7 @@ func (r *Registry) Default(c Category) (Adapter, error)
 | secrets | `local` | encrypted at rest, key on disk (R-190) |
 | backup | `local` | a filesystem path; retention owned by Pando |
 | services | `docker` | postgres, mysql, redis in-bundle |
-| notify | `console` | R-231 |
+| notify | `console`; `smtp`, `slack`, `teams`, `discord`, `ntfy` | R-231, R-232, R-374 |
 | ai | `anthropic` | performs the AI functions assigned to it, each on its own model if the assignment names one (design 10 §9). Not seeded — needs a credential. One per install, like any AI provider. |
 | ai | `openai` | the same functions with OpenAI's models, through the Responses API (design 10 §6.2). Not seeded — needs a credential. |
 | ai | `local` | the same functions with a model on the install's own hardware, through any OpenAI-compatible server such as Ollama (design 10 §6.3). Not seeded — needs a server and a model. |

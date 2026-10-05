@@ -107,6 +107,7 @@ func (stubServices) Restore(context.Context, api.ServiceHandle, io.Reader) error
 type stubNotify struct{ base }
 
 func (stubNotify) Notify(context.Context, api.Notification) error { return nil }
+func (stubNotify) Capabilities() api.NotifyCapabilities           { return api.NotifyCapabilities{} }
 
 type stubBackup struct{ base }
 

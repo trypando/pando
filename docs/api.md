@@ -131,6 +131,28 @@ one verb says nothing about another (R-082).
 | `POST /api/v1/apps/{appID}/deployments/{depID}/reject` | `app.view` | Reject a deploy that is waiting for approval, with an optional `comment`. One rejection ends the request (R-156). The same permissions as approving. |
 | `GET /api/v1/approvals` |  | Deploys waiting for approval on every app you can see, oldest first: each deployment with `app_name`, `app_slug`, its `approval_reasons`, the `approvals` so far, and `can_decide` — whether you may approve or reject it. |
 
+### Events
+
+| Endpoint | Verb | What it does |
+| --- | --- | --- |
+| `GET /api/v1/events` |  | The event catalog: every event a subscription can name — `name`, `scope` (app or install), `source`, `summary` and its data `fields`. The same list as docs/events.md (R-364). `destinations` lists the notification adapters a subscription can send through (`id`, `kind`, and `audience`: people or channel). |
+| `GET /api/v1/subscriptions` |  | Your event subscriptions, newest first. `app_id` narrows to one app; `everyone=true` lists every person's, which needs `install.events.manage`. |
+| `POST /api/v1/subscriptions` |  | Subscribe to events (`events`: names, prefixes such as `deploy.*`, or `*`) on one app (`app_id`, which needs `app.view`) or install-wide (no `app_id`, which needs `install.events.manage`), sent to a `webhook` (`url`) or through a notification adapter (`notify`, `adapter_id`). A webhook's `signing_key` is in this response and never again (R-367, R-371). |
+| `GET /api/v1/subscriptions/{subscriptionID}` |  | One subscription: its filter, destination, whether it is on, and why Pando turned it off if it did. Yours, or anybody's with `install.events.manage`. |
+| `PATCH /api/v1/subscriptions/{subscriptionID}` |  | Change a subscription's `events`, `url`, `adapter_id` or `description`, or turn it on or off (`enabled`). Turning one on clears its record of failures. |
+| `DELETE /api/v1/subscriptions/{subscriptionID}` |  | Delete a subscription, its signing key and its delivery log. |
+| `POST /api/v1/subscriptions/{subscriptionID}/signing-key` |  | Replace a webhook's signing key. The new `signing_key` is in this response and never again; deliveries not yet sent are signed with it. |
+| `POST /api/v1/subscriptions/{subscriptionID}/test` |  | Send a `subscription.test` event to this subscription alone, whatever its filter says. Returns the queued delivery. |
+| `GET /api/v1/subscriptions/{subscriptionID}/deliveries` |  | A subscription's deliveries, newest first: each event, its `status` (pending, succeeded, failed), attempts and last error. `before` and `limit` page; `next_before` continues (R-369). |
+| `GET /api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}` |  | One delivery: every attempt at it (`attempt_log`) and the `payload` sent. |
+| `POST /api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}/redeliver` |  | Send a delivery again now, with the whole retry schedule ahead of it. |
+| `GET /api/v1/me/notifications` |  | Your notifications inbox, newest first: what Pando told you on the console, each with `kind`, `subject`, `body`, `app_name`, `link` and `read_at`, and `unread`, how many are unread in all. `unread=true` lists only those; `before` and `limit` page (R-377). |
+| `POST /api/v1/me/notifications/{notificationID}/read` |  | Mark one of your notifications read. |
+| `POST /api/v1/me/notifications/read` |  | Mark every one of your notifications read. |
+| `GET /api/v1/notification-preferences` |  | Which of Pando's own notifications reach you, on which channel: every `kind`, every `channel` that reaches people (the console, email), and your `choices` with defaults filled in (R-373). |
+| `PUT /api/v1/notification-preferences` |  | Set your notification preferences: `choices`, each a `kind`, a `channel` and `enabled`. Choices not sent keep their current value. |
+| `GET /api/v1/apps/{appID}/events` | `app.view` | The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days (R-378). |
+
 ### Secrets
 
 | Endpoint | Verb | What it does |
@@ -279,6 +301,7 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `VALID_ENV_AMBIGUOUS` | 400 | An environment variable is set twice with different values. |
 | `VALID_INVALID` | 400 | The request or spec is malformed. |
 | `VALID_PRIMARY_WORKLOAD` | 400 | A spec must name exactly one primary workload. |
+| `VALID_UNKNOWN_EVENT` | 400 | A subscription names an event, or a pattern, that matches no event in the catalog (R-364). |
 | `AUTH_INVALID` | 401 | The credential presented is not valid. |
 | `AUTH_REQUIRED` | 401 | No credential was presented, or the session has expired. |
 | `AUTH_TOKEN_INVALID` | 401 | The token is unknown, revoked or expired. |
@@ -289,6 +312,7 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `POLICY_ANONYMOUS_GRANT_FORBIDDEN` | 403 | Host policy does not allow apps to be shared with everyone (R-076). |
 | `POLICY_EXEC_DISABLED` | 403 | Host policy has turned off terminal access, including for an app's owner (R-085). |
 | `POLICY_SOURCE_NOT_ALLOWED` | 403 | Host policy does not allow apps from this source (R-092). |
+| `POLICY_WEBHOOK_PRIVATE_ADDRESS` | 403 | A webhook points at a private, loopback or link-local address, and host policy does not allow that (R-372). |
 | `NOT_FOUND` | 404 | No such object, or none the caller may see. |
 | `CAPACITY_NO_FREE_PORT` | 409 | Port-mode routing has no free port in the configured range. |
 | `CAPACITY_WOULD_OVERSUBSCRIBE` | 409 | Running this would commit more of the host than is left (R-242). |

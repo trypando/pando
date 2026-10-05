@@ -1040,12 +1040,41 @@ const (
 	// the previous version was put back, or could not be (R-359).
 	NotifyUpdateAvailable NotificationKind = "update_available"
 	NotifyUpgradeFailed   NotificationKind = "upgrade_failed"
+
+	// NotifyAppShared: somebody was given use of an app (R-266). Off by
+	// default on every channel — the launcher tile is the notification — and
+	// a person may turn it on for a channel that reaches them elsewhere.
+	NotifyAppShared NotificationKind = "app_shared"
+	// NotifySubscriptionDisabled: Pando turned one of your event
+	// subscriptions off because its endpoint kept failing (R-370).
+	NotifySubscriptionDisabled NotificationKind = "subscription_disabled"
 )
 
 // NotifyAdapter delivers notifications.
 type NotifyAdapter interface {
 	Adapter
+	Capabilities() NotifyCapabilities
 	Notify(ctx context.Context, n Notification) error
+}
+
+// NotifyAudience is who a notify adapter's messages reach.
+type NotifyAudience string
+
+const (
+	// AudiencePeople: the adapter reaches the recipients named on each
+	// notification — the console, an email. Pando's own notifications go to
+	// these, as each person's preferences allow (R-373).
+	AudiencePeople NotifyAudience = "people"
+	// AudienceChannel: the adapter posts to one place its configuration
+	// names — a Slack channel, a Teams channel, an ntfy topic — and ignores
+	// recipients. Only subscriptions send to these, because a message meant
+	// for one person must not land in a room (R-373).
+	AudienceChannel NotifyAudience = "channel"
+)
+
+// NotifyCapabilities is what a notify adapter can do, as data (R-254).
+type NotifyCapabilities struct {
+	Audience NotifyAudience
 }
 
 // Recipient is who to tell.
@@ -1056,11 +1085,28 @@ type Recipient struct {
 
 // Notification is one message.
 type Notification struct {
+	// Kind is one of the constants above, or, for a message a subscription
+	// sent, the name of the event it is about (R-374).
 	Kind       NotificationKind
 	AppID      string
 	Recipients []Recipient
 	Subject    string
 	Body       string
+
+	// EventID is set when the notification tells of an event
+	// (evt_…), so a receiver can deduplicate a delivery made twice.
+	EventID string
+	// Fields are the event's data, in order, for an adapter that lays them
+	// out — a Slack block, a Teams fact set. Never a secret (R-194).
+	Fields []NotificationField
+	// Link is where in the console to look, when Pando knows its own address.
+	Link string
+}
+
+// NotificationField is one labeled value.
+type NotificationField struct {
+	Label string
+	Value string
 }
 
 // PlanDeclaration is what in a repository dictated its build plan.

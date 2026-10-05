@@ -15,6 +15,7 @@
 import { Icon, IconButton, Logo, Radio } from '@design';
 
 import { usePrincipal } from '../app/principal';
+import { NotificationPreferences } from './NotificationPreferences';
 import { useTheme } from '../ui/theme';
 import type { Preference } from '../ui/theme';
 import { MEASURE } from '../ui/layout';
@@ -80,6 +81,11 @@ export function Settings({
                   />
                 ))}
               </div>
+            </section>
+
+            <section>
+              <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Notifications</h4>
+              <NotificationPreferences />
             </section>
 
             <section>

@@ -40,9 +40,11 @@ const (
 	PolicySourceNotAllowed        Code = "POLICY_SOURCE_NOT_ALLOWED"        // R-092, raised before clone
 	PolicyExecDisabled            Code = "POLICY_EXEC_DISABLED"             // R-085
 	PolicyAnonymousGrantForbidden Code = "POLICY_ANONYMOUS_GRANT_FORBIDDEN" // R-076
+	PolicyWebhookPrivateAddress   Code = "POLICY_WEBHOOK_PRIVATE_ADDRESS"   // R-372
 
 	// VALID_* — malformed request or spec. 400.
 	ValidInvalid         Code = "VALID_INVALID"
+	ValidUnknownEvent    Code = "VALID_UNKNOWN_EVENT" // R-364: a subscription names no catalogued event
 	ValidPrimaryWorkload Code = "VALID_PRIMARY_WORKLOAD"
 	ValidDanglingMount   Code = "VALID_DANGLING_MOUNT"
 	ValidEnvAmbiguous    Code = "VALID_ENV_AMBIGUOUS"

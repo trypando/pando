@@ -56,7 +56,16 @@ INTEGRATION_PKGS = $(shell $(GO) list -tags=integration ./... | grep -v '/test/c
 
 .PHONY: test-integration
 test-integration: ## Run integration tests, minus the corpus (real Postgres + Docker)
-	$(GO) test -race -count=1 -timeout=15m -tags=integration $(COVERFLAGS) $(INTEGRATION_PKGS)
+	@# One Ryuk reaper serves every package in a run (testcontainers keys it on
+	@# the go test session). By default it shuts down 10s after its last client
+	@# leaves, and a package that looks it up while it is shutting down finds the
+	@# dying container, waits for a port it will never map, and fails after 60s
+	@# with "wait for reaper … context deadline exceeded" — which happened when
+	@# the audit package started a few seconds after cmd/pando finished. Keeping
+	@# the reaper for as long as a run may last closes that window; it still
+	@# removes everything once the run is over.
+	TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT=15m \
+		$(GO) test -race -count=1 -timeout=15m -tags=integration $(COVERFLAGS) $(INTEGRATION_PKGS)
 
 .PHONY: vet
 vet: ## go vet, including the integration-tagged tests
@@ -152,7 +161,7 @@ detection-corpus: ## Run detection against the corpus of real repositories (netw
 # ---------------------------------------------------------------------------
 
 .PHONY: reference
-reference: ## Regenerate docs/api.md, docs/cli.md and docs/mcp.md from the code
+reference: ## Regenerate docs/api.md, cli.md, mcp.md and events.md from the code
 	$(GO) run ./cmd/gen-reference docs
 
 .PHONY: reference-check
@@ -166,7 +175,7 @@ reference-check: ## Fail if the generated reference is out of date
 	@# a route.
 	@tmp=$$(mktemp -d); \
 	$(GO) run ./cmd/gen-reference $$tmp > /dev/null; \
-	for f in api.md cli.md mcp.md; do \
+	for f in api.md cli.md mcp.md events.md; do \
 		diff -u docs/$$f $$tmp/$$f > /dev/null \
 			|| { echo "docs/$$f is out of date. Run 'make reference' and commit the result."; rm -rf $$tmp; exit 1; }; \
 	done; \

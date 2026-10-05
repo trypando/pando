@@ -425,6 +425,39 @@ would make `grant.delete` a result for a search for "delete". `action` may be gi
 any of the prefixes matches — "apps someone created or deleted" is two prefixes — while different
 parameters still combine with AND.
 
+### 2.8a Events and subscriptions (issue #50)
+
+```
+GET    /events                                           the catalog, and the notification adapters a subscription can send through
+GET    /subscriptions                                    yours; ?everyone=true needs install.events.manage; ?app_id= narrows
+POST   /subscriptions                                    → 201, with signing_key once for a webhook
+GET    /subscriptions/{id}
+PATCH  /subscriptions/{id}                               events, url, adapter_id, description, enabled
+DELETE /subscriptions/{id}
+POST   /subscriptions/{id}/signing-key                   rotate; the new key once
+POST   /subscriptions/{id}/test                          → 202, the queued delivery
+GET    /subscriptions/{id}/deliveries                    ?before=&limit=, next_before
+GET    /subscriptions/{id}/deliveries/{deliveryID}       attempt_log and payload
+POST   /subscriptions/{id}/deliveries/{deliveryID}/redeliver
+GET    /notification-preferences                         kinds × channels, defaults filled in
+PUT    /notification-preferences                         {choices: [{kind, channel, enabled}]}
+GET    /me/notifications                                 the inbox; ?unread=true, ?before=&limit=; unread count
+POST   /me/notifications/{id}/read
+POST   /me/notifications/read                            every one
+GET    /apps/{id}/events                                 the app's recent events (app.view)
+```
+
+A webhook subscription takes `method`, `content_type`, `headers` (an object of name to value, write-only,
+replaced whole on PATCH) and `payload_template` (R-375); the subscription returns `header_names` and never
+a value. An account token may own a subscription (`owner_token_id`) and may not send it to an adapter that
+reaches people.
+
+**[D]** A subscription somebody may not manage is `404`, not `403`: its existence is not something to
+confirm to whoever guesses an ID. Creating one on an app the caller cannot see is `404` for the same
+reason; creating one install-wide without `install.events.manage` is `403`, because that the verb exists
+is no secret. A webhook URL that resolves to a private address is `POLICY_WEBHOOK_PRIVATE_ADDRESS`; a
+filter naming no event is `VALID_UNKNOWN_EVENT`. Rotating a key is not an MCP tool (O-12). Design 11.
+
 ### 2.9 End-user surface
 
 ```

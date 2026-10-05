@@ -759,9 +759,102 @@ without touching core (O-6 resolved).
 
 **R-230 [D]** Notification is an adapter category.
 
-**R-231 [D] [V1]** Default is **console-only**.
+**R-231 [D] [V1]** Default is **console-only**. An installation that configures nothing else gets the
+console adapter and nothing else; every other notify adapter is something an administrator adds.
 
-**R-232 [D] [LATER]** Built-in adapters for SMTP and SendGrid.
+**R-232 [D] [V1]** A built-in adapter for SMTP. *Amended by issue #50, which brought it forward from
+LATER:* SendGrid, Mailgun and Amazon SES each offer an SMTP relay, so one SMTP adapter covers them and a
+SendGrid-specific adapter would add a second way to do the same thing.
+
+### 16.5 Events and subscriptions *(issue #50)*
+
+**R-364 [D]** **There is one event catalog.** Every event a person can subscribe to has a stable name
+(`deploy.failed`), says whether it is about one app or the whole installation, and lists its data
+fields. It is defined once, in code, and the API (`GET /events`), the generated `docs/events.md`, the
+CLI, MCP and the console's subscription form all read it, so none can describe an event the others do
+not. A name or pattern that matches no catalogued event is refused when a subscription is saved.
+
+**R-365 [D]** **Events come from what Pando already records, and from nowhere a person could skip.**
+An audited action in the catalog is copied to the event outbox in the same transaction as its audit
+row. A state change that has no audited action — an app's state, which includes its health, a deploy's
+outcome, a scheduled backup that failed — is written by a database trigger on the row, so every
+writer of that row is covered. Core writes the remaining two directly: adapter health changes and test
+deliveries. An event carries only the fields the catalog lists, never a secret value (R-194).
+
+**R-366 [D]** **Delivery is at least once and survives a restart.** Events are kept in an outbox table
+until every matching subscription has a delivery for them, and a delivery stays pending until it is
+sent or plainly fails. A receiver deduplicates by event ID. The outbox is a queue, not a history: an
+event with nothing left to deliver is removed after 30 days **[P]**; the audit log is the history.
+
+**R-367 [D]** **A subscription is a filter and a destination.** The filter is a list of event names,
+prefixes (`deploy.*`) or `*`. A subscription is about one app or the whole installation. The destination
+is a webhook URL or a notification adapter. A subscription hears about events that happen after it is
+made. Subscriptions are managed from the API, CLI, MCP and console (R-261); a test delivery can be sent
+to one subscription whatever its filter says.
+
+**R-368 [D]** **A subscription is worth no more than its owner's access, checked at every delivery.**
+A subscription belongs to a person, or to an account token (R-060), which is bounded by its own grants
+like any principal; a delegated token's belongs to the person it acts for (R-058). Subscribing to an app
+needs `app.view` on it; subscribing install-wide, and seeing or changing anybody else's subscriptions,
+needs `install.events.manage`, held by Administrator. Every delivery is authorized as the owner at the
+moment it is sent, so an owner who loses sight of the app, loses the verb, is suspended, or — for a
+token — is revoked or expires stops receiving, and the delivery log says why. A token is not a person:
+its subscription may send to a webhook or a channel, never to a destination that reaches people.
+
+**R-369 [D]** **A webhook delivery is signed, retried and recorded.** Pando posts the event as JSON with
+an HMAC-SHA256 signature over a timestamp and the body, the timestamp, the event's name and ID, and the
+delivery's ID. A 2xx answer is a delivery; anything else, a redirect included, is retried on a schedule
+of about a day **[P]**. Every attempt is recorded with its status code and error, a person can see recent
+deliveries and their attempts, and any delivery can be sent again.
+
+**R-370 [D]** **An endpoint that keeps failing is turned off, and its owner is told.** A subscription
+whose every attempt has failed for a day, and at least five times **[P]**, is turned off with the reason
+recorded, the turning-off is audited and is itself an event, and the owner receives a
+`subscription_disabled` notification. Turning it back on clears the record of failures.
+
+**R-371 [D]** **A webhook's signing key is a secret.** It is kept by the secrets adapter as ciphertext or
+an external reference, never in the subscription row (R-190); it is shown once, when the subscription
+is made or the key is rotated, and never again. Rotating is not offered over MCP (O-12).
+
+**R-372 [D]** **A webhook cannot reach into Pando's own network by default.** A webhook may not send to a
+private, loopback, link-local, unspecified or multicast address — the local network, the host itself, a
+cloud metadata service — unless host policy's `allow_private_webhooks` is on. The address is checked when
+the subscription is saved, for a readable refusal, and again on the address actually connected to, so a
+name that resolves differently later is still refused. Redirects are not followed.
+
+**R-373 [D]** **Pando's own notifications go to people, as each person chooses.** A notify adapter says
+whether it reaches **people** (the console, email) or posts to a **channel** (Slack, Teams, Discord,
+ntfy), as capabilities data (R-254). Pando's own notifications — a deploy waiting for approval, an app that
+failed — go to every adapter that reaches people and never to a channel, because a message meant for one
+person must not land in a room. Each person may turn each kind of notification off, or on, per channel;
+a kind they have not chosen for follows its default.
+
+**R-374 [D]** **Built-in notify adapters for the platforms people use.** Email (SMTP, R-232), Slack,
+Microsoft Teams, Discord and ntfy. Each formats a notification for its platform. A channel adapter's
+webhook URL, an ntfy topic and an SMTP password are credentials, stored like any adapter credential
+(R-190). Pushover and other platforms are a new adapter each, by pull request (R-253).
+
+**R-375 [D]** **A webhook sends the request its receiver expects.** A webhook subscription may choose its
+method (POST, PUT or PATCH) and content type, carry headers of its own, and render its body from a
+template given the event and its description; empty sends Pando's envelope. Header values may be
+credentials and are kept as the signing key is (R-371): sealed, named but never shown again. A header
+Pando or the transport sets — `Pando-*`, `Host`, `Content-Type` and the like — cannot be set, so a
+receiver can always trust the signature, which is computed over the body actually sent. A template is
+checked against a sample event when it is saved, and a JSON content type needs it to produce JSON.
+
+**R-376 [D]** **A failed deploy and a failed backup tell the people they concern.** Pando's own
+`deploy_failed` goes to the app's owner and to whoever started the deploy — the person behind a delegated
+token, nobody for Pando itself or an account token; `backup_failed` goes to the app's owner and to
+everybody holding `install.backup.manage`. Each person is told once, on the channels R-373 allows.
+
+**R-377 [D]** **The console has an inbox.** What the console notify adapter records is listed to the
+person it is for, newest first, with a count of those unread beside Settings on every screen; one or all
+can be marked read, by that person alone. A notification links to where in the console to look, when
+Pando knows its own address (`external_url`). Every surface reaches it (R-261).
+
+**R-378 [D]** **An app shows its own events.** Anyone who can see an app reads its recent events, as a
+webhook receives them and as a person reads them, and manages its subscriptions, from the app's own
+Events tab and `GET /apps/{id}/events`. The feed holds what the outbox keeps (R-366).
 
 ---
 
@@ -845,7 +938,7 @@ R-106 describes and is not an error.
 
 **R-265 [D]** Users holding any administrative verb see an **Admin** entry point from the launcher, exposing the console scoped to whatever privileges they hold.
 
-**R-266 [D]** Sharing an app sends no message. The app appears in the recipient's launcher tiles (R-264), and for v1 that is the notification. A notify-adapter message would be console-only (R-231) and so would arrive beside the tile that already appeared — and would be invisible to a recipient who has never signed in, which a waiting tile is not. Revisit when an adapter can reach someone who is not already looking at Pando (R-232).
+**R-266 [D]** Sharing an app sends no message **by default**. The app appears in the recipient's launcher tiles (R-264), and that is the notification. A console message would arrive beside the tile that already appeared — and would be invisible to a recipient who has never signed in, which a waiting tile is not. *Amended by issue #50, now that an adapter can reach someone who is not looking at Pando (R-232):* sharing with a person sends an `app_shared` notification that is off on every channel unless that person turns it on (R-373) — for someone who wants an email as well as the tile. Sharing with a group sends nothing; each member's tile appears all the same.
 
 **R-340 [D] [V1]** An app may carry an **image**, shown on its launcher tile (R-264). Anyone who may change the app's spec may set or remove it (`app.spec.edit`); anyone who can open the app can see it. It is presentation, not configuration: it is not part of the spec (R-020) and a rollback does not change it. An app with no image shows a contour map generated from its ID, the same every time and different for every app. The server accepts raster images only — an SVG can carry script and would be served from Pando's origin — so the console converts an SVG to a PNG in the browser before uploading it.
 
@@ -895,7 +988,7 @@ R-106 describes and is not an error.
 
 **R-361 [D]** Host policy `auto_upgrade_patches`, off by default, upgrades to a new patch release of the running minor line without anyone present, inside `maintenance_window` — weekdays, a start time in UTC and a length in hours. Only stable patch releases qualify, and only where an in-place upgrade is possible (R-355). With nobody to supply a passphrase it takes no full backup; it relies on the database copy of R-359, and the Policy screen says so where it is turned on.
 
-**R-362 [D]** When the update check first sees a newer release, Pando sends an `update_available` notification, once per version, to everyone holding `install.upgrade`, through the notification adapters (R-230). Until those deliver anywhere but the console (R-231, issue #50), the console's Updates screen is where it is seen.
+**R-362 [D]** When the update check first sees a newer release, Pando sends an `update_available` notification, once per version, to everyone holding `install.upgrade`, through the notification adapters (R-230) — the console, and email where it is configured (R-373). The console's Updates screen shows it either way. An install-wide subscription to `pando.upgraded` or `pando.upgrade_failed` sends the outcome to a channel or webhook (R-367).
 
 **R-363 [D]** `pando self-update` replaces a CLI installed from a release archive or with `go install` by the latest release for its platform, after checking the release's signed `checksums.txt` against the release workflow's identity and the archive against it. A CLI installed by Homebrew or a Linux package is upgraded by that package manager, and `pando self-update` prints its command instead.
 
@@ -1031,14 +1124,14 @@ Confirmed for the first release:
 - **Source:** public GitHub repos
 - **Builder:** rootless BuildKit in a container
 - **Runtime:** local (Docker)
-- **Notification:** console only
+- **Notification:** console by default; email (SMTP), Slack, Microsoft Teams, Discord and ntfy when configured; event subscriptions and signed webhooks (issue #50)
 - All four surfaces: API, CLI, MCP, console
 - Detection pipeline, trial run, compose import, slots
 - Recreate deploy, reconcile loop, health monitoring
 - Volumes with the undeclared-persistence warning
 - Rolling backups + full-host DR bundle
 
-Explicitly deferred: per-user instances, GitHub OAuth sign-in, private repos, cloud routing adapters other than Cloudflare Tunnel, external secrets adapters, VM runtime adapters, setting profiles, per-user quotas, notification adapters, log masking.
+Explicitly deferred: per-user instances, GitHub OAuth sign-in, private repos, cloud routing adapters other than Cloudflare Tunnel, external secrets adapters, VM runtime adapters, setting profiles, per-user quotas, log masking.
 
 ---
 

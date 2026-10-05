@@ -31,7 +31,10 @@ import (
 	"github.com/trypando/pando/internal/adapter/identity/local"
 	oidcidentity "github.com/trypando/pando/internal/adapter/identity/oidc"
 	samlidentity "github.com/trypando/pando/internal/adapter/identity/saml"
+	"github.com/trypando/pando/internal/adapter/notify/chat"
 	notifyconsole "github.com/trypando/pando/internal/adapter/notify/console"
+	notifyntfy "github.com/trypando/pando/internal/adapter/notify/ntfy"
+	notifysmtp "github.com/trypando/pando/internal/adapter/notify/smtp"
 	"github.com/trypando/pando/internal/adapter/registry/ociprobe"
 	"github.com/trypando/pando/internal/adapter/routing/cloudflare"
 	"github.com/trypando/pando/internal/adapter/routing/loopback"
@@ -63,6 +66,7 @@ import (
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/core/subscription"
 	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/detect"
 	"github.com/trypando/pando/internal/errs"
@@ -542,6 +546,32 @@ func serve(ctx context.Context, configPath string) error {
 	}
 	authorizer := authz.New(authzStore, hostPolicy, auditDenials{auditor})
 
+	// Pando's own notifications go to the people they name, on the channels
+	// that reach people, as each person's preferences allow (R-373). Event
+	// subscriptions are managed by the service and sent by the dispatcher
+	// started with the other loops below (issue #50).
+	notifyRouter := subscription.Router{
+		Registry:    registry,
+		Preferences: state.NewNotificationPreferences(db),
+		Users:       users,
+		Logger:      logger,
+	}
+	subscriptions := &subscription.Service{
+		Subscriptions: state.NewSubscriptions(db),
+		Deliveries:    state.NewDeliveries(db),
+		Events:        state.NewEvents(db),
+		Keys:          state.NewSubscriptionSecrets(db, secretsAdapter, secretsRef),
+		ExternalURL:   cfg.Server.ExternalURL,
+		Prefs:         state.NewNotificationPreferences(db),
+		Authz:         authorizer,
+		Policy:        policyStore,
+		Apps:          apps,
+		Registry:      registry,
+		Audit:         httpapi.AuditFunc(auditor),
+		Clock:         clock.System{},
+		Logger:        logger,
+	}
+
 	// Every deploy starts through here, and the ones that need somebody's
 	// approval wait here for it (R-154 – R-159).
 	approvals := &approval.Service{
@@ -552,7 +582,7 @@ func serve(ctx context.Context, configPath string) error {
 		Planner:     appPlanner,
 		Deployer:    deployer,
 		Audit:       httpapi.AuditFunc(auditor),
-		Notifier:    registryNotifier{registry: registry, logger: logger},
+		Notifier:    notifyRouter,
 		Approvers:   authzStore,
 		Clock:       clock.System{},
 		Logger:      logger,
@@ -613,7 +643,8 @@ func serve(ctx context.Context, configPath string) error {
 	upgrades := newUpgradeService(upgradeDeps{
 		cfg: cfg, updates: updates, registry: registry,
 		policy:  func(ctx context.Context) (corepolicy.Document, error) { return policyStore.Load(ctx) },
-		backups: backups, backup: backupService, authzStore: authzStore, auditor: auditor, logger: logger,
+		backups: backups, backup: backupService, authzStore: authzStore, auditor: auditor,
+		notify: notifyRouter, logger: logger,
 	})
 
 	apiHandler := (&httpapi.Server{
@@ -685,11 +716,15 @@ func serve(ctx context.Context, configPath string) error {
 		Reconciles:  reconciles,
 		Deployer:    deployer,
 		Approvals:   approvals,
-		Logs:        logStore,
-		Secrets:     secrets,
-		Detections:  detections,
-		Detector:    detector,
-		Console:     consoleHandler(logger),
+
+		Subscriptions: subscriptions,
+		Inbox:         &subscription.Inbox{Store: notifications},
+		Notifier:      notifyRouter,
+		Logs:          logStore,
+		Secrets:       secrets,
+		Detections:    detections,
+		Detector:      detector,
+		Console:       consoleHandler(logger),
 
 		// Policy is evaluated before grants, so it is wired into the
 		// authorizer rather than checked alongside it (R-272).
@@ -768,6 +803,10 @@ func serve(ctx context.Context, configPath string) error {
 		Clock:         clock.System{},
 		ProxyUpstream: proxyUpstream,
 
+		// The owner hears that their app failed (design 05 §4). Unset until
+		// issue #50, which is to say nobody heard.
+		Notifier: notifyRouter,
+
 		// Unset in production: the zero values mean R-149 and R-150's defaults.
 		Backoff:          backoffSchedule,
 		FailureThreshold: cfg.Reconciler.FailureThreshold,
@@ -833,6 +872,34 @@ func serve(ctx context.Context, configPath string) error {
 
 	go updates.Run(loopCtx)
 	go upgrades.Run(loopCtx)
+
+	// Event subscriptions (issue #50): route the outbox and send what is due,
+	// every two seconds while it is quiet and continuously while it is not;
+	// and check every adapter's health every five minutes, recording a change
+	// as an event.
+	dispatcher := &subscription.Dispatcher{
+		Events:        subscriptions.Events,
+		Subscriptions: subscriptions.Subscriptions,
+		Deliveries:    subscriptions.Deliveries,
+		Keys:          subscriptions.Keys,
+		Tokens:        tokens,
+		ExternalURL:   cfg.Server.ExternalURL,
+		Deployments:   deployments,
+		Holders:       authzStore,
+		TokenOwners:   tokens,
+		Authz:         authorizer,
+		Policy:        policyStore,
+		Apps:          apps,
+		Users:         users,
+		Groups:        authzStore,
+		Registry:      registry,
+		Notifier:      notifyRouter,
+		Audit:         httpapi.AuditFunc(auditor),
+		Clock:         clock.System{},
+		Logger:        logger,
+	}
+	go dispatcher.Run(loopCtx)
+	go dispatcher.WatchAdapters(loopCtx, 5*time.Minute)
 
 	// Port-mode apps answer at the root of their own port (design 03 §4.2).
 	//
@@ -929,7 +996,7 @@ func serve(ctx context.Context, configPath string) error {
 		SecurityState: scans,
 		PolicyStore:   hostPolicy,
 		Desired:       apps,
-		Notifier:      securityNotifier{notifications},
+		Notifier:      securityNotifier{notifyRouter},
 	}).Run(loopCtx)
 
 	errCh := make(chan error, 1)
@@ -1199,6 +1266,16 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 		// The sink is supplied by core. The adapter stores nothing itself,
 		// which is R-027 — an adapter never touches state.
 		return notifyconsole.New(notifications)
+	case category == string(adapterapi.CategoryNotify) && kind == notifysmtp.Kind:
+		return notifysmtp.New()
+	case category == string(adapterapi.CategoryNotify) && kind == notifyntfy.Kind:
+		return notifyntfy.New()
+	case category == string(adapterapi.CategoryNotify) && kind == chat.Slack.Kind:
+		return chat.New(chat.Slack)
+	case category == string(adapterapi.CategoryNotify) && kind == chat.Teams.Kind:
+		return chat.New(chat.Teams)
+	case category == string(adapterapi.CategoryNotify) && kind == chat.Discord.Kind:
+		return chat.New(chat.Discord)
 	}
 	return nil
 }
@@ -1561,41 +1638,20 @@ func consoleHandler(logger *zap.Logger) http.Handler {
 // user ID and two strings, and nothing about recipients, retention or
 // notification kinds. `policy_violation` is the kind, because that is what this
 // is — the app did not fail and the deploy did not fail.
-type securityNotifier struct{ store *state.Notifications }
+//
+// It goes through the router like every other notification of Pando's own, so
+// it reaches the owner on every channel that reaches people, as their
+// preferences allow, rather than only the console (R-373).
+type securityNotifier struct{ router subscription.Router }
 
 func (n securityNotifier) Notify(ctx context.Context, userID, appID, subject, body string) {
-	if n.store == nil {
-		return
-	}
-	_ = n.store.Record(ctx, adapterapi.Notification{
+	_ = n.router.Notify(ctx, adapterapi.Notification{
 		Kind:       adapterapi.NotifyPolicyViolation,
 		AppID:      appID,
 		Recipients: []adapterapi.Recipient{{UserID: userID}},
 		Subject:    subject,
 		Body:       body,
-	}, 0)
-}
-
-// registryNotifier sends a notification through every configured notify
-// adapter: the console's own, and any other an installation added (R-231).
-// One that fails is logged and the rest still send — telling people is best
-// effort and never blocks what it is about (R-159).
-type registryNotifier struct {
-	registry *adapterapi.Registry
-	logger   *zap.Logger
-}
-
-func (n registryNotifier) Notify(ctx context.Context, msg adapterapi.Notification) error {
-	for _, ref := range n.registry.ByCategory(adapterapi.CategoryNotify) {
-		adapter, ok := n.registry.Notify(ref)
-		if !ok {
-			continue
-		}
-		if err := adapter.Notify(ctx, msg); err != nil {
-			n.logger.Warn("a notification adapter could not send", zap.String("adapter", ref), zap.Error(err))
-		}
-	}
-	return nil
+	})
 }
 
 // sourceScanner scores a checkout during detection (R-312).
@@ -1681,6 +1737,11 @@ func adapterKinds() []adapterapi.KindInfo {
 		backuplocal.Info(),
 		servicesdocker.Info(),
 		notifyconsole.Info(),
+		notifysmtp.Info(),
+		chat.Slack.Info(),
+		chat.Teams.Info(),
+		chat.Discord.Info(),
+		notifyntfy.Info(),
 	}
 }
 

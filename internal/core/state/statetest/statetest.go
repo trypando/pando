@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -92,19 +93,62 @@ func Archiver(t testing.TB, ownerURL string) *pgxpool.Pool {
 	return pool
 }
 
-// setup starts the container and prepares the template every test copies.
-func setup(ctx context.Context) (string, state.Passwords, error) {
-	container, err := postgres.Run(ctx, "postgres:17-alpine",
+// Postgres starts a test Postgres, retrying a start that failed for a reason
+// the next attempt will not meet.
+//
+// Every integration test that needs a cluster starts it here. Two failures
+// were seen on a busy CI runner that are the host's, not the test's: Docker
+// handing a container — the reaper, or Postgres itself — a random host port
+// another process took first ("address already in use"), and a reaper that
+// was shutting down as a package attached to it ("wait for reaper"). Neither
+// is retried by testcontainers, and either failed a whole package.
+func Postgres(ctx context.Context, opts ...testcontainers.ContainerCustomizer) (*postgres.PostgresContainer, error) {
+	opts = append([]testcontainers.ContainerCustomizer{
 		postgres.WithDatabase("pando"),
 		postgres.WithUsername("pando"),
 		postgres.WithPassword("test-password"),
-		// Every parallel test holds a pool of its own. The default of 100
-		// connections is fewer than a busy run opens at once.
-		testcontainers.WithCmdArgs("-c", "max_connections=500"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
-				WithStartupTimeout(90*time.Second)),
+				WithStartupTimeout(90 * time.Second)),
+	}, opts...)
+
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		container, err := postgres.Run(ctx, "postgres:17-alpine", opts...)
+		if err == nil {
+			return container, nil
+		}
+		// A container that was created and failed to start is removed before
+		// the next attempt, rather than left to collide with it.
+		_ = testcontainers.TerminateContainer(container)
+		lastErr = err
+		if !transient(err) {
+			break
+		}
+		time.Sleep(time.Duration(attempt) * time.Second)
+	}
+	return nil, lastErr
+}
+
+// transient reports a container start that failed because of the Docker host
+// at that moment, and that the same request can be expected to survive.
+func transient(err error) bool {
+	msg := err.Error()
+	for _, s := range []string{"address already in use", "wait for reaper", "port is already allocated"} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// setup starts the container and prepares the template every test copies.
+func setup(ctx context.Context) (string, state.Passwords, error) {
+	container, err := Postgres(ctx,
+		// Every parallel test holds a pool of its own. The default of 100
+		// connections is fewer than a busy run opens at once.
+		testcontainers.WithCmdArgs("-c", "max_connections=500"),
 	)
 	if err != nil {
 		return "", state.Passwords{}, err

@@ -21,6 +21,32 @@ Unreleased above it. -->
 
 ### Added
 
+- Event subscriptions (#50). Subscribe to what happens in Pando — deploys started, succeeded and failed,
+  app state and health, security scores, shares and grants, backups, sign-ins, policy, adapter health,
+  upgrades — on one app or the whole installation, from the console's new **Events** screen,
+  `pando subscriptions`, `/api/v1/subscriptions` or MCP. Each is sent to a webhook, as JSON signed with a
+  per-subscription key (`Pando-Signature`), or through a notification adapter. Deliveries are retried for
+  about a day, every attempt is recorded and can be sent again, and an endpoint that fails everything for
+  a day is turned off and its owner told. The catalog is [`docs/events.md`](docs/events.md). New
+  permission `install.events.manage`, held by Administrator, for install-wide subscriptions; anyone who
+  can see an app can subscribe to it. Webhooks cannot reach private, loopback or link-local addresses
+  unless host policy's new `allow_private_webhooks` is on.
+- Notification adapters for email (SMTP, which covers SendGrid, Mailgun and Amazon SES), Slack,
+  Microsoft Teams, Discord and ntfy. Email reaches people at the address on their account; the others
+  post to a channel and are sent to only by subscriptions.
+- Notification preferences, under **Settings**: which of Pando's own notifications reach you, on the
+  console and by email. "An app was shared with you" is off by default; the launcher tile is still the
+  notification.
+- A notifications inbox: a bell beside Settings with the number unread, `pando notifications list` and
+  `GET /api/v1/me/notifications`. Console notifications were recorded before and shown nowhere.
+- Each app has an **Events** tab: its recent events, and its subscriptions. Also `pando events --app` and
+  `GET /api/v1/apps/{id}/events`.
+- A webhook can send the request its receiver expects: method, content type, headers of its own (stored
+  encrypted, for an API key the receiver needs) and a body template. Deliveries, notifications and the
+  inbox link to the app when `external_url` is set.
+- A failed deploy tells the app's owner and whoever started it; a failed backup tells the owner and
+  whoever manages backups. An account token can own a subscription, within its own grants.
+
 - In-place upgrades (#53). Pando can upgrade itself from the **Updates** screen, `POST /upgrade` or
   `pando upgrade`: it verifies the new image's signature against Pando's release workflow, takes a full
   backup (or records that you skipped it), and starts a helper that replaces Pando's container, waits
@@ -139,6 +165,10 @@ Unreleased above it. -->
 
 ### Fixed
 
+- **An app that failed did not tell its owner** (#50). The reconciler wrote the notification and had no
+  notifier wired to send it. It now goes to the owner on the console, and by email where that is set up.
+- **A security-score warning reached only the console** (#50). It now reaches the owner on every channel
+  that reaches people, as their notification preferences allow.
 - **Redeploying an unchanged source ran the security scan again** (#84). A deploy of a commit,
   image or uploaded archive that already has a successful scan by the configured scanner uses that
   scan and says so in the deploy log ("Using the security scan of … (source unchanged)"). That
