@@ -7,6 +7,7 @@ import (
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/log"
 )
 
 // Preferences reads a person's notification choices.
@@ -96,8 +97,10 @@ func (r Router) choices(ctx context.Context, recipients []api.Recipient) map[str
 		}
 		prefs, err := r.Preferences.List(ctx, rcpt.UserID)
 		if err != nil {
+			// The ID can come from a request — the person an app was shared
+			// with — so it is logged as untrusted, like a path.
 			r.logger().Warn("could not read notification preferences; sending the defaults",
-				zap.String("user_id", rcpt.UserID), zap.Error(err))
+				log.Untrusted("user_id", rcpt.UserID), zap.Error(err))
 		}
 		m := map[choice]bool{}
 		for _, p := range prefs {
