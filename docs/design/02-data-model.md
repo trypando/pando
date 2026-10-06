@@ -383,6 +383,28 @@ CREATE TABLE provisioned_services (
 
 **[D]** Scoped to one app (R-134). No sharing — sharing is expressed as two apps binding to one external target.
 
+```sql
+CREATE TABLE registry_credentials (
+    app_id       text NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    field        text NOT NULL,               -- kind | username | password | access_key_id | ...
+    adapter_ref  text NOT NULL,
+    ciphertext   bytea,
+    external_ref text,
+    version      integer NOT NULL DEFAULT 1,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (app_id, field)
+);
+```
+
+**[D]** The credential an image app's private image is pulled with (issue #41, O-30). App-owned as O-3
+decided for source credentials, with the supplier in the `app.registry_credential.write` audit event
+rather than here. **Not a row in `secrets`**: an app secret can be named by an env entry and so reach the
+app, and a credential that fetches the app's image is never the app's to read. Sealed by the secrets
+adapter under the scope `registry:`, which no app ID can collide with, so a ciphertext cannot be
+replayed as an app secret (the same arrangement as `adapter_credentials`, §2.5). Apps soft-delete, so the
+cascade does not fire on deletion; the GC's teardown removes the rows.
+
 ### 2.5 Policy and adapters
 
 ```sql

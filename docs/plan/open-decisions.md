@@ -5,7 +5,8 @@ design; O-15 through O-17 were found while implementing phases 6, 7 and 8; O-18 
 setting up the release build; O-19 was found by turning `gosec` on; O-20 was found while building the
 first AI adapter; O-21 and O-22 came from issue #74, AI functions beyond detection; O-23 came from
 building the Cloudflare Tunnel adapter; O-24 came from issue #87; O-25 from issue #79, egress rules;
-O-26 from issue #39, deploy approval. **Twenty-two are resolved. Four remain.** O-4 needs a
+O-26 from issue #39, deploy approval; O-28 through O-31 from issue #41, deploying prebuilt images
+and uploaded files. **Twenty-three are resolved; the rest are listed below.** O-4 needs a
 measurement, O-18 needs somebody to pick a host and pay for it, O-23 is kept open deliberately so
 it is revisited, and O-24 needs a product call on stopped apps.
 
@@ -25,6 +26,9 @@ resolution both here and in the requirements or design doc that owns it.
 | **O-23** | Whether the Cloudflare adapter configures Cloudflare Access in front of an app | A product decision about a second gate Pando does not control; the adapter ships without it | Not blocking — design 03 §4.5 |
 | **O-24** | Whether a stopped app keeps a daily backup, and whether an app that has gone unbacked-up is notified | R-211 says "daily, 7 retained" and does not say what happens while an app is stopped; the sweep backs up only running and degraded apps | Not blocking — issue #87 |
 | **O-27** | What happens to audit archives once written (issue #60) | Retention itself is decided (R-347, R-348); what an archive is owed after that is a product call about custody, disk and evidence, and none of it blocks retention | Not blocking — design 02 §2.6 |
+| **O-28** | Whether an ECR pull may use Pando's own AWS identity (an instance role) rather than access keys an app supplies (issue #41) | Lends every app whatever Pando's role can read — the same trade as O-30's resolution, with a cloud IAM boundary behind it. `[P]` explicit keys only | Not blocking — design 01 §2.1 |
+| **O-29** | Whether a non-empty source allowlist admits uploaded files (issue #41) | R-092 says the allowlist restricts "deployable sources" and does not mention uploads, which have no host for an entry to name. `[P]` refused unless the list contains `upload` | Not blocking — design 01 §2.1 |
+| **O-31** | Whether an upload may be a `docker save` tarball as well as source files (issue #41) | The runtime can already import an image from a stream (`SupportsImageImport`); accepting one is a third kind of upload with its own scanning and pinning story, not an extension of this one | Not blocking — design 04 §4 |
 
 **O-4** has a `[P]` fallback that preserves R-103: default `Required: false` for anything the file
 gives a sample value for, and let the trial run settle it — a slot whose absence crashes the trial run
@@ -243,6 +247,7 @@ failure surfaces as a browser warning to a user rather than as a message to an o
 | **O-22** | Whether successful use of an app is audited, so audit search can answer "who accessed this app" | Yes: `app.use`, once per visit, anonymous visitors included by default and turned off by host policy (`disable_anonymous_use_audit`) | R-227, design 06 §4, §6 |
 | **O-21** | How AI functions are assigned, named and gated, and how the config file declares them (issue #74) | The config file wins over a stored assignment or adapter, and the stored one is shown as overridden; declared and console-managed adapters mix; plan chat stays `revise_plan`; access drafting is one function; each function is gated by the verb its ordinary endpoint needs | R-259, R-271, R-343 – R-346, design 10 §7.1, §9, §10 |
 | **O-25** | Egress rules: install allow/denylist with app-level overrides (issue #79) | The install picks allow-all, a denylist or an allowlist, plus a separate private-range switch. An app adds or removes entries and may keep its own list **on top** — it never replaces. Tightening is always allowed (`app.egress.tighten`); loosening is gated by `egress_loosening`: forbidden, a verb (`app.egress.loosen`), or deploy approval | R-181 – R-189, design 01 §2.7, 03 §2.1, 06 §5 |
+| **O-30** | Whether a registry credential belongs to the app or to the install (issue #41) | To the app, as O-3 decided for source credentials, and kept apart from the app's secrets so no env entry can hand it to the app. An install may also opt in (`apps.docker_credentials`, off by default) to pulling with the Docker login on the Pando server for apps with no credential of their own; the app's credential always wins | design 01 §2.1, 02 §2.4 |
 | **O-26** | Require approval before deployments (issue #39) | Off by default. Required by host policy for every app or named apps, by the app's own spec, or by a new egress loosening. Two verbs: `install.deploys.approve` (Administrator) and `app.deploy.approve` (no built-in role); self-approval allowed. Count and expiry configurable (1, seven days). Rollback to a revision that ran, restarts and rotations are free. Auto-deploy and approval do not combine | R-154 – R-159, design 02 §2.3, 05 §3.3, 06 §5, 07 B |
 
 ### O-25 — egress: layered, and only loosening is gated

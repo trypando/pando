@@ -8,7 +8,7 @@ package policy
 // right change, named in a way nobody who uses the Policy screen would
 // recognize. TestEveryPolicyFieldIsDescribed keeps this complete.
 var descriptions = map[string]string{
-	"source_allowlist": "Where apps may be created from: repository hosts or URL prefixes. Empty means anywhere.",
+	"source_allowlist": "Where apps may be created from: a host (github.com), a host suffix (.corp.example), or a host and path (github.com/acme, ghcr.io/acme) — repositories and image registries alike. Add `upload` to allow files sent from a computer. Empty means anywhere.",
 	"disabled_verbs": "Permissions nobody may use, install-wide, including an app's owner. " +
 		"app.exec here is the Policy screen's \"Turn off terminal access for the whole installation\".",
 	"agent_disabled_verbs": "Verbs an agent's token may not use: denied to CLI and MCP tokens only, not to people.",

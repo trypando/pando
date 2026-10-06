@@ -1500,7 +1500,9 @@ func (a *Adapter) pullWith(ctx context.Context, ref string, auth *api.RegistryAu
 // daemon does not store credentials passed this way, and Pando does not write
 // them to the daemon's config.
 func registryAuthHeader(auth *api.RegistryAuth) (string, error) {
-	raw, err := json.Marshal(struct {
+	// G117: this struct exists to carry the password to the daemon, which is
+	// the only place it goes; it is never logged or stored.
+	raw, err := json.Marshal(struct { //nolint:gosec
 		Username      string `json:"username,omitempty"`
 		Password      string `json:"password,omitempty"`
 		ServerAddress string `json:"serveraddress,omitempty"`

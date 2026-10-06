@@ -64,7 +64,9 @@ func (im *Images) Auth(ctx context.Context, appID, reference string) (*Auth, err
 func dockerAuth(kc authn.Keychain, reference string) (*Auth, error) {
 	ref, err := name.ParseReference(strings.TrimSpace(reference))
 	if err != nil {
-		return nil, nil
+		// A reference that does not parse names no registry to look up, and
+		// the pull refuses it with its own message.
+		return nil, nil //nolint:nilerr
 	}
 	authenticator, err := kc.Resolve(ref.Context())
 	if err != nil {
