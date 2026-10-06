@@ -411,6 +411,13 @@ func serve(ctx context.Context, configPath string) error {
 	// its platform, the deployer pulls it. One value so all three agree.
 	registryCredentials := state.NewRegistryCredentials(db, secretsAdapter, secretsRef)
 	images := &oci.Images{Credentials: registryCredentials}
+	if cfg.Apps.DockerCredentials {
+		// The server's own `docker login`, for apps with no credential of
+		// their own. An operator's choice: it lends every app what that login
+		// can read.
+		images.Docker = oci.DockerLogin()
+		logger.Info("private images may be pulled with the Docker login on this server (apps.docker_credentials)")
+	}
 
 	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps).WithImages(images)
 

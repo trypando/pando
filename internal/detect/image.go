@@ -126,5 +126,5 @@ func pullAuth(a *oci.Auth) *api.RegistryAuth {
 	if a == nil {
 		return nil
 	}
-	return &api.RegistryAuth{Registry: a.Registry, Username: a.Username, Password: a.Password}
+	return &api.RegistryAuth{Registry: a.Registry, Username: a.Username, Password: a.Password, IdentityToken: a.IdentityToken}
 }

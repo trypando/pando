@@ -128,6 +128,9 @@ type RegistryAuth struct {
 	Registry string
 	Username string
 	Password secret.Value
+	// IdentityToken stands in for a password where a registry was signed in
+	// to through a browser (a Docker login carried over, issue #41).
+	IdentityToken secret.Value
 }
 
 // RoutingCapabilities describes what a routing adapter can do.

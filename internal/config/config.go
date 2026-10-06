@@ -75,6 +75,15 @@ type Apps struct {
 	CPUMillis   int   `mapstructure:"cpu_millis"`
 	MemoryBytes int64 `mapstructure:"memory_bytes"`
 	DiskBytes   int64 `mapstructure:"disk_bytes"`
+
+	// DockerCredentials pulls a private image with the Docker login on the
+	// Pando server — `docker login`, the config.json it writes and any
+	// credential helper it names, found through DOCKER_CONFIG or
+	// ~/.docker — when the app has no registry credential of its own (issue
+	// #41). Off by default: it lends every app on the install whatever the
+	// server's login can read, so it is an operator's decision, made where
+	// only an operator can make it.
+	DockerCredentials bool `mapstructure:"docker_credentials"`
 }
 
 // Resources lays the configured limits over the shipped ones.
@@ -251,6 +260,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("apps.cpu_millis", 0)
 	v.SetDefault("apps.memory_bytes", int64(0))
 	v.SetDefault("apps.disk_bytes", int64(0))
+	v.SetDefault("apps.docker_credentials", false)
 	v.SetDefault("bootstrap.admin_password", "")
 
 	// Every key in boundEnv is bound explicitly — see there for why that is not
@@ -303,6 +313,8 @@ var boundEnv = map[string]string{
 
 	"server.audit_archive_dir": "PANDO_SERVER_AUDIT_ARCHIVE_DIR",
 	"log.level":                "PANDO_LOG_LEVEL",
+
+	"apps.docker_credentials": "PANDO_APPS_DOCKER_CREDENTIALS",
 
 	// Not PANDO_BOOTSTRAP_ADMIN_PASSWORD, which is what the replacer would
 	// derive — this is the one setting an operator types from memory at the

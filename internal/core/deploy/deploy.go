@@ -311,7 +311,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 			return fail("fetch", err)
 		}
 		if auth != nil {
-			pull = &api.RegistryAuth{Registry: auth.Registry, Username: auth.Username, Password: auth.Password}
+			pull = &api.RegistryAuth{Registry: auth.Registry, Username: auth.Username, Password: auth.Password, IdentityToken: auth.IdentityToken}
 		}
 	}
 

@@ -371,8 +371,10 @@ func Registry(reference string) (string, error) {
 
 // authenticator adapts resolved credentials for the registry client.
 func (a *Auth) authenticator() authn.Authenticator {
-	if a == nil || a.Username == "" {
+	if a == nil || (a.Username == "" && a.IdentityToken.IsZero()) {
 		return authn.Anonymous
 	}
-	return authn.FromConfig(authn.AuthConfig{Username: a.Username, Password: a.Password.Reveal()})
+	return authn.FromConfig(authn.AuthConfig{
+		Username: a.Username, Password: a.Password.Reveal(), IdentityToken: a.IdentityToken.Reveal(),
+	})
 }

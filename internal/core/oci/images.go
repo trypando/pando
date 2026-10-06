@@ -2,6 +2,10 @@ package oci
 
 import (
 	"context"
+	"strings"
+
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
@@ -23,23 +27,66 @@ type Images struct {
 	Inspector   Inspector
 	Resolver    Resolver
 	Credentials CredentialStore
+
+	// Docker is the Docker login on the Pando server, used for an app with no
+	// credential of its own (apps.docker_credentials). Nil is off.
+	Docker authn.Keychain
 }
 
-// Auth resolves the app's credential for reference. Nil, with no error, when
-// the app has none and the pull is anonymous.
+// DockerLogin is the Docker login on the machine Pando runs on: config.json
+// under DOCKER_CONFIG or ~/.docker, and the credential helpers it names.
+func DockerLogin() authn.Keychain { return authn.DefaultKeychain }
+
+// Auth resolves the credential for pulling reference: the app's own, or,
+// when it has none and the install allows it, the server's Docker login.
+// Nil, with no error, when there is neither and the pull is anonymous.
 func (im *Images) Auth(ctx context.Context, appID, reference string) (*Auth, error) {
-	if im == nil || im.Credentials == nil || appID == "" {
+	if im == nil {
 		return nil, nil
 	}
-	fields, err := im.Credentials.Resolve(ctx, appID)
+	if im.Credentials != nil && appID != "" {
+		fields, err := im.Credentials.Resolve(ctx, appID)
+		if err != nil {
+			return nil, err
+		}
+		if c, ok := CredentialFrom(fields); ok {
+			return im.Resolver.Resolve(ctx, c, reference)
+		}
+	}
+	if im.Docker != nil {
+		return dockerAuth(im.Docker, reference)
+	}
+	return nil, nil
+}
+
+// dockerAuth asks the server's Docker login for reference's registry. A
+// registry it has no entry for is an anonymous pull, not an error.
+func dockerAuth(kc authn.Keychain, reference string) (*Auth, error) {
+	ref, err := name.ParseReference(strings.TrimSpace(reference))
 	if err != nil {
-		return nil, err
-	}
-	c, ok := CredentialFrom(fields)
-	if !ok {
 		return nil, nil
 	}
-	return im.Resolver.Resolve(ctx, c, reference)
+	authenticator, err := kc.Resolve(ref.Context())
+	if err != nil {
+		return nil, errs.Wrap(errs.AdapterFailed,
+			"Pando could not read the Docker login on its server for "+ref.Context().RegistryStr()+".", err).
+			WithRemedy("Check the server's Docker configuration and any credential helper it names, or give the app a registry credential of its own.")
+	}
+	if authenticator == authn.Anonymous {
+		return nil, nil
+	}
+	cfg, err := authenticator.Authorization()
+	if err != nil {
+		return nil, errs.Wrap(errs.AdapterFailed,
+			"Pando could not read the Docker login on its server for "+ref.Context().RegistryStr()+".", err)
+	}
+	if cfg.Username == "" && cfg.Password == "" && cfg.IdentityToken == "" {
+		return nil, nil
+	}
+	return &Auth{
+		Registry: ref.Context().RegistryStr(), Username: cfg.Username,
+		Password: secret.New(cfg.Password), IdentityToken: secret.New(cfg.IdentityToken),
+	}, nil
 }
 
 // Inspect reads reference as the app would pull it.

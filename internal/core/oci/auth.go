@@ -50,6 +50,9 @@ type Auth struct {
 	Registry string
 	Username string
 	Password secret.Value
+	// IdentityToken is what `docker login` keeps for a registry signed in to
+	// through a browser, in place of a password.
+	IdentityToken secret.Value
 }
 
 // Validate checks that a credential is complete.

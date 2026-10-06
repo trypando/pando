@@ -1480,7 +1480,7 @@ func (a *Adapter) pullOnce(ctx context.Context, ref string) error {
 
 func (a *Adapter) pullWith(ctx context.Context, ref string, auth *api.RegistryAuth) error {
 	opts := client.ImagePullOptions{}
-	if auth != nil && auth.Username != "" {
+	if auth != nil && (auth.Username != "" || !auth.IdentityToken.IsZero()) {
 		encoded, err := registryAuthHeader(auth)
 		if err != nil {
 			return err
@@ -1501,10 +1501,11 @@ func (a *Adapter) pullWith(ctx context.Context, ref string, auth *api.RegistryAu
 // them to the daemon's config.
 func registryAuthHeader(auth *api.RegistryAuth) (string, error) {
 	raw, err := json.Marshal(struct {
-		Username      string `json:"username"`
-		Password      string `json:"password"`
+		Username      string `json:"username,omitempty"`
+		Password      string `json:"password,omitempty"`
 		ServerAddress string `json:"serveraddress,omitempty"`
-	}{auth.Username, auth.Password.Reveal(), auth.Registry})
+		IdentityToken string `json:"identitytoken,omitempty"`
+	}{auth.Username, auth.Password.Reveal(), auth.Registry, auth.IdentityToken.Reveal()})
 	if err != nil {
 		return "", err
 	}
