@@ -215,15 +215,19 @@ pando app
 
 #### `app add`
 
-Create an app from a repository
+Create an app from a repository, or from an image that is already built
 
 ```
-pando app add <source-url>
+pando app add <source-url> | --image <reference>
 ```
 
 | Flag | Default | What it does |
 | --- | --- | --- |
-| `--name` |  | name for the app (defaults to the repository name) |
+| `--ecr-access-key-id` |  | pull from AWS ECR with this access key; the secret access key is read from the terminal |
+| `--ecr-region` |  | with --ecr-access-key-id, the region (default: read from the registry host) |
+| `--image` |  | run this prebuilt image instead of building a repository, such as ghcr.io/acme/web:1.4 |
+| `--name` |  | name for the app (defaults to the repository or image name) |
+| `--registry-username` |  | pull a private image as this user; the password or token is read from the terminal |
 | `--timeout` | `10m0s` | with --wait, how long to wait before giving up |
 | `--wait` |  | wait for detection to finish, as `pando app detection --wait` does |
 
@@ -310,6 +314,44 @@ List the apps you can manage
 
 ```
 pando app list
+```
+
+#### `app registry-credential`
+
+Manage the credential an app's private image is pulled with
+
+```
+pando app registry-credential
+```
+
+##### `app registry-credential remove`
+
+Remove the credential, so the image is pulled anonymously
+
+```
+pando app registry-credential remove <app>
+```
+
+##### `app registry-credential set`
+
+Set the credential, replacing any the app had
+
+```
+pando app registry-credential set <app>
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--ecr-access-key-id` |  | pull from AWS ECR with this access key; the secret access key is read from the terminal |
+| `--ecr-region` |  | with --ecr-access-key-id, the region (default: read from the registry host) |
+| `--registry-username` |  | pull a private image as this user; the password or token is read from the terminal |
+
+##### `app registry-credential show`
+
+Say whether the app has a credential, and of which kind, without its secret
+
+```
+pando app registry-credential show <app>
 ```
 
 #### `app rename`

@@ -93,6 +93,25 @@ func schema(props map[string]any, required ...string) map[string]any {
 	}
 }
 
+// registryCredentialSchema describes a registry credential (issue #41).
+func registryCredentialSchema(description string) map[string]any {
+	return map[string]any{
+		"type": "object",
+		"description": description + " Either kind basic with username and password (a token " +
+			"that can read the image), or kind ecr with access_key_id, secret_access_key and " +
+			"optionally region, for AWS ECR.",
+		"properties": map[string]any{
+			"kind":              map[string]any{"type": "string", "enum": []string{"basic", "ecr"}},
+			"username":          str("With basic: the registry username."),
+			"password":          str("With basic: the password or access token."),
+			"access_key_id":     str("With ecr: the AWS access key ID."),
+			"secret_access_key": str("With ecr: the AWS secret access key."),
+			"region":            str("With ecr: the region. Optional; read from the registry host."),
+		},
+		"required": []string{"kind"},
+	}
+}
+
 func str(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}
 }
@@ -122,22 +141,50 @@ var toolList = []tool{
 	},
 	{
 		Name: "pando_create_app",
-		Description: "Create an app from a git repository. Returns immediately with the app in " +
-			"draft while Pando works out how to run it; call pando_get_detection next, with " +
-			"wait_seconds to wait for it to finish.",
+		Description: "Create an app from a git repository (source_url), from an image that is " +
+			"already built (image), or from files you will send next (upload: true, then " +
+			"pando_upload_source). Give exactly one. Returns immediately with the app in draft " +
+			"while Pando works out how to run it; call pando_get_detection next, with " +
+			"wait_seconds to wait for it to finish. For an upload, detection starts when " +
+			"pando_upload_source is followed by pando_rerun_detection.",
 		Schema: schema(map[string]any{
 			"name":       str("A short name for the app."),
 			"source_url": str("The repository URL."),
-			"ref":        str("Branch or tag. Optional."),
-		}, "name", "source_url"),
+			"ref":        str("Branch or tag. Optional, with source_url."),
+			"image":      str("An image reference such as ghcr.io/acme/web:1.4, run as it is."),
+			"upload": map[string]any{
+				"type":        "boolean",
+				"description": "True to create the app for files sent with pando_upload_source.",
+			},
+			"registry_credential": registryCredentialSchema(
+				"Optional, with image: the credential a private image is pulled with."),
+		}, "name"),
 		request: func(args map[string]any) (string, string, any, error) {
 			name, err := stringArg(args, "name", true)
 			if err != nil {
 				return "", "", nil, err
 			}
-			source, err := stringArg(args, "source_url", true)
-			if err != nil {
-				return "", "", nil, err
+			source, _ := stringArg(args, "source_url", false)
+			image, _ := stringArg(args, "image", false)
+			upload, _ := args["upload"].(bool)
+			given := 0
+			for _, set := range []bool{source != "", image != "", upload} {
+				if set {
+					given++
+				}
+			}
+			if given != 1 {
+				return "", "", nil, fmt.Errorf("give exactly one of source_url, image, or upload: true")
+			}
+			switch {
+			case image != "":
+				src := map[string]any{"type": "image", "image": image}
+				if cred, ok := args["registry_credential"].(map[string]any); ok {
+					src["credential"] = cred
+				}
+				return "POST", "/apps", map[string]any{"name": name, "source": src}, nil
+			case upload:
+				return "POST", "/apps", map[string]any{"name": name, "source": map[string]string{"type": "upload"}}, nil
 			}
 			ref, _ := stringArg(args, "ref", false)
 			return "POST", "/apps", map[string]any{
@@ -411,6 +458,93 @@ var toolList = []tool{
 				return "", "", nil, err
 			}
 			return "DELETE", appPath(id, "/icon"), nil, nil
+		},
+	},
+	{
+		Name: "pando_upload_source",
+		Description: "Send an app's files as its source: a gzipped tar of the app's directory, " +
+			"base64-encoded, at most 256 MB compressed. Paths in the archive are relative to the " +
+			"app's root; leave out .git, node_modules and build output. A single index.html is " +
+			"enough for a static site. Replaces any files sent before. Then call " +
+			"pando_rerun_detection so Pando works out how to run them.",
+		Schema: schema(map[string]any{
+			"app_id":         str("The app's ID."),
+			"archive_base64": str("The gzipped tar's bytes, base64-encoded."),
+		}, "app_id", "archive_base64"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			encoded, err := stringArg(args, "archive_base64", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			data, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return "", "", nil, fmt.Errorf("archive_base64 is not valid base64: %w", err)
+			}
+			return "POST", appPath(id, "/source"), Bytes{ContentType: "application/gzip", Data: data}, nil
+		},
+	},
+	{
+		Name: "pando_rerun_detection",
+		Description: "Work out again how to run an app, from its source as it is now: after " +
+			"pando_upload_source, after the repository changed, or after setting a registry " +
+			"credential for a private image. Nothing changes until the new proposal is accepted " +
+			"(R-022). Then call pando_get_detection with wait_seconds.",
+		Schema: schema(map[string]any{"app_id": str("The app's ID.")}, "app_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "POST", appPath(id, "/detection/rerun"), nil, nil
+		},
+	},
+	{
+		Name: "pando_set_registry_credential",
+		Description: "Set the credential an image app's private image is pulled with, replacing " +
+			"any it had. It belongs to the app and is never given to it. Pando never shows it " +
+			"again; pando_get_registry_credential says only which kind is set.",
+		Schema: schema(map[string]any{
+			"app_id":              str("The app's ID."),
+			"registry_credential": registryCredentialSchema("The credential."),
+		}, "app_id", "registry_credential"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			cred, ok := args["registry_credential"].(map[string]any)
+			if !ok {
+				return "", "", nil, fmt.Errorf("registry_credential is required")
+			}
+			return "PUT", appPath(id, "/registry-credential"), cred, nil
+		},
+	},
+	{
+		Name:        "pando_get_registry_credential",
+		Description: "Whether an image app has a registry credential, and of which kind, with its username or access key ID. Never the password or secret key.",
+		Schema:      schema(map[string]any{"app_id": str("The app's ID.")}, "app_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", appPath(id, "/registry-credential"), nil, nil
+		},
+	},
+	{
+		Name:        "pando_remove_registry_credential",
+		Description: "Remove an image app's registry credential, so its image is pulled anonymously.",
+		Schema:      schema(map[string]any{"app_id": str("The app's ID.")}, "app_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "DELETE", appPath(id, "/registry-credential"), nil, nil
 		},
 	},
 	{

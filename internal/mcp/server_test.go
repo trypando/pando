@@ -393,7 +393,35 @@ func TestCreateAppReportsEachMissingArgumentByName(t *testing.T) {
 
 	srv, s = newSession()
 	replies = s.run(t, srv, call(1, "pando_create_app", `{"name":"notes"}`))
-	require.Contains(t, text(t, replies[0]), "source_url is required")
+	require.Contains(t, text(t, replies[0]), "give exactly one of source_url, image, or upload")
+}
+
+func jsonOf(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+// An image app and an upload app can be created from MCP, as from the API
+// (R-261, issue #41).
+func TestR261_CreateAppTakesAnImageOrAnUpload(t *testing.T) {
+	srv, s := newSession()
+	s.run(t, srv, call(1, "pando_create_app",
+		`{"name":"web","image":"ghcr.io/acme/web:1","registry_credential":{"kind":"basic","username":"ben","password":"tok"}}`))
+	require.Len(t, s.calls, 1)
+	require.Contains(t, jsonOf(t, s.calls[0].body), `"type":"image"`)
+	require.Contains(t, jsonOf(t, s.calls[0].body), `"credential":{`)
+
+	srv, s = newSession()
+	s.run(t, srv, call(1, "pando_create_app", `{"name":"site","upload":true}`))
+	require.Len(t, s.calls, 1)
+	require.Contains(t, jsonOf(t, s.calls[0].body), `"type":"upload"`)
+
+	srv, s = newSession()
+	replies := s.run(t, srv, call(1, "pando_create_app", `{"name":"both","image":"nginx","source_url":"https://x/y"}`))
+	require.True(t, result(t, replies[0])["isError"].(bool))
+	require.Empty(t, s.calls)
 }
 
 // A wait that is not a whole number of seconds is refused before it reaches
