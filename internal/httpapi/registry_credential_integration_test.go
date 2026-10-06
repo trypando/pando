@@ -104,6 +104,58 @@ func TestAnIncompleteRegistryCredentialRefusesTheApp(t *testing.T) {
 	require.Equal(t, string(errs.ValidInvalid), unknown.ErrorCode(), unknown.String())
 }
 
+// The credential endpoints refuse what they cannot use, and a viewer can see
+// that a credential is set without being able to change it.
+func TestTheRegistryCredentialEndpointsRefuseWhatTheyCannotUse(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+
+	var gitApp, imageApp struct {
+		ID string `json:"id"`
+	}
+	i.do(admin, http.MethodPost, "/apps", map[string]any{
+		"name": "from-git", "source": map[string]string{"type": "git", "url": "https://github.com/acme/notes"},
+	}).JSON(t, &gitApp)
+	i.do(admin, http.MethodPost, "/apps", map[string]any{
+		"name": "from-image", "source": map[string]string{"type": "image", "image": "ghcr.io/acme/web:1"},
+	}).JSON(t, &imageApp)
+
+	onGit := i.do(admin, http.MethodPut, "/apps/"+gitApp.ID+"/registry-credential",
+		map[string]string{"kind": "basic", "username": "ben", "password": "x"})
+	require.Equal(t, string(errs.ValidInvalid), onGit.ErrorCode(), onGit.String())
+
+	garbled := i.doRaw(admin, http.MethodPut, "/apps/"+imageApp.ID+"/registry-credential", "{")
+	require.Equal(t, string(errs.ValidInvalid), garbled.ErrorCode(), garbled.String())
+
+	incomplete := i.do(admin, http.MethodPut, "/apps/"+imageApp.ID+"/registry-credential",
+		map[string]string{"kind": "ecr", "access_key_id": "AKIA"})
+	require.Equal(t, string(errs.ValidInvalid), incomplete.ErrorCode(), incomplete.String())
+
+	// Removing what is not there is not an error.
+	none := i.do(admin, http.MethodDelete, "/apps/"+imageApp.ID+"/registry-credential", nil)
+	require.Equal(t, http.StatusNoContent, none.Code, none.String())
+
+	require.Equal(t, http.StatusNoContent, i.do(admin, http.MethodPut, "/apps/"+imageApp.ID+"/registry-credential",
+		map[string]string{"kind": "basic", "username": "ben", "password": "x"}).Code)
+
+	viewer := i.user("viewer")
+	granted := i.do(admin, http.MethodPost, "/apps/"+imageApp.ID+"/grants", map[string]any{
+		"plane": "control", "principal_kind": "user", "principal_id": i.userID(viewer), "role_id": "role_viewer",
+	})
+	require.Equal(t, http.StatusCreated, granted.Code, granted.String())
+
+	seen := i.do(viewer, http.MethodGet, "/apps/"+imageApp.ID+"/registry-credential", nil)
+	require.Equal(t, http.StatusOK, seen.Code, seen.String())
+	require.Contains(t, seen.String(), `"set":true`)
+
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		refused := i.do(viewer, method, "/apps/"+imageApp.ID+"/registry-credential",
+			map[string]string{"kind": "basic", "username": "mallory", "password": "x"})
+		require.Contains(t, []int{http.StatusForbidden, http.StatusNotFound}, refused.Code, method+" "+refused.String())
+	}
+}
+
 // TestR092_AnImageOutsideTheAllowlistIsRefusedAtCreation asserts R-092 at the
 // API for images: before any pull, an image from a registry or namespace the
 // allowlist does not name is refused. It used to be admitted, because the
@@ -112,6 +164,16 @@ func TestR092_AnImageOutsideTheAllowlistIsRefusedAtCreation(t *testing.T) {
 	t.Parallel()
 	i := newInstall(t)
 	admin := i.admin()
+
+	// An upload app made before the rule: its next upload is refused before a
+	// byte is written.
+	var early struct {
+		ID string `json:"id"`
+	}
+	i.do(admin, http.MethodPost, "/apps", map[string]any{
+		"name": "made-before", "source": map[string]string{"type": "upload"},
+	}).JSON(t, &early)
+	require.NotEmpty(t, early.ID)
 
 	saved := i.do(admin, http.MethodPut, "/policy", map[string]any{
 		"source_allowlist": []string{"github.com", "ghcr.io/acme"},
@@ -135,4 +197,7 @@ func TestR092_AnImageOutsideTheAllowlistIsRefusedAtCreation(t *testing.T) {
 		"name": "from-laptop", "source": map[string]string{"type": "upload"},
 	})
 	require.Equal(t, string(errs.PolicySourceNotAllowed), upload.ErrorCode(), upload.String())
+
+	sent := i.upload(admin, early.ID, []byte("anything"))
+	require.Equal(t, string(errs.PolicySourceNotAllowed), sent.ErrorCode(), sent.String())
 }

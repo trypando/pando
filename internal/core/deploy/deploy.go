@@ -131,17 +131,14 @@ func (r *Runner) PrepareRevision(ctx context.Context, rev state.Revision, by str
 // revision to show it, and a rollback goes back to whatever the tag means
 // today rather than what ran then.
 func (r *Runner) pinImage(ctx context.Context, rev state.Revision, by string) (state.Revision, error) {
-	s := rev.Body
-	if s.Source.Digest != "" || s.Source.Image == "" || r.images == nil {
-		return rev, nil
-	}
-	insp, err := r.images.Inspect(ctx, rev.AppID, s.Source.Image, oci.Platform{})
+	pinned, ok, err := pinnedSpec(ctx, r.images, rev.AppID, rev.Body)
 	if err != nil {
 		return state.Revision{}, err
 	}
-	pinned := *s
-	pinned.Source.Digest = insp.Digest
-	return r.apps.CreateRevision(ctx, rev.AppID, &pinned, spec.OriginEdited, by)
+	if !ok {
+		return rev, nil
+	}
+	return r.apps.CreateRevision(ctx, rev.AppID, pinned, spec.OriginEdited, by)
 }
 
 func NewRunner(registry *api.Registry, p *planner.Planner, apps *state.Apps, deploys *state.Deployments, secrets Secrets, reconciles Reconciles, logs *LogStore, volumes *state.Volumes, proxyUpstream string) *Runner {
@@ -298,21 +295,9 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	// An image app runs the digest its revision pinned, never whatever its tag
 	// names today (issue #41, R-120's rule for commits), and pulls with the
 	// app's own registry credential when it has one.
-	var pull *api.RegistryAuth
-	if appSpec.Source.Type == spec.SourceImage && appSpec.Source.Image != "" {
-		pinnedRef := oci.Reference(appSpec.Source)
-		perWorkload = pinWorkloads(appSpec, perWorkload, pinnedRef)
-		image = pinnedRef
-		if appSpec.Source.Digest != "" {
-			fmt.Fprintf(sink, "=> Running %s at %s\n", appSpec.Source.Image, shortDigest(appSpec.Source.Digest))
-		}
-		auth, err := r.images.Auth(ctx, dep.AppID, appSpec.Source.Image)
-		if err != nil {
-			return fail("fetch", err)
-		}
-		if auth != nil {
-			pull = &api.RegistryAuth{Registry: auth.Registry, Username: auth.Username, Password: auth.Password, IdentityToken: auth.IdentityToken}
-		}
+	image, perWorkload, pull, err := imagePull(ctx, r.images, dep.AppID, appSpec, image, perWorkload, sink)
+	if err != nil {
+		return fail("fetch", err)
 	}
 
 	// Step 10: scan what was built, and refuse to apply it if this
@@ -1039,6 +1024,47 @@ func writeFailure(sink io.Writer, headline string, err error) {
 	if e := errs.As(err); e != nil && e.Remedy != "" {
 		fmt.Fprintf(sink, "   %s\n", e.Remedy)
 	}
+}
+
+// imagePull settles what an image app's workloads run and how the pull
+// authenticates: the pinned reference in place of the tag, and the app's
+// registry credential resolved for this one deploy. Anything that is not an
+// image app passes through unchanged.
+func imagePull(ctx context.Context, images *oci.Images, appID string, s *spec.AppSpec,
+	image string, perWorkload map[string]string, sink io.Writer,
+) (string, map[string]string, *api.RegistryAuth, error) {
+	if s.Source.Type != spec.SourceImage || s.Source.Image == "" {
+		return image, perWorkload, nil, nil
+	}
+	pinned := oci.Reference(s.Source)
+	if s.Source.Digest != "" {
+		fmt.Fprintf(sink, "=> Running %s at %s\n", s.Source.Image, shortDigest(s.Source.Digest))
+	}
+	auth, err := images.Auth(ctx, appID, s.Source.Image)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	var pull *api.RegistryAuth
+	if auth != nil {
+		pull = &api.RegistryAuth{Registry: auth.Registry, Username: auth.Username, Password: auth.Password, IdentityToken: auth.IdentityToken}
+	}
+	return pinned, pinWorkloads(s, perWorkload, pinned), pull, nil
+}
+
+// pinnedSpec is the revision body an unpinned image app deploys from: the
+// same spec with the digest its tag names now. False when there is nothing
+// to pin — not an image, already pinned, or no way to read the registry.
+func pinnedSpec(ctx context.Context, images *oci.Images, appID string, s *spec.AppSpec) (*spec.AppSpec, bool, error) {
+	if s.Source.Type != spec.SourceImage || s.Source.Digest != "" || s.Source.Image == "" || images == nil {
+		return nil, false, nil
+	}
+	insp, err := images.Inspect(ctx, appID, s.Source.Image, oci.Platform{})
+	if err != nil {
+		return nil, false, err
+	}
+	pinned := *s
+	pinned.Source.Digest = insp.Digest
+	return &pinned, true, nil
 }
 
 // pinWorkloads points every workload that runs the app's image at its pinned

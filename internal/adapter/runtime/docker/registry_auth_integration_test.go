@@ -32,7 +32,7 @@ func TestAPrivateImageIsPulledWithTheAppsCredential(t *testing.T) {
 
 	const user, pass = "pando", "correct-horse-registry"
 	port := privateRegistry(t, user, pass)
-	ref := fmt.Sprintf("localhost:%d/acme/private:1", port)
+	ref := fmt.Sprintf("127.0.0.1:%d/acme/private:1", port)
 
 	// Something runnable in it: alpine, copied in with the credential.
 	src, err := name.ParseReference("alpine:3.20")
@@ -54,13 +54,22 @@ func TestAPrivateImageIsPulledWithTheAppsCredential(t *testing.T) {
 	plan.Workloads[0].Image = ref
 	_, err = a.Apply(ctx, plan)
 	require.Error(t, err, "a private image does not pull without its credential")
+	// The daemon pulls from its own loopback. On Linux that is this host's;
+	// under Docker Desktop, colima or OrbStack it is a VM's, the registry's
+	// published port is not there, and the refusal is the network's rather
+	// than the registry's. Read from the adapter's own pull, because the
+	// docker CLI may be talking to a different engine than the adapter is.
+	if msg := strings.ToLower(err.Error()); strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "timeout") || strings.Contains(msg, "no route to host") {
+		t.Skipf("the Docker daemon cannot reach the test registry on this host's loopback: %v", err)
+	}
 
 	signed := "test-private-auth-" + strings.ReplaceAll(stamp, ".", "")
 	cleanup(t, a, signed)
 	plan = bundle(signed, nil)
 	plan.Workloads[0].Image = ref
 	plan.Workloads[0].PullAuth = &api.RegistryAuth{
-		Registry: fmt.Sprintf("localhost:%d", port), Username: user, Password: secret.New(pass),
+		Registry: fmt.Sprintf("127.0.0.1:%d", port), Username: user, Password: secret.New(pass),
 	}
 	_, err = a.Apply(ctx, plan)
 	require.NoError(t, err)
@@ -78,6 +87,11 @@ func privateRegistry(t *testing.T, user, pass string) int {
 	htpasswd := filepath.Join(dir, "htpasswd")
 	require.NoError(t, os.WriteFile(htpasswd, []byte(user+":"+string(hash)+"\n"), 0o644))
 
+	// Pulled first: create would pull it itself, and print the pull's progress
+	// into the output the container ID is read from.
+	if out, err := dockerCLI("pull", "-q", "registry:2"); err != nil {
+		t.Skipf("cannot pull registry:2: %v\n%s", err, out)
+	}
 	id, err := dockerCLI("create", "-P",
 		"-e", "REGISTRY_AUTH=htpasswd",
 		"-e", "REGISTRY_AUTH_HTPASSWD_REALM=pando-test",
@@ -86,7 +100,9 @@ func privateRegistry(t *testing.T, user, pass string) int {
 	if err != nil {
 		t.Skipf("cannot create a registry container: %v", err)
 	}
-	id = strings.TrimSpace(id)
+	// The ID is the last line; anything before it is the daemon talking.
+	lines := strings.Split(strings.TrimSpace(id), "\n")
+	id = strings.TrimSpace(lines[len(lines)-1])
 	t.Cleanup(func() { _, _ = dockerCLI("rm", "-f", id) })
 	// The directory does not exist in the image, so it is copied in whole and
 	// becomes /auth.
@@ -103,7 +119,7 @@ func privateRegistry(t *testing.T, user, pass string) int {
 	require.NoError(t, err, out)
 
 	require.Eventually(t, func() bool {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/v2/", port))
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/v2/", port))
 		if err != nil {
 			return false
 		}
@@ -111,12 +127,5 @@ func privateRegistry(t *testing.T, user, pass string) int {
 		return resp.StatusCode == http.StatusUnauthorized
 	}, 30*time.Second, 200*time.Millisecond, "the registry answers and asks for a credential")
 
-	// The daemon pulls from its own localhost. On Linux that is this host's;
-	// under Docker Desktop, colima or OrbStack it is a VM's, the registry's
-	// published port is not there, and the pull would only time out.
-	if _, err := dockerCLI("run", "--rm", "--network", "host", "busybox:1.37",
-		"nc", "-z", "-w", "2", "localhost", fmt.Sprint(port)); err != nil {
-		t.Skip("the Docker daemon does not share this host's localhost, so it cannot reach the test registry")
-	}
 	return port
 }
