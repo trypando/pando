@@ -148,6 +148,10 @@ type Server struct {
 	// a scan on request.
 	Sources source.Sources
 
+	// Images keeps the credential an image app's image is pulled with (issue
+	// #41). Nil on an install that cannot store one, where setting one says so.
+	Images RegistryCredentials
+
 	// Defaults fills in what an author left out of a spec — the install's
 	// adapters, its routing shape, and the retention caps R-211 and R-223 set.
 	// Nil means a hand-written spec is taken exactly as written, which is how
@@ -751,6 +755,13 @@ func (s *Server) Routes() http.Handler {
 					// it are different levels of trust.
 					r.Get("/{key}/value", s.handleReadSecretValue)
 				})
+
+				// The credential an image app's image is pulled with (issue
+				// #41). Not under /secrets: an app secret can reach the app,
+				// and this never does.
+				r.Get("/registry-credential", s.handleGetRegistryCredential)
+				r.Put("/registry-credential", s.handlePutRegistryCredential)
+				r.Delete("/registry-credential", s.handleDeleteRegistryCredential)
 
 				r.Get("/routing", s.handleGetRouting)
 				r.Put("/routing", s.handleSetRouting)

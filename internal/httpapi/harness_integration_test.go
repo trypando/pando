@@ -37,6 +37,7 @@ import (
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/idp"
+	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/security"
@@ -211,6 +212,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Secrets:            secrets,
 		Detections:         state.NewDetections(db),
 		Sources:            sources,
+		Images:             &oci.Images{Credentials: state.NewRegistryCredentials(db, secretsAdapter, "sec_local")},
 
 		Authz:   authorizer,
 		Authent: authenticator,

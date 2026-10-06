@@ -679,6 +679,7 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:   logger,
 		Security: securityService,
 		Sources:  sources,
+		Images:   images,
 		DB:       db,
 		Identity: identity,
 		IDP:      identityService,
@@ -992,6 +993,9 @@ func serve(ctx context.Context, configPath string) error {
 		// A deleted app's build cache and uploaded source (R-224, issue #55).
 		BuildCaches:   buildCaches{registry},
 		DiscardUpload: sources.DiscardUpload,
+
+		// And its registry credential (issue #41).
+		DiscardCredential: images.RemoveCredential,
 
 		// R-211's rolling backups, which had a column, a default and an expiry
 		// query and nothing that ever took one.

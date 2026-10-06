@@ -128,6 +128,9 @@ var routeDocs = []reference.Route{
 	{Method: "PUT", Path: "/api/v1/apps/{appID}/secrets/{key}", Group: "Secrets", Summary: "Set a secret. Rotating one recreates the workload rather than leaving it running with the old value (R-193).", Verb: string(authz.AppSecretsWrite)},
 	{Method: "DELETE", Path: "/api/v1/apps/{appID}/secrets/{key}", Group: "Secrets", Summary: "Remove a secret.", Verb: string(authz.AppSecretsWrite)},
 	{Method: "GET", Path: "/api/v1/apps/{appID}/secrets/{key}/value", Group: "Secrets", Summary: "Read one secret's value. Its own verb, separate from managing the app, and audited every time (R-083).", Verb: string(authz.AppSecretsRead)},
+	{Method: "GET", Path: "/api/v1/apps/{appID}/registry-credential", Group: "Secrets", Summary: "Whether the app has a credential for pulling its image, and of which `kind` (`basic` or `ecr`), with its `username` or `access_key_id` and `region`. Never the password or secret key.", Verb: string(authz.AppView)},
+	{Method: "PUT", Path: "/api/v1/apps/{appID}/registry-credential", Group: "Secrets", Summary: "Set the credential the app's image is pulled with: `kind` `basic` with `username` and `password` (a token), or `kind` `ecr` with `access_key_id`, `secret_access_key` and optionally `region`, from which a registry password is minted for every pull. Replaces any credential the app had. It belongs to the app and is never given to it.", Verb: string(authz.AppSecretsWrite)},
+	{Method: "DELETE", Path: "/api/v1/apps/{appID}/registry-credential", Group: "Secrets", Summary: "Remove the app's registry credential, so its image is pulled anonymously.", Verb: string(authz.AppSecretsWrite)},
 
 	// --- security ---------------------------------------------------------
 	{Method: "GET", Path: "/api/v1/apps/{appID}/security", Group: "Security", Summary: "The app's security score, what it was taken from, and the findings behind it (R-310).", Verb: string(authz.AppView)},

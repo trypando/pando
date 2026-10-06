@@ -16,6 +16,7 @@ import (
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/backup"
+	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/specgate"
 	"github.com/trypando/pando/internal/core/state"
@@ -79,10 +80,25 @@ type createAppRequest struct {
 		Ref    string `json:"ref"`
 		Image  string `json:"image"`
 		Subdir string `json:"subdir"`
+
+		// Credential pulls a private image (issue #41). Stored before
+		// detection starts, so the first read of the registry already uses it.
+		Credential *oci.Credential `json:"credential"`
 	} `json:"source"`
 }
 
 var slugPattern = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// validSourceType refuses a source type Pando cannot fetch, at creation
+// rather than at the first detection. Empty is an app written by hand.
+func validSourceType(t spec.SourceType) error {
+	switch t {
+	case "", spec.SourceGit, spec.SourceImage, spec.SourceUpload:
+		return nil
+	}
+	return errs.Newf(errs.ValidInvalid,
+		"%q is not a kind of source Pando knows. Valid answers: git (a repository URL), image (a prebuilt image), or upload (files sent from your computer).", t)
+}
 
 // handleCreateApp starts Sequence A.
 //
@@ -121,6 +137,26 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		Image:  req.Source.Image,
 		Subdir: req.Source.Subdir,
 	}
+	if err := validSourceType(src.Type); err != nil {
+		Error(w, r, err)
+		return
+	}
+
+	// A credential is checked before the app exists, so a bad one is a
+	// refused request rather than an app created without it.
+	if req.Source.Credential != nil {
+		if src.Type != spec.SourceImage {
+			Error(w, r, errs.New(errs.ValidInvalid,
+				"A registry credential is for an app that runs a prebuilt image, and this app is built from source.").
+				WithRemedy("Leave the credential out, or create the app from an image."))
+			return
+		}
+		if err := req.Source.Credential.Validate(); err != nil {
+			Error(w, r, err)
+			return
+		}
+		src.CredentialRef = registryCredentialRef
+	}
 
 	// The source allowlist (R-092) is evaluated before anything touches disk:
 	// the clone, the pull, or the upload that follows creation. Given the whole
@@ -155,6 +191,12 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		TargetKind:    "app",
 		TargetID:      app.ID,
 	})
+
+	if req.Source.Credential != nil {
+		if !s.saveRegistryCredential(w, r, app.ID, app.Source, *req.Source.Credential) {
+			return
+		}
+	}
 
 	// Sequence A step 5: enqueue detection.
 	//
