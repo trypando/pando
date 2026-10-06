@@ -20,6 +20,7 @@ import { CarriedFiles } from './CarriedFiles';
 import { BuildPlan } from './BuildPlan';
 import { DeploySection } from './DeploySettings';
 import { Egress } from './Egress';
+import { SourceSection } from './UploadSource';
 import { Table } from '../ui/Table';
 import { AppVerb, useCan } from './verbs';
 
@@ -39,6 +40,7 @@ interface Volume {
 export function Resources({ appID, focus }: { appID: string; focus?: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-7)' }}>
+      <SourceSection appID={appID} />
       <Slots appID={appID} focus={focus === 'dependencies'} />
       <Environment appID={appID} focus={focus === 'variables'} />
       <CarriedFiles appID={appID} />
