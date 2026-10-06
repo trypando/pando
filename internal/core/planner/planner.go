@@ -56,6 +56,10 @@ type Planner struct {
 	// saved (design 05 §3). Optional: a planner without it plans exactly the
 	// same and refuses to preview.
 	inventory Inventory
+
+	// images reads an image app's image for the platform check (image.go).
+	// Optional: without it an image's platforms are left to the pull.
+	images ImageReader
 }
 
 // WithInventory enables policy preview.
@@ -96,7 +100,7 @@ func (p *Planner) Check(ctx context.Context, s *spec.AppSpec) (*Plan, error) {
 
 	// 2. Host policy, including the source allowlist (R-092) — before clone.
 	if p.policy != nil {
-		if err := p.policy.AllowsSource(ctx, s.Source.URL); err != nil {
+		if err := p.policy.AllowsSource(ctx, s.Source); err != nil {
 			return nil, err
 		}
 	}
@@ -115,6 +119,17 @@ func (p *Planner) Check(ctx context.Context, s *spec.AppSpec) (*Plan, error) {
 		return nil, err
 	}
 	plan.Checks["capabilities"] = "ok"
+
+	// 4a. An image app's image runs on this runtime (issue #41) — a capability
+	// question too, asked of the registry instead of the adapter.
+	imageNotes, err := p.checkImage(ctx, s, runtimeCaps)
+	if err != nil {
+		return nil, err
+	}
+	plan.Notes = append(plan.Notes, imageNotes...)
+	if s.Source.Type == spec.SourceImage && p.images != nil {
+		plan.Checks["image"] = "ok"
+	}
 
 	// 4b. Egress (R-183, R-186). After capabilities because the refusal for a
 	// runtime that cannot restrict egress is a capability refusal.

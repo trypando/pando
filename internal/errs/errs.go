@@ -66,6 +66,9 @@ const (
 	// PlanEgressLooseningForbidden is R-183: the app loosens the install's
 	// egress rules and host policy says no app may.
 	PlanEgressLooseningForbidden Code = "PLAN_EGRESS_LOOSENING_FORBIDDEN"
+	// PlanImagePlatformUnsupported is an image with no build for the operating
+	// system and CPU the runtime runs (issue #41), refused before it is pulled.
+	PlanImagePlatformUnsupported Code = "PLAN_IMAGE_PLATFORM_UNSUPPORTED"
 
 	// STATE_* — object in the wrong state for this action. 409.
 	StateInvalid                Code = "STATE_INVALID"

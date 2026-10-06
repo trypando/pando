@@ -71,6 +71,11 @@ services:
       PANDO_APPS_CPU_MILLIS: ${PANDO_APPS_CPU_MILLIS:-}
       PANDO_APPS_MEMORY_BYTES: ${PANDO_APPS_MEMORY_BYTES:-}
       PANDO_APPS_DISK_BYTES: ${PANDO_APPS_DISK_BYTES:-}
+      # Pull private images with a Docker login for apps that have no registry
+      # credential of their own (issue #41). Off by default: every app can then
+      # pull whatever the login can read. The login is read from DOCKER_CONFIG,
+      # so mount a config.json and point DOCKER_CONFIG at its directory.
+      PANDO_APPS_DOCKER_CREDENTIALS: ${PANDO_APPS_DOCKER_CREDENTIALS:-}
       # Port-mode routing hands each app a host port and serves it at the root
       # of that port (design 03 §4.2). The range published below and the range
       # apps are allocated from have to be the same range, or apps past the end

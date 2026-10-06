@@ -24,7 +24,7 @@ import (
 // SourcePolicy is the source allowlist check (R-092), plus the isolation floors
 // a detected spec inherits (R-024, R-114).
 type SourcePolicy interface {
-	AllowsSource(ctx context.Context, url string) error
+	AllowsSource(ctx context.Context, src spec.Source) error
 	IsolationFloors(ctx context.Context) (build, runtime spec.IsolationClass, err error)
 }
 
@@ -199,7 +199,7 @@ func (r *Runner) check(ctx context.Context, appID string) (state.App, error) {
 	}
 
 	if r.Policy != nil {
-		if err := r.Policy.AllowsSource(ctx, app.Source.URL); err != nil {
+		if err := r.Policy.AllowsSource(ctx, app.Source); err != nil {
 			return state.App{}, err
 		}
 	}

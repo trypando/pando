@@ -23,16 +23,28 @@ type AdapterCredentials struct {
 	adapter    api.SecretsAdapter
 	adapterRef string
 
-	// table and scope say whose credentials these are: adapter_configs', or
-	// identity providers' (identity_adapter_credentials). Fixed at
-	// construction from the two constructors below, never from input.
-	table string
-	scope string
+	// table, column and scope say whose credentials these are: adapter_configs',
+	// identity providers' (identity_adapter_credentials), or apps' registry
+	// credentials. Fixed at construction from the constructors below, never
+	// from input.
+	table  string
+	column string
+	scope  string
 }
 
 func NewAdapterCredentials(db *DB, adapter api.SecretsAdapter, adapterRef string) *AdapterCredentials {
 	return &AdapterCredentials{db: db, adapter: adapter, adapterRef: adapterRef,
-		table: "adapter_credentials", scope: "adapter:"}
+		table: "adapter_credentials", column: "adapter_id", scope: "adapter:"}
+}
+
+// NewRegistryCredentials stores the credential an app's image is pulled with
+// (issue #41), keyed by the app. Its own table and scope rather than the app's
+// secrets: an app secret can be named by an env entry and so reach the app,
+// and the credential that pulls the app's image is never the app's to read.
+// App-owned, as O-3 decided for source credentials.
+func NewRegistryCredentials(db *DB, adapter api.SecretsAdapter, adapterRef string) *AdapterCredentials {
+	return &AdapterCredentials{db: db, adapter: adapter, adapterRef: adapterRef,
+		table: "registry_credentials", column: "app_id", scope: "registry:"}
 }
 
 // NewIdentityCredentials stores identity providers' secrets — an OIDC client
@@ -42,7 +54,7 @@ func NewAdapterCredentials(db *DB, adapter api.SecretsAdapter, adapterRef string
 // matched.
 func NewIdentityCredentials(db *DB, adapter api.SecretsAdapter, adapterRef string) *AdapterCredentials {
 	return &AdapterCredentials{db: db, adapter: adapter, adapterRef: adapterRef,
-		table: "identity_adapter_credentials", scope: "identity:"}
+		table: "identity_adapter_credentials", column: "adapter_id", scope: "identity:"}
 }
 
 var credentialField = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -77,9 +89,9 @@ func (c *AdapterCredentials) Put(ctx context.Context, adapterID, field string, v
 		return err
 	}
 	_, err = c.db.Exec(ctx, `
-		INSERT INTO `+c.table+` AS t (adapter_id, field, adapter_ref, ciphertext, external_ref)
+		INSERT INTO `+c.table+` AS t (`+c.column+`, field, adapter_ref, ciphertext, external_ref)
 		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (adapter_id, field) DO UPDATE SET
+		ON CONFLICT (`+c.column+`, field) DO UPDATE SET
 			adapter_ref = EXCLUDED.adapter_ref,
 			ciphertext = EXCLUDED.ciphertext,
 			external_ref = EXCLUDED.external_ref,
@@ -95,7 +107,7 @@ func (c *AdapterCredentials) Put(ctx context.Context, adapterID, field string, v
 // Delete removes one credential.
 func (c *AdapterCredentials) Delete(ctx context.Context, adapterID, field string) error {
 	_, err := c.db.Exec(ctx,
-		`DELETE FROM `+c.table+` WHERE adapter_id = $1 AND field = $2`, adapterID, field)
+		`DELETE FROM `+c.table+` WHERE `+c.column+` = $1 AND field = $2`, adapterID, field)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not remove the adapter's credential.", err)
 	}
@@ -107,7 +119,7 @@ func (c *AdapterCredentials) Delete(ctx context.Context, adapterID, field string
 // anything being able to read it back.
 func (c *AdapterCredentials) Fields(ctx context.Context) (map[string][]string, error) {
 	rows, err := c.db.Query(ctx,
-		`SELECT adapter_id, field FROM `+c.table+` ORDER BY adapter_id, field`)
+		`SELECT `+c.column+`, field FROM `+c.table+` ORDER BY `+c.column+`, field`)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not list adapter credentials.", err)
 	}
@@ -130,7 +142,7 @@ func (c *AdapterCredentials) Fields(ctx context.Context) (map[string][]string, e
 // adapter reads them, so none of them can be logged on the way.
 func (c *AdapterCredentials) Resolve(ctx context.Context, adapterID string) (map[string]secret.Value, error) {
 	rows, err := c.db.Query(ctx,
-		`SELECT field, ciphertext, external_ref FROM `+c.table+` WHERE adapter_id = $1`, adapterID)
+		`SELECT field, ciphertext, external_ref FROM `+c.table+` WHERE `+c.column+` = $1`, adapterID)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not read the adapter's credentials.", err)
 	}

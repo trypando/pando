@@ -248,23 +248,44 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 	})
 
 	add := &cobra.Command{
-		Use:   "add <source-url>",
-		Short: "Create an app from a repository",
-		Args:  cobra.ExactArgs(1),
+		Use:   "add <source-url> | --image <reference>",
+		Short: "Create an app from a repository, or from an image that is already built",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			image, _ := cmd.Flags().GetString("image")
+			if (len(args) == 1) == (image != "") {
+				return fmt.Errorf("give a repository URL, or --image with an image reference such as ghcr.io/acme/web:1.4")
+			}
 			c, err := client()
 			if err != nil {
 				return err
 			}
 			name, _ := cmd.Flags().GetString("name")
-			if name == "" {
-				name = nameFromURL(args[0])
+
+			var src map[string]any
+			if image != "" {
+				if name == "" {
+					name = nameFromImage(image)
+				}
+				src = map[string]any{"type": "image", "image": image}
+				cred, err := registryCredential(cmd)
+				if err != nil {
+					return err
+				}
+				if cred != nil {
+					src["credential"] = cred
+				}
+			} else {
+				if name == "" {
+					name = nameFromURL(args[0])
+				}
+				src = map[string]any{"type": "git", "url": args[0]}
 			}
 
 			var app map[string]any
 			if err := c.Do("POST", "/apps", map[string]any{
 				"name":   name,
-				"source": map[string]string{"type": "git", "url": args[0]},
+				"source": src,
 			}, &app); err != nil {
 				return err
 			}
@@ -289,10 +310,13 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 	// that slice in alphabetical order, not insertion order — so `app add
 	// --name` was rejected as an unknown flag and `app list --name` quietly
 	// accepted one it ignores.
-	add.Flags().String("name", "", "name for the app (defaults to the repository name)")
+	add.Flags().String("name", "", "name for the app (defaults to the repository or image name)")
+	add.Flags().String("image", "", "run this prebuilt image instead of building a repository, such as ghcr.io/acme/web:1.4")
+	registryCredentialFlags(add)
 	add.Flags().Bool("wait", false, "wait for detection to finish, as `pando app detection --wait` does")
 	add.Flags().Duration("timeout", detectionTimeout, "with --wait, how long to wait before giving up")
 	cmd.AddCommand(add)
+	cmd.AddCommand(registryCredentialCmd(client))
 	cmd.AddCommand(appDetectionCmd(client))
 
 	del := &cobra.Command{

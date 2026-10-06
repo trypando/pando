@@ -34,6 +34,16 @@ func (s *Server) handleUploadSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The allowlist again, before a byte is written (R-092): an install that
+	// does not admit uploads refuses this one even for an app that was created
+	// before the rule was.
+	if s.Policy != nil {
+		if err := s.Policy.AllowsSource(r.Context(), spec.Source{Type: spec.SourceUpload, UploadID: app.ID}); err != nil {
+			Error(w, r, err)
+			return
+		}
+	}
+
 	// The limit is enforced on the reader, not on Content-Length. A client that
 	// lies about the length would otherwise stream until the disk gave out.
 	body := http.MaxBytesReader(w, r.Body, maxUploadBytes)

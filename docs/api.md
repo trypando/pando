@@ -66,7 +66,7 @@ one verb says nothing about another (R-082).
 | Endpoint | Verb | What it does |
 | --- | --- | --- |
 | `GET /api/v1/apps` |  | The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection. |
-| `POST /api/v1/apps` | `app.create` | Create an app from a repository. Returns immediately in draft while detection runs; follow it with GET /detection and `wait`. |
+| `POST /api/v1/apps` | `app.create` | Create an app. `source` is `{type: git, url, ref}` for a repository, `{type: image, image, credential}` for an image that is already built (`credential` optional, for a private one: see PUT /registry-credential), or `{type: upload}` for files sent next with POST /source. Checked against the source allowlist before anything is fetched (R-092). Returns immediately in draft while detection runs; follow it with GET /detection and `wait`. |
 | `GET /api/v1/apps/{appID}` | `app.view` | One app: name, source, state and pinned spec; `detection` — its status, and its stage while running — once it has been through detection; and `last_backup`, its last daily backup attempt. |
 | `PATCH /api/v1/apps/{appID}` | `app.spec.edit` | Rename an app or change its source. |
 | `DELETE /api/v1/apps/{appID}` | `app.delete` | Delete an app. With storage, `backup=true` keeps a final copy and `force=true` discards it; without either, the request is refused so the decision is taken rather than assumed (R-204, R-205). |
@@ -91,7 +91,7 @@ one verb says nothing about another (R-082).
 | `POST /api/v1/apps/{appID}/detection/answers` | `app.spec.edit` | Answer detection's questions. Each answer is a fact detection could not find, not a preference. |
 | `POST /api/v1/apps/{appID}/detection/revise` | `app.spec.edit` | Tell the AI adapter what is wrong with the plan (`message`). It checks the repository, changes what it can show, replies, and records the exchange on the proposal. Needs an AI adapter. |
 | `POST /api/v1/apps/{appID}/detection/accept` | `app.spec.edit` | Accept the proposal, writing a spec revision and pinning it. `values` sets variables in the same step — `{key, value, secret?, workload?}` each; a secret goes to the secrets adapter and needs app.secrets.write. Accepting over a configured app needs `confirm`. |
-| `POST /api/v1/apps/{appID}/source` | `app.spec.edit` | Upload a source archive for an app that has no reachable repository. |
+| `POST /api/v1/apps/{appID}/source` | `app.spec.edit` | Send an app's files as its source: a gzipped tar of the app's directory (Content-Type `application/gzip`, at most 256 MB), paths relative to its root. A single index.html is enough for a static site. Replaces any files sent before; follow it with POST /detection/rerun. Refused under a source allowlist that does not include `upload` (R-092). |
 
 ### Configuration
 
@@ -161,6 +161,9 @@ one verb says nothing about another (R-082).
 | `PUT /api/v1/apps/{appID}/secrets/{key}` | `app.secrets.write` | Set a secret. Rotating one recreates the workload rather than leaving it running with the old value (R-193). |
 | `DELETE /api/v1/apps/{appID}/secrets/{key}` | `app.secrets.write` | Remove a secret. |
 | `GET /api/v1/apps/{appID}/secrets/{key}/value` | `app.secrets.read` | Read one secret's value. Its own verb, separate from managing the app, and audited every time (R-083). |
+| `GET /api/v1/apps/{appID}/registry-credential` | `app.view` | Whether the app has a credential for pulling its image, and of which `kind` (`basic` or `ecr`), with its `username` or `access_key_id` and `region`. Never the password or secret key. |
+| `PUT /api/v1/apps/{appID}/registry-credential` | `app.secrets.write` | Set the credential the app's image is pulled with: `kind` `basic` with `username` and `password` (a token), or `kind` `ecr` with `access_key_id`, `secret_access_key` and optionally `region`, from which a registry password is minted for every pull. Replaces any credential the app had. It belongs to the app and is never given to it. |
+| `DELETE /api/v1/apps/{appID}/registry-credential` | `app.secrets.write` | Remove the app's registry credential, so its image is pulled anonymously. |
 
 ### Security
 
@@ -320,6 +323,7 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `PLAN_CAPABILITY_UNSUPPORTED` | 409 | The spec asks for something the chosen adapter does not do (R-254). |
 | `PLAN_COMPOSE_CONSTRUCT_REJECTED` | 409 | The compose file uses a construct Pando will not translate (R-099). |
 | `PLAN_EGRESS_LOOSENING_FORBIDDEN` | 409 | The app loosens the installation's egress rules, and host policy says no app may (R-183). |
+| `PLAN_IMAGE_PLATFORM_UNSUPPORTED` | 409 | The app's image has no build for the operating system and CPU architecture this server runs, so it cannot start here. |
 | `PLAN_NO_ADAPTER_MEETS_POLICY` | 409 | No configured adapter can satisfy this spec under host policy (R-024, R-114). |
 | `PLAN_SECURITY_BELOW_THRESHOLD` | 409 | This installation requires a security score, and this app is below it or has never been scanned (R-314). |
 | `PLAN_SLOT_UNFILLED` | 409 | A required dependency has nothing filling it, so the deploy would start an app that cannot connect (R-132). |

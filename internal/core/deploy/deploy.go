@@ -20,6 +20,7 @@ import (
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/audit"
+	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
 	"github.com/trypando/pando/internal/core/security"
 	"github.com/trypando/pando/internal/core/source"
@@ -84,6 +85,9 @@ type Runner struct {
 	// (R-262), which is kept in the directory it names.
 	sources source.Sources
 
+	// images resolves an image app's digest and registry credential.
+	images *oci.Images
+
 	// ProxyUpstream is where routing adapters must send traffic (R-023). It is
 	// Pando's proxy, always, and it is passed to every Ensure so that no adapter
 	// has to work it out.
@@ -98,6 +102,9 @@ type Runner struct {
 // after the branch has moved — which is the whole point of pinning.
 func (r *Runner) PrepareRevision(ctx context.Context, rev state.Revision, by string) (state.Revision, error) {
 	s := rev.Body
+	if s.Source.Type == spec.SourceImage {
+		return r.pinImage(ctx, rev, by)
+	}
 	if s.Source.Type != spec.SourceGit || s.Source.Commit != "" {
 		return rev, nil
 	}
@@ -115,6 +122,23 @@ func (r *Runner) PrepareRevision(ctx context.Context, rev state.Revision, by str
 	// pinned commit is a real change to how this app runs — one worth being
 	// visible in the app's history rather than applied silently.
 	return r.apps.CreateRevision(ctx, rev.AppID, &pinned, spec.OriginEdited, by)
+}
+
+// pinImage is PrepareRevision for an image app: a revision that names a tag
+// and no digest gets a new revision pinning the digest the tag names now
+// (issue #41), for the reason a branch gets a commit. Without it, a tag pushed
+// again — :latest, or a release tag rebuilt — changes what runs with no new
+// revision to show it, and a rollback goes back to whatever the tag means
+// today rather than what ran then.
+func (r *Runner) pinImage(ctx context.Context, rev state.Revision, by string) (state.Revision, error) {
+	pinned, ok, err := pinnedSpec(ctx, r.images, rev.AppID, rev.Body)
+	if err != nil {
+		return state.Revision{}, err
+	}
+	if !ok {
+		return rev, nil
+	}
+	return r.apps.CreateRevision(ctx, rev.AppID, pinned, spec.OriginEdited, by)
 }
 
 func NewRunner(registry *api.Registry, p *planner.Planner, apps *state.Apps, deploys *state.Deployments, secrets Secrets, reconciles Reconciles, logs *LogStore, volumes *state.Volumes, proxyUpstream string) *Runner {
@@ -162,6 +186,14 @@ func (r *Runner) WithServices(services *state.Services, secrets *state.Secrets) 
 // uploaded one is refused.
 func (r *Runner) WithSources(sources source.Sources) *Runner {
 	r.sources = sources
+	return r
+}
+
+// WithImages sets how an image app's image is read and pulled: its digest is
+// resolved and pinned before a deploy, and its registry credential resolved
+// for the pull (issue #41). Without it an image is pulled anonymously by tag.
+func (r *Runner) WithImages(images *oci.Images) *Runner {
+	r.images = images
 	return r
 }
 
@@ -260,6 +292,14 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		image = built
 	}
 
+	// An image app runs the digest its revision pinned, never whatever its tag
+	// names today (issue #41, R-120's rule for commits), and pulls with the
+	// app's own registry credential when it has one.
+	image, perWorkload, pull, err := imagePull(ctx, r.images, dep.AppID, appSpec, image, perWorkload, sink)
+	if err != nil {
+		return fail("fetch", err)
+	}
+
 	// Step 10: scan what was built, and refuse to apply it if this
 	// installation's threshold says so (R-312, R-314).
 	//
@@ -347,6 +387,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	if err != nil {
 		return fail("apply", err)
 	}
+	withPullAuth(&bundle, image, pull)
 
 	runtime, ok := r.registry.Runtime(appSpec.Runtime.AdapterRef)
 	if !ok {
@@ -985,6 +1026,80 @@ func writeFailure(sink io.Writer, headline string, err error) {
 	}
 }
 
+// imagePull settles what an image app's workloads run and how the pull
+// authenticates: the pinned reference in place of the tag, and the app's
+// registry credential resolved for this one deploy. Anything that is not an
+// image app passes through unchanged.
+func imagePull(ctx context.Context, images *oci.Images, appID string, s *spec.AppSpec,
+	image string, perWorkload map[string]string, sink io.Writer,
+) (string, map[string]string, *api.RegistryAuth, error) {
+	if s.Source.Type != spec.SourceImage || s.Source.Image == "" {
+		return image, perWorkload, nil, nil
+	}
+	pinned := oci.Reference(s.Source)
+	if s.Source.Digest != "" {
+		fmt.Fprintf(sink, "=> Running %s at %s\n", s.Source.Image, shortDigest(s.Source.Digest))
+	}
+	auth, err := images.Auth(ctx, appID, s.Source.Image)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	var pull *api.RegistryAuth
+	if auth != nil {
+		pull = &api.RegistryAuth{Registry: auth.Registry, Username: auth.Username, Password: auth.Password, IdentityToken: auth.IdentityToken}
+	}
+	return pinned, pinWorkloads(s, perWorkload, pinned), pull, nil
+}
+
+// pinnedSpec is the revision body an unpinned image app deploys from: the
+// same spec with the digest its tag names now. False when there is nothing
+// to pin — not an image, already pinned, or no way to read the registry.
+func pinnedSpec(ctx context.Context, images *oci.Images, appID string, s *spec.AppSpec) (*spec.AppSpec, bool, error) {
+	if s.Source.Type != spec.SourceImage || s.Source.Digest != "" || s.Source.Image == "" || images == nil {
+		return nil, false, nil
+	}
+	insp, err := images.Inspect(ctx, appID, s.Source.Image, oci.Platform{})
+	if err != nil {
+		return nil, false, err
+	}
+	pinned := *s
+	pinned.Source.Digest = insp.Digest
+	return &pinned, true, nil
+}
+
+// pinWorkloads points every workload that runs the app's image at its pinned
+// reference. A workload naming a different image — a sidecar from a compose
+// file — is left as it is: the app's pin is a digest of the app's image.
+func pinWorkloads(s *spec.AppSpec, perWorkload map[string]string, pinned string) map[string]string {
+	out := map[string]string{}
+	for k, v := range perWorkload {
+		out[k] = v
+	}
+	for _, w := range s.Workloads {
+		if out[w.Name] != "" || w.Build != nil {
+			continue
+		}
+		if w.Image == "" || w.Image == s.Source.Image {
+			out[w.Name] = pinned
+		}
+	}
+	return out
+}
+
+// withPullAuth gives the app's registry credential to the workloads that run
+// the app's image, and to no other: a sidecar's public image is pulled
+// anonymously, and a credential for one registry is not sent to another.
+func withPullAuth(bundle *api.BundlePlan, image string, auth *api.RegistryAuth) {
+	if auth == nil {
+		return
+	}
+	for i := range bundle.Workloads {
+		if bundle.Workloads[i].Image == image {
+			bundle.Workloads[i].PullAuth = auth
+		}
+	}
+}
+
 // workloadImage is the image one workload runs.
 func workloadImage(w spec.Workload, perWorkload map[string]string, appImage string) string {
 	if built := perWorkload[w.Name]; built != "" {
@@ -1038,6 +1153,19 @@ func orDefault(v, fallback int) int {
 		return v
 	}
 	return fallback
+}
+
+// shortDigest is a digest as a person reads one: the algorithm dropped and
+// the first twelve hex characters, the way docker images shows it.
+func shortDigest(digest string) string {
+	_, hex, found := strings.Cut(digest, ":")
+	if !found {
+		hex = digest
+	}
+	if len(hex) > 12 {
+		return hex[:12]
+	}
+	return hex
 }
 
 func short(commit string) string {

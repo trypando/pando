@@ -103,6 +103,11 @@ func compareSource(old, next *AppSpec, add func(Class, string, string, any, any)
 	if old.Source.Image != next.Source.Image {
 		add(Rebuild, "source.image", "A different image will be run.", old.Source.Image, next.Source.Image)
 	}
+	// The digest is what an image app runs (issue #41), so a new one is a
+	// different image even under the same tag — the case pinning exists for.
+	if old.Source.Digest != next.Source.Digest && old.Source.Image == next.Source.Image {
+		add(Rebuild, "source.digest", "A different build of the same image will be run.", old.Source.Digest, next.Source.Digest)
+	}
 }
 
 func compareBuild(old, next *AppSpec, add func(Class, string, string, any, any)) {

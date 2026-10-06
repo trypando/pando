@@ -106,6 +106,7 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | `PANDO_APP_PORT_START` / `_END` | `9000` / `9019` | Range of host ports apps are allocated. |
 | `PANDO_ADMIN_PASSWORD` | generated | Initial admin password. Read on first run only. |
 | `PANDO_LOG_LEVEL` | `info` | Log verbosity. |
+| `PANDO_APPS_DOCKER_CREDENTIALS` | `false` | Pull private images with the Docker login on the Pando server (`docker login`, read from `DOCKER_CONFIG` or `~/.docker/config.json`, credential helpers included) for apps that have no registry credential of their own. Every app on the install can then pull whatever that login can read. When Pando runs in the shipped Compose stack, mount a `config.json` into the container and set `DOCKER_CONFIG` to its directory; a credential helper such as the macOS keychain is not reachable from inside the container. |
 | `PANDO_RECONCILER_BACKOFF` | see R-149 | Retry schedule. Compressing it is for tests; `pando` warns when it is set faster than the shipped default. |
 
 `PANDO_PORT` is not read by Pando. It is a variable in the shipped `docker-compose.yml`, which uses

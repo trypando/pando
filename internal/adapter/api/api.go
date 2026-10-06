@@ -112,6 +112,25 @@ type RuntimeCapabilities struct {
 	// when it restricts anything (R-186). Without it, a plan whose rules
 	// refuse something is refused, never deployed with them ignored.
 	SupportsEgressRestriction bool
+
+	// Platform is the operating system and CPU architecture the runtime runs
+	// images for, as a registry names them: linux/amd64, linux/arm64. Empty
+	// when the runtime cannot say, and then an image's platforms are not
+	// checked at plan time (issue #41).
+	Platform string
+}
+
+// RegistryAuth is what one image pull authenticates with, resolved by core
+// from the app's registry credential (issue #41). Short-lived — an ECR
+// password lasts twelve hours — so it travels with each plan and is never kept
+// by the adapter. Nil means an anonymous pull.
+type RegistryAuth struct {
+	Registry string
+	Username string
+	Password secret.Value
+	// IdentityToken stands in for a password where a registry was signed in
+	// to through a browser (a Docker login carried over, issue #41).
+	IdentityToken secret.Value
 }
 
 // RoutingCapabilities describes what a routing adapter can do.
@@ -279,6 +298,9 @@ type TrialRequest struct {
 	WorkingDir string
 	Env        map[string]secret.Value
 
+	// PullAuth authenticates the pull of a private image. Nil is anonymous.
+	PullAuth *RegistryAuth
+
 	// DeclaredPaths are the container paths the draft spec declares storage
 	// for. Writes underneath them are expected; a write anywhere else is what
 	// R-202 asks to have named in the persistence warning.
@@ -412,6 +434,11 @@ type WorkloadPlan struct {
 	// a value was sensitive. That keeps R-027's boundary intact and the
 	// interface small.
 	Env map[string]secret.Value
+
+	// PullAuth authenticates the pull of Image when it is private. Nil is an
+	// anonymous pull. Never placed in the workload: it is how the runtime
+	// fetches the image, not something the app is given.
+	PullAuth *RegistryAuth
 
 	Mounts    []MountPlan
 	Files     []FilePlan

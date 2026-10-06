@@ -627,6 +627,15 @@ pando admin reset-password [user]          server-side; needs the host, not a to
 
 **[D]** `pando deploy ./` must work from a local path, since R-262's agent workflow depends on it — a generated app cannot drop a config file, but an agent can invoke a command.
 
+**[D] The console sends files the same way (issue #41).** Add app takes a folder or files — chosen, or
+dropped; a single `index.html` is enough — and packs them in the browser into the archive the CLI sends:
+a gzipped tar, paths relative to the app's root, regular files only, with the CLI's list of rebuilt
+directories (`.git`, `node_modules`, …) left out. It then calls the same three endpoints in the same
+order: `POST /apps` with `{type: upload}`, `POST /apps/{id}/source`, `POST /apps/{id}/detection/rerun`.
+MCP has `pando_upload_source` and `pando_rerun_detection` for the same sequence, so no surface can do
+this and another not (R-261). An upload is admitted under a source allowlist only by the entry `upload`
+(O-29), and only source files are accepted, not a `docker save` tarball (O-31).
+
 **[D]** Everything above `pando admin` is a client of this API and nothing else. `internal/cli` imports
 no core package, so a command that needed something the API cannot do fails to compile rather than
 quietly growing a shortcut (R-261).

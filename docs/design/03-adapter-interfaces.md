@@ -162,6 +162,7 @@ type WorkloadPlan struct {
     Entrypoint []string
     WorkingDir string
     Env        map[string]string  // fully resolved. Slots filled, secrets injected.
+    PullAuth   *RegistryAuth      // the pull of Image, when private. Never in the workload.
     Mounts     []MountPlan
     Ports      []PortPlan
     DependsOn  []string
@@ -188,6 +189,26 @@ type Layer struct {
 ```
 
 **[D]** `Env` arrives fully resolved. Adapters never see a slot, never talk to the secrets adapter, and never learn that a value was sensitive. That keeps R-027's identity/authz/secrets boundary intact and keeps the interface small.
+
+**[D] `PullAuth` arrives resolved the same way (issue #41).** Core reads the app's registry credential,
+mints an ECR password if that is what it is, and hands the runtime a username and a `secret.Value` for
+one registry — set only on the workloads that run the app's own image, so a sidecar's public image is
+pulled anonymously and a credential for one registry is never sent to another. `TrialRequest` carries it
+too. The runtime uses it for the pull and keeps nothing: Docker receives it as the request's
+`X-Registry-Auth` and stores it nowhere. It is short-lived by construction, which is why it travels with
+each plan rather than being configured on the adapter.
+
+**[D] `RuntimeCapabilities.Platform`** is the `os/arch` the runtime runs images for (`linux/arm64`),
+data rather than a probe (R-254). The planner compares it with the platforms an image app's image is
+published for and refuses a mismatch before anything is pulled. Empty means the runtime cannot say,
+and the check is left to the pull.
+
+**[D] Registry authentication is not an adapter category.** It fails §8.1's test on both halves: the
+planner asks it nothing — a credential either opens the registry or it does not — and "a username and a
+password for a host" is no vocabulary worth hiding. ECR's token minting is the one provider-specific
+part, and it is a dozen lines in `core/oci` behind the credential's `kind`. A category would add a
+`Capabilities()` nobody consults. If GCR, Artifact Registry or ACR are wanted, each is another `kind`
+there.
 
 **[D]** `NetworkPlan.Private` is always true. It is a field rather than an assumption so an adapter that cannot provide a private network fails loudly at capability check (`SupportsPrivateNetwork`) rather than silently placing workloads on a shared network.
 

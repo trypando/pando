@@ -70,11 +70,50 @@ type Source struct {
     Subdir string     `json:"subdir,omitempty"`  // monorepo entrypoint
     Image  string     `json:"image,omitempty"`   // when Type == image
     Digest string     `json:"digest,omitempty"`  // resolved, pinned
-    CredentialRef string `json:"credential_ref,omitempty"` // LATER, R-091. App-owned; see below.
+    UploadID string   `json:"upload_id,omitempty"` // when Type == upload: the app's own ID
+    CredentialRef string `json:"credential_ref,omitempty"` // "registry" when an image pull is authenticated
 }
 ```
 
 **[D]** `Ref` is what the user asked for; `Commit` is what runs. Auto-deploy (R-141) advances `Commit` and creates a revision. A deploy never resolves `Ref` implicitly at runtime.
+
+**[D] An image is pinned the way a commit is (issue #41).** `Image` is what the user asked for;
+`Digest` is what runs. Detection reads the registry and records the digest the tag names at that moment;
+a revision that reaches a deploy with no digest — written by hand, or from before this — is pinned first
+by `PrepareRevision`, in a revision of its own, exactly as an unpinned branch gets a commit. The runtime is
+given `image@digest`, so a tag pushed again (`:latest`, a rebuilt release tag) changes nothing until
+somebody re-detects or edits the spec. A digest is true only of the reference it was resolved from:
+a revision that changes `Image` and keeps the previous `Digest` has the digest dropped
+(`spec.DropStalePin`, applied in `CreateRevision`), and the next deploy pins again. For a multi-platform
+image the digest is the index's, so the runtime still selects its own build. Moving the digest
+automatically is R-143, `[LATER]`, and would reuse the auto-deploy job (#40) with a digest in place of a
+commit.
+
+**[D] What an image declares fills its spec.** An image app has no repository for detectors to read, so
+detection reads the image's configuration from the registry before the trial run: `EXPOSE` becomes the
+ports (`Port.Source = expose`, superseded by a port the trial observes), `VOLUME` becomes volumes
+(`Declared = image`; R-200, and R-203's case — data left in the writable layer — is the one this
+prevents), and `HEALTHCHECK` becomes the workload's check. `CMD` is not copied; the image runs its own.
+An image with no build for the runtime's platform is blocked at detection and refused at plan time
+(`PLAN_IMAGE_PLATFORM_UNSUPPORTED`), and a `VOLUME` the spec has lost its storage for is a plan note —
+never a blocker.
+
+**[D] The source allowlist reads every kind of source (R-092).** An entry is a host (`github.com`), a
+suffix (`.corp.example`), or a host and a path prefix matched on whole segments (`github.com/acme`,
+`ghcr.io/acme`, `123456789012.dkr.ecr.us-east-1.amazonaws.com/team`). A git URL and an image reference are
+reduced to the same host and path, with Docker Hub's three hostnames read as `docker.io`. The check had
+been handed `URL`, which an image does not have, and admitted it. **[P]** An upload has no host, so a
+non-empty allowlist admits one only when it contains the entry `upload` (O-29).
+
+**[D] Registry credentials are the app's (O-30).** `CredentialRef` records that an image pull is
+authenticated, never with what. The credential is a username and token, or AWS access keys from which an
+ECR registry password is minted before every read and pull (ECR's own expire after twelve hours). It is
+kept in `registry_credentials` (design 02 §2.4), not with the app's secrets, so no env entry can hand it
+to the app; it reaches the runtime as `WorkloadPlan.PullAuth` for the pull alone (design 03 §2.1).
+**[P]** An install may opt in, with `apps.docker_credentials`, to pulling with the Docker login on the
+Pando server for apps that have no credential of their own. Off by default, because it lends every app
+on the install whatever that login can read. **[P]** ECR takes explicit keys only, not Pando's own
+instance role (O-28).
 
 **[D] Resolved (O-3): source credentials are app-owned and attributed.** The question was whether a
 private-repo credential belongs to the app or to the person who supplied it. User-owned is the

@@ -83,9 +83,9 @@ async function requestText(path: string): Promise<string> {
  * An app's image (R-340) is the image bytes, not JSON. The server decides what
  * the bytes are, so the content type sent is only the file's own claim.
  */
-async function requestBytes<T>(path: string, file: Blob): Promise<T> {
+async function requestBytes<T>(path: string, file: Blob, method = 'PUT'): Promise<T> {
   const response = await fetch(base + path, {
-    method: 'PUT',
+    method,
     headers: { 'Content-Type': file.type || 'application/octet-stream' },
     body: file,
     credentials: 'same-origin',
@@ -134,6 +134,7 @@ export const api = {
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   putFile: <T>(path: string, file: Blob) => requestBytes<T>(path, file),
+  postFile: <T>(path: string, file: Blob) => requestBytes<T>(path, file, 'POST'),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   del: <T>(path: string) => request<T>('DELETE', path),
 };

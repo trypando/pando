@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -75,6 +76,10 @@ type Adapter struct {
 	selfMu      sync.Mutex
 	selfKnown   bool
 	selfGateway gatewayImage
+
+	// The daemon's platform, read once (Capabilities).
+	platformMu   sync.Mutex
+	hostPlatform string
 }
 
 // Config is the adapter's configuration.
@@ -313,7 +318,42 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		// with none configured cannot, and says so: the planner then refuses a
 		// restricted plan rather than deploying it unrestricted (R-186).
 		SupportsEgressRestriction: a.egressGateway(ctx).ref != "",
+
+		// What the daemon runs images for, so the planner can refuse an image
+		// with no build for it before anything is pulled (issue #41).
+		Platform: a.platform(ctx),
 	}, nil
+}
+
+// platform is the daemon's os/arch, read once: it does not change while the
+// daemon runs, and Capabilities is called on every plan. Empty when the daemon
+// cannot be asked, which leaves the check to the pull.
+func (a *Adapter) platform(ctx context.Context) string {
+	a.platformMu.Lock()
+	defer a.platformMu.Unlock()
+	if a.hostPlatform != "" {
+		return a.hostPlatform
+	}
+	res, err := a.cli.Info(ctx, client.InfoOptions{})
+	if err != nil || res.Info.OSType == "" || res.Info.Architecture == "" {
+		return ""
+	}
+	a.hostPlatform = strings.ToLower(res.Info.OSType) + "/" + normalizeArch(res.Info.Architecture)
+	return a.hostPlatform
+}
+
+// normalizeArch names an architecture the way registries do; the daemon
+// reports the kernel's name.
+func normalizeArch(arch string) string {
+	switch strings.ToLower(arch) {
+	case "x86_64", "amd64":
+		return "amd64"
+	case "aarch64", "arm64":
+		return "arm64"
+	case "armv7l", "arm":
+		return "arm"
+	}
+	return strings.ToLower(arch)
 }
 
 // Capacity is adapter-reported (R-243).
@@ -465,7 +505,7 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		}
 	}
 
-	if err := a.ensureImage(ctx, w.Image, forBundle(p.BundleID)); err != nil {
+	if err := a.ensureImageWith(ctx, w.Image, w.PullAuth, forBundle(p.BundleID)); err != nil {
 		return err
 	}
 
@@ -1383,6 +1423,12 @@ const minDockerLogBytes = 1 << 20 // 1 MiB
 // claims nothing but still marks an image it had to fetch, so the app deployed
 // after it can; Pando's own helper images pass the zero claim and are kept.
 func (a *Adapter) ensureImage(ctx context.Context, ref string, claim imageClaim) error {
+	return a.ensureImageWith(ctx, ref, nil, claim)
+}
+
+// ensureImageWith is ensureImage for an image that may be private: auth is
+// what core resolved from the app's registry credential, nil for anonymous.
+func (a *Adapter) ensureImageWith(ctx context.Context, ref string, auth *api.RegistryAuth, claim imageClaim) error {
 	if ref == "" {
 		return errs.New(errs.ValidInvalid, "This workload has no image to run.")
 	}
@@ -1397,7 +1443,7 @@ func (a *Adapter) ensureImage(ctx context.Context, ref string, claim imageClaim)
 	// a moment later succeeds (issue #55). A registry's refusal is final.
 	var err error
 	for attempt := 1; attempt <= 3; attempt++ {
-		err = a.pullOnce(ctx, ref)
+		err = a.pullWith(ctx, ref, auth)
 		if err == nil || !pullTransient(err) || ctx.Err() != nil || attempt == 3 {
 			break
 		}
@@ -1429,12 +1475,43 @@ func pullTransient(err error) bool {
 }
 
 func (a *Adapter) pullOnce(ctx context.Context, ref string) error {
-	rc, err := a.cli.ImagePull(ctx, ref, client.ImagePullOptions{})
+	return a.pullWith(ctx, ref, nil)
+}
+
+func (a *Adapter) pullWith(ctx context.Context, ref string, auth *api.RegistryAuth) error {
+	opts := client.ImagePullOptions{}
+	if auth != nil && (auth.Username != "" || !auth.IdentityToken.IsZero()) {
+		encoded, err := registryAuthHeader(auth)
+		if err != nil {
+			return err
+		}
+		opts.RegistryAuth = encoded
+	}
+	rc, err := a.cli.ImagePull(ctx, ref, opts)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rc.Close() }()
 	return pullError(rc)
+}
+
+// registryAuthHeader encodes credentials the way the daemon reads them: JSON,
+// base64url. Handed to the daemon for this one pull and kept nowhere — the
+// daemon does not store credentials passed this way, and Pando does not write
+// them to the daemon's config.
+func registryAuthHeader(auth *api.RegistryAuth) (string, error) {
+	// G117: this struct exists to carry the password to the daemon, which is
+	// the only place it goes; it is never logged or stored.
+	raw, err := json.Marshal(struct { //nolint:gosec
+		Username      string `json:"username,omitempty"`
+		Password      string `json:"password,omitempty"`
+		ServerAddress string `json:"serveraddress,omitempty"`
+		IdentityToken string `json:"identitytoken,omitempty"`
+	}{auth.Username, auth.Password.Reveal(), auth.Registry, auth.IdentityToken.Reveal()})
+	if err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(raw), nil
 }
 
 // pullError reads a pull's progress stream to the end and returns the error it

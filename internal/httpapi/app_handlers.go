@@ -16,6 +16,7 @@ import (
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/backup"
+	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/specgate"
 	"github.com/trypando/pando/internal/core/state"
@@ -79,10 +80,25 @@ type createAppRequest struct {
 		Ref    string `json:"ref"`
 		Image  string `json:"image"`
 		Subdir string `json:"subdir"`
+
+		// Credential pulls a private image (issue #41). Stored before
+		// detection starts, so the first read of the registry already uses it.
+		Credential *oci.Credential `json:"credential"`
 	} `json:"source"`
 }
 
 var slugPattern = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// validSourceType refuses a source type Pando cannot fetch, at creation
+// rather than at the first detection. Empty is an app written by hand.
+func validSourceType(t spec.SourceType) error {
+	switch t {
+	case "", spec.SourceGit, spec.SourceImage, spec.SourceUpload:
+		return nil
+	}
+	return errs.Newf(errs.ValidInvalid,
+		"%q is not a kind of source Pando knows. Valid answers: git (a repository URL), image (a prebuilt image), or upload (files sent from your computer).", t)
+}
 
 // handleCreateApp starts Sequence A.
 //
@@ -114,31 +130,53 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The source allowlist (R-092) is evaluated before anything touches disk.
-	// There is nothing to clone yet in this phase — detection is phase 6 — but
-	// the check belongs at creation, and putting it here now means the ordering
-	// is already right when cloning exists.
+	src := spec.Source{
+		Type:   spec.SourceType(req.Source.Type),
+		URL:    req.Source.URL,
+		Ref:    req.Source.Ref,
+		Image:  req.Source.Image,
+		Subdir: req.Source.Subdir,
+	}
+	if err := validSourceType(src.Type); err != nil {
+		Error(w, r, err)
+		return
+	}
+
+	// A credential is checked before the app exists, so a bad one is a
+	// refused request rather than an app created without it.
+	if req.Source.Credential != nil {
+		if src.Type != spec.SourceImage {
+			Error(w, r, errs.New(errs.ValidInvalid,
+				"A registry credential is for an app that runs a prebuilt image, and this app is built from source.").
+				WithRemedy("Leave the credential out, or create the app from an image."))
+			return
+		}
+		if err := req.Source.Credential.Validate(); err != nil {
+			Error(w, r, err)
+			return
+		}
+		src.CredentialRef = registryCredentialRef
+	}
+
+	// The source allowlist (R-092) is evaluated before anything touches disk:
+	// the clone, the pull, or the upload that follows creation. Given the whole
+	// source, not its URL — an image or an upload has none, and an empty URL
+	// used to be read as nothing to check (issue #41).
 	if s.Policy != nil {
-		if err := s.Policy.AllowsSource(r.Context(), req.Source.URL); err != nil {
+		if err := s.Policy.AllowsSource(r.Context(), src); err != nil {
 			s.audit(r, audit.Event{
 				PrincipalKind: audit.PrincipalKind(p.Kind),
 				PrincipalID:   p.ID,
 				OnBehalfOf:    p.UserID,
 				Action:        "app.create.denied",
-				Detail:        map[string]any{"source_url": req.Source.URL},
+				Detail:        map[string]any{"source_type": req.Source.Type, "source_url": req.Source.URL, "source_image": req.Source.Image},
 			})
 			Error(w, r, err)
 			return
 		}
 	}
 
-	app, err := s.Apps.Create(r.Context(), req.Name, slugify(req.Name), p.UserID, p.ID, spec.Source{
-		Type:   spec.SourceType(req.Source.Type),
-		URL:    req.Source.URL,
-		Ref:    req.Source.Ref,
-		Image:  req.Source.Image,
-		Subdir: req.Source.Subdir,
-	})
+	app, err := s.Apps.Create(r.Context(), req.Name, slugify(req.Name), p.UserID, p.ID, src)
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -153,6 +191,12 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		TargetKind:    "app",
 		TargetID:      app.ID,
 	})
+
+	if req.Source.Credential != nil {
+		if !s.saveRegistryCredential(w, r, app.ID, app.Source, *req.Source.Credential) {
+			return
+		}
+	}
 
 	// Sequence A step 5: enqueue detection.
 	//
