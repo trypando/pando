@@ -73,7 +73,7 @@ func (s *Server) handleScanApp(w http.ResponseWriter, r *http.Request) {
 		// the two, and a source that is no longer allowed must not be cloned
 		// (R-092).
 		if s.Policy != nil {
-			if err := s.Policy.AllowsSource(r.Context(), app.Source.URL); err != nil {
+			if err := s.Policy.AllowsSource(r.Context(), app.Source); err != nil {
 				Error(w, r, err)
 				return
 			}

@@ -3,8 +3,6 @@ package policy
 import (
 	"context"
 	"fmt"
-	"net/url"
-	"strings"
 
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
@@ -416,34 +414,6 @@ func (e *Evaluator) Allows(ctx context.Context, p authz.Principal, verb authz.Ve
 	return nil
 }
 
-// AllowsSource checks the source allowlist (R-092).
-//
-// Called before any clone, so a blocked source produces zero disk writes. The
-// check being here rather than inside the clone path is the whole point: by the
-// time you are cloning, you have already written to disk.
-func (e *Evaluator) AllowsSource(ctx context.Context, rawURL string) error {
-	doc, err := e.load(ctx)
-	if err != nil {
-		return err
-	}
-	if len(doc.SourceAllowlist) == 0 || rawURL == "" {
-		return nil
-	}
-
-	host := hostOf(rawURL)
-	for _, allowed := range doc.SourceAllowlist {
-		if matchesHost(host, allowed) {
-			return nil
-		}
-	}
-
-	return errs.Newf(errs.PolicySourceNotAllowed,
-		"Apps on this installation can only be created from approved sources, and %s is not one of them.", orUnknown(host)).
-		WithDetail("source", rawURL).
-		WithDetail("allowed", doc.SourceAllowlist).
-		WithRemedy("Use a repository from an approved source, or ask an administrator to add this one.")
-}
-
 // AllowsAnonymousGrant checks R-076: whether an app may be shared with
 // everyone, with a passcode or without one.
 func (e *Evaluator) AllowsAnonymousGrant(ctx context.Context, withPasscode bool) error {
@@ -516,40 +486,6 @@ func (e *Evaluator) RecordsAnonymousUse(ctx context.Context) bool {
 
 // Document returns the current policy.
 func (e *Evaluator) Document(ctx context.Context) (Document, error) { return e.load(ctx) }
-
-func hostOf(raw string) string {
-	if u, err := url.Parse(raw); err == nil && u.Host != "" {
-		return strings.ToLower(u.Hostname())
-	}
-	// Also accept scp-style git remotes: git@github.com:acme/notes.git
-	if _, rest, found := strings.Cut(raw, "@"); found {
-		if host, _, ok := strings.Cut(rest, ":"); ok {
-			return strings.ToLower(host)
-		}
-	}
-	return ""
-}
-
-// matchesHost compares a host against an allowlist entry, which may be a bare
-// host or a leading-dot suffix such as .corp.com.
-func matchesHost(host, pattern string) bool {
-	host = strings.ToLower(host)
-	pattern = strings.ToLower(pattern)
-	if host == "" {
-		return false
-	}
-	if strings.HasPrefix(pattern, ".") {
-		return strings.HasSuffix(host, pattern) || host == strings.TrimPrefix(pattern, ".")
-	}
-	return host == pattern
-}
-
-func orUnknown(host string) string {
-	if host == "" {
-		return "that address"
-	}
-	return host
-}
 
 var _ authz.Policy = (*Evaluator)(nil)
 

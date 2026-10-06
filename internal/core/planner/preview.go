@@ -105,7 +105,7 @@ func (p *Planner) violation(ctx context.Context, app InventoryApp, caps map[stri
 	s := app.Spec
 
 	// The source allowlist (R-092), checked before anything would clone.
-	if err := p.policy.AllowsSource(ctx, s.Source.URL); err != nil {
+	if err := p.policy.AllowsSource(ctx, s.Source); err != nil {
 		return asViolation(app, err), true
 	}
 

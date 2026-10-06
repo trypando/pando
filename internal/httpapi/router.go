@@ -319,7 +319,7 @@ type AnonymousPolicy interface {
 // phase, but the check belongs at creation and putting it here now means the
 // ordering is already right when cloning arrives in phase 6.
 type SourcePolicy interface {
-	AllowsSource(ctx context.Context, url string) error
+	AllowsSource(ctx context.Context, src spec.Source) error
 }
 
 // audit records an event, logging rather than failing the request if the write

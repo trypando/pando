@@ -96,7 +96,7 @@ func (p *Planner) Check(ctx context.Context, s *spec.AppSpec) (*Plan, error) {
 
 	// 2. Host policy, including the source allowlist (R-092) — before clone.
 	if p.policy != nil {
-		if err := p.policy.AllowsSource(ctx, s.Source.URL); err != nil {
+		if err := p.policy.AllowsSource(ctx, s.Source); err != nil {
 			return nil, err
 		}
 	}

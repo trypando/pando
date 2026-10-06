@@ -3,6 +3,7 @@ package policy_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -127,7 +128,7 @@ func TestAPolicyThatCannotBeLoadedFailsClosedRatherThanSilently(t *testing.T) {
 	e := policy.New(func(context.Context) (policy.Document, error) { return policy.Document{}, boom })
 
 	require.ErrorIs(t, e.Allows(ctx(), person, authz.AppExec, "app_01HQ8"), boom)
-	require.ErrorIs(t, e.AllowsSource(ctx(), "https://github.com/ben/notes"), boom)
+	require.ErrorIs(t, e.AllowsSource(ctx(), gitSrc("https://github.com/ben/notes")), boom)
 	require.ErrorIs(t, e.AllowsAnonymousGrant(ctx(), false), boom)
 
 	_, _, err := e.IsolationFloors(ctx())
@@ -150,7 +151,7 @@ func TestR092_TheSourceAllowlistAcceptsOnlyApprovedHosts(t *testing.T) {
 		"https://corp.example/team/app",
 		"ssh://git@deep.git.corp.example/x",
 	} {
-		require.NoError(t, e.AllowsSource(ctx(), allowed), allowed)
+		require.NoError(t, e.AllowsSource(ctx(), gitSrc(allowed)), allowed)
 	}
 
 	for _, blocked := range []string{
@@ -161,7 +162,7 @@ func TestR092_TheSourceAllowlistAcceptsOnlyApprovedHosts(t *testing.T) {
 		// A suffix match must not be a substring match: this is not corp.example.
 		"https://corp.example.evil.com/x",
 	} {
-		err := e.AllowsSource(ctx(), blocked)
+		err := e.AllowsSource(ctx(), gitSrc(blocked))
 		require.Equal(t, errs.PolicySourceNotAllowed, errs.CodeOf(err), blocked)
 	}
 }
@@ -169,7 +170,7 @@ func TestR092_TheSourceAllowlistAcceptsOnlyApprovedHosts(t *testing.T) {
 func TestABlockedSourceSaysWhichHostAndWhatIsAllowed(t *testing.T) {
 	e := policy.Static(policy.Document{SourceAllowlist: []string{"github.com"}})
 
-	err := e.AllowsSource(ctx(), "https://gitlab.com/ben/notes")
+	err := e.AllowsSource(ctx(), gitSrc("https://gitlab.com/ben/notes"))
 	require.Contains(t, errs.As(err).Message, "gitlab.com")
 	require.Equal(t, "https://gitlab.com/ben/notes", errs.As(err).Details["source"])
 	require.Equal(t, []string{"github.com"}, errs.As(err).Details["allowed"])
@@ -181,20 +182,110 @@ func TestABlockedSourceSaysWhichHostAndWhatIsAllowed(t *testing.T) {
 func TestASourceWithNoHostIsRefusedReadably(t *testing.T) {
 	e := policy.Static(policy.Document{SourceAllowlist: []string{"github.com"}})
 
-	err := e.AllowsSource(ctx(), "/srv/local/repo")
+	err := e.AllowsSource(ctx(), gitSrc("/srv/local/repo"))
 	require.Equal(t, errs.PolicySourceNotAllowed, errs.CodeOf(err))
 	require.Contains(t, errs.As(err).Message, "that address")
 }
 
 func TestAnEmptyAllowlistRestrictsNothing(t *testing.T) {
 	e := policy.Static(policy.Document{})
-	require.NoError(t, e.AllowsSource(ctx(), "https://anywhere.example/x"))
+	require.NoError(t, e.AllowsSource(ctx(), gitSrc("https://anywhere.example/x")))
+	require.NoError(t, e.AllowsSource(ctx(), imageSrc("anyone/anything:latest")))
+	require.NoError(t, e.AllowsSource(ctx(), spec.Source{Type: spec.SourceUpload}))
 
-	// An empty URL is not the allowlist's business — there is nothing to check
-	// yet, and an upload has no URL at all.
+	// A source that names nothing yet is not the allowlist's business.
 	require.NoError(t, policy.Static(policy.Document{SourceAllowlist: []string{"github.com"}}).
-		AllowsSource(ctx(), ""))
+		AllowsSource(ctx(), spec.Source{}))
 }
+
+// R-092 names orgs and repos, not only forges: an entry with a path admits
+// that namespace and nothing beside it.
+func TestR092_AnAllowlistEntryWithAPathAdmitsOnlyThatNamespace(t *testing.T) {
+	e := policy.Static(policy.Document{SourceAllowlist: []string{"github.com/acme", "https://gitlab.com/team/app.git"}})
+
+	for _, allowed := range []string{
+		"https://github.com/acme/notes",
+		"https://github.com/ACME/notes.git",
+		"git@github.com:acme/notes.git",
+		"https://gitlab.com/team/app",
+	} {
+		require.NoError(t, e.AllowsSource(ctx(), gitSrc(allowed)), allowed)
+	}
+	for _, blocked := range []string{
+		"https://github.com/other/notes",
+		// A prefix is whole segments, not characters.
+		"https://github.com/acme-evil/notes",
+		"https://gitlab.com/team/app-two",
+		"https://github.com",
+	} {
+		err := e.AllowsSource(ctx(), gitSrc(blocked))
+		require.Equal(t, errs.PolicySourceNotAllowed, errs.CodeOf(err), blocked)
+	}
+}
+
+// TestR092_AnImageOutsideTheAllowlistIsRefused asserts R-092 for images: an
+// image reference is read as a registry and a repository and checked like a
+// git URL. It used to be passed the source's empty URL and admitted, so any
+// image from any registry deployed on an install with an allowlist (issue #41).
+func TestR092_AnImageOutsideTheAllowlistIsRefused(t *testing.T) {
+	e := policy.Static(policy.Document{SourceAllowlist: []string{
+		"ghcr.io/acme",
+		"docker.io/library",
+		"123456789012.dkr.ecr.us-east-1.amazonaws.com",
+	}})
+
+	for _, allowed := range []string{
+		"ghcr.io/acme/web:1.2",
+		"ghcr.io/acme/tools/cli@sha256:" + strings.Repeat("a", 64),
+		"nginx",
+		"nginx:1.27",
+		"docker.io/library/redis:7",
+		"index.docker.io/library/redis",
+		"123456789012.dkr.ecr.us-east-1.amazonaws.com/team/api:v3",
+	} {
+		require.NoError(t, e.AllowsSource(ctx(), imageSrc(allowed)), allowed)
+	}
+
+	for _, blocked := range []string{
+		"ghcr.io/stranger/web:latest",
+		"ghcr.io/acme-evil/web",
+		"stranger/nginx",
+		"quay.io/acme/web",
+		"999999999999.dkr.ecr.us-east-1.amazonaws.com/team/api",
+		"not a reference",
+	} {
+		err := e.AllowsSource(ctx(), imageSrc(blocked))
+		require.Equal(t, errs.PolicySourceNotAllowed, errs.CodeOf(err), blocked)
+	}
+
+	err := e.AllowsSource(ctx(), imageSrc("quay.io/acme/web:1"))
+	require.Contains(t, errs.As(err).Message, "quay.io/acme/web")
+	require.Equal(t, "quay.io/acme/web:1", errs.As(err).Details["source"])
+}
+
+// An upload has no host for an entry to name, so a non-empty allowlist admits
+// one only when it says `upload`. Otherwise "only github.com/acme" would mean
+// nothing to anyone holding a CLI token.
+func TestR092_AnUploadIsRefusedUnlessTheAllowlistAdmitsUploads(t *testing.T) {
+	up := spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"}
+
+	err := policy.Static(policy.Document{SourceAllowlist: []string{"github.com"}}).AllowsSource(ctx(), up)
+	require.Equal(t, errs.PolicySourceNotAllowed, errs.CodeOf(err))
+	require.Contains(t, errs.As(err).Message, "uploaded files")
+	require.Contains(t, errs.As(err).Remedy, "`upload`")
+
+	require.NoError(t, policy.Static(policy.Document{SourceAllowlist: []string{"github.com", "upload"}}).
+		AllowsSource(ctx(), up))
+
+	// And `upload` admits nothing else.
+	err = policy.Static(policy.Document{SourceAllowlist: []string{"upload"}}).
+		AllowsSource(ctx(), gitSrc("https://github.com/acme/notes"))
+	require.Equal(t, errs.PolicySourceNotAllowed, errs.CodeOf(err))
+}
+
+func gitSrc(url string) spec.Source { return spec.Source{Type: spec.SourceGit, URL: url} }
+
+func imageSrc(ref string) spec.Source { return spec.Source{Type: spec.SourceImage, Image: ref} }
 
 // R-076: an app may be shared with everyone unless policy says otherwise.
 func TestR076_AnonymousGrantsAreAllowedUnlessExplicitlyForbidden(t *testing.T) {
