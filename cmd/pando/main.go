@@ -59,6 +59,7 @@ import (
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/idp"
+	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/reconciler"
@@ -405,7 +406,13 @@ func serve(ctx context.Context, configPath string) error {
 
 	deployments := state.NewDeployments(db)
 	logStore := deploy.NewLogStore()
-	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps)
+	// An image app's image, read from its registry with the app's own
+	// credential (issue #41): detection pins and reads it, the planner checks
+	// its platform, the deployer pulls it. One value so all three agree.
+	registryCredentials := state.NewRegistryCredentials(db, secretsAdapter, secretsRef)
+	images := &oci.Images{Credentials: registryCredentials}
+
+	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps).WithImages(images)
 
 	// Every route points here (R-023). The proxy is phase 5; until it exists
 	// this is the address routing adapters are told to use, and it is already
@@ -435,7 +442,8 @@ func serve(ctx context.Context, configPath string) error {
 	deployer := deploy.NewRunner(registry, appPlanner, apps, deployments, secrets, reconciles, logStore, volumes, proxyUpstream).
 		WithServices(state.NewServices(db), secrets).
 		WithSecurity(securityService).
-		WithSources(sources)
+		WithSources(sources).
+		WithImages(images)
 
 	// Detection (Sequence A). Every detector bids; the runtime supplies the
 	// trial run (R-097), and a registry probe would supply R-094's top tier.
@@ -482,6 +490,7 @@ func serve(ctx context.Context, configPath string) error {
 				detect.MonorepoDetector{},
 			),
 			Runtime: runtimeForTrial(registry),
+			Images:  images,
 
 			// R-094 tier 1. ghcr.io only by default — a Docker Hub username has
 			// no relationship to the GitHub owner of the same name, so a match

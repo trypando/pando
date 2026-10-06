@@ -512,6 +512,20 @@ func (a *Apps) CreateRevision(ctx context.Context, appID string, s *spec.AppSpec
 		return Revision{}, errs.Wrap(errs.Internal, "Could not save the spec.", err)
 	}
 
+	// An edited image keeps no digest that was resolved from the old one
+	// (issue #41). Here, where every revision is written, so no path that
+	// creates one can skip it.
+	if next > 1 {
+		var prevBody []byte
+		if err := tx.QueryRow(ctx,
+			`SELECT body FROM spec_revisions WHERE app_id = $1 AND revision = $2`, appID, next-1).Scan(&prevBody); err == nil {
+			var prev spec.AppSpec
+			if json.Unmarshal(prevBody, &prev) == nil {
+				spec.DropStalePin(&prev, s)
+			}
+		}
+	}
+
 	s.SchemaVersion = spec.SchemaVersion
 	s.AppID = appID
 	s.Revision = next

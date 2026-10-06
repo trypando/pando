@@ -1460,20 +1460,20 @@ func (plannerRunningMake) Plan(context.Context, api.SourceView) (map[string]stri
 	// while the real plan did not — buildsWithMake answered from the first RUN
 	// it saw, which is always nix-env.
 	return map[string]string{
-		".nixpacks/Dockerfile": "FROM ubuntu:noble\n" +
-			"ENTRYPOINT [\"/bin/bash\", \"-l\", \"-c\"]\n" +
-			"RUN nix-env -if .nixpacks/nixpkgs-e89cf1c9.nix && nix-collect-garbage -d\n" +
-			"RUN --mount=type=cache,id=x,target=/root/.cache/go-build go mod download\n" +
-			"RUN --mount=type=cache,id=x,target=/root/.cache/go-build make build\n" +
-			"RUN true\n\n" +
-			"FROM ubuntu:noble\n" +
-			"WORKDIR /app/\n" +
-			"CMD [\"./macscout\"]\n",
-	}, ".nixpacks/Dockerfile", &api.PlanDeclaration{
-		Source:     "Makefile",
-		Why:        "Makefile declares how this app is built, and the plan runs it rather than guessing",
-		Confidence: 0.72,
-	}, nil
+			".nixpacks/Dockerfile": "FROM ubuntu:noble\n" +
+				"ENTRYPOINT [\"/bin/bash\", \"-l\", \"-c\"]\n" +
+				"RUN nix-env -if .nixpacks/nixpkgs-e89cf1c9.nix && nix-collect-garbage -d\n" +
+				"RUN --mount=type=cache,id=x,target=/root/.cache/go-build go mod download\n" +
+				"RUN --mount=type=cache,id=x,target=/root/.cache/go-build make build\n" +
+				"RUN true\n\n" +
+				"FROM ubuntu:noble\n" +
+				"WORKDIR /app/\n" +
+				"CMD [\"./macscout\"]\n",
+		}, ".nixpacks/Dockerfile", &api.PlanDeclaration{
+			Source:     "Makefile",
+			Why:        "Makefile declares how this app is built, and the plan runs it rather than guessing",
+			Confidence: 0.72,
+		}, nil
 }
 
 // R-094 tier 3: the maintainer's own build commands rank above tier 4's

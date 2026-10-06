@@ -155,6 +155,10 @@ type Job struct {
 	Runtime  TrialRunner
 	Builder  Builder
 
+	// Images reads an image app's image from its registry before the trial,
+	// with the app's credential: its digest, platforms and configuration.
+	Images ImageReader
+
 	// TrialTimeout bounds the observation. Zero uses DefaultTrialTimeout.
 	TrialTimeout time.Duration
 
@@ -368,16 +372,47 @@ func (j *Job) runImage(ctx context.Context, appID string, src spec.Source) Propo
 			Why: "Pando needs to know where to send traffic once the app is running.",
 		}},
 	}
-	return j.prebuilt(ctx, appID, src, candidate)
+
+	// The registry before the trial (issue #41): the digest the tag names now
+	// is what the revision pins, and the image's own configuration answers
+	// what the trial would otherwise have to — or, with no runtime to trial
+	// on, what would otherwise be asked.
+	src, insp, refused := j.readImage(ctx, appID, src)
+	if insp != nil {
+		var evidence []string
+		candidate.Draft, candidate.Questions, evidence = applyImageConfig(candidate.Draft, candidate.Questions, insp.Config)
+		candidate.Evidence = append(candidate.Evidence, evidence...)
+	}
+	if refused != nil {
+		return Proposal{
+			Winner:    candidate,
+			Status:    StatusBlocked,
+			Blocked:   errs.As(refused),
+			DraftSpec: j.assemble(appID, src, candidate.Draft),
+		}
+	}
+
+	var auth *api.RegistryAuth
+	if j.Images != nil {
+		if a, err := j.Images.Auth(ctx, appID, src.Image); err == nil {
+			auth = pullAuth(a)
+		}
+	}
+	return j.prebuiltWith(ctx, appID, src, candidate, auth)
 }
 
 // prebuilt finishes a proposal for an image that already exists: the trial run
 // answers the port if it can, and the rest is the candidate as given.
 func (j *Job) prebuilt(ctx context.Context, appID string, src spec.Source, candidate Candidate) Proposal {
+	return j.prebuiltWith(ctx, appID, src, candidate, nil)
+}
+
+// prebuiltWith is prebuilt for an image that may be private.
+func (j *Job) prebuiltWith(ctx context.Context, appID string, src spec.Source, candidate Candidate, auth *api.RegistryAuth) Proposal {
 	draft := candidate.Draft
 	proposal := Proposal{Winner: candidate, Questions: candidate.Questions}
 
-	trial := j.trial(ctx, draft)
+	trial := j.trialWith(ctx, draft, auth)
 	draft, proposal.Questions = ApplyTrial(draft, proposal.Questions, trial)
 	proposal.TrialLog = trial.Log
 	proposal.Trial = trial.Observation()
@@ -412,6 +447,11 @@ func (j *Job) prebuilt(ctx context.Context, appID string, src spec.Source, candi
 // built: each turns deferred questions back into real ones, which is worse for
 // the user and not a failure of detection.
 func (j *Job) trial(ctx context.Context, draft Draft) Trial {
+	return j.trialWith(ctx, draft, nil)
+}
+
+// trialWith is trial for an image pulled with credentials.
+func (j *Job) trialWith(ctx context.Context, draft Draft, auth *api.RegistryAuth) Trial {
 	if j.Runtime == nil {
 		return Trial{}
 	}
@@ -446,6 +486,7 @@ func (j *Job) trial(ctx context.Context, draft Draft) Trial {
 		Entrypoint:    primary.Entrypoint,
 		WorkingDir:    primary.WorkingDir,
 		Env:           env,
+		PullAuth:      auth,
 		DeclaredPaths: declaredPaths(primary),
 		Timeout:       timeout,
 	})

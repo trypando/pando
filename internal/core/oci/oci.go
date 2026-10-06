@@ -141,6 +141,26 @@ func (i Inspection) Supports(host Platform) bool {
 	return false
 }
 
+// PlatformMismatch is the refusal for an image with no build for the host:
+// said before anything is pulled, rather than as a container that exits on
+// start with "exec format error".
+func PlatformMismatch(image string, host Platform, published []Platform) error {
+	names := make([]string, 0, len(published))
+	for _, p := range published {
+		names = append(names, p.String())
+	}
+	listed := "no platform Pando recognizes"
+	if len(names) > 0 {
+		listed = strings.Join(names, ", ")
+	}
+	return errs.Newf(errs.PlanImagePlatformUnsupported,
+		"The image %s is published for %s, and this server runs %s, so it cannot run here.",
+		image, listed, host.String()).
+		WithRemedy("Use a tag of the image that is built for "+host.String()+", or ask whoever publishes it for a multi-platform build.").
+		WithDetail("host_platform", host.String()).
+		WithDetail("image_platforms", names)
+}
+
 // Inspector reads images from registries.
 type Inspector struct {
 	// Transport is the HTTP transport registry calls go through. Nil means the
@@ -297,13 +317,13 @@ func readable(reference string, ref name.Reference, auth *Auth, err error) error
 				return errs.Newf(errs.ValidInvalid,
 					"The registry %s would not let Pando read the image %s without signing in. "+
 						"Either the image is private or it does not exist.", registry, reference).
-					WithRemedy("If the image is private, add a registry credential to the app: a username and a token " +
-						"that can read " + repo + ", or AWS access keys for an ECR repository.").
+					WithRemedy("If the image is private, add a registry credential to the app: a username and a token "+
+						"that can read "+repo+", or AWS access keys for an ECR repository.").
 					WithDetail("registry", registry)
 			}
 			return errs.Newf(errs.ValidInvalid,
 				"The registry %s refused the app's registry credential for the image %s.", registry, reference).
-				WithRemedy("Check that the credential is current and can read " + repo + ", then replace it in the app's settings.").
+				WithRemedy("Check that the credential is current and can read "+repo+", then replace it in the app's settings.").
 				WithDetail("registry", registry)
 		case http.StatusNotFound:
 			return errs.Newf(errs.ValidInvalid,

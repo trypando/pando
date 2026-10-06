@@ -52,7 +52,7 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 		_, _ = a.cli.NetworkRemove(context.WithoutCancel(ctx), networkID, client.NetworkRemoveOptions{})
 	}()
 
-	if err := a.ensureImage(ctx, req.Image, forTrial); err != nil {
+	if err := a.ensureImageWith(ctx, req.Image, req.PullAuth, forTrial); err != nil {
 		return api.TrialResult{}, err
 	}
 
