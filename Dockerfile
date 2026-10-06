@@ -37,7 +37,7 @@
 # source change recompiles what changed rather than every dependency. CI keeps
 # the Go build cache between runs too (the image job in ci.yml). The paths are
 # set rather than left to each image's defaults because CI names them.
-FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:0fbbb101cb3c451453aa0d3e7a87c378c6bd784d8cfbfd4958f97dd3bd0197e6 AS console
+FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:89778e746908997996f8e1de415d9834154eac97a43298ea54bdb74f78116430 AS console
 ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build npm_config_cache=/cache/npm
 WORKDIR /src
 RUN apk add --no-cache nodejs npm
@@ -54,7 +54,7 @@ COPY . .
 RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-build \
     cd console && npm run build
 
-FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:0fbbb101cb3c451453aa0d3e7a87c378c6bd784d8cfbfd4958f97dd3bd0197e6 AS build
+FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:89778e746908997996f8e1de415d9834154eac97a43298ea54bdb74f78116430 AS build
 ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build
 ARG TARGETOS
 ARG TARGETARCH
