@@ -538,9 +538,14 @@ func (r *runner) proxyRequest(ctx context.Context) {
 	// Members and others are separate classes, so the report's status counts
 	// say which side an unexpected answer came from: a member refused is a
 	// finding about Pando, a stranger let in is a worse one.
+	// A public app lets in anyone, signed in or not (R-075), so only a
+	// private app refuses a user without a grant of their own.
 	want, who := http.StatusForbidden, "not granted"
-	if a.Members[user] {
+	switch {
+	case a.Members[user]:
 		want, who = http.StatusOK, "granted"
+	case a.Anonymous:
+		want, who = http.StatusOK, "not granted, public app"
 	}
 	r.hit(ctx, "proxy", "real app by "+how+", signed in, "+who, http.MethodGet, url, "", Credential{Cookie: cookie}, expect(want))
 }

@@ -446,7 +446,7 @@ func TestR059_OrphanedDelegatedTokenEndToEnd(t *testing.T) {
 	alice := seedUser(t, db, "alice")
 	appID := seedApp(t, db, alice.ID)
 
-	tokens := state.NewTokens(db)
+	tokens := state.NewTokens(db, testTokenKey)
 	issued, err := tokens.Create(ctx, state.TokenDelegated, "ci", alice.ID, alice.ID, nil)
 	require.NoError(t, err)
 
@@ -475,13 +475,13 @@ func TestR063_TokenSecretIsShownOnceAndStoredHashed(t *testing.T) {
 	db := connected(t)
 	alice := seedUser(t, db, "alice")
 
-	issued, err := state.NewTokens(db).Create(ctx, state.TokenDelegated, "ci", alice.ID, alice.ID, nil)
+	issued, err := state.NewTokens(db, testTokenKey).Create(ctx, state.TokenDelegated, "ci", alice.ID, alice.ID, nil)
 	require.NoError(t, err)
 
 	var stored string
 	require.NoError(t, db.QueryRow(ctx, `SELECT hash FROM tokens WHERE id = $1`, issued.Token.ID).Scan(&stored))
 	require.NotContains(t, stored, issued.Secret.Reveal(), "the secret must not be recoverable from the row")
-	require.True(t, strings.HasPrefix(stored, "sha256:"), "a SHA-256 digest (issue #93)")
+	require.True(t, strings.HasPrefix(stored, "hmac-sha256:"), "an HMAC-SHA-256 digest under the token key (issue #93)")
 }
 
 // TestTokenAuthenticationFailuresAreIndistinguishable asserts that a caller
@@ -491,7 +491,7 @@ func TestTokenAuthenticationFailuresAreIndistinguishable(t *testing.T) {
 	ctx := context.Background()
 	db := connected(t)
 	alice := seedUser(t, db, "alice")
-	tokens := state.NewTokens(db)
+	tokens := state.NewTokens(db, testTokenKey)
 
 	issued, err := tokens.Create(ctx, state.TokenDelegated, "ci", alice.ID, alice.ID, nil)
 	require.NoError(t, err)
@@ -529,7 +529,7 @@ func TestTokenShapesAreEnforced(t *testing.T) {
 	ctx := context.Background()
 	db := connected(t)
 	alice := seedUser(t, db, "alice")
-	tokens := state.NewTokens(db)
+	tokens := state.NewTokens(db, testTokenKey)
 
 	_, err := tokens.Create(ctx, state.TokenDelegated, "no owner", "", alice.ID, nil)
 	require.Error(t, err, "a delegated token needs an owner (R-058)")

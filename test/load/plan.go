@@ -214,15 +214,17 @@ func appSpec(t Tier, j int, baseDomain, createdBy string) (spec.AppSpec, error) 
 }
 
 // realAppSpec is the request body for a real app's spec: the replicas test's
-// prebuiltSpec, in port mode at port.
-func realAppSpec(port int) string {
+// prebuiltSpec. In path mode: a port written into a spec is kept as written and
+// never allocated, so nothing would listen on it. Seeding moves the app to port
+// mode through the routing endpoint, which allocates one.
+func realAppSpec() string {
 	return `{
 		"schema_version": 1,
 		"source": {"type": "image", "image": "nginx:alpine"},
 		"build": {"strategy": "prebuilt"},
 		"workloads": [{"name": "web", "primary": true, "exposed": true,
 			"ports": [{"number": 80, "protocol": "http", "source": "user"}]}],
-		"routing": {"adapter_ref": "rte_loopback", "mode": "port", "port": ` + fmt.Sprint(port) + `},
+		"routing": {"adapter_ref": "rte_loopback", "mode": "path"},
 		"runtime": {"adapter_ref": "rt_docker", "isolation_floor": 10},
 		"deploy": {"strategy": "recreate"}
 	}`
