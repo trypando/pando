@@ -197,6 +197,10 @@ func statusFor(c Code) int {
 		return http.StatusNotFound
 	case c == Internal:
 		return http.StatusInternalServerError
+	case c == RateLimited:
+		// R-075a: a visitor who must wait is told so, not shown a server
+		// fault.
+		return http.StatusTooManyRequests
 	case hasPrefix(c, "AUTH_"):
 		return http.StatusUnauthorized
 	case hasPrefix(c, "PERM_"), hasPrefix(c, "POLICY_"):

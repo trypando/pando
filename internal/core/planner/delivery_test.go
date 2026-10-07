@@ -31,6 +31,31 @@ var (
 	hasAlway = installRegistry{configured: true, always: true}
 )
 
+// unreadableRegistry is an install registry whose settings cannot be read.
+type unreadableRegistry struct{ err error }
+
+func (u unreadableRegistry) CurrentRegistry(context.Context) (planner.InstallRegistry, error) {
+	return nil, u.err
+}
+
+// TestR105_AnInstallRegistryThatCannotBeReadFailsThePlanSayingSo asserts that
+// a plan that needs to know about the install's registry, and cannot read it,
+// fails with that error rather than planning as though there were none — which
+// would refuse a pull-only runtime for the wrong reason, or import a build
+// the install meant to push.
+func TestR105_AnInstallRegistryThatCannotBeReadFailsThePlanSayingSo(t *testing.T) {
+	rt := capableRuntime()
+	rt.caps.ImageDelivery = []api.ImageDelivery{api.ImageDeliveryRegistry}
+	pushing := capableBuilder()
+	pushing.caps.SupportsPush = true
+	gone := errs.New(errs.Internal, "Pando could not read the install registry's settings.")
+	p := planner.New(registry(t, rt, capableRouting(), pushing), policy.Static(policy.Default()), fixedAllocations{}).
+		WithInstallRegistry(unreadableRegistry{gone})
+
+	_, err := p.Check(context.Background(), plannableSpec())
+	require.ErrorIs(t, err, gone)
+}
+
 // TestR254_HowABuildReachesTheRuntimeIsDecidedFromData asserts R-254 for image
 // delivery: the runtime's ImageDelivery, the builder's SupportsPush and the
 // install's registry decide it, with import preferred unless the install sends
