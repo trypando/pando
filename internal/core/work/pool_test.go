@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // queue is an in-memory stand-in for a table of queued work: Claim takes from
@@ -179,4 +182,112 @@ func TestR211_EachRunsAtMostNAtOnce(t *testing.T) {
 	})
 	require.Equal(t, int32(25), visited.Load())
 	require.LessOrEqual(t, most.Load(), int32(4))
+}
+
+// TestR256_AQueueThatCannotBeReadIsTriedAgainAtTheNextPoll asserts that a
+// failed claim — the database briefly unreachable — is logged and does not
+// stop the pool, and that a pool with no limit set still runs one at a time.
+func TestR256_AQueueThatCannotBeReadIsTriedAgainAtTheNextPoll(t *testing.T) {
+	t.Parallel()
+	core, logs := observer.New(zap.WarnLevel)
+	var claims, running, most atomic.Int32
+	ran := make(chan int, 3)
+	pool := &Pool[int]{
+		Name: "flaky",
+		Poll: 5 * time.Millisecond,
+		Claim: func(_ context.Context, n int) ([]int, error) {
+			switch claims.Add(1) {
+			case 1:
+				return nil, errors.New("connection refused")
+			case 2:
+				return []int{1, 2, 3}[:n], nil
+			case 3:
+				return []int{2, 3}[:n], nil
+			case 4:
+				return []int{3}[:n], nil
+			}
+			return nil, nil
+		},
+		Run: func(_ context.Context, item int) {
+			now := running.Add(1)
+			if now > most.Load() {
+				most.Store(now)
+			}
+			time.Sleep(time.Millisecond)
+			running.Add(-1)
+			ran <- item
+		},
+		Logger: zap.New(core),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go pool.Serve(ctx)
+
+	for want := 1; want <= 3; want++ {
+		select {
+		case item := <-ran:
+			require.Equal(t, want, item)
+		case <-time.After(5 * time.Second):
+			t.Fatal("the pool stopped claiming after a failed claim")
+		}
+	}
+	require.Equal(t, int32(1), most.Load(), "no limit set means one at a time")
+	warned := logs.FilterMessage("could not take work from the queue").All()
+	require.Len(t, warned, 1)
+	require.Equal(t, "flaky", warned[0].ContextMap()["queue"])
+}
+
+// TestR256_AStoppingPoolReleasesWorkThatOutlastsTheDrain asserts that a
+// stopping pool does not wait for good on work that ignores cancellation: once
+// Drain has passed, what is still running is released anyway.
+func TestR256_AStoppingPoolReleasesWorkThatOutlastsTheDrain(t *testing.T) {
+	t.Parallel()
+	q := &queue{waiting: []int{9}}
+	started, unblock := make(chan struct{}), make(chan struct{})
+	defer close(unblock)
+	pool := &Pool[int]{
+		Claim:   q.claim,
+		Run:     func(context.Context, int) { close(started); <-unblock },
+		Release: q.release,
+		Drain:   20 * time.Millisecond,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		pool.Serve(ctx)
+		close(done)
+	}()
+	<-started
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the pool waited past its drain")
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	require.Equal(t, []int{9}, q.released, "still running at the drain, so handed back")
+}
+
+// TestR211_EachSkipsWhatItHadNotStartedWhenStopped asserts that a pass whose
+// context ends starts nothing more, and that a bound below one is one.
+func TestR211_EachSkipsWhatItHadNotStartedWhenStopped(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	var visited, running, most atomic.Int32
+	Each(ctx, 0, []int{1, 2, 3, 4, 5}, func(context.Context, int) {
+		now := running.Add(1)
+		if now > most.Load() {
+			most.Store(now)
+		}
+		if visited.Add(1) == 2 {
+			cancel()
+			// Still holding the only slot, so the pass sees the context end
+			// rather than a free slot.
+			time.Sleep(10 * time.Millisecond)
+		}
+		running.Add(-1)
+	})
+	require.Equal(t, int32(2), visited.Load(), "nothing after the context ended")
+	require.Equal(t, int32(1), most.Load(), "a bound of zero runs one at a time")
 }
