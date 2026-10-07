@@ -162,11 +162,14 @@ func (d *Deployments) RecordPriorState(ctx context.Context, deploymentID, appSta
 func (d *Deployments) PriorState(ctx context.Context, deploymentID string) (string, error) {
 	var st *string
 	err := d.db.QueryRow(ctx, `SELECT prior_state FROM deployments WHERE id = $1`, deploymentID).Scan(&st)
-	if errors.Is(err, pgx.ErrNoRows) || st == nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
 		return "", errs.Wrap(errs.Internal, "Could not read the deploy.", err)
+	}
+	if st == nil {
+		return "", nil
 	}
 	return *st, nil
 }

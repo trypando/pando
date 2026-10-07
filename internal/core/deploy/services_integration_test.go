@@ -152,6 +152,51 @@ func TestR148_ARestoredWorkloadGetsTheEnvironmentItWasDeployedWith(t *testing.T)
 		"the stored credentials, never new ones that would not open the data on disk")
 }
 
+// TestR148_RestoringAnEnvironmentNeverProvisionsAService asserts R-148's
+// limit: the reconciler restores what exists and creates nothing. A slot with
+// no recorded instance, or one whose type no adapter now provisions, is
+// skipped rather than stood up; a bound slot is not a service at all; and an
+// adapter that refuses stops the correction instead of starting the app
+// without its connection string.
+func TestR148_RestoringAnEnvironmentNeverProvisionsAService(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r, fake, s := provisioningRunner(t)
+	r.secrets = r.secretStore
+	cacheKey := "CACHE_URL"
+	s.Slots = append(s.Slots, spec.Slot{Key: cacheKey, Type: spec.SlotRedis,
+		Resolution: &spec.Resolution{Mode: spec.ResolutionBound, Target: "redis://cache:6379"}})
+	s.Workloads[0].Env = append(s.Workloads[0].Env, spec.EnvEntry{Key: cacheKey, SlotRef: &cacheKey})
+
+	// Never deployed: nothing recorded, so nothing is provisioned.
+	s.Slots[0].Required = false
+	s.Slots[0].Resolution = nil
+	envs, err := r.Environments(ctx, s)
+	require.NoError(t, err)
+	require.Empty(t, fake.calls, "an optional slot nobody filled is not a reason to provision")
+	require.Equal(t, "redis://cache:6379", envs["web"][cacheKey].Reveal())
+
+	s.Slots[0].Resolution = &spec.Resolution{Mode: spec.ResolutionProvisioned}
+	_, err = r.Environments(ctx, s)
+	require.Error(t, err, "the app reads a slot that has no service yet")
+	require.Empty(t, fake.calls, "the reconciler never creates a database; a deploy does")
+
+	_, err = r.provision(ctx, s, io.Discard)
+	require.NoError(t, err)
+	calls := len(fake.calls)
+
+	fake.failing = true
+	_, err = r.Environments(ctx, s)
+	require.ErrorContains(t, err, "refused")
+	fake.failing = false
+
+	// The recorded instance's type has no adapter any more.
+	s.Slots[0].Type = spec.SlotRedis
+	_, err = r.Environments(ctx, s)
+	require.Error(t, err, "without the service there is no connection string to give the app")
+	require.Len(t, fake.calls, calls+1, "only the refused attempt reached the adapter")
+}
+
 func TestASlotNothingCanProvisionIsRefusedWithTheWayOut(t *testing.T) {
 	t.Parallel()
 	r, _, s := provisioningRunner(t)

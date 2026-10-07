@@ -343,6 +343,33 @@ func TestR148_AKilledWorkloadIsRestoredWithItsEnvironment(t *testing.T) {
 	require.Equal(t, "from-the-secrets-store", applied.Workloads[0].Env["API_KEY"].Reveal())
 }
 
+// unresolvableEnvironments is a secrets store that cannot answer.
+type unresolvableEnvironments struct{}
+
+func (unresolvableEnvironments) Environments(context.Context, *spec.AppSpec) (map[string]map[string]secret.Value, error) {
+	return nil, errors.New("the secrets adapter is unavailable")
+}
+
+// TestR148_AWorkloadIsNeverRestoredWithoutItsEnvironment asserts the other
+// side of R-148's restore: when the environment cannot be resolved, nothing
+// is started. A workload re-created without its variables is a second
+// failure, not a correction; the attempt counts toward R-150 instead, and
+// the app is degraded while it does.
+func TestR148_AWorkloadIsNeverRestoredWithoutItsEnvironment(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, state.StateRunning)
+	h.rec.Environments = unresolvableEnvironments{}
+	h.runtime.setObserved(api.ObservedBundle{Exists: true})
+
+	h.rec.Tick(context.Background())
+
+	h.runtime.mu.Lock()
+	applied := h.runtime.applied
+	h.runtime.mu.Unlock()
+	require.Empty(t, applied.Workloads, "nothing is started without its environment")
+	require.Equal(t, state.StateDegraded, h.state(t))
+}
+
 // The second half, and the one that matters: killing it repeatedly reaches
 // failed and stays there (R-150, R-151).
 func TestR150_RepeatedFailureReachesFailedAndStops(t *testing.T) {

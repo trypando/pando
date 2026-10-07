@@ -1,12 +1,15 @@
 package deploy
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
 
@@ -231,4 +234,41 @@ func TestR132_AnOptionalSlotLeftEmptyLeavesItsVariableUnset(t *testing.T) {
 	s.Slots[1].Required = true
 	_, err = resolveEnv(s, s.Workloads[0], nil, provisionedPostgres())
 	require.Error(t, err, "a required one still refuses")
+}
+
+// storedSecrets is an app's secrets, in memory, or a store that fails.
+type storedSecrets struct {
+	values map[string]secret.Value
+	err    error
+}
+
+func (s storedSecrets) Resolve(context.Context, string) (map[string]secret.Value, error) {
+	return s.values, s.err
+}
+func (s storedSecrets) Versions(context.Context, string) (map[string]int, error) { return nil, s.err }
+
+// TestR148_AnEnvironmentThatCannotBeResolvedIsNotRestoredWithoutIt asserts
+// R-148: the environment the reconciler restores a workload with is resolved
+// as a deploy resolves it, refusals included. A secret store that cannot
+// answer, or a variable naming a secret the app does not have, stops the
+// correction rather than starting the workload with that variable missing.
+func TestR148_AnEnvironmentThatCannotBeResolvedIsNotRestoredWithoutIt(t *testing.T) {
+	ctx := context.Background()
+	s := specWithProvisionedSlot()
+	s.Slots = nil
+	ref := "API_KEY"
+	s.Workloads[0].Env = []spec.EnvEntry{{Key: "API_KEY", SecretRef: &ref}}
+
+	_, err := (&Runner{secrets: storedSecrets{err: errors.New("the secrets adapter is unavailable")}}).Environments(ctx, s)
+	require.ErrorContains(t, err, "unavailable")
+
+	_, err = (&Runner{secrets: storedSecrets{}}).Environments(ctx, s)
+	var e *errs.Error
+	require.ErrorAs(t, err, &e)
+	require.Equal(t, errs.StateInvalid, e.Code)
+	require.Contains(t, e.Message, "API_KEY")
+
+	envs, err := (&Runner{secrets: storedSecrets{values: map[string]secret.Value{"API_KEY": secret.New("k-1")}}}).Environments(ctx, s)
+	require.NoError(t, err)
+	require.Equal(t, "k-1", envs["web"]["API_KEY"].Reveal())
 }
