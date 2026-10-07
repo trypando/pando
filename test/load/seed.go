@@ -431,6 +431,14 @@ func (s *seeder) realApp(ctx context.Context, c *Client, cred Credential, k int)
 		if _, err := c.JSON(ctx, http.MethodPost, fmt.Sprintf("/apps/%s/specs/%d/pin", app, rev.Revision), cred, "", nil); err != nil {
 			return "", err
 		}
+		// A port written into a spec is not an allocation: only the routing
+		// endpoint allocates one (design 03 §4.2), and only an allocated port
+		// has a listener on every replica. Without this every request by port
+		// was refused at the balancer.
+		if _, err := c.JSON(ctx, http.MethodPut, "/apps/"+app+"/routing", cred,
+			`{"adapter_ref":"rte_loopback","mode":"port","confirm":true}`, nil); err != nil {
+			return "", fmt.Errorf("allocating a port for %s: %w", name, err)
+		}
 	}
 	var dep struct {
 		ID string `json:"id"`
