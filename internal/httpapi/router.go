@@ -169,6 +169,11 @@ type Server struct {
 	// #41). Nil on an install that cannot store one, where setting one says so.
 	Images RegistryCredentials
 
+	// ImageRegistry is the install's image registry, which builds are pushed
+	// to for a runtime that pulls (issue #72). Nil reports none and stores
+	// nothing.
+	ImageRegistry ImageRegistry
+
 	// Defaults fills in what an author left out of a spec — the install's
 	// adapters, its routing shape, and the retention caps R-211 and R-223 set.
 	// Nil means a hand-written spec is taken exactly as written, which is how
@@ -560,6 +565,12 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/adapters", s.handleListAdapters)
 		r.Post("/adapters", s.handleCreateAdapter)
 		r.Get("/adapters/kinds", s.handleAdapterKinds)
+
+		// The install's image registry (issue #72): read with install.view,
+		// changed with install.adapters.manage, like the adapters.
+		r.Get("/image-registry", s.handleGetImageRegistry)
+		r.Put("/image-registry", s.handlePutImageRegistry)
+		r.Delete("/image-registry", s.handleDeleteImageRegistry)
 
 		// Which AI adapter handles each AI function, and on which model
 		// (R-259). Read with install.view, changed with

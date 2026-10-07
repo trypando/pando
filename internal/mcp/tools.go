@@ -574,6 +574,53 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_get_image_registry",
+		Description: "The image registry builds are pushed to when a runtime pulls rather than " +
+			"imports: its URL, username, kind, layout, whether plain HTTP is allowed, and whether a " +
+			"password is set — never the password. `fixed` lists settings made in the startup " +
+			"configuration, which cannot be changed through the API.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/image-registry", nil, nil
+		},
+	},
+	{
+		Name: "pando_set_image_registry",
+		Description: "Change the stored image registry. Fields left out are unchanged. The password " +
+			"is stored encrypted and never shown again; an empty password removes it. Every Pando " +
+			"replica uses the change at its next push or pull.",
+		Schema: schema(map[string]any{
+			"url":      str("The registry and an optional path prefix, such as https://registry.internal:5000."),
+			"username": str("The username Pando pushes and pulls with, or the AWS access key ID for ecr."),
+			"password": str("The password, or the AWS secret access key for ecr. Empty removes it."),
+			"kind":     map[string]any{"type": "string", "enum": []string{"basic", "ecr"}},
+			"layout":   map[string]any{"type": "string", "enum": []string{"per_app", "single"}},
+			"insecure": map[string]any{"type": "boolean", "description": "Allow plain HTTP to the registry."},
+			"always": map[string]any{"type": "boolean",
+				"description": "Send every build through the registry, even on a runtime that can import it."},
+		}),
+		request: func(args map[string]any) (string, string, any, error) {
+			body := map[string]any{}
+			for _, k := range []string{"url", "username", "password", "kind", "layout", "insecure", "always"} {
+				if v, ok := args[k]; ok {
+					body[k] = v
+				}
+			}
+			if len(body) == 0 {
+				return "", "", nil, fmt.Errorf("give at least one of url, username, password, kind, layout, insecure or always")
+			}
+			return "PUT", "/image-registry", body, nil
+		},
+	},
+	{
+		Name:        "pando_clear_image_registry",
+		Description: "Remove the stored image registry and its password. Settings made in the startup configuration still apply.",
+		Schema:      schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "DELETE", "/image-registry", nil, nil
+		},
+	},
+	{
 		Name: "pando_favorite_app",
 		Description: "Pin an app to the top of your own launcher. It grants nothing and only you " +
 			"see it; you must be able to open the app.",

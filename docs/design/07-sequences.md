@@ -184,6 +184,8 @@ Admin → POST /api/v1/backups { kind: "dr_bundle", passphrase }
  3. export the local secrets encryption key           (R-212)
  4. export adapter configs and host policy
  5. snapshot app volumes + provisioned services
+ 5a. copy uploaded source archives (uploads/, O-37) — the registry's
+     images are not in the bundle; an image is rebuilt after a restore
  6. build a manifest: object counts, checksums, versions
  7. encrypt the whole bundle under the SUPPLIED PASSPHRASE  (R-213)
       — never a key stored on the host

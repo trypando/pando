@@ -63,6 +63,7 @@ type RuntimeCapabilities struct {
     ReportsUsage            bool   // R-245
     MaxWorkloadsPerBundle   int    // 0 = unlimited
     SupportsEgressRestriction bool // enforces NetworkPlan.Egress (R-186)
+    ImageDelivery           []ImageDelivery // how a built image reaches it: import | registry
 }
 
 type RoutingCapabilities struct {
@@ -78,8 +79,24 @@ type BuilderCapabilities struct {
     Strategies      []BuildStrategy // dockerfile | compose | buildpack | static | prebuilt
     SupportsCache   bool
     SupportsEgressRestriction bool  // R-118
+    SupportsPush    bool            // can push to a registry with a per-build credential
 }
 ```
+
+**[D] Image delivery (issue #72, PR 5).** `ImageDelivery` replaces the single `SupportsImageImport`
+bool. It lists, in the runtime's order of preference, how an image Pando built can reach it:
+`import` (the runtime takes the image as a stream, `ImportImage`) or `registry` (the builder pushes to
+the install's registry and the runtime pulls by digest, with `WorkloadPlan.PullAuth`). Single-host
+Docker reports `[import, registry]`; a runtime spanning machines reports `[registry]`; empty means it
+runs only published images. The planner decides from data (`planner.ChooseDelivery`, plan step 5a):
+import when the runtime takes it and the install does not send every build through its registry
+(`PANDO_REGISTRY_ALWAYS`); otherwise the registry when the runtime pulls, one is configured
+(`PANDO_REGISTRY_URL`) and the builder has `SupportsPush`; otherwise `PLAN_CAPABILITY_UNSUPPORTED`
+naming what is missing. The deploy asks again before building. `BuildRequest` carries exactly one of
+`ImageSink` and `Push`, and a `Tag` (the deployment ID) so no build is ever named by a tag the next
+build moves (R-146). `ImportImage` returns the loaded image's content-addressed ID; a push returns
+`repository@digest`. Either is what the deployment records and the reconciler restores.
+`notes-image-registry-issue-72.md` has the rest.
 
 ---
 

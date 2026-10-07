@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ type Config struct {
 	Apps       Apps       `mapstructure:"apps"`
 	Work       Work       `mapstructure:"work"`
 	Retention  Retention  `mapstructure:"retention"`
+	Registry   Registry   `mapstructure:"registry"`
 
 	// File is the config file read at startup, or empty when there was none.
 	File string `mapstructure:"-"`
@@ -40,6 +42,12 @@ type Config struct {
 	// Adapters are the adapters declared in the config file, with the AI
 	// functions each handles (adapters.go).
 	Adapters []AdapterDecl `mapstructure:"-"`
+
+	// RegistrySet is each install registry field the startup configuration
+	// sets, with where (url, username, password, kind, layout, insecure,
+	// always). Those win over what is stored from the console, which shows
+	// them as fixed (R-271).
+	RegistrySet map[string]Source `mapstructure:"-"`
 }
 
 // Reconciler tunes R-149's retry backoff and R-150's give-up rule.
@@ -100,6 +108,69 @@ type Retention struct {
 	SSOFlows          time.Duration `mapstructure:"sso_flows"`
 	Events            time.Duration `mapstructure:"events"`
 	DeletedApps       time.Duration `mapstructure:"deleted_apps"`
+}
+
+// Registry is the install's image registry, where builds go for a runtime
+// that pulls rather than imports (issue #72, PR 5,
+// docs/design/notes-image-registry-issue-72.md). Startup configuration only,
+// like the database URL. Empty URL: no registry, which single-host Docker does
+// not need (O-34).
+type Registry struct {
+	// URL is the registry and an optional path prefix:
+	// https://registry.internal:5000, or the organization's registry such as
+	// 123456789012.dkr.ecr.us-east-1.amazonaws.com/pando.
+	URL string `mapstructure:"url"`
+
+	// Username and Password are the one credential Pando pushes and pulls
+	// with (O-36). The password may be given as a file instead
+	// (PasswordFile), so it need not be in the environment.
+	Username     string `mapstructure:"username"`
+	Password     string `mapstructure:"password"`
+	PasswordFile string `mapstructure:"password_file"`
+
+	// Kind is basic (the default) or ecr, where Username and Password are an
+	// AWS access key ID and its secret.
+	Kind string `mapstructure:"kind"`
+
+	// Layout is per_app (the default) or single.
+	Layout string `mapstructure:"layout"`
+
+	// Insecure permits plain HTTP (O-35). Off by default.
+	Insecure bool `mapstructure:"insecure"`
+
+	// Always sends every build through the registry, even for a runtime that
+	// can import it. Off by default.
+	Always bool `mapstructure:"always"`
+}
+
+// registryFields are the install registry's fields, as the API names them.
+var registryFields = []string{"url", "username", "password", "kind", "layout", "insecure", "always"}
+
+func registrySetOf(v *viper.Viper, path string) map[string]Source {
+	out := map[string]Source{}
+	for _, f := range registryFields {
+		src := sourceOf(v, "registry."+f, path)
+		if f == "password" && src.Kind == "default" {
+			src = sourceOf(v, "registry.password_file", path)
+		}
+		if src.Kind != "default" {
+			out[f] = src
+		}
+	}
+	return out
+}
+
+// Secret is the registry password: PasswordFile's contents when it is set,
+// with surrounding whitespace removed, and Password otherwise.
+func (r Registry) Secret() (string, error) {
+	if r.PasswordFile == "" {
+		return r.Password, nil
+	}
+	raw, err := os.ReadFile(r.PasswordFile)
+	if err != nil {
+		return "", fmt.Errorf("PANDO_REGISTRY_PASSWORD_FILE is %q, which Pando could not read: %w", r.PasswordFile, err)
+	}
+	return strings.TrimSpace(string(raw)), nil
 }
 
 // Apps holds the resource limits every new app inherits (R-240).
@@ -350,6 +421,14 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("retention.events", time.Duration(0))
 	v.SetDefault("retention.deleted_apps", time.Duration(0))
 	v.SetDefault("bootstrap.admin_password", "")
+	v.SetDefault("registry.url", "")
+	v.SetDefault("registry.username", "")
+	v.SetDefault("registry.password", "")
+	v.SetDefault("registry.password_file", "")
+	v.SetDefault("registry.kind", "basic")
+	v.SetDefault("registry.layout", "per_app")
+	v.SetDefault("registry.insecure", false)
+	v.SetDefault("registry.always", false)
 
 	// Every key in boundEnv is bound explicitly — see there for why that is not
 	// belt-and-braces.
@@ -376,6 +455,7 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	cfg.Adapters = adapters
+	cfg.RegistrySet = registrySetOf(v, path)
 	return &cfg, cfg.validate()
 }
 
@@ -406,6 +486,15 @@ var boundEnv = map[string]string{
 	"log.level":                "PANDO_LOG_LEVEL",
 
 	"apps.docker_credentials": "PANDO_APPS_DOCKER_CREDENTIALS",
+
+	"registry.url":           "PANDO_REGISTRY_URL",
+	"registry.username":      "PANDO_REGISTRY_USERNAME",
+	"registry.password":      "PANDO_REGISTRY_PASSWORD",
+	"registry.password_file": "PANDO_REGISTRY_PASSWORD_FILE",
+	"registry.kind":          "PANDO_REGISTRY_KIND",
+	"registry.layout":        "PANDO_REGISTRY_LAYOUT",
+	"registry.insecure":      "PANDO_REGISTRY_INSECURE",
+	"registry.always":        "PANDO_REGISTRY_ALWAYS",
 
 	// Not PANDO_BOOTSTRAP_ADMIN_PASSWORD, which is what the replacer would
 	// derive — this is the one setting an operator types from memory at the

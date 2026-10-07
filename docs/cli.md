@@ -897,6 +897,54 @@ Unlink a provider's identity from an account
 pando identity-provider unlink <user-id> <provider-id> <external-id>
 ```
 
+### `image-registry`
+
+See and set the registry builds are pushed to when a runtime pulls
+
+```
+pando image-registry
+```
+
+#### `image-registry clear`
+
+Remove the stored registry and its password; startup settings still apply
+
+```
+pando image-registry clear
+```
+
+#### `image-registry set`
+
+Change the stored registry; settings not given are unchanged
+
+```
+pando image-registry set
+```
+
+Changes the registry stored on the server. The password is read from the terminal
+(--password) and never shown again. Settings made in the server's startup configuration
+(PANDO_REGISTRY_*) win and cannot be changed here. Every replica uses the change at its
+next push or pull.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--always` |  | send every build through the registry, even on a runtime that imports |
+| `--insecure` |  | allow plain HTTP to the registry |
+| `--kind` |  | basic or ecr |
+| `--layout` |  | per_app or single |
+| `--password` |  | read the password (the secret access key for ecr) from the terminal |
+| `--remove-password` |  | remove the stored password |
+| `--url` |  | the registry and an optional path, such as https://registry.internal:5000 |
+| `--username` |  | the username Pando pushes and pulls with (the access key ID for ecr) |
+
+#### `image-registry show`
+
+Show the registry in effect, which settings are fixed at startup, and whether a password is set
+
+```
+pando image-registry show
+```
+
 ### `login`
 
 Sign in and store a token for this machine

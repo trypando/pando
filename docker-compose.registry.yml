@@ -1,0 +1,140 @@
+# An image registry beside Pando, for topologies whose runtime pulls built
+# images rather than importing them: Docker on several hosts and Kubernetes
+# (issue #72, docs/design/notes-image-registry-issue-72.md). Laid over the
+# shipped docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d
+#
+# The single-host install does not need it and does not get it (O-34): Docker
+# on one host imports each build directly. Use this file when the runtime pulls,
+# or to send every build through a registry on one host with
+# PANDO_REGISTRY_ALWAYS=true.
+#
+# Pando does not start or run the registry. Like Postgres, it is state the
+# topology supplies, and Pando connects to it (PANDO_REGISTRY_URL). To use the
+# organization's own registry instead, leave this file out and set
+# PANDO_REGISTRY_URL and the credential on the pando service.
+#
+# Before the first `up`:
+#
+#   1. A certificate every host that pulls trusts (O-35), for a hostname every
+#      host resolves, in ${PANDO_REGISTRY_CERTS:-./registry/certs}:
+#      registry.crt, registry.key, and ca.crt (the CA that signed it, so the
+#      build service trusts it too). Plain HTTP is permitted only by
+#      PANDO_REGISTRY_INSECURE=true (with PANDO_REGISTRY_SCHEME=http and
+#      PANDO_REGISTRY_TLS_CERTIFICATE= PANDO_REGISTRY_TLS_KEY= set empty), and
+#      every Docker host must then list the registry under insecure-registries
+#      in /etc/docker/daemon.json.
+#   2. The one credential (O-36), in ${PANDO_REGISTRY_AUTH:-./registry/auth}:
+#        htpasswd -Bbn pando "$PANDO_REGISTRY_PASSWORD" > registry/auth/htpasswd
+#      and PANDO_REGISTRY_PASSWORD exported in the shell that runs compose.
+#
+# Garbage collection (R-224, O-38) is in two halves. Pando deletes a deleted
+# app's manifests through the registry API when it tears the app down, which is
+# why storage.delete is enabled below. The layers those manifests referenced
+# are freed by Distribution's own garbage collector, which needs the registry
+# read-only while it runs. Run it weekly, from the host's scheduler:
+#
+#   # cron: 0 4 * * 0
+#   export PANDO_REGISTRY_READONLY=true
+#   docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d registry
+#   docker compose -f docker-compose.yml -f docker-compose.registry.yml run --rm registry-gc
+#   export PANDO_REGISTRY_READONLY=false
+#   docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d registry
+#
+# A deploy during that window fails its push and says the registry is
+# read-only; deploying again afterwards succeeds.
+
+services:
+  pando:
+    depends_on:
+      registry:
+        condition: service_started
+    environment:
+      PANDO_REGISTRY_URL: ${PANDO_REGISTRY_SCHEME:-https}://${PANDO_REGISTRY_HOST:-registry}:5000
+      PANDO_REGISTRY_USERNAME: ${PANDO_REGISTRY_USERNAME:-pando}
+      PANDO_REGISTRY_PASSWORD: ${PANDO_REGISTRY_PASSWORD:?set PANDO_REGISTRY_PASSWORD to the password in registry/auth/htpasswd}
+      PANDO_REGISTRY_INSECURE: ${PANDO_REGISTRY_INSECURE:-false}
+      PANDO_REGISTRY_ALWAYS: ${PANDO_REGISTRY_ALWAYS:-false}
+
+  # The build service pushes here with the credential Pando hands it per build
+  # (never written to its configuration). It needs to trust the registry's
+  # certificate, which is what this configuration and the CA mount give it.
+  buildkit:
+    configs:
+      - source: buildkitd
+        target: /home/user/.config/buildkit/buildkitd.toml
+    volumes:
+      - ${PANDO_REGISTRY_CERTS:-./registry/certs}/ca.crt:/etc/pando-registry/ca.crt:ro
+
+  # CNCF Distribution v3. Reached by Pando, the build service and each host's
+  # container runtime; not on any app's network, and every request needs the
+  # credential.
+  registry:
+    image: registry:3
+    environment:
+      # Read-only during the weekly blob collection (below).
+      REGISTRY_STORAGE_MAINTENANCE_READONLY: '{"enabled": ${PANDO_REGISTRY_READONLY:-false}}'
+      # TLS with the operator's certificate (O-35). Set both to empty, with
+      # PANDO_REGISTRY_SCHEME=http and PANDO_REGISTRY_INSECURE=true, for plain
+      # HTTP on a private network.
+      REGISTRY_HTTP_TLS_CERTIFICATE: ${PANDO_REGISTRY_TLS_CERTIFICATE-/certs/registry.crt}
+      REGISTRY_HTTP_TLS_KEY: ${PANDO_REGISTRY_TLS_KEY-/certs/registry.key}
+    configs:
+      - source: registry
+        target: /etc/distribution/config.yml
+    ports:
+      # Published for the other hosts' container runtimes, which pull from it.
+      - "${PANDO_REGISTRY_PORT:-5000}:5000"
+    volumes:
+      - registry-data:/var/lib/registry
+      - ${PANDO_REGISTRY_CERTS:-./registry/certs}:/certs:ro
+      - ${PANDO_REGISTRY_AUTH:-./registry/auth}:/auth:ro
+    restart: unless-stopped
+
+  # The weekly blob collection (O-38). Not started by `up`; run by the
+  # schedule above while the registry is read-only.
+  registry-gc:
+    image: registry:3
+    profiles: ["maintenance"]
+    command: ["garbage-collect", "--delete-untagged", "/etc/distribution/config.yml"]
+    configs:
+      - source: registry
+        target: /etc/distribution/config.yml
+    volumes:
+      - registry-data:/var/lib/registry
+      - ${PANDO_REGISTRY_CERTS:-./registry/certs}:/certs:ro
+      - ${PANDO_REGISTRY_AUTH:-./registry/auth}:/auth:ro
+
+configs:
+  registry:
+    content: |
+      version: 0.1
+      log:
+        level: info
+      storage:
+        filesystem:
+          rootdirectory: /var/lib/registry
+        # Pando deletes a deleted app's manifests through the API (R-224).
+        delete:
+          enabled: true
+        maintenance:
+          uploadpurging:
+            enabled: true
+            age: 168h
+            interval: 24h
+            dryrun: false
+      auth:
+        htpasswd:
+          realm: pando
+          path: /auth/htpasswd
+      http:
+        addr: :5000
+
+  buildkitd:
+    content: |
+      [registry."${PANDO_REGISTRY_HOST:-registry}:5000"]
+        ca = ["/etc/pando-registry/ca.crt"]
+
+volumes:
+  registry-data:
