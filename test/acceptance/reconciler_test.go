@@ -215,10 +215,18 @@ func TestPandoRestartingLeavesARunningAppAlone(t *testing.T) {
 	out, err := execCompose("restart", "pando")
 	require.NoError(t, err, out)
 
+	// Back when it answers HTTP, not when its container accepts an exec: the
+	// container runs well before Pando has migrated and is listening, and the
+	// next request then found nothing there — which the suite rightly reads as
+	// the server gone, failing every test after this one.
 	require.Eventually(t, func() bool {
-		_, err := execCompose("exec", "-T", "pando", "true")
-		return err == nil
-	}, 2*time.Minute, 3*time.Second)
+		resp, err := http.Get(strings.TrimSuffix(baseURL(), "/api/v1") + "/healthz")
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 2*time.Minute, time.Second, "Pando never answered again after restarting")
 
 	// Same container, still running: it kept serving while Pando was away, and
 	// Pando converged to it rather than restarting it for tidiness.

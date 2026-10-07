@@ -945,6 +945,7 @@ func serve(ctx context.Context, configPath string) error {
 		Secrets:       secrets,
 		Volumes:       volumes,
 		Services:      deployer,
+		Environments:  deployer,
 		Registry:      registryAdapters{registry},
 		Auditor:       reconcilerAuditor{auditor},
 		Logger:        logger,

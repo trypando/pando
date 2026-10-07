@@ -189,6 +189,72 @@ func (r *Runner) ServiceShapes(ctx context.Context, s *spec.AppSpec) (api.Bundle
 	return shape, nil
 }
 
+// Environments is the environment each of an app's workloads runs with, keyed
+// by workload name: its own workloads' and its provisioned services'.
+//
+// For the reconciler, at the moment it is about to apply a correction (R-148).
+// Its comparison is shape, and environment is deliberately absent from that
+// (R-193) — but a shape is not something to start. A workload it re-created
+// from the shape came up with no environment at all: a provisioned Redis whose
+// password arrives in REDIS_PASSWORD exited on every start, and an app lost
+// every variable and secret it was deployed with.
+//
+// Resolved the way a deploy resolves them, with one difference: a slot with no
+// recorded instance is skipped, as in ServiceShapes. Restoring what exists is
+// the reconciler's job; creating a database is a deploy's.
+func (r *Runner) Environments(ctx context.Context, s *spec.AppSpec) (map[string]map[string]secret.Value, error) {
+	secrets, err := r.secrets.Resolve(ctx, s.AppID)
+	if err != nil {
+		return nil, err
+	}
+
+	svcs := provisioned{connections: map[string]secret.Value{}, names: map[string]string{}}
+	if r.services != nil {
+		for _, slot := range s.Slots {
+			if slot.Resolution == nil || slot.Resolution.Mode != spec.ResolutionProvisioned {
+				continue
+			}
+			existing, found, err := r.services.Get(ctx, s.AppID, slot.Key)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				continue
+			}
+			adapter, _, ok := r.registry.ServicesFor(slot.Type)
+			if !ok {
+				continue
+			}
+			prior, err := r.secretStore.Get(ctx, s.AppID, existing.SecretKey)
+			if err != nil {
+				return nil, err
+			}
+			res, err := adapter.Provision(ctx, api.ProvisionRequest{
+				AppID: s.AppID, BundleID: s.AppID, SlotKey: slot.Key,
+				Type: slot.Type, ServiceID: existing.ID, ExistingSecret: prior,
+			})
+			if err != nil {
+				return nil, err
+			}
+			svcs.workloads = append(svcs.workloads, res.Workloads...)
+			svcs.connections[slot.Key] = res.ConnectionSecret
+		}
+	}
+
+	out := make(map[string]map[string]secret.Value, len(s.Workloads)+len(svcs.workloads))
+	for _, w := range svcs.workloads {
+		out[w.Name] = w.Env
+	}
+	for _, w := range s.Workloads {
+		env, err := resolveEnv(s, w, secrets, svcs)
+		if err != nil {
+			return nil, err
+		}
+		out[w.Name] = env
+	}
+	return out, nil
+}
+
 // dependsOn is every provisioned workload an app workload should start after.
 //
 // Start order, not readiness — Docker's depends_on does not wait for a health

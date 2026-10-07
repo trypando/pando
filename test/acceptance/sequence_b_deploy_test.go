@@ -126,7 +126,7 @@ func TestR146_AFailedBuildLeavesTheRunningAppAlone(t *testing.T) {
 
 	// A second revision that cannot possibly build: a repository that does not
 	// exist.
-	c.putSpec(t, app, `{
+	broken := c.putSpec(t, app, `{
 		"schema_version": 1,
 		"source": {"type": "git", "url": "https://github.com/pando-test/does-not-exist-`+stamp()+`", "ref": "main"},
 		"build": {"strategy": "dockerfile", "adapter_ref": "bld_buildkit"},
@@ -136,7 +136,8 @@ func TestR146_AFailedBuildLeavesTheRunningAppAlone(t *testing.T) {
 		"deploy": {"strategy": "recreate"}
 	}`)
 
-	body, status := c.postRaw(t, fmt.Sprintf("/apps/%s/deployments", app), `{"spec_revision": 2}`)
+	body, status := c.postRaw(t, fmt.Sprintf("/apps/%s/deployments", app),
+		fmt.Sprintf(`{"spec_revision": %d}`, broken))
 
 	// The failure may be refused at the request (fetching the source to pin a
 	// commit fails) or recorded as a failed deployment. Either is correct; what

@@ -7,6 +7,7 @@ import (
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // PlanShape builds what should be running, without resolving any secret.
@@ -38,6 +39,13 @@ func PlanShape(s *spec.AppSpec, image string, perWorkload map[string]state.Workl
 // provisioner, where every app's shape is already complete.
 type ServiceShapes interface {
 	ServiceShapes(ctx context.Context, s *spec.AppSpec) (api.BundlePlan, error)
+}
+
+// Environments resolves the environment each workload runs with, keyed by
+// workload name. Asked only when a correction is about to be applied, which is
+// the uncommon case: comparing never decrypts anything (R-193).
+type Environments interface {
+	Environments(ctx context.Context, s *spec.AppSpec) (map[string]map[string]secret.Value, error)
 }
 
 // EnvHash is the fingerprint of the environment an app should be running with.

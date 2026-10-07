@@ -179,6 +179,16 @@ func (s *Service) read(ctx context.Context, dep state.Deployment) state.Deployme
 // launch is the tail every deploy start shares: the app is deploying, the
 // deploy is audited, and the runner takes it from there in the background.
 func (s *Service) launch(ctx context.Context, p authz.Principal, dep state.Deployment, rev state.Revision, detail map[string]any) error {
+	// What a deploy that stops before touching the runtime puts back (R-146).
+	app, found, err := s.Apps.ByID(ctx, dep.AppID)
+	if err != nil {
+		return err
+	}
+	if found && app.State != state.StateDeploying {
+		if err := s.Deployments.RecordPriorState(ctx, dep.ID, app.State); err != nil {
+			return err
+		}
+	}
 	if err := s.Apps.SetState(ctx, dep.AppID, state.StateDeploying); err != nil {
 		return err
 	}

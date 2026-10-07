@@ -366,7 +366,8 @@ func withAliases(cfg *network.NetworkingConfig, old *container.InspectResponse) 
 func aliasesFor(networkID string, old *container.InspectResponse) *network.EndpointSettings {
 	for _, ep := range old.NetworkSettings.Networks {
 		if ep.NetworkID == networkID {
-			return &network.EndpointSettings{Aliases: keptAliases(ep.Aliases, old.ID)}
+			// And its gateway priority, so the replacement routes as the old one did.
+			return &network.EndpointSettings{Aliases: keptAliases(ep.Aliases, old.ID), GwPriority: ep.GwPriority}
 		}
 	}
 	return nil

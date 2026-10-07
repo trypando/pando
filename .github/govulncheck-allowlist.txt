@@ -25,3 +25,7 @@
 # go-git — which is the maintained fork the advisory tells people to move to.
 #
 # Nothing to do unless `go list -deps ./cmd/pando` starts naming it.
+#
+# Scorecard runs osv-scanner, which checks modules, not call paths, so it does
+# need an entry: osv-scanner.toml at the repository root ignores this ID with the
+# same reasoning. Remove both together.

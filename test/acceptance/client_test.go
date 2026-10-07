@@ -394,10 +394,22 @@ func pruneStaleBundles() {
 	}
 }
 
-func (c *client) putSpec(t *testing.T, appID, spec string) {
+// putSpec writes a spec revision and returns its number.
+//
+// Use the number rather than counting: a deploy can write revisions of its
+// own (an image source's digest is pinned as a new revision, issue #41), so
+// "the second spec this test wrote" is not necessarily revision 2.
+func (c *client) putSpec(t *testing.T, appID, spec string) int {
 	t.Helper()
 	body, status := c.do(t, http.MethodPost, fmt.Sprintf("/apps/%s/specs", appID), spec)
 	require.Equal(t, http.StatusCreated, status, body)
+
+	var rev struct {
+		Revision int `json:"revision"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &rev))
+	require.Positive(t, rev.Revision, body)
+	return rev.Revision
 }
 
 func (c *client) pinSpec(t *testing.T, appID string, revision int) {

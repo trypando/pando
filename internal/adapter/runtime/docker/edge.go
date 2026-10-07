@@ -442,7 +442,7 @@ func (a *Adapter) ensureEdgeNetwork(ctx context.Context, alias string) (string, 
 		aliases = []string{alias}
 	}
 	_, err = a.cli.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{
-		Container: self, EndpointConfig: &network.EndpointSettings{Aliases: aliases},
+		Container: self, EndpointConfig: &network.EndpointSettings{Aliases: aliases, GwPriority: joinedNetworkGwPriority},
 	})
 	switch {
 	case err == nil, strings.Contains(err.Error(), "already exists"):
