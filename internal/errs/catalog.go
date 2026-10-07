@@ -61,6 +61,8 @@ var meanings = map[Code]string{
 
 	AdapterUnavailable: "The adapter needed for this is not configured or not reachable.",
 	AdapterFailed:      "The adapter was reached and failed.",
+	AdapterRegistryRateLimited: "A registry refused an image because this server, or the app's registry account, has downloaded too many images recently. " +
+		"The message says when it accepts downloads again, where the registry said.",
 
 	BuildFailed:            "The build ran and did not succeed. Its log is the answer.",
 	BuildTimeout:           "The build exceeded the time allowed for it (R-119).",

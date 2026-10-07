@@ -94,6 +94,11 @@ const (
 	AdapterUnavailable Code = "ADAPTER_UNAVAILABLE"
 	AdapterFailed      Code = "ADAPTER_FAILED"
 
+	// AdapterRegistryRateLimited: a registry refused an image because this
+	// server, or the app's registry account, has downloaded too many in its
+	// window — Docker Hub's pull limit (internal/registrylimit).
+	AdapterRegistryRateLimited Code = "ADAPTER_REGISTRY_RATE_LIMITED"
+
 	// BUILD_* — build failed. 422.
 	BuildFailed  Code = "BUILD_FAILED"
 	BuildTimeout Code = "BUILD_TIMEOUT" // R-119

@@ -345,5 +345,6 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `RATE_LIMITED` | 429 | Too many attempts in a short time — at a passcode, for example. Wait a few minutes and try again. |
 | `INTERNAL` | 500 | Pando failed in a way it did not expect. The request ID finds the log line. |
 | `ADAPTER_FAILED` | 502 | The adapter was reached and failed. |
+| `ADAPTER_REGISTRY_RATE_LIMITED` | 502 | A registry refused an image because this server, or the app's registry account, has downloaded too many images recently. The message says when it accepts downloads again, where the registry said. |
 | `ADAPTER_UNAVAILABLE` | 502 | The adapter needed for this is not configured or not reachable. |
 
