@@ -289,10 +289,11 @@ What was built, and where it differs from the design above.
   opens nothing, and that host's root can reach its apps anyway.
 - **The SSH Docker client is not run against a real daemon.** `test/multihost` (below) runs the
   adapter on Docker-in-Docker hosts over TLS; SSH is covered by unit tests only.
-- **A redeploy refused because the app's host does not answer leaves the app `deploying`** (O-50).
-  The refusal is as designed, and nothing of the app is placed elsewhere; but the deploy runner does
-  not move the app out of `deploying` after a failed apply, so the reconciler does not start its
-  stopped containers when the host returns. An app nobody tried to redeploy is started again.
+- **A redeploy refused because the app's host does not answer leaves the app `failed`** (O-50,
+  **[D]**). Nothing of the app is placed elsewhere. As for any deploy that fails at the apply step,
+  the app is `failed` (design 05 §1.1) and stays so until a person acts, including after its host
+  returns (R-151); found here as an app left `deploying` for good, and fixed in the deploy runner
+  (#142). An app nobody tried to redeploy is started again when its host returns (R-148).
 
 ## Tests this PR is done with
 
