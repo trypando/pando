@@ -25,9 +25,15 @@ func TestR025_AReplicaRejoinsOnlyNetworksAnAppContainerIsOn(t *testing.T) {
 		"n-live": {"Name": "pando-app_live", "Labels": map[string]string{labelManaged: "true", labelBundle: "app_live"},
 			"Containers": map[string]any{"web": map[string]string{"Name": "web"}}},
 	}
+	// The list carries names and labels, as the daemon's does, so the test
+	// holds whether the adapter reads them there or inspects each network.
 	list := make([]any, 0, len(networks))
-	for id := range networks {
-		list = append(list, map[string]string{"Id": id})
+	for id, n := range networks {
+		item := map[string]any{"Id": id}
+		for k, v := range n {
+			item[k] = v
+		}
+		list = append(list, item)
 	}
 	f.on("GET /networks", respond(http.StatusOK, list))
 	f.on("GET /networks/*", func(w http.ResponseWriter, r *http.Request) {
@@ -38,15 +44,17 @@ func TestR025_AReplicaRejoinsOnlyNetworksAnAppContainerIsOn(t *testing.T) {
 		}
 		writeJSON(w, http.StatusOK, body)
 	})
+	// The deleted app has no containers left; the live one has "web". Asked
+	// for one app's containers or for every app's, the answer is the same.
 	f.on("GET /containers/json", func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Query().Get("filters"), "app_live") {
-			writeJSON(w, http.StatusOK, []any{map[string]any{
-				"Id": "web", "State": "running",
-				"NetworkSettings": map[string]any{"Networks": map[string]any{"pando-app_live": map[string]any{}}},
-			}})
+		if strings.Contains(r.URL.Query().Get("filters"), "app_deleted") {
+			writeJSON(w, http.StatusOK, []any{})
 			return
 		}
-		writeJSON(w, http.StatusOK, []any{})
+		writeJSON(w, http.StatusOK, []any{map[string]any{
+			"Id": "web", "State": "running", "Labels": map[string]string{labelBundle: "app_live"},
+			"NetworkSettings": map[string]any{"Networks": map[string]any{"pando-app_live": map[string]any{}}},
+		}})
 	})
 	var joined []string
 	f.on("POST /networks/*", func(w http.ResponseWriter, r *http.Request) {
