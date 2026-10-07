@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
@@ -185,33 +186,112 @@ func (s *Service) apply(ctx context.Context, bundle io.Reader, v Verified) (Rest
 	return result, nil
 }
 
-// restoreDatabase pipes the dump into pg_restore.
+// dropPartitionedTables runs first in the restore transaction.
 //
-// --clean --if-exists, so the target's existing objects are dropped rather than
-// collided with. This is the step that makes restore destructive and it is why
-// Confirm exists.
+// pg_restore --clean cannot drop a partitioned table whose primary key its
+// partitions inherit: it drops objects in reverse dump order, which reaches a
+// partition's attached key (audit_events_default_pkey) before the parent's,
+// and Postgres refuses with "cannot drop inherited constraint". audit_events
+// is partitioned since migration 000041, so every restore onto a live install
+// failed there. Dropping each partitioned table, with its partitions, before
+// the dump's own statements leaves --clean's DROP ... IF EXISTS for them as
+// no-ops; the dump recreates them. It runs inside the same transaction as the
+// rest, so a restore that fails still leaves the audit log as it was.
+const dropPartitionedTables = `
+DO $$
+DECLARE t regclass;
+BEGIN
+    FOR t IN
+        SELECT c.oid::regclass
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'p' AND NOT c.relispartition AND n.nspname = 'public'
+    LOOP
+        EXECUTE format('DROP TABLE %s CASCADE', t);
+    END LOOP;
+END
+$$;
+`
+
+// restoreDatabase applies the dump to the install's database.
+//
+// pg_restore turns the dump into SQL, with --clean --if-exists so the target's
+// existing objects are dropped rather than collided with. This is the step
+// that makes restore destructive and it is why Confirm exists. psql applies
+// that SQL after dropPartitionedTables, which pg_restore alone has no way to
+// run in its own transaction.
 func (s *Service) restoreDatabase(ctx context.Context, dump io.Reader) error {
 	env, dbname, err := pgEnv(s.DatabaseURL)
 	if err != nil {
 		return err
 	}
 
-	// --single-transaction is what makes this all-or-nothing: a dump that fails
-	// halfway rolls back, so a failed restore leaves the previous install
-	// rather than a half-replaced one. --exit-on-error is required for that to
-	// mean anything, because pg_restore's default is to keep going.
-	cmd := exec.CommandContext(ctx, "pg_restore", "--clean", "--if-exists",
-		"--no-owner", "--no-privileges", "--exit-on-error", "--single-transaction",
-		"--dbname", dbname)
-	cmd.Env = env
-	cmd.Stdin = dump
-
-	out, err := cmd.CombinedOutput()
+	gen := exec.CommandContext(ctx, "pg_restore", "--clean", "--if-exists",
+		"--no-owner", "--no-privileges", "--exit-on-error", "--file", "-")
+	gen.Env = env
+	gen.Stdin = dump
+	var genErr strings.Builder
+	gen.Stderr = &genErr
+	script, err := gen.StdoutPipe()
 	if err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not start restoring the database.", err)
+	}
+
+	// One transaction, opened here and committed only once pg_restore has
+	// exited cleanly — not psql's --single-transaction, which commits at the
+	// end of its input however that input ended, and a dump pg_restore gives
+	// up on halfway is a script that has dropped everything and recreated
+	// half of it. Without the COMMIT, psql disconnects with the transaction
+	// open and Postgres rolls it back; with ON_ERROR_STOP, so does a failing
+	// statement. Either way a failed restore leaves the previous install
+	// rather than a half-replaced one.
+	genWait := sync.OnceValue(gen.Wait)
+	apply := exec.CommandContext(ctx, "psql", "--no-psqlrc", "--quiet",
+		"--set", "ON_ERROR_STOP=1", "--output", os.DevNull, "--dbname", dbname)
+	apply.Env = env
+	apply.Stdin = io.MultiReader(
+		strings.NewReader("BEGIN;\n"+dropPartitionedTables),
+		script,
+		&commitIfClean{wait: genWait},
+	)
+
+	if err := gen.Start(); err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not start pg_restore.", err).
+			WithRemedy("Check that pg_restore and psql are installed alongside Pando.")
+	}
+	out, applyErr := apply.CombinedOutput()
+	// Drain whatever psql left unread, so pg_restore is never blocked on a
+	// full pipe while it is waited for.
+	_, _ = io.Copy(io.Discard, script)
+
+	if err := genWait(); err != nil {
+		return errs.Newf(errs.Internal, "Pando could not restore the database: %s",
+			trimForMessage([]byte(genErr.String()))).
+			WithRemedy("The installation has not been fully replaced. Check the database is reachable and try again.")
+	}
+	if applyErr != nil {
 		return errs.Newf(errs.Internal, "Pando could not restore the database: %s", trimForMessage(out)).
 			WithRemedy("The installation has not been fully replaced. Check the database is reachable and try again.")
 	}
 	return nil
+}
+
+// commitIfClean is the end of the restore script: a COMMIT if pg_restore
+// exited cleanly, and otherwise an error that ends psql's input with the
+// transaction still open, which Postgres rolls back.
+type commitIfClean struct {
+	wait   func() error
+	commit io.Reader
+}
+
+func (c *commitIfClean) Read(p []byte) (int, error) {
+	if c.commit == nil {
+		if err := c.wait(); err != nil {
+			return 0, err
+		}
+		c.commit = strings.NewReader("COMMIT;\n")
+	}
+	return c.commit.Read(p)
 }
 
 // restoreSecretsKey writes the key back.
