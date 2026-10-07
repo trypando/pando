@@ -104,6 +104,64 @@ test-replicas: ## Run Pando as two replicas behind a balancer: topology changes,
 	$(REPLICAS_COMPOSE) down -v --remove-orphans; \
 	exit $$status
 
+# The load harness (issue #72, test/load/README.md): a scale tier seeded into
+# the replicas stack, scaled to LOAD_REPLICAS, with console, API and proxy
+# traffic ramped through the balancer until it holds or breaks. Its own project
+# and ports, so it runs beside test-replicas or a development stack. The
+# report is written to LOAD_DIR; the stack, its volumes, and the containers
+# of the real apps it deployed are removed whether or not anything failed.
+TIER                ?= vm
+LOAD_PROJECT        ?= pando-load
+LOAD_REPLICAS       ?= $(if $(filter cluster,$(TIER)),4,2)
+LOAD_REAL_APPS      ?= $(if $(filter cluster,$(TIER)),20,10)
+LOAD_HOLD           ?= 3m
+LOAD_DIR            ?= test/load/out
+LOAD_PORT           ?= 28080
+LOAD_APP_PORT_START ?= 29000
+LOAD_DB_PORT        ?= 25432
+# Anything else for `run`, e.g. LOAD_ARGS="-keep-going -steps 0.5,1".
+LOAD_ARGS           ?=
+# The port range holds every real app, and at least the shipped twenty.
+LOAD_APP_PORT_END = $(shell echo $$(( $(LOAD_APP_PORT_START) + ($(LOAD_REAL_APPS) > 20 ? $(LOAD_REAL_APPS) : 20) - 1 )))
+# Each replica's pool (32), the leader's lock connection and the archiver,
+# and the harness.
+LOAD_PG_MAX_CONNECTIONS = $(shell echo $$(( $(LOAD_REPLICAS) * 40 + 60 )))
+# Later assignments win, so these replace REPLICAS_ENV's ports.
+LOAD_ENV = $(REPLICAS_ENV) PANDO_PORT=$(LOAD_PORT) \
+	PANDO_APP_PORT_START=$(LOAD_APP_PORT_START) PANDO_APP_PORT_END=$(LOAD_APP_PORT_END) \
+	LOAD_DB_PORT=$(LOAD_DB_PORT) LOAD_PG_MAX_CONNECTIONS=$(LOAD_PG_MAX_CONNECTIONS)
+LOAD_COMPOSE = $(LOAD_ENV) docker compose -p $(LOAD_PROJECT) -f docker-compose.yml \
+	-f test/replicas/docker-compose.replicas.yml -f test/load/docker-compose.load.yml
+LOAD_FLAGS = -tier $(TIER) -url http://localhost:$(LOAD_PORT) -admin-password $(REPLICAS_PASSWORD) \
+	-real-apps $(LOAD_REAL_APPS)
+
+.PHONY: load-test
+load-test: ## Seed a scale tier (TIER=vm|cluster) into LOAD_REPLICAS replicas, ramp load through the balancer, write a report
+	@case "$(TIER)" in vm|cluster) ;; *) echo "TIER must be vm or cluster, not '$(TIER)'"; exit 2;; esac
+	mkdir -p $(LOAD_DIR)
+	$(GO) build -o $(LOAD_DIR)/load ./test/load
+	$(LOAD_COMPOSE) up -d --build --wait --scale pando=$(LOAD_REPLICAS)
+	@status=0; \
+	export LOAD_DATABASE_URL="postgres://pando:$${POSTGRES_PASSWORD:-pando}@127.0.0.1:$(LOAD_DB_PORT)/pando?sslmode=disable"; \
+	$(LOAD_DIR)/load seed $(LOAD_FLAGS) -real-port-start $(LOAD_APP_PORT_START) || status=1; \
+	if [ $$status = 0 ]; then \
+		$(LOAD_DIR)/load run $(LOAD_FLAGS) -replicas $(LOAD_REPLICAS) -hold $(LOAD_HOLD) \
+			-commit "$$(git rev-parse --short HEAD)" -out $(LOAD_DIR)/results-$(TIER).json $(LOAD_ARGS) || status=1; \
+	fi; \
+	if [ -f $(LOAD_DIR)/results-$(TIER).json ]; then \
+		$(LOAD_DIR)/load report -in $(LOAD_DIR)/results-$(TIER).json -out $(LOAD_DIR)/report-$(TIER).md \
+			&& echo "report: $(LOAD_DIR)/report-$(TIER).md" || status=1; \
+	fi; \
+	$(LOAD_DIR)/load cleanup $(LOAD_FLAGS) -real-apps-file $(LOAD_DIR)/real-apps-$(TIER).txt || true; \
+	$(LOAD_COMPOSE) down -v --remove-orphans; \
+	for app in $$(cat $(LOAD_DIR)/real-apps-$(TIER).txt 2>/dev/null); do \
+		ids=$$(docker ps -aq --filter label=io.pando.bundle=$$app); \
+		[ -z "$$ids" ] || docker rm -f $$ids >/dev/null; \
+		nets=$$(docker network ls -q --filter label=io.pando.bundle=$$app); \
+		[ -z "$$nets" ] || docker network rm $$nets >/dev/null; \
+	done; \
+	exit $$status
+
 .PHONY: vet
 vet: ## go vet, including the integration-tagged tests
 	$(GO) vet $(PKG)
