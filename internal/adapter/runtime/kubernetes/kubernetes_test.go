@@ -551,8 +551,9 @@ func TestR114_ARuntimeClassTheClusterLacksMakesTheAdapterUnhealthy(t *testing.T)
 
 // TestR243_CapacityIsTheEligibleNodesLessOthersRequests asserts R-243 on a
 // cluster: the adapter reports schedulable nodes' allocatable room, less what
-// pods outside Pando's namespaces ask for, and the largest single node's room
-// as LargestFit (R-242).
+// pods outside Pando's namespaces ask for, and the roomiest single node, less
+// every pod's requests, as LargestFit; LargestFitFor counts a bundle's own
+// pods as free (R-242).
 func TestR243_CapacityIsTheEligibleNodesLessOthersRequests(t *testing.T) {
 	node := func(name, cpu, mem string, mutate func(*corev1.Node)) *corev1.Node {
 		n := &corev1.Node{
@@ -593,7 +594,14 @@ func TestR243_CapacityIsTheEligibleNodesLessOthersRequests(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 5000, capacity.TotalCPUMillis, "4 + 2 cores, less 1 asked for by somebody else's pod")
 	require.Equal(t, int64(10<<30), capacity.TotalMemoryBytes)
-	require.Equal(t, api.Fit{CPUMillis: 3000, MemoryBytes: 6 << 30}, capacity.LargestFit)
+	require.NotNil(t, capacity.LargestFit)
+	require.Equal(t, api.Fit{CPUMillis: 2000, MemoryBytes: 5 << 30}, *capacity.LargestFit,
+		"node a, less every pod's requests, Pando's included")
+	fit, err := a.LargestFitFor(context.Background(), testBundle)
+	require.NoError(t, err)
+	require.NotNil(t, fit)
+	require.Equal(t, api.Fit{CPUMillis: 3000, MemoryBytes: 6 << 30}, *fit,
+		"the bundle's own pod on node a counts as free for its redeploy")
 	require.Zero(t, capacity.TotalDiskBytes, "storage is the storage class's, not counted")
 	require.Equal(t, 2, capacity.Details["eligible_nodes"])
 

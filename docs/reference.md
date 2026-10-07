@@ -268,6 +268,64 @@ runs metrics-server. Draining a node
 that runs apps needs `kubectl drain --force`: an app's pods belong to no controller, and Pando's
 reconciler recreates them on another node.
 
+### Running apps on several Docker hosts
+
+The `docker-hosts` runtime runs apps on several Docker hosts. Pando, its database, the edge, BuildKit
+and the image registry stay on one host, the control host; apps run on any host in the list,
+including the control host. Each app runs on one host and stays there: a new app goes to the host
+with the most free memory that fits it, and Pando does not move an app to another host, on its own
+or when asked. To empty a host, close it to new apps, then delete and re-create its apps with their
+backups.
+
+Pando reaches the apps on each host through a forwarding agent it runs there, a container named
+`pando-agent`. The agent publishes one port, 7443 by default, and accepts connections only from
+Pando, by certificate. No app port is published on any host.
+
+Built images reach the hosts through the install's image registry, so a registry is required for
+apps Pando builds. Apps that run a published image need none.
+
+To set it up, or to add a host:
+
+1. Make the host's Docker API reachable from the control host, over TLS with a client certificate
+   (`tcp://host:2376`) or over SSH (`ssh://user@host`, a user in the `docker` group). Either one is
+   root on that host.
+2. Allow the agent port on the host's firewall from the control host's address only. Nothing else
+   on the host needs to be reachable from the control host.
+3. Generate the agents' certificate authority once per install, with `pando host-agent
+   new-authority`. Pando issues its own certificate and each agent's from it.
+4. Add the host to the runtime's `hosts` list. Each entry has a `name`; an `endpoint`; an
+   `agent_address`, where Pando's container reaches the agent (the endpoint's host and the agent
+   port by default); `ssh_host_key`, the host's line from `known_hosts`, for an SSH endpoint; and
+   optionally `no_placement: true` to keep new apps off it. Exactly one host is `"control": true`.
+5. Restart Pando. It starts the agent on each host within fifteen seconds and joins it to that
+   host's app networks.
+
+```yaml
+adapters:
+  rt_hosts:
+    category: runtime
+    kind: docker-hosts
+    default: true
+    config:
+      agent_image: registry.example.com/pando:1.9.0   # an image of this version every host can pull
+      hosts:
+        - {name: control, control: true, endpoint: "unix:///var/run/docker.sock", agent_address: "10.0.0.5:7443"}
+        - {name: app-1, endpoint: "tcp://10.0.0.6:2376"}
+        - {name: app-2, endpoint: "ssh://pando@10.0.0.7", ssh_host_key: "10.0.0.7 ssh-ed25519 AAAA..."}
+    credentials:
+      agent_authority: {file: /run/secrets/pando_agent_authority}
+      docker_tls: {file: /run/secrets/docker_tls.pem}   # ca.pem, cert.pem and key.pem together
+      ssh_key: {file: /run/secrets/pando_ssh_key}
+```
+
+Every host must run images for the same CPU architecture. `network_pool` applies on every host and
+cannot be `off`. A host that stops answering makes its apps show as unreachable, not failed; they
+are not started elsewhere, and redeploying one is refused until the host answers. New apps still go
+to the hosts that answer. An app too large for any one host is refused when its deploy is planned. If the host is gone for good, remove it from the list and restore its
+apps from their backups; what changed since the last backup is lost. To replace the authority, put
+the new one before the old one in `agent_authority`, restart, and remove the old one once every
+agent has been replaced.
+
 ## Guarantees worth relying on
 
 These are requirements, not implementation details, and they will not be changed without a major

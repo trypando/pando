@@ -84,6 +84,9 @@ type Adapter struct {
 	// The daemon's platform, read once (Capabilities).
 	platformMu   sync.Mutex
 	hostPlatform string
+
+	// What app containers are limited to, read briefly (hosts.go).
+	committed committedCache
 }
 
 // Config is the adapter's configuration.
@@ -392,8 +395,6 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	}
 	capacity.TotalDiskBytes = a.config.TotalDiskBytes
 
-	// One machine: the roomiest place a workload could go is all of it.
-	capacity.LargestFit = api.Fit{CPUMillis: capacity.TotalCPUMillis, MemoryBytes: capacity.TotalMemoryBytes}
 	capacity.RunningWorkloads = info.ContainersRunning
 
 	// The rest of what the daemon says about itself, for whoever is looking
@@ -413,6 +414,10 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 		capacity.Details["oci_runtime"] = a.config.OCIRuntime
 	}
 
+	// What is left of the totals by the containers' own limits (hosts.go).
+	// One machine is one place, so this is also the largest.
+	capacity.LargestFit = a.largestFit(ctx, capacity)
+
 	return capacity, nil
 }
 
@@ -422,6 +427,7 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 // recreated only when it differs. Calling Apply with an already-satisfied plan
 // touches nothing, which is what lets the reconciler call it freely.
 func (a *Adapter) Apply(ctx context.Context, p api.BundlePlan) (api.BundleHandle, error) {
+	defer a.forgetCommitted()
 	if !p.Network.Private {
 		// R-026. The field is checked rather than assumed so that a caller
 		// that built a plan wrongly fails here instead of silently placing
@@ -572,6 +578,7 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 			labelFiles: fileDigest(w.Files),
 		},
 	}
+	limitLabels(cfg.Labels, w.Resources.CPUMillis, w.Resources.MemoryBytes)
 	if w.Health != nil {
 		cfg.Healthcheck = healthConfig(w.Health)
 	}
@@ -856,6 +863,7 @@ func (a *Adapter) Stop(ctx context.Context, ref api.BundleRef) error {
 // Volumes are kept unless explicitly asked otherwise: they outlive the apps
 // that mount them (R-204), and destroying them is a separate, deliberate act.
 func (a *Adapter) Destroy(ctx context.Context, ref api.BundleRef, opts api.DestroyOptions) error {
+	defer a.forgetCommitted()
 	containers, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: make(client.Filters).Add("label", labelBundle+"="+ref.BundleID),

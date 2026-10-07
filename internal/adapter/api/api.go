@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"io"
+	"net"
 	"time"
 
 	"github.com/trypando/pando/internal/core/spec"
@@ -244,6 +245,15 @@ type RuntimeAdapter interface {
 	// cluster. Core does not read /proc and has no concept of a host.
 	Capacity(ctx context.Context) (Capacity, error)
 
+	// LargestFitFor is Capacity.LargestFit as it stands for one bundle: the
+	// CPU and memory of the roomiest place this bundle may run, counting what
+	// the bundle already holds there as free, so a redeploy that fits where
+	// it is is never refused. A runtime that keeps a bundle where it was
+	// placed answers for that place only. Nil: one place, or not reported,
+	// and the planner checks only Capacity's totals (R-242). The planner
+	// refuses a bundle larger than this at plan time.
+	LargestFitFor(ctx context.Context, bundleID string) (*Fit, error)
+
 	// InUse reports what every workload on the runtime is using right now,
 	// summed. Apart from Capacity because sampling CPU takes the runtime about
 	// a second, and the planner calls Capacity on every plan without needing
@@ -424,6 +434,23 @@ type Upstream struct {
 	// URL is the scheme, host and port the proxy forwards to, such as
 	// "http://pando-app_01HQ8-web:3000". No path: the proxy keeps the request's.
 	URL string
+
+	// Dial opens the connection the proxy sends a request over. Nil: the proxy
+	// dials URL's host itself, as on one Docker host.
+	//
+	// Set by a runtime whose workloads are not on a network Pando's container
+	// is joined to — the multi-host Docker adapter, whose Dial connects to the
+	// forwarding agent on the app's host (O-45, design 06 §4). The proxy has
+	// already decided the request by then; Dial is transport only. Supplied by
+	// the runtime so the agent's protocol stays the adapter's vocabulary
+	// (R-251).
+	Dial func(ctx context.Context) (net.Conn, error)
+
+	// PoolKey groups connections the proxy may reuse: one key, one
+	// destination, so a connection opened by one Dial is only reused for a
+	// request this Upstream would have dialed the same way. Empty is URL's
+	// host. Only read when Dial is set.
+	PoolKey string
 }
 
 // BundleHandle is the adapter's own identifier for a bundle.
@@ -468,6 +495,14 @@ type BundlePlan struct {
 	Volumes   []VolumePlan
 	Network   NetworkPlan
 	Labels    map[string]string
+
+	// FirstDeploy is true when the app has never had a successful deploy, so
+	// nothing of it can be anywhere a runtime cannot see right now. A runtime
+	// that places bundles may then place it while part of itself does not
+	// answer; for any other bundle it must not, because a copy might already
+	// run in the part that is silent (O-46). False is the safe value, and
+	// what the reconciler sends.
+	FirstDeploy bool
 }
 
 // WorkloadPlan is one workload, fully resolved.
@@ -706,13 +741,12 @@ type Capacity struct {
 	// not; -1 when the runtime cannot say.
 	RunningWorkloads int
 
-	// LargestFit is the CPU and memory of the roomiest single place one
-	// workload could go. On one machine it is the totals; across several the
-	// totals can fit a workload that no single machine does, and the planner
-	// refuses a workload larger than this (R-242) rather than leaving it
-	// waiting for room that never comes. Zero in a field means not known, and
-	// that resource is not checked against it.
-	LargestFit Fit
+	// LargestFit is the CPU and memory of the roomiest single place a new
+	// workload could go now, by committed limits. On a runtime spread over
+	// several machines the total can have room that no one machine has. Nil
+	// when the runtime is one place, where the totals already say it
+	// (notes-multi-host-docker-issue-72.md).
+	LargestFit *Fit
 
 	// Details is anything else the runtime reports about itself, in its own
 	// shape — version, storage driver. Shown as it is, never interpreted:
@@ -722,7 +756,7 @@ type Capacity struct {
 	Reported time.Time
 }
 
-// Fit is room for one workload in one place.
+// Fit is an amount of CPU and memory one place has free.
 type Fit struct {
 	CPUMillis   int
 	MemoryBytes int64

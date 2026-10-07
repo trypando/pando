@@ -154,6 +154,12 @@ type RuntimeAdapter interface {
 
 type Upstream struct {
     URL string // scheme, host and port; the proxy keeps the request's path
+
+    // Dial opens the connection the proxy sends the request over. Nil: the
+    // proxy dials URL's host. PoolKey groups reusable connections: one key,
+    // one destination. Empty is URL's host.
+    Dial    func(ctx context.Context) (net.Conn, error)
+    PoolKey string
 }
 ```
 
@@ -164,12 +170,21 @@ chooses *which* port (the primary workload's HTTP port), because that is a readi
 proxy built a Docker container name itself until this was moved, which would have sent every request
 for an app on any other runtime to a host that does not exist.
 
-**[P]** `Upstream` is a struct holding only a URL. A runtime whose workloads are not directly
-addressable from Pando — a remote host, a cluster Pando runs outside of — will need to hand the proxy a
-way to dial as well, and gets a field here then rather than a second interface change. Nothing needs it
-yet, so nothing has it.
+**[D]** `Upstream.Dial` is for a runtime whose workloads are not on a network Pando's container is
+joined to. The multi-host Docker adapter's `Dial` opens a mutually authenticated connection to the
+forwarding agent on the app's host, which carries it to the container (O-45, design 06 §4,
+`notes-multi-host-docker-issue-72.md`). The proxy decides the request — steps 1–10 of design 06 §4,
+including the header and cookie strips — before it dials, so `Dial` is transport and nothing else.
+The proxy pools a dialed upstream's connections under `PoolKey` on a transport of their own, with no
+environment HTTP proxy. A runtime whose workloads Pando's container can reach leaves both empty.
 
 ### 2.1 The plan
+
+**[D]** `BundlePlan.FirstDeploy` is true when the app has never had a successful deploy, which core
+reads from its deployments (`RunningSpecID` empty). Nothing of such an app can be anywhere a runtime
+cannot see, so a runtime that places bundles may place it while part of itself does not answer. For
+any other bundle it must not: a copy may already run in the silent part, and placing it again would
+be a second copy or a move (O-46). False is the safe value and what the reconciler sends.
 
 ```go
 type BundlePlan struct {
@@ -369,9 +384,14 @@ type Capacity struct {
     TotalMemoryBytes int64
     TotalDiskBytes   int64
     RunningWorkloads int   // -1: not known
-    LargestFit       Fit   // the roomiest single place one workload could go; 0 fields: not known
+    LargestFit       *Fit  // the roomiest single place's free CPU and memory; nil: not reported
     Details          map[string]any // the runtime's own shape, shown, never interpreted
     Reported         time.Time
+}
+
+type Fit struct {
+    CPUMillis   int
+    MemoryBytes int64
 }
 
 type InUse struct {
@@ -383,13 +403,36 @@ type InUse struct {
 
 **[D]** R-243. The local Docker adapter reports its own machine; a clustered adapter reports its cluster. Core does not read `/proc` and has no concept of a host.
 
-**[P] `LargestFit` (issue #72).** Across several machines the totals can have room for a workload that no
-one machine has. The planner refuses a workload whose CPU or memory exceeds `LargestFit` (R-242), naming
-the workload and the largest room there is, unless policy allows that resource to be oversubscribed.
-Docker reports its totals; Kubernetes reports the largest eligible node's CPU and largest node's memory,
-each less what pods outside Pando's namespaces request there. The two maxima may come from different
-nodes, so a workload that passes can still find no node; the Kubernetes adapter then turns the
-scheduler's refusal into the deploy's error.
+**[P]** `LargestFit` is what one place has free by committed limits, because on several machines the
+total can have room no one machine has: 6 GB free over three hosts does not place a 4 GB app. The
+single-host Docker adapter reports its totals less what its app containers are limited to; the
+multi-host adapter the roomiest host open to new apps; Kubernetes the eligible node with the most
+memory left (then CPU) once every pod's requests on it are counted, Pando's included — one node, so
+the figure is a place that exists (notes-kubernetes-runtime-issue-72.md). Kubernetes's totals still
+leave out only pods outside Pando's namespaces, because the planner subtracts Pando's own
+allocations from them itself.
+
+**[D]** The planner refuses at plan time an app no single place has room for, through
+`RuntimeAdapter.LargestFitFor(ctx, bundleID) (*Fit, error)`: `LargestFit` as it stands for that
+bundle. A runtime that keeps a bundle where it was placed answers for that place only, counting what
+the bundle already holds there as free, so a redeploy that fits in place is never refused; for a
+bundle placed nowhere yet it answers the roomiest place. The question takes the app's ID rather than
+the planner subtracting the app's recorded allocation, because only the runtime knows where the app
+is and what its workloads actually reserve there, and the answer stays a number: core learns no
+host (R-251). The planner compares the sum of the bundle's workload limits with it and refuses with
+`CAPACITY_WOULD_OVERSUBSCRIBE` and a message that says the room cannot be combined across places;
+policy allowing CPU or memory oversubscription lifts the check for that resource, as it does R-242's.
+Nil means one place, or not reported: the single-host Docker adapter answers nil, since R-242's check
+of its totals already says everything this would. Kubernetes answers the roomiest node with the
+bundle's own pods' requests counted as free there; a cluster reschedules freely, so it is not held to
+one node.
+
+**[P]** The check compares the sum of an app's workload limits with one place, as multi-host Docker
+places a bundle whole. On Kubernetes each workload is its own pod and could land on a different node,
+so the sum is stricter than the scheduler needs; it errs toward a plan-time refusal over a pod that
+waits for room. Where it still passes and the scheduler finds no node, the Kubernetes adapter turns
+the scheduler's refusal into the deploy's error. Image delivery is §1's `ImageDelivery` (PR 5):
+multi-host Docker reports `[registry]` and refuses `ImportImage`.
 
 **[P]** The common fields are the readings every runtime reports in the same shape, so the console can say how much room is left without knowing which runtime answered (issue #88). Anything else goes in `Details`, which the console shows as it came. Live use is its own call, `InUse`, rather than `Used*` fields on `Capacity`. Sampling CPU takes about a second, and the planner reads `Capacity` on every plan without needing it. The `Used*` fields, which no adapter ever filled, are gone. `GET /capacity` reports each runtime's totals beside what Pando has committed on it, which is the planner's own R-242 arithmetic, and live use where the runtime reports usage.
 

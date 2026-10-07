@@ -320,10 +320,19 @@ includes a certificate check. What that adds:
 - **The agent decides nothing.** Authentication, `CheckData`, assertion minting, and header and cookie
   stripping stay in the proxy, in core (R-027). The agent is a transport.
 - **The client key is the key to every app.** Anyone holding it can open a connection to a workload
-  without passing the proxy. Pando generates it, keeps it sealed with the secrets key in Postgres (so
-  every replica has it and a database dump alone does not), and rotates it by overlap as it rotates
-  assertion keys. Its exposure is the secrets key's, under R-191's threat model: it protects against a
-  copied disk or dump, not a compromised Pando.
+  without passing the proxy. As built, what is stored is the certificate authority it is issued from:
+  `pando host-agent new-authority` generates it, and it is the multi-host runtime's `agent_authority`
+  credential, sealed by the secrets adapter in Postgres like every adapter credential (R-190), so every
+  replica has it and a database dump alone does not. Each replica issues its own client certificate
+  from it in memory at start; each agent's certificate is for server authentication only and cannot
+  open another agent. It is replaced by overlap: the credential may hold several authorities, the
+  first issues and all are trusted. Its exposure is the secrets key's, under R-191's threat model: it
+  protects against a copied disk or dump, not a compromised Pando.
+- **The agent forwards only into Pando's app networks.** It carries a connection to a container name
+  of Pando's form, resolved on the networks it is joined to, and only to an address inside the app
+  network range on one of those networks — never the bridge address (the host), the network or
+  broadcast address, or itself (`hostagent.Permitted`). Its own published port is on a network outside
+  the range.
 - **The agent's port is a published host port.** R-026 is about app workloads; this port reaches no app
   without the certificate, and the operator documentation says to restrict it to the control host's
   address with the host firewall.

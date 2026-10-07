@@ -41,6 +41,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/routing/traefik"
 	dockerruntime "github.com/trypando/pando/internal/adapter/runtime/docker"
 	kubernetesruntime "github.com/trypando/pando/internal/adapter/runtime/kubernetes"
+	"github.com/trypando/pando/internal/adapter/runtime/multidocker"
 	trivyscanner "github.com/trypando/pando/internal/adapter/scanner/trivy"
 	secretslocal "github.com/trypando/pando/internal/adapter/secrets/local"
 	servicesdocker "github.com/trypando/pando/internal/adapter/services/docker"
@@ -136,6 +137,9 @@ func rootCmd() *cobra.Command {
 	// Pando's own image, never by a person (R-187).
 	root.AddCommand(egressGatewayCmd())
 	root.AddCommand(upgradeHelperCmd())
+	// The forwarding agent on each host of a multi-host Docker install (O-45),
+	// started by that runtime; and the authority it and Pando trust.
+	root.AddCommand(hostAgentCmd())
 	root.AddCommand(cli.SelfUpdateCmd())
 
 	// The client half (design 04 §4). In the same binary because Pando ships as
@@ -1547,6 +1551,8 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 		// Not seeded: it needs the cluster's address ranges, and Pando running
 		// inside the cluster (deploy/kubernetes).
 		return kubernetesruntime.New()
+	case category == string(adapterapi.CategoryRuntime) && kind == multidocker.Kind:
+		return multidocker.New()
 	case category == string(adapterapi.CategoryRouting) && kind == loopback.Kind:
 		return loopback.New()
 	case category == string(adapterapi.CategorySecrets) && kind == secretslocal.Kind:
@@ -2125,6 +2131,7 @@ func adapterKinds() []adapterapi.KindInfo {
 		ailocal.Info(),
 		dockerruntime.Info(),
 		kubernetesruntime.Info(),
+		multidocker.Info(),
 		loopback.Info(),
 		traefik.Info(),
 		cloudflare.Info(),

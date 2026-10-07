@@ -80,8 +80,8 @@ today's structural argument word for word.
 
 ### (c) A forwarding agent on each app host [D]
 
-Each app host runs one Pando-owned container, `pando-agent` (Pando's binary, a hidden `pando host-agent`
-command, as the egress gateway is). The adapter joins it to every app network on its host — the same
+Each app host runs one Pando-owned container, `pando-agent` (Pando's binary, `pando host-agent serve`,
+as the egress gateway is). The adapter joins it to every app network on its host — the same
 `attachProxy` call, naming the agent instead of Pando's own container (`ProxyContainer` is already a
 setting). The agent publishes one port, and accepts only mutual TLS with a client certificate that only
 Pando's replicas hold. A replica's proxy, having decided a request (design 06 §4, steps 1–10), opens a
@@ -262,18 +262,90 @@ Every method routes to the app's host and runs the single-host code there, excep
 - **R-025, R-026, R-180 – R-187** hold per host exactly as on one host.
 - **R-013** is what the host-failure section relies on.
 
+## As built (PR 7)
+
+What was built, and where it differs from the design above.
+
+| Part | As built |
+|---|---|
+| Adapter | `internal/adapter/runtime/multidocker`, kind `docker-hosts`. One `docker.Adapter` per host, made with `docker.NewWithClient` on that host's client, with `ProxyContainer: "pando-agent"` so `attachProxy` and `RejoinNetworks` join the agent where they joined Pando's container. The control host has a second one, joined as Pando's own container, for the edge, trial runs and self-upgrade. The single-host adapter gained only `NewWithClient`, `Committed`, `Bundles`, limit labels on containers (`io.pando.limit.cpu`, `io.pando.limit.memory`) and `LargestFit` in its `Capacity`. |
+| Configuration | `hosts`, a JSON list (or a string holding one, for a form's text area): `name`, `endpoint`, `agent_address`, `control`, `no_placement`, `ssh_host_key`, and the per-host totals. Exactly one control host. `network_pool` may not be `off`: the agent's check depends on it. Credentials, sealed in `adapter_credentials` like every adapter's (R-190): `agent_authority`, `docker_tls` (client certificate, key and CA for `tcp://`), `ssh_key` (for `ssh://`, through `golang.org/x/crypto/ssh` to the remote socket, with the host key pinned). |
+| Placement | As described. The map is a cache rebuilt from the hosts' bundle-labeled networks and volumes, on a miss (at most every 2 s) and on every rejoin pass (15 s). **While a host does not answer**, an app the map does not know is reported as an observation error rather than absent, and an app that has deployed before is not placed, because either could put a second copy beside one on the silent host. An app's first deploy (`BundlePlan.FirstDeploy`, set by core when the app has no successful deploy) is placed among the hosts that answer: nothing of it can be on the silent one. If a first deploy that failed partway left a network on a host that later goes silent and returns, the bundle is found on both hosts and the first one listed wins. |
+| Plan-time capacity | `RuntimeAdapter.LargestFitFor(bundleID)`: for a placed app, its host's free space plus what the app's running containers hold there (`docker.RoomFor`); for a new one, the roomiest open host that answers. The planner refuses a bundle whose workload limits sum to more, at plan time (design 03 §2.4). `Committed` counts running containers only, as R-242 counts running apps. |
+| Deleted apps' networks | On an app host, `Destroy` then disconnects the agent from the app's networks and removes them (`docker.DetachProxy`), touching only networks labeled as that bundle's — never the agent's own, which has no bundle label — and refusing outright for Pando's own container. Not on the control host, which may be Docker Desktop, where disconnecting a running container drops its published ports. |
+| The agent | `pando host-agent serve`, from `agent_image` (default: the image Pando's container on the control host was started from, by reference so other hosts can pull it). On its own `pando-agent` bridge network, made with Docker's addresses; the adapter refuses one that overlaps the app range. Read-only root, all capabilities dropped, one published port. Protocol: after TLS 1.3, `PANDO-AGENT/1 <container> <port>\n`, answered `OK` or `NO <reason>`, then a byte stream. Re-created when its image, port, range or authority changes, and every 30 days for a new certificate. |
+| What the agent forwards to | A name matching Pando's container names (`pando-…`), resolved by Docker's DNS on the agent's networks, dialed by address, and only if the address is inside `network_pool`, on a network the agent is joined to that lies within the pool, and not that network's address, bridge (`.1`, the host), broadcast or the agent's own address (`hostagent.Permitted`). |
+| Certificates | Not generated into Postgres by core, as design 06 §4 first said: the authority is the adapter's `agent_authority` credential, made by `pando host-agent new-authority`, which is sealed by the secrets adapter in Postgres all the same. Each replica issues its own client certificate (`CN=pando-proxy`, client authentication only) from it in memory at start, and each agent's server certificate (`pando-agent.<host>.invalid`, server authentication only) when the agent is created; an agent's certificate cannot open another agent. Replaced by overlap: the credential holds several authorities, the first issues and all are trusted. |
+| Proxy | `api.Upstream` gained `Dial` and `PoolKey`. When `Dial` is set the proxy sends the request on a second transport, with no environment HTTP proxy, whose connections are pooled under a host derived from `PoolKey` (`<hash>.dial.pando.invalid`) and opened by the registered `Dial`. Steps 1–10 are unchanged and happen before any dial. |
+| Capabilities | `ImageDelivery: [registry]`, `SupportsImageImport: false` (`ImportImage` refuses). `api.RuntimeCapabilities.ImageDelivery` was added here with the shape PR 5's note gives, ahead of PR 5; the single-host adapter reports `[import]`. Until PR 5 lands, only apps that run a published image can be deployed on this runtime. Platform is the hosts' common one, and HealthCheck refuses a mix. |
+| Capacity | Summed over hosts open to new apps; `LargestFit` the roomiest one; per-host figures and reachability in `Details["hosts"]`. |
+
+**Not done here:**
+
+- **On the control host, a deleted app's network is not reclaimed until the agent is re-created**
+  (see "Deleted apps' networks"). `Apply`'s placement refusal remains for two replicas racing for the
+  last room on a host.
+- **The agent's key is in its container's environment** on its own host. It is a server key and
+  opens nothing, and that host's root can reach its apps anyway.
+- **The SSH Docker client is not run against a real daemon.** `test/multihost` (below) runs the
+  adapter on Docker-in-Docker hosts over TLS; SSH is covered by unit tests only.
+- **A redeploy refused because the app's host does not answer leaves the app `deploying`** (O-50).
+  The refusal is as designed, and nothing of the app is placed elsewhere; but the deploy runner does
+  not move the app out of `deploying` after a failed apply, so the reconciler does not start its
+  stopped containers when the host returns. An app nobody tried to redeploy is started again.
+
 ## Tests this PR is done with
 
-Several Docker daemons for tests run as Docker-in-Docker containers (`testcontainers-go`), each standing
-in for a host:
+As written (unit tests, fakes, a real agent on loopback):
 
-- `TestR023_AnAgentRefusesAConnectionWithoutPandosCertificate`.
-- `TestR023_AnAppOnAnotherHostIsReachedOnlyThroughTheProxy` — the design 07 Sequence C run through the
-  balancer, with the app on a different daemon from every replica, forged headers included.
-- `TestR026_AnAppHostPublishesOnlyTheAgentsPort`.
+- `TestR023_AnAgentRefusesAConnectionWithoutPandosCertificate` — no certificate, another authority's,
+  an agent's server certificate, the authority's with another name, plain TCP.
+- `TestR023_AnAgentRefusesATargetOutsideItsAppNetworks`, `TestPermittedAddresses`.
+- `TestR023_AnAgentForwardsPandosConnectionToTheNamedContainer`.
+- `TestR053_ForgedHeadersAreReplacedThroughAHostAgent`,
+  `TestR173_PandosOwnCookiesNeverReachAnAppThroughAHostAgent` — the proxy's forged-header and cookie
+  tests, run with the upstream behind a real agent.
+- `TestR023_AnAppOnAnotherHostIsReachedOnlyAfterTheDecision` — a denied request never dials the
+  agent; allowed ones reuse one connection.
+- `TestR023_AnAppOnAnotherHostIsReachedThroughItsHostsAgent`.
+- `TestR256_ANewAppGoesToTheHostWithTheMostFreeMemoryThatFits`,
+  `TestR256_NoHostThatFitsIsARefusalNamingTheLargestFreeSpace`.
 - `TestR010_AnAppStaysOnItsHostAcrossRedeploys`.
 - `TestR148_AnUnreachableHostMarksItsAppsUnobservableNotFailed`.
-- `TestR243_CapacityReportsTheLargestPlaceAWorkloadFits`.
+- `TestR243_CapacityReportsTheLargestPlaceAWorkloadFits`,
+  `TestR243_OneHostsLargestFitIsWhatItsContainersLeave`.
+- `TestR242_AnAppNoSinglePlaceHasRoomForIsRefusedAtPlanTime`,
+  `TestR242_ARedeployThatFitsWhereTheAppRunsIsAllowed` (planner),
+  `TestR242_TheRoomForAnAppIsWhereItRunsWithWhatItHoldsThere`.
+- `TestR256_AFirstDeployIsPlacedWhileAnotherHostIsUnreachable`,
+  `TestR010_ADeployedAppIsNeverPlacedElsewhereWhileAHostIsUnreachable`.
+- `TestR224_TheAgentLeavesADeletedAppsNetworksOnAnAppHost`,
+  `TestR224_DetachProxyLeavesOnlyTheDeletedBundlesNetworks`.
+
+Against real daemons, in `test/multihost` (`make test-multihost`, build tag `multihost`): two
+Docker-in-Docker app hosts reached over TLS with generated certificates, a third as the control host
+running two replicas of Pando, and Postgres, a registry and BuildKit beside them. Each app host pulls
+the agent's image and the apps' images from the registry.
+
+- `TestR243_CapacityIsSummedOverTheHostsWithTheLargestFit` — totals summed over the open hosts, and
+  an app that fits the sum but no one host refused at plan time.
+- `TestR256_ANewAppGoesToTheHostWithTheMostFreeMemory`.
+- `TestR023_AnAppOnAnotherHostIsReachedOnlyThroughTheProxy` — Sequence C to an app on host B:
+  forged headers replaced, `pando_*` cookies removed, an assertion present, a redirect without a
+  session; a connection routed into host B's app range, or to the app's port on host B, fails.
+- `TestR026_AnAppHostPublishesOnlyTheAgentsPort`.
+- `TestR023_AHostAgentRefusesAClientWithoutPandosCertificate` — real handshakes: no certificate,
+  another authority's, plain text; with Pando's, the agent itself and a container on no app network
+  are refused, and an app's container is reached.
+- `TestR010_AnAppStaysOnItsHostAndAStoppedHostsAppsAreUnobservable` — a redeploy stays; with host B
+  stopped its apps are unreachable and not failed, a new app goes to host A, a redeploy is refused and
+  nothing is re-created on host A; when host B returns its app is started again.
+- `TestR224_DeletingAnAppTearsItDownAndTheAgentLeavesItsNetworks`.
+- `TestR120_ABuildIsDeliveredThroughTheRegistryAndPulledByDigest` — an uploaded source built by
+  BuildKit, pushed to the registry and run by digest on its host.
+- `TestR023_AReplacedAgentIsJoinedToItsHostsAppNetworksAgain`.
+- `TestR023_EitherReplicaReachesAnAppOnAnotherHost` — both replicas reach host B, and their rejoin
+  passes do not replace each other's agents.
 
 ## Decisions
 

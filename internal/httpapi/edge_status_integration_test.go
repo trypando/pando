@@ -31,6 +31,10 @@ func (edgeRouting) Edge(context.Context, adapterapi.EdgeRequest) (adapterapi.Edg
 // noEdgeRuntime is a runtime that cannot run an edge.
 type noEdgeRuntime struct{ adapterapi.RuntimeAdapter }
 
+func (noEdgeRuntime) LargestFitFor(context.Context, string) (*adapterapi.Fit, error) {
+	return nil, nil
+}
+
 func (noEdgeRuntime) Kind() string                                     { return "docker" }
 func (noEdgeRuntime) Category() adapterapi.Category                    { return adapterapi.CategoryRuntime }
 func (noEdgeRuntime) Configure(context.Context, json.RawMessage) error { return nil }

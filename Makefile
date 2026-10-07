@@ -129,6 +129,32 @@ test-kubernetes: ## Run Pando on a kind cluster (2 replicas, the edge, a registr
 	fi; \
 	exit $$status
 
+# The docker-hosts runtime against real Docker daemons (issue #72,
+# notes-multi-host-docker-issue-72.md): two Docker-in-Docker app hosts reached
+# over TLS, a third as the control host running two replicas of Pando, with
+# Postgres, a registry and BuildKit beside them on mh-test-net
+# (test/multihost). Everything it makes is named mh-test-… and removed whether
+# or not anything failed, the image included; MH_KEEP=1 keeps it, and
+# `MH_TEST=1 MH_REUSE=1 go test -tags multihost ./test/multihost/` then runs
+# the tests again against it. Uses whichever daemon DOCKER_CONTEXT names.
+MH_IMAGE ?= mh-test-pando:dev
+MH_KEEP  ?=
+MH_CONTAINERS = mh-test-control mh-test-host-a mh-test-host-b mh-test-buildkit mh-test-registry mh-test-postgres
+
+.PHONY: test-multihost
+test-multihost: ## Run the multi-host Docker runtime on Docker-in-Docker hosts (agents, placement, host failure)
+	docker pull -q mendhak/http-https-echo:34 >/dev/null
+	docker pull -q busybox:1.37 >/dev/null
+	docker build -t $(MH_IMAGE) .
+	@status=0; \
+	MH_TEST=1 MH_IMAGE=$(MH_IMAGE) MH_KEEP=$(MH_KEEP) $(GO) test -count=1 -timeout=60m -tags=multihost -v ./test/multihost/ || status=1; \
+	if [ -z "$(MH_KEEP)" ]; then \
+		docker rm -f -v $(MH_CONTAINERS) >/dev/null 2>&1 || true; \
+		docker network rm mh-test-net >/dev/null 2>&1 || true; \
+		docker image rm $(MH_IMAGE) >/dev/null 2>&1 || true; \
+	fi; \
+	exit $$status
+
 # The load harness (issue #72, test/load/README.md): a scale tier seeded into
 # the replicas stack, scaled to LOAD_REPLICAS, with console, API and proxy
 # traffic ramped through the balancer until it holds or breaks. Its own project
@@ -200,6 +226,7 @@ vet: ## go vet, including the integration-tagged tests
 	# cost of never letting that happen again.
 	$(GO) vet -tags integration $(PKG)
 	$(GO) vet -tags kubernetes ./test/kubernetes/
+	$(GO) vet -tags multihost ./test/multihost/
 
 # `go install` puts binaries in GOPATH/bin, which is not on PATH by default — so
 # following the install line printed below leaves the next `make lint` still

@@ -31,7 +31,8 @@ adding a fast path, you are adding a security hole.
  7. STRIP all inbound X-Pando-* headers        ← see below
  8. Set assertion + convenience headers
  9. Path mode: strip prefix, set X-Forwarded-Prefix (R-167)
-10. Forward, stream unbuffered
+10. Forward, stream unbuffered — through the runtime's Upstream.Dial when it gives one
+    (the host agent on a multi-host Docker install, O-45). Steps 1–9 are done first, always.
 ```
 
 ## Step 7 is a security requirement, not hygiene

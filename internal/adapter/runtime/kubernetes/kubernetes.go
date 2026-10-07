@@ -553,8 +553,31 @@ func tainted(n corev1.Node) bool {
 
 // Capacity is adapter-reported (R-243): what the eligible nodes can hold,
 // less what pods outside Pando's namespaces already ask for on them, since a
-// cluster also runs things that are not Pando's.
+// cluster also runs things that are not Pando's. The planner takes Pando's own
+// allocations off the totals itself.
+//
+// LargestFit is the one node with the most room left once every pod's
+// requests are counted, Pando's too, since the planner compares it as it is
+// (R-242).
 func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
+	return a.capacity(ctx, "")
+}
+
+// LargestFitFor is the roomiest node for one bundle: what each node has left,
+// plus what the bundle's own pods ask for there, since a redeploy replaces
+// them, so a redeploy that fits where the app runs is never refused (R-242).
+// Nil when the cluster has no eligible node, and the totals check refuses.
+func (a *Adapter) LargestFitFor(ctx context.Context, bundleID string) (*api.Fit, error) {
+	c, err := a.capacity(ctx, namespaceFor(bundleID))
+	if err != nil {
+		return nil, err
+	}
+	return c.LargestFit, nil
+}
+
+// capacity reads the cluster's room. ownNS, when set, is a bundle's namespace,
+// whose pods' requests count as free in LargestFit.
+func (a *Adapter) capacity(ctx context.Context, ownNS string) (api.Capacity, error) {
 	nodes, err := a.eligibleNodes(ctx)
 	if err != nil {
 		return api.Capacity{}, errs.Wrap(errs.AdapterUnavailable, "Could not read how much room the cluster has.", err)
@@ -568,7 +591,7 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 		return api.Capacity{}, errs.Wrap(errs.AdapterUnavailable, "Could not read how much room the cluster has.", err)
 	}
 
-	type room struct{ cpu, mem, otherCPU, otherMem int64 }
+	type room struct{ cpu, mem, otherCPU, otherMem, pandoCPU, pandoMem int64 }
 	byNode := map[string]*room{}
 	for _, n := range nodes {
 		byNode[n.Name] = &room{
@@ -585,12 +608,17 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 		if p.Status.Phase == corev1.PodRunning {
 			running++
 		}
-		if ours[p.Namespace] {
-			continue
-		}
 		cpu, mem := podRequests(p)
-		r.otherCPU += cpu
-		r.otherMem += mem
+		switch {
+		case ownNS != "" && p.Namespace == ownNS:
+			// The bundle being planned: what it holds is free for it.
+		case ours[p.Namespace]:
+			r.pandoCPU += cpu
+			r.pandoMem += mem
+		default:
+			r.otherCPU += cpu
+			r.otherMem += mem
+		}
 	}
 
 	capacity := api.Capacity{RunningWorkloads: running, Reported: a.now()}
@@ -600,11 +628,10 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 		cpu, mem := max(r.cpu-r.otherCPU, 0), max(r.mem-r.otherMem, 0)
 		capacity.TotalCPUMillis += int(cpu)
 		capacity.TotalMemoryBytes += mem
-		if int(cpu) > capacity.LargestFit.CPUMillis {
-			capacity.LargestFit.CPUMillis = int(cpu)
-		}
-		if mem > capacity.LargestFit.MemoryBytes {
-			capacity.LargestFit.MemoryBytes = mem
+		free := api.Fit{CPUMillis: int(max(cpu-r.pandoCPU, 0)), MemoryBytes: max(mem-r.pandoMem, 0)}
+		if f := capacity.LargestFit; f == nil || free.MemoryBytes > f.MemoryBytes ||
+			(free.MemoryBytes == f.MemoryBytes && free.CPUMillis > f.CPUMillis) {
+			capacity.LargestFit = &free
 		}
 		perNode = append(perNode, map[string]any{
 			"node":                       n.Name,

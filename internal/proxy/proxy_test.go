@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/assertion"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/spec"
@@ -132,10 +133,13 @@ func (r *resolver) ByPort(_ context.Context, port int) (state.App, *spec.AppSpec
 	return r.app, r.spec, true, nil
 }
 
-type fixedUpstream struct{ addr string }
+type fixedUpstream struct {
+	addr string
+	dial func(context.Context) (net.Conn, error)
+}
 
-func (f fixedUpstream) PrimaryAddress(context.Context, state.App, *spec.AppSpec) (string, error) {
-	return f.addr, nil
+func (f fixedUpstream) Primary(context.Context, state.App, *spec.AppSpec) (api.Upstream, error) {
+	return api.Upstream{URL: f.addr, Dial: f.dial, PoolKey: f.addr}, nil
 }
 
 type staticAuth struct{ principal authz.Principal }
@@ -148,6 +152,13 @@ const appID = "app_01HQ8"
 
 // harness returns a proxy in front of a recording upstream.
 func harness(t *testing.T, principal authz.Principal, configure func(*store)) (*httptest.Server, *store, *proxy.Counters, *received) {
+	t.Helper()
+	return harnessVia(t, principal, configure, func(url string) proxy.Upstreams { return fixedUpstream{addr: url} })
+}
+
+// harnessVia is harness with the way the proxy reaches the upstream chosen by
+// the caller: directly, or through a host agent (agent_test.go).
+func harnessVia(t *testing.T, principal authz.Principal, configure func(*store), via func(upstreamURL string) proxy.Upstreams) (*httptest.Server, *store, *proxy.Counters, *received) {
 	t.Helper()
 
 	got := &received{}
@@ -182,7 +193,7 @@ func harness(t *testing.T, principal authz.Principal, configure func(*store)) (*
 		Authenticator: staticAuth{principal: principal},
 		Authz:         authz.New(s, nil, nil),
 		Minter:        minter,
-		Upstreams:     fixedUpstream{addr: upstream.URL},
+		Upstreams:     via(upstream.URL),
 		Metrics:       counters,
 		Logger:        zap.NewNop(),
 		Mode:          spec.RoutingSubdomain,
@@ -219,10 +230,14 @@ func activeUser(id string) authz.Principal {
 // The assertion is that the forged value arrives REPLACED, not merely that some
 // header is present — a proxy that appended would pass a weaker test.
 func TestR053_ForgedHeadersAreReplaced(t *testing.T) {
-	front, s, _, got := harness(t, activeUser("usr_alice"), func(s *store) {
+	front, _, _, got := harness(t, activeUser("usr_alice"), func(s *store) {
 		s.owner[appID] = "usr_alice"
 	})
-	_ = s
+	forgedHeadersAreReplaced(t, front, got)
+}
+
+func forgedHeadersAreReplaced(t *testing.T, front *httptest.Server, got *received) {
+	t.Helper()
 
 	req, err := http.NewRequest(http.MethodGet, front.URL+"/", nil)
 	require.NoError(t, err)
@@ -867,6 +882,11 @@ func TestR173_PandosOwnCookiesNeverReachAnApp(t *testing.T) {
 	front, _, _, got := harness(t, activeUser("usr_alice"), func(s *store) {
 		s.owner[appID] = "usr_alice"
 	})
+	pandosCookiesAreStripped(t, front, got)
+}
+
+func pandosCookiesAreStripped(t *testing.T, front *httptest.Server, got *received) {
+	t.Helper()
 
 	req, err := http.NewRequest(http.MethodGet, front.URL+"/", nil)
 	require.NoError(t, err)

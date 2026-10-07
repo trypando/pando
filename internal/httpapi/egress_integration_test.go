@@ -41,6 +41,10 @@ func (egressRuntime) Capacity(context.Context) (adapterapi.Capacity, error) {
 	return adapterapi.Capacity{TotalCPUMillis: 64000, TotalMemoryBytes: 256 << 30, TotalDiskBytes: 4 << 40, Reported: time.Now()}, nil
 }
 
+func (egressRuntime) LargestFitFor(context.Context, string) (*adapterapi.Fit, error) {
+	return nil, nil
+}
+
 func (egressRuntime) InUse(context.Context) (adapterapi.InUse, error) {
 	return adapterapi.InUse{}, nil
 }

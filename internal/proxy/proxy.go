@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/assertion"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
@@ -71,9 +74,9 @@ type Authenticator interface {
 	Authenticate(r *http.Request) (authz.Principal, error)
 }
 
-// Upstreams gives the address of an app's primary workload.
+// Upstreams says how to reach an app's primary workload.
 type Upstreams interface {
-	PrimaryAddress(ctx context.Context, app state.App, s *spec.AppSpec) (string, error)
+	Primary(ctx context.Context, app state.App, s *spec.AppSpec) (api.Upstream, error)
 }
 
 // Metrics counts what passed through, so "there is no bypass" is observable
@@ -115,6 +118,12 @@ type Proxy struct {
 	// socket open for IdleConnTimeout.
 	upstreamOnce sync.Once
 	upstream     *http.Transport
+
+	// The transport for upstreams the runtime dials (dialed), and each one's
+	// Dial by the host dialed gives it.
+	dialsOnce     sync.Once
+	dialTransport *http.Transport
+	dials         sync.Map
 
 	// reauthEvery is how often a long-lived connection is re-authorized. Zero
 	// is assertion.Lifetime, which is what it is everywhere but in a test.
@@ -223,25 +232,35 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upstream, err := p.Upstreams.PrimaryAddress(ctx, app, appSpec)
-	if err != nil || upstream == "" {
+	upstream, err := p.Upstreams.Primary(ctx, app, appSpec)
+	if err != nil || upstream.URL == "" {
 		p.fail(w, r, http.StatusServiceUnavailable,
 			"This app isn't reachable right now. Try again in a moment.")
 		return
 	}
 
-	target, err := url.Parse(upstream)
+	target, err := url.Parse(upstream.URL)
 	if err != nil {
 		p.fail(w, r, http.StatusServiceUnavailable, "This app isn't reachable right now.")
 		return
 	}
 
-	p.forward(w, r, target, token, principal, prefix, visit)
+	// 11. Forward. The decision and the assertion are done above, and steps
+	// 7, 8 and 10 happen in forward's Rewrite on the outbound request
+	// whichever way it travels. An upstream with a Dial is reached through
+	// the forwarding agent on its host (O-45, design 06 §4): only the
+	// connection differs.
+	transport := http.RoundTripper(p.transport())
+	if upstream.Dial != nil {
+		target, transport = p.dialed(target, upstream)
+	}
+
+	p.forward(w, r, target, transport, token, principal, prefix, visit)
 }
 
 // forward sets the headers and proxies the request. visit, when set, is the
 // cookie marking this browser's visit, added to the app's response.
-func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target *url.URL, token string, principal authz.Principal, prefix string, visit *http.Cookie) {
+func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target *url.URL, transport http.RoundTripper, token string, principal authz.Principal, prefix string, visit *http.Cookie) {
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
@@ -316,7 +335,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target *url.URL,
 
 		// No response body limit, deliberately (R-170): large uploads and
 		// downloads must pass through.
-		Transport: p.transport(),
+		Transport: transport,
 	}
 
 	// Long-lived connections are re-authorized for as long as they stay open
@@ -561,3 +580,52 @@ func newTransport() *http.Transport {
 // maxIdleConnsPerHost is how many idle connections to one app are kept for
 // reuse. A host here is one app's primary workload.
 const maxIdleConnsPerHost = 64
+
+// dialedHostSuffix ends the host the proxy gives an upstream it reaches
+// through the runtime's Dial. .invalid cannot resolve (RFC 2606), so nothing
+// addressed to one can leave by any route but the Dial registered for it.
+const dialedHostSuffix = ".dial.pando.invalid"
+
+// dialed returns the URL and transport for an upstream the runtime dials
+// itself (api.Upstream.Dial).
+//
+// The transport pools connections by URL host, and a connection the Dial
+// opened is a stream to one workload. So the URL's host is replaced by one
+// derived from the PoolKey, which the runtime promises means one destination,
+// and the Dial is registered under it; the transport's DialContext looks it up
+// there. The Host header is unaffected: forward sets it from the request.
+//
+// A separate transport from the direct one, with no HTTP proxy from the
+// environment: a dialed request goes through the agent or nowhere.
+func (p *Proxy) dialed(target *url.URL, upstream api.Upstream) (*url.URL, http.RoundTripper) {
+	key := upstream.PoolKey
+	if key == "" {
+		key = target.Host
+	}
+	sum := sha256.Sum256([]byte(key))
+	port := target.Port()
+	if port == "" {
+		port = "80"
+	}
+	host := hex.EncodeToString(sum[:12]) + dialedHostSuffix
+	p.dialsOnce.Do(func() { p.dialTransport = newDialTransport(&p.dials) })
+	p.dials.Store(net.JoinHostPort(host, port), upstream.Dial)
+
+	out := *target
+	out.Scheme = "http"
+	out.Host = net.JoinHostPort(host, port)
+	return &out, p.dialTransport
+}
+
+func newDialTransport(dials *sync.Map) *http.Transport {
+	t := newTransport()
+	t.Proxy = nil
+	t.DialContext = func(ctx context.Context, _, addr string) (net.Conn, error) {
+		dial, ok := dials.Load(addr)
+		if !ok {
+			return nil, fmt.Errorf("no route to %s", addr)
+		}
+		return dial.(func(context.Context) (net.Conn, error))(ctx)
+	}
+	return t
+}
