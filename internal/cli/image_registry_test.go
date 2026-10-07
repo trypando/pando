@@ -37,3 +37,33 @@ func TestR261_TheImageRegistryIsSetFromTheCLI(t *testing.T) {
 	got = run(t, api, "", "image-registry", "set")
 	require.Error(t, got.err, "nothing to change")
 }
+
+// TestR105_TheImageRegistryCommandsPassOnWhatTheServerRefused asserts that a
+// refusal from the server reaches the person running the command, and that the
+// password flags refuse what cannot be meant: both at once, and an empty
+// password, which is what --remove-password is for.
+func TestR105_TheImageRegistryCommandsPassOnWhatTheServerRefused(t *testing.T) {
+	refusal := map[string]string{"code": "PERM_DENIED",
+		"message": "Changing the install registry needs install.adapters.manage."}
+	api := newAPI(t).
+		fail("GET /image-registry", 403, refusal).
+		fail("PUT /image-registry", 403, refusal).
+		fail("DELETE /image-registry", 403, refusal)
+
+	for _, args := range [][]string{{"show"}, {"set", "--url", "https://registry.internal"}, {"clear"}} {
+		got := run(t, api, "", "image-registry", args...)
+		require.Error(t, got.err, args)
+		require.Contains(t, got.err.Error(), "install.adapters.manage", args)
+	}
+
+	quiet := newAPI(t)
+	got := run(t, quiet, "pw\n", "image-registry", "set", "--password", "--remove-password")
+	require.ErrorContains(t, got.err, "not both")
+
+	got = run(t, quiet, "\n", "image-registry", "set", "--password")
+	require.ErrorContains(t, got.err, "--remove-password")
+
+	got = run(t, quiet, "", "image-registry", "set", "--password")
+	require.Error(t, got.err, "nothing to read a password from")
+	require.False(t, quiet.sawPath("/image-registry"), "nothing was sent for any of them")
+}
