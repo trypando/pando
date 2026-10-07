@@ -1331,6 +1331,19 @@ func (a *Adapter) ensureNetwork(ctx context.Context, bundleID string, restricted
 	return created.ID, nil
 }
 
+// joinedNetworkGwPriority is the gateway priority Pando's own container
+// joins a bundle's network with: below the default of 0, so a joined network
+// never becomes the container's default gateway.
+//
+// Docker gives the default gateway to the endpoint with the highest priority
+// and breaks a tie by network name. "pando-app_…" sorts before the install's
+// own "pando_default", so the first deploy moved Pando's default route onto
+// that app's network: Docker re-bound the container's published ports while
+// it did, and the API and every app port stopped answering for a second or two
+// — long enough for the acceptance suite to declare the server gone. Pando's
+// own traffic out (clones, pulls) then left through an app's network.
+const joinedNetworkGwPriority = -1
+
 // attachProxy joins Pando's own container to a bundle network.
 //
 // Every app sits on its own private network so no app can reach another
@@ -1359,7 +1372,9 @@ func (a *Adapter) attachProxy(ctx context.Context, networkID string) error {
 		container = host
 	}
 
-	_, err := a.cli.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{Container: container})
+	_, err := a.cli.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{
+		Container: container, EndpointConfig: &network.EndpointSettings{GwPriority: joinedNetworkGwPriority},
+	})
 	switch {
 	case err == nil:
 		return nil

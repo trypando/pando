@@ -579,6 +579,59 @@ func TestR023_ProxyRejoinsRunningAppsNetworksAfterItIsReplaced(t *testing.T) {
 		"startup must put it back, because no deploy is coming")
 }
 
+// TestR023_JoiningAnAppsNetworkNeverMovesPandosDefaultRoute asserts that the
+// proxy joining an app's network leaves its default gateway where it was.
+//
+// Docker gives the default gateway to the highest gateway priority and
+// breaks a tie by network name, and "pando-<app>" sorts before an install's
+// own "pando_default". So the first deploy moved Pando's default route onto
+// the app's network, and Docker re-bound Pando's published ports while it did:
+// the API refused connections for a second or two, which is how the
+// acceptance suite came to report the server gone after its first deploy.
+func TestR023_JoiningAnAppsNetworkNeverMovesPandosDefaultRoute(t *testing.T) {
+	ctx := context.Background()
+	stamp := time.Now().Format("150405")
+
+	// Pando's stand-in, on a network that sorts after every bundle network,
+	// as "pando_default" does.
+	own := "pando_zz_default_" + stamp
+	_, err := dockerCLI("network", "create", own)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = dockerCLI("network", "rm", own) })
+	proxy := "test-gw-proxy-" + stamp
+	out, err := dockerCLI("run", "-d", "--name", proxy, "--network", own, "alpine:3.20", "sleep", "3600")
+	require.NoError(t, err, out)
+	t.Cleanup(func() { _, _ = dockerCLI("rm", "-f", proxy) })
+	route := func() string {
+		out, err := dockerCLI("exec", proxy, "ip", "route")
+		require.NoError(t, err, out)
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "default ") {
+				return strings.TrimSpace(line)
+			}
+		}
+		return ""
+	}
+	before := route()
+	require.NotEmpty(t, before)
+
+	a := dockeradapter.New()
+	require.NoError(t, a.Configure(ctx, json.RawMessage(`{"proxy_container":"`+proxy+`"}`)))
+	if err := a.HealthCheck(ctx); err != nil {
+		t.Skipf("docker unavailable: %v", err)
+	}
+	id := "test-gw-" + stamp
+	cleanup(t, a, id)
+	// Last registered, first run: off the app's network before Destroy.
+	t.Cleanup(func() { _, _ = dockerCLI("network", "disconnect", "-f", "pando-"+id, proxy) })
+	_, err = a.Apply(ctx, bundle(id, nil))
+	require.NoError(t, err)
+
+	require.Contains(t, dockerInspect(t, proxy, "{{json .NetworkSettings.Networks}}"), "pando-"+id,
+		"the proxy is on the app's network")
+	require.Equal(t, before, route(), "and its default route has not moved onto it")
+}
+
 // TestR023_RejoiningLeavesTheNetworksOfStoppedAppsAlone asserts the ordering
 // that keeps R-023's fix from undoing network reclamation: an empty network
 // belongs to an app that is not running, an endpoint on it would make it look
