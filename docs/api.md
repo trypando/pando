@@ -339,8 +339,8 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `BUILD_FAILED` | 422 | The build ran and did not succeed. Its log is the answer. |
 | `BUILD_LISTENS_ON_LOOPBACK` | 422 | The built app listens only on 127.0.0.1 inside its container, where nothing outside it can reach it. |
 | `BUILD_TIMEOUT` | 422 | The build exceeded the time allowed for it (R-119). |
+| `RATE_LIMITED` | 429 | Too many attempts in a short time — at a passcode, for example. Wait a few minutes and try again. |
 | `INTERNAL` | 500 | Pando failed in a way it did not expect. The request ID finds the log line. |
-| `RATE_LIMITED` | 500 | Too many attempts in a short time — at a passcode, for example. Wait a few minutes and try again. |
 | `ADAPTER_FAILED` | 502 | The adapter was reached and failed. |
 | `ADAPTER_UNAVAILABLE` | 502 | The adapter needed for this is not configured or not reachable. |
 
