@@ -896,7 +896,7 @@ assertion. A `Destination` interface would have had to grow one anyway, under a 
 
 **R-255 [D]** Runtime adapters declare an isolation class. Host policy may require a minimum (R-114).
 
-**R-256 [P]** Multi-machine capability comes entirely from adapters that span machines (e.g. Incus placing VMs across a cluster). Pando remains a single control plane, models no host objects, and performs no placement logic. The scope line (R-010) holds: Pando delegates to something that schedules; it does not schedule.
+**R-256 [P]** Multi-machine capability comes entirely from adapters that span machines (e.g. Incus placing VMs across a cluster). Pando remains a single control plane, models no host objects, and performs no placement logic. The scope line (R-010) holds: Pando delegates to something that schedules; it does not schedule. A single control plane may run as several replicas of the Pando process sharing one database: they are one control plane — one state store, one leader for install-wide work, one policy and one audit log — and none of them is a place an app runs. Running several copies of Pando is not scheduling apps (issue #72; topology and prerequisites in `docs/design/notes-multiple-replicas-issue-72.md`).
 
 **R-258 [D]** **AI is the tenth adapter category.** It passes both halves of the test design 03 §8.1
 states before a category may be added. The planner's half: whether a screener can read a repository at

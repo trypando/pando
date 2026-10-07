@@ -37,7 +37,7 @@ func PrepareTemplate(ctx context.Context, ownerURL string) (Passwords, error) {
 	if _, err := migrateUp(ctx, ownerURL); err != nil {
 		return Passwords{}, err
 	}
-	passwords, err := provisionRoles(ctx, owner)
+	passwords, err := provisionRoles(ctx, owner, ownerURL)
 	if err != nil {
 		return Passwords{}, err
 	}
@@ -70,5 +70,5 @@ func ConnectCopy(ctx context.Context, ownerURL string, appPassword secret.Value)
 	if err := verifyAuditImmutability(ctx, owner); err != nil {
 		return nil, err
 	}
-	return connectAsApp(ctx, ownerURL, appPassword, version)
+	return connectAsApp(ctx, ownerURL, appPassword, version, 0)
 }

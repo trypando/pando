@@ -53,6 +53,11 @@ const (
 	Subscription Kind = "sub"
 	Delivery     Kind = "dlv"
 
+	// Replica is one running Pando process (issue #72). Fresh on every start:
+	// a restarted process is a new replica, which is how work the old one had
+	// under way is recognized as nobody's.
+	Replica Kind = "rep"
+
 	// Adapter configs are prefixed by category, so a log line naming one says
 	// which kind of adapter it is (design 02 §2.5).
 	AdapterRuntime  Kind = "rt"

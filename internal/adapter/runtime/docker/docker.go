@@ -1045,6 +1045,15 @@ func (a *Adapter) RejoinNetworks(ctx context.Context, owns func(bundleID string)
 			// Pando's proxy reaches (egress.go).
 			continue
 		}
+		// Endpoints are not the same as an app. With several Pando replicas
+		// each joined to every app network, a deleted app's network still has
+		// endpoints — the other replicas — and joining it would keep it from
+		// ever emptying, so ReclaimNetworks could never collect it. Only a
+		// network one of the app's own containers is on is worth joining
+		// (issue #72).
+		if !a.networkHasContainers(ctx, full.Network.Labels[labelBundle], full.Network.Name) {
+			continue
+		}
 		if err := a.attachProxy(ctx, n.ID); err != nil {
 			// One unreachable app is not a reason to leave the rest
 			// unreachable, and the app's own next deploy will try again.

@@ -96,6 +96,7 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | Variable | Default | Purpose |
 |---|---|---|
 | `PANDO_DATABASE_URL` | the bundled Postgres | Point Pando at an existing database. |
+| `PANDO_DATABASE_MAX_CONNS` | `32` | Connections each Pando replica may hold as its application role. Postgres's `max_connections` must cover this for every replica, plus a few each for startup and the audit archiver; the bundled Postgres allows 100, which is three replicas. |
 | `PANDO_SERVER_ADDR` | `:8080` | Address the console and API listen on. |
 | `PANDO_SERVER_BASE_DOMAIN` | `localtest.me` | Domain per-app subdomains are taken from, under hostname routing. |
 | `PANDO_SERVER_ROUTING_MODE` | port | How apps are addressed: port, subdomain or path. |
@@ -103,6 +104,7 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | `PANDO_SERVER_EXTERNAL_URL` | — | The address browsers reach this installation on, such as `https://pando.example.com`. Set it when something other than Pando terminates TLS: it is what marks the session cookie `Secure`. Unset means "use the request", which is right on a localhost install and when Pando serves TLS itself. |
 | `PANDO_SERVER_PROXY_UPSTREAM` | — | Where the proxy sends traffic it has authorized. |
 | `PANDO_SERVER_WORK_DIR` | `/var/lib/pando` | Build contexts, uploads and adapter state. |
+| `PANDO_SERVER_ADVERTISE_URL` | `http://<hostname>:<port>` | Where the other replicas reach this one, when more than one runs. Only a deploy's live log is asked of a particular replica. In Kubernetes set it to the pod's address, such as `http://$(POD_IP):8080`. See `docs/design/notes-multiple-replicas-issue-72.md`. |
 | `PANDO_APP_PORT_START` / `_END` | `9000` / `9019` | Range of host ports apps are allocated. |
 | `PANDO_ADMIN_PASSWORD` | generated | Initial admin password. Read on first run only. |
 | `PANDO_LOG_LEVEL` | `info` | Log verbosity. |

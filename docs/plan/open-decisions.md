@@ -1,12 +1,12 @@
 # Open decisions
 
-Twenty-six questions. O-1 through O-10 come from requirements §23; O-11 through O-14 were added during
+Twenty-eight questions. O-1 through O-10 come from requirements §23; O-11 through O-14 were added during
 design; O-15 through O-17 were found while implementing phases 6, 7 and 8; O-18 was found while
 setting up the release build; O-19 was found by turning `gosec` on; O-20 was found while building the
 first AI adapter; O-21 and O-22 came from issue #74, AI functions beyond detection; O-23 came from
 building the Cloudflare Tunnel adapter; O-24 came from issue #87; O-25 from issue #79, egress rules;
 O-26 from issue #39, deploy approval; O-28 through O-31 from issue #41, deploying prebuilt images
-and uploaded files. **Twenty-three are resolved; the rest are listed below.** O-4 needs a
+and uploaded files; O-32 and O-33 from issue #72, running Pando as several replicas. **Twenty-five are resolved; the rest are listed below.** O-32 (a deploy and detection work queue) and O-33 (a Kubernetes runtime adapter) were both answered yes, alongside a multi-host Docker adapter and a registry Pando runs by default; `docs/design/notes-multiple-replicas-issue-72.md` has the decisions and the PRs that carry them out. O-4 needs a
 measurement, O-18 needs somebody to pick a host and pay for it, O-23 is kept open deliberately so
 it is revisited, and O-24 needs a product call on stopped apps.
 

@@ -20,6 +20,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/id"
 	"github.com/trypando/pando/internal/log"
 	"github.com/trypando/pando/internal/secret"
 	"github.com/trypando/pando/migrations"
@@ -68,7 +69,16 @@ type DB struct {
 	// archiver is a pool held as ArchiverRole, for audit retention and
 	// nothing else. Nil on a copy connected for a test.
 	archiver *pgxpool.Pool
+
+	// replica is this process's identity among the replicas sharing the
+	// database (issue #72), fresh on every connect. Work this process starts
+	// is stamped with it, so work left by a process that stopped is told apart
+	// from work a live one is still doing.
+	replica string
 }
+
+// Replica is this process's replica ID.
+func (db *DB) Replica() string { return db.replica }
 
 // SchemaVersion is the migration version this database is at.
 func (db *DB) SchemaVersion() uint { return db.schemaVersion }
@@ -91,6 +101,10 @@ type ConnectOptions struct {
 
 	// SkipMigrate is for tests that manage schema themselves.
 	SkipMigrate bool
+
+	// MaxConns caps the application pool; zero is pgx's default
+	// (config.Database.MaxConns explains the choice).
+	MaxConns int32
 }
 
 func (o *ConnectOptions) setDefaults() {
@@ -115,6 +129,14 @@ func Connect(ctx context.Context, opts ConnectOptions) (*DB, error) {
 	}
 	defer owner.Close()
 
+	// One replica bootstraps at a time (issue #72), until its grants are
+	// verified; the application pool opens after, so nothing serves early.
+	release, err := lockBootstrap(ctx, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	var version uint
 	if opts.SkipMigrate {
 		version, err = readSchemaVersion(ctx, owner)
@@ -125,7 +147,7 @@ func Connect(ctx context.Context, opts ConnectOptions) (*DB, error) {
 		return nil, err
 	}
 
-	passwords, err := provisionRoles(ctx, owner)
+	passwords, err := provisionRoles(ctx, owner, opts.OwnerURL)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +158,7 @@ func Connect(ctx context.Context, opts ConnectOptions) (*DB, error) {
 		return nil, err
 	}
 
-	db, err := connectAsApp(ctx, opts.OwnerURL, passwords.App, version)
+	db, err := connectAsApp(ctx, opts.OwnerURL, passwords.App, version, opts.MaxConns)
 	if err != nil {
 		return nil, err
 	}
@@ -156,12 +178,15 @@ type Passwords struct {
 }
 
 // provisionRoles creates or updates AppRole and ArchiverRole.
-func provisionRoles(ctx context.Context, owner *pgxpool.Pool) (Passwords, error) {
-	app, err := provisionRole(ctx, owner, AppRole)
+func provisionRoles(ctx context.Context, owner *pgxpool.Pool, ownerURL string) (Passwords, error) {
+	if err := ensurePrivateSchema(ctx, owner); err != nil {
+		return Passwords{}, err
+	}
+	app, err := provisionRole(ctx, owner, ownerURL, AppRole)
 	if err != nil {
 		return Passwords{}, err
 	}
-	archiver, err := provisionRole(ctx, owner, ArchiverRole)
+	archiver, err := provisionRole(ctx, owner, ownerURL, ArchiverRole)
 	if err != nil {
 		return Passwords{}, err
 	}
@@ -211,12 +236,19 @@ func Regrant(ctx context.Context, ownerURL string) error {
 }
 
 // connectAsApp opens the pool the rest of the process uses, held as AppRole.
-func connectAsApp(ctx context.Context, ownerURL string, appPassword secret.Value, version uint) (*DB, error) {
+func connectAsApp(ctx context.Context, ownerURL string, appPassword secret.Value, version uint, maxConns int32) (*DB, error) {
 	appURL, err := withCredentials(ownerURL, AppRole, appPassword)
 	if err != nil {
 		return nil, err
 	}
-	pool, err := pgxpool.New(ctx, appURL)
+	cfg, err := pgxpool.ParseConfig(appURL)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "The database connection URL is malformed.", err)
+	}
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not connect to the state database as the application role.", err)
 	}
@@ -224,7 +256,7 @@ func connectAsApp(ctx context.Context, ownerURL string, appPassword secret.Value
 		pool.Close()
 		return nil, errs.Wrap(errs.Internal, "Could not connect to the state database as the application role.", err)
 	}
-	return &DB{Pool: pool, schemaVersion: version}, nil
+	return &DB{Pool: pool, schemaVersion: version, replica: id.New(id.Replica)}, nil
 }
 
 // readSchemaVersion is the migration a database is at, for one that was not
@@ -394,11 +426,21 @@ func newestMigration(src source.Driver) (uint, error) {
 // provisionRole creates or updates one of Pando's restricted roles and returns
 // its password.
 //
-// The password is regenerated on every start and never persisted. Pando is the
-// only thing that connects as this role, and it holds the value only for the
-// life of the process — so there is one less secret at rest, and a leaked
-// password expires at the next restart.
-func provisionRole(ctx context.Context, owner *pgxpool.Pool, role string) (secret.Value, error) {
+// A password that already works is kept, and is recorded where only the
+// owning role can read it (privateSchema). It used to be regenerated on every
+// start and held only in memory, which was one process's view of the world:
+// every replica provisions on start, and a second replica setting a fresh
+// password refused every new connection the first one made. A rolling restart
+// or a scale-up took the rest of the install down with it (issue #72).
+func provisionRole(ctx context.Context, owner *pgxpool.Pool, ownerURL, role string) (secret.Value, error) {
+	stored, found, err := storedPassword(ctx, owner, role)
+	if err != nil {
+		return secret.Value{}, err
+	}
+	if found && canLogIn(ctx, ownerURL, role, stored) {
+		return stored, nil
+	}
+
 	password, err := randomPassword()
 	if err != nil {
 		return secret.Value{}, err
@@ -425,7 +467,103 @@ func provisionRole(ctx context.Context, owner *pgxpool.Pool, role string) (secre
 			WithDetail("role", role).
 			WithRemedy("Pando needs a database account that can CREATE ROLE and GRANT. If you set PANDO_DATABASE_URL to an existing database, grant those privileges or point Pando at a database it owns. This is required: without a separate role, the audit log cannot be made tamper-proof.")
 	}
+	if _, err := owner.Exec(ctx, `
+		INSERT INTO `+privateSchema+`.role_passwords (role, password) VALUES ($1, $2)
+		ON CONFLICT (role) DO UPDATE SET password = EXCLUDED.password, updated_at = now()`,
+		role, password.Reveal()); err != nil {
+		return secret.Value{}, errs.Wrap(errs.Internal, "Pando could not record a database role's password.", err).
+			WithDetail("role", role)
+	}
 	return password, nil
+}
+
+// privateSchema holds what only the owning role may read: the passwords of the
+// two restricted roles.
+//
+// Outside public on purpose. applyGrants hands the application role every
+// table in public, and the archiver's password is what the application role
+// must not be able to read — with it, the role serving traffic could log in as
+// the one that removes audit history (R-348). Nothing is ever granted on this
+// schema, and the DR bundle's pg_dump leaves it out, so a bundle carries no
+// database password (R-194); a restore onto a new server provisions new ones.
+const privateSchema = "pando_private"
+
+// ensurePrivateSchema creates privateSchema and its one table.
+func ensurePrivateSchema(ctx context.Context, owner *pgxpool.Pool) error {
+	for _, stmt := range []string{
+		`CREATE SCHEMA IF NOT EXISTS ` + privateSchema,
+		`REVOKE ALL ON SCHEMA ` + privateSchema + ` FROM PUBLIC`,
+		`CREATE TABLE IF NOT EXISTS ` + privateSchema + `.role_passwords (
+			role       text PRIMARY KEY,
+			password   text NOT NULL,
+			updated_at timestamptz NOT NULL DEFAULT now()
+		)`,
+	} {
+		if _, err := owner.Exec(ctx, stmt); err != nil {
+			return errs.Wrap(errs.Internal, "Pando could not prepare the schema that holds its database role passwords.", err).
+				WithRemedy("Pando's database account needs CREATE on the database it owns.")
+		}
+	}
+	return nil
+}
+
+// storedPassword reads the password last given to role.
+func storedPassword(ctx context.Context, owner *pgxpool.Pool, role string) (secret.Value, bool, error) {
+	var pw string
+	err := owner.QueryRow(ctx,
+		`SELECT password FROM `+privateSchema+`.role_passwords WHERE role = $1`, role).Scan(&pw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return secret.Value{}, false, nil
+	}
+	if err != nil {
+		return secret.Value{}, false, errs.Wrap(errs.Internal, "Pando could not read a database role's password.", err)
+	}
+	return secret.New(pw), true, nil
+}
+
+// canLogIn reports whether role can connect with password.
+//
+// Checked rather than assumed: the role may have been altered by hand, or the
+// database restored onto a server whose roles differ. A password that does not
+// work is replaced, which strands nobody — no replica could have been
+// connecting with it either.
+func canLogIn(ctx context.Context, ownerURL, role string, password secret.Value) bool {
+	dsn, err := withCredentials(ownerURL, role, password)
+	if err != nil {
+		return false
+	}
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(cctx, dsn)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close(cctx)
+	return true
+}
+
+// bootstrapLock is the advisory lock every replica holds while it bootstraps,
+// so two starting at once do not race to migrate, provision or grant —
+// concurrent GRANTs on one table fail with "tuple concurrently updated".
+const bootstrapLock int64 = 0x70616e646f01
+
+// lockBootstrap holds bootstrapLock on one owner connection until release.
+//
+// Blocking: a replica that starts while another is bootstrapping waits its turn
+// and then finds the work already done, rather than failing.
+func lockBootstrap(ctx context.Context, owner *pgxpool.Pool) (release func(), err error) {
+	conn, err := owner.Acquire(ctx)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not take the startup lock in the state database.", err)
+	}
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, bootstrapLock); err != nil {
+		conn.Release()
+		return nil, errs.Wrap(errs.Internal, "Could not take the startup lock in the state database.", err)
+	}
+	return func() {
+		_, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, bootstrapLock)
+		conn.Release()
+	}, nil
 }
 
 // applyGrants applies the grant policy to every table.

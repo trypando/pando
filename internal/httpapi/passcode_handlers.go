@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -36,39 +37,59 @@ const (
 	passcodeWindow   = 15 * time.Minute
 )
 
-// passcodeLimiter counts wrong passcodes per app and client address. In
-// memory: it resets when Pando restarts, which costs an attacker a restart
-// they cannot cause, and needs no table.
-type passcodeLimiter struct {
+// PasscodeFailures counts wrong passcodes per app and client address.
+//
+// Shared by every replica in production (state.PasscodeFailures): a count kept
+// in one process's memory gave an attacker one allowance per replica behind
+// the load balancer, and a fresh one whenever a replica restarted (issue #72).
+type PasscodeFailures interface {
+	Recent(ctx context.Context, key string, window time.Duration) (int, error)
+	Record(ctx context.Context, key string, window time.Duration) error
+	Clear(ctx context.Context, key string) error
+}
+
+// memoryPasscodeFailures is the count when no store is wired, as in a test
+// that builds a Server by hand. Correct for one process and only one.
+type memoryPasscodeFailures struct {
 	mu   sync.Mutex
 	seen map[string][]time.Time
 }
 
-var passcodeTries = &passcodeLimiter{seen: map[string][]time.Time{}}
+var passcodeTries = &memoryPasscodeFailures{seen: map[string][]time.Time{}}
 
-func (l *passcodeLimiter) blocked(key string, now time.Time) bool {
+func (l *memoryPasscodeFailures) Recent(_ context.Context, key string, window time.Duration) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	now := time.Now()
 	recent := l.seen[key][:0]
 	for _, t := range l.seen[key] {
-		if now.Sub(t) < passcodeWindow {
+		if now.Sub(t) < window {
 			recent = append(recent, t)
 		}
 	}
 	l.seen[key] = recent
-	return len(recent) >= passcodeAttempts
+	return len(recent), nil
 }
 
-func (l *passcodeLimiter) failed(key string, now time.Time) {
+func (l *memoryPasscodeFailures) Record(_ context.Context, key string, _ time.Duration) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.seen[key] = append(l.seen[key], now)
+	l.seen[key] = append(l.seen[key], time.Now())
+	return nil
 }
 
-func (l *passcodeLimiter) clear(key string) {
+func (l *memoryPasscodeFailures) Clear(_ context.Context, key string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.seen, key)
+	return nil
+}
+
+func (s *Server) passcodeFailures() PasscodeFailures {
+	if s.PasscodeFailures != nil {
+		return s.PasscodeFailures
+	}
+	return passcodeTries
 }
 
 // handleGetPasscodeApp names an app for its passcode page. Answers only for an
@@ -94,8 +115,13 @@ func (s *Server) handleEnterPasscode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := app.ID + "|" + clientIP(r)
-	now := time.Now()
-	if passcodeTries.blocked(key, now) {
+	failures := s.passcodeFailures()
+	recent, err := failures.Recent(r.Context(), key, passcodeWindow)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	if recent >= passcodeAttempts {
 		Error(w, r, errs.New(errs.RateLimited, "Too many wrong passcodes. Wait a few minutes and try again."))
 		return
 	}
@@ -109,14 +135,17 @@ func (s *Server) handleEnterPasscode(w http.ResponseWriter, r *http.Request) {
 	}
 	right, err := hash.Verify(secret.New(req.Passcode), grant.PasscodeHash)
 	if err != nil || !right {
-		passcodeTries.failed(key, now)
+		if err := failures.Record(r.Context(), key, passcodeWindow); err != nil {
+			Error(w, r, err)
+			return
+		}
 		s.audit(r, audit.Event{
 			PrincipalKind: audit.KindAnonymous, Action: "app.passcode.denied", AppID: app.ID,
 		})
 		Error(w, r, errs.New(errs.AuthInvalid, "That passcode isn't right. Check it with whoever gave it to you."))
 		return
 	}
-	passcodeTries.clear(key)
+	_ = failures.Clear(r.Context(), key)
 
 	token, expires, err := s.Grants.Unlock(r.Context(), app.ID, grant.ID)
 	if err != nil {

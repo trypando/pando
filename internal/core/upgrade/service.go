@@ -56,6 +56,9 @@ type Service struct {
 	DropSnapshot func(ctx context.Context) error
 	Notify       func(ctx context.Context, n api.Notification) error
 	Audit        func(ctx context.Context, e audit.Event)
+	// Replicas counts the live Pando processes serving this install. An
+	// in-place upgrade is for one (issue #72).
+	Replicas func(ctx context.Context) (int, error)
 
 	DatabaseURL  secret.Value
 	WorkDir      string
@@ -111,6 +114,15 @@ func (s *Service) PlanFor(ctx context.Context, version string) (Plan, error) {
 	}
 	if !doc.UpgradeInPlace {
 		no("In-place upgrades are off. Turn on \"Let Pando upgrade itself\" on the Policy screen, or set PANDO_POLICY_UPGRADE_IN_PLACE=true where Pando is deployed, which also locks it there.")
+	}
+	// An in-place upgrade replaces the one container it runs in. With several
+	// replicas it would replace one and leave the rest on the old version, and
+	// whatever runs them — Compose, Kubernetes — would put the old image back
+	// the next time it reconciled (issue #72).
+	if s.Replicas != nil {
+		if n, err := s.Replicas(ctx); err == nil && n > 1 {
+			no(fmt.Sprintf("This install runs %d Pando replicas, and an in-place upgrade replaces only the one it runs in. Upgrade by rolling every replica to the new release's image with whatever runs them, such as `docker compose up -d` or `kubectl rollout`.", n))
+		}
 	}
 
 	st, err := s.Updates.Status(ctx)

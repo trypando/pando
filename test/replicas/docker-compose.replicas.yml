@@ -1,0 +1,33 @@
+# Pando as several replicas behind a load balancer, against one Postgres
+# (issue #72). Laid over the shipped docker-compose.yml:
+#
+#   docker compose -p pando-replicas -f docker-compose.yml \
+#     -f test/replicas/docker-compose.replicas.yml up -d --build --wait
+#
+# `make test-replicas` does that, runs test/replicas and the design 07
+# sequences through the balancer, and takes it down again.
+#
+# What a replica needs that one process did not, and how this file gives it
+# (docs/design/notes-multiple-replicas-issue-72.md):
+#   - the same /var/lib/pando: the pando-data volume, shared by every replica;
+#   - the same Docker host: the socket, as before;
+#   - one address for everyone: the lb service, which owns the published ports.
+services:
+  pando:
+    # Replicas cannot each publish the same host port; the balancer does.
+    ports: !reset []
+    deploy:
+      replicas: 2
+
+  lb:
+    image: haproxy:3.0-alpine
+    depends_on:
+      - pando
+    environment:
+      APP_PORTS: "${PANDO_APP_PORT_START:-9000}-${PANDO_APP_PORT_END:-9019}"
+    ports:
+      - "${PANDO_PORT:-8080}:8080"
+      - "${PANDO_APP_PORT_START:-9000}-${PANDO_APP_PORT_END:-9019}:${PANDO_APP_PORT_START:-9000}-${PANDO_APP_PORT_END:-9019}"
+    volumes:
+      - ./test/replicas/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    restart: unless-stopped

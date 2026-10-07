@@ -472,7 +472,7 @@ func (u *Users) ClaimFirst(ctx context.Context, username, displayName, passwordH
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Any fixed key; it only has to be the same key for every claimant.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(46046)`); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, FirstAccountLock); err != nil {
 		return User{}, "", errs.Wrap(errs.Internal, "Could not set up the installation.", err)
 	}
 	var count int

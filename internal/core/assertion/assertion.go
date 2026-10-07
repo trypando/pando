@@ -8,6 +8,7 @@
 package assertion
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -77,6 +78,7 @@ type Minter struct {
 	clock   clock.Clock
 	signing *Key
 	retired []*Key
+	peers   PeerKeys
 }
 
 // NewMinter builds a minter with a freshly generated key.
@@ -220,13 +222,76 @@ func (m *Minter) Verify(token string) (Claims, error) {
 	return claims, nil
 }
 
-// JWKS returns the public keys, for publication at /.well-known/jwks.json.
-func (m *Minter) JWKS() map[string]any {
+// PeerKeys lists the verifying keys of the other Pando processes serving this
+// install (issue #72).
+//
+// Each replica signs with a key of its own that never leaves its memory, and
+// publishes the public half where the others can read it. An app may fetch the
+// JWKS from one replica and receive an assertion signed by another, so every
+// replica's JWKS has to carry every key that may have signed something still
+// valid — otherwise the app sees a kid nobody publishes and refuses a caller
+// Pando vouched for (R-051).
+type PeerKeys func(ctx context.Context) ([]PublicKey, error)
+
+// PublicKey is a verifying key, without the private half.
+type PublicKey struct {
+	ID     string
+	Public ed25519.PublicKey
+}
+
+// WithPeers sets where the other replicas' keys are read from.
+func (m *Minter) WithPeers(p PeerKeys) *Minter {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.peers = p
+	return m
+}
+
+// SigningKey is the public half of the key this process signs with, for
+// publishing to the other replicas.
+func (m *Minter) SigningKey() PublicKey {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if m.signing == nil {
+		return PublicKey{}
+	}
+	return PublicKey{ID: m.signing.ID, Public: m.signing.Public}
+}
 
-	keys := make([]map[string]string, 0, len(m.retired)+1)
-	add := func(k *Key) {
+// JWKS returns the public keys, for publication at /.well-known/jwks.json:
+// this process's own, and every peer's.
+//
+// Read from the peers per request rather than cached. An app that meets an
+// unknown kid fetches the JWKS again, and a cached list would answer that fetch
+// without the key it came for. If the peers cannot be read the process's own
+// keys are still published: the alternative is publishing nothing, which fails
+// every app rather than some.
+func (m *Minter) JWKS(ctx context.Context) map[string]any {
+	m.mu.RLock()
+	own := make([]PublicKey, 0, len(m.retired)+1)
+	if m.signing != nil {
+		own = append(own, PublicKey{ID: m.signing.ID, Public: m.signing.Public})
+	}
+	for _, k := range m.retired {
+		own = append(own, PublicKey{ID: k.ID, Public: k.Public})
+	}
+	peers := m.peers
+	m.mu.RUnlock()
+
+	all := own
+	if peers != nil {
+		if theirs, err := peers(ctx); err == nil {
+			all = append(all, theirs...)
+		}
+	}
+
+	seen := make(map[string]bool, len(all))
+	keys := make([]map[string]string, 0, len(all))
+	for _, k := range all {
+		if seen[k.ID] || len(k.Public) != ed25519.PublicKeySize {
+			continue
+		}
+		seen[k.ID] = true
 		keys = append(keys, map[string]string{
 			"kty": "OKP",
 			"crv": "Ed25519",
@@ -236,14 +301,12 @@ func (m *Minter) JWKS() map[string]any {
 			"x":   base64.RawURLEncoding.EncodeToString(k.Public),
 		})
 	}
-	if m.signing != nil {
-		add(m.signing)
-	}
-	for _, k := range m.retired {
-		add(k)
-	}
 	return map[string]any{"keys": keys}
 }
+
+// KeyID is the kid of a public key: derived from the key, so every replica
+// names a peer's key the same way without being told.
+func KeyID(pub ed25519.PublicKey) string { return keyID(pub) }
 
 // SigningKeyID returns the key currently used to sign.
 func (m *Minter) SigningKeyID() string {

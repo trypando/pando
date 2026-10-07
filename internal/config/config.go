@@ -202,6 +202,27 @@ type Server struct {
 	// of Pando's data, on the same volume, so the archives are on the disk
 	// R-224 is about rather than somewhere nobody counts.
 	AuditArchiveDir string `mapstructure:"audit_archive_dir"`
+
+	// AdvertiseURL is where the other Pando replicas reach this one, for the
+	// one request that has to go to a particular replica: a deploy's live log
+	// (issue #72). Empty means http://<hostname><port of addr>, which is right
+	// on a Compose network; in Kubernetes, set it to the pod's address, such
+	// as http://$(POD_IP):8080. With one replica nothing reads it.
+	AdvertiseURL string `mapstructure:"advertise_url"`
+}
+
+// Advertise is AdvertiseURL, or the default built from hostname.
+func (s Server) Advertise(hostname string) string {
+	if s.AdvertiseURL != "" {
+		return strings.TrimSuffix(s.AdvertiseURL, "/")
+	}
+	port := s.Addr
+	if i := strings.LastIndex(port, ":"); i >= 0 {
+		port = port[i:]
+	} else {
+		port = ""
+	}
+	return "http://" + hostname + port
 }
 
 type Database struct {
@@ -213,6 +234,14 @@ type Database struct {
 	// refuses to run if the audit log would be rewritable.
 	URL            string        `mapstructure:"url"`
 	ConnectTimeout time.Duration `mapstructure:"connect_timeout"`
+
+	// MaxConns caps this replica's pool of connections as the application
+	// role. pgx's own default is the CPU count, at least four, which a
+	// reconciler holding a connection per app it is converging, plus the
+	// leader's held lock, could use up on a small host and then wait on
+	// forever (issue #72). Postgres's max_connections must allow MaxConns
+	// for every replica, plus a few for each one's bootstrap.
+	MaxConns int32 `mapstructure:"max_conns"`
 }
 
 type Log struct {
@@ -228,6 +257,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("server.addr", ":8080")
 	v.SetDefault("server.shutdown_timeout", 15*time.Second)
 	v.SetDefault("database.connect_timeout", 60*time.Second)
+	v.SetDefault("database.max_conns", 32)
 	v.SetDefault("server.issuer", "https://pando.local")
 	v.SetDefault("server.routing_mode", string(spec.RoutingPath))
 	v.SetDefault("server.port_range_start", 9000)
@@ -253,6 +283,7 @@ func Load(path string) (*Config, error) {
 	// A zero default is not a value: it is how the key gets registered.
 	v.SetDefault("server.base_domain", "")
 	v.SetDefault("server.external_url", "")
+	v.SetDefault("server.advertise_url", "")
 	v.SetDefault("reconciler.backoff", "")
 	v.SetDefault("reconciler.failure_threshold", 0)
 	v.SetDefault("reconciler.failure_window", time.Duration(0))
@@ -303,6 +334,7 @@ func Load(path string) (*Config, error) {
 // Also where sources.go learns which variable a key came from.
 var boundEnv = map[string]string{
 	"database.url":          "PANDO_DATABASE_URL",
+	"database.max_conns":    "PANDO_DATABASE_MAX_CONNS",
 	"server.base_domain":    "PANDO_SERVER_BASE_DOMAIN",
 	"server.proxy_upstream": "PANDO_SERVER_PROXY_UPSTREAM",
 	"server.issuer":         "PANDO_SERVER_ISSUER",
@@ -310,6 +342,7 @@ var boundEnv = map[string]string{
 	"server.addr":           "PANDO_SERVER_ADDR",
 	"server.routing_mode":   "PANDO_SERVER_ROUTING_MODE",
 	"server.work_dir":       "PANDO_SERVER_WORK_DIR",
+	"server.advertise_url":  "PANDO_SERVER_ADVERTISE_URL",
 
 	"server.audit_archive_dir": "PANDO_SERVER_AUDIT_ARCHIVE_DIR",
 	"log.level":                "PANDO_LOG_LEVEL",

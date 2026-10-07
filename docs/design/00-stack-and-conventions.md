@@ -71,6 +71,14 @@ race and the standard fix.
 simply expected to use the external-database path, is unspecified. The external path covers it
 functionally; only the first-run experience differs.
 
+**[P] More than one `pando` (issue #72).** The `pando` service may run as N replicas against the one
+Postgres, behind a load balancer, provided every replica reaches the same Docker daemon and shares
+`/var/lib/pando`. Bootstrap is serialized by an advisory lock, the restricted roles keep their
+passwords across starts, one replica leads the install-wide jobs, and each replica signs assertions
+with its own key and publishes every replica's. Replicas on different Docker hosts, and Kubernetes
+with no Docker host beside it, are not supported. The verdict, prerequisites and what each fix cost
+are in `notes-multiple-replicas-issue-72.md`; `make test-replicas` runs it.
+
 ### 1.2 Library choices [P]
 
 | Concern | Choice | Note |

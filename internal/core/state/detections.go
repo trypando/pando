@@ -57,19 +57,21 @@ func NewDetections(db *DB) *Detections { return &Detections{db: db} }
 // unrelated reason (R-022 makes re-detection explicit, not free).
 func (d *Detections) Start(ctx context.Context, appID string) error {
 	_, err := d.db.Exec(ctx, `
-		INSERT INTO detections (app_id, status, body, started_at, updated_at)
-		VALUES ($1, $2, '{}'::jsonb, now(), now())
+		INSERT INTO detections (app_id, status, body, started_at, updated_at, replica_id)
+		VALUES ($1, $2, '{}'::jsonb, now(), now(), $3)
 		ON CONFLICT (app_id) DO UPDATE
-		SET status = EXCLUDED.status, body = '{}'::jsonb, started_at = now(), updated_at = now()
-	`, appID, DetectionRunning)
+		SET status = EXCLUDED.status, body = '{}'::jsonb, started_at = now(), updated_at = now(),
+		    replica_id = EXCLUDED.replica_id
+	`, appID, DetectionRunning, d.db.replica)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not start detection.", err)
 	}
 	return nil
 }
 
-// AbandonRunning fails every detection still marked running, and is called at
-// startup, before anything new can start one.
+// AbandonRunning fails every detection still marked running on a Pando process
+// that is no longer running: at startup and then periodically, and never a
+// live replica's (issue #72, as Deployments.AbandonInFlight).
 //
 // Detection runs inside the server process. One that was running when the
 // process stopped will never finish, and it stayed "running" for good: a
@@ -77,14 +79,14 @@ func (d *Detections) Start(ctx context.Context, appID string) error {
 // come (issue #55). Failing it says what happened and lets it be run again.
 func (d *Detections) AbandonRunning(ctx context.Context) (int64, error) {
 	body, err := json.Marshal(map[string]any{"error": errs.New(errs.StateInvalid,
-		"Pando restarted while it was working out how to run this app, so that work did not finish.").
+		"Pando restarted or stopped while it was working out how to run this app, so that work did not finish.").
 		WithRemedy("Run detection again.")})
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not record interrupted detections.", err)
 	}
 	tag, err := d.db.Exec(ctx, `
-		UPDATE detections SET status = $1, body = $2, updated_at = now()
-		WHERE status = $3`, DetectionFailed, body, DetectionRunning)
+		UPDATE detections d SET status = $1, body = $2, updated_at = now()
+		WHERE d.status = $3 AND `+orphaned(4), DetectionFailed, body, DetectionRunning, ReplicaStale.Seconds())
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not record interrupted detections.", err)
 	}

@@ -83,6 +83,16 @@ func (s *LogStore) Follow(deploymentID string) ([]string, <-chan string, func())
 }
 
 // Sink is an io.Writer over one deployment's output.
+// Has reports whether this process holds any of a deployment's log: whether it
+// ran the deploy (since it last started) or someone is already following it
+// here.
+func (s *LogStore) Has(deploymentID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.streams[deploymentID]
+	return ok
+}
+
 type Sink struct {
 	stream *stream
 	buf    []byte

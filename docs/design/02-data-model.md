@@ -726,6 +726,20 @@ place they all pass through: `apps.state` → `app.state_changed`; `deployments.
 outcome `failed` → `backup.failed`. The audit writer adds a fifth path for catalogued actions, in the same
 transaction as the audit row (R-365).
 
+### 2.10 Replicas (issue #72)
+
+Migration 000045. Several `pando` processes may share one database; the verdict and topology are in
+[notes-multiple-replicas-issue-72.md](notes-multiple-replicas-issue-72.md).
+
+| Table | Holds | Constraints that matter |
+|---|---|---|
+| `pando_replicas` | One row per Pando process start: hostname, advertise URL, the **public** half of its assertion signing key, heartbeat, stopped time | `id` is `rep_…`, fresh per start. `assertion_key` is exactly 32 bytes — an Ed25519 public key; there is no column a private key could go in. **Not a hosts table** (§3): it records Pando's own processes, and nothing that plans or places a workload reads it |
+| `deployments.replica_id`, `detections.replica_id` | Which replica is running the work | Work whose replica is stopped or silent past `state.ReplicaStale` is recorded as interrupted; a live replica's never is |
+| `passcode_failures` | Wrong passcodes per app and client address (R-075a) | Pruned past the window by the leader |
+| `secrets_canary` | A random value sealed with the install's secrets key, and its SHA-256 | Singleton. Every replica opens it at start and refuses to run with a key that cannot (R-190) |
+| `cluster_signals` | `restart_requested_at`, which every replica started earlier obeys | Singleton (R-015) |
+| `pando_private.role_passwords` | The passwords of `pando_app` and `pando_audit_archiver`, so replicas agree on them | **Outside `public`, with no grant to anyone but the owner** — the application role must not be able to read the archiver's password (R-348). Created by bootstrap, not a migration, and excluded from the DR bundle's `pg_dump` |
+
 ## 3. Things deliberately not in the schema
 
 - **Hosts.** R-256: multi-machine capability lives entirely in adapters. Adding a `hosts` table would be the first step toward the scheduler R-010 forbids.

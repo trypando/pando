@@ -55,6 +55,7 @@ import (
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
 	"github.com/trypando/pando/internal/core/clock"
+	"github.com/trypando/pando/internal/core/cluster"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/edge"
@@ -251,6 +252,7 @@ func serve(ctx context.Context, configPath string) error {
 	db, err := state.Connect(ctx, state.ConnectOptions{
 		OwnerURL:       cfg.Database.URL,
 		ConnectTimeout: cfg.Database.ConnectTimeout,
+		MaxConns:       cfg.Database.MaxConns,
 	})
 	if err != nil {
 		return err
@@ -344,6 +346,13 @@ func serve(ctx context.Context, configPath string) error {
 	secretsRef, _ := registry.Default(adapterapi.CategorySecrets)
 	secretsAdapter, _ := registry.Secrets(secretsRef)
 	secrets := state.NewSecrets(db, secretsAdapter, secretsRef)
+
+	// Every replica must hold the same secrets key, which by design is not in
+	// the database (R-190). One that does not stops here, before it can write
+	// a secret no other replica can read (issue #72).
+	if err := secrets.VerifyKey(ctx); err != nil {
+		return err
+	}
 
 	// External identity (issue #51). Unlike other adapter categories, a
 	// provider is built from its stored row when first used and rebuilt when
@@ -532,12 +541,32 @@ func serve(ctx context.Context, configPath string) error {
 	}
 
 	// Assertions are what an app can actually trust about a caller (R-051).
-	// The signing key is generated per process for now; persisting it across
-	// restarts is phase 9's concern, since the DR bundle carries it (R-212).
+	// The signing key is generated per process and never leaves it; its public
+	// half is published to the other replicas, and every replica's JWKS
+	// carries every live replica's key, so an assertion verifies whichever
+	// replica signed it (issue #72).
 	minter, err := assertion.NewMinter(cfg.Server.Issuer, clock.System{})
 	if err != nil {
 		return err
 	}
+	replicas := state.NewReplicas(db)
+	hostname, _ := os.Hostname()
+	member := &cluster.Member{
+		Store:        replicas,
+		ID:           db.Replica(),
+		Hostname:     hostname,
+		AdvertiseURL: cfg.Server.Advertise(hostname),
+		Version:      buildVersion,
+		Minter:       minter,
+		Logger:       logger,
+	}
+	minter.WithPeers(member.PeerKeys)
+	if err := member.Join(ctx); err != nil {
+		return err
+	}
+	defer member.Leave(context.WithoutCancel(ctx))
+	logger = logger.With(zap.String("replica_id", member.ID))
+	ctx = log.Into(ctx, logger)
 
 	// Validated in config.Load, so this cannot fail here; the second read is
 	// how the parsed value reaches the handlers.
@@ -662,6 +691,10 @@ func serve(ctx context.Context, configPath string) error {
 		backups: backups, backup: backupService, authzStore: authzStore, auditor: auditor,
 		notify: notifyRouter, logger: logger,
 	})
+	upgrades.Replicas = func(ctx context.Context) (int, error) {
+		live, err := replicas.Live(ctx)
+		return len(live), err
+	}
 
 	apiHandler := (&httpapi.Server{
 		Updates:  updates,
@@ -719,6 +752,15 @@ func serve(ctx context.Context, configPath string) error {
 		AdapterKinds: adapterKinds(),
 		StartedAt:    startedAt,
 		Restart: func() {
+			// Every replica, not only the one the load balancer chose: a
+			// restart is how saved adapters start running (R-253), and
+			// replicas left on the old configuration would drift apart.
+			// The others notice at their next heartbeat (issue #72).
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			if err := replicas.RequestRestart(ctx); err != nil {
+				logger.Warn("could not ask the other replicas to restart", zap.Error(err))
+			}
 			select {
 			case restartCh <- struct{}{}:
 			default: // one is already on its way
@@ -738,10 +780,14 @@ func serve(ctx context.Context, configPath string) error {
 		Inbox:         &subscription.Inbox{Store: notifications},
 		Notifier:      notifyRouter,
 		Logs:          logStore,
-		Secrets:       secrets,
-		Detections:    detections,
-		Detector:      detector,
-		Console:       consoleHandler(logger),
+		LogOwner: cluster.LogOwner{
+			Self: member.ID, Deployments: deployments, Replicas: replicas,
+		}.Where,
+		PasscodeFailures: state.NewPasscodeFailures(db),
+		Secrets:          secrets,
+		Detections:       detections,
+		Detector:         detector,
+		Console:          consoleHandler(logger),
 
 		// Policy is evaluated before grants, so it is wired into the
 		// authorizer rather than checked alongside it (R-272).
@@ -829,9 +875,11 @@ func serve(ctx context.Context, configPath string) error {
 		FailureThreshold: cfg.Reconciler.FailureThreshold,
 		FailureWindow:    cfg.Reconciler.FailureWindow,
 	}
-	// Work the previous process had under way will never finish, so it is
-	// recorded as interrupted rather than left running forever. Before the
-	// loops below start, since they are what start new work.
+	// Work a stopped process had under way will never finish, so it is
+	// recorded as interrupted rather than left running forever. Only a
+	// stopped replica's: another replica's live work is left alone (issue
+	// #72). Here at startup, and then by the leader's sweeper, since a lost
+	// pod is not followed by a restart of itself.
 	if n, err := detections.AbandonRunning(ctx); err != nil {
 		logger.Warn("could not record interrupted detections", zap.Error(err))
 	} else if n > 0 {
@@ -845,17 +893,41 @@ func serve(ctx context.Context, configPath string) error {
 
 	loopCtx, stopLoop := context.WithCancel(ctx)
 	defer stopLoop()
+
+	// The reconciler runs on every replica: it locks per app (state
+	// Reconciles.Lock), so replicas share the apps between them rather than
+	// fighting over them.
 	go loop.Run(loopCtx)
+
+	// What must happen once per install rather than once per process runs on
+	// the leader alone (issue #72): two replicas each running the GC tore
+	// down, backed up and pruned twice, and two running auto-deploy deployed
+	// one commit twice. jobs collects them; the leader starts them below.
+	var jobs []cluster.Job
+	job := func(name string, run func(context.Context)) {
+		jobs = append(jobs, cluster.Job{Name: name, Run: run})
+	}
+	job("sweep", (&cluster.Sweeper{
+		Abandon: []func(context.Context) (int64, error){deployments.AbandonInFlight, detections.AbandonRunning},
+		Prune: func(ctx context.Context) error {
+			_, err := replicas.Prune(ctx, 24*time.Hour)
+			if err == nil {
+				err = state.NewPasscodeFailures(db).Prune(ctx, time.Hour)
+			}
+			return err
+		},
+		Logger: logger,
+	}).Run)
 
 	// Once a minute: an edge somebody removed by hand comes back, and one no
 	// adapter asks for any more goes. Docker restarts one that crashed.
-	go edges.Run(loopCtx, time.Minute)
+	job("edges", func(ctx context.Context) { edges.Run(ctx, time.Minute) })
 
 	// Auto-deploy is a separate job on its own clock (R-141). It never modifies
 	// a running app — it creates a revision and enqueues a deployment, and
 	// everything flows through the normal path from there. Off unless an app's
 	// pinned spec asks for it, so this is usually a query returning nothing.
-	go (&reconciler.AutoDeploy{
+	job("auto-deploy", (&reconciler.AutoDeploy{
 		Apps:        apps,
 		Deployments: deployments,
 		Resolver:    refResolver{},
@@ -866,11 +938,11 @@ func serve(ctx context.Context, configPath string) error {
 		// An app whose deploys now need approval stops auto-deploying
 		// (R-158).
 		Policy: policyStore,
-	}).Run(loopCtx)
+	}).Run)
 
 	// Audit retention, daily (R-347). As the archiver role, which is the only
 	// one that can remove a month, and only one archived and old enough.
-	go (&audit.Archiver{
+	job("audit-retention", (&audit.Archiver{
 		Pool:   db.Archiver(),
 		Stores: auditStores,
 		Retention: func(ctx context.Context) (audit.Retention, error) {
@@ -879,16 +951,19 @@ func serve(ctx context.Context, configPath string) error {
 		},
 		Clock:  clock.System{},
 		Logger: logger,
-	}).Run(loopCtx)
+	}).Run)
 
 	// Deploy requests nobody answered in time expire (R-156), once a minute.
 	// Approving or rejecting one also expires it on the spot, so the minute
 	// is how long the list can show one that has already run out, not how
 	// long one can be approved late.
-	go approvals.RunExpiry(loopCtx, time.Minute)
+	job("approval-expiry", func(ctx context.Context) { approvals.RunExpiry(ctx, time.Minute) })
 
+	// The update check on every replica: what it learns is kept in memory,
+	// and each replica answers the Updates screen from its own. The upgrade
+	// loop records outcomes and notifies once, so it leads.
 	go updates.Run(loopCtx)
-	go upgrades.Run(loopCtx)
+	job("upgrades", upgrades.Run)
 
 	// Event subscriptions (issue #50): route the outbox and send what is due,
 	// every two seconds while it is quiet and continuously while it is not;
@@ -916,7 +991,9 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:        logger,
 	}
 	go dispatcher.Run(loopCtx)
-	go dispatcher.WatchAdapters(loopCtx, 5*time.Minute)
+	// Delivery claims with SKIP LOCKED, so it runs on every replica; a health
+	// change is one event per install, so the watch leads.
+	job("adapter-health", func(ctx context.Context) { dispatcher.WatchAdapters(ctx, 5*time.Minute) })
 
 	// Port-mode apps answer at the root of their own port (design 03 §4.2).
 	//
@@ -958,7 +1035,18 @@ func serve(ctx context.Context, configPath string) error {
 		if reclaimer, ok := rt.(interface {
 			ReclaimNetworks(context.Context, func(string) bool) (int, error)
 		}); ok {
-			if n, err := reclaimer.ReclaimNetworks(ctx, owns); err != nil {
+			// Not an app with a deploy under way. Another replica's deploy
+			// makes the app's network before its containers, so for a moment
+			// it is empty and container-less and looks like a dead app's
+			// (issue #72). A deleted app has nothing in flight.
+			reclaimable := func(bundleID string) bool {
+				if !owns(bundleID) {
+					return false
+				}
+				busy, err := deployments.InFlight(ctx, bundleID)
+				return err == nil && !busy
+			}
+			if n, err := reclaimer.ReclaimNetworks(ctx, reclaimable); err != nil {
 				logger.Warn("could not reclaim app networks", zap.Error(err))
 			} else if n > 0 {
 				logger.Info("reclaimed app networks left by deleted apps", zap.Int("count", n))
@@ -980,6 +1068,29 @@ func serve(ctx context.Context, configPath string) error {
 			} else if n > 0 {
 				logger.Info("rejoined the networks of running apps", zap.Int("count", n))
 			}
+
+			// And keep rejoining, on every replica. An app deployed by
+			// another replica gets a network only that replica joined, so
+			// this one's proxy could not reach it until its next restart
+			// (issue #72). Fifteen seconds is how long a new app may answer
+			// 502 here; joining is idempotent, so a pass with nothing new
+			// changes nothing.
+			go func() {
+				ticker := time.NewTicker(15 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-loopCtx.Done():
+						return
+					case <-ticker.C:
+					}
+					if n, err := rejoiner.RejoinNetworks(loopCtx, owns); err != nil {
+						logger.Warn("could not rejoin app networks", zap.Error(err))
+					} else if n > 0 {
+						logger.Debug("joined app networks", zap.Int("count", n))
+					}
+				}
+			}()
 		}
 	}
 
@@ -988,14 +1099,14 @@ func serve(ctx context.Context, configPath string) error {
 	// private network behind. Registry and Auditor are what make that possible
 	// — and the teardown is audited, because destruction is destruction whoever
 	// does it.
-	go (&reconciler.GC{
-		Apps:        apps,
-		Logger:      logger,
-		Registry:    registryAdapters{registry},
-		Auditor:     reconcilerAuditor{auditor},
-		Interval:    cfg.Reconciler.GCInterval,
-		TeardownNow: teardownNow,
-		Clock:       clock.System{},
+	gc := &reconciler.GC{
+		Apps:     apps,
+		Logger:   logger,
+		Registry: registryAdapters{registry},
+		Auditor:  reconcilerAuditor{auditor},
+		Interval: cfg.Reconciler.GCInterval,
+
+		Clock: clock.System{},
 
 		// A deleted app's build cache and uploaded source (R-224, issue #55).
 		BuildCaches:   buildCaches{registry},
@@ -1017,7 +1128,36 @@ func serve(ctx context.Context, configPath string) error {
 		PolicyStore:   hostPolicy,
 		Desired:       apps,
 		Notifier:      securityNotifier{notifyRouter},
-	}).Run(loopCtx)
+	}
+	job("gc", gc.Run)
+
+	// A delete tears its app down at once, on the replica that took the
+	// delete, whichever replica leads (issue #72). Teardown is idempotent, so
+	// this and the leader's own pass meeting on one app is harmless; and the
+	// leader's pass is what catches a delete whose replica stopped first.
+	go func() {
+		for {
+			select {
+			case <-loopCtx.Done():
+				return
+			case <-teardownNow:
+				gc.TearDownDeleted(loopCtx)
+			}
+		}
+	}()
+
+	// Whichever replica holds the leader lock runs the jobs above; with one
+	// replica, that is this one, a moment after it starts.
+	go (&cluster.Leader{Store: replicas, Jobs: jobs, Logger: logger}).Run(loopCtx)
+
+	// Heartbeat. It ends early when this replica should restart: a restart
+	// was asked for on any replica, or the install took this one for dead.
+	memberCh := make(chan string, 1)
+	go func() {
+		if reason := member.Run(loopCtx); reason != "" {
+			memberCh <- reason
+		}
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -1035,7 +1175,13 @@ func serve(ctx context.Context, configPath string) error {
 	case <-restartCh:
 		logger.Info("restarting")
 		restartRequested.Store(true)
+	case reason := <-memberCh:
+		logger.Info("restarting", zap.String("reason", reason))
+		restartRequested.Store(true)
 	}
+	// Leaders resign and jobs stop before the server does, so the next
+	// leader can start while this one drains its requests.
+	stopLoop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.Server.ShutdownTimeout)
 	defer cancel()

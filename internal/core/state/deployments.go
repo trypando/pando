@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -133,9 +134,9 @@ func (d *Deployments) Create(ctx context.Context, appID, specID, trigger, create
 		CreatedBy: createdBy,
 	}
 	err := d.db.QueryRow(ctx, `
-		INSERT INTO deployments (id, app_id, spec_id, trigger, status, created_by)
-		VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING started_at`,
-		dep.ID, appID, specID, trigger, createdBy).Scan(&dep.StartedAt)
+		INSERT INTO deployments (id, app_id, spec_id, trigger, status, created_by, replica_id)
+		VALUES ($1, $2, $3, $4, 'pending', $5, $6) RETURNING started_at`,
+		dep.ID, appID, specID, trigger, createdBy, d.db.replica).Scan(&dep.StartedAt)
 	if err != nil {
 		return Deployment{}, errs.Wrap(errs.Internal, "Could not start the deploy.", err)
 	}
@@ -180,28 +181,67 @@ func (d *Deployments) Finish(ctx context.Context, deploymentID, status, errorCod
 	return nil
 }
 
-// AbandonInFlight fails every deployment that was still under way, and is
-// called at startup, before anything new can start one.
+// AbandonInFlight fails every deployment still under way on a Pando process
+// that is no longer running.
 //
-// A deploy runs inside the server process, so one in progress when the process
-// stopped will never finish. It stayed pending or building for good, and an
-// app with a deploy in flight refuses the next one (issue #55).
+// A deploy runs inside the process that started it, so one in progress when
+// that process stopped will never finish. It stayed pending or building for
+// good, and an app with a deploy in flight refuses the next one (issue #55).
+//
+// Only a stopped process's work, never a live one's (issue #72). This used to
+// fail everything in flight and was called at startup, which was right for one
+// process and wrong for two: the second replica to start failed every deploy
+// the first was in the middle of. A deploy belongs to the replica that started
+// it, and is abandoned once that replica stops heartbeating — called at
+// startup and then periodically, because a lost pod is not followed by a
+// restart of itself.
 func (d *Deployments) AbandonInFlight(ctx context.Context) (int64, error) {
 	detail, err := json.Marshal(map[string]string{
-		"message": "Pando restarted while this deploy was under way, so it did not finish. Deploy again.",
+		"message": "Pando restarted or stopped while this deploy was under way, so it did not finish. Deploy again.",
 	})
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not record interrupted deploys.", err)
 	}
 	tag, err := d.db.Exec(ctx, `
-		UPDATE deployments
+		UPDATE deployments d
 		SET status = $1, error_code = $2, error_detail = $3, finished_at = now()
-		WHERE status IN ($4, $5, $6)`,
-		DeployFailed, string(errs.StateInvalid), detail, DeployPending, DeployBuilding, DeployApplying)
+		WHERE d.status IN ($4, $5, $6) AND `+orphaned(7),
+		DeployFailed, string(errs.StateInvalid), detail, DeployPending, DeployBuilding, DeployApplying,
+		ReplicaStale.Seconds())
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not record interrupted deploys.", err)
 	}
 	return tag.RowsAffected(), nil
+}
+
+// orphaned is true of a row d whose replica_id names no live replica: a row
+// from before replicas were recorded, or one started by a process that has
+// stopped or gone silent. The staleness window is the query's last parameter
+// (param), in seconds.
+func orphaned(param int) string {
+	return `NOT EXISTS (
+	SELECT 1 FROM pando_replicas r
+	WHERE r.id = d.replica_id AND r.stopped_at IS NULL
+	  AND r.heartbeat_at > now() - make_interval(secs => $` + strconv.Itoa(param) + `))`
+}
+
+// Runner names the replica running a deployment, or "" when none is recorded.
+// It is where the deploy's live log is (deploy.LogStore).
+func (d *Deployments) Runner(ctx context.Context, deploymentID string) (string, error) {
+	var replica *string
+	err := d.db.QueryRow(ctx, `SELECT replica_id FROM deployments WHERE id = $1`, deploymentID).Scan(&replica)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		// Checked before replica, which is nil on any failure: an unreadable
+		// runner is an error, not "nobody runs it".
+		return "", errs.Wrap(errs.Internal, "Could not read which Pando process ran the deploy.", err)
+	}
+	if replica == nil {
+		return "", nil
+	}
+	return *replica, nil
 }
 
 // ByID returns one deployment.
@@ -394,12 +434,12 @@ func (d *Deployments) Decisions(ctx context.Context, deploymentIDs []string) (ma
 // the deploy.request audit event.
 func (d *Deployments) StartApproved(ctx context.Context, deploymentID string) (bool, error) {
 	tag, err := d.db.Exec(ctx, `
-		UPDATE deployments d SET status = $2, started_at = now()
+		UPDATE deployments d SET status = $2, started_at = now(), replica_id = $6
 		WHERE d.id = $1 AND d.status = $3
 		  AND NOT EXISTS (
 		      SELECT 1 FROM deployments other
 		      WHERE other.app_id = d.app_id AND other.status IN ($2, $4, $5))`,
-		deploymentID, DeployPending, DeployAwaitingApproval, DeployBuilding, DeployApplying)
+		deploymentID, DeployPending, DeployAwaitingApproval, DeployBuilding, DeployApplying, d.db.replica)
 	if err != nil {
 		return false, errs.Wrap(errs.Internal, "Could not start the approved deploy.", err)
 	}

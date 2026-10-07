@@ -234,7 +234,10 @@ func TestR057_TheJWKSEndpointIsUnauthenticatedAndCacheable(t *testing.T) {
 
 	got := r.get("", "/.well-known/jwks.json")
 	require.Equal(t, http.StatusOK, got.Code)
-	require.Contains(t, got.Header().Get("Cache-Control"), "max-age=300")
+	// A minute, shorter than an assertion lives (assertion.Lifetime): a cache
+	// in front of an app must not keep serving a list that lacks a replica
+	// that has just started signing (issue #72).
+	require.Contains(t, got.Header().Get("Cache-Control"), "max-age=60")
 	require.Contains(t, got.Body.String(), `"keys"`)
 	require.NotContains(t, got.Body.String(), `"d"`, "a private exponent must never be published")
 }
