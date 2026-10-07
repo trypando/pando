@@ -218,14 +218,33 @@ func (r *Runner) Start(ctx context.Context, dep state.Deployment, rev state.Revi
 
 // Run executes a deployment to completion.
 //
-// The app's state moves to deploying at the start and to running or degraded at
-// the end. A build failure is the exception: it leaves the app's state
-// untouched, because nothing about the running app changed (R-146). The
-// deployment is failed; the app is not.
+// The app's state moves to deploying when the deploy is started and to running
+// or degraded at the end. A deploy that fails before the runtime is touched — a
+// build failure, a refused scan — puts back the state it found, because nothing
+// about the running app changed (R-146). The deployment is failed; the app is
+// not. One that fails later leaves the app failed or degraded (design 05 §1.2).
 func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revision) error {
 	l := log.From(ctx).With(zap.String("deployment_id", dep.ID), zap.String("app_id", dep.AppID))
 	sink := r.logs.Writer(dep.ID)
 	defer sink.Close()
+
+	// Where the app is left if the deploy stops here (design 05 §1.2). The
+	// app was moved to deploying when this started, and the reconciler does
+	// not look at a deploying app — so a deploy that ended without saying
+	// otherwise left it deploying forever, never reconciled and never able
+	// to reach failed (R-150, R-151).
+	//
+	// Before the runtime is touched: as it was, because nothing about the
+	// running app changed (R-146). Once Apply has been called: failed if
+	// starting it did not work, and degraded if it started and never became
+	// healthy, which is where the reconciler's backoff and give-up threshold
+	// take over (R-149, R-150).
+	leaveAs := dep.PriorState
+	leave := func() {
+		if leaveAs != "" {
+			_ = r.apps.SetStateIf(ctx, dep.AppID, state.StateDeploying, leaveAs)
+		}
+	}
 
 	fail := func(step string, err error) error {
 		code := string(errs.CodeOf(err))
@@ -236,6 +255,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		writeFailure(sink, step+" failed: "+message, err)
 		l.Warn("deployment failed", zap.String("step", step), zap.Error(err))
 		_ = r.deploys.Finish(ctx, dep.ID, state.DeployFailed, code, message)
+		leave()
 		return err
 	}
 
@@ -287,6 +307,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 			fmt.Fprintf(sink, "   The running version of this app was not touched.\n")
 			_ = r.deploys.Finish(ctx, dep.ID, state.DeployFailed, string(errs.CodeOf(err)), messageOf(err))
 			l.Warn("build failed; app state unchanged (R-146)", zap.Error(err))
+			leave()
 			return err
 		}
 		image = built
@@ -314,6 +335,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		writeFailure(sink, messageOf(err), err)
 		fmt.Fprintf(sink, "   The running version of this app was not touched.\n")
 		_ = r.deploys.Finish(ctx, dep.ID, state.DeployFailed, string(errs.CodeOf(err)), messageOf(err))
+		leave()
 		return err
 	}
 
@@ -328,6 +350,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 				fmt.Fprintf(sink, "   The running version of this app was not touched.\n")
 				_ = r.deploys.Finish(ctx, dep.ID, state.DeployFailed,
 					string(errs.CodeOf(check.Refusal)), messageOf(check.Refusal))
+				leave()
 				return check.Refusal
 			}
 			if check.Port != 0 {
@@ -398,6 +421,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	// Steps 12-13: volumes, then apply. Recreate is the default (R-144) and the
 	// app is down during the swap, which is the accepted cost.
 	fmt.Fprintf(sink, "=> Starting the app\n")
+	leaveAs = state.StateFailed // design 05 §1.2: apply failed
 	if _, err := runtime.Apply(ctx, bundle); err != nil {
 		return fail("apply", err)
 	}
@@ -447,6 +471,10 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 
 	// Step 15: wait for health.
 	fmt.Fprintf(sink, "=> Waiting for the app to be ready\n")
+	// From here the app is running what was applied, healthy or not: one
+	// that never comes up is degraded, and the reconciler retries it with
+	// backoff until it recovers or reaches the give-up threshold (R-150).
+	leaveAs = state.StateDegraded
 	healthy, err := r.waitForHealth(ctx, runtime, dep.AppID, bundle, sink)
 	if err != nil {
 		return fail("health", err)

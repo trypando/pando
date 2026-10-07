@@ -91,6 +91,12 @@ type Deployment struct {
 	// by the approval service, per caller, on a deploy that is waiting; the
 	// store never fills it in.
 	CanDecide bool `json:"can_decide,omitempty"`
+
+	// PriorState is the app's state when this deploy was started, set by
+	// whatever moved the app to deploying. A deploy that stops before it
+	// touches the runtime puts it back (R-146): nothing about the running
+	// app changed. Never stored and never sent; the store never fills it in.
+	PriorState string `json:"-"`
 }
 
 // ApprovalReason is why a deploy needed approval. The store holds the reason;

@@ -1047,6 +1047,18 @@ func (a *Apps) SetState(ctx context.Context, appID, appState string) error {
 	return nil
 }
 
+// SetStateIf moves an app to `to` only if it is in `from`, so a caller
+// settling its own transition never overwrites one somebody else made since.
+func (a *Apps) SetStateIf(ctx context.Context, appID, from, to string) error {
+	_, err := a.db.Exec(ctx,
+		`UPDATE apps SET state = $3, updated_at = now() WHERE id = $1 AND state = $2 AND deleted_at IS NULL`,
+		appID, from, to)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not update the app.", err)
+	}
+	return nil
+}
+
 // ByRouting resolves a running app from how it is addressed.
 //
 // Used by the proxy on every request, so it reads the pinned spec in the same
