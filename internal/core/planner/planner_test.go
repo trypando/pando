@@ -493,6 +493,42 @@ func TestR242_DiskIsNeverOversubscribed(t *testing.T) {
 	require.Equal(t, "disk space", errs.As(err).Details["resource"])
 }
 
+// TestR242_AnUnreadablePolicyRefusesRatherThanOversubscribing asserts that
+// the planner never guesses at host policy: whichever of its reads fails —
+// the oversubscription allowance among them — the plan is refused with that
+// failure, not made as if the policy allowed it.
+func TestR242_AnUnreadablePolicyRefusesRatherThanOversubscribing(t *testing.T) {
+	over := plannableSpec()
+	over.Resources.CPUMillis = 4000
+	over.Resources.MemoryBytes = 8 << 30
+	alloc := planner.Allocation{CPUMillis: 6000, MemoryBytes: 12 << 30}
+	allowed := policy.Default()
+	allowed.AllowCPUOversubscription, allowed.AllowMemoryOversubscription = true, true
+	unreadable := errors.New("policy unreadable")
+
+	check := func(failAt int) (int, error) {
+		reads := 0
+		ev := policy.New(func(context.Context) (policy.Document, error) {
+			reads++
+			if reads == failAt {
+				return policy.Document{}, unreadable
+			}
+			return allowed, nil
+		})
+		p := planner.New(registry(t, capableRuntime(), capableRouting(), capableBuilder()), ev, fixedAllocations{alloc: alloc})
+		_, err := p.Check(context.Background(), over)
+		return reads, err
+	}
+
+	reads, err := check(0)
+	require.NoError(t, err, "readable, the policy allows the oversubscription")
+	require.Positive(t, reads)
+	for failAt := 1; failAt <= reads; failAt++ {
+		_, err := check(failAt)
+		require.ErrorIs(t, err, unreadable, "read %d of %d failing refuses the plan", failAt, reads)
+	}
+}
+
 // Replanning an app must not count its own current allocation against itself.
 func TestCapacityExcludesTheAppBeingPlanned(t *testing.T) {
 	s := plannableSpec()

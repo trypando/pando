@@ -27,6 +27,7 @@ func TestStatusMappingByPrefix(t *testing.T) {
 		errs.BackupIncomplete:            http.StatusUnprocessableEntity,
 		errs.NotFound:                    http.StatusNotFound,
 		errs.Internal:                    http.StatusInternalServerError,
+		errs.RateLimited:                 http.StatusTooManyRequests,
 	} {
 		require.Equal(t, want, errs.New(code, "x").Status(), "wrong status for %s", code)
 	}
