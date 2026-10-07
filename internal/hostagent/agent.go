@@ -35,6 +35,7 @@ const (
 	protocolVersion = "PANDO-AGENT/1"
 	maxHeaderLine   = 512
 	headerTimeout   = 10 * time.Second
+	halfCloseWait   = 30 * time.Second
 )
 
 // targetName is what a container name Pando gives an app's workload looks
@@ -159,9 +160,16 @@ func (a *Agent) handle(ctx context.Context, raw net.Conn) {
 		_ = conn.CloseWrite()
 		done <- struct{}{}
 	}()
+	// When one side has finished, the other is given a while to finish too,
+	// then both are closed: a peer that never closes does not hold the
+	// agent's goroutines open.
 	select {
 	case <-done:
-		<-done
+		select {
+		case <-done:
+		case <-time.After(halfCloseWait):
+		case <-ctx.Done():
+		}
 	case <-ctx.Done():
 	}
 }
