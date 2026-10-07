@@ -153,6 +153,9 @@ load-test: ## Seed a scale tier (TIER=vm|cluster) into LOAD_REPLICAS replicas, r
 			&& echo "report: $(LOAD_DIR)/report-$(TIER).md" || status=1; \
 	fi; \
 	$(LOAD_DIR)/load cleanup $(LOAD_FLAGS) -real-apps-file $(LOAD_DIR)/real-apps-$(TIER).txt || true; \
+	$(LOAD_COMPOSE) logs --no-color pando lb > $(LOAD_DIR)/logs-$(TIER).txt 2>&1 || true; \
+	docker ps -a --filter label=com.docker.compose.project=$(LOAD_PROJECT) \
+		--format '{{.Names}} {{.Status}}' > $(LOAD_DIR)/containers-$(TIER).txt 2>&1 || true; \
 	$(LOAD_COMPOSE) down -v --remove-orphans; \
 	for app in $$(cat $(LOAD_DIR)/real-apps-$(TIER).txt 2>/dev/null); do \
 		ids=$$(docker ps -aq --filter label=io.pando.bundle=$$app); \
