@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -397,6 +398,12 @@ func (a *Adapter) putSecret(ctx context.Context, s *corev1.Secret, what string) 
 		existing.Type = s.Type
 		existing.Data = s.Data
 		existing.Labels = s.Labels
+		for k, v := range s.Annotations {
+			if existing.Annotations == nil {
+				existing.Annotations = map[string]string{}
+			}
+			existing.Annotations[k] = v
+		}
 		_, err = client.Update(ctx, existing, metav1.UpdateOptions{})
 	}
 	if err != nil {
@@ -404,6 +411,30 @@ func (a *Adapter) putSecret(ctx context.Context, s *corev1.Secret, what string) 
 	}
 	return nil
 }
+
+// envKey is the key a workload's environment is HMACed under in its plan
+// digest: the one already on its environment Secret, or a new one when there
+// is none. A new key changes the digest, so a Secret deleted by hand costs
+// the workload one restart, never a pod left on an old environment.
+func (a *Adapter) envKey(ctx context.Context, ns, name string) ([]byte, error) {
+	existing, err := a.cs.CoreV1().Secrets(ns).Get(ctx, name, metav1.GetOptions{})
+	switch {
+	case err == nil:
+		if key, err := base64.StdEncoding.DecodeString(existing.Annotations[annoEnvKey]); err == nil && len(key) == envKeySize {
+			return key, nil
+		}
+	case !apierrors.IsNotFound(err):
+		return nil, errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not read the environment of %q.", name), err)
+	}
+	key := make([]byte, envKeySize)
+	if _, err := rand.Read(key); err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not generate a key.", err)
+	}
+	return key, nil
+}
+
+// envKeySize is the length of an envKey in bytes.
+const envKeySize = 32
 
 // ensureService gives a workload a headless Service named for it.
 //
@@ -490,12 +521,20 @@ func checkFilesFit(w api.WorkloadPlan) error {
 
 // applyWorkload converges one workload's pod.
 func (a *Adapter) applyWorkload(ctx context.Context, ns string, p api.BundlePlan, w api.WorkloadPlan, env map[string]string) error {
-	digest := planDigest(w, env, a.config.RuntimeClass, a.config.NodeSelector)
+	key, err := a.envKey(ctx, ns, envSecretName(w.Name))
+	if err != nil {
+		return err
+	}
+	digest := planDigest(w, env, key, a.config.RuntimeClass, a.config.NodeSelector)
 
 	if err := a.putSecret(ctx, &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: envSecretName(w.Name), Namespace: ns, Labels: map[string]string{labelManagedBy: managedBy, labelWorkload: w.Name}},
-		Type:       corev1.SecretTypeOpaque,
-		Data:       secretData(env),
+		ObjectMeta: metav1.ObjectMeta{
+			Name: envSecretName(w.Name), Namespace: ns,
+			Labels:      map[string]string{labelManagedBy: managedBy, labelWorkload: w.Name},
+			Annotations: map[string]string{annoEnvKey: base64.StdEncoding.EncodeToString(key)},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: secretData(env),
 	}, fmt.Sprintf("the environment of %q", w.Name)); err != nil {
 		return err
 	}
@@ -797,15 +836,26 @@ func secretData(env map[string]string) map[string][]byte {
 	return out
 }
 
-// planDigest summarizes what a workload's pod is made from. Environment values
-// are hashed in, never stored: the digest is an annotation anyone who can read
-// the pod can see.
-func planDigest(w api.WorkloadPlan, env map[string]string, runtimeClass, nodeSelector string) string {
+// planDigest summarizes what a workload's pod is made from.
+//
+// The digest is an annotation anyone who can read the pod can see, and the
+// environment holds resolved secrets — a database password among them. So
+// the environment goes in only as an HMAC under envKey, a random key kept on
+// the environment's own Secret: whoever can check a guess against it can
+// already read the values. Plain SHA-256 over the values let anyone who could
+// read pods but not Secrets test guesses at a weak password (CodeQL
+// go/weak-sensitive-data-hashing, R-194).
+func planDigest(w api.WorkloadPlan, env map[string]string, envKey []byte, runtimeClass, nodeSelector string) string {
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	mac := hmac.New(sha256.New, envKey)
+	for _, k := range keys {
+		fmt.Fprintf(mac, "%s\x00%s\x00", k, env[k])
+	}
+
 	h := sha256.New()
 	write := func(parts ...any) {
 		for _, p := range parts {
@@ -813,9 +863,7 @@ func planDigest(w api.WorkloadPlan, env map[string]string, runtimeClass, nodeSel
 		}
 	}
 	write("image", w.Image, "cmd", strings.Join(w.Command, "\x01"), "entry", strings.Join(w.Entrypoint, "\x01"), "wd", w.WorkingDir)
-	for _, k := range keys {
-		write("env", k, env[k])
-	}
+	write("env", hex.EncodeToString(mac.Sum(nil)))
 	for _, p := range w.Ports {
 		write("port", p.Number, p.Protocol)
 	}
