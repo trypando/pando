@@ -3,6 +3,9 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/trypando/pando/internal/egress"
@@ -44,6 +47,10 @@ type Reconcilable struct {
 	// take effect at a deploy (R-183, O-10), so the reconciler restores these
 	// rather than resolving policy afresh and changing a running app.
 	EgressRules egress.Rules
+
+	// ClaimedAt is the database's time when this pass claimed the app. The
+	// visit is released with it, so it is when the app was last looked at.
+	ClaimedAt time.Time
 }
 
 // Reconciles reads and writes the reconciler's view of an app.
@@ -60,18 +67,105 @@ func NewReconciles(db *DB) *Reconciles { return &Reconciles{db: db} }
 // Adding it to this list is how that requirement gets broken.
 var reconcilableStates = []string{StateRunning, StateDegraded, StateStopped}
 
-// Due returns the apps the loop should reconcile now.
+// Lease is one reconciliation pass's hold on the apps it claimed.
+//
+// Two passes must never work on one app at once, on one replica or across
+// several. That used to be a session advisory lock, which held a pooled
+// connection for the whole reconciliation — Apply included, which can take
+// minutes — while the reconciliation took more connections of its own. A lease
+// is a column, so holding one holds nothing (issue #72).
+type Lease struct {
+	db     *DB
+	holder string
+}
+
+// leaseCounter makes each pass's holder unique within this process; the
+// replica ID makes it unique across processes and restarts.
+var leaseCounter atomic.Uint64
+
+// Lease starts a pass. Nothing is claimed until Claim.
+func (r *Reconciles) Lease() *Lease {
+	return &Lease{db: r.db, holder: r.db.Replica() + ":" + strconv.FormatUint(leaseCounter.Add(1), 10)}
+}
+
+// Holder identifies this pass in the apps it holds.
+func (l *Lease) Holder() string { return l.holder }
+
+// reconcilableIn is reconcilableStates as SQL. Literal rather than a parameter
+// so the claim can use the partial index whose predicate names them.
+var reconcilableIn = func() string {
+	quoted := make([]string, len(reconcilableStates))
+	for i, s := range reconcilableStates {
+		quoted[i] = "'" + s + "'"
+	}
+	return "(" + strings.Join(quoted, ", ") + ")"
+}()
+
+// Cutoff is the database's time minus revisit: an app visited after it is not
+// due again in the pass that asked.
+//
+// A pass fixes this once, before its first claim. Every app it visits is
+// released with the time its visit started, which is after the cutoff, so the
+// pass cannot claim the same app twice and ends when nothing older is left.
+// revisit spreads the same guarantee across replicas: an app another replica
+// visited less than revisit ago is left for later rather than visited twice.
+//
+// The database's clock and not the caller's, because replicas' clocks differ
+// and the lease is compared against the database's.
+func (r *Reconciles) Cutoff(ctx context.Context, revisit time.Duration) (time.Time, error) {
+	var cutoff time.Time
+	if err := r.db.QueryRow(ctx, `SELECT now() - $1::interval`, revisit).Scan(&cutoff); err != nil {
+		return time.Time{}, errs.Wrap(errs.Internal, "Could not read which apps need attention.", err)
+	}
+	return cutoff, nil
+}
+
+// Claim leases up to limit apps the loop should reconcile now.
+//
+// Due means: in a state the loop acts on, out of backoff, and neither held by
+// another pass nor visited since cutoff. Least recently visited first, so every
+// app gets its turn: ordering by updated_at, as this used to, visited the same
+// 200 apps forever because a healthy pass changes nothing on the row. SKIP
+// LOCKED hands each concurrent claimant — another replica, usually — a disjoint
+// set rather than the same rows to contend for.
 //
 // Apps in backoff are filtered here rather than skipped in the loop, so an app
 // waiting five minutes costs one row in a WHERE clause instead of a goroutine
-// per tick that wakes up and does nothing.
-func (r *Reconciles) Due(ctx context.Context, now time.Time, limit int) ([]Reconcilable, error) {
-	rows, err := r.db.Query(ctx, `
+// per tick that wakes up and does nothing. Backoff is measured on the loop's
+// clock (now), as RecordFailure sets it; the lease on the database's.
+//
+// The last successful deployment's facts are read for the claimed rows only,
+// each an index probe on deployments (app_id, started_at DESC), so a claim's
+// cost follows its limit and not the number of apps on the install.
+func (l *Lease) Claim(ctx context.Context, now, cutoff time.Time, limit int, lease time.Duration) ([]Reconcilable, error) {
+	rows, err := l.db.Query(ctx, `
+		WITH claimed AS (
+		    UPDATE apps
+		    SET reconcile_lease_until = now() + $5::interval,
+		        reconcile_lease_holder = $4
+		    WHERE id IN (
+		        SELECT id FROM apps
+		        WHERE deleted_at IS NULL
+		          AND state IN `+reconcilableIn+`
+		          AND pinned_spec_id IS NOT NULL
+		          AND (next_attempt_at IS NULL OR next_attempt_at <= $1)
+		          AND (reconcile_lease_until IS NULL OR reconcile_lease_until < $2)
+		        ORDER BY reconcile_lease_until NULLS FIRST, id
+		        LIMIT $3
+		        FOR UPDATE SKIP LOCKED
+		    )
+		    RETURNING id, name, slug, owner_user_id, state, desired_state,
+		              pinned_spec_id, source, created_at, updated_at,
+		              consecutive_failures, last_failure_at,
+		              next_attempt_at, unobservable_since,
+		              coalesce(applied_env_fingerprint, '') AS applied_env_fingerprint,
+		              now() AS claimed_at
+		)
 		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state,
 		       a.pinned_spec_id, a.source, a.created_at, a.updated_at,
 		       a.consecutive_failures, a.last_failure_at,
 		       a.next_attempt_at, a.unobservable_since,
-		       coalesce(a.applied_env_fingerprint, ''),
+		       a.applied_env_fingerprint, a.claimed_at,
 		       coalesce((
 		           SELECT d.image_ref FROM deployments d
 		           WHERE d.app_id = a.id AND d.status = 'succeeded' AND d.image_ref IS NOT NULL
@@ -92,14 +186,9 @@ func (r *Reconciles) Due(ctx context.Context, now time.Time, limit int) ([]Recon
 		           WHERE d.app_id = a.id AND d.status = 'succeeded'
 		           ORDER BY d.started_at DESC LIMIT 1
 		       )
-		FROM apps a
-		WHERE a.deleted_at IS NULL
-		  AND a.state = ANY($1)
-		  AND a.pinned_spec_id IS NOT NULL
-		  AND (a.next_attempt_at IS NULL OR a.next_attempt_at <= $2)
-		ORDER BY a.updated_at
-		LIMIT $3
-	`, reconcilableStates, now, limit)
+		FROM claimed a
+		ORDER BY a.id
+	`, now, cutoff, limit, l.holder, lease)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not read which apps need attention.", err)
 	}
@@ -116,7 +205,7 @@ func (r *Reconciles) Due(ctx context.Context, now time.Time, limit int) ([]Recon
 			&pinned, &source, &a.CreatedAt, &a.UpdatedAt,
 			&a.ConsecutiveFailures, &a.LastFailureAt,
 			&a.NextAttemptAt, &a.UnobservableSince,
-			&a.AppliedEnvHash, &a.ImageRef, &a.ImageDigest, &workloadImages, &egressRules); err != nil {
+			&a.AppliedEnvHash, &a.ClaimedAt, &a.ImageRef, &a.ImageDigest, &workloadImages, &egressRules); err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not read which apps need attention.", err)
 		}
 		if len(workloadImages) > 0 {
@@ -145,40 +234,51 @@ func (r *Reconciles) Due(ctx context.Context, now time.Time, limit int) ([]Recon
 	return out, nil
 }
 
-// Lock takes a per-app advisory lock for the duration of one reconciliation.
+// Extend pushes every lease this pass still holds lease further out, and
+// returns the apps it still holds.
 //
-// Advisory rather than a row lock: two ticks must not overlap on one app, but a
-// tick must not block anyone else reading or writing that app's row either. A
-// second holder is told immediately rather than waiting — the next tick is
-// fifteen seconds away, and a queue of ticks behind a slow app is how one
-// unhealthy app stops every other one being looked at.
-func (r *Reconciles) Lock(ctx context.Context, appID string) (release func(), ok bool, err error) {
-	conn, err := r.db.Acquire(ctx)
+// An app missing from the result is no longer this pass's — its lease ran out
+// before it was extended, and another pass may have it — and its work must stop.
+func (l *Lease) Extend(ctx context.Context, lease time.Duration) (map[string]bool, error) {
+	rows, err := l.db.Query(ctx, `
+		UPDATE apps SET reconcile_lease_until = now() + $2::interval
+		WHERE reconcile_lease_holder = $1 AND reconcile_lease_until > now()
+		RETURNING id`, l.holder, lease)
 	if err != nil {
-		return nil, false, errs.Wrap(errs.Internal, "Could not take the reconciliation lock.", err)
+		return nil, errs.Wrap(errs.Internal, "Could not extend the reconciliation lease.", err)
 	}
-
-	var acquired bool
-	if err := conn.QueryRow(ctx,
-		`SELECT pg_try_advisory_lock(hashtext($1))`, lockNamespace+appID).Scan(&acquired); err != nil {
-		conn.Release()
-		return nil, false, errs.Wrap(errs.Internal, "Could not take the reconciliation lock.", err)
+	defer rows.Close()
+	held := map[string]bool{}
+	for rows.Next() {
+		var appID string
+		if err := rows.Scan(&appID); err != nil {
+			return nil, errs.Wrap(errs.Internal, "Could not extend the reconciliation lease.", err)
+		}
+		held[appID] = true
 	}
-	if !acquired {
-		conn.Release()
-		return nil, false, nil
+	if err := rows.Err(); err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not extend the reconciliation lease.", err)
 	}
-
-	return func() {
-		_, _ = conn.Exec(context.WithoutCancel(ctx),
-			`SELECT pg_advisory_unlock(hashtext($1))`, lockNamespace+appID)
-		conn.Release()
-	}, true, nil
+	return held, nil
 }
 
-// lockNamespace keeps reconciliation locks from colliding with any other
-// advisory lock this install might take on the same identifier.
-const lockNamespace = "pando:reconcile:"
+// Release lets go of one app.
+//
+// visited is when this pass's visit to it started, which orders the app behind
+// every app visited less recently. Nil for an app the pass claimed and never
+// started, which goes back to the front.
+//
+// Only if this pass still holds it: a lease that ran out belongs to whoever
+// claimed it next.
+func (l *Lease) Release(ctx context.Context, appID string, visited *time.Time) error {
+	_, err := l.db.Exec(context.WithoutCancel(ctx), `
+		UPDATE apps SET reconcile_lease_until = $3, reconcile_lease_holder = NULL
+		WHERE id = $1 AND reconcile_lease_holder = $2`, appID, l.holder, visited)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not release the reconciliation lease.", err)
+	}
+	return nil
+}
 
 // MarkUnobservable records that the adapter could not be reached.
 //

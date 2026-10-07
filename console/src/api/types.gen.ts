@@ -239,6 +239,8 @@ export interface PolicyDocument {
   require_backup_before_destroy?: boolean;
   max_token_lifetime_days?: number;
   max_log_disk_bytes?: number;
+  allow_cpu_oversubscription?: boolean;
+  allow_memory_oversubscription?: boolean;
   audit_retention_months?: number;
   audit_archive?: string;
   audit_archive_destination?: string;
