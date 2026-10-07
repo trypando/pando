@@ -6,9 +6,43 @@ does: `ImportImage` loads a tarball into the one daemon that will run it, and a 
 daemon. The issue's author decided **[D]** that built images go to a registry, that Pando runs one by
 default, and that setup may point at the organization's own instead. This note is how.
 
-It is a design note. Nothing here is implemented yet.
+PR 5 implemented it; [What was built](#what-was-built-pr-5) says how, and what was left for later.
+The rest of the note is the design as it was decided.
 
-## What happens today
+## What was built (PR 5)
+
+No migration: nothing new is stored. The registry is startup configuration, and what a deployment
+ran is already recorded in `deployments.image_ref` and `workload_images`.
+
+| Item | What | Where | Test |
+|---|---|---|---|
+| The refused-build gap (R-146) | BuildKit tags each streamed build `pando/<app>:<deployment-id>` (`BuildRequest.Tag`). Docker's `ImportImage` returns the loaded image's ID (`sha256:…`), which the deployment records and the reconciler restores. Docker prunes an app's build tags past the newest eleven on each import, never `:latest` (an older deployment may name it) and never an image a container uses | `buildkit.imageName`, `docker.ImportImage`, `docker.pruneBuildTags` | `TestR146_ARefusedBuildIsNotWhatTheReconcilerRestores` (Postgres, fake runtime), `TestR146_AnImportedBuildIsNamedByItsImageID`, `TestR146_EachBuildIsTaggedByItsDeployment`, `TestR224_OldBuildTagsArePrunedAndLatestIsKept` |
+| Capabilities (R-254) | `RuntimeCapabilities.ImageDelivery` replaces `SupportsImageImport`; `BuilderCapabilities.SupportsPush`. `planner.ChooseDelivery` decides at plan step 5a and again before the build | `adapter/api`, `core/planner/delivery.go`, `deploy.build` | `TestR254_HowABuildReachesTheRuntimeIsDecidedFromData`, `TestR254_NoWayToDeliverABuildIsAPlanTimeRefusal`, `TestR254_ARuntimeThatPullsWithNoRegistryIsRefusedBeforeBuilding` |
+| Configuration | `PANDO_REGISTRY_URL`, `_USERNAME`, `_PASSWORD` or `_PASSWORD_FILE`, `_KIND`, `_LAYOUT`, `_INSECURE`, and `_ALWAYS` (below). An `http://` URL without `_INSECURE` is refused at startup | `core/imageregistry`, `config.Registry` | `TestR194_PlainHTTPOnlyWhenTheOperatorSaysSo`, `TestR194_TheRegistryPasswordIsReadAndNeverReported` |
+| Push and pin (R-120) | BuildKit's `image` exporter with `push=true`; the credential reaches buildkitd through the session's auth provider, only for the target registry's host. The result is `repository@digest`; a push with no digest fails | `buildkit/push.go`, `deploy.build` | `TestR120_APushIsPinnedByTheDigestTheRegistryReported`, `TestR120_ABuiltImageIsPinnedByDigest` |
+| Pull by digest | The deploy sets `WorkloadPlan.PullAuth` for a workload running a pushed build; the port check's trial, the scanner (`ScanRequest.PullAuth`, which the Trivy adapter uses to fetch the image) and the reconciler's corrective apply get the same | `deploy.withBuiltImageAuth`, `Reconciler.BuiltImageAuth` | `TestR194_TheRegistryCredentialNeverReachesALogOrAWorkload`, `TestR194_ThePushCredentialGoesOnlyToItsRegistry` |
+| Deleted apps' manifests (R-224) | Teardown lists the app's repositories (the app-wide one and each separately built workload any revision named) and deletes every manifest by digest. A registry that cannot be reached leaves the app for the next pass | `imageregistry.DeleteApp`, `GC.RegistryImages` | `TestR224_ADeletedAppsImagesAreRemovedFromTheRegistry`, `TestR224_TeardownDeletesADeletedAppsRegistryImages` |
+| Topology | `docker-compose.registry.yml`, an overlay with a `registry:3` service (`storage.delete.enabled`, `htpasswd`, the operator's certificate), the build service's trust of its CA, and a `registry-gc` service under the `maintenance` profile for the weekly read-only blob collection, with the schedule in the file's header (O-38). Not in the default `docker-compose.yml` (O-34) | repository root | — |
+| Uploads in the DR bundle (O-37) | Every `uploads/<app>.tar.gz`, restored 0600 | `core/backup` | `TestR212_UploadsAreInTheDRBundle` |
+
+**`PANDO_REGISTRY_ALWAYS` [P].** Not in the decisions above: it sends every build through the
+registry even on a runtime that imports. It is how the push path can run on one host before PRs 6
+and 7 add a runtime that only pulls, and it gives an install that wants one delivery path one.
+
+**Left for later**, each a [P] in the design below rather than a decision:
+
+- Collecting a live app's old manifests (revisions R-152 no longer keeps). Only deleted apps'
+  manifests are deleted; a live app's pushed builds accumulate until it is deleted. Single-host
+  Docker's per-build tags are pruned, so that tier does not have this gap.
+- Rollback reusing a recorded image instead of rebuilding.
+- After a restore, turning an image that cannot be pulled into a redeploy of the pinned revision.
+- `GET /capacity` counting the images Pando holds in the registry.
+- The replicas-topology run with the registry service, and the BuildKit push against a real registry:
+  neither was run for this PR (it needs the Docker daemon). The overlay's Distribution environment
+  overrides (`REGISTRY_STORAGE_MAINTENANCE_READONLY`, the TLS paths) are as documented by Distribution
+  and unverified here.
+
+## What happened before PR 5
 
 - BuildKit exports the image as a Docker tarball (`ExporterDocker`) into `BuildRequest.ImageSink`.
   Core pipes it into `RuntimeAdapter.ImportImage`, which `docker load`s it and returns the

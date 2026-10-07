@@ -110,6 +110,12 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | `PANDO_ADMIN_PASSWORD` | generated | Initial admin password. Read on first run only. |
 | `PANDO_LOG_LEVEL` | `info` | Log verbosity. |
 | `PANDO_APPS_DOCKER_CREDENTIALS` | `false` | Pull private images with the Docker login on the Pando server (`docker login`, read from `DOCKER_CONFIG` or `~/.docker/config.json`, credential helpers included) for apps that have no registry credential of their own. Every app on the install can then pull whatever that login can read. When Pando runs in the shipped Compose stack, mount a `config.json` into the container and set `DOCKER_CONFIG` to its directory; a credential helper such as the macOS keychain is not reachable from inside the container. |
+| `PANDO_REGISTRY_URL` | — | The image registry builds are pushed to when the runtime pulls rather than imports, with an optional path prefix: `https://registry.internal:5000`, or `123456789012.dkr.ecr.us-east-1.amazonaws.com/pando`. Unset on a single-host install, which does not need one. `docker-compose.registry.yml` runs one. See `docs/design/notes-image-registry-issue-72.md`. |
+| `PANDO_REGISTRY_USERNAME` / `PANDO_REGISTRY_PASSWORD` | — | The one credential Pando pushes and pulls with. For `ecr`, an AWS access key ID and its secret. Held in memory only; never stored or reported. `PANDO_REGISTRY_PASSWORD_FILE` reads the password from a file instead. |
+| `PANDO_REGISTRY_KIND` | `basic` | `basic` (a username and password) or `ecr` (Pando mints a registry password from the access key before each push and pull). |
+| `PANDO_REGISTRY_LAYOUT` | `per_app` | `per_app` puts each app's builds in `<prefix>/apps/<app>[/<workload>]`; `single` puts every build in the one repository the URL names, tagged `<app>-<workload>-<deployment>`, for a registry where a repository must exist before a push. |
+| `PANDO_REGISTRY_INSECURE` | `false` | Permits plain HTTP to the registry. Every host that pulls must then list it under `insecure-registries`. Without it, an `http://` URL is refused at startup. |
+| `PANDO_REGISTRY_ALWAYS` | `false` | Sends every build through the registry, even on a runtime that can import it (single-host Docker). |
 | `PANDO_RECONCILER_BACKOFF` | see R-149 | Retry schedule. Compressing it is for tests; `pando` warns when it is set faster than the shipped default. |
 
 `PANDO_PORT` is not read by Pando. It is a variable in the shipped `docker-compose.yml`, which uses
