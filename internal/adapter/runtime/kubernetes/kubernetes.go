@@ -51,6 +51,11 @@ const (
 	// changed plan is a pod that no longer matches and is recreated (R-144).
 	annoDigest = "pando.dev/plan-digest"
 
+	// annoEnvKey, on a workload's environment Secret, is the key its
+	// environment is HMACed under for annoDigest (planDigest). On the Secret
+	// because only someone who can read the values may check a guess at one.
+	annoEnvKey = "pando.dev/env-digest-key"
+
 	// annoCreated is when Pando made a pod, to the nanosecond (newest).
 	annoCreated = "pando.dev/created"
 
