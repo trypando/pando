@@ -11,8 +11,8 @@ The rest of the note is the design as it was decided.
 
 ## What was built (PR 5)
 
-No migration: nothing new is stored. The registry is startup configuration, and what a deployment
-ran is already recorded in `deployments.image_ref` and `workload_images`.
+One migration, `000051_install_registry`, for the registry set from the console (below). What a
+deployment ran is already recorded in `deployments.image_ref` and `workload_images`.
 
 | Item | What | Where | Test |
 |---|---|---|---|
@@ -24,6 +24,27 @@ ran is already recorded in `deployments.image_ref` and `workload_images`.
 | Deleted apps' manifests (R-224) | Teardown lists the app's repositories (the app-wide one and each separately built workload any revision named) and deletes every manifest by digest. A registry that cannot be reached leaves the app for the next pass | `imageregistry.DeleteApp`, `GC.RegistryImages` | `TestR224_ADeletedAppsImagesAreRemovedFromTheRegistry`, `TestR224_TeardownDeletesADeletedAppsRegistryImages` |
 | Topology | `docker-compose.registry.yml`, an overlay with a `registry:3` service (`storage.delete.enabled`, `htpasswd`, the operator's certificate), the build service's trust of its CA, and a `registry-gc` service under the `maintenance` profile for the weekly read-only blob collection, with the schedule in the file's header (O-38). Not in the default `docker-compose.yml` (O-34) | repository root | — |
 | Uploads in the DR bundle (O-37) | Every `uploads/<app>.tar.gz`, restored 0600 | `core/backup` | `TestR212_UploadsAreInTheDRBundle` |
+
+**Set from the console too [D] (owner, after the first cut).** The note proposed startup
+configuration only. The owner decided the registry must also be settable from the console and the API,
+with the credential stored as ciphertext (R-190). Migration `000051_install_registry` adds
+`install_registry` (settings, no credential column, a CHECK refusing a URL with a username or password
+in it) and `install_registry_credentials` (ciphertext or an external reference only, one `password`
+field), design 02 §2.4. `GET /image-registry` (`install.view`) shows the registry in effect, `fixed`
+naming each field set by `PANDO_REGISTRY_*` and where, and `password_set` — never the password.
+`PUT` and `DELETE /image-registry` need `install.adapters.manage`: the registry is infrastructure the
+builder and runtimes use, as an adapter is, so no new verb (R-081) was needed. A field fixed at startup
+is refused unless sent with its startup value, as host policy's fields are. The CLI is
+`pando image-registry show|set|clear` (the password read from the terminal) and MCP has
+`pando_get_image_registry`, `pando_set_image_registry` and `pando_clear_image_registry` (R-261). The
+console shows it on the Adapters screen. `imageregistry.Service` reads the stored row and opens the
+password on every push, pull and plan, so rotation reaches every replica with no restart and nothing to
+watch. The audit event `install.registry.update` names the fields changed, never their values. Tests:
+`TestR190_TheRegistryPasswordIsStoredAsCiphertextOnly`,
+`TestR256_AReplicaUsesARotatedRegistryPasswordWithoutARestart`,
+`TestR271_StartupRegistrySettingsWinAndAreShownFixed`, `TestR194_TheStoredRegistryPasswordIsNeverShown`,
+`TestR194_TheImageRegistryPasswordIsSetHereAndNeverReadBack`, `TestR261_TheImageRegistryToolsMapToTheirEndpoints`,
+`TestR261_TheImageRegistryIsSetFromTheCLI`.
 
 **`PANDO_REGISTRY_ALWAYS` [P].** Not in the decisions above: it sends every build through the
 registry even on a runtime that imports. It is how the push path can run on one host before PRs 6

@@ -64,7 +64,7 @@ type Planner struct {
 	// installRegistry is the install's image registry, for how a build
 	// reaches a runtime that pulls (delivery.go). Optional: without it the
 	// install has none.
-	installRegistry InstallRegistry
+	installRegistry InstallRegistries
 }
 
 // WithInventory enables policy preview.
@@ -157,13 +157,13 @@ func (p *Planner) Check(ctx context.Context, s *spec.AppSpec) (*Plan, error) {
 
 	// 5a. How the build reaches the runtime (R-254, issue #72 PR 5): after
 	// isolation, which names a builder that is not configured.
-	delivery, err := p.checkDelivery(ctx, s, runtimeCaps)
+	delivery, reg, err := p.checkDelivery(ctx, s, runtimeCaps)
 	if err != nil {
 		return nil, err
 	}
 	if delivery != "" {
 		plan.Checks["image_delivery"] = "ok"
-		if note := deliveryNote(delivery, p.installRegistry); note != "" {
+		if note := deliveryNote(delivery, reg); note != "" {
 			plan.Notes = append(plan.Notes, note)
 		}
 	}

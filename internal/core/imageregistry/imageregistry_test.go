@@ -58,7 +58,7 @@ func TestR194_PlainHTTPOnlyWhenTheOperatorSaysSo(t *testing.T) {
 func TestTheCredentialIsCompleteOrRefused(t *testing.T) {
 	_, err := New(Config{URL: "registry.internal", Username: "pando"})
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
-	require.Contains(t, errs.As(err).Message, "PANDO_REGISTRY_PASSWORD")
+	require.Contains(t, errs.As(err).Remedy, "PANDO_REGISTRY_PASSWORD")
 
 	_, err = New(Config{URL: "registry.internal", Kind: "token"})
 	require.Contains(t, errs.As(err).Message, "PANDO_REGISTRY_KIND")

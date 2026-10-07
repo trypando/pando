@@ -27,6 +27,7 @@ import { api, base } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { AdapterDialog } from './AdapterDialog';
 import { Capacity } from './Capacity';
+import { ImageRegistry } from './ImageRegistry';
 import { useAIFunctionOn } from './AIFunctions';
 import { RestartButton } from './Restart';
 import { categoryLabel, categoryNote, orderCategories } from './adapters';
@@ -197,6 +198,10 @@ export function Installation() {
 
       {/* Each runtime by the name its kind goes by, as in the table above. */}
       <Capacity names={Object.fromEntries(grouped.map((r) => [r.id, r.kindName]))} />
+
+      {/* The registry builds go to when a runtime pulls them (issue #72):
+          infrastructure the builder and runtimes use, so beside them. */}
+      <ImageRegistry />
     </Screen>
   );
 }

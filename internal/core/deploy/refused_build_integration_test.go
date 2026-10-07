@@ -97,7 +97,7 @@ func (routeAnything) Ensure(context.Context, api.RouteRequest) (api.RouteHandle,
 type noSecrets struct{}
 
 func (noSecrets) Resolve(context.Context, string) (map[string]secret.Value, error) { return nil, nil }
-func (noSecrets) Versions(context.Context, string) (map[string]int, error)        { return nil, nil }
+func (noSecrets) Versions(context.Context, string) (map[string]int, error)         { return nil, nil }
 
 // TestR146_ARefusedBuildIsNotWhatTheReconcilerRestores asserts R-146 and the
 // security scan's matching contract (R-314) on single-host Docker: a build

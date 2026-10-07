@@ -63,6 +63,9 @@ boundary (O-12), and offering a tool policy will refuse wastes the agent's turn.
 | `pando_set_registry_credential` | Set the credential an image app's private image is pulled with, replacing any it had. It belongs to the app and is never given to it. Pando never shows it again; pando_get_registry_credential says only which kind is set. | `app_id`, `registry_credential` |
 | `pando_get_registry_credential` | Whether an image app has a registry credential, and of which kind, with its username or access key ID. Never the password or secret key. | `app_id` |
 | `pando_remove_registry_credential` | Remove an image app's registry credential, so its image is pulled anonymously. | `app_id` |
+| `pando_get_image_registry` | The image registry builds are pushed to when a runtime pulls rather than imports: its URL, username, kind, layout, whether plain HTTP is allowed, and whether a password is set — never the password. `fixed` lists settings made in the startup configuration, which cannot be changed through the API. | none |
+| `pando_set_image_registry` | Change the stored image registry. Fields left out are unchanged. The password is stored encrypted and never shown again; an empty password removes it. Every Pando replica uses the change at its next push or pull. | `always` (optional), `insecure` (optional), `kind` (optional), `layout` (optional), `password` (optional), `url` (optional), `username` (optional) |
+| `pando_clear_image_registry` | Remove the stored image registry and its password. Settings made in the startup configuration still apply. | none |
 | `pando_favorite_app` | Pin an app to the top of your own launcher. It grants nothing and only you see it; you must be able to open the app. | `app_id` |
 | `pando_unfavorite_app` | Unpin an app from your launcher. | `app_id` |
 | `pando_rename_app` | Change an app's display name. Its ID and address do not change. | `app_id`, `name` |

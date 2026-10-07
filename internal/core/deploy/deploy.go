@@ -92,7 +92,7 @@ type Runner struct {
 	// buildRegistry is the install's image registry, where a build goes when
 	// the runtime pulls rather than imports (issue #72, PR 5). Nil when the
 	// install has none, which single-host Docker does not need (O-34).
-	buildRegistry *imageregistry.Registry
+	buildRegistry imageregistry.Provider
 
 	// ProxyUpstream is where routing adapters must send traffic (R-023). It is
 	// Pando's proxy, always, and it is passed to every Ensure so that no adapter
@@ -205,7 +205,10 @@ func (r *Runner) WithImages(images *oci.Images) *Runner {
 
 // WithBuildRegistry sets the install's image registry (issue #72, PR 5).
 // Without it, a build reaches only a runtime that imports it.
-func (r *Runner) WithBuildRegistry(reg *imageregistry.Registry) *Runner {
+//
+// Asked on every build and pull rather than held, because the registry and
+// its credential can be changed from the console while Pando runs.
+func (r *Runner) WithBuildRegistry(reg imageregistry.Provider) *Runner {
 	r.buildRegistry = reg
 	return r
 }
@@ -214,15 +217,28 @@ func (r *Runner) WithBuildRegistry(reg *imageregistry.Registry) *Runner {
 // pushed there, and nil for any other image. Minted fresh for ECR. A failure
 // leaves the pull anonymous, which fails with the registry's own reason.
 func (r *Runner) builtImageAuth(ctx context.Context, image string) *api.RegistryAuth {
-	if !r.buildRegistry.Owns(image) {
+	reg, err := r.currentRegistry(ctx)
+	if err != nil {
+		log.From(ctx).Warn("could not read the install registry", zap.Error(err))
 		return nil
 	}
-	auth, err := r.buildRegistry.Auth(ctx)
+	if !reg.Owns(image) {
+		return nil
+	}
+	auth, err := reg.Auth(ctx)
 	if err != nil {
 		log.From(ctx).Warn("could not resolve the install registry's credential", zap.Error(err))
 		return nil
 	}
 	return auth
+}
+
+// currentRegistry is the install registry now, nil when there is none.
+func (r *Runner) currentRegistry(ctx context.Context) (*imageregistry.Registry, error) {
+	if r.buildRegistry == nil {
+		return nil, nil
+	}
+	return r.buildRegistry.Current(ctx)
 }
 
 // withBuiltImageAuth gives every workload that runs a build from the install's
@@ -595,7 +611,11 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 	// The planner asked the same question; asked again because a runtime or
 	// the registry may have changed since, and a build nothing can run is the
 	// failure this exists to prevent (R-254).
-	delivery, err := planner.ChooseDelivery(s.Runtime.AdapterRef, caps, s.Build.AdapterRef, builderCaps, r.buildRegistry)
+	reg, err := r.currentRegistry(ctx)
+	if err != nil {
+		return "", err
+	}
+	delivery, err := planner.ChooseDelivery(s.Runtime.AdapterRef, caps, s.Build.AdapterRef, builderCaps, reg)
 	if err != nil {
 		return "", err
 	}
@@ -655,7 +675,7 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 		if wb != nil {
 			_, workload, _ = strings.Cut(cacheNamespace, "/")
 		}
-		target, err := r.buildRegistry.Target(ctx, s.AppID, workload, deploymentID)
+		target, err := reg.Target(ctx, s.AppID, workload, deploymentID)
 		if err != nil {
 			return "", err
 		}
@@ -668,10 +688,10 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 		// pin is not run by tag instead.
 		if result.Digest == "" || !strings.HasSuffix(result.ImageRef, "@"+result.Digest) {
 			return "", errs.Newf(errs.BuildFailed,
-				"The build was pushed to %s, and the builder did not report the digest it was stored under.", r.buildRegistry.Host()).
+				"The build was pushed to %s, and the builder did not report the digest it was stored under.", reg.Host()).
 				WithRemedy("Deploy again. If it happens again, check the build service's logs for the push.")
 		}
-		fmt.Fprintf(sink, "=> Pushed to %s at %s\n", r.buildRegistry.Host(), shortDigest(result.Digest))
+		fmt.Fprintf(sink, "=> Pushed to %s at %s\n", reg.Host(), shortDigest(result.Digest))
 		return result.ImageRef, nil
 	}
 

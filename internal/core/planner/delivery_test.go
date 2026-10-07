@@ -86,7 +86,7 @@ func TestR254_NoWayToDeliverABuildIsAPlanTimeRefusal(t *testing.T) {
 	_, err = p.Check(context.Background(), plannableSpec())
 	require.Equal(t, errs.PlanCapabilityUnsupported, errs.CodeOf(err))
 
-	plan, err := p.WithInstallRegistry(has).Check(context.Background(), plannableSpec())
+	plan, err := p.WithInstallRegistry(planner.FixedRegistry(has)).Check(context.Background(), plannableSpec())
 	require.NoError(t, err)
 	require.Equal(t, "ok", plan.Checks["image_delivery"])
 	require.Contains(t, plan.Notes, "The built image is pushed to the install's registry, registry.internal:5000, and the runtime pulls it by digest.")

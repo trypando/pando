@@ -18,14 +18,14 @@ import (
 
 var pulling = api.RuntimeCapabilities{ImageDelivery: []api.ImageDelivery{api.ImageDeliveryRegistry}}
 
-func installRegistry(t *testing.T, always bool) *imageregistry.Registry {
+func installRegistry(t *testing.T, always bool) imageregistry.Provider {
 	t.Helper()
 	reg, err := imageregistry.New(imageregistry.Config{
 		URL: "https://registry.internal:5000", Username: "pando", Password: secret.New("registry-password-9"),
 		Always: always,
 	})
 	require.NoError(t, err)
-	return reg
+	return imageregistry.Static(reg)
 }
 
 // TestR120_ABuiltImageIsPinnedByDigest asserts R-120 for a build pushed to the

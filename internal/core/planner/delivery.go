@@ -18,10 +18,24 @@ type InstallRegistry interface {
 	Host() string
 }
 
+// InstallRegistries reads the install's registry as it is now: it can be
+// changed from the console while Pando runs (*imageregistry.Service).
+type InstallRegistries interface {
+	CurrentRegistry(ctx context.Context) (InstallRegistry, error)
+}
+
+// fixedRegistry is a registry that does not change, for tests.
+type fixedRegistry struct{ r InstallRegistry }
+
+func (f fixedRegistry) CurrentRegistry(context.Context) (InstallRegistry, error) { return f.r, nil }
+
+// FixedRegistry answers InstallRegistries with r every time.
+func FixedRegistry(r InstallRegistry) InstallRegistries { return fixedRegistry{r} }
+
 // WithInstallRegistry tells the planner about the install's image registry.
 // Without it the planner knows of none, and a runtime that only pulls from a
 // registry is refused.
-func (p *Planner) WithInstallRegistry(r InstallRegistry) *Planner {
+func (p *Planner) WithInstallRegistry(r InstallRegistries) *Planner {
 	p.installRegistry = r
 	return p
 }
@@ -71,24 +85,30 @@ func ChooseDelivery(runtimeRef string, rc api.RuntimeCapabilities, builderRef st
 
 // checkDelivery is ChooseDelivery for an app that is built: a runtime, a
 // builder and the install's registry that cannot meet refuse the plan here.
-func (p *Planner) checkDelivery(ctx context.Context, s *spec.AppSpec, rc api.RuntimeCapabilities) (api.ImageDelivery, error) {
+func (p *Planner) checkDelivery(ctx context.Context, s *spec.AppSpec, rc api.RuntimeCapabilities) (api.ImageDelivery, InstallRegistry, error) {
 	if !needsBuild(s) || s.Build.AdapterRef == "" {
-		return "", nil
+		return "", nil, nil
 	}
 	builder, ok := p.registry.Builder(s.Build.AdapterRef)
 	if !ok {
 		// checkIsolation names a builder that is not configured.
-		return "", nil
+		return "", nil, nil
 	}
 	bc, err := builder.Capabilities(ctx)
 	if err != nil {
-		return "", errs.Wrap(errs.AdapterUnavailable, "Pando could not read what the builder supports.", err)
+		return "", nil, errs.Wrap(errs.AdapterUnavailable, "Pando could not read what the builder supports.", err)
 	}
-	d, err := ChooseDelivery(s.Runtime.AdapterRef, rc, s.Build.AdapterRef, bc, p.installRegistry)
+	var reg InstallRegistry
+	if p.installRegistry != nil {
+		if reg, err = p.installRegistry.CurrentRegistry(ctx); err != nil {
+			return "", nil, err
+		}
+	}
+	d, err := ChooseDelivery(s.Runtime.AdapterRef, rc, s.Build.AdapterRef, bc, reg)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return d, nil
+	return d, reg, nil
 }
 
 // deliveryNote says where a build will go, for the plan's notes.

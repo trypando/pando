@@ -92,6 +92,12 @@ func New(c Config) (*Registry, error) {
 	if raw == "" {
 		return nil, nil
 	}
+	// A credential in the URL would be stored and shown in the clear (R-190,
+	// R-194). Not quoted back, for the same reason.
+	if host, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(raw, "https://"), "http://"), "/"); strings.Contains(host, "@") {
+		return nil, errs.New(errs.ValidInvalid, "The registry URL carries a username or password, which Pando does not keep in a URL.").
+			WithRemedy("Give the registry's address alone, and the username and password as their own settings.")
+	}
 	r := &Registry{insecure: c.Insecure, always: c.Always}
 
 	switch {
@@ -155,8 +161,8 @@ func New(c Config) (*Registry, error) {
 		}
 		if err := cred.Validate(); err != nil {
 			return nil, errs.New(errs.ValidInvalid,
-				"The install registry's credential is incomplete: PANDO_REGISTRY_USERNAME and PANDO_REGISTRY_PASSWORD must both be set.").
-				WithRemedy("For a basic registry set the username and password Pando pushes with. For ECR (PANDO_REGISTRY_KIND=ecr) set the AWS access key ID as the username and its secret access key as the password.")
+				"The install registry's credential is incomplete: it needs both a username and a password.").
+				WithRemedy("Set both (PANDO_REGISTRY_USERNAME and PANDO_REGISTRY_PASSWORD, or the image registry settings in the console), or neither for a registry Pando reaches anonymously. For ECR the username is the AWS access key ID and the password its secret access key.")
 		}
 		r.cred = &cred
 	}

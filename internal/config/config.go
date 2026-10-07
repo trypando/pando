@@ -42,6 +42,12 @@ type Config struct {
 	// Adapters are the adapters declared in the config file, with the AI
 	// functions each handles (adapters.go).
 	Adapters []AdapterDecl `mapstructure:"-"`
+
+	// RegistrySet is each install registry field the startup configuration
+	// sets, with where (url, username, password, kind, layout, insecure,
+	// always). Those win over what is stored from the console, which shows
+	// them as fixed (R-271).
+	RegistrySet map[string]Source `mapstructure:"-"`
 }
 
 // Reconciler tunes R-149's retry backoff and R-150's give-up rule.
@@ -135,6 +141,23 @@ type Registry struct {
 	// Always sends every build through the registry, even for a runtime that
 	// can import it. Off by default.
 	Always bool `mapstructure:"always"`
+}
+
+// registryFields are the install registry's fields, as the API names them.
+var registryFields = []string{"url", "username", "password", "kind", "layout", "insecure", "always"}
+
+func registrySetOf(v *viper.Viper, path string) map[string]Source {
+	out := map[string]Source{}
+	for _, f := range registryFields {
+		src := sourceOf(v, "registry."+f, path)
+		if f == "password" && src.Kind == "default" {
+			src = sourceOf(v, "registry.password_file", path)
+		}
+		if src.Kind != "default" {
+			out[f] = src
+		}
+	}
+	return out
 }
 
 // Secret is the registry password: PasswordFile's contents when it is set,
@@ -432,6 +455,7 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	cfg.Adapters = adapters
+	cfg.RegistrySet = registrySetOf(v, path)
 	return &cfg, cfg.validate()
 }
 

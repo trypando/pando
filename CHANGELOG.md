@@ -34,7 +34,9 @@ Unreleased above it. -->
   scanner pull with the registry's credential, and a deleted app's images are deleted from it.
   `docker-compose.registry.yml` adds a registry to the Compose topology. A single-host install needs
   none and keeps importing builds directly, unless `PANDO_REGISTRY_ALWAYS` is set. See
-  `docs/reference.md` for the settings.
+  `docs/reference.md` for the settings. The registry and its password can also be set from the
+  console, the API (`/image-registry`), the CLI and MCP; the password is stored encrypted and never
+  shown, and startup settings win.
 - A DR bundle now includes uploaded source (#72). The registry's images are not in it, so an uploaded
   app's archive is what it is rebuilt from after a restore.
 - `disable_anonymous_denial_audit` host policy setting (#72), also settable as

@@ -453,13 +453,22 @@ func serve(ctx context.Context, configPath string) error {
 
 	// The install's image registry (issue #72, PR 5): where builds go for a
 	// runtime that pulls. None on a single host, which imports (O-34).
-	buildRegistry, err := installRegistry(cfg.Registry)
+	// Startup configuration wins field by field over what the console stored,
+	// and both are read afresh on every push and pull, so a credential
+	// rotated on one replica reaches every replica without a restart.
+	buildRegistry, err := installRegistry(cfg, state.NewInstallRegistry(db, secretsAdapter, secretsRef))
 	if err != nil {
 		return err
 	}
-	if buildRegistry.Configured() {
-		logger.Info("built images may be pushed to the install registry", zap.String("registry", buildRegistry.Host()),
-			zap.Bool("always", buildRegistry.Always()))
+	if current, err := buildRegistry.Current(ctx); err != nil {
+		if len(cfg.RegistrySet) > 0 {
+			return fmt.Errorf("the install registry is misconfigured: %w", err)
+		}
+		logger.Warn("the install registry stored from the console cannot be used; builds that need it will be refused",
+			zap.Error(err))
+	} else if current.Configured() {
+		logger.Info("built images may be pushed to the install registry", zap.String("registry", current.Host()),
+			zap.Bool("always", current.Always()))
 	}
 
 	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps).WithImages(images).
@@ -776,16 +785,18 @@ func serve(ctx context.Context, configPath string) error {
 		Security: securityService,
 		Sources:  sources,
 		Images:   images,
-		DB:       db,
-		Identity: identity,
-		IDP:      identityService,
-		Users:    users,
-		Sessions: sessions,
-		Tokens:   tokens,
-		Apps:     apps,
-		Volumes:  volumes,
-		Auditor:  auditor,
-		Policy:   hostPolicy,
+
+		ImageRegistry: buildRegistry,
+		DB:            db,
+		Identity:      identity,
+		IDP:           identityService,
+		Users:         users,
+		Sessions:      sessions,
+		Tokens:        tokens,
+		Apps:          apps,
+		Volumes:       volumes,
+		Auditor:       auditor,
+		Policy:        hostPolicy,
 
 		Registry:    registry,
 		Adapters:    adapters,
@@ -1855,34 +1866,37 @@ func (a registryAdapters) Routing(ref string) (adapterapi.RoutingAdapter, bool) 
 	return a.r.Routing(ref)
 }
 
-// installRegistry reads the install's image registry from configuration. A nil
-// registry, with no error, is an install that has none.
-func installRegistry(c config.Registry) (*imageregistry.Registry, error) {
+// installRegistry is the install's image registry: the startup configuration
+// (PANDO_REGISTRY_*) laid over what the console stored.
+func installRegistry(cfg *config.Config, store imageregistry.Store) (*imageregistry.Service, error) {
+	c := cfg.Registry
 	password, err := c.Secret()
 	if err != nil {
 		return nil, err
 	}
-	reg, err := imageregistry.New(imageregistry.Config{
-		URL: c.URL, Username: c.Username, Password: secret.New(password),
-		Kind: c.Kind, Layout: c.Layout, Insecure: c.Insecure, Always: c.Always,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("the install registry is misconfigured: %w", err)
+	fixed := make(map[string]imageregistry.Source, len(cfg.RegistrySet))
+	for k, src := range cfg.RegistrySet {
+		fixed[k] = imageregistry.Source{Kind: src.Kind, Name: src.Name, Key: src.Key}
 	}
-	return reg, nil
+	return &imageregistry.Service{
+		Startup: imageregistry.Config{
+			URL: c.URL, Username: c.Username, Password: secret.New(password),
+			Kind: c.Kind, Layout: c.Layout, Insecure: c.Insecure, Always: c.Always,
+		},
+		Fixed: fixed,
+		Store: store,
+	}, nil
 }
 
 // builtImageAuth is the reconciler's view of the install registry: its
-// credential for an image Pando pushed there. Nil when there is no registry.
-func builtImageAuth(reg *imageregistry.Registry) func(context.Context, string) *adapterapi.RegistryAuth {
-	if !reg.Configured() {
-		return nil
-	}
+// credential for an image Pando pushed there, read when it is needed.
+func builtImageAuth(reg imageregistry.Provider) func(context.Context, string) *adapterapi.RegistryAuth {
 	return func(ctx context.Context, ref string) *adapterapi.RegistryAuth {
-		if !reg.Owns(ref) {
+		current, err := reg.Current(ctx)
+		if err != nil || !current.Owns(ref) {
 			return nil
 		}
-		auth, err := reg.Auth(ctx)
+		auth, err := current.Auth(ctx)
 		if err != nil {
 			return nil
 		}
@@ -1894,18 +1908,21 @@ func builtImageAuth(reg *imageregistry.Registry) func(context.Context, string) *
 // the app-wide image's repository, and one per workload any of its revisions
 // built separately.
 type deletedAppImages struct {
-	reg  *imageregistry.Registry
+	reg  imageregistry.Provider
 	apps *state.Apps
 }
 
-func registryImages(reg *imageregistry.Registry, apps *state.Apps) reconciler.RegistryImages {
-	if !reg.Configured() {
-		return nil
-	}
+func registryImages(reg imageregistry.Provider, apps *state.Apps) reconciler.RegistryImages {
 	return deletedAppImages{reg: reg, apps: apps}
 }
 
 func (d deletedAppImages) DeleteApp(ctx context.Context, appID string) error {
+	current, err := d.reg.Current(ctx)
+	if err != nil || !current.Configured() {
+		// No registry, nothing in it. One that cannot be read is retried at
+		// the next teardown pass.
+		return err
+	}
 	revisions, err := d.apps.ListRevisions(ctx, appID)
 	if err != nil {
 		return err
@@ -1923,7 +1940,7 @@ func (d deletedAppImages) DeleteApp(ctx context.Context, appID string) error {
 			}
 		}
 	}
-	_, err = d.reg.DeleteApp(ctx, appID, workloads)
+	_, err = current.DeleteApp(ctx, appID, workloads)
 	return err
 }
 
