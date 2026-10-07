@@ -6,13 +6,14 @@
 // and for somebody holding app.deploy.approve on two apps: what they may answer
 // has buttons, and the rest is shown read-only.
 
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { Button, EmptyState } from '@design';
 
 import { api } from '@api/client';
 import { Quiet, Screen, messageOf } from '../install/Accounts';
 import { MEASURE } from '../ui/layout';
 import { LineSkeleton, Loading } from '../ui/Loading';
+import { ShowMore, withParams } from '../ui/paged';
 import { ApprovalRequest } from './ApprovalRequest';
 import type { ApprovalRow } from './approval';
 
@@ -22,19 +23,28 @@ import type { ApprovalRow } from './approval';
  * for them, which is an answer rather than an error, so it is not retried.
  */
 export function useApprovals(enabled: boolean) {
-  return useQuery({
+  const query = useInfiniteQuery({
     queryKey: ['approvals'],
-    queryFn: () => api.get<{ approvals: ApprovalRow[] | null }>('/approvals'),
+    initialPageParam: '',
+    queryFn: ({ pageParam }) =>
+      api.get<{ approvals: ApprovalRow[] | null; next_cursor?: string }>(
+        withParams('/approvals', { cursor: pageParam }),
+      ),
+    // A page at a time (issue #72). A page can be short and still have a
+    // next one, when the requests it read were on apps this caller can't see.
+    getNextPageParam: (last) => last.next_cursor || undefined,
     enabled,
     retry: false,
-    // Somebody else's answer, or a new request, changes this list.
-    refetchInterval: 30_000,
+    // Somebody else's answer, or a new request, changes this list. Every open
+    // console asks, and each ask checks access app by app, so not often: a
+    // request waits hours for an answer, not seconds.
+    refetchInterval: 60_000,
   });
+  return { query, rows: query.data?.pages.flatMap((p) => p.approvals ?? []) ?? [] };
 }
 
 export function Approvals({ onOpenApp }: { onOpenApp: (appID: string) => void }) {
-  const approvals = useApprovals(true);
-  const rows = approvals.data?.approvals ?? [];
+  const { query: approvals, rows } = useApprovals(true);
 
   return (
     <Screen heading="Approvals">
@@ -53,7 +63,7 @@ export function Approvals({ onOpenApp }: { onOpenApp: (appID: string) => void })
         )}
         {approvals.isError && <Quiet>{messageOf(approvals.error)}</Quiet>}
 
-        {approvals.isSuccess && rows.length === 0 && (
+        {approvals.isSuccess && rows.length === 0 && !approvals.hasNextPage && (
           <EmptyState heading="Nothing is waiting for approval">
             When a deploy needs approval, it is listed here until somebody answers it.
           </EmptyState>
@@ -80,6 +90,7 @@ export function Approvals({ onOpenApp }: { onOpenApp: (appID: string) => void })
             />
           </section>
         ))}
+        <ShowMore query={approvals} label="Show more requests" />
       </div>
     </Screen>
   );

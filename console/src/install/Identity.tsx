@@ -16,6 +16,7 @@ import { VERB_NOTES } from './verbNotes';
 import { AccountApps } from './AccountApps';
 import { NoMatches, SearchField } from '../ui/SearchField';
 import { matches } from '../ui/search';
+import { ShowMore, usePaged, useSettled, withParams, type PageOf } from '../ui/paged';
 import { Table } from '../ui/Table';
 import { LineSkeleton, Loading } from '../ui/Loading';
 import { AIButton } from '../ui/AskAI';
@@ -28,7 +29,10 @@ interface Group {
   /** The identity provider that owns the membership, and its name. */
   source?: string;
   source_name?: string;
+  /** On GET /groups/{id} only; the list carries member_count instead. */
   members?: string[];
+  /** How many people are in the group directly; on the list. */
+  member_count?: number;
   /** On a Pando group: the provider groups whose members count as its own. */
   linked_from?: string[] | null;
   /** The installation role everyone in the group holds; '' for none. */
@@ -96,9 +100,13 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
   const [showing, setShowing] = useState<string | null>(null);
   const [linking, setLinking] = useState<Group | null>(null);
 
-  const groups = useQuery({
-    queryKey: ['groups'],
-    queryFn: () => api.get<{ groups: Group[] | null }>('/groups'),
+  // A page at a time, searched by name on the server (issue #72). Each row
+  // counts its people rather than listing them; the editor reads the group.
+  const groups = usePaged<{ groups: Group[] | null } & PageOf, Group>({
+    key: ['groups', 'list'],
+    path: '/groups',
+    rows: (p) => p.groups,
+    search: useSettled(query.trim()),
   });
   // Installation roles only: a group's role here applies across the
   // installation (R-080). What it can do on one app is set in its apps.
@@ -107,12 +115,9 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
     queryFn: () => api.get<{ roles: Role[] }>('/roles'),
   });
   const installRoles = roles.data?.roles ?? [];
-  const roleName = (id?: string) => installRoles.find((r) => r.id === id)?.name ?? '';
 
-  const all = groups.data?.groups ?? [];
-  const rows = all.filter((g) =>
-    matches(query, g.name, g.source_name ?? g.source ?? 'Pando', roleName(g.install_role_id)),
-  );
+  const all = groups.rows;
+  const rows = all;
   // Looked up rather than kept, so the panel follows a rename or a delete.
   const shown = all.find((g) => g.id === showing);
 
@@ -141,11 +146,11 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
         role and its access to apps.
       </Quiet>
 
-      {groups.isError && <Banner tone="failed">{messageOf(groups.error)}</Banner>}
+      {groups.query.isError && <Banner tone="failed">{messageOf(groups.query.error)}</Banner>}
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table
-          loading={groups.isPending}
+          loading={groups.query.isPending}
           skeletonRows={3}
           columns={[
             { key: 'name', header: 'Name', width: 'minmax(0,36ch)' },
@@ -153,7 +158,7 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
               key: 'members',
               header: 'People',
               width: '14ch',
-              render: (row: Group) => <Badge count={row.members?.length ?? 0} />,
+              render: (row: Group) => <Badge count={row.member_count ?? row.members?.length ?? 0} />,
             },
             {
               key: 'source',
@@ -219,13 +224,16 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
           ]}
           rows={rows}
           empty={
-            query.trim() && all.length > 0 ? (
+            query.trim() ? (
               <NoMatches what="groups" query={query} />
             ) : (
               <Quiet>No groups yet. Apps can still be shared with one person at a time.</Quiet>
             )
           }
         />
+        <div style={{ marginTop: 'var(--space-3)' }}>
+          <ShowMore query={groups.query} label="Show more groups" />
+        </div>
       </div>
 
       {/* Below the table rather than in a dialog: giving access to an app
@@ -255,15 +263,46 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
   );
 }
 
+/** Members listed by name in the group editor; a search finds the rest. */
+const MEMBERS_NAMED = 100;
+/** Accounts a search in the group editor offers. */
+const PEOPLE_FOUND = 20;
+
 function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => void }) {
   const queries = useQueryClient();
   const creating = group === 'new';
   const [name, setName] = useState(creating ? '' : group.name);
-  const [members, setMembers] = useState<string[]>(creating ? [] : (group.members ?? []));
+  // The group's members come from the group itself — the list counts them
+  // rather than carrying them (issue #72) — and are held here once changed.
+  const detail = useQuery({
+    queryKey: ['groups', creating ? 'new' : group.id],
+    queryFn: () => api.get<Group>(`/groups/${creating ? '' : group.id}`),
+    enabled: !creating,
+  });
+  const [changed, setMembers] = useState<string[] | null>(creating ? [] : null);
+  const members = changed ?? detail.data?.members ?? [];
 
+  // The people offered: the members, by name, and whoever a search finds.
+  // Not every account in the install, which can be a hundred thousand.
+  const [search, setSearch] = useState('');
+  const settled = useSettled(search.trim());
+  // The members as the group had them, so one taken out stays on the list
+  // to be put back.
+  const named = (detail.data?.members ?? []).slice(0, MEMBERS_NAMED);
   const accounts = useQuery({
-    queryKey: ['users'],
-    queryFn: () => api.get<{ users: Account[] }>('/users'),
+    queryKey: ['users', 'pick', settled, named],
+    queryFn: async () => {
+      const [inGroup, found] = await Promise.all([
+        named.length > 0
+          ? api.get<{ users: Account[] | null }>(withParams('/users', { id: named, limit: named.length }))
+          : Promise.resolve({ users: [] as Account[] }),
+        api.get<{ users: Account[] | null }>(withParams('/users', { q: settled, limit: PEOPLE_FOUND })),
+      ]);
+      const first = inGroup.users ?? [];
+      return [...first, ...(found.users ?? []).filter((a) => !first.some((m) => m.id === a.id))];
+    },
+    enabled: creating || detail.isSuccess,
+    placeholderData: (previous) => previous,
   });
 
   const save = useMutation({
@@ -276,7 +315,10 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
   });
 
   const toggle = (id: string) =>
-    setMembers((current) => (current.includes(id) ? current.filter((m) => m !== id) : [...current, id]));
+    setMembers((current) => {
+      const base = current ?? detail.data?.members ?? [];
+      return base.includes(id) ? base.filter((m) => m !== id) : [...base, id];
+    });
 
   return (
     <Dialog
@@ -289,7 +331,7 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={save.isPending || (creating && !name)} onClick={() => save.mutate()}>
+          <Button variant="primary" disabled={save.isPending || (creating && !name) || (!creating && !detail.isSuccess)} onClick={() => save.mutate()}>
             {save.isPending ? 'Saving' : 'Save'}
           </Button>
         </>
@@ -318,6 +360,12 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
             gap: 'var(--space-3)',
           }}
         >
+          <SearchField value={search} onChange={setSearch} placeholder="Search accounts to add" width="100%" />
+          {(detail.data?.members?.length ?? 0) > MEMBERS_NAMED && (
+            <Quiet>
+              The first {MEMBERS_NAMED} of {detail.data?.members?.length} people are listed. Search to find the others.
+            </Quiet>
+          )}
           {/* A checkbox's line each, until the accounts arrive. */}
           {accounts.isPending && (
             <Loading>
@@ -326,7 +374,7 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
               ))}
             </Loading>
           )}
-          {(accounts.data?.users ?? []).map((a) => (
+          {(accounts.data ?? []).map((a) => (
             <Checkbox
               key={a.id}
               checked={members.includes(a.id)}
@@ -637,7 +685,7 @@ function DeleteGroup({ group, onClose }: { group: Group; onClose: () => void }) 
       onClose();
     },
   });
-  const people = group.members?.length ?? 0;
+  const people = group.member_count ?? group.members?.length ?? 0;
 
   return (
     <Dialog
@@ -768,7 +816,7 @@ function LinkGroups({ group, synced, onClose }: { group: Group; synced: Group[];
           <Checkbox
             key={g.id}
             label={g.name}
-            description={`From ${g.source_name ?? g.source}, ${g.members?.length ?? 0} people`}
+            description={`From ${g.source_name ?? g.source}, ${g.member_count ?? g.members?.length ?? 0} people`}
             checked={linked.has(g.id)}
             disabled={toggle.isPending}
             onChange={(e) => toggle.mutate({ id: g.id, on: e.target.checked })}

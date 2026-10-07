@@ -176,6 +176,21 @@ the first of a stack; each later PR is based on the one before, and #72 closes w
 | 6 — Kubernetes runtime adapter | O-33, with a design note first: a Service per app reachable only from Pando's proxy (R-023), NetworkPolicy for R-025, PersistentVolumeClaims |
 | 7 — multi-host Docker runtime adapter | Docker on several hosts, with placement in the adapter and a design for how the proxy reaches an app on another host without routing around Pando |
 
+### PR 2, the API and console part
+
+| Problem | Fix | Test |
+|---|---|---|
+| `GET /users`, `/groups`, `/apps` and `/approvals` returned every row; groups carried every member of each | Keyset pages, design 04 §1's `limit` (default 100, at most 500), `cursor`, `next_cursor`, plus `total` and a server-side `q`. `/apps` and `/users` take `id` (repeatable) to read only those rows. A group in the list carries `member_count`; `GET /groups/{groupID}` (new) has the members, and `member` narrows the list to one account's groups. `/approvals` reads at most 2,000 waiting requests per page while looking for ones the caller may view, so a page may be short and still have a cursor | `TestTheAccountsListPagesWithoutGapsOrRepeats`, `TestTheGroupsListPagesAndCountsRatherThanListingMembers`, `TestTheAppsListPagesOncePerAppAndNarrowsToIDs`, `TestR154_TheWaitingListPagesAndShowsOnlyAppsTheCallerSees`, `TestTheAccountsGroupsAndAppsListsPage` |
+| The launcher joined every app's data grants under OR'd predicates; `apps.owner_user_id` had no index | A union of indexed lookups — owned, direct grant, group grant, anonymous — and migration 000047's indexes | `TestR264_TheLauncherListsEveryAppItsUserCanOpenOnce` |
+| SCIM lists counted every match on every page | Kept: `totalResults` is required on every list response (RFC 7644 §3.4.2). Skipped when a first, short page already shows it — the userName lookup a client makes before each create — and index-served otherwise | `TestSCIMTotalIsCountedUnlessTheFirstPageShowsIt` |
+| Every open app page called Docker on each `/status` (5 s) and `/usage` (10 s) poll | **[P]** A per-replica singleflight cache of runtime observations (2 s) and usage samples (5 s) by app, in `core/observe`. Authorization is checked on each request before it; nothing about authorization is cached (R-274). Start, stop and restart forget the app's entry on the replica that ran them. The reconciler still observes uncached | `internal/core/observe` tests |
+| The admin console re-read the whole app list every 5 s while any row deployed or scanned | Only the changing rows are asked for again, by `id`; the list is re-read once when one settles. Approvals poll every 60 s rather than 30 s | console |
+| A deploy's live log stayed in memory forever | Dropped `deploy.LogRetention` (5 min) after it has finished and nobody follows it. A request for it answers as a stopped replica's does | `TestAFinishedLogWithNoFollowersIsDroppedAfterRetention` and the rest of `logs_evict_test.go` |
+| The proxy's visit log, at its 200,000 cap, swept or cleared the whole map under one lock on the request path | 64 shards, each with its own lock and an even share of the cap, kept in arrival order; a full shard drops its expired visits, then its oldest. What is audited is unchanged | `visits_test.go` |
+
+The access assistant still reads every account and app to draft access (`assist.Service.people`,
+`apps`); it runs on request, not per page load, and is left for a later change.
+
 ## The issue's open questions, answered
 
 1. **Scope.** Both: surviving a rolling restart and a lost pod (this PR), and horizontal throughput

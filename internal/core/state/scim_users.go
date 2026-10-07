@@ -74,12 +74,8 @@ func (s *SCIMUsers) List(ctx context.Context, adapterID, attr, value string, off
 	default:
 		return nil, 0, errs.Newf(errs.ValidInvalid, "Pando cannot filter users by %q.", attr)
 	}
-	var total int
-	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM user_identities i JOIN users u ON u.id = i.user_id`+where,
-		args...).Scan(&total); err != nil {
-		return nil, 0, errs.Wrap(errs.Internal, "Could not read the users.", err)
-	}
-	args = append(args, limit, offset)
+	countArgs := args
+	args = append(append([]any{}, args...), limit, offset)
 	n := len(args)
 	rows, err := s.db.Query(ctx, scimUserSelect+where+` ORDER BY i.created_at, u.id LIMIT $`+itoa(n-1)+` OFFSET $`+itoa(n), args...)
 	if err != nil {
@@ -94,7 +90,34 @@ func (s *SCIMUsers) List(ctx context.Context, adapterID, attr, value string, off
 		}
 		out = append(out, u)
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, errs.Wrap(errs.Internal, "Could not read the users.", err)
+	}
+
+	// totalResults is required in every list response (RFC 7644 §3.4.2), so
+	// it is counted — unless the page already says it: a first page that is
+	// not full holds every match. That is the common call by far, a client
+	// looking one user up by userName before creating it, and it then costs
+	// one indexed query instead of two. The count is index-served
+	// (user_identities_scim_list_idx, migration 000047).
+	if total, ok := totalFromPage(offset, limit, len(out)); ok {
+		return out, total, nil
+	}
+	var total int
+	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM user_identities i JOIN users u ON u.id = i.user_id`+where,
+		countArgs...).Scan(&total); err != nil {
+		return nil, 0, errs.Wrap(errs.Internal, "Could not read the users.", err)
+	}
+	return out, total, nil
+}
+
+// totalFromPage is a SCIM list's totalResults when one page shows it without
+// counting: the first page, not full.
+func totalFromPage(offset, limit, got int) (int, bool) {
+	if offset == 0 && got < limit {
+		return got, true
+	}
+	return 0, false
 }
 
 // ByID returns one of a provider's accounts.

@@ -737,7 +737,7 @@ pando group apps <group-id>
 
 #### `group list`
 
-Show every group, its members and its installation role
+Show every group, how many people are in it, and its installation role
 
 ```
 pando group list

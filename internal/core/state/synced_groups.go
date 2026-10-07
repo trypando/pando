@@ -181,11 +181,8 @@ func (s *SCIMGroups) List(ctx context.Context, adapterID, attr, value string, of
 	default:
 		return nil, 0, errs.Newf(errs.ValidInvalid, "Pando cannot filter groups by %q.", attr)
 	}
-	var total int
-	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM groups WHERE `+where, args...).Scan(&total); err != nil {
-		return nil, 0, errs.Wrap(errs.Internal, "Could not read the groups.", err)
-	}
-	args = append(args, limit, offset)
+	countArgs := args
+	args = append(append([]any{}, args...), limit, offset)
 	n := len(args)
 	rows, err := s.db.Query(ctx, `
 		SELECT id FROM groups WHERE `+where+`
@@ -203,6 +200,18 @@ func (s *SCIMGroups) List(ctx context.Context, adapterID, attr, value string, of
 		ids = append(ids, groupID)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, 0, errs.Wrap(errs.Internal, "Could not read the groups.", err)
+	}
+	// totalResults is required (RFC 7644 §3.4.2); counted only when the page
+	// does not already show it, as for users. Index-served
+	// (groups_scim_list_idx, migration 000047).
+	total, ok := totalFromPage(offset, limit, len(ids))
+	if !ok {
+		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM groups WHERE `+where, countArgs...).Scan(&total); err != nil {
+			return nil, 0, errs.Wrap(errs.Internal, "Could not read the groups.", err)
+		}
+	}
 	out := make([]SCIMGroup, 0, len(ids))
 	for _, groupID := range ids {
 		grp, _, err := s.ByID(ctx, adapterID, groupID, members)

@@ -18,6 +18,8 @@ import { api } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { Table } from '../ui/Table';
 import { FieldSkeleton, LineSkeleton, Loading } from '../ui/Loading';
+import { SearchField } from '../ui/SearchField';
+import { useSettled, withParams } from '../ui/paged';
 import type { Role } from './Accounts';
 import { Quiet, messageOf, sentence } from './Accounts';
 
@@ -52,6 +54,9 @@ const listKey = (p: Principal) => [p.kind === 'user' ? 'users' : 'groups', p.id,
 
 /** The principal's own grant, as opposed to one an account holds through a
  *  group. Every grant in a group's list is the group's own. */
+/** Apps offered at once in the picker; a search finds the rest. */
+const PICK_LIMIT = 50;
+
 const isOwn = (p: Principal) => (g: Grant) => p.kind === 'group' || g.via === 'user';
 
 export function AccountApps({
@@ -287,11 +292,20 @@ function GiveAccess({
   roles: Role[];
   onClose: () => void;
 }) {
+  // Searched by the server, a screenful at a time: the install may hold
+  // twenty thousand apps, and a picker of all of them is not one (issue #72).
+  const [search, setSearch] = useState('');
+  const settled = useSettled(search.trim());
   const apps = useQuery({
-    queryKey: ['apps'],
-    queryFn: () => api.get<{ apps: { id: string; name: string }[] }>('/apps'),
+    queryKey: ['apps', 'pick', settled],
+    queryFn: () =>
+      api.get<{ apps: { id: string; name: string }[] | null; next_cursor?: string }>(
+        withParams('/apps', { q: settled, limit: PICK_LIMIT }),
+      ),
+    placeholderData: (previous) => previous,
   });
   const offered = (apps.data?.apps ?? []).filter((a) => !has.has(a.id));
+  const more = Boolean(apps.data?.next_cursor);
   const [appID, setAppID] = useState('');
   const [role, setRole] = useState('');
   const [opens, setOpens] = useState(true);
@@ -342,15 +356,23 @@ function GiveAccess({
             <LineSkeleton width="6ch" font="var(--type-label)" />
             <FieldSkeleton />
           </Loading>
-        ) : offered.length === 0 ? (
+        ) : offered.length === 0 && settled === '' && !more ? (
           <Quiet>This {noun} already has access to every app.</Quiet>
         ) : (
-          <Select
-            label="App"
-            value={appID}
-            onChange={(e) => setAppID(e.target.value)}
-            options={[{ value: '', label: 'Choose an app' }, ...offered.map((a) => ({ value: a.id, label: a.name }))]}
-          />
+          <>
+            <SearchField value={search} onChange={setSearch} placeholder="Search apps" width="100%" />
+            {offered.length === 0 ? (
+              <Quiet>No apps match &ldquo;{settled}&rdquo; that this {noun} doesn&rsquo;t already have.</Quiet>
+            ) : (
+              <Select
+                label="App"
+                value={appID}
+                onChange={(e) => setAppID(e.target.value)}
+                helper={more ? `The first ${PICK_LIMIT} apps. Search to find another.` : undefined}
+                options={[{ value: '', label: 'Choose an app' }, ...offered.map((a) => ({ value: a.id, label: a.name }))]}
+              />
+            )}
+          </>
         )}
         <Select
           label="Role"

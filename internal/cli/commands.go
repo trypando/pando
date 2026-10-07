@@ -214,19 +214,29 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var out struct {
-				Apps []struct {
-					ID        string `json:"id"`
-					Name      string `json:"name"`
-					Slug      string `json:"slug"`
-					State     string `json:"state"`
-					Detection *struct {
-						Status string `json:"status"`
-						Stage  string `json:"stage"`
-					} `json:"detection"`
-				} `json:"apps"`
+			type appRow struct {
+				ID        string `json:"id"`
+				Name      string `json:"name"`
+				Slug      string `json:"slug"`
+				State     string `json:"state"`
+				Detection *struct {
+					Status string `json:"status"`
+					Stage  string `json:"stage"`
+				} `json:"detection"`
 			}
-			if err := c.Do("GET", "/apps", nil, &out); err != nil {
+			var out struct{ Apps []appRow }
+			err = allPages(c, "/apps", func(get func(any) error) (string, error) {
+				var page struct {
+					Apps       []appRow `json:"apps"`
+					NextCursor string   `json:"next_cursor"`
+				}
+				if err := get(&page); err != nil {
+					return "", err
+				}
+				out.Apps = append(out.Apps, page.Apps...)
+				return page.NextCursor, nil
+			})
+			if err != nil {
 				return err
 			}
 
@@ -1329,18 +1339,29 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "list",
-		Short: "Show every group, its members and its installation role",
+		Short: "Show every group, how many people are in it, and its installation role",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := client()
 			if err != nil {
 				return err
 			}
-			var out map[string]any
-			if err := c.Do("GET", "/groups", nil, &out); err != nil {
+			groups := []any{}
+			err = allPages(c, "/groups", func(get func(any) error) (string, error) {
+				var page struct {
+					Groups     []any  `json:"groups"`
+					NextCursor string `json:"next_cursor"`
+				}
+				if err := get(&page); err != nil {
+					return "", err
+				}
+				groups = append(groups, page.Groups...)
+				return page.NextCursor, nil
+			})
+			if err != nil {
 				return err
 			}
-			return printJSON(cmd.OutOrStdout(), out)
+			return printJSON(cmd.OutOrStdout(), map[string]any{"groups": groups})
 		},
 	})
 	cmd.AddCommand(&cobra.Command{

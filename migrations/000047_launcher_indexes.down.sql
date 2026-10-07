@@ -1,0 +1,9 @@
+DROP INDEX IF EXISTS groups_scim_name_idx;
+DROP INDEX IF EXISTS groups_scim_list_idx;
+DROP INDEX IF EXISTS user_identities_scim_external_idx;
+DROP INDEX IF EXISTS user_identities_scim_list_idx;
+DROP INDEX IF EXISTS deployments_awaiting_order_idx;
+DROP INDEX IF EXISTS groups_list_order_idx;
+DROP INDEX IF EXISTS apps_live_created_idx;
+DROP INDEX IF EXISTS grants_data_anonymous_idx;
+DROP INDEX IF EXISTS apps_owner_user_idx;

@@ -87,6 +87,9 @@ func (s *Server) setDesired(w http.ResponseWriter, r *http.Request, desired, act
 	if after != nil {
 		after(r.Context(), app)
 	}
+	// What this replica last saw of the app is now about to change. Other
+	// replicas' copies age out within their TTL (issue #72).
+	s.Observations.Forget(app.ID)
 
 	p := PrincipalFrom(r.Context())
 	s.audit(r, audit.Event{
@@ -143,6 +146,7 @@ func (s *Server) handleRestartApp(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
+	s.Observations.Forget(app.ID)
 
 	p := PrincipalFrom(r.Context())
 	s.audit(r, audit.Event{

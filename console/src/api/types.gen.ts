@@ -328,6 +328,7 @@ export interface Group {
   source?: string;
   source_name?: string;
   members?: (string[] | null);
+  member_count?: number;
   linked_from?: (string[] | null);
   links_to?: (string[] | null);
   created_at: string;
