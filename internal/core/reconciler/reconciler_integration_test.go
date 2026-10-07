@@ -77,7 +77,10 @@ func (f *fakeRuntime) Capabilities(context.Context) (api.RuntimeCapabilities, er
 	return api.RuntimeCapabilities{SupportsPrivateNetwork: true}, nil
 }
 func (f *fakeRuntime) Capacity(context.Context) (api.Capacity, error) { return api.Capacity{}, nil }
-func (f *fakeRuntime) InUse(context.Context) (api.InUse, error)       { return api.InUse{}, nil }
+func (f *fakeRuntime) LargestFitFor(context.Context, string) (*api.Fit, error) {
+	return nil, nil
+}
+func (f *fakeRuntime) InUse(context.Context) (api.InUse, error) { return api.InUse{}, nil }
 
 func (f *fakeRuntime) Usage(context.Context, api.BundleRef) (api.BundleUsage, error) {
 	return api.BundleUsage{}, nil

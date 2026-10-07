@@ -598,6 +598,46 @@ func (p *Planner) checkCapacity(ctx context.Context, s *spec.AppSpec, runtime ap
 	if err := over("disk space", requested.DiskBytes, allocated.DiskBytes, capacity.TotalDiskBytes, formatBytes); err != nil {
 		return err
 	}
+	return p.checkLargestFit(ctx, s, runtime, allowCPU, allowMemory)
+}
+
+// checkLargestFit refuses an app no single place on the runtime has room
+// for, though the totals do: on several machines, room spread over them
+// cannot be combined, because an app's workloads all run in one place.
+//
+// The runtime answers for this app (LargestFitFor), counting what the app
+// already holds as free where it runs, so a redeploy that fits in place is
+// never refused. Core learns a number, not where it is (R-251). What is
+// compared is what the workloads are limited to, summed, which is what the
+// runtime reserves.
+func (p *Planner) checkLargestFit(ctx context.Context, s *spec.AppSpec, runtime api.RuntimeAdapter, allowCPU, allowMemory bool) error {
+	fit, err := runtime.LargestFitFor(ctx, s.AppID)
+	if err != nil {
+		return errs.Wrap(errs.AdapterUnavailable, "Pando could not read how much room is left.", err)
+	}
+	if fit == nil {
+		return nil
+	}
+	var need api.Fit
+	for _, w := range p.bundlePlan(s, api.EgressRules{}).Workloads {
+		need.CPUMillis += w.Resources.CPUMillis
+		need.MemoryBytes += w.Resources.MemoryBytes
+	}
+	refuse := func(kind, asked, free string) error {
+		return errs.Newf(errs.CapacityWouldOversubscribe,
+			"No single place this app's runtime can start it has enough %s free. The app's workloads ask for %s in all, and they all run in one place, where the most free is %s.",
+			kind, asked, free).
+			WithDetail("resource", kind).
+			WithDetail("requested", asked).
+			WithDetail("largest_free", free).
+			WithRemedy("Lower what the app's workloads ask for, or stop or delete another app on this runtime to free room.")
+	}
+	if !allowMemory && need.MemoryBytes > fit.MemoryBytes {
+		return refuse("memory", formatBytes(need.MemoryBytes), formatBytes(fit.MemoryBytes))
+	}
+	if !allowCPU && need.CPUMillis > fit.CPUMillis {
+		return refuse("CPU", formatMillis(int64(need.CPUMillis)), formatMillis(int64(fit.CPUMillis)))
+	}
 	return nil
 }
 

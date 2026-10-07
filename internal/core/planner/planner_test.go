@@ -21,9 +21,11 @@ import (
 // --- adapter doubles -------------------------------------------------------
 
 type fakeRuntime struct {
-	caps      api.RuntimeCapabilities
-	capacity  api.Capacity
-	unhealthy error
+	caps     api.RuntimeCapabilities
+	capacity api.Capacity
+	// largestFit is what LargestFitFor answers for every bundle.
+	largestFit *api.Fit
+	unhealthy  error
 }
 
 func (f *fakeRuntime) Kind() string                                     { return "fake" }
@@ -35,7 +37,10 @@ func (f *fakeRuntime) Capabilities(context.Context) (api.RuntimeCapabilities, er
 	return f.caps, nil
 }
 func (f *fakeRuntime) Capacity(context.Context) (api.Capacity, error) { return f.capacity, nil }
-func (f *fakeRuntime) InUse(context.Context) (api.InUse, error)       { return api.InUse{}, nil }
+func (f *fakeRuntime) LargestFitFor(context.Context, string) (*api.Fit, error) {
+	return f.largestFit, nil
+}
+func (f *fakeRuntime) InUse(context.Context) (api.InUse, error) { return api.InUse{}, nil }
 
 func (f *fakeRuntime) Apply(context.Context, api.BundlePlan) (api.BundleHandle, error) {
 	return api.BundleHandle{}, nil
@@ -709,4 +714,76 @@ func (f *fakeRuntime) EdgeVolumes(context.Context) ([]api.VolumeHandle, error) {
 }
 func (f *fakeRouting) Edge(context.Context, api.EdgeRequest) (api.EdgePlan, bool, error) {
 	return api.EdgePlan{}, false, nil
+}
+
+// fitRuntime answers LargestFitFor per app: the room where that app may go,
+// with what it already holds there counted as free, as a runtime on several
+// machines does.
+type fitRuntime struct {
+	*fakeRuntime
+	fits map[string]*api.Fit
+}
+
+func (f fitRuntime) LargestFitFor(_ context.Context, appID string) (*api.Fit, error) {
+	return f.fits[appID], nil
+}
+
+// TestR242_AnAppNoSinglePlaceHasRoomForIsRefusedAtPlanTime asserts R-242 on
+// a runtime spread over several machines: the totals have room, no one place
+// does, and the refusal comes from the planner — before anything is built or
+// started — with a message that says why (R-105).
+func TestR242_AnAppNoSinglePlaceHasRoomForIsRefusedAtPlanTime(t *testing.T) {
+	rt := capableRuntime()
+	rt.capacity = api.Capacity{TotalCPUMillis: 12000, TotalMemoryBytes: 24 << 30}
+	s := plannableSpec()
+	s.Resources.MemoryBytes = 4 << 30
+
+	p := planner.New(
+		registry(t, fitRuntime{rt, map[string]*api.Fit{s.AppID: {CPUMillis: 4000, MemoryBytes: 5 << 29}}},
+			capableRouting(), capableBuilder()),
+		policy.Static(policy.Default()), fixedAllocations{})
+	_, err := p.Check(context.Background(), s)
+	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
+	e := errs.As(err)
+	require.Equal(t, "memory", e.Details["resource"])
+	require.Contains(t, e.Message, "No single place")
+	require.Contains(t, e.Message, "all run in one place")
+	require.NotEmpty(t, e.Remedy)
+
+	// Memory oversubscription allowed by policy lifts this check too.
+	doc := policy.Default()
+	doc.AllowMemoryOversubscription = true
+	p = planner.New(
+		registry(t, fitRuntime{rt, map[string]*api.Fit{s.AppID: {CPUMillis: 4000, MemoryBytes: 5 << 29}}},
+			capableRouting(), capableBuilder()),
+		policy.Static(doc), fixedAllocations{})
+	_, err = p.Check(context.Background(), s)
+	require.NoError(t, err)
+}
+
+// TestR242_ARedeployThatFitsWhereTheAppRunsIsAllowed asserts the other half:
+// the runtime counts what the app already holds as free where it runs, so an
+// app on a full machine that fits there in place is not refused, while a new
+// app of the same size is.
+func TestR242_ARedeployThatFitsWhereTheAppRunsIsAllowed(t *testing.T) {
+	rt := capableRuntime()
+	rt.capacity = api.Capacity{TotalCPUMillis: 12000, TotalMemoryBytes: 24 << 30}
+	running := plannableSpec()
+	running.Resources.MemoryBytes = 2 << 30
+	fresh := plannableSpec()
+	fresh.AppID = "app_01HQ9"
+	fresh.Resources.MemoryBytes = 2 << 30
+
+	fits := map[string]*api.Fit{
+		// 512 MB free on its machine, plus the 2 GB it holds there.
+		running.AppID: {CPUMillis: 1000, MemoryBytes: 5 << 29},
+		// The roomiest machine for a new app: 1 GB free.
+		fresh.AppID: {CPUMillis: 1000, MemoryBytes: 1 << 30},
+	}
+	p := planner.New(registry(t, fitRuntime{rt, fits}, capableRouting(), capableBuilder()),
+		policy.Static(policy.Default()), fixedAllocations{})
+	_, err := p.Check(context.Background(), running)
+	require.NoError(t, err)
+	_, err = p.Check(context.Background(), fresh)
+	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
 }

@@ -270,7 +270,9 @@ What was built, and where it differs from the design above.
 |---|---|
 | Adapter | `internal/adapter/runtime/multidocker`, kind `docker-hosts`. One `docker.Adapter` per host, made with `docker.NewWithClient` on that host's client, with `ProxyContainer: "pando-agent"` so `attachProxy` and `RejoinNetworks` join the agent where they joined Pando's container. The control host has a second one, joined as Pando's own container, for the edge, trial runs and self-upgrade. The single-host adapter gained only `NewWithClient`, `Committed`, `Bundles`, limit labels on containers (`io.pando.limit.cpu`, `io.pando.limit.memory`) and `LargestFit` in its `Capacity`. |
 | Configuration | `hosts`, a JSON list (or a string holding one, for a form's text area): `name`, `endpoint`, `agent_address`, `control`, `no_placement`, `ssh_host_key`, and the per-host totals. Exactly one control host. `network_pool` may not be `off`: the agent's check depends on it. Credentials, sealed in `adapter_credentials` like every adapter's (R-190): `agent_authority`, `docker_tls` (client certificate, key and CA for `tcp://`), `ssh_key` (for `ssh://`, through `golang.org/x/crypto/ssh` to the remote socket, with the host key pinned). |
-| Placement | As described. The map is a cache rebuilt from the hosts' bundle-labeled networks and volumes, on a miss (at most every 2 s) and on every rejoin pass (15 s). **A host that does not answer blocks two things**: an app the map does not know is reported as an observation error rather than absent, and no new app is placed, because either could put a second copy of an app beside one on the silent host. |
+| Placement | As described. The map is a cache rebuilt from the hosts' bundle-labeled networks and volumes, on a miss (at most every 2 s) and on every rejoin pass (15 s). **While a host does not answer**, an app the map does not know is reported as an observation error rather than absent, and an app that has deployed before is not placed, because either could put a second copy beside one on the silent host. An app's first deploy (`BundlePlan.FirstDeploy`, set by core when the app has no successful deploy) is placed among the hosts that answer: nothing of it can be on the silent one. If a first deploy that failed partway left a network on a host that later goes silent and returns, the bundle is found on both hosts and the first one listed wins. |
+| Plan-time capacity | `RuntimeAdapter.LargestFitFor(bundleID)`: for a placed app, its host's free space plus what the app's running containers hold there (`docker.RoomFor`); for a new one, the roomiest open host that answers. The planner refuses a bundle whose workload limits sum to more, at plan time (design 03 §2.4). `Committed` counts running containers only, as R-242 counts running apps. |
+| Deleted apps' networks | On an app host, `Destroy` then disconnects the agent from the app's networks and removes them (`docker.DetachProxy`), touching only networks labeled as that bundle's — never the agent's own, which has no bundle label — and refusing outright for Pando's own container. Not on the control host, which may be Docker Desktop, where disconnecting a running container drops its published ports. |
 | The agent | `pando host-agent serve`, from `agent_image` (default: the image Pando's container on the control host was started from, by reference so other hosts can pull it). On its own `pando-agent` bridge network, made with Docker's addresses; the adapter refuses one that overlaps the app range. Read-only root, all capabilities dropped, one published port. Protocol: after TLS 1.3, `PANDO-AGENT/1 <container> <port>\n`, answered `OK` or `NO <reason>`, then a byte stream. Re-created when its image, port, range or authority changes, and every 30 days for a new certificate. |
 | What the agent forwards to | A name matching Pando's container names (`pando-…`), resolved by Docker's DNS on the agent's networks, dialed by address, and only if the address is inside `network_pool`, on a network the agent is joined to that lies within the pool, and not that network's address, bridge (`.1`, the host), broadcast or the agent's own address (`hostagent.Permitted`). |
 | Certificates | Not generated into Postgres by core, as design 06 §4 first said: the authority is the adapter's `agent_authority` credential, made by `pando host-agent new-authority`, which is sealed by the secrets adapter in Postgres all the same. Each replica issues its own client certificate (`CN=pando-proxy`, client authentication only) from it in memory at start, and each agent's server certificate (`pando-agent.<host>.invalid`, server authentication only) when the agent is created; an agent's certificate cannot open another agent. Replaced by overlap: the credential holds several authorities, the first issues and all are trusted. |
@@ -280,11 +282,9 @@ What was built, and where it differs from the design above.
 
 **Not done here:**
 
-- **The planner does not read `LargestFit` yet.** Placement refuses with a `CAPACITY_WOULD_OVERSUBSCRIBE`
-  naming the largest free space, at `Apply`. A plan-time check needs to know whether the app already
-  has a host (its own containers count against that host's free space), which the planner cannot ask.
-- **A deleted app's network on an app host is not reclaimed until the agent is re-created**, because
-  the agent stays attached to it and `ReclaimNetworks` only removes networks with nothing attached.
+- **On the control host, a deleted app's network is not reclaimed until the agent is re-created**
+  (see "Deleted apps' networks"). `Apply`'s placement refusal remains for two replicas racing for the
+  last room on a host.
 - **The agent's key is in its container's environment** on its own host. It is a server key and
   opens nothing, and that host's root can reach its apps anyway.
 - **Not run against real hosts.** The tests below use fakes and a real agent on loopback; the
@@ -313,6 +313,13 @@ As written (unit tests, fakes, a real agent on loopback):
 - `TestR148_AnUnreachableHostMarksItsAppsUnobservableNotFailed`.
 - `TestR243_CapacityReportsTheLargestPlaceAWorkloadFits`,
   `TestR243_OneHostsLargestFitIsWhatItsContainersLeave`.
+- `TestR242_AnAppNoSinglePlaceHasRoomForIsRefusedAtPlanTime`,
+  `TestR242_ARedeployThatFitsWhereTheAppRunsIsAllowed` (planner),
+  `TestR242_TheRoomForAnAppIsWhereItRunsWithWhatItHoldsThere`.
+- `TestR256_AFirstDeployIsPlacedWhileAnotherHostIsUnreachable`,
+  `TestR010_ADeployedAppIsNeverPlacedElsewhereWhileAHostIsUnreachable`.
+- `TestR224_TheAgentLeavesADeletedAppsNetworksOnAnAppHost`,
+  `TestR224_DetachProxyLeavesOnlyTheDeletedBundlesNetworks`.
 
 Planned and still owed, with Docker-in-Docker daemons standing in for hosts:
 `TestR023_AnAppOnAnotherHostIsReachedOnlyThroughTheProxy` (Sequence C through the balancer) and

@@ -34,8 +34,9 @@ type stubRuntime struct{ base }
 func (stubRuntime) Capabilities(context.Context) (api.RuntimeCapabilities, error) {
 	return api.RuntimeCapabilities{}, nil
 }
-func (stubRuntime) Capacity(context.Context) (api.Capacity, error) { return api.Capacity{}, nil }
-func (stubRuntime) InUse(context.Context) (api.InUse, error)       { return api.InUse{}, nil }
+func (stubRuntime) Capacity(context.Context) (api.Capacity, error)          { return api.Capacity{}, nil }
+func (stubRuntime) LargestFitFor(context.Context, string) (*api.Fit, error) { return nil, nil }
+func (stubRuntime) InUse(context.Context) (api.InUse, error)                { return api.InUse{}, nil }
 func (stubRuntime) Apply(context.Context, api.BundlePlan) (api.BundleHandle, error) {
 	return api.BundleHandle{}, nil
 }

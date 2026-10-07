@@ -155,6 +155,12 @@ environment HTTP proxy. A runtime whose workloads Pando's container can reach le
 
 ### 2.1 The plan
 
+**[D]** `BundlePlan.FirstDeploy` is true when the app has never had a successful deploy, which core
+reads from its deployments (`RunningSpecID` empty). Nothing of such an app can be anywhere a runtime
+cannot see, so a runtime that places bundles may place it while part of itself does not answer. For
+any other bundle it must not: a copy may already run in the silent part, and placing it again would
+be a second copy or a move (O-46). False is the safe value and what the reconciler sends.
+
 ```go
 type BundlePlan struct {
     BundleID   string          // stable across deploys of one app
@@ -376,10 +382,20 @@ type InUse struct {
 total can have room no one machine has: 6 GB free over three hosts does not place a 4 GB app. The
 single-host Docker adapter reports its totals less what its app containers are limited to; the
 multi-host adapter the roomiest host open to new apps; Kubernetes will report the roomiest node
-(notes-kubernetes-runtime-issue-72.md). The planner does not read it yet: an app already placed counts
-against its own host's free space, and only the adapter knows whether it is placed, so the refusal
-happens at `Apply` with a `CAPACITY_*` error naming the largest free space
-(`notes-multi-host-docker-issue-72.md`).
+(notes-kubernetes-runtime-issue-72.md).
+
+**[D]** The planner refuses at plan time an app no single place has room for, through
+`RuntimeAdapter.LargestFitFor(ctx, bundleID) (*Fit, error)`: `LargestFit` as it stands for that
+bundle. A runtime that keeps a bundle where it was placed answers for that place only, counting what
+the bundle already holds there as free, so a redeploy that fits in place is never refused; for a
+bundle placed nowhere yet it answers the roomiest place. The question takes the app's ID rather than
+the planner subtracting the app's recorded allocation, because only the runtime knows where the app
+is and what its workloads actually reserve there, and the answer stays a number: core learns no
+host (R-251). The planner compares the sum of the bundle's workload limits with it and refuses with
+`CAPACITY_WOULD_OVERSUBSCRIBE` and a message that says the room cannot be combined across places;
+policy allowing CPU or memory oversubscription lifts the check for that resource, as it does R-242's.
+Nil means one place, or not reported: the single-host Docker adapter answers nil, since R-242's check
+of its totals already says everything this would.
 
 **[P]** `RuntimeCapabilities.ImageDelivery` says how a built image reaches the runtime, in order of
 preference: `import` (`ImportImage`) or `registry` (pulled by digest). Added by PR 7 with the shape

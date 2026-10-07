@@ -285,7 +285,8 @@ adapters:
 
 Every host must run images for the same CPU architecture. `network_pool` applies on every host and
 cannot be `off`. A host that stops answering makes its apps show as unreachable, not failed; they
-are not started elsewhere. If the host is gone for good, remove it from the list and restore its
+are not started elsewhere, and redeploying one is refused until the host answers. New apps still go
+to the hosts that answer. An app too large for any one host is refused when its deploy is planned. If the host is gone for good, remove it from the list and restore its
 apps from their backups; what changed since the last backup is lost. To replace the authority, put
 the new one before the old one in `agent_authority`, restart, and remove the old one once every
 agent has been replaced.

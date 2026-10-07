@@ -238,7 +238,9 @@ func (a *Adapter) place(ctx context.Context, p api.BundlePlan) (*host, error) {
 			down = append(down, h.cfg.Name)
 		}
 	}
-	if len(down) > 0 {
+	// A first deploy has nothing on any host, so the hosts that answer are
+	// enough to choose from (BundlePlan.FirstDeploy).
+	if len(down) > 0 && !p.FirstDeploy {
 		// Placing now could put a second copy of an app beside one on the
 		// host that did not answer.
 		return nil, errs.Newf(errs.AdapterUnavailable,

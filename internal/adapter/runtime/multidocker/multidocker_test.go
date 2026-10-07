@@ -28,6 +28,9 @@ type fakeHost struct {
 	applied  []string
 	observed []string
 	running  int
+	// own is what the one bundle on this host holds (RoomFor).
+	own      api.Fit
+	detached []string
 }
 
 var errDown = errors.New("connection refused")
@@ -100,6 +103,27 @@ func (f *fakeHost) DestroyVolume(_ context.Context, h api.VolumeHandle) error {
 	f.observed = append(f.observed, "destroy "+h.Handle)
 	return nil
 }
+
+func (f *fakeHost) RoomFor(context.Context, string) (*api.Fit, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down {
+		return nil, errDown
+	}
+	room := f.free
+	room.CPUMillis += f.own.CPUMillis
+	room.MemoryBytes += f.own.MemoryBytes
+	return &room, nil
+}
+
+func (f *fakeHost) DetachProxy(_ context.Context, bundle string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.detached = append(f.detached, bundle)
+	return nil
+}
+
+func (f *fakeHost) Destroy(context.Context, api.BundleRef, api.DestroyOptions) error { return nil }
 
 func (f *fakeHost) RejoinNetworks(context.Context, func(string) bool) (int, error)  { return 0, nil }
 func (f *fakeHost) ReclaimNetworks(context.Context, func(string) bool) (int, error) { return 0, nil }
@@ -384,4 +408,79 @@ func TestConfigurationIsCheckedBeforeAnythingIsContacted(t *testing.T) {
 
 func TestInfoIsAValidForm(t *testing.T) {
 	require.NoError(t, Info().Validate())
+}
+
+// TestR256_AFirstDeployIsPlacedWhileAnotherHostIsUnreachable asserts that one
+// silent host does not stop new apps going to the others: an app that has
+// never deployed (BundlePlan.FirstDeploy) has nothing on the silent host.
+func TestR256_AFirstDeployIsPlacedWhileAnotherHostIsUnreachable(t *testing.T) {
+	hosts := map[string]*fakeHost{
+		"control": {total: api.Fit{CPUMillis: 4000, MemoryBytes: 8 * gib}, free: api.Fit{CPUMillis: 4000, MemoryBytes: 2 * gib}},
+		"app-1":   {down: true},
+		"app-2":   {total: api.Fit{CPUMillis: 4000, MemoryBytes: 8 * gib}, free: api.Fit{CPUMillis: 4000, MemoryBytes: 6 * gib}},
+	}
+	a := newTestAdapter(t, hosts, "control", "app-1", "app-2")
+	p := plan("app_new", gib)
+	p.FirstDeploy = true
+	handle, err := a.Apply(context.Background(), p)
+	require.NoError(t, err)
+	require.Equal(t, "app-2", handle.Handle)
+}
+
+// TestR010_ADeployedAppIsNeverPlacedElsewhereWhileAHostIsUnreachable asserts
+// O-46's side of the same rule: an app that has deployed before may be on the
+// silent host, so it is refused rather than created a second time elsewhere.
+func TestR010_ADeployedAppIsNeverPlacedElsewhereWhileAHostIsUnreachable(t *testing.T) {
+	hosts := map[string]*fakeHost{
+		"control": {total: api.Fit{CPUMillis: 4000, MemoryBytes: 8 * gib}, free: api.Fit{CPUMillis: 4000, MemoryBytes: 8 * gib}},
+		"app-1":   {down: true, bundles: map[string]bool{"app_old": true}},
+	}
+	a := newTestAdapter(t, hosts, "control", "app-1")
+	_, err := a.Apply(context.Background(), plan("app_old", gib)) // FirstDeploy false
+	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err))
+	require.Contains(t, errs.As(err).Message, "app-1")
+	require.Empty(t, hosts["control"].applied)
+}
+
+// TestR242_TheRoomForAnAppIsWhereItRunsWithWhatItHoldsThere asserts
+// LargestFitFor: a placed app may go only to its host, and what it holds there
+// counts as free; a new app may go to the roomiest host that answers.
+func TestR242_TheRoomForAnAppIsWhereItRunsWithWhatItHoldsThere(t *testing.T) {
+	hosts := map[string]*fakeHost{
+		"control": {total: api.Fit{CPUMillis: 4000, MemoryBytes: 8 * gib}, free: api.Fit{CPUMillis: 4000, MemoryBytes: 6 * gib}},
+		"app-1": {total: api.Fit{CPUMillis: 4000, MemoryBytes: 8 * gib}, free: api.Fit{CPUMillis: 500, MemoryBytes: gib / 2},
+			own: api.Fit{CPUMillis: 1000, MemoryBytes: 2 * gib}, bundles: map[string]bool{"app_placed": true}},
+	}
+	a := newTestAdapter(t, hosts, "control", "app-1")
+	got, err := a.LargestFitFor(context.Background(), "app_placed")
+	require.NoError(t, err)
+	require.Equal(t, api.Fit{CPUMillis: 1500, MemoryBytes: 2*gib + gib/2}, *got,
+		"its own host only, though control has more free, with its own reservation counted as free")
+
+	got, err = a.LargestFitFor(context.Background(), "app_new")
+	require.NoError(t, err)
+	require.Equal(t, api.Fit{CPUMillis: 4000, MemoryBytes: 6 * gib}, *got)
+
+	// Its host silent: no answer, and Observe reports the host.
+	hosts["app-1"].down = true
+	got, err = a.LargestFitFor(context.Background(), "app_placed")
+	require.NoError(t, err)
+	require.Nil(t, got)
+}
+
+// TestR224_TheAgentLeavesADeletedAppsNetworksOnAnAppHost asserts that a
+// deleted app's networks on an app host are not held by the agent until it is
+// replaced: Destroy detaches it there, and only there — never on the control
+// host, which may be Docker Desktop.
+func TestR224_TheAgentLeavesADeletedAppsNetworksOnAnAppHost(t *testing.T) {
+	hosts := map[string]*fakeHost{
+		"control": {bundles: map[string]bool{"app_c": true}},
+		"app-1":   {bundles: map[string]bool{"app_a": true}},
+	}
+	a := newTestAdapter(t, hosts, "control", "app-1")
+	ctx := context.Background()
+	require.NoError(t, a.Destroy(ctx, api.BundleRef{BundleID: "app_a"}, api.DestroyOptions{KeepVolumes: true}))
+	require.NoError(t, a.Destroy(ctx, api.BundleRef{BundleID: "app_c"}, api.DestroyOptions{KeepVolumes: true}))
+	require.Equal(t, []string{"app_a"}, hosts["app-1"].detached)
+	require.Empty(t, hosts["control"].detached)
 }

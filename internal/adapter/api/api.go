@@ -218,6 +218,15 @@ type RuntimeAdapter interface {
 	// cluster. Core does not read /proc and has no concept of a host.
 	Capacity(ctx context.Context) (Capacity, error)
 
+	// LargestFitFor is Capacity.LargestFit as it stands for one bundle: the
+	// CPU and memory of the roomiest place this bundle may run, counting what
+	// the bundle already holds there as free, so a redeploy that fits where
+	// it is is never refused. A runtime that keeps a bundle where it was
+	// placed answers for that place only. Nil: one place, or not reported,
+	// and the planner checks only Capacity's totals (R-242). The planner
+	// refuses a bundle larger than this at plan time.
+	LargestFitFor(ctx context.Context, bundleID string) (*Fit, error)
+
 	// InUse reports what every workload on the runtime is using right now,
 	// summed. Apart from Capacity because sampling CPU takes the runtime about
 	// a second, and the planner calls Capacity on every plan without needing
@@ -453,6 +462,14 @@ type BundlePlan struct {
 	Volumes   []VolumePlan
 	Network   NetworkPlan
 	Labels    map[string]string
+
+	// FirstDeploy is true when the app has never had a successful deploy, so
+	// nothing of it can be anywhere a runtime cannot see right now. A runtime
+	// that places bundles may then place it while part of itself does not
+	// answer; for any other bundle it must not, because a copy might already
+	// run in the part that is silent (O-46). False is the safe value, and
+	// what the reconciler sends.
+	FirstDeploy bool
 }
 
 // WorkloadPlan is one workload, fully resolved.

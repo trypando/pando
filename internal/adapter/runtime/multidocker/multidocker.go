@@ -46,6 +46,8 @@ type hostRuntime interface {
 	Committed(ctx context.Context) (api.Fit, error)
 	Bundles(ctx context.Context) (map[string]bool, error)
 	RejoinNetworks(ctx context.Context, owns func(string) bool) (int, error)
+	RoomFor(ctx context.Context, bundleID string) (*api.Fit, error)
+	DetachProxy(ctx context.Context, bundleID string) error
 	ReclaimNetworks(ctx context.Context, owns func(string) bool) (int, error)
 }
 
@@ -389,10 +391,14 @@ func (a *Adapter) InUse(ctx context.Context) (api.InUse, error) {
 // adapter's code. The handle names the host.
 func (a *Adapter) Apply(ctx context.Context, p api.BundlePlan) (api.BundleHandle, error) {
 	h, err := a.locate(ctx, p.BundleID)
-	if err != nil {
+	if err != nil && !p.FirstDeploy {
+		// A host is silent and the app may be on it. Never placed elsewhere:
+		// that would be a second copy, or a move (O-46).
 		return api.BundleHandle{}, err
 	}
 	if h == nil {
+		// A first deploy has nothing on any host, the silent ones included,
+		// so it is placed among the hosts that answer.
 		if h, err = a.place(ctx, p); err != nil {
 			return api.BundleHandle{}, err
 		}
@@ -460,7 +466,36 @@ func (a *Adapter) Destroy(ctx context.Context, ref api.BundleRef, opts api.Destr
 	if !opts.KeepVolumes {
 		a.forget(ref.BundleID)
 	}
+	// On an app host the agent leaves the app's networks, so they are removed
+	// now rather than kept by the agent until it is replaced. Not on the
+	// control host, which may be Docker Desktop, where disconnecting a
+	// running container drops its published ports. DetachProxy touches only
+	// networks labeled as this bundle's, never the agent's own.
+	if !h.cfg.Control {
+		return h.rt.DetachProxy(ctx, ref.BundleID)
+	}
 	return nil
+}
+
+// LargestFitFor is the roomiest place this bundle may go, for the planner
+// (R-242 per host). A bundle already on a host may go only there, and what it
+// holds there counts as free. A new one may go to any host open to new apps
+// that answers. Nil when its host does not answer: Observe reports that, and
+// the planner checks the totals alone.
+func (a *Adapter) LargestFitFor(ctx context.Context, bundleID string) (*api.Fit, error) {
+	h, err := a.locate(ctx, bundleID)
+	if err == nil && h != nil {
+		room, err := h.rt.RoomFor(ctx, bundleID)
+		if err != nil {
+			return nil, nil //nolint:nilerr // A silent host is Observe's to report, not a plan refusal.
+		}
+		return room, nil
+	}
+	c, err := a.Capacity(ctx)
+	if err != nil {
+		return nil, nil //nolint:nilerr // As above.
+	}
+	return c.LargestFit, nil
 }
 
 // Volume handles carry their host: "<host>/<docker volume name>". A Docker

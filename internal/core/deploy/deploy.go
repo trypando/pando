@@ -369,6 +369,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		return fail("apply", err)
 	}
 	withPullAuth(&bundle, image, pull)
+	bundle.FirstDeploy = r.firstDeploy(ctx, dep.AppID)
 
 	runtime, ok := r.registry.Runtime(appSpec.Runtime.AdapterRef)
 	if !ok {
@@ -1276,4 +1277,17 @@ func primaryImage(s *spec.AppSpec, perWorkload map[string]string) string {
 		}
 	}
 	return ""
+}
+
+// firstDeploy reports whether the app has never had a successful deploy
+// (api.BundlePlan.FirstDeploy), from its own deployments: none succeeded, so
+// nothing of it runs anywhere. A runtime spread over several machines may then
+// place it while one of them does not answer. Any doubt answers false, which
+// is the safe value: a deployed app is never placed afresh (O-46).
+func (r *Runner) firstDeploy(ctx context.Context, appID string) bool {
+	if r.deploys == nil {
+		return false
+	}
+	running, err := r.deploys.RunningSpecID(ctx, appID)
+	return err == nil && running == ""
 }
