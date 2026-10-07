@@ -10,9 +10,10 @@ import (
 )
 
 // The administrative functions (R-343 … R-346), as tasks any provider can run.
-// Each is one request with one tool the model is asked to call, because each
-// has one answer: a draft, a filter, a summary, an answer. Nothing is read
-// from a repository and there is no loop.
+// Each has one tool the model answers through, because each has one answer: a
+// draft, a filter, a summary, an answer. Drafting access and searching the
+// audit log may also have the lookup tools (O-54), which is the only loop
+// these have; nothing is read from a repository.
 //
 // Every value these return is checked again by core. The schemas below are
 // how the model is told what shape to answer in, not what Pando accepts.
@@ -23,6 +24,22 @@ type Task struct {
 	System string
 	User   string
 	Tool   Tool
+
+	// Lookup, when set, is what the lookup tools run (O-54).
+	Lookup *api.Lookup
+}
+
+// Tools are the task's tools: the one it answers through, then the lookups.
+func (t Task) Tools() []Tool {
+	return append([]Tool{t.Tool}, LookupTools(t.Lookup)...)
+}
+
+// listsNote says what the lists in a prompt are, now that none is whole.
+func listsNote(l *api.Lookup) string {
+	if l != nil {
+		return " " + LookupNote
+	}
+	return " " + MatchNote
 }
 
 // Voice is the house style every answer here is held to (R-105), said once.
@@ -48,10 +65,10 @@ func AccessTask(req api.AccessRequest) Task {
 	system := "You draft access for Pando, a self-hosted app platform, from an administrator's description. " +
 		"You may draft one custom role, one group, or both. A role has a scope, install or app, and holds " +
 		"verbs of that scope only — never a mix. Use only verbs from the catalog given, by exact name. " +
-		"Never reuse the name of an existing role. Group members are account IDs from the list given; " +
+		"Never reuse the name of an existing role or group. Group members are account IDs; " +
 		"leave out anyone you cannot identify and say so. If the description asks for something the " +
 		"catalog cannot express, draft what it can and say what it cannot. You draft; an administrator " +
-		"reviews and creates. " + Voice
+		"reviews and creates." + listsNote(req.Lookup) + " " + Voice
 
 	user := "## Description\n\n" + req.Description +
 		"\n\n## Verb catalog\n\n" + JSONBlock(req.Verbs) +
@@ -96,7 +113,7 @@ func AccessTask(req api.AccessRequest) Task {
 		"reply": map[string]any{"type": "string", "description": "One to three sentences: what you drafted and why, and anything you could not draft."},
 	}
 
-	return Task{System: system, User: user, Tool: submitTool(schema, []string{"reply"})}
+	return Task{System: system, User: user, Tool: submitTool(schema, []string{"reply"}), Lookup: req.Lookup}
 }
 
 // PolicyTask proposes changes to host policy (R-344).
@@ -134,7 +151,7 @@ func PolicyTask(req api.PolicyRequest) Task {
 // AuditSearchTask turns a question into one audit filter (R-345).
 func AuditSearchTask(req api.AuditSearchRequest) Task {
 	system := "You turn a question about Pando's audit log into one filter. Resolve people to account " +
-		"IDs by username, name or email, and apps to app IDs, from the lists given; when the question " +
+		"IDs by username, name or email, and apps to app IDs; when the question " +
 		"names who did something, set principal_id to that account's ID; resolve relative times against the current time " +
 		"given, in UTC, and write times in RFC 3339. Actions are names or prefixes from the list given; " +
 		"any of several matches. Leave a field out rather than guess it. Using an app is recorded as " +
@@ -142,7 +159,7 @@ func AuditSearchTask(req api.AuditSearchRequest) Task {
 		"use as app.use.denied; for what someone accessed or used, filter on app.use. Visitors who were " +
 		"not signed in are app.use with principal_kind anonymous, unless host policy turns that off. " +
 		"Use the note for what the filter cannot answer, such as individual requests within a visit, " +
-		"which are not recorded. " + Voice
+		"which are not recorded." + listsNote(req.Lookup) + " " + Voice
 
 	user := "## Question\n\n" + req.Question +
 		"\n\n## Current time\n\n" + req.Now.UTC().Format(time.RFC3339) +
@@ -169,7 +186,7 @@ func AuditSearchTask(req api.AuditSearchRequest) Task {
 		"note": map[string]any{"type": "string", "description": "What this filter cannot answer, if anything. Empty otherwise."},
 	}
 
-	return Task{System: system, User: user, Tool: submitTool(schema, []string{"filter"})}
+	return Task{System: system, User: user, Tool: submitTool(schema, []string{"filter"}), Lookup: req.Lookup}
 }
 
 // AuditSummaryTask summarizes the records core found (R-345).

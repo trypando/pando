@@ -87,6 +87,7 @@ type AICapabilities struct {
     Models       []string     // when set, the only models an assignment may name
     MaxFiles     int
     MaxBytes     int64
+    LooksUp      bool         // calls the lookup tools in §10.6 (O-54)
 }
 ```
 
@@ -455,8 +456,8 @@ depguard rule in `.golangci.yml` covers it without a new entry, because it match
 ### 6.1 What every AI adapter shares
 
 **[D] `internal/adapter/ai/aikit` holds everything that is not a provider's**: the system and user
-prompts, the tools (`list_files`, `read_file`, `submit_findings`, and `submit` for the administrative
-functions) with their JSON schemas, the budgeted reader, what a tool call does, and each
+prompts, the tools (`list_files`, `read_file`, `submit_findings`, and `submit` and the lookup tools of
+§10.6 for the administrative functions) with their JSON schemas, the budgeted reader, what a tool call does, and each
 administrative function's task. An adapter translates these into its provider's request types and holds
 the conversation; nothing in `aikit` speaks to a provider. One copy, so every adapter asks the same
 questions under the same rules and is refused the same way by core — a second copy of a prompt is a copy
@@ -506,6 +507,9 @@ still written, because the server is somebody's machine and what was sent to it 
   no further.
 - **[D] One per install**, like every AI provider (§9): different models on one server are chosen per
   function.
+- **[P] It does not look things up** (`LooksUp` false, §10.6). A small model is uneven at calling
+  tools, and a lookup loop multiplies the rounds a slow server serves, so core searches the request's
+  own words for it and sends the matches.
 
 ---
 
@@ -733,21 +737,25 @@ person typed, and the log is readable by everyone with `install.audit.read`. Thi
 what left the host, applied to these functions (R-227).
 
 Each is one bounded call (two for audit search), with a 90-second timeout and a 2,000-character limit
-on what a person types. The Anthropic adapter implements each with one `submit` tool whose schema is
-the function's result, forced with `tool_choice`, on the assignment's model. There is no tool loop,
-because none of these reads a repository.
+on what a person types. Each adapter implements each with a `submit` tool whose schema is the
+function's result, asked for rather than forced (§6.1), on the assignment's model. Drafting access and
+searching the audit log may also have the lookup tools of §10.6, which is the only loop these
+functions have; none of them reads a repository.
 
 ### 10.1 Access (`draft_access`, R-343)
 
 `POST /api/v1/ai/access/draft {description}`, `install.users.manage`. The adapter receives the verb
-catalog, the existing roles and groups, and the accounts (ID, name, email), and returns
-`{role?: {name, scope, verbs}, group?: {name, members}, reply}`.
+catalog and the existing roles, finds the accounts (ID, username, name, email) and groups the
+description names through §10.6 rather than being handed every one, and returns
+`{role?: {name, scope, verbs}, group?: {name, members}, reply}`. When refining a draft, the accounts
+already in its group are named for it, by ID, up to twenty.
 
 The catalog handed over is what the caller could grant: every app verb, since `POST /roles` lets any
 holder of `install.users.manage` define an app role, and only the install verbs the caller holds.
 Core then refuses a verb outside the catalog, a verb of the other scope (R-080), a role left with no
 verb, a role or group name that already exists (built-in names included, R-081 and R-082), and a
-member who is not an account. The console creates what survives with `POST /roles`, `POST /groups`
+member who is not an account. Each check is a bounded read: the group name by one search, the members
+by ID, at most 500 of them, beyond which a draft's members are cut and the refusal says so. The console creates what survives with `POST /roles`, `POST /groups`
 and, for an install-scoped role, `PUT /groups/{id}/role`; an app role is granted per app, which is
 that app's decision. R-088's last-administrator rule is untouched, because a draft only adds.
 
@@ -770,13 +778,15 @@ exist are refused. The proposal is saved only by `PUT /policy`, which runs its o
 
 `POST /api/v1/ai/audit/search {question}`, `install.audit.read`. Two calls:
 
-1. `SearchAudit` receives the question, the current UTC time, the accounts (ID, username, name, email), the apps
-   (ID, name) and the action names present in the log, and returns one filter — `actions` (prefixes,
+1. `SearchAudit` receives the question, the current UTC time and every action name Pando records
+   (`audit.Actions`, §10.6), finds the accounts and apps the question names through §10.6, and returns
+   one filter — `actions` (prefixes,
    any of which matches), `app_id`, `principal_id`, `principal_kind`, `target_kind`, `target_id`,
    `involving`, `since`, `until` — and a `note`. Core trims it, drops an unknown principal kind, keeps
    at most ten actions, and refuses a range that ends before it starts.
 2. Core runs the filter (`audit.Reader.List`, up to 200 records). `SummarizeAudit` receives up to 100
-   of them with the question, and returns a summary written from those alone.
+   of them with the question, and the accounts and apps those records and the filter name, by ID, up
+   to fifty of each, and returns a summary written from those alone.
 
 The response carries `filter`, `note`, `summary`, `matched` and `truncated`. The filter is ordinary
 `GET /audit` parameters, so the console puts it in the audit log's own filter fields and the table
@@ -789,8 +799,8 @@ how many records to send.
 **[D] "Accessed" is `app.use`** (O-22, R-227): the proxy records each visit to an app, anonymous ones
 included unless host policy turns that off. The adapter is told what a visit is, and uses its `note`
 for what the log cannot answer, such as individual requests within a visit. A person named by
-username, email or name in the filter is resolved to their ID by core, so "admin" finds admin's
-events whether or not the model looked the ID up.
+username, email or name in the filter is resolved to their ID by core, with one bounded search for
+an exact match, so "admin" finds admin's events whether or not the model looked the ID up.
 
 ### 10.4 Reference help (`answer_reference`, R-346)
 
@@ -809,3 +819,43 @@ Each function is an endpoint first (R-261). The CLI is `pando ai ask`, `pando ai
 name avoids "policy" because `TestO12_TheMostDangerousActionsAreNotOfferedAsTools` refuses any tool
 name containing it (§04 3), and drafting a policy changes nothing. The console's entry points are in
 §08 1.1.
+
+### 10.6 Looking people, apps and groups up (O-54)
+
+**[D] The adapter is never handed a whole table** (O-54). Drafting access and searching the audit log
+once sent every account, every app and every group, and the action names by a `DISTINCT` over the
+whole log, so the prompt and the reads behind it grew with the installation. Now:
+
+- **[D] Lookup tools, as callbacks core passes in.** `api.Lookup` carries `People`, `Apps` and
+  `Groups` functions; `aikit` offers them to the model as `find_people`, `find_apps` and
+  `find_groups`, each taking a `query` (part of a name, username, email or slug). The adapter calls
+  them; it never touches state or authorization (R-027, depguard). Group lookup is offered for
+  drafting access only.
+- **[D] They run as the person who asked**, and return only what that person could read through the
+  API: accounts and groups with `install.view` (the verb `GET /users` and `GET /groups` require), every
+  app with `install.apps.view`, otherwise the apps the person holds a grant on (`GET /apps`). A lookup
+  the person may not make is nil, and its tool is not offered. The same rule filters the fallback
+  below and the names a summary is given.
+- **[D] Bounded three ways.** Each lookup returns at most `api.LookupLimit` (20) matches, from a store
+  search with that limit (`Users.Search`, `Groups.Search`, `Apps.List*Page` with a query), each field
+  clipped to 200 characters. A conversation makes at most `aikit.MaxLookups` (10) lookups; past that a
+  lookup is answered with "submit now" instead of being run. And each adapter's loop stops after its
+  `maxIterations` rounds (24).
+- **[D] A capability, not a type assertion** (R-254). `AICapabilities.LooksUp` says the adapter calls
+  the lookup tools. The Anthropic adapter (Messages API tool use) and the OpenAI adapter (Responses API
+  function calling) set it.
+- **[P] Without it, core pre-searches the request's words.** For an adapter that does not look things
+  up — the local adapter (§6.3) — core takes up to eight words of the description or question
+  (longest first, words of three letters or more, a short list of words that name nobody left out),
+  searches each as a person, an app and, for access, a group, keeping five matches of each kind per
+  word and twenty of each kind in all, and sends those. The prompt says the lists are matches, not
+  everything, so a name it does not find is left out and said so rather than guessed.
+- **[D] Action names come from the code.** `audit.Actions` is the catalog of every action Pando
+  writes; `TestEveryActionWrittenIsCatalogued` scans the tree for literal actions and fails when one
+  is missing from it. `audit.Reader.ActionNames` is gone.
+- **[D] Roles are still sent whole.** A draft must not duplicate a role (R-082), and their number is
+  set by administrators defining roles by hand, not by the organization's size.
+- When refining an access draft, the accounts in its group are named by ID (up to twenty), and the
+  audit summary is given the accounts and apps its records name, by ID (up to fifty of each). Both are
+  bounded by the request, not the installation. `TestO54_NoOperationReadsAWholeTable` runs both
+  functions on ten thousand accounts, apps and groups against stores that refuse any unbounded read.

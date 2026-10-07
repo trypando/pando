@@ -165,13 +165,20 @@ func (a *Adapter) screen(ctx context.Context, fn api.AIFunction, req api.ScreenR
 	return result, nil
 }
 
-// submit runs one administrative task and decodes its answer into out.
+// submit runs one administrative task and decodes its answer into out. A
+// task with a Lookup also has the lookup tools (O-54), run within
+// aikit.MaxLookups lookups and maxIterations rounds.
 func (a *Adapter) submit(ctx context.Context, model string, task aikit.Task, out any) error {
 	if !a.ready {
 		return errors.New("openai: not configured")
 	}
-	return a.converse(ctx, model, task.System+aikit.AnswerThroughTool, task.User, []aikit.Tool{task.Tool},
+	looker := aikit.NewLooker(task.Lookup)
+	return a.converse(ctx, model, task.System+aikit.AnswerThroughTool, task.User, task.Tools(),
 		func(name, arguments string) (string, bool, error) {
+			if looker.Handles(name) {
+				text, isError := looker.Call(ctx, name, arguments)
+				return text, isError, nil
+			}
 			if name != task.Tool.Name {
 				return "There is no tool by that name. Answer with " + task.Tool.Name + ".", true, nil
 			}
