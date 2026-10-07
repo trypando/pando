@@ -74,5 +74,10 @@ Adding any of these is a design change, not a refactor:
   (R-193).
 - `backups` rows with `kind = 'on_delete'` have `retain_until IS NULL` — kept until explicitly
   discarded, never aged out (R-204).
+- A deployment `pending` with `replica_id IS NULL`, and a detection `running` with none, is **queued**,
+  not orphaned (O-32, issue #72). Recovery (`RecoverInFlight`, `RecoverRunning`) touches only work a
+  stopped replica had claimed. Anything new that reads `replica_id` must keep that distinction.
+- The retention job (`Retention`) deletes in batches and never touches `spec_revisions` (R-152) or
+  `audit_events` (R-027); what each delete keeps is in its query, not in a setting.
 - Sessions are server-side rows, not stateless cookies. The cookie carries only `ses_…`. Revocation
   has to be immediate when an adapter can push (R-048), which a stateless cookie cannot do.

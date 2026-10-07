@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -50,47 +51,108 @@ type Detections struct{ db *DB }
 // NewDetections returns a store over db.
 func NewDetections(db *DB) *Detections { return &Detections{db: db} }
 
-// Start marks detection as running for an app.
+// Start marks detection as running for an app, and queues it: running with no
+// replica running it, until a replica's detection queue claims it (Claim,
+// issue #72, O-32).
 //
 // Answers are preserved across a re-run. Someone who answered "which service is
 // primary" should not be asked again because detection was re-run for an
 // unrelated reason (R-022 makes re-detection explicit, not free).
 func (d *Detections) Start(ctx context.Context, appID string) error {
 	_, err := d.db.Exec(ctx, `
-		INSERT INTO detections (app_id, status, body, started_at, updated_at, replica_id)
-		VALUES ($1, $2, '{}'::jsonb, now(), now(), $3)
+		INSERT INTO detections (app_id, status, body, started_at, updated_at)
+		VALUES ($1, $2, '{}'::jsonb, now(), now())
 		ON CONFLICT (app_id) DO UPDATE
 		SET status = EXCLUDED.status, body = '{}'::jsonb, started_at = now(), updated_at = now(),
-		    replica_id = EXCLUDED.replica_id
-	`, appID, DetectionRunning, d.db.replica)
+		    replica_id = NULL, claimed_at = NULL, attempts = 0
+	`, appID, DetectionRunning)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not start detection.", err)
 	}
 	return nil
 }
 
-// AbandonRunning fails every detection still marked running on a Pando process
-// that is no longer running: at startup and then periodically, and never a
-// live replica's (issue #72, as Deployments.AbandonInFlight).
+// Claim takes up to limit queued detections for this replica, oldest first,
+// and returns their apps' IDs. SKIP LOCKED, as Deployments.Claim.
+func (d *Detections) Claim(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := d.db.Query(ctx, `
+		WITH next AS (
+		    SELECT app_id FROM detections
+		    WHERE status = $3 AND replica_id IS NULL
+		    ORDER BY started_at, app_id
+		    LIMIT $2
+		    FOR UPDATE SKIP LOCKED)
+		UPDATE detections d SET replica_id = $1, claimed_at = now(), attempts = d.attempts + 1
+		FROM next WHERE d.app_id = next.app_id
+		RETURNING d.app_id`, d.db.replica, limit, DetectionRunning)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not take detections from the queue.", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var appID string
+		if err := rows.Scan(&appID); err != nil {
+			return nil, errs.Wrap(errs.Internal, "Could not take detections from the queue.", err)
+		}
+		out = append(out, appID)
+	}
+	return out, rows.Err()
+}
+
+// Release puts detections this replica claimed back in the queue, at a
+// shutdown that stopped them part-way. Not counted as an attempt.
+func (d *Detections) Release(ctx context.Context, appIDs []string) (int64, error) {
+	if len(appIDs) == 0 {
+		return 0, nil
+	}
+	tag, err := d.db.Exec(ctx, `
+		UPDATE detections
+		SET replica_id = NULL, claimed_at = NULL, attempts = greatest(attempts - 1, 0)
+		WHERE app_id = ANY($1) AND replica_id = $2 AND status = $3`,
+		appIDs, d.db.replica, DetectionRunning)
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Could not return detections to the queue.", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// RecoverRunning puts back in the queue every detection claimed by a Pando
+// process that is no longer running, and records as interrupted one started
+// MaxAttempts times (issue #72, as Deployments.RecoverInFlight). Detection
+// writes nothing but its own row, so running it again from the start is
+// always safe; answers given so far are kept, as on any re-run.
 //
-// Detection runs inside the server process. One that was running when the
-// process stopped will never finish, and it stayed "running" for good: a
-// console spinning forever, and a client polling for an answer that could not
-// come (issue #55). Failing it says what happened and lets it be run again.
-func (d *Detections) AbandonRunning(ctx context.Context) (int64, error) {
+// A detection that stayed "running" for good was a console spinning forever
+// and a client polling for an answer that could not come (issue #55); this is
+// what ends that, at startup and then periodically. Queued detections nobody
+// has claimed are left in the queue.
+func (d *Detections) RecoverRunning(ctx context.Context) (int64, error) {
 	body, err := json.Marshal(map[string]any{"error": errs.New(errs.StateInvalid,
-		"Pando restarted or stopped while it was working out how to run this app, so that work did not finish.").
+		"Pando stopped while it was working out how to run this app, "+strconv.Itoa(MaxAttempts)+
+			" times, so that work was not started again.").
 		WithRemedy("Run detection again.")})
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not record interrupted detections.", err)
 	}
-	tag, err := d.db.Exec(ctx, `
+	failed, err := d.db.Exec(ctx, `
 		UPDATE detections d SET status = $1, body = $2, updated_at = now()
-		WHERE d.status = $3 AND `+orphaned(4), DetectionFailed, body, DetectionRunning, ReplicaStale.Seconds())
+		WHERE d.status = $3 AND d.replica_id IS NOT NULL AND d.attempts >= $4 AND `+orphaned(5),
+		DetectionFailed, body, DetectionRunning, MaxAttempts, ReplicaStale.Seconds())
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not record interrupted detections.", err)
 	}
-	return tag.RowsAffected(), nil
+	requeued, err := d.db.Exec(ctx, `
+		UPDATE detections d SET replica_id = NULL, claimed_at = NULL
+		WHERE d.status = $1 AND d.replica_id IS NOT NULL AND `+orphaned(2),
+		DetectionRunning, ReplicaStale.Seconds())
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Could not return interrupted detections to the queue.", err)
+	}
+	return failed.RowsAffected() + requeued.RowsAffected(), nil
 }
 
 // FailIfRunning records a failure for a detection that is still marked running,

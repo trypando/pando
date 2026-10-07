@@ -122,7 +122,7 @@ func (s Sources) fetchUpload(_ context.Context, src spec.Source) (*Checkout, err
 	}
 	defer func() { _ = f.Close() }()
 
-	dir, err := os.MkdirTemp("", "pando-upload-")
+	dir, err := s.tempDir("pando-upload-")
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Pando could not unpack the uploaded source.", err)
 	}

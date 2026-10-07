@@ -136,6 +136,23 @@ func (r *Runner) Detect(ctx context.Context, appID string) (state.Detection, err
 	if err := r.Detections.Start(ctx, appID); err != nil {
 		return state.Detection{}, err
 	}
+	return r.detect(ctx, app)
+}
+
+// RunQueued runs a detection the detection queue claimed: Detect without
+// marking it running again, which would hand it back to the queue (issue #72,
+// O-32). The allowlist is checked again here, since it can change while a
+// detection waits (R-092).
+func (r *Runner) RunQueued(ctx context.Context, appID string) (state.Detection, error) {
+	app, err := r.check(ctx, appID)
+	if err != nil {
+		return state.Detection{}, err
+	}
+	return r.detect(ctx, app)
+}
+
+func (r *Runner) detect(ctx context.Context, app state.App) (state.Detection, error) {
+	appID := app.ID
 
 	// Each stage is recorded as it is reached, with the proposal as far as it
 	// has got, so a person watching sees the app take shape rather than

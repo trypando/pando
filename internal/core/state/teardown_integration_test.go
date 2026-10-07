@@ -162,10 +162,10 @@ func TestStartupRecoveryReportsAStoreItCannotReach(t *testing.T) {
 		require.Equal(t, errs.Internal, errs.As(err).Code)
 	}
 
-	_, err := detections.AbandonRunning(ctx)
+	_, err := detections.RecoverRunning(ctx)
 	internal(err)
 	internal(detections.FailIfRunning(ctx, id.New(id.App), errors.New("x")))
-	_, err = deployments.AbandonInFlight(ctx)
+	_, err = deployments.RecoverInFlight(ctx)
 	internal(err)
 	_, err = apps.Known(ctx, id.New(id.App))
 	internal(err)

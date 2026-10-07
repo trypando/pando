@@ -162,14 +162,22 @@ func (s *Events) ForApp(ctx context.Context, appID, before string, limit int) ([
 	return out, rows.Err()
 }
 
-// Route takes up to limit events nobody has routed yet, oldest first, asks
+// Route takes up to limit events nobody has routed yet that occurred before
+// before (all of them, when it is zero), oldest first, asks
 // route which subscriptions each one goes to, and queues a delivery for each,
 // all in one transaction. Another Pando routing at the same time skips the
 // rows this one holds, so an event is routed once.
 //
 // An event route cannot decide about is left for the next pass rather than
 // marked routed: a database hiccup must not lose an event (R-366).
-func (s *Events) Route(ctx context.Context, limit int, route func(context.Context, Event) ([]string, error)) ([]Event, error) {
+//
+// The cutoff is for a router matching against a cached list of
+// subscriptions: an event newer than the list could be meant for a
+// subscription made after it, so it waits for the next list.
+func (s *Events) Route(ctx context.Context, limit int, before time.Time, route func(context.Context, Event) ([]string, error)) ([]Event, error) {
+	if before.IsZero() {
+		before = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not route events.", err)
@@ -178,10 +186,10 @@ func (s *Events) Route(ctx context.Context, limit int, route func(context.Contex
 
 	rows, err := tx.Query(ctx, `
 		SELECT `+eventColumns+` FROM events
-		WHERE routed_at IS NULL
+		WHERE routed_at IS NULL AND occurred_at < $2
 		ORDER BY seq
 		LIMIT $1
-		FOR UPDATE SKIP LOCKED`, limit)
+		FOR UPDATE SKIP LOCKED`, limit, before)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not route events.", err)
 	}
@@ -225,15 +233,24 @@ func (s *Events) Route(ctx context.Context, limit int, route func(context.Contex
 	return routed, nil
 }
 
-// Prune removes events older than before that have nothing left to deliver,
-// and their deliveries with them. The outbox is not a history: the audit log is
+// Prune removes up to limit events older than before that have nothing left
+// to deliver, and their deliveries and delivery attempts with them, and
+// returns how many it removed. The outbox is not a history: the audit log is
 // (R-224, R-366).
-func (s *Events) Prune(ctx context.Context, before time.Time) (int64, error) {
+//
+// A batch at a time, so a backlog of a month's events is removed in short
+// transactions the retention job repeats rather than in one that holds locks
+// across the whole outbox (issue #72). The cascade into event_deliveries is
+// by event_id, which is indexed (migration 000049).
+func (s *Events) Prune(ctx context.Context, before time.Time, limit int) (int64, error) {
 	tag, err := s.db.Exec(ctx, `
-		DELETE FROM events e
-		WHERE e.occurred_at < $1 AND e.routed_at IS NOT NULL
-		  AND NOT EXISTS (SELECT 1 FROM event_deliveries d WHERE d.event_id = e.id AND d.status = 'pending')`,
-		before)
+		DELETE FROM events WHERE id IN (
+		    SELECT e.id FROM events e
+		    WHERE e.occurred_at < $1 AND e.routed_at IS NOT NULL
+		      AND NOT EXISTS (SELECT 1 FROM event_deliveries d WHERE d.event_id = e.id AND d.status = 'pending')
+		    ORDER BY e.seq
+		    LIMIT $2)`,
+		before, limit)
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not prune old events.", err)
 	}
@@ -364,6 +381,18 @@ type SubscriptionFilter struct {
 
 	// EnabledOnly keeps only subscriptions that are on.
 	EnabledOnly bool
+}
+
+// Enabled returns every enabled subscription, and the database's time just
+// before it read them: a subscription made before asOf is in the list, give
+// or take a transaction still committing (issue #72, the dispatcher's cache).
+func (s *Subscriptions) Enabled(ctx context.Context) ([]Subscription, time.Time, error) {
+	var asOf time.Time
+	if err := s.db.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&asOf); err != nil {
+		return nil, time.Time{}, errs.Wrap(errs.Internal, "Could not list subscriptions.", err)
+	}
+	subs, err := s.List(ctx, SubscriptionFilter{EnabledOnly: true})
+	return subs, asOf, err
 }
 
 // List returns subscriptions, newest first.

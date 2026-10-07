@@ -87,6 +87,26 @@ func (c *Checkout) View(subdir string) api.SourceView {
 type Sources struct {
 	// UploadDir is where uploaded sources are kept.
 	UploadDir string
+
+	// WorkDir is where a clone or an unpacked upload is made while a deploy or
+	// a detection reads it: server.work_dir, beside Pando's other working
+	// files, rather than the system temporary directory, which is often a
+	// small tmpfs that a few concurrent clones fill (issue #72). Empty means
+	// the system temporary directory, for tests and embeddings.
+	WorkDir string
+}
+
+// tempDir makes a working directory for one fetch under WorkDir, or under the
+// system temporary directory when WorkDir is unset or cannot be made — a
+// development run without /var/lib/pando, say — since a fetch that fails over
+// where it would have put the files is worse than one in a small tmpfs.
+func (s Sources) tempDir(pattern string) (string, error) {
+	if s.WorkDir != "" {
+		if err := os.MkdirAll(s.WorkDir, 0o700); err == nil {
+			return os.MkdirTemp(s.WorkDir, pattern)
+		}
+	}
+	return os.MkdirTemp("", pattern)
 }
 
 // Fetch clones an app's source.
@@ -97,7 +117,7 @@ type Sources struct {
 func (s Sources) Fetch(ctx context.Context, src spec.Source) (*Checkout, error) {
 	switch src.Type {
 	case spec.SourceGit:
-		return fetchGit(ctx, src)
+		return fetchGit(ctx, src, s.tempDir)
 	case spec.SourceImage:
 		// Nothing to fetch: a prebuilt image is run as it is.
 		return &Checkout{Dir: "", Commit: src.Digest}, nil
@@ -122,11 +142,11 @@ const fetchAttempts = 3
 // the pool by then, so another attempt opens a new one. A wrong address, a
 // missing branch or a commit that is not there fails the same way every time
 // and is reported at once.
-func fetchGit(ctx context.Context, src spec.Source) (*Checkout, error) {
+func fetchGit(ctx context.Context, src spec.Source, mkdir func(string) (string, error)) (*Checkout, error) {
 	var err error
 	for attempt := 1; attempt <= fetchAttempts; attempt++ {
 		var co *Checkout
-		co, err = fetchGitOnce(ctx, src)
+		co, err = fetchGitOnce(ctx, src, mkdir)
 		if err == nil || !transient(err) || ctx.Err() != nil || attempt == fetchAttempts {
 			return co, err
 		}
@@ -156,8 +176,11 @@ func transient(err error) bool {
 	return false
 }
 
-func fetchGitOnce(ctx context.Context, src spec.Source) (*Checkout, error) {
-	dir, err := os.MkdirTemp("", "pando-src-")
+func fetchGitOnce(ctx context.Context, src spec.Source, mkdir func(string) (string, error)) (*Checkout, error) {
+	if mkdir == nil {
+		mkdir = func(pattern string) (string, error) { return os.MkdirTemp("", pattern) }
+	}
+	dir, err := mkdir("pando-src-")
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not make room to fetch the source.", err)
 	}

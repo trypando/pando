@@ -486,7 +486,7 @@ func TestR366_ADeliveryOutlivesAPandoThatStoppedMidSend(t *testing.T) {
 	svc := i.Server.Subscriptions
 	subs, err := svc.Subscriptions.List(ctx, state.SubscriptionFilter{EnabledOnly: true})
 	require.NoError(t, err)
-	_, err = svc.Events.Route(ctx, 100, func(_ context.Context, e state.Event) ([]string, error) {
+	_, err = svc.Events.Route(ctx, 100, time.Time{}, func(_ context.Context, e state.Event) ([]string, error) {
 		return subscription.Matching(subs, e), nil
 	})
 	require.NoError(t, err)

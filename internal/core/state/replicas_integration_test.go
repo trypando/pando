@@ -76,10 +76,10 @@ func TestR348_TheApplicationRoleCannotReadTheStoredRolePasswords(t *testing.T) {
 	require.Contains(t, err.Error(), "permission denied")
 }
 
-// TestR256_OnlyAStoppedReplicasWorkIsRecordedAsInterrupted asserts that a
-// starting or sweeping replica leaves another live replica's deploys and
-// detections alone, and records a stopped one's as interrupted.
-func TestR256_OnlyAStoppedReplicasWorkIsRecordedAsInterrupted(t *testing.T) {
+// TestR256_OnlyAStoppedReplicasWorkIsRecovered asserts that a starting or
+// sweeping replica leaves another live replica's deploys and detections alone,
+// and puts a stopped one's back in the queue (O-32).
+func TestR256_OnlyAStoppedReplicasWorkIsRecovered(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	live, ownerURL := statetest.Connect(t)
@@ -109,8 +109,14 @@ func TestR256_OnlyAStoppedReplicasWorkIsRecordedAsInterrupted(t *testing.T) {
 		require.NoError(t, err)
 		dep, err := state.NewDeployments(db).Create(ctx, app.ID, rev.ID, "manual", owner.ID)
 		require.NoError(t, err)
+		claimed, err := state.NewDeployments(db).Claim(ctx, 1)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1)
 		require.NoError(t, state.NewDeployments(db).SetStatus(ctx, dep.ID, state.DeployBuilding))
 		require.NoError(t, state.NewDetections(db).Start(ctx, app.ID))
+		apps, err := state.NewDetections(db).Claim(ctx, 1)
+		require.NoError(t, err)
+		require.Equal(t, []string{app.ID}, apps)
 		return app.ID, dep.ID
 	}
 	liveApp, liveDep := deploy(live, "on-live")
@@ -122,32 +128,38 @@ func TestR256_OnlyAStoppedReplicasWorkIsRecordedAsInterrupted(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, gone.Replica(), runner, "a deploy records the replica running it")
 
-	// Both alive: nothing is anybody's to abandon.
-	n, err := deployments.AbandonInFlight(ctx)
+	// Both alive: nothing is anybody's to recover.
+	n, err := deployments.RecoverInFlight(ctx)
 	require.NoError(t, err)
 	require.Zero(t, n, "a live replica's deploys are left alone")
-	n, err = detections.AbandonRunning(ctx)
+	n, err = detections.RecoverRunning(ctx)
 	require.NoError(t, err)
 	require.Zero(t, n, "a live replica's detections are left alone")
 
 	// One stops.
 	require.NoError(t, state.NewReplicas(gone).Stop(ctx, gone.Replica()))
-	n, err = deployments.AbandonInFlight(ctx)
+	n, err = deployments.RecoverInFlight(ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, n)
-	_, err = detections.AbandonRunning(ctx)
+	_, err = detections.RecoverRunning(ctx)
 	require.NoError(t, err)
 
 	dep, _, err := deployments.ByID(ctx, goneDep)
 	require.NoError(t, err)
-	require.Equal(t, state.DeployFailed, dep.Status)
+	require.Equal(t, state.DeployPending, dep.Status, "back in the queue")
+	waiting, err := deployments.Waiting(ctx, goneDep)
+	require.NoError(t, err)
+	require.True(t, waiting, "for any replica to take")
 	dep, _, err = deployments.ByID(ctx, liveDep)
 	require.NoError(t, err)
 	require.Equal(t, state.DeployBuilding, dep.Status, "the live replica's deploy carries on")
 
 	got, err := detections.Get(ctx, goneApp)
 	require.NoError(t, err)
-	require.Equal(t, state.DetectionFailed, got.Status)
+	require.Equal(t, state.DetectionRunning, got.Status)
+	requeued, err := detections.Claim(ctx, 5)
+	require.NoError(t, err)
+	require.Equal(t, []string{goneApp}, requeued, "the stopped replica's detection is queued again")
 	got, err = detections.Get(ctx, liveApp)
 	require.NoError(t, err)
 	require.Equal(t, state.DetectionRunning, got.Status)

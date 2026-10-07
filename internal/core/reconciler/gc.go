@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -34,12 +35,10 @@ type GC struct {
 	// R-227's rule does not have an exception for the janitor.
 	Auditor Auditor
 
-	// Backups, Backup and BundleSource drive R-211's rolling backups and their
-	// expiry. Nil disables both rather than failing: an install with no backup
-	// destination configured has nowhere to put one.
-	Backups      *state.Backups
-	Backup       BackupRunner
-	BundleSource *state.BundleSource
+	// Backups gates reclaiming a deleted app's storage on a backup holding
+	// its data. Nil disables that rather than failing. Taking and expiring
+	// rolling backups is RollingBackups, a job of its own (issue #72).
+	Backups *state.Backups
 
 	// The security pass (R-315, R-316). All four are nil on an installation
 	// with no scanner, where nothing is scored and the pass does nothing.
@@ -65,7 +64,18 @@ type GC struct {
 	// next pass — which was up to an hour later, while a force-deleted app kept
 	// running and holding its share of the host (issue #55). Nil means ticks
 	// only.
+	//
+	// Served by a loop of its own, so a delete is acted on while the rest of
+	// a pass — a security pass over every app, reclaiming storage — is still
+	// running, rather than after it (issue #72).
 	TeardownNow <-chan struct{}
+
+	// TeardownEvery is how often teardown runs when nothing asks: a delete
+	// whose signal reached another replica, or one whose runtime was away.
+	// A minute when zero.
+	TeardownEvery time.Duration
+
+	teardownMu sync.Mutex
 
 	// BuildCaches and DiscardUpload remove a deleted app's build cache and
 	// uploaded source at teardown. Nil skips each.
@@ -98,12 +108,21 @@ func (g *GC) Run(ctx context.Context) {
 		interval = GCInterval
 	}
 
-	// A pass at startup, before the first tick.
-	//
-	// Without it, an install that upgrades and restarts waits a full interval
-	// before reclaiming anything — and the apps waiting longest are exactly the
-	// ones deleted by a version that never tore anything down.
-	g.Collect(ctx)
+	// Teardown on its own loop: at startup, whenever a delete asks, and every
+	// TeardownEvery. Without the startup pass an install that upgrades and
+	// restarts waits before reclaiming anything — and the apps waiting
+	// longest are exactly the ones deleted by a version that never tore
+	// anything down.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runTeardown(ctx)
+	}()
+	defer wg.Wait()
+
+	// The slow pass, at startup and then every interval.
+	g.collectSlow(ctx)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -113,11 +132,25 @@ func (g *GC) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			g.Collect(ctx)
+			g.collectSlow(ctx)
+		}
+	}
+}
+
+func (g *GC) runTeardown(ctx context.Context) {
+	every := g.TeardownEvery
+	if every <= 0 {
+		every = time.Minute
+	}
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		g.tearDownDeletedBundles(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		case <-g.TeardownNow:
-			// Teardown only. The rest of a pass is on the slow clock for a
-			// reason, and a delete is not one.
-			g.tearDownDeletedBundles(ctx)
 		}
 	}
 }
@@ -132,8 +165,16 @@ func (g *GC) Run(ctx context.Context) {
 // one app turns chatty, which is destruction on a schedule and not something
 // the reconciler may do. Recorded as O-16 rather than guessed at.
 //
-// Backup expiry (R-211) arrives with backups, in phase 9.
+// Rolling backups and their expiry (R-211) are RollingBackups, a job of its
+// own, and teardown also runs on a loop of its own in Run (issue #72); Collect
+// tears down too, so one call is a whole pass.
 func (g *GC) Collect(ctx context.Context) {
+	g.tearDownDeletedBundles(ctx)
+	g.collectSlow(ctx)
+}
+
+// collectSlow is a pass without teardown.
+func (g *GC) collectSlow(ctx context.Context) {
 	pruned, err := g.Apps.PruneSpecRevisions(ctx)
 	if err != nil {
 		g.Logger.Warn("could not prune spec revisions", zap.Error(err))
@@ -141,8 +182,6 @@ func (g *GC) Collect(ctx context.Context) {
 		g.Logger.Info("pruned spec revisions", zap.Int("count", pruned))
 	}
 
-	g.tearDownDeletedBundles(ctx)
-	g.runBackups(ctx)
 	g.reclaimOrphanedVolumes(ctx)
 	g.enforceSecurity(ctx)
 }
@@ -172,6 +211,10 @@ func (g *GC) tearDownDeletedBundles(ctx context.Context) {
 	if g.Registry == nil {
 		return
 	}
+	// One teardown pass at a time: Collect and the teardown loop can both
+	// call this, and two passes would destroy one bundle twice.
+	g.teardownMu.Lock()
+	defer g.teardownMu.Unlock()
 
 	targets, err := g.Apps.AwaitingTeardown(ctx, TeardownBatch)
 	if err != nil {

@@ -24,6 +24,8 @@ type Config struct {
 	Log        Log        `mapstructure:"log"`
 	Reconciler Reconciler `mapstructure:"reconciler"`
 	Apps       Apps       `mapstructure:"apps"`
+	Work       Work       `mapstructure:"work"`
+	Retention  Retention  `mapstructure:"retention"`
 
 	// File is the config file read at startup, or empty when there was none.
 	File string `mapstructure:"-"`
@@ -62,6 +64,41 @@ type Reconciler struct {
 	// hour. Short intervals are wasteful rather than dangerous — nothing the
 	// collector does is urgent — so unlike the backoff this gets no warning.
 	GCInterval time.Duration `mapstructure:"gc_interval"`
+}
+
+// Work bounds the background work one replica does at once (issue #72). Zero
+// means the shipped default for each.
+type Work struct {
+	// Deploys is how many deploys this replica runs at once from the deploy
+	// queue. Default: one per CPU, at least two.
+	Deploys int `mapstructure:"deploys"`
+
+	// Detections is how many detections this replica runs at once. Default:
+	// one per CPU, at least two.
+	Detections int `mapstructure:"detections"`
+
+	// Backups is how many rolling backups the leader takes at once.
+	// Default: two.
+	Backups int `mapstructure:"backups"`
+
+	// AutoDeploy is how many apps the leader checks for new commits at
+	// once. Default: eight.
+	AutoDeploy int `mapstructure:"auto_deploy"`
+}
+
+// Retention is how long the retention job keeps each kind of row it removes
+// (issue #72, R-224). Zero means the shipped default for each, listed in
+// retention.Settings: 50 deploys per app, scans 90 days, expired or revoked
+// sessions 30 days, idempotency keys a day, expired sign-in flows a day, the
+// event outbox 30 days, a deleted app's detection and backup record 30 days.
+type Retention struct {
+	DeploymentsPerApp int           `mapstructure:"deployments_per_app"`
+	Scans             time.Duration `mapstructure:"scans"`
+	Sessions          time.Duration `mapstructure:"sessions"`
+	IdempotencyKeys   time.Duration `mapstructure:"idempotency_keys"`
+	SSOFlows          time.Duration `mapstructure:"sso_flows"`
+	Events            time.Duration `mapstructure:"events"`
+	DeletedApps       time.Duration `mapstructure:"deleted_apps"`
 }
 
 // Apps holds the resource limits every new app inherits (R-240).
@@ -292,6 +329,17 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("apps.memory_bytes", int64(0))
 	v.SetDefault("apps.disk_bytes", int64(0))
 	v.SetDefault("apps.docker_credentials", false)
+	v.SetDefault("work.deploys", 0)
+	v.SetDefault("work.detections", 0)
+	v.SetDefault("work.backups", 0)
+	v.SetDefault("work.auto_deploy", 0)
+	v.SetDefault("retention.deployments_per_app", 0)
+	v.SetDefault("retention.scans", time.Duration(0))
+	v.SetDefault("retention.sessions", time.Duration(0))
+	v.SetDefault("retention.idempotency_keys", time.Duration(0))
+	v.SetDefault("retention.sso_flows", time.Duration(0))
+	v.SetDefault("retention.events", time.Duration(0))
+	v.SetDefault("retention.deleted_apps", time.Duration(0))
 	v.SetDefault("bootstrap.admin_password", "")
 
 	// Every key in boundEnv is bound explicitly — see there for why that is not

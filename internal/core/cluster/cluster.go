@@ -227,14 +227,38 @@ type LogOwner struct {
 	Self        string
 	Deployments interface {
 		Runner(ctx context.Context, deploymentID string) (string, error)
+		Waiting(ctx context.Context, deploymentID string) (bool, error)
 	}
 	Replicas interface {
 		ByID(ctx context.Context, replicaID string) (state.Replica, bool, error)
 	}
+
+	// ClaimWait is how long to wait for a queued deploy to be claimed before
+	// answering (O-32): until then nobody holds its log, and answering "this
+	// replica" would follow a log another replica is about to write. A
+	// minute when zero.
+	ClaimWait time.Duration
 }
 
 // Where answers for one deployment.
 func (o LogOwner) Where(ctx context.Context, deploymentID string) (string, error) {
+	wait := o.ClaimWait
+	if wait <= 0 {
+		wait = time.Minute
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		waiting, err := o.Deployments.Waiting(ctx, deploymentID)
+		if err != nil || !waiting || time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return "", nil
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+
 	runner, err := o.Deployments.Runner(ctx, deploymentID)
 	if err != nil || runner == "" || runner == o.Self {
 		return "", err

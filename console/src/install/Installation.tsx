@@ -1081,6 +1081,12 @@ const SETTING_AREAS: Array<{ name: string; prefix?: string; keys: string[] }> = 
     prefix: 'reconciler.',
     keys: ['reconciler.backoff', 'reconciler.failure_threshold', 'reconciler.failure_window', 'reconciler.gc_interval'],
   },
+  {
+    name: 'Background work',
+    prefix: 'work.',
+    keys: ['work.deploys', 'work.detections', 'work.backups', 'work.auto_deploy'],
+  },
+  { name: 'Retention', prefix: 'retention.', keys: [] },
   { name: 'Logging', prefix: 'log.', keys: ['log.level', 'log.development'] },
 ];
 

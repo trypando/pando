@@ -256,6 +256,36 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		},
 	}
 
+	// The deploy and detection queues (issue #72, O-32). The deploy queue is
+	// not served: the harness has no runtime to deploy onto, and the tests
+	// here assert what is queued, not what a deploy does. The detection queue
+	// is served for as long as the test runs.
+	queueCtx, stopQueues := context.WithCancel(context.Background())
+	t.Cleanup(stopQueues)
+	deployQueue := &deploy.Queue{Runner: deployer, Deployments: deployments, Revisions: apps}
+	detectionQueue := &detection.Queue{
+		Detections: srv.Detections,
+		// Whatever detector the test has put on the server, read when a
+		// detection runs: a test replaces it after the harness is built.
+		Detect: func(ctx context.Context, appID string) (state.Detection, error) {
+			if q, ok := srv.Detector.(interface {
+				RunQueued(ctx context.Context, appID string) (state.Detection, error)
+			}); ok {
+				return q.RunQueued(ctx, appID)
+			}
+			if srv.Detector == nil {
+				return state.Detection{}, nil
+			}
+			return srv.Detector.Detect(ctx, appID)
+		},
+		// Woken only by Enqueue, never by a timer: a test sets the server's
+		// detector before it asks for a detection, and the wake-up is what
+		// orders the two for the race detector.
+		Poll: time.Hour,
+	}
+	go detectionQueue.Serve(queueCtx)
+	srv.DetectionQueue = detectionQueue
+
 	// Every deploy starts through the approval service (R-154), wired as main
 	// wires it. Its Planner, Deployer and Notifier are interfaces a test may
 	// replace, since the harness has no runtime to plan or deploy onto.
@@ -265,7 +295,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Authz:       authorizer,
 		Policy:      effectivePolicy,
 		Planner:     appPlanner,
-		Deployer:    deployer,
+		Deployer:    deployQueue,
 		Audit:       httpapi.AuditFunc(auditor),
 		Approvers:   authzStore,
 		Clock:       clock.System{},
@@ -320,23 +350,26 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Clock:         clock.System{},
 	}
 	dispatcher := &subscription.Dispatcher{
-		Events:        srv.Subscriptions.Events,
-		Subscriptions: srv.Subscriptions.Subscriptions,
-		Deliveries:    srv.Subscriptions.Deliveries,
-		Keys:          srv.Subscriptions.Keys,
-		Tokens:        tokens,
-		TokenOwners:   tokens,
-		Deployments:   deployments,
-		Holders:       authzStore,
-		ExternalURL:   "https://pando.test",
-		Authz:         authorizer,
-		Policy:        effectivePolicy,
-		Apps:          apps,
-		Users:         users,
-		Groups:        authzStore,
-		Registry:      registry,
-		Notifier:      router,
-		Audit:         httpapi.AuditFunc(auditor),
+		// Every Pass reads the subscriptions afresh: a test makes one and
+		// emits an event a moment later, inside any cache's lifetime.
+		SubscriptionCache: -1,
+		Events:            srv.Subscriptions.Events,
+		Subscriptions:     srv.Subscriptions.Subscriptions,
+		Deliveries:        srv.Subscriptions.Deliveries,
+		Keys:              srv.Subscriptions.Keys,
+		Tokens:            tokens,
+		TokenOwners:       tokens,
+		Deployments:       deployments,
+		Holders:           authzStore,
+		ExternalURL:       "https://pando.test",
+		Authz:             authorizer,
+		Policy:            effectivePolicy,
+		Apps:              apps,
+		Users:             users,
+		Groups:            authzStore,
+		Registry:          registry,
+		Notifier:          router,
+		Audit:             httpapi.AuditFunc(auditor),
 	}
 
 	return &install{

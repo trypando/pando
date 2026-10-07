@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -134,7 +135,7 @@ func (f *fakeBackups) Discard(context.Context, string, string) error { return ni
 
 // backupGC is a GC with one running app that keeps its data in a volume, and
 // the log it writes.
-func backupGC(t *testing.T, runner *fakeBackups, recordVolume bool) (*reconciler.GC, string, *observer.ObservedLogs) {
+func backupGC(t *testing.T, runner *fakeBackups, recordVolume bool) (*reconciler.RollingBackups, string, *observer.ObservedLogs) {
 	t.Helper()
 	ctx := context.Background()
 	db := connected(t)
@@ -167,16 +168,19 @@ func backupGC(t *testing.T, runner *fakeBackups, recordVolume bool) (*reconciler
 	}
 
 	core, logs := observer.New(zap.InfoLevel)
-	return &reconciler.GC{
+	return &reconciler.RollingBackups{
 		Apps:         apps,
 		Logger:       zap.New(core),
 		Backups:      state.NewBackups(db),
 		Backup:       runner,
 		BundleSource: state.NewBundleSource(db),
+		// Tried again on the very next pass, so the test need not wait the
+		// hour a failed attempt waits in production.
+		RetryAfter: time.Nanosecond,
 	}, app.ID, logs
 }
 
-func lastAttempt(t *testing.T, gc *reconciler.GC, appID string) state.BackupAttempt {
+func lastAttempt(t *testing.T, gc *reconciler.RollingBackups, appID string) state.BackupAttempt {
 	t.Helper()
 	attempts, err := gc.Backups.Attempts(context.Background(), appID)
 	require.NoError(t, err)
@@ -191,7 +195,7 @@ func TestR211_ARollingBackupIsTakenAndRecorded(t *testing.T) {
 	runner := &fakeBackups{}
 	gc, appID, logs := backupGC(t, runner, true)
 
-	gc.Collect(context.Background())
+	gc.Pass(context.Background())
 
 	require.Len(t, runner.taken, 1)
 	require.Len(t, runner.taken[0].Volumes, 1)
@@ -200,8 +204,8 @@ func TestR211_ARollingBackupIsTakenAndRecorded(t *testing.T) {
 	require.NotEmpty(t, attempt.BackupID)
 	require.Equal(t, 1, logs.FilterMessage("took a rolling backup").Len())
 
-	// Taken once a day, not once a pass.
-	gc.Collect(context.Background())
+	// Taken once a day, not once a pass: the job asks for what is due.
+	gc.Pass(context.Background())
 	require.Len(t, runner.taken, 1)
 }
 
@@ -215,7 +219,7 @@ func TestR211_ABackupWithNothingToCopyIsRecordedAsSkipped(t *testing.T) {
 	runner := &fakeBackups{}
 	gc, appID, logs := backupGC(t, runner, false)
 
-	gc.Collect(context.Background())
+	gc.Pass(context.Background())
 
 	require.Empty(t, runner.taken)
 	require.Zero(t, logs.FilterMessage("took a rolling backup").Len(), "nothing was taken, so nothing says it was")
@@ -233,7 +237,7 @@ func TestR211_AFailedBackupIsRecordedWithWhatToDo(t *testing.T) {
 		WithRemedy("Configure a backup destination before taking a backup.")}
 	gc, appID, _ := backupGC(t, runner, true)
 
-	gc.Collect(context.Background())
+	gc.Pass(context.Background())
 
 	attempt := lastAttempt(t, gc, appID)
 	require.Equal(t, state.AttemptFailed, attempt.Outcome)
@@ -243,7 +247,7 @@ func TestR211_AFailedBackupIsRecordedWithWhatToDo(t *testing.T) {
 	// Tried again on the next pass rather than given up on, and the record
 	// is replaced rather than accumulated.
 	runner.fail = nil
-	gc.Collect(context.Background())
+	gc.Pass(context.Background())
 	require.Len(t, runner.taken, 1)
 	require.Equal(t, state.AttemptTaken, lastAttempt(t, gc, appID).Outcome)
 }

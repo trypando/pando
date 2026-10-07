@@ -10,6 +10,7 @@ import (
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/core/work"
 )
 
 // Auto-deploy polling intervals. [P], design 05 §5.
@@ -32,8 +33,17 @@ type AutoDeploy struct {
 	Apps        *state.Apps
 	Deployments *state.Deployments
 	Resolver    RefResolver
-	Enqueue     func(ctx context.Context, dep state.Deployment, rev state.Revision)
-	Logger      *zap.Logger
+
+	// Enqueue tells the deploy queue a deployment is waiting. The
+	// deployment is already queued when this is called (Deployments.Create);
+	// any replica's queue runs it (issue #72, O-32).
+	Enqueue func(ctx context.Context, dep state.Deployment, rev state.Revision)
+	Logger  *zap.Logger
+
+	// Concurrency is how many apps are checked at once. Eight when zero
+	// [P]: each check is a `git ls-remote` against somebody's git host, and
+	// in series a poll over a few thousand apps outlasted its own interval.
+	Concurrency int
 
 	// Policy is host policy as it is now. An app whose deploys need approval
 	// does not auto-deploy (R-158); nil reads as no policy, so nothing is
@@ -90,12 +100,16 @@ func (a *AutoDeploy) Poll(ctx context.Context) {
 		}
 	}
 
-	for _, app := range apps {
+	concurrency := a.Concurrency
+	if concurrency <= 0 {
+		concurrency = 8
+	}
+	work.Each(ctx, concurrency, apps, func(ctx context.Context, app state.App) {
 		if err := a.pollOne(ctx, doc, app); err != nil {
 			a.Logger.Warn("could not check for new commits",
 				zap.String("app_id", app.ID), zap.Error(err))
 		}
-	}
+	})
 }
 
 func (a *AutoDeploy) pollOne(ctx context.Context, doc policy.Document, app state.App) error {

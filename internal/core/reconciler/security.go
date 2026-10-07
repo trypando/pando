@@ -21,9 +21,14 @@ import (
 // which is why every branch of it is audited and none of it is quiet.
 
 // SecurityScores is what this pass needs from the security service.
+//
+// Place, the batched path, rather than a Report per app: a report is a policy
+// load, a scan read and a state read for each app, which over twenty thousand
+// apps is sixty thousand queries an hour for an answer one query and one
+// policy load give (issue #72). The scores come from LiveSecurityState.
 type SecurityScores interface {
 	Configured() (string, bool)
-	Report(ctx context.Context, appID, specID string) (security.Report, error)
+	Place(ctx context.Context, scores map[string]security.Scores) (map[string]security.Placed, error)
 }
 
 // SecurityState is the store half.
@@ -76,24 +81,33 @@ func (g *GC) enforceSecurity(ctx context.Context) {
 		return
 	}
 
+	scores := make(map[string]security.Scores, len(apps))
 	for _, app := range apps {
-		g.placeApp(ctx, doc, app)
+		scores[app.AppID] = security.Scores{All: app.Score, Fixable: app.ScoreFixable}
 	}
-}
-
-func (g *GC) placeApp(ctx context.Context, doc policy.Document, app state.SecurityState) {
-	report, err := g.Security.Report(ctx, app.AppID, app.PinnedSpecID)
+	placed, err := g.Security.Place(ctx, scores)
 	if err != nil {
-		g.Logger.Warn("could not read an app's security standing",
-			zap.String("app_id", app.AppID), zap.Error(err))
+		g.Logger.Warn("could not place apps against the security threshold", zap.Error(err))
 		return
 	}
 
-	switch report.Standing.Verdict {
+	for _, app := range apps {
+		p, ok := placed[app.AppID]
+		if !ok {
+			continue
+		}
+		g.placeApp(ctx, doc, app, security.Standing{
+			Score: p.Score, Threshold: doc.MinSecurityScore, Verdict: p.Verdict,
+		})
+	}
+}
+
+func (g *GC) placeApp(ctx context.Context, doc policy.Document, app state.SecurityState, standing security.Standing) {
+	switch standing.Verdict {
 	case security.VerdictOK:
-		g.recovered(ctx, app, report)
+		g.recovered(ctx, app, standing)
 	case security.VerdictInsecure, security.VerdictUnscanned:
-		g.insecure(ctx, doc, app, report)
+		g.insecure(ctx, doc, app, standing)
 	}
 }
 
@@ -102,7 +116,7 @@ func (g *GC) placeApp(ctx context.Context, doc policy.Document, app state.Securi
 // Only one Pando stopped: an app its owner stopped stays stopped, which is the
 // whole reason `stopped_for_security` is recorded separately from the desired
 // state (design 09 §4.2).
-func (g *GC) recovered(ctx context.Context, app state.SecurityState, report security.Report) {
+func (g *GC) recovered(ctx context.Context, app state.SecurityState, report security.Standing) {
 	if app.InsecureSince == nil && !app.StoppedForSecurity {
 		return
 	}
@@ -133,7 +147,7 @@ func (g *GC) recovered(ctx context.Context, app state.SecurityState, report secu
 }
 
 // insecure marks, warns, notifies, and stops when the grace has run out.
-func (g *GC) insecure(ctx context.Context, doc policy.Document, app state.SecurityState, report security.Report) {
+func (g *GC) insecure(ctx context.Context, doc policy.Document, app state.SecurityState, report security.Standing) {
 	now := g.now()
 
 	if app.InsecureSince == nil {
@@ -184,14 +198,14 @@ func (g *GC) insecure(ctx context.Context, doc policy.Document, app state.Securi
 		zap.String("app_id", app.AppID), zap.Int("threshold", doc.MinSecurityScore))
 }
 
-func (g *GC) notifyOwner(ctx context.Context, doc policy.Document, app state.SecurityState, report security.Report) {
+func (g *GC) notifyOwner(ctx context.Context, doc policy.Document, app state.SecurityState, report security.Standing) {
 	if g.Notifier == nil || app.OwnerUserID == "" {
 		return
 	}
 
 	score := "no score"
-	if report.Standing.Score != nil {
-		score = fmt.Sprintf("a score of %d", *report.Standing.Score)
+	if report.Score != nil {
+		score = fmt.Sprintf("a score of %d", *report.Score)
 	}
 
 	body := fmt.Sprintf(
@@ -212,17 +226,17 @@ func actionOf(doc policy.Document) string {
 	return policy.InsecureWarn
 }
 
-func (g *GC) auditSecurity(ctx context.Context, action string, app state.SecurityState, report security.Report, extra map[string]any) {
+func (g *GC) auditSecurity(ctx context.Context, action string, app state.SecurityState, report security.Standing, extra map[string]any) {
 	if g.Auditor == nil {
 		return
 	}
 
 	detail := map[string]any{
-		"threshold": report.Standing.Threshold,
-		"verdict":   string(report.Standing.Verdict),
+		"threshold": report.Threshold,
+		"verdict":   string(report.Verdict),
 	}
-	if report.Standing.Score != nil {
-		detail["score"] = *report.Standing.Score
+	if report.Score != nil {
+		detail["score"] = *report.Score
 	}
 	for k, v := range extra {
 		detail[k] = v

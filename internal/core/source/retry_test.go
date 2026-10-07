@@ -52,7 +52,7 @@ func cutOffServer(t *testing.T) (string, *atomic.Int32) {
 func TestACloneCutOffByTheConnectionIsTriedAgain(t *testing.T) {
 	url, conns := cutOffServer(t)
 
-	_, err := fetchGit(context.Background(), spec.Source{Type: spec.SourceGit, URL: url})
+	_, err := fetchGit(context.Background(), spec.Source{Type: spec.SourceGit, URL: url}, nil)
 	require.Error(t, err)
 	require.True(t, transient(err), "the failure was the connection's: %v", err)
 	require.GreaterOrEqual(t, int(conns.Load()), fetchAttempts, "every attempt reached the server")
@@ -64,7 +64,7 @@ func TestRetryingACloneStopsWithTheContext(t *testing.T) {
 	defer cancel()
 
 	started := time.Now()
-	_, err := fetchGit(ctx, spec.Source{Type: spec.SourceGit, URL: url})
+	_, err := fetchGit(ctx, spec.Source{Type: spec.SourceGit, URL: url}, nil)
 	require.Error(t, err)
 	require.Less(t, time.Since(started), 900*time.Millisecond, "a canceled deploy does not wait out the next attempt")
 }

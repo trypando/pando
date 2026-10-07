@@ -123,7 +123,9 @@ type Deployments struct{ db *DB }
 
 func NewDeployments(db *DB) *Deployments { return &Deployments{db: db} }
 
-// Create records a new deployment.
+// Create records a new deployment, queued: pending with no replica running it.
+// Any replica's deploy queue claims it (Claim) when it has room (issue #72,
+// O-32).
 func (d *Deployments) Create(ctx context.Context, appID, specID, trigger, createdBy string) (Deployment, error) {
 	dep := Deployment{
 		ID:        id.New(id.Deployment),
@@ -134,9 +136,9 @@ func (d *Deployments) Create(ctx context.Context, appID, specID, trigger, create
 		CreatedBy: createdBy,
 	}
 	err := d.db.QueryRow(ctx, `
-		INSERT INTO deployments (id, app_id, spec_id, trigger, status, created_by, replica_id)
-		VALUES ($1, $2, $3, $4, 'pending', $5, $6) RETURNING started_at`,
-		dep.ID, appID, specID, trigger, createdBy, d.db.replica).Scan(&dep.StartedAt)
+		INSERT INTO deployments (id, app_id, spec_id, trigger, status, created_by)
+		VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING started_at`,
+		dep.ID, appID, specID, trigger, createdBy).Scan(&dep.StartedAt)
 	if err != nil {
 		return Deployment{}, errs.Wrap(errs.Internal, "Could not start the deploy.", err)
 	}
@@ -144,8 +146,13 @@ func (d *Deployments) Create(ctx context.Context, appID, specID, trigger, create
 }
 
 // SetStatus advances a deployment.
+//
+// Only this replica's deployment, or one nobody has claimed: a replica that was
+// taken for dead and whose deploy another replica has since claimed must not
+// move it under the one now running it (fenced, as Finish is).
 func (d *Deployments) SetStatus(ctx context.Context, deploymentID, status string) error {
-	_, err := d.db.Exec(ctx, `UPDATE deployments SET status = $2 WHERE id = $1`, deploymentID, status)
+	_, err := d.db.Exec(ctx, `UPDATE deployments SET status = $2 WHERE id = $1 AND `+fenced(3),
+		deploymentID, status, d.db.replica)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not update the deploy.", err)
 	}
@@ -174,44 +181,149 @@ func (d *Deployments) Finish(ctx context.Context, deploymentID, status, errorCod
 	}
 	_, err := d.db.Exec(ctx, `
 		UPDATE deployments SET status = $2, error_code = $3, error_detail = $4, finished_at = now()
-		WHERE id = $1`, deploymentID, status, nullable(errorCode), detail)
+		WHERE id = $1 AND `+fenced(5), deploymentID, status, nullable(errorCode), detail, d.db.replica)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not update the deploy.", err)
 	}
 	return nil
 }
 
-// AbandonInFlight fails every deployment still under way on a Pando process
-// that is no longer running.
+// fenced is true of a deployment this replica may write the status of: one it
+// claimed, or one nobody has (a deploy run directly rather than from the
+// queue). The replica's ID is the query's parameter number param.
+func fenced(param int) string {
+	return `(replica_id IS NULL OR replica_id = $` + strconv.Itoa(param) + `)`
+}
+
+// MaxAttempts is how many times a deploy or a detection is started before a
+// replica stopping under it is taken as the reason, rather than bad luck [P].
+// A build that takes its replica down with it (out of memory, say) would
+// otherwise move from replica to replica until every one had fallen over.
+const MaxAttempts = 3
+
+// Claim takes up to limit queued deployments for this replica, oldest first,
+// and returns them (issue #72, O-32).
 //
-// A deploy runs inside the process that started it, so one in progress when
-// that process stopped will never finish. It stayed pending or building for
-// good, and an app with a deploy in flight refuses the next one (issue #55).
+// FOR UPDATE SKIP LOCKED, so replicas claiming at once take different rows and
+// none waits on another; claiming stamps replica_id, which is what makes a
+// deployment this replica's to run, to fence (SetStatus, Finish) and to serve
+// the live log of. The claimant's heartbeat is the lease: RecoverInFlight puts
+// back what a stopped replica had claimed.
+func (d *Deployments) Claim(ctx context.Context, limit int) ([]Deployment, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := d.db.Query(ctx, `
+		WITH next AS (
+		    SELECT id FROM deployments
+		    WHERE status = $3 AND replica_id IS NULL
+		    ORDER BY started_at, id
+		    LIMIT $2
+		    FOR UPDATE SKIP LOCKED)
+		UPDATE deployments d SET replica_id = $1, claimed_at = now(), attempts = d.attempts + 1
+		FROM next WHERE d.id = next.id
+		RETURNING `+deploymentColumns, d.db.replica, limit, DeployPending)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not take deploys from the queue.", err)
+	}
+	defer rows.Close()
+	var out []Deployment
+	for rows.Next() {
+		dep, err := scanDeployment(rows)
+		if err != nil {
+			return nil, errs.Wrap(errs.Internal, "Could not take deploys from the queue.", err)
+		}
+		out = append(out, dep)
+	}
+	return out, rows.Err()
+}
+
+// Release puts deployments this replica claimed back in the queue, at a
+// shutdown that stopped them part-way. Not counted as an attempt: a rolling
+// restart is not the deploy's fault. One that finished first is left alone.
+func (d *Deployments) Release(ctx context.Context, deploymentIDs []string) (int64, error) {
+	if len(deploymentIDs) == 0 {
+		return 0, nil
+	}
+	tag, err := d.db.Exec(ctx, `
+		UPDATE deployments
+		SET status = $3, replica_id = NULL, claimed_at = NULL, attempts = greatest(attempts - 1, 0)
+		WHERE id = ANY($1) AND replica_id = $2 AND status IN ($3, $4, $5)`,
+		deploymentIDs, d.db.replica, DeployPending, DeployBuilding, DeployApplying)
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Could not return deploys to the queue.", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// QueueDepth is how many deployments are waiting for a replica to take them.
+func (d *Deployments) QueueDepth(ctx context.Context) (int, error) {
+	var n int
+	err := d.db.QueryRow(ctx,
+		`SELECT count(*) FROM deployments WHERE status = $1 AND replica_id IS NULL`, DeployPending).Scan(&n)
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Could not read the deploy queue.", err)
+	}
+	return n, nil
+}
+
+// Waiting reports whether a deployment is queued and nobody has claimed it.
+func (d *Deployments) Waiting(ctx context.Context, deploymentID string) (bool, error) {
+	var waiting bool
+	err := d.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM deployments
+		WHERE id = $1 AND status = $2 AND replica_id IS NULL)`, deploymentID, DeployPending).Scan(&waiting)
+	if err != nil {
+		return false, errs.Wrap(errs.Internal, "Could not read the deploy.", err)
+	}
+	return waiting, nil
+}
+
+// RecoverInFlight puts back in the queue every deployment claimed by a Pando
+// process that is no longer running, and records as interrupted one that has
+// been started MaxAttempts times. It returns how many it did either to.
 //
-// Only a stopped process's work, never a live one's (issue #72). This used to
-// fail everything in flight and was called at startup, which was right for one
-// process and wrong for two: the second replica to start failed every deploy
-// the first was in the middle of. A deploy belongs to the replica that started
-// it, and is abandoned once that replica stops heartbeating — called at
-// startup and then periodically, because a lost pod is not followed by a
-// restart of itself.
-func (d *Deployments) AbandonInFlight(ctx context.Context) (int64, error) {
+// Resume rather than record-interrupted (issue #72, O-32): every step a deploy
+// takes before it commits is safe to take again — fetching the pinned commit
+// and building it produce the same image, a scan of the same source is reused,
+// provisioning finds the instance it made, and applying a bundle converges on
+// the spec whatever state the last attempt left it in. So the deploy starts
+// again from the top on whichever replica claims it next, and its user sees
+// it finish rather than a failure that says "deploy again".
+//
+// Only a stopped or silent process's work, never a live one's: a deploy
+// belongs to the replica that claimed it until that replica stops
+// heartbeating. Queued work nobody has claimed is nobody's to recover and is
+// left in the queue. Called at startup and by the leader's sweeper.
+func (d *Deployments) RecoverInFlight(ctx context.Context) (int64, error) {
 	detail, err := json.Marshal(map[string]string{
-		"message": "Pando restarted or stopped while this deploy was under way, so it did not finish. Deploy again.",
+		"message": "Pando stopped while this deploy was under way, " + strconv.Itoa(MaxAttempts) +
+			" times, so it was not started again. Deploy again; if it stops Pando again, check the build's memory use.",
 	})
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not record interrupted deploys.", err)
 	}
-	tag, err := d.db.Exec(ctx, `
+	// A row from before the queue existed with no replica recorded, in
+	// building or applying, is a dead process's too.
+	claimed := `(d.status IN ($2, $3) OR (d.status = $1 AND d.replica_id IS NOT NULL))`
+	failed, err := d.db.Exec(ctx, `
 		UPDATE deployments d
-		SET status = $1, error_code = $2, error_detail = $3, finished_at = now()
-		WHERE d.status IN ($4, $5, $6) AND `+orphaned(7),
-		DeployFailed, string(errs.StateInvalid), detail, DeployPending, DeployBuilding, DeployApplying,
-		ReplicaStale.Seconds())
+		SET status = $4, error_code = $5, error_detail = $6, finished_at = now()
+		WHERE `+claimed+` AND d.attempts >= $7 AND `+orphaned(8),
+		DeployPending, DeployBuilding, DeployApplying,
+		DeployFailed, string(errs.StateInvalid), detail, MaxAttempts, ReplicaStale.Seconds())
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not record interrupted deploys.", err)
 	}
-	return tag.RowsAffected(), nil
+	requeued, err := d.db.Exec(ctx, `
+		UPDATE deployments d
+		SET status = $1, replica_id = NULL, claimed_at = NULL
+		WHERE `+claimed+` AND `+orphaned(4),
+		DeployPending, DeployBuilding, DeployApplying, ReplicaStale.Seconds())
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Could not return interrupted deploys to the queue.", err)
+	}
+	return failed.RowsAffected() + requeued.RowsAffected(), nil
 }
 
 // orphaned is true of a row d whose replica_id names no live replica: a row
@@ -418,7 +530,7 @@ func (d *Deployments) Decisions(ctx context.Context, deploymentIDs []string) (ma
 }
 
 // StartApproved moves a deploy that has its approvals from awaiting_approval
-// to pending, the ordinary path, and reports whether it did.
+// to pending — queued, the ordinary path — and reports whether it did.
 //
 // Conditional, so that two approvals arriving together start it once: the
 // second finds it no longer waiting. And conditional on nothing else being in
@@ -429,12 +541,12 @@ func (d *Deployments) Decisions(ctx context.Context, deploymentIDs []string) (ma
 // the deploy.request audit event.
 func (d *Deployments) StartApproved(ctx context.Context, deploymentID string) (bool, error) {
 	tag, err := d.db.Exec(ctx, `
-		UPDATE deployments d SET status = $2, started_at = now(), replica_id = $6
+		UPDATE deployments d SET status = $2, started_at = now(), replica_id = NULL
 		WHERE d.id = $1 AND d.status = $3
 		  AND NOT EXISTS (
 		      SELECT 1 FROM deployments other
 		      WHERE other.app_id = d.app_id AND other.status IN ($2, $4, $5))`,
-		deploymentID, DeployPending, DeployAwaitingApproval, DeployBuilding, DeployApplying, d.db.replica)
+		deploymentID, DeployPending, DeployAwaitingApproval, DeployBuilding, DeployApplying)
 	if err != nil {
 		return false, errs.Wrap(errs.Internal, "Could not start the approved deploy.", err)
 	}

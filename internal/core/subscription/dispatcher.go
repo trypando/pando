@@ -14,6 +14,7 @@ import (
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/events"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/core/work"
 )
 
 // RetrySchedule is how long to wait after each failed attempt before the next
@@ -82,9 +83,61 @@ type Dispatcher struct {
 	// Interval is how often the outbox is read when it was empty last time.
 	Interval time.Duration
 
+	// SubscriptionCache is how long the list of enabled subscriptions is
+	// reused for routing [P]: three seconds when zero, and never when
+	// negative. Routing used to read it — three joins — on every pass of
+	// every replica (issue #72). It decides only which deliveries are queued;
+	// whether one is sent is decided at send time, as its owner, now (R-368),
+	// and a subscription turned off is not sent to however it was routed.
+	SubscriptionCache time.Duration
+
+	// Senders is how many deliveries are sent at once. Eight when zero.
+	Senders int
+
 	once          sync.Once
 	guarded, open *http.Client
 	health        map[string]bool
+
+	cacheMu sync.Mutex
+	cache   *subscriptionCache
+	senders work.Pool[state.Delivery]
+}
+
+// subscriptionCache is the enabled subscriptions, indexed by event name as
+// names are met.
+type subscriptionCache struct {
+	// asOf is the database's time when the list was read. An event that
+	// occurred later is not routed against it: it could be meant for a
+	// subscription made in between.
+	asOf    time.Time
+	expires time.Time
+	subs    []state.Subscription
+
+	mu     sync.Mutex
+	byName map[string][]state.Subscription
+}
+
+// cacheMargin covers a subscription whose transaction began before the list
+// was read and committed after: its created_at is earlier than asOf, but the
+// list could not see it.
+const cacheMargin = time.Second
+
+// forName is the subscriptions whose filter names an event, worked out once
+// per name per list rather than once per event.
+func (c *subscriptionCache) forName(name string) []state.Subscription {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if got, ok := c.byName[name]; ok {
+		return got
+	}
+	var out []state.Subscription
+	for _, sub := range c.subs {
+		if sub.Enabled && events.MatchAny(sub.Events, name) {
+			out = append(out, sub)
+		}
+	}
+	c.byName[name] = out
+	return out
 }
 
 func (d *Dispatcher) now() time.Time {
@@ -125,7 +178,13 @@ func (d *Dispatcher) allowPrivate(ctx context.Context) bool {
 	return err == nil && doc.AllowPrivateWebhooks
 }
 
-// Run routes and delivers until ctx ends, and prunes the outbox hourly.
+// Run routes and delivers until ctx ends.
+//
+// Routing and sending are separate loops (issue #72). Sending pulls deliveries
+// as senders come free, Senders at a time, rather than claiming a batch and
+// waiting for the slowest webhook in it before claiming the next; routing
+// tells it when it has queued something. Pruning the outbox is the retention
+// job's, on the leader: it used to run here, on every replica.
 func (d *Dispatcher) Run(ctx context.Context) {
 	interval := d.Interval
 	if interval <= 0 {
@@ -135,18 +194,37 @@ func (d *Dispatcher) Run(ctx context.Context) {
 	if c == nil {
 		c = clock.System{}
 	}
-	lastPrune := time.Time{}
+
+	senders := d.Senders
+	if senders <= 0 {
+		senders = 8
+	}
+	d.senders.Name = "deliveries"
+	d.senders.Limit = senders
+	d.senders.Poll = interval
+	d.senders.Logger = d.logger()
+	d.senders.Claim = func(ctx context.Context, n int) ([]state.Delivery, error) {
+		return d.Deliveries.Claim(ctx, d.now(), 2*time.Minute, n)
+	}
+	d.senders.Run = d.send
+	// No Release: a delivery claimed and not sent is retried when its lease
+	// runs out, which is at least once and never zero times (R-366).
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		d.senders.Serve(ctx)
+	}()
+	defer wg.Wait()
+
 	for {
-		busy := d.Pass(ctx)
-		if d.now().Sub(lastPrune) > time.Hour {
-			if n, err := d.Events.Prune(ctx, d.now().Add(-Retention)); err != nil {
-				d.logger().Warn("could not prune delivered events", zap.Error(err))
-			} else if n > 0 {
-				d.logger().Info("pruned delivered events", zap.Int64("events", n))
-			}
-			lastPrune = d.now()
+		routed, err := d.route(ctx)
+		if err != nil && ctx.Err() == nil {
+			d.logger().Warn("could not route events", zap.Error(err))
 		}
-		if busy {
+		d.announce(ctx, routed)
+		if len(routed) > 0 {
+			d.senders.Kick()
 			continue
 		}
 		select {
@@ -157,8 +235,9 @@ func (d *Dispatcher) Run(ctx context.Context) {
 	}
 }
 
-// Pass routes what is waiting and sends what is due, once. It reports
-// whether there was anything to do, so Run keeps going while there is.
+// Pass routes what is waiting and sends what is due, once, and reports
+// whether there was anything to do. Run does the same continuously; Pass is
+// the one-shot form, for a test or a caller that wants it done now.
 func (d *Dispatcher) Pass(ctx context.Context) bool {
 	routed, err := d.route(ctx)
 	if err != nil {
@@ -176,13 +255,53 @@ func (d *Dispatcher) Pass(ctx context.Context) bool {
 // Authorization is not decided here but at send time (R-368), so a grant
 // revoked between the two still stops the delivery.
 func (d *Dispatcher) route(ctx context.Context) ([]state.Event, error) {
-	subs, err := d.Subscriptions.List(ctx, state.SubscriptionFilter{EnabledOnly: true})
+	cache, err := d.subscriptions(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return d.Events.Route(ctx, 100, func(_ context.Context, e state.Event) ([]string, error) {
-		return Matching(subs, e), nil
+	var before time.Time
+	if d.SubscriptionCache >= 0 {
+		before = cache.asOf.Add(-cacheMargin)
+	}
+	routed, err := d.Events.Route(ctx, 100, before, func(_ context.Context, e state.Event) ([]string, error) {
+		return Matching(cache.forName(e.Name), e), nil
 	})
+	if err != nil {
+		// A subscription deleted since the list was read refuses its
+		// delivery by foreign key; the next list will not have it.
+		d.forget()
+	}
+	return routed, err
+}
+
+// subscriptions is the enabled subscriptions, read again once the cached list
+// is older than SubscriptionCache.
+func (d *Dispatcher) subscriptions(ctx context.Context) (*subscriptionCache, error) {
+	d.cacheMu.Lock()
+	defer d.cacheMu.Unlock()
+	if d.cache != nil && d.SubscriptionCache >= 0 && d.now().Before(d.cache.expires) {
+		return d.cache, nil
+	}
+	subs, asOf, err := d.Subscriptions.Enabled(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ttl := d.SubscriptionCache
+	if ttl == 0 {
+		ttl = 3 * time.Second
+	}
+	d.cache = &subscriptionCache{
+		asOf: asOf, expires: d.now().Add(ttl), subs: subs,
+		byName: map[string][]state.Subscription{},
+	}
+	return d.cache, nil
+}
+
+// forget drops the cached subscriptions, so the next route reads them again.
+func (d *Dispatcher) forget() {
+	d.cacheMu.Lock()
+	d.cache = nil
+	d.cacheMu.Unlock()
 }
 
 // Matching is which subscriptions an event goes to: those whose filter names
