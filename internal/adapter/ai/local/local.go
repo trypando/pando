@@ -178,6 +178,11 @@ func (a *Adapter) Capabilities(_ context.Context) (api.AICapabilities, error) {
 		ChoosesModel: true,
 		MaxFiles:     a.cfg.MaxFiles,
 		MaxBytes:     a.cfg.MaxBytes,
+
+		// LooksUp is left off. [P] A small model is uneven at calling tools,
+		// and a lookup loop multiplies the rounds a slow server serves; core
+		// searches the words of the request instead and sends the matches
+		// (O-54, design 10 §10.6).
 	}
 	if a.cfg.ScreenPlans == nil || *a.cfg.ScreenPlans {
 		caps.Functions = append(caps.Functions,
