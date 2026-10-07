@@ -10,7 +10,7 @@ specify it, the phase that builds it, and the tests that prove it. Test coverage
 | | Count | Of total |
 |---|---:|---:|
 | Requirements | 285 | — |
-| Specified in a design doc | 247 | 86% |
+| Specified in a design doc | 249 | 87% |
 | Assigned to a phase | 137 | 48% |
 | Covered by a named test | 211 | 74% |
 
@@ -184,7 +184,7 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-188** | D | The rules an app runs with are shown, merged. | 12. Egress and Isolation | 04, 07, 08 | — | `TestR188_ADryRunSaveShowsTheServersDecisionAndWritesNothing`, `TestR188_ThePlanAndTheEgressEndpointShowTheMergedRules`, `TestR188_ThePlanCarriesTheMergedRules` |
 | **R-189** | P | Build egress (R-118) is a separate setting and does not follow this model. | 12. Egress and Isolation | 01, 03 | — | — |
 | **R-190** | D V1 | Local secret storage: encrypted at rest with a key on the same disk. | 13. Secrets | 02, 03, 10 | 03, 04, 08, 11 | `TestR190_ALocalServerIsNeverSentTheOpenAIKey`, `TestR190_ALocalServerIsSentOnlyItsOwnKey`, `TestR190_AProvidersSecretIsNeverStoredInTheClear`, `TestR190_AReplicaWithADifferentSecretsKeyRefusesToStart`, `TestR190_ASecretRoundTripsThroughTheAdapter`, `TestR190_ATokenStoredInTheClearIsRefused`, `TestR190_AnAdapterCredentialGoesInEncryptedAndNeverComesBack`, `TestR190_AnAdapterCredentialIsStoredOnlyAsCiphertext`, `TestR190_AnInlineKeyIsRefused`, `TestR190_ConfigFileNeverHoldsACredential`, `TestR190_DNSCredentialsStoredInTheClearAreRefused`, `TestR190_DeclaredCredentialsAreReadFromWhereTheFileSays`, `TestR190_DeclaredCredentialsAreReferencesOnly`, `TestR190_OpenAIReadsItsKeyFromTheNamedVariable`, `TestR190_SecretsRoundTripThroughCiphertext`, `TestR190_TheDatabaseRefusesCredentialsInPlainConfiguration` |
-| **R-191** | D | The threat model must be stated, not implied: this protects a leaked backup file or copied… | 13. Secrets | 02 | 08 | — |
+| **R-191** | D | The threat model must be stated, not implied: this protects a leaked backup file or copied… | 13. Secrets | 02, 06 | 08 | — |
 | **R-192** | D | Environment variables are the default injection mechanism, since slot detection keys on them… | 13. Secrets | — | — | — |
 | **R-193** | D | On the env path, rotation implies a restart. | 13. Secrets | 02, 03, 05, 08 | 07 | `TestR193_AChangedEnvironmentFingerprintIsDrift`, `TestR193_ARotatedEdgeCredentialRecreatesTheEdge`, `TestR193_ChangedEnvironmentCausesRecreate`, `TestR193_RotatingASecretChangesTheFingerprint` |
 | **R-194** | P | Secret values are redacted in logs, in spec exports, and in the audit log. | 13. Secrets | 00, 02, 10, 11 | 00, 04 | `TestR194_AUserIsNeverReturnedWithAnythingCredentialShaped`, `TestR194_AnEventCarriesOnlyItsCataloguedFields`, `TestR194_CredentialsDoNotAppearInErrors`, `TestR194_DNSCredentialsNeverRender`, `TestR194_ErrorStringsDoNotLeak`, `TestR194_RevealIsTheOnlyWayOut`, `TestR194_RoundTrippingARedactedPayloadDoesNotSetTheSecret`, `TestR194_SecretInDetailsDoesNotSerialize`, `TestR194_TheAPIKeyNeverRenders`, `TestR194_TheDatabasePasswordGoesInTheEnvironmentAndNeverInArgv`, `TestR194_UnmarshalAcceptsARealSecret`, `TestR194_ValueNeverReachesALogLine`, `TestR194_ValueNeverRendersThroughAnyFormattingVerb`, `TestR194_ValueNeverRendersWhenNested` |
@@ -324,14 +324,12 @@ Check each against the categories above before treating it as a gap.
 - **R-090** (7.1 Input) — The user points Pando at a source — a public GitHub repo in v1 — plus routing and hosting…
 - **R-091** (7.1 Input) — Private repos are in scope, supporting the credential mechanisms GitHub offers (PAT, GitHub…
 - **R-110** (8. Build) — Builds never run on the host (R-024).
-- **R-113** (8. Build) — Build code has no access to Pando's state store, no access to any other app's secrets, and no…
 - **R-142** (10.2 Deploy triggers) — Trigger delivery is by polling by default, since inbound connectivity cannot be assumed.
 - **R-192** (13. Secrets) — Environment variables are the default injection mechanism, since slot detection keys on them…
 - **R-220** (16.1 Health) — Pando runs health listeners — health endpoints, uptime checks — so you know when an app goes…
 - **R-225** (16.2 Logs) — Log masking is out of scope for now.
 - **R-230** (16.4 Notifications) — Notification is an adapter category.
 - **R-244** (17. Resources and Capacity) — Per-user quotas (max apps, max disk) as a policy knob.
-- **R-257** (18. Adapters) — A runtime adapter may be swapped under an existing app, and it is neither a migration nor a…
 - **R-260** (19. Surfaces) — Four first-class administrative surfaces, all shipping: API, CLI, MCP, web console.
 - **R-263** (19. Surfaces) — End users — people who were granted use of an app and nothing else — do not need the console.
 - **R-273** (20. Configuration and Policy) — Premade setting profiles for common postures (hobbyist, hardened, regulated), usable as-is or…

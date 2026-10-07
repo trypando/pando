@@ -41,7 +41,7 @@ Requirement IDs are stable. Refer to them rather than to section numbers.
 
 These are permanent. A request falling into one of these is answered "no," not "later."
 
-**R-010 [D]** **Pando is not a scheduler.** It places; it does not schedule. One app lives in one place. No cross-host bin-packing, no autoscaling groups, no service mesh, no rescheduling on node failure.
+**R-010 [D]** **Pando is not a scheduler.** It places; it does not schedule. One app lives in one place. No cross-host bin-packing, no autoscaling groups, no service mesh, no rescheduling on node failure. A runtime that spans machines moving a workload after a failure is not Pando scheduling: when such a runtime (Kubernetes, for example) recreates an app's workload on another node because the node it ran on failed, the runtime places it as it places any workload, and Pando has decided nothing about where it runs (R-256, O-44).
 
 **R-011 [D]** **Pando does not test.** It builds and deploys. It does not run your test suite and does not gate deploys on test results.
 
