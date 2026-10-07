@@ -156,9 +156,18 @@ func TestTheCachePathIsPerAppAndOnPandosSide(t *testing.T) {
 func TestImageNamesAreValidReferences(t *testing.T) {
 	// Lowercased and underscores replaced: neither is legal in an OCI
 	// repository name, and an app ID carries both.
-	require.Equal(t, "pando/app-01hq8:latest", imageName("APP_01HQ8"))
-	require.Equal(t, "pando/my-app:latest", imageName("my_app"))
-	require.True(t, strings.HasPrefix(imageName("x"), "pando/"))
+	require.Equal(t, "pando/app-01hq8:latest", imageName("APP_01HQ8", ""))
+	require.Equal(t, "pando/my-app:latest", imageName("my_app", ""))
+	require.True(t, strings.HasPrefix(imageName("x", ""), "pando/"))
+}
+
+// TestR146_EachBuildIsTaggedByItsDeployment asserts R-146's half in the
+// builder: a build is loaded under its deployment's tag, never one the next
+// build moves, so a build refused after it was loaded cannot take the place of
+// the image a deployment recorded.
+func TestR146_EachBuildIsTaggedByItsDeployment(t *testing.T) {
+	require.Equal(t, "pando/app-01hq8:dep_01hq9", imageName("APP_01HQ8", "dep_01HQ9"))
+	require.NotEqual(t, imageName("app_1", "dep_a"), imageName("app_1", "dep_b"))
 }
 
 // One runaway generator must not put a megabyte of text into an error envelope.

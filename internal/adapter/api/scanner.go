@@ -49,6 +49,11 @@ type ScanRequest struct {
 	// that has never been built.
 	Image string
 
+	// PullAuth fetches Image from the install's registry when the build was
+	// pushed there rather than imported (issue #72, PR 5). Nil for an image
+	// already on the scanner's host.
+	PullAuth *RegistryAuth
+
 	// SourceDir is a checkout of the app's source, for scanners that read the
 	// tree rather than the image. Empty when there is none.
 	SourceDir string

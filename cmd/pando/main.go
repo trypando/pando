@@ -60,6 +60,7 @@ import (
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/idp"
+	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
@@ -412,6 +413,10 @@ func serve(ctx context.Context, configPath string) error {
 		// install holds every token's digest and cannot check any of them.
 		TokenKeyPath: cfg.Server.TokenKeyPath,
 
+		// Uploaded source is the only record of what an uploaded app is built
+		// from, and the registry's images are not in the bundle (O-37).
+		UploadDir: source.DefaultUploadDir,
+
 		State:         bundleSource,
 		Version:       buildVersion,
 		SchemaVersion: db.SchemaVersion(),
@@ -446,7 +451,19 @@ func serve(ctx context.Context, configPath string) error {
 		logger.Info("private images may be pulled with the Docker login on this server (apps.docker_credentials)")
 	}
 
-	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps).WithImages(images)
+	// The install's image registry (issue #72, PR 5): where builds go for a
+	// runtime that pulls. None on a single host, which imports (O-34).
+	buildRegistry, err := installRegistry(cfg.Registry)
+	if err != nil {
+		return err
+	}
+	if buildRegistry.Configured() {
+		logger.Info("built images may be pushed to the install registry", zap.String("registry", buildRegistry.Host()),
+			zap.Bool("always", buildRegistry.Always()))
+	}
+
+	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps).WithImages(images).
+		WithInstallRegistry(buildRegistry)
 
 	// Every route points here (R-023). The proxy is phase 5; until it exists
 	// this is the address routing adapters are told to use, and it is already
@@ -477,7 +494,8 @@ func serve(ctx context.Context, configPath string) error {
 		WithServices(state.NewServices(db), secrets).
 		WithSecurity(securityService).
 		WithSources(sources).
-		WithImages(images)
+		WithImages(images).
+		WithBuildRegistry(buildRegistry)
 
 	// The deploy queue (issue #72, O-32): a deploy is queued in Postgres and
 	// run by whichever replica has room, at most work.deploys at once here.
@@ -915,6 +933,10 @@ func serve(ctx context.Context, configPath string) error {
 		// issue #50, which is to say nobody heard.
 		Notifier: notifyRouter,
 
+		// A workload restored from a build in the install registry pulls with
+		// its credential (issue #72, PR 5).
+		BuiltImageAuth: builtImageAuth(buildRegistry),
+
 		// Unset in production: the zero values mean R-149 and R-150's defaults.
 		Backoff:          backoffSchedule,
 		FailureThreshold: cfg.Reconciler.FailureThreshold,
@@ -1190,6 +1212,9 @@ func serve(ctx context.Context, configPath string) error {
 
 		// And its registry credential (issue #41).
 		DiscardCredential: images.RemoveCredential,
+
+		// And its builds in the install registry (issue #72, R-224).
+		RegistryImages: registryImages(buildRegistry, apps),
 
 		// Storage of a deleted app is reclaimed only once a backup holds it.
 		Backups: backups,
@@ -1828,6 +1853,78 @@ func (a registryAdapters) Runtime(ref string) (adapterapi.RuntimeAdapter, bool) 
 
 func (a registryAdapters) Routing(ref string) (adapterapi.RoutingAdapter, bool) {
 	return a.r.Routing(ref)
+}
+
+// installRegistry reads the install's image registry from configuration. A nil
+// registry, with no error, is an install that has none.
+func installRegistry(c config.Registry) (*imageregistry.Registry, error) {
+	password, err := c.Secret()
+	if err != nil {
+		return nil, err
+	}
+	reg, err := imageregistry.New(imageregistry.Config{
+		URL: c.URL, Username: c.Username, Password: secret.New(password),
+		Kind: c.Kind, Layout: c.Layout, Insecure: c.Insecure, Always: c.Always,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("the install registry is misconfigured: %w", err)
+	}
+	return reg, nil
+}
+
+// builtImageAuth is the reconciler's view of the install registry: its
+// credential for an image Pando pushed there. Nil when there is no registry.
+func builtImageAuth(reg *imageregistry.Registry) func(context.Context, string) *adapterapi.RegistryAuth {
+	if !reg.Configured() {
+		return nil
+	}
+	return func(ctx context.Context, ref string) *adapterapi.RegistryAuth {
+		if !reg.Owns(ref) {
+			return nil
+		}
+		auth, err := reg.Auth(ctx)
+		if err != nil {
+			return nil
+		}
+		return auth
+	}
+}
+
+// deletedAppImages deletes a deleted app's builds from the install registry:
+// the app-wide image's repository, and one per workload any of its revisions
+// built separately.
+type deletedAppImages struct {
+	reg  *imageregistry.Registry
+	apps *state.Apps
+}
+
+func registryImages(reg *imageregistry.Registry, apps *state.Apps) reconciler.RegistryImages {
+	if !reg.Configured() {
+		return nil
+	}
+	return deletedAppImages{reg: reg, apps: apps}
+}
+
+func (d deletedAppImages) DeleteApp(ctx context.Context, appID string) error {
+	revisions, err := d.apps.ListRevisions(ctx, appID)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	var workloads []string
+	for _, rev := range revisions {
+		if rev.Body == nil {
+			continue
+		}
+		for _, w := range rev.Body.Workloads {
+			if w.Build != nil && !seen[w.Name] {
+				seen[w.Name] = true
+				workloads = append(workloads, w.Name)
+			}
+		}
+	}
+	_, err = d.reg.DeleteApp(ctx, appID, workloads)
+	return err
 }
 
 // buildCaches resolves the builder that built a deleted app. A builder that is
