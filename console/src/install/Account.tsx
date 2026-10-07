@@ -16,6 +16,7 @@ import { InstallVerb, useInstallVerb, usePrincipal } from '../app/principal';
 import { Sheet } from '../ui/Sheet';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton } from '../ui/Loading';
 import { BesideField } from '../ui/BesideField';
+import { withParams } from '../ui/paged';
 import { Identities } from './Identities';
 import { AccountApps } from './AccountApps';
 import { GeneratedPassword, PasswordToCopy } from './GeneratedPassword';
@@ -24,6 +25,9 @@ import { Quiet, RoleLabel, RolePicker, StatusToggle, messageOf, refusal, sentenc
 import { NO_FILTERS, WHEN, linkQuery } from './audit';
 import type { AuditFilters } from './audit';
 import { AuditTable, LoadOlder, useAuditLog, usePeople } from './Installation';
+
+/** Groups read for the account page: the most one request returns. */
+const GROUPS_LIMIT = 500;
 
 interface Group {
   id: string;
@@ -61,9 +65,22 @@ export function AccountPage({
     queryKey: ['roles'],
     queryFn: () => api.get<{ roles: Role[] }>('/roles'),
   });
+  // The groups this account is in, asked of the server (`member`), and the
+  // groups it could be added to. The list counts each group's members rather
+  // than carrying them (issue #72), so membership is marked here from the
+  // first answer: `members` holds this account alone when it is in the group.
   const groups = useQuery({
-    queryKey: ['groups'],
-    queryFn: () => api.get<{ groups: Group[] }>('/groups'),
+    queryKey: ['groups', 'of', userID],
+    queryFn: async () => {
+      const [mine, every] = await Promise.all([
+        api.get<{ groups: Group[] | null }>(withParams('/groups', { member: userID, limit: GROUPS_LIMIT })),
+        api.get<{ groups: Group[] | null }>(withParams('/groups', { limit: GROUPS_LIMIT })),
+      ]);
+      const inGroup = new Set((mine.groups ?? []).map((g) => g.id));
+      const mark = (g: Group): Group => ({ ...g, members: inGroup.has(g.id) ? [userID] : [] });
+      const rest = (every.groups ?? []).filter((g) => !inGroup.has(g.id));
+      return { groups: [...(mine.groups ?? []), ...rest].map(mark) };
+    },
   });
 
   const back = (

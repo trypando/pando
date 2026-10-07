@@ -525,11 +525,40 @@ func (d *Deployments) ExpireDue(ctx context.Context, now time.Time) ([]Deploymen
 // not been deleted, oldest request first, with its decisions so far. Who may
 // see each is the caller's to decide.
 func (d *Deployments) ListAwaiting(ctx context.Context) ([]AwaitingApproval, error) {
+	return d.ListAwaitingAfter(ctx, AwaitingKey{}, -1)
+}
+
+// AwaitingKey is where a page of ListAwaitingAfter starts: after the request
+// with this start time and ID. The zero key starts from the oldest.
+type AwaitingKey struct {
+	StartedAt time.Time
+	ID        string
+}
+
+// Cursor encodes the key for a next_cursor.
+func (k AwaitingKey) Cursor() string { return encodeCursor(k.StartedAt, k.ID) }
+
+// AwaitingKeyFrom reads a cursor made by Cursor.
+func AwaitingKeyFrom(cursor string) (AwaitingKey, error) {
+	var k AwaitingKey
+	_, err := decodeCursor(cursor, &k.StartedAt, &k.ID)
+	return k, err
+}
+
+// ListAwaitingAfter is ListAwaiting from after a key, at most limit of them
+// (a negative limit reads them all).
+func (d *Deployments) ListAwaitingAfter(ctx context.Context, after AwaitingKey, limit int) ([]AwaitingApproval, error) {
+	var lim any
+	if limit >= 0 {
+		lim = limit
+	}
 	rows, err := d.db.Query(ctx, `
 		SELECT `+deploymentColumns+`, a.name, a.slug
 		FROM deployments d JOIN apps a ON a.id = d.app_id
 		WHERE d.status = $1 AND a.deleted_at IS NULL
-		ORDER BY d.started_at, d.id`, DeployAwaitingApproval)
+		  AND ($2 = '' OR (d.started_at, d.id) > ($3::timestamptz, $2::text))
+		ORDER BY d.started_at, d.id
+		LIMIT $4`, DeployAwaitingApproval, after.ID, after.StartedAt, lim)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not list the deploys waiting for approval.", err)
 	}

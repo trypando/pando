@@ -24,7 +24,7 @@ import { InstallVerb, useInstallVerb } from '../app/principal';
 import { GeneratedPassword } from './GeneratedPassword';
 import { Sheet } from '../ui/Sheet';
 import { SearchField } from '../ui/SearchField';
-import { matches } from '../ui/search';
+import { ShowMore, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { Table } from '../ui/Table';
 
 export interface Account {
@@ -53,28 +53,21 @@ export function Accounts({ onOpen }: { onOpen: (account: Account) => void }) {
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState('');
 
-  const accounts = useQuery({
-    queryKey: ['users'],
-    queryFn: () => api.get<{ users: Account[] }>('/users'),
+  // A page at a time, searched by the server — username, name or email — so
+  // the account being looked for is found whichever page it would be on
+  // (issue #72). Status and role narrow in the table's own column filters.
+  const accounts = usePaged<{ users: Account[] | null } & PageOf, Account>({
+    key: ['users', 'list'],
+    path: '/users',
+    rows: (p) => p.users,
+    search: useSettled(query.trim()),
   });
   const roles = useQuery({
     queryKey: ['roles'],
     queryFn: () => api.get<{ roles: Role[] }>('/roles'),
   });
 
-  const all = accounts.data?.users ?? [];
-  // By anything the table shows: username, name, email, status and role.
-  const roleName = (id?: string) => roles.data?.roles.find((r) => r.id === id)?.name;
-  const rows = all.filter((a) =>
-    matches(
-      query,
-      a.external_id,
-      a.display_name,
-      a.email,
-      a.status === 'active' ? 'active' : 'suspended',
-      roleName(a.install_role_id),
-    ),
-  );
+  const rows = accounts.rows;
 
   return (
     <Screen
@@ -86,15 +79,15 @@ export function Accounts({ onOpen }: { onOpen: (account: Account) => void }) {
               Add account
             </Button>
           )}
-          {all.length > 0 && <SearchField value={query} onChange={setQuery} placeholder="Search accounts" />}
+          {(rows.length > 0 || query !== '') && <SearchField value={query} onChange={setQuery} placeholder="Search accounts" />}
 
         </div>
       }
     >
-      {accounts.isError && <Quiet>{messageOf(accounts.error)}</Quiet>}
+      {accounts.query.isError && <Quiet>{messageOf(accounts.query.error)}</Quiet>}
 
       <Table
-        loading={accounts.isPending}
+        loading={accounts.query.isPending}
         onRowClick={onOpen}
         columns={[
           { key: 'external_id', header: 'Username', width: 'minmax(0,22ch)', mono: true, filter: 'text' },
@@ -143,8 +136,9 @@ export function Accounts({ onOpen }: { onOpen: (account: Account) => void }) {
           },
         ]}
         rows={rows}
-        empty={all.length > 0 ? <Quiet>No accounts match &ldquo;{query.trim()}&rdquo;.</Quiet> : undefined}
+        empty={query.trim() !== '' ? <Quiet>No accounts match &ldquo;{query.trim()}&rdquo;.</Quiet> : undefined}
       />
+      <ShowMore query={accounts.query} label="Show more accounts" />
 
       {adding && <AddAccount onClose={() => setAdding(false)} />}
     </Screen>

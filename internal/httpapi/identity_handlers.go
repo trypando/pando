@@ -21,7 +21,13 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireInstall(w, r, authz.InstallView); !ok {
 		return
 	}
-	groups, err := s.Groups.List(r.Context())
+	page, err := pageFrom(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	groups, next, total, err := s.Groups.ListPage(r.Context(), page,
+		state.GroupFilter{Member: r.URL.Query().Get("member")})
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -41,7 +47,26 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	for _, g := range groups {
 		out = append(out, withRole{g, roles[g.ID]})
 	}
-	JSON(w, http.StatusOK, map[string]any{"groups": out})
+	JSON(w, http.StatusOK, map[string]any{"groups": out, "next_cursor": next, "total": total})
+}
+
+// handleGetGroup is one group with its members: what the list leaves out,
+// since a page of groups carrying every member of each grows with the
+// organization (issue #72).
+func (s *Server) handleGetGroup(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireInstall(w, r, authz.InstallView); !ok {
+		return
+	}
+	group, found, err := s.Groups.ByID(r.Context(), chi.URLParam(r, "groupID"))
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	if !found {
+		Error(w, r, errs.New(errs.NotFound, "There is no group with that ID."))
+		return
+	}
+	JSON(w, http.StatusOK, group)
 }
 
 func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {

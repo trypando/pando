@@ -82,6 +82,25 @@ func decisionRequest(action string) func(args map[string]any) (string, string, a
 	}
 }
 
+// pagedGet is a GET of a paged list with the given optional string arguments
+// passed through as query parameters (design 04 §1).
+func pagedGet(path string, args map[string]any, keys ...string) (string, string, any, error) {
+	q := url.Values{}
+	for _, key := range keys {
+		v, err := stringArg(args, key, false)
+		if err != nil {
+			return "", "", nil, err
+		}
+		if v != "" {
+			q.Set(key, v)
+		}
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return "GET", path, nil, nil
+}
+
 func schema(props map[string]any, required ...string) map[string]any {
 	if required == nil {
 		required = []string{}
@@ -118,11 +137,15 @@ func str(description string) map[string]any {
 
 var toolList = []tool{
 	{
-		Name:        "pando_list_apps",
-		Description: "List the apps you can manage, with their current state.",
-		Schema:      schema(map[string]any{}),
-		request: func(map[string]any) (string, string, any, error) {
-			return "GET", "/apps", nil, nil
+		Name: "pando_list_apps",
+		Description: "List the apps you can manage, with their current state, newest first, a page at a time. " +
+			"`total` is how many match; pass `next_cursor` back as `cursor` for the next page.",
+		Schema: schema(map[string]any{
+			"q":      str("Only apps whose name or slug contains this."),
+			"cursor": str("The next_cursor from a previous page."),
+		}),
+		request: func(args map[string]any) (string, string, any, error) {
+			return pagedGet("/apps", args, "q", "cursor")
 		},
 	},
 	{
@@ -330,10 +353,13 @@ var toolList = []tool{
 	{
 		Name: "pando_list_approvals",
 		Description: "List the deploys waiting for approval on every app you can see. Each says which app, " +
-			"why it needs approval, the approvals it has so far, and `can_decide`: whether you may approve or reject it.",
-		Schema: schema(map[string]any{}),
-		request: func(map[string]any) (string, string, any, error) {
-			return "GET", "/approvals", nil, nil
+			"why it needs approval, the approvals it has so far, and `can_decide`: whether you may approve or reject it. " +
+			"Oldest first, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
+		Schema: schema(map[string]any{
+			"cursor": str("The next_cursor from a previous page."),
+		}),
+		request: func(args map[string]any) (string, string, any, error) {
+			return pagedGet("/approvals", args, "cursor")
 		},
 	},
 	{

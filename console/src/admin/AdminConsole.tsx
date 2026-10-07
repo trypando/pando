@@ -31,7 +31,7 @@ import type { SidebarItem } from '@design';
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
-import { InstallVerb, useInstallVerb } from '../app/principal';
+import { InstallVerb, useInstallVerb, useManageableApps } from '../app/principal';
 import { AccountPage } from '../install/Account';
 import { Accounts, messageOf } from '../install/Accounts';
 import { filtersFrom, linkQuery } from '../install/audit';
@@ -65,7 +65,8 @@ import { Terminal } from './Terminal';
 import { Sheet } from '../ui/Sheet';
 import { TopoBackground } from '../ui/TopoBackground';
 import { SearchField } from '../ui/SearchField';
-import { matches } from '../ui/search';
+import { ShowMore, usePaged, useSettled, type PageOf } from '../ui/paged';
+import { APP_LIST_KEY, useWatchedRows } from './appList';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
@@ -129,32 +130,32 @@ export function AdminConsole({
   // to know who holds it. The item is shown to an install-wide approver
   // always, and to anybody else while something is waiting that they can see.
   const approvals = useApprovals(administrative || canApproveAll);
-  const waiting = approvals.data?.approvals ?? [];
+  const waiting = approvals.rows;
 
-  const apps = useQuery({
-    queryKey: ['apps'],
-    queryFn: () => api.get<{ apps: App[] | null }>('/apps'),
+  // A page at a time, searched by the server (issue #72): an install can hold
+  // twenty thousand apps, and neither the request nor the table should.
+  const [appSearch, setAppSearch] = useState('');
+  const apps = usePaged<{ apps: App[] | null } & PageOf, App>({
+    key: APP_LIST_KEY,
+    path: '/apps',
+    rows: (p) => p.apps,
+    search: useSettled(appSearch.trim()),
     enabled: administrative,
-    // Asked again while a row is scanning or deploying — a deploy of a new
-    // commit scans it — so the Security column moves from "Scanning" to the
-    // score without a reload.
-    refetchInterval: (query) =>
-      query.state.data?.apps?.some((a) => a.security_scanning || a.state === 'deploying')
-        ? 5_000
-        : false,
   });
+  const rows = useWatchedRows(apps.rows, administrative);
+  // Every app, whatever the search: the same count the Admin entry is decided
+  // by, so it is already in the cache.
+  const appCount = useManageableApps();
 
-  // The same query key the accounts screen uses, so the sidebar's count and
-  // that screen's table are one request and cannot disagree. Only asked for by
-  // somebody who may read it — the endpoint refuses the rest, and a sidebar
-  // that fires a 403 on every load is a sidebar that fills the log.
+  // The count alone, for the sidebar: one row asked for, and `total` read.
+  // Only asked for by somebody who may read it — the endpoint refuses the
+  // rest, and a sidebar that fires a 403 on every load is a sidebar that fills
+  // the log.
   const accounts = useQuery({
-    queryKey: ['users'],
-    queryFn: () => api.get<{ users: unknown[] | null }>('/users'),
+    queryKey: ['users', 'count'],
+    queryFn: () => api.get<{ total?: number }>('/users?limit=1'),
     enabled: canView || canManageUsers,
   });
-
-  const rows = apps.data?.apps ?? [];
 
   // Whether a newer Pando is released (R-351), behind install.view like the
   // rest of the installation's state. The sidebar counts the versions behind.
@@ -166,7 +167,7 @@ export function AdminConsole({
   // offering to add one they cannot create is a screen that answers 403.
   const items: SidebarItem[] = [];
   if (administrative) {
-    items.push({ value: 'apps', label: 'Apps', trailing: <Badge count={rows.length} /> });
+    items.push({ value: 'apps', label: 'Apps', trailing: <Badge count={appCount} /> });
   }
   // Beside Apps: a request is about an app, and answering one is app work.
   if (canApproveAll || waiting.length > 0 || section === 'approvals') {
@@ -179,7 +180,7 @@ export function AdminConsole({
     items.push({
       value: 'accounts',
       label: 'Accounts',
-      trailing: <Badge count={accounts.data?.users?.length ?? 0} />,
+      trailing: <Badge count={accounts.data?.total ?? 0} />,
     });
   }
   // Groups and roles are the same verb pair as accounts, and a separate screen:
@@ -397,7 +398,10 @@ export function AdminConsole({
               rows={rows}
               // Guarded by `administrative`: a query that is not enabled stays
               // pending forever, and would leave the list loading for good.
-              loading={administrative && apps.isPending}
+              loading={administrative && apps.query.isPending}
+              query={appSearch}
+              onQuery={setAppSearch}
+              more={<ShowMore query={apps.query} label="Show more apps" />}
               onOpen={(app) => setSelectedID(app.id)}
               onAdded={(app) => setSelectedID(app.id)}
             />
@@ -410,22 +414,28 @@ export function AdminConsole({
 function AppsList({
   rows,
   loading,
+  query,
+  onQuery,
+  more,
   onOpen,
   onAdded,
 }: {
+  /** The pages read so far, already narrowed by the search. */
   rows: App[];
   /** The list has not arrived: placeholder rows, not "Add your first app". */
   loading: boolean;
+  /** The search, by name or address slug. The server narrows the list:
+   *  the app being looked for may not be on a page read yet. Narrowing by
+   *  one column is the column filters' job, in the table's own headers. */
+  query: string;
+  onQuery: (query: string) => void;
+  /** Reads the next page, while there is one. */
+  more: React.ReactNode;
   onOpen: (app: App) => void;
   onAdded: (app: App) => void;
 }) {
   const [adding, setAdding] = useState(false);
-  const [query, setQuery] = useState('');
-
-  // By name, address slug, ID and status — the ID because it is what the CLI
-  // and a log line give somebody to go looking for. Narrowing by one column is
-  // the column filters' job, in the table's own headers.
-  const shown = rows.filter((a) => matches(query, a.name, a.slug, a.id, statusLabel(a.state)));
+  const shown = rows;
 
   // The page is not capped — a table's rows and rules run to the edge of the
   // window, which is what a wide display should look like. Its content is: the
@@ -445,7 +455,7 @@ function AppsList({
             <Button variant="primary" onClick={() => setAdding(true)}>
               Add app
             </Button>
-            {rows.length > 0 && <SearchField value={query} onChange={setQuery} placeholder="Search apps" />}
+            {(rows.length > 0 || query !== '') && <SearchField value={query} onChange={onQuery} placeholder="Search apps" />}
           </div>
         }
       >
@@ -456,7 +466,7 @@ function AppsList({
           // headers over nothing. R-002 is about the tenth app; the first one
           // is what makes the install anything at all.
           empty={
-            rows.length > 0 ? (
+            query.trim() !== '' ? (
               <Quiet>No apps match &ldquo;{query.trim()}&rdquo;.</Quiet>
             ) : (
             <EmptyState
@@ -522,6 +532,7 @@ function AppsList({
           ]}
           rows={shown}
         />
+        {more}
       </Sheet>
 
       {adding && (

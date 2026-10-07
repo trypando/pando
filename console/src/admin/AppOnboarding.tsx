@@ -52,6 +52,7 @@ import { Loading } from '../ui/Loading';
 import { ScoreBadge } from '../ui/ScoreBadge';
 import { Security } from './Security';
 import { deletePath } from './delete-app';
+import { invalidateAppLists } from './appList';
 import {
   Blocked,
   DetectionFailed,
@@ -224,9 +225,9 @@ export function AppOnboarding({
       }
     },
     onSuccess: () => {
-      // As DeleteApp does: exact, then remove, so the list refetches and the
+      // As DeleteApp does: the lists only, then remove, so they refetch and the
       // deleted app's own record is not asked for on the way out.
-      void queries.invalidateQueries({ queryKey: ['apps'], exact: true });
+      void invalidateAppLists(queries);
       queries.removeQueries({ queryKey: ['apps', appID] });
       onBack();
     },

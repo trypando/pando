@@ -26,6 +26,7 @@ import (
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/idp"
+	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/source"
@@ -69,6 +70,11 @@ type Server struct {
 
 	Registry *api.Registry
 	Adapters *state.Adapters
+
+	// Observations shares the runtime's answers for /status and /usage between
+	// requests asking at the same moment (issue #72). Authorization is checked
+	// before it is consulted, every request. Nil asks the runtime every time.
+	Observations *observe.Cache
 
 	// Address resolves changes to where an app is reached (R-162, R-163).
 	// Nil means the address cannot be changed after configuration.
@@ -504,6 +510,7 @@ func (s *Server) Routes() http.Handler {
 			// A provider's group counting as a Pando group's members (R-078).
 			r.Put("/{groupID}/links/{syncedGroupID}", s.handleLinkGroup)
 			r.Delete("/{groupID}/links/{syncedGroupID}", s.handleUnlinkGroup)
+			r.Get("/{groupID}", s.handleGetGroup)
 			r.Delete("/{groupID}", s.handleDeleteGroup)
 		})
 

@@ -87,7 +87,8 @@ func (s *Server) requireSelfOrInstall(w http.ResponseWriter, r *http.Request, us
 	return p, true
 }
 
-// handleListUsers returns every account, with the installation role each holds.
+// handleListUsers returns a page of accounts, newest first, with the
+// installation role each holds (issue #72: `limit`, `cursor`, `q`).
 //
 // The role travels with the account rather than behind a second request per
 // row: the accounts screen exists to answer "who can do what here", and an
@@ -98,7 +99,12 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	users, err := s.Users.List(r.Context())
+	page, err := pageFrom(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	users, next, total, err := s.Users.ListPage(r.Context(), page)
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -113,7 +119,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	for _, u := range users {
 		out = append(out, accountView(u, roles[u.ID]))
 	}
-	JSON(w, http.StatusOK, map[string]any{"users": out})
+	JSON(w, http.StatusOK, map[string]any{"users": out, "next_cursor": next, "total": total})
 }
 
 // accountView is an account as the API shows it, in the list and on its own:

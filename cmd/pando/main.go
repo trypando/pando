@@ -60,6 +60,7 @@ import (
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/idp"
+	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
@@ -750,6 +751,9 @@ func serve(ctx context.Context, configPath string) error {
 		Registry:    registry,
 		Adapters:    adapters,
 		AIFunctions: aiFunctions,
+		// One answer per app per moment for the console's status and usage
+		// polls, rather than one Docker call per open tab (issue #72).
+		Observations: observe.New(),
 		Assist: &assist.Service{
 			Registry: registry,
 			Users:    users,

@@ -65,7 +65,7 @@ one verb says nothing about another (R-082).
 
 | Endpoint | Verb | What it does |
 | --- | --- | --- |
-| `GET /api/v1/apps` |  | The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection. |
+| `GET /api/v1/apps` |  | The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection. Newest first, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, which is empty after the last page), `q` to match the name or slug, and `id`, repeatable, to read only those apps; `total` counts every match. |
 | `POST /api/v1/apps` | `app.create` | Create an app. `source` is `{type: git, url, ref}` for a repository, `{type: image, image, credential}` for an image that is already built (`credential` optional, for a private one: see PUT /registry-credential), or `{type: upload}` for files sent next with POST /source. Checked against the source allowlist before anything is fetched (R-092). Returns immediately in draft while detection runs; follow it with GET /detection and `wait`. |
 | `GET /api/v1/apps/{appID}` | `app.view` | One app: name, source, state and pinned spec; `detection` — its status, and its stage while running — once it has been through detection; and `last_backup`, its last daily backup attempt. |
 | `PATCH /api/v1/apps/{appID}` | `app.spec.edit` | Rename an app or change its source. |
@@ -129,7 +129,7 @@ one verb says nothing about another (R-082).
 | `POST /api/v1/apps/{appID}/deployments/rollback` | `app.deploy` | Deploy the last revision that ran successfully, or the revision `to` names. Rolling back to a revision that ran successfully before never needs approval (R-157). |
 | `POST /api/v1/apps/{appID}/deployments/{depID}/approve` | `app.view` | Approve a deploy that is waiting for approval, with an optional `comment`. Takes `install.deploys.approve`, or `app.deploy.approve` on this app; either may approve its holder's own request (R-155). The last approval it needs plans it again and starts it: 200 with the deployment, `pending` once started and still `awaiting_approval` while it needs more. Refused while another deploy of the app is running; the request keeps waiting. |
 | `POST /api/v1/apps/{appID}/deployments/{depID}/reject` | `app.view` | Reject a deploy that is waiting for approval, with an optional `comment`. One rejection ends the request (R-156). The same permissions as approving. |
-| `GET /api/v1/approvals` |  | Deploys waiting for approval on every app you can see, oldest first: each deployment with `app_name`, `app_slug`, its `approval_reasons`, the `approvals` so far, and `can_decide` — whether you may approve or reject it. |
+| `GET /api/v1/approvals` |  | Deploys waiting for approval on every app you can see, oldest first: each deployment with `app_name`, `app_slug`, its `approval_reasons`, the `approvals` so far, and `can_decide` — whether you may approve or reject it. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues, and a page can hold fewer than `limit` and still have one. |
 
 ### Events
 
@@ -188,7 +188,7 @@ one verb says nothing about another (R-082).
 
 | Endpoint | Verb | What it does |
 | --- | --- | --- |
-| `GET /api/v1/users` | `install.view` | The accounts on this installation. |
+| `GET /api/v1/users` | `install.view` | The accounts on this installation, newest first, each with its `install_role_id`. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, reads only those accounts; `total` counts every match. |
 | `POST /api/v1/users` | `install.users.manage` | Create an account. |
 | `GET /api/v1/users/{userID}` | `install.view` | One account. Your own needs no verb. |
 | `PATCH /api/v1/users/{userID}` | `install.users.manage` | Change an account: any of `username`, `display_name`, `email` and `status`. Username and email only on a local account; a username only with this verb, even your own. Suspension is not deletion (R-049). Your own name and email need no verb. |
@@ -198,7 +198,7 @@ one verb says nothing about another (R-082).
 | `POST /api/v1/users/{userID}/password` | `install.users.manage` | Reset another local account's password (`password`), ending every session it holds. `must_change_password` defaults to true: whoever set it hands it over, and its holder chooses their own at the next sign-in. Your own is `POST /me/password`. |
 | `POST /api/v1/passwords/generate` | `install.users.manage` | A strong random password, 18 to 22 characters with upper and lower case, digits and symbols, for creating or resetting an account. Stores nothing. |
 | `GET /api/v1/users/{userID}/apps` | `install.view` | The apps an account has something on: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (`can_manage`). Only apps you can see are listed. Your own needs nothing. |
-| `GET /api/v1/groups` | `install.view` | Groups, whether Pando's own or an identity adapter's (R-078). |
+| `GET /api/v1/groups` | `install.view` | Groups, whether Pando's own or an identity adapter's (R-078), Pando's first and then by name, each with `member_count`; GET /groups/{groupID} has the members. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the name; `member` keeps the groups an account is directly in; `total` counts every match. |
 | `POST /api/v1/groups` | `install.users.manage` | Create a group. |
 | `PUT /api/v1/groups/{groupID}/members` | `install.users.manage` | Set a group's members. |
 | `PUT /api/v1/groups/{groupID}/members/{userID}` | `install.users.manage` | Add one account to a group. It then holds everything the group holds. |
@@ -211,6 +211,7 @@ one verb says nothing about another (R-082).
 | `PUT /api/v1/groups/{groupID}/links/{syncedGroupID}` | `install.users.manage` | Make everyone in a group an identity provider syncs count as a member of a group made in Pando, live (R-078, R-079). |
 | `DELETE /api/v1/groups/{groupID}/links/{syncedGroupID}` | `install.users.manage` | Remove such a link. Refused when it would leave nobody who can manage accounts (R-088). |
 | `GET /api/v1/groups/{groupID}/apps` | `install.view` | A group's app grants: the role everyone in it has on each app, whether they can open it, and whether you can change that (`can_manage`). Only apps you can see. Share an app with a group through `POST /apps/{appID}/grants` with `principal_kind: group`. |
+| `GET /api/v1/groups/{groupID}` | `install.view` | One group with its `members` (account IDs, direct members only), its `linked_from` or `links_to`, and where it comes from. |
 | `DELETE /api/v1/groups/{groupID}` | `install.users.manage` | Delete a group. Everything shared with it goes with it: its members lose that access and keep anything given to them another way. Refused if it would leave nobody who can manage accounts (R-088). |
 | `GET /api/v1/roles` | `install.view` | Roles, built in and custom. By default the ones granted across the installation; `scope=app` gives the ones granted on an app, and `scope=all` both. Built-in roles are immutable (R-081). |
 | `POST /api/v1/roles` | `install.users.manage` | Compose a custom role from verbs (R-082). |

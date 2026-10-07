@@ -285,12 +285,17 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.AuthRequired, "You need to sign in."))
 		return
 	}
-	waiting, err := s.Approvals.Awaiting(r.Context(), p)
+	page, err := pageFrom(r)
 	if err != nil {
 		Error(w, r, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"approvals": waiting})
+	waiting, next, err := s.Approvals.Awaiting(r.Context(), p, page)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"approvals": waiting, "next_cursor": next})
 }
 
 // handleDeploymentLogs streams build output as server-sent events.
@@ -328,9 +333,11 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 
 	rc := http.NewResponseController(w)
 	if dep.FinishedAt != nil && !s.Logs.Has(depID) {
-		// Run by a replica that has since stopped, or by this one before a
-		// restart. Following would wait for lines that cannot come.
-		fmt.Fprint(w, "data: The live log of this deploy was kept by the Pando process that ran it, which has since stopped. The deploy's outcome and error are on the deploy itself.\n\n")
+		// Run by a replica that has since stopped, by this one before a
+		// restart, or long enough ago that the log was dropped from memory
+		// (deploy.LogRetention). Following would wait for lines that cannot
+		// come.
+		fmt.Fprint(w, "data: The live log of this deploy is no longer held. Pando keeps it in the memory of the Pando process that ran the deploy, and only while the deploy runs and for a few minutes after it ends. The deploy's outcome and error are on the deploy itself.\n\n")
 		fmt.Fprint(w, "event: end\ndata: \n\n")
 		_ = rc.Flush()
 		return
@@ -450,7 +457,7 @@ func (s *Server) handleAppStatus(w http.ResponseWriter, r *http.Request) {
 		rev, found, err := s.Apps.RevisionByID(r.Context(), app.PinnedSpecID)
 		if err == nil && found {
 			if runtime, ok := s.Registry.Runtime(rev.Body.Runtime.AdapterRef); ok {
-				observed, err := runtime.Observe(r.Context(), apiBundleRef(app.ID))
+				observed, err := s.Observations.Observe(r.Context(), rev.Body.Runtime.AdapterRef, runtime, app.ID)
 				if err != nil {
 					// An adapter being unreachable is a platform problem, not
 					// app failure (design 05 §2). Reported as such rather than

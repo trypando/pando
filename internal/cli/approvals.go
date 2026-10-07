@@ -27,7 +27,18 @@ func approvalsCmd(client func() (*Client, error)) *cobra.Command {
 			var out struct {
 				Approvals []waitingDeploy `json:"approvals"`
 			}
-			if err := c.Do("GET", "/approvals", nil, &out); err != nil {
+			err = allPages(c, "/approvals", func(get func(any) error) (string, error) {
+				var page struct {
+					Approvals  []waitingDeploy `json:"approvals"`
+					NextCursor string          `json:"next_cursor"`
+				}
+				if err := get(&page); err != nil {
+					return "", err
+				}
+				out.Approvals = append(out.Approvals, page.Approvals...)
+				return page.NextCursor, nil
+			})
+			if err != nil {
 				return err
 			}
 			if len(out.Approvals) == 0 {
