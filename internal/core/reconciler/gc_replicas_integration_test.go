@@ -36,6 +36,16 @@ func awaitingTeardown(t *testing.T, apps *state.Apps, appID string) bool {
 	return false
 }
 
+// teardownSignal reports each app whose bundle the GC records destroying.
+type teardownSignal struct{ apps chan string }
+
+func (s teardownSignal) Write(_ context.Context, e reconciler.AuditEvent) error {
+	if e.Action == "app.bundle.destroy" {
+		s.apps <- e.AppID
+	}
+	return nil
+}
+
 // TestR256_AnAppDeletedOnAnotherReplicaIsTornDownByTheLeader asserts that
 // the GC, which runs on whichever replica leads, finds a delete made on
 // another replica — whose TeardownNow signal never reaches it — within
@@ -47,14 +57,29 @@ func TestR256_AnAppDeletedOnAnotherReplicaIsTornDownByTheLeader(t *testing.T) {
 	apps := state.NewApps(db)
 	owner := seedOwner(t, db)
 
+	// An app deleted before the GC starts is torn down by its startup pass,
+	// which lists what awaits teardown before the loop begins. Seeing it torn
+	// down is how this test knows that listing is behind it.
+	before, err := apps.Create(ctx, "before-"+id.New(id.App), id.New(id.App), owner, owner,
+		spec.Source{Type: spec.SourceGit, URL: "https://example.test/app"})
+	require.NoError(t, err)
+	require.NoError(t, apps.Archive(ctx, before.ID))
+	torn := teardownSignal{apps: make(chan string, 4)}
+
 	gc := &reconciler.GC{
-		Apps: apps, Registry: noAdapters{}, Logger: zap.NewNop(),
+		Apps: apps, Registry: noAdapters{}, Logger: zap.NewNop(), Auditor: torn,
 		Interval: time.Hour, TeardownEvery: 20 * time.Millisecond,
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() { gc.Run(runCtx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
+	select {
+	case got := <-torn.apps:
+		require.Equal(t, before.ID, got)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the GC's startup pass did not tear down an app deleted before it")
+	}
 
 	// Deleted after the GC's startup pass, with no signal to it.
 	app, err := apps.Create(ctx, "elsewhere-"+id.New(id.App), id.New(id.App), owner, owner,
@@ -64,6 +89,48 @@ func TestR256_AnAppDeletedOnAnotherReplicaIsTornDownByTheLeader(t *testing.T) {
 
 	require.Eventually(t, func() bool { return !awaitingTeardown(t, apps, app.ID) }, 10*time.Second, 20*time.Millisecond,
 		"the leader's GC finds the delete by polling")
+}
+
+// TestR256_AGCLeftAtItsDefaultPollStillAnswersADeleteAtOnce asserts that a GC
+// with no TeardownEvery set — the slow default, ten seconds — still tears a
+// delete down as soon as the replica that took it signals, and stops with its
+// context.
+func TestR256_AGCLeftAtItsDefaultPollStillAnswersADeleteAtOnce(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	apps := state.NewApps(db)
+	owner := seedOwner(t, db)
+
+	now := make(chan struct{}, 1)
+	torn := teardownSignal{apps: make(chan string, 4)}
+	gc := &reconciler.GC{
+		Apps: apps, Registry: noAdapters{}, Logger: zap.NewNop(), Auditor: torn,
+		Interval: time.Hour, TeardownNow: now,
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { gc.Run(runCtx); close(done) }()
+
+	app, err := apps.Create(ctx, "signaled-"+id.New(id.App), id.New(id.App), owner, owner,
+		spec.Source{Type: spec.SourceGit, URL: "https://example.test/app"})
+	require.NoError(t, err)
+	require.NoError(t, apps.Archive(ctx, app.ID))
+	now <- struct{}{}
+
+	select {
+	case got := <-torn.apps:
+		require.Equal(t, app.ID, got)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a signaled delete waited for the poll")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not end with its context")
+	}
 }
 
 // TestR256_TheReplicaThatTookADeleteTearsItDownItself asserts that the
