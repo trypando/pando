@@ -745,7 +745,7 @@ without touching core (O-6 resolved).
 
 **R-226 [D]** The audit log is in core and cannot be written or rewritten by an adapter (R-027).
 
-**R-227 [P]** Auditable events: every spec mutation, every grant change, every deploy and every step of a deploy approval (R-159), every secret write, every token creation and use, every exec session, every policy change, every delete, every use of an app — once per visit, anonymous visitors included unless host policy turns that off — and every call that sends data to an AI adapter's provider, naming the function, the adapter and the model but not what was sent (R-337).
+**R-227 [P]** Auditable events: every spec mutation, every grant change, every deploy and every step of a deploy approval (R-159), every secret write, every token creation and use, every exec session, every policy change, every delete, every use of an app — once per visit, anonymous visitors included unless host policy turns that off — every authorization denial — a visitor who is not signed in being refused an app included, unless host policy turns that off (issue #72) — and every call that sends data to an AI adapter's provider, naming the function, the adapter and the model but not what was sent (R-337).
 
 **R-228 [P]** Exec sessions are audited as a distinct event type — principal, app, workload, start and end. Command contents are **not** recorded. **[O-7]**
 

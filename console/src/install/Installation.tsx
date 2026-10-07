@@ -244,6 +244,7 @@ interface PolicyDoc {
 
   disable_ai_screening?: boolean;
   disable_anonymous_use_audit?: boolean;
+  disable_anonymous_denial_audit?: boolean;
 
   disable_password_sign_in?: boolean;
   disable_jit_provisioning?: boolean;
@@ -562,6 +563,18 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               label="Don't record visits from people who aren't signed in"
               description="Each visit to an app is recorded in the audit log. With this on, only visits by signed-in people and tokens are."
               onChange={(e) => edit({ disable_anonymous_use_audit: e.target.checked })}
+            />
+          </Fixed>
+
+          {/* Design 06 §6: every denial is audited, including a visitor who
+              isn't signed in reaching a private app. Anyone can cause those. */}
+          <Fixed field="disable_anonymous_denial_audit">
+            <Switch
+              checked={current.disable_anonymous_denial_audit ?? false}
+              disabled={locked('disable_anonymous_denial_audit')}
+              label="Don't record refusals of people who aren't signed in"
+              description="Each refused visit to a private app is recorded in the audit log. With this on, only refusals of signed-in people and tokens are."
+              onChange={(e) => edit({ disable_anonymous_denial_audit: e.target.checked })}
             />
           </Fixed>
 

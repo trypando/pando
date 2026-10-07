@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"strings"
@@ -77,12 +78,9 @@ func (t *Tokens) Create(ctx context.Context, kind, name, ownerUserID, createdBy 
 	}
 	plaintext := secret.New(base64.RawURLEncoding.EncodeToString(raw))
 
-	digest, err := hash.New(plaintext)
-	if err != nil {
-		return Issued{}, errs.Wrap(errs.Internal, "Could not generate a token.", err)
-	}
+	digest := apiTokenDigest(plaintext)
 
-	_, err = t.db.Exec(ctx, `
+	_, err := t.db.Exec(ctx, `
 		INSERT INTO tokens (id, kind, name, hash, owner_user_id, created_by, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		tokenID, kind, name, digest, nullable(ownerUserID), createdBy, expiresAt)
@@ -98,9 +96,8 @@ func (t *Tokens) Create(ctx context.Context, kind, name, ownerUserID, createdBy 
 
 // Authenticate resolves a presented token string.
 //
-// The string is "<id>.<secret>". Splitting on the ID lets the hash be looked up
-// directly rather than compared against every row — an argon2id verify per
-// stored token would make authentication cost grow with the number of tokens.
+// The string is "<id>.<secret>". Splitting on the ID lets the digest be looked
+// up directly rather than compared against every row.
 //
 // Every failure returns the same error. Distinguishing "no such token" from
 // "wrong secret" would let a caller enumerate valid token IDs.
@@ -116,11 +113,13 @@ func (t *Tokens) Authenticate(ctx context.Context, presented secret.Value) (Toke
 		owner     *string
 		expiresAt *time.Time
 		revokedAt *time.Time
+		stale     bool
 	)
 	err := t.db.QueryRow(ctx, `
-		SELECT id, kind, name, hash, owner_user_id, expires_at, revoked_at
-		FROM tokens WHERE id = $1`, tokenID).
-		Scan(&tok.ID, &tok.Kind, &tok.Name, &digest, &owner, &expiresAt, &revokedAt)
+		SELECT id, kind, name, hash, owner_user_id, expires_at, revoked_at,
+		       last_used_at IS NULL OR last_used_at < now() - make_interval(secs => $2)
+		FROM tokens WHERE id = $1`, tokenID, lastUsedResolution.Seconds()).
+		Scan(&tok.ID, &tok.Kind, &tok.Name, &digest, &owner, &expiresAt, &revokedAt, &stale)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Token{}, errInvalidToken()
 	}
@@ -128,8 +127,9 @@ func (t *Tokens) Authenticate(ctx context.Context, presented secret.Value) (Toke
 		return Token{}, errs.Wrap(errs.Internal, "Could not read the token.", err)
 	}
 
-	ok, verifyErr := hash.Verify(secret.New(plaintext), digest)
-	if verifyErr != nil || !ok {
+	presentedSecret := secret.New(plaintext)
+	ok, rehash := verifyAPIToken(presentedSecret, digest)
+	if !ok {
 		return Token{}, errInvalidToken()
 	}
 
@@ -148,11 +148,67 @@ func (t *Tokens) Authenticate(ctx context.Context, presented secret.Value) (Toke
 	}
 	tok.ExpiresAt = expiresAt
 
-	// R-062. Best effort: a failure to record last use must not deny a valid
-	// request.
-	_, _ = t.db.Exec(ctx, `UPDATE tokens SET last_used_at = now() WHERE id = $1`, tokenID)
+	// A token stored before tokens were SHA-256 (issue #93) is rewritten the
+	// first time it is used, so its next use costs a SHA-256 and not an
+	// argon2id. Only if the row still holds the digest just verified: a
+	// rotation racing this one wins. Best effort, like last use below.
+	if rehash {
+		_, _ = t.db.Exec(ctx, `UPDATE tokens SET hash = $2 WHERE id = $1 AND hash = $3`,
+			tokenID, apiTokenDigest(presentedSecret), digest)
+	}
+
+	// R-062. Written when the stored time is older than lastUsedResolution,
+	// not on every request: a token used in a loop otherwise writes its row
+	// once per call. Best effort: a failure to record last use must not deny a
+	// valid request.
+	if stale {
+		_, _ = t.db.Exec(ctx, `
+			UPDATE tokens SET last_used_at = now()
+			WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - make_interval(secs => $2))`,
+			tokenID, lastUsedResolution.Seconds())
+	}
 
 	return tok, nil
+}
+
+// lastUsedResolution is how stale a token's last_used_at may be before a use
+// writes it again (R-062). The column says when a token was last used to
+// within this, which is what reviewing stale credentials needs.
+const lastUsedResolution = time.Minute
+
+// apiTokenPrefix marks a token digest as SHA-256. A digest without it is an
+// argon2id one, from before issue #93.
+const apiTokenPrefix = "sha256:"
+
+// apiTokenDigest is what the tokens table stores for a token's secret, so a
+// leaked table hands nobody a working token (R-063).
+//
+// SHA-256, not argon2id, which passwords get: the secret is 256 bits Create
+// generated, not anything a person chose, so there is nothing to guess and
+// nothing for a slow hash to slow down — the same reasoning, and the same
+// function, as the passcode unlock token (tokenHash). Unkeyed, like that one:
+// a key would protect a secret nobody can guess from a dump, and would be one
+// more thing every replica and every restored backup has to carry for any
+// token to work. argon2id here cost 64 MiB and tens of milliseconds on every
+// request a token made, and anyone who knew a token's ID could make Pando pay
+// it (issue #93).
+func apiTokenDigest(v secret.Value) string {
+	return apiTokenPrefix + tokenHash(v.Reveal())
+}
+
+// verifyAPIToken reports whether v is the secret a stored digest was made
+// from, and whether that digest is an argon2id one that should be rewritten.
+// Constant time for a SHA-256 digest; argon2id's own comparison is too.
+func verifyAPIToken(v secret.Value, stored string) (ok, rehash bool) {
+	if digest, isSHA := strings.CutPrefix(stored, apiTokenPrefix); isSHA {
+		want := tokenHash(v.Reveal())
+		return subtle.ConstantTimeCompare([]byte(want), []byte(digest)) == 1, false
+	}
+	matched, err := hash.Verify(v, stored)
+	if err != nil || !matched {
+		return false, false
+	}
+	return true, true
 }
 
 // Active returns a token that is neither revoked nor expired, by ID alone.

@@ -148,7 +148,7 @@ The settings are `source_allowlist`, `disabled_verbs`, `agent_disabled_verbs`,
 `deploy_approval_required`, `deploy_approval_apps`, `deploy_approval_count`,
 `deploy_approval_expiry_hours`, `require_backup_before_destroy`, `max_token_lifetime_days`,
 `max_log_disk_bytes`, `allow_cpu_oversubscription`, `allow_memory_oversubscription`,
-`disable_ai_screening`, `disable_anonymous_use_audit`,
+`disable_ai_screening`, `disable_anonymous_use_audit`, `disable_anonymous_denial_audit`,
 `disable_password_sign_in`, `disable_jit_provisioning`, `min_security_score`, `insecure_action`,
 `insecure_grace_hours` and `ignore_unfixable_findings`.
 

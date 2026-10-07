@@ -28,6 +28,7 @@ const LABELS: Record<string, string> = {
   allow_memory_oversubscription: 'Allow more memory to be promised than the runtime has',
   disable_ai_screening: 'Turn off AI screening of deployment plans',
   disable_anonymous_use_audit: "Don't record visits from people who aren't signed in",
+  disable_anonymous_denial_audit: "Don't record refusals of people who aren't signed in",
   min_security_score: 'Minimum security score',
   insecure_action: 'Stop apps that fall below it while running',
   insecure_grace_hours: 'Grace period, in hours',

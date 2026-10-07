@@ -19,8 +19,20 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Security
+
+- **An open websocket outlived a revoked session or a suspended account** (#72). A long-lived
+  connection through the proxy is re-authorized every two minutes, but the check reused who the
+  person was when the connection opened, so signing them out everywhere or suspending them (R-048,
+  R-049) left it open. It now authenticates the connection's session or token again each time, and
+  closes it with a policy-violation close frame when that no longer works.
+
 ### Added
 
+- `disable_anonymous_denial_audit` host policy setting (#72), also settable as
+  `PANDO_POLICY_DISABLE_ANONYMOUS_DENIAL_AUDIT`. Off by default: a visitor who is not signed in being
+  refused a private app is still written to the audit log as `authz.denied`. Turned on, those rows
+  stop; refusals of signed-in people and tokens are always recorded.
 - Event subscriptions (#50). Subscribe to what happens in Pando — deploys started, succeeded and failed,
   app state and health, security scores, shares and grants, backups, sign-ins, policy, adapter health,
   upgrades — on one app or the whole installation, from the console's new **Events** screen,
@@ -146,6 +158,14 @@ Unreleased above it. -->
 
 ### Changed
 
+- API tokens are stored as SHA-256 digests rather than argon2id (#93). A token is 256 random bits
+  Pando made, so the slow hash protected nothing and cost 64 MiB and tens of milliseconds on every
+  request a token made. Existing tokens keep working and are rewritten on their next use; passwords are
+  still argon2id. A token's last-used time is now recorded to the minute rather than written on every
+  request.
+- The proxy reuses its connections to an app instead of opening one per request, finds the app a
+  request is for with one indexed lookup instead of reading every app's spec, and the app screen's
+  permission check reads grants and policy once instead of once per permission (#72).
 - `install.apps.manage` is gone; the **App manager** role holds its thirteen verbs. `install.apps.view`
   now means seeing every app only, and every role that held it also holds `install.apps.logs.read`, so
   what it allowed is unchanged.
@@ -165,6 +185,8 @@ Unreleased above it. -->
 
 ### Fixed
 
+- The identity assertion and `X-Pando-Email` header for somebody signed in with a session carried no
+  email or name (R-054). They now do.
 - **An app that failed did not tell its owner** (#50). The reconciler wrote the notification and had no
   notifier wired to send it. It now goes to the owner on the console, and by email where that is set up.
 - **A security-score warning reached only the console** (#50). It now reaches the owner on every channel

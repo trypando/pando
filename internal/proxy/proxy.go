@@ -109,6 +109,17 @@ type Proxy struct {
 	visits     *visits
 	clock      func() time.Time
 
+	// upstream is the one transport every forwarded request shares, so a
+	// connection to an app is reused rather than dialed per request. It was
+	// built per request, which reused nothing and left each request's idle
+	// socket open for IdleConnTimeout.
+	upstreamOnce sync.Once
+	upstream     *http.Transport
+
+	// reauthEvery is how often a long-lived connection is re-authorized. Zero
+	// is assertion.Lifetime, which is what it is everywhere but in a test.
+	reauthEvery time.Duration
+
 	// LoginPath is where an unauthenticated caller is sent.
 	//
 	// It has to be a path Pando answers on *every* hostname, not only its own.
@@ -305,7 +316,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target *url.URL,
 
 		// No response body limit, deliberately (R-170): large uploads and
 		// downloads must pass through.
-		Transport: transport(),
+		Transport: p.transport(),
 	}
 
 	// Long-lived connections are re-authorized for as long as they stay open
@@ -314,9 +325,8 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target *url.URL,
 	rp.ServeHTTP(&reauthorizing{
 		ResponseWriter: w,
 		proxy:          p,
-		principal:      principal,
+		request:        r,
 		appID:          appIDOf(r),
-		ctx:            r.Context(),
 	}, r)
 }
 
@@ -518,14 +528,27 @@ func firstSegment(path string) string {
 	return trimmed
 }
 
-func transport() *http.Transport {
+// transport returns the transport shared by every request this proxy forwards.
+func (p *Proxy) transport() *http.Transport {
+	p.upstreamOnce.Do(func() { p.upstream = newTransport() })
+	return p.upstream
+}
+
+// newTransport is how the proxy reaches apps. One per Proxy: an app's
+// connections are kept and reused across requests, up to
+// maxIdleConnsPerHost each, because every request to an app goes to the same
+// address and a busy app would otherwise dial for each one. Go's default of
+// two idle connections per host is what an HTTP client talking to many hosts
+// wants, not a reverse proxy talking to a few hosts a great deal.
+func newTransport() *http.Transport {
 	return &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		MaxIdleConns:        100,
+		MaxIdleConns:        1024,
+		MaxIdleConnsPerHost: maxIdleConnsPerHost,
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
 
@@ -534,3 +557,7 @@ func transport() *http.Transport {
 		DisableCompression: true,
 	}
 }
+
+// maxIdleConnsPerHost is how many idle connections to one app are kept for
+// reuse. A host here is one app's primary workload.
+const maxIdleConnsPerHost = 64

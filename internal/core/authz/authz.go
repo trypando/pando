@@ -108,6 +108,10 @@ type Grant struct {
 	PrincipalKind string
 	PrincipalID   string
 	RoleID        string
+
+	// Role is the grant's role, when the store read it with the grant. Nil
+	// means it did not, and the authorizer asks Store.Role for it.
+	Role *Role
 }
 
 // Policy is host policy, evaluated before grants.
@@ -123,6 +127,23 @@ type Policy interface {
 	// boundary. Enforcement has to live where every surface passes through it,
 	// and this is that place.
 	Allows(ctx context.Context, p Principal, verb Verb, appID string) error
+}
+
+// Snapshotter is a Policy that can answer several questions from one read of
+// its document. AppVerbs asks policy about every app verb for one screen, and
+// reading the document once per verb was most of what that cost.
+//
+// The snapshot lives for one call and is never kept: policy applies to a
+// running install the moment it changes (R-274), so a snapshot held across
+// requests would be the cache R-274 rules out.
+type Snapshotter interface {
+	Snapshot(ctx context.Context) (Policy, error)
+}
+
+// DenialAuditPolicy is a Policy that says whether anonymous denials on the
+// data plane are audited. A policy that does not implement it audits them.
+type DenialAuditPolicy interface {
+	AuditsAnonymousDenials(ctx context.Context) bool
 }
 
 // Auditor records authorization outcomes.
@@ -194,14 +215,20 @@ func auditsReach(verb Verb) bool {
 // the same question CheckControl asks for each — so what the console shows as
 // editable is what the API will allow, and cannot drift from it. Denials are
 // not audited: this is somebody looking at a screen, not trying anything.
+//
+// The question is asked once per app verb, with the same rules as control,
+// but the principal's status, the policy document, the grants and their roles
+// are read once for the whole call rather than once per verb (lookups). None
+// of it outlives the call (R-274).
 func (a *Authorizer) AppVerbs(ctx context.Context, p Principal, appID string) ([]Verb, error) {
 	out := []Verb{}
+	m := &lookups{}
 	for _, verb := range AppVerbs() {
 		if p.Kind == KindSystem {
 			out = append(out, verb)
 			continue
 		}
-		_, denial, err := a.control(ctx, p, appID, verb)
+		_, denial, err := a.controlWith(ctx, m, p, appID, verb)
 		if err != nil {
 			return nil, err
 		}
@@ -210,6 +237,114 @@ func (a *Authorizer) AppVerbs(ctx context.Context, p Principal, appID string) ([
 		}
 	}
 	return out, nil
+}
+
+// lookups holds what control reads, for one call that asks it about several
+// verbs. Each is read the first time a verb needs it, so a call asks the store
+// for nothing a per-verb check would not have asked for. A nil *lookups reads
+// everything fresh, which is what every single-verb check does.
+type lookups struct {
+	principalDone bool
+	principalErr  error
+
+	policyDone bool
+	policy     Policy
+	policyErr  error
+
+	controlDone bool
+	control     []Grant
+
+	installDone bool
+	install     []Grant
+
+	roles map[string]Role
+}
+
+// checkPrincipalWith runs steps 1–4, once per lookups.
+func (a *Authorizer) checkPrincipalWith(ctx context.Context, m *lookups, p Principal) error {
+	if m == nil {
+		return a.checkPrincipal(ctx, p)
+	}
+	if !m.principalDone {
+		m.principalErr = a.checkPrincipal(ctx, p)
+		m.principalDone = true
+	}
+	return m.principalErr
+}
+
+// policyAllows runs step 5. With lookups, the document is read once: through
+// a snapshot when the policy offers one, and a failure to read it denies every
+// verb, as Allows would have for each.
+func (a *Authorizer) policyAllows(ctx context.Context, m *lookups, p Principal, verb Verb, appID string) error {
+	if a.policy == nil {
+		return nil
+	}
+	if m == nil {
+		return a.policy.Allows(ctx, p, verb, appID)
+	}
+	if !m.policyDone {
+		m.policy = a.policy
+		if s, ok := a.policy.(Snapshotter); ok {
+			m.policy, m.policyErr = s.Snapshot(ctx)
+		}
+		m.policyDone = true
+	}
+	if m.policyErr != nil {
+		return m.policyErr
+	}
+	return m.policy.Allows(ctx, p, verb, appID)
+}
+
+func (a *Authorizer) controlGrants(ctx context.Context, m *lookups, p Principal, appID string) ([]Grant, error) {
+	if m == nil {
+		return a.store.ControlGrantsFor(ctx, appID, p)
+	}
+	if !m.controlDone {
+		grants, err := a.store.ControlGrantsFor(ctx, appID, p)
+		if err != nil {
+			return nil, err
+		}
+		m.control, m.controlDone = grants, true
+	}
+	return m.control, nil
+}
+
+func (a *Authorizer) installGrants(ctx context.Context, m *lookups, p Principal) ([]Grant, error) {
+	if m == nil {
+		return a.store.InstallGrantsFor(ctx, p)
+	}
+	if !m.installDone {
+		grants, err := a.store.InstallGrantsFor(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		m.install, m.installDone = grants, true
+	}
+	return m.install, nil
+}
+
+// roleOf returns a grant's role: the one read with the grant when the store
+// joined it, else the store's answer, kept for the rest of the call.
+func (a *Authorizer) roleOf(ctx context.Context, m *lookups, g Grant) (Role, error) {
+	if g.Role != nil {
+		return *g.Role, nil
+	}
+	if m != nil {
+		if r, ok := m.roles[g.RoleID]; ok {
+			return r, nil
+		}
+	}
+	r, err := a.store.Role(ctx, g.RoleID)
+	if err != nil {
+		return Role{}, err
+	}
+	if m != nil {
+		if m.roles == nil {
+			m.roles = map[string]Role{}
+		}
+		m.roles[g.RoleID] = r
+	}
+	return r, nil
 }
 
 // Allows reports whether CheckControl would allow the verb, without auditing a
@@ -268,7 +403,7 @@ func (a *Authorizer) AllowsInstall(ctx context.Context, p Principal, verb Verb) 
 		return false, err
 	}
 	for _, g := range grants {
-		role, err := a.store.Role(ctx, g.RoleID)
+		role, err := a.roleOf(ctx, nil, g)
 		if err != nil {
 			return false, err
 		}
@@ -300,8 +435,15 @@ type reach struct {
 // denial, or a failure to evaluate at all, and audits neither. When an
 // install grant allowed the verb rather than one on the app, via says which.
 func (a *Authorizer) control(ctx context.Context, p Principal, appID string, verb Verb) (via *reach, denial, failure error) {
+	return a.controlWith(ctx, nil, p, appID, verb)
+}
+
+// controlWith is control reading through m, which AppVerbs shares across
+// every verb it asks about. The rules are the same whether m is nil or not;
+// only how often the store is asked differs.
+func (a *Authorizer) controlWith(ctx context.Context, m *lookups, p Principal, appID string, verb Verb) (via *reach, denial, failure error) {
 	// Steps 1–4: the principal itself.
-	if err := a.checkPrincipal(ctx, p); err != nil {
+	if err := a.checkPrincipalWith(ctx, m, p); err != nil {
 		return nil, err, nil
 	}
 
@@ -309,19 +451,17 @@ func (a *Authorizer) control(ctx context.Context, p Principal, appID string, ver
 	// install-wide denies the owner too (R-272) — and anyone holding it
 	// install-wide, because policy is asked about the app verb, never about
 	// the install verb standing for it.
-	if a.policy != nil {
-		if err := a.policy.Allows(ctx, p, verb, appID); err != nil {
-			return nil, err, nil
-		}
+	if err := a.policyAllows(ctx, m, p, verb, appID); err != nil {
+		return nil, err, nil
 	}
 
 	// Steps 6–7: grants, then the verb.
-	grants, err := a.store.ControlGrantsFor(ctx, appID, p)
+	grants, err := a.controlGrants(ctx, m, p, appID)
 	if err != nil {
 		return nil, nil, err
 	}
 	for _, g := range grants {
-		role, err := a.store.Role(ctx, g.RoleID)
+		role, err := a.roleOf(ctx, m, g)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -334,12 +474,12 @@ func (a *Authorizer) control(ctx context.Context, p Principal, appID string, ver
 	// install verbs that bear on an app are each app verb's counterpart in
 	// everyApp — nothing else in an install role is read here, and only the
 	// one counterpart of this verb is looked for.
-	install, err := a.store.InstallGrantsFor(ctx, p)
+	install, err := a.installGrants(ctx, m, p)
 	if err != nil {
 		return nil, nil, err
 	}
 	for _, g := range install {
-		role, err := a.store.Role(ctx, g.RoleID)
+		role, err := a.roleOf(ctx, m, g)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -393,7 +533,7 @@ func (a *Authorizer) CheckInstall(ctx context.Context, p Principal, verb Verb) e
 		return err
 	}
 	for _, g := range grants {
-		role, err := a.store.Role(ctx, g.RoleID)
+		role, err := a.roleOf(ctx, nil, g)
 		if err != nil {
 			return err
 		}
@@ -464,8 +604,25 @@ func (a *Authorizer) CheckData(ctx context.Context, p Principal, appID string) e
 		return errs.New(errs.PermPasscodeRequired, "This app asks for a passcode.")
 	}
 
-	return a.deny(ctx, p, appID, "app.use",
-		errs.New(errs.PermDenied, "You do not have access to this app."))
+	denied := errs.New(errs.PermDenied, "You do not have access to this app.")
+	if p.Kind == KindAnonymous && !a.auditsAnonymousDenials(ctx) {
+		// Anyone can cause this one, once per request, without an account:
+		// every crawler and stray link to a private app does. Host policy may
+		// stop recording it (disable_anonymous_denial_audit). A denial to
+		// anyone signed in is always recorded.
+		return denied
+	}
+	return a.deny(ctx, p, appID, "app.use", denied)
+}
+
+// auditsAnonymousDenials reports whether host policy wants an anonymous
+// data-plane denial audited. Yes unless the policy says otherwise: when it
+// cannot say, keep the record.
+func (a *Authorizer) auditsAnonymousDenials(ctx context.Context) bool {
+	if d, ok := a.policy.(DenialAuditPolicy); ok {
+		return d.AuditsAnonymousDenials(ctx)
+	}
+	return true
 }
 
 // checkPrincipal runs steps 1–4: status, token validity, and token derivation.

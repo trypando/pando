@@ -97,13 +97,17 @@ func (a *Authenticator) fromSession(ctx context.Context, sessionID string) (auth
 		return authz.Anonymous(), err
 	}
 
+	// Email and name go into the assertion an app receives (R-054). Display
+	// detail only: authorization reads ID and Status, never these.
 	return authz.Principal{
-		Kind:      authz.KindUser,
-		ID:        user.ID,
-		UserID:    user.ID,
-		Groups:    groups,
-		AdapterID: user.AdapterID,
-		Status:    user.Status,
+		Kind:        authz.KindUser,
+		ID:          user.ID,
+		UserID:      user.ID,
+		Groups:      groups,
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		AdapterID:   user.AdapterID,
+		Status:      user.Status,
 	}, nil
 }
 
