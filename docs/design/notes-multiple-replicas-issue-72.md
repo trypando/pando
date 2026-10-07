@@ -39,7 +39,7 @@ replica to the new image with whatever runs them.
 |---|---|---|
 | One Postgres for all replicas | All state is there: sessions, tokens, specs, audit, the replica table | the `postgres` service |
 | The same Docker daemon | Runtime, builder and services adapters are Docker adapters on the local socket | the socket, mounted as before |
-| The same `/var/lib/pando` | The secrets key, uploaded sources, local backups, build cache, audit archives and Traefik's dynamic config are files there (below) | the `pando-data` volume, shared |
+| The same `/var/lib/pando` | The secrets key, the API token key, uploaded sources, local backups, build cache, audit archives and Traefik's dynamic config are files there (below) | the `pando-data` volume, shared |
 | A load balancer with a health check on `/healthz` | Requests may land on any replica; no stickiness is needed | `lb` (HAProxy, `test/replicas/haproxy.cfg`) |
 | The app port range forwarded too, if port-mode routing is used | Every replica listens on every allocated port | `lb` publishes it |
 | `PANDO_SERVER_ADVERTISE_URL` reachable between replicas | A deploy's live log is read from the replica running the deploy | default `http://<hostname>:8080`, which resolves on a Compose network; in Kubernetes set `http://$(POD_IP):8080` |
@@ -47,9 +47,10 @@ replica to the new image with whatever runs them.
 **Shared files rather than object storage [P].** Moving uploads, backup staging and keys into
 Postgres or an object store would remove the shared-volume prerequisite at the cost of a storage
 adapter category Pando does not have. Every replica in the supported topology is on one Docker host,
-where a shared named volume costs nothing, so the volume is the requirement. The secrets key is the
-one file that must never move into Postgres — R-190's threat is a leaked database dump — and it is
-now checked (below).
+where a shared named volume costs nothing, so the volume is the requirement. The secrets key and the
+API token key are the two files that must never move into Postgres — the threat each defends against
+is a leaked database dump (R-190, R-063) — and both are now checked at start (below, and design 02
+§2.1).
 
 ## What broke, and what changed
 
@@ -163,11 +164,15 @@ the first of a stack; each later PR is based on the one before, and #72 closes w
 - **Capacity is not oversubscribed by default** (R-242), and host policy or config may allow CPU and
   memory oversubscription. Disk is never oversubscribed: it is not a reservation, and a full disk
   stops everything.
-- **API tokens are hashed with SHA-256**, not argon2id. They are 256-bit random secrets Pando
-  generates, so a slow hash adds nothing but cost (about 64 MiB per concurrent request). Passwords
-  stay argon2id. Decided as HMAC-SHA-256; built unkeyed, following the passcode unlock token's
-  precedent, because a key adds no protection to a 256-bit secret and would have to travel with every
-  replica and every DR bundle (design 02 §2.1). Issue #93.
+- **API tokens are stored as HMAC-SHA-256 under a server-side key**, not argon2id (the product
+  owner's decision). They are 256-bit random secrets Pando generates, so a slow hash adds nothing but
+  cost (about 64 MiB per concurrent request). The key is 32 random bytes in a file outside the
+  database (`/var/lib/pando/token.key`, `PANDO_SERVER_TOKEN_KEY_PATH`), so a database dump alone
+  cannot be used to test a guess at any token. Every replica must hold the same key: each compares
+  it at start against `token_key_check` and refuses to start if it differs, and the DR bundle carries
+  it beside the secrets key. Older argon2id and unkeyed `sha256:` digests still verify and are
+  rewritten on first use. Passwords stay argon2id; the passcode unlock token stays unkeyed SHA-256
+  (design 02 §2.1). Issue #93.
 - **Anonymous data-plane denials stay audited by default**, and host policy or config may turn that
   off, since anyone can cause one write per request.
 

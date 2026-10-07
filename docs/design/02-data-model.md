@@ -145,7 +145,7 @@ CREATE TABLE tokens (
     id            text PRIMARY KEY,          -- tok_...
     kind          text NOT NULL,             -- delegated | account   (R-058, R-060)
     name          text NOT NULL,
-    hash          text NOT NULL,             -- 'sha256:' || SHA-256 of the secret; secret shown once (R-063)
+    hash          text NOT NULL,             -- 'hmac-sha256:' || HMAC-SHA-256(token key, secret); secret shown once (R-063)
     owner_user_id text REFERENCES users(id), -- delegated: required. account: NULL (R-060)
     created_by    text NOT NULL,             -- principal that minted it
     expires_at    timestamptz,               -- NULL = never; policy may forbid (R-061)
@@ -156,15 +156,25 @@ CREATE TABLE tokens (
 CREATE INDEX ON tokens (owner_user_id) WHERE revoked_at IS NULL;
 ```
 
-**[D] A token's secret is stored as a SHA-256 digest, not argon2id** (issue #93). The secret is 256
-random bits Pando generated, so there is nothing to guess and nothing for a slow hash to slow down —
-the reasoning, and the function, of the passcode unlock token. argon2id cost 64 MiB and tens of
-milliseconds on every request a token made, and anyone who knew a token's ID could make Pando pay it.
-Unkeyed rather than an HMAC: a key protects nothing a 256-bit secret does not already, and would be
-one more thing every replica and every restored DR bundle must carry for any token to work. A token
-stored as argon2id before the change still verifies and is rewritten as SHA-256 on its first use.
-Passwords stay argon2id. `last_used_at` is written when it is more than a minute old, not on every
-request (R-062).
+**[D] A token's secret is stored as HMAC-SHA-256 under a server-side key, not argon2id** (issue
+#93; the product owner's decision). argon2id cost 64 MiB and tens of milliseconds on every request a
+token made, and anyone who knew a token's ID could make Pando pay it; the secret is 256 random bits
+Pando generated, not something a person chose, so a fast function is enough. The key is what keeps a
+database dump alone — a copied Postgres backup, a read-only SQL injection — from being usable to test
+a guess against any row: that also takes the key file.
+
+The key is 32 random bytes in a file, `server.token_key_path` (`PANDO_SERVER_TOKEN_KEY_PATH`), default
+`/var/lib/pando/token.key`, beside the secrets key. It is core's own key (`internal/core/tokenkey`),
+not an adapter's. Pando creates it on first start, 0600, written beside the path and linked into
+place so replicas starting together on one shared volume end with one key. Every replica must hold
+the same key: `token_key_check` (§2.10) records HMAC(key, a fixed label), and a replica whose key
+gives a different value refuses to start. The DR bundle carries the key as `token.key` and a restore
+writes it back (R-212); without it every restored token is unusable.
+
+A digest written before this — argon2id from before issue #93, or `sha256:` from an earlier unkeyed
+build for it — still verifies, in constant time, and is rewritten as `hmac-sha256:` on its first
+successful use. Passwords stay argon2id. The passcode unlock token stays unkeyed SHA-256.
+`last_used_at` is written when it is more than a minute old, not on every request (R-062).
 
 **[D]** A delegated token has no grants of its own. Authorization resolves through `owner_user_id` live (R-059), so an owner's revocation is the token's revocation with no cascade to write.
 
@@ -748,6 +758,7 @@ Migration 000045. Several `pando` processes may share one database; the verdict 
 | `deployments.replica_id`, `detections.replica_id` | Which replica is running the work | Work whose replica is stopped or silent past `state.ReplicaStale` is recorded as interrupted; a live replica's never is |
 | `passcode_failures` | Wrong passcodes per app and client address (R-075a) | Pruned past the window by the leader |
 | `secrets_canary` | A random value sealed with the install's secrets key, and its SHA-256 | Singleton. Every replica opens it at start and refuses to run with a key that cannot (R-190) |
+| `token_key_check` | HMAC-SHA-256 of a fixed label under the install's API token key (migration 000050) | Singleton. Every replica compares its own at start and refuses to run with a key that differs (R-063, §2.1) |
 | `cluster_signals` | `restart_requested_at`, which every replica started earlier obeys | Singleton (R-015) |
 | `pando_private.role_passwords` | The passwords of `pando_app` and `pando_audit_archiver`, so replicas agree on them | **Outside `public`, with no grant to anyone but the owner** — the application role must not be able to read the archiver's password (R-348). Created by bootstrap, not a migration, and excluded from the DR bundle's `pg_dump` |
 
