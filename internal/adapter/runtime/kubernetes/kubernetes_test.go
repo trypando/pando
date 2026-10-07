@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -267,6 +268,55 @@ func TestR194_AWorkloadsEnvironmentIsInASecretNotThePodSpec(t *testing.T) {
 	s, err := cs.CoreV1().Secrets(testNS).Get(ctx, envSecretName("web"), metav1.GetOptions{})
 	require.NoError(t, err)
 	require.Equal(t, "postgres://u:hunter2@db/app", string(s.Data["DATABASE_URL"]))
+}
+
+// TestR194_ThePlanDigestCannotBeCheckedWithoutTheEnvironmentSecret asserts
+// the digest on the pod, which more can read than can read Secrets, tests no
+// guess at an environment value without the key on the environment's own
+// Secret — and still replaces the pod when the environment changes.
+func TestR194_ThePlanDigestCannotBeCheckedWithoutTheEnvironmentSecret(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testAdapter(t, nil)
+	_, err := a.Apply(ctx, webPlan())
+	require.NoError(t, err)
+	first := listPods(t, cs, testNS, "web")[0]
+	setStatus(t, cs, first, running(true))
+
+	s, err := cs.CoreV1().Secrets(testNS).Get(ctx, envSecretName("web"), metav1.GetOptions{})
+	require.NoError(t, err)
+	key, err := base64.StdEncoding.DecodeString(s.Annotations[annoEnvKey])
+	require.NoError(t, err)
+	require.Len(t, key, envKeySize)
+
+	w := webPlan().Workloads[0]
+	env := map[string]string{"DATABASE_URL": "postgres://u:hunter2@db/app"}
+	got := first.Annotations[annoDigest]
+	require.Equal(t, planDigest(w, env, key, "", ""), got, "the digest is checkable with the Secret's key")
+	require.NotEqual(t, planDigest(w, env, make([]byte, envKeySize), "", ""), got, "and not without it")
+
+	// The same environment keeps the key, so the running pod is left alone.
+	_, err = a.Apply(ctx, webPlan())
+	require.NoError(t, err)
+	require.Equal(t, first.Name, listPods(t, cs, testNS, "web")[0].Name)
+	s, err = cs.CoreV1().Secrets(testNS).Get(ctx, envSecretName("web"), metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, base64.StdEncoding.EncodeToString(key), s.Annotations[annoEnvKey])
+
+	// A changed value replaces the pod.
+	changed := webPlan()
+	changed.Workloads[0].Env["DATABASE_URL"] = secret.New("postgres://u:rotated@db/app")
+	_, err = a.Apply(ctx, changed)
+	require.NoError(t, err)
+	second := listPods(t, cs, testNS, "web")[0]
+	require.NotEqual(t, first.Name, second.Name)
+	setStatus(t, cs, second, running(true))
+
+	// A Secret deleted by hand means a new key: one restart, never a pod
+	// left running an environment nobody can confirm.
+	require.NoError(t, cs.CoreV1().Secrets(testNS).Delete(ctx, envSecretName("web"), metav1.DeleteOptions{}))
+	_, err = a.Apply(ctx, changed)
+	require.NoError(t, err)
+	require.NotEqual(t, second.Name, listPods(t, cs, testNS, "web")[0].Name)
 }
 
 // TestR194_ThePullCredentialIsANamespaceSecretRewrittenEachDeploy asserts
