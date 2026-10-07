@@ -61,13 +61,16 @@ type Queue struct {
 
 // Enqueue queues a detection for an app — marked running, so the first poll
 // cannot read the previous outcome as this one's — and tells this replica's
-// queue to look now.
-func (q *Queue) Enqueue(ctx context.Context, appID string) error {
-	if err := q.Detections.Start(ctx, appID); err != nil {
-		return err
+// queue to look now. It returns the detection as queued, from the statement
+// that queued it (state.Detections.Queue): any replica may claim and finish it
+// the moment it is written, and a later read could return that outcome.
+func (q *Queue) Enqueue(ctx context.Context, appID string) (state.Detection, error) {
+	d, err := q.Detections.Queue(ctx, appID)
+	if err != nil {
+		return state.Detection{}, err
 	}
 	q.pool.Kick()
-	return nil
+	return d, nil
 }
 
 // Running is how many detections this replica is running now.

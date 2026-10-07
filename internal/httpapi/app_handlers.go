@@ -211,7 +211,7 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 	// which is R-022's explicit re-detection doing exactly what it is for.
 	pending := app.Source.Type == spec.SourceUpload && app.Source.UploadID == ""
 	if s.Detector != nil && s.DetectionQueue != nil && app.Source.Type != "" && !pending {
-		if err := s.DetectionQueue.Enqueue(r.Context(), app.ID); err != nil {
+		if _, err := s.DetectionQueue.Enqueue(r.Context(), app.ID); err != nil {
 			// The app exists; a detection that could not be queued is one
 			// the person can start again from the app's page.
 			s.Logger.Warn("could not queue detection", zap.String("app_id", app.ID), zap.Error(err))
