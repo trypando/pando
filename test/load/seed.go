@@ -435,9 +435,19 @@ func (s *seeder) realApp(ctx context.Context, c *Client, cred Credential, k int)
 		// endpoint allocates one (design 03 §4.2), and only an allocated port
 		// has a listener on every replica. Without this every request by port
 		// was refused at the balancer.
+		//
+		// The routing endpoint writes a new revision with the port in it and
+		// leaves the pin alone, as an address change waits for a deploy; the
+		// new revision is pinned so the deploy below runs it.
+		var moved struct {
+			Revision int `json:"revision"`
+		}
 		if _, err := c.JSON(ctx, http.MethodPut, "/apps/"+app+"/routing", cred,
-			`{"adapter_ref":"rte_loopback","mode":"port","confirm":true}`, nil); err != nil {
+			`{"adapter_ref":"rte_loopback","mode":"port","confirm":true}`, &moved); err != nil {
 			return "", fmt.Errorf("allocating a port for %s: %w", name, err)
+		}
+		if _, err := c.JSON(ctx, http.MethodPost, fmt.Sprintf("/apps/%s/specs/%d/pin", app, moved.Revision), cred, "", nil); err != nil {
+			return "", err
 		}
 	}
 	var dep struct {
