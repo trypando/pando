@@ -93,6 +93,35 @@ func TestR022_ARerunRunsInTheBackgroundAndRecordsItsFailure(t *testing.T) {
 	require.Equal(t, int32(1), detector.detected.Load())
 }
 
+// TestR022_ARerunAnswersQueuedEvenWhenItFailsAtOnce asserts R-022's "returns
+// at once" holds against the queue (issue #72): the 202 describes the request.
+// A detection a replica claims and fails the instant it is queued used to be
+// read back failed between the two, which CI caught intermittently.
+func TestR022_ARerunAnswersQueuedEvenWhenItFailsAtOnce(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+	appID := i.createApp(admin, "notes")
+	i.Server.Detector = &fakeDetector{detectErr: errs.New(errs.ValidInvalid, "The repository could not be cloned.")}
+
+	for n := range 40 {
+		got := i.do(admin, http.MethodPost, "/apps/"+appID+"/detection/rerun", map[string]any{})
+		require.Equal(t, http.StatusAccepted, got.Code, got.String())
+		var started struct {
+			Status string `json:"status"`
+		}
+		got.JSON(t, &started)
+		require.Equal(t, state.DetectionRunning, started.Status, "rerun %d answered with the outcome, not the request", n)
+
+		// Let it finish before the next one, so each rerun races its own
+		// detection rather than queueing behind the last.
+		require.Eventually(t, func() bool {
+			d, err := state.NewDetections(i.db).Get(context.Background(), appID)
+			return err == nil && d.Status == state.DetectionFailed
+		}, 10*time.Second, 5*time.Millisecond)
+	}
+}
+
 // TestR338_AnAnswerThatCannotBecomeASpecIsRefusedWhenGiven asserts R-338's
 // counterpart for a person's answer. A build_method answer naming no reading a
 // detector made is refused at once, rather than recorded and refused at accept
