@@ -122,7 +122,7 @@ func TestR156_DecisionsAreOnePerPersonAndTheRestartLeavesRequestsAlone(t *testin
 	require.WithinDuration(t, expires, *got.ApprovalExpiresAt, time.Second)
 	require.Equal(t, 1, got.SpecRevision)
 
-	_, err = deployments.AbandonInFlight(ctx)
+	_, err = deployments.RecoverInFlight(ctx)
 	require.NoError(t, err)
 	got, _, err = deployments.ByID(ctx, dep.ID)
 	require.NoError(t, err)

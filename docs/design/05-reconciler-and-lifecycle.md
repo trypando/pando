@@ -258,7 +258,28 @@ distinction, and both were already observed.
 
 ## 3. Deployment
 
-A deployment is a foreground operation, not the reconciler's work. The reconciler skips apps in `deploying`.
+A deployment is an operation somebody asked for, not the reconciler's work. The reconciler skips apps in `deploying`.
+
+**[D] Deployments are queued (O-32, issue #72).** Steps 1–7 run in the request. A deploy that passes
+them is recorded `pending` with no replica and the request returns 202; steps 8–16 run when a replica's
+deploy queue claims it (`FOR UPDATE SKIP LOCKED`, `deploy.Queue`). Each replica runs at most
+`work.deploys` at once **[P: one per CPU, at least two]**, so N replicas run N times as many and none
+takes on more than it can build. Detection is queued the same way (`detection.Queue`,
+`work.detections`). An app still has at most one deploy in flight — queued counts — and a second is
+refused, as before (§5's reasoning). A queued deploy survives a restart of the replica that took the
+request: nothing is lost until something claims it.
+
+**[D] A deploy whose replica stops is resumed, not failed.** The claimant's heartbeat is the lease. The
+leader's sweeper first records a replica silent past `state.ReplicaStale` as stopped (so one that was only
+paused restarts at its next heartbeat instead of carrying on), then puts that replica's claimed deploys
+back in the queue, where another replica starts them again from step 8. That is safe because every step
+before the commit repeats cleanly: fetching a pinned commit and building it give the same image, a scan of
+the same source is reused, provisioning finds the instance it made, and applying converges on the spec
+whatever an interrupted apply left behind (recreate, R-144). After `state.MaxAttempts` (3) claims the deploy
+is recorded as interrupted instead, so a build that takes down whichever replica runs it does not go round
+for ever. A replica shutting down cleanly cancels its deploys and hands them straight back, uncounted.
+A replica that lost its claim can no longer move the deploy's status (`SetStatus` and `Finish` are
+fenced on `replica_id`).
 
 ```
 1.  Validate spec                          → VALID_*
@@ -393,9 +414,11 @@ being retried forever.
 
 ## 5. Triggers
 
-**[D]** Auto-deploy (R-141) is a separate scheduled job, not the reconciler. It never modifies a running app directly — it creates a spec revision with the new commit SHA and enqueues a deployment. Everything then flows through the normal path, including plan-time checks.
+**[D]** Auto-deploy (R-141) is a separate scheduled job, not the reconciler. It never modifies a running app directly — it creates a spec revision with the new commit SHA and enqueues a deployment in the deploy queue (§3). Everything then flows through the normal path, including plan-time checks.
 
-**[P]** Poll interval: 5 minutes for branch tracking, 15 for release tags.
+**[P]** Poll interval: 5 minutes for branch tracking, 15 for release tags. Apps are checked eight at a
+time (`work.auto_deploy`): in series, a `git ls-remote` per app outlasted the interval past a few
+thousand apps (issue #72).
 
 **[D]** If a deployment is already in flight for an app, the trigger is skipped, not queued. Queued auto-deploys on a fast-moving branch produce a backlog nobody wants.
 
@@ -410,7 +433,19 @@ console can say why nothing is deploying.
 
 ## 6. Garbage collection
 
-**[P]** A separate periodic job, hourly:
+**[P]** Leader jobs (issue #72), each on its own clock so a slow one does not hold up the rest:
+
+- **GC**, hourly: spec-revision pruning, reclaiming backed-up storage of deleted apps, and the security
+  pass, which places every app against the threshold in one batched call (`security.Place`) rather than
+  three queries per app. **Teardown** of deleted apps runs on a loop of its own — at once when a delete
+  asks, and every minute — so a delete is not queued behind the hourly pass.
+- **Rolling backups**, every five minutes: asks for a page of apps *due* one (no rolling backup in 24
+  hours, no attempt in the last hour) and takes them two at a time (`work.backups`). Then expiry.
+- **Retention**, hourly: batched deletes of what only grew — deploys, scans, sessions, notifications,
+  idempotency keys, sign-in flows, the event outbox, and deleted apps' detections and backup records. The
+  windows and what each never removes are in design 02 §2.11.
+
+What those jobs do:
 
 - Trim logs to `Retention.LogBytes` per app (R-223), and to the aggregate host disk budget (R-224). **Aggregate wins.** If total retention exceeds the disk budget, every app's cap is scaled down proportionally rather than letting one app's allowance brick the host. **Not implemented — see O-16.** Pando does not hold app logs; it streams them from the runtime, and there is no mechanism on the adapter interface to trim them. Scaling caps down proportionally would mean recreating every container, which is destruction on a schedule triggered by an unrelated app being chatty.
 - Take a rolling backup of each `running` or `degraded` app with storage that has none from the last

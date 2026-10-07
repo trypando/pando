@@ -306,10 +306,16 @@ CREATE TABLE deployments (
     approval_reasons    text[],               -- install | app_policy | app_spec | egress_loosening
     started_at   timestamptz NOT NULL DEFAULT now(),
     finished_at  timestamptz,
-    created_by   text NOT NULL
+    created_by   text NOT NULL,
+    replica_id   text,                        -- the replica that claimed it; NULL while queued
+    claimed_at   timestamptz,
+    attempts     integer NOT NULL DEFAULT 0   -- claims; a stopped replica's work is resumed up to 3
 );
 CREATE INDEX deployments_awaiting_idx ON deployments (approval_expires_at)
     WHERE status = 'awaiting_approval';
+CREATE INDEX deployments_in_flight_idx ON deployments (started_at)
+    WHERE status IN ('pending', 'building', 'applying');
+CREATE INDEX deployments_spec_idx ON deployments (spec_id);
 
 CREATE TABLE deployment_approvals (
     deployment_id text NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
@@ -755,12 +761,32 @@ Migration 000045. Several `pando` processes may share one database; the verdict 
 | Table | Holds | Constraints that matter |
 |---|---|---|
 | `pando_replicas` | One row per Pando process start: hostname, advertise URL, the **public** half of its assertion signing key, heartbeat, stopped time | `id` is `rep_…`, fresh per start. `assertion_key` is exactly 32 bytes — an Ed25519 public key; there is no column a private key could go in. **Not a hosts table** (§3): it records Pando's own processes, and nothing that plans or places a workload reads it |
-| `deployments.replica_id`, `detections.replica_id` | Which replica is running the work | Work whose replica is stopped or silent past `state.ReplicaStale` is recorded as interrupted; a live replica's never is |
+| `deployments.replica_id`, `detections.replica_id` | Which replica is running the work; NULL while it is queued (migration 000050, O-32) | Claimed with `FOR UPDATE SKIP LOCKED`. Work whose replica is stopped or silent past `state.ReplicaStale` goes back in the queue, and is recorded as interrupted once `attempts` reaches `state.MaxAttempts`; a live replica's never is, and queued work is never failed |
 | `passcode_failures` | Wrong passcodes per app and client address (R-075a) | Pruned past the window by the leader |
 | `secrets_canary` | A random value sealed with the install's secrets key, and its SHA-256 | Singleton. Every replica opens it at start and refuses to run with a key that cannot (R-190) |
 | `token_key_check` | HMAC-SHA-256 of a fixed label under the install's API token key (migration 000047) | Singleton. Every replica compares its own at start and refuses to run with a key that differs (R-063, §2.1) |
 | `cluster_signals` | `restart_requested_at`, which every replica started earlier obeys | Singleton (R-015) |
 | `pando_private.role_passwords` | The passwords of `pando_app` and `pando_audit_archiver`, so replicas agree on them | **Outside `public`, with no grant to anyone but the owner** — the application role must not be able to read the archiver's password (R-348). Created by bootstrap, not a migration, and excluded from the DR bundle's `pg_dump` |
+
+### 2.11 Retention (issue #72)
+
+Migration 000049. The tables below only grew; the leader's retention job (`internal/core/retention`)
+removes rows past a window, a batch at a time. Windows are `retention.*` settings; the defaults are
+**[P]**.
+
+| Table | Removed | Never removed |
+|---|---|---|
+| `deployments` | Beyond each app's newest 50 | One in flight or awaiting approval; the newest successful deploy of each revision in `spec_pins` (R-157's "ran before", and the image the reconciler restores) |
+| `app_scans` | Older than 90 days | The newest scan of each revision, and of each app's source (R-319) |
+| `sessions` | Expired or revoked more than 30 days ago | A usable session |
+| `notifications` | Past their own `retain_until` | One with no `retain_until` |
+| `idempotency_keys` | Older than a day | — |
+| `sso_flows`, `sso_replay` | A flow a day past expiry; an identifier past its assertion's expiry | — (used to be deleted on every sign-in, in the request) |
+| `events` (with `event_deliveries`, `delivery_attempts` by cascade) | Older than 30 days with nothing pending | An event with a delivery still pending (R-366) |
+| `detections`, `backup_attempts` | Rows of apps deleted more than 30 days ago | A live app's |
+
+`spec_revisions` and `audit_events` are not in it: revisions are pruned by the GC under R-152's rules,
+and the audit log by R-347's archiver.
 
 ## 3. Things deliberately not in the schema
 

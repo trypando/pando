@@ -896,16 +896,50 @@ func (a *Apps) WithStorage(ctx context.Context) ([]AppWithStorage, error) {
 		       coalesce((r.body->'retention'->>'backup_daily_count')::int, 0)
 		FROM apps a
 		JOIN spec_revisions r ON r.id = a.pinned_spec_id
-		WHERE a.deleted_at IS NULL
-		  AND a.state IN ('running', 'degraded')
-		  AND jsonb_typeof(r.body->'volumes') = 'array'
-		  AND r.body->'volumes' <> '[]'::jsonb
+		WHERE `+withStorage+`
 		ORDER BY a.id`)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not list apps with storage.", err)
 	}
-	defer rows.Close()
+	return scanWithStorage(rows)
+}
 
+// withStorage is WithStorage's filter, over apps a joined to their pinned
+// revision r.
+const withStorage = `a.deleted_at IS NULL
+		  AND a.state IN ('running', 'degraded')
+		  AND jsonb_typeof(r.body->'volumes') = 'array'
+		  AND r.body->'volumes' <> '[]'::jsonb`
+
+// DueForBackup lists up to limit apps with storage that are due a rolling
+// backup (R-211): none taken since takenSince, and no attempt of any outcome
+// since triedSince, so a destination that is down is tried again on the
+// retry interval rather than on every pass. The app whose last attempt is
+// oldest comes first, and one never attempted before any.
+//
+// Due-driven rather than a walk over every app with storage (issue #72): the
+// job asks for what is due and gets a page of it, however many apps there are.
+func (a *Apps) DueForBackup(ctx context.Context, takenSince, triedSince time.Time, limit int) ([]AppWithStorage, error) {
+	rows, err := a.db.Query(ctx, `
+		SELECT a.id, r.body,
+		       coalesce((r.body->'retention'->>'backup_daily_count')::int, 0)
+		FROM apps a
+		JOIN spec_revisions r ON r.id = a.pinned_spec_id
+		LEFT JOIN backup_attempts t ON t.app_id = a.id
+		WHERE `+withStorage+`
+		  AND NOT EXISTS (SELECT 1 FROM backups b
+		                  WHERE b.app_id = a.id AND b.kind = 'rolling' AND b.created_at > $1)
+		  AND (t.attempted_at IS NULL OR t.attempted_at <= $2)
+		ORDER BY t.attempted_at NULLS FIRST, a.id
+		LIMIT $3`, takenSince, triedSince, limit)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not list apps due a backup.", err)
+	}
+	return scanWithStorage(rows)
+}
+
+func scanWithStorage(rows pgx.Rows) ([]AppWithStorage, error) {
+	defer rows.Close()
 	out := make([]AppWithStorage, 0)
 	for rows.Next() {
 		var app AppWithStorage

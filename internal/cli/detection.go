@@ -12,7 +12,7 @@ import (
 )
 
 // detectionTimeout is how long the CLI waits for detection by default. The
-// server gives detection ten minutes (httpapi.detectionTimeout), so waiting any
+// server gives detection ten minutes (detection.Timeout), so waiting any
 // less would give up on a detection that was going to finish.
 const detectionTimeout = 10 * time.Minute
 

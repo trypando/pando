@@ -1,0 +1,11 @@
+DROP INDEX IF EXISTS sso_replay_expires_idx;
+DROP INDEX IF EXISTS backups_rolling_idx;
+DROP INDEX IF EXISTS sessions_expiry_idx;
+DROP INDEX IF EXISTS event_deliveries_event_idx;
+DROP INDEX IF EXISTS deployments_spec_idx;
+DROP INDEX IF EXISTS detections_queued_idx;
+DROP INDEX IF EXISTS deployments_in_flight_idx;
+ALTER TABLE detections DROP COLUMN attempts;
+ALTER TABLE detections DROP COLUMN claimed_at;
+ALTER TABLE deployments DROP COLUMN attempts;
+ALTER TABLE deployments DROP COLUMN claimed_at;

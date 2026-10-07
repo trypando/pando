@@ -42,17 +42,10 @@ type SSOFlows struct{ db *DB }
 
 func NewSSOFlows(db *DB) *SSOFlows { return &SSOFlows{db: db} }
 
-// Create stores a new flow, and clears out flows that expired more than a
-// day ago — kept that long so a person arriving late at a failed sign-in can
-// still be told why.
+// Create stores a new flow. Expired flows and spent one-time identifiers are
+// removed by the retention job (Retention.SSOFlows), not here: two deletes on
+// every sign-in were two full scans on the path everyone waits on (issue #72).
 func (s *SSOFlows) Create(ctx context.Context, f SSOFlow) error {
-	if _, err := s.db.Exec(ctx,
-		`DELETE FROM sso_flows WHERE expires_at < now() - interval '1 day'`); err != nil {
-		return errs.Wrap(errs.Internal, "Could not start the sign-in.", err)
-	}
-	if _, err := s.db.Exec(ctx, `DELETE FROM sso_replay WHERE expires_at < now()`); err != nil {
-		return errs.Wrap(errs.Internal, "Could not start the sign-in.", err)
-	}
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO sso_flows (id, adapter_id, purpose, bind_hash, return_origin, next_path, callback_url,
 		                       entity_id, flow, initiated_by, expires_at)

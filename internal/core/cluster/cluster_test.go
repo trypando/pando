@@ -326,6 +326,10 @@ func (f *fakeDeployments) Runner(context.Context, string) (string, error) {
 	return f.runner, f.runnerErr
 }
 
+// Waiting reports every deploy as claimed already; waiting for a claim is
+// logowner_test.go's.
+func (f *fakeDeployments) Waiting(context.Context, string) (bool, error) { return false, nil }
+
 type fakeReplicas map[string]state.Replica
 
 func (f fakeReplicas) ByID(_ context.Context, id string) (state.Replica, bool, error) {

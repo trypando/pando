@@ -197,25 +197,6 @@ func (r *Runner) WithImages(images *oci.Images) *Runner {
 	return r
 }
 
-// Start runs a deployment in the background and returns at once.
-//
-// Detached from ctx's cancellation deliberately: a client that disconnects
-// must not cancel a deploy that is already changing things. The logger
-// travels with it, so the deploy's lines still carry the request's fields.
-func (r *Runner) Start(ctx context.Context, dep state.Deployment, rev state.Revision) {
-	runCtx := log.Into(context.WithoutCancel(ctx), log.From(ctx))
-	go func() {
-		// The reason is not repeated here. Run has already put it where it
-		// belongs — the deployment's record and the log its user is watching —
-		// and an error from a deploy can carry what it was doing with the
-		// app's secrets, which a server log line must never risk (R-194).
-		if err := r.Run(runCtx, dep, rev); err != nil {
-			log.From(runCtx).Warn("deployment ended in failure; the reason is on the deployment",
-				zap.String("deployment_id", dep.ID), zap.String("app_id", dep.AppID))
-		}
-	}()
-}
-
 // Run executes a deployment to completion.
 //
 // The app's state moves to deploying at the start and to running or degraded at

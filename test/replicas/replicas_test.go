@@ -354,7 +354,7 @@ func TestR256_PandoServesAsSeveralReplicasAgainstOneDatabase(t *testing.T) {
 		require.Len(t, liveKids(t), 2)
 	})
 
-	t.Run("a replica lost mid-deploy leaves the deploy recorded as interrupted", func(t *testing.T) {
+	t.Run("a replica lost mid-deploy has the deploy resumed by another", func(t *testing.T) {
 		app := s.must(t, http.MethodPost, "/apps", `{"name":"replicas-lost-`+stamp()+`"}`, http.StatusAccepted)
 		lostApp := app["id"].(string)
 		// A health check that never passes holds the deploy open for its
@@ -380,12 +380,21 @@ func TestR256_PandoServesAsSeveralReplicasAgainstOneDatabase(t *testing.T) {
 		// test starts it again below, as an orchestrator would.
 		docker(t, "kill", "--signal", "KILL", host)
 
-		// The surviving leader notices the silence and records the deploy as
-		// interrupted, so the app's next deploy is not refused on its account.
+		// The surviving leader notices the silence and puts the deploy back
+		// in the queue, and the surviving replica takes it (O-32): every step
+		// before a deploy commits is safe to repeat.
+		require.Eventually(t, func() bool {
+			other := psql(t, `SELECT r.hostname FROM deployments d JOIN pando_replicas r ON r.id = d.replica_id
+				WHERE d.id = '`+depID+`'`)
+			return other != "" && other != host
+		}, 2*time.Minute, 2*time.Second, "the lost replica's deploy was never resumed elsewhere")
+
+		// And it finishes there, so the app's next deploy is not refused on
+		// its account.
 		require.Eventually(t, func() bool {
 			got := s.must(t, http.MethodGet, "/apps/"+lostApp+"/deployments/"+depID, "", http.StatusOK)
-			return got["status"] == "failed"
-		}, 2*time.Minute, 2*time.Second, "the lost replica's deploy was never recorded as interrupted")
+			return got["status"] == "succeeded" || got["status"] == "failed"
+		}, 4*time.Minute, 2*time.Second, "the resumed deploy never finished")
 
 		// The killed container comes back; the install returns to two
 		// replicas, the killed one under a new identity.

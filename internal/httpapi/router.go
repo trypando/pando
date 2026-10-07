@@ -156,6 +156,11 @@ type Server struct {
 	// configured, each step degrades to a question, not a dead end.
 	Detector Detector
 
+	// DetectionQueue is where a detection the API starts is queued (issue
+	// #72, O-32). Nil, with a Detector, means detection is not started on
+	// create and a re-run is refused as not configured.
+	DetectionQueue DetectionQueue
+
 	// Sources keeps an uploaded source (R-262) and fetches an app's source for
 	// a scan on request.
 	Sources source.Sources

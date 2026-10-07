@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"go.uber.org/zap"
-
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/clock"
@@ -152,10 +150,11 @@ func (s *Server) handleRerunDetection(w http.ResponseWriter, r *http.Request) {
 		TargetID:      app.ID,
 	})
 
-	// In the background, the way detection on create runs. A clone, a build
-	// plan and a trial run held this request open for minutes (issue #55), and
-	// every client already polls GET /detection for the outcome. Marked running
-	// first, so the first poll cannot read the previous outcome as this one's.
+	// Queued, the way detection on create is. A clone, a build plan and a
+	// trial run held this request open for minutes (issue #55), and every
+	// client already polls GET /detection for the outcome. Marked running
+	// first, so the first poll cannot read the previous outcome as this one's;
+	// the detection queue runs it where there is room (issue #72, O-32).
 	//
 	// What would refuse it is checked here, before anything is written: a
 	// source the allowlist does not permit is refused with nothing recorded
@@ -164,35 +163,18 @@ func (s *Server) handleRerunDetection(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	if err := s.Detections.Start(r.Context(), app.ID); err != nil {
-		Error(w, r, err)
+	if s.DetectionQueue == nil {
+		Error(w, r, errs.New(errs.AdapterUnavailable, "Detection is not configured on this install."))
 		return
 	}
-
-	// Read before the detection starts, not after: this response describes
-	// the request, and a detection that failed at once used to finish between
-	// the two, answering 202 with the outcome of work it said had only begun.
-	d, err := s.Detections.Get(r.Context(), app.ID)
+	// The detection as queued: this response describes the request, not
+	// the work, which may already have finished on another replica.
+	d, err := s.DetectionQueue.Enqueue(r.Context(), app.ID)
 	if err != nil {
 		Error(w, r, err)
 		return
 	}
-	go s.redetectInBackground(context.WithoutCancel(r.Context()), app.ID)
 	JSON(w, http.StatusAccepted, s.detectionResponse(d))
-}
-
-// redetectInBackground runs a re-detection, and records a failure the detector
-// returned before it got as far as recording anything itself — a source the
-// allowlist no longer permits, say — which would otherwise leave the detection
-// marked running.
-func (s *Server) redetectInBackground(parent context.Context, appID string) {
-	ctx, cancel := context.WithTimeout(parent, detectionTimeout)
-	defer cancel()
-
-	if _, err := s.Detector.Detect(ctx, appID); err != nil {
-		s.Logger.Warn("detection failed", zap.String("app_id", appID), zap.Error(err))
-		_ = s.Detections.FailIfRunning(context.WithoutCancel(ctx), appID, err)
-	}
 }
 
 // handleDetectionDiff compares the proposal against the pinned spec (R-022).
@@ -623,6 +605,15 @@ func keysOf(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// DetectionQueue queues a detection to run on whichever replica has room
+// (detection.Queue). Enqueue returns the detection as queued, read before any
+// replica can claim it: a detection that fails at once would otherwise finish
+// between queueing it and reading it back, and a 202 would report the outcome
+// of work it says has only begun.
+type DetectionQueue interface {
+	Enqueue(ctx context.Context, appID string) (state.Detection, error)
 }
 
 // Detector runs detection for an app.

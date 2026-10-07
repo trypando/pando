@@ -48,8 +48,8 @@ func (s teardownSignal) Write(_ context.Context, e reconciler.AuditEvent) error 
 
 // TestR256_AnAppDeletedOnAnotherReplicaIsTornDownByTheLeader asserts that
 // the GC, which runs on whichever replica leads, finds a delete made on
-// another replica — whose TeardownNow signal never reaches it — within its
-// teardown poll rather than at its next hourly pass (R-256, issue #72).
+// another replica — whose TeardownNow signal never reaches it — within
+// TeardownEvery rather than at its next hourly pass (R-256, issue #72).
 func TestR256_AnAppDeletedOnAnotherReplicaIsTornDownByTheLeader(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -68,7 +68,7 @@ func TestR256_AnAppDeletedOnAnotherReplicaIsTornDownByTheLeader(t *testing.T) {
 
 	gc := &reconciler.GC{
 		Apps: apps, Registry: noAdapters{}, Logger: zap.NewNop(), Auditor: torn,
-		Interval: time.Hour, TeardownPoll: 20 * time.Millisecond,
+		Interval: time.Hour, TeardownEvery: 20 * time.Millisecond,
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -92,7 +92,7 @@ func TestR256_AnAppDeletedOnAnotherReplicaIsTornDownByTheLeader(t *testing.T) {
 }
 
 // TestR256_AGCLeftAtItsDefaultPollStillAnswersADeleteAtOnce asserts that a GC
-// with no TeardownPoll set — the slow default, ten seconds — still tears a
+// with no TeardownEvery set — the slow default, ten seconds — still tears a
 // delete down as soon as the replica that took it signals, and stops with its
 // context.
 func TestR256_AGCLeftAtItsDefaultPollStillAnswersADeleteAtOnce(t *testing.T) {

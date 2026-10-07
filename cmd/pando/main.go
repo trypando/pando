@@ -65,6 +65,7 @@ import (
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/reconciler"
+	"github.com/trypando/pando/internal/core/retention"
 	"github.com/trypando/pando/internal/core/security"
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/spec"
@@ -470,13 +471,24 @@ func serve(ctx context.Context, configPath string) error {
 
 	// Where an app's source comes from, and where an uploaded one is kept
 	// (R-262). One value for the deploy path, detection, the API and the GC.
-	sources := source.Sources{UploadDir: source.DefaultUploadDir}
+	sources := source.Sources{UploadDir: source.DefaultUploadDir, WorkDir: cfg.Server.WorkDir}
 
 	deployer := deploy.NewRunner(registry, appPlanner, apps, deployments, secrets, reconciles, logStore, volumes, proxyUpstream).
 		WithServices(state.NewServices(db), secrets).
 		WithSecurity(securityService).
 		WithSources(sources).
 		WithImages(images)
+
+	// The deploy queue (issue #72, O-32): a deploy is queued in Postgres and
+	// run by whichever replica has room, at most work.deploys at once here.
+	// Served once the loops start, below.
+	deployQueue := &deploy.Queue{
+		Runner:      deployer,
+		Deployments: deployments,
+		Revisions:   apps,
+		Limit:       cfg.Work.Deploys,
+		Logger:      logger,
+	}
 
 	// Detection (Sequence A). Every detector bids; the runtime supplies the
 	// trial run (R-097), and a registry probe would supply R-094's top tier.
@@ -531,6 +543,15 @@ func serve(ctx context.Context, configPath string) error {
 			// (docs/design/notes-registry-tier-namespaces.md).
 			Registry: ociprobe.New(),
 		},
+	}
+
+	// The detection queue, as the deploy queue: queued in Postgres, run where
+	// there is room, at most work.detections at once here.
+	detectionQueue := &detection.Queue{
+		Detections: detections,
+		Detect:     detector.RunQueued,
+		Limit:      cfg.Work.Detections,
+		Logger:     logger,
 	}
 
 	// Which AI adapter handles each AI function (R-259): the stored
@@ -642,7 +663,7 @@ func serve(ctx context.Context, configPath string) error {
 		Authz:       authorizer,
 		Policy:      policyStore,
 		Planner:     appPlanner,
-		Deployer:    deployer,
+		Deployer:    deployQueue,
 		Audit:       httpapi.AuditFunc(auditor),
 		Notifier:    notifyRouter,
 		Approvers:   authzStore,
@@ -807,6 +828,7 @@ func serve(ctx context.Context, configPath string) error {
 		Secrets:          secrets,
 		Detections:       detections,
 		Detector:         detector,
+		DetectionQueue:   detectionQueue,
 		Console:          consoleHandler(logger),
 
 		// Policy is evaluated before grants, so it is wired into the
@@ -898,20 +920,22 @@ func serve(ctx context.Context, configPath string) error {
 		FailureThreshold: cfg.Reconciler.FailureThreshold,
 		FailureWindow:    cfg.Reconciler.FailureWindow,
 	}
-	// Work a stopped process had under way will never finish, so it is
-	// recorded as interrupted rather than left running forever. Only a
-	// stopped replica's: another replica's live work is left alone (issue
-	// #72). Here at startup, and then by the leader's sweeper, since a lost
-	// pod is not followed by a restart of itself.
-	if n, err := detections.AbandonRunning(ctx); err != nil {
-		logger.Warn("could not record interrupted detections", zap.Error(err))
+	// Work a stopped process had claimed will never finish there, so it goes
+	// back in the queue for a replica that is running — or, started too many
+	// times, is recorded as interrupted (O-32). Only a stopped replica's:
+	// another replica's live work is left alone, and queued work nobody has
+	// claimed is waiting, not lost (issue #72). Here at startup, and then by
+	// the leader's sweeper, since a lost pod is not followed by a restart of
+	// itself.
+	if n, err := detections.RecoverRunning(ctx); err != nil {
+		logger.Warn("could not recover interrupted detections", zap.Error(err))
 	} else if n > 0 {
-		logger.Info("recorded detections interrupted by the restart", zap.Int64("count", n))
+		logger.Info("recovered detections interrupted by a stopped replica", zap.Int64("count", n))
 	}
-	if n, err := deployments.AbandonInFlight(ctx); err != nil {
-		logger.Warn("could not record interrupted deploys", zap.Error(err))
+	if n, err := deployments.RecoverInFlight(ctx); err != nil {
+		logger.Warn("could not recover interrupted deploys", zap.Error(err))
 	} else if n > 0 {
-		logger.Info("recorded deploys interrupted by the restart", zap.Int64("count", n))
+		logger.Info("recovered deploys interrupted by a stopped replica", zap.Int64("count", n))
 	}
 
 	loopCtx, stopLoop := context.WithCancel(ctx)
@@ -922,6 +946,11 @@ func serve(ctx context.Context, configPath string) error {
 	// rather than fighting over them.
 	go loop.Run(loopCtx)
 
+	// The deploy and detection queues run on every replica: each claims what
+	// it has room for (issue #72, O-32).
+	go deployQueue.Serve(loopCtx)
+	go detectionQueue.Serve(loopCtx)
+
 	// What must happen once per install rather than once per process runs on
 	// the leader alone (issue #72): two replicas each running the GC tore
 	// down, backed up and pruned twice, and two running auto-deploy deployed
@@ -931,7 +960,12 @@ func serve(ctx context.Context, configPath string) error {
 		jobs = append(jobs, cluster.Job{Name: name, Run: run})
 	}
 	job("sweep", (&cluster.Sweeper{
-		Abandon: []func(context.Context) (int64, error){deployments.AbandonInFlight, detections.AbandonRunning},
+		// Silent replicas are recorded as stopped first, so one that was
+		// only paused finds out at its next heartbeat and restarts rather
+		// than carrying on with work another replica has claimed again.
+		Abandon: []func(context.Context) (int64, error){
+			replicas.StopSilent, deployments.RecoverInFlight, detections.RecoverRunning,
+		},
 		Prune: func(ctx context.Context) error {
 			_, err := replicas.Prune(ctx, 24*time.Hour)
 			if err == nil {
@@ -954,10 +988,10 @@ func serve(ctx context.Context, configPath string) error {
 		Apps:        apps,
 		Deployments: deployments,
 		Resolver:    refResolver{},
-		Enqueue: func(ctx context.Context, dep state.Deployment, rev state.Revision) {
-			go deployer.Run(context.WithoutCancel(ctx), dep, rev) //nolint:errcheck // recorded on the deployment
-		},
-		Logger: logger,
+		// Into the deploy queue, like every other deploy (O-32).
+		Enqueue:     deployQueue.Start,
+		Concurrency: cfg.Work.AutoDeploy,
+		Logger:      logger,
 		// An app whose deploys now need approval stops auto-deploying
 		// (R-158).
 		Policy: policyStore,
@@ -1014,6 +1048,25 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:        logger,
 	}
 	go dispatcher.Run(loopCtx)
+
+	// Retention, hourly, for the tables that otherwise only grow — the event
+	// outbox among them, whose pruning used to run on every replica (issue
+	// #72, R-224).
+	job("retention", (&retention.Job{
+		Store:  state.NewRetention(db),
+		Outbox: subscriptions.Events,
+		Settings: retention.Settings{
+			DeploymentsPerApp: cfg.Retention.DeploymentsPerApp,
+			Scans:             cfg.Retention.Scans,
+			Sessions:          cfg.Retention.Sessions,
+			IdempotencyKeys:   cfg.Retention.IdempotencyKeys,
+			SSOFlows:          cfg.Retention.SSOFlows,
+			Events:            cfg.Retention.Events,
+			DeletedApps:       cfg.Retention.DeletedApps,
+		},
+		Clock:  clock.System{},
+		Logger: logger,
+	}).Run)
 	// Delivery claims with SKIP LOCKED, so it runs on every replica; a health
 	// change is one event per install, so the watch leads.
 	job("adapter-health", func(ctx context.Context) { dispatcher.WatchAdapters(ctx, 5*time.Minute) })
@@ -1138,11 +1191,8 @@ func serve(ctx context.Context, configPath string) error {
 		// And its registry credential (issue #41).
 		DiscardCredential: images.RemoveCredential,
 
-		// R-211's rolling backups, which had a column, a default and an expiry
-		// query and nothing that ever took one.
-		Backups:      backups,
-		Backup:       backupService,
-		BundleSource: bundleSource,
+		// Storage of a deleted app is reclaimed only once a backup holds it.
+		Backups: backups,
 
 		// The security pass (R-315, R-316): mark, warn, and stop when the
 		// grace has run out. Inert until an administrator sets a threshold.
@@ -1168,6 +1218,21 @@ func serve(ctx context.Context, configPath string) error {
 			}
 		}
 	}()
+
+	// R-211's rolling backups, which had a column, a default and an expiry
+	// query and nothing that ever took one — and then took them in series
+	// inside the hourly GC. A job of its own now, asking for what is due and
+	// taking work.backups at a time (issue #72).
+	job("backups", (&reconciler.RollingBackups{
+		Apps:         apps,
+		Backups:      backups,
+		Backup:       backupService,
+		BundleSource: bundleSource,
+		Auditor:      reconcilerAuditor{auditor},
+		Logger:       logger,
+		Clock:        clock.System{},
+		Concurrency:  cfg.Work.Backups,
+	}).Run)
 
 	// Whichever replica holds the leader lock runs the jobs above; with one
 	// replica, that is this one, a moment after it starts.

@@ -7,7 +7,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/core/backup"
+	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/core/work"
 	"github.com/trypando/pando/internal/errs"
 )
 
@@ -17,9 +19,9 @@ import (
 // query that found expired rows — and nothing that ever took a backup or
 // deleted one. The requirement was true in the database and false in practice.
 //
-// Here rather than in the reconciler's own loop because nothing about this is
-// urgent and all of it is destructive, which is the same reason spec pruning
-// and bundle teardown are here.
+// A leader job of its own rather than in the reconciler's loop because nothing
+// about this is urgent and all of it is destructive, and rather than in the
+// GC's pass because a backup is slow and that pass has other work to do.
 
 // BackupRunner takes and prunes per-app backups.
 //
@@ -31,51 +33,104 @@ type BackupRunner interface {
 	Discard(ctx context.Context, adapterRef, objectName string) error
 }
 
-// backupDue reports whether an app is due a rolling backup.
+// RollingBackups takes rolling backups for apps that are due one, and removes
+// backups whose retention has passed (R-211). A leader job of its own (issue
+// #72), not part of the GC's hourly pass: that walked every app with storage
+// in series, so one slow destination held up every other app's backup and the
+// rest of the GC with it.
+//
+// Due-driven: each pass asks the database for a page of apps due a backup and
+// takes them a few at a time, so how long a pass takes depends on how many are
+// due, not on how many apps there are.
+type RollingBackups struct {
+	Apps         *state.Apps
+	Backups      *state.Backups
+	Backup       BackupRunner
+	BundleSource *state.BundleSource
+	Auditor      Auditor
+	Logger       *zap.Logger
+	Clock        clock.Clock
+
+	// Every is how often to look for apps due a backup. Five minutes when
+	// zero [P]: a backup is due once a day, so this is how late one can be.
+	Every time.Duration
+
+	// Concurrency is how many backups run at once. Two when zero [P]: a
+	// backup copies a volume, and the disk it reads is the one the apps use.
+	Concurrency int
+
+	// RetryAfter is how long after an attempt that was skipped or failed the
+	// app is tried again. An hour when zero, which is what the attempt's
+	// remedy tells a person ("within the hour").
+	RetryAfter time.Duration
+
+	// Batch is the most apps one pass takes. 200 when zero.
+	Batch int
+}
+
+// backupInterval is how often an app is due a rolling backup.
 //
 // Daily, measured from the last rolling backup rather than from a fixed clock
 // time: an install that is off overnight should take a backup when it comes
 // back, not skip the day. R-211's "daily" is an interval, not an appointment.
 const backupInterval = 24 * time.Hour
 
-// runBackups takes rolling backups for apps that are due one, then removes
-// backups whose retention has passed.
-func (g *GC) runBackups(ctx context.Context) {
-	if g.Backups == nil || g.Backup == nil || g.BundleSource == nil {
-		return
+// Run takes backups until ctx ends.
+func (b *RollingBackups) Run(ctx context.Context) {
+	every := b.Every
+	if every <= 0 {
+		every = 5 * time.Minute
 	}
-
-	g.takeRollingBackups(ctx)
-	g.pruneExpiredBackups(ctx)
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		b.Pass(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
-func (g *GC) takeRollingBackups(ctx context.Context) {
-	apps, err := g.Apps.WithStorage(ctx)
-	if err != nil {
-		g.Logger.Warn("could not list apps for rolling backups", zap.Error(err))
+// Pass takes every due backup it is given a page of, then expires old ones.
+func (b *RollingBackups) Pass(ctx context.Context) {
+	if b.Backups == nil || b.Backup == nil || b.BundleSource == nil {
 		return
 	}
+	b.takeDue(ctx)
+	b.pruneExpired(ctx)
+}
 
-	for _, app := range apps {
+func (b *RollingBackups) takeDue(ctx context.Context) {
+	retry := b.RetryAfter
+	if retry <= 0 {
+		retry = time.Hour
+	}
+	batch := b.Batch
+	if batch <= 0 {
+		batch = 200
+	}
+	concurrency := b.Concurrency
+	if concurrency <= 0 {
+		concurrency = 2
+	}
+	now := b.now()
+	due, err := b.Apps.DueForBackup(ctx, now.Add(-backupInterval), now.Add(-retry), batch)
+	if err != nil {
+		b.Logger.Warn("could not list apps due a rolling backup", zap.Error(err))
+		return
+	}
+	work.Each(ctx, concurrency, due, func(ctx context.Context, app state.AppWithStorage) {
 		// Only apps that have data to lose. An app with no volumes has nothing
 		// a rolling backup would hold that its spec revisions do not, and
 		// taking one anyway would fill the destination with empty bundles.
 		if app.Retain <= 0 {
-			continue
+			return
 		}
-
-		last, err := g.Backups.LastRolling(ctx, app.AppID)
-		if err != nil {
-			g.Logger.Warn("could not read the last backup", zap.String("app_id", app.AppID), zap.Error(err))
-			continue
-		}
-		if !last.IsZero() && g.now().Sub(last) < backupInterval {
-			continue
-		}
-
-		attempt, cause := g.takeOne(ctx, app)
-		g.recordAttempt(ctx, attempt, cause)
-	}
+		attempt, cause := b.takeOne(ctx, app)
+		b.recordAttempt(ctx, attempt, cause)
+	})
 }
 
 // takeOne takes one app's rolling backup and says what came of it.
@@ -87,7 +142,7 @@ func (g *GC) takeRollingBackups(ctx context.Context) {
 //
 // The error, when there is one, is the cause for the log. The attempt carries
 // the part a person can act on.
-func (g *GC) takeOne(ctx context.Context, app state.AppWithStorage) (state.BackupAttempt, error) {
+func (g *RollingBackups) takeOne(ctx context.Context, app state.AppWithStorage) (state.BackupAttempt, error) {
 	attempt := state.BackupAttempt{AppID: app.AppID, AttemptedAt: g.now()}
 
 	volumes, err := g.BundleSource.VolumesForApp(ctx, app.AppID)
@@ -161,7 +216,7 @@ func failed(attempt state.BackupAttempt, err error) state.BackupAttempt {
 }
 
 // recordAttempt logs an attempt and keeps it where the console can show it.
-func (g *GC) recordAttempt(ctx context.Context, attempt state.BackupAttempt, cause error) {
+func (g *RollingBackups) recordAttempt(ctx context.Context, attempt state.BackupAttempt, cause error) {
 	fields := []zap.Field{zap.String("app_id", attempt.AppID)}
 	switch attempt.Outcome {
 	case state.AttemptTaken:
@@ -177,12 +232,12 @@ func (g *GC) recordAttempt(ctx context.Context, attempt state.BackupAttempt, cau
 	}
 }
 
-// pruneExpiredBackups removes backups whose retention has passed (R-211).
+// pruneExpired removes backups whose retention has passed (R-211).
 //
 // The object first, then the row. The other order leaves an object nothing
 // references, which is invisible and accumulates — and an on_delete backup is
 // never returned here, because R-204 keeps those until somebody discards them.
-func (g *GC) pruneExpiredBackups(ctx context.Context) {
+func (g *RollingBackups) pruneExpired(ctx context.Context) {
 	expired, err := g.Backups.Expired(ctx, g.now())
 	if err != nil {
 		g.Logger.Warn("could not list expired backups", zap.Error(err))
@@ -212,6 +267,13 @@ func (g *GC) pruneExpiredBackups(ctx context.Context) {
 }
 
 func (g *GC) now() time.Time {
+	if g.Clock == nil {
+		return time.Now().UTC()
+	}
+	return g.Clock.Now()
+}
+
+func (g *RollingBackups) now() time.Time {
 	if g.Clock == nil {
 		return time.Now().UTC()
 	}

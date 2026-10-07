@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -22,11 +23,19 @@ import (
 type fakeScores struct {
 	report security.Report
 	ref    string
+	calls  int
 }
 
 func (f *fakeScores) Configured() (string, bool) { return f.ref, f.ref != "" }
-func (f *fakeScores) Report(context.Context, string, string) (security.Report, error) {
-	return f.report, nil
+
+// Place answers with the report's standing for every app, and counts calls.
+func (f *fakeScores) Place(_ context.Context, scores map[string]security.Scores) (map[string]security.Placed, error) {
+	f.calls++
+	out := make(map[string]security.Placed, len(scores))
+	for appID := range scores {
+		out[appID] = security.Placed{Score: f.report.Standing.Score, Verdict: f.report.Standing.Verdict}
+	}
+	return out, nil
 }
 
 type fakeState struct {
@@ -206,4 +215,27 @@ func TestR317_WithNoScannerThePassDoesNothing(t *testing.T) {
 	g.enforceSecurity(context.Background())
 	require.Empty(t, desired.desired)
 	require.Empty(t, st.stopped)
+}
+
+// TestR315_TheSecurityPassPlacesEveryAppInOneCall asserts the batched path
+// (issue #72): however many apps there are, the pass places them against
+// policy once, rather than reading a report — a policy load and two queries —
+// per app.
+func TestR315_TheSecurityPassPlacesEveryAppInOneCall(t *testing.T) {
+	now := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
+	doc := policy.Document{MinSecurityScore: 70}
+	report := security.Report{Standing: security.Standing{Verdict: security.VerdictInsecure, Score: score(40), Threshold: 70}}
+
+	var apps []state.SecurityState
+	for i := 0; i < 50; i++ {
+		apps = append(apps, state.SecurityState{
+			AppID: fmt.Sprintf("app_%02d", i), Name: "notes",
+			State: state.StateRunning, DesiredState: state.StateRunning, PinnedSpecID: "spec_1",
+		})
+	}
+	g, st, _, _ := gc(t, doc, report, now, apps...)
+	g.enforceSecurity(context.Background())
+
+	require.Equal(t, 1, g.Security.(*fakeScores).calls)
+	require.Len(t, st.marked, 50, "and every app was placed")
 }

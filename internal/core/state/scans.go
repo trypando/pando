@@ -224,6 +224,13 @@ type SecurityState struct {
 	PinnedSpecID       string
 	OwnerUserID        string
 	Name               string
+
+	// Score and ScoreFixable are the pinned revision's newest scan's two
+	// numbers, as Scans.Latest would find it: what the security pass places
+	// against policy, read in the same query so the pass is one query rather
+	// than three per app (issue #72).
+	Score        *int
+	ScoreFixable *int
 }
 
 // LiveSecurityState returns every app the policy pass has to consider.
@@ -235,8 +242,16 @@ type SecurityState struct {
 func (s *Scans) LiveSecurityState(ctx context.Context) ([]SecurityState, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT a.id, a.name, coalesce(a.owner_user_id, ''), a.state, a.desired_state,
-		       coalesce(a.pinned_spec_id, ''), a.insecure_since, a.stopped_for_security
+		       coalesce(a.pinned_spec_id, ''), a.insecure_since, a.stopped_for_security,
+		       s.score, s.score_fixable
 		FROM apps a
+		LEFT JOIN LATERAL (
+		    SELECT sc.score, sc.score_fixable
+		    FROM app_scans sc
+		    WHERE sc.app_id = a.id AND (sc.spec_id = a.pinned_spec_id OR sc.spec_id IS NULL)
+		    ORDER BY (sc.spec_id IS NOT NULL) DESC, sc.ran_at DESC
+		    LIMIT 1
+		) s ON true
 		WHERE a.deleted_at IS NULL
 		  AND a.pinned_spec_id IS NOT NULL
 		  AND a.state <> 'archived'
@@ -250,7 +265,8 @@ func (s *Scans) LiveSecurityState(ctx context.Context) ([]SecurityState, error) 
 	for rows.Next() {
 		var row SecurityState
 		if err := rows.Scan(&row.AppID, &row.Name, &row.OwnerUserID, &row.State, &row.DesiredState,
-			&row.PinnedSpecID, &row.InsecureSince, &row.StoppedForSecurity); err != nil {
+			&row.PinnedSpecID, &row.InsecureSince, &row.StoppedForSecurity,
+			&row.Score, &row.ScoreFixable); err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not list apps for the security pass.", err)
 		}
 		out = append(out, row)

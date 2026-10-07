@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -61,16 +60,6 @@ func (i *Idempotency) Remember(ctx context.Context, key, principalID, endpoint s
 		key, principalID, endpoint, status, body)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not record that this was done.", err)
-	}
-	return nil
-}
-
-// Sweep deletes keys older than the retention window.
-func (i *Idempotency) Sweep(ctx context.Context, olderThan time.Duration) error {
-	_, err := i.db.Exec(ctx,
-		`DELETE FROM idempotency_keys WHERE created_at < $1`, time.Now().UTC().Add(-olderThan))
-	if err != nil {
-		return errs.Wrap(errs.Internal, "Could not sweep old idempotency keys.", err)
 	}
 	return nil
 }

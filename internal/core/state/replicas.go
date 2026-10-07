@@ -162,6 +162,22 @@ func (r *Replicas) Prune(ctx context.Context, olderThan time.Duration) (int64, e
 	return tag.RowsAffected(), nil
 }
 
+// StopSilent records as stopped every replica that has not heartbeated for
+// ReplicaStale, before its claimed work is put back in the queue (issue #72,
+// O-32). A replica that was only slow — a long pause, a partition — then finds
+// at its next heartbeat that it was taken for dead, and restarts rather than
+// carrying on with deploys another replica has already claimed again.
+func (r *Replicas) StopSilent(ctx context.Context) (int64, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE pando_replicas SET stopped_at = now()
+		WHERE stopped_at IS NULL AND heartbeat_at < now() - make_interval(secs => $1)`,
+		ReplicaStale.Seconds())
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Could not record silent replicas as stopped.", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // RequestRestart asks every replica running now to restart (POST /restart).
 func (r *Replicas) RequestRestart(ctx context.Context) error {
 	if _, err := r.db.Exec(ctx, `UPDATE cluster_signals SET restart_requested_at = now() WHERE id = 1`); err != nil {
