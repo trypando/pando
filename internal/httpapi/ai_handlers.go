@@ -205,7 +205,7 @@ func (s *Server) handleSearchAudit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, err := s.Assist.SearchAudit(r.Context(), text)
+	out, err := s.Assist.SearchAudit(r.Context(), p, text)
 	if err != nil {
 		Error(w, r, err)
 		return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,42 @@ type fakeAI struct {
 	summaryRan  bool
 	refReq      api.ReferenceRequest
 	hadDeadline time.Time
+
+	// lookFor, when set, is looked up with every lookup a request offers,
+	// as a model calling the tools would, and the results kept in looked.
+	lookFor []string
+	looked  lookedUp
+	lookErr error
+}
+
+// lookedUp is what a fakeAI's lookups returned.
+type lookedUp struct {
+	people []api.PersonInfo
+	apps   []api.AppInfo
+	groups []api.GroupInfo
+}
+
+func (f *fakeAI) lookUp(ctx context.Context, l *api.Lookup) {
+	if l == nil {
+		return
+	}
+	for _, q := range f.lookFor {
+		if l.People != nil {
+			got, err := l.People(ctx, q)
+			f.looked.people = append(f.looked.people, got...)
+			f.lookErr = errors.Join(f.lookErr, err)
+		}
+		if l.Apps != nil {
+			got, err := l.Apps(ctx, q)
+			f.looked.apps = append(f.looked.apps, got...)
+			f.lookErr = errors.Join(f.lookErr, err)
+		}
+		if l.Groups != nil {
+			got, err := l.Groups(ctx, q)
+			f.looked.groups = append(f.looked.groups, got...)
+			f.lookErr = errors.Join(f.lookErr, err)
+		}
+	}
 }
 
 func (f *fakeAI) Kind() string                                     { return "fake" }
@@ -71,6 +108,7 @@ func (f *fakeAI) RevisePlan(context.Context, api.ScreenRequest) (api.ScreenResul
 func (f *fakeAI) DraftAccess(ctx context.Context, req api.AccessRequest) (api.AccessDraft, error) {
 	f.accessReq = req
 	f.hadDeadline, _ = ctx.Deadline()
+	f.lookUp(ctx, req.Lookup)
 	return f.access, f.err
 }
 
@@ -79,8 +117,9 @@ func (f *fakeAI) DraftPolicy(_ context.Context, req api.PolicyRequest) (api.Poli
 	return f.policy, f.err
 }
 
-func (f *fakeAI) SearchAudit(_ context.Context, req api.AuditSearchRequest) (api.AuditSearch, error) {
+func (f *fakeAI) SearchAudit(ctx context.Context, req api.AuditSearchRequest) (api.AuditSearch, error) {
 	f.searchReq = req
+	f.lookUp(ctx, req.Lookup)
 	return f.search, f.err
 }
 
@@ -106,19 +145,118 @@ func doesAll() api.AICapabilities {
 	return api.AICapabilities{Functions: assistFunctions, Model: "house-model"}
 }
 
+// errUnbounded is what every fake store returns for a read with no bound: no
+// limit, or a limit past a page, with neither a query nor IDs to narrow it.
+// O-54: nothing the assistant does reads a whole table.
+var errUnbounded = errors.New("an unbounded read of a whole table")
+
+func bounded(limit int, narrowed bool) error {
+	if limit <= 0 || limit > state.MaxPageSize || (!narrowed && limit > api.LookupLimit) {
+		return errUnbounded
+	}
+	return nil
+}
+
+// matches is a case-insensitive substring match on any of fields, as the
+// stores' ILIKE is; an empty query matches everything.
+func matches(q string, fields ...string) bool {
+	q = strings.ToLower(q)
+	for _, f := range fields {
+		if strings.Contains(strings.ToLower(f), q) {
+			return true
+		}
+	}
+	return q == ""
+}
+
 type fakeUsers struct {
 	users []state.User
 	err   error
+
+	// calls counts every read, searches and pages.
+	calls *int
 }
 
-func (f fakeUsers) List(context.Context) ([]state.User, error) { return f.users, f.err }
+func (f fakeUsers) count() {
+	if f.calls != nil {
+		*f.calls++
+	}
+}
+
+func (f fakeUsers) Search(_ context.Context, q string, limit int) ([]state.User, error) {
+	f.count()
+	if err := bounded(limit, false); err != nil {
+		return nil, err
+	}
+	var out []state.User
+	for _, u := range f.users {
+		if len(out) < limit && matches(q, u.ExternalID, u.DisplayName, u.Email) {
+			out = append(out, u)
+		}
+	}
+	return out, f.err
+}
+
+func (f fakeUsers) ListPage(_ context.Context, page state.Page) ([]state.User, string, int, error) {
+	f.count()
+	if err := bounded(page.Limit, len(page.IDs) > 0); err != nil {
+		return nil, "", 0, err
+	}
+	var out []state.User
+	for _, u := range f.users {
+		if len(out) < page.Limit && (len(page.IDs) == 0 || slices.Contains(page.IDs, u.ID)) &&
+			matches(page.Query, u.ExternalID, u.DisplayName, u.Email) {
+			out = append(out, u)
+		}
+	}
+	return out, "", len(out), f.err
+}
 
 type fakeApps struct {
 	apps []state.App
 	err  error
+
+	// granted are the apps ListForPrincipalPage returns: those the
+	// principal holds a grant on.
+	granted map[string]bool
+
+	// every and mine count which list was read.
+	every, mine *int
 }
 
-func (f fakeApps) ListAll(context.Context) ([]state.App, error) { return f.apps, f.err }
+func (f fakeApps) page(page state.Page, only map[string]bool) ([]state.App, string, int, error) {
+	if err := bounded(page.Limit, len(page.IDs) > 0); err != nil {
+		return nil, "", 0, err
+	}
+	var out []state.App
+	for _, a := range f.apps {
+		if only != nil && !only[a.ID] {
+			continue
+		}
+		if len(out) < page.Limit && (len(page.IDs) == 0 || slices.Contains(page.IDs, a.ID)) && matches(page.Query, a.Name, a.Slug) {
+			out = append(out, a)
+		}
+	}
+	return out, "", len(out), f.err
+}
+
+func (f fakeApps) ListAllPage(_ context.Context, page state.Page) ([]state.App, string, int, error) {
+	if f.every != nil {
+		*f.every++
+	}
+	return f.page(page, nil)
+}
+
+func (f fakeApps) ListForPrincipalPage(_ context.Context, _ authz.Principal, page state.Page) ([]state.App, string, int, error) {
+	if f.mine != nil {
+		*f.mine++
+	}
+	only := f.granted
+	if only == nil {
+		only = map[string]bool{}
+	}
+	return f.page(page, only)
+}
 
 type fakeRoles struct {
 	roles []state.RoleRow
@@ -132,7 +270,18 @@ type fakeGroups struct {
 	err    error
 }
 
-func (f fakeGroups) List(context.Context) ([]state.Group, error) { return f.groups, f.err }
+func (f fakeGroups) Search(_ context.Context, q string, limit int) ([]state.Group, error) {
+	if err := bounded(limit, q != ""); err != nil {
+		return nil, err
+	}
+	var out []state.Group
+	for _, g := range f.groups {
+		if len(out) < limit && matches(q, g.Name) {
+			out = append(out, g)
+		}
+	}
+	return out, f.err
+}
 
 type fakeVerbs struct {
 	verbs []string
@@ -151,10 +300,8 @@ type fakePolicy struct {
 func (f fakePolicy) Load(context.Context) (policy.Document, error) { return f.doc, f.err }
 
 type fakeAudit struct {
-	records    []audit.Record
-	listErr    error
-	actions    []string
-	actionsErr error
+	records []audit.Record
+	listErr error
 
 	query  audit.Query
 	listed bool
@@ -166,11 +313,13 @@ func (f *fakeAudit) List(_ context.Context, q audit.Query) ([]audit.Record, erro
 	return f.records, f.listErr
 }
 
-func (f *fakeAudit) ActionNames(context.Context) ([]string, error) { return f.actions, f.actionsErr }
-
 var (
 	errBoom = errors.New("boom")
 	admin   = authz.Principal{Kind: "user", ID: "usr_admin", UserID: "usr_admin"}
+
+	// adminVerbs are what admin holds install-wide in these tests: enough
+	// to read accounts, groups and every app, and to read the audit log.
+	adminVerbs = []string{"install.audit.read", "install.view", "install.apps.view"}
 )
 
 // newService is a Service over fixed people, apps, roles and groups, with
@@ -192,12 +341,12 @@ func newService(t *testing.T, ai *fakeAI, model string) *Service {
 			{ID: "usr_ada", ExternalID: "ada", Email: "Ada@Example.com", DisplayName: "Ada Lovelace"},
 			{ID: "usr_bob", ExternalID: "bob", Email: "bob@example.com", DisplayName: "Bob Byte"},
 		}},
-		Apps:   fakeApps{apps: []state.App{{ID: "app_blog", Name: "blog"}}},
+		Apps:   fakeApps{apps: []state.App{{ID: "app_blog", Name: "blog", Slug: "blog"}}},
 		Roles:  fakeRoles{roles: []state.RoleRow{{ID: "role_viewer", Name: "Viewer", Scope: "app", Builtin: true, Verbs: []string{"app.view"}}}},
 		Groups: fakeGroups{groups: []state.Group{{ID: "grp_ops", Name: "Ops"}}},
-		Verbs:  fakeVerbs{verbs: []string{"install.audit.read"}},
+		Verbs:  fakeVerbs{verbs: adminVerbs},
 		Policy: fakePolicy{},
-		Audit:  &fakeAudit{actions: []string{"app.create", "app.delete"}},
+		Audit:  &fakeAudit{},
 	}
 }
 
@@ -247,7 +396,7 @@ func TestEveryFunctionRefusesAnEmptyAsk(t *testing.T) {
 	requireCode(t, err, errs.ValidInvalid)
 	_, err = s.DraftPolicy(ctx, " ", nil)
 	requireCode(t, err, errs.ValidInvalid)
-	_, err = s.SearchAudit(ctx, "")
+	_, err = s.SearchAudit(ctx, admin, "")
 	requireCode(t, err, errs.ValidInvalid)
 }
 
@@ -264,7 +413,7 @@ func TestR343_UnassignedFunctionIsOff(t *testing.T) {
 
 	_, err = s.DraftPolicy(ctx, "no exec", nil)
 	requireCode(t, err, errs.AdapterUnavailable)
-	_, err = s.SearchAudit(ctx, "who deleted blog")
+	_, err = s.SearchAudit(ctx, admin, "who deleted blog")
 	requireCode(t, err, errs.AdapterUnavailable)
 	_, err = s.AnswerReference(ctx, "how do I deploy")
 	requireCode(t, err, errs.AdapterUnavailable)
@@ -366,7 +515,7 @@ func TestAdapterErrorIsAdapterFailed(t *testing.T) {
 	}{
 		{"access", "access drafting", func(s *Service) error { _, err := s.DraftAccess(ctx, admin, "let Ada deploy", nil); return err }},
 		{"policy", "policy drafting", func(s *Service) error { _, err := s.DraftPolicy(ctx, "no exec", nil); return err }},
-		{"audit", "audit search", func(s *Service) error { _, err := s.SearchAudit(ctx, "who deleted blog"); return err }},
+		{"audit", "audit search", func(s *Service) error { _, err := s.SearchAudit(ctx, admin, "who deleted blog"); return err }},
 		{"reference", "reference help", func(s *Service) error { _, err := s.AnswerReference(ctx, "how do I deploy"); return err }},
 	}
 	for _, c := range cases {
@@ -405,8 +554,11 @@ func TestR343_AccessCatalogIsWhatTheCallerCouldGrant(t *testing.T) {
 
 	require.Len(t, ai.accessReq.Roles, 1)
 	assert.Equal(t, api.RoleInfo{ID: "role_viewer", Name: "Viewer", Scope: "app", Builtin: true, Verbs: []string{"app.view"}}, ai.accessReq.Roles[0])
-	assert.Equal(t, []api.GroupInfo{{ID: "grp_ops", Name: "Ops"}}, ai.accessReq.Groups)
-	assert.Equal(t, api.PersonInfo{ID: "usr_ada", Username: "ada", Name: "Ada Lovelace", Email: "Ada@Example.com"}, ai.accessReq.People[0])
+	// O-54: the people the description names, not every account; no group
+	// matches its words.
+	assert.Equal(t, []api.PersonInfo{{ID: "usr_ada", Username: "ada", Name: "Ada Lovelace", Email: "Ada@Example.com"}}, ai.accessReq.People)
+	assert.Empty(t, ai.accessReq.Groups)
+	assert.Nil(t, ai.accessReq.Lookup, "this adapter does not look things up")
 	assert.Same(t, current, ai.accessReq.Current)
 	assert.Equal(t, "let Ada deploy", ai.accessReq.Description)
 }
@@ -772,17 +924,19 @@ func TestR345_AuditSearchRunsTheFilterAndSummarizes(t *testing.T) {
 		summary: api.AuditSummary{Summary: "  Ada deployed blog 250 times.  "},
 	}
 	s := newService(t, ai, "")
-	a := &fakeAudit{actions: []string{"app.deploy"}, records: records(250)}
+	a := &fakeAudit{records: records(250)}
 	s.Audit = a
 	now := time.Date(2026, 9, 26, 9, 0, 0, 0, time.FixedZone("x", 7200))
 	s.Now = func() time.Time { return now }
 
-	res, err := s.SearchAudit(context.Background(), "what did ada deploy yesterday")
+	res, err := s.SearchAudit(context.Background(), admin, "what did ada deploy yesterday")
 	require.NoError(t, err)
 
 	assert.Equal(t, now.UTC(), ai.searchReq.Now)
-	assert.Equal(t, []string{"app.deploy"}, ai.searchReq.Actions)
-	assert.Equal(t, []api.AppInfo{{ID: "app_blog", Name: "blog"}}, ai.searchReq.Apps)
+	assert.Equal(t, audit.Actions, ai.searchReq.Actions, "the code's catalog, not a scan of the log (O-54)")
+	assert.Equal(t, []api.PersonInfo{{ID: "usr_ada", Username: "ada", Name: "Ada Lovelace", Email: "Ada@Example.com"}},
+		ai.searchReq.People, "the person the question names")
+	assert.Empty(t, ai.searchReq.Apps, "no app matches the question's words")
 
 	assert.Equal(t, audit.Query{
 		Actions: []string{"app.deploy"}, AppID: "app_blog", PrincipalID: "usr_ada", PrincipalKind: "user",
@@ -801,6 +955,11 @@ func TestR345_AuditSearchRunsTheFilterAndSummarizes(t *testing.T) {
 	assert.Equal(t, time.UTC, ai.summaryReq.Records[0].At.Location())
 	assert.Equal(t, "app_blog", ai.summaryReq.Records[0].AppID)
 	assert.Equal(t, res.Filter, ai.summaryReq.Filter)
+
+	// The summary names the people and apps the records hold, by ID.
+	assert.Equal(t, []api.AppInfo{{ID: "app_blog", Name: "blog", Slug: "blog"}}, ai.summaryReq.Apps)
+	require.Len(t, ai.summaryReq.People, 1)
+	assert.Equal(t, "usr_ada", ai.summaryReq.People[0].ID)
 }
 
 // TestAuditSearchUnderTheLimitIsNotTruncated asserts a result smaller than the
@@ -810,7 +969,7 @@ func TestAuditSearchUnderTheLimitIsNotTruncated(t *testing.T) {
 	s := newService(t, ai, "")
 	s.Audit = &fakeAudit{records: records(3)}
 
-	res, err := s.SearchAudit(context.Background(), "what happened")
+	res, err := s.SearchAudit(context.Background(), admin, "what happened")
 	require.NoError(t, err)
 	assert.Equal(t, 3, res.Matched)
 	assert.False(t, res.Truncated)
@@ -820,12 +979,16 @@ func TestAuditSearchUnderTheLimitIsNotTruncated(t *testing.T) {
 
 // TestR345_AuditSearchResolvesPeopleByName asserts a person named by
 // username, email or display name, in any case, is searched for by ID, and a
-// name matching nobody is left as given.
+// name matching nobody is left as given. Each is one bounded search (O-54).
 func TestR345_AuditSearchResolvesPeopleByName(t *testing.T) {
-	people := []api.PersonInfo{
-		{ID: "usr_ada", Username: "ada", Email: "Ada@Example.com", Name: "Ada Lovelace"},
-		{ID: "usr_bob", Username: "bob"},
-	}
+	s := newService(t, nil, "")
+	calls := 0
+	s.Users = fakeUsers{users: []state.User{
+		{ID: "usr_ada", ExternalID: "ada", Email: "Ada@Example.com", DisplayName: "Ada Lovelace"},
+		{ID: "usr_bob", ExternalID: "bob"},
+	}, calls: &calls}
+	v, err := s.sightOf(context.Background(), admin)
+	require.NoError(t, err)
 	for in, want := range map[string]string{
 		"usr_ada":          "usr_ada",
 		" ADA ":            "usr_ada",
@@ -836,13 +999,26 @@ func TestR345_AuditSearchResolvesPeopleByName(t *testing.T) {
 		"":                 "",
 		"usr_somebodyelse": "usr_somebodyelse",
 	} {
-		assert.Equal(t, want, resolvePerson(in, people), in)
+		got, err := s.resolvePerson(context.Background(), v, in)
+		require.NoError(t, err)
+		assert.Equal(t, want, got, in)
 	}
+	assert.Equal(t, 5, calls, "an ID or an empty name is not searched for")
 
-	f, err := cleanFilter(api.AuditFilter{PrincipalID: "ADA", Involving: "bob"}, people)
+	// Someone who may not read accounts gets the name back as it is.
+	s.Verbs = fakeVerbs{verbs: []string{"install.audit.read"}}
+	v, err = s.sightOf(context.Background(), admin)
 	require.NoError(t, err)
-	assert.Equal(t, "usr_ada", f.PrincipalID)
-	assert.Equal(t, "usr_bob", f.Involving)
+	got, err := s.resolvePerson(context.Background(), v, "ada")
+	require.NoError(t, err)
+	assert.Equal(t, "ada", got)
+
+	ai := &fakeAI{caps: doesAll(), search: api.AuditSearch{Filter: api.AuditFilter{PrincipalID: "ADA", Involving: "bob"}}}
+	s = newService(t, ai, "")
+	res, err := s.SearchAudit(context.Background(), admin, "what did they do")
+	require.NoError(t, err)
+	assert.Equal(t, "usr_ada", res.Filter.PrincipalID)
+	assert.Equal(t, "usr_bob", res.Filter.Involving)
 }
 
 // TestCleanFilterTrimsAndCaps asserts blank actions are dropped, at most ten
@@ -854,7 +1030,7 @@ func TestCleanFilterTrimsAndCaps(t *testing.T) {
 	}
 	f, err := cleanFilter(api.AuditFilter{
 		Actions: actions, PrincipalKind: "robot", TargetKind: " user ", TargetID: " usr_ada ",
-	}, nil)
+	})
 	require.NoError(t, err)
 	require.Len(t, f.Actions, 10)
 	assert.Equal(t, "app.aa", f.Actions[0])
@@ -864,7 +1040,7 @@ func TestCleanFilterTrimsAndCaps(t *testing.T) {
 	assert.Equal(t, "usr_ada", f.TargetID)
 
 	for _, kind := range []string{"user", "token", "system", "anonymous"} {
-		f, err := cleanFilter(api.AuditFilter{PrincipalKind: " " + kind}, nil)
+		f, err := cleanFilter(api.AuditFilter{PrincipalKind: " " + kind})
 		require.NoError(t, err)
 		assert.Equal(t, kind, f.PrincipalKind)
 	}
@@ -885,7 +1061,7 @@ func TestAuditSearchRefusesATimeRangeThatEndsBeforeItStarts(t *testing.T) {
 			a := &fakeAudit{}
 			s.Audit = a
 
-			_, err := s.SearchAudit(context.Background(), "what happened")
+			_, err := s.SearchAudit(context.Background(), admin, "what happened")
 			e := requireCode(t, err, errs.AdapterFailed)
 			assert.Contains(t, e.Message, "ends before it starts")
 			assert.NotEmpty(t, e.Remedy)
@@ -895,7 +1071,7 @@ func TestAuditSearchRefusesATimeRangeThatEndsBeforeItStarts(t *testing.T) {
 	}
 
 	// A range with one end open is fine.
-	f, err := cleanFilter(api.AuditFilter{Since: &since}, nil)
+	f, err := cleanFilter(api.AuditFilter{Since: &since})
 	require.NoError(t, err)
 	assert.Nil(t, f.Until)
 }
@@ -905,17 +1081,16 @@ func TestAuditSearchRefusesATimeRangeThatEndsBeforeItStarts(t *testing.T) {
 // the adapter's failure.
 func TestSearchAuditPropagatesErrors(t *testing.T) {
 	cases := map[string]func(s *Service){
-		"users":   func(s *Service) { s.Users = fakeUsers{err: errBoom} },
-		"apps":    func(s *Service) { s.Apps = fakeApps{err: errBoom} },
-		"actions": func(s *Service) { s.Audit = &fakeAudit{actionsErr: errBoom} },
-		"list":    func(s *Service) { s.Audit = &fakeAudit{listErr: errBoom} },
+		"users": func(s *Service) { s.Users = fakeUsers{err: errBoom} },
+		"apps":  func(s *Service) { s.Apps = fakeApps{err: errBoom} },
+		"list":  func(s *Service) { s.Audit = &fakeAudit{listErr: errBoom} },
 	}
 	for name, breakIt := range cases {
 		t.Run(name, func(t *testing.T) {
 			ai := &fakeAI{caps: doesAll()}
 			s := newService(t, ai, "")
 			breakIt(s)
-			_, err := s.SearchAudit(context.Background(), "what happened")
+			_, err := s.SearchAudit(context.Background(), admin, "what happened")
 			require.ErrorIs(t, err, errBoom)
 			assert.False(t, ai.summaryRan)
 		})
@@ -923,7 +1098,7 @@ func TestSearchAuditPropagatesErrors(t *testing.T) {
 
 	t.Run("summary", func(t *testing.T) {
 		s := newService(t, &fakeAI{caps: doesAll(), summaryErr: errors.New("overloaded")}, "")
-		_, err := s.SearchAudit(context.Background(), "what happened")
+		_, err := s.SearchAudit(context.Background(), admin, "what happened")
 		e := requireCode(t, err, errs.AdapterFailed)
 		assert.Equal(t, "The AI adapter could not finish audit search: overloaded", e.Message)
 	})

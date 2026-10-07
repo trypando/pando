@@ -29,6 +29,10 @@ const DefaultTimeout = 90 * time.Second
 const (
 	auditSearchLimit = 200
 	summaryLimit     = 100
+
+	// summaryNames is how many people, and how many apps, the records sent
+	// for a summary are named with (O-54).
+	summaryNames = 50
 )
 
 // Service runs the administrative AI functions (R-343 … R-346).
@@ -40,21 +44,30 @@ const (
 type Service struct {
 	Registry *api.Registry
 
+	// Users, Apps and Groups are searched, never listed whole (O-54): every
+	// read here is bounded by a limit or a set of IDs.
 	Users interface {
-		List(ctx context.Context) ([]state.User, error)
+		Search(ctx context.Context, q string, limit int) ([]state.User, error)
+		ListPage(ctx context.Context, page state.Page) ([]state.User, string, int, error)
 	}
 	Apps interface {
-		ListAll(ctx context.Context) ([]state.App, error)
+		ListAllPage(ctx context.Context, page state.Page) ([]state.App, string, int, error)
+		ListForPrincipalPage(ctx context.Context, p authz.Principal, page state.Page) ([]state.App, string, int, error)
 	}
+	Groups interface {
+		Search(ctx context.Context, q string, limit int) ([]state.Group, error)
+	}
+
+	// Roles are read whole: the built-in roles and the custom ones an
+	// administrator made, which a draft must not duplicate (R-082). Their
+	// number is set by people defining roles by hand, not by the size of the
+	// organization.
 	Roles interface {
 		List(ctx context.Context) ([]state.RoleRow, error)
 	}
-	Groups interface {
-		List(ctx context.Context) ([]state.Group, error)
-	}
 
 	// Verbs is what a principal holds install-wide, which bounds what an
-	// access draft may grant.
+	// access draft may grant and what the AI may look up for them.
 	Verbs interface {
 		InstallVerbsFor(ctx context.Context, p authz.Principal) ([]string, error)
 	}
@@ -66,9 +79,10 @@ type Service struct {
 	}
 	Overlay *policy.Overlay
 
+	// Audit runs the filter an audit search becomes. The action names the
+	// adapter chooses from are audit.Actions, the code's own catalog (O-54).
 	Audit interface {
 		List(ctx context.Context, q audit.Query) ([]audit.Record, error)
-		ActionNames(ctx context.Context) ([]string, error)
 	}
 
 	// Reference is the generated reference in Markdown.
@@ -123,6 +137,14 @@ func (s *Service) call(ctx context.Context, fn api.AIFunction) (api.AIAdapter, s
 	return ai, model, ran, callCtx, cancel, nil
 }
 
+// looksUp is whether ai calls the lookup tools (O-54), as its capabilities
+// say: data, never a type assertion (R-254). call has already read them once,
+// so a failure here is read as no.
+func looksUp(ctx context.Context, ai api.AIAdapter) bool {
+	caps, err := ai.Capabilities(ctx)
+	return err == nil && caps.LooksUp
+}
+
 func failed(fn api.AIFunction, err error) error {
 	return errs.Newf(errs.AdapterFailed, "The AI adapter could not finish %s: %s", strings.ToLower(fn.Title()), err.Error()).
 		WithRemedy("Try again in a moment, or do this without AI.")
@@ -173,28 +195,22 @@ func (s *Service) DraftAccess(ctx context.Context, p authz.Principal, descriptio
 		return AccessResult{}, err
 	}
 
-	held := map[string]bool{}
-	if s.Verbs != nil {
-		verbs, err := s.Verbs.InstallVerbsFor(ctx, p)
-		if err != nil {
-			return AccessResult{}, err
-		}
-		for _, v := range verbs {
-			held[v] = true
-		}
+	v, err := s.sightOf(ctx, p)
+	if err != nil {
+		return AccessResult{}, err
 	}
 	catalog := map[string]string{}
 	var verbs []api.VerbInfo
-	for _, v := range authz.Verbs {
+	for _, verb := range authz.Verbs {
 		scope := "app"
-		if authz.InstallScoped(v) {
+		if authz.InstallScoped(verb) {
 			scope = "install"
-			if !held[string(v)] {
+			if !v.held[string(verb)] {
 				continue
 			}
 		}
-		catalog[string(v)] = scope
-		verbs = append(verbs, api.VerbInfo{Name: string(v), Scope: scope})
+		catalog[string(verb)] = scope
+		verbs = append(verbs, api.VerbInfo{Name: string(verb), Scope: scope})
 	}
 
 	roleRows, err := s.Roles.List(ctx)
@@ -207,34 +223,34 @@ func (s *Service) DraftAccess(ctx context.Context, p authz.Principal, descriptio
 		roles = append(roles, api.RoleInfo{ID: r.ID, Name: r.Name, Scope: r.Scope, Builtin: r.Builtin, Verbs: r.Verbs})
 		roleNames[strings.ToLower(r.Name)] = true
 	}
-	groupRows, err := s.Groups.List(ctx)
-	if err != nil {
-		return AccessResult{}, err
-	}
-	groups := make([]api.GroupInfo, 0, len(groupRows))
-	groupNames := map[string]bool{}
-	for _, g := range groupRows {
-		groups = append(groups, api.GroupInfo{ID: g.ID, Name: g.Name})
-		groupNames[strings.ToLower(g.Name)] = true
-	}
-	people, err := s.people(ctx)
-	if err != nil {
-		return AccessResult{}, err
-	}
-	known := map[string]bool{}
-	for _, person := range people {
-		known[person.ID] = true
-	}
 
 	ai, model, ran, callCtx, cancel, err := s.call(ctx, api.AIFunctionDraftAccess)
 	if err != nil {
 		return AccessResult{}, err
 	}
 	defer cancel()
-	draft, err := ai.DraftAccess(callCtx, api.AccessRequest{
-		Description: description, Verbs: verbs, Roles: roles, Groups: groups, People: people,
-		Current: current, Model: model,
-	})
+
+	// O-54: the people the draft so far names, so a refinement can say who
+	// they are, then either the lookup tools or what the description's own
+	// words match. Never every account or group.
+	req := api.AccessRequest{Description: description, Verbs: verbs, Roles: roles, Current: current, Model: model}
+	if current != nil && current.Group != nil {
+		if req.People, err = s.peopleByID(ctx, v, current.Group.Members, api.LookupLimit); err != nil {
+			return AccessResult{}, err
+		}
+	}
+	if looksUp(ctx, ai) {
+		req.Lookup = s.lookup(v, true)
+	} else {
+		m, err := s.searchMatches(ctx, v, description, true)
+		if err != nil {
+			return AccessResult{}, err
+		}
+		req.People = mergePeople(req.People, m.people)
+		req.Groups = m.groups
+	}
+
+	draft, err := ai.DraftAccess(callCtx, req)
 	if err != nil {
 		return AccessResult{}, failed(api.AIFunctionDraftAccess, err)
 	}
@@ -249,31 +265,75 @@ func (s *Service) DraftAccess(ctx context.Context, p authz.Principal, descriptio
 		out.Role = role
 	}
 	if g := draft.Group; g != nil {
-		name := strings.TrimSpace(g.Name)
-		switch {
-		case name == "":
-			out.Refused = append(out.Refused, "The group had no name, so it was left out.")
-		case groupNames[strings.ToLower(name)]:
-			out.Refused = append(out.Refused, fmt.Sprintf("A group called %q already exists, so no new one was drafted. Add people to it instead.", name))
-		default:
-			group := &api.GroupDraft{Name: name}
-			seen := map[string]bool{}
-			for _, m := range g.Members {
-				m = strings.TrimSpace(m)
-				if seen[m] {
-					continue
-				}
-				seen[m] = true
-				if !known[m] {
-					out.Refused = append(out.Refused, fmt.Sprintf("%q is not an account on this installation, so it was left out of the group.", m))
-					continue
-				}
-				group.Members = append(group.Members, m)
-			}
-			out.Group = group
+		group, refused, err := s.checkGroup(ctx, *g)
+		if err != nil {
+			return AccessResult{}, err
 		}
+		out.Refused = append(out.Refused, refused...)
+		out.Group = group
 	}
 	return out, nil
+}
+
+// checkGroup refuses a drafted group with no name or the name of one that
+// exists, and drops members who are not accounts. Each is a bounded read: a
+// search on the name, and the members by ID (O-54).
+func (s *Service) checkGroup(ctx context.Context, g api.GroupDraft) (*api.GroupDraft, []string, error) {
+	name := strings.TrimSpace(g.Name)
+	if name == "" {
+		return nil, []string{"The group had no name, so it was left out."}, nil
+	}
+	same, err := s.Groups.Search(ctx, name, groupNameProbe)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, existing := range same {
+		if strings.EqualFold(existing.Name, name) {
+			return nil, []string{fmt.Sprintf("A group called %q already exists, so no new one was drafted. Add people to it instead.", name)}, nil
+		}
+	}
+
+	var refused []string
+	members := firstUnique(g.Members, len(g.Members))
+	if len(members) > state.MaxPageSize {
+		refused = append(refused, fmt.Sprintf("The group named %d people and a draft holds at most %d, so the rest were left out. "+
+			"Add them after creating it.", len(members), state.MaxPageSize))
+		members = members[:state.MaxPageSize]
+	}
+	known := map[string]bool{}
+	if len(members) > 0 {
+		users, _, _, err := s.Users.ListPage(ctx, state.Page{IDs: members, Limit: len(members)})
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, u := range users {
+			known[u.ID] = true
+		}
+	}
+	group := &api.GroupDraft{Name: name}
+	for _, m := range members {
+		if !known[m] {
+			refused = append(refused, fmt.Sprintf("%q is not an account on this installation, so it was left out of the group.", m))
+			continue
+		}
+		group.Members = append(group.Members, m)
+	}
+	return group, refused, nil
+}
+
+// mergePeople is a followed by those of b not already in it.
+func mergePeople(a, b []api.PersonInfo) []api.PersonInfo {
+	seen := map[string]bool{}
+	for _, p := range a {
+		seen[p.ID] = true
+	}
+	for _, p := range b {
+		if !seen[p.ID] {
+			seen[p.ID] = true
+			a = append(a, p)
+		}
+	}
+	return a
 }
 
 func checkRole(r api.RoleDraft, catalog map[string]string, existing map[string]bool) (*api.RoleDraft, []string) {
@@ -503,20 +563,17 @@ type AuditResult struct {
 // able to read the log (install.audit.read); the adapter sees the records
 // that caller could see and nothing more, and never queries the log itself
 // (R-027): it returns a filter, and core runs it.
-func (s *Service) SearchAudit(ctx context.Context, question string) (AuditResult, error) {
+//
+// The adapter is not handed every account and app (O-54): one that LooksUp
+// searches for those the question names, as p; any other is given what the
+// question's own words match. The action names are audit.Actions, the code's
+// catalog, not a scan of the log.
+func (s *Service) SearchAudit(ctx context.Context, p authz.Principal, question string) (AuditResult, error) {
 	question, err := ask("what you want to find in the audit log", question)
 	if err != nil {
 		return AuditResult{}, err
 	}
-	people, err := s.people(ctx)
-	if err != nil {
-		return AuditResult{}, err
-	}
-	apps, err := s.apps(ctx)
-	if err != nil {
-		return AuditResult{}, err
-	}
-	actions, err := s.Audit.ActionNames(ctx)
+	v, err := s.sightOf(ctx, p)
 	if err != nil {
 		return AuditResult{}, err
 	}
@@ -526,9 +583,17 @@ func (s *Service) SearchAudit(ctx context.Context, question string) (AuditResult
 		return AuditResult{}, err
 	}
 	defer cancel()
-	search, err := ai.SearchAudit(callCtx, api.AuditSearchRequest{
-		Question: question, Now: s.now(), People: people, Apps: apps, Actions: actions, Model: model,
-	})
+	req := api.AuditSearchRequest{Question: question, Now: s.now(), Actions: audit.Actions, Model: model}
+	if looksUp(ctx, ai) {
+		req.Lookup = s.lookup(v, false)
+	} else {
+		m, err := s.searchMatches(ctx, v, question, false)
+		if err != nil {
+			return AuditResult{}, err
+		}
+		req.People, req.Apps = m.people, m.apps
+	}
+	search, err := ai.SearchAudit(callCtx, req)
 	if err != nil {
 		return AuditResult{}, failed(api.AIFunctionSearchAudit, err)
 	}
@@ -536,8 +601,14 @@ func (s *Service) SearchAudit(ctx context.Context, question string) (AuditResult
 		ran.Model = search.Model
 	}
 
-	f, err := cleanFilter(search.Filter, people)
+	f, err := cleanFilter(search.Filter)
 	if err != nil {
+		return AuditResult{}, err
+	}
+	if f.PrincipalID, err = s.resolvePerson(ctx, v, f.PrincipalID); err != nil {
+		return AuditResult{}, err
+	}
+	if f.Involving, err = s.resolvePerson(ctx, v, f.Involving); err != nil {
 		return AuditResult{}, err
 	}
 	q := audit.Query{
@@ -568,6 +639,31 @@ func (s *Service) SearchAudit(ctx context.Context, question string) (AuditResult
 		})
 	}
 
+	// Names for the summary: the people and apps the records and the filter
+	// name, by ID, that p may see. Bounded by the records (O-54).
+	personIDs := []string{f.PrincipalID, f.Involving, f.TargetID}
+	appIDs := []string{f.AppID, f.Involving, f.TargetID}
+	for _, r := range views {
+		if r.PrincipalKind == "user" {
+			personIDs = append(personIDs, r.PrincipalID)
+		}
+		appIDs = append(appIDs, r.AppID)
+		switch r.TargetKind {
+		case "user":
+			personIDs = append(personIDs, r.TargetID)
+		case "app":
+			appIDs = append(appIDs, r.TargetID)
+		}
+	}
+	people, err := s.peopleByID(ctx, v, personIDs, summaryNames)
+	if err != nil {
+		return AuditResult{}, err
+	}
+	apps, err := s.appsByID(ctx, v, appIDs, summaryNames)
+	if err != nil {
+		return AuditResult{}, err
+	}
+
 	summary, err := ai.SummarizeAudit(callCtx, api.AuditSummaryRequest{
 		Question: question, Filter: f, Records: views, Truncated: len(records) > len(views),
 		People: people, Apps: apps, Model: model,
@@ -580,16 +676,11 @@ func (s *Service) SearchAudit(ctx context.Context, question string) (AuditResult
 }
 
 // cleanFilter trims a filter and refuses one that would not read as a query.
-//
-// A person named by username, email or name rather than ID is resolved to
-// their ID here, so "admin" finds admin's events whether or not the model
-// looked the ID up: the log is keyed by ID, and a filter on a name matches
-// nothing without saying why.
-func cleanFilter(f api.AuditFilter, people []api.PersonInfo) (api.AuditFilter, error) {
+func cleanFilter(f api.AuditFilter) (api.AuditFilter, error) {
 	out := api.AuditFilter{
-		AppID: strings.TrimSpace(f.AppID), PrincipalID: resolvePerson(f.PrincipalID, people),
+		AppID: strings.TrimSpace(f.AppID), PrincipalID: strings.TrimSpace(f.PrincipalID),
 		PrincipalKind: strings.TrimSpace(f.PrincipalKind), TargetKind: strings.TrimSpace(f.TargetKind),
-		TargetID: strings.TrimSpace(f.TargetID), Involving: resolvePerson(f.Involving, people),
+		TargetID: strings.TrimSpace(f.TargetID), Involving: strings.TrimSpace(f.Involving),
 		Since: f.Since, Until: f.Until,
 	}
 	for _, a := range f.Actions {
@@ -610,26 +701,31 @@ func cleanFilter(f api.AuditFilter, people []api.PersonInfo) (api.AuditFilter, e
 	return out, nil
 }
 
-// resolvePerson returns the ID of the person v names, or v as it is when it
-// is already an ID or names nobody.
-func resolvePerson(v string, people []api.PersonInfo) string {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return v
+// resolvePerson returns the ID of the account name names exactly, by
+// username, email or display name in any case, or name as it is when it is
+// already an account ID, names nobody, or the person asking may not read
+// accounts.
+//
+// So "admin" finds admin's events whether or not the model looked the ID up:
+// the log is keyed by ID, and a filter on a name matches nothing without
+// saying why. One bounded search, never a list of every account (O-54).
+func (s *Service) resolvePerson(ctx context.Context, v sight, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.HasPrefix(name, "usr_") || !v.people() {
+		return name, nil
+	}
+	people, err := s.findPeople(ctx, v, name, api.LookupLimit)
+	if err != nil {
+		return "", err
 	}
 	for _, p := range people {
-		if p.ID == v {
-			return v
-		}
-	}
-	for _, p := range people {
-		for _, name := range []string{p.Username, p.Email, p.Name} {
-			if name != "" && strings.EqualFold(name, v) {
-				return p.ID
+		for _, n := range []string{p.Username, p.Email, p.Name} {
+			if n != "" && strings.EqualFold(n, name) {
+				return p.ID, nil
 			}
 		}
 	}
-	return v
+	return name, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -675,32 +771,6 @@ func (s *Service) AnswerReference(ctx context.Context, question string) (Referen
 		if c = strings.TrimSpace(c); c != "" && strings.Contains(ref, c) {
 			out.Cites = append(out.Cites, c)
 		}
-	}
-	return out, nil
-}
-
-// ---------------------------------------------------------------------------
-
-func (s *Service) people(ctx context.Context) ([]api.PersonInfo, error) {
-	users, err := s.Users.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]api.PersonInfo, 0, len(users))
-	for _, u := range users {
-		out = append(out, api.PersonInfo{ID: u.ID, Username: u.ExternalID, Name: u.DisplayName, Email: u.Email})
-	}
-	return out, nil
-}
-
-func (s *Service) apps(ctx context.Context) ([]api.AppInfo, error) {
-	apps, err := s.Apps.ListAll(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]api.AppInfo, 0, len(apps))
-	for _, a := range apps {
-		out = append(out, api.AppInfo{ID: a.ID, Name: a.Name})
 	}
 	return out, nil
 }
