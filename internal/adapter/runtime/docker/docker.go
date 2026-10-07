@@ -304,6 +304,11 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		// A single daemon can load an image from a stream, which is how a build
 		// reaches the runtime without a registry.
 		SupportsImageImport: true,
+		ImageDelivery:       []api.ImageDelivery{api.DeliveryImport},
+
+		// Traefik reads route files from a directory Pando writes and the
+		// edge mounts (edge.go).
+		EdgeConfig: []api.EdgeConfig{api.EdgeConfigSharedMount},
 
 		// Only when Pando is itself a container on this daemon: then it can
 		// start the helper that replaces it (R-359).
@@ -385,6 +390,9 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 		capacity.TotalMemoryBytes = a.config.TotalMemoryBytes
 	}
 	capacity.TotalDiskBytes = a.config.TotalDiskBytes
+
+	// One machine: the roomiest place a workload could go is all of it.
+	capacity.LargestFit = api.Fit{CPUMillis: capacity.TotalCPUMillis, MemoryBytes: capacity.TotalMemoryBytes}
 	capacity.RunningWorkloads = info.ContainersRunning
 
 	// The rest of what the daemon says about itself, for whoever is looking

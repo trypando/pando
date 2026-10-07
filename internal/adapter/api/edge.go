@@ -23,6 +23,38 @@ type EdgeRequest struct {
 	// ProxyUpstream is Pando's proxy, as the edge must reach it (R-023) — the
 	// same value every RouteRequest carries.
 	ProxyUpstream string
+
+	// EdgeConfig is how the runtime that will run the edge lets it receive
+	// routes (RuntimeCapabilities.EdgeConfig). Empty means the runtime did not
+	// say, which is read as EdgeConfigSharedMount.
+	EdgeConfig []EdgeConfig
+}
+
+// EdgeConfig is one way an edge receives its routes.
+type EdgeConfig string
+
+const (
+	// EdgeConfigSharedMount: a directory Pando writes and the edge mounts
+	// (EdgeMount.SharedWithPando). Single-host Docker.
+	EdgeConfigSharedMount EdgeConfig = "shared_mount"
+	// EdgeConfigKubernetesAPI: objects in the cluster's API that the edge
+	// watches — Traefik's IngressRoutes. The Kubernetes runtime.
+	EdgeConfigKubernetesAPI EdgeConfig = "kubernetes_api"
+)
+
+// Offers reports whether a list of edge configurations includes c. An empty
+// list offers only the shared mount, which is what every runtime offered
+// before the field existed.
+func Offers(list []EdgeConfig, c EdgeConfig) bool {
+	if len(list) == 0 {
+		return c == EdgeConfigSharedMount
+	}
+	for _, x := range list {
+		if x == c {
+			return true
+		}
+	}
+	return false
 }
 
 // EdgePlan is the workload a routing adapter needs running.
@@ -49,6 +81,13 @@ type EdgePlan struct {
 	// host part of ProxyUpstream. The runtime makes Pando answer to it on the
 	// network it shares with the edge, and joins the edge to nothing else.
 	ProxyAlias string
+
+	// ReadsRoutesFrom is how this edge receives its routes, when it reads them
+	// from the runtime's API (EdgeConfigKubernetesAPI): the runtime then gives
+	// it the identity that may read them and nothing else. Empty for an edge
+	// that reads a shared mount or holds its configuration remotely
+	// (cloudflared), which is given no API identity at all.
+	ReadsRoutesFrom EdgeConfig
 }
 
 // EdgePort publishes one port of the edge on the host.

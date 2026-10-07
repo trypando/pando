@@ -89,7 +89,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		plan, needs, err := routing.Edge(ctx, api.EdgeRequest{Ref: ref, ProxyUpstream: s.ProxyUpstream})
+		plan, needs, err := routing.Edge(ctx, api.EdgeRequest{Ref: ref, ProxyUpstream: s.ProxyUpstream, EdgeConfig: caps.EdgeConfig})
 		if err != nil {
 			fail(ref, err)
 			continue

@@ -75,6 +75,19 @@ type RuntimeCapabilities struct {
 	// than a failure after the build has already run.
 	SupportsImageImport bool
 
+	// ImageDelivery is how a built image can reach this runtime, in order of
+	// preference (notes-image-registry-issue-72.md). Empty means the runtime
+	// has not said, and SupportsImageImport alone decides. A runtime that
+	// spans machines offers only DeliveryRegistry: every node pulls.
+	ImageDelivery []ImageDelivery
+
+	// EdgeConfig is how an edge on this runtime can receive its routes, for a
+	// routing adapter that writes them (notes-kubernetes-runtime-issue-72.md).
+	// Core hands it to the routing adapter in EdgeRequest; a routing adapter
+	// that can use none of them refuses its edge rather than running one that
+	// never learns a route. Data, never a type assertion (R-254).
+	EdgeConfig []EdgeConfig
+
 	// SupportsSelfUpgrade means this runtime runs Pando itself and can start
 	// the helper that replaces it (R-355, R-359): the adapter implements
 	// SelfUpgrader. Data, never a type assertion (R-254), so the Updates
@@ -119,6 +132,17 @@ type RuntimeCapabilities struct {
 	// checked at plan time (issue #41).
 	Platform string
 }
+
+// ImageDelivery is one way a built image reaches a runtime.
+type ImageDelivery string
+
+const (
+	// DeliveryImport streams the image into ImportImage.
+	DeliveryImport ImageDelivery = "import"
+	// DeliveryRegistry pushes it to the install's registry, and the runtime
+	// pulls it by digest with WorkloadPlan.PullAuth.
+	DeliveryRegistry ImageDelivery = "registry"
+)
 
 // RegistryAuth is what one image pull authenticates with, resolved by core
 // from the app's registry credential (issue #41). Short-lived — an ECR
@@ -657,12 +681,26 @@ type Capacity struct {
 	// not; -1 when the runtime cannot say.
 	RunningWorkloads int
 
+	// LargestFit is the CPU and memory of the roomiest single place one
+	// workload could go. On one machine it is the totals; across several the
+	// totals can fit a workload that no single machine does, and the planner
+	// refuses a workload larger than this (R-242) rather than leaving it
+	// waiting for room that never comes. Zero in a field means not known, and
+	// that resource is not checked against it.
+	LargestFit Fit
+
 	// Details is anything else the runtime reports about itself, in its own
 	// shape — version, storage driver. Shown as it is, never interpreted:
 	// Pando does not own its schema.
 	Details map[string]any
 
 	Reported time.Time
+}
+
+// Fit is room for one workload in one place.
+type Fit struct {
+	CPUMillis   int
+	MemoryBytes int64
 }
 
 // InUse is what a runtime's workloads are using now, summed (R-245).

@@ -40,6 +40,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/routing/loopback"
 	"github.com/trypando/pando/internal/adapter/routing/traefik"
 	dockerruntime "github.com/trypando/pando/internal/adapter/runtime/docker"
+	kubernetesruntime "github.com/trypando/pando/internal/adapter/runtime/kubernetes"
 	trivyscanner "github.com/trypando/pando/internal/adapter/scanner/trivy"
 	secretslocal "github.com/trypando/pando/internal/adapter/secrets/local"
 	servicesdocker "github.com/trypando/pando/internal/adapter/services/docker"
@@ -1488,6 +1489,10 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 	switch {
 	case category == string(adapterapi.CategoryRuntime) && kind == dockerruntime.Kind:
 		return dockerruntime.New()
+	case category == string(adapterapi.CategoryRuntime) && kind == kubernetesruntime.Kind:
+		// Not seeded: it needs the cluster's address ranges, and Pando running
+		// inside the cluster (deploy/kubernetes).
+		return kubernetesruntime.New()
 	case category == string(adapterapi.CategoryRouting) && kind == loopback.Kind:
 		return loopback.New()
 	case category == string(adapterapi.CategorySecrets) && kind == secretslocal.Kind:
@@ -1982,6 +1987,7 @@ func adapterKinds() []adapterapi.KindInfo {
 		aiopenai.Info(),
 		ailocal.Info(),
 		dockerruntime.Info(),
+		kubernetesruntime.Info(),
 		loopback.Info(),
 		traefik.Info(),
 		cloudflare.Info(),

@@ -710,3 +710,42 @@ func (f *fakeRuntime) EdgeVolumes(context.Context) ([]api.VolumeHandle, error) {
 func (f *fakeRouting) Edge(context.Context, api.EdgeRequest) (api.EdgePlan, bool, error) {
 	return api.EdgePlan{}, false, nil
 }
+
+// TestR242_AWorkloadLargerThanTheLargestFitIsRefused asserts R-242 on a runtime
+// spanning machines: room in total is not room in one place. The refusal names
+// the workload and the largest space there is, and a policy that allows memory
+// oversubscription leaves the decision to the runtime.
+func TestR242_AWorkloadLargerThanTheLargestFitIsRefused(t *testing.T) {
+	rt := capableRuntime()
+	rt.capacity.LargestFit = api.Fit{CPUMillis: 4000, MemoryBytes: 2 << 30}
+
+	s := plannableSpec()
+	s.Resources.MemoryBytes = 4 << 30
+	p := planner.New(
+		registry(t, rt, capableRouting(), capableBuilder()),
+		policy.Static(policy.Default()),
+		fixedAllocations{},
+	)
+	_, err := p.Check(context.Background(), s)
+	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
+	e := errs.As(err)
+	require.Equal(t, "memory", e.Details["resource"])
+	require.Equal(t, s.Workloads[0].Name, e.Details["workload"])
+	require.Contains(t, e.Message, "2.0 GiB")
+	require.Contains(t, e.Remedy, "Lower what")
+
+	s.Resources.MemoryBytes = 1 << 30
+	_, err = p.Check(context.Background(), s)
+	require.NoError(t, err, "a workload that fits on one machine is planned")
+
+	s.Resources.MemoryBytes = 4 << 30
+	doc := policy.Default()
+	doc.AllowMemoryOversubscription = true
+	p = planner.New(
+		registry(t, rt, capableRouting(), capableBuilder()),
+		policy.Static(doc),
+		fixedAllocations{},
+	)
+	_, err = p.Check(context.Background(), s)
+	require.NoError(t, err)
+}
