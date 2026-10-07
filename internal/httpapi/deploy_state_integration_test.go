@@ -23,6 +23,25 @@ func (refusingRuntime) Apply(context.Context, adapterapi.BundlePlan) (adapterapi
 	return adapterapi.BundleHandle{}, errs.New(errs.Internal, "The runtime could not create the app's containers.")
 }
 
+// unwatchableRuntime starts the app and then cannot report on it, which ends
+// a deploy at the health step: the app was started and never seen healthy.
+type unwatchableRuntime struct{ egressRuntime }
+
+func (unwatchableRuntime) Apply(context.Context, adapterapi.BundlePlan) (adapterapi.BundleHandle, error) {
+	return adapterapi.BundleHandle{}, nil
+}
+
+func (unwatchableRuntime) Observe(context.Context, adapterapi.BundleRef) (adapterapi.ObservedBundle, error) {
+	return adapterapi.ObservedBundle{}, errs.New(errs.AdapterUnavailable, "The runtime could not report on the app.")
+}
+
+// acceptingRouting routes anything.
+type acceptingRouting struct{ subdomainRouting }
+
+func (acceptingRouting) Ensure(context.Context, adapterapi.RouteRequest) (adapterapi.RouteHandle, error) {
+	return adapterapi.RouteHandle{}, nil
+}
+
 // deployAndWait starts a deploy of the given revision and waits for it to end.
 func (i *install) deployAndWait(s *session, appID string, revision int) state.Deployment {
 	i.t.Helper()
@@ -99,4 +118,34 @@ func TestR151_ADeployThatCannotStartTheAppLeavesItFailedNotDeploying(t *testing.
 	dep := i.deployAndWait(admin, appID, 1)
 	require.Equal(t, state.DeployFailed, dep.Status)
 	require.Equal(t, state.StateFailed, i.appStateOf(admin, appID))
+}
+
+// TestR151_AnAppThatStartsAndNeverBecomesHealthyIsLeftForTheReconciler
+// asserts where a deploy that got as far as starting the app leaves it: degraded,
+// and wanted running. Both halves matter. Degraded is what the reconciler
+// retries toward R-150's threshold; but an app created stopped and never
+// deployed successfully still said desired_state=stopped, so the reconciler
+// held it stopped instead — a crash-looping app that never reached failed.
+func TestR151_AnAppThatStartsAndNeverBecomesHealthyIsLeftForTheReconciler(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	reg := i.Server.Registry
+	require.NoError(t, reg.Register("rt_docker", unwatchableRuntime{}))
+	require.NoError(t, reg.SetDefault(adapterapi.CategoryRuntime, "rt_docker"))
+	require.NoError(t, reg.Register("rte_loopback", acceptingRouting{}))
+	require.NoError(t, reg.SetDefault(adapterapi.CategoryRouting, "rte_loopback"))
+
+	admin := i.admin()
+	appID := i.appWithSpec(admin, "notes")
+	app, _, err := i.Apps.ByID(context.Background(), appID)
+	require.NoError(t, err)
+	require.Equal(t, "stopped", app.DesiredState, "a new app starts out wanted stopped")
+
+	dep := i.deployAndWait(admin, appID, 1)
+	require.Equal(t, state.DeployFailed, dep.Status)
+
+	app, _, err = i.Apps.ByID(context.Background(), appID)
+	require.NoError(t, err)
+	require.Equal(t, state.StateDegraded, app.State, "started and never healthy is degraded (design 05 §1.2)")
+	require.Equal(t, "running", app.DesiredState, "and wanted running, so the reconciler retries it rather than holding it stopped")
 }

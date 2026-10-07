@@ -422,6 +422,17 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	// app is down during the swap, which is the accepted cost.
 	fmt.Fprintf(sink, "=> Starting the app\n")
 	leaveAs = state.StateFailed // design 05 §1.2: apply failed
+
+	// Deploying is asking for the app to run (R-140), and from here it may.
+	// Recorded before Apply rather than only on success: an app that starts
+	// and never becomes healthy is left degraded for the reconciler to retry
+	// toward R-150's threshold, and one whose desired state still said
+	// stopped would instead be held stopped — never retried, never failed.
+	// A failed app is untouched either way: the reconciler does not look at
+	// failed, whatever its desired state (R-151).
+	if err := r.apps.SetDesiredState(ctx, dep.AppID, "running"); err != nil {
+		return fail("apply", err)
+	}
 	if _, err := runtime.Apply(ctx, bundle); err != nil {
 		return fail("apply", err)
 	}
