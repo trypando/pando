@@ -65,6 +65,28 @@ func keycloak(t *testing.T) string {
 			keycloakErr = err
 			return
 		}
+		// Plain HTTP from the test, wherever the test runs. Keycloak's master
+		// realm requires HTTPS for any client it does not see as local or on
+		// a private network ("sslRequired": "external"). Behind a Linux
+		// runner's port mapping a request arrives from the bridge gateway,
+		// which is private, so this never came up in CI; behind Docker
+		// Desktop's it does not, and every admin token request was refused
+		// with "HTTPS required". Inside the container the request is local.
+		for _, cmd := range [][]string{
+			{"/opt/keycloak/bin/kcadm.sh", "config", "credentials", "--server", "http://localhost:8080",
+				"--realm", "master", "--user", "admin", "--password", "admin"},
+			{"/opt/keycloak/bin/kcadm.sh", "update", "realms/master", "-s", "sslRequired=NONE"},
+		} {
+			code, out, err := c.Exec(ctx, cmd)
+			if err == nil && code != 0 {
+				b, _ := io.ReadAll(out)
+				err = fmt.Errorf("%s exited %d: %s", strings.Join(cmd[1:3], " "), code, b)
+			}
+			if err != nil {
+				keycloakErr = err
+				return
+			}
+		}
 		port, err := c.MappedPort(ctx, "8080/tcp")
 		if err != nil {
 			keycloakErr = err
@@ -128,7 +150,8 @@ func (k *kcAdmin) must(method, path string, body any) {
 
 // realm makes a realm with one user, alice, in one group, engineering.
 func (k *kcAdmin) realm(name string) {
-	k.must(http.MethodPost, "/realms", map[string]any{"realm": name, "enabled": true})
+	// Plain HTTP, for the reason keycloak() sets the master realm to it.
+	k.must(http.MethodPost, "/realms", map[string]any{"realm": name, "enabled": true, "sslRequired": "none"})
 	k.must(http.MethodPost, "/realms/"+name+"/groups", map[string]any{"name": "engineering"})
 	k.must(http.MethodPost, "/realms/"+name+"/users", map[string]any{
 		"username": "alice", "email": "alice@example.com", "emailVerified": true, "enabled": true,
