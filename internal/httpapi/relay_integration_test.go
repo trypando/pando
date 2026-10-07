@@ -81,6 +81,32 @@ func TestR256_ADeployLogIsRelayedToTheReplicaRunningTheDeploy(t *testing.T) {
 		"passed on with the caller's credentials, for the owner to authorize again")
 }
 
+// TestR256_OnlyADeploymentIDIsRelayed asserts that a deploy-log request naming
+// something that is not a deployment ID is answered where it lands: never
+// passed to another replica, and never written into a log line (CodeQL
+// go/log-injection).
+func TestR256_OnlyADeploymentIDIsRelayed(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+	appID := i.appWithSpec(admin, "notes")
+
+	var asked, relayed atomic.Bool
+	owner := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { relayed.Store(true) }))
+	t.Cleanup(owner.Close)
+	i.Server.LogOwner = func(context.Context, string) (string, error) {
+		asked.Store(true)
+		return owner.URL, nil
+	}
+
+	for _, bad := range []string{"not-a-deployment", "dep_x%0Aforged=1", appID} {
+		got := i.logsRequest(admin, appID, bad, nil)
+		require.NotEqual(t, http.StatusOK, got.Code, bad)
+	}
+	require.False(t, asked.Load(), "nothing that is not a deployment ID is looked up")
+	require.False(t, relayed.Load(), "or relayed")
+}
+
 // TestR256_ARelayedDeployLogIsNeverRelayedAgain asserts that a request one
 // replica relayed is served where it lands, so a relay is one hop and never a
 // loop — whatever the receiving replica thinks of who holds the log.
