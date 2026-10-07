@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"io"
+	"net"
 	"time"
 
 	"github.com/trypando/pando/internal/core/spec"
@@ -75,6 +76,14 @@ type RuntimeCapabilities struct {
 	// than a failure after the build has already run.
 	SupportsImageImport bool
 
+	// ImageDelivery is how a built image can reach this runtime, in order of
+	// preference (notes-image-registry-issue-72.md): "import" through
+	// ImportImage, or "registry", pulled by digest from where the build pushed
+	// it. A runtime on several machines offers only "registry", because the
+	// machine an image is needed on is chosen after the build. Empty is read
+	// from SupportsImageImport.
+	ImageDelivery []ImageDelivery
+
 	// SupportsSelfUpgrade means this runtime runs Pando itself and can start
 	// the helper that replaces it (R-355, R-359): the adapter implements
 	// SelfUpgrader. Data, never a type assertion (R-254), so the Updates
@@ -119,6 +128,14 @@ type RuntimeCapabilities struct {
 	// checked at plan time (issue #41).
 	Platform string
 }
+
+// ImageDelivery is one way a built image reaches a runtime.
+type ImageDelivery string
+
+const (
+	ImageDeliveryImport   ImageDelivery = "import"
+	ImageDeliveryRegistry ImageDelivery = "registry"
+)
 
 // RegistryAuth is what one image pull authenticates with, resolved by core
 // from the app's registry credential (issue #41). Short-lived — an ECR
@@ -375,6 +392,23 @@ type Upstream struct {
 	// URL is the scheme, host and port the proxy forwards to, such as
 	// "http://pando-app_01HQ8-web:3000". No path: the proxy keeps the request's.
 	URL string
+
+	// Dial opens the connection the proxy sends a request over. Nil: the proxy
+	// dials URL's host itself, as on one Docker host.
+	//
+	// Set by a runtime whose workloads are not on a network Pando's container
+	// is joined to — the multi-host Docker adapter, whose Dial connects to the
+	// forwarding agent on the app's host (O-45, design 06 §4). The proxy has
+	// already decided the request by then; Dial is transport only. Supplied by
+	// the runtime so the agent's protocol stays the adapter's vocabulary
+	// (R-251).
+	Dial func(ctx context.Context) (net.Conn, error)
+
+	// PoolKey groups connections the proxy may reuse: one key, one
+	// destination, so a connection opened by one Dial is only reused for a
+	// request this Upstream would have dialed the same way. Empty is URL's
+	// host. Only read when Dial is set.
+	PoolKey string
 }
 
 // BundleHandle is the adapter's own identifier for a bundle.
@@ -657,12 +691,25 @@ type Capacity struct {
 	// not; -1 when the runtime cannot say.
 	RunningWorkloads int
 
+	// LargestFit is the CPU and memory of the roomiest single place a new
+	// workload could go now, by committed limits. On a runtime spread over
+	// several machines the total can have room that no one machine has. Nil
+	// when the runtime is one place, where the totals already say it
+	// (notes-multi-host-docker-issue-72.md).
+	LargestFit *Fit
+
 	// Details is anything else the runtime reports about itself, in its own
 	// shape — version, storage driver. Shown as it is, never interpreted:
 	// Pando does not own its schema.
 	Details map[string]any
 
 	Reported time.Time
+}
+
+// Fit is an amount of CPU and memory one place has free.
+type Fit struct {
+	CPUMillis   int
+	MemoryBytes int64
 }
 
 // InUse is what a runtime's workloads are using now, summed (R-245).

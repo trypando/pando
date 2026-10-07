@@ -56,12 +56,20 @@ func NewRuntimeUpstreams(registry *api.Registry) *RuntimeUpstreams {
 
 // PrimaryAddress returns the URL of the app's primary workload.
 func (u *RuntimeUpstreams) PrimaryAddress(ctx context.Context, app state.App, s *spec.AppSpec) (string, error) {
+	upstream, err := u.Primary(ctx, app, s)
+	return upstream.URL, err
+}
+
+// Primary returns how to reach the app's primary workload: its URL, and on a
+// runtime whose workloads are on another host, the Dial that reaches it
+// through that host's agent (O-45).
+func (u *RuntimeUpstreams) Primary(ctx context.Context, app state.App, s *spec.AppSpec) (api.Upstream, error) {
 	if s == nil {
-		return "", errs.New(errs.StateInvalid, "This app has no pinned spec.")
+		return api.Upstream{}, errs.New(errs.StateInvalid, "This app has no pinned spec.")
 	}
 	primary, ok := s.PrimaryWorkload()
 	if !ok {
-		return "", errs.New(errs.ValidPrimaryWorkload, "This app has no primary workload.")
+		return api.Upstream{}, errs.New(errs.ValidPrimaryWorkload, "This app has no primary workload.")
 	}
 
 	port := 0
@@ -75,7 +83,7 @@ func (u *RuntimeUpstreams) PrimaryAddress(ctx context.Context, app state.App, s 
 		port = primary.Ports[0].Number
 	}
 	if port == 0 {
-		return "", errs.New(errs.StateInvalid,
+		return api.Upstream{}, errs.New(errs.StateInvalid,
 			"Pando doesn't know which port this app serves on.").
 			WithRemedy("Add the port to the app's spec.")
 	}
@@ -86,20 +94,16 @@ func (u *RuntimeUpstreams) PrimaryAddress(ctx context.Context, app state.App, s 
 	// container name, which sent every request for an app on any other runtime
 	// to a host that did not exist.
 	if u.registry == nil {
-		return "", errs.New(errs.AdapterUnavailable, "Pando has no runtimes set up.")
+		return api.Upstream{}, errs.New(errs.AdapterUnavailable, "Pando has no runtimes set up.")
 	}
 	runtime, ok := u.registry.Runtime(s.Runtime.AdapterRef)
 	if !ok {
-		return "", errs.Newf(errs.PlanAdapterNotConfigured,
+		return api.Upstream{}, errs.Newf(errs.PlanAdapterNotConfigured,
 			"The runtime %q is not configured.", s.Runtime.AdapterRef)
 	}
 
 	// The bundle is the app: every deploy names it by the app's ID.
-	upstream, err := runtime.Upstream(ctx, api.WorkloadRef{BundleID: app.ID, Workload: primary.Name}, port)
-	if err != nil {
-		return "", err
-	}
-	return upstream.URL, nil
+	return runtime.Upstream(ctx, api.WorkloadRef{BundleID: app.ID, Workload: primary.Name}, port)
 }
 
 // Counters is an in-memory request count, per app.

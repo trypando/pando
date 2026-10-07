@@ -347,6 +347,7 @@ func (a *Adapter) ensureGateway(ctx context.Context, p api.BundlePlan, img gatew
 			labelEgressDigest: digest,
 		},
 	}
+	limitLabels(cfg.Labels, gatewayNanoCPUs/1_000_000, gatewayMemory)
 	hostCfg := &container.HostConfig{
 		// Unlike a workload, which has no restart policy so the reconciler can
 		// back off and give up (R-149 – R-151). The gateway is Pando's own and
