@@ -156,6 +156,11 @@ func (s *Service) apply(ctx context.Context, bundle io.Reader, v Verified) (Rest
 				return result, err
 			}
 
+		case header.Name == TokenKey:
+			if err := s.restoreTokenKey(tr); err != nil {
+				return result, err
+			}
+
 		case strings.HasPrefix(header.Name, VolumesPrefix):
 			if err := s.restoreVolume(ctx, header.Name, tr); err != nil {
 				return result, err
@@ -229,6 +234,26 @@ func (s *Service) restoreSecretsKey(r io.Reader) error {
 	}
 	if err := os.WriteFile(s.SecretsKeyPath, body, 0o600); err != nil {
 		return errs.Wrap(errs.Internal, "Pando could not write the secrets key.", err)
+	}
+	return nil
+}
+
+// restoreTokenKey writes the API token key back.
+//
+// The restored database holds every token as HMAC-SHA-256 under this key, and
+// the check every replica makes at start (token_key_check) was made with it.
+// Without it every token is unusable and no replica starts. 0600, like the
+// secrets key.
+func (s *Service) restoreTokenKey(r io.Reader) error {
+	if s.TokenKeyPath == "" {
+		return nil
+	}
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not read the API token key from the backup.", err)
+	}
+	if err := os.WriteFile(s.TokenKeyPath, body, 0o600); err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not write the API token key.", err)
 	}
 	return nil
 }

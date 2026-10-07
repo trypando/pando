@@ -33,6 +33,12 @@ type Service struct {
 	// starts (R-212).
 	SecretsKeyPath string
 
+	// TokenKeyPath is core's API token key file (core/tokenkey). API tokens
+	// are stored as HMAC-SHA-256 under it, so a restore without it holds every
+	// token's digest and can check none of them (R-063, R-212). Empty leaves it
+	// out, which only a test does: every install has one.
+	TokenKeyPath string
+
 	// State supplies everything the bundle records about the install.
 	State StateSource
 
@@ -212,21 +218,8 @@ func (s *Service) assemble(ctx context.Context, w io.Writer) (Manifest, error) {
 		return Manifest{}, err
 	}
 
-	// The secrets key. A missing file is normal — an install using an external
-	// secrets adapter has no local key to export — but it is checked
-	// explicitly rather than by swallowing every error from addFile, because
-	// an unreadable key and an absent one are very different and only one of
-	// them should produce a bundle.
-	if s.SecretsKeyPath != "" {
-		switch _, statErr := os.Stat(s.SecretsKeyPath); {
-		case statErr == nil:
-			if err := addFile(b, SecretsKey, s.SecretsKeyPath); err != nil {
-				return Manifest{}, err
-			}
-		case !os.IsNotExist(statErr):
-			return Manifest{}, errs.Wrap(errs.Internal,
-				"Pando could not read the secrets key for the backup.", statErr)
-		}
+	if err := s.addKeys(b); err != nil {
+		return Manifest{}, err
 	}
 
 	adapters, err := s.State.AdapterConfigs(ctx)
@@ -652,6 +645,34 @@ func pgEnv(dsn secret.Value) (env []string, dbname string, err error) {
 		env = append(env, "PGSSLMODE="+mode)
 	}
 	return env, dbname, nil
+}
+
+// addKeys puts the install's key files in the bundle (R-212).
+//
+// A missing secrets key is normal — an install using an external secrets
+// adapter has no local key to export — but it is checked explicitly rather
+// than by swallowing every error from addFile, because an unreadable key and
+// an absent one are very different and only one of them should produce a
+// bundle. A missing token key is not normal: Pando creates it at start, and a
+// bundle without it restores tokens nobody can use.
+func (s *Service) addKeys(b *Writer) error {
+	if s.SecretsKeyPath != "" {
+		switch _, statErr := os.Stat(s.SecretsKeyPath); {
+		case statErr == nil:
+			if err := addFile(b, SecretsKey, s.SecretsKeyPath); err != nil {
+				return err
+			}
+		case !os.IsNotExist(statErr):
+			return errs.Wrap(errs.Internal,
+				"Pando could not read the secrets key for the backup.", statErr)
+		}
+	}
+	if s.TokenKeyPath != "" {
+		if err := addFile(b, TokenKey, s.TokenKeyPath); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func addFile(b *Writer, name, path string) error {
