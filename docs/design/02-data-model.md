@@ -145,7 +145,7 @@ CREATE TABLE tokens (
     id            text PRIMARY KEY,          -- tok_...
     kind          text NOT NULL,             -- delegated | account   (R-058, R-060)
     name          text NOT NULL,
-    hash          text NOT NULL,             -- argon2id of the secret; secret shown once (R-063)
+    hash          text NOT NULL,             -- 'sha256:' || SHA-256 of the secret; secret shown once (R-063)
     owner_user_id text REFERENCES users(id), -- delegated: required. account: NULL (R-060)
     created_by    text NOT NULL,             -- principal that minted it
     expires_at    timestamptz,               -- NULL = never; policy may forbid (R-061)
@@ -155,6 +155,16 @@ CREATE TABLE tokens (
 );
 CREATE INDEX ON tokens (owner_user_id) WHERE revoked_at IS NULL;
 ```
+
+**[D] A token's secret is stored as a SHA-256 digest, not argon2id** (issue #93). The secret is 256
+random bits Pando generated, so there is nothing to guess and nothing for a slow hash to slow down —
+the reasoning, and the function, of the passcode unlock token. argon2id cost 64 MiB and tens of
+milliseconds on every request a token made, and anyone who knew a token's ID could make Pando pay it.
+Unkeyed rather than an HMAC: a key protects nothing a 256-bit secret does not already, and would be
+one more thing every replica and every restored DR bundle must carry for any token to work. A token
+stored as argon2id before the change still verifies and is rewritten as SHA-256 on its first use.
+Passwords stay argon2id. `last_used_at` is written when it is more than a minute old, not on every
+request (R-062).
 
 **[D]** A delegated token has no grants of its own. Authorization resolves through `owner_user_id` live (R-059), so an owner's revocation is the token's revocation with no cascade to write.
 
@@ -239,6 +249,7 @@ CREATE TABLE apps (
     applied_env_fingerprint text,             -- see 2.4, secret rotation
     address_hostname text,                    -- the pinned spec's hostname, unique among live apps
     address_path     text,                    -- the pinned spec's path, unique among live apps (design 03 §4.1)
+    address_port     integer,                 -- a port-mode pinned spec's port; not unique, port_allocations is (O-15)
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     deleted_at     timestamptz

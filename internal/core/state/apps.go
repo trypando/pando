@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -648,6 +650,7 @@ func (a *Apps) Pin(ctx context.Context, appID, specID, newState, pinnedBy string
 		return err
 	}
 	hostname, path := addressOf(pinned.Routing)
+	port := portOf(pinned.Routing)
 
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO spec_pins (app_id, spec_id, pinned_by) VALUES ($1, $2, $3)`,
@@ -656,9 +659,10 @@ func (a *Apps) Pin(ctx context.Context, appID, specID, newState, pinnedBy string
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE apps SET pinned_spec_id = $2, state = $3, updated_at = now(),
-		        address_hostname = NULLIF($4, ''), address_path = NULLIF($5, '')
+		        address_hostname = NULLIF($4, ''), address_path = NULLIF($5, ''),
+		        address_port = NULLIF($6, 0)
 		 WHERE id = $1`,
-		appID, specID, newState, hostname, path); err != nil {
+		appID, specID, newState, hostname, path, port); err != nil {
 		if isUniqueViolation(err) {
 			// Two pins of the same address raced past checkAddress; the
 			// index decided.
@@ -1050,25 +1054,39 @@ func (a *Apps) SetState(ctx context.Context, appID, appState string) error {
 // ByRouting resolves a running app from how it is addressed.
 //
 // Used by the proxy on every request, so it reads the pinned spec in the same
-// query rather than making a second round trip per request.
+// query rather than making a second round trip per request, and matches on
+// indexed columns of apps rather than on the pinned spec's JSON: the address
+// columns are written with the pin (migrations 35 and 46), so they say what
+// the pinned spec says.
 //
-// `by` is "hostname" or "slug". A hostname lookup reads the pinned spec's
-// routing block; a slug lookup reads the app's own column.
+// `by` is "hostname", "slug", "id" or "port".
 func (a *Apps) ByRouting(ctx context.Context, by, value string) (App, *spec.AppSpec, bool, error) {
 	var where string
+	var arg any = value
 	switch by {
 	case "hostname":
-		where = `r.body->'routing'->>'hostname' = $1`
+		// Stored lowercase, and only for an app addressed by hostname. A
+		// hostname is not case-sensitive, so neither is the match.
+		where = `a.address_hostname = $1`
+		arg = strings.ToLower(value)
 	case "slug":
 		where = `a.slug = $1`
 	case "id":
 		where = `a.id = $1`
 	case "port":
-		// The mode is part of the match, not just the number. A port-mode app's
-		// routing block is the only place a port means "this app's address";
-		// leaving the mode out would let a path-mode app whose routing happened
-		// to record a port answer on a listener that is not its own.
-		where = `r.body->'routing'->>'mode' = 'port' AND r.body->'routing'->>'port' = $1`
+		// Set only for a port-mode app (portOf). The mode is part of the
+		// match, not just the number: a port-mode app's routing block is the
+		// only place a port means "this app's address", and a path-mode app
+		// whose routing happened to record a port does not answer on a
+		// listener that is not its own.
+		// Not a number is no app's port, as the text comparison it replaces
+		// found nothing for it.
+		port, convErr := strconv.Atoi(value)
+		if convErr != nil { //nolint:nilerr // no app has this address; not a failure
+			return App{}, nil, false, nil
+		}
+		where = `a.address_port = $1`
+		arg = port
 	default:
 		return App{}, nil, false, errs.Newf(errs.Internal, "Unknown routing lookup %q.", by)
 	}
@@ -1081,7 +1099,7 @@ func (a *Apps) ByRouting(ctx context.Context, by, value string) (App, *spec.AppS
 		       a.created_at, a.updated_at, r.body
 		FROM apps a
 		JOIN spec_revisions r ON r.id = a.pinned_spec_id
-		WHERE a.deleted_at IS NULL AND `+where, value).
+		WHERE a.deleted_at IS NULL AND `+where, arg).
 		Scan(&app.ID, &app.Name, &app.Slug, &owner, &app.State, &app.DesiredState, &app.PinnedSpecID,
 			&app.CreatedAt, &app.UpdatedAt, &body)
 	if errors.Is(err, pgx.ErrNoRows) {

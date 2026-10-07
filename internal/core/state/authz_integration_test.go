@@ -4,6 +4,7 @@ package state_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -480,7 +481,7 @@ func TestR063_TokenSecretIsShownOnceAndStoredHashed(t *testing.T) {
 	var stored string
 	require.NoError(t, db.QueryRow(ctx, `SELECT hash FROM tokens WHERE id = $1`, issued.Token.ID).Scan(&stored))
 	require.NotContains(t, stored, issued.Secret.Reveal(), "the secret must not be recoverable from the row")
-	require.Contains(t, stored, "$argon2id$")
+	require.True(t, strings.HasPrefix(stored, "sha256:"), "a SHA-256 digest (issue #93)")
 }
 
 // TestTokenAuthenticationFailuresAreIndistinguishable asserts that a caller

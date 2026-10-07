@@ -88,6 +88,11 @@ its connection cancels its jobs and waits for them to stop before anyone else ca
 | Audit retention, approval expiry, adapter health events, edges, upgrade loop | leader | Once per install |
 | Sweep of stopped replicas' work; pruning old replica rows and passcode failures | leader | Once per install |
 
+**A delete tears its app down on the replica that took it**, at once, whichever replica leads; the
+GC's own pass also looks for deleted apps every ten seconds, which catches a delete whose replica
+stopped first. Teardown is idempotent, so the two meeting on one app is harmless. Before this, a
+delete made on a replica that did not lead waited for the hourly pass.
+
 **Network reclaim at startup** now skips the network of any app with a deploy in flight. Another
 replica's deploy makes the app's network before its containers, so for a moment it is empty and
 container-less and looks like a dead app's; a deleted app has nothing in flight.
@@ -158,9 +163,11 @@ the first of a stack; each later PR is based on the one before, and #72 closes w
 - **Capacity is not oversubscribed by default** (R-242), and host policy or config may allow CPU and
   memory oversubscription. Disk is never oversubscribed: it is not a reservation, and a full disk
   stops everything.
-- **API tokens are hashed with HMAC-SHA-256**, not argon2id. They are 256-bit random secrets Pando
+- **API tokens are hashed with SHA-256**, not argon2id. They are 256-bit random secrets Pando
   generates, so a slow hash adds nothing but cost (about 64 MiB per concurrent request). Passwords
-  stay argon2id.
+  stay argon2id. Decided as HMAC-SHA-256; built unkeyed, following the passcode unlock token's
+  precedent, because a key adds no protection to a 256-bit secret and would have to travel with every
+  replica and every DR bundle (design 02 §2.1). Issue #93.
 - **Anonymous data-plane denials stay audited by default**, and host policy or config may turn that
   off, since anyone can cause one write per request.
 
