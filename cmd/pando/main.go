@@ -1953,10 +1953,15 @@ func (d deletedAppImages) DeleteApp(ctx context.Context, appID string) error {
 	seen := map[string]bool{}
 	var workloads []string
 	for _, rev := range revisions {
-		if rev.Body == nil {
+		// ListRevisions reads no bodies; the workloads are in the body.
+		full, found, err := d.apps.RevisionByID(ctx, rev.ID)
+		if err != nil {
+			return err
+		}
+		if !found || full.Body == nil {
 			continue
 		}
-		for _, w := range rev.Body.Workloads {
+		for _, w := range full.Body.Workloads {
 			if w.Build != nil && !seen[w.Name] {
 				seen[w.Name] = true
 				workloads = append(workloads, w.Name)

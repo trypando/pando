@@ -62,6 +62,9 @@ type fakeRuntime struct {
 	stops    int
 	observes int
 
+	// applied is the last plan Apply was given.
+	applied api.BundlePlan
+
 	// applyErr fails Apply, which is how a repeatedly-unstartable app is
 	// simulated without needing a real container that refuses to boot.
 	applyErr error
@@ -93,10 +96,11 @@ func (f *fakeRuntime) Observe(context.Context, api.BundleRef) (api.ObservedBundl
 	return f.observed, f.observeErr
 }
 
-func (f *fakeRuntime) Apply(context.Context, api.BundlePlan) (api.BundleHandle, error) {
+func (f *fakeRuntime) Apply(_ context.Context, plan api.BundlePlan) (api.BundleHandle, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.applies++
+	f.applied = plan
 	if f.applyErr != nil {
 		return api.BundleHandle{}, f.applyErr
 	}
