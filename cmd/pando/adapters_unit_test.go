@@ -66,6 +66,7 @@ func TestR271_DeclaredAssignmentsComeFromEnabledAdaptersOnly(t *testing.T) {
 func TestNewAdapterBuildsEachShippedKind(t *testing.T) {
 	for _, tc := range []struct{ category, kind string }{
 		{"runtime", "docker"},
+		{"runtime", "docker-hosts"},
 		{"routing", "loopback"},
 		{"routing", "traefik"},
 		{"secrets", "local"},
