@@ -1099,14 +1099,14 @@ func serve(ctx context.Context, configPath string) error {
 	// private network behind. Registry and Auditor are what make that possible
 	// — and the teardown is audited, because destruction is destruction whoever
 	// does it.
-	job("gc", (&reconciler.GC{
-		Apps:        apps,
-		Logger:      logger,
-		Registry:    registryAdapters{registry},
-		Auditor:     reconcilerAuditor{auditor},
-		Interval:    cfg.Reconciler.GCInterval,
-		TeardownNow: teardownNow,
-		Clock:       clock.System{},
+	gc := &reconciler.GC{
+		Apps:     apps,
+		Logger:   logger,
+		Registry: registryAdapters{registry},
+		Auditor:  reconcilerAuditor{auditor},
+		Interval: cfg.Reconciler.GCInterval,
+
+		Clock: clock.System{},
 
 		// A deleted app's build cache and uploaded source (R-224, issue #55).
 		BuildCaches:   buildCaches{registry},
@@ -1128,7 +1128,23 @@ func serve(ctx context.Context, configPath string) error {
 		PolicyStore:   hostPolicy,
 		Desired:       apps,
 		Notifier:      securityNotifier{notifyRouter},
-	}).Run)
+	}
+	job("gc", gc.Run)
+
+	// A delete tears its app down at once, on the replica that took the
+	// delete, whichever replica leads (issue #72). Teardown is idempotent, so
+	// this and the leader's own pass meeting on one app is harmless; and the
+	// leader's pass is what catches a delete whose replica stopped first.
+	go func() {
+		for {
+			select {
+			case <-loopCtx.Done():
+				return
+			case <-teardownNow:
+				gc.TearDownDeleted(loopCtx)
+			}
+		}
+	}()
 
 	// Whichever replica holds the leader lock runs the jobs above; with one
 	// replica, that is this one, a moment after it starts.
