@@ -134,6 +134,18 @@ func TestR256_AReplicaHeartbeatsUntilItsContextEnds(t *testing.T) {
 	require.Greater(t, store.heartbeats.Load(), int32(1))
 }
 
+// TestR256_ZeroIntervalHeartbeatsAtTheDefaultPace asserts that a Member with
+// no Interval set heartbeats on state.HeartbeatInterval rather than spinning,
+// and still stops with its context.
+func TestR256_ZeroIntervalHeartbeatsAtTheDefaultPace(t *testing.T) {
+	t.Parallel()
+	store := &fakeStore{alive: true}
+	m := member(t, store)
+	m.Interval = 0
+	require.Empty(t, runFor(t, m, 100*time.Millisecond))
+	require.Zero(t, store.heartbeats.Load(), "the first heartbeat waits a full default interval")
+}
+
 // TestR256_AReplicaTakenForStoppedRestarts asserts that a replica whose row
 // was marked stopped — its work already abandoned — restarts rather than
 // carrying on under the same identity.
