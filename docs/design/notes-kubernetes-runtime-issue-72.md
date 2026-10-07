@@ -168,11 +168,12 @@ no Secret of Pando's — the secrets key is a Secret in `pando`.
 **Several replicas, spread across nodes [P].** Issue #72 is about the install surviving the loss of any
 one process, and every app is behind the edge, so the edge cannot be one pod. The Deployment runs
 `edge_replicas` replicas (an adapter setting, default 2, minimum 2) with a `topologySpreadConstraint` on
-`kubernetes.io/hostname` (`maxSkew: 1`, `whenUnsatisfiable: DoNotSchedule`), so two replicas never share
-a node while another node has room. A PodDisruptionBudget with `minAvailable: 1` keeps a drain from
+`kubernetes.io/hostname` (`maxSkew: 1`, `whenUnsatisfiable: ScheduleAnyway`): a soft spread, so the
+scheduler puts replicas on different nodes when it can and on the same node when it cannot. A PodDisruptionBudget with `minAvailable: 1` keeps a drain from
 taking every replica at once, and updates roll with `maxUnavailable: 0` and `maxSurge: 1`. On a
-one-node cluster the second replica stays `Pending`, and `ObserveEdge` reports that the edge has no
-spare node rather than calling it healthy.
+one-node cluster both replicas run on that node. `ObserveEdge` then reports the edge healthy with a
+warning, *"The edge's replicas share a node, so losing that node takes the edge offline. Add a node
+to the cluster to spread them."* It is a warning, never a blocker (CLAUDE.md §4).
 
 With the CRD provider, Traefik holds no state: routes come from the API and certificates from Secrets
 (below), so replicas need nothing shared and any replica serves any request. `cloudflared` runs the
@@ -517,7 +518,10 @@ Against a kind cluster with Calico in CI (`testcontainers-go` can start one; the
 - `TestR174_TurningOnTraefikRunsItInTheCluster` — the edge's Deployment and `LoadBalancer` Service are
   created, and an app's `IngressRoute` serves the app through the proxy.
 - `TestR174_TheEdgeSurvivesLosingAReplica` — with one edge pod deleted, apps keep answering through the
-  other, and both replicas serve the same certificate.
+  other, and both replicas serve the same certificate. It holds whether or not the replicas share a
+  node, so it runs on a one-node kind cluster.
+- `TestR174_EdgeReplicasSharingANodeIsAWarning` — on one node, both replicas run and the edge is
+  reported healthy with the shared-node warning.
 - `TestR023_TheEdgeCannotReachAnAppPod` — a connection from the edge pod to an app pod is refused, and
   an `IngressRoute` naming an app's Service is refused by the admission policy.
 - `TestR026_NoLoadBalancerServiceOutsidePandoEdge` — the admission policy.
