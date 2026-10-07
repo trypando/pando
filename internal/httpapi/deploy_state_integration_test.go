@@ -42,9 +42,19 @@ func (acceptingRouting) Ensure(context.Context, adapterapi.RouteRequest) (adapte
 	return adapterapi.RouteHandle{}, nil
 }
 
+// serveDeploys runs the install's deploy queue for the rest of the test, so a
+// deploy that is started actually runs.
+func (i *install) serveDeploys() {
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); i.DeployQueue.Serve(ctx) }()
+	i.t.Cleanup(func() { stop(); <-done })
+}
+
 // deployAndWait starts a deploy of the given revision and waits for it to end.
 func (i *install) deployAndWait(s *session, appID string, revision int) state.Deployment {
 	i.t.Helper()
+	i.serveDeploys()
 	got := i.do(s, http.MethodPost, "/apps/"+appID+"/deployments", map[string]any{"spec_revision": revision})
 	require.Equal(i.t, http.StatusAccepted, got.Code, got.String())
 	var dep state.Deployment

@@ -93,6 +93,10 @@ type install struct {
 	// Restarts counts POST /restart's calls to Server.Restart.
 	Restarts *atomic.Int32
 
+	// DeployQueue is the queue deploys start through. Not served unless a
+	// test calls serveDeploys, because most have no runtime to deploy onto.
+	DeployQueue *deploy.Queue
+
 	// AdminID and adminPassword are the first-run account (R-046).
 	AdminID       string
 	adminPassword string
@@ -377,7 +381,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 
 	return &install{
 		Dispatcher: dispatcher, People: people, Channel: channel,
-		t: t, handler: srv.Routes(), db: db, ownerURL: dbURL, Server: srv, Restarts: restarts,
+		t: t, handler: srv.Routes(), db: db, ownerURL: dbURL, Server: srv, Restarts: restarts, DeployQueue: deployQueue,
 		Apps: apps, Users: users, Grants: grants, Sessions: sessions, Tokens: tokens,
 		Secrets: secrets, Volumes: volumes, Adapters: adapters, PolicyStore: policyStore,
 		AdminID: first.User.ID, adminPassword: adminPassword,
