@@ -141,7 +141,7 @@ load-test: ## Seed a scale tier (TIER=vm|cluster) into LOAD_REPLICAS replicas, r
 	mkdir -p $(LOAD_DIR)
 	$(GO) build -o $(LOAD_DIR)/load ./test/load
 	$(LOAD_COMPOSE) up -d --build --wait --scale pando=$(LOAD_REPLICAS)
-	@status=0; \
+	@status=0; rm -f $(LOAD_DIR)/results-$(TIER).json $(LOAD_DIR)/report-$(TIER).md; \
 	export LOAD_DATABASE_URL="postgres://pando:$${POSTGRES_PASSWORD:-pando}@127.0.0.1:$(LOAD_DB_PORT)/pando?sslmode=disable"; \
 	$(LOAD_DIR)/load seed $(LOAD_FLAGS) -real-port-start $(LOAD_APP_PORT_START) || status=1; \
 	if [ $$status = 0 ]; then \
