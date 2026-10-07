@@ -179,6 +179,24 @@ the first of a stack; each later PR is based on the one before, and #72 closes w
   (design 02 §2.1). Issue #93.
 - **Anonymous data-plane denials stay audited by default**, and host policy or config may turn that
   off, since anyone can cause one write per request.
+- **For PR 4, retention defaults:** 50 deployments kept per app, security scans 90 days, sessions 30
+  days.
+- **For PR 4, an interrupted deploy is resumed** by another replica taking it from the queue, up to 3
+  attempts.
+- **For PR 4, webhook delivery may lag by up to about 4 seconds** because event subscriptions are read
+  from a cache rather than queried per event.
+- **Image registry, Kubernetes and multi-host Docker (PRs 5–7):** O-34 – O-47 are decided. The
+  operational defaults are as the notes recommended. On Kubernetes, Pando runs the edge itself,
+  Traefik included (R-174 holds, O-42); the cluster recreating a pod on another node after a node fails
+  is accepted, with R-010 amended (O-44); multi-host Docker reaches apps through a per-host forwarding
+  agent (O-45, design 06 §4); and Pando does not move apps between hosts at first (O-46).
+
+**Known issues, and the PR that fixes each:**
+
+| Issue | Fixed by |
+|---|---|
+| **A refused build can come back (R-146).** Built images are tagged `pando/<app>:latest`. A build refused by the security scan or the port check has already been loaded under that tag, and if the reconciler later recreates the workload it runs the refused image | PR 5, by pinning built images by digest (registry delivery) or by image ID with a per-deployment tag (single-host Docker, which keeps `ImportImage`). Applies on single-host Docker too. `notes-image-registry-issue-72.md` |
+| **Uploaded source is not in the DR bundle (R-212).** It lives under `/var/lib/pando/uploads`; after a restore onto a new host, an uploaded app has nothing to rebuild from | PR 5, with O-37: uploads go into the bundle |
 
 **What the audit found, and which PR fixes it:**
 
@@ -188,9 +206,9 @@ the first of a stack; each later PR is based on the one before, and #72 closes w
 | 2 — request path and a load harness | A new HTTP transport per proxied request (no upstream connection reuse); hostname and port app lookups scanning every pinned spec's JSON; `AppVerbs` running the full control check sixteen times per request; the launcher query and unpaginated user, group, app and approval lists; console polling that calls Docker on every `/status` and `/usage`; token hashing and the per-request `last_used_at` write; the anonymous-denial audit toggle; a proxied websocket not closing when its session is revoked or its user suspended (R-048, a security fix); the deploy log store never freeing a finished deploy. The harness seeds the two tiers and drives proxy, API and console traffic through the replicas stack |
 | 3 — single-host capacity | **The reconciler only ever visits 200 apps**: `Due` orders by `updated_at`, which a healthy pass never changes, so past 200 apps the rest are never observed or repaired. Replaced by a lease column claimed with `SKIP LOCKED`, which also spreads apps across replicas and stops holding a connection per app. The oversubscription toggle. Smaller subnets (/28) and a shared egress bridge, lifting the network pool from about 1,000 apps to about 4,000. The rejoin loop inspecting every network every 15 s; unbounded usage sampling; the per-app build cache with no total cap |
 | 4 — background work and data growth | **Done** ([below](#pr-4-background-work-and-data-growth)). A bounded deploy and detection queue in Postgres that any replica takes from (O-32), so a lost replica's deploy resumes elsewhere. GC, rolling backups and auto-deploy made concurrent and due-driven rather than serial over every app. A retention job for the tables that only grow (deployments, sessions, notifications, idempotency keys, sign-in flows, the event outbox, scans, deleted apps' detections) — never spec revisions (R-152). Missing indexes: `event_deliveries(event_id)`, in-flight `deployments`, `deployments(spec_id)`, `apps(owner_user_id)` |
-| 5 — image registry | The registry above, and builds that push and pin by digest |
-| 6 — Kubernetes runtime adapter | O-33, with a design note first: a Service per app reachable only from Pando's proxy (R-023), NetworkPolicy for R-025, PersistentVolumeClaims |
-| 7 — multi-host Docker runtime adapter | Docker on several hosts, with placement in the adapter and a design for how the proxy reaches an app on another host without routing around Pando |
+| 5 — image registry | The registry above, and builds that push and pin by digest. Design: `notes-image-registry-issue-72.md` (O-34 – O-38) |
+| 6 — Kubernetes runtime adapter | O-33: a Service per app reachable only from Pando's proxy (R-023), NetworkPolicy for R-025, PersistentVolumeClaims. Design: `notes-kubernetes-runtime-issue-72.md` (O-39 – O-44) |
+| 7 — multi-host Docker runtime adapter | Docker on several hosts, with placement in the adapter and a design for how the proxy reaches an app on another host without routing around Pando. Design: `notes-multi-host-docker-issue-72.md` (O-45 – O-47) |
 
 ## PR 4: background work and data growth
 
