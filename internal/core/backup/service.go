@@ -490,8 +490,11 @@ func (s *Service) dumpDatabase(ctx context.Context) (string, error) {
 		return "", err
 	}
 
+	// pando_private holds the restricted roles' passwords and is left out: a
+	// bundle carries no database password (R-194), and a restore onto a new
+	// server provisions new ones at its first start (issue #72).
 	cmd := exec.CommandContext(ctx, "pg_dump", "--format=custom", "--no-owner", "--no-privileges",
-		"--dbname", dbname, "--file", path)
+		"--exclude-schema=pando_private", "--dbname", dbname, "--file", path)
 	cmd.Env = env
 
 	out, err := cmd.CombinedOutput()

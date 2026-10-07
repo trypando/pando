@@ -103,6 +103,7 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | `PANDO_SERVER_EXTERNAL_URL` | — | The address browsers reach this installation on, such as `https://pando.example.com`. Set it when something other than Pando terminates TLS: it is what marks the session cookie `Secure`. Unset means "use the request", which is right on a localhost install and when Pando serves TLS itself. |
 | `PANDO_SERVER_PROXY_UPSTREAM` | — | Where the proxy sends traffic it has authorized. |
 | `PANDO_SERVER_WORK_DIR` | `/var/lib/pando` | Build contexts, uploads and adapter state. |
+| `PANDO_SERVER_ADVERTISE_URL` | `http://<hostname>:<port>` | Where the other replicas reach this one, when more than one runs. Only a deploy's live log is asked of a particular replica. In Kubernetes set it to the pod's address, such as `http://$(POD_IP):8080`. See `docs/design/notes-multiple-replicas-issue-72.md`. |
 | `PANDO_APP_PORT_START` / `_END` | `9000` / `9019` | Range of host ports apps are allocated. |
 | `PANDO_ADMIN_PASSWORD` | generated | Initial admin password. Read on first run only. |
 | `PANDO_LOG_LEVEL` | `info` | Log verbosity. |

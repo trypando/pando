@@ -52,7 +52,21 @@ type Result struct {
 // A supplied password still must be changed at first sign-in, because an
 // environment variable is not a safe place for one — it is in the Compose
 // file, in `docker inspect`, and inherited by every child process.
+//
+// Under state.FirstAccountLock. Replicas started together each run this, and
+// without the lock both found no account and both made one; the second failed
+// on the username and that replica did not start (issue #72).
 func Run(ctx context.Context, users *state.Users, grants *state.Grants, db *state.DB, auditor *audit.Writer, supplied secret.Value) (Result, error) {
+	var res Result
+	err := db.Exclusive(ctx, state.FirstAccountLock, func() error {
+		var err error
+		res, err = run(ctx, users, grants, db, auditor, supplied)
+		return err
+	})
+	return res, err
+}
+
+func run(ctx context.Context, users *state.Users, grants *state.Grants, db *state.DB, auditor *audit.Writer, supplied secret.Value) (Result, error) {
 	if err := users.EnsureLocalAdapter(ctx); err != nil {
 		return Result{}, err
 	}

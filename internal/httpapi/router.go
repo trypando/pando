@@ -130,9 +130,15 @@ type Server struct {
 		Notify(ctx context.Context, n api.Notification) error
 	}
 
-	Logs       *deploy.LogStore
-	Secrets    *state.Secrets
-	Detections *state.Detections
+	Logs *deploy.LogStore
+	// LogOwner finds the replica running a deploy, so its live log can be
+	// read from any replica (issue #72). Nil with one replica.
+	LogOwner DeployLogOwner
+	// PasscodeFailures is the shared count behind the passcode limit
+	// (R-075a). In memory, for one process, when nil.
+	PasscodeFailures PasscodeFailures
+	Secrets          *state.Secrets
+	Detections       *state.Detections
 
 	// Clock times a detection wait and how long one has been running. Nil is
 	// the system clock.
@@ -355,8 +361,8 @@ func (s *Server) Routes() http.Handler {
 			Error(w, r, errs.New(errs.Internal, "Assertion signing is not set up."))
 			return
 		}
-		w.Header().Set("Cache-Control", "public, max-age=300")
-		JSON(w, http.StatusOK, s.Minter.JWKS())
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		JSON(w, http.StatusOK, s.Minter.JWKS(r.Context()))
 	})
 
 	// Liveness. Deliberately does not touch the database: a health check that

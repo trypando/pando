@@ -63,6 +63,9 @@ type Adapter struct {
 	cli    *client.Client
 	config Config
 
+	// reclaimAgeOverride replaces reclaimMinAge, for tests only.
+	reclaimAgeOverride *time.Duration
+
 	// Volume sizes, reused briefly across usage readings (usage.go).
 	usageMu          sync.Mutex
 	volumeSizesCache map[string]int64
@@ -955,11 +958,33 @@ func (a *Adapter) ReclaimNetworks(ctx context.Context, owns func(bundleID string
 		if !ownedBundle(owns, bundle) || a.networkHasContainers(ctx, bundle, full.Network.Name) {
 			continue
 		}
+		// A network made in the last few minutes may be one another Pando
+		// replica is deploying onto right now: ensureNetwork makes it before
+		// the app's containers exist, so for a moment it is empty and
+		// container-less and looks exactly like a dead app's (issue #72).
+		if time.Since(full.Network.Created) < a.reclaimAge() {
+			continue
+		}
 		if _, err := a.cli.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{}); err == nil {
 			reclaimed++
 		}
 	}
 	return reclaimed, nil
+}
+
+// reclaimMinAge is how old an empty network must be before it is reclaimed. A
+// deploy creates its network and then its containers within seconds; ten
+// minutes is far past that, and an orphan waiting ten minutes longer costs
+// nothing.
+const reclaimMinAge = 10 * time.Minute
+
+// reclaimAge is reclaimMinAge, unless a test made its networks a moment ago
+// and set it shorter (export_test.go).
+func (a *Adapter) reclaimAge() time.Duration {
+	if a.reclaimAgeOverride != nil {
+		return *a.reclaimAgeOverride
+	}
+	return reclaimMinAge
 }
 
 // ownedBundle reports whether a network labeled with bundle is this install's to
@@ -1043,6 +1068,15 @@ func (a *Adapter) RejoinNetworks(ctx context.Context, owns func(bundleID string)
 		if full.Network.Labels[labelEgressNetwork] == egressNetworkOutbound {
 			// The network an egress gateway leaves through holds nothing
 			// Pando's proxy reaches (egress.go).
+			continue
+		}
+		// Endpoints are not the same as an app. With several Pando replicas
+		// each joined to every app network, a deleted app's network still has
+		// endpoints — the other replicas — and joining it would keep it from
+		// ever emptying, so ReclaimNetworks could never collect it. Only a
+		// network one of the app's own containers is on is worth joining
+		// (issue #72).
+		if !a.networkHasContainers(ctx, full.Network.Labels[labelBundle], full.Network.Name) {
 			continue
 		}
 		if err := a.attachProxy(ctx, n.ID); err != nil {

@@ -314,12 +314,27 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A deploy's live log is in the memory of the replica running it (issue
+	// #72). Asked of another replica, the request goes there: the load
+	// balancer chose this replica, not the deploy.
+	if s.relayDeployLog(w, r, depID) {
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
 	rc := http.NewResponseController(w)
+	if dep.FinishedAt != nil && !s.Logs.Has(depID) {
+		// Run by a replica that has since stopped, or by this one before a
+		// restart. Following would wait for lines that cannot come.
+		fmt.Fprint(w, "data: The live log of this deploy was kept by the Pando process that ran it, which has since stopped. The deploy's outcome and error are on the deploy itself.\n\n")
+		fmt.Fprint(w, "event: end\ndata: \n\n")
+		_ = rc.Flush()
+		return
+	}
 	backlog, updates, cancel := s.Logs.Follow(depID)
 	defer cancel()
 

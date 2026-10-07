@@ -202,6 +202,27 @@ type Server struct {
 	// of Pando's data, on the same volume, so the archives are on the disk
 	// R-224 is about rather than somewhere nobody counts.
 	AuditArchiveDir string `mapstructure:"audit_archive_dir"`
+
+	// AdvertiseURL is where the other Pando replicas reach this one, for the
+	// one request that has to go to a particular replica: a deploy's live log
+	// (issue #72). Empty means http://<hostname><port of addr>, which is right
+	// on a Compose network; in Kubernetes, set it to the pod's address, such
+	// as http://$(POD_IP):8080. With one replica nothing reads it.
+	AdvertiseURL string `mapstructure:"advertise_url"`
+}
+
+// Advertise is AdvertiseURL, or the default built from hostname.
+func (s Server) Advertise(hostname string) string {
+	if s.AdvertiseURL != "" {
+		return strings.TrimSuffix(s.AdvertiseURL, "/")
+	}
+	port := s.Addr
+	if i := strings.LastIndex(port, ":"); i >= 0 {
+		port = port[i:]
+	} else {
+		port = ""
+	}
+	return "http://" + hostname + port
 }
 
 type Database struct {
@@ -253,6 +274,7 @@ func Load(path string) (*Config, error) {
 	// A zero default is not a value: it is how the key gets registered.
 	v.SetDefault("server.base_domain", "")
 	v.SetDefault("server.external_url", "")
+	v.SetDefault("server.advertise_url", "")
 	v.SetDefault("reconciler.backoff", "")
 	v.SetDefault("reconciler.failure_threshold", 0)
 	v.SetDefault("reconciler.failure_window", time.Duration(0))
@@ -310,6 +332,7 @@ var boundEnv = map[string]string{
 	"server.addr":           "PANDO_SERVER_ADDR",
 	"server.routing_mode":   "PANDO_SERVER_ROUTING_MODE",
 	"server.work_dir":       "PANDO_SERVER_WORK_DIR",
+	"server.advertise_url":  "PANDO_SERVER_ADVERTISE_URL",
 
 	"server.audit_archive_dir": "PANDO_SERVER_AUDIT_ARCHIVE_DIR",
 	"log.level":                "PANDO_LOG_LEVEL",

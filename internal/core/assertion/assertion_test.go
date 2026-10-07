@@ -1,6 +1,8 @@
 package assertion_test
 
 import (
+	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"strings"
@@ -73,7 +75,7 @@ func TestR057_RotationOverlapsRatherThanCutsOver(t *testing.T) {
 
 	// Both keys are published, so an app that cached the JWKS before rotation
 	// and one that fetches after can both verify.
-	jwks := m.JWKS()
+	jwks := m.JWKS(context.Background())
 	ids := keyIDs(t, jwks)
 	require.Contains(t, ids, first)
 	require.Contains(t, ids, second)
@@ -81,7 +83,7 @@ func TestR057_RotationOverlapsRatherThanCutsOver(t *testing.T) {
 	// Once everything the old key signed has expired, it stops being published.
 	fake.Advance(assertion.Lifetime + time.Second)
 	require.NoError(t, m.Rotate())
-	require.NotContains(t, keyIDs(t, m.JWKS()), first,
+	require.NotContains(t, keyIDs(t, m.JWKS(context.Background())), first,
 		"a key that can no longer verify anything is not published")
 }
 
@@ -153,7 +155,7 @@ func TestJWKSShape(t *testing.T) {
 	m, err := assertion.NewMinter("https://pando.test", nil)
 	require.NoError(t, err)
 
-	keys, ok := m.JWKS()["keys"].([]map[string]string)
+	keys, ok := m.JWKS(context.Background())["keys"].([]map[string]string)
 	require.True(t, ok)
 	require.Len(t, keys, 1)
 
@@ -166,7 +168,7 @@ func TestJWKSShape(t *testing.T) {
 	require.NotEmpty(t, k["x"])
 
 	// The public key is published; nothing else is.
-	encoded, err := json.Marshal(m.JWKS())
+	encoded, err := json.Marshal(m.JWKS(context.Background()))
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "private")
 	require.NotContains(t, strings.ToLower(string(encoded)), "\"d\"", "no private scalar")
@@ -182,4 +184,60 @@ func keyIDs(t *testing.T, jwks map[string]any) []string {
 		out = append(out, k["kid"])
 	}
 	return out
+}
+
+// TestR051_AnyReplicasJWKSVerifiesAnyReplicasAssertion asserts R-051 across
+// replicas (issue #72). Each Pando process signs with a key of its own; an app
+// that fetched the JWKS from one replica must still verify an assertion
+// another signed, or the load balancer decides whom an app believes.
+func TestR051_AnyReplicasJWKSVerifiesAnyReplicasAssertion(t *testing.T) {
+	a, err := assertion.NewMinter("https://pando.test", nil)
+	require.NoError(t, err)
+	b, err := assertion.NewMinter("https://pando.test", nil)
+	require.NoError(t, err)
+	require.NotEqual(t, a.SigningKeyID(), b.SigningKeyID(), "each replica has a key of its own")
+
+	published := func(ms ...*assertion.Minter) assertion.PeerKeys {
+		return func(context.Context) ([]assertion.PublicKey, error) {
+			var out []assertion.PublicKey
+			for _, m := range ms {
+				out = append(out, m.SigningKey())
+			}
+			return out, nil
+		}
+	}
+	a.WithPeers(published(a, b))
+	b.WithPeers(published(a, b))
+
+	token, err := b.Mint(assertion.Claims{Sub: "usr_alice", Aud: "app_01HQ8"})
+	require.NoError(t, err)
+
+	// Verify as an app would: from the JWKS replica A serves, and nothing else.
+	parts := strings.Split(token, ".")
+	require.Len(t, parts, 3)
+	header, err := base64.RawURLEncoding.DecodeString(parts[0])
+	require.NoError(t, err)
+	var h struct{ Kid string }
+	require.NoError(t, json.Unmarshal(header, &h))
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	require.NoError(t, err)
+
+	keys, ok := a.JWKS(context.Background())["keys"].([]map[string]string)
+	require.True(t, ok)
+	verified := false
+	for _, k := range keys {
+		if k["kid"] != h.Kid {
+			continue
+		}
+		pub, err := base64.RawURLEncoding.DecodeString(k["x"])
+		require.NoError(t, err)
+		verified = ed25519.Verify(pub, []byte(parts[0]+"."+parts[1]), sig)
+	}
+	require.True(t, verified, "replica A's JWKS verifies what replica B signed")
+
+	// A peer list that cannot be read still publishes the replica's own key.
+	c, err := assertion.NewMinter("https://pando.test", nil)
+	require.NoError(t, err)
+	c.WithPeers(func(context.Context) ([]assertion.PublicKey, error) { return nil, context.DeadlineExceeded })
+	require.Equal(t, []string{c.SigningKeyID()}, keyIDs(t, c.JWKS(context.Background())))
 }

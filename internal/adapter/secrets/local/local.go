@@ -160,7 +160,29 @@ func loadOrCreateKey(path string) ([]byte, error) {
 			return nil, errs.Wrap(errs.Internal, fmt.Sprintf("Could not create %s.", filepath.Dir(path)), err)
 		}
 		// 0600: the key is the thing that makes the ciphertext worth anything.
-		if err := os.WriteFile(path, key, 0o600); err != nil {
+		//
+		// Written beside the path and linked into place, which fails if a key
+		// is already there. Several replicas sharing one volume start at once,
+		// and two that each wrote their own key would each encrypt with one
+		// the other cannot read; the one that loses the link reads the
+		// winner's instead (issue #72).
+		tmp, err := os.CreateTemp(filepath.Dir(path), ".secrets-key-*")
+		if err != nil {
+			return nil, errs.Wrap(errs.Internal, fmt.Sprintf("Could not write the key to %s.", path), err)
+		}
+		defer func() { _ = os.Remove(tmp.Name()) }()
+		_, werr := tmp.Write(key)
+		cerr := tmp.Close()
+		if werr != nil || cerr != nil {
+			return nil, errs.Wrap(errs.Internal, fmt.Sprintf("Could not write the key to %s.", path), errors.Join(werr, cerr))
+		}
+		if err := os.Chmod(tmp.Name(), 0o600); err != nil {
+			return nil, errs.Wrap(errs.Internal, fmt.Sprintf("Could not write the key to %s.", path), err)
+		}
+		if err := os.Link(tmp.Name(), path); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				return loadOrCreateKey(path)
+			}
 			return nil, errs.Wrap(errs.Internal, fmt.Sprintf("Could not write the key to %s.", path), err)
 		}
 		return key, nil

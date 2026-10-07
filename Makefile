@@ -67,6 +67,38 @@ test-integration: ## Run integration tests, minus the corpus (real Postgres + Do
 	TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT=15m \
 		$(GO) test -race -count=1 -timeout=15m -tags=integration $(COVERFLAGS) $(INTEGRATION_PKGS)
 
+# Several replicas against one Postgres, behind a load balancer (issue #72).
+# Its own project and ports, so it never touches a stack somebody is using:
+# brought up, changed under test, the design 07 sequences run through it, and
+# taken down with its volumes whether or not anything failed.
+REPLICAS_PROJECT  ?= pando-replicas
+# The acceptance suite's own setup password: test/replicas claims the fresh
+# install with it through POST /setup, and the sequences then sign in with it.
+REPLICAS_PASSWORD ?= pando-acceptance-suite-admin
+# Shared by the stack and the tests: the ports, and the compressed retry
+# schedule test/acceptance/README.md describes, which the crash-loop test
+# sizes its deadlines from. A test that recreates the server reads the ports
+# from here too, or `docker compose up` would fall back to 8080.
+REPLICAS_ENV = PANDO_PORT=18080 PANDO_APP_PORT_START=19000 PANDO_APP_PORT_END=19019 \
+	PANDO_RECONCILER_BACKOFF=0s,1s,2s,3s,4s PANDO_RECONCILER_FAILURE_WINDOW=2m
+REPLICAS_COMPOSE = $(REPLICAS_ENV) docker compose -p $(REPLICAS_PROJECT) \
+	-f docker-compose.yml -f test/replicas/docker-compose.replicas.yml
+# COMPOSE_PROJECT_NAME and COMPOSE_FILE point the acceptance suite's own
+# `docker compose exec postgres …` at this stack rather than the default one.
+REPLICAS_TEST_ENV = $(REPLICAS_ENV) PANDO_REPLICAS_PROJECT=$(REPLICAS_PROJECT) \
+	PANDO_TEST_URL=http://localhost:18080/api/v1 PANDO_TEST_PASSWORD=$(REPLICAS_PASSWORD) \
+	COMPOSE_PROJECT_NAME=$(REPLICAS_PROJECT) \
+	COMPOSE_FILE=$(CURDIR)/docker-compose.yml:$(CURDIR)/test/replicas/docker-compose.replicas.yml
+
+.PHONY: test-replicas
+test-replicas: ## Run Pando as two replicas behind a balancer: topology changes, then the design 07 sequences
+	$(REPLICAS_COMPOSE) up -d --build --wait
+	@status=0; \
+	$(REPLICAS_TEST_ENV) $(GO) test -count=1 -timeout=30m -tags=integration ./test/replicas/ || status=1; \
+	$(REPLICAS_TEST_ENV) $(GO) test -count=1 -timeout=60m -tags=integration ./test/acceptance/ || status=1; \
+	$(REPLICAS_COMPOSE) down -v --remove-orphans; \
+	exit $$status
+
 .PHONY: vet
 vet: ## go vet, including the integration-tagged tests
 	$(GO) vet $(PKG)

@@ -1,12 +1,12 @@
 # Open decisions
 
-Twenty-six questions. O-1 through O-10 come from requirements §23; O-11 through O-14 were added during
+Twenty-eight questions. O-1 through O-10 come from requirements §23; O-11 through O-14 were added during
 design; O-15 through O-17 were found while implementing phases 6, 7 and 8; O-18 was found while
 setting up the release build; O-19 was found by turning `gosec` on; O-20 was found while building the
 first AI adapter; O-21 and O-22 came from issue #74, AI functions beyond detection; O-23 came from
 building the Cloudflare Tunnel adapter; O-24 came from issue #87; O-25 from issue #79, egress rules;
 O-26 from issue #39, deploy approval; O-28 through O-31 from issue #41, deploying prebuilt images
-and uploaded files. **Twenty-three are resolved; the rest are listed below.** O-4 needs a
+and uploaded files; O-32 and O-33 from issue #72, running Pando as several replicas. **Twenty-three are resolved; the rest are listed below.** O-4 needs a
 measurement, O-18 needs somebody to pick a host and pay for it, O-23 is kept open deliberately so
 it is revisited, and O-24 needs a product call on stopped apps.
 
@@ -29,6 +29,8 @@ resolution both here and in the requirements or design doc that owns it.
 | **O-28** | Whether an ECR pull may use Pando's own AWS identity (an instance role) rather than access keys an app supplies (issue #41) | Lends every app whatever Pando's role can read — the same trade as O-30's resolution, with a cloud IAM boundary behind it. `[P]` explicit keys only | Not blocking — design 01 §2.1 |
 | **O-29** | Whether a non-empty source allowlist admits uploaded files (issue #41) | R-092 says the allowlist restricts "deployable sources" and does not mention uploads, which have no host for an entry to name. `[P]` refused unless the list contains `upload` | Not blocking — design 01 §2.1 |
 | **O-31** | Whether an upload may be a `docker save` tarball as well as source files (issue #41) | The runtime can already import an image from a stream (`SupportsImageImport`); accepting one is a third kind of upload with its own scanning and pinning story, not an extension of this one | Not blocking — design 04 §4 |
+| **O-32** | Whether deploys and detections become a work queue in Postgres that any replica takes from (issue #72) | Replicas now share the requests and survive losing one, but each deploy still runs in the process that started it. A queue adds horizontal throughput and lets another replica resume a lost deploy rather than record it interrupted; it also adds a claim/lease protocol and a second way for work to start. Whether the throughput is needed is a product call, and with the Docker adapter every build lands on one host anyway | Not blocking — `notes-multiple-replicas-issue-72.md` |
+| **O-33** | Whether Pando gets a Kubernetes runtime adapter, so its replicas can run as a `Deployment` with no Docker host beside the cluster (issue #72) | The Docker adapter reaches an app by joining its bridge network; pods on other nodes cannot. A Kubernetes adapter is the multi-machine path R-256 already names, and needs its own answer on how the proxy reaches a workload (a `Service` per app) without routing around Pando (R-023) | Not blocking — `notes-multiple-replicas-issue-72.md` |
 
 **O-4** has a `[P]` fallback that preserves R-103: default `Required: false` for anything the file
 gives a sample value for, and let the trial run settle it — a slot whose absence crashes the trial run

@@ -33,13 +33,16 @@ a migration simpler.
 | `grants_data_plane_is_app_scoped` | R-070 — data-plane use is per-app and binary; there is no install-wide "use" |
 | `user_identities` PK and `users_alias_is_suspended` | O-1 — an identity reaches one account; linking aliases and never merges |
 | `identity_adapters_no_inline_credentials` | R-190 — an identity provider's secret lives only in `identity_adapter_credentials` |
+| `pando_private` schema, granted to nobody, holding the restricted roles' passwords | R-348 — the application role cannot read the archiver's password. Never move it into `public`, where `applyGrants` would hand it to `pando_app` |
+| `pando_replicas.assertion_key` is exactly 32 bytes | R-051 — only the public half of a signing key is ever stored |
 
 ## Things deliberately absent from the schema
 
 Adding any of these is a design change, not a refactor:
 
 - **Hosts.** R-256: multi-machine capability lives entirely in adapters. A `hosts` table is the first
-  step toward the scheduler R-010 forbids.
+  step toward the scheduler R-010 forbids. `pando_replicas` is not one: it records Pando's own
+  processes (issue #72), and nothing that plans or places a workload may read it.
 - **Tenants / orgs.** R-015.
 - **Per-user instances.** R-290 is LATER. When it lands it is an `app_instances` table keyed on
   `(app_id, user_id)` with its own volume rows; nothing needs restructuring to accommodate it.

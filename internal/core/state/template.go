@@ -37,7 +37,7 @@ func PrepareTemplate(ctx context.Context, ownerURL string) (Passwords, error) {
 	if _, err := migrateUp(ctx, ownerURL); err != nil {
 		return Passwords{}, err
 	}
-	passwords, err := provisionRoles(ctx, owner)
+	passwords, err := provisionRoles(ctx, owner, ownerURL)
 	if err != nil {
 		return Passwords{}, err
 	}

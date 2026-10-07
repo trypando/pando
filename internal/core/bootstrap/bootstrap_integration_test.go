@@ -155,3 +155,48 @@ func TestASuppliedPasswordTooShortIsRefused(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found, "a refused bootstrap leaves no half-made administrator")
 }
+
+// TestR046_ReplicasStartingTogetherMakeOneAdministrator asserts R-046 holds
+// when several Pando replicas start at once with PANDO_ADMIN_PASSWORD set
+// (issue #72): one makes the account, and every other starts normally and
+// finds it, rather than failing on the second copy of the username.
+func TestR046_ReplicasStartingTogetherMakeOneAdministrator(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, ownerURL := statetest.Connect(t)
+	_, appPassword := statetest.Database(t)
+
+	const replicas = 4
+	results := make([]bootstrap.Result, replicas)
+	errs := make([]error, replicas)
+	done := make(chan int)
+	for i := range replicas {
+		go func(i int) {
+			defer func() { done <- i }()
+			conn, err := state.ConnectCopy(ctx, ownerURL, appPassword)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer conn.Close()
+			results[i], errs[i] = bootstrap.Run(ctx, state.NewUsers(conn), state.NewGrants(conn), conn,
+				audit.New(conn.Pool), secret.New("a-long-enough-password"))
+		}(i)
+	}
+	for range replicas {
+		<-done
+	}
+
+	created := 0
+	for i := range replicas {
+		require.NoError(t, errs[i])
+		if results[i].Created {
+			created++
+		}
+	}
+	require.Equal(t, 1, created, "exactly one replica makes the administrator")
+
+	var n int
+	require.NoError(t, db.QueryRow(ctx, `SELECT count(*) FROM users WHERE deleted_at IS NULL`).Scan(&n))
+	require.Equal(t, 1, n)
+}
