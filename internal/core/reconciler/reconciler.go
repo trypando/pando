@@ -74,6 +74,12 @@ type Reconciler struct {
 	// Nil on an install with no provisioner, where every app's shape is already
 	// complete.
 	Services ServiceShapes
+
+	// Environments supplies what each workload runs with when a correction
+	// is applied (R-148). Nil applies the shape as it is, which is complete
+	// only for an app whose workloads take no environment.
+	Environments Environments
+
 	Volumes  *state.Volumes
 	Registry Registry
 	Auditor  Auditor
@@ -448,9 +454,32 @@ func (r *Reconciler) correct(ctx context.Context, app state.Reconcilable, runtim
 		}
 	}
 
+	// The shape was compared without environment; what is started needs it,
+	// or a re-created workload comes up with none (R-148).
+	if r.Environments != nil {
+		envs, err := r.Environments.Environments(ctx, s)
+		if err != nil {
+			r.attempt(ctx, app, runtime, "could not prepare the app's configuration: "+reason(err))
+			return
+		}
+		for i := range want.Workloads {
+			if env, ok := envs[want.Workloads[i].Name]; ok {
+				want.Workloads[i].Env = env
+			}
+		}
+	}
+
 	if _, err := runtime.Apply(ctx, want); err != nil {
 		r.attempt(ctx, app, runtime, "could not start the app: "+reason(err))
 		return
+	}
+
+	// What it now runs with is the current environment, so a rotated value
+	// that this correction applied is not drift on the next tick (R-193).
+	if r.Environments != nil && r.Secrets != nil {
+		if versions, err := r.Secrets.Versions(ctx, app.ID); err == nil {
+			_ = r.Reconciles.SetAppliedEnvFingerprint(ctx, app.ID, EnvHash(s, versions))
+		}
 	}
 
 	if err := r.ensureRoute(ctx, app, s); err != nil {

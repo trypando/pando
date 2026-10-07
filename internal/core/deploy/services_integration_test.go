@@ -125,6 +125,33 @@ func TestR131_AProvisionedDatabaseKeepsItsCredentialsAcrossDeploys(t *testing.T)
 	require.True(t, fake.calls[2].ExistingSecret.IsZero(), "the shape is never a reason to decrypt a secret")
 }
 
+// TestR148_ARestoredWorkloadGetsTheEnvironmentItWasDeployedWith asserts what
+// the reconciler starts when it re-creates something that was killed: the
+// service with its own credentials, and the app with the connection string
+// to it — the same values the deploy gave them.
+//
+// The reconciler applied the shape it compares, which has no environment by
+// design (R-193). A provisioned Redis takes its password from the
+// environment, so the one it re-created exited on every start and the
+// killed service never came back.
+func TestR148_ARestoredWorkloadGetsTheEnvironmentItWasDeployedWith(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r, fake, s := provisioningRunner(t)
+	r.secrets = r.secretStore
+
+	deployed, err := r.provision(ctx, s, io.Discard)
+	require.NoError(t, err)
+	dsn := deployed.connections["DATABASE_URL"].Reveal()
+
+	envs, err := r.Environments(ctx, s)
+	require.NoError(t, err)
+	require.Equal(t, "pw", envs["svc-db"]["POSTGRES_PASSWORD"].Reveal(), "the service keeps its credentials")
+	require.Equal(t, dsn, envs["web"]["DATABASE_URL"].Reveal(), "the app is pointed at the same database")
+	require.False(t, fake.calls[len(fake.calls)-1].ExistingSecret.IsZero(),
+		"the stored credentials, never new ones that would not open the data on disk")
+}
+
 func TestASlotNothingCanProvisionIsRefusedWithTheWayOut(t *testing.T) {
 	t.Parallel()
 	r, _, s := provisioningRunner(t)
