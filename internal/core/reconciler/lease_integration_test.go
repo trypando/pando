@@ -311,3 +311,77 @@ type blockingRegistry struct{ runtime *blockingRuntime }
 
 func (r blockingRegistry) Runtime(string) (api.RuntimeAdapter, bool) { return r.runtime, true }
 func (r blockingRegistry) Routing(string) (api.RoutingAdapter, bool) { return nil, false }
+
+// startCountingRuntime's Observe counts the apps whose reconciliation has
+// started, says when limit have, and waits until its context is canceled.
+type startCountingRuntime struct {
+	fakeRuntime
+	mu      sync.Mutex
+	started map[string]bool
+	limit   int
+	full    chan struct{}
+}
+
+func (f *startCountingRuntime) Observe(ctx context.Context, ref api.BundleRef) (api.ObservedBundle, error) {
+	f.mu.Lock()
+	f.started[ref.BundleID] = true
+	if len(f.started) == f.limit {
+		close(f.full)
+	}
+	f.mu.Unlock()
+	<-ctx.Done()
+	return api.ObservedBundle{}, ctx.Err()
+}
+
+type startCountingRegistry struct{ runtime *startCountingRuntime }
+
+func (r startCountingRegistry) Runtime(string) (api.RuntimeAdapter, bool) { return r.runtime, true }
+func (r startCountingRegistry) Routing(string) (api.RoutingAdapter, bool) { return nil, false }
+
+// TestR148_AppsClaimedButNotStartedGoBackToTheFrontOnShutdown asserts that a
+// pass stopped while apps wait their turn releases them at once, unvisited,
+// rather than leaving them held until their leases run out: they are the
+// first the next pass takes.
+func TestR148_AppsClaimedButNotStartedGoBackToTheFrontOnShutdown(t *testing.T) {
+	t.Parallel()
+	db := connected(t)
+	ids := seedRunningApps(t, db, 3*reconciler.Concurrency)
+
+	runtime := &startCountingRuntime{started: map[string]bool{}, limit: reconciler.Concurrency, full: make(chan struct{})}
+	rec := &reconciler.Reconciler{
+		Apps:       state.NewApps(db),
+		Reconciles: state.NewReconciles(db),
+		Secrets:    state.NewSecrets(db, nil, ""),
+		Volumes:    state.NewVolumes(db),
+		Registry:   startCountingRegistry{runtime},
+		Auditor:    &recordingAuditor{},
+		Logger:     zap.NewNop(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { rec.Tick(ctx); close(done) }()
+	select {
+	case <-runtime.full:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the pass never filled its slots")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the pass did not end when it was stopped")
+	}
+
+	var held, unvisited int
+	require.NoError(t, db.QueryRow(context.Background(), `
+		SELECT count(*) FILTER (WHERE reconcile_lease_holder IS NOT NULL),
+		       count(*) FILTER (WHERE reconcile_lease_until IS NULL)
+		FROM apps WHERE id = ANY($1)`, ids).Scan(&held, &unvisited))
+	require.Zero(t, held, "nothing is left held by a pass that has ended")
+	require.Equal(t, len(ids)-reconciler.Concurrency, unvisited,
+		"every app that never started is back at the front of the queue")
+	runtime.mu.Lock()
+	require.Len(t, runtime.started, reconciler.Concurrency, "and none was started after the stop")
+	runtime.mu.Unlock()
+}
