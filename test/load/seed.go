@@ -435,7 +435,20 @@ func (s *seeder) realApp(ctx context.Context, c *Client, cred Credential, k int)
 	var dep struct {
 		ID string `json:"id"`
 	}
-	if _, err := c.JSON(ctx, http.MethodPost, "/apps/"+app+"/deployments", cred, "{}", &dep); err != nil {
+	// Retried: a deploy request resolves the image's digest at the registry
+	// before it returns, and a public registry that is briefly slow or
+	// rate-limiting answers 502 here without anything being wrong with Pando.
+	for attempt := 1; attempt <= 4; attempt++ {
+		if _, err = c.JSON(ctx, http.MethodPost, "/apps/"+app+"/deployments", cred, "{}", &dep); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(time.Duration(attempt) * 10 * time.Second):
+		}
+	}
+	if err != nil {
 		return "", err
 	}
 	deadline := time.Now().Add(5 * time.Minute)
