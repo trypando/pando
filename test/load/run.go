@@ -164,7 +164,8 @@ func loadWorkingSet(ctx context.Context, pool *pgxpool.Pool, tokenSecret string)
 	rows.Close()
 
 	rows, err = pool.Query(ctx, `
-		SELECT a.id, a.slug, coalesce((r.body->'routing'->>'port')::int, 0),
+		SELECT a.id, a.slug, coalesce((SELECT p.port FROM port_allocations p WHERE p.app_id = a.id LIMIT 1),
+		                              (r.body->'routing'->>'port')::int, 0),
 		       EXISTS (SELECT 1 FROM grants g WHERE g.app_id = a.id AND g.plane = 'data' AND g.principal_kind = 'anonymous')
 		FROM apps a JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		WHERE a.name LIKE $1 AND a.deleted_at IS NULL AND a.state IN ('running', 'degraded')
@@ -534,11 +535,14 @@ func (r *runner) proxyRequest(ctx context.Context) {
 		r.hit(ctx, "proxy", "real app by "+how+", anonymous", http.MethodGet, url, "", Credential{}, expect(want))
 		return
 	}
-	want := http.StatusForbidden
+	// Members and others are separate classes, so the report's status counts
+	// say which side an unexpected answer came from: a member refused is a
+	// finding about Pando, a stranger let in is a worse one.
+	want, who := http.StatusForbidden, "not granted"
 	if a.Members[user] {
-		want = http.StatusOK
+		want, who = http.StatusOK, "granted"
 	}
-	r.hit(ctx, "proxy", "real app by "+how+", signed in", http.MethodGet, url, "", Credential{Cookie: cookie}, expect(want))
+	r.hit(ctx, "proxy", "real app by "+how+", signed in, "+who, http.MethodGet, url, "", Credential{Cookie: cookie}, expect(want))
 }
 
 func (r *runner) someSession() (string, string) {
