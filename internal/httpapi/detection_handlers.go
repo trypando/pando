@@ -167,15 +167,9 @@ func (s *Server) handleRerunDetection(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.AdapterUnavailable, "Detection is not configured on this install."))
 		return
 	}
-	if err := s.DetectionQueue.Enqueue(r.Context(), app.ID); err != nil {
-		Error(w, r, err)
-		return
-	}
-
-	// Read before the detection starts, not after: this response describes
-	// the request, and a detection that failed at once used to finish between
-	// the two, answering 202 with the outcome of work it said had only begun.
-	d, err := s.Detections.Get(r.Context(), app.ID)
+	// The detection as queued: this response describes the request, not
+	// the work, which may already have finished on another replica.
+	d, err := s.DetectionQueue.Enqueue(r.Context(), app.ID)
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -613,17 +607,20 @@ func keysOf(m map[string]bool) []string {
 	return out
 }
 
+// DetectionQueue queues a detection to run on whichever replica has room
+// (detection.Queue). Enqueue returns the detection as queued, read before any
+// replica can claim it: a detection that fails at once would otherwise finish
+// between queueing it and reading it back, and a 202 would report the outcome
+// of work it says has only begun.
+type DetectionQueue interface {
+	Enqueue(ctx context.Context, appID string) (state.Detection, error)
+}
+
 // Detector runs detection for an app.
 //
 // An interface rather than the concrete job, so the HTTP layer does not have to
 // know how source is fetched or which adapters are involved — and so a test can
 // assert what the endpoints do without a network, a builder or a daemon.
-// DetectionQueue queues a detection to run on whichever replica has room
-// (detection.Queue).
-type DetectionQueue interface {
-	Enqueue(ctx context.Context, appID string) error
-}
-
 type Detector interface {
 	Detect(ctx context.Context, appID string) (state.Detection, error)
 
