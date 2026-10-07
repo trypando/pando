@@ -39,6 +39,11 @@ type Service struct {
 	// out, which only a test does: every install has one.
 	TokenKeyPath string
 
+	// UploadDir is where uploaded source archives are kept
+	// (source.DefaultUploadDir). Each goes into the bundle and is put back by
+	// a restore (O-37). Empty leaves them out, which only a test does.
+	UploadDir string
+
 	// State supplies everything the bundle records about the install.
 	State StateSource
 
@@ -253,6 +258,12 @@ func (s *Service) assemble(ctx context.Context, w io.Writer) (Manifest, error) {
 		return Manifest{}, err
 	}
 	b.Count("edge_volumes", edgeVolumes)
+
+	uploads, err := s.addUploads(b)
+	if err != nil {
+		return Manifest{}, err
+	}
+	b.Count("uploads", uploads)
 
 	// Provisioned services (R-212).
 	//
@@ -673,6 +684,36 @@ func (s *Service) addKeys(b *Writer) error {
 		}
 	}
 	return nil
+}
+
+// uploadName is an uploaded archive's file name, as source.StoreUpload writes
+// it: an app ID and .tar.gz. A half-written .partial is not one.
+var uploadName = regexp.MustCompile(`^[a-z]+_[0-9A-Za-z]+\.tar\.gz$`)
+
+// addUploads puts every uploaded source archive into the bundle (O-37) and
+// returns how many. A missing directory is an install nobody has uploaded to.
+func (s *Service) addUploads(b *Writer) (int, error) {
+	if s.UploadDir == "" {
+		return 0, nil
+	}
+	entries, err := os.ReadDir(s.UploadDir)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Pando could not list the uploaded source for the backup.", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !uploadName.MatchString(e.Name()) {
+			continue
+		}
+		if err := addFile(b, UploadsPrefix+e.Name(), filepath.Join(s.UploadDir, e.Name())); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 func addFile(b *Writer, name, path string) error {
