@@ -571,12 +571,30 @@ func (p *Planner) checkCapacity(ctx context.Context, s *spec.AppSpec, runtime ap
 				format(req), format(max64(total-alloc, 0))))
 	}
 
-	if err := over("CPU", int64(requested.CPUMillis), int64(allocated.CPUMillis), int64(capacity.TotalCPUMillis), formatMillis); err != nil {
-		return err
+	// Host policy may allow CPU and memory to be oversubscribed, each on its
+	// own (R-242 as amended). Read only here: the default refuses, and an
+	// install that cannot read its policy refuses too rather than guessing.
+	allowCPU, allowMemory := false, false
+	if p.policy != nil {
+		doc, err := p.policy.Document(ctx)
+		if err != nil {
+			return err
+		}
+		allowCPU, allowMemory = doc.AllowCPUOversubscription, doc.AllowMemoryOversubscription
 	}
-	if err := over("memory", requested.MemoryBytes, allocated.MemoryBytes, capacity.TotalMemoryBytes, formatBytes); err != nil {
-		return err
+
+	if !allowCPU {
+		if err := over("CPU", int64(requested.CPUMillis), int64(allocated.CPUMillis), int64(capacity.TotalCPUMillis), formatMillis); err != nil {
+			return err
+		}
 	}
+	if !allowMemory {
+		if err := over("memory", requested.MemoryBytes, allocated.MemoryBytes, capacity.TotalMemoryBytes, formatBytes); err != nil {
+			return err
+		}
+	}
+	// Disk is never oversubscribed, whatever policy says: it is not a share
+	// the kernel hands out, and a full disk stops every app and Pando too.
 	if err := over("disk space", requested.DiskBytes, allocated.DiskBytes, capacity.TotalDiskBytes, formatBytes); err != nil {
 		return err
 	}

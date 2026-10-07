@@ -36,6 +36,10 @@ type Adapter struct {
 
 	// pruneMu keeps cache trims from piling up when builds finish together.
 	pruneMu sync.Mutex
+
+	// localCacheMu does the same for evicting apps' caches under Pando's
+	// data directory (trimLocalCaches).
+	localCacheMu sync.Mutex
 }
 
 // Config is the adapter's configuration.
@@ -47,6 +51,12 @@ type Config struct {
 	// CacheMaxBytes caps the build service's own cache. Zero uses
 	// defaultCacheMaxBytes; a negative value leaves it unbounded.
 	CacheMaxBytes int64 `json:"cache_max_bytes,omitempty"`
+
+	// LocalCacheMaxBytes caps every app's build cache under Pando's data
+	// directory together, evicting whole apps' caches least recently used
+	// first. Zero uses defaultLocalCacheMaxBytes; a negative value leaves them
+	// unbounded.
+	LocalCacheMaxBytes int64 `json:"local_cache_max_bytes,omitempty"`
 }
 
 // defaultCacheMaxBytes is how much the build service may keep between builds.
@@ -207,6 +217,9 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 		return api.BuildResult{}, errs.Wrap(errs.BuildFailed,
 			"Could not prepare the build cache.", err)
 	}
+	// Marked as in use before the build, so eviction leaves it alone while
+	// the build runs (cacheInUseFor), and ordered as most recently used after.
+	touchCache(bundleOf(req.CacheNamespace), time.Now())
 
 	contextFS, err := fsutil.NewFS(contextDir)
 	if err != nil {
@@ -316,6 +329,10 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 	// an earlier build's, and would otherwise stay for the life of the app.
 	_, _ = pruneCacheDir(cacheDir)
 
+	// And the caches together kept under their total, in the background for
+	// the same reason as trimCache.
+	go a.trimLocalCaches()
+
 	return api.BuildResult{ImageRef: imageRef}, nil
 }
 
@@ -386,11 +403,7 @@ func imageName(namespace string) string {
 // BuildKit container fails with a permission error that reads as a build
 // failure. R-117's per-app namespace is preserved either way.
 func cachePath(namespace string) string {
-	root := os.Getenv("PANDO_BUILD_CACHE_DIR")
-	if root == "" {
-		root = "/var/lib/pando/buildcache"
-	}
-	return filepath.Join(root, namespace)
+	return filepath.Join(cacheRoot(), namespace)
 }
 
 // Info describes this kind of adapter for the forms that configure one

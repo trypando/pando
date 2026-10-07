@@ -116,6 +116,22 @@ type Document struct {
 	// because an unrelated app turned chatty.
 	MaxLogDiskBytes int64 `json:"max_log_disk_bytes,omitempty"`
 
+	// AllowCPUOversubscription and AllowMemoryOversubscription let the apps
+	// on a runtime together ask for more CPU, or more memory, than the runtime
+	// reports having (R-242 as amended for issue #72). Both off by default: a
+	// deploy that would oversubscribe is refused at plan time.
+	//
+	// Separate, because they fail differently. Too little CPU makes every app
+	// slower; too little memory makes the kernel kill one. An install packing
+	// many mostly-idle apps onto one host usually wants the first and not the
+	// second.
+	//
+	// There is no disk counterpart and there will not be one: disk is not a
+	// reservation the kernel shares out, and a full disk stops every app and
+	// Pando with them.
+	AllowCPUOversubscription    bool `json:"allow_cpu_oversubscription,omitempty"`
+	AllowMemoryOversubscription bool `json:"allow_memory_oversubscription,omitempty"`
+
 	// Audit retention (R-347, R-348). The live audit log keeps
 	// AuditRetentionMonths whole months; an older month is archived, the
 	// archive read back and checked, and only then is the month removed.

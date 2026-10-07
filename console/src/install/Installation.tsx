@@ -227,6 +227,10 @@ interface PolicyDoc {
   agent_disabled_verbs?: string[];
   max_log_disk_bytes?: number;
 
+  // R-242, as amended by issue #72. Disk has no counterpart.
+  allow_cpu_oversubscription?: boolean;
+  allow_memory_oversubscription?: boolean;
+
   // Audit retention (R-347, R-348).
   audit_retention_months?: number;
   audit_archive?: string;
@@ -777,6 +781,30 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               onChange={(e) =>
                 edit({ max_log_disk_bytes: Math.max(0, Math.round(Number(e.target.value) || 0)) * 1_000_000 })
               }
+            />
+          </Fixed>
+        </PolicySection>
+
+        <PolicySection
+          heading="Capacity"
+          note="By default Pando refuses a deploy that would ask for more CPU or memory than the runtime has. Disk is never oversubscribed."
+        >
+          <Fixed field="allow_cpu_oversubscription">
+            <Switch
+              checked={current.allow_cpu_oversubscription ?? false}
+              disabled={locked('allow_cpu_oversubscription')}
+              label="Allow more CPU to be promised than the runtime has"
+              description="Busy apps share the CPU and run slower."
+              onChange={(e) => edit({ allow_cpu_oversubscription: e.target.checked })}
+            />
+          </Fixed>
+          <Fixed field="allow_memory_oversubscription">
+            <Switch
+              checked={current.allow_memory_oversubscription ?? false}
+              disabled={locked('allow_memory_oversubscription')}
+              label="Allow more memory to be promised than the runtime has"
+              description="If the host runs out, it stops an app to free memory."
+              onChange={(e) => edit({ allow_memory_oversubscription: e.target.checked })}
             />
           </Fixed>
         </PolicySection>

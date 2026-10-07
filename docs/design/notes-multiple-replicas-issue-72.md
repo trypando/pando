@@ -78,7 +78,7 @@ its connection cancels its jobs and waits for them to stop before anyone else ca
 
 | Loop | Runs on | Why |
 |---|---|---|
-| Reconciler | every replica | Already locks per app (`Reconciles.Lock`); replicas share the apps |
+| Reconciler | every replica | Claims apps under a lease with `SKIP LOCKED` (`state.Lease`, PR 3); replicas share the apps |
 | Event delivery | every replica | Claims with `FOR UPDATE SKIP LOCKED` |
 | Network rejoin | every replica, every 15 s | Each replica's container must be on every app's network (below) |
 | Port listeners | every replica | Each replica is a front door; the balancer forwards the range |
@@ -113,8 +113,8 @@ container-less and looks like a dead app's; a deleted app has nothing in flight.
 ### Accepted costs
 
 - A deleted app's network stays until every replica that joined it has been replaced, not until the
-  next restart of one process. Pando's own address pool (10.213.0.0/16 in /26 blocks) holds about
-  1,000; PR 3 widens it.
+  next restart of one process. Pando's own address pool (10.213.0.0/16) holds 4,096 app networks
+  in /28 blocks since PR 3, and `network_pool` takes a wider range.
 - A request already relayed for a deploy log is cut if the replica holding it stops; the reader
   retries and gets the "has since stopped" line.
 - Restoring a DR bundle (R-212) replaces `pando_replicas` with the bundle's. Every replica then finds
@@ -182,11 +182,30 @@ the first of a stack; each later PR is based on the one before, and #72 closes w
 |---|---|
 | 1 (this) | Replicas, above. The application pool's size is now set (`PANDO_DATABASE_MAX_CONNS`, default 32): pgx's default of the CPU count could be used up by the reconciler's held locks plus the leader's |
 | 2 — request path and a load harness | A new HTTP transport per proxied request (no upstream connection reuse); hostname and port app lookups scanning every pinned spec's JSON; `AppVerbs` running the full control check sixteen times per request; the launcher query and unpaginated user, group, app and approval lists; console polling that calls Docker on every `/status` and `/usage`; token hashing and the per-request `last_used_at` write; the anonymous-denial audit toggle; a proxied websocket not closing when its session is revoked or its user suspended (R-048, a security fix); the deploy log store never freeing a finished deploy. The harness seeds the two tiers and drives proxy, API and console traffic through the replicas stack |
-| 3 — single-host capacity | **The reconciler only ever visits 200 apps**: `Due` orders by `updated_at`, which a healthy pass never changes, so past 200 apps the rest are never observed or repaired. Replaced by a lease column claimed with `SKIP LOCKED`, which also spreads apps across replicas and stops holding a connection per app. The oversubscription toggle. Smaller subnets (/28) and a shared egress bridge, lifting the network pool from about 1,000 apps to about 4,000. The rejoin loop inspecting every network every 15 s; unbounded usage sampling; the per-app build cache with no total cap |
+| 3 — single-host capacity | **The reconciler only ever visits 200 apps**: `Due` orders by `updated_at`, which a healthy pass never changes, so past 200 apps the rest are never observed or repaired. Replaced by a lease column claimed with `SKIP LOCKED`, which also spreads apps across replicas and stops holding a connection per app. The oversubscription toggle. Smaller subnets (/28, larger for a bundle that needs it, /29 for an egress gateway's way out), lifting the network pool from about 1,000 apps to about 4,000. The rejoin loop inspecting every network every 15 s; unbounded usage sampling; the per-app build cache with no total cap. **Done, with one change of plan:** the egress gateways keep an outbound network each rather than sharing one bridge with inter-container traffic off (below) |
 | 4 — background work and data growth | A bounded deploy and detection queue in Postgres that any replica takes from (O-32), so a lost replica's deploy resumes elsewhere. GC, rolling backups and auto-deploy made concurrent and due-driven rather than serial over every app. A retention job for the tables that only grow (deployments, revisions, sessions, notifications, idempotency keys, detections, scans). Missing indexes: `event_deliveries(event_id)`, in-flight `deployments(status)`, `deployments(spec_id)`, `apps(owner_user_id)` |
 | 5 — image registry | The registry above, and builds that push and pin by digest |
 | 6 — Kubernetes runtime adapter | O-33, with a design note first: a Service per app reachable only from Pando's proxy (R-023), NetworkPolicy for R-025, PersistentVolumeClaims |
 | 7 — multi-host Docker runtime adapter | Docker on several hosts, with placement in the adapter and a design for how the proxy reaches an app on another host without routing around Pando |
+
+### PR 3: why the egress gateways do not share one bridge [P]
+
+The plan was one outbound bridge for every restricted app's gateway, with
+`com.docker.network.bridge.enable_icc=false` so gateways could not reach each other. It was not
+done. Per-app outbound networks exist so an app whose rules allow private addresses cannot ask its
+gateway to connect to another app's gateway, and through it into that app's internal network
+(R-180, egress.go). On a shared bridge that guarantee rests entirely on `enable_icc=false` being
+enforced, and nothing tells Pando when it is not: it is a driver option an engine may accept and not
+act on (Podman's netavark has its own isolation option, and whether it honors Docker's was not
+verified), and Docker's firewall backends have changed how such rules are written. Each failure
+would be silent and would connect every restricted app's gateway to every other's. The per-app
+network relies on the isolation between bridge networks that the rest of R-025 already relies on,
+so it adds no new assumption; the shared bridge would add one that no test here could check on every
+engine.
+
+The address cost is taken down instead: the outbound network holds only the gateway, so it is a
+/29 (8 addresses) rather than an app-sized block. A restricted app costs a /28 and a /29, and the
+default pool still holds about 2,700 restricted apps, or 4,096 unrestricted ones.
 
 ## The issue's open questions, answered
 

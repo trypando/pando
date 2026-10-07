@@ -38,6 +38,11 @@ var descriptions = map[string]string{
 		"backed up before the app or its volumes are deleted.",
 	"max_token_lifetime_days": "Longest a token may live, in days. 0 means no limit.",
 	"max_log_disk_bytes":      "Total disk for app logs across every app, in bytes. 0 means no limit.",
+	"allow_cpu_oversubscription": "Let apps together ask for more CPU than the runtime has. Off by default: a " +
+		"deploy that would need more CPU than is left is refused. On, busy apps share the CPU and run slower.",
+	"allow_memory_oversubscription": "Let apps together ask for more memory than the runtime has. Off by " +
+		"default: a deploy that would need more memory than is left is refused. On, the host may run out and " +
+		"stop an app to free memory. Disk is never oversubscribed.",
 	"audit_retention_months": "How many months the audit log keeps before an older month is archived and removed " +
 		"from the live log. 0 means 3, which is also the least it may be.",
 	"audit_archive": "Where a month of the audit log goes once it is past retention: keep (archived under Pando's " +

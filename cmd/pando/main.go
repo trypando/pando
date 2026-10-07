@@ -882,6 +882,9 @@ func serve(ctx context.Context, configPath string) error {
 		Clock:         clock.System{},
 		ProxyUpstream: proxyUpstream,
 
+		// Replicas share the apps rather than each visiting every one.
+		MinRevisit: reconciler.DefaultMinRevisit,
+
 		// The owner hears that their app failed (design 05 §4). Unset until
 		// issue #50, which is to say nobody heard.
 		Notifier: notifyRouter,
@@ -910,9 +913,9 @@ func serve(ctx context.Context, configPath string) error {
 	loopCtx, stopLoop := context.WithCancel(ctx)
 	defer stopLoop()
 
-	// The reconciler runs on every replica: it locks per app (state
-	// Reconciles.Lock), so replicas share the apps between them rather than
-	// fighting over them.
+	// The reconciler runs on every replica: it claims apps under a lease
+	// with SKIP LOCKED (state.Lease), so replicas share the apps between them
+	// rather than fighting over them.
 	go loop.Run(loopCtx)
 
 	// What must happen once per install rather than once per process runs on
