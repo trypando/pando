@@ -34,3 +34,6 @@ vulns.json
 # Python bytecode. Scorecard flags any committed binary (Binary-Artifacts).
 __pycache__/
 *.py[cod]
+
+# Load harness output (test/load): reports, results, logs and the built binary.
+/test/load/out/
