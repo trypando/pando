@@ -155,3 +155,29 @@ subjects:
   - kind: ServiceAccount
     name: pando-edge-traefik
     namespace: pando-edge
+---
+# Traefik's CRD provider (v3.2 and later) watches nodes, cluster-wide, and
+# serves no route until that watch syncs: without this every request to the
+# edge was a 404, with "nodes is forbidden" in its log. Read only; nodes hold
+# no secret.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pando-edge-traefik
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pando-edge-traefik
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pando-edge-traefik
+subjects:
+  - kind: ServiceAccount
+    name: pando-edge-traefik
+    namespace: pando-edge

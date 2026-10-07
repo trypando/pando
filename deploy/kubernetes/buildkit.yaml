@@ -1,19 +1,24 @@
-# Rootless BuildKit (R-111), as the Compose file runs it.
+# Rootless BuildKit (R-111), as the Compose file runs it, alone in the
+# pando-build namespace (O-48).
 #
-# No container runtime socket is mounted, here or anywhere (R-112). Rootless
-# BuildKit makes its own user namespaces, which needs seccomp and AppArmor
-# unconfined and nothing privileged. Its NetworkPolicy (networkpolicy.yaml)
-# lets builds reach the internet and the registry, and nothing inside the
-# cluster (R-113).
+# Rootless BuildKit makes its own user and mount namespaces, which the
+# container runtime's default seccomp and AppArmor profiles refuse. So it asks
+# for both Unconfined, which Pod Security baseline would refuse; pando-build
+# enforces privileged instead, and holds nothing else. Nothing is privileged
+# and no container runtime socket is mounted, here or anywhere (R-112).
+#
+# Its NetworkPolicy (networkpolicy.yaml) admits only Pando's server pods, and
+# lets builds reach DNS, an in-cluster registry and anywhere outside the
+# cluster — nothing else inside it (R-113).
 #
 # On Kubernetes a build is pushed to a registry and every node pulls it
 # (notes-image-registry-issue-72.md); set PANDO_REGISTRY_URL on Pando's
-# Deployment once that lands.
+# Deployment.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: buildkit
-  namespace: pando
+  namespace: pando-build
   labels:
     app.kubernetes.io/name: buildkit
 spec:
@@ -41,6 +46,7 @@ spec:
           securityContext:
             runAsUser: 1000
             runAsGroup: 1000
+            privileged: false
           volumeMounts:
             - name: cache
               mountPath: /home/user/.local/share/buildkit
@@ -52,7 +58,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: buildkit
-  namespace: pando
+  namespace: pando-build
 spec:
   selector:
     app.kubernetes.io/name: buildkit

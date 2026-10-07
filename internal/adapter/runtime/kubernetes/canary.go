@@ -7,7 +7,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -27,8 +26,9 @@ import (
 // makes the adapter unusable rather than quietly unisolated.
 
 const (
-	canaryNamespace = "pando-canary"
-	canaryPort      = 8080
+	canaryNamespacePrefix = "pando-canary-"
+	roleCanary            = "canary"
+	canaryPort            = 8080
 
 	// A passed check is good for an hour. A failed one is looked at again in
 	// five minutes, so installing a network plugin does not wait an hour.
@@ -78,6 +78,15 @@ func (a *Adapter) networkPolicyEnforced(ctx context.Context) (bool, error) {
 }
 
 // runCanary is the check itself, in a namespace of its own that it removes.
+//
+// The namespace is this run's alone, named with a random suffix. Every
+// replica runs the canary, and when two shared one namespace, one replica's
+// cleanup deleted it under the other's run: Kubernetes removes a terminating
+// namespace's NetworkPolicy and its pods together, so for a moment the other
+// run's refused client reached its server with no policy in the way, and
+// that replica recorded the cluster as not enforcing NetworkPolicy — the
+// whole runtime unavailable for five minutes, seen on kind whenever both
+// replicas started at once.
 func (a *Adapter) runCanary(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, canaryTimeout)
 	defer cancel()
@@ -88,14 +97,17 @@ func (a *Adapter) runCanary(ctx context.Context) (bool, error) {
 			WithRemedy(fmt.Sprintf("Check that Pando's ServiceAccount may create namespaces and pods, and that nodes can pull %s. Pando does not run apps on a cluster it has not checked.", a.config.HelperImage))
 	}
 
+	a.sweepCanaries(ctx)
+
+	name := canaryNamespacePrefix + randomLabel(8)
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-		Name:   canaryNamespace,
-		Labels: map[string]string{labelManagedBy: managedBy, labelPSAEnforce: "baseline"},
+		Name:   name,
+		Labels: map[string]string{labelManagedBy: managedBy, labelPSAEnforce: "baseline", labelRole: roleCanary},
 	}}
-	if _, err := a.cs.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	if _, err := a.cs.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil {
 		return false, cannot("its namespace could not be created", err)
 	}
-	if err := a.bindAppRole(ctx, canaryNamespace); err != nil {
+	if err := a.bindAppRole(ctx, name); err != nil {
 		return false, cannot("Pando could not be given its role in the canary's namespace", err)
 	}
 	defer func() {
@@ -103,17 +115,12 @@ func (a *Adapter) runCanary(ctx context.Context) (bool, error) {
 		// namespace would leave pods behind.
 		cleanup, done := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer done()
-		_ = a.cs.CoreV1().Namespaces().Delete(cleanup, canaryNamespace, metav1.DeleteOptions{})
+		_ = a.cs.CoreV1().Namespaces().Delete(cleanup, name, metav1.DeleteOptions{})
 	}()
 
-	pods := a.cs.CoreV1().Pods(canaryNamespace)
-	// Leftovers of an interrupted run.
-	for _, name := range []string{"server", "admitted", "refused"} {
-		_ = pods.Delete(ctx, name, metav1.DeleteOptions{})
-	}
-
+	pods := a.cs.CoreV1().Pods(name)
 	policy := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "admit-one", Namespace: canaryNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: "admit-one", Namespace: name},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"role": "server"}},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
@@ -124,11 +131,11 @@ func (a *Adapter) runCanary(ctx context.Context) (bool, error) {
 			}},
 		},
 	}
-	if _, err := a.cs.NetworkingV1().NetworkPolicies(canaryNamespace).Create(ctx, policy, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	if _, err := a.cs.NetworkingV1().NetworkPolicies(name).Create(ctx, policy, metav1.CreateOptions{}); err != nil {
 		return false, cannot("its NetworkPolicy could not be created", err)
 	}
 
-	server := a.canaryPod("server", []string{"sh", "-c",
+	server := a.canaryPod(name, "server", []string{"sh", "-c",
 		fmt.Sprintf("mkdir -p /www && echo ok > /www/index.html && exec httpd -f -p %d -h /www", canaryPort)})
 	server.Spec.Containers[0].ReadinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 		TCPSocket: &corev1.TCPSocketAction{Port: intOrPort(canaryPort)},
@@ -136,25 +143,25 @@ func (a *Adapter) runCanary(ctx context.Context) (bool, error) {
 	if _, err := pods.Create(ctx, server, metav1.CreateOptions{}); err != nil {
 		return false, cannot("its server pod could not be created", err)
 	}
-	ip, err := a.waitForPodIP(ctx, canaryNamespace, "server")
+	ip, err := a.waitForPodIP(ctx, name, "server")
 	if err != nil {
 		return false, cannot("its server pod did not start", err)
 	}
 
 	connect := []string{"sh", "-c", fmt.Sprintf("wget -q -T 5 -O /dev/null http://%s:%d/", ip, canaryPort)}
 	for _, role := range []string{"admitted", "refused"} {
-		if _, err := pods.Create(ctx, a.canaryPod(role, connect), metav1.CreateOptions{}); err != nil {
+		if _, err := pods.Create(ctx, a.canaryPod(name, role, connect), metav1.CreateOptions{}); err != nil {
 			return false, cannot("its client pod could not be created", err)
 		}
 	}
-	admitted, err := a.waitForExit(ctx, canaryNamespace, "admitted")
+	admitted, err := a.waitForExit(ctx, name, "admitted")
 	if err != nil {
 		return false, cannot("its client pod did not finish", err)
 	}
 	if admitted != 0 {
 		return false, cannot("a pod the policy admits could not connect either, so the result says nothing about the policy", nil)
 	}
-	refused, err := a.waitForExit(ctx, canaryNamespace, "refused")
+	refused, err := a.waitForExit(ctx, name, "refused")
 	if err != nil {
 		return false, cannot("its client pod did not finish", err)
 	}
@@ -162,10 +169,24 @@ func (a *Adapter) runCanary(ctx context.Context) (bool, error) {
 	return refused != 0, nil
 }
 
-func (a *Adapter) canaryPod(role string, cmd []string) *corev1.Pod {
+// sweepCanaries removes canary namespaces older than any run can last: a
+// replica that stopped mid-check leaves its namespace behind.
+func (a *Adapter) sweepCanaries(ctx context.Context) {
+	list, err := a.cs.CoreV1().Namespaces().List(ctx, metav1.ListOptions{LabelSelector: labelRole + "=" + roleCanary})
+	if err != nil {
+		return
+	}
+	for _, ns := range list.Items {
+		if ns.DeletionTimestamp == nil && a.now().Sub(ns.CreationTimestamp.Time) > 2*canaryTimeout {
+			_ = a.cs.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+		}
+	}
+}
+
+func (a *Adapter) canaryPod(namespace, role string, cmd []string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: role, Namespace: canaryNamespace,
+			Name: role, Namespace: namespace,
 			Labels: map[string]string{"role": role, labelManagedBy: managedBy},
 		},
 		Spec: corev1.PodSpec{

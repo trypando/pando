@@ -258,7 +258,7 @@ func (a *Adapter) ensureKubernetes(ctx context.Context, r api.RouteRequest, rule
 	if entryPoints[0] == "" {
 		entryPoints = nil
 	}
-	name := routerName(r.AppID)
+	name := routeObjectName(r.AppID)
 	obj := a.ingressRoute(name, r.AppID, entryPoints, []any{map[string]any{
 		"match": rule, "kind": "Rule", "services": proxyBackend(service, port),
 	}}, tls, annotations)
@@ -268,8 +268,16 @@ func (a *Adapter) ensureKubernetes(ctx context.Context, r api.RouteRequest, rule
 	return api.RouteHandle{AppID: r.AppID, Handle: a.config.Namespace + "/" + name}, nil
 }
 
+// routeObjectName is an app's IngressRoute name. A Kubernetes object name is
+// a DNS subdomain — lowercase, no underscore — which an app ID is not
+// ("app_01HQ…"), so the router name the file delivery uses would be refused
+// by the API. Lowercasing a ULID cannot collide: its alphabet has one case.
+func routeObjectName(appID string) string {
+	return strings.ToLower(strings.ReplaceAll(routerName(appID), "_", "-"))
+}
+
 func (a *Adapter) removeKubernetes(ctx context.Context, h api.RouteHandle) error {
-	err := a.routes().Delete(ctx, routerName(h.AppID), metav1.DeleteOptions{})
+	err := a.routes().Delete(ctx, routeObjectName(h.AppID), metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return errs.Wrap(errs.AdapterFailed, "Pando could not remove Traefik's IngressRoute.", err)
 	}
@@ -279,7 +287,7 @@ func (a *Adapter) removeKubernetes(ctx context.Context, h api.RouteHandle) error
 // observeKubernetes reports whether the IngressRoute is there, and the
 // address it sends traffic to. It never rewrites a missing one (design 05).
 func (a *Adapter) observeKubernetes(ctx context.Context, h api.RouteHandle) (api.RouteState, error) {
-	obj, err := a.routes().Get(ctx, routerName(h.AppID), metav1.GetOptions{})
+	obj, err := a.routes().Get(ctx, routeObjectName(h.AppID), metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return api.RouteState{}, nil
 	}

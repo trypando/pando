@@ -368,8 +368,13 @@ func TestSequenceB_BuildFromSource(t *testing.T) {
 	// The built image is named for the app it belongs to, which is also the
 	// per-app build cache namespace (R-117). Image references cannot carry an
 	// underscore, so the app ID's is replaced.
+	//
+	// The container runs the image by its ID — a deployment records exactly
+	// the image it ran, so a refused build can never be restored in its place
+	// (R-146) — and the name is on the image's tags.
 	image := inspect(t, fmt.Sprintf("pando-%s-web", app), `{{.Config.Image}}`)
+	tags := inspect(t, image, `{{json .RepoTags}}`)
 	expected := strings.ReplaceAll(strings.ToLower(app), "_", "-")
-	require.Contains(t, strings.ToLower(image), expected,
+	require.Contains(t, strings.ToLower(tags), expected,
 		"the built image is named for the app it belongs to")
 }

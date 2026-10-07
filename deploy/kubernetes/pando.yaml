@@ -141,7 +141,7 @@ spec:
             - name: PANDO_SERVER_BASE_DOMAIN
               value: apps.example.com
             - name: PANDO_BUILDKIT_ADDRESS
-              value: tcp://buildkit.pando.svc:1234
+              value: tcp://buildkit.pando-build.svc:1234
           readinessProbe:
             httpGet:
               path: /readyz

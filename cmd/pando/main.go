@@ -745,7 +745,16 @@ func serve(ctx context.Context, configPath string) error {
 		Clock:         clock.System{},
 	}
 	if secretsAdapter != nil {
-		edges.Certificates = &edgecert.Issuer{Store: edgeCerts, ACME: edgecert.Lego{}, Clock: clock.System{}, Logger: logger}
+		// The CA is a setting (O-49): Let's Encrypt by default, or an
+		// organization's own ACME server, trusted through its CA file.
+		acmeClient, err := edgecert.ClientTrusting(cfg.ACME.CAFile)
+		if err != nil {
+			return err
+		}
+		edges.Certificates = &edgecert.Issuer{
+			Store: edgeCerts, ACME: edgecert.Lego{HTTPClient: acmeClient}, Clock: clock.System{}, Logger: logger,
+			Directory: cfg.ACME.DirectoryURL,
+		}
 	}
 
 	// Whether a newer Pando is released (R-349). Started with the other loops

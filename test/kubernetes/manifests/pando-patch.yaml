@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pando
+  namespace: pando
+spec:
+  template:
+    spec:
+      containers:
+        - name: pando
+          imagePullPolicy: Never
+          env:
+            - name: PANDO_SERVER_BASE_DOMAIN
+              value: apps.pando.test
+            # The in-cluster registry (registry.yaml). Plain HTTP, said so.
+            - name: PANDO_REGISTRY_URL
+              value: http://registry.pando.svc.cluster.local:5000
+            - name: PANDO_REGISTRY_INSECURE
+              value: "true"
+            # The compressed retry schedule test/acceptance uses, so a
+            # crashing app reaches failed in seconds rather than minutes.
+            - name: PANDO_RECONCILER_BACKOFF
+              value: 0s,1s,2s,3s,4s
+            - name: PANDO_RECONCILER_FAILURE_WINDOW
+              value: 2m
+            - name: PANDO_APPS_CPU_MILLIS
+              value: "100"
+            - name: PANDO_APPS_MEMORY_BYTES
+              value: "134217728"
+            # Pebble, not Let's Encrypt (pebble.yaml, O-49).
+            - name: PANDO_ACME_DIRECTORY_URL
+              value: https://pebble:14000/dir
+            - name: PANDO_ACME_CA_FILE
+              value: /etc/pando-acme/pebble.minica.pem
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: acme-ca
+              mountPath: /etc/pando-acme
+              readOnly: true
+      volumes:
+        - name: acme-ca
+          configMap:
+            name: pebble-ca
