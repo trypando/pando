@@ -1140,6 +1140,8 @@ func (v *Volumes) Handles(ctx context.Context, appID string) (map[string]string,
 //   - **The currently pinned revision is never pruned**, which the first rule
 //     already covers, but a deployment also references it by foreign key and
 //     would refuse.
+//   - **A revision a scan describes is never pruned** (R-319). The scan is
+//     append-only and names its revision; the foreign key refuses the delete.
 //
 // Returns how many rows went.
 func (a *Apps) PruneSpecRevisions(ctx context.Context) (int, error) {
@@ -1163,6 +1165,10 @@ func (a *Apps) PruneSpecRevisions(ctx context.Context) (int, error) {
 		  AND NOT EXISTS (SELECT 1 FROM spec_pins p WHERE p.spec_id = r.id)
 		  -- Never one a deployment refers to.
 		  AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.spec_id = r.id)
+		  -- Never one a scan describes. A scan is an append-only fact about
+		  -- a revision (R-319); deleting the revision would leave it naming
+		  -- nothing, and the foreign key refuses that.
+		  AND NOT EXISTS (SELECT 1 FROM app_scans s WHERE s.spec_id = r.id)
 	`)
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not prune old spec revisions.", err)
