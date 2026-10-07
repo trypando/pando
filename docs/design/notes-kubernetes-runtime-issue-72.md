@@ -22,7 +22,7 @@ what was built, with these differences, each a **[P]** the owner may override:
 | Services | Headless, as designed, with `publishNotReadyAddresses: true` | A workload's name resolves while its readiness probe fails, as a Docker container name does. Whether to send traffic to an unhealthy app is Pando's decision |
 | Quota | Always refuses NodePort and LoadBalancer Services (`services.nodeports: 0`, `services.loadbalancers: 0`). CPU and memory ceilings at twice the plan, only when every workload has limits | A pod and its replacement exist together during a recreate; a CPU quota refuses any pod that does not state its own limits |
 | The canary | Three pods in `pando-canary`: a server behind a policy admitting one label, an admitted client that must connect, and a refused client that must not. An admitted client that cannot connect is "could not check", not a pass. Passed results last an hour, failed ones five minutes | Without the admitted client a broken network would read as an enforcing one. `Capabilities` reports `SupportsPrivateNetwork` only after a pass, so the planner refuses the runtime until `HealthCheck` has run it |
-| Edge certificates | As designed (below): the leader's edge pass (a `cluster.Job`) orders with lego (`internal/core/edgecert`), renews 30 days before expiry, waits an hour after a failed order and keeps serving the certificate it would replace. The account key and each certificate with its key are sealed by the secrets adapter in migration `000052_edge_certificates` (numbered past 000051, which PR 7 may take). The Traefik adapter asks for them through `EdgePlan.Issue`, core fills `EdgePlan.Certificates`, and the runtime writes `kubernetes.io/tls` Secrets the IngressRoutes name in `tls.secretName`. HTTP-01 answers are written to `edge_acme_challenges` and served by whichever replica's router the CA reaches, before the proxy fallback, only for a token Pando is waiting on. Port 80 redirects to HTTPS except `/.well-known/acme-challenge/`. DNS-01 uses the adapter's provider and credentials for the five named providers; another code is refused at configure on this delivery | The issuer is tested against an in-memory store and a fake ACME server, not a real CA |
+| Edge certificates | As designed (below): the leader's edge pass (a `cluster.Job`) orders with lego (`internal/core/edgecert`), renews 30 days before expiry, waits an hour after a failed order and keeps serving the certificate it would replace. The account key and each certificate with its key are sealed by the secrets adapter in migration `000052_edge_certificates` (numbered past 000051, which PR 7 may take). The Traefik adapter asks for them through `EdgePlan.Issue`, core fills `EdgePlan.Certificates`, and the runtime writes `kubernetes.io/tls` Secrets the IngressRoutes name in `tls.secretName`. HTTP-01 answers are written to `edge_acme_challenges` and served by whichever replica's router the CA reaches, before the proxy fallback, only for a token Pando is waiting on. Port 80 redirects to HTTPS except `/.well-known/acme-challenge/`. DNS-01 uses the adapter's provider and credentials for the five named providers; another code is refused at configure on this delivery | The CA is a setting (O-49): `PANDO_ACME_DIRECTORY_URL`, Let's Encrypt by default, and `PANDO_ACME_CA_FILE` to trust a private ACME server. `test/kubernetes` is written to issue and renew against Pebble |
 | Path prefixes | No `Middleware`; the prefix reaches Pando's proxy, which strips it (R-167) | The same as the file delivery on Docker. Stripping it at the edge would hand the proxy a path it cannot resolve |
 | Usage | CPU and memory per workload from `metrics.k8s.io` (`k8s.io/metrics`); `ReportsUsage` is false, and the console says use is not reported, when the cluster serves no metrics API. Disk and volume sizes are -1 | Volume sizes need `nodes/proxy`, which the adapter does not ask for |
 | `LargestFit` | The largest eligible node's CPU and largest node's memory, each less other pods' requests | The two may come from different nodes; Apply turns a `FailedScheduling` refusal into the deploy's error |
@@ -32,8 +32,9 @@ what was built, with these differences, each a **[P]** the owner may override:
 
 **Run on a kind cluster.** `make test-kubernetes` (`test/kubernetes`) creates a kind cluster of one
 control plane and two workers with kind's own network plugin, kindnet, builds Pando's image from the
-checkout, applies `deploy/kubernetes` with Postgres and a CNCF Distribution registry beside it
-(`test/kubernetes/manifests`), and drives Pando's API through a port-forward. kindnet enforces
+checkout, applies `deploy/kubernetes` with Postgres, a CNCF Distribution registry, a ReadWriteMany volume
+every node shares and Pebble as the edge's certificate authority beside it (`test/kubernetes/manifests`),
+and drives Pando's API through a port-forward. kindnet enforces
 NetworkPolicy (kind v0.24 and later), so the canary passes on it; the note's expectation that it would
 refuse predates that. What the run proves, each a `TestR###_` in that package: two replicas against one
 Postgres with one leader; the canary; an image app as a bare pod with `restartPolicy: Never` in its own
@@ -45,7 +46,12 @@ claim surviving its pod's replacement, and a delete keeping a final backup taken
 helper; a build pushed by in-cluster BuildKit to the registry and pulled by the node by digest; the edge
 at two replicas with a PodDisruptionBudget, every IngressRoute naming `pando-proxy`, and a request into
 the edge's Service reaching an app through the proxy while the edge's own pods cannot reach it; and a
-deploy resumed on the other replica when its pod is force-deleted.
+deploy resumed on the other replica when its pod is force-deleted. Written after O-48 and O-49 were
+decided and **not yet run on a cluster** (the host was short of disk): a certificate for an app's
+hostname issued by the leader from Pebble over HTTP-01, served by every edge replica with a chain to
+Pebble's root, and renewed ahead of expiry (`TestR169_…` in `certificates_test.go`); and an uploaded
+source stored by one replica and built by both from the shared `/var/lib/pando`
+(`TestR262_AnUploadedSourceIsBuiltByEitherReplica`).
 
 Found and fixed by that run: an app's IngressRoute was named with the app ID as is (`pando-app_01…`),
 which the API refuses, so every deploy failed at routing — it is lowercased with a hyphen now; Traefik
@@ -53,13 +59,12 @@ which the API refuses, so every deploy failed at routing — it is lowercased wi
 ClusterRole reading nodes; a deleted app without storage left its namespace behind, and now goes in one
 delete; `Stop` deleted finished pods too, so the reconciler stopping an app as it gave up took the log
 of the crash that failed it — it now deletes only pods still running; and BuildKit's Deployment asked
-for `Unconfined` profiles, which `baseline` refuses, so it never made a pod (O-48).
+for `Unconfined` profiles, which `baseline` refuses, so it never made a pod. It now runs alone in
+`pando-build`, which enforces `privileged` (O-48, decided).
 
-Still not run against a real cluster: the HTTP-01 and DNS-01 issuance (the issuer orders only from Let's
-Encrypt, O-49); a CNI that does not enforce NetworkPolicy; the ValidatingAdmissionPolicy refusals;
-restricted egress through the gateway; `fsGroup` on a ReadWriteMany volume (kind offers none, so the test
-gives each replica its own `/var/lib/pando`, and builds from uploaded source are not tested); usage from
-metrics-server; and O-40's 20,000 namespaces through the load harness.
+Still not run against a real cluster: DNS-01 issuance; a CNI that does not enforce NetworkPolicy; the ValidatingAdmissionPolicy refusals;
+restricted egress through the gateway; `fsGroup` on a network
+ReadWriteMany volume (the test's is a directory every kind node mounts); usage from metrics-server; and O-40's 20,000 namespaces through the load harness.
 
 ## Running Pando on Kubernetes
 
@@ -67,11 +72,11 @@ metrics-server; and O-40's 20,000 namespaces through the load harness.
 
 | File | What |
 |---|---|
-| `namespaces.yaml` | `pando` and `pando-edge`, both Pod Security `baseline` |
+| `namespaces.yaml` | `pando` and `pando-edge`, both Pod Security `baseline`, and `pando-build`, `privileged`, for BuildKit alone (O-48) |
 | `rbac.yaml` | The tables under "RBAC, minimal" below: Pando's ClusterRole, `pando-app-manager`, the edge Role, and `pando-edge-traefik` (a Role in `pando-edge`, and a ClusterRole reading nodes, which Traefik 3.2 watches) |
 | `admission-policy.yaml` | The ValidatingAdmissionPolicies: namespace deletes only of Pando's, no NodePort or LoadBalancer Service but the edge's, no `ExternalName` outside `pando-edge`, no host network or host port, every IngressRoute to `pando-proxy` |
 | `networkpolicy.yaml` | Default deny in `pando`; Pando's server pods admit the edge and each other on 8080; BuildKit admits only Pando and reaches only outside the cluster |
-| `buildkit.yaml` | Rootless BuildKit, no host path, nothing privileged, no seccomp or AppArmor profile named, which `baseline` admits; it runs only where nodes apply neither by default (O-48, R-112) |
+| `buildkit.yaml` | Rootless BuildKit alone in `pando-build`, which enforces Pod Security `privileged`: seccomp and AppArmor `Unconfined`, nothing privileged, no host path or runtime socket (O-48, R-112). It admits only Pando's server pods and reaches DNS, the in-cluster registry and outside the cluster (R-113) |
 | `pando.yaml` | A ConfigMap declaring `rt_kubernetes` and `rte_traefik` (`delivery: kubernetes_api`); the ReadWriteMany `pando-data` claim (O-39); Deployment `pando`, 2 replicas, `PANDO_SERVER_ADVERTISE_URL=http://$(POD_IP):8080` from the downward API, `PANDO_SERVER_PROXY_UPSTREAM=http://pando-proxy:8080`; Service `pando`; a PodDisruptionBudget |
 
 Before applying: create Secrets `pando-database` (key `url`) and `pando-keys` (`secrets.key` and
@@ -548,8 +553,10 @@ build cache out removes the last reasons for it; that is the next step after thi
 lets Pando's replicas run on more than one host under multi-host Docker (O-47).
 
 **Builder in the cluster.** Rootless BuildKit (`moby/buildkit:rootless`) as a Deployment, which needs
-`seccompProfile: Unconfined` and `appArmorProfile: Unconfined` to create its own user namespaces — which `baseline` on `pando` refuses to admit, so the manifest names neither and how it runs everywhere is O-48 — and
-nothing privileged. No container runtime socket is mounted anywhere (R-112); the integration test that
+`seccompProfile: Unconfined` and `appArmorProfile: Unconfined` to create its own user namespaces. Pod
+Security `baseline` refuses both, so BuildKit runs alone in `pando-build`, a namespace enforcing
+`privileged` **[D] (O-48)**; app namespaces and `pando` stay `baseline`, and the pod
+is not privileged. No container runtime socket is mounted anywhere (R-112); the integration test that
 reads the build container's mounts gets a Kubernetes version reading the pod spec. Builds push to the
 registry (PR 5). Its NetworkPolicy allows egress to the internet and the registry, and denies the pod
 and Service CIDRs, which is R-113's "no route to the internal network or other bundles". More replicas

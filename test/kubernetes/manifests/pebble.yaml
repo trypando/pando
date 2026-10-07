@@ -1,0 +1,107 @@
+# Pebble, Let's Encrypt's test CA, for the edge's certificates (R-169, O-49).
+#
+# In "pando" and named "pebble" because its bundled TLS certificate names
+# "pebble": Pando reaches https://pebble:14000/dir and trusts the certificate
+# through PANDO_ACME_CA_FILE (pebble.minica.pem, a ConfigMap setup.sh makes).
+#
+# Its validation authority asks cluster DNS for an app's hostname. setup.sh
+# rewrites every *.pando.test in CoreDNS to the edge's Service, so Pebble's
+# HTTP-01 request reaches Traefik on port 80, then Pando's proxy, which
+# answers from the database — the way a CA on the internet reaches the edge.
+#
+# Certificates are valid for 29 days, under Pando's 30-day renewal window,
+# so the leader renews each one at its next edge pass: renewal ahead of
+# expiry, observable within minutes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pebble-config
+  namespace: pando
+data:
+  pebble.json: |
+    {
+      "pebble": {
+        "listenAddress": "0.0.0.0:14000",
+        "managementListenAddress": "0.0.0.0:15000",
+        "certificate": "/test/certs/localhost/cert.pem",
+        "privateKey": "/test/certs/localhost/key.pem",
+        "httpPort": 80,
+        "tlsPort": 443,
+        "ocspResponderURL": "",
+        "externalAccountBindingRequired": false,
+        "certificateValidityPeriod": 2505600
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pebble
+  namespace: pando
+  labels:
+    app.kubernetes.io/name: pebble
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pebble
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pebble
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: pebble
+          image: ghcr.io/letsencrypt/pebble:latest
+          args: [-config, /config/pebble.json, -dnsserver, "10.96.0.10:53"]
+          env:
+            - name: PEBBLE_WFE_NONCEREJECT
+              value: "0"
+          ports:
+            - containerPort: 14000
+            - containerPort: 15000
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          configMap:
+            name: pebble-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pebble
+  namespace: pando
+spec:
+  selector:
+    app.kubernetes.io/name: pebble
+  ports:
+    - name: acme
+      port: 14000
+    - name: management
+      port: 15000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pebble
+  namespace: pando
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pebble
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pando
+              app.kubernetes.io/component: server
+      ports:
+        - port: 14000

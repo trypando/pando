@@ -141,33 +141,53 @@ func TestR023_TheManifestsGivePandosPodsTheLabelsAppNamespacesAdmit(t *testing.T
 	require.Equal(t, "kubernetes_api", file.Adapters["rte_traefik"].Config["delivery"])
 }
 
-// TestR112_EveryShippedPodIsAdmittedUnderBaseline: both of Pando's
-// namespaces enforce Pod Security baseline, which refuses a pod asking for an
-// Unconfined seccomp or AppArmor profile. BuildKit's did, and on a kind
-// cluster its Deployment never made a pod (O-48).
-func TestR112_EveryShippedPodIsAdmittedUnderBaseline(t *testing.T) {
-	unconfined := func(name string, sec *corev1.SeccompProfile, aa *corev1.AppArmorProfile) {
-		if sec != nil {
-			require.NotEqual(t, corev1.SeccompProfileTypeUnconfined, sec.Type, "%s asks for Unconfined seccomp, which baseline refuses", name)
-		}
-		if aa != nil {
-			require.NotEqual(t, corev1.AppArmorProfileTypeUnconfined, aa.Type, "%s asks for Unconfined AppArmor, which baseline refuses", name)
+// TestR112_OnlyTheBuilderLeavesBaseline: Pod Security baseline refuses a pod
+// asking for an Unconfined seccomp or AppArmor profile, which rootless
+// BuildKit needs. So BuildKit runs alone in pando-build, which enforces
+// privileged (O-48); every other namespace the manifests make enforces
+// baseline, and no other pod asks for Unconfined. On a kind cluster the
+// builder was in "pando" and its Deployment never made a pod.
+func TestR112_OnlyTheBuilderLeavesBaseline(t *testing.T) {
+	enforce := map[string]string{}
+	var deployments []*appsv1.Deployment
+	for _, obj := range manifests(t) {
+		switch o := obj.(type) {
+		case *corev1.Namespace:
+			enforce[o.Name] = o.Labels["pod-security.kubernetes.io/enforce"]
+		case *appsv1.Deployment:
+			deployments = append(deployments, o)
 		}
 	}
-	for _, obj := range manifests(t) {
-		d, ok := obj.(*appsv1.Deployment)
-		if !ok {
+	for ns, level := range enforce {
+		if ns == "pando-build" {
+			require.Equal(t, "privileged", level)
 			continue
 		}
-		if sc := d.Spec.Template.Spec.SecurityContext; sc != nil {
-			unconfined(d.Name, sc.SeccompProfile, sc.AppArmorProfile)
-		}
-		for _, c := range d.Spec.Template.Spec.Containers {
+		require.Equal(t, "baseline", level, ns)
+	}
+
+	unconfined := func(sec *corev1.SeccompProfile, aa *corev1.AppArmorProfile) bool {
+		return (sec != nil && sec.Type == corev1.SeccompProfileTypeUnconfined) ||
+			(aa != nil && aa.Type == corev1.AppArmorProfileTypeUnconfined)
+	}
+	builder := false
+	for _, d := range deployments {
+		spec := d.Spec.Template.Spec
+		loose := spec.SecurityContext != nil && unconfined(spec.SecurityContext.SeccompProfile, spec.SecurityContext.AppArmorProfile)
+		for _, c := range spec.Containers {
 			if sc := c.SecurityContext; sc != nil {
-				unconfined(d.Name, sc.SeccompProfile, sc.AppArmorProfile)
+				loose = loose || unconfined(sc.SeccompProfile, sc.AppArmorProfile)
+				require.True(t, sc.Privileged == nil || !*sc.Privileged, "%s is privileged", d.Name)
 			}
 		}
+		if d.Namespace == "pando-build" {
+			require.Equal(t, "buildkit", d.Name, "only BuildKit runs in pando-build")
+			builder = true
+			continue
+		}
+		require.False(t, loose, "%s asks for an Unconfined profile in %s, which baseline refuses", d.Name, d.Namespace)
 	}
+	require.True(t, builder, "BuildKit runs in pando-build")
 }
 
 // TestR174_TraefikMayWatchNodes: Traefik's CRD provider watches nodes and

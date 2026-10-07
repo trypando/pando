@@ -27,11 +27,20 @@ spec:
               value: "100"
             - name: PANDO_APPS_MEMORY_BYTES
               value: "134217728"
+            # Pebble, not Let's Encrypt (pebble.yaml, O-49).
+            - name: PANDO_ACME_DIRECTORY_URL
+              value: https://pebble:14000/dir
+            - name: PANDO_ACME_CA_FILE
+              value: /etc/pando-acme/pebble.minica.pem
           resources:
             requests:
               cpu: 100m
               memory: 128Mi
+          volumeMounts:
+            - name: acme-ca
+              mountPath: /etc/pando-acme
+              readOnly: true
       volumes:
-        - name: data
-          persistentVolumeClaim: null
-          emptyDir: {}
+        - name: acme-ca
+          configMap:
+            name: pebble-ca

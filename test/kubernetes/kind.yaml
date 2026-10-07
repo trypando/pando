@@ -9,10 +9,15 @@ apiVersion: kind.x-k8s.io/v1alpha4
 networking:
   podSubnet: 10.244.0.0/16
   serviceSubnet: 10.96.0.0/12
+# Every node mounts the same directory at /pando-shared, the ReadWriteMany
+# volume Pando's replicas share (manifests/shared-volume.yaml, O-39).
 nodes:
   - role: control-plane
+    extraMounts: [{hostPath: /tmp/pando-k8s-shared, containerPath: /pando-shared}]
   - role: worker
+    extraMounts: [{hostPath: /tmp/pando-k8s-shared, containerPath: /pando-shared}]
   - role: worker
+    extraMounts: [{hostPath: /tmp/pando-k8s-shared, containerPath: /pando-shared}]
 containerdConfigPatches:
   - |-
     [plugins."io.containerd.grpc.v1.cri".registry]

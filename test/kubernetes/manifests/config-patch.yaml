@@ -27,9 +27,8 @@ data:
         default: true
         config:
           delivery: kubernetes_api
-          # Pando's certificate issuer orders only from Let's Encrypt: no
-          # setting points it at a test CA such as Pebble yet, and the test
-          # must not order real certificates.
-          certificates: none
+          # Issued by Pando's leader from Pebble (pebble.yaml), over HTTP-01.
+          certificates: http
+          acme_email: ops@pando.test
           console_hostname: pando.pando.test
           base_domain: apps.pando.test

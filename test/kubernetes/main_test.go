@@ -15,6 +15,7 @@ package kubernetes_test
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -428,6 +429,11 @@ func (c *client) proxyGet(base, host, slug, path string, headers map[string]stri
 	}
 	hc := &http.Client{Timeout: 30 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if strings.HasPrefix(base, "https://") {
+		// Into the edge by a port-forward, so by name only in SNI. The
+		// chain is checked by the certificate tests, not here.
+		hc.Transport = &http.Transport{TLSClientConfig: &tls.Config{ServerName: host, InsecureSkipVerify: true}} //nolint:gosec // see above
+	}
 	resp, err := hc.Do(req)
 	if err != nil {
 		return 0, "", err

@@ -29,6 +29,7 @@ type Config struct {
 	Work       Work       `mapstructure:"work"`
 	Retention  Retention  `mapstructure:"retention"`
 	Registry   Registry   `mapstructure:"registry"`
+	ACME       ACME       `mapstructure:"acme"`
 
 	// File is the config file read at startup, or empty when there was none.
 	File string `mapstructure:"-"`
@@ -115,6 +116,23 @@ type Retention struct {
 // docs/design/notes-image-registry-issue-72.md). Startup configuration only,
 // like the database URL. Empty URL: no registry, which single-host Docker does
 // not need (O-34).
+// ACME is the certificate authority the edge's certificates are ordered from
+// when Pando issues them itself — the Kubernetes edge (O-49, R-169).
+type ACME struct {
+	// DirectoryURL is the CA's ACME directory. Let's Encrypt's production
+	// directory by default; an organization's own ACME CA, or a test CA such
+	// as Pebble, otherwise.
+	DirectoryURL string `mapstructure:"directory_url"`
+
+	// CAFile is a PEM bundle of certificates trusted, beside the system's,
+	// when connecting to the directory: for a private ACME server whose own
+	// TLS certificate no public root signs. Empty trusts the system roots.
+	CAFile string `mapstructure:"ca_file"`
+}
+
+// LetsEncryptDirectory is ACME.DirectoryURL's default.
+const LetsEncryptDirectory = "https://acme-v02.api.letsencrypt.org/directory"
+
 type Registry struct {
 	// URL is the registry and an optional path prefix:
 	// https://registry.internal:5000, or the organization's registry such as
@@ -429,6 +447,8 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("registry.layout", "per_app")
 	v.SetDefault("registry.insecure", false)
 	v.SetDefault("registry.always", false)
+	v.SetDefault("acme.directory_url", LetsEncryptDirectory)
+	v.SetDefault("acme.ca_file", "")
 
 	// Every key in boundEnv is bound explicitly — see there for why that is not
 	// belt-and-braces.
@@ -496,6 +516,9 @@ var boundEnv = map[string]string{
 	"registry.insecure":      "PANDO_REGISTRY_INSECURE",
 	"registry.always":        "PANDO_REGISTRY_ALWAYS",
 
+	"acme.directory_url": "PANDO_ACME_DIRECTORY_URL",
+	"acme.ca_file":       "PANDO_ACME_CA_FILE",
+
 	// Not PANDO_BOOTSTRAP_ADMIN_PASSWORD, which is what the replacer would
 	// derive — this is the one setting an operator types from memory at the
 	// worst possible moment. That makes this bind load-bearing rather than
@@ -510,6 +533,10 @@ func (c *Config) validate() error {
 	}
 	if _, err := c.Server.External(); err != nil {
 		return err
+	}
+	if u, err := url.Parse(c.ACME.DirectoryURL); err != nil || u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("PANDO_ACME_DIRECTORY_URL is %q, which is not an https URL; it is a certificate authority's ACME directory, such as %s",
+			c.ACME.DirectoryURL, LetsEncryptDirectory)
 	}
 	return nil
 }

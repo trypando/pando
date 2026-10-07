@@ -27,6 +27,22 @@ for node in $(kind get nodes --name "$CLUSTER"); do
     docker exec -i "$node" cp /dev/stdin "/etc/containerd/certs.d/$REGISTRY_NAME/hosts.toml"
 done
 
+# The shared /var/lib/pando (manifests/shared-volume.yaml), emptied: the
+# directory outlives a cluster, and a new install starts with none.
+CP=$(kind get nodes --name "$CLUSTER" | grep control-plane)
+docker exec "$CP" sh -c 'rm -rf /pando-shared/pando-data && mkdir -p /pando-shared/pando-data && chmod 0777 /pando-shared/pando-data'
+
+# Pebble's validation authority resolves app hostnames through cluster DNS:
+# every *.pando.test answers with the edge's Service (manifests/pebble.yaml).
+corefile=$(k -n kube-system get configmap coredns -o jsonpath='{.data.Corefile}')
+if ! grep -q pando.test <<<"$corefile"; then
+  corefile=$(sed 's|^\( *\)ready$|\1ready\
+\1rewrite name regex (.+)\\.pando\\.test\\.$ pando-edge-rte-traefik.pando-edge.svc.cluster.local. answer auto|' <<<"$corefile")
+  k -n kube-system create configmap coredns --from-literal=Corefile="$corefile" --dry-run=client -o yaml | k apply -f -
+  k -n kube-system rollout restart deployment/coredns
+  k -n kube-system rollout status deployment/coredns --timeout=3m
+fi
+
 if [ -z "${SKIP_BUILD:-}" ]; then
   docker build -t "$IMAGE" "$ROOT"
 fi
@@ -49,8 +65,18 @@ if ! k -n pando get secret pando-keys >/dev/null 2>&1; then
   rm -rf "$keys"
 fi
 
+# The CA Pebble's own TLS certificate is signed by, which Pando trusts
+# through PANDO_ACME_CA_FILE.
+if ! k -n pando get configmap pebble-ca >/dev/null 2>&1; then
+  ca=$(mktemp -d)
+  curl -fsSL -o "$ca/pebble.minica.pem" https://raw.githubusercontent.com/letsencrypt/pebble/main/test/certs/pebble.minica.pem
+  k -n pando create configmap pebble-ca --from-file="$ca/pebble.minica.pem"
+  rm -rf "$ca"
+fi
+
 k apply -k "$HERE/manifests"
+k -n pando rollout status deployment/pebble --timeout=5m
 k -n pando rollout status deployment/postgres --timeout=5m
 k -n pando rollout status deployment/registry --timeout=5m
-k -n pando rollout status deployment/buildkit --timeout=5m
+k -n pando-build rollout status deployment/buildkit --timeout=5m
 k -n pando rollout status deployment/pando --timeout=10m

@@ -116,6 +116,8 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | `PANDO_REGISTRY_LAYOUT` | `per_app` | `per_app` puts each app's builds in `<prefix>/apps/<app>[/<workload>]`; `single` puts every build in the one repository the URL names, tagged `<app>-<workload>-<deployment>`, for a registry where a repository must exist before a push. |
 | `PANDO_REGISTRY_INSECURE` | `false` | Permits plain HTTP to the registry. Every host that pulls must then list it under `insecure-registries`. Without it, an `http://` URL is refused at startup. |
 | `PANDO_REGISTRY_ALWAYS` | `false` | Sends every build through the registry, even on a runtime that can import it (single-host Docker). |
+| `PANDO_ACME_DIRECTORY_URL` | Let's Encrypt (`https://acme-v02.api.letsencrypt.org/directory`) | The ACME directory of the certificate authority the edge's certificates are ordered from, where Pando issues them itself (Traefik on Kubernetes). An https URL: an organization's own ACME server, or a test CA such as Pebble. |
+| `PANDO_ACME_CA_FILE` | — | A PEM file of certificates to trust, beside the system's, when connecting to that directory — for an ACME server whose own certificate no public root signs. |
 | `PANDO_RECONCILER_BACKOFF` | see R-149 | Retry schedule. Compressing it is for tests; `pando` warns when it is set faster than the shipped default. |
 
 `PANDO_PORT` is not read by Pando. It is a variable in the shipped `docker-compose.yml`, which uses

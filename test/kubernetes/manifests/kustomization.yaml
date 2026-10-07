@@ -1,12 +1,15 @@
 # deploy/kubernetes as `make test-kubernetes` runs it on kind: the shipped
 # manifests unchanged, plus what an operator would supply — Postgres, a
-# registry — and the few settings the shipped files tell an operator to set.
+# registry, a ReadWriteMany volume — and Pebble as the edge's certificate
+# authority, with the few settings the shipped files tell an operator to set.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../deploy/kubernetes
   - postgres.yaml
   - registry.yaml
+  - shared-volume.yaml
+  - pebble.yaml
 images:
   # Built from the checkout and loaded into the nodes by setup.sh.
   - name: ghcr.io/trypando/pando
@@ -15,16 +18,14 @@ images:
 patches:
   - path: pando-patch.yaml
   - path: config-patch.yaml
-  # kind's storage (local-path) offers no ReadWriteMany. Nothing the test
-  # asserts reads another replica's /var/lib/pando; the keys come from the
-  # pando-keys Secret, as shipped.
+  # The shipped claim, bound to the shared volume.
   - target:
       kind: PersistentVolumeClaim
       name: pando-data
     patch: |-
-      $patch: delete
-      apiVersion: v1
-      kind: PersistentVolumeClaim
-      metadata:
-        name: pando-data
-        namespace: pando
+      - op: add
+        path: /spec/storageClassName
+        value: pando-shared
+      - op: add
+        path: /spec/volumeName
+        value: pando-data

@@ -48,17 +48,25 @@ func TestR174_TheEdgeRunsInTheClusterAndReachesAppsThroughTheProxy(t *testing.T)
 
 	// Into the edge's Service, as a visitor would come in through its node
 	// port: Traefik, then pando-proxy, then Pando's proxy, then the app.
-	port, err := freePort()
+	// With certificates on, port 80 redirects to HTTPS.
+	httpPort, err := freePort()
+	require.NoError(t, err)
+	tlsPort, err := freePort()
 	require.NoError(t, err)
 	pf := exec.Command("kubectl", "--context", kubeContext(), "-n", "pando-edge", "port-forward",
-		"service/"+deployment, fmt.Sprintf("%d:80", port))
+		"service/"+deployment, fmt.Sprintf("%d:80", httpPort), fmt.Sprintf("%d:443", tlsPort))
 	require.NoError(t, pf.Start())
 	t.Cleanup(func() { _ = pf.Process.Kill(); _ = pf.Wait() })
-	edge := fmt.Sprintf("http://127.0.0.1:%d", port)
+	edge := fmt.Sprintf("https://127.0.0.1:%d", tlsPort)
 
 	slug := c.slug(t, app)
 	var status int
 	var body string
+	eventually(t, time.Minute, "port 80 redirects to HTTPS", func() bool {
+		var err error
+		status, _, err = c.proxyGet(fmt.Sprintf("http://127.0.0.1:%d", httpPort), "pando.pando.test", slug, "/", nil)
+		return err == nil && (status == http.StatusMovedPermanently || status == http.StatusPermanentRedirect)
+	})
 	eventually(t, time.Minute, "a request through the edge reaches the app", func() bool {
 		var err error
 		status, body, err = c.proxyGet(edge, "pando.pando.test", slug, "/", map[string]string{"X-Pando-User": "forged"})

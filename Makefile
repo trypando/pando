@@ -123,6 +123,7 @@ test-kubernetes: ## Run Pando on a kind cluster (2 replicas, the edge, a registr
 		PANDO_K8S_CONTEXT=kind-$(K8S_CLUSTER) $(GO) test -count=1 -timeout=60m -tags=kubernetes -v ./test/kubernetes/ || status=1; \
 	fi; \
 	if [ -z "$(K8S_KEEP)" ]; then \
+		docker exec $(K8S_CLUSTER)-control-plane rm -rf /pando-shared/pando-data 2>/dev/null || true; \
 		kind delete cluster --name $(K8S_CLUSTER); \
 		docker image rm $(K8S_IMAGE) >/dev/null 2>&1 || true; \
 	fi; \
