@@ -1,0 +1,204 @@
+# Pando on Kubernetes (notes-kubernetes-runtime-issue-72.md, "Pando in the
+# cluster"). Before applying, create two Secrets in the namespace "pando":
+#
+#   kubectl -n pando create secret generic pando-database \
+#     --from-literal=url='postgres://pando:…@postgres.example.internal:5432/pando'
+#
+#   head -c 32 /dev/urandom > secrets.key && head -c 32 /dev/urandom > token.key
+#   kubectl -n pando create secret generic pando-keys \
+#     --from-file=secrets.key --from-file=token.key
+#
+# Keep a copy of both key files offsite: without secrets.key no stored secret
+# can be read (R-190), and without token.key every API token is issued again.
+# Every replica reads the same two keys, and refuses to start if its token key
+# differs from the one the database was set up with.
+#
+# Then set pod_cidr and service_cidr in the ConfigMap below to the cluster's,
+# and the storage class of the pando-data claim to one that offers
+# ReadWriteMany (NFS, EFS, Filestore, CephFS). That claim is /var/lib/pando,
+# shared by every replica (O-39).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pando-config
+  namespace: pando
+data:
+  pando.yaml: |
+    # Adapters declared here are read-only elsewhere while declared (R-271).
+    adapters:
+      rt_kubernetes:
+        category: runtime
+        kind: kubernetes
+        name: Kubernetes
+        default: true
+        config:
+          # The cluster's ranges. Apps may open connections out of the
+          # cluster, never into these.
+          pod_cidr: 10.244.0.0/16
+          service_cidr: 10.96.0.0/12
+          # Pando's own image runs a restricted app's egress gateway (R-187).
+          egress_gateway_image: ghcr.io/trypando/pando:latest
+      rte_traefik:
+        category: routing
+        kind: traefik
+        name: Traefik
+        default: true
+        config:
+          # IngressRoutes in pando-edge, which every replica of the edge
+          # watches. Certificates are none until Pando issues them on
+          # Kubernetes; terminate TLS at the load balancer meanwhile.
+          delivery: kubernetes_api
+          certificates: none
+          base_domain: apps.example.com
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pando-data
+  namespace: pando
+spec:
+  accessModes: [ReadWriteMany]
+  # storageClassName: nfs
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pando
+  namespace: pando
+  labels:
+    app.kubernetes.io/name: pando
+    app.kubernetes.io/component: server
+spec:
+  # Any number of replicas share the one database (notes-multiple-replicas).
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pando
+      app.kubernetes.io/component: server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        # These two labels are what every app namespace admits connections
+        # from (R-023). Nothing else in the cluster may carry them.
+        app.kubernetes.io/name: pando
+        app.kubernetes.io/component: server
+    spec:
+      serviceAccountName: pando
+      securityContext:
+        # The image drops to the nonroot user (65532) at start; the group
+        # lets it read the mounted keys.
+        fsGroup: 65532
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: pando
+              app.kubernetes.io/component: server
+      containers:
+        - name: pando
+          image: ghcr.io/trypando/pando:latest
+          args: [serve, --config, /etc/pando/pando.yaml]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # Where the other replicas reach this one, to relay a deploy's
+            # live log (notes-multiple-replicas).
+            - name: PANDO_SERVER_ADVERTISE_URL
+              value: http://$(POD_IP):8080
+            - name: PANDO_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pando-database
+                  key: url
+            # Where routing adapters send traffic: always Pando's proxy
+            # (R-023). The edge resolves this name in pando-edge, where the
+            # runtime makes it an alias for the Service below.
+            - name: PANDO_SERVER_PROXY_UPSTREAM
+              value: http://pando-proxy:8080
+            - name: PANDO_SERVER_BASE_DOMAIN
+              value: apps.example.com
+            - name: PANDO_BUILDKIT_ADDRESS
+              value: tcp://buildkit.pando.svc:1234
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pando
+            - name: config
+              mountPath: /etc/pando
+              readOnly: true
+            # The keys from the Secret, over their paths on the shared
+            # volume, so no replica ever writes its own.
+            - name: keys
+              mountPath: /var/lib/pando/secrets.key
+              subPath: secrets.key
+              readOnly: true
+            - name: keys
+              mountPath: /var/lib/pando/token.key
+              subPath: token.key
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pando-data
+        - name: config
+          configMap:
+            name: pando-config
+        - name: keys
+          secret:
+            secretName: pando-keys
+            defaultMode: 0440
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pando
+  namespace: pando
+spec:
+  # ClusterIP. With an edge configured, the edge reaches it through
+  # pando-proxy in pando-edge. Without one, point a load balancer or Ingress
+  # at it; that is install topology.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pando
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pando
+  namespace: pando
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pando
+      app.kubernetes.io/component: server

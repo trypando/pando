@@ -10,6 +10,54 @@ a node fails is the runtime placing a workload, not Pando scheduling.
 This note maps the runtime interface onto Kubernetes, decides what is decidable, and lists what is not.
 It depends on PR 5 (`notes-image-registry-issue-72.md`): Kubernetes pulls every image from a registry.
 
+## As built (PR 6)
+
+`internal/adapter/runtime/kubernetes`, registered as runtime kind `kubernetes`; IngressRoute delivery in
+`internal/adapter/routing/traefik/kubernetes.go`; manifests in `deploy/kubernetes`. The design below is
+what was built, with these differences, each a **[P]** the owner may override:
+
+| What | As built | Why |
+|---|---|---|
+| Interface additions | `RuntimeCapabilities.ImageDelivery` and `EdgeConfig`, `EdgeRequest.EdgeConfig`, `EdgePlan.ReadsRoutesFrom`, `Capacity.LargestFit` (design 03). The planner refuses a workload larger than `LargestFit` | PR 5's branch did not exist when this was written; `ImageDelivery` follows its note and is the field PR 5 adds. Docker reports `[import]` and `[shared_mount]`, and `LargestFit` equal to its totals |
+| Services | Headless, as designed, with `publishNotReadyAddresses: true` | A workload's name resolves while its readiness probe fails, as a Docker container name does. Whether to send traffic to an unhealthy app is Pando's decision |
+| Quota | Always refuses NodePort and LoadBalancer Services (`services.nodeports: 0`, `services.loadbalancers: 0`). CPU and memory ceilings at twice the plan, only when every workload has limits | A pod and its replacement exist together during a recreate; a CPU quota refuses any pod that does not state its own limits |
+| The canary | Three pods in `pando-canary`: a server behind a policy admitting one label, an admitted client that must connect, and a refused client that must not. An admitted client that cannot connect is "could not check", not a pass. Passed results last an hour, failed ones five minutes | Without the admitted client a broken network would read as an enforcing one. `Capabilities` reports `SupportsPrivateNetwork` only after a pass, so the planner refuses the runtime until `HealthCheck` has run it |
+| Edge certificates | `certificates: http` or `dns` with `delivery: kubernetes_api` is refused at configure | Pando's leader as the one issuer (below) is not built. Terminate TLS at the load balancer in front of the edge until it is |
+| Path prefixes | No `Middleware`; the prefix reaches Pando's proxy, which strips it (R-167) | The same as the file delivery on Docker. Stripping it at the edge would hand the proxy a path it cannot resolve |
+| Usage | `ReportsUsage: false` | Reading `metrics.k8s.io` needs another client; the console says the runtime does not report use (R-245) |
+| `LargestFit` | The largest eligible node's CPU and largest node's memory, each less other pods' requests | The two may come from different nodes; Apply turns a `FailedScheduling` refusal into the deploy's error |
+| Keys | `pando-keys` Secret mounted by `subPath` over `/var/lib/pando/secrets.key` and `token.key` on the shared volume | No setting changes, and no replica can write a key of its own |
+| RBAC | The cluster role adds `pods: get, list, watch` | Capacity subtracts what other pods request on each node |
+| Trial | Writes are not observed; an observer container in the trial pod reads `/proc/net/tcp` through `pods/exec` | As designed, through exec rather than the pod's log |
+
+**Not verified without a cluster.** Every test here is a unit test against client-go's fake clientset
+and dynamic client. Not yet run against a real cluster: the canary on kind with kindnet (expected to
+refuse) and with Calico (expected to pass); pod exec, log streaming and the volume helper; Traefik
+reading the IngressRoutes and reaching Pando through the `ExternalName` alias; the
+ValidatingAdmissionPolicy expressions; Pod Security `baseline` with real images; `fsGroup` on the
+ReadWriteMany volume; and O-40's 20,000 namespaces through the load harness. The tests named at the end
+of this note are still the ones the PR is done with on a kind cluster.
+
+## Running Pando on Kubernetes
+
+`deploy/kubernetes`, applied with `kubectl apply -k deploy/kubernetes`:
+
+| File | What |
+|---|---|
+| `namespaces.yaml` | `pando` and `pando-edge`, both Pod Security `baseline` |
+| `rbac.yaml` | The tables under "RBAC, minimal" below: Pando's ClusterRole, `pando-app-manager`, the edge Role, and `pando-edge-traefik` |
+| `admission-policy.yaml` | The ValidatingAdmissionPolicies: namespace deletes only of Pando's, no NodePort or LoadBalancer Service but the edge's, no `ExternalName` outside `pando-edge`, no host network or host port, every IngressRoute to `pando-proxy` |
+| `networkpolicy.yaml` | Default deny in `pando`; Pando's server pods admit the edge and each other on 8080; BuildKit admits only Pando and reaches only outside the cluster |
+| `buildkit.yaml` | Rootless BuildKit, no host path, seccomp and AppArmor unconfined (R-112) |
+| `pando.yaml` | A ConfigMap declaring `rt_kubernetes` and `rte_traefik` (`delivery: kubernetes_api`); the ReadWriteMany `pando-data` claim (O-39); Deployment `pando`, 2 replicas, `PANDO_SERVER_ADVERTISE_URL=http://$(POD_IP):8080` from the downward API, `PANDO_SERVER_PROXY_UPSTREAM=http://pando-proxy:8080`; Service `pando`; a PodDisruptionBudget |
+
+Before applying: create Secrets `pando-database` (key `url`) and `pando-keys` (`secrets.key` and
+`token.key`, 32 random bytes each, kept offsite), set `pod_cidr` and `service_cidr` in the ConfigMap and
+the BuildKit policy, choose a ReadWriteMany storage class, and install Traefik's CRDs. Postgres is
+external (`PANDO_DATABASE_URL`), as design 00 §1.1 allows. The registry PR 5 adds is not in these
+manifests yet; until it is, the Kubernetes runtime runs image apps and refuses a deploy that needs a build
+(`PLAN_CAPABILITY_UNSUPPORTED`).
+
 ## Topology
 
 ```

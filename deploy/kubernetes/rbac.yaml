@@ -1,0 +1,150 @@
+# What Pando's ServiceAccount may do (notes-kubernetes-runtime-issue-72.md,
+# "RBAC, minimal").
+#
+# Cluster-wide: make and remove app namespaces, bind one role in them, read
+# nodes and pods for capacity, set a volume's reclaim policy. Everything an app
+# needs inside its namespace comes from pando-app-manager, which Pando binds in
+# each namespace it makes and holds nowhere else. Nothing in kube-system, no
+# nodes/proxy, no pods/exec outside app namespaces.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pando
+  namespace: pando
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pando
+rules:
+  # One namespace per app. A delete is limited to namespaces Pando made by
+  # admission-policy.yaml: RBAC cannot select by label.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch, create, delete]
+  # Binds pando-app-manager in each app namespace.
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [get, create, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    verbs: [bind]
+    resourceNames: [pando-app-manager]
+  # Capacity: allocatable room per node, less what other pods request.
+  - apiGroups: [""]
+    resources: [nodes, pods]
+    verbs: [get, list, watch]
+  # Retain while an app keeps its volumes (R-204); Delete when a volume is
+  # destroyed on purpose.
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, patch, delete]
+  # The isolation class (R-114).
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pando
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pando
+subjects:
+  - kind: ServiceAccount
+    name: pando
+    namespace: pando
+---
+# Bound by Pando in each namespace it makes — an app's, a trial's, the
+# NetworkPolicy canary's — and nowhere else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pando-app-manager
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, pods/exec, services, persistentvolumeclaims, configmaps, secrets, resourcequotas, limitranges]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+# The edge's namespace: Pando runs the edge and writes its routes (R-174).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pando
+  namespace: pando-edge
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [services, secrets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, create, update, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, create, update, delete]
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes, middlewares]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pando
+  namespace: pando-edge
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pando
+subjects:
+  - kind: ServiceAccount
+    name: pando
+    namespace: pando
+---
+# Traefik's identity: it reads what its CRD provider watches, in its own
+# namespace only. A cloudflared edge runs with no ServiceAccount token.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pando-edge-traefik
+  namespace: pando-edge
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pando-edge-traefik
+  namespace: pando-edge
+rules:
+  - apiGroups: [traefik.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [services, secrets]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pando-edge-traefik
+  namespace: pando-edge
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pando-edge-traefik
+subjects:
+  - kind: ServiceAccount
+    name: pando-edge-traefik
+    namespace: pando-edge

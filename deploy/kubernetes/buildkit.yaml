@@ -1,0 +1,61 @@
+# Rootless BuildKit (R-111), as the Compose file runs it.
+#
+# No container runtime socket is mounted, here or anywhere (R-112). Rootless
+# BuildKit makes its own user namespaces, which needs seccomp and AppArmor
+# unconfined and nothing privileged. Its NetworkPolicy (networkpolicy.yaml)
+# lets builds reach the internet and the registry, and nothing inside the
+# cluster (R-113).
+#
+# On Kubernetes a build is pushed to a registry and every node pulls it
+# (notes-image-registry-issue-72.md); set PANDO_REGISTRY_URL on Pando's
+# Deployment once that lands.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildkit
+  namespace: pando
+  labels:
+    app.kubernetes.io/name: buildkit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: buildkit
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: buildkit
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+        appArmorProfile:
+          type: Unconfined
+      containers:
+        - name: buildkitd
+          image: moby/buildkit:v0.17.2-rootless
+          args: [--addr, tcp://0.0.0.0:1234, --oci-worker-no-process-sandbox]
+          ports:
+            - containerPort: 1234
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: cache
+              mountPath: /home/user/.local/share/buildkit
+      volumes:
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: buildkit
+  namespace: pando
+spec:
+  selector:
+    app.kubernetes.io/name: buildkit
+  ports:
+    - port: 1234
+      targetPort: 1234

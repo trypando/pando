@@ -233,6 +233,29 @@ default adapters in one category, two AI adapters of one kind (an installation h
 provider), one AI function under two adapters, or two services adapters that provide the same kind
 of service.
 
+### Running on Kubernetes
+
+The `kubernetes` runtime adapter runs apps on the cluster Pando itself runs in.
+`deploy/kubernetes` holds the manifests: `kubectl apply -k deploy/kubernetes` after creating the
+`pando-database` and `pando-keys` Secrets its `pando.yaml` describes, installing Traefik's CRDs, and
+setting the cluster's pod and Service ranges. The cluster needs a network plugin that enforces
+NetworkPolicy, such as Calico or Cilium: Pando checks with a short-lived pair of pods in the namespace
+`pando-canary` and will not run apps on a cluster that does not. It also needs a storage class that
+offers ReadWriteMany for `/var/lib/pando`, which every replica shares. A cluster dedicated to Pando is
+recommended: anything running with the host's network can reach app pods directly.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `pod_cidr`, `service_cidr` | — (required) | The cluster's address ranges. Apps may connect out of the cluster, never into these. |
+| `egress_gateway_image` | — | An image of Pando, run as a restricted app's egress gateway. Without it, apps whose egress rules restrict anything cannot be deployed. |
+| `runtime_class` | the cluster's default | A RuntimeClass to run apps under; a gVisor or Kata handler makes the runtime `sandboxed`. |
+| `edge_replicas` | `2` | Copies of the edge, spread across nodes. At least 2. |
+| `edge_service_type` | `LoadBalancer` | Or `NodePort`, on `edge_http_node_port` (30080) and `edge_https_node_port` (30443). |
+
+The Traefik routing adapter's `delivery` setting is `kubernetes_api` on this runtime. Draining a node
+that runs apps needs `kubectl drain --force`: an app's pods belong to no controller, and Pando's
+reconciler recreates them on another node.
+
 ## Guarantees worth relying on
 
 These are requirements, not implementation details, and they will not be changed without a major
