@@ -58,6 +58,11 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 		claim()
+		if err := awaitRuntime(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			fwd.stop()
+			os.Exit(1)
+		}
 	}
 	code := m.Run()
 	if fwd != nil {
@@ -197,6 +202,52 @@ func claim() {
 	if err == nil {
 		_ = resp.Body.Close()
 	}
+}
+
+// awaitRuntime waits for rt_kubernetes to report healthy. A fresh Pando
+// refuses deploys on the runtime until its first NetworkPolicy canary has
+// passed (O-43), which takes as long as three pods pulling an image.
+func awaitRuntime() error {
+	c := &http.Client{Timeout: 30 * time.Second}
+	deadline := time.Now().Add(8 * time.Minute)
+	var last string
+	for time.Now().Before(deadline) {
+		resp, err := c.Post(fwd.base()+"/api/v1/sessions", "application/json",
+			strings.NewReader(fmt.Sprintf(`{"username":"admin","password":%q}`, adminPassword)))
+		if err == nil {
+			var cookie string
+			for _, ck := range resp.Cookies() {
+				if ck.Name == "pando_session" {
+					cookie = ck.Value
+				}
+			}
+			_ = resp.Body.Close()
+			req, _ := http.NewRequest(http.MethodGet, fwd.base()+"/api/v1/adapters", nil)
+			req.AddCookie(&http.Cookie{Name: "pando_session", Value: cookie})
+			if resp, err = c.Do(req); err == nil {
+				var list struct {
+					Adapters []struct {
+						ID      string `json:"id"`
+						Healthy bool   `json:"healthy"`
+					} `json:"adapters"`
+				}
+				_ = json.NewDecoder(resp.Body).Decode(&list)
+				_ = resp.Body.Close()
+				for _, a := range list.Adapters {
+					if a.ID == "rt_kubernetes" && a.Healthy {
+						return nil
+					}
+				}
+				last = "rt_kubernetes is not healthy yet"
+			}
+		}
+		if err != nil {
+			last = err.Error()
+			_ = fwd.ensure()
+		}
+		time.Sleep(5 * time.Second)
+	}
+	return fmt.Errorf("the Kubernetes runtime did not become healthy within 8m: %s", last)
 }
 
 type client struct {
