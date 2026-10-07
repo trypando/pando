@@ -206,6 +206,8 @@ func TestR265_TheServerReportsWhatTheConsoleScopesOn(t *testing.T) {
 		"install.view", "install.users.manage", "install.policy.manage",
 		"install.adapters.manage", "install.audit.read", "install.backup.manage",
 		"install.tokens.manage", "install.deploys.approve", "app.create",
+		// Migrations 000042 (issue #53) and 000043 (issue #50).
+		"install.upgrade", "install.events.manage",
 		// Each app verb on every app (issue #81).
 		"install.apps.view", "install.apps.logs.read", "install.apps.deploy",
 		"install.apps.restart", "install.apps.spec.edit", "install.apps.secrets.write",
