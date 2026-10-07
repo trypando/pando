@@ -8,6 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/trypando/pando/internal/id"
 	"github.com/trypando/pando/internal/log"
 )
 
@@ -29,6 +30,12 @@ type DeployLogOwner func(ctx context.Context, deploymentID string) (string, erro
 // replica that holds the log decides for itself who may read it. Streaming,
 // so each line arrives as it is written rather than when the deploy ends.
 func (s *Server) relayDeployLog(w http.ResponseWriter, r *http.Request, depID string) bool {
+	// Only a well-formed deployment ID — a prefix and a ULID, no control
+	// characters — is relayed, and so only one reaches the log line below.
+	// Anything else is not a deployment, and this replica answers it.
+	if !id.Is(id.Deployment, depID) {
+		return false
+	}
 	if s.LogOwner == nil || r.Header.Get(relayHeader) != "" || s.Logs.Has(depID) {
 		return false
 	}
