@@ -72,6 +72,37 @@ func (d *Detections) Start(ctx context.Context, appID string) error {
 	return nil
 }
 
+// Queue is Start, returning the detection as it wrote it.
+//
+// In the same statement, so the row returned is the queued one: read back
+// afterwards, a detection another replica claimed and failed at once in the
+// meantime came back failed, and an API answering "queued" reported the
+// outcome of work that had only just begun (issue #72).
+func (d *Detections) Queue(ctx context.Context, appID string) (Detection, error) {
+	var out Detection
+	var answers []byte
+	var commit *string
+	err := d.db.QueryRow(ctx, `
+		INSERT INTO detections (app_id, status, body, started_at, updated_at)
+		VALUES ($1, $2, '{}'::jsonb, now(), now())
+		ON CONFLICT (app_id) DO UPDATE
+		SET status = EXCLUDED.status, body = '{}'::jsonb, started_at = now(), updated_at = now(),
+		    replica_id = NULL, claimed_at = NULL, attempts = 0
+		RETURNING app_id, status, body, answers, commit, started_at, updated_at
+	`, appID, DetectionRunning).Scan(&out.AppID, &out.Status, &out.Body, &answers, &commit, &out.StartedAt, &out.UpdatedAt)
+	if err != nil {
+		return Detection{}, errs.Wrap(errs.Internal, "Could not start detection.", err)
+	}
+	out.Answers = map[string]string{}
+	if len(answers) > 0 {
+		_ = json.Unmarshal(answers, &out.Answers)
+	}
+	if commit != nil {
+		out.Commit = *commit
+	}
+	return out, nil
+}
+
 // Claim takes up to limit queued detections for this replica, oldest first,
 // and returns their apps' IDs. SKIP LOCKED, as Deployments.Claim.
 func (d *Detections) Claim(ctx context.Context, limit int) ([]string, error) {
