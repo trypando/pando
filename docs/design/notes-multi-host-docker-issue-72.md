@@ -287,11 +287,12 @@ What was built, and where it differs from the design above.
   last room on a host.
 - **The agent's key is in its container's environment** on its own host. It is a server key and
   opens nothing, and that host's root can reach its apps anyway.
-- **Not run against real hosts.** The tests below use fakes and a real agent on loopback; the
-  Docker-in-Docker tests this note planned were not written, because the Docker daemon was in use by
-  another job. Unverified until they are: agent creation and port publishing on a real daemon, Docker's
-  DNS resolving container names inside the agent, the TLS and SSH Docker clients against real
-  daemons, and rejoining after an agent is replaced.
+- **The SSH Docker client is not run against a real daemon.** `test/multihost` (below) runs the
+  adapter on Docker-in-Docker hosts over TLS; SSH is covered by unit tests only.
+- **A redeploy refused because the app's host does not answer leaves the app `deploying`** (O-50).
+  The refusal is as designed, and nothing of the app is placed elsewhere; but the deploy runner does
+  not move the app out of `deploying` after a failed apply, so the reconciler does not start its
+  stopped containers when the host returns. An app nobody tried to redeploy is started again.
 
 ## Tests this PR is done with
 
@@ -321,9 +322,30 @@ As written (unit tests, fakes, a real agent on loopback):
 - `TestR224_TheAgentLeavesADeletedAppsNetworksOnAnAppHost`,
   `TestR224_DetachProxyLeavesOnlyTheDeletedBundlesNetworks`.
 
-Planned and still owed, with Docker-in-Docker daemons standing in for hosts:
-`TestR023_AnAppOnAnotherHostIsReachedOnlyThroughTheProxy` (Sequence C through the balancer) and
-`TestR026_AnAppHostPublishesOnlyTheAgentsPort`.
+Against real daemons, in `test/multihost` (`make test-multihost`, build tag `multihost`): two
+Docker-in-Docker app hosts reached over TLS with generated certificates, a third as the control host
+running two replicas of Pando, and Postgres, a registry and BuildKit beside them. Each app host pulls
+the agent's image and the apps' images from the registry.
+
+- `TestR243_CapacityIsSummedOverTheHostsWithTheLargestFit` — totals summed over the open hosts, and
+  an app that fits the sum but no one host refused at plan time.
+- `TestR256_ANewAppGoesToTheHostWithTheMostFreeMemory`.
+- `TestR023_AnAppOnAnotherHostIsReachedOnlyThroughTheProxy` — Sequence C to an app on host B:
+  forged headers replaced, `pando_*` cookies removed, an assertion present, a redirect without a
+  session; a connection routed into host B's app range, or to the app's port on host B, fails.
+- `TestR026_AnAppHostPublishesOnlyTheAgentsPort`.
+- `TestR023_AHostAgentRefusesAClientWithoutPandosCertificate` — real handshakes: no certificate,
+  another authority's, plain text; with Pando's, the agent itself and a container on no app network
+  are refused, and an app's container is reached.
+- `TestR010_AnAppStaysOnItsHostAndAStoppedHostsAppsAreUnobservable` — a redeploy stays; with host B
+  stopped its apps are unreachable and not failed, a new app goes to host A, a redeploy is refused and
+  nothing is re-created on host A; when host B returns its app is started again.
+- `TestR224_DeletingAnAppTearsItDownAndTheAgentLeavesItsNetworks`.
+- `TestR120_ABuildIsDeliveredThroughTheRegistryAndPulledByDigest` — an uploaded source built by
+  BuildKit, pushed to the registry and run by digest on its host.
+- `TestR023_AReplacedAgentIsJoinedToItsHostsAppNetworksAgain`.
+- `TestR023_EitherReplicaReachesAnAppOnAnotherHost` — both replicas reach host B, and their rejoin
+  passes do not replace each other's agents.
 
 ## Decisions
 
