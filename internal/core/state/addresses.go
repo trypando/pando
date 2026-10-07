@@ -32,6 +32,15 @@ func addressOf(r spec.Routing) (hostname, path string) {
 	return "", ""
 }
 
+// portOf is the port a routing block claims as its address: a port-mode
+// app's, and no other's. Zero means none.
+func portOf(r spec.Routing) int {
+	if r.Mode == spec.RoutingPort {
+		return r.Port
+	}
+	return 0
+}
+
 // CheckAddress reports whether another live app already holds the address r
 // would claim for appID, saying which address and why. nil means it is free.
 //
@@ -116,15 +125,23 @@ func taken(address, other, why string) error {
 //
 // Case-sensitive, as a URL's path is: paths are stored lowercase, and the
 // proxy strips exactly the prefix that matched.
+//
+// The candidates are built here and matched with = ANY, so the lookup is the
+// unique index on address_path rather than a scan comparing the request's
+// path with every app's. An app's path matches when it is the request's path,
+// or the request's path continues past it with a slash — which is exactly
+// when it is one of pathCandidates.
 func (a *Apps) ByPath(ctx context.Context, requestPath string) (App, *spec.AppSpec, string, bool, error) {
-	p := requestPath
+	candidates := pathCandidates(requestPath)
+	if len(candidates) == 0 {
+		return App{}, nil, "", false, nil
+	}
 	var appID, prefix string
 	err := a.db.QueryRow(ctx, `
 		SELECT id, address_path FROM apps
-		WHERE deleted_at IS NULL AND address_path IS NOT NULL
-		  AND ($1 = address_path OR starts_with($1, address_path || '/'))
+		WHERE deleted_at IS NULL AND address_path = ANY($1)
 		ORDER BY length(address_path) DESC
-		LIMIT 1`, p).Scan(&appID, &prefix)
+		LIMIT 1`, candidates).Scan(&appID, &prefix)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return App{}, nil, "", false, nil
 	}
@@ -133,4 +150,26 @@ func (a *Apps) ByPath(ctx context.Context, requestPath string) (App, *spec.AppSp
 	}
 	app, s, found, err := a.ByRouting(ctx, "id", appID)
 	return app, s, prefix, found, err
+}
+
+// maxPathCandidates bounds how many prefixes of one request's path are looked
+// up. An app's path has at most four segments (spec.CheckPathPrefix); this is
+// far past that, and only stops a request with thousands of slashes in its
+// path from becoming a query with thousands of parameters.
+const maxPathCandidates = 64
+
+// pathCandidates is every path an app could hold and receive this request
+// under: the request's path, and each prefix of it that ends just before a
+// slash. /a/b/c gives /a/b/c, /a and /a/b.
+func pathCandidates(p string) []string {
+	if p == "" {
+		return nil
+	}
+	out := []string{p}
+	for i := 1; i < len(p) && len(out) < maxPathCandidates; i++ {
+		if p[i] == '/' {
+			out = append(out, p[:i])
+		}
+	}
+	return out
 }

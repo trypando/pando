@@ -244,6 +244,7 @@ export interface PolicyDocument {
   audit_archive_destination?: string;
   disable_ai_screening?: boolean;
   disable_anonymous_use_audit?: boolean;
+  disable_anonymous_denial_audit?: boolean;
   min_security_score?: number;
   insecure_action?: string;
   insecure_grace_hours?: number;

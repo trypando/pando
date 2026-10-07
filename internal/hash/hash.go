@@ -1,8 +1,10 @@
 // Package hash derives and verifies password and token hashes with argon2id.
 //
-// Used for both local user passwords (R-042) and token secrets, which are shown
-// once and stored hashed (R-063). Kept out of core so adapters may use it
-// without importing anything the R-027 boundary forbids.
+// Used for local user passwords (R-042). API token secrets were hashed here
+// too until issue #93; they are now SHA-256 digests (state.apiTokenDigest),
+// and Verify still reads a token stored before that, once, before it is
+// rewritten. Kept out of core so adapters may use it without importing
+// anything the R-027 boundary forbids.
 package hash
 
 import (
