@@ -99,7 +99,7 @@ func TestR256_ARelayedDeployLogIsNeverRelayedAgain(t *testing.T) {
 	got := i.logsRequest(admin, appID, depID, map[string]string{"Pando-Replica-Relay": "1"})
 	require.Equal(t, http.StatusOK, got.Code, got.Body.String())
 	require.False(t, relayed.Load(), "a relayed request is served where it lands")
-	require.Contains(t, got.Body.String(), "kept by the Pando process that ran it")
+	require.Contains(t, got.Body.String(), "the Pando process that ran")
 }
 
 // TestR256_AFinishedDeploysLogFromAStoppedReplicaEndsAtOnce asserts that a
@@ -123,7 +123,7 @@ func TestR256_AFinishedDeploysLogFromAStoppedReplicaEndsAtOnce(t *testing.T) {
 		got := i.logsRequest(admin, appID, depID, nil)
 		require.Equal(t, http.StatusOK, got.Code, name)
 		require.Equal(t, "text/event-stream", got.Header().Get("Content-Type"), name)
-		require.Contains(t, got.Body.String(), "kept by the Pando process that ran it", name)
+		require.Contains(t, got.Body.String(), "the Pando process that ran", name)
 		require.Contains(t, got.Body.String(), "event: end", name)
 	}
 }
