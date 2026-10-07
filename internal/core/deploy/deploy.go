@@ -302,8 +302,12 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		}
 		writeFailure(sink, step+" failed: "+message, err)
 		l.Warn("deployment failed", zap.String("step", step), zap.Error(err))
-		_ = r.deploys.Finish(ctx, dep.ID, state.DeployFailed, code, message)
+		// The app's state first, as on success: a deploy that reads as
+		// finished is one whose app is already where it was left. The other
+		// way round, a client that saw the deploy fail could still read the
+		// app as deploying (R-146).
 		leave()
+		_ = r.deploys.Finish(ctx, dep.ID, state.DeployFailed, code, message)
 		return err
 	}
 
@@ -353,9 +357,9 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 			// the failure mode R-105 exists to prevent.
 			writeFailure(sink, messageOf(err), err)
 			fmt.Fprintf(sink, "   The running version of this app was not touched.\n")
-			_ = r.deploys.Finish(ctx, dep.ID, state.DeployFailed, string(errs.CodeOf(err)), messageOf(err))
 			l.Warn("build failed; app state unchanged (R-146)", zap.Error(err))
 			leave()
+			_ = r.deploys.Finish(ctx, dep.ID, state.DeployFailed, string(errs.CodeOf(err)), messageOf(err))
 			return err
 		}
 		image = built
@@ -382,8 +386,8 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	if err := r.scan(ctx, dep, appSpec, image, checkout.Dir, commit, sink); err != nil {
 		writeFailure(sink, messageOf(err), err)
 		fmt.Fprintf(sink, "   The running version of this app was not touched.\n")
-		_ = r.deploys.Finish(ctx, dep.ID, state.DeployFailed, string(errs.CodeOf(err)), messageOf(err))
 		leave()
+		_ = r.deploys.Finish(ctx, dep.ID, state.DeployFailed, string(errs.CodeOf(err)), messageOf(err))
 		return err
 	}
 
@@ -396,9 +400,9 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 			if check.Refusal != nil {
 				writeFailure(sink, messageOf(check.Refusal), check.Refusal)
 				fmt.Fprintf(sink, "   The running version of this app was not touched.\n")
+				leave()
 				_ = r.deploys.Finish(ctx, dep.ID, state.DeployFailed,
 					string(errs.CodeOf(check.Refusal)), messageOf(check.Refusal))
-				leave()
 				return check.Refusal
 			}
 			if check.Port != 0 {
