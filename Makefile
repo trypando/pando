@@ -104,6 +104,31 @@ test-replicas: ## Run Pando as two replicas behind a balancer: topology changes,
 	$(REPLICAS_COMPOSE) down -v --remove-orphans; \
 	exit $$status
 
+# Pando on a real Kubernetes cluster (issue #72, notes-kubernetes-runtime):
+# a kind cluster of one control plane and two workers, the image built from
+# this checkout, and deploy/kubernetes with Postgres and a registry beside it
+# (test/kubernetes/setup.sh). The tests drive the API through a port-forward;
+# the cluster and the image are removed whether or not anything failed.
+# K8S_KEEP=1 keeps both, to look around or to run the tests again with
+# `PANDO_K8S_CONTEXT=kind-pando-k8s go test -tags kubernetes ./test/kubernetes/`.
+K8S_CLUSTER ?= pando-k8s
+K8S_IMAGE   ?= pando-k8s-test/pando:dev
+K8S_KEEP    ?=
+
+.PHONY: test-kubernetes
+test-kubernetes: ## Run Pando on a kind cluster (2 replicas, the edge, a registry) and test the Kubernetes runtime
+	@status=0; \
+	KIND_CLUSTER=$(K8S_CLUSTER) PANDO_K8S_IMAGE=$(K8S_IMAGE) test/kubernetes/setup.sh || status=1; \
+	if [ $$status = 0 ]; then \
+		PANDO_K8S_CONTEXT=kind-$(K8S_CLUSTER) $(GO) test -count=1 -timeout=60m -tags=kubernetes -v ./test/kubernetes/ || status=1; \
+	fi; \
+	if [ -z "$(K8S_KEEP)" ]; then \
+		docker exec $(K8S_CLUSTER)-control-plane rm -rf /pando-shared/pando-data 2>/dev/null || true; \
+		kind delete cluster --name $(K8S_CLUSTER); \
+		docker image rm $(K8S_IMAGE) >/dev/null 2>&1 || true; \
+	fi; \
+	exit $$status
+
 # The load harness (issue #72, test/load/README.md): a scale tier seeded into
 # the replicas stack, scaled to LOAD_REPLICAS, with console, API and proxy
 # traffic ramped through the balancer until it holds or breaks. Its own project
@@ -174,6 +199,7 @@ vet: ## go vet, including the integration-tagged tests
 	# Vet compiles them without needing Docker or Postgres, which is the whole
 	# cost of never letting that happen again.
 	$(GO) vet -tags integration $(PKG)
+	$(GO) vet -tags kubernetes ./test/kubernetes/
 
 # `go install` puts binaries in GOPATH/bin, which is not on PATH by default — so
 # following the install line printed below leaves the next `make lint` still

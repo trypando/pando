@@ -141,6 +141,89 @@ func TestR023_TheManifestsGivePandosPodsTheLabelsAppNamespacesAdmit(t *testing.T
 	require.Equal(t, "kubernetes_api", file.Adapters["rte_traefik"].Config["delivery"])
 }
 
+// TestR112_OnlyTheBuilderLeavesBaseline: Pod Security baseline refuses a pod
+// asking for an Unconfined seccomp or AppArmor profile, which rootless
+// BuildKit needs. So BuildKit runs alone in pando-build, which enforces
+// privileged (O-48); every other namespace the manifests make enforces
+// baseline, and no other pod asks for Unconfined. On a kind cluster the
+// builder was in "pando" and its Deployment never made a pod.
+func TestR112_OnlyTheBuilderLeavesBaseline(t *testing.T) {
+	enforce := map[string]string{}
+	var deployments []*appsv1.Deployment
+	for _, obj := range manifests(t) {
+		switch o := obj.(type) {
+		case *corev1.Namespace:
+			enforce[o.Name] = o.Labels["pod-security.kubernetes.io/enforce"]
+		case *appsv1.Deployment:
+			deployments = append(deployments, o)
+		}
+	}
+	for ns, level := range enforce {
+		if ns == "pando-build" {
+			require.Equal(t, "privileged", level)
+			continue
+		}
+		require.Equal(t, "baseline", level, ns)
+	}
+
+	unconfined := func(sec *corev1.SeccompProfile, aa *corev1.AppArmorProfile) bool {
+		return (sec != nil && sec.Type == corev1.SeccompProfileTypeUnconfined) ||
+			(aa != nil && aa.Type == corev1.AppArmorProfileTypeUnconfined)
+	}
+	builder := false
+	for _, d := range deployments {
+		spec := d.Spec.Template.Spec
+		loose := spec.SecurityContext != nil && unconfined(spec.SecurityContext.SeccompProfile, spec.SecurityContext.AppArmorProfile)
+		for _, c := range spec.Containers {
+			if sc := c.SecurityContext; sc != nil {
+				loose = loose || unconfined(sc.SeccompProfile, sc.AppArmorProfile)
+				require.True(t, sc.Privileged == nil || !*sc.Privileged, "%s is privileged", d.Name)
+			}
+		}
+		if d.Namespace == "pando-build" {
+			require.Equal(t, "buildkit", d.Name, "only BuildKit runs in pando-build")
+			builder = true
+			continue
+		}
+		require.False(t, loose, "%s asks for an Unconfined profile in %s, which baseline refuses", d.Name, d.Namespace)
+	}
+	require.True(t, builder, "BuildKit runs in pando-build")
+}
+
+// TestR174_TraefikMayWatchNodes: Traefik's CRD provider watches nodes and
+// serves no route until it can; on a kind cluster every request to the edge
+// was a 404 until its ServiceAccount could list them.
+func TestR174_TraefikMayWatchNodes(t *testing.T) {
+	roles := map[string]*rbacv1.ClusterRole{}
+	var bound []string
+	for _, obj := range manifests(t) {
+		switch o := obj.(type) {
+		case *rbacv1.ClusterRole:
+			roles[o.Name] = o
+		case *rbacv1.ClusterRoleBinding:
+			for _, s := range o.Subjects {
+				if s.Kind == "ServiceAccount" && s.Namespace == defaultEdgeNamespace && s.Name == edgeServiceAccount {
+					bound = append(bound, o.RoleRef.Name)
+				}
+			}
+		}
+	}
+	verbs := map[string]bool{}
+	for _, name := range bound {
+		require.Contains(t, roles, name)
+		for _, r := range roles[name].Rules {
+			for _, res := range r.Resources {
+				if res == "nodes" {
+					for _, v := range r.Verbs {
+						verbs[v] = true
+					}
+				}
+			}
+		}
+	}
+	require.True(t, verbs["list"] && verbs["watch"], "Traefik's ServiceAccount can list and watch nodes")
+}
+
 // TestR112_TheClusterBuilderMountsNoRuntimeSocket asserts R-112 for the
 // shipped BuildKit: no hostPath at all, so no container runtime socket, and
 // nothing privileged.

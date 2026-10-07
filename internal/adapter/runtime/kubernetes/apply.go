@@ -835,13 +835,18 @@ func planDigest(w api.WorkloadPlan, env map[string]string, runtimeClass, nodeSel
 // podName is a workload's name and a random suffix: a finished pod cannot be
 // started again, so every start is a new pod with a new name.
 func podName(workload string) string {
+	return workload + "-" + randomLabel(5)
+}
+
+// randomLabel is n random characters that are valid in a DNS label.
+func randomLabel(n int) string {
 	const alphabet = "bcdfghjklmnpqrstvwxz2456789"
-	b := make([]byte, 5)
+	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	for i := range b {
 		b[i] = alphabet[int(b[i])%len(alphabet)]
 	}
-	return workload + "-" + string(b)
+	return string(b)
 }
 
 // workloadPods lists a workload's pods.

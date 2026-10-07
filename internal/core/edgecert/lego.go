@@ -3,11 +3,15 @@ package edgecert
 import (
 	"context"
 	"crypto"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
@@ -30,6 +34,30 @@ import (
 type Lego struct {
 	// HTTPClient reaches the CA. Nil is lego's default.
 	HTTPClient *http.Client
+}
+
+// ClientTrusting is an HTTP client for the CA that trusts the certificates in
+// caFile beside the system's roots: a private ACME server, or a test CA such
+// as Pebble, whose own certificate no public root signs (O-49). Empty caFile
+// is nil, lego's default client.
+func ClientTrusting(caFile string) (*http.Client, error) {
+	if caFile == "" {
+		return nil, nil
+	}
+	pem, err := os.ReadFile(caFile) //nolint:gosec // an operator's setting
+	if err != nil {
+		return nil, fmt.Errorf("could not read PANDO_ACME_CA_FILE %s: %w", caFile, err)
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("PANDO_ACME_CA_FILE %s holds no PEM certificate", caFile)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	return &http.Client{Transport: transport, Timeout: 30 * time.Second}, nil
 }
 
 // legoUser is the account as lego asks for it.

@@ -2,8 +2,8 @@
 # one per app (R-023, R-025), and the edge's from the runtime adapter.
 #
 # Nothing in "pando" admits a connection by default. Pando's server pods admit
-# the proxy port from the edge's pods; BuildKit admits only Pando's server
-# pods. Without an edge, a load balancer or Ingress pointed at Service pando
+# the proxy port from the edge's pods. BuildKit, in pando-build, admits only
+# Pando's server pods. Without an edge, a load balancer or Ingress pointed at Service pando
 # needs a rule of its own below — which one depends on the cluster.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -51,29 +51,40 @@ spec:
     #   ports:
     #     - port: 8080
 ---
+# The builder's namespace (O-48): nothing in or out but what a build needs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: pando-build
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: buildkit
-  namespace: pando
+  namespace: pando-build
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: buildkit
   policyTypes: [Ingress, Egress]
   ingress:
+    # Only Pando's server pods start builds.
     - from:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: pando
+          podSelector:
             matchLabels:
               app.kubernetes.io/name: pando
               app.kubernetes.io/component: server
       ports:
         - port: 1234
   egress:
-    # DNS, and anywhere outside the cluster's pod and Service ranges: a build
-    # fetches dependencies and pushes to the registry, and reaches nothing
-    # inside the cluster (R-113). Set the excepted ranges to the cluster's, as
-    # in pando.yaml.
+    # DNS.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -86,6 +97,20 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
+    # An install registry running in "pando" (Deployment registry), for the
+    # push. A registry outside the cluster is reached by the rule below.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: pando
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: registry
+      ports:
+        - port: 5000
+    # Base images, dependencies and source: anywhere outside the cluster's
+    # pod and Service ranges, and nothing inside them (R-113). Set the
+    # excepted ranges to the cluster's, as in pando.yaml.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
