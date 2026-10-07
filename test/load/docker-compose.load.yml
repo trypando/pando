@@ -1,0 +1,36 @@
+# The load harness's stack (issue #72): the replicas stack, with what a load
+# test needs on top. Laid over the other two:
+#
+#   docker compose -p pando-load -f docker-compose.yml \
+#     -f test/replicas/docker-compose.replicas.yml \
+#     -f test/load/docker-compose.load.yml up -d --build --wait --scale pando=N
+#
+# `make load-test TIER=vm|cluster` does that, seeds, runs, reports and takes it
+# down again. See test/load/README.md.
+services:
+  postgres:
+    # pg_stat_statements, for the report's top queries; and room for every
+    # replica's pool (PANDO_DATABASE_MAX_CONNS, 32 each) plus the harness's
+    # own connections. The default of 100 would be the first thing to break
+    # at four replicas, and that is a configuration finding, not a load one.
+    command:
+      - postgres
+      - -c
+      - max_connections=${LOAD_PG_MAX_CONNECTIONS:-400}
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=top
+    # The harness seeds and samples the database as its owner, from the host.
+    # Loopback only.
+    ports:
+      - "127.0.0.1:${LOAD_DB_PORT:-25432}:5432"
+
+  lb:
+    # Room for every replica, and for thousands of client connections.
+    volumes: !override
+      - ./test/load/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ulimits:
+      nofile:
+        soft: 200000
+        hard: 200000

@@ -1,0 +1,380 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"sort"
+	"strings"
+	"time"
+)
+
+// Results is everything one run measured. `run` writes it as JSON after every
+// step, so a run cut short still leaves what it got; `report` renders it.
+type Results struct {
+	Tier       Tier           `json:"tier"`
+	Replicas   int            `json:"replicas"`
+	BaseURL    string         `json:"base_url"`
+	Commit     string         `json:"commit"`
+	StartedAt  time.Time      `json:"started_at"`
+	FinishedAt time.Time      `json:"finished_at"`
+	Thresholds Thresholds     `json:"thresholds"`
+	Statements bool           `json:"pg_stat_statements"`
+	Seeded     map[string]int `json:"seeded"`
+	Steps      []StepResult   `json:"steps"`
+}
+
+// StepResult is one step of the ramp.
+type StepResult struct {
+	Step           Step              `json:"step"`
+	Online         int               `json:"online"`
+	SignInFailures int               `json:"sign_in_failures"`
+	Classes        []*ClassStats     `json:"classes"`
+	Dropped        map[string]uint64 `json:"dropped"`
+	PG             PGSample          `json:"pg"`
+	TopQueries     []Query           `json:"top_queries"`
+	Breaches       []Breach          `json:"breaches"`
+}
+
+// Thresholds are what counts as broken.
+type Thresholds struct {
+	// MaxErrorRate is the share of a class's requests that may fail beyond
+	// what failed at the first step. Measured against the first step, so an
+	// endpoint that refuses at every load is reported once as failing, not as
+	// load breaking it.
+	MaxErrorRate float64 `json:"max_error_rate"`
+	// P95 is the slowest a class's 95th percentile may be.
+	P95 time.Duration `json:"p95"`
+	// MinRequests is how many requests a class needs in a step before its
+	// numbers are judged; fewer is noise.
+	MinRequests uint64 `json:"min_requests"`
+}
+
+var DefaultThresholds = Thresholds{MaxErrorRate: 0.01, P95: time.Second, MinRequests: 20}
+
+// Breach is one way a step broke.
+type Breach struct {
+	Class  string `json:"class"`
+	Reason string `json:"reason"`
+}
+
+// Breaches judges a step against the thresholds, with earlier steps as the
+// baseline for error rates.
+func Breaches(earlier []StepResult, s StepResult, th Thresholds) []Breach {
+	// The first step is its own baseline: at the lightest load, an error is
+	// the endpoint's, not the load's, and is reported as such (failing).
+	first := s
+	if len(earlier) > 0 {
+		first = earlier[0]
+	}
+	baseline := map[string]float64{}
+	for _, c := range first.Classes {
+		if c.Requests >= th.MinRequests {
+			baseline[c.Class] = c.ErrorRate()
+		}
+	}
+	var out []Breach
+	for _, c := range s.Classes {
+		if c.Requests < th.MinRequests || c.Surface == "sign-in" {
+			continue
+		}
+		if er := c.ErrorRate(); er > baseline[c.Class]+th.MaxErrorRate {
+			out = append(out, Breach{Class: c.Class, Reason: fmt.Sprintf("%.1f%% errors (limit %.1f%%)",
+				100*er, 100*(baseline[c.Class]+th.MaxErrorRate))})
+		}
+		if p := c.Latency.Quantile(0.95); th.P95 > 0 && p > th.P95 {
+			out = append(out, Breach{Class: c.Class, Reason: fmt.Sprintf("p95 %s (limit %s)", ms(p), ms(th.P95))})
+		}
+	}
+	// Sign-ins are judged on failures alone: argon2id makes them slow by
+	// design (R-042), and a slow sign-in is not a broken one.
+	for _, c := range s.Classes {
+		if c.Surface == "sign-in" && c.Requests >= th.MinRequests && c.ErrorRate() > th.MaxErrorRate {
+			out = append(out, Breach{Class: c.Class, Reason: fmt.Sprintf("%.1f%% of sign-ins failed", 100*c.ErrorRate())})
+		}
+	}
+	if s.PG.MaxConnections > 0 && s.PG.PeakTotal*10 >= s.PG.MaxConnections*9 {
+		out = append(out, Breach{Class: "postgres", Reason: fmt.Sprintf("%d of %d connections in use",
+			s.PG.PeakTotal, s.PG.MaxConnections)})
+	}
+	return out
+}
+
+// summarize is a step in one line, for the log.
+func summarize(s StepResult) string {
+	var req, errs uint64
+	worst, worstClass := time.Duration(0), ""
+	for _, c := range s.Classes {
+		req += c.Requests
+		errs += c.Errors
+		if p := c.Latency.Quantile(0.95); p > worst {
+			worst, worstClass = p, c.Class
+		}
+	}
+	verdict := "held"
+	if len(s.Breaches) > 0 {
+		verdict = fmt.Sprintf("BROKE (%d breaches)", len(s.Breaches))
+	}
+	return fmt.Sprintf("%s — %d requests, %d errors, slowest p95 %s (%s), %d online, Postgres peak %d/%d connections",
+		verdict, req, errs, ms(worst), worstClass, s.Online, s.PG.PeakTotal, s.PG.MaxConnections)
+}
+
+// ms formats a latency for a table: milliseconds, to a precision that
+// suits its size.
+func ms(d time.Duration) string {
+	v := float64(d) / float64(time.Millisecond)
+	switch {
+	case v == 0:
+		return "0 ms"
+	case v < 10:
+		return fmt.Sprintf("%.1f ms", v)
+	case v < 1000:
+		return fmt.Sprintf("%.0f ms", v)
+	default:
+		return fmt.Sprintf("%.1f s", v/1000)
+	}
+}
+
+// WriteReport renders runs as Markdown, one section per run.
+func WriteReport(w io.Writer, runs []Results) error {
+	b := &strings.Builder{}
+	fmt.Fprintf(b, "# Pando load report\n\n")
+	fmt.Fprintf(b, "Generated by `go run ./test/load report`. How to read it: test/load/README.md.\n\n")
+	for _, r := range runs {
+		writeRun(b, r)
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+func writeRun(b *strings.Builder, r Results) {
+	fmt.Fprintf(b, "## Tier: %s\n\n", r.Tier.Name)
+	fmt.Fprintf(b, "| | |\n|---|---|\n")
+	fmt.Fprintf(b, "| Commit | %s |\n", orDash(r.Commit))
+	fmt.Fprintf(b, "| Replicas | %d |\n", r.Replicas)
+	fmt.Fprintf(b, "| Base URL | %s |\n", r.BaseURL)
+	fmt.Fprintf(b, "| Started | %s |\n", r.StartedAt.Format(time.RFC3339))
+	if !r.FinishedAt.IsZero() {
+		fmt.Fprintf(b, "| Duration | %s |\n", r.FinishedAt.Sub(r.StartedAt).Round(time.Second))
+	} else {
+		fmt.Fprintf(b, "| Duration | did not finish; these are the steps it completed |\n")
+	}
+	fmt.Fprintf(b, "| Target | %d users, %d apps, %d console users at peak, %.0f API req/s, %.0f proxy req/s |\n",
+		r.Tier.Users, r.Tier.Apps, r.Tier.ConsoleUsers, r.Tier.APIRate, r.Tier.ProxyRate)
+	fmt.Fprintf(b, "| Limits | p95 ≤ %s, errors ≤ first step + %.1f%%, at least %d requests per class |\n",
+		ms(r.Thresholds.P95), 100*r.Thresholds.MaxErrorRate, r.Thresholds.MinRequests)
+	if len(r.Seeded) > 0 {
+		keys := make([]string, 0, len(r.Seeded))
+		for k := range r.Seeded {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s %d", k, r.Seeded[k]))
+		}
+		fmt.Fprintf(b, "| Database at start | %s |\n", strings.Join(parts, ", "))
+	}
+	b.WriteString("\n")
+
+	fmt.Fprintf(b, "### Verdict\n\n%s\n\n", verdict(r))
+
+	fmt.Fprintf(b, "### Steps\n\n")
+	fmt.Fprintf(b, "| Step | Console users online | API req/s (target / achieved) | Proxy req/s (target / achieved) | Total req/s | Errors | Slowest p95 | Postgres connections (peak / max) | Result |\n")
+	fmt.Fprintf(b, "|---|---|---|---|---|---|---|---|---|\n")
+	for _, s := range r.Steps {
+		total, errs, rate := totals(s)
+		worst, worstClass := slowest(s)
+		result := "held"
+		if len(s.Breaches) > 0 {
+			result = "**broke**"
+		}
+		fmt.Fprintf(b, "| %d | %d of %d | %.0f / %.1f | %.0f / %.1f | %.1f | %s | %s (%s) | %d / %d | %s |\n",
+			s.Step.Index+1, s.Online, s.Step.ConsoleUsers,
+			s.Step.APIRate, surfaceRate(s, "api"), s.Step.ProxyRate, surfaceRate(s, "proxy"),
+			rate, pct(errs, total), ms(worst), worstClass, s.PG.PeakTotal, s.PG.MaxConnections, result)
+	}
+	b.WriteString("\n")
+
+	for _, s := range r.Steps {
+		writeStep(b, r, s)
+	}
+}
+
+func verdict(r Results) string {
+	if len(r.Steps) == 0 {
+		return "No step completed."
+	}
+	return loadVerdict(r) + failing(r)
+}
+
+// failing lists classes that already failed at the first step: something to
+// fix, but not something load did.
+func failing(r Results) string {
+	var lines []string
+	for _, c := range r.Steps[0].Classes {
+		if c.Surface != "sign-in" && c.Requests >= r.Thresholds.MinRequests && c.ErrorRate() > r.Thresholds.MaxErrorRate {
+			lines = append(lines, fmt.Sprintf("- %s %s: %s errors (%s)", c.Surface, c.Class, pct(c.Errors, c.Requests), statuses(c.Statuses)))
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n\nFailing from the first step, at the lightest load, so not counted as load breaking them:\n\n" + strings.Join(lines, "\n")
+}
+
+func loadVerdict(r Results) string {
+	for _, s := range r.Steps {
+		if len(s.Breaches) == 0 {
+			continue
+		}
+		var lines []string
+		for _, br := range s.Breaches {
+			lines = append(lines, fmt.Sprintf("- %s: %s", br.Class, br.Reason))
+		}
+		prev := "no step held"
+		if s.Step.Index > 0 {
+			p := r.Steps[s.Step.Index-1].Step
+			prev = fmt.Sprintf("the last step that held was step %d (%d console users, %.0f API req/s, %.0f proxy req/s)",
+				p.Index+1, p.ConsoleUsers, p.APIRate, p.ProxyRate)
+		}
+		return fmt.Sprintf("**Broke at step %d** (%d console users, %.0f API req/s, %.0f proxy req/s); %s.\n\n%s",
+			s.Step.Index+1, s.Step.ConsoleUsers, s.Step.APIRate, s.Step.ProxyRate, prev, strings.Join(lines, "\n"))
+	}
+	last := r.Steps[len(r.Steps)-1].Step
+	return fmt.Sprintf("**Held** through step %d (%d console users, %.0f API req/s, %.0f proxy req/s) within the limits above.",
+		last.Index+1, last.ConsoleUsers, last.APIRate, last.ProxyRate)
+}
+
+func writeStep(b *strings.Builder, r Results, s StepResult) {
+	fmt.Fprintf(b, "### Step %d: %d console users, %.0f API req/s, %.0f proxy req/s\n\n",
+		s.Step.Index+1, s.Step.ConsoleUsers, s.Step.APIRate, s.Step.ProxyRate)
+	if s.SignInFailures > 0 {
+		fmt.Fprintf(b, "%d sign-ins have failed so far in this run; those users never came online.\n\n", s.SignInFailures)
+	}
+	var dropped []string
+	for class, n := range s.Dropped {
+		if n > 0 {
+			dropped = append(dropped, fmt.Sprintf("%s %d", class, n))
+		}
+	}
+	if len(dropped) > 0 {
+		sort.Strings(dropped)
+		fmt.Fprintf(b, "The harness could not send everything it was asked to (dropped: %s): every worker was waiting on an answer. "+
+			"Achieved rates below are what Pando saw.\n\n", strings.Join(dropped, ", "))
+	}
+
+	fmt.Fprintf(b, "| Surface | Class | Requests | req/s | p50 | p95 | p99 | Max | Errors | Statuses |\n")
+	fmt.Fprintf(b, "|---|---|---|---|---|---|---|---|---|---|\n")
+	breached := map[string]bool{}
+	for _, br := range s.Breaches {
+		breached[br.Class] = true
+	}
+	for _, c := range s.Classes {
+		name := c.Class
+		if breached[c.Class] {
+			name = "**" + name + "**"
+		}
+		rate := fmt.Sprintf("%.1f", c.Rate())
+		if c.Surface == "sign-in" {
+			rate = "—" // made during the ramp, not the hold
+		}
+		fmt.Fprintf(b, "| %s | %s | %d | %s | %s | %s | %s | %s | %s | %s |\n",
+			c.Surface, name, c.Requests, rate,
+			ms(c.Latency.Quantile(0.50)), ms(c.Latency.Quantile(0.95)), ms(c.Latency.Quantile(0.99)), ms(c.Latency.Max),
+			pct(c.Errors, c.Requests), statuses(c.Statuses))
+	}
+	b.WriteString("\n")
+
+	fmt.Fprintf(b, "Postgres: peak %d connections of %d (%d active, %d idle in a transaction, %d waiting on a lock), over %d samples.\n\n",
+		s.PG.PeakTotal, s.PG.MaxConnections, s.PG.PeakActive, s.PG.PeakIdleInTx, s.PG.PeakLockWaiting, s.PG.Samples)
+	if len(s.TopQueries) > 0 {
+		if r.Statements {
+			fmt.Fprintf(b, "Top queries by total time (pg_stat_statements, this step only):\n\n")
+			fmt.Fprintf(b, "| Total | Calls | Mean | Rows | Query |\n|---|---|---|---|---|\n")
+			for _, q := range s.TopQueries {
+				fmt.Fprintf(b, "| %s | %d | %.2f ms | %d | `%s` |\n",
+					ms(time.Duration(q.TotalMS*float64(time.Millisecond))), q.Calls, q.MeanMS, q.Rows, cell(q.Query, 220))
+			}
+		} else {
+			fmt.Fprintf(b, "Queries most often caught running (pg_stat_activity samples; pg_stat_statements was not available):\n\n")
+			fmt.Fprintf(b, "| Seen | Query |\n|---|---|\n")
+			for _, q := range s.TopQueries {
+				fmt.Fprintf(b, "| %d | `%s` |\n", q.Seen, cell(q.Query, 220))
+			}
+		}
+		b.WriteString("\n")
+	}
+}
+
+func totals(s StepResult) (total, errs uint64, rate float64) {
+	for _, c := range s.Classes {
+		if c.Surface == "sign-in" {
+			continue
+		}
+		total += c.Requests
+		errs += c.Errors
+		rate += c.Rate()
+	}
+	return total, errs, rate
+}
+
+func surfaceRate(s StepResult, surface string) float64 {
+	var rate float64
+	for _, c := range s.Classes {
+		if c.Surface == surface {
+			rate += c.Rate()
+		}
+	}
+	return rate
+}
+
+func slowest(s StepResult) (time.Duration, string) {
+	var worst time.Duration
+	class := "—"
+	for _, c := range s.Classes {
+		if c.Surface == "sign-in" {
+			continue
+		}
+		if p := c.Latency.Quantile(0.95); p > worst {
+			worst, class = p, c.Class
+		}
+	}
+	return worst, class
+}
+
+func pct(n, of uint64) string {
+	if of == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.2f%%", 100*float64(n)/float64(of))
+}
+
+func statuses(m map[string]uint64) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s×%d", k, m[k]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// cell makes text safe for a Markdown table cell inside backticks.
+func cell(s string, limit int) string {
+	s = strings.ReplaceAll(normalizeQuery(s), "|", "\\|")
+	s = strings.ReplaceAll(s, "`", "'")
+	if len([]rune(s)) > limit {
+		s = string([]rune(s)[:limit]) + "…"
+	}
+	return s
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}

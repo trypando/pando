@@ -147,7 +147,7 @@ larger one: can a whole organization put its apps on one Pando install. That was
 (request path, app capacity, background work, data growth) and the answer is **not yet**. This PR is
 the first of a stack; each later PR is based on the one before, and #72 closes with the last.
 
-**Targets [D].** Two tiers, which the load harness proves:
+**Targets [D].** Two tiers, which the load harness (`make load-test TIER=vm|cluster`, `test/load/README.md`) measures:
 
 | Tier | Users | Apps | Concurrent console users | Runtime |
 |---|---|---|---|---|

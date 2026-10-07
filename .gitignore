@@ -35,5 +35,5 @@ vulns.json
 __pycache__/
 *.py[cod]
 
-# Load harness output (test/load): reports, results, logs and the built binary.
+# Load harness output (test/load/README.md): results, reports, the built binary
 /test/load/out/
