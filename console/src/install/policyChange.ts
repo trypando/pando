@@ -26,6 +26,7 @@ const LABELS: Record<string, string> = {
   max_log_disk_bytes: 'Total disk for app logs',
   disable_ai_screening: 'Turn off AI screening of deployment plans',
   disable_anonymous_use_audit: "Don't record visits from people who aren't signed in",
+  disable_anonymous_denial_audit: "Don't record refusals of people who aren't signed in",
   min_security_score: 'Minimum security score',
   insecure_action: 'Stop apps that fall below it while running',
   insecure_grace_hours: 'Grace period, in hours',

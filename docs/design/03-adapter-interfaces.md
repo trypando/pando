@@ -536,6 +536,8 @@ before a change is saved so the person choosing hears it then:
 - **One live app per address.** `apps.address_hostname` and `apps.address_path` carry the pinned
   address, with unique indexes over live apps. This also closes a gap that predates paths: two apps
   could pin the same hostname, and the proxy answered for whichever the database returned first.
+  The proxy resolves a request by these columns, and by `apps.address_port` for a port-mode app
+  (migration 46), never by reading pinned specs' JSON: one indexed lookup per request (issue #72).
 - **No path inside or around another's** (`/team` and `/team/notes`), and none whose first segment is
   another app's slug. One app would receive the other's requests, and an app claiming a path under
   another's would be a page in that app's name that it does not control — on Pando's own origin.

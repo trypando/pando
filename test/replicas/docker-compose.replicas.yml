@@ -9,7 +9,8 @@
 #
 # What a replica needs that one process did not, and how this file gives it
 # (docs/design/notes-multiple-replicas-issue-72.md):
-#   - the same /var/lib/pando: the pando-data volume, shared by every replica;
+#   - the same /var/lib/pando: the pando-data volume, shared by every replica,
+#     which holds the secrets key and the API token key;
 #   - the same Docker host: the socket, as before;
 #   - one address for everyone: the lb service, which owns the published ports.
 services:

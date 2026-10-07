@@ -193,3 +193,60 @@ func TestAVolumeEntryWithoutAnAppStillRestores(t *testing.T) {
 	require.Equal(t, "app_1", appID)
 	require.Equal(t, "vol_a", volumeID)
 }
+
+// TestR212_TheTokenKeySurvivesABundleRoundTrip asserts R-212 for the API token
+// key (R-063): it goes into a DR bundle beside the secrets key and a restore
+// puts it back, 0600. Without it a restored install holds every token's
+// HMAC-SHA-256 digest and can check none of them.
+func TestR212_TheTokenKeySurvivesABundleRoundTrip(t *testing.T) {
+	s, _ := restoring(t)
+	s.TokenKeyPath = filepath.Join(t.TempDir(), "token.key")
+	tokenKey := []byte("0123456789abcdef0123456789abcdef")
+	require.NoError(t, os.WriteFile(s.TokenKeyPath, tokenKey, 0o600))
+	secretsKey, err := os.ReadFile(s.SecretsKeyPath)
+	require.NoError(t, err)
+
+	var plain bytes.Buffer
+	w := NewWriter(&plain, "dr_bundle", "test", 1)
+	require.NoError(t, s.addKeys(w))
+	manifest, err := w.Finish()
+	require.NoError(t, err)
+	var names []string
+	for _, e := range manifest.Entries {
+		names = append(names, e.Name)
+	}
+	require.ElementsMatch(t, []string{SecretsKey, TokenKey}, names)
+
+	dest, _, err := s.destination("")
+	require.NoError(t, err)
+	out, err := dest.Writer(context.Background(), "dr_keys")
+	require.NoError(t, err)
+	require.NoError(t, Encrypt(out, &plain, passphrase))
+	require.NoError(t, out.Close())
+
+	// A new machine: neither key is there.
+	require.NoError(t, os.Remove(s.TokenKeyPath))
+	require.NoError(t, os.Remove(s.SecretsKeyPath))
+
+	_, err = s.Restore(context.Background(), RestoreRequest{AdapterRef: "bk_local", ObjectName: "dr_keys",
+		Passphrase: passphrase, Confirm: true})
+	require.NoError(t, err)
+
+	got, err := os.ReadFile(s.TokenKeyPath)
+	require.NoError(t, err)
+	require.Equal(t, tokenKey, got)
+	info, err := os.Stat(s.TokenKeyPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	got, err = os.ReadFile(s.SecretsKeyPath)
+	require.NoError(t, err)
+	require.Equal(t, secretsKey, got)
+}
+
+func TestABundleWithoutTheTokenKeyItShouldHaveIsNotMade(t *testing.T) {
+	s, _ := restoring(t)
+	s.TokenKeyPath = filepath.Join(t.TempDir(), "missing.key")
+	var plain bytes.Buffer
+	require.Error(t, s.addKeys(NewWriter(&plain, "dr_bundle", "test", 1)),
+		"every install has a token key, so a missing one is not left out quietly")
+}

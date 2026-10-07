@@ -41,8 +41,10 @@ func (s *AuthzStore) UserStatus(ctx context.Context, userID string) (string, err
 // waiting for a cache.
 func (s *AuthzStore) ControlGrantsFor(ctx context.Context, appID string, p authz.Principal) ([]authz.Grant, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT g.id, g.app_id, g.plane, g.principal_kind, coalesce(g.principal_id, ''), coalesce(g.role_id, '')
+		SELECT g.id, g.app_id, g.plane, g.principal_kind, coalesce(g.principal_id, ''), coalesce(g.role_id, ''),
+		       `+grantRoleColumns+`
 		FROM grants g
+		LEFT JOIN roles r ON r.id = g.role_id
 		WHERE g.app_id = $1
 		  AND g.plane = 'control'
 		  AND (
@@ -59,8 +61,8 @@ func (s *AuthzStore) ControlGrantsFor(ctx context.Context, appID string, p authz
 
 	var out []authz.Grant
 	for rows.Next() {
-		var g authz.Grant
-		if err := rows.Scan(&g.ID, &g.AppID, &g.Plane, &g.PrincipalKind, &g.PrincipalID, &g.RoleID); err != nil {
+		g, err := scanGrantWithRole(rows)
+		if err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not read permissions for this app.", err)
 		}
 		out = append(out, g)
@@ -83,8 +85,10 @@ func (s *AuthzStore) ControlGrantsFor(ctx context.Context, appID string, p authz
 func (s *AuthzStore) InstallGrantsFor(ctx context.Context, p authz.Principal) ([]authz.Grant, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT g.id, coalesce(g.app_id, ''), g.plane, g.principal_kind,
-		       coalesce(g.principal_id, ''), coalesce(g.role_id, '')
+		       coalesce(g.principal_id, ''), coalesce(g.role_id, ''),
+		       `+grantRoleColumns+`
 		FROM grants g
+		LEFT JOIN roles r ON r.id = g.role_id
 		WHERE g.app_id IS NULL
 		  AND g.plane = 'control'
 		  AND (
@@ -101,13 +105,36 @@ func (s *AuthzStore) InstallGrantsFor(ctx context.Context, p authz.Principal) ([
 
 	var out []authz.Grant
 	for rows.Next() {
-		var g authz.Grant
-		if err := rows.Scan(&g.ID, &g.AppID, &g.Plane, &g.PrincipalKind, &g.PrincipalID, &g.RoleID); err != nil {
+		g, err := scanGrantWithRole(rows)
+		if err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not read installation permissions.", err)
 		}
 		out = append(out, g)
 	}
 	return out, rows.Err()
+}
+
+// grantRoleColumns are the role columns read with a grant, from a LEFT JOIN
+// of roles as r, so the authorizer does not ask for each grant's role in a
+// query of its own. A grant whose role is missing reads as a role with no
+// verbs, which is what Role answers for one.
+const grantRoleColumns = `coalesce(r.name, ''), coalesce(r.builtin, false), coalesce(r.verbs, '{}')`
+
+// scanGrantWithRole reads a grant and its joined role (grantRoleColumns).
+func scanGrantWithRole(rows pgx.Rows) (authz.Grant, error) {
+	var g authz.Grant
+	var role authz.Role
+	var verbs []string
+	if err := rows.Scan(&g.ID, &g.AppID, &g.Plane, &g.PrincipalKind, &g.PrincipalID, &g.RoleID,
+		&role.Name, &role.Builtin, &verbs); err != nil {
+		return authz.Grant{}, err
+	}
+	role.ID = g.RoleID
+	for _, v := range verbs {
+		role.Verbs = append(role.Verbs, authz.Verb(v))
+	}
+	g.Role = &role
+	return g, nil
 }
 
 // InstallVerbsFor returns every installation-wide verb the principal holds.
@@ -125,9 +152,14 @@ func (s *AuthzStore) InstallVerbsFor(ctx context.Context, p authz.Principal) ([]
 	seen := map[string]bool{}
 	var verbs []string
 	for _, g := range grants {
-		role, err := s.Role(ctx, g.RoleID)
-		if err != nil {
-			return nil, err
+		// Read with the grant (grantRoleColumns).
+		role := g.Role
+		if role == nil {
+			r, err := s.Role(ctx, g.RoleID)
+			if err != nil {
+				return nil, err
+			}
+			role = &r
 		}
 		for _, verb := range role.Verbs {
 			if !seen[string(verb)] {

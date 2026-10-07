@@ -104,6 +104,7 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | `PANDO_SERVER_EXTERNAL_URL` | — | The address browsers reach this installation on, such as `https://pando.example.com`. Set it when something other than Pando terminates TLS: it is what marks the session cookie `Secure`. Unset means "use the request", which is right on a localhost install and when Pando serves TLS itself. |
 | `PANDO_SERVER_PROXY_UPSTREAM` | — | Where the proxy sends traffic it has authorized. |
 | `PANDO_SERVER_WORK_DIR` | `/var/lib/pando` | Build contexts, uploads and adapter state. |
+| `PANDO_SERVER_TOKEN_KEY_PATH` | `/var/lib/pando/token.key` | The key API tokens are stored under, as HMAC-SHA-256. Created on first start. Every replica must read the same file, and a replica whose key differs from the install's refuses to start. A DR bundle includes it. |
 | `PANDO_SERVER_ADVERTISE_URL` | `http://<hostname>:<port>` | Where the other replicas reach this one, when more than one runs. Only a deploy's live log is asked of a particular replica. In Kubernetes set it to the pod's address, such as `http://$(POD_IP):8080`. See `docs/design/notes-multiple-replicas-issue-72.md`. |
 | `PANDO_APP_PORT_START` / `_END` | `9000` / `9019` | Range of host ports apps are allocated. |
 | `PANDO_ADMIN_PASSWORD` | generated | Initial admin password. Read on first run only. |
@@ -148,8 +149,8 @@ The settings are `source_allowlist`, `disabled_verbs`, `agent_disabled_verbs`,
 `deploy_approval_required`, `deploy_approval_apps`, `deploy_approval_count`,
 `deploy_approval_expiry_hours`, `require_backup_before_destroy`, `max_token_lifetime_days`,
 `max_log_disk_bytes`, `disable_ai_screening`, `disable_anonymous_use_audit`,
-`disable_password_sign_in`, `disable_jit_provisioning`, `min_security_score`, `insecure_action`,
-`insecure_grace_hours` and `ignore_unfixable_findings`.
+`disable_anonymous_denial_audit`, `disable_password_sign_in`, `disable_jit_provisioning`,
+`min_security_score`, `insecure_action`, `insecure_grace_hours` and `ignore_unfixable_findings`.
 
 `public_sharing` is how an app may be shared with everyone: `allowed` (with or without a passcode),
 `passcode_only`, or `none`. The older `allow_anonymous_grants: false` still means `none` when
