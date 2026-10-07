@@ -246,6 +246,7 @@ func (s *Service) restoreDatabase(ctx context.Context, dump io.Reader) error {
 	// statement. Either way a failed restore leaves the previous install
 	// rather than a half-replaced one.
 	genWait := sync.OnceValue(gen.Wait)
+	//nolint:gosec // G204: a fixed program and flags; dbname is the install's own database, passed as one argument with no shell.
 	apply := exec.CommandContext(ctx, "psql", "--no-psqlrc", "--quiet",
 		"--set", "ON_ERROR_STOP=1", "--output", os.DevNull, "--dbname", dbname)
 	apply.Env = env
