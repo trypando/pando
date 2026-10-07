@@ -72,7 +72,9 @@ func TestR256_AQueuedDetectionRunsAndRecordsItsProposal(t *testing.T) {
 	got := settled(t, detections, appID)
 	require.NotEqual(t, state.DetectionFailed, got.Status)
 	require.NotEmpty(t, got.Commit, "the clone ran and its commit is recorded")
-	require.Zero(t, q.Running())
+	// The outcome is recorded before the worker that ran it returns, so the
+	// count reaches zero just after, not at once.
+	require.Eventually(t, func() bool { return q.Running() == 0 }, 5*time.Second, 5*time.Millisecond)
 	require.GreaterOrEqual(t, detection.DefaultConcurrency(), 2)
 }
 
