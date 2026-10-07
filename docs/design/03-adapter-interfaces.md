@@ -706,8 +706,9 @@ reach the edge as `secret.Value` environment variables.
 adapter writes one `IngressRoute` per app into the edge's namespace instead of a file, every one naming
 the Service Pando's proxy is reached by, and its edge plan reads routes through Traefik's Kubernetes CRD
 provider, limited to that namespace with cross-namespace references off (`ReadsRoutesFrom` on the
-plan). Certificates on that delivery are refused at configure until Pando's leader issues them
-(`notes-kubernetes-runtime-issue-72.md`).
+plan). On that delivery Traefik orders no certificates: its plan's `Issue` asks Pando's leader for
+them (`internal/core/edgecert`), core puts the issued ones in `EdgePlan.Certificates`, and the runtime
+writes them where every replica reads them (`notes-kubernetes-runtime-issue-72.md`).
 
 **[D] Certificate storage survives the edge.** The ACME store is a volume the edge owns
 (`EdgeMount.Volume`), not the container's filesystem, so recreating the edge does not re-issue every

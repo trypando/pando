@@ -30,10 +30,17 @@ rules:
     resources: [clusterroles]
     verbs: [bind]
     resourceNames: [pando-app-manager]
-  # Capacity: allocatable room per node, less what other pods request.
+  # Capacity: allocatable room per node, less what other pods request. Read
+  # only: listing pods cluster-wide is how Pando sees the requests of work
+  # that is not its own on the nodes it reports (R-243). Pando cannot change,
+  # exec into or read the logs of any pod outside its own namespaces.
   - apiGroups: [""]
     resources: [nodes, pods]
     verbs: [get, list, watch]
+  # What apps are using now (R-245), when metrics-server is installed.
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods, nodes]
+    verbs: [get, list]
   # Retain while an app keeps its volumes (R-204); Delete when a volume is
   # destroyed on purpose.
   - apiGroups: [""]

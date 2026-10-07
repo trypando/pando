@@ -17,12 +17,15 @@ import (
 	"github.com/trypando/pando/internal/errs"
 )
 
-var ingressRoutes = schema.GroupVersionResource{Group: "traefik.io", Version: "v1alpha1", Resource: "ingressroutes"}
+var (
+	ingressRoutes = schema.GroupVersionResource{Group: "traefik.io", Version: "v1alpha1", Resource: "ingressroutes"}
+	middlewares   = schema.GroupVersionResource{Group: "traefik.io", Version: "v1alpha1", Resource: "middlewares"}
+)
 
 func kubeAdapter(t *testing.T, cfg string) (*traefik.Adapter, *dynamicfake.FakeDynamicClient) {
 	t.Helper()
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{ingressRoutes: "IngressRouteList"})
+		map[schema.GroupVersionResource]string{ingressRoutes: "IngressRouteList", middlewares: "MiddlewareList"})
 	t.Cleanup(traefik.UseDynamic(dyn))
 	a := traefik.New()
 	require.NoError(t, a.Configure(context.Background(), []byte(cfg)))
@@ -121,11 +124,88 @@ func TestR254_AnEdgeTheRuntimeCannotDeliverRoutesToIsRefused(t *testing.T) {
 	require.Contains(t, errs.As(err).Remedy, "kubernetes_api")
 }
 
-// TestR169_CertificatesOnKubernetesAreRefusedUntilPandoIssuesThem asserts the
-// configuration is refused rather than started with every replica ordering
-// its own certificates.
-func TestR169_CertificatesOnKubernetesAreRefusedUntilPandoIssuesThem(t *testing.T) {
-	e := configureErr(t, `{"delivery":"kubernetes_api","certificates":"http","acme_email":"ops@example.com"}`)
+// TestR169_OnKubernetesTraefikAsksPandoForItsCertificates asserts R-169 and
+// R-174 on Kubernetes: Traefik orders nothing itself, its edge asks Pando for a
+// certificate for every hostname served over HTTPS and for the console's, and
+// every route names the Secret Pando keeps the certificate in. Plain HTTP is
+// redirected, except a certificate authority's challenge, which reaches
+// Pando's proxy.
+func TestR169_OnKubernetesTraefikAsksPandoForItsCertificates(t *testing.T) {
+	ctx := context.Background()
+	a, dyn := kubeAdapter(t, `{"delivery":"kubernetes_api","certificates":"http","acme_email":"ops@example.com","console_hostname":"pando.example.com"}`)
+	_, err := a.Ensure(ctx, api.RouteRequest{
+		AppID: "app_01HQ8", Mode: spec.RoutingSubdomain, Hostname: "Web.apps.example.com",
+		ProxyUpstream: "http://pando-proxy:8080", TLS: api.TLSRequest{Enabled: true, Hostname: "web.apps.example.com"},
+	})
+	require.NoError(t, err)
+
+	plan, needs, err := a.Edge(ctx, api.EdgeRequest{Ref: "rte_traefik", ProxyUpstream: "http://pando-proxy:8080",
+		EdgeConfig: []api.EdgeConfig{api.EdgeConfigKubernetesAPI}})
+	require.NoError(t, err)
+	require.True(t, needs)
+	require.False(t, hasArg(plan, "--certificatesresolvers"), "Traefik's replicas order nothing")
+	require.Contains(t, plan.Ports, api.EdgePort{Host: 443, Container: 443})
+	require.NotNil(t, plan.Issue)
+	require.Equal(t, api.ChallengeHTTP01, plan.Issue.Challenge)
+	require.Equal(t, "ops@example.com", plan.Issue.Email)
+	require.ElementsMatch(t, []api.CertificateOrder{
+		{Name: "pando-tls-pando.example.com", Domains: []string{"pando.example.com"}},
+		{Name: "pando-tls-web.apps.example.com", Domains: []string{"web.apps.example.com"}},
+	}, plan.Issue.Orders)
+
+	route, err := dyn.Resource(ingressRoutes).Namespace("pando-edge").Get(ctx, "pando-app_01HQ8", metav1.GetOptions{})
+	require.NoError(t, err)
+	secretName, _, _ := unstructured.NestedString(route.Object, "spec", "tls", "secretName")
+	require.Equal(t, "pando-tls-web.apps.example.com", secretName)
+	eps, _, _ := unstructured.NestedStringSlice(route.Object, "spec", "entryPoints")
+	require.Equal(t, []string{"websecure"}, eps)
+
+	console, err := dyn.Resource(ingressRoutes).Namespace("pando-edge").Get(ctx, "pando-console", metav1.GetOptions{})
+	require.NoError(t, err)
+	routes, _, _ := unstructured.NestedSlice(console.Object, "spec", "routes")
+	require.Len(t, routes, 2)
+	challenge := routes[0].(map[string]any)
+	require.Contains(t, challenge["match"], "/.well-known/acme-challenge/")
+	require.Nil(t, challenge["middlewares"], "the CA's request is answered, not redirected")
+	require.NotNil(t, routes[1].(map[string]any)["middlewares"], "everything else on port 80 goes to HTTPS")
+	for _, svc := range routeServices(t, console) {
+		require.Equal(t, "pando-proxy", svc["name"])
+	}
+}
+
+// TestR169_DNS01OnKubernetesOrdersTheWildcardThroughTheNamedProvider asserts
+// the DNS-01 settings carry over: one wildcard for the base domain, through the
+// DNS provider and credentials the adapter already holds, which any app under
+// the base domain is served with.
+func TestR169_DNS01OnKubernetesOrdersTheWildcardThroughTheNamedProvider(t *testing.T) {
+	ctx := context.Background()
+	a, dyn := kubeAdapter(t, `{"delivery":"kubernetes_api","certificates":"dns","acme_email":"ops@example.com",
+		"base_domain":"apps.example.com","dns_provider":"cloudflare","credentials":{"dns_credentials":"CF_DNS_API_TOKEN=tok"}}`)
+	_, err := a.Ensure(ctx, api.RouteRequest{
+		AppID: "app_01HQ8", Mode: spec.RoutingSubdomain, Hostname: "web.apps.example.com",
+		ProxyUpstream: "http://pando-proxy:8080", TLS: api.TLSRequest{Enabled: true},
+	})
+	require.NoError(t, err)
+	plan, _, err := a.Edge(ctx, api.EdgeRequest{Ref: "rte_traefik", ProxyUpstream: "http://pando-proxy:8080",
+		EdgeConfig: []api.EdgeConfig{api.EdgeConfigKubernetesAPI}})
+	require.NoError(t, err)
+	require.Equal(t, api.ChallengeDNS01, plan.Issue.Challenge)
+	require.Equal(t, "cloudflare", plan.Issue.DNSProvider)
+	require.Equal(t, "tok", plan.Issue.DNSCredentials["CF_DNS_API_TOKEN"].Reveal())
+	require.Equal(t, []api.CertificateOrder{{Name: "pando-tls-wildcard", Domains: []string{"apps.example.com", "*.apps.example.com"}}}, plan.Issue.Orders)
+
+	route, err := dyn.Resource(ingressRoutes).Namespace("pando-edge").Get(ctx, "pando-app_01HQ8", metav1.GetOptions{})
+	require.NoError(t, err)
+	secretName, _, _ := unstructured.NestedString(route.Object, "spec", "tls", "secretName")
+	require.Equal(t, "pando-tls-wildcard", secretName)
+}
+
+// TestR169_AnUnnamedDNSProviderIsRefusedOnKubernetes asserts Pando's issuer
+// refuses at configure a provider it cannot drive, rather than failing at the
+// first order.
+func TestR169_AnUnnamedDNSProviderIsRefusedOnKubernetes(t *testing.T) {
+	e := configureErr(t, `{"delivery":"kubernetes_api","certificates":"dns","acme_email":"ops@example.com",
+		"base_domain":"apps.example.com","dns_provider":"ovh","credentials":{"dns_credentials":"OVH_KEY=x"}}`)
 	require.Equal(t, errs.ValidInvalid, e.Code)
-	require.Contains(t, e.Remedy, "none")
+	require.Contains(t, e.Message, "cloudflare")
 }

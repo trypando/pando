@@ -88,6 +88,58 @@ type EdgePlan struct {
 	// that reads a shared mount or holds its configuration remotely
 	// (cloudflared), which is given no API identity at all.
 	ReadsRoutesFrom EdgeConfig
+
+	// Issue is the certificates this edge needs Pando to issue, when it does
+	// not issue its own (notes-kubernetes-runtime-issue-72.md: on Kubernetes
+	// several replicas share one set, so Pando's leader is the one issuer).
+	// Nil for an edge that issues its own or serves none.
+	Issue *CertificateIssue
+
+	// Certificates are the issued certificates the edge serves, filled in by
+	// core from Issue before the plan reaches the runtime. The runtime
+	// stores them where the edge reads them, under each one's Name.
+	Certificates []EdgeCertificate
+}
+
+// Challenge types an ACME order is proved with (R-169).
+const (
+	ChallengeHTTP01 = "http-01"
+	ChallengeDNS01  = "dns-01"
+)
+
+// CertificateIssue is what a routing adapter asks Pando to issue for its
+// edge, in the terms its settings already use (R-169).
+type CertificateIssue struct {
+	// Email is the ACME account's address.
+	Email string
+
+	// Challenge is ChallengeHTTP01, answered by Pando's proxy on every
+	// hostname it issues for, or ChallengeDNS01 through DNSProvider.
+	Challenge string
+
+	// DNSProvider is the DNS-01 provider's code, as Traefik and lego name it,
+	// and DNSCredentials its variables. secret.Value so they cannot reach a
+	// log line (R-194).
+	DNSProvider    string
+	DNSCredentials map[string]secret.Value
+
+	// Orders are the certificates wanted. Each is kept under its Name.
+	Orders []CertificateOrder
+}
+
+// CertificateOrder is one certificate: the name the edge's routes refer to it
+// by, and the names it covers, the first being its subject.
+type CertificateOrder struct {
+	Name    string
+	Domains []string
+}
+
+// EdgeCertificate is an issued certificate and its key, as the edge serves
+// it.
+type EdgeCertificate struct {
+	Name    string
+	CertPEM []byte
+	KeyPEM  secret.Value
 }
 
 // EdgePort publishes one port of the edge on the host.

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // Routes as Traefik IngressRoutes, for an edge on the Kubernetes runtime
@@ -44,7 +47,10 @@ const (
 	consoleRoute         = "pando-console"
 )
 
-var ingressRoutes = schema.GroupVersionResource{Group: "traefik.io", Version: "v1alpha1", Resource: "ingressroutes"}
+var (
+	ingressRoutes = schema.GroupVersionResource{Group: "traefik.io", Version: "v1alpha1", Resource: "ingressroutes"}
+	middlewares   = schema.GroupVersionResource{Group: "traefik.io", Version: "v1alpha1", Resource: "middlewares"}
+)
 
 var serviceName = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
 
@@ -87,16 +93,23 @@ func (a *Adapter) configureKubernetes(cfg *Config) error {
 	if cfg.Namespace == "" {
 		cfg.Namespace = defaultEdgeNamespace
 	}
-	if (cfg.Managed == nil || *cfg.Managed) && (cfg.Certificates == CertsHTTP || cfg.Certificates == CertsDNS) {
+	if (cfg.Managed == nil || *cfg.Managed) && cfg.Certificates == CertsDNS {
 		// On Kubernetes certificates are issued once, by Pando's leader, and
 		// kept as Secrets every Traefik replica reads (the note's
-		// "Certificates with several replicas"). That issuer is not built
-		// yet, and Traefik's own ACME would have every replica order the same
-		// certificates and fail HTTP-01 whenever the CA reached another
-		// replica.
-		return errs.New(errs.ValidInvalid,
-			"On Kubernetes, Traefik's certificates are issued by Pando, and this release of Pando does not issue them yet.").
-			WithRemedy("Set certificates to none to serve plain HTTP, or terminate TLS at the cluster's load balancer in front of the edge.")
+		// "Certificates with several replicas"); Traefik's own ACME would
+		// have every replica order the same certificates. Pando's issuer
+		// knows the five providers offered by name, not every code Traefik
+		// does.
+		if _, ok := knownProvider(cfg.DNSProvider); !ok {
+			names := make([]string, 0, len(dnsProviders))
+			for _, p := range dnsProviders {
+				names = append(names, p.Code)
+			}
+			return errs.Newf(errs.ValidInvalid,
+				"On Kubernetes Pando issues Traefik's certificates itself, through one of the DNS providers %s, and %q is not one of them.",
+				strings.Join(names, ", "), cfg.DNSProvider).
+				WithRemedy("Choose one of those DNS providers, or set certificates to http for one certificate per hostname.")
+		}
 	}
 	dyn, err := newDynamic(*cfg)
 	if err != nil {
@@ -148,11 +161,15 @@ func proxyService(upstream string) (string, int64, error) {
 	return u.Hostname(), port, nil
 }
 
-// ingressRoute is one route to Pando's proxy, as an object.
-func (a *Adapter) ingressRoute(name, appID string, routes []any, tls map[string]any) *unstructured.Unstructured {
+// ingressRoute is one IngressRoute to Pando's proxy, as an object.
+func (a *Adapter) ingressRoute(name, appID string, entryPoints []string, routes []any, tls map[string]any, annotations map[string]any) *unstructured.Unstructured {
 	spec := map[string]any{"routes": routes}
-	if ep := a.entryPoint(); ep != "" {
-		spec["entryPoints"] = []any{ep}
+	if len(entryPoints) > 0 {
+		eps := make([]any, 0, len(entryPoints))
+		for _, ep := range entryPoints {
+			eps = append(eps, ep)
+		}
+		spec["entryPoints"] = eps
 	}
 	if tls != nil {
 		spec["tls"] = tls
@@ -161,13 +178,15 @@ func (a *Adapter) ingressRoute(name, appID string, routes []any, tls map[string]
 	if appID != "" {
 		labels["pando.dev/app"] = sanitize(appID)
 	}
+	meta := map[string]any{"name": name, "namespace": a.config.Namespace, "labels": labels}
+	if len(annotations) > 0 {
+		meta["annotations"] = annotations
+	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": ingressRoutes.Group + "/" + ingressRoutes.Version,
 		"kind":       "IngressRoute",
-		"metadata": map[string]any{
-			"name": name, "namespace": a.config.Namespace, "labels": labels,
-		},
-		"spec": spec,
+		"metadata":   meta,
+		"spec":       spec,
 	}}
 }
 
@@ -179,34 +198,70 @@ func proxyBackend(service string, port int64) []any {
 
 // putRoute creates or replaces an IngressRoute.
 func (a *Adapter) putRoute(ctx context.Context, obj *unstructured.Unstructured) error {
-	existing, err := a.routes().Get(ctx, obj.GetName(), metav1.GetOptions{})
+	return a.put(ctx, a.routes(), obj, "IngressRoute")
+}
+
+func (a *Adapter) put(ctx context.Context, client dynamic.ResourceInterface, obj *unstructured.Unstructured, kind string) error {
+	existing, err := client.Get(ctx, obj.GetName(), metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		_, err = a.routes().Create(ctx, obj, metav1.CreateOptions{})
+		_, err = client.Create(ctx, obj, metav1.CreateOptions{})
 	case err == nil:
 		obj.SetResourceVersion(existing.GetResourceVersion())
-		_, err = a.routes().Update(ctx, obj, metav1.UpdateOptions{})
+		_, err = client.Update(ctx, obj, metav1.UpdateOptions{})
 	}
 	if err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Pando could not write Traefik's IngressRoute.", err)
+		return errs.Wrap(errs.AdapterFailed, "Pando could not write Traefik's "+kind+".", err)
 	}
 	return nil
 }
 
-// ensureKubernetes writes an app's IngressRoute.
+// annoTLSHost marks an app route served over HTTPS with the hostname its
+// certificate is for, which is how Edge learns what to ask Pando to issue.
+const annoTLSHost = "pando.dev/tls-hostname"
+
+// certificateName is the TLS Secret a hostname's routes name: the base
+// domain's wildcard when it covers the hostname, otherwise one of its own.
+func (a *Adapter) certificateName(host string) string {
+	if _, ok := a.wildcardFor(host); ok {
+		return "pando-tls-wildcard"
+	}
+	return "pando-tls-" + strings.ToLower(host)
+}
+
+// ensureKubernetes writes an app's IngressRoute. Over HTTPS when TLS is asked
+// for and certificates are configured, naming the Secret Pando keeps the
+// hostname's certificate in.
 func (a *Adapter) ensureKubernetes(ctx context.Context, r api.RouteRequest, rule string) (api.RouteHandle, error) {
 	service, port, err := proxyService(r.ProxyUpstream)
 	if err != nil {
 		return api.RouteHandle{}, err
 	}
-	var tls map[string]any
-	if resolver := a.resolver(); r.TLS.Enabled && resolver != "" {
-		tls = map[string]any{"certResolver": resolver}
+	var (
+		tls         map[string]any
+		annotations map[string]any
+		entryPoints = []string{a.entryPoint()}
+	)
+	switch {
+	case !a.managed():
+		if resolver := a.resolver(); r.TLS.Enabled && resolver != "" {
+			tls = map[string]any{"certResolver": resolver}
+		}
+	case a.tls() && r.TLS.Enabled && r.Hostname != "":
+		tls = map[string]any{"secretName": a.certificateName(r.Hostname)}
+		annotations = map[string]any{annoTLSHost: strings.ToLower(r.Hostname)}
+		entryPoints = []string{entryWebTLS}
+	case a.tls():
+		entryPoints = []string{entryWebTLS}
+		tls = map[string]any{}
+	}
+	if entryPoints[0] == "" {
+		entryPoints = nil
 	}
 	name := routerName(r.AppID)
-	obj := a.ingressRoute(name, r.AppID, []any{map[string]any{
+	obj := a.ingressRoute(name, r.AppID, entryPoints, []any{map[string]any{
 		"match": rule, "kind": "Rule", "services": proxyBackend(service, port),
-	}}, tls)
+	}}, tls, annotations)
 	if err := a.putRoute(ctx, obj); err != nil {
 		return api.RouteHandle{}, err
 	}
@@ -249,13 +304,22 @@ func backendOf(obj *unstructured.Unstructured) string {
 	return fmt.Sprintf("http://%v:%v", svc["name"], svc["port"])
 }
 
+const (
+	consoleRouteTLS = "pando-console-tls"
+	redirectHTTPS   = "pando-redirect-https"
+)
+
 // edgeKubernetes is the Traefik Pando runs on Kubernetes, reading
-// IngressRoutes from its own namespace.
+// IngressRoutes from its own namespace, and, when certificates are on, the
+// certificates Pando's leader issues for it (R-169): Traefik orders none
+// itself, because its replicas would each order the same ones.
 func (a *Adapter) edgeKubernetes(ctx context.Context, r api.EdgeRequest) (api.EdgePlan, bool, error) {
 	if !a.managed() {
-		err := a.routes().Delete(ctx, consoleRoute, metav1.DeleteOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return api.EdgePlan{}, false, errs.Wrap(errs.AdapterFailed, "Pando could not remove its console route from Traefik.", err)
+		for _, name := range []string{consoleRoute, consoleRouteTLS} {
+			err := a.routes().Delete(ctx, name, metav1.DeleteOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				return api.EdgePlan{}, false, errs.Wrap(errs.AdapterFailed, "Pando could not remove its console route from Traefik.", err)
+			}
 		}
 		return api.EdgePlan{}, false, nil
 	}
@@ -263,19 +327,36 @@ func (a *Adapter) edgeKubernetes(ctx context.Context, r api.EdgeRequest) (api.Ed
 	if err != nil {
 		return api.EdgePlan{}, false, err
 	}
+	backend := proxyBackend(service, port)
 
-	// Every hostname that is not an app's reaches Pando, which answers with
-	// the console; lowest priority, so an app's route always wins.
-	routes := []any{}
-	if h := a.config.ConsoleHostname; h != "" {
-		routes = append(routes, map[string]any{
-			"match": "Host(`" + h + "`)", "kind": "Rule", "services": proxyBackend(service, port),
-		})
+	// Port 80. Every hostname that is not an app's reaches Pando, which
+	// answers with the console; lowest priority, so an app's route wins.
+	// With certificates on, plain HTTP is redirected to HTTPS — except a
+	// certificate authority's HTTP-01 request, which reaches Pando's proxy
+	// on every hostname, where the leader's answer waits (R-169).
+	web := []any{}
+	if a.tls() {
+		if err := a.put(ctx, a.dyn.Resource(middlewares).Namespace(a.config.Namespace), &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": middlewares.Group + "/" + middlewares.Version,
+			"kind":       "Middleware",
+			"metadata": map[string]any{"name": redirectHTTPS, "namespace": a.config.Namespace,
+				"labels": map[string]any{"app.kubernetes.io/managed-by": "pando"}},
+			"spec": map[string]any{"redirectScheme": map[string]any{"scheme": "https", "permanent": true}},
+		}}, "Middleware"); err != nil {
+			return api.EdgePlan{}, false, err
+		}
+		web = append(web,
+			map[string]any{"match": "PathPrefix(`/.well-known/acme-challenge/`)", "kind": "Rule", "priority": int64(1000), "services": backend},
+			map[string]any{"match": "PathPrefix(`/`)", "kind": "Rule", "priority": int64(1), "services": backend,
+				"middlewares": []any{map[string]any{"name": redirectHTTPS}}},
+		)
+	} else {
+		if h := a.config.ConsoleHostname; h != "" {
+			web = append(web, map[string]any{"match": "Host(`" + h + "`)", "kind": "Rule", "services": backend})
+		}
+		web = append(web, map[string]any{"match": "PathPrefix(`/`)", "kind": "Rule", "priority": int64(1), "services": backend})
 	}
-	routes = append(routes, map[string]any{
-		"match": "PathPrefix(`/`)", "kind": "Rule", "priority": int64(1), "services": proxyBackend(service, port),
-	})
-	if err := a.putRoute(ctx, a.ingressRoute(consoleRoute, "", routes, nil)); err != nil {
+	if err := a.putRoute(ctx, a.ingressRoute(consoleRoute, "", []string{entryWeb}, web, nil, nil)); err != nil {
 		return api.EdgePlan{}, false, err
 	}
 
@@ -293,13 +374,95 @@ func (a *Adapter) edgeKubernetes(ctx context.Context, r api.EdgeRequest) (api.Ed
 		"--ping=true",
 		"--log.level=INFO",
 	}
-	return api.EdgePlan{
+	ports := []api.EdgePort{{Host: a.config.HTTPPort, Container: 80}}
+	plan := api.EdgePlan{
 		Name:            r.Ref,
 		Image:           a.config.Image,
-		Args:            args,
-		Env:             nil,
-		Ports:           []api.EdgePort{{Host: a.config.HTTPPort, Container: 80}},
 		ProxyAlias:      service,
 		ReadsRoutesFrom: api.EdgeConfigKubernetesAPI,
-	}, true, nil
+	}
+
+	if a.tls() {
+		args = append(args, "--entrypoints."+entryWebTLS+".address=:443")
+		ports = append(ports, api.EdgePort{Host: a.config.HTTPSPort, Container: 443})
+
+		// Port 443: the console's hostname with its certificate, and any
+		// other hostname with whatever Traefik has.
+		tlsRoutes := []any{}
+		var consoleTLS map[string]any
+		if h := a.config.ConsoleHostname; h != "" {
+			tlsRoutes = append(tlsRoutes, map[string]any{"match": "Host(`" + h + "`)", "kind": "Rule", "services": backend})
+			consoleTLS = map[string]any{"secretName": a.certificateName(h)}
+		} else {
+			consoleTLS = map[string]any{}
+		}
+		tlsRoutes = append(tlsRoutes, map[string]any{"match": "PathPrefix(`/`)", "kind": "Rule", "priority": int64(1), "services": backend})
+		if err := a.putRoute(ctx, a.ingressRoute(consoleRouteTLS, "", []string{entryWebTLS}, tlsRoutes, consoleTLS, nil)); err != nil {
+			return api.EdgePlan{}, false, err
+		}
+
+		issue, err := a.certificateIssue(ctx)
+		if err != nil {
+			return api.EdgePlan{}, false, err
+		}
+		plan.Issue = issue
+	} else if err := a.routes().Delete(ctx, consoleRouteTLS, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return api.EdgePlan{}, false, errs.Wrap(errs.AdapterFailed, "Pando could not remove its HTTPS console route from Traefik.", err)
+	}
+
+	plan.Args, plan.Ports = args, ports
+	return plan, true, nil
+}
+
+// certificateIssue is what Pando is asked to issue: a certificate for every
+// hostname an app route serves over HTTPS and for the console's, or, with
+// DNS-01, the base domain's wildcard and one for each hostname outside it.
+func (a *Adapter) certificateIssue(ctx context.Context) (*api.CertificateIssue, error) {
+	issue := &api.CertificateIssue{Email: a.config.ACMEEmail, Challenge: api.ChallengeHTTP01}
+	if a.config.Certificates == CertsDNS {
+		issue.Challenge = api.ChallengeDNS01
+		issue.DNSProvider = a.config.DNSProvider
+		issue.DNSCredentials = make(map[string]secret.Value, len(a.dnsEnv))
+		for k, v := range a.dnsEnv {
+			issue.DNSCredentials[k] = v
+		}
+	}
+
+	hosts := map[string]bool{}
+	if h := a.config.ConsoleHostname; h != "" {
+		hosts[strings.ToLower(h)] = true
+	}
+	list, err := a.routes().List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=pando"})
+	if err != nil {
+		return nil, errs.Wrap(errs.AdapterFailed, "Pando could not read Traefik's IngressRoutes.", err)
+	}
+	for _, obj := range list.Items {
+		if h := obj.GetAnnotations()[annoTLSHost]; h != "" {
+			hosts[h] = true
+		}
+	}
+
+	orders := map[string]api.CertificateOrder{}
+	if a.config.Certificates == CertsDNS && a.config.BaseDomain != "" {
+		// Issued before the first app exists, so a new app is served over
+		// HTTPS at once (R-166).
+		base := strings.ToLower(a.config.BaseDomain)
+		orders["pando-tls-wildcard"] = api.CertificateOrder{Name: "pando-tls-wildcard", Domains: []string{base, "*." + base}}
+	}
+	for h := range hosts {
+		name := a.certificateName(h)
+		if _, ok := orders[name]; ok {
+			continue
+		}
+		orders[name] = api.CertificateOrder{Name: name, Domains: []string{h}}
+	}
+	names := make([]string, 0, len(orders))
+	for n := range orders {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		issue.Orders = append(issue.Orders, orders[n])
+	}
+	return issue, nil
 }

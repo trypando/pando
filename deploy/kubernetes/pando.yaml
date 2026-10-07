@@ -10,8 +10,13 @@
 #
 # Keep a copy of both key files offsite: without secrets.key no stored secret
 # can be read (R-190), and without token.key every API token is issued again.
-# Every replica reads the same two keys, and refuses to start if its token key
-# differs from the one the database was set up with.
+#
+# The two keys are mounted from the Secret over their paths on the shared
+# /var/lib/pando volume, so no replica ever generates a key of its own. The
+# startup checks still apply: each replica opens the secrets-key canary sealed
+# in the database and compares its token key with token_key_check, and
+# refuses to start on a mismatch — a Secret replaced with new keys is caught
+# exactly as a different key file on disk would be.
 #
 # Then set pod_cidr and service_cidr in the ConfigMap below to the cluster's,
 # and the storage class of the pando-data claim to one that offers
@@ -45,10 +50,13 @@ data:
         default: true
         config:
           # IngressRoutes in pando-edge, which every replica of the edge
-          # watches. Certificates are none until Pando issues them on
-          # Kubernetes; terminate TLS at the load balancer meanwhile.
+          # watches. Certificates are issued by Pando's leader, kept sealed
+          # in Postgres and written as TLS Secrets every replica serves;
+          # HTTP-01 challenges are answered by Pando's proxy.
           delivery: kubernetes_api
-          certificates: none
+          certificates: http
+          acme_email: ops@example.com
+          console_hostname: pando.example.com
           base_domain: apps.example.com
 ---
 apiVersion: v1

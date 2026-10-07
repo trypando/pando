@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
+	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
@@ -74,6 +75,12 @@ type Adapter struct {
 	config Config
 	cs     kubernetes.Interface
 	rest   *rest.Config
+
+	// mc reads metrics.k8s.io (usage.go). Nil reports no use.
+	mc             metricsclient.Interface
+	metricsMu      sync.Mutex
+	metricsChecked time.Time
+	metricsOK      bool
 
 	// stream runs a command in a pod's container (Exec, SnapshotVolume,
 	// RestoreVolume). The API server's exec subresource; replaced in tests.
@@ -227,6 +234,9 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		return errs.Wrap(errs.AdapterFailed, "Could not set up the connection to the Kubernetes API.", err)
 	}
 	a.rest = rc
+	if mc, err := metricsclient.NewForConfig(rc); err == nil {
+		a.mc = mc
+	}
 	a.use(cs, cfg)
 	return nil
 }
@@ -433,10 +443,10 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		SupportsResourceLimits:    true,
 		SupportsStartThenSwap:     false,
 
-		// metrics-server is optional and its client is another dependency;
-		// until it is read, the console says the runtime does not report use
-		// rather than showing zeros (R-245).
-		ReportsUsage: false,
+		// From metrics.k8s.io when the cluster serves it (usage.go); without
+		// it the console says the runtime does not report use rather than
+		// showing zeros (R-245).
+		ReportsUsage: a.metricsAvailable(ctx),
 
 		// The kubelet rotates every container's log at one node-wide size;
 		// there is no per-workload cap to set (R-222).
@@ -636,18 +646,9 @@ func (a *Adapter) pandoNamespaces(ctx context.Context) (map[string]bool, error) 
 	return out, nil
 }
 
-// InUse is not reported on this runtime (ReportsUsage is false).
-func (a *Adapter) InUse(context.Context) (api.InUse, error) {
-	return api.InUse{}, errNoUsage()
-}
-
-// Usage is not reported on this runtime (ReportsUsage is false).
-func (a *Adapter) Usage(context.Context, api.BundleRef) (api.BundleUsage, error) {
-	return api.BundleUsage{}, errNoUsage()
-}
-
 func errNoUsage() error {
-	return errs.New(errs.PlanCapabilityUnsupported, "The Kubernetes runtime does not report what apps are using.")
+	return errs.New(errs.PlanCapabilityUnsupported, "This cluster does not report what apps are using: it serves no metrics API.").
+		WithRemedy("Install metrics-server in the cluster.")
 }
 
 // ImportImage is not offered: every node pulls from a registry.

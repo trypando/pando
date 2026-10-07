@@ -60,6 +60,7 @@ import (
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/edge"
+	"github.com/trypando/pando/internal/core/edgecert"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/oci"
@@ -702,11 +703,18 @@ func serve(ctx context.Context, configPath string) error {
 	// app's own listener falls back to for Pando's reserved path (R-172).
 	// What routing adapters need running in front of Pando — a Traefik on
 	// :80 and :443, a cloudflared — run through the runtime adapter (R-174).
+	// Certificates the edge cannot issue itself — on Kubernetes, where it is
+	// several replicas — are issued by the leader in its edge pass and kept
+	// sealed (R-169, R-190). Any replica answers the HTTP-01 challenge.
+	edgeCerts := state.NewEdgeCertificates(db, secretsAdapter, secretsRef)
 	edges := &edge.Service{
 		Registry:      registry,
 		ProxyUpstream: proxyUpstream,
 		Logger:        logger,
 		Clock:         clock.System{},
+	}
+	if secretsAdapter != nil {
+		edges.Certificates = &edgecert.Issuer{Store: edgeCerts, ACME: edgecert.Lego{}, Clock: clock.System{}, Logger: logger}
 	}
 
 	// Whether a newer Pando is released (R-349). Started with the other loops
@@ -844,11 +852,12 @@ func serve(ctx context.Context, configPath string) error {
 
 		// So the console does not answer on an app's own hostname. Without
 		// this the console's "/" route shadows every subdomain app's root.
-		AppHosts:   appResolver,
-		Grants:     grants,
-		HostPolicy: hostPolicy,
-		Verbs:      authzStore,
-		Defaults:   installDefaults,
+		AppHosts:       appResolver,
+		ACMEChallenges: edgecert.Challenges{Store: edgeCerts},
+		Grants:         grants,
+		HostPolicy:     hostPolicy,
+		Verbs:          authzStore,
+		Defaults:       installDefaults,
 
 		// The policy *document* and the policy *evaluator* are different
 		// things and both are wired: one endpoint edits the document, every

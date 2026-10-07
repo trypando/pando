@@ -252,7 +252,11 @@ recommended: anything running with the host's network can reach app pods directl
 | `edge_replicas` | `2` | Copies of the edge, spread across nodes. At least 2. |
 | `edge_service_type` | `LoadBalancer` | Or `NodePort`, on `edge_http_node_port` (30080) and `edge_https_node_port` (30443). |
 
-The Traefik routing adapter's `delivery` setting is `kubernetes_api` on this runtime. Draining a node
+The Traefik routing adapter's `delivery` setting is `kubernetes_api` on this runtime. Its
+certificate settings work as on Docker, but Pando's leader orders and renews the certificates rather
+than Traefik, keeps them encrypted in the database, and answers HTTP-01 challenges itself; DNS-01 works
+with the five DNS providers named in the settings. What apps are using is reported when the cluster
+runs metrics-server. Draining a node
 that runs apps needs `kubectl drain --force`: an app's pods belong to no controller, and Pando's
 reconciler recreates them on another node.
 

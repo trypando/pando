@@ -51,6 +51,7 @@ const (
 	edgeServiceAccount = "pando-edge-traefik"
 	annoEdgeDigest     = "pando.dev/edge-digest"
 	annoEdgeName       = "pando.dev/edge-name"
+	roleCertificate    = "certificate"
 	edgeContainer      = "edge"
 )
 
@@ -67,7 +68,7 @@ func (a *Adapter) ApplyEdge(ctx context.Context, p api.EdgePlan) error {
 		case m.Volume != "":
 			return errs.Newf(errs.PlanCapabilityUnsupported,
 				"The edge %q asks for storage of its own, and on Kubernetes an edge's replicas share nothing.", p.Name).
-				WithRemedy("On Kubernetes certificates are issued by Pando and kept as Secrets; set the routing adapter's certificates to none until that is available.")
+				WithRemedy("On Kubernetes the edge's certificates are issued by Pando and kept as Secrets, so it needs no storage of its own. Set the routing adapter's delivery setting to kubernetes_api.")
 		}
 	}
 	if p.ProxyAlias != "" && !dnsLabel.MatchString(p.ProxyAlias) {
@@ -98,6 +99,9 @@ func (a *Adapter) ApplyEdge(ctx context.Context, p api.EdgePlan) error {
 	if err := a.ensureAlias(ctx, p.ProxyAlias); err != nil {
 		return err
 	}
+	if err := a.ensureCertificates(ctx, p); err != nil {
+		return err
+	}
 	if err := a.ensureEdgeDeployment(ctx, p, name, labels, selector, env); err != nil {
 		return err
 	}
@@ -108,6 +112,74 @@ func (a *Adapter) ApplyEdge(ctx context.Context, p api.EdgePlan) error {
 		return err
 	}
 	return a.putPolicy(ctx, a.edgePolicy(name, labels, selector))
+}
+
+// ensureCertificates writes the certificates Pando issued for this edge as
+// kubernetes.io/tls Secrets in the edge's namespace, under the names its
+// routes refer to, where Traefik's CRD provider loads them on every replica.
+// One deleted by hand is written again on the next pass; one no longer in the
+// plan is removed. Written only when changed, so Traefik does not reload for
+// nothing.
+func (a *Adapter) ensureCertificates(ctx context.Context, p api.EdgePlan) error {
+	ns := a.config.EdgeNamespace
+	client := a.cs.CoreV1().Secrets(ns)
+	edge := toLabel(p.Name)
+	labels := map[string]string{labelManagedBy: managedBy, labelEdge: edge, labelRole: roleCertificate}
+	keep := map[string]bool{}
+	for _, c := range p.Certificates {
+		keep[c.Name] = true
+		data := map[string][]byte{
+			corev1.TLSCertKey:       c.CertPEM,
+			corev1.TLSPrivateKeyKey: []byte(c.KeyPEM.Reveal()),
+		}
+		existing, err := client.Get(ctx, c.Name, metav1.GetOptions{})
+		switch {
+		case apierrors.IsNotFound(err):
+			_, err = client.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: c.Name, Namespace: ns, Labels: labels},
+				Type:       corev1.SecretTypeTLS,
+				Data:       data,
+			}, metav1.CreateOptions{})
+		case err == nil:
+			if existing.Type != corev1.SecretTypeTLS {
+				// The type of a Secret cannot change; replace it.
+				if err = client.Delete(ctx, c.Name, metav1.DeleteOptions{}); err == nil {
+					_, err = client.Create(ctx, &corev1.Secret{
+						ObjectMeta: metav1.ObjectMeta{Name: c.Name, Namespace: ns, Labels: labels},
+						Type:       corev1.SecretTypeTLS, Data: data,
+					}, metav1.CreateOptions{})
+				}
+				break
+			}
+			if equalJSON(existing.Data, data) && equalJSON(existing.Labels, labels) {
+				continue
+			}
+			existing.Data, existing.Labels = data, labels
+			_, err = client.Update(ctx, existing, metav1.UpdateOptions{})
+		}
+		if err != nil {
+			return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not give the edge its certificate %s.", c.Name), err)
+		}
+	}
+	return a.pruneCertificates(ctx, edge, keep)
+}
+
+// pruneCertificates removes an edge's certificate Secrets not in keep.
+func (a *Adapter) pruneCertificates(ctx context.Context, edge string, keep map[string]bool) error {
+	client := a.cs.CoreV1().Secrets(a.config.EdgeNamespace)
+	list, err := client.List(ctx, metav1.ListOptions{LabelSelector: labelEdge + "=" + edge + "," + labelRole + "=" + roleCertificate})
+	if err != nil {
+		return errs.Wrap(errs.AdapterUnavailable, "Could not read the edge's certificates.", err)
+	}
+	for _, s := range list.Items {
+		if keep[s.Name] {
+			continue
+		}
+		if err := client.Delete(ctx, s.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return errs.Wrap(errs.AdapterFailed, "Could not remove a certificate the edge no longer uses.", err)
+		}
+	}
+	return nil
 }
 
 func (a *Adapter) ensureEdgeDeployment(ctx context.Context, p api.EdgePlan, name string, labels, selector map[string]string, env map[string]string) error {
@@ -405,6 +477,7 @@ func (a *Adapter) RemoveEdge(ctx context.Context, name string) error {
 		func() error { return a.cs.PolicyV1().PodDisruptionBudgets(ns).Delete(ctx, obj, metav1.DeleteOptions{}) },
 		func() error { return a.cs.CoreV1().Secrets(ns).Delete(ctx, obj+"-env", metav1.DeleteOptions{}) },
 		func() error { return a.cs.NetworkingV1().NetworkPolicies(ns).Delete(ctx, obj, metav1.DeleteOptions{}) },
+		func() error { return a.pruneCertificates(ctx, toLabel(name), nil) },
 	}
 	for _, step := range steps {
 		if err := step(); err != nil && !apierrors.IsNotFound(err) {
