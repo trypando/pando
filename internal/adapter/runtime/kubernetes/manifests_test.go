@@ -141,6 +141,69 @@ func TestR023_TheManifestsGivePandosPodsTheLabelsAppNamespacesAdmit(t *testing.T
 	require.Equal(t, "kubernetes_api", file.Adapters["rte_traefik"].Config["delivery"])
 }
 
+// TestR112_EveryShippedPodIsAdmittedUnderBaseline: both of Pando's
+// namespaces enforce Pod Security baseline, which refuses a pod asking for an
+// Unconfined seccomp or AppArmor profile. BuildKit's did, and on a kind
+// cluster its Deployment never made a pod (O-48).
+func TestR112_EveryShippedPodIsAdmittedUnderBaseline(t *testing.T) {
+	unconfined := func(name string, sec *corev1.SeccompProfile, aa *corev1.AppArmorProfile) {
+		if sec != nil {
+			require.NotEqual(t, corev1.SeccompProfileTypeUnconfined, sec.Type, "%s asks for Unconfined seccomp, which baseline refuses", name)
+		}
+		if aa != nil {
+			require.NotEqual(t, corev1.AppArmorProfileTypeUnconfined, aa.Type, "%s asks for Unconfined AppArmor, which baseline refuses", name)
+		}
+	}
+	for _, obj := range manifests(t) {
+		d, ok := obj.(*appsv1.Deployment)
+		if !ok {
+			continue
+		}
+		if sc := d.Spec.Template.Spec.SecurityContext; sc != nil {
+			unconfined(d.Name, sc.SeccompProfile, sc.AppArmorProfile)
+		}
+		for _, c := range d.Spec.Template.Spec.Containers {
+			if sc := c.SecurityContext; sc != nil {
+				unconfined(d.Name, sc.SeccompProfile, sc.AppArmorProfile)
+			}
+		}
+	}
+}
+
+// TestR174_TraefikMayWatchNodes: Traefik's CRD provider watches nodes and
+// serves no route until it can; on a kind cluster every request to the edge
+// was a 404 until its ServiceAccount could list them.
+func TestR174_TraefikMayWatchNodes(t *testing.T) {
+	roles := map[string]*rbacv1.ClusterRole{}
+	var bound []string
+	for _, obj := range manifests(t) {
+		switch o := obj.(type) {
+		case *rbacv1.ClusterRole:
+			roles[o.Name] = o
+		case *rbacv1.ClusterRoleBinding:
+			for _, s := range o.Subjects {
+				if s.Kind == "ServiceAccount" && s.Namespace == defaultEdgeNamespace && s.Name == edgeServiceAccount {
+					bound = append(bound, o.RoleRef.Name)
+				}
+			}
+		}
+	}
+	verbs := map[string]bool{}
+	for _, name := range bound {
+		require.Contains(t, roles, name)
+		for _, r := range roles[name].Rules {
+			for _, res := range r.Resources {
+				if res == "nodes" {
+					for _, v := range r.Verbs {
+						verbs[v] = true
+					}
+				}
+			}
+		}
+	}
+	require.True(t, verbs["list"] && verbs["watch"], "Traefik's ServiceAccount can list and watch nodes")
+}
+
 // TestR112_TheClusterBuilderMountsNoRuntimeSocket asserts R-112 for the
 // shipped BuildKit: no hostPath at all, so no container runtime socket, and
 // nothing privileged.

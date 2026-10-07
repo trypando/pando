@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	nodev1 "k8s.io/api/node/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -175,6 +176,30 @@ func TestR148_ApplyReplacesAnExitedPodAndKeepsItsLog(t *testing.T) {
 	require.Equal(t, replacement.Name, pods[0].Name)
 }
 
+// TestR151_StoppingAFailedAppKeepsTheLastCrashsPod: the reconciler stops an
+// app as it gives up on it. Stop removes what is running and keeps a pod that
+// has already exited, so the crash that sent the app to failed can still be
+// read — on kind, every pod went and the app's log was empty.
+func TestR151_StoppingAFailedAppKeepsTheLastCrashsPod(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testAdapter(t, nil)
+	_, err := a.Apply(ctx, webPlan())
+	require.NoError(t, err)
+	crashed := listPods(t, cs, testNS, "web")[0]
+	setStatus(t, cs, crashed, exited(1))
+	setStatus(t, cs, listPods(t, cs, testNS, "db")[0], running(true))
+
+	require.NoError(t, a.Stop(ctx, api.BundleRef{BundleID: testBundle}))
+	require.Empty(t, listPods(t, cs, testNS, "db"), "a running pod is stopped")
+	web := listPods(t, cs, testNS, "web")
+	require.Len(t, web, 1, "the exited pod is kept")
+	require.Equal(t, crashed.Name, web[0].Name)
+
+	rc, err := a.Logs(ctx, api.WorkloadRef{BundleID: testBundle, Workload: "web"}, api.LogOptions{Tail: 10})
+	require.NoError(t, err)
+	_ = rc.Close()
+}
+
 // TestR144_ApplyIsIdempotentAndAChangedPlanReplacesThePod asserts Apply
 // converges: the same plan twice leaves the running pod alone, and a changed
 // plan replaces it.
@@ -328,6 +353,24 @@ func TestR204_AVolumeIsRetainedAndOutlivesItsApp(t *testing.T) {
 	require.Equal(t, corev1.PersistentVolumeReclaimDelete, reclaim(), "destroying a volume destroys its data")
 	_, err = cs.CoreV1().PersistentVolumeClaims(testNS).Get(ctx, pvcName("vol_01DATA"), metav1.GetOptions{})
 	require.Error(t, err)
+}
+
+// TestR224_ADeletedAppWithNoStorageLeavesNoNamespace: the teardown keeps
+// volumes by default, and a namespace is kept only because a claim lives in
+// it. An app with none has its namespace removed — on a kind cluster every
+// deleted app left one behind, with its policy and role binding.
+func TestR224_ADeletedAppWithNoStorageLeavesNoNamespace(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testAdapter(t, nil)
+	plan := webPlan()
+	plan.Volumes = nil
+	plan.Workloads[1].Mounts = nil
+	_, err := a.Apply(ctx, plan)
+	require.NoError(t, err)
+
+	require.NoError(t, a.Destroy(ctx, api.BundleRef{BundleID: testBundle}, api.DestroyOptions{KeepVolumes: true}))
+	_, err = cs.CoreV1().Namespaces().Get(ctx, testNS, metav1.GetOptions{})
+	require.True(t, apierrors.IsNotFound(err), "the namespace of an app with no storage is removed: %v", err)
 }
 
 // TestR025_AClusterThatDoesNotEnforceNetworkPolicyIsUnusable asserts O-43:

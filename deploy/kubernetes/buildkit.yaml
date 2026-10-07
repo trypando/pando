@@ -1,14 +1,24 @@
 # Rootless BuildKit (R-111), as the Compose file runs it.
 #
-# No container runtime socket is mounted, here or anywhere (R-112). Rootless
-# BuildKit makes its own user namespaces, which needs seccomp and AppArmor
-# unconfined and nothing privileged. Its NetworkPolicy (networkpolicy.yaml)
-# lets builds reach the internet and the registry, and nothing inside the
-# cluster (R-113).
+# No container runtime socket is mounted, here or anywhere (R-112), and
+# nothing is privileged. Rootless BuildKit makes its own user and mount
+# namespaces, which the container runtime's default seccomp and AppArmor
+# profiles refuse ("[rootlesskit:parent] error: failed to start the child:
+# fork/exec /proc/self/exe: operation not permitted"). Pod Security baseline,
+# enforced on this namespace, refuses a pod that asks for Unconfined, so no
+# profile is named here: the pod is admitted, and it runs unconfined only on
+# nodes whose kubelet does not apply RuntimeDefault to every pod
+# (seccompDefault) and that enforce no AppArmor profile — kind's nodes, for
+# one. Elsewhere it crash-loops with the error above. How BuildKit should run
+# under baseline everywhere is open (O-48).
+#
+# Its NetworkPolicy (networkpolicy.yaml) lets builds reach the internet and
+# nothing inside the cluster (R-113); an in-cluster registry needs a rule
+# admitting BuildKit's pushes, as test/kubernetes/manifests/registry.yaml has.
 #
 # On Kubernetes a build is pushed to a registry and every node pulls it
 # (notes-image-registry-issue-72.md); set PANDO_REGISTRY_URL on Pando's
-# Deployment once that lands.
+# Deployment.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,11 +37,6 @@ spec:
         app.kubernetes.io/name: buildkit
     spec:
       automountServiceAccountToken: false
-      securityContext:
-        seccompProfile:
-          type: Unconfined
-        appArmorProfile:
-          type: Unconfined
       containers:
         - name: buildkitd
           image: moby/buildkit:v0.17.2-rootless

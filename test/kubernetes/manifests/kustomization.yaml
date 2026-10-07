@@ -1,0 +1,30 @@
+# deploy/kubernetes as `make test-kubernetes` runs it on kind: the shipped
+# manifests unchanged, plus what an operator would supply — Postgres, a
+# registry — and the few settings the shipped files tell an operator to set.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../deploy/kubernetes
+  - postgres.yaml
+  - registry.yaml
+images:
+  # Built from the checkout and loaded into the nodes by setup.sh.
+  - name: ghcr.io/trypando/pando
+    newName: pando-k8s-test/pando
+    newTag: dev
+patches:
+  - path: pando-patch.yaml
+  - path: config-patch.yaml
+  # kind's storage (local-path) offers no ReadWriteMany. Nothing the test
+  # asserts reads another replica's /var/lib/pando; the keys come from the
+  # pando-keys Secret, as shipped.
+  - target:
+      kind: PersistentVolumeClaim
+      name: pando-data
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: pando-data
+        namespace: pando

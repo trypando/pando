@@ -1,0 +1,19 @@
+# The cluster `make test-kubernetes` runs Pando on: one control plane and two
+# workers, kind's default network plugin (kindnet, which enforces
+# NetworkPolicy, as O-43 requires), and containerd reading per-registry
+# configuration from /etc/containerd/certs.d — kind's documented
+# local-registry pattern. setup.sh writes the hosts.toml that sends pulls of
+# the in-cluster registry's name to its fixed ClusterIP.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  podSubnet: 10.244.0.0/16
+  serviceSubnet: 10.96.0.0/12
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"

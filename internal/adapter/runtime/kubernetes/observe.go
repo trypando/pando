@@ -117,12 +117,17 @@ func observePod(name string, p *corev1.Pod) api.ObservedWorkload {
 	return w
 }
 
-// Stop removes the app's pods and keeps everything else: its Services, its
-// volumes, its configuration. A finished pod cannot be started again, so a
-// stopped app is started by Apply creating new pods.
+// Stop removes the app's running pods and keeps everything else: its
+// Services, its volumes, its configuration, and any pod that has already
+// finished. A finished pod uses nothing and is how the last crash's output
+// stays readable: the reconciler stops an app as it gives up on it (R-150),
+// and deleting every pod then took the log of the crash that sent it to
+// failed with it — on Docker the stopped container keeps its log. A finished
+// pod cannot be started again, so a stopped app is started by Apply creating
+// new pods.
 func (a *Adapter) Stop(ctx context.Context, ref api.BundleRef) error {
 	ns := namespaceFor(ref.BundleID)
-	if err := a.deleteManagedPods(ctx, ns); err != nil {
+	if err := a.deletePods(ctx, ns, false); err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not stop the app.", err)
 	}
 	return nil
@@ -132,12 +137,21 @@ var managedOnly = metav1.ListOptions{LabelSelector: labelManagedBy + "=" + manag
 
 // deleteManagedPods removes every pod Pando made in a namespace.
 func (a *Adapter) deleteManagedPods(ctx context.Context, ns string) error {
+	return a.deletePods(ctx, ns, true)
+}
+
+// deletePods removes the pods Pando made in a namespace: all of them, or
+// only those not yet finished.
+func (a *Adapter) deletePods(ctx context.Context, ns string, finished bool) error {
 	list, err := a.cs.CoreV1().Pods(ns).List(ctx, managedOnly)
 	if err != nil {
 		return err
 	}
 	names := make([]string, 0, len(list.Items))
 	for _, p := range list.Items {
+		if !finished && (p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed) {
+			continue
+		}
 		names = append(names, p.Name)
 	}
 	return deleteEach(names, func(n string) error { return a.cs.CoreV1().Pods(ns).Delete(ctx, n, metav1.DeleteOptions{}) })
@@ -164,6 +178,20 @@ func (a *Adapter) Destroy(ctx context.Context, ref api.BundleRef, opts api.Destr
 	ns := namespaceFor(ref.BundleID)
 	if _, err := a.cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{}); apierrors.IsNotFound(err) {
 		return nil
+	}
+
+	if opts.KeepVolumes {
+		// Nothing to keep: the namespace goes, in one delete. Keeping it
+		// would leave a namespace, a policy and a role binding behind for
+		// every deleted app that had no storage, and the cluster tier is
+		// counted in namespaces (O-40).
+		claims, err := a.cs.CoreV1().PersistentVolumeClaims(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return errs.Wrap(errs.AdapterUnavailable, "Could not read the app's storage.", err)
+		}
+		if len(claims.Items) == 0 {
+			opts.KeepVolumes = false
+		}
 	}
 
 	if opts.KeepVolumes {

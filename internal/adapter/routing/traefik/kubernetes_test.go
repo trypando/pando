@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -153,7 +154,7 @@ func TestR169_OnKubernetesTraefikAsksPandoForItsCertificates(t *testing.T) {
 		{Name: "pando-tls-web.apps.example.com", Domains: []string{"web.apps.example.com"}},
 	}, plan.Issue.Orders)
 
-	route, err := dyn.Resource(ingressRoutes).Namespace("pando-edge").Get(ctx, "pando-app_01HQ8", metav1.GetOptions{})
+	route, err := dyn.Resource(ingressRoutes).Namespace("pando-edge").Get(ctx, "pando-app-01hq8", metav1.GetOptions{})
 	require.NoError(t, err)
 	secretName, _, _ := unstructured.NestedString(route.Object, "spec", "tls", "secretName")
 	require.Equal(t, "pando-tls-web.apps.example.com", secretName)
@@ -194,7 +195,7 @@ func TestR169_DNS01OnKubernetesOrdersTheWildcardThroughTheNamedProvider(t *testi
 	require.Equal(t, "tok", plan.Issue.DNSCredentials["CF_DNS_API_TOKEN"].Reveal())
 	require.Equal(t, []api.CertificateOrder{{Name: "pando-tls-wildcard", Domains: []string{"apps.example.com", "*.apps.example.com"}}}, plan.Issue.Orders)
 
-	route, err := dyn.Resource(ingressRoutes).Namespace("pando-edge").Get(ctx, "pando-app_01HQ8", metav1.GetOptions{})
+	route, err := dyn.Resource(ingressRoutes).Namespace("pando-edge").Get(ctx, "pando-app-01hq8", metav1.GetOptions{})
 	require.NoError(t, err)
 	secretName, _, _ := unstructured.NestedString(route.Object, "spec", "tls", "secretName")
 	require.Equal(t, "pando-tls-wildcard", secretName)
@@ -208,4 +209,34 @@ func TestR169_AnUnnamedDNSProviderIsRefusedOnKubernetes(t *testing.T) {
 		"base_domain":"apps.example.com","dns_provider":"ovh","credentials":{"dns_credentials":"OVH_KEY=x"}}`)
 	require.Equal(t, errs.ValidInvalid, e.Code)
 	require.Contains(t, e.Message, "cloudflare")
+}
+
+// TestR174_AnAppsIngressRouteIsNamedAsTheAPIAccepts: an app ID has an
+// underscore and capitals ("app_01M4…"), which a Kubernetes object name
+// refuses. The fake client validates nothing, so the name is checked here as
+// the API server checks it; on a kind cluster the route was refused and every
+// deploy failed at "Routing traffic".
+func TestR174_AnAppsIngressRouteIsNamedAsTheAPIAccepts(t *testing.T) {
+	ctx := context.Background()
+	a, dyn := kubeAdapter(t, `{"delivery":"kubernetes_api","certificates":"none","console_hostname":"pando.example.com"}`)
+	appID := "app_01M4BCVYCB4F0Z9N0TC6GFCTN3"
+	_, err := a.Ensure(ctx, api.RouteRequest{AppID: appID, Mode: spec.RoutingPath, PathPrefix: "/web",
+		ProxyUpstream: "http://pando-proxy:8080"})
+	require.NoError(t, err)
+
+	list, err := dyn.Resource(ingressRoutes).Namespace("pando-edge").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	var names []string
+	for _, item := range list.Items {
+		require.Empty(t, validation.IsDNS1123Subdomain(item.GetName()), "%q is not a name the API server accepts", item.GetName())
+		names = append(names, item.GetName())
+	}
+	require.Contains(t, names, "pando-app-01m4bcvycb4f0z9n0tc6gfctn3")
+
+	state, err := a.Observe(ctx, api.RouteHandle{AppID: appID})
+	require.NoError(t, err)
+	require.True(t, state.Present, "Observe finds the route by the same name")
+	require.NoError(t, a.Remove(ctx, api.RouteHandle{AppID: appID}))
+	_, err = dyn.Resource(ingressRoutes).Namespace("pando-edge").Get(ctx, "pando-app-01m4bcvycb4f0z9n0tc6gfctn3", metav1.GetOptions{})
+	require.Error(t, err, "Remove deletes it by the same name")
 }

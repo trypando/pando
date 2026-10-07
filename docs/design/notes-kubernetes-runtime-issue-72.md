@@ -30,13 +30,36 @@ what was built, with these differences, each a **[P]** the owner may override:
 | RBAC | The cluster role adds `pods: get, list, watch` cluster-wide, read-only, and `metrics.k8s.io` `pods`, `nodes`: `get, list` | Capacity subtracts what other pods request on each node; usage reads metrics. Pando cannot change, exec into or read logs of a pod outside its own namespaces |
 | Trial | Writes are not observed; an observer container in the trial pod reads `/proc/net/tcp` through `pods/exec` | As designed, through exec rather than the pod's log |
 
-**Not verified without a cluster.** Every test here is a unit test against client-go's fake clientset
-and dynamic client. Not yet run against a real cluster: the canary on kind with kindnet (expected to
-refuse) and with Calico (expected to pass); pod exec, log streaming and the volume helper; Traefik
-reading the IngressRoutes and reaching Pando through the `ExternalName` alias; the
-ValidatingAdmissionPolicy expressions; Pod Security `baseline` with real images; `fsGroup` on the
-ReadWriteMany volume; and O-40's 20,000 namespaces through the load harness. The tests named at the end
-of this note are still the ones the PR is done with on a kind cluster.
+**Run on a kind cluster.** `make test-kubernetes` (`test/kubernetes`) creates a kind cluster of one
+control plane and two workers with kind's own network plugin, kindnet, builds Pando's image from the
+checkout, applies `deploy/kubernetes` with Postgres and a CNCF Distribution registry beside it
+(`test/kubernetes/manifests`), and drives Pando's API through a port-forward. kindnet enforces
+NetworkPolicy (kind v0.24 and later), so the canary passes on it; the note's expectation that it would
+refuse predates that. What the run proves, each a `TestR###_` in that package: two replicas against one
+Postgres with one leader; the canary; an image app as a bare pod with `restartPolicy: Never` in its own
+namespace under default deny, reached only through the proxy, with forged `X-Pando-*` headers and
+`pando_*` cookies stripped and an assertion added; a pod in `default` or in another app's namespace
+timing out against an app pod, carrying Pando's labels or not, while Pando's pods connect; exec and
+logs through the API; a crash loop reaching `failed` and nothing restarting it; a volume as a Retain
+claim surviving its pod's replacement, and a delete keeping a final backup taken through the volume
+helper; a build pushed by in-cluster BuildKit to the registry and pulled by the node by digest; the edge
+at two replicas with a PodDisruptionBudget, every IngressRoute naming `pando-proxy`, and a request into
+the edge's Service reaching an app through the proxy while the edge's own pods cannot reach it; and a
+deploy resumed on the other replica when its pod is force-deleted.
+
+Found and fixed by that run: an app's IngressRoute was named with the app ID as is (`pando-app_01…`),
+which the API refuses, so every deploy failed at routing — it is lowercased with a hyphen now; Traefik
+3.2's CRD provider watches nodes and serves no route until it can, so `pando-edge-traefik` gets a
+ClusterRole reading nodes; a deleted app without storage left its namespace behind, and now goes in one
+delete; `Stop` deleted finished pods too, so the reconciler stopping an app as it gave up took the log
+of the crash that failed it — it now deletes only pods still running; and BuildKit's Deployment asked
+for `Unconfined` profiles, which `baseline` refuses, so it never made a pod (O-48).
+
+Still not run against a real cluster: the HTTP-01 and DNS-01 issuance (the issuer orders only from Let's
+Encrypt, O-49); a CNI that does not enforce NetworkPolicy; the ValidatingAdmissionPolicy refusals;
+restricted egress through the gateway; `fsGroup` on a ReadWriteMany volume (kind offers none, so the test
+gives each replica its own `/var/lib/pando`, and builds from uploaded source are not tested); usage from
+metrics-server; and O-40's 20,000 namespaces through the load harness.
 
 ## Running Pando on Kubernetes
 
@@ -45,10 +68,10 @@ of this note are still the ones the PR is done with on a kind cluster.
 | File | What |
 |---|---|
 | `namespaces.yaml` | `pando` and `pando-edge`, both Pod Security `baseline` |
-| `rbac.yaml` | The tables under "RBAC, minimal" below: Pando's ClusterRole, `pando-app-manager`, the edge Role, and `pando-edge-traefik` |
+| `rbac.yaml` | The tables under "RBAC, minimal" below: Pando's ClusterRole, `pando-app-manager`, the edge Role, and `pando-edge-traefik` (a Role in `pando-edge`, and a ClusterRole reading nodes, which Traefik 3.2 watches) |
 | `admission-policy.yaml` | The ValidatingAdmissionPolicies: namespace deletes only of Pando's, no NodePort or LoadBalancer Service but the edge's, no `ExternalName` outside `pando-edge`, no host network or host port, every IngressRoute to `pando-proxy` |
 | `networkpolicy.yaml` | Default deny in `pando`; Pando's server pods admit the edge and each other on 8080; BuildKit admits only Pando and reaches only outside the cluster |
-| `buildkit.yaml` | Rootless BuildKit, no host path, seccomp and AppArmor unconfined (R-112) |
+| `buildkit.yaml` | Rootless BuildKit, no host path, nothing privileged, no seccomp or AppArmor profile named, which `baseline` admits; it runs only where nodes apply neither by default (O-48, R-112) |
 | `pando.yaml` | A ConfigMap declaring `rt_kubernetes` and `rte_traefik` (`delivery: kubernetes_api`); the ReadWriteMany `pando-data` claim (O-39); Deployment `pando`, 2 replicas, `PANDO_SERVER_ADVERTISE_URL=http://$(POD_IP):8080` from the downward API, `PANDO_SERVER_PROXY_UPSTREAM=http://pando-proxy:8080`; Service `pando`; a PodDisruptionBudget |
 
 Before applying: create Secrets `pando-database` (key `url`) and `pando-keys` (`secrets.key` and
@@ -525,7 +548,7 @@ build cache out removes the last reasons for it; that is the next step after thi
 lets Pando's replicas run on more than one host under multi-host Docker (O-47).
 
 **Builder in the cluster.** Rootless BuildKit (`moby/buildkit:rootless`) as a Deployment, which needs
-`seccompProfile: Unconfined` and `appArmorProfile: Unconfined` to create its own user namespaces, and
+`seccompProfile: Unconfined` and `appArmorProfile: Unconfined` to create its own user namespaces — which `baseline` on `pando` refuses to admit, so the manifest names neither and how it runs everywhere is O-48 — and
 nothing privileged. No container runtime socket is mounted anywhere (R-112); the integration test that
 reads the build container's mounts gets a Kubernetes version reading the pod spec. Builds push to the
 registry (PR 5). Its NetworkPolicy allows egress to the internet and the registry, and denies the pod
@@ -560,7 +583,7 @@ Against a kind cluster with Calico in CI (`testcontainers-go` can start one; the
 - `TestR026_AnAppNamespaceRefusesANodePortService` — the admission policy.
 - `TestR151_AFailedAppsPodIsNotRestartedByKubernetes` — a crashing workload reaches `failed`, and its
   pod stays terminated for the next ten minutes.
-- `TestR204_AVolumeSurvivesItsAppsDeletion` — PVC kept, PV `Retain`.
+- `TestR204_AVolumeIsRetainedAndTheDeleteKeepsAFinalBackup` — PV `Retain` while the app runs; the delete keeps a final backup (R-204) and then removes the claim, as every delete of an app with storage settles it.
 - `TestR187_ARestrictedAppReachesOnlyItsGateway`.
 - `TestR112_TheBuildPodMountsNoRuntimeSocket`.
 - `TestR174_TurningOnTraefikRunsItInTheCluster` — the edge's Deployment and `LoadBalancer` Service are
@@ -573,8 +596,8 @@ Against a kind cluster with Calico in CI (`testcontainers-go` can start one; the
 - `TestR023_TheEdgeCannotReachAnAppPod` — a connection from the edge pod to an app pod is refused, and
   an `IngressRoute` naming an app's Service is refused by the admission policy.
 - `TestR026_NoLoadBalancerServiceOutsidePandoEdge` — the admission policy.
-- The canary refusing a cluster without an enforcing CNI (kind with its default CNI, kindnet, which
-  does not enforce NetworkPolicy).
+- The canary refusing a cluster without an enforcing CNI (kind with `disableDefaultCNI` and flannel; kindnet
+  enforces NetworkPolicy since kind v0.24).
 
 ## Decisions
 
