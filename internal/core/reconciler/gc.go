@@ -67,6 +67,11 @@ type GC struct {
 	// only.
 	TeardownNow <-chan struct{}
 
+	// TeardownPoll is how often deleted apps are looked for between passes,
+	// for deletes made on a replica that is not running the GC. Ten seconds
+	// when zero.
+	TeardownPoll time.Duration
+
 	// BuildCaches and DiscardUpload remove a deleted app's build cache and
 	// uploaded source at teardown. Nil skips each.
 	BuildCaches   BuildCaches
@@ -108,12 +113,25 @@ func (g *GC) Run(ctx context.Context) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// TeardownNow reaches only the process the delete was made in, and the GC
+	// runs on whichever replica leads (issue #72). A delete made on another
+	// replica is found here instead, within TeardownPoll: one query for apps
+	// deleted and not yet torn down.
+	poll := g.TeardownPoll
+	if poll <= 0 {
+		poll = 10 * time.Second
+	}
+	teardownTicker := time.NewTicker(poll)
+	defer teardownTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			g.Collect(ctx)
+		case <-teardownTicker.C:
+			g.tearDownDeletedBundles(ctx)
 		case <-g.TeardownNow:
 			// Teardown only. The rest of a pass is on the slow clock for a
 			// reason, and a delete is not one.
@@ -168,6 +186,11 @@ func (g *GC) Collect(ctx context.Context) {
 // recorded on the app (TeardownTarget.DiscardStorage) and is the only thing
 // that sets KeepVolumes false here: this is the one place a bug would
 // silently destroy data, so nothing is inferred.
+// TearDownDeleted tears down the bundles of deleted apps now, outside the GC's
+// own loop: the replica that took a delete calls it whether or not it leads
+// (issue #72).
+func (g *GC) TearDownDeleted(ctx context.Context) { g.tearDownDeletedBundles(ctx) }
+
 func (g *GC) tearDownDeletedBundles(ctx context.Context) {
 	if g.Registry == nil {
 		return
