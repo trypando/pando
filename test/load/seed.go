@@ -425,7 +425,7 @@ func (s *seeder) realApp(ctx context.Context, c *Client, cred Credential, k int)
 		var rev struct {
 			Revision int `json:"revision"`
 		}
-		if _, err := c.JSON(ctx, http.MethodPost, "/apps/"+app+"/specs", cred, realAppSpec(s.o.RealPortStart+k), &rev); err != nil {
+		if _, err := c.JSON(ctx, http.MethodPost, "/apps/"+app+"/specs", cred, realAppSpec(), &rev); err != nil {
 			return "", err
 		}
 		if _, err := c.JSON(ctx, http.MethodPost, fmt.Sprintf("/apps/%s/specs/%d/pin", app, rev.Revision), cred, "", nil); err != nil {
