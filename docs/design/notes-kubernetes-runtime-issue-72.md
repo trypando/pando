@@ -16,8 +16,8 @@ It depends on PR 5 (`notes-image-registry-issue-72.md`): Kubernetes pulls every 
         :80 / :443 ── Service type LoadBalancer or NodePort (the edge's only)
                                  │
           ┌─────────── namespace pando-edge ────────────┐
-          │  Deployment traefik (1 replica)              │
-          │    or cloudflared                            │
+          │  Deployment traefik (2+ replicas, spread)    │
+          │    or cloudflared (2+ replicas, one tunnel)  │
           │  IngressRoutes, all to Service pando-proxy   │
           └──────────────────────┬───────────────────────┘
                                  │ to Pando's proxy only
@@ -158,18 +158,30 @@ no Secret of Pando's — the secrets key is a Secret in `pando`.
 
 | `EdgePlan` field | On Kubernetes |
 |---|---|
-| `Name`, `Image`, `Args` | A Deployment `pando-edge-<name>`, one replica, strategy `Recreate`, labeled `app.kubernetes.io/component: edge`. `restartPolicy: Always`: an edge restarts itself, as it does on Docker (`unless-stopped`); R-149 – R-151 are about apps |
+| `Name`, `Image`, `Args` | A Deployment `pando-edge-<name>` of at least two replicas spread across nodes, with a PodDisruptionBudget (below), labeled `app.kubernetes.io/component: edge`. `restartPolicy: Always`: an edge restarts itself, as it does on Docker (`unless-stopped`); R-149 – R-151 are about apps |
 | `Env` | A Secret in `pando-edge`, mounted by `envFrom` (DNS-01 credentials, a tunnel token). Values stay `secret.Value` until the API call that writes them (R-194) |
 | `Ports` | One Service for the edge, type `LoadBalancer` by default or `NodePort` (below). The only Service of either type Pando ever creates |
-| `Mounts` with `Volume` | A `ReadWriteOnce` PersistentVolumeClaim the edge owns (Traefik's ACME store), patched to `Retain` like an app volume, so certificates survive the edge being recreated |
+| `Mounts` with `Volume` | Not supported on this runtime: edge replicas are stateless and share nothing. On `kubernetes_api` the Traefik adapter's plan has no ACME volume, because certificates come from Pando (below). A plan that asks for an owned volume is refused at configure |
 | `Mounts` with `SharedWithPando` | Not supported on this runtime. A plan that asks for one is refused at configure with a message naming the routing adapter's setting (below) |
 | `ProxyAlias` | A Service `pando-proxy` in `pando-edge` of type `ExternalName`, resolving to `pando.pando.svc.<cluster domain>`. The edge reaches Pando's proxy by that name |
 
-**One replica, `Recreate` [P].** Traefik keeps ACME certificates in one file and does not coordinate
-issuance between instances, and a `ReadWriteOnce` claim cannot attach to a second pod on another node
-during a rolling update. It is one edge, as on Docker, and every app behind it is unreachable for the
-few seconds it takes to restart. An edge that runs as several replicas needs a shared certificate store,
-which is a later change.
+**Several replicas, spread across nodes [P].** Issue #72 is about the install surviving the loss of any
+one process, and every app is behind the edge, so the edge cannot be one pod. The Deployment runs
+`edge_replicas` replicas (an adapter setting, default 2, minimum 2) with a `topologySpreadConstraint` on
+`kubernetes.io/hostname` (`maxSkew: 1`, `whenUnsatisfiable: DoNotSchedule`), so two replicas never share
+a node while another node has room. A PodDisruptionBudget with `minAvailable: 1` keeps a drain from
+taking every replica at once, and updates roll with `maxUnavailable: 0` and `maxSurge: 1`. On a
+one-node cluster the second replica stays `Pending`, and `ObserveEdge` reports that the edge has no
+spare node rather than calling it healthy.
+
+With the CRD provider, Traefik holds no state: routes come from the API and certificates from Secrets
+(below), so replicas need nothing shared and any replica serves any request. `cloudflared` runs the
+same way: several replicas of one connector against the one tunnel, which Cloudflare treats as
+redundant connections and balances across.
+
+What remains: a replica being replaced, or one on a node that fails, drops the connections open on it —
+websockets and in-flight requests — and those clients reconnect to another replica. Until the load
+balancer's health check notices a dead node, some new connections to that node fail.
 
 **Service type [P]: `LoadBalancer` by default, `NodePort` as a setting.** `LoadBalancer` is what managed
 clusters and MetalLB provide, and it publishes `:80` and `:443` as the plan asks. A cluster with no load
@@ -177,7 +189,36 @@ balancer implementation leaves such a Service pending; the adapter reports that 
 and the message names the setting. With `edge_service_type: NodePort`, the plan's ports map to node
 ports from the adapter's settings (default 30080 and 30443; Kubernetes' node port range does not include
 80 and 443), and the operator points an external balancer at them. `externalTrafficPolicy: Local`, so
-the client address the proxy records is the visitor's and not a node's.
+the client address the proxy records is the visitor's and not a node's; a node without an edge replica
+then fails the balancer's health check and receives no traffic, which is why replicas are spread.
+
+### Certificates with several replicas [P]
+
+**Pando's leader is the one issuer, and every Traefik replica reads the result from Secrets.** The edge's
+ACME settings are unchanged (R-169: HTTP-01 or DNS-01, an email, one of the five named DNS providers or
+"other", credentials stored per R-190). On this runtime core carries them out instead of Traefik:
+
+- **Issuance and renewal run in the leader's edge pass**, which already runs on the leader only
+  (replicas note), using lego — the ACME library Traefik itself uses, so the same provider codes and
+  credential variables work. A hostname added by `Ensure` on any replica is issued at the next pass.
+- **Certificates and the ACME account key are kept in Postgres, sealed with the secrets key**, and
+  written out as `kubernetes.io/tls` Secrets in `pando-edge`, one per hostname (or one wildcard). The
+  `IngressRoute`s name them in `tls.secretName`, and Traefik's CRD provider loads them on every replica.
+  Keeping them in Postgres means a DR bundle carries them, as the Docker edge's ACME volume is in the
+  full-host bundle, and a deleted Secret is rewritten rather than re-issued.
+- **HTTP-01 challenges are answered by Pando's proxy**, not by Traefik. The leader stores the pending
+  token in Postgres; an `IngressRoute` for `/.well-known/acme-challenge/` on each hostname goes to
+  `pando-proxy` like every other route, and whichever Pando replica receives the CA's request answers
+  from the database. That path is then Pando's on every hostname it issues for, as it already is on
+  Docker, where Traefik takes it.
+
+Alternatives considered:
+
+| Option | Why not |
+|---|---|
+| Each Traefik replica runs its own ACME | Every replica orders the same certificates, multiplying Let's Encrypt rate-limit use, and an HTTP-01 challenge fails whenever the CA's request lands on a replica other than the one that ordered it |
+| Traefik's ACME with one elected issuer | Traefik's open-source edition has no leader election for ACME; that is a Traefik Enterprise feature |
+| cert-manager issuing Secrets | A second controller with cluster-scoped CRDs and webhooks that Pando would configure but not run, which is the split R-174 rejects. Its HTTP-01 solver publishes through Ingress or Gateway objects, which a Traefik limited to the CRD provider does not serve. Porkbun and Namecheap are available only through third-party webhooks, so R-169's five named providers would not all work |
 
 ### How Pando writes Traefik's dynamic configuration
 
@@ -402,16 +443,15 @@ Consequences:
 |---|---|---|
 | `deployments` (apps) | get, list, watch, create, update, patch, delete | The edge's Deployment |
 | `services` | get, list, watch, create, update, patch, delete | The edge's `LoadBalancer` or `NodePort` Service, and `pando-proxy`; the admission policy limits which |
-| `persistentvolumeclaims`, `secrets` | get, list, watch, create, update, patch, delete | The ACME store; DNS-01 credentials and tunnel tokens |
+| `secrets` | get, list, watch, create, update, patch, delete | Certificates; DNS-01 credentials and tunnel tokens |
+| `poddisruptionbudgets` (policy) | get, create, update, delete | The edge's disruption budget |
 | `networkpolicies` | get, create, update, delete | The edge's egress policy |
 | `ingressroutes.traefik.io`, `middlewares.traefik.io` | get, list, watch, create, update, patch, delete | One route per app, and prefix stripping (R-167) |
 | `pods`, `pods/log` | get, list, watch | `ObserveEdge`, and the edge's logs for an operator |
 
-And the cluster-scoped rule `persistentvolumes: patch` above covers the ACME store's `Retain`.
-
 A ServiceAccount `pando-edge-traefik`, used only by a Traefik edge, with a Role in `pando-edge` that
 reads what Traefik's CRD provider watches: `get`, `list`, `watch` on the `traefik.io` resources,
-`services`, `endpointslices` and `secrets`, in `pando-edge` only. A `cloudflared` edge runs with no
+`services`, `endpointslices` and `secrets` (the certificates), in `pando-edge` only. A `cloudflared` edge runs with no
 ServiceAccount token. Neither can read anything in `pando` or in an app namespace.
 
 `pando-app-manager`, bound only inside app namespaces: pods, `pods/log`, `pods/exec`, services,
@@ -448,7 +488,6 @@ of BuildKit share the registry cache, so a build need not land on the same repli
 - Pando outside the cluster it deploys to.
 - More than one cluster per Pando (see O-40).
 - The in-place upgrade (R-359).
-- More than one replica of an edge.
 - Write observation in the trial run.
 
 ## Requirements this touches
@@ -477,6 +516,8 @@ Against a kind cluster with Calico in CI (`testcontainers-go` can start one; the
 - `TestR112_TheBuildPodMountsNoRuntimeSocket`.
 - `TestR174_TurningOnTraefikRunsItInTheCluster` — the edge's Deployment and `LoadBalancer` Service are
   created, and an app's `IngressRoute` serves the app through the proxy.
+- `TestR174_TheEdgeSurvivesLosingAReplica` — with one edge pod deleted, apps keep answering through the
+  other, and both replicas serve the same certificate.
 - `TestR023_TheEdgeCannotReachAnAppPod` — a connection from the edge pod to an app pod is refused, and
   an `IngressRoute` naming an app's Service is refused by the admission policy.
 - `TestR026_NoLoadBalancerServiceOutsidePandoEdge` — the admission policy.
