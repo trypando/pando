@@ -165,9 +165,15 @@ func (i *Issuer) Ensure(ctx context.Context, plan *api.CertificateIssue) ([]api.
 				held, valid = issued, true
 			}
 		} else if waiting && !current && held.LastError != "" {
+			// An order naming no hostnames failed for that reason; name the
+			// certificate rather than index an empty list.
+			what := order.Name
+			if len(order.Domains) > 0 {
+				what = order.Domains[0]
+			}
 			failures = append(failures, errs.Newf(errs.AdapterFailed,
 				"The certificate for %s could not be issued, and Pando tries again after %s: %s",
-				order.Domains[0], held.AttemptedAt.Add(RetryAfter).Format(time.RFC3339), held.LastError))
+				what, held.AttemptedAt.Add(RetryAfter).Format(time.RFC3339), held.LastError))
 		}
 
 		// A certificate for other names than the order's is still served
