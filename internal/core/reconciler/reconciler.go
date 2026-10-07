@@ -9,6 +9,7 @@ package reconciler
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -33,6 +34,19 @@ const (
 	// DefaultFailureThreshold and DefaultFailureWindow are R-150's give-up rule.
 	DefaultFailureThreshold = 10
 	DefaultFailureWindow    = 30 * time.Minute
+
+	// DefaultLeaseDuration is how long a claim on an app lasts unless the
+	// pass holding it extends it, which it does every third of this. It is
+	// how long an app held by a replica that died waits to be visited again.
+	DefaultLeaseDuration = 2 * time.Minute
+
+	// DefaultMinRevisit is how recently visited an app must be for a pass to
+	// leave it for the next one. Half an interval: with several replicas
+	// ticking out of phase, an app one of them has just looked at is not
+	// looked at again by the next a few seconds later, and on one replica a
+	// pass that finishes within half an interval still visits every app on
+	// every tick.
+	DefaultMinRevisit = Interval / 2
 )
 
 // DefaultBackoff is R-149, capped at five minutes.
@@ -98,6 +112,14 @@ type Reconciler struct {
 	FailureThreshold int
 	FailureWindow    time.Duration
 
+	// MinRevisit is how recently visited an app may be and still be left
+	// for a later pass (DefaultMinRevisit in production). Zero visits every
+	// app on every pass, which is what a test calling Tick in a row wants.
+	MinRevisit time.Duration
+
+	// LeaseDuration overrides DefaultLeaseDuration. Zero means the default.
+	LeaseDuration time.Duration
+
 	// ProxyUpstream is where routes point. Every route points at Pando's proxy
 	// and never at a workload (R-023) — the reconciler re-ensuring a route must
 	// not be the one place that forgets.
@@ -136,36 +158,210 @@ func (r *Reconciler) Run(ctx context.Context) {
 }
 
 // Tick reconciles every app that is due.
+//
+// Apps are claimed in small batches under a lease (state.Lease), least
+// recently visited first, until none is left that was last visited before the
+// pass began. The batches keep the number held but not yet started small,
+// and the lease is what keeps two passes — on this replica or another — off
+// one app. Nothing is held on a database connection while an app is
+// reconciled, however long its Apply takes.
 func (r *Reconciler) Tick(ctx context.Context) {
-	apps, err := r.Reconciles.Due(ctx, r.now(), 200)
+	cutoff, err := r.Reconciles.Cutoff(ctx, r.MinRevisit)
 	if err != nil {
 		r.Logger.Warn("could not list apps to reconcile", zap.Error(err))
 		return
 	}
 
+	lease := r.Reconciles.Lease()
+	keeper := newLeaseKeeper(lease, r.leaseDuration(), r.Logger)
+	keeperCtx, stopKeeper := context.WithCancel(ctx)
+	keeperDone := make(chan struct{})
+	go func() { defer close(keeperDone); keeper.run(keeperCtx) }()
+	defer func() { stopKeeper(); <-keeperDone }()
+
 	sem := make(chan struct{}, Concurrency)
-	done := make(chan struct{})
+	var wg sync.WaitGroup
+	defer wg.Wait()
 
-	for _, app := range apps {
-		select {
-		case <-ctx.Done():
+	for {
+		batch, err := keeper.claim(func() ([]state.Reconcilable, error) {
+			return lease.Claim(ctx, r.now(), cutoff, Concurrency*2, r.leaseDuration())
+		})
+		if err != nil {
+			r.Logger.Warn("could not list apps to reconcile", zap.Error(err))
 			return
-		case sem <- struct{}{}:
+		}
+		if len(batch) == 0 {
+			return
 		}
 
-		go func(a state.Reconcilable) {
-			defer func() { <-sem; done <- struct{}{} }()
-			defer r.recoverPanic(a)
-			r.reconcileOne(ctx, a)
-		}(app)
+		for i, app := range batch {
+			select {
+			case <-ctx.Done():
+				// Claimed and never started: back to the front of the queue
+				// now rather than when the lease runs out.
+				for _, left := range batch[i:] {
+					_ = lease.Release(ctx, left.ID, nil)
+				}
+				return
+			case sem <- struct{}{}:
+			}
+
+			appCtx, ok := keeper.start(ctx, app.ID)
+			if !ok {
+				// The lease ran out while the app waited its turn, and
+				// another pass may have it now.
+				<-sem
+				continue
+			}
+			wg.Add(1)
+			go func(a state.Reconcilable) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				defer func() {
+					keeper.finish(a.ID)
+					visited := a.ClaimedAt
+					if err := lease.Release(ctx, a.ID, &visited); err != nil {
+						r.Logger.Warn("could not release an app after reconciling it",
+							zap.String("app_id", a.ID), zap.Error(err))
+					}
+				}()
+				defer r.recoverPanic(a)
+				r.reconcileOne(appCtx, a)
+			}(app)
+		}
 	}
+}
 
-	for range apps {
+// leaseDuration is how long a claim lasts without being extended.
+func (r *Reconciler) leaseDuration() time.Duration {
+	if r.LeaseDuration > 0 {
+		return r.LeaseDuration
+	}
+	return DefaultLeaseDuration
+}
+
+// leaseKeeper extends a pass's leases while its apps are reconciled, and stops
+// the work on any app whose lease it could not keep.
+//
+// Stopping is what makes a lease as good as the lock it replaced. A lease that
+// runs out is another pass's to claim; an Apply still running here past that
+// point is two reconciliations of one app, which is the thing being prevented.
+type leaseKeeper struct {
+	lease    *state.Lease
+	duration time.Duration
+	logger   *zap.Logger
+
+	// claiming is held across a claim and across an extension, so an app
+	// claimed while an extension is in flight is never mistaken for one the
+	// extension found already gone.
+	claiming sync.Mutex
+
+	mu      sync.Mutex
+	waiting map[string]bool
+	running map[string]context.CancelFunc
+	lost    map[string]bool
+	// heldUntil is when the leases last extended run out, by this process's
+	// clock and conservatively: measured from before the extension was asked.
+	heldUntil time.Time
+}
+
+func newLeaseKeeper(lease *state.Lease, duration time.Duration, logger *zap.Logger) *leaseKeeper {
+	return &leaseKeeper{
+		lease: lease, duration: duration, logger: logger,
+		waiting:   map[string]bool{},
+		running:   map[string]context.CancelFunc{},
+		lost:      map[string]bool{},
+		heldUntil: time.Now().Add(duration),
+	}
+}
+
+// claim runs one claim and records what it returned as held and waiting.
+func (k *leaseKeeper) claim(claim func() ([]state.Reconcilable, error)) ([]state.Reconcilable, error) {
+	k.claiming.Lock()
+	defer k.claiming.Unlock()
+	batch, err := claim()
+	if err != nil {
+		return nil, err
+	}
+	k.mu.Lock()
+	for _, a := range batch {
+		k.waiting[a.ID] = true
+	}
+	k.mu.Unlock()
+	return batch, nil
+}
+
+// start returns the context an app's reconciliation runs under, or false if
+// its lease has already been lost.
+func (k *leaseKeeper) start(ctx context.Context, appID string) (context.Context, bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	delete(k.waiting, appID)
+	if k.lost[appID] || time.Now().After(k.heldUntil) {
+		return nil, false
+	}
+	appCtx, cancel := context.WithCancel(ctx)
+	k.running[appID] = cancel
+	return appCtx, true
+}
+
+func (k *leaseKeeper) finish(appID string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if cancel, ok := k.running[appID]; ok {
+		cancel()
+		delete(k.running, appID)
+	}
+}
+
+// run extends every lease the pass holds at a third of their length, so two
+// extensions can fail before one runs out.
+func (k *leaseKeeper) run(ctx context.Context) {
+	ticker := time.NewTicker(k.duration / 3)
+	defer ticker.Stop()
+	for {
 		select {
-		case <-done:
 		case <-ctx.Done():
 			return
+		case <-ticker.C:
 		}
+
+		k.claiming.Lock()
+		asked := time.Now()
+		held, err := k.lease.Extend(ctx, k.duration)
+
+		k.mu.Lock()
+		if err != nil {
+			if ctx.Err() == nil && time.Now().After(k.heldUntil) {
+				// Not extended, and the last extension has run out: none of
+				// this pass's apps can be assumed to be its own any more.
+				k.logger.Warn("lost the reconciliation lease; stopping this pass's work", zap.Error(err))
+				for appID, cancel := range k.running {
+					cancel()
+					k.lost[appID] = true
+				}
+			}
+			k.mu.Unlock()
+			k.claiming.Unlock()
+			continue
+		}
+		k.heldUntil = asked.Add(k.duration)
+		for appID, cancel := range k.running {
+			if !held[appID] {
+				k.logger.Warn("lost the reconciliation lease on an app; stopping its work",
+					zap.String("app_id", appID))
+				cancel()
+				k.lost[appID] = true
+			}
+		}
+		for appID := range k.waiting {
+			if !held[appID] {
+				k.lost[appID] = true
+			}
+		}
+		k.mu.Unlock()
+		k.claiming.Unlock()
 	}
 }
 
@@ -193,18 +389,8 @@ func (r *Reconciler) recoverPanic(app state.Reconcilable) {
 
 // reconcileOne converges a single app.
 func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) {
-	release, locked, err := r.Reconciles.Lock(ctx, app.ID)
-	if err != nil {
-		r.Logger.Warn("could not lock app for reconciliation",
-			zap.String("app_id", app.ID), zap.Error(err))
-		return
-	}
-	if !locked {
-		// Another tick has it. The next one is fifteen seconds away.
-		return
-	}
-	defer release()
-
+	// No lock taken here: the app is this pass's under its lease (Tick), and
+	// ctx is canceled if the lease is lost.
 	rev, found, err := r.Apps.RevisionByID(ctx, app.PinnedSpecID)
 	if err != nil || !found {
 		return

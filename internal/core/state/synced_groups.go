@@ -205,7 +205,7 @@ func (s *SCIMGroups) List(ctx context.Context, adapterID, attr, value string, of
 	}
 	// totalResults is required (RFC 7644 §3.4.2); counted only when the page
 	// does not already show it, as for users. Index-served
-	// (groups_scim_list_idx, migration 000047).
+	// (groups_scim_list_idx, migration 000049).
 	total, ok := totalFromPage(offset, limit, len(ids))
 	if !ok {
 		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM groups WHERE `+where, countArgs...).Scan(&total); err != nil {

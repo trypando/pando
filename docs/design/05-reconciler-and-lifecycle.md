@@ -83,7 +83,13 @@ func (r *Reconciler) Tick(ctx context.Context) {
 }
 ```
 
-**[P]** Interval: 15 seconds. Concurrency: 8 apps at once. Per-app work is serialized by an advisory lock on `app_id` so two ticks cannot overlap on one app.
+**[P]** Interval: 15 seconds. Concurrency: 8 apps at once. Per-app work is serialized by a **lease** on the app's row so two ticks — on one replica or several — cannot overlap on one app (issue #72, migration 000048):
+
+- A pass claims apps in batches of 16 with `UPDATE … WHERE id IN (SELECT … ORDER BY reconcile_lease_until NULLS FIRST LIMIT 16 FOR UPDATE SKIP LOCKED)`, setting `reconcile_lease_until` to two minutes out and `reconcile_lease_holder` to itself. It claims until nothing is left that was last visited before the pass began.
+- While its apps are reconciled the pass extends its leases every 40 seconds. An app whose lease was not extended — another pass may have it now — has its context canceled, so its work stops instead of running beside the new holder's.
+- Releasing an app sets `reconcile_lease_until` back to when its visit started. That one column orders the queue (never visited, then least recently visited), so every app gets its turn. The loop used to read the 200 due apps with the oldest `updated_at`, which a healthy pass never changes: past 200 apps the same 200 were visited forever and the rest were never observed or repaired.
+- An app visited less than half an interval ago is left for the next pass (`DefaultMinRevisit`), so replicas ticking out of phase share the apps instead of each visiting every one.
+- Nothing holds a database connection during a reconciliation. The advisory lock this replaced held one per app for the whole of Apply, while the reconciliation took more.
 
 ```go
 func (r *Reconciler) reconcileOne(ctx context.Context, app App) {
@@ -264,6 +270,8 @@ A deployment is a foreground operation, not the reconciler's work. The reconcile
 5.  Check isolation floors (build+runtime) → PLAN_NO_ADAPTER_MEETS_POLICY (R-024, R-114)
 6.  Check every required slot is resolved  → PLAN_SLOT_UNFILLED          (R-132)
 7.  Check capacity                         → CAPACITY_WOULD_OVERSUBSCRIBE (R-242)
+                                             CPU / memory skipped where policy allows
+                                             oversubscribing it; disk always checked
     ── plan boundary: nothing has been created yet ──
 7b. Needs approval? → deployment awaiting_approval; stop here (§3.3, R-154)
 8.  Clone source, resolve ref → commit SHA

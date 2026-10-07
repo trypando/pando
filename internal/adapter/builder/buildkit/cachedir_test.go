@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -86,4 +87,57 @@ func TestR224_ADeletedAppsBuildCacheIsRemoved(t *testing.T) {
 		require.Error(t, a.Forget(context.Background(), bad), bad)
 	}
 	require.DirExists(t, root)
+}
+
+// TestR224_AppBuildCachesAreEvictedLeastRecentlyUsedFirst asserts R-224 for
+// the build caches together: past their total, whole apps' caches go, the
+// least recently used first, and a cache in use is never removed (issue #72).
+func TestR224_AppBuildCachesAreEvictedLeastRecentlyUsedFirst(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	cache := func(app string, bytes int, lastUsed time.Time) {
+		dir := filepath.Join(root, app, "web", "blobs", "sha256")
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "layer"), make([]byte, bytes), 0o644))
+		marker := filepath.Join(root, app, lastUsedMarker)
+		require.NoError(t, os.WriteFile(marker, nil, 0o644))
+		require.NoError(t, os.Chtimes(marker, lastUsed, lastUsed))
+	}
+	cache("app_oldest", 400, now.Add(-72*time.Hour))
+	cache("app_older", 400, now.Add(-48*time.Hour))
+	cache("app_recent", 400, now.Add(-2*time.Hour))
+	cache("app_building", 400, now.Add(-time.Minute))
+
+	removed, err := evictCaches(root, 1000, now)
+	require.NoError(t, err)
+	require.Equal(t, []string{"app_oldest", "app_older"}, removed,
+		"oldest first, and only until the rest fit")
+	require.DirExists(t, filepath.Join(root, "app_recent"))
+	require.DirExists(t, filepath.Join(root, "app_building"))
+
+	removed, err = evictCaches(root, 100, now)
+	require.NoError(t, err)
+	require.Equal(t, []string{"app_recent"}, removed)
+	require.DirExists(t, filepath.Join(root, "app_building"),
+		"a cache a build is using is left alone, even over the limit")
+
+	removed, err = evictCaches(root, 1<<20, now)
+	require.NoError(t, err)
+	require.Empty(t, removed, "under the limit nothing goes")
+}
+
+// The marker a build touches is what orders eviction.
+func TestR224_ABuildMarksItsAppsCacheAsUsed(t *testing.T) {
+	t.Setenv("PANDO_BUILD_CACHE_DIR", t.TempDir())
+	at := time.Now().Add(-time.Hour).Truncate(time.Second)
+	touchCache("app_x", at)
+	info, err := os.Stat(filepath.Join(cachePath("app_x"), lastUsedMarker))
+	require.NoError(t, err)
+	require.True(t, info.ModTime().Equal(at))
+
+	later := at.Add(30 * time.Minute)
+	touchCache("app_x", later)
+	info, err = os.Stat(filepath.Join(cachePath("app_x"), lastUsedMarker))
+	require.NoError(t, err)
+	require.True(t, info.ModTime().Equal(later))
 }

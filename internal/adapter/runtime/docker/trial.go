@@ -86,7 +86,7 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 }
 
 func (a *Adapter) trialNetwork(ctx context.Context, trialID string) (string, error) {
-	created, err := a.createNetwork(ctx, "pando-trial-"+trialID, client.NetworkCreateOptions{
+	created, err := a.createNetwork(ctx, "pando-trial-"+trialID, a.blockBits(), client.NetworkCreateOptions{
 		Driver:   "bridge",
 		Internal: false, // the app may legitimately need to fetch something to start
 		Labels:   map[string]string{labelManaged: "true", labelTrial: trialID},

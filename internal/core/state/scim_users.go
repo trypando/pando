@@ -99,7 +99,7 @@ func (s *SCIMUsers) List(ctx context.Context, adapterID, attr, value string, off
 	// not full holds every match. That is the common call by far, a client
 	// looking one user up by userName before creating it, and it then costs
 	// one indexed query instead of two. The count is index-served
-	// (user_identities_scim_list_idx, migration 000047).
+	// (user_identities_scim_list_idx, migration 000049).
 	if total, ok := totalFromPage(offset, limit, len(out)); ok {
 		return out, total, nil
 	}

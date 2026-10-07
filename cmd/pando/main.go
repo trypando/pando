@@ -870,6 +870,9 @@ func serve(ctx context.Context, configPath string) error {
 		Clock:         clock.System{},
 		ProxyUpstream: proxyUpstream,
 
+		// Replicas share the apps rather than each visiting every one.
+		MinRevisit: reconciler.DefaultMinRevisit,
+
 		// The owner hears that their app failed (design 05 §4). Unset until
 		// issue #50, which is to say nobody heard.
 		Notifier: notifyRouter,
@@ -898,9 +901,9 @@ func serve(ctx context.Context, configPath string) error {
 	loopCtx, stopLoop := context.WithCancel(ctx)
 	defer stopLoop()
 
-	// The reconciler runs on every replica: it locks per app (state
-	// Reconciles.Lock), so replicas share the apps between them rather than
-	// fighting over them.
+	// The reconciler runs on every replica: it claims apps under a lease
+	// with SKIP LOCKED (state.Lease), so replicas share the apps between them
+	// rather than fighting over them.
 	go loop.Run(loopCtx)
 
 	// What must happen once per install rather than once per process runs on
@@ -1103,14 +1106,14 @@ func serve(ctx context.Context, configPath string) error {
 	// private network behind. Registry and Auditor are what make that possible
 	// — and the teardown is audited, because destruction is destruction whoever
 	// does it.
-	job("gc", (&reconciler.GC{
-		Apps:        apps,
-		Logger:      logger,
-		Registry:    registryAdapters{registry},
-		Auditor:     reconcilerAuditor{auditor},
-		Interval:    cfg.Reconciler.GCInterval,
-		TeardownNow: teardownNow,
-		Clock:       clock.System{},
+	gc := &reconciler.GC{
+		Apps:     apps,
+		Logger:   logger,
+		Registry: registryAdapters{registry},
+		Auditor:  reconcilerAuditor{auditor},
+		Interval: cfg.Reconciler.GCInterval,
+
+		Clock: clock.System{},
 
 		// A deleted app's build cache and uploaded source (R-224, issue #55).
 		BuildCaches:   buildCaches{registry},
@@ -1132,7 +1135,23 @@ func serve(ctx context.Context, configPath string) error {
 		PolicyStore:   hostPolicy,
 		Desired:       apps,
 		Notifier:      securityNotifier{notifyRouter},
-	}).Run)
+	}
+	job("gc", gc.Run)
+
+	// A delete tears its app down at once, on the replica that took the
+	// delete, whichever replica leads (issue #72). Teardown is idempotent, so
+	// this and the leader's own pass meeting on one app is harmless; and the
+	// leader's pass is what catches a delete whose replica stopped first.
+	go func() {
+		for {
+			select {
+			case <-loopCtx.Done():
+				return
+			case <-teardownNow:
+				gc.TearDownDeleted(loopCtx)
+			}
+		}
+	}()
 
 	// Whichever replica holds the leader lock runs the jobs above; with one
 	// replica, that is this one, a moment after it starts.

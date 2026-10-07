@@ -1,6 +1,6 @@
 -- Indexes for the lists that grow with the organization (issue #72).
 --
--- Numbered 000047 rather than the next free 000046: another change in the same
+-- Numbered 000049 rather than the next free 000046: another change in the same
 -- stack (PR 4, retention and deployment indexes) takes 000046. IF NOT EXISTS
 -- because that change also lists apps(owner_user_id); whichever lands second
 -- finds it made.

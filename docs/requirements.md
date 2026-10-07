@@ -745,7 +745,7 @@ without touching core (O-6 resolved).
 
 **R-226 [D]** The audit log is in core and cannot be written or rewritten by an adapter (R-027).
 
-**R-227 [P]** Auditable events: every spec mutation, every grant change, every deploy and every step of a deploy approval (R-159), every secret write, every token creation and use, every exec session, every policy change, every delete, every use of an app — once per visit, anonymous visitors included unless host policy turns that off — and every call that sends data to an AI adapter's provider, naming the function, the adapter and the model but not what was sent (R-337).
+**R-227 [P]** Auditable events: every spec mutation, every grant change, every deploy and every step of a deploy approval (R-159), every secret write, every token creation and use, every exec session, every policy change, every delete, every use of an app — once per visit, anonymous visitors included unless host policy turns that off — every authorization denial — a visitor who is not signed in being refused an app included, unless host policy turns that off (issue #72) — and every call that sends data to an AI adapter's provider, naming the function, the adapter and the model but not what was sent (R-337).
 
 **R-228 [P]** Exec sessions are audited as a distinct event type — principal, app, workload, start and end. Command contents are **not** recorded. **[O-7]**
 
@@ -864,7 +864,7 @@ Events tab and `GET /apps/{id}/events`. The feed holds what the outbox keeps (R-
 
 **R-241 [D]** Per-app override is available, gated by `app.resources.override`.
 
-**R-242 [D]** **Pando tracks total allocation against host capacity** and must refuse a deploy that would oversubscribe, failing at plan time with a readable message rather than letting the kernel resolve it with OOM kills.
+**R-242 [D]** **Pando tracks total allocation against host capacity** and by default must refuse a deploy that would oversubscribe, failing at plan time with a readable message rather than letting the kernel resolve it with OOM kills. Host policy may allow CPU oversubscription and memory oversubscription, each separately (`allow_cpu_oversubscription`, `allow_memory_oversubscription`); both are off by default. **Disk is never oversubscribed**, whatever policy says: it is not a share the kernel hands out, and a full disk stops every app and Pando with it. *(Amended by issue #72: oversubscription was refused unconditionally, which made packing many mostly-idle apps onto one host impossible.)*
 
 **R-243 [D]** **Capacity is adapter-reported, not host-inspected.** The local Docker adapter reports the machine it runs on; a clustered adapter reports what its cluster has. Core does not read `/proc`.
 
