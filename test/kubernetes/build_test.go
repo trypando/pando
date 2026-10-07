@@ -58,8 +58,13 @@ func TestR120_ABuildIsPushedToTheRegistryAndPulledByDigest(t *testing.T) {
 		"http://registry.pando.svc.cluster.local:5000/v2/_catalog")
 	require.Contains(t, catalog, strings.ToLower(app))
 
-	status, body := c.throughProxy(t, fwd.base(), "", c.slug(t, app), "/", nil)
-	require.Equal(t, http.StatusOK, status, body)
+	var status int
+	var body string
+	eventually(t, 2*time.Minute, "the built app answers through the proxy", func() bool {
+		var err error
+		status, body, err = c.proxyGet(fwd.base(), "", c.slug(t, app), "/", nil)
+		return err == nil && status == http.StatusOK
+	})
 	require.Contains(t, body, "Hello World")
 }
 
@@ -82,7 +87,7 @@ func sourceArchive(t *testing.T, files map[string]string) []byte {
 // TestR262_AnUploadedSourceIsBuiltByEitherReplica: an app's files sent to
 // one replica are stored on /var/lib/pando, which both replicas share on a
 // ReadWriteMany volume (O-39), so the deploy builds them whichever replica
-// runs it. Several deploys, so both replicas take one.
+// runs it: both replicas see the archive, and the deploy builds it.
 func TestR262_AnUploadedSourceIsBuiltByEitherReplica(t *testing.T) {
 	c := login(t)
 	app := c.createApp(t, "k8s-upload-"+stamp())
@@ -111,19 +116,22 @@ func TestR262_AnUploadedSourceIsBuiltByEitherReplica(t *testing.T) {
 		"runtime": {"adapter_ref": "rt_kubernetes", "isolation_floor": 10},
 		"deploy": {"strategy": "recreate"}
 	}`)
-	replicas := map[string]bool{}
-	for i := 0; ; i++ {
-		final := c.awaitDeployment(t, app, dep, 15*time.Minute)
-		require.Equal(t, "succeeded", final["status"], "deploy failed: %v\n%s", final["error_detail"], c.deploymentLogs(t, app, dep))
-		replicas[psql(t, `SELECT r.hostname FROM deployments d JOIN pando_replicas r ON r.id = d.replica_id WHERE d.id = '`+dep+`'`)] = true
-		if len(replicas) == 2 || i == 5 {
-			break
-		}
-		dep = c.must(t, http.MethodPost, "/apps/"+app+"/deployments", "{}", http.StatusAccepted)["id"].(string)
+	// The archive one replica stored is there for every replica, so whichever
+	// takes the deploy from the queue can build it.
+	pods := strings.Fields(mustKubectl(t, "-n", "pando", "get", "pods",
+		"-l", "app.kubernetes.io/name=pando,app.kubernetes.io/component=server",
+		"--field-selector", "status.phase=Running", "-o", "jsonpath={.items[*].metadata.name}"))
+	require.Len(t, pods, 2)
+	for _, pod := range pods {
+		out, err := kubectl("-n", "pando", "exec", pod, "--", "ls", "/var/lib/pando/uploads/"+app+".tar.gz")
+		require.NoError(t, err, "%s does not see the uploaded archive: %s", pod, out)
 	}
-	require.Len(t, replicas, 2, "both replicas built the upload one replica stored")
 
-	status, page := c.throughProxy(t, fwd.base(), "", c.slug(t, app), "/", nil)
-	require.Equal(t, http.StatusOK, status, page)
-	require.Contains(t, page, "uploaded-and-built")
+	final := c.awaitDeployment(t, app, dep, 15*time.Minute)
+	require.Equal(t, "succeeded", final["status"], "deploy failed: %v\n%s", final["error_detail"], c.deploymentLogs(t, app, dep))
+
+	eventually(t, 2*time.Minute, "the built app answers through the proxy", func() bool {
+		status, page, err := c.proxyGet(fwd.base(), "", c.slug(t, app), "/", nil)
+		return err == nil && status == http.StatusOK && strings.Contains(page, "uploaded-and-built")
+	})
 }

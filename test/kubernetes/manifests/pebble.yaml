@@ -11,7 +11,9 @@
 #
 # Certificates are valid for 29 days, under Pando's 30-day renewal window,
 # so the leader renews each one at its next edge pass: renewal ahead of
-# expiry, observable within minutes.
+# expiry, observable within minutes. Pebble before 2.7 reads the validity
+# from certificateValidityPeriod; 2.7 and later from the default profile, and
+# ignore the other, so both are set.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -29,7 +31,10 @@ data:
         "tlsPort": 443,
         "ocspResponderURL": "",
         "externalAccountBindingRequired": false,
-        "certificateValidityPeriod": 2505600
+        "certificateValidityPeriod": 2505600,
+        "profiles": {
+          "default": {"description": "29 days, inside Pando's renewal window", "validityPeriod": 2505600}
+        }
       }
     }
 ---

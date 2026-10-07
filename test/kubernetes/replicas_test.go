@@ -49,6 +49,8 @@ func TestR256_ADeployResumesOnTheOtherReplicaWhenItsPodIsDeleted(t *testing.T) {
 		out, _ := kubectl("-n", "pando", "get", "deployment", "pando", "-o", "jsonpath={.status.readyReplicas}")
 		return out == "2"
 	})
+	// The new replica runs its own canary before it plans a deploy (O-43).
+	require.NoError(t, awaitRuntime())
 	next := c.must(t, http.MethodPost, "/apps/"+app+"/deployments", "{}", http.StatusAccepted)
 	require.NotEmpty(t, next["id"], "the app's next deploy is accepted")
 }

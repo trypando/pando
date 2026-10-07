@@ -66,9 +66,9 @@ func TestO43_TheRuntimePassesItsNetworkPolicyCanary(t *testing.T) {
 	require.Equal(t, []any{"registry"}, caps["ImageDelivery"])
 
 	// The canary cleans up after itself.
-	eventually(t, 2*time.Minute, "the canary's namespace is removed", func() bool {
-		_, err := kubectl("get", "namespace", "pando-canary")
-		return err != nil
+	eventually(t, 2*time.Minute, "the canaries' namespaces are removed", func() bool {
+		out, err := kubectl("get", "namespaces", "-l", "pando.dev/role=canary", "-o", "name")
+		return err == nil && strings.TrimSpace(out) == ""
 	})
 }
 

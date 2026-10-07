@@ -205,15 +205,42 @@ func claim() {
 	}
 }
 
-// awaitRuntime waits for rt_kubernetes to report healthy. A fresh Pando
-// refuses deploys on the runtime until its first NetworkPolicy canary has
-// passed (O-43), which takes as long as three pods pulling an image.
+// awaitRuntime waits for rt_kubernetes to report healthy on every replica. A
+// fresh Pando refuses deploys on the runtime until its first NetworkPolicy
+// canary has passed (O-43), which takes as long as three pods pulling an
+// image — and each replica runs its own. Asking each replica directly is
+// what showed two replicas' canaries spoiling each other.
 func awaitRuntime() error {
+	out, err := kubectl("-n", "pando", "get", "pods", "-l", "app.kubernetes.io/name=pando,app.kubernetes.io/component=server",
+		"--field-selector", "status.phase=Running", "-o", "jsonpath={.items[*].metadata.name}")
+	if err != nil {
+		return err
+	}
+	for _, pod := range strings.Fields(out) {
+		if err := awaitReplicaRuntime(pod); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func awaitReplicaRuntime(pod string) error {
+	port, err := freePort()
+	if err != nil {
+		return err
+	}
+	pf := exec.Command("kubectl", "--context", kubeContext(), "-n", "pando", "port-forward", "pod/"+pod, fmt.Sprintf("%d:8080", port))
+	if err := pf.Start(); err != nil {
+		return err
+	}
+	defer func() { _ = pf.Process.Kill(); _ = pf.Wait() }()
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+
 	c := &http.Client{Timeout: 30 * time.Second}
 	deadline := time.Now().Add(8 * time.Minute)
-	var last string
+	last := "no answer"
 	for time.Now().Before(deadline) {
-		resp, err := c.Post(fwd.base()+"/api/v1/sessions", "application/json",
+		resp, err := c.Post(base+"/api/v1/sessions", "application/json",
 			strings.NewReader(fmt.Sprintf(`{"username":"admin","password":%q}`, adminPassword)))
 		if err == nil {
 			var cookie string
@@ -223,7 +250,7 @@ func awaitRuntime() error {
 				}
 			}
 			_ = resp.Body.Close()
-			req, _ := http.NewRequest(http.MethodGet, fwd.base()+"/api/v1/adapters", nil)
+			req, _ := http.NewRequest(http.MethodGet, base+"/api/v1/adapters", nil)
 			req.AddCookie(&http.Cookie{Name: "pando_session", Value: cookie})
 			if resp, err = c.Do(req); err == nil {
 				var list struct {
@@ -244,11 +271,10 @@ func awaitRuntime() error {
 		}
 		if err != nil {
 			last = err.Error()
-			_ = fwd.ensure()
 		}
 		time.Sleep(5 * time.Second)
 	}
-	return fmt.Errorf("the Kubernetes runtime did not become healthy within 8m: %s", last)
+	return fmt.Errorf("the Kubernetes runtime did not become healthy on %s within 8m: %s", pod, last)
 }
 
 type client struct {
@@ -400,7 +426,9 @@ func (c *client) deployImage(t *testing.T, name, spec string) string {
 }
 
 // namespaceOf is the app's namespace (notes, "Namespace per app").
-func namespaceOf(app string) string { return "pando-" + strings.ToLower(strings.ReplaceAll(app, "_", "-")) }
+func namespaceOf(app string) string {
+	return "pando-" + strings.ToLower(strings.ReplaceAll(app, "_", "-"))
+}
 
 // throughProxy requests path under the app's slug from Pando's proxy, as the
 // signed-in administrator, with extra headers and cookies.
