@@ -6,7 +6,7 @@ setting up the release build; O-19 was found by turning `gosec` on; O-20 was fou
 first AI adapter; O-21 and O-22 came from issue #74, AI functions beyond detection; O-23 came from
 building the Cloudflare Tunnel adapter; O-24 came from issue #87; O-25 from issue #79, egress rules;
 O-26 from issue #39, deploy approval; O-28 through O-31 from issue #41, deploying prebuilt images
-and uploaded files; O-32 and O-33 from issue #72, running Pando as several replicas. **Twenty-five are resolved; the rest are listed below.** O-32 (a deploy and detection work queue) and O-33 (a Kubernetes runtime adapter) were both answered yes, alongside a multi-host Docker adapter and a registry Pando runs by default; `docs/design/notes-multiple-replicas-issue-72.md` has the decisions and the PRs that carry them out. O-4 needs a
+and uploaded files; O-32 and O-33 from issue #72, running Pando as several replicas; O-34 through O-47 from the design notes for PRs 5–7 of the same issue (an image registry, a Kubernetes runtime adapter, Docker on several hosts). **Twenty-five are resolved; the rest are listed below.** O-32 (a deploy and detection work queue) and O-33 (a Kubernetes runtime adapter) were both answered yes, alongside a multi-host Docker adapter and a registry Pando runs by default; `docs/design/notes-multiple-replicas-issue-72.md` has the decisions and the PRs that carry them out. O-4 needs a
 measurement, O-18 needs somebody to pick a host and pay for it, O-23 is kept open deliberately so
 it is revisited, and O-24 needs a product call on stopped apps.
 
@@ -29,6 +29,20 @@ resolution both here and in the requirements or design doc that owns it.
 | **O-28** | Whether an ECR pull may use Pando's own AWS identity (an instance role) rather than access keys an app supplies (issue #41) | Lends every app whatever Pando's role can read — the same trade as O-30's resolution, with a cloud IAM boundary behind it. `[P]` explicit keys only | Not blocking — design 01 §2.1 |
 | **O-29** | Whether a non-empty source allowlist admits uploaded files (issue #41) | R-092 says the allowlist restricts "deployable sources" and does not mention uploads, which have no host for an entry to name. `[P]` refused unless the list contains `upload` | Not blocking — design 01 §2.1 |
 | **O-31** | Whether an upload may be a `docker save` tarball as well as source files (issue #41) | The runtime can already import an image from a stream (`SupportsImageImport`); accepting one is a third kind of upload with its own scanning and pinning story, not an extension of this one | Not blocking — design 04 §4 |
+| **O-34** | Whether the single-VM install runs an image registry too (issue #72, PR 5) | `[P]` no: single-host Docker keeps `ImportImage` and pins built images by image ID | Issue #72 PR 5 — `notes-image-registry-issue-72.md` |
+| **O-35** | How a Pando-run registry gets a certificate every node trusts | `[P]` operator-supplied certificate; plain HTTP accepted by explicit setting | Issue #72 PR 5 — `notes-image-registry-issue-72.md` |
+| **O-36** | Whether one full-access registry credential is acceptable, or Pando issues pull-only tokens per app | `[P]` one `htpasswd` credential now; pull by digest limits what a leak can change | Issue #72 PR 5 — `notes-image-registry-issue-72.md` |
+| **O-37** | Whether the DR bundle includes the registry's images (R-212) | `[P]` never; rebuild after restore. Uploads, which are not in the bundle today, go in | Issue #72 PR 5 — `notes-image-registry-issue-72.md` |
+| **O-38** | Whether a weekly read-only window for registry blob GC is acceptable | `[P]` yes, Distribution with a scheduled GC; Zot if not | Issue #72 PR 5 — `notes-image-registry-issue-72.md` |
+| **O-39** | What replaces the shared `/var/lib/pando` in a cluster | `[P]` a ReadWriteMany volume first, then uploads and build cache moved out | Issue #72 PR 6 — `notes-kubernetes-runtime-issue-72.md` |
+| **O-40** | Namespace per app on Kubernetes, given 20,000 apps exceeds the tested namespace count | `[P]` namespace per app, proven with the load harness | Issue #72 PR 6 — `notes-kubernetes-runtime-issue-72.md` |
+| **O-41** | How a pod pulls an app's private image | `[P]` an `imagePullSecret` per app namespace, rewritten at every apply | Issue #72 PR 6 — `notes-kubernetes-runtime-issue-72.md` |
+| **O-42** | How R-174's edge works on Kubernetes | `[P]` edges without a shared mount (cloudflared); Traefik unmanaged; a Gateway API routing adapter later | Issue #72 PR 6 — `notes-kubernetes-runtime-issue-72.md` |
+| **O-43** | Whether the Kubernetes adapter requires a NetworkPolicy-enforcing CNI and a dedicated cluster | `[P]` require the CNI (verified by a canary), recommend dedication | Issue #72 PR 6 — `notes-kubernetes-runtime-issue-72.md` |
+| **O-44** | Whether a workload recreated on another node after node failure is consistent with R-010 | `[P]` yes, with R-010 amended to say Pando itself does not reschedule. A requirement change | Issue #72 PR 6 — `notes-kubernetes-runtime-issue-72.md` |
+| **O-45** | How the proxy reaches an app on another Docker host (R-023) | `[P]` a forwarding agent per host, mTLS with a certificate only Pando holds; changes design 06 §4's mechanism | Issue #72 PR 7 — `notes-multi-host-docker-issue-72.md` |
+| **O-46** | Whether moving an app between Docker hosts is an action Pando offers | `[P]` not in the first release; later an administrator's action, needing a new install verb | Issue #72 PR 7 — `notes-multi-host-docker-issue-72.md` |
+| **O-47** | Whether Pando's replicas may run on more than one Docker host | `[P]` control host only until O-39 removes the shared volume | Issue #72 PR 7 — `notes-multi-host-docker-issue-72.md` |
 
 **O-4** has a `[P]` fallback that preserves R-103: default `Required: false` for anything the file
 gives a sample value for, and let the trial run settle it — a slot whose absence crashes the trial run
