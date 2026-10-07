@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
-	dockeradapter "github.com/trypando/pando/internal/adapter/runtime/docker"
 )
 
 // buildTestImage builds a tiny image from dockerfile under name, removing it
@@ -112,10 +111,6 @@ func TestR025_StartupReclaimsOnlyNetworksNoContainerBelongsTo(t *testing.T) {
 		t.Fatalf("could not create the stopped container: %v %s", err, out)
 	}
 	t.Cleanup(func() { _, _ = dockerCLI("rm", "-f", holder) })
-
-	// The networks above are seconds old, and reclaim leaves a network that
-	// young alone in case another replica is deploying onto it (issue #72).
-	dockeradapter.SetReclaimMinAge(a, 0)
 
 	mine := func(bundle string) bool { return bundle == empty || bundle == stopped }
 	n, err := a.ReclaimNetworks(ctx, mine)

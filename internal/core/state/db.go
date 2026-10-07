@@ -101,6 +101,10 @@ type ConnectOptions struct {
 
 	// SkipMigrate is for tests that manage schema themselves.
 	SkipMigrate bool
+
+	// MaxConns caps the application pool; zero is pgx's default
+	// (config.Database.MaxConns explains the choice).
+	MaxConns int32
 }
 
 func (o *ConnectOptions) setDefaults() {
@@ -154,7 +158,7 @@ func Connect(ctx context.Context, opts ConnectOptions) (*DB, error) {
 		return nil, err
 	}
 
-	db, err := connectAsApp(ctx, opts.OwnerURL, passwords.App, version)
+	db, err := connectAsApp(ctx, opts.OwnerURL, passwords.App, version, opts.MaxConns)
 	if err != nil {
 		return nil, err
 	}
@@ -232,12 +236,19 @@ func Regrant(ctx context.Context, ownerURL string) error {
 }
 
 // connectAsApp opens the pool the rest of the process uses, held as AppRole.
-func connectAsApp(ctx context.Context, ownerURL string, appPassword secret.Value, version uint) (*DB, error) {
+func connectAsApp(ctx context.Context, ownerURL string, appPassword secret.Value, version uint, maxConns int32) (*DB, error) {
 	appURL, err := withCredentials(ownerURL, AppRole, appPassword)
 	if err != nil {
 		return nil, err
 	}
-	pool, err := pgxpool.New(ctx, appURL)
+	cfg, err := pgxpool.ParseConfig(appURL)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "The database connection URL is malformed.", err)
+	}
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not connect to the state database as the application role.", err)
 	}

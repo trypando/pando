@@ -70,5 +70,5 @@ func ConnectCopy(ctx context.Context, ownerURL string, appPassword secret.Value)
 	if err := verifyAuditImmutability(ctx, owner); err != nil {
 		return nil, err
 	}
-	return connectAsApp(ctx, ownerURL, appPassword, version)
+	return connectAsApp(ctx, ownerURL, appPassword, version, 0)
 }

@@ -18,20 +18,20 @@ container no longer takes every app offline while Pando restarts, which is the o
 design 00 §1.4. It is not more capacity for apps. Apps still run where the runtime adapter puts
 them, and with the Docker adapter that is one Docker host.
 
-**Not supported:**
+**Not supported by this PR** — each is a later PR in the stack (below):
 
 - **Replicas on different Docker hosts.** The Docker runtime adapter reaches apps by joining each
   app's bridge network as Pando's own container (design 03 §4, `attachProxy`). A replica on another
-  host cannot join that network, so its proxy cannot reach the app. Fixing that is a runtime adapter
-  that spans machines, which is what R-256 already says multi-machine capability is.
+  host cannot join that network, so its proxy cannot reach the app. The fix is a runtime adapter
+  that spans machines, which is what R-256 already says multi-machine capability is: PRs 6 and 7.
 - **Kubernetes as the place the replicas run, with no Docker host beside it.** A pod has no Docker
-  socket, and pods on different nodes cannot share one host's bridge networks. A Kubernetes runtime
-  adapter would make this work, and is its own issue (O-33).
-- **The in-place upgrade (R-359) with more than one live replica.** It replaces the one container it
-  runs in. The upgrade plan now says so and refuses; upgrade by rolling every replica to the new
-  image with whatever runs them.
+  socket, and pods on different nodes cannot share one host's bridge networks. PR 6 (O-33).
 - **Horizontal throughput of deploys and detections.** Each runs in the process that started it, as
-  before. N replicas share the requests, not a work queue (O-32).
+  before. N replicas share the requests, not a work queue. PR 4 (O-32).
+
+**Not supported at all: the in-place upgrade (R-359) with more than one live replica.** It replaces
+the one container it runs in. The upgrade plan now says so and refuses; upgrade by rolling every
+replica to the new image with whatever runs them.
 
 ## What a replica needs
 
@@ -88,8 +88,9 @@ its connection cancels its jobs and waits for them to stop before anyone else ca
 | Audit retention, approval expiry, adapter health events, edges, upgrade loop | leader | Once per install |
 | Sweep of stopped replicas' work; pruning old replica rows and passcode failures | leader | Once per install |
 
-**Network reclaim at startup** now skips networks younger than ten minutes, so it cannot remove a
-network a deploy on another replica has just created and not yet put a container on.
+**Network reclaim at startup** now skips the network of any app with a deploy in flight. Another
+replica's deploy makes the app's network before its containers, so for a moment it is empty and
+container-less and looks like a dead app's; a deleted app has nothing in flight.
 
 ### Per-process state a load balancer split
 
@@ -106,7 +107,8 @@ network a deploy on another replica has just created and not yet put a container
 ### Accepted costs
 
 - A deleted app's network stays until every replica that joined it has been replaced, not until the
-  next restart of one process. Docker's default address pool holds about thirty networks.
+  next restart of one process. Pando's own address pool (10.213.0.0/16 in /26 blocks) holds about
+  1,000; PR 3 widens it.
 - A request already relayed for a deploy log is cut if the replica holding it stops; the reader
   retries and gets the "has since stopped" line.
 - Restoring a DR bundle (R-212) replaces `pando_replicas` with the bundle's. Every replica then finds
@@ -132,12 +134,54 @@ network a deploy on another replica has just created and not yet put a container
   from the database's clock, never a replica's — the same as one process writing from many
   goroutines, which it already was.
 
+## Is all of Pando scalable? The rest of the stack
+
+Replicas answer one question — can Pando's own process be more than one copy. Issue #72 asks the
+larger one: can a whole organization put its apps on one Pando install. That was audited end to end
+(request path, app capacity, background work, data growth) and the answer is **not yet**. This PR is
+the first of a stack; each later PR is based on the one before, and #72 closes with the last.
+
+**Targets [D].** Two tiers, which the load harness proves:
+
+| Tier | Users | Apps | Concurrent console users | Runtime |
+|---|---|---|---|---|
+| Single VM | ~3,000 | ~1,000 | — | Docker on the VM |
+| Cluster | ~100,000 | ~20,000 | ~5,000 | Kubernetes, or Docker on several hosts; N Pando replicas |
+
+**Decisions [D]** (the issue's author, for this stack):
+
+- **Several machines without Kubernetes are supported** by a multi-host Docker runtime adapter, as well
+  as by a Kubernetes one. Placement is the adapter's; core still places nothing (R-256).
+- **Built images go to a registry**, which Pando runs by default and setup may point at the
+  organization's own. Both multi-machine adapters need it: neither can load a built image into the
+  host the way single-host Docker does.
+- **Capacity is not oversubscribed by default** (R-242), and host policy or config may allow CPU and
+  memory oversubscription. Disk is never oversubscribed: it is not a reservation, and a full disk
+  stops everything.
+- **API tokens are hashed with HMAC-SHA-256**, not argon2id. They are 256-bit random secrets Pando
+  generates, so a slow hash adds nothing but cost (about 64 MiB per concurrent request). Passwords
+  stay argon2id.
+- **Anonymous data-plane denials stay audited by default**, and host policy or config may turn that
+  off, since anyone can cause one write per request.
+
+**What the audit found, and which PR fixes it:**
+
+| PR | Fixes |
+|---|---|
+| 1 (this) | Replicas, above. The application pool's size is now set (`PANDO_DATABASE_MAX_CONNS`, default 32): pgx's default of the CPU count could be used up by the reconciler's held locks plus the leader's |
+| 2 — request path and a load harness | A new HTTP transport per proxied request (no upstream connection reuse); hostname and port app lookups scanning every pinned spec's JSON; `AppVerbs` running the full control check sixteen times per request; the launcher query and unpaginated user, group, app and approval lists; console polling that calls Docker on every `/status` and `/usage`; token hashing and the per-request `last_used_at` write; the anonymous-denial audit toggle; a proxied websocket not closing when its session is revoked or its user suspended (R-048, a security fix); the deploy log store never freeing a finished deploy. The harness seeds the two tiers and drives proxy, API and console traffic through the replicas stack |
+| 3 — single-host capacity | **The reconciler only ever visits 200 apps**: `Due` orders by `updated_at`, which a healthy pass never changes, so past 200 apps the rest are never observed or repaired. Replaced by a lease column claimed with `SKIP LOCKED`, which also spreads apps across replicas and stops holding a connection per app. The oversubscription toggle. Smaller subnets (/28) and a shared egress bridge, lifting the network pool from about 1,000 apps to about 4,000. The rejoin loop inspecting every network every 15 s; unbounded usage sampling; the per-app build cache with no total cap |
+| 4 — background work and data growth | A bounded deploy and detection queue in Postgres that any replica takes from (O-32), so a lost replica's deploy resumes elsewhere. GC, rolling backups and auto-deploy made concurrent and due-driven rather than serial over every app. A retention job for the tables that only grow (deployments, revisions, sessions, notifications, idempotency keys, detections, scans). Missing indexes: `event_deliveries(event_id)`, in-flight `deployments(status)`, `deployments(spec_id)`, `apps(owner_user_id)` |
+| 5 — image registry | The registry above, and builds that push and pin by digest |
+| 6 — Kubernetes runtime adapter | O-33, with a design note first: a Service per app reachable only from Pando's proxy (R-023), NetworkPolicy for R-025, PersistentVolumeClaims |
+| 7 — multi-host Docker runtime adapter | Docker on several hosts, with placement in the adapter and a design for how the proxy reaches an app on another host without routing around Pando |
+
 ## The issue's open questions, answered
 
-1. **Scope.** Survive a rolling restart and a lost pod with small N. Real horizontal throughput needs
-   a work queue for deploys and detections and is O-32.
+1. **Scope.** Both: surviving a rolling restart and a lost pod (this PR), and horizontal throughput
+   to the two tiers above (the rest of the stack).
 2. **Leader or lock per job.** A leader (above).
 3. **Kubernetes without a Kubernetes runtime adapter.** Not useful except with a Docker host beside
-   the cluster, and not supported. O-33.
+   the cluster. PR 6 adds the adapter (O-33).
 4. **Deploy logs.** Routed to the owning replica (above).
 5. **Shared storage.** A shared volume (above).

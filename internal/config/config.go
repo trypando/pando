@@ -234,6 +234,14 @@ type Database struct {
 	// refuses to run if the audit log would be rewritable.
 	URL            string        `mapstructure:"url"`
 	ConnectTimeout time.Duration `mapstructure:"connect_timeout"`
+
+	// MaxConns caps this replica's pool of connections as the application
+	// role. pgx's own default is the CPU count, at least four, which a
+	// reconciler holding a connection per app it is converging, plus the
+	// leader's held lock, could use up on a small host and then wait on
+	// forever (issue #72). Postgres's max_connections must allow MaxConns
+	// for every replica, plus a few for each one's bootstrap.
+	MaxConns int32 `mapstructure:"max_conns"`
 }
 
 type Log struct {
@@ -249,6 +257,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("server.addr", ":8080")
 	v.SetDefault("server.shutdown_timeout", 15*time.Second)
 	v.SetDefault("database.connect_timeout", 60*time.Second)
+	v.SetDefault("database.max_conns", 32)
 	v.SetDefault("server.issuer", "https://pando.local")
 	v.SetDefault("server.routing_mode", string(spec.RoutingPath))
 	v.SetDefault("server.port_range_start", 9000)
@@ -325,6 +334,7 @@ func Load(path string) (*Config, error) {
 // Also where sources.go learns which variable a key came from.
 var boundEnv = map[string]string{
 	"database.url":          "PANDO_DATABASE_URL",
+	"database.max_conns":    "PANDO_DATABASE_MAX_CONNS",
 	"server.base_domain":    "PANDO_SERVER_BASE_DOMAIN",
 	"server.proxy_upstream": "PANDO_SERVER_PROXY_UPSTREAM",
 	"server.issuer":         "PANDO_SERVER_ISSUER",

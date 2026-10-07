@@ -252,6 +252,7 @@ func serve(ctx context.Context, configPath string) error {
 	db, err := state.Connect(ctx, state.ConnectOptions{
 		OwnerURL:       cfg.Database.URL,
 		ConnectTimeout: cfg.Database.ConnectTimeout,
+		MaxConns:       cfg.Database.MaxConns,
 	})
 	if err != nil {
 		return err
@@ -1034,7 +1035,18 @@ func serve(ctx context.Context, configPath string) error {
 		if reclaimer, ok := rt.(interface {
 			ReclaimNetworks(context.Context, func(string) bool) (int, error)
 		}); ok {
-			if n, err := reclaimer.ReclaimNetworks(ctx, owns); err != nil {
+			// Not an app with a deploy under way. Another replica's deploy
+			// makes the app's network before its containers, so for a moment
+			// it is empty and container-less and looks like a dead app's
+			// (issue #72). A deleted app has nothing in flight.
+			reclaimable := func(bundleID string) bool {
+				if !owns(bundleID) {
+					return false
+				}
+				busy, err := deployments.InFlight(ctx, bundleID)
+				return err == nil && !busy
+			}
+			if n, err := reclaimer.ReclaimNetworks(ctx, reclaimable); err != nil {
 				logger.Warn("could not reclaim app networks", zap.Error(err))
 			} else if n > 0 {
 				logger.Info("reclaimed app networks left by deleted apps", zap.Int("count", n))

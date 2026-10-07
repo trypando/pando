@@ -96,6 +96,7 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | Variable | Default | Purpose |
 |---|---|---|
 | `PANDO_DATABASE_URL` | the bundled Postgres | Point Pando at an existing database. |
+| `PANDO_DATABASE_MAX_CONNS` | `32` | Connections each Pando replica may hold as its application role. Postgres's `max_connections` must cover this for every replica, plus a few each for startup and the audit archiver; the bundled Postgres allows 100, which is three replicas. |
 | `PANDO_SERVER_ADDR` | `:8080` | Address the console and API listen on. |
 | `PANDO_SERVER_BASE_DOMAIN` | `localtest.me` | Domain per-app subdomains are taken from, under hostname routing. |
 | `PANDO_SERVER_ROUTING_MODE` | port | How apps are addressed: port, subdomain or path. |

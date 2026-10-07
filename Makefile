@@ -79,8 +79,13 @@ REPLICAS_PASSWORD ?= pando-acceptance-suite-admin
 # schedule test/acceptance/README.md describes, which the crash-loop test
 # sizes its deadlines from. A test that recreates the server reads the ports
 # from here too, or `docker compose up` would fall back to 8080.
+#
+# Small per-app reservations, so the suite's apps fit a laptop's Docker: at the
+# shipped 1 CPU each, a four-CPU daemon refuses every deploy after the fourth
+# (R-242, no oversubscription).
 REPLICAS_ENV = PANDO_PORT=18080 PANDO_APP_PORT_START=19000 PANDO_APP_PORT_END=19019 \
-	PANDO_RECONCILER_BACKOFF=0s,1s,2s,3s,4s PANDO_RECONCILER_FAILURE_WINDOW=2m
+	PANDO_RECONCILER_BACKOFF=0s,1s,2s,3s,4s PANDO_RECONCILER_FAILURE_WINDOW=2m \
+	PANDO_APPS_CPU_MILLIS=100 PANDO_APPS_MEMORY_BYTES=134217728
 REPLICAS_COMPOSE = $(REPLICAS_ENV) docker compose -p $(REPLICAS_PROJECT) \
 	-f docker-compose.yml -f test/replicas/docker-compose.replicas.yml
 # COMPOSE_PROJECT_NAME and COMPOSE_FILE point the acceptance suite's own
