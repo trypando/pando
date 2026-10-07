@@ -1185,6 +1185,18 @@ func (a *Apps) SetState(ctx context.Context, appID, appState string) error {
 	return nil
 }
 
+// SetStateIf moves an app to `to` only if it is in `from`, so a caller
+// settling its own transition never overwrites one somebody else made since.
+func (a *Apps) SetStateIf(ctx context.Context, appID, from, to string) error {
+	_, err := a.db.Exec(ctx,
+		`UPDATE apps SET state = $3, updated_at = now() WHERE id = $1 AND state = $2 AND deleted_at IS NULL`,
+		appID, from, to)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not update the app.", err)
+	}
+	return nil
+}
+
 // ByRouting resolves a running app from how it is addressed.
 //
 // Used by the proxy on every request, so it reads the pinned spec in the same
@@ -1292,6 +1304,8 @@ func (v *Volumes) Handles(ctx context.Context, appID string) (map[string]string,
 //   - **The currently pinned revision is never pruned**, which the first rule
 //     already covers, but a deployment also references it by foreign key and
 //     would refuse.
+//   - **A revision a scan describes is never pruned** (R-319). The scan is
+//     append-only and names its revision; the foreign key refuses the delete.
 //
 // Returns how many rows went.
 func (a *Apps) PruneSpecRevisions(ctx context.Context) (int, error) {
@@ -1315,6 +1329,10 @@ func (a *Apps) PruneSpecRevisions(ctx context.Context) (int, error) {
 		  AND NOT EXISTS (SELECT 1 FROM spec_pins p WHERE p.spec_id = r.id)
 		  -- Never one a deployment refers to.
 		  AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.spec_id = r.id)
+		  -- Never one a scan describes. A scan is an append-only fact about
+		  -- a revision (R-319); deleting the revision would leave it naming
+		  -- nothing, and the foreign key refuses that.
+		  AND NOT EXISTS (SELECT 1 FROM app_scans s WHERE s.spec_id = r.id)
 	`)
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not prune old spec revisions.", err)

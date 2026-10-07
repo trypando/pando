@@ -115,7 +115,8 @@ RUN apk add --no-cache curl tar \
 # What the server needs beyond the runtime base, installed where there is a
 # package manager and staged for the copy below:
 #
-# - postgresql17-client for pg_dump and pg_restore (backups, R-210). The client
+# - postgresql17-client for pg_dump, pg_restore and psql (backups and restore,
+#   R-210, R-212; restore pipes pg_restore into psql). The client
 #   major version has to match the server: pg_dump refuses a server newer than
 #   itself, and discovering that during a restore is discovering it at the worst
 #   possible moment. Bump this with the postgres service in docker-compose.yml,

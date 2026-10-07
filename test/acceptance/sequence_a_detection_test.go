@@ -181,12 +181,28 @@ func TestSequenceA_ANodeAppWithNoDeploymentArtifacts(t *testing.T) {
 	appID := c.createAppFromSource(t, "seq-a-node-"+stamp(),
 		"https://github.com/expressjs/express", "master", "")
 
+	// Ready, not needs_answers. This used to ask which port the app serves
+	// on; since issue #55 (bc0dd0d) a buildpack app's port is the language's
+	// usual one, marked as assumed, and the deploy watches the built image
+	// start and records the port it really binds — R-097: "port discovery
+	// happens by observing what the process binds, not by asking". Nothing
+	// in express since this test was written touches what detection reads.
 	response := c.awaitDetection(t, appID)
-	require.Equal(t, "needs_answers", response["status"])
+	require.Equal(t, "ready", response["status"])
 
 	detection := detectionBody(t, response)
-	require.Equal(t, "buildpack", detection["winning_bid"].(map[string]any)["strategy"],
+	winner := detection["winning_bid"].(map[string]any)
+	require.Equal(t, "buildpack", winner["strategy"],
 		"this is the case R-103 is really about: written by someone who never thought about deployment")
+
+	draft := detection["draft_spec"].(map[string]any)
+	workloads := draft["workloads"].([]any)
+	require.NotEmpty(t, workloads)
+	port := workloads[0].(map[string]any)["ports"].([]any)[0].(map[string]any)
+	require.Equal(t, "framework", port["source"],
+		"the port is marked as assumed, which is what makes the deploy check it against the built image (R-097)")
+	require.Contains(t, fmt.Sprint(winner["evidence"]), "assumed to serve HTTP",
+		"and the person reading the proposal is told it is an assumption")
 
 	// R-105 is a content requirement. Every question must be answerable by
 	// something that cannot see the repository, because the workflow is pasting

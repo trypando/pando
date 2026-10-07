@@ -326,16 +326,21 @@ func TestR148_AKilledProvisionedServiceIsRestored(t *testing.T) {
 	require.NotEqual(t, before, after, "it is a new container, not the old one resurrected")
 }
 
-// serviceContainer is the running provisioned service in an app's bundle, if
-// there is one.
+// serviceContainer is the ID of the running provisioned service in an app's
+// bundle, if there is one.
+//
+// The ID, not the name: Pando names a bundle's containers deterministically, so
+// a service the reconciler recreates has the same name as the one it replaces,
+// and only the ID tells the two apart.
 func serviceContainer(t *testing.T, appID string) string {
 	t.Helper()
 
 	out := docker(t, "ps", "--filter", "label=io.pando.bundle="+appID,
-		"--filter", "status=running", "--format", "{{.Names}}")
-	for _, name := range strings.Split(strings.TrimSpace(out), "\n") {
-		if strings.Contains(name, "svc-") {
-			return name
+		"--filter", "status=running", "--format", "{{.ID}} {{.Names}}")
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		id, name, ok := strings.Cut(line, " ")
+		if ok && strings.Contains(name, "svc-") {
+			return id
 		}
 	}
 	return ""

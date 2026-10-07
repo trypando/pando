@@ -83,6 +83,79 @@ func TestR152_PruningNeverRemovesARevisionThatWasEverPinned(t *testing.T) {
 	require.GreaterOrEqual(t, len(remaining), 10, "the retention window is kept")
 }
 
+// R-319 against R-152: a scan is an append-only fact about one revision, and
+// pruning history must neither fail on it nor rewrite it.
+//
+// The scan's foreign key said ON DELETE SET NULL, which is an UPDATE of
+// app_scans, which the append-only trigger refuses — so once a revision that
+// had been scanned fell outside the retention window, every prune failed and
+// no history was trimmed on that install again.
+func TestR319_PruningKeepsARevisionAScanDescribes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	apps := state.NewApps(db)
+	scans := state.NewScans(db)
+	owner := seedOwner(t, db)
+
+	app, err := apps.Create(ctx, "gc-scan-"+id.New(id.App), id.New(id.App), owner, owner,
+		spec.Source{Type: spec.SourceGit, URL: "https://example.test/app"})
+	require.NoError(t, err)
+
+	var scannedRev, unscannedRev string
+	for i := range 15 {
+		s := &spec.AppSpec{
+			SchemaVersion: spec.SchemaVersion,
+			AppID:         app.ID,
+			Source:        spec.Source{Type: spec.SourceGit, URL: "https://example.test/app", Ref: "main"},
+			Build:         spec.Build{Strategy: spec.BuildPrebuilt},
+			Workloads:     []spec.Workload{{Name: "web", Image: fmt.Sprintf("example/app:%d", i), Primary: true, Exposed: true}},
+			Routing:       spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: 9000},
+			Runtime:       spec.RuntimeRef{AdapterRef: "rt_fake", IsolationFloor: spec.IsolationContainer},
+			Deploy:        spec.Deploy{Strategy: spec.DeployRecreate},
+			Retention:     spec.Retention{SpecRevisions: 10},
+		}
+		rev, err := apps.CreateRevision(ctx, app.ID, s, spec.OriginEdited, owner)
+		require.NoError(t, err)
+		switch i {
+		case 0:
+			unscannedRev = rev.ID
+		case 1:
+			// A draft somebody scanned before deciding not to deploy it.
+			scannedRev = rev.ID
+		}
+	}
+	seventy := 70
+	scan, err := scans.Record(ctx, state.Scan{AppID: app.ID, SpecID: scannedRev, ScannerRef: "scn_fake", Score: &seventy})
+	require.NoError(t, err)
+
+	all, err := apps.ListRevisions(ctx, app.ID)
+	require.NoError(t, err)
+	require.NoError(t, apps.Pin(ctx, app.ID, all[0].ID, state.StateRunning, owner))
+
+	pruned, err := apps.PruneSpecRevisions(ctx)
+	require.NoError(t, err, "a scanned revision outside the window must not make pruning fail")
+	require.Positive(t, pruned, "the unscanned history outside the window is still trimmed")
+
+	_, found, err := apps.RevisionByID(ctx, unscannedRev)
+	require.NoError(t, err)
+	require.False(t, found, "an unscanned, never-pinned revision outside the window is pruned")
+
+	_, found, err = apps.RevisionByID(ctx, scannedRev)
+	require.NoError(t, err)
+	require.True(t, found, "the revision a scan describes stays, so the scan still says what it scanned")
+
+	history, err := scans.History(ctx, app.ID, 10)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	require.Equal(t, scan.ID, history[0].ID)
+	require.Equal(t, scannedRev, history[0].SpecID, "the scan was not rewritten")
+
+	// The app's own deletion still takes its revisions and scans together.
+	_, err = db.Exec(ctx, `DELETE FROM apps WHERE id = $1`, app.ID)
+	require.NoError(t, err, "deleting an app with scanned revisions cascades cleanly")
+}
+
 // Pruning is idempotent and safe to run on an install with nothing to prune.
 func TestPruningAnAppWithLittleHistoryDoesNothing(t *testing.T) {
 	t.Parallel()

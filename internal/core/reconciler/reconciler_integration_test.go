@@ -58,12 +58,12 @@ type fakeRuntime struct {
 	observed   api.ObservedBundle
 	observeErr error
 
+	// applied is the last plan Apply was given.
+	applied api.BundlePlan
+
 	applies  int
 	stops    int
 	observes int
-
-	// applied is the last plan Apply was given.
-	applied api.BundlePlan
 
 	// applyErr fails Apply, which is how a repeatedly-unstartable app is
 	// simulated without needing a real container that refuses to boot.
@@ -99,11 +99,11 @@ func (f *fakeRuntime) Observe(context.Context, api.BundleRef) (api.ObservedBundl
 	return f.observed, f.observeErr
 }
 
-func (f *fakeRuntime) Apply(_ context.Context, plan api.BundlePlan) (api.BundleHandle, error) {
+func (f *fakeRuntime) Apply(_ context.Context, p api.BundlePlan) (api.BundleHandle, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.applies++
-	f.applied = plan
+	f.applied = p
 	if f.applyErr != nil {
 		return api.BundleHandle{}, f.applyErr
 	}
@@ -314,6 +314,60 @@ func TestAKilledWorkloadIsRestored(t *testing.T) {
 	h.runtime.setObserved(healthy())
 	h.rec.Tick(context.Background())
 	require.Equal(t, state.StateRunning, h.state(t))
+}
+
+// fixedEnvironments answers Environments with the same values every time.
+type fixedEnvironments map[string]map[string]secret.Value
+
+func (f fixedEnvironments) Environments(context.Context, *spec.AppSpec) (map[string]map[string]secret.Value, error) {
+	return f, nil
+}
+
+// TestR148_AKilledWorkloadIsRestoredWithItsEnvironment asserts that what the
+// reconciler re-creates is started with the environment it was deployed
+// with. It compares shape, which has none (R-193), and it used to apply that
+// shape as it was: a killed workload came back with no variables, no secrets
+// and — for a provisioned Redis, whose password is one — no way to start.
+func TestR148_AKilledWorkloadIsRestoredWithItsEnvironment(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, state.StateRunning)
+	h.rec.Environments = fixedEnvironments{"web": {"API_KEY": secret.New("from-the-secrets-store")}}
+	h.runtime.setObserved(api.ObservedBundle{Exists: true})
+
+	h.rec.Tick(context.Background())
+
+	h.runtime.mu.Lock()
+	applied := h.runtime.applied
+	h.runtime.mu.Unlock()
+	require.Len(t, applied.Workloads, 1)
+	require.Equal(t, "from-the-secrets-store", applied.Workloads[0].Env["API_KEY"].Reveal())
+}
+
+// unresolvableEnvironments is a secrets store that cannot answer.
+type unresolvableEnvironments struct{}
+
+func (unresolvableEnvironments) Environments(context.Context, *spec.AppSpec) (map[string]map[string]secret.Value, error) {
+	return nil, errors.New("the secrets adapter is unavailable")
+}
+
+// TestR148_AWorkloadIsNeverRestoredWithoutItsEnvironment asserts the other
+// side of R-148's restore: when the environment cannot be resolved, nothing
+// is started. A workload re-created without its variables is a second
+// failure, not a correction; the attempt counts toward R-150 instead, and
+// the app is degraded while it does.
+func TestR148_AWorkloadIsNeverRestoredWithoutItsEnvironment(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, state.StateRunning)
+	h.rec.Environments = unresolvableEnvironments{}
+	h.runtime.setObserved(api.ObservedBundle{Exists: true})
+
+	h.rec.Tick(context.Background())
+
+	h.runtime.mu.Lock()
+	applied := h.runtime.applied
+	h.runtime.mu.Unlock()
+	require.Empty(t, applied.Workloads, "nothing is started without its environment")
+	require.Equal(t, state.StateDegraded, h.state(t))
 }
 
 // The second half, and the one that matters: killing it repeatedly reaches

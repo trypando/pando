@@ -91,6 +91,15 @@ func TestR105_TheQueueAndRetentionStoresSayWhatFailedWhenTheDatabaseIsGone(t *te
 			"Could not read the deploy queue."},
 		"waiting": {func(ctx context.Context) error { _, err := deployments.Waiting(ctx, "dep_x"); return err },
 			"Could not read the deploy."},
+		"record prior state": {func(ctx context.Context) error {
+			return deployments.RecordPriorState(ctx, "dep_x", state.StateRunning)
+		}, "Could not record the deploy."},
+		// Never "" with no error: a deploy reads that as "nothing to put back".
+		"read prior state": {func(ctx context.Context) error { _, err := deployments.PriorState(ctx, "dep_x"); return err },
+			"Could not read the deploy."},
+		"settle app state": {func(ctx context.Context) error {
+			return state.NewApps(db).SetStateIf(ctx, f.appID, state.StateDeploying, state.StateRunning)
+		}, "Could not update the app."},
 		"recover deploys": {func(ctx context.Context) error { _, err := deployments.RecoverInFlight(ctx); return err },
 			"Could not record interrupted deploys."},
 		"queue detection": {func(ctx context.Context) error { _, err := detections.Queue(ctx, f.appID); return err },

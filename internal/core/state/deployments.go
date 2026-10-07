@@ -145,6 +145,35 @@ func (d *Deployments) Create(ctx context.Context, appID, specID, trigger, create
 	return dep, nil
 }
 
+// RecordPriorState stores the app's state as it was when this deploy was
+// started: what a deploy that stops before touching the runtime puts back
+// (R-146). Stored, because the deploy runs from the queue on whichever
+// replica claims it.
+func (d *Deployments) RecordPriorState(ctx context.Context, deploymentID, appState string) error {
+	_, err := d.db.Exec(ctx, `UPDATE deployments SET prior_state = NULLIF($2, '') WHERE id = $1`,
+		deploymentID, appState)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not record the deploy.", err)
+	}
+	return nil
+}
+
+// PriorState is what RecordPriorState stored, or "" if nothing was.
+func (d *Deployments) PriorState(ctx context.Context, deploymentID string) (string, error) {
+	var st *string
+	err := d.db.QueryRow(ctx, `SELECT prior_state FROM deployments WHERE id = $1`, deploymentID).Scan(&st)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", errs.Wrap(errs.Internal, "Could not read the deploy.", err)
+	}
+	if st == nil {
+		return "", nil
+	}
+	return *st, nil
+}
+
 // SetStatus advances a deployment.
 //
 // Only this replica's deployment, or one nobody has claimed: a replica that was

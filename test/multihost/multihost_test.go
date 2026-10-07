@@ -340,7 +340,8 @@ func TestR010_AnAppStaysOnItsHostAndAStoppedHostsAppsAreUnobservable(t *testing.
 	// A redeploy of the app on host B is refused, not placed on host A.
 	c.putSpec(t, app, echoSpec(port, 128<<20, "3"))
 	dep, status, out := c.startDeploy(t, app)
-	if status == http.StatusAccepted {
+	appliedAndFailed := status == http.StatusAccepted
+	if appliedAndFailed {
 		final := c.awaitDeployment(t, app, dep["id"].(string), 3*time.Minute)
 		require.NotEqual(t, "succeeded", final["status"], "a redeploy succeeded while the app's host was down")
 		out = fmt.Sprint(final["error_detail"])
@@ -352,8 +353,19 @@ func TestR010_AnAppStaysOnItsHostAndAStoppedHostsAppsAreUnobservable(t *testing.
 		onA, err := inner(cHostA, "ps", "-aq", "--filter", "label=io.pando.bundle="+id)
 		require.NoError(t, err)
 		require.Empty(t, onA, "an app of host B's was re-created on host A")
-		require.NotEqual(t, "failed", c.get(t, "/apps/"+id+"/status")["state"])
 	}
+	// O-50, decided: a deploy that fails at the apply step leaves its app
+	// failed (design 05 §1.1), held there until a person acts (R-151), even
+	// when the runtime refused before changing anything. One refused at the
+	// request never started, and the app is as it was.
+	if appliedAndFailed {
+		require.Equal(t, "failed", c.get(t, "/apps/"+app+"/status")["state"],
+			"a deploy that failed at apply leaves its app failed")
+	} else {
+		require.NotEqual(t, "failed", c.get(t, "/apps/"+app+"/status")["state"])
+	}
+	require.NotEqual(t, "failed", c.get(t, "/apps/"+idle+"/status")["state"],
+		"an app nobody deployed is not failed by another's deploy")
 
 	// Host B returns: the app nobody touched is observed there again, and
 	// the reconciler starts its stopped container (R-148).
@@ -370,10 +382,12 @@ func TestR010_AnAppStaysOnItsHostAndAStoppedHostsAppsAreUnobservable(t *testing.
 	})
 	requireOn(t, idle, "host-b")
 	requireOn(t, app, "host-b")
-	// The app whose redeploy was refused is left as the refusal left it,
-	// which design 05 §1.1 and the deploy runner disagree on; see the
-	// multi-host note's "As built" for the open question.
-	t.Logf("after the refused redeploy: %v", c.get(t, "/apps/"+app+"/status")["state"])
+	// The app whose redeploy failed at apply stays failed now its host is
+	// back: nothing but a person acting moves it (R-151, O-50).
+	if appliedAndFailed {
+		require.Equal(t, "failed", c.get(t, "/apps/"+app+"/status")["state"],
+			"a failed app stays failed when its host returns")
+	}
 }
 
 func startHostB(t *testing.T) {

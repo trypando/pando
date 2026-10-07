@@ -475,8 +475,8 @@ func (s *Service) addSnapshot(ctx context.Context, b *Writer, rt api.RuntimeAdap
 
 // dumpDatabase runs pg_dump into a temporary file and returns its path.
 //
-// The custom format, because it restores with pg_restore --clean and does not
-// depend on psql parsing whatever the dump contains. The password reaches the
+// The custom format, because pg_restore --clean turns it into a script that
+// drops what it recreates, in dependency order (restoreDatabase). The password reaches the
 // child through the environment and never through argv, which is world-readable
 // in /proc — the database name is the only part of the URL on the command line,
 // and it is not a secret (R-194).
