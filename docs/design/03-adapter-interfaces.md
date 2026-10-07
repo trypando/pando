@@ -129,6 +129,12 @@ type RuntimeAdapter interface {
 
 type Upstream struct {
     URL string // scheme, host and port; the proxy keeps the request's path
+
+    // Dial opens the connection the proxy sends the request over. Nil: the
+    // proxy dials URL's host. PoolKey groups reusable connections: one key,
+    // one destination. Empty is URL's host.
+    Dial    func(ctx context.Context) (net.Conn, error)
+    PoolKey string
 }
 ```
 
@@ -139,10 +145,13 @@ chooses *which* port (the primary workload's HTTP port), because that is a readi
 proxy built a Docker container name itself until this was moved, which would have sent every request
 for an app on any other runtime to a host that does not exist.
 
-**[P]** `Upstream` is a struct holding only a URL. A runtime whose workloads are not directly
-addressable from Pando — a remote host, a cluster Pando runs outside of — will need to hand the proxy a
-way to dial as well, and gets a field here then rather than a second interface change. Nothing needs it
-yet, so nothing has it.
+**[D]** `Upstream.Dial` is for a runtime whose workloads are not on a network Pando's container is
+joined to. The multi-host Docker adapter's `Dial` opens a mutually authenticated connection to the
+forwarding agent on the app's host, which carries it to the container (O-45, design 06 §4,
+`notes-multi-host-docker-issue-72.md`). The proxy decides the request — steps 1–10 of design 06 §4,
+including the header and cookie strips — before it dials, so `Dial` is transport and nothing else.
+The proxy pools a dialed upstream's connections under `PoolKey` on a transport of their own, with no
+environment HTTP proxy. A runtime whose workloads Pando's container can reach leaves both empty.
 
 ### 2.1 The plan
 
@@ -344,8 +353,14 @@ type Capacity struct {
     TotalMemoryBytes int64
     TotalDiskBytes   int64
     RunningWorkloads int   // -1: not known
+    LargestFit       *Fit  // the roomiest single place's free CPU and memory; nil: not reported
     Details          map[string]any // the runtime's own shape, shown, never interpreted
     Reported         time.Time
+}
+
+type Fit struct {
+    CPUMillis   int
+    MemoryBytes int64
 }
 
 type InUse struct {
@@ -356,6 +371,20 @@ type InUse struct {
 ```
 
 **[D]** R-243. The local Docker adapter reports its own machine; a clustered adapter reports its cluster. Core does not read `/proc` and has no concept of a host.
+
+**[P]** `LargestFit` is what one place has free by committed limits, because on several machines the
+total can have room no one machine has: 6 GB free over three hosts does not place a 4 GB app. The
+single-host Docker adapter reports its totals less what its app containers are limited to; the
+multi-host adapter the roomiest host open to new apps; Kubernetes will report the roomiest node
+(notes-kubernetes-runtime-issue-72.md). The planner does not read it yet: an app already placed counts
+against its own host's free space, and only the adapter knows whether it is placed, so the refusal
+happens at `Apply` with a `CAPACITY_*` error naming the largest free space
+(`notes-multi-host-docker-issue-72.md`).
+
+**[P]** `RuntimeCapabilities.ImageDelivery` says how a built image reaches the runtime, in order of
+preference: `import` (`ImportImage`) or `registry` (pulled by digest). Added by PR 7 with the shape
+`notes-image-registry-issue-72.md` gives it; single-host Docker reports `[import]`, multi-host Docker
+`[registry]`. `SupportsImageImport` stays until PR 5 moves the planner to it.
 
 **[P]** The common fields are the readings every runtime reports in the same shape, so the console can say how much room is left without knowing which runtime answered (issue #88). Anything else goes in `Details`, which the console shows as it came. Live use is its own call, `InUse`, rather than `Used*` fields on `Capacity`. Sampling CPU takes about a second, and the planner reads `Capacity` on every plan without needing it. The `Used*` fields, which no adapter ever filled, are gone. `GET /capacity` reports each runtime's totals beside what Pando has committed on it, which is the planner's own R-242 arithmetic, and live use where the runtime reports usage.
 
