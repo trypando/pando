@@ -163,8 +163,16 @@ func TestR187_ARestrictedAppReachesOnlyWhatItsRulesAllowThroughTheGateway(t *tes
 	})
 
 	t.Run("an allowed destination through the gateway, as plain HTTP", func(t *testing.T) {
-		out, ok := inApp(id, "web", "wget -q -O - -T 5 http://"+gwIP+":18080/")
-		require.True(t, ok, out)
+		// Retried for a few seconds: the gateway listening is not the same as
+		// its route to the host's published port on a network created a
+		// moment ago, and CI caught a 502 in between. A refusal is a 403 and
+		// fails every attempt; what is denied above and below is not retried.
+		var out string
+		require.Eventually(t, func() bool {
+			var ok bool
+			out, ok = inApp(id, "web", "wget -q -O - -T 5 http://"+gwIP+":18080/")
+			return ok
+		}, 15*time.Second, 500*time.Millisecond, "the gateway never passed the allowed request on")
 		require.Contains(t, out, "allowed-destination")
 	})
 
