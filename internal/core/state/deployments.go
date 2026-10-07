@@ -230,11 +230,16 @@ func orphaned(param int) string {
 func (d *Deployments) Runner(ctx context.Context, deploymentID string) (string, error) {
 	var replica *string
 	err := d.db.QueryRow(ctx, `SELECT replica_id FROM deployments WHERE id = $1`, deploymentID).Scan(&replica)
-	if errors.Is(err, pgx.ErrNoRows) || replica == nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
+		// Checked before replica, which is nil on any failure: an unreadable
+		// runner is an error, not "nobody runs it".
 		return "", errs.Wrap(errs.Internal, "Could not read which Pando process ran the deploy.", err)
+	}
+	if replica == nil {
+		return "", nil
 	}
 	return *replica, nil
 }
