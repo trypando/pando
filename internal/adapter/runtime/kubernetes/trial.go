@@ -122,7 +122,10 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 		return api.TrialResult{}, errs.Wrap(errs.AdapterFailed, "Could not start the app's trial run.", err)
 	}
 
-	result := a.watchTrial(ctx, ns, timeout)
+	result, err := a.watchTrial(ctx, ns, timeout, req.PullAuth != nil)
+	if err != nil {
+		return api.TrialResult{}, err
+	}
 	result.Log = a.trialLog(ctx, ns)
 	if req.LogSink != nil && result.Log != "" {
 		_, _ = io.WriteString(req.LogSink, result.Log)
@@ -131,13 +134,18 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 }
 
 // watchTrial polls the trial until it exits, binds a port, or time runs out.
-func (a *Adapter) watchTrial(ctx context.Context, ns string, timeout time.Duration) api.TrialResult {
+// A node refusing the image for the registry's download limit is an error:
+// the trial never ran, and waiting out the clock would report it as working.
+func (a *Adapter) watchTrial(ctx context.Context, ns string, timeout time.Duration, signed bool) (api.TrialResult, error) {
 	deadline, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var result api.TrialResult
 	for {
 		p, err := a.cs.CoreV1().Pods(ns).Get(deadline, "trial", metav1.GetOptions{})
 		if err == nil {
+			if limited := pullLimited(p, signed); limited != nil {
+				return result, limited
+			}
 			for _, s := range p.Status.ContainerStatuses {
 				if s.Name != appContainer {
 					continue
@@ -149,7 +157,7 @@ func (a *Adapter) watchTrial(ctx context.Context, ns string, timeout time.Durati
 					code := int(t.ExitCode)
 					result.ExitCode = &code
 					result.Started = result.Started || !t.StartedAt.IsZero()
-					return result
+					return result, nil
 				}
 			}
 			if result.Started {
@@ -158,14 +166,14 @@ func (a *Adapter) watchTrial(ctx context.Context, ns string, timeout time.Durati
 					result.LoopbackPorts = loopback
 					if len(routable) > 0 {
 						result.ObservedPorts = routable
-						return result
+						return result, nil
 					}
 				}
 			}
 		}
 		if sleep(deadline, a.poll) != nil {
 			// Still up when the clock ran out, which is the app working.
-			return result
+			return result, nil
 		}
 	}
 }

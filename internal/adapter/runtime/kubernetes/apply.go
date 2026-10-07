@@ -617,6 +617,9 @@ func (a *Adapter) waitScheduled(ctx context.Context, ns, name string, w api.Work
 		// A pod that cannot be read now is looked at again; one placed on a
 		// node has room.
 		if p, err := a.cs.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			if limited := pullLimited(p, w.PullAuth != nil); limited != nil {
+				return limited
+			}
 			if p.Spec.NodeName != "" {
 				return nil
 			}

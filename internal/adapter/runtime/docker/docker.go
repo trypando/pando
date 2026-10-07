@@ -28,6 +28,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/registrylimit"
 )
 
 // Kind is the adapter's kind string.
@@ -1610,6 +1611,15 @@ func (a *Adapter) ensureImageWith(ctx context.Context, ref string, auth *api.Reg
 		case <-ctx.Done():
 		case <-time.After(time.Duration(attempt) * 2 * time.Second):
 		}
+	}
+	if err != nil && registrylimit.Mentioned(err.Error()) {
+		signed := registrylimit.Anonymous
+		if auth != nil && (auth.Username != "" || !auth.IdentityToken.IsZero()) {
+			signed = registrylimit.SignedIn
+		}
+		r := registrylimit.FromText(err.Error(), ref)
+		r.Signed = signed
+		return r.Error(time.Now(), err)
 	}
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not fetch the image %q.", ref), err).
