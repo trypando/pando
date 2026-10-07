@@ -78,7 +78,7 @@ today's structural argument word for word.
   which turns R-025 from a topology property into a firewall rule set Pando would have to maintain on
   every host.
 
-### (c) A forwarding agent on each app host [P]
+### (c) A forwarding agent on each app host [D]
 
 Each app host runs one Pando-owned container, `pando-agent` (Pando's binary, a hidden `pando host-agent`
 command, as the egress gateway is). The adapter joins it to every app network on its host — the same
@@ -117,11 +117,10 @@ Costs:
   app without the certificate; the documentation also says to restrict it to the control host's
   address with the host firewall.
 
-**What design 06 §4 says after this.** Its "how that is made structural" paragraph becomes: on one host,
-the set of networks Pando's container belongs to is the set of apps it can reach; on several hosts, the
-set of networks each host's agent belongs to is, and the agent forwards only for Pando's proxy. There is
-still no route to an app that does not pass enforcement, now with a certificate check as part of the
-route. That changes a CLAUDE.md invariant's mechanism, which is why it is O-45 and not only a [P].
+**Approved by the owner (O-45) [D].** Design 06 §4 now says it: on one host, the set of networks Pando's
+container belongs to is the set of apps it can reach; on several hosts, the set of networks each host's
+agent belongs to is, and the agent forwards only for Pando's proxy. There is still no route to an app
+that does not pass enforcement, now with a certificate check as part of the route.
 
 **What it requires of the interface.**
 
@@ -176,11 +175,10 @@ Volumes are Docker volumes on the app's host. Consequences:
   The marker for a deleted app with kept volumes is the volume label rather than the network.
 - **An app cannot follow its data to another host**, because the data does not move. Moving an app is:
   stop, snapshot each volume to the backup destination, destroy on the old host with volumes discarded,
-  apply on the new host, restore. Every step exists today. Whether Pando offers it as one action, and
-  who may run it, is O-46. R-257 already calls relocating running workloads "one step from the
-  scheduling R-010 forbids"; a move a person starts, with downtime, is not that step, but the owner
-  should say so. Until then a host is emptied by deleting and re-creating its apps, with
-  backups (R-205).
+  apply on the new host, restore. Every step exists today. **[D] Pando does not offer it as an action
+  in the first release (O-46).** A host is emptied by deleting and re-creating its apps, with backups
+  (R-205). Offering a move later — one audited action behind a new install-scoped verb, which is a
+  change to R-080's table — is a separate decision when someone needs it.
 
 ## Host failure
 
@@ -231,9 +229,10 @@ on a timeout.
   replicas note's supported topology (one host, a shared volume), with the app hosts added. The edge joins
   `pando-edge` with Pando's containers on the control host, exactly as now, so `SupportsEdge` is true
   for the control host and the edge does not move.
-- **Replicas on several hosts** need the replicas note's shared `/var/lib/pando` on every host running
-  one (an NFS mount), or O-39's alternative. That, and whether the edge then runs on more than one host,
-  is O-47.
+- **[D] Replicas run on the control host only (O-47)** until the shared `/var/lib/pando` is gone —
+  O-39's second step, which moves uploads and the build cache out of it. Replicas on several hosts with
+  an NFS mount of that directory are not supported. Whether the edge then runs on more than one host is
+  decided with that change.
 - **The in-place upgrade (R-359)** stays as on one host: allowed with a single replica on the control
   host, refused otherwise. The agents run Pando's image and are re-created at the new version by the
   adapter at start, one host at a time; an agent being replaced drops that host's open connections, and
@@ -257,9 +256,9 @@ Every method routes to the app's host and runs the single-host code there, excep
 ## Requirements this touches
 
 - **R-010, R-153, R-256** hold: one app on one host, placed by the adapter, never moved by Pando on its
-  own.
+  own, and not moved by a person through Pando either in the first release (O-46).
 - **R-023** holds by the agent's certificate check and the proxy being the only holder of the
-  certificate. That is a change to how design 06 §4 describes the mechanism (O-45).
+  certificate. Design 06 §4 describes the mechanism (O-45).
 - **R-025, R-026, R-180 – R-187** hold per host exactly as on one host.
 - **R-013** is what the host-failure section relies on.
 
@@ -276,10 +275,13 @@ in for a host:
 - `TestR148_AnUnreachableHostMarksItsAppsUnobservableNotFailed`.
 - `TestR243_CapacityReportsTheLargestPlaceAWorkloadFits`.
 
-## Next decisions for the owner
+## Decisions
 
-| ID | Question | Options | Recommended |
+All three were decided by the owner **[D]**; the table keeps the options that were weighed.
+
+
+| ID | Question | Options | Decided |
 |---|---|---|---|
-| **O-45** | How does the proxy reach an app on another host? | (a) A proxy replica on every app host, with routing adapters sending each app's traffic there. (b) An overlay network per app with Pando attached. (c) A forwarding agent on each host, reachable only with Pando's client certificate, and `Upstream.Dial`. | (c). It changes design 06 §4's statement of how R-023 is structural, which is why it needs the owner rather than a [P]. |
-| **O-46** | Is moving an app between hosts an action Pando offers? | (a) No; delete and re-create with backups. (b) Yes, as one audited action (stop, snapshot, recreate, restore) behind an install verb. (c) Yes, for the app's owner. | (a) for the first release. (b) next. It moves data and causes downtime, so it should be an administrator's, which means a new install-scoped verb — a change to R-080's table, proposed here rather than made. |
-| **O-47** | Can Pando's replicas run on more than one host in this topology? | (a) No: control host only. (b) Yes, with `/var/lib/pando` on NFS on each. (c) Yes, after O-39(b) removes the shared volume. | (a) now, (c) when O-39(b) lands. |
+| **O-45** | How does the proxy reach an app on another host? | (a) A proxy replica on every app host, with routing adapters sending each app's traffic there. (b) An overlay network per app with Pando attached. (c) A forwarding agent on each host, reachable only with Pando's client certificate, and `Upstream.Dial`. | **(c) [D].** Design 06 §4 states the mechanism. |
+| **O-46** | Is moving an app between hosts an action Pando offers? | (a) No; delete and re-create with backups. (b) Yes, as one audited action (stop, snapshot, recreate, restore) behind an install verb. (c) Yes, for the app's owner. | **(a) [D]** for the first release. (b) is the likely next step: it moves data and causes downtime, so it would be an administrator's, with a new install-scoped verb — a change to R-080's table, not made here. |
+| **O-47** | Can Pando's replicas run on more than one host in this topology? | (a) No: control host only. (b) Yes, with `/var/lib/pando` on NFS on each. (c) Yes, after O-39(b) removes the shared volume. | **(a) [D]** now; (c) when O-39(b) lands. |

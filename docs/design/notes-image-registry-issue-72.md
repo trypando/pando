@@ -28,6 +28,7 @@ workload (a container removed by hand, R-148), it creates it from `pando/<app>:l
 the refused image. R-146 says a failed build replaces nothing, and the scan's refusal is meant to have
 the same contract. Pinning built images by digest closes this on every runtime, including single-host
 Docker (below). It wants a test named for R-146 before the fix, so the fix is shown to be needed.
+It is recorded as a known issue in `notes-multiple-replicas-issue-72.md`, fixed by this PR.
 
 ## Decisions
 
@@ -83,7 +84,7 @@ the database. Configuration names it:
 the credential, which then belongs in encrypted storage (R-190) and needs its own restart semantics.
 Nothing needs that yet. The credential is a `secret.Value` from the moment it is read (R-194).
 
-**Single-host Docker does not need a registry and does not get one by default [P].** `ImportImage`
+**Single-host Docker does not need a registry and does not get one [D] (O-34).** `ImportImage`
 stays, for the reason `SupportsImageImport`'s comment gives: a registry on one host needs daemon
 configuration and charges the setup cost R-002 says is paid once. Two changes apply there anyway, so the
 gap above closes on the single-VM tier too:
@@ -94,7 +95,7 @@ gap above closes on the single-VM tier too:
 
 The runtime's existing teardown (`ImageLabelBundle`) already removes a deleted app's images, so the
 extra tags do not accumulate past the app. Old tags of a live app are pruned with the same retention as
-the registry (below). Whether the single-VM install should run the registry anyway is O-34.
+the registry (below).
 
 ### Repository layout [P]
 
@@ -148,12 +149,14 @@ Apps never hold a registry credential and never reach the registry:
   reachable from the hosts' own addresses; apps reach it only as they reach any host address, and
   without a credential.
 
-**One credential, `htpasswd`, for the Pando-run registry.** Distribution's `htpasswd` auth grants every
+**One credential, `htpasswd`, for the Pando-run registry [D] (O-36).** Distribution's `htpasswd` auth grants every
 authenticated user full access; there is no read-only account. The credential is held by Pando (and
 handed per build to BuildKit and per pull to a runtime) and, on Kubernetes, by a pull Secret in each app
 namespace that nothing in the namespace can read (PR 6). Pull by digest is what makes a leaked
 credential less dangerous than it sounds: a push cannot change an image a deployment pinned. A scoped
-alternative — Pando as the registry's token issuer, minting pull-only tokens per repository — is O-36.
+alternative — Pando as the registry's token issuer, minting pull-only tokens per repository — is for
+when per-app pull isolation is wanted; it matters most on Kubernetes, where the credential sits in
+every app namespace.
 
 ### TLS and insecure registries
 
@@ -162,10 +165,11 @@ configuration lists it as insecure (`insecure-registries` in `daemon.json`; a `h
 containerd). Both are node configuration Pando cannot set (R-087 covers the access it would need, but
 the adapter does not hold it). So:
 
-- **The default [P] is TLS with a certificate the operator supplies**, mounted into the registry
+- **TLS with a certificate the operator supplies [D] (O-35)**, mounted into the registry
   container, and a hostname every node resolves. A certificate from a private CA works if every node
   trusts that CA.
-- **`PANDO_REGISTRY_INSECURE=true`** is accepted for a registry on a private network. Pando cannot
+- **`PANDO_REGISTRY_INSECURE=true`** is accepted for a registry on a private network, and plain HTTP
+  is used only when it is set [D]. Pando cannot
   check that each node is configured to allow it, so the first pull's failure is turned into a message
   that names the setting on the node: *"The host app-3 refused to pull from registry.internal:5000
   over HTTP. Add it to insecure-registries in /etc/docker/daemon.json on that host, or give the
@@ -173,7 +177,7 @@ the adapter does not hold it). So:
 - **Managed Kubernetes** (EKS, GKE, AKS) makes node configuration awkward; there the organization's
   registry (ECR, Artifact Registry, ACR) is the recommended setting, since nodes already trust it.
 
-How the Pando-run registry gets a certificate is O-35.
+ACME DNS-01 reusing the edge's DNS credential remains a later option if installs ask for it.
 
 ### Pointing at the organization's registry
 
@@ -203,7 +207,8 @@ Two halves, because Distribution splits them:
   does not run it: that would need Pando to control the registry container, which the decision above
   does not give it. The shipped topology runs it on a weekly schedule with the registry switched to
   read-only (`maintenance.readonly`), and a deploy during that window fails its push with a message that
-  says so. Whether this is acceptable or Zot's online GC is preferred is O-38.
+  says so. **[D] (O-38)** The weekly window is accepted; if deploys during it become a real complaint,
+  the registry changes to Zot, which collects online.
 
 The registry's disk is bounded by the image count, not measured. Pando does not read the registry's
 storage (R-243's rule, applied here: Pando reports what something tells it). `GET /capacity` shows how
@@ -214,7 +219,7 @@ organization's (ECR lifecycle policies, Harbor's scheduled GC).
 
 ### Backups and DR (R-212)
 
-**The registry's contents are not in the DR bundle [P].** At the cluster tier that is tens of
+**The registry's contents are not in the DR bundle [D] (O-37).** At the cluster tier that is tens of
 gigabytes per thousand apps, in a file the operator must store offsite and decrypt interactively
 (R-214). What that means, by source type:
 
@@ -224,15 +229,17 @@ gigabytes per thousand apps, in a file the operator must store offsite and decry
 | `image` | Pulled again by the pinned digest, if the upstream registry still has it. |
 | `upload` | Rebuilt from the stored upload — **if the upload survived.** Uploads are kept under `/var/lib/pando/uploads` and are not in the DR bundle today. Without the image and without the upload there is nothing to rebuild from. |
 
-So the upload gap exists now, with or without a registry, and the registry does not close it. **[P]
-Uploads go into the DR bundle**: they are the source of record for those apps (R-020's logic, as
+So the upload gap exists now, with or without a registry, and the registry does not close it. It is
+recorded as a known issue in `notes-multiple-replicas-issue-72.md`. **[D] (O-37) Uploads go into the
+DR bundle**: they are the source of record for those apps (R-020's logic, as
 `core/source/upload.go` says), sized by what people upload rather than by what builds produce.
 
 After a restore, the reconciler finds a workload whose recorded image cannot be pulled. Today that is a
 failed `Apply` and backoff toward `failed`. **[P]** It becomes a redeploy of the pinned revision
 instead, with the deploy log saying the image was rebuilt and may differ from the one that ran before.
-That is a deploy, so it goes through approval where approval applies (R-154). Whether the registry
-should instead be in the bundle, optionally, is O-37.
+That is a deploy, so it goes through approval where approval applies (R-154). An optional registry
+export in the bundle, off by default, is reasonable later for installs whose builds cannot be
+reproduced.
 
 Restoring with the registry intact (same topology, Postgres lost) needs none of this: the recorded
 digests still resolve.
@@ -287,12 +294,15 @@ registry configured. Set PANDO_REGISTRY_URL to the registry Pando should push bu
 - A replicas-topology run (`make test-replicas`) with the registry service and registry delivery forced
   on the single host, so the push path is exercised before PRs 6 and 7 depend on it.
 
-## Next decisions for the owner
+## Decisions
 
-| ID | Question | Options | Recommended |
+All five were decided by the owner as recommended **[D]**; the table keeps the options that were weighed.
+
+
+| ID | Question | Options | Decided |
 |---|---|---|---|
-| **O-34** | Does the single-VM install run a registry too? | (a) No: keep `ImportImage`, pin by image ID. (b) Yes, always: one delivery path everywhere. | (a). A registry on one host adds a service and TLS or daemon configuration for no capability the host lacks. The pinning fix applies either way. |
-| **O-35** | How does the Pando-run registry get a certificate every node trusts? | (a) Operator supplies a certificate and hostname. (b) Pando issues one by ACME DNS-01, reusing the edge's DNS credential. (c) Pando generates a CA the operator installs on each node. (d) Plain HTTP, with each node configured as insecure. | (a) by default, (d) accepted with an explicit setting; (b) later if installs ask for it. (c) moves a trust root onto every node, which is the larger setup cost. |
-| **O-36** | Is one full-access registry credential acceptable? | (a) `htpasswd`, one account, pull by digest limiting what a leak can change. (b) Pando acts as the registry's token issuer and mints pull-only tokens per app repository. | (a) now; (b) when per-app pull isolation is wanted (it matters most on Kubernetes, where the credential sits in every app namespace). |
-| **O-37** | Should the DR bundle include the registry? | (a) Never; rebuild after restore. (b) Optional, off by default. (c) Always. | (a), with uploads added to the bundle. (b) is reasonable later for installs whose builds cannot be reproduced. |
-| **O-38** | Is a weekly read-only window for blob GC acceptable? | (a) Yes, Distribution with a scheduled read-only GC. (b) Use Zot, which collects online. | (a). Revisit with (b) if deploys during the window are a real complaint. |
+| **O-34** | Does the single-VM install run a registry too? | (a) No: keep `ImportImage`, pin by image ID. (b) Yes, always: one delivery path everywhere. | **[D]** (a). A registry on one host adds a service and TLS or daemon configuration for no capability the host lacks. The pinning fix applies either way. |
+| **O-35** | How does the Pando-run registry get a certificate every node trusts? | (a) Operator supplies a certificate and hostname. (b) Pando issues one by ACME DNS-01, reusing the edge's DNS credential. (c) Pando generates a CA the operator installs on each node. (d) Plain HTTP, with each node configured as insecure. | **[D]** (a) by default, (d) accepted with an explicit setting; (b) later if installs ask for it. (c) moves a trust root onto every node, which is the larger setup cost. |
+| **O-36** | Is one full-access registry credential acceptable? | (a) `htpasswd`, one account, pull by digest limiting what a leak can change. (b) Pando acts as the registry's token issuer and mints pull-only tokens per app repository. | **[D]** (a) now; (b) when per-app pull isolation is wanted (it matters most on Kubernetes, where the credential sits in every app namespace). |
+| **O-37** | Should the DR bundle include the registry? | (a) Never; rebuild after restore. (b) Optional, off by default. (c) Always. | **[D]** (a), with uploads added to the bundle. (b) is reasonable later for installs whose builds cannot be reproduced. |
+| **O-38** | Is a weekly read-only window for blob GC acceptable? | (a) Yes, Distribution with a scheduled read-only GC. (b) Use Zot, which collects online. | **[D]** (a). Revisit with (b) if deploys during the window are a real complaint. |

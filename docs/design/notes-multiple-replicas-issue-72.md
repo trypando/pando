@@ -158,11 +158,29 @@ the first of a stack; each later PR is based on the one before, and #72 closes w
 - **Capacity is not oversubscribed by default** (R-242), and host policy or config may allow CPU and
   memory oversubscription. Disk is never oversubscribed: it is not a reservation, and a full disk
   stops everything.
-- **API tokens are hashed with HMAC-SHA-256**, not argon2id. They are 256-bit random secrets Pando
-  generates, so a slow hash adds nothing but cost (about 64 MiB per concurrent request). Passwords
-  stay argon2id.
+- **API tokens are stored as HMAC-SHA-256, keyed with a key held outside the database**, not
+  argon2id. They are 256-bit random secrets Pando generates, so a slow hash adds nothing but cost
+  (about 64 MiB per concurrent request). Passwords stay argon2id.
 - **Anonymous data-plane denials stay audited by default**, and host policy or config may turn that
   off, since anyone can cause one write per request.
+- **For PR 4, retention defaults:** 50 deployments kept per app, security scans 90 days, sessions 30
+  days.
+- **For PR 4, an interrupted deploy is resumed** by another replica taking it from the queue, up to 3
+  attempts.
+- **For PR 4, webhook delivery may lag by up to about 4 seconds** because event subscriptions are read
+  from a cache rather than queried per event.
+- **Image registry, Kubernetes and multi-host Docker (PRs 5–7):** O-34 – O-47 are decided. The
+  operational defaults are as the notes recommended. On Kubernetes, Pando runs the edge itself,
+  Traefik included (R-174 holds, O-42); the cluster recreating a pod on another node after a node fails
+  is accepted, with R-010 amended (O-44); multi-host Docker reaches apps through a per-host forwarding
+  agent (O-45, design 06 §4); and Pando does not move apps between hosts at first (O-46).
+
+**Known issues, and the PR that fixes each:**
+
+| Issue | Fixed by |
+|---|---|
+| **A refused build can come back (R-146).** Built images are tagged `pando/<app>:latest`. A build refused by the security scan or the port check has already been loaded under that tag, and if the reconciler later recreates the workload it runs the refused image | PR 5, by pinning built images by digest (registry delivery) or by image ID with a per-deployment tag (single-host Docker, which keeps `ImportImage`). Applies on single-host Docker too. `notes-image-registry-issue-72.md` |
+| **Uploaded source is not in the DR bundle (R-212).** It lives under `/var/lib/pando/uploads`; after a restore onto a new host, an uploaded app has nothing to rebuild from | PR 5, with O-37: uploads go into the bundle |
 
 **What the audit found, and which PR fixes it:**
 

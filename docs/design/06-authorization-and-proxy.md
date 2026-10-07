@@ -302,6 +302,38 @@ picks the primary workload's port from the spec and asks the app's runtime adapt
 (`RuntimeAdapter.Upstream`, §03 2). Docker answers with the container's name, which is unique across
 every network Pando is joined to where the workload's alias is not.
 
+**[D] On several Docker hosts, a forwarding agent stands where Pando's container stood (O-45).** A
+bridge network exists on one host, so a Pando on the control host cannot join the network of an app on
+another. Each app host runs one Pando-owned container, `pando-agent` (Pando's binary, `pando
+host-agent`), and the multi-host runtime adapter joins *it* to every app network on that host, with the
+same call that joins Pando's container on one host. The agent publishes one port and accepts only
+mutual TLS with a client certificate that only Pando's replicas hold. The proxy completes steps 1–10
+as above, then opens a connection to the agent on the app's host through the `Dial` that
+`RuntimeAdapter.Upstream` returns, and the agent carries that connection to the named container and
+port and nowhere else.
+
+The statement above then reads per host: the set of networks each host's agent belongs to is the set
+of that host's apps that can be reached, and the agent forwards only for a holder of Pando's client
+certificate. There is still no route to an app that does not pass through enforcement; the route now
+includes a certificate check. What that adds:
+
+- **The agent decides nothing.** Authentication, `CheckData`, assertion minting, and header and cookie
+  stripping stay in the proxy, in core (R-027). The agent is a transport.
+- **The client key is the key to every app.** Anyone holding it can open a connection to a workload
+  without passing the proxy. Pando generates it, keeps it sealed with the secrets key in Postgres (so
+  every replica has it and a database dump alone does not), and rotates it by overlap as it rotates
+  assertion keys. Its exposure is the secrets key's, under R-191's threat model: it protects against a
+  copied disk or dump, not a compromised Pando.
+- **The agent's port is a published host port.** R-026 is about app workloads; this port reaches no app
+  without the certificate, and the operator documentation says to restrict it to the control host's
+  address with the host firewall.
+- **Routing adapters do not change.** They still point at Pando's proxy (§00 1.3); any replica serves
+  any app, and nothing in front of Pando knows which host an app is on.
+
+Design and tests: `notes-multi-host-docker-issue-72.md`. On Kubernetes the same property is held by a
+NetworkPolicy in each app namespace that admits connections only from Pando's server pods
+(`notes-kubernetes-runtime-issue-72.md`).
+
 **[P]** The cost is a private network per app, and a container runtime has a finite supply. Docker's
 default pool holds about thirty, so an install past that size needs `default-address-pools` widened
 before it can start another app. The adapter turns that refusal into a `CAPACITY_*` error naming the

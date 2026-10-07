@@ -4,6 +4,8 @@ The sixth PR of the stack in `notes-multiple-replicas-issue-72.md`. O-33 asked w
 have a Kubernetes runtime adapter; the issue's author answered yes **[D]**, as one of two ways to run
 apps on more than one machine (the other is PR 7). Placement is Kubernetes' scheduler's, behind the
 adapter. Core places nothing (R-256), and R-010 holds: Pando delegates to something that schedules.
+R-010 was amended for this runtime (O-44): the cluster recreating an app's pod on another node after
+a node fails is the runtime placing a workload, not Pando scheduling.
 
 This note maps the runtime interface onto Kubernetes, decides what is decidable, and lists what is not.
 It depends on PR 5 (`notes-image-registry-issue-72.md`): Kubernetes pulls every image from a registry.
@@ -11,8 +13,14 @@ It depends on PR 5 (`notes-image-registry-issue-72.md`): Kubernetes pulls every 
 ## Topology
 
 ```
-                 load balancer / Ingress for Pando's own Service (install topology)
-                                   │
+        :80 / :443 ── Service type LoadBalancer or NodePort (the edge's only)
+                                 │
+          ┌─────────── namespace pando-edge ────────────┐
+          │  Deployment traefik (1 replica)              │
+          │    or cloudflared                            │
+          │  IngressRoutes, all to Service pando-proxy   │
+          └──────────────────────┬───────────────────────┘
+                                 │ to Pando's proxy only
           ┌────────────── namespace pando ──────────────┐
           │  Deployment pando (N replicas) ── Service    │
           │  Deployment buildkit (rootless)              │
@@ -33,7 +41,7 @@ and a pod address, which exist only inside the cluster network. A Pando outside 
 the API server's `services/proxy` path (slow, and a much broader RBAC grant) or a tunnel; neither is
 built. One cluster per runtime adapter configuration, and a Pando reaches only the cluster it runs in.
 
-## Namespace per app [P]
+## Namespace per app [D] (O-40)
 
 Each app is a namespace, `pando-app-<app id, lowercased>`, labeled `app.kubernetes.io/managed-by=pando`
 and `pando.dev/app=<id>`.
@@ -61,10 +69,12 @@ Costs, stated:
 - **Scale.** Kubernetes' published scalability thresholds put tested limits around 10,000 namespaces
   and 10,000 Services per cluster. The cluster tier is 20,000 apps. Headless Services (below) avoid the
   kube-proxy rules that make Service count expensive, but the namespace count is past what upstream
-  tests. O-40.
+  tests. **[D] (O-40)** Namespace per app is kept, and the PR 2 load harness proves 20,000 app
+  namespaces on the cluster tier before this PR is done, with the result documented. If the harness
+  finds a limit, the fallback is several clusters per install, which needs the proxy to reach pods in a
+  cluster it does not run in (PR 7's host agent would do it).
 
-A shared namespace is the alternative if O-40 goes the other way; the rest of this note marks where it
-would differ.
+A shared namespace was the alternative; the rest of this note marks where it would differ.
 
 ## How the proxy reaches an app (R-023)
 
@@ -104,14 +114,15 @@ configure and every hour: two pods in a throwaway namespace under the same polic
 from one to the other that must be refused. If it connects, the adapter reports
 `SupportsPrivateNetwork: false`, which makes the adapter unusable (design 03 §1.1), and the message
 says why: *"This cluster does not enforce NetworkPolicy, so Pando cannot keep apps from reaching each
-other. Install a network plugin that enforces it, such as Calico or Cilium."* Requiring an enforcing CNI
-is O-43.
+other. Install a network plugin that enforces it, such as Calico or Cilium."* **[D] (O-43)** An
+enforcing network plugin is required, verified by this canary.
 
 **What NetworkPolicy does not cover.** Traffic from a node's own network (host-network pods, the
 kubelet) is admitted by most CNIs regardless of policy. Anything in the cluster running with
 `hostNetwork: true` can reach app pods directly. Inside Pando's threat model that is the host operator
-(R-087); a cluster shared with other teams' workloads is not, which is why O-43 also asks whether the
-cluster must be dedicated to Pando.
+(R-087); a cluster shared with other teams' workloads is not. **[D] (O-43)** A cluster dedicated to
+Pando is recommended, not required: dedication cannot be checked, so the operator documentation states
+the host-network gap and recommends it.
 
 **Who else could carry Pando's labels.** Anyone allowed to create pods in the `pando` namespace can
 create one with Pando's server labels and reach every app. That right belongs to cluster
@@ -129,6 +140,95 @@ Each app namespace is labeled for Pod Security Admission `baseline`, enforced: n
 host namespaces, no `hostPath`, no added capabilities beyond the default set. `restricted` would
 refuse every image that runs as root, which is most of them; Docker runs those today, so `baseline`
 matches what the Docker adapter allows.
+
+## The edge Pando runs (R-174) [D] (O-42)
+
+**R-174 holds on Kubernetes as written.** Turning on an edge is a setting in Pando, and Pando creates,
+configures, reconciles and removes it through this runtime adapter — Traefik as well as `cloudflared`.
+The cluster's own ingress controller is not a substitute, and Pando running Traefik does not depend on
+the operator choosing to. The owner rejected the narrower reading this note first proposed, in which
+Traefik ran `managed: false` against a cluster ingress Pando did not run.
+
+`SupportsEdge` is true. `ApplyEdge`, `ObserveEdge`, `RemoveEdge` and `Edges` act on one namespace,
+`pando-edge`, which Pando's manifests create and which holds nothing but edges and their objects. It is
+separate from `pando` so that an edge's ServiceAccount, which Traefik needs to read its routes, can read
+no Secret of Pando's — the secrets key is a Secret in `pando`.
+
+### What an `EdgePlan` becomes
+
+| `EdgePlan` field | On Kubernetes |
+|---|---|
+| `Name`, `Image`, `Args` | A Deployment `pando-edge-<name>`, one replica, strategy `Recreate`, labeled `app.kubernetes.io/component: edge`. `restartPolicy: Always`: an edge restarts itself, as it does on Docker (`unless-stopped`); R-149 – R-151 are about apps |
+| `Env` | A Secret in `pando-edge`, mounted by `envFrom` (DNS-01 credentials, a tunnel token). Values stay `secret.Value` until the API call that writes them (R-194) |
+| `Ports` | One Service for the edge, type `LoadBalancer` by default or `NodePort` (below). The only Service of either type Pando ever creates |
+| `Mounts` with `Volume` | A `ReadWriteOnce` PersistentVolumeClaim the edge owns (Traefik's ACME store), patched to `Retain` like an app volume, so certificates survive the edge being recreated |
+| `Mounts` with `SharedWithPando` | Not supported on this runtime. A plan that asks for one is refused at configure with a message naming the routing adapter's setting (below) |
+| `ProxyAlias` | A Service `pando-proxy` in `pando-edge` of type `ExternalName`, resolving to `pando.pando.svc.<cluster domain>`. The edge reaches Pando's proxy by that name |
+
+**One replica, `Recreate` [P].** Traefik keeps ACME certificates in one file and does not coordinate
+issuance between instances, and a `ReadWriteOnce` claim cannot attach to a second pod on another node
+during a rolling update. It is one edge, as on Docker, and every app behind it is unreachable for the
+few seconds it takes to restart. An edge that runs as several replicas needs a shared certificate store,
+which is a later change.
+
+**Service type [P]: `LoadBalancer` by default, `NodePort` as a setting.** `LoadBalancer` is what managed
+clusters and MetalLB provide, and it publishes `:80` and `:443` as the plan asks. A cluster with no load
+balancer implementation leaves such a Service pending; the adapter reports that through `ObserveEdge`,
+and the message names the setting. With `edge_service_type: NodePort`, the plan's ports map to node
+ports from the adapter's settings (default 30080 and 30443; Kubernetes' node port range does not include
+80 and 443), and the operator points an external balancer at them. `externalTrafficPolicy: Local`, so
+the client address the proxy records is the visitor's and not a node's.
+
+### How Pando writes Traefik's dynamic configuration
+
+**[P] Traefik's Kubernetes CRD provider, with Pando writing `IngressRoute` objects in `pando-edge`.**
+On Docker the Traefik adapter writes one file per app into a directory Pando and the edge share. That
+does not carry over. Four ways were weighed:
+
+| Option | Why not, or why |
+|---|---|
+| Files on the ReadWriteMany volume (O-39), mounted into Traefik | Traefik's file provider learns of changes through inotify, which does not report a write made by another node over NFS. Routes would apply only when Traefik restarts. It also ties the edge to the volume O-39's second step removes |
+| One ConfigMap holding every route, mounted into Traefik | A ConfigMap holds at most 1 MiB. At about 400 bytes per app that is roughly 2,500 apps; the cluster tier is 20,000. One ConfigMap per app does not help, since adding a mounted ConfigMap changes the pod spec and restarts the edge. A change also takes up to a minute to reach the pod |
+| Traefik's HTTP provider, polling Pando for its configuration | Works on every runtime, but it is a new Pando endpoint that has to be kept off the public listener and documented as a surface (R-261), for a problem the cluster already solves |
+| **Traefik's Kubernetes CRD provider** | Traefik watches the API and applies a change within seconds. No size limit, no shared storage, no new Pando surface. Pando writes one `IngressRoute` per app, and a `Middleware` where a path prefix is stripped (R-167). Costs: Traefik's CRDs installed with the manifests, and the RBAC below |
+
+**Every `IngressRoute` names one backend: Service `pando-proxy`** (R-023, design 03 §4: an adapter is
+told where to point, and that destination is always the proxy). Three things keep it so:
+
+1. **The adapter's code.** `RouteRequest.ProxyUpstream` is the only backend it writes.
+2. **Traefik's static configuration**, which the routing adapter generates into `EdgePlan.Args`:
+   `--providers.kubernetescrd.namespaces=pando-edge`, so routes written anywhere else are ignored, and
+   `allowCrossNamespace=false`, so a route in `pando-edge` cannot name a Service in an app namespace.
+   `allowExternalNameServices=true` is set for `pando-proxy`, the one `ExternalName` Service in the
+   namespace.
+3. **The network, as a second check.** Edge pods carry `component: edge`, not Pando's server labels, so
+   every app namespace's NetworkPolicy refuses them. An `IngressRoute` that named an app's Service would
+   connect to nothing. The edge's own NetworkPolicy allows egress to Pando's server pods on the proxy
+   port, to the API server (the address is an adapter setting), to DNS, and to addresses outside the pod
+   and Service CIDRs (ACME and DNS-01 provider APIs).
+
+The same ValidatingAdmissionPolicy that refuses a `NodePort` Service in an app namespace also refuses,
+for Pando's ServiceAccount, an `IngressRoute` whose services name anything but `pando-proxy`, a Service
+of type `ExternalName` other than `pando-proxy`, and a `LoadBalancer` or `NodePort` Service anywhere but
+`pando-edge` or selecting anything but edge pods. A bug in the adapter fails at the API.
+
+**How the routing adapter learns which to write [P].** Core joins the two adapters, as it does for
+`EdgePlan` (design 03 §4.4). `RuntimeCapabilities` gains `EdgeConfig`, a list of the ways an edge on this
+runtime can receive configuration: `shared_mount` on Docker, `kubernetes_api` here (R-254: data, not a
+type assertion). Core hands the default runtime's list to the routing adapter in `EdgeRequest` and at
+`Configure`. The Traefik adapter writes files for `shared_mount` and `IngressRoute` objects for
+`kubernetes_api`, through the in-cluster client with Pando's ServiceAccount; its `Ensure`, `Remove` and
+`Observe` are unchanged in meaning. A routing adapter that supports neither delivery the runtime offers
+is refused at configure with a message that says so.
+
+`cloudflared` needs none of this. It holds its configuration remotely, so its plan has no shared mount,
+no ports and no Service: a Deployment and a Secret in `pando-edge`, and egress to Cloudflare and to
+`pando-proxy`.
+
+**The console's own address.** With an edge configured, the edge is the way into the cluster for the
+console as well as the apps: Traefik's lowest-priority catch-all route goes to `pando-proxy`, exactly as
+on Docker (design 03 §4.4). Without one, the operator points a load balancer or Ingress at Service
+`pando`, which is install topology, as before.
 
 ## Egress (R-180 – R-187)
 
@@ -178,7 +278,7 @@ matches what the Docker adapter allows.
 
 | Method or capability | Kubernetes |
 |---|---|
-| `Apply` | Namespace, policies, quota, Services, PVCs, a Secret for environment, a ConfigMap for carried files, then one Pod per workload in `DependsOn` order. Idempotent by comparing a digest annotation, as the Docker adapter compares labels. |
+| `Apply` | Namespace, policies, quota, Services, PVCs, a Secret for environment, a ConfigMap for carried files, the namespace's pull Secret (below), then one Pod per workload in `DependsOn` order. Idempotent by comparing a digest annotation, as the Docker adapter compares labels. |
 | `Observe` | Pods and their status in the namespace. `Running` from phase and container state, `Healthy` from the readiness condition (nil when no probe), `ImageDigest` from `status.containerStatuses[].imageID`, `ExitCode` from the terminated state. `RestartCount` is always 0 (below). Never remediates. |
 | `Stop` | Deletes the pods; keeps everything else. A stopped workload is observed as present and not running from its Service, which remains. |
 | `Destroy` | Above, under Volumes. |
@@ -197,7 +297,7 @@ matches what the Docker adapter allows.
 | `IsolationClass` | `container`, or `sandboxed` when the adapter's `runtime_class` names a RuntimeClass whose handler is gVisor (`runsc`) or Kata. The adapter checks the RuntimeClass exists; it cannot check what the handler really is, which is the same trust the Docker adapter places in a configured OCI runtime name (R-114, R-115). |
 | `ImageDelivery` | `[registry]` (PR 5). `ImportImage` is not offered. |
 | `Platform` | The architecture of the eligible nodes, when they agree. Mixed nodes: empty, and the pod gets a `kubernetes.io/arch` selector for the image's platform. |
-| `SupportsEdge` | See O-42. |
+| `SupportsEdge` | True. `pando-edge`, above. `EdgeConfig` is `[kubernetes_api]`. |
 | `SupportsSelfUpgrade` | False. Pando is upgraded by changing the image on its Deployment, which rolls the replicas (R-352). |
 | `Capacity` | Below. |
 
@@ -205,6 +305,14 @@ matches what the Docker adapter allows.
 something holding `get` on Secrets in that namespace. Either way it is stored in etcd; installs should
 enable etcd encryption at rest. That is the cluster's version of R-191's statement that Pando's own
 storage protects a copied disk and not a compromised host.
+
+**Private images [D] (O-41).** Kubernetes has no per-pull credential. Each app namespace gets one
+`imagePullSecret` holding the credentials its pods pull with — the install registry's pull credential
+(PR 5) for built images, and the app's own registry credential for an image app — rewritten at every
+`Apply` (an ECR password lasts twelve hours) and deleted at `Destroy`. It stores in etcd a credential the
+Docker runtime never stores (design 03 §2.1); no app can read it, because app pods get no ServiceAccount
+token. Copying every image app's image into the install registry, so pods pull only from there, is the
+cleaner alternative and costs registry storage for every image app.
 
 **Workload names** must be DNS labels to be Service names. The planner refuses a name that is not one,
 on this runtime, with the name it would accept.
@@ -233,8 +341,10 @@ Consequences:
   returns, or is tainted out-of-service. The adapter reports a pod being deleted as not running, and
   the reconciler recreates the workload under a new pod name. The scheduler puts it on another node,
   where it starts once its volume can attach there — for a `ReadWriteOnce` volume, after the storage
-  system detaches it from the dead node. See O-44: that is recovery from node failure by way of R-148,
-  which R-010's text forbids Pando from doing itself.
+  system detaches it from the dead node. That is recovery from node failure by way of R-148, and it is
+  accepted **[D] (O-44)**: R-010 now says a runtime that spans machines moving a workload after a
+  failure is not Pando scheduling. Pando decided only that the workload should exist; the scheduler
+  decided where. The adapter does not pin pods to the node they first ran on.
 - **`kubectl drain` refuses bare pods without `--force`.** The operator documentation says so: draining a
   node that runs apps needs `--force`, and the reconciler recreates the evicted pods elsewhere within a
   tick. PodDisruptionBudgets do not apply to bare pods.
@@ -265,12 +375,14 @@ Consequences:
 | Object | Notes |
 |---|---|
 | `Deployment pando` | N replicas, the image Pando ships. `PANDO_SERVER_ADVERTISE_URL=http://$(POD_IP):8080` (replicas note). A readiness probe on `/healthz`. PodDisruptionBudget `minAvailable: 1`. |
-| `Service pando` | ClusterIP. The operator's load balancer or Ingress points at it; that is install topology, like the balancer in the replicas note. |
+| `Service pando` | ClusterIP. The edge reaches it through `pando-proxy` in `pando-edge`. With no edge configured, the operator's load balancer or Ingress points at it; that is install topology, like the balancer in the replicas note. |
 | `Secret pando-secrets-key` | The secrets key, mounted read-only into every replica (R-190). The canary check at start (replicas note) refuses a replica with a different key. |
 | Postgres | External (`PANDO_DATABASE_URL`), or a StatefulSet in the manifests. |
 | `Deployment buildkit` | Below. |
 | `Deployment registry` | PR 5, or the organization's registry. |
-| NetworkPolicy in `pando` | Postgres, BuildKit and the registry admit connections only from Pando's server pods. |
+| NetworkPolicy in `pando` | Postgres, BuildKit and the registry admit connections only from Pando's server pods. Pando's server pods admit the proxy port from edge pods in `pando-edge`. |
+| Namespace `pando-edge` | Edges (above). Pando's ServiceAccount has a Role here, not cluster-wide rights. |
+| Traefik's CRDs | `IngressRoute`, `Middleware` and the rest of `traefik.io`, installed with the manifests. Cluster-scoped, so applied once by whoever applies the manifests; Pando holds no rights over CRDs. |
 
 **RBAC, minimal [P].** One ClusterRole bound to Pando's ServiceAccount:
 
@@ -284,13 +396,31 @@ Consequences:
 | `runtimeclasses` | get | Isolation check |
 | `pods.metrics.k8s.io` | get, list | Usage, when installed |
 
+**Added for the edge [P].** A Role in `pando-edge`, bound to Pando's ServiceAccount:
+
+| Resource | Verbs | Why |
+|---|---|---|
+| `deployments` (apps) | get, list, watch, create, update, patch, delete | The edge's Deployment |
+| `services` | get, list, watch, create, update, patch, delete | The edge's `LoadBalancer` or `NodePort` Service, and `pando-proxy`; the admission policy limits which |
+| `persistentvolumeclaims`, `secrets` | get, list, watch, create, update, patch, delete | The ACME store; DNS-01 credentials and tunnel tokens |
+| `networkpolicies` | get, create, update, delete | The edge's egress policy |
+| `ingressroutes.traefik.io`, `middlewares.traefik.io` | get, list, watch, create, update, patch, delete | One route per app, and prefix stripping (R-167) |
+| `pods`, `pods/log` | get, list, watch | `ObserveEdge`, and the edge's logs for an operator |
+
+And the cluster-scoped rule `persistentvolumes: patch` above covers the ACME store's `Retain`.
+
+A ServiceAccount `pando-edge-traefik`, used only by a Traefik edge, with a Role in `pando-edge` that
+reads what Traefik's CRD provider watches: `get`, `list`, `watch` on the `traefik.io` resources,
+`services`, `endpointslices` and `secrets`, in `pando-edge` only. A `cloudflared` edge runs with no
+ServiceAccount token. Neither can read anything in `pando` or in an app namespace.
+
 `pando-app-manager`, bound only inside app namespaces: pods, `pods/log`, `pods/exec`, services,
 persistentvolumeclaims, configmaps, secrets, networkpolicies, resourcequotas, limitranges — create, get,
 list, watch, update, delete. Nothing in `kube-system`, no `nodes/proxy`, no `pods/exec` outside app
 namespaces. With a shared namespace, all of it would be one Role and no cluster-scoped rights except
 nodes.
 
-**`/var/lib/pando` [P]: a ReadWriteMany PVC for v1.** The replicas note lists what lives there:
+**`/var/lib/pando` [D] (O-39): a ReadWriteMany PVC first.** The replicas note lists what lives there:
 
 | Item | On Kubernetes |
 |---|---|
@@ -299,10 +429,11 @@ nodes.
 | Local backups | Use a remote backup destination adapter (R-217). `local` on an RWX volume works but is the disk-failure case R-217 warns about |
 | Build cache | Moves into the registry as BuildKit `type=registry` cache, one cache reference per app (R-117) |
 | Audit archives | Exported to the backup destination (R-347 already permits it) |
-| Traefik's dynamic configuration | Only with a Pando-run Traefik, which this runtime does not run (O-42) |
+| Traefik's dynamic configuration | `IngressRoute` objects in `pando-edge` (above). Not on the volume |
 
 An RWX volume needs a storage class that offers it (NFS, EFS, Filestore, CephFS). Moving uploads and the
-build cache out removes the last reasons for it, which is O-39.
+build cache out removes the last reasons for it; that is the next step after this PR, and it also
+lets Pando's replicas run on more than one host under multi-host Docker (O-47).
 
 **Builder in the cluster.** Rootless BuildKit (`moby/buildkit:rootless`) as a Deployment, which needs
 `seccompProfile: Unconfined` and `appArmorProfile: Unconfined` to create its own user namespaces, and
@@ -317,12 +448,14 @@ of BuildKit share the registry cache, so a build need not land on the same repli
 - Pando outside the cluster it deploys to.
 - More than one cluster per Pando (see O-40).
 - The in-place upgrade (R-359).
-- A Pando-run Traefik in `managed` mode (O-42).
+- More than one replica of an edge.
 - Write observation in the trial run.
 
 ## Requirements this touches
 
-- **R-010.** O-44 proposes a clarification. Nothing else here needs a change.
+- **R-010** is amended in the same change as this note's decisions (O-44): the cluster moving a
+  workload after a node failure is not Pando scheduling. Nothing else here needs a change.
+- **R-174 holds as written (O-42).** Pando runs and configures the edge, Traefik included.
 - **R-023, R-025, R-026** hold by NetworkPolicy, the absence of any Service type that leaves the
   cluster, and the admission policy. They depend on the CNI (O-43).
 - **R-151** holds by bare pods with `restartPolicy: Never`.
@@ -342,19 +475,27 @@ Against a kind cluster with Calico in CI (`testcontainers-go` can start one; the
 - `TestR204_AVolumeSurvivesItsAppsDeletion` — PVC kept, PV `Retain`.
 - `TestR187_ARestrictedAppReachesOnlyItsGateway`.
 - `TestR112_TheBuildPodMountsNoRuntimeSocket`.
+- `TestR174_TurningOnTraefikRunsItInTheCluster` — the edge's Deployment and `LoadBalancer` Service are
+  created, and an app's `IngressRoute` serves the app through the proxy.
+- `TestR023_TheEdgeCannotReachAnAppPod` — a connection from the edge pod to an app pod is refused, and
+  an `IngressRoute` naming an app's Service is refused by the admission policy.
+- `TestR026_NoLoadBalancerServiceOutsidePandoEdge` — the admission policy.
 - The canary refusing a cluster without an enforcing CNI (kind with its default CNI, kindnet, which
   does not enforce NetworkPolicy).
 
-## Next decisions for the owner
+## Decisions
 
-| ID | Question | Options | Recommended |
+All six were decided by the owner **[D]**: five as recommended, and O-42 against the recommendation. The table keeps the options that were weighed.
+
+
+| ID | Question | Options | Decided |
 |---|---|---|---|
-| **O-39** | What replaces the shared `/var/lib/pando` in a cluster? | (a) A ReadWriteMany PVC, required. (b) Move uploads to Postgres or the registry and the build cache to the registry, so no shared volume is needed. | (a) for the first release, (b) next. (b) also removes the prerequisite for multi-host Docker with replicas on several hosts (PR 7, O-47). |
-| **O-40** | Namespace per app, given 20,000 apps exceeds the tested namespace count? | (a) Namespace per app; prove 20,000 with the PR 2 load harness and document the result. (b) Shared namespaces holding many apps each, with hostAliases for workload names. (c) Several clusters per install, which needs the proxy to reach pods in a cluster it does not run in (PR 7's host agent would do it). | (a). (c) is the fallback if the harness finds a limit. (b) loses per-app isolation boundaries for a scale problem that may not exist. |
-| **O-41** | How does a pod pull an app's private image? Kubernetes has no per-pull credential. | (a) An `imagePullSecret` in the app's namespace, rewritten at each `Apply` (ECR passwords last twelve hours) and deleted at `Destroy`. (b) Pando copies the image into the install registry at deploy and pods pull only from there. | (a). It stores a credential in etcd that design 03 §2.1 says the Docker runtime never stores; no app can read it (no ServiceAccount token), and it is the same for the install registry's own pull credential (O-36). (b) is cleaner and costs registry storage for every image app. |
-| **O-42** | How does R-174's edge work on Kubernetes? | (a) `SupportsEdge` for plans with no `SharedWithPando` mount — `cloudflared` runs as a Deployment; Traefik runs `managed: false` against Pando's Service. (b) Run Traefik too, sharing route files through a ConfigMap. (c) A Gateway API routing adapter that writes routes to Pando's Service. | (a) now, which means splitting `SupportsEdge` so a plan's shared mount is a capability of its own; (c) as the Kubernetes-native routing adapter later. R-174 is met for Cloudflare; for Traefik, the cluster's own ingress is the edge and Pando does not run it, which is a narrower reading of R-174 the owner should accept or reject. |
-| **O-43** | Does the adapter require a NetworkPolicy-enforcing CNI, and a cluster dedicated to Pando? | (a) Require an enforcing CNI (canary-verified), recommend a dedicated cluster, and document the host-network gap. (b) Require both. | (a). An enforcing CNI is checkable; dedication is not, so it is documented rather than enforced. |
-| **O-44** | Kubernetes recreates an app on another node after node failure, by way of R-148's "workload missing, recreate it". R-010 says "no rescheduling on node failure". | (a) Accept: amend R-010 to say Pando itself does not reschedule, and an adapter that spans machines places a recreated workload where it places any workload. (b) Forbid: pin each pod to the node it first ran on, so a dead node leaves the app down until a person acts. | (a). It follows R-256 ("Pando delegates to something that schedules"), and (b) requires the adapter to fight the scheduler. This is a requirement change and needs the owner. |
+| **O-39** | What replaces the shared `/var/lib/pando` in a cluster? | (a) A ReadWriteMany PVC, required. (b) Move uploads to Postgres or the registry and the build cache to the registry, so no shared volume is needed. | **[D]** (a) for the first release, (b) next. (b) also removes the prerequisite for multi-host Docker with replicas on several hosts (PR 7, O-47). |
+| **O-40** | Namespace per app, given 20,000 apps exceeds the tested namespace count? | (a) Namespace per app; prove 20,000 with the PR 2 load harness and document the result. (b) Shared namespaces holding many apps each, with hostAliases for workload names. (c) Several clusters per install, which needs the proxy to reach pods in a cluster it does not run in (PR 7's host agent would do it). | **[D]** (a), proven by the load harness. (c) is the fallback if the harness finds a limit. (b) loses per-app isolation boundaries for a scale problem that may not exist. |
+| **O-41** | How does a pod pull an app's private image? Kubernetes has no per-pull credential. | (a) An `imagePullSecret` in the app's namespace, rewritten at each `Apply` (ECR passwords last twelve hours) and deleted at `Destroy`. (b) Pando copies the image into the install registry at deploy and pods pull only from there. | **[D]** (a). It stores a credential in etcd that design 03 §2.1 says the Docker runtime never stores; no app can read it (no ServiceAccount token), and it is the same for the install registry's own pull credential (O-36). (b) is cleaner and costs registry storage for every image app. |
+| **O-42** | How does R-174's edge work on Kubernetes? | (a) `SupportsEdge` for plans with no `SharedWithPando` mount — `cloudflared` runs as a Deployment; Traefik runs `managed: false` against Pando's Service. (b) Run Traefik too, sharing route files through a ConfigMap. (c) A Gateway API routing adapter that writes routes to Pando's Service. | Recommended (a), which read R-174 narrowly for Traefik. **Not approved. [D] R-174 holds on Kubernetes:** Pando runs and configures the edge itself, Traefik included, with routes written as `IngressRoute` objects (the edge section above). (c) remains possible later as another routing adapter. |
+| **O-43** | Does the adapter require a NetworkPolicy-enforcing CNI, and a cluster dedicated to Pando? | (a) Require an enforcing CNI (canary-verified), recommend a dedicated cluster, and document the host-network gap. (b) Require both. | **[D]** (a). An enforcing CNI is checkable; dedication is not, so it is documented rather than enforced. |
+| **O-44** | Kubernetes recreates an app on another node after node failure, by way of R-148's "workload missing, recreate it". R-010 says "no rescheduling on node failure". | (a) Accept: amend R-010 to say Pando itself does not reschedule, and an adapter that spans machines places a recreated workload where it places any workload. (b) Forbid: pin each pod to the node it first ran on, so a dead node leaves the app down until a person acts. | **[D]** (a). R-010 is amended in this change. It follows R-256 ("Pando delegates to something that schedules"), and (b) would require the adapter to fight the scheduler. |
 
 The bare-pod design for R-151 is a [P] rather than an open question, but it changes how operators drain
 nodes, so it is worth confirming alongside these.
