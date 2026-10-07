@@ -453,8 +453,7 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		LogRetention: api.LogRetentionCapability{SupportsSizeCap: false},
 
 		// Every node pulls; there is no daemon to stream an image into.
-		SupportsImageImport: false,
-		ImageDelivery:       []api.ImageDelivery{api.DeliveryRegistry},
+		ImageDelivery: []api.ImageDelivery{api.ImageDeliveryRegistry},
 
 		// Pando is upgraded by changing the image on its Deployment.
 		SupportsSelfUpgrade: false,

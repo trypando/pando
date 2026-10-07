@@ -22,18 +22,30 @@ type recordingBuilder struct {
 	asked  api.BuildRequest
 	result api.BuildResult
 	err    error
+	pushes bool
 }
 
 func (b *recordingBuilder) Category() api.Category { return api.CategoryBuilder }
+
+func (b *recordingBuilder) Capabilities(context.Context) (api.BuilderCapabilities, error) {
+	return api.BuilderCapabilities{SupportsPush: b.pushes}, nil
+}
 
 func (b *recordingBuilder) Build(_ context.Context, req api.BuildRequest) (api.BuildResult, error) {
 	b.asked = req
 	if b.err != nil {
 		return api.BuildResult{}, b.err
 	}
+	if req.Push != nil {
+		return b.result, nil
+	}
 	_, _ = io.WriteString(req.ImageSink, "image-bytes")
 	return b.result, nil
 }
+
+// importing is a runtime that takes a built image directly, as single-host
+// Docker does.
+var importing = api.RuntimeCapabilities{ImageDelivery: []api.ImageDelivery{api.ImageDeliveryImport}}
 
 // importingRuntime can import an image and records what it read.
 type importingRuntime struct {
@@ -89,11 +101,11 @@ func buildApp() *spec.AppSpec {
 // builder plans again and the answer never reaches the image.
 func TestTheAppWideBuildIsAskedForWhatTheSpecSays(t *testing.T) {
 	b := &recordingBuilder{result: api.BuildResult{ImageRef: "pando/app:latest"}}
-	rt := &importingRuntime{caps: api.RuntimeCapabilities{SupportsImageImport: true}, id: "sha256:imported"}
+	rt := &importingRuntime{caps: importing, id: "sha256:imported"}
 	r := buildRunner(t, b, rt)
 
 	var log strings.Builder
-	image, err := r.build(context.Background(), buildApp(), &source.Checkout{}, &log, nil, "app_01HQ8")
+	image, err := r.build(context.Background(), buildApp(), &source.Checkout{}, &log, nil, "app_01HQ8", "dep_1")
 	require.NoError(t, err)
 	require.Equal(t, "sha256:imported", image, "what the runtime imported is what runs")
 	require.Equal(t, "image-bytes", rt.imported, "the built image went through to the runtime")
@@ -118,7 +130,7 @@ func TestTheAppWideBuildIsAskedForWhatTheSpecSays(t *testing.T) {
 // says its own.
 func TestR096_AComposeServiceBuildsFromItsOwnDockerfile(t *testing.T) {
 	b := &recordingBuilder{result: api.BuildResult{ImageRef: "pando/app-api:latest"}}
-	rt := &importingRuntime{caps: api.RuntimeCapabilities{SupportsImageImport: true}}
+	rt := &importingRuntime{caps: importing}
 	r := buildRunner(t, b, rt)
 
 	wb := &spec.WorkloadBuild{
@@ -126,7 +138,7 @@ func TestR096_AComposeServiceBuildsFromItsOwnDockerfile(t *testing.T) {
 		Args: []spec.KV{{Key: "SHARED", Value: "service"}},
 	}
 	var log strings.Builder
-	image, err := r.build(context.Background(), buildApp(), &source.Checkout{}, &log, wb, "app_01HQ8/api")
+	image, err := r.build(context.Background(), buildApp(), &source.Checkout{}, &log, wb, "app_01HQ8/api", "dep_1")
 	require.NoError(t, err)
 	require.Equal(t, "pando/app-api:latest", image,
 		"a runtime that names nothing on import leaves the builder's reference")
@@ -149,10 +161,10 @@ func TestR096_AComposeServiceBuildsFromItsOwnDockerfile(t *testing.T) {
 func TestR146_ABuildFailureIsReturnedAsIs(t *testing.T) {
 	cause := errs.New(errs.BuildFailed, "The build failed.")
 	b := &recordingBuilder{err: cause}
-	rt := &importingRuntime{caps: api.RuntimeCapabilities{SupportsImageImport: true}}
+	rt := &importingRuntime{caps: importing}
 	r := buildRunner(t, b, rt)
 
-	_, err := r.build(context.Background(), buildApp(), &source.Checkout{}, io.Discard, nil, "app_01HQ8")
+	_, err := r.build(context.Background(), buildApp(), &source.Checkout{}, io.Discard, nil, "app_01HQ8", "dep_1")
 	require.ErrorIs(t, err, cause)
 }
 
@@ -162,7 +174,7 @@ func TestABuildIsRefusedForARuntimeThatCannotImport(t *testing.T) {
 	b := &recordingBuilder{}
 	r := buildRunner(t, b, &importingRuntime{})
 
-	_, err := r.build(context.Background(), buildApp(), &source.Checkout{}, io.Discard, nil, "app_01HQ8")
+	_, err := r.build(context.Background(), buildApp(), &source.Checkout{}, io.Discard, nil, "app_01HQ8", "dep_1")
 	e := errs.As(err)
 	require.NotNil(t, e)
 	require.Equal(t, errs.PlanCapabilityUnsupported, e.Code)
@@ -170,7 +182,7 @@ func TestABuildIsRefusedForARuntimeThatCannotImport(t *testing.T) {
 	require.Empty(t, b.asked.Strategy, "nothing was built")
 
 	broken := buildRunner(t, &recordingBuilder{}, &importingRuntime{capsErr: errors.New("daemon down")})
-	_, err = broken.build(context.Background(), buildApp(), &source.Checkout{}, io.Discard, nil, "app_01HQ8")
+	_, err = broken.build(context.Background(), buildApp(), &source.Checkout{}, io.Discard, nil, "app_01HQ8", "dep_1")
 	require.EqualError(t, err, "daemon down")
 }
 

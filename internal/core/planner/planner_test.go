@@ -127,6 +127,9 @@ func capableRuntime() *fakeRuntime {
 			SupportsPrivateNetwork:    true,
 			SupportsResourceLimits:    true,
 
+			// Takes a built image directly, as single-host Docker does.
+			ImageDelivery: []api.ImageDelivery{api.ImageDeliveryImport},
+
 			// R-222: a runtime that can bound a workload's logs, which is what
 			// lets an install enforce an aggregate budget (O-16).
 			LogRetention: api.LogRetentionCapability{

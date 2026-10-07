@@ -86,6 +86,17 @@ type GC struct {
 	// #41). Apps soft-delete, so the row's cascade never fires; a credential
 	// for an app nobody can deploy is a key kept for no one. Nil skips it.
 	DiscardCredential func(ctx context.Context, appID string) error
+
+	// RegistryImages deletes a deleted app's builds from the install's image
+	// registry (issue #72 PR 5, R-224). Nil when the install has none.
+	RegistryImages RegistryImages
+}
+
+// RegistryImages removes a deleted app's images from the install's registry,
+// by manifest. The layers are freed by the registry's own scheduled garbage
+// collection (O-38).
+type RegistryImages interface {
+	DeleteApp(ctx context.Context, appID string) error
 }
 
 // BuildCaches has the builder that built an app forget its cache.
@@ -366,6 +377,14 @@ func (g *GC) forgetFiles(ctx context.Context, t state.TeardownTarget) error {
 	}
 	if g.DiscardCredential != nil {
 		if err := g.DiscardCredential(ctx, t.AppID); err != nil {
+			return err
+		}
+	}
+	// A deleted app keeps nothing in the registry, a kept final backup
+	// included: the backup is of volumes, and a restored app's image is
+	// rebuilt from its spec (R-204, O-37).
+	if g.RegistryImages != nil {
+		if err := g.RegistryImages.DeleteApp(ctx, t.AppID); err != nil {
 			return err
 		}
 	}

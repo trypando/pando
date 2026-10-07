@@ -95,6 +95,12 @@ type Reconciler struct {
 	Logger   *zap.Logger
 	Clock    clock.Clock
 
+	// BuiltImageAuth is the install registry's credential for an image Pando
+	// pushed there, nil for any other (issue #72, PR 5). A workload restored
+	// on a runtime that pulls needs it for the pull, as the deploy did. Nil
+	// means no install registry.
+	BuiltImageAuth func(ctx context.Context, ref string) *api.RegistryAuth
+
 	// Backoff, FailureThreshold and FailureWindow override R-149 and R-150's
 	// defaults. Zero values mean the defaults, so a caller that does not care
 	// sets nothing.
@@ -634,6 +640,15 @@ func (r *Reconciler) correct(ctx context.Context, app state.Reconcilable, runtim
 		}
 	}
 
+	// The credential is resolved here, for the one apply, rather than on every
+	// tick: for ECR it is minted by a call to AWS.
+	if r.BuiltImageAuth != nil {
+		for i := range want.Workloads {
+			if want.Workloads[i].PullAuth == nil {
+				want.Workloads[i].PullAuth = r.BuiltImageAuth(ctx, want.Workloads[i].Image)
+			}
+		}
+	}
 	if _, err := runtime.Apply(ctx, want); err != nil {
 		r.attempt(ctx, app, runtime, "could not start the app: "+reason(err))
 		return

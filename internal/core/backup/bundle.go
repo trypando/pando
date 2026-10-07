@@ -81,6 +81,13 @@ const (
 	// a rebuilt host does not ask Let's Encrypt for every certificate again
 	// at once and meet its rate limits. Named by the runtime's own handle.
 	EdgesPrefix = "edges/"
+
+	// UploadsPrefix holds uploaded source archives, one per app, by file name
+	// (R-262). An uploaded app's source exists nowhere else: the archive is
+	// what its next deploy builds from, and after a restore onto a registry
+	// that has lost its image it is the only thing it can be rebuilt from
+	// (O-37). The registry's images are not in a bundle.
+	UploadsPrefix = "uploads/"
 )
 
 // Writer assembles a bundle.

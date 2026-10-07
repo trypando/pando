@@ -257,14 +257,14 @@ func TestAnUnknownKindIsSkippedRatherThanFatal(t *testing.T) {
 	logger, logs := recorded()
 
 	require.NoError(t, store.Upsert(ctx, state.AdapterConfig{
-		ID: "rt_kubernetes", Category: string(adapterapi.CategoryRuntime), Kind: "kubernetes",
-		Name: "Kubernetes", Enabled: true,
+		ID: "rt_nomad", Category: string(adapterapi.CategoryRuntime), Kind: "nomad",
+		Name: "Nomad", Enabled: true,
 	}))
 
 	registry, _, err := registerAdapters(ctx, db, store, state.NewNotifications(db), nil, logger)
 	require.NoError(t, err)
 
-	_, ok := registry.Get("rt_kubernetes")
+	_, ok := registry.Get("rt_nomad")
 	require.False(t, ok)
 	require.NotEmpty(t, logs.FilterMessage("skipping adapter of unknown kind").All(),
 		"it was skipped without saying so")
