@@ -47,8 +47,8 @@ export function AccessAI({ onClose }: { onClose: () => void }) {
     queryFn: () => api.get<{ verbs: { verb: string; scope: string }[] | null }>('/verbs'),
   });
   const users = useQuery({
-    queryKey: ['users'],
-    queryFn: () => api.get<{ users: Person[] }>('/users'),
+    queryKey: ['users', 'people'],
+    queryFn: () => api.get<{ users: Person[] }>('/users?limit=500'),
     retry: false,
   });
   const people = users.data?.users ?? [];

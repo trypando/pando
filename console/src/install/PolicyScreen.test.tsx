@@ -15,7 +15,15 @@ function render(policy: object, config?: object) {
   const queries = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   queries.setQueryData(['policy'], policy);
   queries.setQueryData(['config'], config ?? { file: '', settings: [], policy: [] });
-  queries.setQueryData(['apps'], { apps: [{ id: 'app_01', name: 'crewmate' }] });
+  // The approval section asks for the chosen apps by ID and a search's worth
+  // of others (issue #72); both answers, as the server would give them.
+  const apps = [{ id: 'app_01', name: 'crewmate' }];
+  const chosen = (policy as { deploy_approval_apps?: string[] }).deploy_approval_apps ?? [];
+  queries.setQueryData(['apps', 'approval-policy', chosen, ''], {
+    picked: apps.filter((a) => chosen.includes(a.id)),
+    found: apps,
+    more: false,
+  });
   return renderToString(
     <QueryClientProvider client={queries}>
       <Policy canEdit />

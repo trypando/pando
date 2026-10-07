@@ -120,7 +120,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 
 	users := state.NewUsers(db)
 	sessions := state.NewSessions(db)
-	tokens := state.NewTokens(db)
+	tokens := state.NewTokens(db, testTokenKey)
 	apps := state.NewApps(db)
 	volumes := state.NewVolumes(db)
 	adapters := state.NewAdapters(db)
@@ -586,3 +586,7 @@ func declaredAI(startup *config.Config) []assist.Declared {
 	}
 	return out
 }
+
+// testTokenKey is the API token key every test install uses. In production it
+// is a random file under /var/lib/pando (core/tokenkey).
+var testTokenKey = []byte("0123456789abcdef0123456789abcdef")

@@ -38,6 +38,11 @@ var descriptions = map[string]string{
 		"backed up before the app or its volumes are deleted.",
 	"max_token_lifetime_days": "Longest a token may live, in days. 0 means no limit.",
 	"max_log_disk_bytes":      "Total disk for app logs across every app, in bytes. 0 means no limit.",
+	"allow_cpu_oversubscription": "Let apps together ask for more CPU than the runtime has. Off by default: a " +
+		"deploy that would need more CPU than is left is refused. On, busy apps share the CPU and run slower.",
+	"allow_memory_oversubscription": "Let apps together ask for more memory than the runtime has. Off by " +
+		"default: a deploy that would need more memory than is left is refused. On, the host may run out and " +
+		"stop an app to free memory. Disk is never oversubscribed.",
 	"audit_retention_months": "How many months the audit log keeps before an older month is archived and removed " +
 		"from the live log. 0 means 3, which is also the least it may be.",
 	"audit_archive": "Where a month of the audit log goes once it is past retention: keep (archived under Pando's " +
@@ -48,6 +53,9 @@ var descriptions = map[string]string{
 		"repair a plan or answer detection's questions.",
 	"disable_anonymous_use_audit": "Don't record visits from people who aren't signed in: app.use is written " +
 		"to the audit log for signed-in people and tokens only, not for anonymous visitors to public apps.",
+	"disable_anonymous_denial_audit": "Don't record refusals of people who aren't signed in: authz.denied is " +
+		"written for an anonymous visitor to an app not shared with them only while this is off. Refusals of " +
+		"signed-in people and tokens are always recorded.",
 	"min_security_score": "Minimum security score a deploy must reach, 0 to 100. 0 means off.",
 	"insecure_action": "What happens to a running app that falls below the minimum security score: " +
 		"warn, or stop (after the grace period).",

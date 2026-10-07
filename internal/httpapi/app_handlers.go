@@ -232,11 +232,20 @@ func (s *Server) handleListApps(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	var apps []state.App
+	page, err := pageFrom(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	var (
+		apps  []state.App
+		next  string
+		total int
+	)
 	if every {
-		apps, err = s.Apps.ListAll(r.Context())
+		apps, next, total, err = s.Apps.ListAllPage(r.Context(), page)
 	} else {
-		apps, err = s.Apps.ListForPrincipal(r.Context(), p)
+		apps, next, total, err = s.Apps.ListForPrincipalPage(r.Context(), p, page)
 	}
 	if err != nil {
 		Error(w, r, err)
@@ -247,7 +256,9 @@ func (s *Server) handleListApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, map[string]any{
-		"apps": s.withVerdicts(r.Context(), withAddresses(r, apps)),
+		"apps":        s.withVerdicts(r.Context(), withAddresses(r, apps)),
+		"next_cursor": next,
+		"total":       total,
 	})
 }
 

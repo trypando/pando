@@ -1,15 +1,21 @@
 package state
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/trypando/pando/internal/core/tokenkey"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/hash"
 	"github.com/trypando/pando/internal/id"
@@ -23,9 +29,24 @@ const (
 )
 
 // Tokens stores API tokens.
-type Tokens struct{ db *DB }
+type Tokens struct {
+	db *DB
 
-func NewTokens(db *DB) *Tokens { return &Tokens{db: db} }
+	// key is what token digests are made with (core/tokenkey). It is not in
+	// the database, so a dump of the tokens table cannot test a guess.
+	key []byte
+}
+
+// NewTokens returns the token store. key is the install's API token key
+// (tokenkey.LoadOrCreate), and must be tokenkey.Size bytes: a store without
+// one could neither issue a token nor check one, and finding that out at the
+// first request is later than at start.
+func NewTokens(db *DB, key []byte) *Tokens {
+	if len(key) != tokenkey.Size {
+		panic("state.NewTokens: the API token key must be tokenkey.Size bytes")
+	}
+	return &Tokens{db: db, key: bytes.Clone(key)}
+}
 
 // Token is a stored token, without its secret.
 type Token struct {
@@ -77,12 +98,9 @@ func (t *Tokens) Create(ctx context.Context, kind, name, ownerUserID, createdBy 
 	}
 	plaintext := secret.New(base64.RawURLEncoding.EncodeToString(raw))
 
-	digest, err := hash.New(plaintext)
-	if err != nil {
-		return Issued{}, errs.Wrap(errs.Internal, "Could not generate a token.", err)
-	}
+	digest := t.digest(plaintext)
 
-	_, err = t.db.Exec(ctx, `
+	_, err := t.db.Exec(ctx, `
 		INSERT INTO tokens (id, kind, name, hash, owner_user_id, created_by, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		tokenID, kind, name, digest, nullable(ownerUserID), createdBy, expiresAt)
@@ -98,9 +116,8 @@ func (t *Tokens) Create(ctx context.Context, kind, name, ownerUserID, createdBy 
 
 // Authenticate resolves a presented token string.
 //
-// The string is "<id>.<secret>". Splitting on the ID lets the hash be looked up
-// directly rather than compared against every row — an argon2id verify per
-// stored token would make authentication cost grow with the number of tokens.
+// The string is "<id>.<secret>". Splitting on the ID lets the digest be looked
+// up directly rather than compared against every row.
 //
 // Every failure returns the same error. Distinguishing "no such token" from
 // "wrong secret" would let a caller enumerate valid token IDs.
@@ -116,11 +133,13 @@ func (t *Tokens) Authenticate(ctx context.Context, presented secret.Value) (Toke
 		owner     *string
 		expiresAt *time.Time
 		revokedAt *time.Time
+		stale     bool
 	)
 	err := t.db.QueryRow(ctx, `
-		SELECT id, kind, name, hash, owner_user_id, expires_at, revoked_at
-		FROM tokens WHERE id = $1`, tokenID).
-		Scan(&tok.ID, &tok.Kind, &tok.Name, &digest, &owner, &expiresAt, &revokedAt)
+		SELECT id, kind, name, hash, owner_user_id, expires_at, revoked_at,
+		       last_used_at IS NULL OR last_used_at < now() - make_interval(secs => $2)
+		FROM tokens WHERE id = $1`, tokenID, lastUsedResolution.Seconds()).
+		Scan(&tok.ID, &tok.Kind, &tok.Name, &digest, &owner, &expiresAt, &revokedAt, &stale)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Token{}, errInvalidToken()
 	}
@@ -128,8 +147,9 @@ func (t *Tokens) Authenticate(ctx context.Context, presented secret.Value) (Toke
 		return Token{}, errs.Wrap(errs.Internal, "Could not read the token.", err)
 	}
 
-	ok, verifyErr := hash.Verify(secret.New(plaintext), digest)
-	if verifyErr != nil || !ok {
+	presentedSecret := secret.New(plaintext)
+	ok, rehash := t.verify(presentedSecret, digest)
+	if !ok {
 		return Token{}, errInvalidToken()
 	}
 
@@ -148,11 +168,85 @@ func (t *Tokens) Authenticate(ctx context.Context, presented secret.Value) (Toke
 	}
 	tok.ExpiresAt = expiresAt
 
-	// R-062. Best effort: a failure to record last use must not deny a valid
-	// request.
-	_, _ = t.db.Exec(ctx, `UPDATE tokens SET last_used_at = now() WHERE id = $1`, tokenID)
+	// A token stored before tokens were HMAC-SHA-256 — argon2id, or the
+	// unkeyed SHA-256 an earlier build for issue #93 wrote — is rewritten the
+	// first time it is used, so its next use costs an HMAC and not an
+	// argon2id, and the table stops holding a digest a dump alone could test
+	// guesses against. Only if the row still holds the digest just verified:
+	// a rotation racing this one wins. Best effort, like last use below.
+	if rehash {
+		_, _ = t.db.Exec(ctx, `UPDATE tokens SET hash = $2 WHERE id = $1 AND hash = $3`,
+			tokenID, t.digest(presentedSecret), digest)
+	}
+
+	// R-062. Written when the stored time is older than lastUsedResolution,
+	// not on every request: a token used in a loop otherwise writes its row
+	// once per call. Best effort: a failure to record last use must not deny a
+	// valid request.
+	if stale {
+		_, _ = t.db.Exec(ctx, `
+			UPDATE tokens SET last_used_at = now()
+			WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - make_interval(secs => $2))`,
+			tokenID, lastUsedResolution.Seconds())
+	}
 
 	return tok, nil
+}
+
+// lastUsedResolution is how stale a token's last_used_at may be before a use
+// writes it again (R-062). The column says when a token was last used to
+// within this, which is what reviewing stale credentials needs.
+const lastUsedResolution = time.Minute
+
+// Prefixes of the digests the tokens table holds. A digest with neither is an
+// argon2id one, from before issue #93.
+const (
+	// apiTokenPrefix is the current form: HMAC-SHA-256 under the token key.
+	apiTokenPrefix = "hmac-sha256:"
+
+	// legacySHA256Prefix is unkeyed SHA-256, which an earlier build for issue
+	// #93 wrote. Still accepted, and rewritten on use.
+	legacySHA256Prefix = "sha256:"
+)
+
+// digest is what the tokens table stores for a token's secret, so a leaked
+// table hands nobody a working token (R-063).
+//
+// HMAC-SHA-256 under the install's token key (core/tokenkey), which is kept
+// in a file and not in the database. Not argon2id, which passwords get: the
+// secret is 256 bits Create generated, not anything a person chose, and
+// argon2id cost 64 MiB and tens of milliseconds on every request a token
+// made, which anyone who knew a token's ID could make Pando pay (issue #93).
+// Keyed rather than plain SHA-256 so that a database dump alone — a copied
+// Postgres backup, a read-only SQL injection — cannot be used to check a
+// candidate secret against any row: that also takes the key file.
+func (t *Tokens) digest(v secret.Value) string {
+	return apiTokenPrefix + hex.EncodeToString(t.mac(v.Reveal()))
+}
+
+func (t *Tokens) mac(s string) []byte {
+	m := hmac.New(sha256.New, t.key)
+	m.Write([]byte(s))
+	return m.Sum(nil)
+}
+
+// verify reports whether v is the secret a stored digest was made from, and
+// whether that digest is in an older form that should be rewritten. Constant
+// time for an HMAC or SHA-256 digest; argon2id's own comparison is too.
+func (t *Tokens) verify(v secret.Value, stored string) (ok, rehash bool) {
+	if digest, isHMAC := strings.CutPrefix(stored, apiTokenPrefix); isHMAC {
+		want := hex.EncodeToString(t.mac(v.Reveal()))
+		return subtle.ConstantTimeCompare([]byte(want), []byte(digest)) == 1, false
+	}
+	if digest, isSHA := strings.CutPrefix(stored, legacySHA256Prefix); isSHA {
+		want := tokenHash(v.Reveal())
+		return subtle.ConstantTimeCompare([]byte(want), []byte(digest)) == 1, true
+	}
+	matched, err := hash.Verify(v, stored)
+	if err != nil || !matched {
+		return false, false
+	}
+	return true, true
 }
 
 // Active returns a token that is neither revoked nor expired, by ID alone.

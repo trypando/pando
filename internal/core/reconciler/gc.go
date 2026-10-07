@@ -72,7 +72,7 @@ type GC struct {
 
 	// TeardownEvery is how often teardown runs when nothing asks: a delete
 	// whose signal reached another replica, or one whose runtime was away.
-	// A minute when zero.
+	// Ten seconds when zero.
 	TeardownEvery time.Duration
 
 	teardownMu sync.Mutex
@@ -140,7 +140,7 @@ func (g *GC) Run(ctx context.Context) {
 func (g *GC) runTeardown(ctx context.Context) {
 	every := g.TeardownEvery
 	if every <= 0 {
-		every = time.Minute
+		every = 10 * time.Second
 	}
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
@@ -207,6 +207,13 @@ func (g *GC) collectSlow(ctx context.Context) {
 // recorded on the app (TeardownTarget.DiscardStorage) and is the only thing
 // that sets KeepVolumes false here: this is the one place a bug would
 // silently destroy data, so nothing is inferred.
+// TearDownDeleted tears down the bundles of deleted apps now, outside the GC's
+// own loop: the replica that took a delete calls it whether or not it leads
+// (issue #72). teardownMu keeps it from overlapping this replica's own pass,
+// and teardown is idempotent, so meeting the leader's pass on one app is
+// harmless.
+func (g *GC) TearDownDeleted(ctx context.Context) { g.tearDownDeletedBundles(ctx) }
+
 func (g *GC) tearDownDeletedBundles(ctx context.Context) {
 	if g.Registry == nil {
 		return

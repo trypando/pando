@@ -52,9 +52,15 @@ const UseWindow = 12 * time.Hour
 // AnonymousUsePerMinute caps new anonymous visits recorded per app per minute.
 const AnonymousUsePerMinute = 120
 
-// maxRemembered bounds the memory the visit log takes; past it, expired visits
-// are dropped, and if that is not enough the log starts over.
+// maxRemembered bounds the memory the visit log takes. It is split evenly over
+// visitShards shards; a shard at its share drops its expired visits and then,
+// if that is not enough, its oldest — never the whole log, so a full log does
+// not turn into every visit being recorded again.
 const maxRemembered = 200_000
+
+// visitShards spreads the visit log over independent locks, so concurrent
+// requests to the proxy rarely wait on each other to check a visit.
+const visitShards = 64
 
 // AuditWriter is where the proxy records what happened. *audit.Writer is one.
 type AuditWriter interface {
@@ -69,40 +75,99 @@ type UsePolicy interface {
 
 // visits is the memory of recorded visits, and the anonymous rate cap.
 type visits struct {
+	shards [visitShards]visitShard
+	limit  int // visits remembered per shard
+
 	mu      sync.Mutex
-	seen    map[string]time.Time // visit key → when it stops being remembered
-	minute  map[string]int       // app → new anonymous visits this minute
-	current time.Time            // the minute counted
-	skipped map[string]int       // app → anonymous visits over the cap, not yet reported
+	minute  map[string]int // app → new anonymous visits this minute
+	current time.Time      // the minute counted
+	skipped map[string]int // app → anonymous visits over the cap, not yet reported
+}
+
+// visitShard is one slice of the visit log. Every visit is remembered for the
+// same UseWindow, so the order visits were remembered in is the order they
+// expire in: order is that queue, oldest first, and dropping expired or oldest
+// visits is popping its front — constant work per visit, amortized.
+type visitShard struct {
+	mu    sync.Mutex
+	seen  map[string]time.Time // visit key → when it stops being remembered
+	order []visitEntry         // order[head:] is live, oldest first
+	head  int
+}
+
+type visitEntry struct {
+	key   string
+	until time.Time
 }
 
 func newVisits() *visits {
-	return &visits{seen: map[string]time.Time{}, minute: map[string]int{}, skipped: map[string]int{}}
+	return newVisitsLimit(maxRemembered)
+}
+
+func newVisitsLimit(total int) *visits {
+	v := &visits{limit: max(1, total/visitShards), minute: map[string]int{}, skipped: map[string]int{}}
+	for i := range v.shards {
+		v.shards[i].seen = map[string]time.Time{}
+	}
+	return v
+}
+
+// shard picks a key's shard: FNV-1a, inline so the request path allocates
+// nothing for it.
+func (v *visits) shard(key string) *visitShard {
+	h := uint32(2166136261)
+	for i := 0; i < len(key); i++ {
+		h ^= uint32(key[i])
+		h *= 16777619
+	}
+	return &v.shards[h%visitShards]
 }
 
 // remembered reports whether a visit is already recorded.
 func (v *visits) remembered(key string, now time.Time) bool {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	until, ok := v.seen[key]
+	s := v.shard(key)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	until, ok := s.seen[key]
 	return ok && now.Before(until)
 }
 
 // remember marks a visit recorded.
 func (v *visits) remember(key string, now time.Time) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if len(v.seen) >= maxRemembered {
-		for k, until := range v.seen {
-			if !now.Before(until) {
-				delete(v.seen, k)
-			}
-		}
-		if len(v.seen) >= maxRemembered {
-			v.seen = map[string]time.Time{}
-		}
+	s := v.shard(key)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Expired visits first, then — only if the shard is still at its share —
+	// the oldest ones still remembered. Forgetting a visit early records it
+	// again: a duplicate row, never a missing one.
+	for s.head < len(s.order) && !now.Before(s.order[s.head].until) {
+		s.pop()
 	}
-	v.seen[key] = now.Add(UseWindow)
+	for len(s.order)-s.head >= v.limit {
+		s.pop()
+	}
+	until := now.Add(UseWindow)
+	s.seen[key] = until
+	s.order = append(s.order, visitEntry{key: key, until: until})
+}
+
+// pop drops the oldest queued visit, and its entry in seen unless that key was
+// remembered again since. Callers hold s.mu.
+func (s *visitShard) pop() {
+	e := s.order[s.head]
+	s.order[s.head] = visitEntry{}
+	s.head++
+	if until, ok := s.seen[e.key]; ok && until.Equal(e.until) {
+		delete(s.seen, e.key)
+	}
+	// Reclaim the popped prefix once it is most of the slice, so the queue
+	// never grows past twice its live length.
+	if s.head > len(s.order)/2 {
+		n := copy(s.order, s.order[s.head:])
+		clear(s.order[n:])
+		s.order = s.order[:n]
+		s.head = 0
+	}
 }
 
 // admitAnonymous takes one of this minute's anonymous records for an app, and

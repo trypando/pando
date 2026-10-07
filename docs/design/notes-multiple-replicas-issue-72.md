@@ -40,7 +40,7 @@ replica to the new image with whatever runs them.
 |---|---|---|
 | One Postgres for all replicas | All state is there: sessions, tokens, specs, audit, the replica table | the `postgres` service |
 | The same Docker daemon | Runtime, builder and services adapters are Docker adapters on the local socket | the socket, mounted as before |
-| The same `/var/lib/pando` | The secrets key, uploaded sources, local backups, build cache, audit archives and Traefik's dynamic config are files there (below) | the `pando-data` volume, shared |
+| The same `/var/lib/pando` | The secrets key, the API token key, uploaded sources, local backups, build cache, audit archives and Traefik's dynamic config are files there (below) | the `pando-data` volume, shared |
 | A load balancer with a health check on `/healthz` | Requests may land on any replica; no stickiness is needed | `lb` (HAProxy, `test/replicas/haproxy.cfg`) |
 | The app port range forwarded too, if port-mode routing is used | Every replica listens on every allocated port | `lb` publishes it |
 | `PANDO_SERVER_ADVERTISE_URL` reachable between replicas | A deploy's live log is read from the replica running the deploy | default `http://<hostname>:8080`, which resolves on a Compose network; in Kubernetes set `http://$(POD_IP):8080` |
@@ -48,9 +48,10 @@ replica to the new image with whatever runs them.
 **Shared files rather than object storage [P].** Moving uploads, backup staging and keys into
 Postgres or an object store would remove the shared-volume prerequisite at the cost of a storage
 adapter category Pando does not have. Every replica in the supported topology is on one Docker host,
-where a shared named volume costs nothing, so the volume is the requirement. The secrets key is the
-one file that must never move into Postgres — R-190's threat is a leaked database dump — and it is
-now checked (below).
+where a shared named volume costs nothing, so the volume is the requirement. The secrets key and the
+API token key are the two files that must never move into Postgres — the threat each defends against
+is a leaked database dump (R-190, R-063) — and both are now checked at start (below, and design 02
+§2.1).
 
 ## What broke, and what changed
 
@@ -78,8 +79,8 @@ its connection cancels its jobs and waits for them to stop before anyone else ca
 
 | Loop | Runs on | Why |
 |---|---|---|
-| Reconciler | every replica | Already locks per app (`Reconciles.Lock`); replicas share the apps |
 | Deploy and detection queues (PR 4) | every replica | Claim with `FOR UPDATE SKIP LOCKED`, each up to its own limit |
+| Reconciler | every replica | Claims apps under a lease with `SKIP LOCKED` (`state.Lease`, PR 3); replicas share the apps |
 | Event delivery | every replica | Claims with `FOR UPDATE SKIP LOCKED` |
 | Network rejoin | every replica, every 15 s | Each replica's container must be on every app's network (below) |
 | Port listeners | every replica | Each replica is a front door; the balancer forwards the range |
@@ -91,6 +92,11 @@ its connection cancels its jobs and waits for them to stop before anyone else ca
 | Auto-deploy | leader | Deployed one commit once per replica |
 | Audit retention, approval expiry, adapter health events, edges, upgrade loop | leader | Once per install |
 | Sweep of stopped replicas' work; pruning old replica rows and passcode failures | leader | Once per install |
+
+**A delete tears its app down on the replica that took it**, at once, whichever replica leads; the
+GC's own pass also looks for deleted apps every ten seconds, which catches a delete whose replica
+stopped first. Teardown is idempotent, so the two meeting on one app is harmless. Before this, a
+delete made on a replica that did not lead waited for the hourly pass.
 
 **Network reclaim at startup** now skips the network of any app with a deploy in flight. Another
 replica's deploy makes the app's network before its containers, so for a moment it is empty and
@@ -111,8 +117,8 @@ container-less and looks like a dead app's; a deleted app has nothing in flight.
 ### Accepted costs
 
 - A deleted app's network stays until every replica that joined it has been replaced, not until the
-  next restart of one process. Pando's own address pool (10.213.0.0/16 in /26 blocks) holds about
-  1,000; PR 3 widens it.
+  next restart of one process. Pando's own address pool (10.213.0.0/16) holds 4,096 app networks
+  in /28 blocks since PR 3, and `network_pool` takes a wider range.
 - A request already relayed for a deploy log is cut if the replica holding it stops; the reader
   retries and gets the "has since stopped" line.
 - Restoring a DR bundle (R-212) replaces `pando_replicas` with the bundle's. Every replica then finds
@@ -145,7 +151,7 @@ larger one: can a whole organization put its apps on one Pando install. That was
 (request path, app capacity, background work, data growth) and the answer is **not yet**. This PR is
 the first of a stack; each later PR is based on the one before, and #72 closes with the last.
 
-**Targets [D].** Two tiers, which the load harness proves:
+**Targets [D].** Two tiers, which the load harness (`make load-test TIER=vm|cluster`, `test/load/README.md`) measures:
 
 | Tier | Users | Apps | Concurrent console users | Runtime |
 |---|---|---|---|---|
@@ -162,9 +168,15 @@ the first of a stack; each later PR is based on the one before, and #72 closes w
 - **Capacity is not oversubscribed by default** (R-242), and host policy or config may allow CPU and
   memory oversubscription. Disk is never oversubscribed: it is not a reservation, and a full disk
   stops everything.
-- **API tokens are hashed with HMAC-SHA-256**, not argon2id. They are 256-bit random secrets Pando
-  generates, so a slow hash adds nothing but cost (about 64 MiB per concurrent request). Passwords
-  stay argon2id.
+- **API tokens are stored as HMAC-SHA-256 under a server-side key**, not argon2id (the product
+  owner's decision). They are 256-bit random secrets Pando generates, so a slow hash adds nothing but
+  cost (about 64 MiB per concurrent request). The key is 32 random bytes in a file outside the
+  database (`/var/lib/pando/token.key`, `PANDO_SERVER_TOKEN_KEY_PATH`), so a database dump alone
+  cannot be used to test a guess at any token. Every replica must hold the same key: each compares
+  it at start against `token_key_check` and refuses to start if it differs, and the DR bundle carries
+  it beside the secrets key. Older argon2id and unkeyed `sha256:` digests still verify and are
+  rewritten on first use. Passwords stay argon2id; the passcode unlock token stays unkeyed SHA-256
+  (design 02 §2.1). Issue #93.
 - **Anonymous data-plane denials stay audited by default**, and host policy or config may turn that
   off, since anyone can cause one write per request.
 
@@ -182,7 +194,7 @@ the first of a stack; each later PR is based on the one before, and #72 closes w
 
 ## PR 4: background work and data growth
 
-Migration `000049_work_queue_and_retention` (numbered past 000046–000048, which other PRs in the stack
+Migration `000050_work_queue_and_retention` (numbered past 000046–000049, which other PRs in the stack
 may take; the numbers only need to be distinct and ascending when the stack lands).
 
 ### The deploy and detection queue (O-32)
@@ -237,6 +249,39 @@ audit log keeps R-347's archiver.
 `TestR366_PruningTheOutboxIsBatchedAndKeepsWhatIsStillOwed`, `TestR224_RetentionRemovesOldDeploysButNeverARollbackTarget`,
 `TestR224_RetentionRemovesExpiredRowsFromTablesThatOnlyGrew`; the lost-replica step of `make test-replicas`
 now expects the deploy to be resumed by the surviving replica.
+### PR 2, the API and console part
+
+| Problem | Fix | Test |
+|---|---|---|
+| `GET /users`, `/groups`, `/apps` and `/approvals` returned every row; groups carried every member of each | Keyset pages, design 04 §1's `limit` (default 100, at most 500), `cursor`, `next_cursor`, plus `total` and a server-side `q`. `/apps` and `/users` take `id` (repeatable) to read only those rows. A group in the list carries `member_count`; `GET /groups/{groupID}` (new) has the members, and `member` narrows the list to one account's groups. `/approvals` reads at most 2,000 waiting requests per page while looking for ones the caller may view, so a page may be short and still have a cursor | `TestTheAccountsListPagesWithoutGapsOrRepeats`, `TestTheGroupsListPagesAndCountsRatherThanListingMembers`, `TestTheAppsListPagesOncePerAppAndNarrowsToIDs`, `TestR154_TheWaitingListPagesAndShowsOnlyAppsTheCallerSees`, `TestTheAccountsGroupsAndAppsListsPage` |
+| The launcher joined every app's data grants under OR'd predicates; `apps.owner_user_id` had no index | A union of indexed lookups — owned, direct grant, group grant, anonymous — and migration 000049's indexes | `TestR264_TheLauncherListsEveryAppItsUserCanOpenOnce` |
+| SCIM lists counted every match on every page | Kept: `totalResults` is required on every list response (RFC 7644 §3.4.2). Skipped when a first, short page already shows it — the userName lookup a client makes before each create — and index-served otherwise | `TestSCIMTotalIsCountedUnlessTheFirstPageShowsIt` |
+| Every open app page called Docker on each `/status` (5 s) and `/usage` (10 s) poll | **[P]** A per-replica singleflight cache of runtime observations (2 s) and usage samples (5 s) by app, in `core/observe`. Authorization is checked on each request before it; nothing about authorization is cached (R-274). Start, stop and restart forget the app's entry on the replica that ran them. The reconciler still observes uncached | `internal/core/observe` tests |
+| The admin console re-read the whole app list every 5 s while any row deployed or scanned | Only the changing rows are asked for again, by `id`; the list is re-read once when one settles. Approvals poll every 60 s rather than 30 s | console |
+| A deploy's live log stayed in memory forever | Dropped `deploy.LogRetention` (5 min) after it has finished and nobody follows it. A request for it answers as a stopped replica's does | `TestAFinishedLogWithNoFollowersIsDroppedAfterRetention` and the rest of `logs_evict_test.go` |
+| The proxy's visit log, at its 200,000 cap, swept or cleared the whole map under one lock on the request path | 64 shards, each with its own lock and an even share of the cap, kept in arrival order; a full shard drops its expired visits, then its oldest. What is audited is unchanged | `visits_test.go` |
+
+The access assistant still reads every account and app to draft access (`assist.Service.people`,
+`apps`); it runs on request, not per page load, and is left for a later change.
+
+### PR 3: why the egress gateways do not share one bridge [P]
+
+The plan was one outbound bridge for every restricted app's gateway, with
+`com.docker.network.bridge.enable_icc=false` so gateways could not reach each other. It was not
+done. Per-app outbound networks exist so an app whose rules allow private addresses cannot ask its
+gateway to connect to another app's gateway, and through it into that app's internal network
+(R-180, egress.go). On a shared bridge that guarantee rests entirely on `enable_icc=false` being
+enforced, and nothing tells Pando when it is not: it is a driver option an engine may accept and not
+act on (Podman's netavark has its own isolation option, and whether it honors Docker's was not
+verified), and Docker's firewall backends have changed how such rules are written. Each failure
+would be silent and would connect every restricted app's gateway to every other's. The per-app
+network relies on the isolation between bridge networks that the rest of R-025 already relies on,
+so it adds no new assumption; the shared bridge would add one that no test here could check on every
+engine.
+
+The address cost is taken down instead: the outbound network holds only the gateway, so it is a
+/29 (8 addresses) rather than an app-sized block. A restricted app costs a /28 and a /29, and the
+default pool still holds about 2,700 restricted apps, or 4,096 unrestricted ones.
 
 ## The issue's open questions, answered
 

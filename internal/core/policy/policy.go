@@ -116,6 +116,22 @@ type Document struct {
 	// because an unrelated app turned chatty.
 	MaxLogDiskBytes int64 `json:"max_log_disk_bytes,omitempty"`
 
+	// AllowCPUOversubscription and AllowMemoryOversubscription let the apps
+	// on a runtime together ask for more CPU, or more memory, than the runtime
+	// reports having (R-242 as amended for issue #72). Both off by default: a
+	// deploy that would oversubscribe is refused at plan time.
+	//
+	// Separate, because they fail differently. Too little CPU makes every app
+	// slower; too little memory makes the kernel kill one. An install packing
+	// many mostly-idle apps onto one host usually wants the first and not the
+	// second.
+	//
+	// There is no disk counterpart and there will not be one: disk is not a
+	// reservation the kernel shares out, and a full disk stops every app and
+	// Pando with them.
+	AllowCPUOversubscription    bool `json:"allow_cpu_oversubscription,omitempty"`
+	AllowMemoryOversubscription bool `json:"allow_memory_oversubscription,omitempty"`
+
 	// Audit retention (R-347, R-348). The live audit log keeps
 	// AuditRetentionMonths whole months; an older month is archived, the
 	// archive read back and checked, and only then is the month removed.
@@ -150,6 +166,14 @@ type Document struct {
 	// app" after a leak includes the people nobody knew by name. An install
 	// with a busy public site that does not want those rows turns it off.
 	DisableAnonymousUseAudit bool `json:"disable_anonymous_use_audit,omitempty"`
+
+	// DisableAnonymousDenialAudit stops recording authz.denied when somebody
+	// not signed in reaches an app that is not shared with them (design 06
+	// §6). Default false: every denial is audited, these included. Anyone can
+	// cause one write per request without an account — a crawler walking a
+	// private app's links does — so an install that does not want those rows
+	// turns it off. A signed-in person or a token refused is always recorded.
+	DisableAnonymousDenialAudit bool `json:"disable_anonymous_denial_audit,omitempty"`
 
 	// The security score (R-314 – R-316, design 09 §5).
 	//
@@ -484,10 +508,37 @@ func (e *Evaluator) RecordsAnonymousUse(ctx context.Context) bool {
 	return !doc.DisableAnonymousUseAudit
 }
 
+// AuditsAnonymousDenials reports whether a data-plane denial of somebody not
+// signed in is written to the audit log as authz.denied. A policy that cannot
+// be read audits it, as RecordsAnonymousUse does.
+func (e *Evaluator) AuditsAnonymousDenials(ctx context.Context) bool {
+	doc, err := e.load(ctx)
+	if err != nil {
+		return true
+	}
+	return !doc.DisableAnonymousDenialAudit
+}
+
+// Snapshot is an evaluator over the document as it is now, for answering
+// several questions in one call from one read (authz.Snapshotter). Used for
+// the length of that call and dropped: never kept across requests, because
+// policy applies the moment it changes (R-274).
+func (e *Evaluator) Snapshot(ctx context.Context) (authz.Policy, error) {
+	doc, err := e.load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return Static(doc), nil
+}
+
 // Document returns the current policy.
 func (e *Evaluator) Document(ctx context.Context) (Document, error) { return e.load(ctx) }
 
-var _ authz.Policy = (*Evaluator)(nil)
+var (
+	_ authz.Policy            = (*Evaluator)(nil)
+	_ authz.Snapshotter       = (*Evaluator)(nil)
+	_ authz.DenialAuditPolicy = (*Evaluator)(nil)
+)
 
 // DefaultDeployApprovalExpiryHours is how long a deploy request waits for
 // approval when policy does not say (R-156): a week, so a request made on a

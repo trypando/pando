@@ -413,6 +413,83 @@ func TestR242_CapacityWouldOversubscribeBlocksDeploy(t *testing.T) {
 	require.Contains(t, e.Remedy, "Lower what it asks for")
 }
 
+// TestR242_OversubscriptionIsRefusedByDefault asserts R-242's default holds
+// for CPU as well as memory: neither policy field set, both refused.
+func TestR242_OversubscriptionIsRefusedByDefault(t *testing.T) {
+	cases := map[string]struct {
+		request func(*spec.AppSpec)
+		alloc   planner.Allocation
+	}{
+		"CPU":    {func(s *spec.AppSpec) { s.Resources.CPUMillis = 4000 }, planner.Allocation{CPUMillis: 6000}},
+		"memory": {func(s *spec.AppSpec) { s.Resources.MemoryBytes = 8 << 30 }, planner.Allocation{MemoryBytes: 12 << 30}},
+	}
+	for resource, tc := range cases {
+		s := plannableSpec()
+		tc.request(s)
+		p := planner.New(
+			registry(t, capableRuntime(), capableRouting(), capableBuilder()),
+			policy.Static(policy.Default()),
+			fixedAllocations{alloc: tc.alloc},
+		)
+		_, err := p.Check(context.Background(), s)
+		require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err), resource)
+		require.Equal(t, resource, errs.As(err).Details["resource"], resource)
+	}
+}
+
+// TestR242_PolicyMayAllowCPUAndMemoryOversubscription asserts the amendment:
+// each of CPU and memory may be oversubscribed when host policy allows that
+// one, and allowing one does not allow the other.
+func TestR242_PolicyMayAllowCPUAndMemoryOversubscription(t *testing.T) {
+	over := plannableSpec()
+	over.Resources.CPUMillis = 4000
+	over.Resources.MemoryBytes = 8 << 30
+	alloc := planner.Allocation{CPUMillis: 6000, MemoryBytes: 12 << 30}
+
+	check := func(doc policy.Document) error {
+		p := planner.New(
+			registry(t, capableRuntime(), capableRouting(), capableBuilder()),
+			policy.Static(doc), fixedAllocations{alloc: alloc})
+		_, err := p.Check(context.Background(), over)
+		return err
+	}
+
+	cpuOnly := policy.Default()
+	cpuOnly.AllowCPUOversubscription = true
+	err := check(cpuOnly)
+	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
+	require.Equal(t, "memory", errs.As(err).Details["resource"], "allowing CPU does not allow memory")
+
+	memoryOnly := policy.Default()
+	memoryOnly.AllowMemoryOversubscription = true
+	err = check(memoryOnly)
+	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
+	require.Equal(t, "CPU", errs.As(err).Details["resource"], "allowing memory does not allow CPU")
+
+	both := policy.Default()
+	both.AllowCPUOversubscription, both.AllowMemoryOversubscription = true, true
+	require.NoError(t, check(both))
+}
+
+// TestR242_DiskIsNeverOversubscribed asserts the amendment's limit: no policy
+// lets the apps on a runtime ask for more disk than it has.
+func TestR242_DiskIsNeverOversubscribed(t *testing.T) {
+	s := plannableSpec()
+	s.Resources.DiskBytes = 300 << 30
+
+	doc := policy.Default()
+	doc.AllowCPUOversubscription, doc.AllowMemoryOversubscription = true, true
+
+	p := planner.New(
+		registry(t, capableRuntime(), capableRouting(), capableBuilder()),
+		policy.Static(doc),
+		fixedAllocations{alloc: planner.Allocation{DiskBytes: 300 << 30}},
+	)
+	_, err := p.Check(context.Background(), s)
+	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
+	require.Equal(t, "disk space", errs.As(err).Details["resource"])
+}
+
 // Replanning an app must not count its own current allocation against itself.
 func TestCapacityExcludesTheAppBeingPlanned(t *testing.T) {
 	s := plannableSpec()

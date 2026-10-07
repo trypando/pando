@@ -27,6 +27,7 @@ import { Banner, Button, Dialog, Radio } from '@design';
 import { api } from '@api/client';
 import { Quiet, messageOf } from '../install/Accounts';
 import { deletePath, type StorageDecision } from './delete-app';
+import { invalidateAppLists } from './appList';
 
 export function DeleteApp({
   appID,
@@ -57,10 +58,10 @@ export function DeleteApp({
   const remove = useMutation({
     mutationFn: () => api.del(deletePath(appID, decision)),
     onSuccess: () => {
-      // Exact, then remove. `['apps', appID]` sits under the `['apps']` prefix,
-      // so a plain invalidate refetches the app that was just deleted and puts
-      // a 404 on the screen on the way out of it.
-      void queries.invalidateQueries({ queryKey: ['apps'], exact: true });
+      // The lists only, then remove. `['apps', appID]` sits under the
+      // `['apps']` prefix, so a plain invalidate refetches the app that was
+      // just deleted and puts a 404 on the screen on the way out of it.
+      void invalidateAppLists(queries);
       queries.removeQueries({ queryKey: ['apps', appID] });
       onDeleted();
     },

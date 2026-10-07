@@ -149,15 +149,54 @@ func (u *Users) ByID(ctx context.Context, userID string) (User, bool, error) {
 // deletion (R-049), and an administrator managing accounts needs to see the
 // suspended ones — they are the ones most likely to need attention.
 //
-// Unpaginated. An install is one organization (R-015) and its account list is
-// a screenful, not a feed. When that stops being true this grows a cursor like
-// every other list, and the shape of the response already allows it.
+// Unpaginated, for the one reader that needs every account at once (the access
+// assistant). The API pages with ListPage: an organization of 100,000 people
+// is not a screenful (issue #72).
 func (u *Users) List(ctx context.Context) ([]User, error) {
+	list, _, _, err := u.list(ctx, Page{Limit: -1})
+	return list, err
+}
+
+// ListPage is one page of List, newest first, with the cursor for the next
+// page (empty after the last) and how many accounts match in all.
+//
+// Page.Query matches the username, display name or email, as Search does.
+func (u *Users) ListPage(ctx context.Context, page Page) ([]User, string, int, error) {
+	return u.list(ctx, page)
+}
+
+// usersListWhere is the accounts list's filter: live, not an alias, matching
+// $1 when it is not empty, and among the IDs $2 when that is not NULL.
+const usersListWhere = `
+		WHERE deleted_at IS NULL AND alias_of IS NULL
+		  AND ($1 = '' OR external_id ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
+		  AND ($2::text[] IS NULL OR id = ANY($2::text[]))`
+
+func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error) {
+	var after string
+	if _, err := decodeCursor(page.Cursor, &after); err != nil {
+		return nil, "", 0, err
+	}
+	q := likeEscape(page.Query)
+	var ids any // NULL: no narrowing
+	if len(page.IDs) > 0 {
+		ids = page.IDs
+	}
+
+	// A negative limit is the unpaginated read, and LIMIT NULL is no limit.
+	// One more row than the page is read to learn whether there is a next.
+	var limit any
+	if page.Limit >= 0 {
+		limit = page.Size() + 1
+	}
 	rows, err := u.db.Query(ctx, `
 		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, created_at, coalesce(alias_of, '')
-		FROM users WHERE deleted_at IS NULL AND alias_of IS NULL ORDER BY id DESC`)
+		FROM users`+usersListWhere+`
+		  AND ($3 = '' OR id < $3)
+		ORDER BY id DESC
+		LIMIT $4`, q, ids, after, limit)
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read the accounts.", err)
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the accounts.", err)
 	}
 	defer rows.Close()
 
@@ -167,7 +206,7 @@ func (u *Users) List(ctx context.Context) ([]User, error) {
 		var email, display *string
 		if err := rows.Scan(&user.ID, &user.AdapterID, &user.ExternalID, &email, &display,
 			&user.Status, &user.MustChangePassword, &user.CreatedAt, &user.AliasOf); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read the accounts.", err)
+			return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the accounts.", err)
 		}
 		if email != nil {
 			user.Email = *email
@@ -177,7 +216,23 @@ func (u *Users) List(ctx context.Context) ([]User, error) {
 		}
 		out = append(out, user)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the accounts.", err)
+	}
+	if page.Limit < 0 {
+		return out, "", len(out), nil
+	}
+
+	var next string
+	if len(out) > page.Size() {
+		out = out[:page.Size()]
+		next = encodeCursor(out[len(out)-1].ID)
+	}
+	var total int
+	if err := u.db.QueryRow(ctx, `SELECT count(*) FROM users`+usersListWhere, q, ids).Scan(&total); err != nil {
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not count the accounts.", err)
+	}
+	return out, next, total, nil
 }
 
 // SetStatus changes a user's status.

@@ -47,10 +47,18 @@ func (a *Adapter) Usage(ctx context.Context, ref api.BundleRef) (api.BundleUsage
 
 	out := api.BundleUsage{Reported: time.Now().UTC(), Workloads: make([]api.WorkloadUsage, len(containers))}
 	var wg sync.WaitGroup
+	slots := a.samplingSlots()
 	for i, c := range containers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+			case <-ctx.Done():
+				out.Workloads[i] = api.WorkloadUsage{Workload: c.Labels[labelWorkload], DiskBytes: -1}
+				return
+			}
 			out.Workloads[i] = a.workloadUsage(ctx, c.ID, c.Labels[labelWorkload])
 		}()
 	}
@@ -91,14 +99,25 @@ func (a *Adapter) InUse(ctx context.Context) (api.InUse, error) {
 		wg  sync.WaitGroup
 		out = api.InUse{Reported: time.Now().UTC()}
 	)
+	slots := a.samplingSlots()
 	for _, c := range containers.Items {
 		// The egress gateway is Pando's own, and a trial run is not an app yet.
 		if isGateway(c.Labels) || c.Labels[labelTrial] != "" {
 			continue
 		}
+		// Taken before the goroutine starts, so a host with a thousand
+		// containers has samplingConcurrency goroutines waiting on the
+		// daemon, not a thousand.
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return out, nil
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() { <-slots }()
 			cpu, memory := a.sample(ctx, c.ID)
 			mu.Lock()
 			out.CPUMillis += cpu
@@ -108,6 +127,21 @@ func (a *Adapter) InUse(ctx context.Context) (api.InUse, error) {
 	}
 	wg.Wait()
 	return out, nil
+}
+
+// samplingConcurrency is how many containers are sampled at once, across every
+// reading this adapter is taking (issue #72). Each sample is a stats call the
+// daemon holds open for about a second; one per running container at once was
+// a thousand concurrent calls on a host of a thousand apps, from every replica
+// and every console open on the capacity page. At 24 a thousand containers
+// take about forty seconds rather than one, which a reading nobody acts on
+// automatically can afford, and the daemon stays responsive for deploys.
+const samplingConcurrency = 24
+
+// samplingSlots is the adapter's shared limit on samples in flight.
+func (a *Adapter) samplingSlots() chan struct{} {
+	a.samplingOnce.Do(func() { a.sampling = make(chan struct{}, samplingConcurrency) })
+	return a.sampling
 }
 
 func (a *Adapter) workloadUsage(ctx context.Context, id, name string) api.WorkloadUsage {

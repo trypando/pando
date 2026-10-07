@@ -241,7 +241,7 @@ func (s *Events) Route(ctx context.Context, limit int, before time.Time, route f
 // A batch at a time, so a backlog of a month's events is removed in short
 // transactions the retention job repeats rather than in one that holds locks
 // across the whole outbox (issue #72). The cascade into event_deliveries is
-// by event_id, which is indexed (migration 000049).
+// by event_id, which is indexed (migration 000050).
 func (s *Events) Prune(ctx context.Context, before time.Time, limit int) (int64, error) {
 	tag, err := s.db.Exec(ctx, `
 		DELETE FROM events WHERE id IN (

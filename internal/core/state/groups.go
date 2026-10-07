@@ -36,6 +36,12 @@ type Group struct {
 
 	Members []string `json:"members,omitempty"`
 
+	// MemberCount is how many people are in the group directly. Set by
+	// ListPage, which leaves Members out: a page of groups carrying every
+	// member of each is a page that grows with the organization (issue #72).
+	// GET /groups/{id} has the members.
+	MemberCount *int `json:"member_count,omitempty"`
+
 	// LinkedFrom, on a Pando-made group, are the provider groups whose members
 	// count as its members (group_links). LinksTo, on a synced group, are the
 	// Pando groups it feeds.
@@ -99,6 +105,85 @@ func (g *Groups) List(ctx context.Context) ([]Group, error) {
 		out = append(out, group)
 	}
 	return out, rows.Err()
+}
+
+// GroupFilter narrows ListPage.
+type GroupFilter struct {
+	// Member keeps only the groups this user is directly in.
+	Member string
+}
+
+// ListPage is one page of groups — Pando's own first, then providers', each
+// by name — with the cursor for the next page and how many match in all.
+// Each carries MemberCount rather than Members, and its links.
+//
+// Page.Query matches the name.
+func (g *Groups) ListPage(ctx context.Context, page Page, f GroupFilter) ([]Group, string, int, error) {
+	var (
+		synced bool
+		name   string
+		after  string
+	)
+	have, err := decodeCursor(page.Cursor, &synced, &name, &after)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	const where = `
+		WHERE ($1 = '' OR g.name ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = g.id AND gm.user_id = $2))`
+	q := likeEscape(page.Query)
+
+	rows, err := g.db.Query(ctx, `
+		SELECT g.id, g.name, coalesce(g.adapter_id, ''), coalesce(a.name, ''), g.created_at,
+		       (SELECT count(*) FROM group_members m WHERE m.group_id = g.id),
+		       coalesce((SELECT array_agg(l.synced_group_id ORDER BY l.synced_group_id) FROM group_links l WHERE l.group_id = g.id), '{}'),
+		       coalesce((SELECT array_agg(l.group_id ORDER BY l.group_id) FROM group_links l WHERE l.synced_group_id = g.id), '{}'),
+		       g.adapter_id IS NOT NULL, lower(g.name)
+		FROM groups g
+		LEFT JOIN identity_adapters a ON a.id = g.adapter_id`+where+`
+		  AND (NOT $3 OR (g.adapter_id IS NOT NULL, lower(g.name), g.id) > ($4::boolean, $5::text, $6::text))
+		ORDER BY g.adapter_id IS NOT NULL, lower(g.name), g.id
+		LIMIT $7`, q, f.Member, have, synced, name, after, page.Size()+1)
+	if err != nil {
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the groups.", err)
+	}
+	defer rows.Close()
+
+	type keyed struct {
+		Group
+		synced bool
+		lower  string
+	}
+	var got []keyed
+	for rows.Next() {
+		var k keyed
+		var count int
+		if err := rows.Scan(&k.ID, &k.Name, &k.Source, &k.SourceName, &k.CreatedAt,
+			&count, &k.LinkedFrom, &k.LinksTo, &k.synced, &k.lower); err != nil {
+			return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the groups.", err)
+		}
+		k.MemberCount = &count
+		got = append(got, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the groups.", err)
+	}
+
+	var next string
+	if len(got) > page.Size() {
+		got = got[:page.Size()]
+		last := got[len(got)-1]
+		next = encodeCursor(last.synced, last.lower, last.ID)
+	}
+	out := make([]Group, 0, len(got))
+	for _, k := range got {
+		out = append(out, k.Group)
+	}
+	var total int
+	if err := g.db.QueryRow(ctx, `SELECT count(*) FROM groups g`+where, q, f.Member).Scan(&total); err != nil {
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not count the groups.", err)
+	}
+	return out, next, total, nil
 }
 
 // Search finds groups by name, case-insensitively, at most limit of them.

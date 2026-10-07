@@ -51,7 +51,7 @@ func TestWithThePoolOffDockerChoosesTheAddresses(t *testing.T) {
 		writeJSON(w, http.StatusCreated, map[string]string{"Id": "net1"})
 	})
 
-	created, err := a.createNetwork(context.Background(), "test-pool-off", networkRequestOptions())
+	created, err := a.createNetwork(context.Background(), "test-pool-off", defaultBlockBits, networkRequestOptions())
 	require.NoError(t, err)
 	require.Equal(t, "net1", created.ID)
 	require.Empty(t, got.subnet(), "no block is asked for")
@@ -67,7 +67,7 @@ func TestANetworkIsStillCreatedWhenTheTakenOnesCannotBeListed(t *testing.T) {
 		writeJSON(w, http.StatusCreated, map[string]string{"Id": "net1"})
 	})
 
-	_, err := a.createNetwork(context.Background(), "test-list-fails", networkRequestOptions())
+	_, err := a.createNetwork(context.Background(), "test-list-fails", defaultBlockBits, networkRequestOptions())
 	require.NoError(t, err)
 	require.Empty(t, got.subnet(), "with nothing known about what is taken, Docker chooses")
 }
@@ -84,16 +84,16 @@ func TestR025_ABlockSomethingElseTookIsSkipped(t *testing.T) {
 	f.on("POST /networks/create", func(w http.ResponseWriter, r *http.Request) {
 		req := decodeNetwork(t, r)
 		subnets = append(subnets, req.subnet())
-		if req.subnet() == "10.213.0.0/26" {
+		if req.subnet() == "10.213.0.0/28" {
 			writeJSON(w, http.StatusForbidden, map[string]string{"message": "Pool overlaps with other one on this address space"})
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]string{"Id": "net1"})
 	})
 
-	_, err := a.createNetwork(context.Background(), "test-overlap", networkRequestOptions())
+	_, err := a.createNetwork(context.Background(), "test-overlap", defaultBlockBits, networkRequestOptions())
 	require.NoError(t, err)
-	require.Equal(t, []string{"10.213.0.0/26", "10.213.0.64/26"}, subnets)
+	require.Equal(t, []string{"10.213.0.0/28", "10.213.0.16/28"}, subnets)
 }
 
 // The same, in Podman's words. Podman also refuses a block the host's routes
@@ -106,17 +106,17 @@ func TestR025_ABlockPodmanSaysIsTakenIsSkipped(t *testing.T) {
 	f.on("POST /networks/create", func(w http.ResponseWriter, r *http.Request) {
 		req := decodeNetwork(t, r)
 		subnets = append(subnets, req.subnet())
-		if req.subnet() == "10.213.0.0/26" {
+		if req.subnet() == "10.213.0.0/28" {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{
-				"message": "subnet 10.213.0.0/26 is already used on the host or by another config"})
+				"message": "subnet 10.213.0.0/28 is already used on the host or by another config"})
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]string{"Id": "net1"})
 	})
 
-	_, err := a.createNetwork(context.Background(), "test-podman-taken", networkRequestOptions())
+	_, err := a.createNetwork(context.Background(), "test-podman-taken", defaultBlockBits, networkRequestOptions())
 	require.NoError(t, err)
-	require.Equal(t, []string{"10.213.0.0/26", "10.213.0.64/26"}, subnets)
+	require.Equal(t, []string{"10.213.0.0/28", "10.213.0.16/28"}, subnets)
 }
 
 func TestAfterEightRefusedBlocksDockerChoosesTheAddresses(t *testing.T) {
@@ -133,14 +133,14 @@ func TestAfterEightRefusedBlocksDockerChoosesTheAddresses(t *testing.T) {
 		writeJSON(w, http.StatusCreated, map[string]string{"Id": "net1"})
 	})
 
-	_, err := a.createNetwork(context.Background(), "test-overlap-all", networkRequestOptions())
+	_, err := a.createNetwork(context.Background(), "test-overlap-all", defaultBlockBits, networkRequestOptions())
 	require.NoError(t, err)
 	require.Len(t, subnets, 9)
 	require.Empty(t, subnets[8], "the last try leaves the choice to Docker")
 }
 
 func TestAFullPoolLeavesTheAddressesToDocker(t *testing.T) {
-	f, a := newFakeDaemon(t, map[string]any{"network_pool": "10.214.0.0/26"})
+	f, a := newFakeDaemon(t, map[string]any{"network_pool": "10.214.0.0/24"})
 	f.on("GET /networks", respond(http.StatusOK, []any{
 		map[string]any{"Id": "taken", "IPAM": map[string]any{"Config": []any{map[string]string{"Subnet": "10.214.0.0/24"}}}},
 	}))
@@ -150,7 +150,7 @@ func TestAFullPoolLeavesTheAddressesToDocker(t *testing.T) {
 		writeJSON(w, http.StatusCreated, map[string]string{"Id": "net1"})
 	})
 
-	_, err := a.createNetwork(context.Background(), "test-pool-full", networkRequestOptions())
+	_, err := a.createNetwork(context.Background(), "test-pool-full", defaultBlockBits, networkRequestOptions())
 	require.NoError(t, err)
 	require.Equal(t, []string{""}, subnets)
 }
@@ -160,7 +160,7 @@ func TestARefusalOtherThanAnOverlapIsReported(t *testing.T) {
 	f.on("GET /networks", respond(http.StatusOK, []any{}))
 	f.on("POST /networks/create", respond(http.StatusInternalServerError, map[string]string{"message": "driver failed"}))
 
-	_, err := a.createNetwork(context.Background(), "test-refused", networkRequestOptions())
+	_, err := a.createNetwork(context.Background(), "test-refused", defaultBlockBits, networkRequestOptions())
 	require.ErrorContains(t, err, "driver failed")
 	require.Equal(t, 1, f.called("POST /networks/create"), "only an overlap is worth another block")
 }

@@ -80,7 +80,7 @@ func (s *Server) handleAppUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reading, err := runtime.Usage(r.Context(), apiBundleRef(app.ID))
+	reading, err := s.Observations.Usage(r.Context(), rev.Body.Runtime.AdapterRef, runtime, app.ID)
 	if err != nil {
 		Error(w, r, err)
 		return

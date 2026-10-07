@@ -66,3 +66,20 @@ func TestR271_AFixedFieldIsNeitherChangedNorStored(t *testing.T) {
 	var none *policy.Overlay
 	require.Equal(t, policy.Document{MinSecurityScore: 5}, none.Apply(policy.Document{MinSecurityScore: 5}))
 }
+
+// TestR242_OversubscriptionCanBeAllowedAtStartup asserts the R-242 amendment's
+// toggles are ordinary policy fields, settable from the environment like any
+// other (R-271), and that there is no disk counterpart to set.
+func TestR242_OversubscriptionCanBeAllowedAtStartup(t *testing.T) {
+	o, err := policy.NewOverlay([]policy.Setting{
+		env("allow_cpu_oversubscription", "true"),
+		env("allow_memory_oversubscription", "false"),
+	})
+	require.NoError(t, err)
+	got := o.Apply(policy.Default())
+	require.True(t, got.AllowCPUOversubscription)
+	require.False(t, got.AllowMemoryOversubscription)
+
+	_, err = policy.NewOverlay([]policy.Setting{env("allow_disk_oversubscription", "true")})
+	require.ErrorContains(t, err, "not a host policy setting", "disk is never oversubscribed")
+}

@@ -703,40 +703,80 @@ func describe(dep *state.Deployment) {
 	}
 }
 
-// Awaiting lists the deploys waiting for approval on every app p may view,
-// each saying whether p may decide it.
-func (s *Service) Awaiting(ctx context.Context, p authz.Principal) ([]state.AwaitingApproval, error) {
-	all, err := s.Deployments.ListAwaiting(ctx)
+// awaitingScanLimit bounds how many waiting requests one page reads while
+// looking for ones p may view. Past it the page comes back short, with a
+// cursor to carry on from: a request from somebody who can see few of many
+// waiting deploys costs a bounded number of authorization checks, not one per
+// waiting deploy in the install (issue #72).
+var awaitingScanLimit = 4 * state.MaxPageSize
+
+// Awaiting lists one page of the deploys waiting for approval on every app p
+// may view, oldest first, each saying whether p may decide it, and the cursor
+// for the next page (empty after the last). A page may hold fewer than its
+// limit and still have a cursor, when the requests read were on apps p cannot
+// see.
+func (s *Service) Awaiting(ctx context.Context, p authz.Principal, page state.Page) ([]state.AwaitingApproval, string, error) {
+	after, err := state.AwaitingKeyFrom(page.Cursor)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	size := page.Size()
 	now := s.now()
-	out := make([]state.AwaitingApproval, 0, len(all))
+	out := make([]state.AwaitingApproval, 0)
 	views := map[string]bool{}
-	for _, item := range all {
-		// Past its expiry and not yet swept: it is not waiting any more,
-		// whatever the row says.
-		if item.ApprovalExpiresAt != nil && !item.ApprovalExpiresAt.After(now) {
-			continue
+	scanned := 0
+	for {
+		batch, err := s.Deployments.ListAwaitingAfter(ctx, after, size)
+		if err != nil {
+			return nil, "", err
 		}
-		ok, seen := views[item.AppID]
-		if !seen {
-			if ok, err = s.Authz.Allows(ctx, p, item.AppID, authz.AppView); err != nil {
-				return nil, err
+		for _, item := range batch {
+			if len(out) == size || scanned >= awaitingScanLimit {
+				// Stopped before this row: the next page starts after the
+				// last one read.
+				return out, after.Cursor(), nil
 			}
-			views[item.AppID] = ok
+			scanned++
+			after = state.AwaitingKey{StartedAt: item.StartedAt, ID: item.ID}
+			ok, err := s.awaitingVisible(ctx, p, item, now, views)
+			if err != nil {
+				return nil, "", err
+			}
+			if !ok {
+				continue
+			}
+			deps := []state.Deployment{item.Deployment}
+			if err := s.Describe(ctx, p, deps); err != nil {
+				return nil, "", err
+			}
+			item.Deployment = deps[0]
+			out = append(out, item)
 		}
-		if !ok {
-			continue
+		if len(batch) < size {
+			return out, "", nil // read to the end
 		}
-		deps := []state.Deployment{item.Deployment}
-		if err := s.Describe(ctx, p, deps); err != nil {
-			return nil, err
-		}
-		item.Deployment = deps[0]
-		out = append(out, item)
 	}
-	return out, nil
+}
+
+// awaitingVisible reports whether a waiting request belongs on p's list: not
+// past its expiry, and on an app p may view. views memoizes the view check by
+// app within one request only — never across requests (R-274).
+func (s *Service) awaitingVisible(ctx context.Context, p authz.Principal, item state.AwaitingApproval,
+	now time.Time, views map[string]bool) (bool, error) {
+	// Past its expiry and not yet swept: it is not waiting any more, whatever
+	// the row says.
+	if item.ApprovalExpiresAt != nil && !item.ApprovalExpiresAt.After(now) {
+		return false, nil
+	}
+	ok, seen := views[item.AppID]
+	if !seen {
+		var err error
+		if ok, err = s.Authz.Allows(ctx, p, item.AppID, authz.AppView); err != nil {
+			return false, err
+		}
+		views[item.AppID] = ok
+	}
+	return ok, nil
 }
 
 // AutoDeployPaused reports whether an app's pinned spec asks for auto-deploy

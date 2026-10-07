@@ -35,11 +35,26 @@ import { Menu, MenuDivider, MenuItem } from '../ui/Menu';
 import { NoMatches, SearchField } from '../ui/SearchField';
 import { matches } from '../ui/search';
 import { useNarrow } from '../ui/narrow';
+import { withParams } from '../ui/paged';
 import { TopoBackground, TopoTile } from '../ui/TopoBackground';
 
 type MyApps = { apps: App[] | null; sections: Section[] | null };
 
 const KEY = ['me', 'apps'];
+
+/** IDs per GET /apps: about 3 KB of address, well inside what a load
+ *  balancer in front of Pando accepts in a request line. */
+const IDS_PER_REQUEST = 100;
+
+/** Which of these apps the caller may administer, asked a page of IDs at a time. */
+async function manageableOf(ids: string[]): Promise<string[]> {
+  const asks = [];
+  for (let i = 0; i < ids.length; i += IDS_PER_REQUEST) {
+    const chunk = ids.slice(i, i + IDS_PER_REQUEST);
+    asks.push(api.get<{ apps: App[] | null }>(withParams('/apps', { id: chunk, limit: chunk.length })));
+  }
+  return (await Promise.all(asks)).flatMap((r) => (r.apps ?? []).map((a) => a.id));
+}
 
 /** What a dragged tile carries: its app's ID, under a type only tiles use. */
 const DRAG_TYPE = 'application/x-pando-app';
@@ -62,17 +77,19 @@ export function Launcher({
   const narrow = useNarrow();
 
   // Which of these apps the person can also administer: GET /apps, the
-  // control-plane list — the same query the Admin entry is decided by, so it
-  // is already in the cache. Two planes, two lists (R-070, R-071); an app is
-  // offered in admin only when it is on the second one, never because it is
-  // on the first.
+  // control-plane list, narrowed to the apps on this launcher by ID rather
+  // than read whole — it is paged, and an administrator's runs to every app
+  // in the install (issue #72). Two planes, two lists (R-070, R-071); an app
+  // is offered in admin only when it is on the second one, never because it
+  // is on the first.
+  const launcherIDs = (apps.data?.apps ?? []).map((a) => a.id);
   const managed = useQuery({
-    queryKey: ['apps'],
-    queryFn: () => api.get<{ apps: App[] | null }>('/apps'),
-    enabled: Boolean(onManage),
+    queryKey: ['apps', 'managed', launcherIDs],
+    queryFn: () => manageableOf(launcherIDs),
+    enabled: Boolean(onManage) && launcherIDs.length > 0,
     retry: false,
   });
-  const manageable = new Set((managed.data?.apps ?? []).map((a) => a.id));
+  const manageable = new Set(managed.data ?? []);
   const arrange = useArrange();
   const [collapsed, toggleCollapsed] = useCollapsed();
 

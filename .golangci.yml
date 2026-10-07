@@ -98,6 +98,13 @@ linters:
       - path: _test\.go
         linters:
           - gosec
+      # The load harness draws which user, app and endpoint to exercise next.
+      # Nothing it draws is a secret, and a cryptographic source per request
+      # would be the harness's own bottleneck.
+      - path: ^test/load/
+        linters:
+          - gosec
+        text: G404
     paths:
       - third_party$
       - builtin$

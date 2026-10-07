@@ -28,10 +28,6 @@ CREATE INDEX deployments_spec_idx ON deployments (spec_id);
 -- other column. Each pruned event was a scan of every delivery.
 CREATE INDEX event_deliveries_event_idx ON event_deliveries (event_id);
 
--- "Apps this person owns", read on every owner-scoped list and at user
--- deletion.
-CREATE INDEX apps_owner_idx ON apps (owner_user_id);
-
 -- Retention of sessions, which nothing removed: an expired or revoked session
 -- is a row nobody can use.
 CREATE INDEX sessions_expiry_idx ON sessions (expires_at);

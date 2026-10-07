@@ -56,6 +56,7 @@ import {
 } from './policyEgress';
 import { ListField } from '../ui/ListField';
 import { useNarrow } from '../ui/narrow';
+import { useSettled, withParams } from '../ui/paged';
 
 /** Where the config file declares an adapter, in words. */
 function declaredAt(row: AdapterRow): string {
@@ -227,6 +228,10 @@ interface PolicyDoc {
   agent_disabled_verbs?: string[];
   max_log_disk_bytes?: number;
 
+  // R-242, as amended by issue #72. Disk has no counterpart.
+  allow_cpu_oversubscription?: boolean;
+  allow_memory_oversubscription?: boolean;
+
   // Audit retention (R-347, R-348).
   audit_retention_months?: number;
   audit_archive?: string;
@@ -240,6 +245,7 @@ interface PolicyDoc {
 
   disable_ai_screening?: boolean;
   disable_anonymous_use_audit?: boolean;
+  disable_anonymous_denial_audit?: boolean;
 
   disable_password_sign_in?: boolean;
   disable_jit_provisioning?: boolean;
@@ -561,6 +567,18 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             />
           </Fixed>
 
+          {/* Design 06 §6: every denial is audited, including a visitor who
+              isn't signed in reaching a private app. Anyone can cause those. */}
+          <Fixed field="disable_anonymous_denial_audit">
+            <Switch
+              checked={current.disable_anonymous_denial_audit ?? false}
+              disabled={locked('disable_anonymous_denial_audit')}
+              label="Don't record refusals of people who aren't signed in"
+              description="Each refused visit to a private app is recorded in the audit log. With this on, only refusals of signed-in people and tokens are."
+              onChange={(e) => edit({ disable_anonymous_denial_audit: e.target.checked })}
+            />
+          </Fixed>
+
           {/* Issue #51: how people sign in. Password sign-in off is refused
               while no identity provider is on; the Sign-in screen says so. */}
           <Fixed field="disable_password_sign_in">
@@ -764,6 +782,30 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               onChange={(e) =>
                 edit({ max_log_disk_bytes: Math.max(0, Math.round(Number(e.target.value) || 0)) * 1_000_000 })
               }
+            />
+          </Fixed>
+        </PolicySection>
+
+        <PolicySection
+          heading="Capacity"
+          note="By default Pando refuses a deploy that would ask for more CPU or memory than the runtime has. Disk is never oversubscribed."
+        >
+          <Fixed field="allow_cpu_oversubscription">
+            <Switch
+              checked={current.allow_cpu_oversubscription ?? false}
+              disabled={locked('allow_cpu_oversubscription')}
+              label="Allow more CPU to be promised than the runtime has"
+              description="Busy apps share the CPU and run slower."
+              onChange={(e) => edit({ allow_cpu_oversubscription: e.target.checked })}
+            />
+          </Fixed>
+          <Fixed field="allow_memory_oversubscription">
+            <Switch
+              checked={current.allow_memory_oversubscription ?? false}
+              disabled={locked('allow_memory_oversubscription')}
+              label="Allow more memory to be promised than the runtime has"
+              description="If the host runs out, it stops an app to free memory."
+              onChange={(e) => edit({ allow_memory_oversubscription: e.target.checked })}
             />
           </Fixed>
         </PolicySection>
@@ -1403,16 +1445,31 @@ function EgressPolicy({ current, edit, locked, fixed }: PolicyControls & { fixed
  * an administrator finds out about later otherwise (R-158).
  */
 function DeployApprovalPolicy({ current, edit, locked }: PolicyControls) {
+  const chosen = current.deploy_approval_apps ?? [];
+  // The chosen apps by ID, and others by search: not every app in the
+  // install, which can be twenty thousand checkboxes (issue #72).
+  const [search, setSearch] = useState('');
+  const settled = useSettled(search.trim());
+  type Named = { id: string; name: string };
   const apps = useQuery({
-    queryKey: ['apps'],
-    queryFn: () => api.get<{ apps: Array<{ id: string; name: string }> | null }>('/apps'),
+    queryKey: ['apps', 'approval-policy', chosen, settled],
+    queryFn: async () => {
+      const [picked, found] = await Promise.all([
+        chosen.length > 0
+          ? api.get<{ apps: Named[] | null }>(withParams('/apps', { id: chosen.slice(0, 100), limit: 100 }))
+          : Promise.resolve({ apps: [] as Named[] }),
+        api.get<{ apps: Named[] | null; next_cursor?: string }>(withParams('/apps', { q: settled, limit: 20 })),
+      ]);
+      return { picked: picked.apps ?? [], found: found.apps ?? [], more: Boolean(found.next_cursor) };
+    },
+    placeholderData: (previous) => previous,
     retry: false,
   });
-  const chosen = current.deploy_approval_apps ?? [];
-  const known = apps.data?.apps ?? [];
+  const picked = apps.data?.picked ?? [];
+  const known = [...picked, ...(apps.data?.found ?? []).filter((a) => !picked.some((p) => p.id === a.id))];
   // An app that was chosen and has since gone — or that this account cannot
   // see — stays listed by its ID, so it can still be taken off.
-  const unknown = chosen.filter((id) => !known.some((a) => a.id === id));
+  const unknown = apps.isSuccess ? chosen.filter((id) => !picked.some((a) => a.id === id)) : [];
   const everyApp = current.deploy_approval_required ?? false;
   const toggle = (id: string, on: boolean) => {
     const rest = chosen.filter((x) => x !== id);
@@ -1442,9 +1499,14 @@ function DeployApprovalPolicy({ current, edit, locked }: PolicyControls) {
               ? 'Every app needs approval while the setting above is on, so this list has no effect.'
               : 'These apps’ deploys wait for approval whatever their owners set, and their owners can’t turn it off.'}
           </p>
+          {(apps.data?.more || settled !== '') && (
+            <SearchField value={search} onChange={setSearch} placeholder="Search apps" />
+          )}
           {apps.isPending && <LineSkeleton width="24ch" />}
           {apps.isError && <Quiet>{messageOf(apps.error)}</Quiet>}
-          {apps.isSuccess && known.length === 0 && unknown.length === 0 && <Quiet>There are no apps yet.</Quiet>}
+          {apps.isSuccess && known.length === 0 && unknown.length === 0 && (
+            <Quiet>{settled ? `No apps match “${settled}”.` : 'There are no apps yet.'}</Quiet>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', maxHeight: '16rem', overflowY: 'auto' }}>
             {known.map((a) => (
               <Checkbox
@@ -1567,11 +1629,13 @@ export function useAuditLog(filters: AuditFilters) {
 
 /** Names for the "who" column and the actor pickers. install.audit.read does
  *  not imply install.view — an account can hold only the first — so when the
- *  list is refused, the pickers take an ID and the columns show IDs. */
+ *  list is refused, the pickers take an ID and the columns show IDs. The
+ *  newest 500 accounts, the most one page holds (issue #72); anyone older
+ *  shows by ID. */
 export function usePeople() {
   const users = useQuery({
-    queryKey: ['users'],
-    queryFn: () => api.get<{ users: Person[] }>('/users'),
+    queryKey: ['users', 'people'],
+    queryFn: () => api.get<{ users: Person[] }>('/users?limit=500'),
     retry: false,
   });
   return users.data?.users ?? [];

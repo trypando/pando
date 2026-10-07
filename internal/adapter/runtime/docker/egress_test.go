@@ -716,3 +716,42 @@ func TestR186_ARuntimeThatCannotRestrictSaysSo(t *testing.T) {
 		require.Empty(t, w.containerNames())
 	})
 }
+
+// TestR023_RejoiningCostsTheSameWhateverTheNumberOfApps asserts that the pass
+// every replica runs every fifteen seconds asks the daemon a fixed number of
+// things, not a few per app (issue #72), and asks whether an app is this
+// install's only for a network it is about to join.
+func TestR023_RejoiningCostsTheSameWhateverTheNumberOfApps(t *testing.T) {
+	ctx := context.Background()
+	w, a := newWorld(t, map[string]any{"network_pool": "off", "proxy_container": "pando-self"})
+	w.addContainer("pando-self", "sha256:pando", "/usr/local/bin/pando", "serve")
+
+	const apps = 20
+	for i := range apps {
+		_, err := a.Apply(ctx, egressPlan(fmt.Sprintf("b%d", i), egress.Rules{}))
+		require.NoError(t, err)
+	}
+
+	asked := 0
+	owns := func(string) bool { asked++; return true }
+
+	w.f.mu.Lock()
+	w.f.calls = nil
+	w.f.mu.Unlock()
+	joined, err := a.RejoinNetworks(ctx, owns)
+	require.NoError(t, err)
+	require.Zero(t, joined, "already on every network")
+	require.Zero(t, asked, "and so nothing to ask the database about")
+	w.f.mu.Lock()
+	calls := len(w.f.calls)
+	w.f.mu.Unlock()
+	require.LessOrEqual(t, calls, 3, "one list of networks, one of containers, one inspect of itself: %v", w.f.calls)
+
+	// A replaced Pando container is on none of them, and rejoins them all.
+	w.detach("pando-self")
+	joined, err = a.RejoinNetworks(ctx, owns)
+	require.NoError(t, err)
+	require.Equal(t, apps, joined)
+	require.Equal(t, apps, asked)
+	require.Len(t, w.container("pando-self").Networks, apps)
+}

@@ -1,7 +1,6 @@
 DROP INDEX IF EXISTS sso_replay_expires_idx;
 DROP INDEX IF EXISTS backups_rolling_idx;
 DROP INDEX IF EXISTS sessions_expiry_idx;
-DROP INDEX IF EXISTS apps_owner_idx;
 DROP INDEX IF EXISTS event_deliveries_event_idx;
 DROP INDEX IF EXISTS deployments_spec_idx;
 DROP INDEX IF EXISTS detections_queued_idx;

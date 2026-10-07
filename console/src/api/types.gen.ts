@@ -239,11 +239,14 @@ export interface PolicyDocument {
   require_backup_before_destroy?: boolean;
   max_token_lifetime_days?: number;
   max_log_disk_bytes?: number;
+  allow_cpu_oversubscription?: boolean;
+  allow_memory_oversubscription?: boolean;
   audit_retention_months?: number;
   audit_archive?: string;
   audit_archive_destination?: string;
   disable_ai_screening?: boolean;
   disable_anonymous_use_audit?: boolean;
+  disable_anonymous_denial_audit?: boolean;
   min_security_score?: number;
   insecure_action?: string;
   insecure_grace_hours?: number;
@@ -328,6 +331,7 @@ export interface Group {
   source?: string;
   source_name?: string;
   members?: (string[] | null);
+  member_count?: number;
   linked_from?: (string[] | null);
   links_to?: (string[] | null);
   created_at: string;

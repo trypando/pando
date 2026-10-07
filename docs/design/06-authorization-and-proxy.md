@@ -341,7 +341,12 @@ never fires again. Accepting the alternative (leave it open, document the gap) w
 websocket the one way to hold access indefinitely after revocation, which is precisely the property an
 attacker would look for.
 
-Re-authorization runs the same `CheckData` as a fresh request. On failure the connection closes with a
+Re-authorization runs the same `CheckData` as a fresh request, on credentials authenticated again
+from the request that opened the connection — its session cookie or bearer token, and any passcode
+unlock — not on the principal they resolved to then. That principal is a snapshot of who the user
+was at connect time; reusing it meant a session revoked, a token revoked, or a user suspended
+(R-048, R-049) left an open websocket open. The loop also ends when the connection closes, rather
+than running for the life of the process. On failure the connection closes with a
 normal WebSocket close frame carrying a policy-violation status, not an abrupt reset, so a client can
 tell revocation from a network fault.
 
@@ -465,7 +470,10 @@ caller holding neither is audited as denied.
 **[D]** What the caller may do on an app is on the wire: `GET /apps/{id}` returns `verbs`, computed by
 `Authorizer.AppVerbs`, which asks `CheckControl`'s own question for each app verb without auditing a
 denial. The console shows a control it cannot use as read-only instead of letting it fail, and it
-cannot drift from the API because it is the API's answer. `GET /users/{id}/apps` returns
+cannot drift from the API because it is the API's answer. The rules are `CheckControl`'s, verb by verb, but one
+call reads the principal's status, the policy document, the grants (each with its role, joined in
+the same query) and the install grants once rather than once per verb; nothing it read outlives the
+call (R-274). `GET /users/{id}/apps` returns
 `can_manage` per app the same way, and lists only apps the caller could see.
 
 **[D]** Creator holds `app.create` and nothing else. It is the built-in answer to "may make and run
@@ -497,6 +505,14 @@ console confirms each with its own wording, naming whose access goes and whose s
 ## 6. Audit integration
 
 **[D]** Every authorization **denial** is audited, not only successes. A denial pattern is the signal that matters for detecting misuse, and it is the thing most commonly left out.
+
+**[D] Except, if host policy says so, an anonymous one on the data plane** (R-227, issue #72). A
+visitor who is not signed in reaching an app not shared with them is refused in `CheckData` and
+audited as `authz.denied`, one row per request — and anyone can make those requests, without an
+account. Host policy's `disable_anonymous_denial_audit` (default off, so they are recorded) stops
+writing them; `PANDO_POLICY_DISABLE_ANONYMOUS_DENIAL_AUDIT` sets it at startup like any other policy
+field. A denial of a signed-in person or a token is always written, and so is every control-plane and
+install denial. The setting is read per request, like all policy (R-274).
 
 **[D] Reaching an app through an install grant is audited** (issue #81). When `CheckControl` allows
 an app verb through an install-wide counterpart rather than a grant on the app, it writes

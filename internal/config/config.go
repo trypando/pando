@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/core/tokenkey"
 )
 
 // Config is Pando's configuration, from YAML, environment, and flags (R-271).
@@ -240,6 +241,13 @@ type Server struct {
 	// R-224 is about rather than somewhere nobody counts.
 	AuditArchiveDir string `mapstructure:"audit_archive_dir"`
 
+	// TokenKeyPath is the file holding the key API tokens are stored under,
+	// as HMAC-SHA-256 (R-063). Generated on first start. Outside the database
+	// so a dump alone cannot test a guess at a token; every replica must read
+	// the same file, which is why it defaults to the shared /var/lib/pando
+	// beside the secrets key, and a DR bundle carries it (R-212).
+	TokenKeyPath string `mapstructure:"token_key_path"`
+
 	// AdvertiseURL is where the other Pando replicas reach this one, for the
 	// one request that has to go to a particular replica: a deploy's live log
 	// (issue #72). Empty means http://<hostname><port of addr>, which is right
@@ -301,6 +309,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("server.port_range_end", 9999)
 	v.SetDefault("server.work_dir", "/var/lib/pando/work")
 	v.SetDefault("server.audit_archive_dir", "/var/lib/pando/audit-archives")
+	v.SetDefault("server.token_key_path", tokenkey.DefaultPath)
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.development", false)
 
@@ -393,6 +402,7 @@ var boundEnv = map[string]string{
 	"server.advertise_url":  "PANDO_SERVER_ADVERTISE_URL",
 
 	"server.audit_archive_dir": "PANDO_SERVER_AUDIT_ARCHIVE_DIR",
+	"server.token_key_path":    "PANDO_SERVER_TOKEN_KEY_PATH",
 	"log.level":                "PANDO_LOG_LEVEL",
 
 	"apps.docker_credentials": "PANDO_APPS_DOCKER_CREDENTIALS",

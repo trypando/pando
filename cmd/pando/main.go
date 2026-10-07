@@ -60,6 +60,7 @@ import (
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/idp"
+	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
@@ -70,6 +71,7 @@ import (
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/subscription"
+	"github.com/trypando/pando/internal/core/tokenkey"
 	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/detect"
 	"github.com/trypando/pando/internal/errs"
@@ -273,7 +275,18 @@ func serve(ctx context.Context, configPath string) error {
 
 	users := state.NewUsers(db)
 	sessions := state.NewSessions(db)
-	tokens := state.NewTokens(db)
+	// API tokens are stored as HMAC-SHA-256 under a key kept beside the
+	// process, not in the database (R-063). Every replica must hold the same
+	// one, and one that does not stops here, before it rejects every token
+	// the others issued (issue #72).
+	tokenKey, err := tokenkey.LoadOrCreate(cfg.Server.TokenKeyPath)
+	if err != nil {
+		return err
+	}
+	tokens := state.NewTokens(db, tokenKey)
+	if err := tokens.VerifyKey(ctx); err != nil {
+		return err
+	}
 	apps := state.NewApps(db)
 	volumes := state.NewVolumes(db)
 	adapters := state.NewAdapters(db)
@@ -394,6 +407,10 @@ func serve(ctx context.Context, configPath string) error {
 		// Read from the adapter's own configuration rather than duplicated into
 		// server config, so there is one place that decides where the key lives.
 		SecretsKeyPath: secretsKeyPath(ctx, adapters, logger),
+
+		// The API token key, for the same reason: without it a restored
+		// install holds every token's digest and cannot check any of them.
+		TokenKeyPath: cfg.Server.TokenKeyPath,
 
 		State:         bundleSource,
 		Version:       buildVersion,
@@ -755,6 +772,9 @@ func serve(ctx context.Context, configPath string) error {
 		Registry:    registry,
 		Adapters:    adapters,
 		AIFunctions: aiFunctions,
+		// One answer per app per moment for the console's status and usage
+		// polls, rather than one Docker call per open tab (issue #72).
+		Observations: observe.New(),
 		Assist: &assist.Service{
 			Registry: registry,
 			Users:    users,
@@ -888,6 +908,9 @@ func serve(ctx context.Context, configPath string) error {
 		Clock:         clock.System{},
 		ProxyUpstream: proxyUpstream,
 
+		// Replicas share the apps rather than each visiting every one.
+		MinRevisit: reconciler.DefaultMinRevisit,
+
 		// The owner hears that their app failed (design 05 §4). Unset until
 		// issue #50, which is to say nobody heard.
 		Notifier: notifyRouter,
@@ -918,9 +941,9 @@ func serve(ctx context.Context, configPath string) error {
 	loopCtx, stopLoop := context.WithCancel(ctx)
 	defer stopLoop()
 
-	// The reconciler runs on every replica: it locks per app (state
-	// Reconciles.Lock), so replicas share the apps between them rather than
-	// fighting over them.
+	// The reconciler runs on every replica: it claims apps under a lease
+	// with SKIP LOCKED (state.Lease), so replicas share the apps between them
+	// rather than fighting over them.
 	go loop.Run(loopCtx)
 
 	// The deploy and detection queues run on every replica: each claims what
@@ -1152,14 +1175,14 @@ func serve(ctx context.Context, configPath string) error {
 	// private network behind. Registry and Auditor are what make that possible
 	// — and the teardown is audited, because destruction is destruction whoever
 	// does it.
-	job("gc", (&reconciler.GC{
-		Apps:        apps,
-		Logger:      logger,
-		Registry:    registryAdapters{registry},
-		Auditor:     reconcilerAuditor{auditor},
-		Interval:    cfg.Reconciler.GCInterval,
-		TeardownNow: teardownNow,
-		Clock:       clock.System{},
+	gc := &reconciler.GC{
+		Apps:     apps,
+		Logger:   logger,
+		Registry: registryAdapters{registry},
+		Auditor:  reconcilerAuditor{auditor},
+		Interval: cfg.Reconciler.GCInterval,
+
+		Clock: clock.System{},
 
 		// A deleted app's build cache and uploaded source (R-224, issue #55).
 		BuildCaches:   buildCaches{registry},
@@ -1178,7 +1201,23 @@ func serve(ctx context.Context, configPath string) error {
 		PolicyStore:   hostPolicy,
 		Desired:       apps,
 		Notifier:      securityNotifier{notifyRouter},
-	}).Run)
+	}
+	job("gc", gc.Run)
+
+	// A delete tears its app down at once, on the replica that took the
+	// delete, whichever replica leads (issue #72). Teardown is idempotent, so
+	// this and the leader's own pass meeting on one app is harmless; and the
+	// leader's pass is what catches a delete whose replica stopped first.
+	go func() {
+		for {
+			select {
+			case <-loopCtx.Done():
+				return
+			case <-teardownNow:
+				gc.TearDownDeleted(loopCtx)
+			}
+		}
+	}()
 
 	// R-211's rolling backups, which had a column, a default and an expiry
 	// query and nothing that ever took one — and then took them in series

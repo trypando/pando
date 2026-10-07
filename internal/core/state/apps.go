@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -222,29 +225,94 @@ func (a *Apps) ByID(ctx context.Context, appID string) (App, bool, error) {
 // Scoped by grant rather than returning everything and filtering afterward: a
 // list endpoint that leaks the existence of apps is a smaller problem than one
 // that leaks their contents, but it is still a leak.
+//
+// Unpaginated; the API pages with ListForPrincipalPage.
 func (a *Apps) ListForPrincipal(ctx context.Context, p authz.Principal) ([]App, error) {
-	return a.listControl(ctx, `
-		JOIN grants g ON g.app_id = a.id AND g.plane = 'control'
-		WHERE a.deleted_at IS NULL
-		  AND (
-		        (g.principal_kind = 'user'  AND g.principal_id = $1)
-		     OR (g.principal_kind = 'token' AND g.principal_id = $2)
-		     OR (g.principal_kind = 'group' AND g.principal_id IN (
-		            SELECT group_id FROM effective_group_members WHERE user_id = $1))
-		  )`, nullable(p.UserID), nullable(accountTokenID(p)))
+	list, _, _, err := a.listControl(ctx, Page{Limit: -1}, controlGrantWhere,
+		nullable(p.UserID), nullable(accountTokenID(p)))
+	return list, err
 }
+
+// ListForPrincipalPage is one page of ListForPrincipal, newest first, with the
+// cursor for the next page and how many apps match in all. Page.Query matches
+// the name or slug.
+func (a *Apps) ListForPrincipalPage(ctx context.Context, p authz.Principal, page Page) ([]App, string, int, error) {
+	return a.listControl(ctx, page, controlGrantWhere, nullable(p.UserID), nullable(accountTokenID(p)))
+}
+
+// controlGrantWhere narrows the list to apps $1 (a user) or $2 (an account
+// token) holds a control-plane grant on, directly or through a group. A UNION
+// of indexed lookups (grants_principal_idx) rather than a join of every
+// grant, so the list costs the caller's grants, not the install's — and no
+// DISTINCT over the result, since IN already answers once per app.
+const controlGrantWhere = `
+		WHERE a.deleted_at IS NULL
+		  AND a.id IN (
+		        SELECT app_id FROM grants
+		        WHERE plane = 'control' AND principal_kind = 'user' AND principal_id = $1
+		        UNION
+		        SELECT app_id FROM grants
+		        WHERE plane = 'control' AND principal_kind = 'token' AND principal_id = $2
+		        UNION
+		        SELECT g.app_id FROM grants g
+		        JOIN effective_group_members m ON m.group_id = g.principal_id
+		        WHERE g.plane = 'control' AND g.principal_kind = 'group' AND m.user_id = $1
+		  )`
 
 // ListAll returns every app, for a principal whose install role reaches every
 // app with app.view (install.apps.view, R-081). The caller decides
 // that; this only reads.
+//
+// Unpaginated, for the readers that need every app at once (the access
+// assistant); the API pages with ListAllPage.
 func (a *Apps) ListAll(ctx context.Context) ([]App, error) {
-	return a.listControl(ctx, `WHERE a.deleted_at IS NULL`)
+	list, _, _, err := a.listControl(ctx, Page{Limit: -1}, `WHERE a.deleted_at IS NULL`)
+	return list, err
 }
 
-// listControl is the admin console's app list, narrowed by `where`.
-func (a *Apps) listControl(ctx context.Context, where string, args ...any) ([]App, error) {
+// ListAllPage is one page of ListAll, newest first. Page.Query matches the
+// name or slug.
+func (a *Apps) ListAllPage(ctx context.Context, page Page) ([]App, string, int, error) {
+	return a.listControl(ctx, page, `WHERE a.deleted_at IS NULL`)
+}
+
+// listControl is the admin console's app list, narrowed by `where`, whose
+// placeholders are args. A negative page limit reads every row.
+//
+// Keyset-paged on (created_at, id), newest first, which the
+// apps_live_created_idx index serves: the per-row scan lookup below then runs
+// for one page of apps rather than all of them (issue #72).
+func (a *Apps) listControl(ctx context.Context, page Page, where string, args ...any) ([]App, string, int, error) {
+	var (
+		afterAt time.Time
+		afterID string
+	)
+	have, err := decodeCursor(page.Cursor, &afterAt, &afterID)
+	if err != nil {
+		return nil, "", 0, err
+	}
+
+	// The caller's placeholders first, then the query and the IDs, then the
+	// cursor and limit, which only the list (not the count) takes.
+	var ids any // NULL: no narrowing
+	if len(page.IDs) > 0 {
+		ids = page.IDs
+	}
+	n := len(args)
+	filter := where + fmt.Sprintf(`
+		  AND ($%d = '' OR a.name ILIKE '%%' || $%d || '%%' OR a.slug ILIKE '%%' || $%d || '%%')
+		  AND ($%d::text[] IS NULL OR a.id = ANY($%d::text[]))`, n+1, n+1, n+1, n+2, n+2)
+	countArgs := append(append([]any{}, args...), likeEscape(page.Query), ids)
+	n++
+
+	var limit any
+	if page.Limit >= 0 {
+		limit = page.Size() + 1
+	}
+	listArgs := append(append([]any{}, countArgs...), have, afterAt, afterID, limit)
+
 	rows, err := a.db.Query(ctx, `
-		SELECT DISTINCT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state,
+		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state,
 		       a.pinned_spec_id, a.created_at, a.updated_at, r.body->'routing', s.score, s.score_fixable,
 		       i.updated_at
 		FROM apps a
@@ -263,10 +331,12 @@ func (a *Apps) listControl(ctx context.Context, where string, args ...any) ([]Ap
 		    ORDER BY (sc.spec_id IS NOT NULL) DESC, sc.ran_at DESC
 		    LIMIT 1
 		) s ON true
-		`+where+`
-		ORDER BY a.created_at DESC`, args...)
+		`+filter+fmt.Sprintf(`
+		  AND (NOT $%d OR (a.created_at, a.id) < ($%d::timestamptz, $%d::text))
+		ORDER BY a.created_at DESC, a.id DESC
+		LIMIT $%d`, n+2, n+3, n+4, n+5), listArgs...)
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not list apps.", err)
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not list apps.", err)
 	}
 	defer rows.Close()
 
@@ -278,7 +348,7 @@ func (a *Apps) listControl(ctx context.Context, where string, args ...any) ([]Ap
 		if err := rows.Scan(&app.ID, &app.Name, &app.Slug, &owner, &app.State, &app.DesiredState,
 			&pinned, &app.CreatedAt, &app.UpdatedAt, &routing,
 			&app.SecurityScore, &app.SecurityScoreFixable, &app.IconUpdatedAt); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not list apps.", err)
+			return nil, "", 0, errs.Wrap(errs.Internal, "Could not list apps.", err)
 		}
 		if len(routing) > 0 {
 			_ = json.Unmarshal(routing, &app.Routing)
@@ -291,33 +361,65 @@ func (a *Apps) listControl(ctx context.Context, where string, args ...any) ([]Ap
 		}
 		out = append(out, app)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not list apps.", err)
+	}
+	if page.Limit < 0 {
+		return out, "", len(out), nil
+	}
+
+	var next string
+	if len(out) > page.Size() {
+		out = out[:page.Size()]
+		last := out[len(out)-1]
+		next = encodeCursor(last.CreatedAt, last.ID)
+	}
+	var total int
+	if err := a.db.QueryRow(ctx, `SELECT count(*) FROM apps a `+filter, countArgs...).Scan(&total); err != nil {
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not count apps.", err)
+	}
+	return out, next, total, nil
 }
 
-// ListForUse returns apps the principal holds a DATA-plane grant on (R-264).
+// ListForUse returns apps the principal holds a DATA-plane grant on (R-264),
+// or owns.
 //
 // Deliberately a different query from ListForPrincipal. Two planes, two
 // endpoints: the launcher shows what you can open, not what you can manage.
+//
+// A UNION of indexed lookups — owned (apps_owner_user_idx), a direct user or
+// token grant and a group grant (grants_principal_idx), and anonymous grants
+// (grants_data_anonymous_idx) — rather than a join of every app's data grants
+// under OR'd predicates, which read every grant in the install for each
+// launcher load (issue #72).
 func (a *Apps) ListForUse(ctx context.Context, p authz.Principal) ([]App, error) {
 	rows, err := a.db.Query(ctx, `
-		SELECT DISTINCT a.id, a.name, a.slug, a.state, r.body->'routing', i.updated_at,
+		WITH usable AS (
+		    SELECT id AS app_id FROM apps WHERE owner_user_id = $1 AND deleted_at IS NULL
+		    UNION
+		    SELECT app_id FROM grants
+		    WHERE plane = 'data' AND principal_kind = 'user' AND principal_id = $1
+		    UNION
+		    SELECT app_id FROM grants
+		    WHERE plane = 'data' AND principal_kind = 'token' AND principal_id = $2
+		    UNION
+		    SELECT g.app_id FROM grants g
+		    JOIN effective_group_members m ON m.group_id = g.principal_id
+		    WHERE g.plane = 'data' AND g.principal_kind = 'group' AND m.user_id = $1
+		    UNION
+		    SELECT app_id FROM grants
+		    WHERE plane = 'data' AND principal_kind = 'anonymous'
+		)
+		SELECT a.id, a.name, a.slug, a.state, r.body->'routing', i.updated_at,
 		       f.app_id IS NOT NULL, lp.section_id
-		FROM apps a
+		FROM usable u
+		JOIN apps a ON a.id = u.app_id
 		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		LEFT JOIN app_icons i ON i.app_id = a.id
 		LEFT JOIN app_favorites f ON f.app_id = a.id AND f.user_id = $1
 		LEFT JOIN launcher_placements lp ON lp.app_id = a.id AND lp.user_id = $1
-		LEFT JOIN grants g ON g.app_id = a.id AND g.plane = 'data'
 		WHERE a.deleted_at IS NULL
-		  AND (
-		        a.owner_user_id = $1
-		     OR g.principal_kind = 'anonymous'
-		     OR (g.principal_kind = 'user'  AND g.principal_id = $1)
-		     OR (g.principal_kind = 'token' AND g.principal_id = $2)
-		     OR (g.principal_kind = 'group' AND g.principal_id IN (
-		            SELECT group_id FROM effective_group_members WHERE user_id = $1))
-		  )
-		ORDER BY a.name`,
+		ORDER BY a.name, a.id`,
 		nullable(p.UserID), nullable(accountTokenID(p)))
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not list apps.", err)
@@ -648,6 +750,7 @@ func (a *Apps) Pin(ctx context.Context, appID, specID, newState, pinnedBy string
 		return err
 	}
 	hostname, path := addressOf(pinned.Routing)
+	port := portOf(pinned.Routing)
 
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO spec_pins (app_id, spec_id, pinned_by) VALUES ($1, $2, $3)`,
@@ -656,9 +759,10 @@ func (a *Apps) Pin(ctx context.Context, appID, specID, newState, pinnedBy string
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE apps SET pinned_spec_id = $2, state = $3, updated_at = now(),
-		        address_hostname = NULLIF($4, ''), address_path = NULLIF($5, '')
+		        address_hostname = NULLIF($4, ''), address_path = NULLIF($5, ''),
+		        address_port = NULLIF($6, 0)
 		 WHERE id = $1`,
-		appID, specID, newState, hostname, path); err != nil {
+		appID, specID, newState, hostname, path, port); err != nil {
 		if isUniqueViolation(err) {
 			// Two pins of the same address raced past checkAddress; the
 			// index decided.
@@ -1084,25 +1188,39 @@ func (a *Apps) SetState(ctx context.Context, appID, appState string) error {
 // ByRouting resolves a running app from how it is addressed.
 //
 // Used by the proxy on every request, so it reads the pinned spec in the same
-// query rather than making a second round trip per request.
+// query rather than making a second round trip per request, and matches on
+// indexed columns of apps rather than on the pinned spec's JSON: the address
+// columns are written with the pin (migrations 35 and 46), so they say what
+// the pinned spec says.
 //
-// `by` is "hostname" or "slug". A hostname lookup reads the pinned spec's
-// routing block; a slug lookup reads the app's own column.
+// `by` is "hostname", "slug", "id" or "port".
 func (a *Apps) ByRouting(ctx context.Context, by, value string) (App, *spec.AppSpec, bool, error) {
 	var where string
+	var arg any = value
 	switch by {
 	case "hostname":
-		where = `r.body->'routing'->>'hostname' = $1`
+		// Stored lowercase, and only for an app addressed by hostname. A
+		// hostname is not case-sensitive, so neither is the match.
+		where = `a.address_hostname = $1`
+		arg = strings.ToLower(value)
 	case "slug":
 		where = `a.slug = $1`
 	case "id":
 		where = `a.id = $1`
 	case "port":
-		// The mode is part of the match, not just the number. A port-mode app's
-		// routing block is the only place a port means "this app's address";
-		// leaving the mode out would let a path-mode app whose routing happened
-		// to record a port answer on a listener that is not its own.
-		where = `r.body->'routing'->>'mode' = 'port' AND r.body->'routing'->>'port' = $1`
+		// Set only for a port-mode app (portOf). The mode is part of the
+		// match, not just the number: a port-mode app's routing block is the
+		// only place a port means "this app's address", and a path-mode app
+		// whose routing happened to record a port does not answer on a
+		// listener that is not its own.
+		// Not a number is no app's port, as the text comparison it replaces
+		// found nothing for it.
+		port, convErr := strconv.Atoi(value)
+		if convErr != nil { //nolint:nilerr // no app has this address; not a failure
+			return App{}, nil, false, nil
+		}
+		where = `a.address_port = $1`
+		arg = port
 	default:
 		return App{}, nil, false, errs.Newf(errs.Internal, "Unknown routing lookup %q.", by)
 	}
@@ -1115,7 +1233,7 @@ func (a *Apps) ByRouting(ctx context.Context, by, value string) (App, *spec.AppS
 		       a.created_at, a.updated_at, r.body
 		FROM apps a
 		JOIN spec_revisions r ON r.id = a.pinned_spec_id
-		WHERE a.deleted_at IS NULL AND `+where, value).
+		WHERE a.deleted_at IS NULL AND `+where, arg).
 		Scan(&app.ID, &app.Name, &app.Slug, &owner, &app.State, &app.DesiredState, &app.PinnedSpecID,
 			&app.CreatedAt, &app.UpdatedAt, &body)
 	if errors.Is(err, pgx.ErrNoRows) {
