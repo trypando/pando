@@ -1,0 +1,23 @@
+# ReadWriteMany for /var/lib/pando on kind (O-39). kind's own storage offers
+# only ReadWriteOnce, so every node mounts the same directory of the machine
+# running the cluster at /pando-shared (kind.yaml's extraMounts), and this
+# volume is that directory. Both replicas then read and write one
+# /var/lib/pando, as on NFS or EFS in production: an upload stored by one is
+# built by the other.
+#
+# A hostPath volume, which a pod could not name under Pod Security baseline;
+# a PersistentVolume is the cluster administrator's, and the pod names only
+# the claim.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pando-data
+spec:
+  storageClassName: pando-shared
+  accessModes: [ReadWriteMany]
+  capacity:
+    storage: 50Gi
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /pando-shared/pando-data
+    type: Directory

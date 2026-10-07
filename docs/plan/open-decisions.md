@@ -1,12 +1,12 @@
 # Open decisions
 
-Forty-seven questions. O-1 through O-10 come from requirements §23; O-11 through O-14 were added during
+Forty-nine questions. O-1 through O-10 come from requirements §23; O-11 through O-14 were added during
 design; O-15 through O-17 were found while implementing phases 6, 7 and 8; O-18 was found while
 setting up the release build; O-19 was found by turning `gosec` on; O-20 was found while building the
 first AI adapter; O-21 and O-22 came from issue #74, AI functions beyond detection; O-23 came from
 building the Cloudflare Tunnel adapter; O-24 came from issue #87; O-25 from issue #79, egress rules;
 O-26 from issue #39, deploy approval; O-28 through O-31 from issue #41, deploying prebuilt images
-and uploaded files; O-32 and O-33 from issue #72, running Pando as several replicas; O-34 through O-47 from the design notes for PRs 5–7 of the same issue (an image registry, a Kubernetes runtime adapter, Docker on several hosts). **Thirty-nine are resolved; the rest are listed below.** O-32 (a deploy and detection work queue) and O-33 (a Kubernetes runtime adapter) were both answered yes, alongside a multi-host Docker adapter and a registry Pando runs by default; `docs/design/notes-multiple-replicas-issue-72.md` has the decisions and the PRs that carry them out. O-34 through O-47 were all decided by the owner, O-42 against the note's recommendation (see the Resolved table). O-4 needs a
+and uploaded files; O-32 and O-33 from issue #72, running Pando as several replicas; O-34 through O-47 from the design notes for PRs 5–7 of the same issue (an image registry, a Kubernetes runtime adapter, Docker on several hosts); O-48 and O-49 from running the Kubernetes adapter on a kind cluster. **Forty-one are resolved; the rest are listed below.** O-48 and O-49, from running the Kubernetes adapter on kind, were decided by the owner. O-32 (a deploy and detection work queue) and O-33 (a Kubernetes runtime adapter) were both answered yes, alongside a multi-host Docker adapter and a registry Pando runs by default; `docs/design/notes-multiple-replicas-issue-72.md` has the decisions and the PRs that carry them out. O-34 through O-47 were all decided by the owner, O-42 against the note's recommendation (see the Resolved table). O-4 needs a
 measurement, O-18 needs somebody to pick a host and pay for it, O-23 is kept open deliberately so
 it is revisited, and O-24 needs a product call on stopped apps.
 
@@ -263,6 +263,8 @@ failure surfaces as a browser warning to a user rather than as a message to an o
 | **O-45** | How the proxy reaches an app on another Docker host (R-023) | A forwarding agent per host that accepts only Pando's client certificate | design 06 §4, `notes-multi-host-docker-issue-72.md` |
 | **O-46** | Whether moving an app between Docker hosts is an action Pando offers | Not in the first release; a host is emptied by deleting and re-creating its apps with backups | `notes-multi-host-docker-issue-72.md` |
 | **O-47** | Whether Pando's replicas may run on more than one Docker host | Control host only until O-39's shared volume is gone | `notes-multi-host-docker-issue-72.md` |
+| **O-48** | How rootless BuildKit runs on Kubernetes under Pod Security `baseline` | **[D]** In a namespace of its own, `pando-build`, enforcing `privileged`, with seccomp and AppArmor `Unconfined` and nothing privileged or socket-mounted (R-112). It admits only Pando's server pods and reaches DNS, the in-cluster registry and outside the cluster (R-113); app namespaces stay `baseline`. Found running `deploy/kubernetes` on kind, where `baseline` on `pando` refused the builder's pod | `notes-kubernetes-runtime-issue-72.md`, `deploy/kubernetes/buildkit.yaml` |
+| **O-49** | Whether the edge's certificate issuer may use an ACME directory other than Let's Encrypt | **[D]** Yes, a startup setting: `PANDO_ACME_DIRECTORY_URL` (default Let's Encrypt production) and `PANDO_ACME_CA_FILE`, a PEM bundle trusted beside the system roots for a private ACME server. It is what lets the HTTP-01 path be tested against Pebble | `docs/reference.md`, `internal/config` (R-169) |
 
 ### O-25 — egress: layered, and only loosening is gated
 

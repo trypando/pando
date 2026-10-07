@@ -1,0 +1,67 @@
+# Rootless BuildKit (R-111), as the Compose file runs it, alone in the
+# pando-build namespace (O-48).
+#
+# Rootless BuildKit makes its own user and mount namespaces, which the
+# container runtime's default seccomp and AppArmor profiles refuse. So it asks
+# for both Unconfined, which Pod Security baseline would refuse; pando-build
+# enforces privileged instead, and holds nothing else. Nothing is privileged
+# and no container runtime socket is mounted, here or anywhere (R-112).
+#
+# Its NetworkPolicy (networkpolicy.yaml) admits only Pando's server pods, and
+# lets builds reach DNS, an in-cluster registry and anywhere outside the
+# cluster — nothing else inside it (R-113).
+#
+# On Kubernetes a build is pushed to a registry and every node pulls it
+# (notes-image-registry-issue-72.md); set PANDO_REGISTRY_URL on Pando's
+# Deployment.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildkit
+  namespace: pando-build
+  labels:
+    app.kubernetes.io/name: buildkit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: buildkit
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: buildkit
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+        appArmorProfile:
+          type: Unconfined
+      containers:
+        - name: buildkitd
+          image: moby/buildkit:v0.17.2-rootless
+          args: [--addr, tcp://0.0.0.0:1234, --oci-worker-no-process-sandbox]
+          ports:
+            - containerPort: 1234
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            privileged: false
+          volumeMounts:
+            - name: cache
+              mountPath: /home/user/.local/share/buildkit
+      volumes:
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: buildkit
+  namespace: pando-build
+spec:
+  selector:
+    app.kubernetes.io/name: buildkit
+  ports:
+    - port: 1234
+      targetPort: 1234

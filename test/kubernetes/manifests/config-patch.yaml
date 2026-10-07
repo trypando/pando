@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pando-config
+  namespace: pando
+data:
+  pando.yaml: |
+    adapters:
+      rt_kubernetes:
+        category: runtime
+        kind: kubernetes
+        name: Kubernetes
+        default: true
+        config:
+          # kind's ranges (kind.yaml).
+          pod_cidr: 10.244.0.0/16
+          service_cidr: 10.96.0.0/12
+          egress_gateway_image: pando-k8s-test/pando:dev
+          # kind has no load balancer; the test reaches the edge's
+          # NodePort Service by port-forward.
+          edge_service_type: NodePort
+          volume_size_bytes: 104857600
+      rte_traefik:
+        category: routing
+        kind: traefik
+        name: Traefik
+        default: true
+        config:
+          delivery: kubernetes_api
+          # Issued by Pando's leader from Pebble (pebble.yaml), over HTTP-01.
+          certificates: http
+          acme_email: ops@pando.test
+          console_hostname: pando.pando.test
+          base_domain: apps.pando.test

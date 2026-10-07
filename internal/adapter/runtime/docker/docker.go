@@ -307,6 +307,10 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		// and the install asks for that (PANDO_REGISTRY_ALWAYS).
 		ImageDelivery: []api.ImageDelivery{api.ImageDeliveryImport, api.ImageDeliveryRegistry},
 
+		// Traefik reads route files from a directory Pando writes and the
+		// edge mounts (edge.go).
+		EdgeConfig: []api.EdgeConfig{api.EdgeConfigSharedMount},
+
 		// Only when Pando is itself a container on this daemon: then it can
 		// start the helper that replaces it (R-359).
 		SupportsSelfUpgrade: a.inspectSelf(ctx) != nil,
@@ -387,6 +391,9 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 		capacity.TotalMemoryBytes = a.config.TotalMemoryBytes
 	}
 	capacity.TotalDiskBytes = a.config.TotalDiskBytes
+
+	// One machine: the roomiest place a workload could go is all of it.
+	capacity.LargestFit = api.Fit{CPUMillis: capacity.TotalCPUMillis, MemoryBytes: capacity.TotalMemoryBytes}
 	capacity.RunningWorkloads = info.ContainersRunning
 
 	// The rest of what the daemon says about itself, for whoever is looking

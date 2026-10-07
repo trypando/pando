@@ -40,10 +40,19 @@ type Service struct {
 	Registry      *api.Registry
 	ProxyUpstream string
 	Logger        *zap.Logger
-	Clock         clock.Clock
+
+	// Certificates issues what an edge asks Pando to (EdgePlan.Issue):
+	// *edgecert.Issuer. Nil refuses such an edge.
+	Certificates CertificateIssuer
+	Clock        clock.Clock
 
 	mu     sync.RWMutex
 	status map[string]Status
+}
+
+// CertificateIssuer issues an edge's certificates and returns those it holds.
+type CertificateIssuer interface {
+	Ensure(ctx context.Context, plan *api.CertificateIssue) ([]api.EdgeCertificate, error)
 }
 
 // Status reports the last result for a routing adapter's edge. false means
@@ -89,7 +98,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		plan, needs, err := routing.Edge(ctx, api.EdgeRequest{Ref: ref, ProxyUpstream: s.ProxyUpstream})
+		plan, needs, err := routing.Edge(ctx, api.EdgeRequest{Ref: ref, ProxyUpstream: s.ProxyUpstream, EdgeConfig: caps.EdgeConfig})
 		if err != nil {
 			fail(ref, err)
 			continue
@@ -112,6 +121,22 @@ func (s *Service) Reconcile(ctx context.Context) error {
 				WithRemedy("Use the Docker runtime adapter, or set the routing adapter so that something else runs its edge."))
 			continue
 		}
+		// Certificates the edge cannot issue itself are Pando's to issue, on
+		// the leader, which is the only replica running this pass (R-169).
+		// A failed order leaves what is already held in service.
+		var issueErr error
+		if plan.Issue != nil {
+			if s.Certificates == nil {
+				fail(ref, errs.New(errs.AdapterUnavailable,
+					fmt.Sprintf("The %s routing adapter needs Pando to issue its certificates, and this Pando has nowhere to keep them.", ref)).
+					WithRemedy("Configure a secrets adapter, restart Pando, and try again."))
+				continue
+			}
+			plan.Certificates, issueErr = s.Certificates.Ensure(ctx, plan.Issue)
+			if issueErr != nil {
+				s.logger().Warn("edge certificates incomplete", zap.String("adapter_id", ref), zap.Error(issueErr))
+			}
+		}
 		if err := rt.ApplyEdge(ctx, plan); err != nil {
 			fail(ref, err)
 			continue
@@ -121,7 +146,11 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			fail(ref, err)
 			continue
 		}
-		results[ref] = Status{Running: observed.Running, Message: observed.Detail, CheckedAt: now}
+		message := observed.Detail
+		if issueErr != nil && message == "" {
+			message = messageOf(issueErr)
+		}
+		results[ref] = Status{Running: observed.Running, Message: message, CheckedAt: now}
 	}
 
 	if caps.SupportsEdge {

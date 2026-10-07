@@ -1,0 +1,134 @@
+# A second check, at the API, on what Pando's ServiceAccount may create
+# (notes-kubernetes-runtime-issue-72.md). The adapter's code already does none
+# of this; these make a bug in it fail loudly rather than open a way in.
+# ValidatingAdmissionPolicy is GA from Kubernetes 1.30.
+#
+#   - A namespace is deleted only if Pando made it (RBAC cannot select by
+#     label).
+#   - No NodePort or LoadBalancer Service except the edge's, in pando-edge
+#     (R-026), and no ExternalName Service outside pando-edge.
+#   - No pod with the host's network or a host port (R-026).
+#   - Every IngressRoute sends traffic to pando-proxy and nothing else (R-023).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pando-namespace-delete
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        resources: [namespaces]
+        operations: [DELETE]
+  matchConditions:
+    - name: pando-service-account
+      expression: request.userInfo.username == 'system:serviceaccount:pando:pando'
+  validations:
+    - expression: >-
+        has(oldObject.metadata.labels) &&
+        'app.kubernetes.io/managed-by' in oldObject.metadata.labels &&
+        oldObject.metadata.labels['app.kubernetes.io/managed-by'] == 'pando' &&
+        !(oldObject.metadata.name in ['pando', 'pando-edge'])
+      message: Pando deletes only the namespaces it made for apps.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pando-no-route-in
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        resources: [services]
+        operations: [CREATE, UPDATE]
+  matchConditions:
+    - name: pando-service-account
+      expression: request.userInfo.username == 'system:serviceaccount:pando:pando'
+  validations:
+    - expression: >-
+        !(has(object.spec.type) && object.spec.type in ['NodePort', 'LoadBalancer']) ||
+        (request.namespace == 'pando-edge' && has(object.spec.selector) &&
+         'app.kubernetes.io/component' in object.spec.selector &&
+         object.spec.selector['app.kubernetes.io/component'] == 'edge')
+      message: Only the edge, in pando-edge, gets a NodePort or LoadBalancer Service. An app never does (R-026).
+    - expression: >-
+        !(has(object.spec.type) && object.spec.type == 'ExternalName') ||
+        request.namespace == 'pando-edge'
+      message: An ExternalName Service is made only in pando-edge, for the edge to reach Pando's proxy.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pando-no-host-access
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        resources: [pods]
+        operations: [CREATE, UPDATE]
+  matchConditions:
+    - name: pando-service-account
+      expression: request.userInfo.username == 'system:serviceaccount:pando:pando'
+  validations:
+    - expression: >-
+        (!has(object.spec.hostNetwork) || object.spec.hostNetwork == false) &&
+        object.spec.containers.all(c, !has(c.ports) || c.ports.all(p, !has(p.hostPort) || p.hostPort == 0))
+      message: An app's pod never uses the host's network or a host port (R-026).
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pando-routes-reach-the-proxy
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [traefik.io]
+        apiVersions: ["*"]
+        resources: [ingressroutes]
+        operations: [CREATE, UPDATE]
+  matchConditions:
+    - name: pando-service-account
+      expression: request.userInfo.username == 'system:serviceaccount:pando:pando'
+  validations:
+    - expression: >-
+        object.spec.routes.all(r, !has(r.services) ||
+          r.services.all(s, s.name == 'pando-proxy' && (!has(s.namespace) || s.namespace == 'pando-edge')))
+      message: Every route sends traffic to Pando's proxy, never to an app (R-023).
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pando-namespace-delete
+spec:
+  policyName: pando-namespace-delete
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pando-no-route-in
+spec:
+  policyName: pando-no-route-in
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pando-no-host-access
+spec:
+  policyName: pando-no-host-access
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pando-routes-reach-the-proxy
+spec:
+  policyName: pando-routes-reach-the-proxy
+  validationActions: [Deny]

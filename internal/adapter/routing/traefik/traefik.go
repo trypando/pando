@@ -26,6 +26,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"k8s.io/client-go/dynamic"
+
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
@@ -43,6 +45,9 @@ type Adapter struct {
 	// dnsEnv is the DNS provider's credentials, as the environment Traefik
 	// reads them from. Held as secret.Value so it cannot reach a log (R-194).
 	dnsEnv map[string]secret.Value
+
+	// dyn writes IngressRoutes, with delivery kubernetes_api (kubernetes.go).
+	dyn dynamic.Interface
 }
 
 // Config is the adapter's configuration.
@@ -52,6 +57,19 @@ type Config struct {
 	// an install that already has Traefik on :80 and :443 for other things.
 	// A pointer so an unset value is the default rather than false.
 	Managed *bool `json:"managed,omitempty"`
+
+	// Delivery is how routes reach Traefik: shared_mount, files in Dir, which
+	// Traefik mounts (Docker, the default); or kubernetes_api, IngressRoute
+	// objects in Namespace (the Kubernetes runtime, kubernetes.go). Core says
+	// which the runtime offers, and Edge refuses a mismatch.
+	Delivery string `json:"delivery,omitempty"`
+
+	// Namespace holds the IngressRoutes, with delivery kubernetes_api.
+	Namespace string `json:"namespace,omitempty"`
+
+	// Kubeconfig connects to the cluster from outside it, with delivery
+	// kubernetes_api. Empty is the cluster Pando runs in.
+	Kubeconfig string `json:"kubeconfig,omitempty"`
 
 	// Dir is the directory Traefik's file provider watches. Pando writes one
 	// file per app here and Traefik picks them up; there is no API call and no
@@ -135,13 +153,16 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 			return errs.Wrap(errs.ValidInvalid, "The Traefik routing configuration could not be read.", err)
 		}
 	}
-	if cfg.Dir == "" {
+	if cfg.Dir == "" && cfg.Delivery != DeliveryKubernetesAPI {
 		return errs.New(errs.ValidInvalid, "Traefik routing needs a directory to write its configuration to.").
 			WithRemedy("Set dir to the directory Traefik's file provider watches.")
 	}
 
 	dnsEnv, err := validateManaged(&cfg)
 	if err != nil {
+		return err
+	}
+	if err := a.configureKubernetes(&cfg); err != nil {
 		return err
 	}
 	// Not kept in the config once parsed: the plain text lives only as long
@@ -163,7 +184,10 @@ func (a *Adapter) managed() bool { return a.config.Managed == nil || *a.config.M
 // it writes will land somewhere Traefik reads. A directory that has become
 // read-only produces routes that silently never appear, which is the failure
 // this catches.
-func (a *Adapter) HealthCheck(context.Context) error {
+func (a *Adapter) HealthCheck(ctx context.Context) error {
+	if a.viaAPI() {
+		return a.healthKubernetes(ctx)
+	}
 	if a.config.Dir == "" {
 		return errs.New(errs.Internal, "Traefik routing is not configured.")
 	}
@@ -222,7 +246,7 @@ func (a *Adapter) Capabilities(context.Context) (api.RoutingCapabilities, error)
 // Idempotent by construction: the file is named for the app and rewritten
 // whole, so applying the same route twice leaves the same file. The reconciler
 // calls this on every pass and must not accumulate anything.
-func (a *Adapter) Ensure(_ context.Context, r api.RouteRequest) (api.RouteHandle, error) {
+func (a *Adapter) Ensure(ctx context.Context, r api.RouteRequest) (api.RouteHandle, error) {
 	if r.ProxyUpstream == "" {
 		// Refused rather than defaulted. A default here would be Pando's
 		// address as this adapter guesses it, and a wrong guess produces a
@@ -234,6 +258,9 @@ func (a *Adapter) Ensure(_ context.Context, r api.RouteRequest) (api.RouteHandle
 	rule, err := a.rule(r)
 	if err != nil {
 		return api.RouteHandle{}, err
+	}
+	if a.viaAPI() {
+		return a.ensureKubernetes(ctx, r, rule)
 	}
 
 	if err := os.MkdirAll(a.config.Dir, 0o755); err != nil {
@@ -262,7 +289,10 @@ func (a *Adapter) Ensure(_ context.Context, r api.RouteRequest) (api.RouteHandle
 	return api.RouteHandle{AppID: r.AppID, Handle: path}, nil
 }
 
-func (a *Adapter) Remove(_ context.Context, h api.RouteHandle) error {
+func (a *Adapter) Remove(ctx context.Context, h api.RouteHandle) error {
+	if a.viaAPI() {
+		return a.removeKubernetes(ctx, h)
+	}
 	path := h.Handle
 	if path == "" {
 		path = a.pathFor(h.AppID)
@@ -278,7 +308,10 @@ func (a *Adapter) Remove(_ context.Context, h api.RouteHandle) error {
 // It reports what exists and never remediates — the reconciler decides what to
 // do about drift (design 05). An adapter that quietly rewrote a missing file
 // here would make drift undetectable.
-func (a *Adapter) Observe(_ context.Context, h api.RouteHandle) (api.RouteState, error) {
+func (a *Adapter) Observe(ctx context.Context, h api.RouteHandle) (api.RouteState, error) {
+	if a.viaAPI() {
+		return a.observeKubernetes(ctx, h)
+	}
 	path := h.Handle
 	if path == "" {
 		path = a.pathFor(h.AppID)
@@ -436,6 +469,16 @@ func Info() api.KindInfo {
 			{Key: "http_port", Label: "HTTP port", Type: "int", Default: "80", ShownWhen: &api.Condition{Key: "managed", Values: []string{"true"}}, Advanced: true},
 			{Key: "https_port", Label: "HTTPS port", Type: "int", Default: "443", ShownWhen: &api.Condition{Key: "managed", Values: []string{"true"}}, Advanced: true},
 			{Key: "image", Label: "Traefik image", Type: "string", Default: DefaultImage, Help: "Set to run a different Traefik release than this Pando ships with.", ShownWhen: &api.Condition{Key: "managed", Values: []string{"true"}}, Advanced: true},
+			{Key: "delivery", Label: "Route delivery", Type: "select", Default: DeliverySharedMount, Advanced: true,
+				Help: "How routes reach Traefik. Use IngressRoutes with the Kubernetes runtime.",
+				Options: []api.Option{
+					{Value: DeliverySharedMount, Label: "Files", Description: "Route files in a directory Traefik mounts. The Docker runtime."},
+					{Value: DeliveryKubernetesAPI, Label: "IngressRoutes", Description: "IngressRoute objects Traefik watches in the cluster's API. The Kubernetes runtime."},
+				}},
+			{Key: "namespace", Label: "IngressRoute namespace", Type: "string", Default: defaultEdgeNamespace, Advanced: true,
+				ShownWhen: &api.Condition{Key: "delivery", Values: []string{DeliveryKubernetesAPI}}},
+			{Key: "kubeconfig", Label: "Kubeconfig file", Type: "string", Default: "The cluster Pando runs in", Advanced: true,
+				ShownWhen: &api.Condition{Key: "delivery", Values: []string{DeliveryKubernetesAPI}}},
 			{Key: "dir", Label: "Configuration directory", Type: "string", Help: "Where Pando writes Traefik's route files.", Default: "/etc/traefik/dynamic", Advanced: true},
 			{Key: "entrypoint", Label: "Entry point", Type: "string", Help: "The entry point of your Traefik that apps are served on.", Default: "websecure", ShownWhen: &api.Condition{Key: "managed", Values: []string{"false"}}, Advanced: true},
 			{Key: "cert_resolver", Label: "Certificate resolver", Type: "string", Help: "The certificate resolver your Traefik has configured.", Placeholder: "letsencrypt", ShownWhen: &api.Condition{Key: "managed", Values: []string{"false"}}},

@@ -616,6 +616,46 @@ func (p *Planner) checkCapacity(ctx context.Context, s *spec.AppSpec, runtime ap
 	if err := over("disk space", requested.DiskBytes, allocated.DiskBytes, capacity.TotalDiskBytes, formatBytes); err != nil {
 		return err
 	}
+	// Oversubscription a policy allows is allowed here too: the runtime
+	// decides what happens to a workload larger than its room.
+	fit := capacity.LargestFit
+	if allowCPU {
+		fit.CPUMillis = 0
+	}
+	if allowMemory {
+		fit.MemoryBytes = 0
+	}
+	return checkLargestFit(s, fit)
+}
+
+// checkLargestFit refuses a workload bigger than the roomiest single place the
+// runtime could put it (R-242). A runtime spanning several machines can have
+// room in total and none in one place; without this the workload is accepted
+// and then waits for room that never comes. A zero field is not reported and
+// not checked.
+func checkLargestFit(s *spec.AppSpec, fit api.Fit) error {
+	for _, w := range s.Workloads {
+		cpu, mem := s.Resources.CPUMillis, s.Resources.MemoryBytes
+		if w.Resources != nil {
+			cpu, mem = w.Resources.CPUMillis, w.Resources.MemoryBytes
+		}
+		refuse := func(kind, want, largest string) error {
+			return errs.Newf(errs.CapacityWouldOversubscribe,
+				"No single machine this runtime can use has %s of %s free for %q. The largest free space on one machine is %s.",
+				want, kind, w.Name, largest).
+				WithDetail("resource", kind).
+				WithDetail("workload", w.Name).
+				WithDetail("requested", want).
+				WithDetail("largest_fit", largest).
+				WithRemedy(fmt.Sprintf("Lower what %q asks for to %s or less, or add a larger machine to the runtime.", w.Name, largest))
+		}
+		if fit.MemoryBytes > 0 && mem > fit.MemoryBytes {
+			return refuse("memory", formatBytes(mem), formatBytes(fit.MemoryBytes))
+		}
+		if fit.CPUMillis > 0 && cpu > fit.CPUMillis {
+			return refuse("CPU", formatMillis(int64(cpu)), formatMillis(int64(fit.CPUMillis)))
+		}
+	}
 	return nil
 }
 

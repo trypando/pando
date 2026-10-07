@@ -1,0 +1,117 @@
+# Policies for Pando's own namespace. App namespaces get theirs from Pando,
+# one per app (R-023, R-025), and the edge's from the runtime adapter.
+#
+# Nothing in "pando" admits a connection by default. Pando's server pods admit
+# the proxy port from the edge's pods. BuildKit, in pando-build, admits only
+# Pando's server pods. Without an edge, a load balancer or Ingress pointed at Service pando
+# needs a rule of its own below — which one depends on the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: pando
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pando-server
+  namespace: pando
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pando
+      app.kubernetes.io/component: server
+  policyTypes: [Ingress]
+  ingress:
+    # The edge reaches the proxy.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: pando-edge
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: edge
+      ports:
+        - port: 8080
+    # Replicas relay a deploy's live log to each other (notes-multiple-replicas).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pando
+              app.kubernetes.io/component: server
+      ports:
+        - port: 8080
+    # The kubelet's probes come from the node and are admitted by most network
+    # plugins regardless. A load balancer without an edge goes here:
+    # - from:
+    #     - ipBlock: {cidr: 10.0.0.0/8}
+    #   ports:
+    #     - port: 8080
+---
+# The builder's namespace (O-48): nothing in or out but what a build needs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: pando-build
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: buildkit
+  namespace: pando-build
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: buildkit
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Only Pando's server pods start builds.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: pando
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pando
+              app.kubernetes.io/component: server
+      ports:
+        - port: 1234
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # An install registry running in "pando" (Deployment registry), for the
+    # push. A registry outside the cluster is reached by the rule below.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: pando
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: registry
+      ports:
+        - port: 5000
+    # Base images, dependencies and source: anywhere outside the cluster's
+    # pod and Service ranges, and nothing inside them (R-113). Set the
+    # excepted ranges to the cluster's, as in pando.yaml.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.244.0.0/16, 10.96.0.0/12]

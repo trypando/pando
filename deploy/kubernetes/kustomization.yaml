@@ -1,0 +1,21 @@
+# Pando on Kubernetes: `kubectl apply -k deploy/kubernetes` after creating the
+# two Secrets pando.yaml names. Design and prerequisites:
+# docs/design/notes-kubernetes-runtime-issue-72.md, "Running Pando on
+# Kubernetes".
+#
+# Prerequisites the manifests cannot provide: a network plugin that enforces
+# NetworkPolicy (Calico, Cilium; Pando checks and refuses to run apps without
+# one, O-43), a storage class offering ReadWriteMany (O-39), Postgres
+# reachable at PANDO_DATABASE_URL, and Traefik's CRDs, applied once by a
+# cluster administrator:
+#
+#   kubectl apply -f https://raw.githubusercontent.com/traefik/traefik/v3.2/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml
+  - rbac.yaml
+  - admission-policy.yaml
+  - networkpolicy.yaml
+  - buildkit.yaml
+  - pando.yaml

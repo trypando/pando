@@ -1,0 +1,35 @@
+# Pando's own namespace, the edge's and the builder's (notes-kubernetes-runtime-issue-72.md).
+#
+# The edge is in a namespace of its own so that Traefik's ServiceAccount, which
+# reads routes and certificates there, can read nothing of Pando's: the
+# secrets key is in "pando". App namespaces are made by Pando, one per app.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pando
+  labels:
+    app.kubernetes.io/managed-by: pando
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pando-edge
+  labels:
+    app.kubernetes.io/managed-by: pando
+    pod-security.kubernetes.io/enforce: baseline
+---
+# BuildKit alone (O-48). Rootless BuildKit makes its own user and mount
+# namespaces, which needs seccomp and AppArmor Unconfined; Pod Security
+# baseline refuses a pod asking for either, so the builder has a namespace of
+# its own enforcing privileged. Nothing else runs here: Pando creates nothing
+# in it, its ServiceAccount has no rights here, and BuildKit's pod is not
+# privileged and mounts no runtime socket (R-112). App namespaces stay
+# baseline.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pando-build
+  labels:
+    app.kubernetes.io/managed-by: pando
+    pod-security.kubernetes.io/enforce: privileged

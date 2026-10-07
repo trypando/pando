@@ -116,6 +116,8 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | `PANDO_REGISTRY_LAYOUT` | `per_app` | `per_app` puts each app's builds in `<prefix>/apps/<app>[/<workload>]`; `single` puts every build in the one repository the URL names, tagged `<app>-<workload>-<deployment>`, for a registry where a repository must exist before a push. |
 | `PANDO_REGISTRY_INSECURE` | `false` | Permits plain HTTP to the registry. Every host that pulls must then list it under `insecure-registries`. Without it, an `http://` URL is refused at startup. |
 | `PANDO_REGISTRY_ALWAYS` | `false` | Sends every build through the registry, even on a runtime that can import it (single-host Docker). |
+| `PANDO_ACME_DIRECTORY_URL` | Let's Encrypt (`https://acme-v02.api.letsencrypt.org/directory`) | The ACME directory of the certificate authority the edge's certificates are ordered from, where Pando issues them itself (Traefik on Kubernetes). An https URL: an organization's own ACME server, or a test CA such as Pebble. |
+| `PANDO_ACME_CA_FILE` | — | A PEM file of certificates to trust, beside the system's, when connecting to that directory — for an ACME server whose own certificate no public root signs. |
 | `PANDO_RECONCILER_BACKOFF` | see R-149 | Retry schedule. Compressing it is for tests; `pando` warns when it is set faster than the shipped default. |
 
 `PANDO_PORT` is not read by Pando. It is a variable in the shipped `docker-compose.yml`, which uses
@@ -238,6 +240,33 @@ A declaration that contradicts itself stops Pando at startup with an error namin
 default adapters in one category, two AI adapters of one kind (an installation has one per
 provider), one AI function under two adapters, or two services adapters that provide the same kind
 of service.
+
+### Running on Kubernetes
+
+The `kubernetes` runtime adapter runs apps on the cluster Pando itself runs in.
+`deploy/kubernetes` holds the manifests: `kubectl apply -k deploy/kubernetes` after creating the
+`pando-database` and `pando-keys` Secrets its `pando.yaml` describes, installing Traefik's CRDs, and
+setting the cluster's pod and Service ranges. The cluster needs a network plugin that enforces
+NetworkPolicy, such as Calico or Cilium: Pando checks with a short-lived pair of pods in the namespace
+`pando-canary` and will not run apps on a cluster that does not. It also needs a storage class that
+offers ReadWriteMany for `/var/lib/pando`, which every replica shares. A cluster dedicated to Pando is
+recommended: anything running with the host's network can reach app pods directly.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `pod_cidr`, `service_cidr` | — (required) | The cluster's address ranges. Apps may connect out of the cluster, never into these. |
+| `egress_gateway_image` | — | An image of Pando, run as a restricted app's egress gateway. Without it, apps whose egress rules restrict anything cannot be deployed. |
+| `runtime_class` | the cluster's default | A RuntimeClass to run apps under; a gVisor or Kata handler makes the runtime `sandboxed`. |
+| `edge_replicas` | `2` | Copies of the edge, spread across nodes. At least 2. |
+| `edge_service_type` | `LoadBalancer` | Or `NodePort`, on `edge_http_node_port` (30080) and `edge_https_node_port` (30443). |
+
+The Traefik routing adapter's `delivery` setting is `kubernetes_api` on this runtime. Its
+certificate settings work as on Docker, but Pando's leader orders and renews the certificates rather
+than Traefik, keeps them encrypted in the database, and answers HTTP-01 challenges itself; DNS-01 works
+with the five DNS providers named in the settings. What apps are using is reported when the cluster
+runs metrics-server. Draining a node
+that runs apps needs `kubectl drain --force`: an app's pods belong to no controller, and Pando's
+reconciler recreates them on another node.
 
 ## Guarantees worth relying on
 
