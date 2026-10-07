@@ -38,8 +38,8 @@ func awaitingTeardown(t *testing.T, apps *state.Apps, appID string) bool {
 
 // TestR256_AnAppDeletedOnAnotherReplicaIsTornDownByTheLeader asserts that
 // the GC, which runs on whichever replica leads, finds a delete made on
-// another replica — whose TeardownNow signal never reaches it — within its
-// teardown poll rather than at its next hourly pass (R-256, issue #72).
+// another replica — whose TeardownNow signal never reaches it — within
+// TeardownEvery rather than at its next hourly pass (R-256, issue #72).
 func TestR256_AnAppDeletedOnAnotherReplicaIsTornDownByTheLeader(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -49,7 +49,7 @@ func TestR256_AnAppDeletedOnAnotherReplicaIsTornDownByTheLeader(t *testing.T) {
 
 	gc := &reconciler.GC{
 		Apps: apps, Registry: noAdapters{}, Logger: zap.NewNop(),
-		Interval: time.Hour, TeardownPoll: 20 * time.Millisecond,
+		Interval: time.Hour, TeardownEvery: 20 * time.Millisecond,
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
