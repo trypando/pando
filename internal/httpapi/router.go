@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -169,6 +170,11 @@ type Server struct {
 	// #41). Nil on an install that cannot store one, where setting one says so.
 	Images RegistryCredentials
 
+	// ImageRegistry is the install's image registry, which builds are pushed
+	// to for a runtime that pulls (issue #72). Nil reports none and stores
+	// nothing.
+	ImageRegistry ImageRegistry
+
 	// Defaults fills in what an author left out of a spec — the install's
 	// adapters, its routing shape, and the retention caps R-211 and R-223 set.
 	// Nil means a hand-written spec is taken exactly as written, which is how
@@ -276,6 +282,10 @@ type Server struct {
 	// instead. Nil means the console answers on every hostname, which is
 	// correct for a path-addressed install and wrong for a subdomain one.
 	AppHosts AppHosts
+
+	// ACMEChallenges answers HTTP-01 challenges for the certificates Pando
+	// issues for the edge, on every hostname. Nil answers none.
+	ACMEChallenges ACMEChallenges
 
 	// AppProxy serves every request to every app (R-023). Mounted last, as the
 	// catch-all, so Pando's own routes are reachable and everything else goes
@@ -560,6 +570,12 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/adapters", s.handleListAdapters)
 		r.Post("/adapters", s.handleCreateAdapter)
 		r.Get("/adapters/kinds", s.handleAdapterKinds)
+
+		// The install's image registry (issue #72): read with install.view,
+		// changed with install.adapters.manage, like the adapters.
+		r.Get("/image-registry", s.handleGetImageRegistry)
+		r.Put("/image-registry", s.handlePutImageRegistry)
+		r.Delete("/image-registry", s.handleDeleteImageRegistry)
 
 		// Which AI adapter handles each AI function, and on which model
 		// (R-259). Read with install.view, changed with
@@ -854,7 +870,14 @@ func (s *Server) Routes() http.Handler {
 	// than on a prefix is what makes "there is no bypass" structural: a route
 	// that does not exist above cannot reach an app any other way.
 	if s.AppProxy != nil {
-		r.NotFound(s.AppProxy.ServeHTTP)
+		r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+			// A pending ACME answer, then the app. Not a way past the proxy: it
+			// answers only a token Pando itself is waiting on (R-169).
+			if s.answerACMEChallenge(w, req) {
+				return
+			}
+			s.AppProxy.ServeHTTP(w, req)
+		})
 	}
 
 	return r
@@ -877,6 +900,9 @@ type reservedKey struct{}
 
 func (s *Server) consoleOrApp() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.answerACMEChallenge(w, r) {
+			return
+		}
 		// Reserved paths are Pando's on every hostname, including one that
 		// belongs to an app — otherwise there is nowhere to sign in to reach
 		// that app (R-172).
@@ -898,6 +924,47 @@ func (s *Server) consoleOrApp() http.Handler {
 		s.Console.ServeHTTP(w, r)
 	})
 }
+
+// ACMEChallengePrefix is where a certificate authority asks for an HTTP-01
+// answer (RFC 8555 §8.3).
+const ACMEChallengePrefix = "/.well-known/acme-challenge/"
+
+// ACMEChallenges answers HTTP-01 challenges for certificates Pando issues for
+// the edge (R-169; notes-kubernetes-runtime-issue-72.md).
+type ACMEChallenges interface {
+	KeyAuthorization(ctx context.Context, token string) (string, bool, error)
+}
+
+// answerACMEChallenge answers a pending HTTP-01 challenge, on any hostname
+// and from any replica: the leader that ordered the certificate wrote the
+// answer to the database. A token nobody is waiting on falls through to the
+// app or the console as before, so an app's own use of the path is untouched
+// unless Pando is proving that hostname at that moment. The answer is public
+// by design — it is what the CA reads — so nothing is authorized here.
+func (s *Server) answerACMEChallenge(w http.ResponseWriter, r *http.Request) bool {
+	if s.ACMEChallenges == nil || r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, ACMEChallengePrefix) {
+		return false
+	}
+	token := strings.TrimPrefix(r.URL.Path, ACMEChallengePrefix)
+	if !acmeToken.MatchString(token) {
+		return false
+	}
+	answer, ok, err := s.ACMEChallenges.KeyAuthorization(r.Context(), token)
+	if err != nil || !ok {
+		return false
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// A key authorization Pando wrote to the database, served as plain text
+	// that cannot be sniffed into HTML.
+	_, _ = w.Write([]byte(answer)) //nolint:gosec // G705: not request data, and not HTML
+
+	return true
+}
+
+// acmeToken is an ACME token: base64url, no padding.
+var acmeToken = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
 
 // ReservedPrefix is the one path that is Pando's on every hostname.
 //

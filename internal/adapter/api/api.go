@@ -63,26 +63,32 @@ type RuntimeCapabilities struct {
 	// LogRetention is what the runtime can do about R-222's size cap.
 	LogRetention LogRetentionCapability
 
-	// SupportsImageImport means the runtime can take an image as bytes.
+	// ImageDelivery is how an image built by Pando can reach this runtime, in
+	// the runtime's order of preference (issue #72, PR 5). Empty means it
+	// cannot run a built image at all, only a published one.
 	//
+	// ImageDeliveryImport: the runtime takes the image as bytes (ImportImage).
 	// R-111 says Pando "hands it source, receives an image", so on a single
 	// host the built image travels back through Pando rather than via a
 	// registry — which would otherwise need daemon-level configuration and
-	// charge the setup cost R-002 says is paid once.
+	// charge the setup cost R-002 says is paid once (O-34).
 	//
-	// A clustered runtime reports false: pushing a tarball to every node is the
-	// wrong shape, and such an adapter wants a registry-based builder instead.
-	// The planner turns a false here into a readable plan-time refusal rather
-	// than a failure after the build has already run.
-	SupportsImageImport bool
-
-	// ImageDelivery is how a built image can reach this runtime, in order of
-	// preference (notes-image-registry-issue-72.md): "import" through
-	// ImportImage, or "registry", pulled by digest from where the build pushed
-	// it. A runtime on several machines offers only "registry", because the
-	// machine an image is needed on is chosen after the build. Empty is read
-	// from SupportsImageImport.
+	// ImageDeliveryRegistry: the runtime pulls the image by digest from the
+	// install's registry, with WorkloadPlan.PullAuth. A runtime spanning
+	// machines offers only this: pushing a tarball to every node is the wrong
+	// shape.
+	//
+	// Data, never a type assertion (R-254): the planner turns a runtime, a
+	// builder and the install's registry that cannot meet into a readable
+	// plan-time refusal rather than a failure after the build has already run.
 	ImageDelivery []ImageDelivery
+
+	// EdgeConfig is how an edge on this runtime can receive its routes, for a
+	// routing adapter that writes them (notes-kubernetes-runtime-issue-72.md).
+	// Core hands it to the routing adapter in EdgeRequest; a routing adapter
+	// that can use none of them refuses its edge rather than running one that
+	// never learns a route. Data, never a type assertion (R-254).
+	EdgeConfig []EdgeConfig
 
 	// SupportsSelfUpgrade means this runtime runs Pando itself and can start
 	// the helper that replaces it (R-355, R-359): the adapter implements
@@ -133,9 +139,24 @@ type RuntimeCapabilities struct {
 type ImageDelivery string
 
 const (
-	ImageDeliveryImport   ImageDelivery = "import"
+	// ImageDeliveryImport streams the image from the builder into the
+	// runtime's ImportImage.
+	ImageDeliveryImport ImageDelivery = "import"
+
+	// ImageDeliveryRegistry has the builder push the image to the install's
+	// registry and the runtime pull it by digest.
 	ImageDeliveryRegistry ImageDelivery = "registry"
 )
+
+// Delivers reports whether the runtime takes a built image this way.
+func (c RuntimeCapabilities) Delivers(d ImageDelivery) bool {
+	for _, have := range c.ImageDelivery {
+		if have == d {
+			return true
+		}
+	}
+	return false
+}
 
 // RegistryAuth is what one image pull authenticates with, resolved by core
 // from the app's registry credential (issue #41). Short-lived — an ECR
@@ -184,6 +205,12 @@ type BuilderCapabilities struct {
 	Strategies                []BuildStrategy
 	SupportsCache             bool
 	SupportsEgressRestriction bool // R-118
+
+	// SupportsPush means the builder can push what it built to a registry,
+	// with a credential it is handed per build and keeps nowhere
+	// (BuildRequest.Push). A runtime that only pulls from a registry needs a
+	// builder with it (RuntimeCapabilities.ImageDelivery).
+	SupportsPush bool
 }
 
 // Supports reports whether the routing adapter advertises a mode.
@@ -256,8 +283,14 @@ type RuntimeAdapter interface {
 	RestoreVolume(ctx context.Context, h VolumeHandle, src io.Reader) error
 
 	// ImportImage takes an image as a stream and makes it runnable, returning
-	// the reference to use in a WorkloadPlan. Only called when
-	// SupportsImageImport is true.
+	// the reference to use in a WorkloadPlan. Only called when ImageDelivery
+	// includes ImageDeliveryImport.
+	//
+	// The reference must be immutable: the image's content-addressed ID
+	// (sha256:…) rather than a tag. A deployment records it and the reconciler
+	// restores from it, and a tag the next build moves would let a build that
+	// was refused (by the security scan or the port check) be what a removed
+	// workload is recreated from (R-146).
 	ImportImage(ctx context.Context, r io.Reader) (string, error)
 
 	Logs(ctx context.Context, ref WorkloadRef, opts LogOptions) (io.ReadCloser, error)
@@ -943,7 +976,40 @@ type BuildRequest struct {
 	// to a sink rather than returning it means the image never has to be held
 	// in memory or staged on disk — the caller pipes it straight into the
 	// runtime's ImportImage.
+	//
+	// Exactly one of ImageSink and Push is set.
 	ImageSink io.Writer
+
+	// Push sends the image to a registry instead, for a runtime that pulls
+	// (RuntimeCapabilities.ImageDelivery). Only set for a builder with
+	// SupportsPush. BuildResult.Digest is then the pushed manifest's digest
+	// and BuildResult.ImageRef is Repository@Digest.
+	Push *PushTarget
+
+	// Tag names this build's image, unique to the build: core passes the
+	// deployment ID. Never a tag the next build moves, so an image refused
+	// after it was built is never mistaken for the one that runs (R-146).
+	// Empty lets the builder choose.
+	Tag string
+}
+
+// PushTarget is where a build pushes its image (issue #72, PR 5).
+type PushTarget struct {
+	// Repository is the registry host and path, with no tag:
+	// registry.internal:5000/pando/apps/app_01hq8.
+	Repository string
+
+	// Tag is for people reading the registry. Nothing Pando runs refers to
+	// it: what runs is Repository@digest.
+	Tag string
+
+	// Auth is the push credential, for this build only. The builder keeps it
+	// nowhere — not in its configuration and not on disk (R-194).
+	Auth *RegistryAuth
+
+	// Insecure permits plain HTTP to the registry. Only set when the operator
+	// said so (PANDO_REGISTRY_INSECURE, O-35).
+	Insecure bool
 }
 
 // ImageLabelBundle is the image label a builder sets to the app an image was

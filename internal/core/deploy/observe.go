@@ -62,6 +62,12 @@ func needsPortCheck(s *spec.AppSpec) bool {
 // before it. An app that cannot start without them tells this nothing, and the
 // assumption stands.
 func checkPort(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppSpec, image, trialID string, sink io.Writer) portCheck {
+	return checkPortWith(ctx, runtime, s, image, nil, trialID, sink)
+}
+
+// checkPortWith is checkPort for an image the runtime pulls with auth: a
+// build pushed to the install's registry (issue #72, PR 5).
+func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppSpec, image string, auth *api.RegistryAuth, trialID string, sink io.Writer) portCheck {
 	caps, err := runtime.Capabilities(ctx)
 	if err != nil || !caps.SupportsTrialRun || !caps.SupportsPortObservation {
 		return portCheck{}
@@ -83,6 +89,7 @@ func checkPort(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppSpec,
 	result, err := runtime.Trial(ctx, api.TrialRequest{
 		TrialID:        trialID,
 		Image:          image,
+		PullAuth:       auth,
 		Command:        primary.Command,
 		Entrypoint:     primary.Entrypoint,
 		WorkingDir:     primary.WorkingDir,

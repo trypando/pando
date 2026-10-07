@@ -250,3 +250,86 @@ func TestABundleWithoutTheTokenKeyItShouldHaveIsNotMade(t *testing.T) {
 	require.Error(t, s.addKeys(NewWriter(&plain, "dr_bundle", "test", 1)),
 		"every install has a token key, so a missing one is not left out quietly")
 }
+
+// TestR212_UploadsAreInTheDRBundle asserts R-212 for uploaded source (O-37):
+// every uploaded archive goes into a DR bundle and a restore puts it back
+// where deploys read it, 0600. The registry's images are not in a bundle, so
+// for an uploaded app the archive is the only thing it can be rebuilt from.
+// A half-written upload and anything else in the directory stay out.
+func TestR212_UploadsAreInTheDRBundle(t *testing.T) {
+	s, _ := restoring(t)
+	s.UploadDir = filepath.Join(t.TempDir(), "uploads")
+	require.NoError(t, os.MkdirAll(s.UploadDir, 0o700))
+	files := map[string]string{
+		"app_01HQ8AAAAAAAAAAAAAAAAAAAAA.tar.gz": "first app's source",
+		"app_01HQ9BBBBBBBBBBBBBBBBBBBBB.tar.gz": "second app's source",
+	}
+	for name, body := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(s.UploadDir, name), []byte(body), 0o600))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(s.UploadDir, "app_01HQ7.tar.gz.partial"), []byte("half"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(s.UploadDir, "notes.txt"), []byte("not an upload"), 0o600))
+
+	var plain bytes.Buffer
+	w := NewWriter(&plain, "dr_bundle", "test", 1)
+	n, err := s.addUploads(w)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	manifest, err := w.Finish()
+	require.NoError(t, err)
+	var names []string
+	for _, e := range manifest.Entries {
+		names = append(names, e.Name)
+	}
+	require.ElementsMatch(t, []string{
+		UploadsPrefix + "app_01HQ8AAAAAAAAAAAAAAAAAAAAA.tar.gz",
+		UploadsPrefix + "app_01HQ9BBBBBBBBBBBBBBBBBBBBB.tar.gz",
+	}, names)
+
+	dest, _, err := s.destination("")
+	require.NoError(t, err)
+	out, err := dest.Writer(context.Background(), "dr_uploads")
+	require.NoError(t, err)
+	require.NoError(t, Encrypt(out, &plain, passphrase))
+	require.NoError(t, out.Close())
+
+	// A new machine: no uploads directory at all.
+	require.NoError(t, os.RemoveAll(s.UploadDir))
+
+	got, err := s.Restore(context.Background(), RestoreRequest{AdapterRef: "bk_local", ObjectName: "dr_uploads",
+		Passphrase: passphrase, Confirm: true})
+	require.NoError(t, err)
+	require.Equal(t, 2, got.UploadsApplied)
+	for name, body := range files {
+		restored, err := os.ReadFile(filepath.Join(s.UploadDir, name))
+		require.NoError(t, err)
+		require.Equal(t, body, string(restored))
+		info, err := os.Stat(filepath.Join(s.UploadDir, name))
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
+	leftovers, err := filepath.Glob(filepath.Join(s.UploadDir, "*.partial"))
+	require.NoError(t, err)
+	require.Empty(t, leftovers)
+}
+
+// An entry under uploads/ that is not a name Pando writes is refused rather
+// than written somewhere it names.
+func TestAnUploadEntryThatNamesAnotherPathIsRefused(t *testing.T) {
+	s, _ := restoring(t)
+	s.UploadDir = t.TempDir()
+	require.Error(t, s.restoreUpload(UploadsPrefix+"../secrets.key", strings.NewReader("x")))
+	require.Error(t, s.restoreUpload(UploadsPrefix+"app_1/../../x.tar.gz", strings.NewReader("x")))
+
+	s.UploadDir = ""
+	require.NoError(t, s.restoreUpload(UploadsPrefix+"app_1.tar.gz", strings.NewReader("x")), "no directory, nothing restored")
+
+	none := &Service{}
+	n, err := none.addUploads(NewWriter(&bytes.Buffer{}, "dr_bundle", "test", 1))
+	require.NoError(t, err)
+	require.Zero(t, n)
+	none.UploadDir = filepath.Join(t.TempDir(), "never-made")
+	n, err = none.addUploads(NewWriter(&bytes.Buffer{}, "dr_bundle", "test", 1))
+	require.NoError(t, err)
+	require.Zero(t, n, "an install nobody has uploaded to")
+}

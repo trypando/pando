@@ -235,7 +235,17 @@ func (a *Adapter) wildcardFor(host string) (string, bool) {
 // Edge describes the Traefik Pando runs, and routes every hostname that is not
 // an app's to the console. A Traefik somebody else runs has no edge, and the
 // console route is withdrawn: that Traefik's other hostnames are not Pando's.
-func (a *Adapter) Edge(_ context.Context, r api.EdgeRequest) (api.EdgePlan, bool, error) {
+func (a *Adapter) Edge(ctx context.Context, r api.EdgeRequest) (api.EdgePlan, bool, error) {
+	// The runtime says how its edges can receive routes (R-254). An edge
+	// that cannot receive this adapter's would never learn a route.
+	if !api.Offers(r.EdgeConfig, api.EdgeConfig(a.config.Delivery)) {
+		return api.EdgePlan{}, false, errs.Newf(errs.PlanCapabilityUnsupported,
+			"Traefik is set to deliver its routes as %s, and the runtime that runs the edge cannot deliver them that way.", a.config.Delivery).
+			WithRemedy(fmt.Sprintf("Set Traefik's delivery setting to %s, which the runtime offers.", offered(r.EdgeConfig)))
+	}
+	if a.viaAPI() {
+		return a.edgeKubernetes(ctx, r)
+	}
 	if !a.managed() {
 		if err := os.Remove(filepath.Join(a.config.Dir, consoleFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return api.EdgePlan{}, false, errs.Wrap(errs.AdapterFailed, "Pando could not remove its console route from Traefik's configuration.", err)
@@ -369,6 +379,18 @@ func (a *Adapter) renderConsole(upstream string) string {
 	fmt.Fprintf(&b, "          - url: %q\n", upstream)
 	b.WriteString("        passHostHeader: true\n")
 	return b.String()
+}
+
+// offered names what a runtime offers, for a remedy.
+func offered(list []api.EdgeConfig) string {
+	if len(list) == 0 {
+		return DeliverySharedMount
+	}
+	names := make([]string, 0, len(list))
+	for _, c := range list {
+		names = append(names, string(c))
+	}
+	return strings.Join(names, " or ")
 }
 
 // hostOf is the host part of an upstream URL — the name Traefik dials.

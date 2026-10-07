@@ -132,6 +132,9 @@ func capableRuntime() *fakeRuntime {
 			SupportsPrivateNetwork:    true,
 			SupportsResourceLimits:    true,
 
+			// Takes a built image directly, as single-host Docker does.
+			ImageDelivery: []api.ImageDelivery{api.ImageDeliveryImport},
+
 			// R-222: a runtime that can bound a workload's logs, which is what
 			// lets an install enforce an aggregate budget (O-16).
 			LogRetention: api.LogRetentionCapability{
@@ -757,6 +760,45 @@ func TestR242_AnAppNoSinglePlaceHasRoomForIsRefusedAtPlanTime(t *testing.T) {
 		registry(t, fitRuntime{rt, map[string]*api.Fit{s.AppID: {CPUMillis: 4000, MemoryBytes: 5 << 29}}},
 			capableRouting(), capableBuilder()),
 		policy.Static(doc), fixedAllocations{})
+	_, err = p.Check(context.Background(), s)
+	require.NoError(t, err)
+}
+
+// TestR242_AWorkloadLargerThanTheLargestFitIsRefused asserts R-242 with one
+// answer for every app, as a cluster gives (scale/6): room in total is not
+// room in one place. The refusal names the largest space there is, an app
+// that fits is planned, and a policy that allows memory oversubscription
+// leaves the decision to the runtime.
+func TestR242_AWorkloadLargerThanTheLargestFitIsRefused(t *testing.T) {
+	rt := capableRuntime()
+	rt.largestFit = &api.Fit{CPUMillis: 4000, MemoryBytes: 2 << 30}
+
+	s := plannableSpec()
+	s.Resources.MemoryBytes = 4 << 30
+	p := planner.New(
+		registry(t, rt, capableRouting(), capableBuilder()),
+		policy.Static(policy.Default()),
+		fixedAllocations{},
+	)
+	_, err := p.Check(context.Background(), s)
+	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
+	e := errs.As(err)
+	require.Equal(t, "memory", e.Details["resource"])
+	require.Contains(t, e.Message, "2.0 GiB")
+	require.Contains(t, e.Remedy, "Lower what")
+
+	s.Resources.MemoryBytes = 1 << 30
+	_, err = p.Check(context.Background(), s)
+	require.NoError(t, err, "a workload that fits on one machine is planned")
+
+	s.Resources.MemoryBytes = 4 << 30
+	doc := policy.Default()
+	doc.AllowMemoryOversubscription = true
+	p = planner.New(
+		registry(t, rt, capableRouting(), capableBuilder()),
+		policy.Static(doc),
+		fixedAllocations{},
+	)
 	_, err = p.Check(context.Background(), s)
 	require.NoError(t, err)
 }

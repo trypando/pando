@@ -55,6 +55,7 @@ type fakeRouting struct {
 	api.RoutingAdapter
 	needs bool
 	got   api.EdgeRequest
+	issue *api.CertificateIssue
 }
 
 func (*fakeRouting) Kind() string                                     { return "fake" }
@@ -66,7 +67,7 @@ func (f *fakeRouting) Edge(_ context.Context, r api.EdgeRequest) (api.EdgePlan, 
 	if !f.needs {
 		return api.EdgePlan{}, false, nil
 	}
-	return api.EdgePlan{Image: "traefik:v3.2"}, true, nil
+	return api.EdgePlan{Image: "traefik:v3.2", Issue: f.issue}, true, nil
 }
 
 func setup(t *testing.T, rt *fakeRuntime, routes map[string]*fakeRouting) *Service {

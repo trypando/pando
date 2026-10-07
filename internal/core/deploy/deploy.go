@@ -20,6 +20,7 @@ import (
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/audit"
+	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
 	"github.com/trypando/pando/internal/core/security"
@@ -87,6 +88,11 @@ type Runner struct {
 
 	// images resolves an image app's digest and registry credential.
 	images *oci.Images
+
+	// buildRegistry is the install's image registry, where a build goes when
+	// the runtime pulls rather than imports (issue #72, PR 5). Nil when the
+	// install has none, which single-host Docker does not need (O-34).
+	buildRegistry imageregistry.Provider
 
 	// ProxyUpstream is where routing adapters must send traffic (R-023). It is
 	// Pando's proxy, always, and it is passed to every Ensure so that no adapter
@@ -197,6 +203,56 @@ func (r *Runner) WithImages(images *oci.Images) *Runner {
 	return r
 }
 
+// WithBuildRegistry sets the install's image registry (issue #72, PR 5).
+// Without it, a build reaches only a runtime that imports it.
+//
+// Asked on every build and pull rather than held, because the registry and
+// its credential can be changed from the console while Pando runs.
+func (r *Runner) WithBuildRegistry(reg imageregistry.Provider) *Runner {
+	r.buildRegistry = reg
+	return r
+}
+
+// builtImageAuth is the install registry's credential for an image Pando
+// pushed there, and nil for any other image. Minted fresh for ECR. A failure
+// leaves the pull anonymous, which fails with the registry's own reason.
+func (r *Runner) builtImageAuth(ctx context.Context, image string) *api.RegistryAuth {
+	reg, err := r.currentRegistry(ctx)
+	if err != nil {
+		log.From(ctx).Warn("could not read the install registry", zap.Error(err))
+		return nil
+	}
+	if !reg.Owns(image) {
+		return nil
+	}
+	auth, err := reg.Auth(ctx)
+	if err != nil {
+		log.From(ctx).Warn("could not resolve the install registry's credential", zap.Error(err))
+		return nil
+	}
+	return auth
+}
+
+// currentRegistry is the install registry now, nil when there is none.
+func (r *Runner) currentRegistry(ctx context.Context) (*imageregistry.Registry, error) {
+	if r.buildRegistry == nil {
+		return nil, nil
+	}
+	return r.buildRegistry.Current(ctx)
+}
+
+// withBuiltImageAuth gives every workload that runs a build from the install's
+// registry the registry's credential, for the one pull (design 03 §2.1). An
+// image app's own credential, set by withPullAuth, is left alone.
+func (r *Runner) withBuiltImageAuth(ctx context.Context, bundle *api.BundlePlan) {
+	for i := range bundle.Workloads {
+		w := &bundle.Workloads[i]
+		if w.PullAuth == nil {
+			w.PullAuth = r.builtImageAuth(ctx, w.Image)
+		}
+	}
+}
+
 // Run executes a deployment to completion.
 //
 // The app's state moves to deploying at the start and to running or degraded at
@@ -258,7 +314,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		if err := r.deploys.SetStatus(ctx, dep.ID, state.DeployBuilding); err != nil {
 			return fail("build", err)
 		}
-		built, images, err := r.buildAll(ctx, appSpec, checkout, sink)
+		built, images, err := r.buildAll(ctx, appSpec, checkout, sink, dep.ID)
 		perWorkload = images
 		if err != nil {
 			// The reason goes into the log the user is watching, not only into
@@ -303,7 +359,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	// scan: a refusal must leave the running app untouched (R-146).
 	if needsPortCheck(appSpec) && image != "" {
 		if runtime, ok := r.registry.Runtime(appSpec.Runtime.AdapterRef); ok {
-			check := checkPort(ctx, runtime, appSpec, image, "port-"+strings.ToLower(dep.ID), sink)
+			check := checkPortWith(ctx, runtime, appSpec, image, r.builtImageAuth(ctx, image), "port-"+strings.ToLower(dep.ID), sink)
 			if check.Refusal != nil {
 				writeFailure(sink, messageOf(check.Refusal), check.Refusal)
 				fmt.Fprintf(sink, "   The running version of this app was not touched.\n")
@@ -369,6 +425,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		return fail("apply", err)
 	}
 	withPullAuth(&bundle, image, pull)
+	r.withBuiltImageAuth(ctx, &bundle)
 	bundle.FirstDeploy = r.firstDeploy(ctx, dep.AppID)
 
 	runtime, ok := r.registry.Runtime(appSpec.Runtime.AdapterRef)
@@ -500,9 +557,13 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 //
 // Returns the app-wide image, if there is one, and the per-workload images
 // keyed by workload name.
-func (r *Runner) buildAll(ctx context.Context, s *spec.AppSpec, checkout *source.Checkout, sink io.Writer) (string, map[string]string, error) {
+//
+// Each build is named by the deployment that ran it (R-146): the image a
+// deployment records is that build's and no other, whichever way it reached
+// the runtime.
+func (r *Runner) buildAll(ctx context.Context, s *spec.AppSpec, checkout *source.Checkout, sink io.Writer, deploymentID string) (string, map[string]string, error) {
 	if s.Build.Strategy != spec.BuildCompose {
-		image, err := r.build(ctx, s, checkout, sink, nil, s.AppID)
+		image, err := r.build(ctx, s, checkout, sink, nil, s.AppID, deploymentID)
 		return image, nil, err
 	}
 
@@ -519,7 +580,7 @@ func (r *Runner) buildAll(ctx context.Context, s *spec.AppSpec, checkout *source
 		// R-117's requirement — one app must not read another's layers — and
 		// two services in one app sharing a namespace would thrash each other's
 		// cache and collide on the built image's name.
-		image, err := r.build(ctx, s, checkout, sink, w.Build, s.AppID+"/"+w.Name)
+		image, err := r.build(ctx, s, checkout, sink, w.Build, s.AppID+"/"+w.Name, deploymentID)
 		if err != nil {
 			return "", nil, err
 		}
@@ -528,7 +589,7 @@ func (r *Runner) buildAll(ctx context.Context, s *spec.AppSpec, checkout *source
 	return "", images, nil
 }
 
-func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Checkout, sink io.Writer, wb *spec.WorkloadBuild, cacheNamespace string) (string, error) {
+func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Checkout, sink io.Writer, wb *spec.WorkloadBuild, cacheNamespace, deploymentID string) (string, error) {
 	builder, ok := r.registry.Builder(s.Build.AdapterRef)
 	if !ok {
 		return "", errs.Newf(errs.PlanAdapterNotConfigured,
@@ -544,32 +605,26 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 	if err != nil {
 		return "", err
 	}
-	if !caps.SupportsImageImport {
-		return "", errs.Newf(errs.PlanCapabilityUnsupported,
-			"%q cannot take an image built here.", s.Runtime.AdapterRef).
-			WithRemedy("Use a runtime that can import a built image, or point this app at a prebuilt image.")
+	builderCaps, err := builder.Capabilities(ctx)
+	if err != nil {
+		return "", err
+	}
+	// The planner asked the same question; asked again because a runtime or
+	// the registry may have changed since, and a build nothing can run is the
+	// failure this exists to prevent (R-254).
+	reg, err := r.currentRegistry(ctx)
+	if err != nil {
+		return "", err
+	}
+	delivery, err := planner.ChooseDelivery(s.Runtime.AdapterRef, caps, s.Build.AdapterRef, builderCaps, reg)
+	if err != nil {
+		return "", err
 	}
 
 	args := map[string]string{}
 	for _, kv := range s.Build.Args {
 		args[kv.Key] = kv.Value
 	}
-
-	pr, pw := io.Pipe()
-
-	var (
-		wg         sync.WaitGroup
-		importedID string
-		importErr  error
-	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		importedID, importErr = runtime.ImportImage(ctx, pr)
-		// Draining matters: if the import fails early, the builder would block
-		// writing into a pipe nobody reads.
-		_, _ = io.Copy(io.Discard, pr)
-	}()
 
 	// One service of a compose app is an ordinary Dockerfile build: its own
 	// context and its own file, from the same checkout.
@@ -584,7 +639,7 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 		fmt.Fprintf(sink, "=> Building\n")
 	}
 
-	result, buildErr := builder.Build(ctx, api.BuildRequest{
+	req := api.BuildRequest{
 		Source:     checkout.View(s.Source.Subdir),
 		Strategy:   strategy,
 		Dockerfile: dockerfile,
@@ -610,9 +665,55 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 		// layers produced by another's.
 		CacheNamespace: cacheNamespace,
 
-		LogSink:   sink,
-		ImageSink: pw,
-	})
+		LogSink: sink,
+
+		// Named by the deployment, never a tag the next build moves (R-146).
+		Tag: deploymentID,
+	}
+
+	if delivery == api.ImageDeliveryRegistry {
+		workload := ""
+		if wb != nil {
+			_, workload, _ = strings.Cut(cacheNamespace, "/")
+		}
+		target, err := reg.Target(ctx, s.AppID, workload, deploymentID)
+		if err != nil {
+			return "", err
+		}
+		req.Push = target
+		result, err := builder.Build(ctx, req)
+		if err != nil {
+			return "", err
+		}
+		// What runs is repository@digest (R-120). A push the builder could not
+		// pin is not run by tag instead.
+		if result.Digest == "" || !strings.HasSuffix(result.ImageRef, "@"+result.Digest) {
+			return "", errs.Newf(errs.BuildFailed,
+				"The build was pushed to %s, and the builder did not report the digest it was stored under.", reg.Host()).
+				WithRemedy("Deploy again. If it happens again, check the build service's logs for the push.")
+		}
+		fmt.Fprintf(sink, "=> Pushed to %s at %s\n", reg.Host(), shortDigest(result.Digest))
+		return result.ImageRef, nil
+	}
+
+	pr, pw := io.Pipe()
+
+	var (
+		wg         sync.WaitGroup
+		importedID string
+		importErr  error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		importedID, importErr = runtime.ImportImage(ctx, pr)
+		// Draining matters: if the import fails early, the builder would block
+		// writing into a pipe nobody reads.
+		_, _ = io.Copy(io.Discard, pr)
+	}()
+
+	req.ImageSink = pw
+	result, buildErr := builder.Build(ctx, req)
 	_ = pw.CloseWithError(buildErr)
 	wg.Wait()
 

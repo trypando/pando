@@ -110,6 +110,12 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | `PANDO_ADMIN_PASSWORD` | generated | Initial admin password. Read on first run only. |
 | `PANDO_LOG_LEVEL` | `info` | Log verbosity. |
 | `PANDO_APPS_DOCKER_CREDENTIALS` | `false` | Pull private images with the Docker login on the Pando server (`docker login`, read from `DOCKER_CONFIG` or `~/.docker/config.json`, credential helpers included) for apps that have no registry credential of their own. Every app on the install can then pull whatever that login can read. When Pando runs in the shipped Compose stack, mount a `config.json` into the container and set `DOCKER_CONFIG` to its directory; a credential helper such as the macOS keychain is not reachable from inside the container. |
+| `PANDO_REGISTRY_URL` | — | The image registry builds are pushed to when the runtime pulls rather than imports, with an optional path prefix: `https://registry.internal:5000`, or `123456789012.dkr.ecr.us-east-1.amazonaws.com/pando`. Unset on a single-host install, which does not need one. `docker-compose.registry.yml` runs one. Every `PANDO_REGISTRY_*` setting can also be made from the console (Adapters), `PUT /image-registry`, `pando image-registry set` or MCP; one set here wins and is shown there as fixed. See `docs/design/notes-image-registry-issue-72.md`. |
+| `PANDO_REGISTRY_USERNAME` / `PANDO_REGISTRY_PASSWORD` | — | The one credential Pando pushes and pulls with. For `ecr`, an AWS access key ID and its secret. Held in memory only; never stored or reported. `PANDO_REGISTRY_PASSWORD_FILE` reads the password from a file instead. |
+| `PANDO_REGISTRY_KIND` | `basic` | `basic` (a username and password) or `ecr` (Pando mints a registry password from the access key before each push and pull). |
+| `PANDO_REGISTRY_LAYOUT` | `per_app` | `per_app` puts each app's builds in `<prefix>/apps/<app>[/<workload>]`; `single` puts every build in the one repository the URL names, tagged `<app>-<workload>-<deployment>`, for a registry where a repository must exist before a push. |
+| `PANDO_REGISTRY_INSECURE` | `false` | Permits plain HTTP to the registry. Every host that pulls must then list it under `insecure-registries`. Without it, an `http://` URL is refused at startup. |
+| `PANDO_REGISTRY_ALWAYS` | `false` | Sends every build through the registry, even on a runtime that can import it (single-host Docker). |
 | `PANDO_RECONCILER_BACKOFF` | see R-149 | Retry schedule. Compressing it is for tests; `pando` warns when it is set faster than the shipped default. |
 
 `PANDO_PORT` is not read by Pando. It is a variable in the shipped `docker-compose.yml`, which uses
@@ -232,6 +238,33 @@ A declaration that contradicts itself stops Pando at startup with an error namin
 default adapters in one category, two AI adapters of one kind (an installation has one per
 provider), one AI function under two adapters, or two services adapters that provide the same kind
 of service.
+
+### Running on Kubernetes
+
+The `kubernetes` runtime adapter runs apps on the cluster Pando itself runs in.
+`deploy/kubernetes` holds the manifests: `kubectl apply -k deploy/kubernetes` after creating the
+`pando-database` and `pando-keys` Secrets its `pando.yaml` describes, installing Traefik's CRDs, and
+setting the cluster's pod and Service ranges. The cluster needs a network plugin that enforces
+NetworkPolicy, such as Calico or Cilium: Pando checks with a short-lived pair of pods in the namespace
+`pando-canary` and will not run apps on a cluster that does not. It also needs a storage class that
+offers ReadWriteMany for `/var/lib/pando`, which every replica shares. A cluster dedicated to Pando is
+recommended: anything running with the host's network can reach app pods directly.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `pod_cidr`, `service_cidr` | — (required) | The cluster's address ranges. Apps may connect out of the cluster, never into these. |
+| `egress_gateway_image` | — | An image of Pando, run as a restricted app's egress gateway. Without it, apps whose egress rules restrict anything cannot be deployed. |
+| `runtime_class` | the cluster's default | A RuntimeClass to run apps under; a gVisor or Kata handler makes the runtime `sandboxed`. |
+| `edge_replicas` | `2` | Copies of the edge, spread across nodes. At least 2. |
+| `edge_service_type` | `LoadBalancer` | Or `NodePort`, on `edge_http_node_port` (30080) and `edge_https_node_port` (30443). |
+
+The Traefik routing adapter's `delivery` setting is `kubernetes_api` on this runtime. Its
+certificate settings work as on Docker, but Pando's leader orders and renews the certificates rather
+than Traefik, keeps them encrypted in the database, and answers HTTP-01 challenges itself; DNS-01 works
+with the five DNS providers named in the settings. What apps are using is reported when the cluster
+runs metrics-server. Draining a node
+that runs apps needs `kubectl drain --force`: an app's pods belong to no controller, and Pando's
+reconciler recreates them on another node.
 
 ### Running apps on several Docker hosts
 

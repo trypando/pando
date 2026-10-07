@@ -305,9 +305,14 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		},
 
 		// A single daemon can load an image from a stream, which is how a build
-		// reaches the runtime without a registry.
-		SupportsImageImport: true,
-		ImageDelivery:       []api.ImageDelivery{api.ImageDeliveryImport},
+		// reaches the runtime without a registry (O-34). It can also pull a
+		// build from the install's registry by digest, when one is configured
+		// and the install asks for that (PANDO_REGISTRY_ALWAYS).
+		ImageDelivery: []api.ImageDelivery{api.ImageDeliveryImport, api.ImageDeliveryRegistry},
+
+		// Traefik reads route files from a directory Pando writes and the
+		// edge mounts (edge.go).
+		EdgeConfig: []api.EdgeConfig{api.EdgeConfigSharedMount},
 
 		// Only when Pando is itself a container on this daemon: then it can
 		// start the helper that replaces it (R-359).
@@ -389,6 +394,7 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 		capacity.TotalMemoryBytes = a.config.TotalMemoryBytes
 	}
 	capacity.TotalDiskBytes = a.config.TotalDiskBytes
+
 	capacity.RunningWorkloads = info.ContainersRunning
 
 	// The rest of what the daemon says about itself, for whoever is looking
@@ -1208,12 +1214,19 @@ func (a *Adapter) DestroyVolume(ctx context.Context, h api.VolumeHandle) error {
 // backup that quietly does nothing is worse than one that refuses.
 // SnapshotVolume and RestoreVolume are in volumes_backup.go (R-212).
 
-// ImportImage loads an image tarball into the daemon.
+// ImportImage loads an image tarball into the daemon and returns the loaded
+// image's ID.
 //
 // The reference is read back from the daemon's own response rather than
 // assumed, because the tag the build asked for and the tag the daemon actually
 // recorded are not guaranteed to match, and running the wrong one would be
 // silent.
+//
+// The ID, not the tag, is what is returned: it is content-addressed, so what a
+// deployment records cannot be changed by a later build. A build refused after
+// it was loaded (by the security scan or the port check) used to move
+// pando/<app>:latest, and a workload recreated afterwards ran the refused image
+// (R-146).
 func (a *Adapter) ImportImage(ctx context.Context, r io.Reader) (string, error) {
 	resp, err := a.cli.ImageLoad(ctx, r, client.ImageLoadWithQuiet(true))
 	if err != nil {
@@ -1231,7 +1244,13 @@ func (a *Adapter) ImportImage(ctx context.Context, r io.Reader) (string, error) 
 		return "", errs.New(errs.AdapterFailed, "The built image could not be loaded.").
 			WithRemedy("Check the build logs — the image may not have been produced correctly.")
 	}
-	return ref, nil
+	inspect, err := a.cli.ImageInspect(ctx, ref)
+	if err != nil || inspect.ID == "" {
+		return "", errs.Wrap(errs.AdapterFailed, "The built image was loaded, and Pando could not read its ID.", err).
+			WithRemedy("Check that the Docker daemon is responding, then deploy again.")
+	}
+	a.pruneBuildTags(ctx, ref)
+	return inspect.ID, nil
 }
 
 // parseLoadedRef pulls the image reference out of Docker's load output, which

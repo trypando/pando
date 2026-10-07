@@ -20,6 +20,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -144,6 +145,9 @@ func (a *Adapter) Scan(ctx context.Context, req api.ScanRequest) (api.ScanResult
 	var findings []api.Finding
 
 	if req.Image != "" {
+		if err := a.fetch(ctx, req.Image, req.PullAuth); err != nil {
+			return api.ScanResult{}, err
+		}
 		found, err := a.scanImage(ctx, req.Image)
 		if err != nil {
 			return api.ScanResult{}, err
@@ -184,6 +188,48 @@ func (a *Adapter) ensureCache(ctx context.Context) error {
 		return errs.Wrap(errs.AdapterFailed, "Could not prepare the scanner's cache.", err)
 	}
 	return nil
+}
+
+// fetch pulls a built image this host does not have, from the install's
+// registry with the credential the request carries (issue #72, PR 5). An
+// image the runtime imported is already here, and one with no credential is
+// left to save, which says what is missing.
+func (a *Adapter) fetch(ctx context.Context, ref string, auth *api.RegistryAuth) error {
+	if auth == nil {
+		return nil
+	}
+	if _, err := a.cli.ImageInspect(ctx, ref); err == nil {
+		return nil
+	}
+	header, err := registryAuthHeader(auth)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not prepare the registry credential to fetch the image to scan.", err)
+	}
+	rc, err := a.cli.ImagePull(ctx, ref, client.ImagePullOptions{RegistryAuth: header})
+	if err != nil {
+		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not fetch the image %q to scan it.", ref), err).
+			WithRemedy("Check that the registry is reachable from this host and accepts Pando's credential.")
+	}
+	defer func() { _ = rc.Close() }()
+	_, _ = io.Copy(io.Discard, rc)
+	return nil
+}
+
+// registryAuthHeader encodes a credential the way the daemon reads it: JSON,
+// base64url, for this one pull. The daemon keeps nothing passed this way.
+func registryAuthHeader(auth *api.RegistryAuth) (string, error) {
+	// G117: this struct exists to carry the password to the daemon, which is
+	// the only place it goes; it is never logged or stored.
+	raw, err := json.Marshal(struct { //nolint:gosec
+		Username      string `json:"username,omitempty"`
+		Password      string `json:"password,omitempty"`
+		ServerAddress string `json:"serveraddress,omitempty"`
+		IdentityToken string `json:"identitytoken,omitempty"`
+	}{auth.Username, auth.Password.Reveal(), auth.Registry, auth.IdentityToken.Reveal()})
+	if err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(raw), nil
 }
 
 // scanImage saves the image and hands the scanner the file.

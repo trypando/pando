@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -34,6 +35,9 @@ type RestoreResult struct {
 	// EdgeVolumesApplied counts the edge's storage put back — Traefik's
 	// certificates (EdgesPrefix).
 	EdgeVolumesApplied int
+
+	// UploadsApplied counts uploaded source archives put back (O-37).
+	UploadsApplied int
 }
 
 // Restore decrypts, verifies, and only then applies (Sequence D, R-215).
@@ -167,6 +171,12 @@ func (s *Service) apply(ctx context.Context, bundle io.Reader, v Verified) (Rest
 			}
 			result.VolumesApplied++
 
+		case strings.HasPrefix(header.Name, UploadsPrefix):
+			if err := s.restoreUpload(header.Name, tr); err != nil {
+				return result, err
+			}
+			result.UploadsApplied++
+
 		case strings.HasPrefix(header.Name, EdgesPrefix):
 			if err := s.restoreEdgeVolume(ctx, header.Name, tr); err != nil {
 				return result, err
@@ -254,6 +264,43 @@ func (s *Service) restoreTokenKey(r io.Reader) error {
 	}
 	if err := os.WriteFile(s.TokenKeyPath, body, 0o600); err != nil {
 		return errs.Wrap(errs.Internal, "Pando could not write the API token key.", err)
+	}
+	return nil
+}
+
+// restoreUpload writes an uploaded source archive back where deploys read it
+// (O-37). The name is checked against what StoreUpload writes, so an entry
+// cannot name a path outside the directory. 0600 in a 0700 directory, as
+// StoreUpload makes them.
+func (s *Service) restoreUpload(entryName string, r io.Reader) error {
+	if s.UploadDir == "" {
+		return nil
+	}
+	name := strings.TrimPrefix(entryName, UploadsPrefix)
+	if !uploadName.MatchString(name) {
+		return errs.Newf(errs.ValidInvalid, "The backup holds an uploaded source named %q, which is not one Pando writes.", name)
+	}
+	if err := os.MkdirAll(s.UploadDir, 0o700); err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not restore the uploaded source.", err)
+	}
+	final := filepath.Join(s.UploadDir, name)
+	tmp := final + ".partial"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not restore the uploaded source.", err)
+	}
+	if _, err := io.Copy(f, r); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return errs.Wrap(errs.Internal, "Pando could not restore the uploaded source.", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return errs.Wrap(errs.Internal, "Pando could not restore the uploaded source.", err)
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		_ = os.Remove(tmp)
+		return errs.Wrap(errs.Internal, "Pando could not restore the uploaded source.", err)
 	}
 	return nil
 }

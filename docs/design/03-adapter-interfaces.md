@@ -63,6 +63,8 @@ type RuntimeCapabilities struct {
     ReportsUsage            bool   // R-245
     MaxWorkloadsPerBundle   int    // 0 = unlimited
     SupportsEgressRestriction bool // enforces NetworkPlan.Egress (R-186)
+    EdgeConfig              []EdgeConfig    // how an edge here receives routes: "shared_mount" | "kubernetes_api"
+    ImageDelivery           []ImageDelivery // how a built image reaches it: import | registry
 }
 
 type RoutingCapabilities struct {
@@ -78,10 +80,33 @@ type BuilderCapabilities struct {
     Strategies      []BuildStrategy // dockerfile | compose | buildpack | static | prebuilt
     SupportsCache   bool
     SupportsEgressRestriction bool  // R-118
+    SupportsPush    bool            // can push to a registry with a per-build credential
 }
 ```
 
+**[D] Image delivery (issue #72, PR 5).** `ImageDelivery` replaces the single `SupportsImageImport`
+bool. It lists, in the runtime's order of preference, how an image Pando built can reach it:
+`import` (the runtime takes the image as a stream, `ImportImage`) or `registry` (the builder pushes to
+the install's registry and the runtime pulls by digest, with `WorkloadPlan.PullAuth`). Single-host
+Docker reports `[import, registry]`; a runtime spanning machines reports `[registry]`; empty means it
+runs only published images. The planner decides from data (`planner.ChooseDelivery`, plan step 5a):
+import when the runtime takes it and the install does not send every build through its registry
+(`PANDO_REGISTRY_ALWAYS`); otherwise the registry when the runtime pulls, one is configured
+(`PANDO_REGISTRY_URL`) and the builder has `SupportsPush`; otherwise `PLAN_CAPABILITY_UNSUPPORTED`
+naming what is missing. The deploy asks again before building. `BuildRequest` carries exactly one of
+`ImageSink` and `Push`, and a `Tag` (the deployment ID) so no build is ever named by a tag the next
+build moves (R-146). `ImportImage` returns the loaded image's content-addressed ID; a push returns
+`repository@digest`. Either is what the deployment records and the reconciler restores.
+`notes-image-registry-issue-72.md` has the rest.
+
 ---
+
+**[P] `ImageDelivery` and `EdgeConfig` (issue #72).** `ImageDelivery` is how a built image can reach the
+runtime: `import` streams it into `ImportImage` (single-host Docker), `registry` has the builder push it
+and every node pull it by digest (Kubernetes; `notes-image-registry-issue-72.md`, PR 5, wires the push).
+`EdgeConfig` is how an edge on the runtime can receive routes; core passes the default runtime's list to
+the routing adapter in `EdgeRequest`, and a routing adapter whose delivery the runtime does not offer
+refuses its edge with a readable error rather than running one that never learns a route (§4.4).
 
 ## 2. Runtime
 
@@ -381,8 +406,11 @@ type InUse struct {
 **[P]** `LargestFit` is what one place has free by committed limits, because on several machines the
 total can have room no one machine has: 6 GB free over three hosts does not place a 4 GB app. The
 single-host Docker adapter reports its totals less what its app containers are limited to; the
-multi-host adapter the roomiest host open to new apps; Kubernetes will report the roomiest node
-(notes-kubernetes-runtime-issue-72.md).
+multi-host adapter the roomiest host open to new apps; Kubernetes the eligible node with the most
+memory left (then CPU) once every pod's requests on it are counted, Pando's included — one node, so
+the figure is a place that exists (notes-kubernetes-runtime-issue-72.md). Kubernetes's totals still
+leave out only pods outside Pando's namespaces, because the planner subtracts Pando's own
+allocations from them itself.
 
 **[D]** The planner refuses at plan time an app no single place has room for, through
 `RuntimeAdapter.LargestFitFor(ctx, bundleID) (*Fit, error)`: `LargestFit` as it stands for that
@@ -395,12 +423,16 @@ host (R-251). The planner compares the sum of the bundle's workload limits with 
 `CAPACITY_WOULD_OVERSUBSCRIBE` and a message that says the room cannot be combined across places;
 policy allowing CPU or memory oversubscription lifts the check for that resource, as it does R-242's.
 Nil means one place, or not reported: the single-host Docker adapter answers nil, since R-242's check
-of its totals already says everything this would.
+of its totals already says everything this would. Kubernetes answers the roomiest node with the
+bundle's own pods' requests counted as free there; a cluster reschedules freely, so it is not held to
+one node.
 
-**[P]** `RuntimeCapabilities.ImageDelivery` says how a built image reaches the runtime, in order of
-preference: `import` (`ImportImage`) or `registry` (pulled by digest). Added by PR 7 with the shape
-`notes-image-registry-issue-72.md` gives it; single-host Docker reports `[import]`, multi-host Docker
-`[registry]`. `SupportsImageImport` stays until PR 5 moves the planner to it.
+**[P]** The check compares the sum of an app's workload limits with one place, as multi-host Docker
+places a bundle whole. On Kubernetes each workload is its own pod and could land on a different node,
+so the sum is stricter than the scheduler needs; it errs toward a plan-time refusal over a pod that
+waits for room. Where it still passes and the scheduler finds no node, the Kubernetes adapter turns
+the scheduler's refusal into the deploy's error. Image delivery is §1's `ImageDelivery` (PR 5):
+multi-host Docker reports `[registry]` and refuses `ImportImage`.
 
 **[P]** The common fields are the readings every runtime reports in the same shape, so the console can say how much room is left without knowing which runtime answered (issue #88). Anything else goes in `Details`, which the console shows as it came. Live use is its own call, `InUse`, rather than `Used*` fields on `Capacity`. Sampling CPU takes about a second, and the planner reads `Capacity` on every plan without needing it. The `Used*` fields, which no adapter ever filled, are gone. `GET /capacity` reports each runtime's totals beside what Pando has committed on it, which is the planner's own R-242 arithmetic, and live use where the runtime reports usage.
 
@@ -727,6 +759,14 @@ adapter offers Cloudflare, Route 53, DigitalOcean, Porkbun and Namecheap by name
 missing variable in a message that meets R-105 — and accepts any other provider code with whatever
 `KEY=value` pairs the operator gives. Credentials are stored like every adapter credential (R-190) and
 reach the edge as `secret.Value` environment variables.
+
+**[P] Routes through the cluster's API on Kubernetes.** With `delivery: kubernetes_api` the Traefik
+adapter writes one `IngressRoute` per app into the edge's namespace instead of a file, every one naming
+the Service Pando's proxy is reached by, and its edge plan reads routes through Traefik's Kubernetes CRD
+provider, limited to that namespace with cross-namespace references off (`ReadsRoutesFrom` on the
+plan). On that delivery Traefik orders no certificates: its plan's `Issue` asks Pando's leader for
+them (`internal/core/edgecert`), core puts the issued ones in `EdgePlan.Certificates`, and the runtime
+writes them where every replica reads them (`notes-kubernetes-runtime-issue-72.md`).
 
 **[D] Certificate storage survives the edge.** The ACME store is a volume the edge owns
 (`EdgeMount.Volume`), not the container's filesystem, so recreating the edge does not re-issue every
@@ -1122,6 +1162,7 @@ func (r *Registry) Default(c Category) (Adapter, error)
 | routing | `cloudflare` | Cloudflare Tunnel; subdomain and path, TLS at Cloudflare's edge (§4.5) |
 | builder | `buildkit` | rootless, containerized, no socket (R-111) |
 | runtime | `docker` | enforces app egress through an internal network and a per-app gateway proxy (§2.1, R-187); container isolation class; `sandboxed` when `oci_runtime` names gVisor (`runsc`) or a Kata runtime (R-115), which the daemon must have registered or the adapter reports itself unavailable. A sandboxed trial run still reports whether the app started, but not its ports or writes — both are read from outside the container, and a sandbox hides them. Also drives rootless Podman through its Docker-compatible socket (see below). |
+| runtime | `kubernetes` | the cluster Pando runs in, one namespace per app under a default-deny NetworkPolicy admitting only Pando's server pods; bare pods with `restartPolicy: Never` (R-151); headless Services the proxy reaches by name; PVCs set to `Retain` (R-204); unusable on a cluster whose network plugin does not enforce NetworkPolicy, which a canary checks (O-43). Runs the edge as a spread Deployment (R-174). `notes-kubernetes-runtime-issue-72.md` |
 | secrets | `local` | encrypted at rest, key on disk (R-190) |
 | backup | `local` | a filesystem path; retention owned by Pando |
 | services | `docker` | postgres, mysql, redis in-bundle |

@@ -23,6 +23,38 @@ type EdgeRequest struct {
 	// ProxyUpstream is Pando's proxy, as the edge must reach it (R-023) — the
 	// same value every RouteRequest carries.
 	ProxyUpstream string
+
+	// EdgeConfig is how the runtime that will run the edge lets it receive
+	// routes (RuntimeCapabilities.EdgeConfig). Empty means the runtime did not
+	// say, which is read as EdgeConfigSharedMount.
+	EdgeConfig []EdgeConfig
+}
+
+// EdgeConfig is one way an edge receives its routes.
+type EdgeConfig string
+
+const (
+	// EdgeConfigSharedMount: a directory Pando writes and the edge mounts
+	// (EdgeMount.SharedWithPando). Single-host Docker.
+	EdgeConfigSharedMount EdgeConfig = "shared_mount"
+	// EdgeConfigKubernetesAPI: objects in the cluster's API that the edge
+	// watches — Traefik's IngressRoutes. The Kubernetes runtime.
+	EdgeConfigKubernetesAPI EdgeConfig = "kubernetes_api"
+)
+
+// Offers reports whether a list of edge configurations includes c. An empty
+// list offers only the shared mount, which is what every runtime offered
+// before the field existed.
+func Offers(list []EdgeConfig, c EdgeConfig) bool {
+	if len(list) == 0 {
+		return c == EdgeConfigSharedMount
+	}
+	for _, x := range list {
+		if x == c {
+			return true
+		}
+	}
+	return false
 }
 
 // EdgePlan is the workload a routing adapter needs running.
@@ -49,6 +81,65 @@ type EdgePlan struct {
 	// host part of ProxyUpstream. The runtime makes Pando answer to it on the
 	// network it shares with the edge, and joins the edge to nothing else.
 	ProxyAlias string
+
+	// ReadsRoutesFrom is how this edge receives its routes, when it reads them
+	// from the runtime's API (EdgeConfigKubernetesAPI): the runtime then gives
+	// it the identity that may read them and nothing else. Empty for an edge
+	// that reads a shared mount or holds its configuration remotely
+	// (cloudflared), which is given no API identity at all.
+	ReadsRoutesFrom EdgeConfig
+
+	// Issue is the certificates this edge needs Pando to issue, when it does
+	// not issue its own (notes-kubernetes-runtime-issue-72.md: on Kubernetes
+	// several replicas share one set, so Pando's leader is the one issuer).
+	// Nil for an edge that issues its own or serves none.
+	Issue *CertificateIssue
+
+	// Certificates are the issued certificates the edge serves, filled in by
+	// core from Issue before the plan reaches the runtime. The runtime
+	// stores them where the edge reads them, under each one's Name.
+	Certificates []EdgeCertificate
+}
+
+// Challenge types an ACME order is proved with (R-169).
+const (
+	ChallengeHTTP01 = "http-01"
+	ChallengeDNS01  = "dns-01"
+)
+
+// CertificateIssue is what a routing adapter asks Pando to issue for its
+// edge, in the terms its settings already use (R-169).
+type CertificateIssue struct {
+	// Email is the ACME account's address.
+	Email string
+
+	// Challenge is ChallengeHTTP01, answered by Pando's proxy on every
+	// hostname it issues for, or ChallengeDNS01 through DNSProvider.
+	Challenge string
+
+	// DNSProvider is the DNS-01 provider's code, as Traefik and lego name it,
+	// and DNSCredentials its variables. secret.Value so they cannot reach a
+	// log line (R-194).
+	DNSProvider    string
+	DNSCredentials map[string]secret.Value
+
+	// Orders are the certificates wanted. Each is kept under its Name.
+	Orders []CertificateOrder
+}
+
+// CertificateOrder is one certificate: the name the edge's routes refer to it
+// by, and the names it covers, the first being its subject.
+type CertificateOrder struct {
+	Name    string
+	Domains []string
+}
+
+// EdgeCertificate is an issued certificate and its key, as the edge serves
+// it.
+type EdgeCertificate struct {
+	Name    string
+	CertPEM []byte
+	KeyPEM  secret.Value
 }
 
 // EdgePort publishes one port of the edge on the host.

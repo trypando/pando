@@ -284,7 +284,6 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 	// build, by being pulled from the registry the build pushed it to (PR 5,
 	// notes-image-registry-issue-72.md). A tarball streamed to the control
 	// host would not be on the app's host when the reconciler recreates it.
-	caps.SupportsImageImport = false
 	caps.ImageDelivery = []api.ImageDelivery{api.ImageDeliveryRegistry}
 
 	// The egress gateway runs on the app's host, from an image every host

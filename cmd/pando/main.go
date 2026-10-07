@@ -40,6 +40,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/routing/loopback"
 	"github.com/trypando/pando/internal/adapter/routing/traefik"
 	dockerruntime "github.com/trypando/pando/internal/adapter/runtime/docker"
+	kubernetesruntime "github.com/trypando/pando/internal/adapter/runtime/kubernetes"
 	"github.com/trypando/pando/internal/adapter/runtime/multidocker"
 	trivyscanner "github.com/trypando/pando/internal/adapter/scanner/trivy"
 	secretslocal "github.com/trypando/pando/internal/adapter/secrets/local"
@@ -60,7 +61,9 @@ import (
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/edge"
+	"github.com/trypando/pando/internal/core/edgecert"
 	"github.com/trypando/pando/internal/core/idp"
+	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
@@ -416,6 +419,10 @@ func serve(ctx context.Context, configPath string) error {
 		// install holds every token's digest and cannot check any of them.
 		TokenKeyPath: cfg.Server.TokenKeyPath,
 
+		// Uploaded source is the only record of what an uploaded app is built
+		// from, and the registry's images are not in the bundle (O-37).
+		UploadDir: source.DefaultUploadDir,
+
 		State:         bundleSource,
 		Version:       buildVersion,
 		SchemaVersion: db.SchemaVersion(),
@@ -450,7 +457,28 @@ func serve(ctx context.Context, configPath string) error {
 		logger.Info("private images may be pulled with the Docker login on this server (apps.docker_credentials)")
 	}
 
-	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps).WithImages(images)
+	// The install's image registry (issue #72, PR 5): where builds go for a
+	// runtime that pulls. None on a single host, which imports (O-34).
+	// Startup configuration wins field by field over what the console stored,
+	// and both are read afresh on every push and pull, so a credential
+	// rotated on one replica reaches every replica without a restart.
+	buildRegistry, err := installRegistry(cfg, state.NewInstallRegistry(db, secretsAdapter, secretsRef))
+	if err != nil {
+		return err
+	}
+	if current, err := buildRegistry.Current(ctx); err != nil {
+		if len(cfg.RegistrySet) > 0 {
+			return fmt.Errorf("the install registry is misconfigured: %w", err)
+		}
+		logger.Warn("the install registry stored from the console cannot be used; builds that need it will be refused",
+			zap.Error(err))
+	} else if current.Configured() {
+		logger.Info("built images may be pushed to the install registry", zap.String("registry", current.Host()),
+			zap.Bool("always", current.Always()))
+	}
+
+	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps).WithImages(images).
+		WithInstallRegistry(buildRegistry)
 
 	// Every route points here (R-023). The proxy is phase 5; until it exists
 	// this is the address routing adapters are told to use, and it is already
@@ -481,7 +509,8 @@ func serve(ctx context.Context, configPath string) error {
 		WithServices(state.NewServices(db), secrets).
 		WithSecurity(securityService).
 		WithSources(sources).
-		WithImages(images)
+		WithImages(images).
+		WithBuildRegistry(buildRegistry)
 
 	// The deploy queue (issue #72, O-32): a deploy is queued in Postgres and
 	// run by whichever replica has room, at most work.deploys at once here.
@@ -705,11 +734,18 @@ func serve(ctx context.Context, configPath string) error {
 	// app's own listener falls back to for Pando's reserved path (R-172).
 	// What routing adapters need running in front of Pando — a Traefik on
 	// :80 and :443, a cloudflared — run through the runtime adapter (R-174).
+	// Certificates the edge cannot issue itself — on Kubernetes, where it is
+	// several replicas — are issued by the leader in its edge pass and kept
+	// sealed (R-169, R-190). Any replica answers the HTTP-01 challenge.
+	edgeCerts := state.NewEdgeCertificates(db, secretsAdapter, secretsRef)
 	edges := &edge.Service{
 		Registry:      registry,
 		ProxyUpstream: proxyUpstream,
 		Logger:        logger,
 		Clock:         clock.System{},
+	}
+	if secretsAdapter != nil {
+		edges.Certificates = &edgecert.Issuer{Store: edgeCerts, ACME: edgecert.Lego{}, Clock: clock.System{}, Logger: logger}
 	}
 
 	// Whether a newer Pando is released (R-349). Started with the other loops
@@ -762,16 +798,18 @@ func serve(ctx context.Context, configPath string) error {
 		Security: securityService,
 		Sources:  sources,
 		Images:   images,
-		DB:       db,
-		Identity: identity,
-		IDP:      identityService,
-		Users:    users,
-		Sessions: sessions,
-		Tokens:   tokens,
-		Apps:     apps,
-		Volumes:  volumes,
-		Auditor:  auditor,
-		Policy:   hostPolicy,
+
+		ImageRegistry: buildRegistry,
+		DB:            db,
+		Identity:      identity,
+		IDP:           identityService,
+		Users:         users,
+		Sessions:      sessions,
+		Tokens:        tokens,
+		Apps:          apps,
+		Volumes:       volumes,
+		Auditor:       auditor,
+		Policy:        hostPolicy,
 
 		Registry:    registry,
 		Adapters:    adapters,
@@ -847,11 +885,12 @@ func serve(ctx context.Context, configPath string) error {
 
 		// So the console does not answer on an app's own hostname. Without
 		// this the console's "/" route shadows every subdomain app's root.
-		AppHosts:   appResolver,
-		Grants:     grants,
-		HostPolicy: hostPolicy,
-		Verbs:      authzStore,
-		Defaults:   installDefaults,
+		AppHosts:       appResolver,
+		ACMEChallenges: edgecert.Challenges{Store: edgeCerts},
+		Grants:         grants,
+		HostPolicy:     hostPolicy,
+		Verbs:          authzStore,
+		Defaults:       installDefaults,
 
 		// The policy *document* and the policy *evaluator* are different
 		// things and both are wired: one endpoint edits the document, every
@@ -918,6 +957,10 @@ func serve(ctx context.Context, configPath string) error {
 		// The owner hears that their app failed (design 05 §4). Unset until
 		// issue #50, which is to say nobody heard.
 		Notifier: notifyRouter,
+
+		// A workload restored from a build in the install registry pulls with
+		// its credential (issue #72, PR 5).
+		BuiltImageAuth: builtImageAuth(buildRegistry),
 
 		// Unset in production: the zero values mean R-149 and R-150's defaults.
 		Backoff:          backoffSchedule,
@@ -1194,6 +1237,9 @@ func serve(ctx context.Context, configPath string) error {
 
 		// And its registry credential (issue #41).
 		DiscardCredential: images.RemoveCredential,
+
+		// And its builds in the install registry (issue #72, R-224).
+		RegistryImages: registryImages(buildRegistry, apps),
 
 		// Storage of a deleted app is reclaimed only once a backup holds it.
 		Backups: backups,
@@ -1492,6 +1538,10 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 	switch {
 	case category == string(adapterapi.CategoryRuntime) && kind == dockerruntime.Kind:
 		return dockerruntime.New()
+	case category == string(adapterapi.CategoryRuntime) && kind == kubernetesruntime.Kind:
+		// Not seeded: it needs the cluster's address ranges, and Pando running
+		// inside the cluster (deploy/kubernetes).
+		return kubernetesruntime.New()
 	case category == string(adapterapi.CategoryRuntime) && kind == multidocker.Kind:
 		return multidocker.New()
 	case category == string(adapterapi.CategoryRouting) && kind == loopback.Kind:
@@ -1836,6 +1886,84 @@ func (a registryAdapters) Routing(ref string) (adapterapi.RoutingAdapter, bool) 
 	return a.r.Routing(ref)
 }
 
+// installRegistry is the install's image registry: the startup configuration
+// (PANDO_REGISTRY_*) laid over what the console stored.
+func installRegistry(cfg *config.Config, store imageregistry.Store) (*imageregistry.Service, error) {
+	c := cfg.Registry
+	password, err := c.Secret()
+	if err != nil {
+		return nil, err
+	}
+	fixed := make(map[string]imageregistry.Source, len(cfg.RegistrySet))
+	for k, src := range cfg.RegistrySet {
+		fixed[k] = imageregistry.Source{Kind: src.Kind, Name: src.Name, Key: src.Key}
+	}
+	return &imageregistry.Service{
+		Startup: imageregistry.Config{
+			URL: c.URL, Username: c.Username, Password: secret.New(password),
+			Kind: c.Kind, Layout: c.Layout, Insecure: c.Insecure, Always: c.Always,
+		},
+		Fixed: fixed,
+		Store: store,
+	}, nil
+}
+
+// builtImageAuth is the reconciler's view of the install registry: its
+// credential for an image Pando pushed there, read when it is needed.
+func builtImageAuth(reg imageregistry.Provider) func(context.Context, string) *adapterapi.RegistryAuth {
+	return func(ctx context.Context, ref string) *adapterapi.RegistryAuth {
+		current, err := reg.Current(ctx)
+		if err != nil || !current.Owns(ref) {
+			return nil
+		}
+		auth, err := current.Auth(ctx)
+		if err != nil {
+			return nil
+		}
+		return auth
+	}
+}
+
+// deletedAppImages deletes a deleted app's builds from the install registry:
+// the app-wide image's repository, and one per workload any of its revisions
+// built separately.
+type deletedAppImages struct {
+	reg  imageregistry.Provider
+	apps *state.Apps
+}
+
+func registryImages(reg imageregistry.Provider, apps *state.Apps) reconciler.RegistryImages {
+	return deletedAppImages{reg: reg, apps: apps}
+}
+
+func (d deletedAppImages) DeleteApp(ctx context.Context, appID string) error {
+	current, err := d.reg.Current(ctx)
+	if err != nil || !current.Configured() {
+		// No registry, nothing in it. One that cannot be read is retried at
+		// the next teardown pass.
+		return err
+	}
+	revisions, err := d.apps.ListRevisions(ctx, appID)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	var workloads []string
+	for _, rev := range revisions {
+		if rev.Body == nil {
+			continue
+		}
+		for _, w := range rev.Body.Workloads {
+			if w.Build != nil && !seen[w.Name] {
+				seen[w.Name] = true
+				workloads = append(workloads, w.Name)
+			}
+		}
+	}
+	_, err = current.DeleteApp(ctx, appID, workloads)
+	return err
+}
+
 // buildCaches resolves the builder that built a deleted app. A builder that is
 // no longer configured holds nothing Pando can reach, so there is nothing to
 // forget.
@@ -1988,6 +2116,7 @@ func adapterKinds() []adapterapi.KindInfo {
 		aiopenai.Info(),
 		ailocal.Info(),
 		dockerruntime.Info(),
+		kubernetesruntime.Info(),
 		multidocker.Info(),
 		loopback.Info(),
 		traefik.Info(),

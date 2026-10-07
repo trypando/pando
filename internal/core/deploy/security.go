@@ -51,6 +51,10 @@ func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.A
 		Commit:    commit,
 		Image:     image,
 		SourceDir: sourceDir,
+
+		// A build pushed to the install's registry is not on the scanner's
+		// host; it is fetched with the registry's credential (issue #72).
+		PullAuth: r.builtImageAuth(ctx, image),
 	}, audit.Event{
 		PrincipalKind: audit.KindUser,
 		PrincipalID:   dep.CreatedBy,

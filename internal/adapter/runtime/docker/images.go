@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"sort"
 	"strings"
 
+	"github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/client"
 )
 
@@ -58,10 +60,11 @@ func bundleTag(bundleID string) (string, bool) {
 	return tag, true
 }
 
-// ownsRef reports whether an image reference is one Pando built, which its
-// label accounts for instead.
+// builtByPando reports whether an image reference is one Pando built, which
+// its label accounts for instead: a pando/ tag, or the bare image ID that
+// ImportImage returns for a build.
 func builtByPando(ref string) bool {
-	return strings.HasPrefix(ref, "pando/")
+	return strings.HasPrefix(ref, "pando/") || strings.HasPrefix(ref, "sha256:")
 }
 
 // imageClaim says who an image is being made available for.
@@ -162,4 +165,74 @@ func unclaimedRefs(repoTags []string, repo string) (refs []string, fetched, clai
 		}
 	}
 	return refs, fetched, claimed
+}
+
+// keepBuildTags is how many of an app's builds stay tagged on the host: about
+// the ten revisions R-152 keeps for rollback and the one being deployed. [P],
+// issue #72 PR 5, the same retention as the registry.
+const keepBuildTags = 11
+
+// pruneBuildTags removes the oldest tags of a built image's repository past
+// keepBuildTags.
+//
+// Each build is tagged pando/<app>:<deployment> (R-146), so without this the
+// tags of a live app would accumulate until it is deleted (R-224). Removing a
+// tag never removes an image a container uses: Docker refuses that without
+// force, and nothing here forces. The legacy :latest tag is left alone, since
+// a deployment from before builds were pinned may still name it.
+//
+// Best effort: a tag that stays costs disk, never a deploy.
+func (a *Adapter) pruneBuildTags(ctx context.Context, loaded string) {
+	ref := familiarRef(loaded)
+	if !builtByPando(ref) {
+		return
+	}
+	repo, _, found := strings.Cut(ref, ":")
+	if !found {
+		return
+	}
+	list, err := a.cli.ImageList(ctx, client.ImageListOptions{
+		Filters: make(client.Filters).Add("reference", repo),
+	})
+	if err != nil {
+		return
+	}
+	for _, tag := range staleBuildTags(list.Items, repo, ref) {
+		_, _ = a.cli.ImageRemove(ctx, tag, client.ImageRemoveOptions{})
+	}
+}
+
+// staleBuildTags picks the tags of repo past the newest keepBuildTags. The tag
+// just loaded, keep, is never among them, and neither is :latest.
+func staleBuildTags(images []image.Summary, repo, keep string) []string {
+	type tagged struct {
+		ref     string
+		created int64
+	}
+	var tags []tagged
+	for _, img := range images {
+		for _, rt := range img.RepoTags {
+			rt = familiarRef(rt)
+			r, t, _ := strings.Cut(rt, ":")
+			if r != repo || t == "latest" || rt == keep {
+				continue
+			}
+			tags = append(tags, tagged{ref: rt, created: img.Created})
+		}
+	}
+	sort.SliceStable(tags, func(i, j int) bool {
+		if tags[i].created != tags[j].created {
+			return tags[i].created > tags[j].created
+		}
+		return tags[i].ref > tags[j].ref
+	})
+	// The loaded one is the newest and was left out above, so one fewer.
+	if len(tags) <= keepBuildTags-1 {
+		return nil
+	}
+	stale := make([]string, 0, len(tags)-keepBuildTags+1)
+	for _, t := range tags[keepBuildTags-1:] {
+		stale = append(stale, t.ref)
+	}
+	return stale
 }

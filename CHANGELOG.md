@@ -29,6 +29,16 @@ Unreleased above it. -->
 
 ### Added
 
+- An install image registry (#72). `PANDO_REGISTRY_URL` and its credential name a registry that
+  builds are pushed to, by digest, for a runtime that pulls rather than imports; runtimes and the
+  scanner pull with the registry's credential, and a deleted app's images are deleted from it.
+  `docker-compose.registry.yml` adds a registry to the Compose topology. A single-host install needs
+  none and keeps importing builds directly, unless `PANDO_REGISTRY_ALWAYS` is set. See
+  `docs/reference.md` for the settings. The registry and its password can also be set from the
+  console, the API (`/image-registry`), the CLI and MCP; the password is stored encrypted and never
+  shown, and startup settings win.
+- A DR bundle now includes uploaded source (#72). The registry's images are not in it, so an uploaded
+  app's archive is what it is rebuilt from after a restore.
 - `disable_anonymous_denial_audit` host policy setting (#72), also settable as
   `PANDO_POLICY_DISABLE_ANONYMOUS_DENIAL_AUDIT`. Off by default: a visitor who is not signed in being
   refused a private app is still written to the audit log as `authz.denied`. Turned on, those rows
@@ -187,6 +197,11 @@ Unreleased above it. -->
 
 ### Fixed
 
+- **A build refused by the security scan or the port check could still run** (#72, R-146). Builds were
+  loaded as `pando/<app>:latest` and deployments recorded that tag, so a refused build moved it, and a
+  container the reconciler recreated afterwards ran the refused image. Each build is now tagged with
+  its deployment and recorded by its image ID. Older tags of an app's builds are removed past the
+  newest eleven.
 - The identity assertion and `X-Pando-Email` header for somebody signed in with a session carried no
   email or name (R-054). They now do.
 - **An app that failed did not tell its owner** (#50). The reconciler wrote the notification and had no

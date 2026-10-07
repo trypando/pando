@@ -142,6 +142,11 @@ func (a *Adapter) Capabilities(context.Context) (api.BuilderCapabilities, error)
 		// expose directly. Claiming it would turn R-118 into a promise nothing
 		// keeps, so the planner refuses a spec that needs it instead.
 		SupportsEgressRestriction: false,
+
+		// BuildKit's image exporter pushes to a registry with the credential
+		// the build carries, through the client session (push.go). Nothing is
+		// written to buildkitd's configuration.
+		SupportsPush: true,
 	}, nil
 }
 
@@ -158,12 +163,14 @@ func (a *Adapter) Bid(_ context.Context, src api.SourceView) (api.Bid, error) {
 	return api.Bid{Confidence: 0, Strategy: spec.BuildDockerfile}, nil
 }
 
-// Build produces an image and streams it back to the caller.
+// Build produces an image and streams it back to the caller, or pushes it to
+// the install's registry when the request says so.
 //
-// R-111: Pando hands BuildKit source and receives an image. The image is
-// exported as a tarball rather than pushed to a registry, because a registry
-// would need daemon-level configuration on the host and charge the setup cost
-// R-002 says is paid once.
+// R-111: Pando hands BuildKit source and receives an image. On a single host
+// the image is exported as a tarball rather than pushed to a registry, because
+// a registry would need daemon-level configuration on the host and charge the
+// setup cost R-002 says is paid once (O-34). A runtime that pulls from a
+// registry gets Push instead (issue #72, PR 5).
 func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildResult, error) {
 	if a.cli == nil {
 		return api.BuildResult{}, errs.New(errs.AdapterUnavailable, "The build service is not responding.")
@@ -207,9 +214,9 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	if req.ImageSink == nil {
+	if (req.ImageSink == nil) == (req.Push == nil) {
 		return api.BuildResult{}, errs.New(errs.BuildFailed,
-			"This build has nowhere to put the image it produces.")
+			"This build has nowhere to put the image it produces, or was given two places.")
 	}
 
 	cacheDir := cachePath(req.CacheNamespace)
@@ -230,7 +237,7 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 		return api.BuildResult{}, errs.Wrap(errs.BuildFailed, "Could not read the app's Dockerfile.", err)
 	}
 
-	imageRef := imageName(req.CacheNamespace)
+	imageRef := imageName(req.CacheNamespace, req.Tag)
 
 	frontendAttrs := map[string]string{
 		"filename": filepath.Base(dockerfile),
@@ -306,7 +313,12 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 		close(logsDone)
 	}()
 
-	_, err = a.cli.Solve(ctx, nil, solveOpt, statusCh)
+	if req.Push != nil {
+		solveOpt.Exports = []bkclient.ExportEntry{pushExport(req.Push)}
+		solveOpt.Session = append(solveOpt.Session, pushAuth(req.Push))
+	}
+
+	resp, err := a.cli.Solve(ctx, nil, solveOpt, statusCh)
 	<-logsDone
 
 	// Trim the build service's cache now that this build is done with it. In
@@ -333,6 +345,9 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 	// the same reason as trimCache.
 	go a.trimLocalCaches()
 
+	if req.Push != nil {
+		return pushedResult(req.Push, resp)
+	}
 	return api.BuildResult{ImageRef: imageRef}, nil
 }
 
@@ -391,9 +406,17 @@ func bundleOf(namespace string) string {
 	return bundle
 }
 
-func imageName(namespace string) string {
+// imageName is the tag a streamed build is loaded under: pando/<app>:<tag>,
+// where the tag is the deployment's ID. One per build rather than :latest, so
+// a build refused after it was loaded never takes the place of the one that
+// runs (R-146). The runtime prunes old ones.
+func imageName(namespace, tag string) string {
 	clean := strings.ToLower(strings.ReplaceAll(namespace, "_", "-"))
-	return fmt.Sprintf("pando/%s:latest", clean)
+	tag = strings.ToLower(tag)
+	if tag == "" {
+		tag = "latest"
+	}
+	return fmt.Sprintf("pando/%s:%s", clean, tag)
 }
 
 // cachePath is resolved on THIS side of the connection, not inside buildkitd.

@@ -54,6 +54,7 @@ const PolicyEnvPrefix = "PANDO_POLICY_"
 var secret = map[string]bool{
 	"database.url":             true,
 	"bootstrap.admin_password": true,
+	"registry.password":        true,
 }
 
 // envName is the variable a key is read from: its explicit bind, or the name
