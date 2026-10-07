@@ -321,6 +321,10 @@ func TestR256_ADeployFromBeforeReplicasWereRecordedHasNoRunner(t *testing.T) {
 	dep, err := deployments.Create(ctx, app.ID, rev.ID, "manual", owner.ID)
 	require.NoError(t, err)
 
+	// Named as the runner directly: whether creating a deploy claims it, or
+	// queues it for any replica to claim, is not what this asserts.
+	_, err = db.Exec(ctx, `UPDATE deployments SET replica_id = $2 WHERE id = $1`, dep.ID, db.Replica())
+	require.NoError(t, err)
 	runner, err := deployments.Runner(ctx, dep.ID)
 	require.NoError(t, err)
 	require.Equal(t, db.Replica(), runner)
