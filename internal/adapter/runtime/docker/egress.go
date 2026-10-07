@@ -262,7 +262,7 @@ func (a *Adapter) ensureOutboundNetwork(ctx context.Context, bundleID string) (s
 	} else if ok {
 		return n.ID, nil
 	}
-	created, err := a.createNetwork(ctx, name, client.NetworkCreateOptions{
+	created, err := a.createNetwork(ctx, name, outboundBlockBits, client.NetworkCreateOptions{
 		Driver: "bridge",
 		Labels: map[string]string{
 			labelBundle: bundleID, labelManaged: "true", labelEgressNetwork: egressNetworkOutbound,
