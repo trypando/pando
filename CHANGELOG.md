@@ -158,11 +158,13 @@ Unreleased above it. -->
 
 ### Changed
 
-- API tokens are stored as SHA-256 digests rather than argon2id (#93). A token is 256 random bits
-  Pando made, so the slow hash protected nothing and cost 64 MiB and tens of milliseconds on every
-  request a token made. Existing tokens keep working and are rewritten on their next use; passwords are
-  still argon2id. A token's last-used time is now recorded to the minute rather than written on every
-  request.
+- API tokens are stored as HMAC-SHA-256 under a key rather than argon2id (#93). A token is 256 random
+  bits Pando made, so the slow hash cost 64 MiB and tens of milliseconds on every request a token made
+  for no benefit. The key is a new file, `/var/lib/pando/token.key` (`PANDO_SERVER_TOKEN_KEY_PATH`),
+  created on first start and kept out of the database so that a database dump alone cannot be used to
+  check a guessed token. Every replica must read the same file, and a DR bundle includes it. Existing
+  tokens keep working and are rewritten on their next use; passwords are still argon2id. A token's
+  last-used time is now recorded to the minute rather than written on every request.
 - The proxy reuses its connections to an app instead of opening one per request, finds the app a
   request is for with one indexed lookup instead of reading every app's spec, and the app screen's
   permission check reads grants and policy once instead of once per permission (#72).

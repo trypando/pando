@@ -62,6 +62,7 @@ const (
 	ManifestName  = "manifest.json"
 	PostgresName  = "postgres.dump"
 	SecretsKey    = "secrets.key"
+	TokenKey      = "token.key"
 	AdaptersName  = "adapters.json"
 	PolicyName    = "policy.json"
 	VolumesPrefix = "volumes/"

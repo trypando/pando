@@ -1,10 +1,10 @@
 // Package hash derives and verifies password and token hashes with argon2id.
 //
 // Used for local user passwords (R-042). API token secrets were hashed here
-// too until issue #93; they are now SHA-256 digests (state.apiTokenDigest),
-// and Verify still reads a token stored before that, once, before it is
-// rewritten. Kept out of core so adapters may use it without importing
-// anything the R-027 boundary forbids.
+// too until issue #93; they are now HMAC-SHA-256 under a key outside the
+// database (internal/core/tokenkey), and Verify still reads a token stored
+// before that, once, before it is rewritten. Kept out of core so adapters may
+// use it without importing anything the R-027 boundary forbids.
 package hash
 
 import (
@@ -12,6 +12,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -42,6 +43,21 @@ const (
 // holds and can grind offline as fast as their hardware allows.
 const MinPasswordLength = 10
 
+// slots bounds how many argon2id derivations run at once in this process.
+//
+// Each holds memoryCost of memory and keeps a CPU busy, so a burst of sign-ins
+// — a whole office arriving at nine — ran them all at once, swapped, and made
+// every sign-in slow instead of a few of them wait (issue #72: p95 6.4 s on a
+// four-CPU host at 225 console users). One per CPU keeps memory bounded at
+// CPUs × memoryCost; the rest queue, and queueing is the cheaper way to be slow.
+var slots = make(chan struct{}, max(1, runtime.NumCPU()))
+
+func idKey(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+	slots <- struct{}{}
+	defer func() { <-slots }()
+	return argon2.IDKey(password, salt, time, memory, threads, keyLen)
+}
+
 // New derives an encoded hash of v in the standard argon2 string format.
 func New(v secret.Value) (string, error) {
 	salt := make([]byte, saltLength)
@@ -49,7 +65,7 @@ func New(v secret.Value) (string, error) {
 		return "", fmt.Errorf("generating salt: %w", err)
 	}
 
-	key := argon2.IDKey([]byte(v.Reveal()), salt, timeCost, memoryCost, parallelism, keyLength)
+	key := idKey([]byte(v.Reveal()), salt, timeCost, memoryCost, parallelism, keyLength)
 
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, memoryCost, timeCost, parallelism,
@@ -69,7 +85,7 @@ func Verify(v secret.Value, encoded string) (bool, error) {
 		return false, err
 	}
 
-	candidate := argon2.IDKey([]byte(v.Reveal()), salt,
+	candidate := idKey([]byte(v.Reveal()), salt,
 		//nolint:gosec // G115: decode bounds len(key) to maxKeyLength.
 		params.time, params.memory, params.parallelism, uint32(len(key)))
 

@@ -69,6 +69,7 @@ import (
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/subscription"
+	"github.com/trypando/pando/internal/core/tokenkey"
 	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/detect"
 	"github.com/trypando/pando/internal/errs"
@@ -272,7 +273,18 @@ func serve(ctx context.Context, configPath string) error {
 
 	users := state.NewUsers(db)
 	sessions := state.NewSessions(db)
-	tokens := state.NewTokens(db)
+	// API tokens are stored as HMAC-SHA-256 under a key kept beside the
+	// process, not in the database (R-063). Every replica must hold the same
+	// one, and one that does not stops here, before it rejects every token
+	// the others issued (issue #72).
+	tokenKey, err := tokenkey.LoadOrCreate(cfg.Server.TokenKeyPath)
+	if err != nil {
+		return err
+	}
+	tokens := state.NewTokens(db, tokenKey)
+	if err := tokens.VerifyKey(ctx); err != nil {
+		return err
+	}
 	apps := state.NewApps(db)
 	volumes := state.NewVolumes(db)
 	adapters := state.NewAdapters(db)
@@ -393,6 +405,10 @@ func serve(ctx context.Context, configPath string) error {
 		// Read from the adapter's own configuration rather than duplicated into
 		// server config, so there is one place that decides where the key lives.
 		SecretsKeyPath: secretsKeyPath(ctx, adapters, logger),
+
+		// The API token key, for the same reason: without it a restored
+		// install holds every token's digest and cannot check any of them.
+		TokenKeyPath: cfg.Server.TokenKeyPath,
 
 		State:         bundleSource,
 		Version:       buildVersion,

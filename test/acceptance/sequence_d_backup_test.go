@@ -68,6 +68,7 @@ func TestR212_ADRBundleContainsWhatItPromises(t *testing.T) {
 	}
 	require.True(t, names["postgres.dump"], "the state store")
 	require.True(t, names["secrets.key"], "R-212: without this a restore cannot read any app's secrets")
+	require.True(t, names["token.key"], "R-212, R-063: without this a restore cannot check any API token")
 	require.True(t, names["adapters.json"])
 	require.True(t, names["policy.json"])
 

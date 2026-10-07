@@ -142,8 +142,9 @@ func (g *Grants) Unlock(ctx context.Context, appID, grantID string) (string, tim
 // 256 random bits Unlock just generated, not anything a person chose. There is
 // nothing to guess, so there is nothing for a slow hash to slow down — and
 // this runs on every request a visitor makes with the cookie, where argon2id's
-// cost would be the app's latency. The same treatment sessions and API tokens
-// get.
+// cost would be the app's latency. Unkeyed, unlike API tokens, which are
+// HMAC-SHA-256 under the token key (tokens.go). Also the function that checks
+// API token digests written unkeyed before that, so they can be rewritten.
 func tokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token)) // codeql[go/weak-sensitive-data-hashing]
 	return hex.EncodeToString(sum[:])
