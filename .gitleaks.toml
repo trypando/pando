@@ -45,6 +45,16 @@ regexes = [
   # The name of a cipher, in prose. SECURITY.md names the algorithms in use,
   # and the generic-api-key rule reads this one as a high-entropy string.
   '''ChaCha20-Poly1305''',
+
+  # internal/core/edgecert/lego.go — the ACME library's certificate key type,
+  # `cfg.Certificate.KeyType = certcrypto.EC256`, which the generic rule reads
+  # as "key = <value>". A constant naming an algorithm (issue #72).
+  '''certcrypto\.EC256''',
+
+  # internal/httpapi/acme_challenge_test.go — a made-up HTTP-01 challenge
+  # token, the alphabet in order, that the test serves and reads back. ACME
+  # tokens are public by design: the CA fetches them over plain HTTP.
+  '''abcdefghijklmnopqrstuvwx_-12''',
 ]
 
 [[allowlists]]
@@ -56,4 +66,6 @@ regexes = [
   '''eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0\.eyJzdWIiOiJ1c3JfYWRtaW4ifQ\.''',
   '''ChaCha20-Poly1305''',
   '''tok_01HQ8\.secret''',
+  '''cfg\.Certificate\.KeyType = certcrypto\.EC256''',
+  '''token = "abcdefghijklmnopqrstuvwx_-12"''',
 ]
