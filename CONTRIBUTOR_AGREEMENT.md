@@ -158,7 +158,7 @@ TORT OR OTHERWISE) UPON WHICH THE CLAIM IS BASED.
 ## 6. Miscellaneous
 
 6.1 This Agreement will be governed by and construed in accordance with the laws of the State of
-[STATE], United States, excluding its conflicts of law provisions. Under certain circumstances, the
+Utah, United States, excluding its conflicts of law provisions. Under certain circumstances, the
 governing law in this section might be superseded by the United Nations Convention on Contracts for
 the International Sale of Goods ("UN Convention") and the parties intend to avoid the application of
 the UN Convention to this Agreement and, thus, exclude the application of the UN Convention in its
