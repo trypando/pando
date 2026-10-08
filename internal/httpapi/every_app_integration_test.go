@@ -165,7 +165,7 @@ func TestAccountAppsListOnlyWhatTheViewerCanSee(t *testing.T) {
 
 	got := i.do(pat, http.MethodGet, "/users/"+danaID+"/apps", nil)
 	require.Equal(t, http.StatusOK, got.Code, got.String())
-	require.JSONEq(t, `{"apps":[]}`, got.String())
+	require.JSONEq(t, `{"apps":[],"next_cursor":""}`, got.String())
 
 	// Dana's own, with nothing administrative.
 	got = i.do(dana, http.MethodGet, "/users/"+danaID+"/apps", nil)
