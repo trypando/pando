@@ -1,7 +1,9 @@
 // The contributor agreement check (CONTRIBUTOR_AGREEMENT.md, issue #49).
 //
-// Every person who authored a commit in a pull request must have signed the
-// agreement once, by posting PHRASE as a comment on a pull request. A signature
+// Every person who authored or co-authored a commit in a pull request must have
+// signed the agreement once, by posting PHRASE as a comment on a pull request.
+// Co-authors come from Co-authored-by trailers; AI tools named there are exempt
+// (agreement section 7). A signature
 // is recorded as one JSON entry on the SIGNATURE_BRANCH, keyed on the GitHub
 // user ID rather than the login, because a login can be renamed and an ID
 // cannot. The entry links the comment and names the agreement's version and
@@ -39,10 +41,43 @@ function isSignature(body) {
   return normalize(body) === normalize(PHRASE);
 }
 
-// The people who must have signed: the pull request's author and every commit
-// author. A commit whose email is not linked to any GitHub account cannot be
-// matched to a signature, so it is reported by name instead.
-function authorsOf(pr, commits) {
+// Co-authors that are AI tools. A tool holds no copyright, so it has nothing to
+// license (agreement section 7). Tools that co-author from a GitHub bot
+// account, such as Copilot, are exempt by account type instead.
+const AI_COAUTHOR_EMAILS = new Set(['noreply@anthropic.com', 'cursoragent@cursor.com']);
+
+const COAUTHOR_TRAILER = /^co-authored-by:\s*(.*?)\s*<([^>]+)>\s*$/gim;
+const NOREPLY = /^(?:\d+\+)?([^@+]+)@users\.noreply\.github\.com$/i;
+
+function coAuthorsOf(message) {
+  return [...(message || '').matchAll(COAUTHOR_TRAILER)].map(([, name, email]) => ({
+    name: name || email,
+    email: email.toLowerCase(),
+  }));
+}
+
+// The GitHub account behind a co-author's email, or null. A noreply address
+// names its account; any other address is matched against public profile
+// emails, and only an unambiguous match counts.
+async function accountFor(github, email) {
+  const noreply = email.match(NOREPLY);
+  if (noreply) {
+    try {
+      return (await github.rest.users.getByUsername({ username: noreply[1] })).data;
+    } catch (e) {
+      if (e.status === 404) return null;
+      throw e;
+    }
+  }
+  const { data } = await github.rest.search.users({ q: `${email} in:email` });
+  return data.total_count === 1 ? data.items[0] : null;
+}
+
+// The people who must have signed: the pull request's author, every commit
+// author, and every human named in a Co-authored-by trailer. Anyone whose email
+// is not linked to a GitHub account cannot be matched to a signature, so they
+// are reported by name instead.
+async function authorsOf(github, pr, commits) {
   const people = new Map();
   const unlinked = new Set();
   const add = (user) => {
@@ -50,9 +85,18 @@ function authorsOf(pr, commits) {
     people.set(user.id, user.login);
   };
   add(pr.user);
+  const coAuthors = new Map();
   for (const c of commits) {
     if (c.author) add(c.author);
     else unlinked.add(c.commit.author.name);
+    for (const co of coAuthorsOf(c.commit.message)) {
+      if (!AI_COAUTHOR_EMAILS.has(co.email)) coAuthors.set(co.email, co.name);
+    }
+  }
+  for (const [email, name] of coAuthors) {
+    const account = await accountFor(github, email);
+    if (account) add(account);
+    else unlinked.add(name);
   }
   return { people, unlinked };
 }
@@ -137,9 +181,10 @@ function unsignedComment(docUrl, missing, unlinked) {
   }
   if (unlinked.size) {
     lines.push(
-      `Commits by ${[...unlinked].join(', ')} use an email address that is not linked to a GitHub ` +
-        'account, so they cannot be matched to a signature. Add the address to the account under ' +
-        'GitHub Settings → Emails, or amend the commits to use an address that is, then comment `recheck`.',
+      `${[...unlinked].join(', ')} authored or co-authored commits here under an email address that is ` +
+        'not linked to a GitHub account, so they cannot be matched to a signature. Add the address to ' +
+        'the account under GitHub Settings → Emails, or amend the commits or `Co-authored-by` lines to ' +
+        'use an address that is, such as the account\'s `users.noreply.github.com` address. Then comment `recheck`.',
       '',
     );
   }
@@ -162,7 +207,7 @@ module.exports = async function run({ github, context, core }) {
   const commits = await github.paginate(github.rest.pulls.listCommits, {
     owner, repo, pull_number: number, per_page: 100,
   });
-  const { people, unlinked } = authorsOf(pr, commits);
+  const { people, unlinked } = await authorsOf(github, pr, commits);
 
   const { entries } = await readSignatures(github, owner, repo);
   const signed = new Set(entries.map((e) => e.id));
@@ -227,4 +272,5 @@ module.exports = async function run({ github, context, core }) {
 module.exports.normalize = normalize;
 module.exports.isSignature = isSignature;
 module.exports.authorsOf = authorsOf;
+module.exports.coAuthorsOf = coAuthorsOf;
 module.exports.PHRASE = PHRASE;

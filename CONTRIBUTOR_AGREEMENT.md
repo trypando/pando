@@ -193,6 +193,12 @@ Contribution until one of the following is true:
   then not a Contribution under this Agreement; We decide whether to include it under its own license.
 - Your employer owns it. Open an issue at <https://github.com/trypando/pando/issues> before
   Submitting, and We will arrange for Your employer to approve or sign this Agreement.
+- Another person wrote part of it with You. Each such person has signed this Agreement, and is named
+  in a `Co-authored-by` line of the commits they worked on. Your confirmation in Section 3(b) covers
+  their part only once they have signed.
+
+An AI tool You use is not a co-author for this purpose and does not sign this Agreement. You are
+responsible for what You Submit with its help, as for any other Contribution.
 
 ---
 
