@@ -10,7 +10,6 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import {
   Banner,
   Button,
-  Checkbox,
   CodeBlock,
   EmptyState,
   Icon,
@@ -56,6 +55,7 @@ import {
   looseningRule,
 } from './policyEgress';
 import { ListField } from '../ui/ListField';
+import { TagField } from '../ui/TagField';
 import { useNarrow } from '../ui/narrow';
 import { useSettled, withParams } from '../ui/paged';
 
@@ -1451,35 +1451,35 @@ function EgressPolicy({ current, edit, locked, fixed }: PolicyControls & { fixed
  */
 function DeployApprovalPolicy({ current, edit, locked }: PolicyControls) {
   const chosen = current.deploy_approval_apps ?? [];
-  // The chosen apps by ID, and others by search: not every app in the
-  // install, which can be twenty thousand checkboxes (issue #72).
+  // Only the chosen apps are drawn, as tags, and others are found by typing:
+  // never every app in the install, which can be twenty thousand (issue #72).
   const [search, setSearch] = useState('');
   const settled = useSettled(search.trim());
   type Named = { id: string; name: string };
-  const apps = useQuery({
-    queryKey: ['apps', 'approval-policy', chosen, settled],
-    queryFn: async () => {
-      const [picked, found] = await Promise.all([
-        chosen.length > 0
-          ? api.get<{ apps: Named[] | null }>(withParams('/apps', { id: chosen.slice(0, 100), limit: 100 }))
-          : Promise.resolve({ apps: [] as Named[] }),
-        api.get<{ apps: Named[] | null; next_cursor?: string }>(withParams('/apps', { q: settled, limit: 20 })),
-      ]);
-      return { picked: picked.apps ?? [], found: found.apps ?? [], more: Boolean(found.next_cursor) };
-    },
+  // The chosen apps' names. Asked for by ID, a hundred at a time being as many
+  // as the API returns in one page; past that a tag shows the app's ID.
+  const named = chosen.slice(0, 100);
+  const picked = useQuery({
+    queryKey: ['apps', 'approval-policy', 'picked', named],
+    queryFn: async () =>
+      named.length > 0
+        ? ((await api.get<{ apps: Named[] | null }>(withParams('/apps', { id: named, limit: 100 }))).apps ?? [])
+        : [],
     placeholderData: (previous) => previous,
     retry: false,
   });
-  const picked = apps.data?.picked ?? [];
-  const known = [...picked, ...(apps.data?.found ?? []).filter((a) => !picked.some((p) => p.id === a.id))];
+  const found = useQuery({
+    queryKey: ['apps', 'approval-policy', 'search', settled],
+    queryFn: async () =>
+      (await api.get<{ apps: Named[] | null }>(withParams('/apps', { q: settled, limit: 20 }))).apps ?? [],
+    placeholderData: (previous) => previous,
+    retry: false,
+  });
+  const nameOf = (id: string) => picked.data?.find((a) => a.id === id)?.name ?? id;
   // An app that was chosen and has since gone — or that this account cannot
-  // see — stays listed by its ID, so it can still be taken off.
-  const unknown = apps.isSuccess ? chosen.filter((id) => !picked.some((a) => a.id === id)) : [];
+  // see — keeps a tag with its ID, so it can still be taken off.
+  const unknown = picked.isSuccess ? named.filter((id) => !picked.data.some((a) => a.id === id)) : [];
   const everyApp = current.deploy_approval_required ?? false;
-  const toggle = (id: string, on: boolean) => {
-    const rest = chosen.filter((x) => x !== id);
-    edit({ deploy_approval_apps: on ? [...rest, id] : rest });
-  };
 
   return (
     <PolicySection
@@ -1497,43 +1497,35 @@ function DeployApprovalPolicy({ current, edit, locked }: PolicyControls) {
       </Fixed>
 
       <Fixed field="deploy_approval_apps">
-        <fieldset style={FIELDSET}>
-          <legend style={LEGEND}>Apps that always need approval</legend>
-          <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: '0 0 var(--space-1)' }}>
-            {everyApp
-              ? 'Every app needs approval while the setting above is on, so this list has no effect.'
-              : 'These apps’ deploys wait for approval whatever their owners set, and their owners can’t turn it off.'}
-          </p>
-          {(apps.data?.more || settled !== '') && (
-            <SearchField value={search} onChange={setSearch} placeholder="Search apps" />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+          <TagField
+            label="Apps that always need approval"
+            value={chosen}
+            onChange={(ids) => edit({ deploy_approval_apps: ids })}
+            nameOf={nameOf}
+            text={search}
+            onText={setSearch}
+            options={(found.data ?? []).map((a) => ({ id: a.id, name: a.name }))}
+            placeholder="Type an app’s name"
+            disabled={locked('deploy_approval_apps') || everyApp}
+            helper={
+              everyApp
+                ? 'Every app needs approval while the setting above is on, so this list has no effect.'
+                : 'These apps’ deploys wait for approval whatever their owners set, and their owners can’t turn it off.'
+            }
+          />
+          {found.isSuccess && settled !== '' && found.data.length === 0 && (
+            <Quiet>{`No apps match “${settled}”.`}</Quiet>
           )}
-          {apps.isPending && <LineSkeleton width="24ch" />}
-          {apps.isError && <Quiet>{messageOf(apps.error)}</Quiet>}
-          {apps.isSuccess && known.length === 0 && unknown.length === 0 && (
-            <Quiet>{settled ? `No apps match “${settled}”.` : 'There are no apps yet.'}</Quiet>
+          {(picked.isError || found.isError) && <Quiet>{messageOf(picked.error ?? found.error)}</Quiet>}
+          {unknown.length > 0 && (
+            <Quiet>
+              {unknown.length === 1
+                ? `Pando can’t find ${unknown[0]}. It may have been deleted. Take it off with ×.`
+                : `Pando can’t find ${unknown.length} of these apps: ${unknown.join(', ')}. They may have been deleted. Take them off with ×.`}
+            </Quiet>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', maxHeight: '16rem', overflowY: 'auto' }}>
-            {known.map((a) => (
-              <Checkbox
-                key={a.id}
-                label={a.name}
-                checked={chosen.includes(a.id)}
-                disabled={locked('deploy_approval_apps') || everyApp}
-                onChange={(e) => toggle(a.id, e.target.checked)}
-              />
-            ))}
-            {unknown.map((id) => (
-              <Checkbox
-                key={id}
-                label={id}
-                description="Pando can’t find this app. It may have been deleted."
-                checked
-                disabled={locked('deploy_approval_apps')}
-                onChange={() => toggle(id, false)}
-              />
-            ))}
-          </div>
-        </fieldset>
+        </div>
       </Fixed>
 
       <Fixed field="deploy_approval_count">
