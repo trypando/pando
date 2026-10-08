@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           # A build cache of this job's own, below, for the reason the
           # integration job has one: setup-go's is keyed on go.sum alone and
           # shared by every job, so it rarely holds what this job compiles.
@@ -126,7 +126,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           cache: true
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -179,7 +179,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           # Not setup-go's cache: its key is go.sum alone, shared with every
           # other job and saved only when that key is new, so what this job
           # restored was whichever job ran first on the day go.sum last
