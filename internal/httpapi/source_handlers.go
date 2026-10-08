@@ -27,7 +27,7 @@ import (
 
 // sourcesPage is the console screen a browser authorization returns to: the
 // Adapters screen, where source connections are listed with the rest.
-const sourcesPage = "/admin/adapters"
+const sourcesPage = "/admin/system/adapters"
 
 func (s *Server) sourcesConfigured(w http.ResponseWriter, r *http.Request) bool {
 	if s.SourceConnections == nil {

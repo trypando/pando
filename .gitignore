@@ -9,7 +9,9 @@
 # would otherwise not compile until someone had run npm.
 /internal/console/dist/*
 !/internal/console/dist/README.md
-/console/node_modules/
+# Anywhere, not only under console/: running vitest from the repository root
+# writes its results cache to node_modules/.vite there.
+node_modules/
 /console/dist/
 
 # Local development

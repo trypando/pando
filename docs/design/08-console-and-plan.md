@@ -69,7 +69,7 @@ The design system has no menu component; `ui/Menu.tsx` is one built from its pop
 focus return. It should move into the design project.
 
 **[D] Search.** The launcher has a search field in its header ("/" focuses it), and the admin
-console has one beside the heading of Apps, Accounts, Groups and roles, and Policy. Each filters the
+console has one beside the heading of Apps, Accounts, Groups and roles, and System's Policy tab. Each filters the
 list the page already has, in the browser: one installation's lists are small (R-015), the API
 already returns them whole, so nothing here is a capability the API lacks (R-261). Matching is
 case-insensitive and needs every word somewhere in the row (`ui/search.ts`). The launcher hides
@@ -136,6 +136,18 @@ own at `/admin/settings`, opened by a gear in the launcher header and in the adm
 with a back arrow to wherever it was opened from. Not a section of the admin console: nothing on it
 is administration. Under `/admin` only because that prefix is already reserved against app slugs
 (R-023). The launcher does not link to *API and tools*; it is in the admin console.
+
+**[D] System.** Adapters, Policy, Backups and Updates are tabs of one *System* item in the admin
+sidebar rather than four items: they are how the installation itself is set up and kept, not its
+apps or its people (issue #154). The tabs sit under the heading *System*, spaced as an app's tabs
+are, and each tab keeps its own action beside that heading. Each tab is shown on the verb it needed
+as an item of its own — Adapters and Updates on `install.view`, Policy on `install.view` or
+`install.policy.manage`, Backups on `install.backup.manage` — and *System* is shown when any tab is,
+so nobody sees a screen there they could not see before. The count of versions behind (R-351) is on
+*System* as well as on its Updates tab. Each tab is at `/admin/system/{tab}`; `/admin/system` opens
+the first one the person may see, and the old `/admin/adapters`, `/admin/policy`, `/admin/backups`,
+`/admin/updates` and `/admin/installation` still open the right tab. *Sign-in* stays an item of its
+own beside Accounts, though identity providers are adapters: it is about who can sign in.
 
 ### 1.2 Stack [P]
 

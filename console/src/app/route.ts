@@ -19,13 +19,17 @@ export type Section =
   | 'accounts'
   | 'identity'
   | 'sign-in'
-  | 'adapters'
-  | 'policy'
-  | 'backups'
+  | 'system'
   | 'audit'
   | 'approvals'
-  | 'events'
-  | 'updates';
+  | 'events';
+
+/** The tabs of System (issue #154): how the installation itself is set up and
+ *  kept, as opposed to its apps or its people. Each was a sidebar item of its
+ *  own, and its old address still opens it. */
+export type SystemTab = 'adapters' | 'policy' | 'backups' | 'updates';
+
+export const SYSTEM_TABS: SystemTab[] = ['adapters', 'policy', 'backups', 'updates'];
 
 export interface Route {
   /** Settings is its own page, not a section of the admin console: it is
@@ -34,6 +38,7 @@ export interface Route {
   view: 'launcher' | 'admin' | 'settings';
   section: Section;
   appID?: string;
+  /** An app's tab, or System's. */
   tab?: string;
   /** An account's own page, under Accounts. */
   userID?: string;
@@ -49,13 +54,10 @@ const SECTIONS: Section[] = [
   'accounts',
   'identity',
   'sign-in',
-  'adapters',
-  'policy',
-  'backups',
+  'system',
   'audit',
   'approvals',
   'events',
-  'updates',
 ];
 
 /** Reads a route out of a path. Anything unrecognized is the launcher. */
@@ -80,13 +82,25 @@ export function parse(pathname: string, search = ''): Route {
   const query = search.replace(/^\?/, '');
   if (parts[1] === 'audit' && query) return { view: 'admin', section: 'audit', query };
   if (parts[1] === 'sign-in' && query) return { view: 'admin', section: 'sign-in', query };
-  // /admin/adapters?… — the outcome of a source connection's browser
-  // authorization (issue #127).
-  if (parts[1] === 'adapters' && query) return { view: 'admin', section: 'adapters', query };
 
-  // The adapters screen was called Installation, and a link to it may still
-  // say so.
-  if (parts[1] === 'installation') return { view: 'admin', section: 'adapters' };
+  // /admin/system/{tab}. The bare /admin/system is its first tab, and which
+  // one that is depends on what the person may see, so it carries no tab.
+  // /admin/system/adapters?… is the outcome of a source connection's browser
+  // authorization (issue #127).
+  // Each tab was a section of its own at /admin/{tab}, and the adapters
+  // screen before that was called Installation; a link may still say either.
+  const tab =
+    parts[1] === 'system'
+      ? SYSTEM_TABS.find((t) => t === parts[2])
+      : parts[1] === 'installation'
+        ? 'adapters'
+        : SYSTEM_TABS.find((t) => t === parts[1]);
+  if (parts[1] === 'system' || tab) {
+    const route: Route = { view: 'admin', section: 'system' };
+    if (tab) route.tab = tab;
+    if (tab === 'adapters' && query) route.query = query;
+    return route;
+  }
 
   const section = SECTIONS.find((s) => s === parts[1]);
   return { view: 'admin', section: section ?? 'apps' };
@@ -100,7 +114,10 @@ export function format(route: Route): string {
     return `/admin/apps/${route.appID}${route.tab ? `/${route.tab}` : ''}`;
   }
   if (route.section === 'accounts' && route.userID) return `/admin/accounts/${route.userID}`;
-  if ((route.section === 'audit' || route.section === 'sign-in' || route.section === 'adapters') && route.query) {
+  if (route.section === 'system' && route.tab) {
+    return `/admin/system/${route.tab}${route.query ? `?${route.query}` : ''}`;
+  }
+  if ((route.section === 'audit' || route.section === 'sign-in') && route.query) {
     return `/admin/${route.section}?${route.query}`;
   }
   return route.section === 'apps' ? '/admin' : `/admin/${route.section}`;
