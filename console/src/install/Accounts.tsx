@@ -15,13 +15,14 @@
 // Nobody types a password for somebody else. Adding an account shows one Pando
 // generated (GeneratedPassword.tsx), for the administrator to pass on.
 
-import { useState } from 'react';
+import { useContext, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Dialog, Input, Select, StatusIndicator, Tag } from '@design';
+import { Banner, Button, Dialog, Input, Select, StatusIndicator, Tabs, Tag } from '@design';
 
 import { api, RequestFailed } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { GeneratedPassword } from './GeneratedPassword';
+import { SystemTabs } from './systemTabs';
 import { Sheet } from '../ui/Sheet';
 import { SearchField } from '../ui/SearchField';
 import { ShowMore, usePaged, useSettled, type PageOf } from '../ui/paged';
@@ -301,6 +302,17 @@ export function Screen({
   // Left-aligned and uncapped: the rules under a table run to the window's
   // edge, and the screen's action sits beside its heading rather than at the
   // far end of a measure. Sheet keeps both and adds the neatline.
+  const system = useContext(SystemTabs);
+  if (system) {
+    // A tab of System: System's heading, this screen's action, then the tabs
+    // — spaced as an app's tabs are.
+    return (
+      <Sheet heading="System" action={action}>
+        <Tabs value={system.value} onChange={system.onChange} items={system.items} />
+        <div style={{ paddingTop: 'var(--space-5)' }}>{children}</div>
+      </Sheet>
+    );
+  }
   return (
     <Sheet heading={heading} action={action}>
       {children}

@@ -27,7 +27,7 @@ import {
   Tabs,
   Tooltip,
 } from '@design';
-import type { SidebarItem } from '@design';
+import type { SidebarItem, TabItem } from '@design';
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
@@ -41,6 +41,7 @@ import { Backups } from '../install/Backups';
 import { Events } from '../install/Events';
 import { InboxButton } from '../ui/Inbox';
 import { Updates, useUpdates } from '../install/Updates';
+import { SystemTabs } from '../install/systemTabs';
 import { Audit, Installation, Policy } from '../install/Installation';
 import { statusLabel, statusSymbol } from '../ui/status';
 import { AppOnboarding } from './AppOnboarding';
@@ -195,14 +196,26 @@ export function AdminConsole({
   // Identity providers are adapters (R-040): read with install.view, changed
   // with install.adapters.manage.
   if (canView) items.push({ value: 'sign-in', label: 'Sign-in' });
-  if (canView) items.push({ value: 'adapters', label: 'Adapters' });
-  if (canView || canManagePolicy) items.push({ value: 'policy', label: 'Policy' });
-  if (canManageBackups) items.push({ value: 'backups', label: 'Backups' });
+  // How the installation itself is set up and kept (issue #154). Each tab
+  // keeps the verb it had as a sidebar item of its own, and System is shown
+  // only when one of them is, so nobody sees a screen here they could not see
+  // before. The versions behind ride on System as well as on its tab, so they
+  // are not hidden behind a click.
+  const systemTabs: TabItem[] = [];
+  if (canView) systemTabs.push({ value: 'adapters', label: 'Adapters' });
+  if (canView || canManagePolicy) systemTabs.push({ value: 'policy', label: 'Policy' });
+  if (canManageBackups) systemTabs.push({ value: 'backups', label: 'Backups' });
+  if (canView) {
+    systemTabs.push({ value: 'updates', label: 'Updates', trailing: behind > 0 ? <Badge count={behind} /> : undefined });
+  }
+  const systemTab = systemTabs.find((t) => t.value === route.tab)?.value ?? systemTabs[0]?.value;
+  if (systemTabs.length > 0) {
+    items.push({ value: 'system', label: 'System', trailing: behind > 0 ? <Badge count={behind} /> : undefined });
+  }
   if (canReadAudit) items.push({ value: 'audit', label: 'Audit log' });
   // Anybody who administers an app may subscribe to its events (R-368);
   // install.events.manage adds install-wide ones and everybody's.
   if (administrative || canManageEvents) items.push({ value: 'events', label: 'Events' });
-  if (canView) items.push({ value: 'updates', label: 'Updates', trailing: behind > 0 ? <Badge count={behind} /> : undefined });
 
   // Last, and for everyone. The API is the product (R-261) and an agent holding
   // a token is an ordinary principal (R-262), so the manual and the way to mint
@@ -363,11 +376,24 @@ export function AdminConsole({
             onClearTest={() => go({ view: 'admin', section: 'sign-in' }, true)}
           />
         )}
-        {section === 'adapters' && <Installation query={route.query} />}
-        {section === 'policy' && <Policy canEdit={canManagePolicy} />}
-        {section === 'backups' && <Backups />}
+        {section === 'system' && systemTab && (
+          <SystemTabs.Provider
+            value={{
+              value: systemTab,
+              items: systemTabs,
+              // Replaced rather than pushed, as an app's tabs are.
+              onChange: (tab) => go({ view: 'admin', section: 'system', tab }, true),
+            }}
+          >
+            {systemTab === 'adapters' && <Installation query={route.query} />}
+            {systemTab === 'policy' && <Policy canEdit={canManagePolicy} />}
+            {systemTab === 'backups' && <Backups />}
+            {systemTab === 'updates' && (
+              <Updates onPolicy={() => go({ view: 'admin', section: 'system', tab: 'policy' })} />
+            )}
+          </SystemTabs.Provider>
+        )}
         {section === 'events' && <Events canManageAll={canManageEvents} apps={rows} />}
-        {section === 'updates' && <Updates onPolicy={() => setSection('policy')} />}
         {section === 'audit' && (
           <Audit
             // Filters carried in from a link, such as an account's page. Each
