@@ -1224,6 +1224,14 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name:        "pando_count_unread_notifications",
+		Description: "How many of your notifications are unread, without listing them.",
+		Schema:      schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/me/notifications/unread", nil, nil
+		},
+	},
+	{
 		Name:        "pando_mark_notifications_read",
 		Description: "Mark one of your notifications read, by notification_id, or every one when it is omitted.",
 		Schema:      schema(map[string]any{"notification_id": str("The notification's ID, ntf_…. Omit to mark every one read.")}),

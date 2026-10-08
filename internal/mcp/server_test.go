@@ -301,6 +301,7 @@ func TestEachToolMapsToItsEndpoint(t *testing.T) {
 		{"pando_get_notification_preferences", `{}`, "GET", "/notification-preferences"},
 		{"pando_list_app_events", `{"app_id":"app_01HQ8"}`, "GET", "/apps/app_01HQ8/events"},
 		{"pando_list_notifications", `{"unread":"true"}`, "GET", "/me/notifications?unread=true"},
+		{"pando_count_unread_notifications", `{}`, "GET", "/me/notifications/unread"},
 		{"pando_mark_notifications_read", `{}`, "POST", "/me/notifications/read"},
 		{"pando_mark_notifications_read", `{"notification_id":"ntf_01"}`, "POST", "/me/notifications/ntf_01/read"},
 		{"pando_set_notification_preference", `{"kind":"app_shared","channel":"ntf_smtp","enabled":"true"}`, "PUT", "/notification-preferences"},

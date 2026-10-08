@@ -1043,6 +1043,14 @@ pando notifications read [notification-id]
 | --- | --- | --- |
 | `--all` |  | Mark every notification read |
 
+#### `notifications unread`
+
+How many of your notifications are unread
+
+```
+pando notifications unread
+```
+
 ### `plan`
 
 Show what a deploy would do, without doing it

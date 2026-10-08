@@ -148,6 +148,7 @@ one verb says nothing about another (R-082).
 | `GET /api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}` |  | One delivery: every attempt at it (`attempt_log`) and the `payload` sent. |
 | `POST /api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}/redeliver` |  | Send a delivery again now, with the whole retry schedule ahead of it. |
 | `GET /api/v1/me/notifications` |  | Your notifications inbox, newest first: what Pando told you on the console, each with `kind`, `subject`, `body`, `app_name`, `link` and `read_at`, and `unread`, how many are unread in all. `unread=true` lists only those; `before` and `limit` page (R-377). |
+| `GET /api/v1/me/notifications/unread` |  | How many of your notifications are unread, as `unread`, without listing any: the count the console's bell asks for (R-377). |
 | `POST /api/v1/me/notifications/{notificationID}/read` |  | Mark one of your notifications read. |
 | `POST /api/v1/me/notifications/read` |  | Mark every one of your notifications read. |
 | `GET /api/v1/notification-preferences` |  | Which of Pando's own notifications reach you, on which channel: every `kind`, every `channel` that reaches people (the console, email), and your `choices` with defaults filled in (R-373). |

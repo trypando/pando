@@ -102,6 +102,7 @@ boundary (O-12), and offering a tool policy will refuse wastes the agent's turn.
 | `pando_redeliver` | Send a delivery again now, with the whole retry schedule ahead of it. | `delivery_id`, `subscription_id` |
 | `pando_list_app_events` | An app's recent events, newest first: deploys, state and health changes, scans, shares, backups. Each says what happened in a sentence. | `app_id` |
 | `pando_list_notifications` | Your notifications inbox, newest first, and how many are unread. unread=true lists only those. | `unread` (optional) |
+| `pando_count_unread_notifications` | How many of your notifications are unread, without listing them. | none |
 | `pando_mark_notifications_read` | Mark one of your notifications read, by notification_id, or every one when it is omitted. | `notification_id` (optional) |
 | `pando_get_notification_preferences` | Which of Pando's own notifications reach you, on each channel that reaches people, such as the console and email. | none |
 | `pando_set_notification_preference` | Turn one of Pando's notifications on or off for you on one channel. kind and channel are as pando_get_notification_preferences lists them. | `channel`, `enabled`, `kind` |

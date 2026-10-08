@@ -616,6 +616,26 @@ func notificationsCmd(client func() (*Client, error)) *cobra.Command {
 	list.Flags().BoolVar(&unread, "unread", false, "Only the ones you have not read")
 	cmd.AddCommand(list)
 
+	cmd.AddCommand(&cobra.Command{
+		Use:   "unread",
+		Short: "How many of your notifications are unread",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			var out struct {
+				Unread int `json:"unread"`
+			}
+			if err := c.Do("GET", "/me/notifications/unread", nil, &out); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%d unread.\n", out.Unread)
+			return nil
+		},
+	})
+
 	var all bool
 	read := &cobra.Command{
 		Use:   "read [notification-id]",

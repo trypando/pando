@@ -676,6 +676,7 @@ func (s *Server) Routes() http.Handler {
 			})
 		})
 		r.Get("/me/notifications", s.handleListNotifications)
+		r.Get("/me/notifications/unread", s.handleUnreadNotifications)
 		r.Post("/me/notifications/read", s.handleReadAllNotifications)
 		r.Post("/me/notifications/{notificationID}/read", s.handleReadNotification)
 		r.Get("/notification-preferences", s.handleGetNotificationPreferences)

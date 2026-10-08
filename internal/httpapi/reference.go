@@ -122,6 +122,7 @@ var routeDocs = []reference.Route{
 	{Method: "GET", Path: "/api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}", Group: "Events", Summary: "One delivery: every attempt at it (`attempt_log`) and the `payload` sent."},
 	{Method: "POST", Path: "/api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}/redeliver", Group: "Events", Summary: "Send a delivery again now, with the whole retry schedule ahead of it."},
 	{Method: "GET", Path: "/api/v1/me/notifications", Group: "Events", Summary: "Your notifications inbox, newest first: what Pando told you on the console, each with `kind`, `subject`, `body`, `app_name`, `link` and `read_at`, and `unread`, how many are unread in all. `unread=true` lists only those; `before` and `limit` page (R-377)."},
+	{Method: "GET", Path: "/api/v1/me/notifications/unread", Group: "Events", Summary: "How many of your notifications are unread, as `unread`, without listing any: the count the console's bell asks for (R-377)."},
 	{Method: "POST", Path: "/api/v1/me/notifications/{notificationID}/read", Group: "Events", Summary: "Mark one of your notifications read."},
 	{Method: "POST", Path: "/api/v1/me/notifications/read", Group: "Events", Summary: "Mark every one of your notifications read."},
 	{Method: "GET", Path: "/api/v1/notification-preferences", Group: "Events", Summary: "Which of Pando's own notifications reach you, on which channel: every `kind`, every `channel` that reaches people (the console, email), and your `choices` with defaults filled in (R-373)."},

@@ -253,6 +253,21 @@ func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request)
 	JSON(w, http.StatusOK, page)
 }
 
+// handleUnreadNotifications answers the bell's count alone, without a page of
+// the inbox: every open console asks it on every screen (R-377, issue #72).
+func (s *Server) handleUnreadNotifications(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.inbox(w, r)
+	if !ok {
+		return
+	}
+	unread, err := s.Inbox.UnreadCount(r.Context(), p)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]int{"unread": unread})
+}
+
 func (s *Server) handleReadNotification(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.inbox(w, r)
 	if !ok {
