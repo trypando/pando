@@ -30,16 +30,24 @@ func Error(w http.ResponseWriter, r *http.Request, err error) {
 
 	e := errs.As(err)
 	if e == nil {
-		log.From(ctx).Error("unenveloped error reached the API boundary", zap.Error(err))
+		log.From(ctx).Error("unenveloped error reached the API boundary", untrustedError(err))
 		e = errs.New(errs.Internal, "Something went wrong. The error has been logged.")
 	}
 	e = e.WithRequestID(RequestIDFrom(ctx))
 
 	if e.Status() >= 500 {
-		log.From(ctx).Error("request failed", zap.String("code", string(e.Code)), zap.Error(err))
+		log.From(ctx).Error("request failed", log.Untrusted("code", string(e.Code)), untrustedError(err))
 	} else {
-		log.From(ctx).Info("request rejected", zap.String("code", string(e.Code)))
+		log.From(ctx).Info("request rejected", log.Untrusted("code", string(e.Code)))
 	}
 
 	JSON(w, e.Status(), e)
+}
+
+// untrustedError is zap.Error for an error whose text may carry request input:
+// a path parameter that reached a lookup comes back inside its not-found error.
+// The code goes through log.Untrusted too — it is always a catalog constant, but
+// an analyzer tracking err cannot see that past errs.As.
+func untrustedError(err error) zap.Field {
+	return log.Untrusted("error", err.Error())
 }
