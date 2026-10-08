@@ -23,6 +23,7 @@ import (
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/backup"
+	"github.com/trypando/pando/internal/core/capacity"
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/edge"
@@ -113,6 +114,10 @@ type Server struct {
 	Planner     *planner.Planner
 	Allocations *state.Allocations
 	Deployments *state.Deployments
+
+	// Capacity is GET /capacity's runtime readings, refreshed in the
+	// background (issue #72).
+	Capacity *capacity.Snapshots
 
 	// Security scores apps and answers where one stands (R-310). Nil on an
 	// installation with no scanner, where the endpoints say so rather than

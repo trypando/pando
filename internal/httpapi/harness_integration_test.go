@@ -33,6 +33,7 @@ import (
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
+	"github.com/trypando/pando/internal/core/capacity"
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/detection"
@@ -207,6 +208,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		},
 		AdapterKinds: []adapterapi.KindInfo{aianthropic.Info(), secretslocal.Info()},
 		Allocations:  allocations,
+		Capacity:     &capacity.Snapshots{Registry: registry, Allocations: allocations},
 
 		AdapterCredentials: state.NewAdapterCredentials(db, secretsAdapter, "sec_local"),
 		Planner:            appPlanner,
