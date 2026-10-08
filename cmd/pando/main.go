@@ -54,6 +54,7 @@ import (
 	"github.com/trypando/pando/internal/core/assist"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
+	"github.com/trypando/pando/internal/core/autodeploy"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
 	"github.com/trypando/pando/internal/core/capacity"
@@ -708,6 +709,38 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:      logger,
 	}
 
+	// Auto-deploy is a separate job on its own clock (R-141). It never modifies
+	// a running app — it creates a revision and deploys it through the same
+	// service a person's deploy goes through. Off unless an app's pinned spec
+	// asks for it, so its poll is usually a query returning nothing. A webhook
+	// (R-142) asks the same job to check one app sooner.
+	autoDeployChecks := state.NewAutoDeployChecks(db)
+	autoDeployJob := &reconciler.AutoDeploy{
+		Apps:        apps,
+		Deployments: deployments,
+		Checks:      autoDeployChecks,
+		Resolver:    refResolver{},
+		// The plan, the capacity hold, the audit event and the deploy queue,
+		// as for every other deploy (O-32).
+		Deployer:    approvals,
+		Audit:       auditor,
+		Concurrency: cfg.Work.AutoDeploy,
+		Logger:      logger,
+		// An app whose deploys now need approval stops auto-deploying
+		// (R-158).
+		Policy: policyStore,
+	}
+	autoDeploy := &autodeploy.Service{
+		Apps:    apps,
+		Checks:  autoDeployChecks,
+		Secrets: state.NewAutoDeploySecrets(db, secretsAdapter, secretsRef),
+		Policy:  policyStore,
+		Authz:   authorizer,
+		Checker: autoDeployJob,
+		Audit:   httpapi.AuditFunc(auditor),
+		Logger:  logger,
+	}
+
 	// One resolver, used by the proxy to route and by the router to tell an
 	// app's hostname from Pando's own.
 	appResolver := proxy.NewStateResolver(apps)
@@ -876,6 +909,7 @@ func serve(ctx context.Context, configPath string) error {
 		Reconciles:  reconciles,
 		Deployer:    deployer,
 		Approvals:   approvals,
+		AutoDeploy:  autoDeploy,
 
 		Subscriptions: subscriptions,
 		Inbox:         &subscription.Inbox{Store: notifications},
@@ -1052,25 +1086,8 @@ func serve(ctx context.Context, configPath string) error {
 	// adapter asks for any more goes. Docker restarts one that crashed.
 	job("edges", func(ctx context.Context) { edges.Run(ctx, time.Minute) })
 
-	// Auto-deploy is a separate job on its own clock (R-141). It never modifies
-	// a running app — it creates a revision and deploys it through the same
-	// service a person's deploy goes through. Off unless an app's pinned spec
-	// asks for it, so this is usually a query returning nothing.
-	job("auto-deploy", (&reconciler.AutoDeploy{
-		Apps:        apps,
-		Deployments: deployments,
-		Checks:      state.NewAutoDeployChecks(db),
-		Resolver:    refResolver{},
-		// The plan, the capacity hold, the audit event and the deploy queue,
-		// as for every other deploy (O-32).
-		Deployer:    approvals,
-		Audit:       auditor,
-		Concurrency: cfg.Work.AutoDeploy,
-		Logger:      logger,
-		// An app whose deploys now need approval stops auto-deploying
-		// (R-158).
-		Policy: policyStore,
-	}).Run)
+	// Auto-deploy's polls (R-141, R-142).
+	job("auto-deploy", autoDeployJob.Run)
 
 	// Audit retention, daily (R-347). As the archiver role, which is the only
 	// one that can remove a month, and only one archived and old enough.

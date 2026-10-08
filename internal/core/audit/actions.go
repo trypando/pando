@@ -17,6 +17,8 @@ var Actions = []string{
 	"ai.function.unassign",
 	"ai.search_audit",
 	"app.auto_deploy",
+	"app.auto_deploy.configure",
+	"app.auto_deploy.webhook_secret",
 	"app.bundle.destroy",
 	"app.corrected",
 	"app.create",

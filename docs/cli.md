@@ -231,6 +231,73 @@ pando app add <source-url> | --image <reference>
 | `--timeout` | `10m0s` | with --wait, how long to wait before giving up |
 | `--wait` |  | wait for detection to finish, as `pando app detection --wait` does |
 
+#### `app auto-deploy`
+
+Deploy an app automatically when its branch or releases change
+
+```
+pando app auto-deploy
+```
+
+Pando checks the app's repository every few minutes and deploys what it finds.
+Off by default. A change here is saved as a new configuration revision and takes
+effect at the app's next deploy.
+
+##### `app auto-deploy off`
+
+Turn automatic deploys off
+
+```
+pando app auto-deploy off <app>
+```
+
+##### `app auto-deploy set`
+
+Turn automatic deploys on, following a branch or new releases
+
+```
+pando app auto-deploy set <app>
+```
+
+With --trigger branch (the default), each new commit on the branch deploys. Without
+--branch, that is the branch the app was deployed from.
+
+With --trigger release, each new release tag deploys. A release is a tag such as
+v1.2.3, or one matching --tag-pattern, a pattern such as release-* where * matches
+any characters.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--branch` |  | the branch to follow; empty follows the branch the app was deployed from |
+| `--tag-pattern` |  | which tags are releases, such as release-*; empty means tags like v1.2.3 |
+| `--trigger` | `branch` | what deploys: branch (each new commit) or release (each new release tag) |
+
+##### `app auto-deploy show`
+
+Show the settings, the last check and the webhook
+
+```
+pando app auto-deploy show <app>
+```
+
+##### `app auto-deploy webhook-secret`
+
+Make the app a new webhook secret, and print it with the webhook URL
+
+```
+pando app auto-deploy webhook-secret <app>
+```
+
+A webhook lets the git host tell Pando about a push or a release as it happens,
+instead of Pando finding out at its next check. It needs Pando to be reachable from
+the git host. Paste the URL and secret into the repository's webhook settings, with
+content type application/json. The secret is printed this once; making a new one
+replaces it.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--remove` |  | remove the secret instead, which turns the webhook off |
+
 #### `app delete`
 
 Delete an app, keeping a final backup of its data

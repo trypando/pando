@@ -293,6 +293,37 @@ func TestR141_ANewCommitWhileADeployRunsIsSkippedNotQueued(t *testing.T) {
 	require.False(t, found, "nothing attempted, so nothing stops the next poll")
 }
 
+// TestR142_AWebhookCheckGoesTheWayAPollDoes asserts that a check a webhook
+// asks for is the poll's own check of one app — the same deploy, recorded as
+// delivered by webhook — and leaves alone the apps a poll leaves alone.
+func TestR142_AWebhookCheckGoesTheWayAPollDoes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	apps := state.NewApps(db)
+	owner := seedOwner(t, db)
+	app := autoApp(t, apps, owner, onBranch)
+
+	head := &movedHead{sha: "bbbbbbb"}
+	deployer := &recordingDeployer{deployments: state.NewDeployments(db)}
+	j := job(db, head, deployer)
+	require.NoError(t, j.CheckApp(ctx, app.ID, reconciler.DeliveryWebhook))
+
+	calls := deployer.made()
+	require.Len(t, calls, 1)
+	require.Equal(t, authz.System(), calls[0].principal)
+	var delivery string
+	require.NoError(t, db.Pool.QueryRow(ctx, `
+		SELECT detail->>'delivery' FROM audit_events
+		WHERE action = 'app.auto_deploy' AND app_id = $1`, app.ID).Scan(&delivery))
+	require.Equal(t, "webhook", delivery)
+
+	failed := autoApp(t, apps, owner, onBranch)
+	require.NoError(t, apps.SetState(ctx, failed.ID, state.StateFailed))
+	require.NoError(t, j.CheckApp(ctx, failed.ID, reconciler.DeliveryWebhook))
+	require.Len(t, deployer.made(), 1, "R-151: a webhook does not deploy a failed app either")
+}
+
 // TestR151_AutoDeployLeavesAFailedAppAlone asserts that an app in failed is
 // not deployed automatically: it stays failed until a person acts.
 func TestR151_AutoDeployLeavesAFailedAppAlone(t *testing.T) {

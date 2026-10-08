@@ -151,6 +151,30 @@ func (a *AutoDeploy) poll(ctx context.Context, only spec.AutoDeployTrigger) {
 	})
 }
 
+// CheckApp checks one app now, as a poll would: what a webhook from the git
+// host asks for (R-142). The same path as the poll, so a webhook can start
+// nothing a poll could not — it only makes the check sooner.
+func (a *AutoDeploy) CheckApp(ctx context.Context, appID, delivery string) error {
+	app, found, err := a.Apps.ByID(ctx, appID)
+	if err != nil || !found {
+		return err
+	}
+	// The apps WithAutoDeploy leaves out, for the same reasons: a failed app
+	// stays failed (R-151), and one deploying already is skipped.
+	if app.DeletedAt != nil || app.PinnedSpecID == "" {
+		return nil
+	}
+	switch app.State {
+	case state.StateFailed, state.StateArchived, state.StateDeploying:
+		return nil
+	}
+	doc, err := a.policy(ctx)
+	if err != nil {
+		return err
+	}
+	return a.check(ctx, doc, app, "", delivery)
+}
+
 func (a *AutoDeploy) policy(ctx context.Context) (policy.Document, error) {
 	if a.Policy == nil {
 		return policy.Document{}, nil

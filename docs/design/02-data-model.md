@@ -338,6 +338,17 @@ CREATE TABLE auto_deploy_checks (
     created_at       timestamptz NOT NULL DEFAULT now(),
     updated_at       timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE auto_deploy_webhook_secrets (     -- R-142, one per app (O-56)
+    app_id       text PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+    adapter_ref  text NOT NULL,
+    ciphertext   bytea,                        -- sealed by the secrets adapter (R-190)
+    external_ref text,
+    version      integer NOT NULL DEFAULT 1,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    CHECK (ciphertext IS NOT NULL OR external_ref IS NOT NULL)
+);
 ```
 
 **[D]** `auto_deploy_checks` is what the console shows as an app's last check, and what stops

@@ -22,6 +22,7 @@ import (
 	"github.com/trypando/pando/internal/core/assist"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
+	"github.com/trypando/pando/internal/core/autodeploy"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/capacity"
 	"github.com/trypando/pando/internal/core/clock"
@@ -129,6 +130,10 @@ type Server struct {
 	// Approvals starts every deploy, and asks for, records and acts on the
 	// approval of those that need one (R-154 – R-159).
 	Approvals *approval.Service
+
+	// AutoDeploy reads and changes automatic deploy settings and takes the
+	// webhooks git hosts send (R-141, R-142).
+	AutoDeploy *autodeploy.Service
 
 	// Subscriptions manages event subscriptions and notification
 	// preferences (issue #50). Nil answers that they are unavailable.
@@ -817,6 +822,18 @@ func (s *Server) Routes() http.Handler {
 
 				r.Get("/routing", s.handleGetRouting)
 				r.Put("/routing", s.handleSetRouting)
+
+				// Automatic deploys (R-141, R-142). Changing the settings writes a
+				// revision, so app.spec.edit, as does the webhook secret. The
+				// webhook itself is public: the git host proves itself with a
+				// signature over the body, keyed by the app's own secret.
+				r.Route("/auto-deploy", func(r chi.Router) {
+					r.Get("/", s.handleGetAutoDeploy)
+					r.Put("/", s.handleSetAutoDeploy)
+					r.Post("/webhook-secret", s.handleRotateWebhookSecret)
+					r.Delete("/webhook-secret", s.handleRemoveWebhookSecret)
+					r.Post("/webhook", s.handleAutoDeployWebhook)
+				})
 
 				r.Route("/specs", func(r chi.Router) {
 					r.Get("/", s.handleListSpecs)

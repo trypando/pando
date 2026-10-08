@@ -486,6 +486,20 @@ commit whose deploy is refused or fails is not retried on every poll; the next c
 can deploy the old one by hand. The same row holds the last check's time, what it found and why it went
 nowhere, for the console. An app in `failed` is not checked at all (R-151).
 
+**[D]** Webhook delivery (R-142) is opt-in per app and only makes a check sooner. An app gets a webhook
+when somebody makes it a secret (`POST /apps/{id}/auto-deploy/webhook-secret`, shown once, sealed by the
+secrets adapter, one per app, O-56). `POST /apps/{id}/auto-deploy/webhook` takes GitHub's format: it
+verifies `X-Hub-Signature-256` against that secret, and a push to the branch the app follows, or a
+tag, release or tag creation for an app following releases, calls `AutoDeploy.CheckApp` in the
+background. That is the poll's own check of one app: it lists the remote's refs itself, so nothing in
+the payload decides what deploys, and it skips what a poll skips. Every refusal is the same `401`, so the
+endpoint does not say which apps exist or have a webhook. Polling carries on regardless.
+
+**[D]** The settings are changed through `PUT /apps/{id}/auto-deploy`, which writes a revision on the
+newest one with the same validation and spec gate as `POST /specs` (R-158), so the console, `pando app
+auto-deploy` and `pando_set_auto_deploy` share it (R-261). Like every edit, it takes effect at the next
+deploy.
+
 **[P]** Poll interval: 5 minutes for apps following a branch, 15 for apps following releases, each on
 its own ticker. Apps are checked eight at a
 time (`work.auto_deploy`): in series, a `git ls-remote` per app outlasted the interval past a few
