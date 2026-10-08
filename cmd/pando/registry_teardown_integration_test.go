@@ -53,10 +53,10 @@ func TestR224_ADeletedAppsBuildsAreDeletedForEveryWorkloadItEverBuilt(t *testing
 
 	srv := httptest.NewServer(ggcrregistry.New(ggcrregistry.Logger(log.New(io.Discard, "", 0))))
 	t.Cleanup(srv.Close)
-	reg, err := imageregistry.New(imageregistry.Config{URL: srv.URL, Insecure: true})
-	require.NoError(t, err)
+	adapter := ociRegistry(t, map[string]any{"url": srv.URL, "insecure": true}, "")
+	reg := imageregistry.Of("reg_1", adapter)
 	push := func(appID, workload string) name.Reference {
-		repo, tag := reg.Repository(appID, workload, "dep_1")
+		repo, tag := adapter.Repository(appID, workload, "dep_1")
 		ref, err := name.NewTag(repo+":"+tag, name.Insecure)
 		require.NoError(t, err)
 		img, err := random.Image(64, 1)

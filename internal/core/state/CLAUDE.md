@@ -33,6 +33,7 @@ a migration simpler.
 | `grants_data_plane_is_app_scoped` | R-070 — data-plane use is per-app and binary; there is no install-wide "use" |
 | `user_identities` PK and `users_alias_is_suspended` | O-1 — an identity reaches one account; linking aliases and never merges |
 | `identity_adapters_no_inline_credentials` | R-190 — an identity provider's secret lives only in `identity_adapter_credentials` |
+| `adapter_configs_registry_url_no_credential` | R-190 — an image registry's address never carries its username and password; the password lives only in `adapter_credentials` |
 | `pando_private` schema, granted to nobody, holding the restricted roles' passwords | R-348 — the application role cannot read the archiver's password. Never move it into `public`, where `applyGrants` would hand it to `pando_app` |
 | `pando_replicas.assertion_key` is exactly 32 bytes | R-051 — only the public half of a signing key is ever stored |
 

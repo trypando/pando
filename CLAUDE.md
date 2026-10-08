@@ -35,6 +35,15 @@ design.
 
 **Writing an adapter?** `docs/design/03-adapter-interfaces.md`, then the relevant section of `01`.
 
+**Adding an adapter category is allowed.** The set in R-252 is not closed. If you are building something
+that talks to an outside provider, apply design 03 §8.1's test: does the planner need to ask it a
+question, and does it have a provider's vocabulary to hide? If it passes, make it a category — interface
+and capabilities in `adapter/api`, kinds under `internal/adapter/`, a migration adding it to
+`adapter_configs`' check, R-252 amended in the same change. Do not build an adapter-shaped thing in core
+(provider kinds switched on in a core package, its own settings table, its own screen) to avoid adding
+one; the install image registry was built that way and had to be converted (issue #153). If it fails the
+test, it is a library, and it does not go under `internal/adapter/`.
+
 ---
 
 ## 2. Invariants you may not break
@@ -97,8 +106,8 @@ internal/
     policy/             Host policy evaluation.
     state/              sqlc-generated queries + repository types.
   adapter/
-    api/                The seven interfaces. Definitions only, no implementations.
-    identity|routing|builder|runtime|secrets|services|notify/
+    api/                One interface per category. Definitions only, no implementations.
+    identity|routing|builder|runtime|secrets|services|notify|backup|scanner|ai|source|imageregistry/
   detect/               The auction, detectors, trial run.
   proxy/                The identity-aware reverse proxy. The single enforcement point.
   httpapi/              chi handlers. NO business logic — see §4.

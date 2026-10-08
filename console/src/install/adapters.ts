@@ -120,18 +120,21 @@ export function kindKey(k: { category: string; kind: string }): string {
  *  words, in sentence case like everything else. */
 export function categoryLabel(category: string): string {
   if (category === 'ai') return 'AI';
+  if (category === 'image_registry') return 'Image registry';
   return category.charAt(0).toUpperCase() + category.slice(1);
 }
 
 // The categories in the order an installation is built up: where apps run and
 // how they are reached first, then what they are built with and what they
 // lean on, then the extras. One not listed here sorts after these, by name.
-const CATEGORY_ORDER = ['runtime', 'routing', 'builder', 'services', 'secrets', 'backup', 'scanner', 'ai', 'notify', 'identity'];
+const CATEGORY_ORDER = ['runtime', 'routing', 'builder', 'image_registry', 'services', 'secrets', 'backup', 'scanner', 'ai', 'notify', 'identity'];
 
 const CATEGORY_NOTES: Record<string, string> = {
   runtime: 'Where apps run: it starts, stops and watches the containers each app is made of.',
   routing: 'How apps are reached: their addresses, and the edge that sends requests through Pando to them.',
   builder: 'What turns an app\u2019s source into an image Pando can run.',
+  image_registry:
+    'Where Pando pushes built images when a runtime pulls them rather than taking them directly. A single Docker host needs none. Used from the moment it is saved.',
   services: 'The databases and caches apps declare, such as PostgreSQL or Redis, provisioned beside each app.',
   secrets: 'Where secret values are kept, encrypted. Pando stores what this hands back, never the plain value.',
   backup: 'Where backups of Pando and of each app\u2019s storage are written.',

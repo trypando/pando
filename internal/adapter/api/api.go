@@ -1063,7 +1063,7 @@ type PushTarget struct {
 	Auth *RegistryAuth
 
 	// Insecure permits plain HTTP to the registry. Only set when the operator
-	// said so (PANDO_REGISTRY_INSECURE, O-35).
+	// said so in the image registry adapter's settings (O-35).
 	Insecure bool
 }
 
@@ -1088,27 +1088,6 @@ const ImageLabelBundle = "io.pando.built-for"
 type BuildResult struct {
 	ImageRef string
 	Digest   string
-}
-
-// --- registry probe --------------------------------------------------------
-
-// RegistryProbe looks for an image the maintainer already publishes.
-//
-// R-094 tier 1, the top of the confidence ladder, and it sits there because a
-// published image is the maintainer's own answer to "how is this built" —
-// already built, already shipped by whoever maintains it. Nothing Pando infers
-// about the source beats it.
-type RegistryProbe interface {
-	// Published reports images published for a source repository, best first.
-	// No result is the normal case and not an error.
-	Published(ctx context.Context, src spec.Source) ([]PublishedImage, error)
-}
-
-// PublishedImage is an image that already exists.
-type PublishedImage struct {
-	Ref      string `json:"ref"`
-	Digest   string `json:"digest,omitempty"`
-	Registry string `json:"registry"`
 }
 
 // --- secrets ---------------------------------------------------------------

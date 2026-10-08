@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -9,11 +10,11 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 
+	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/log"
-	"github.com/trypando/pando/internal/secret"
 )
 
 // unreadable is an install registry whose settings cannot be read.
@@ -21,14 +22,29 @@ type unreadable struct{ err error }
 
 func (u unreadable) Current(context.Context) (*imageregistry.Registry, error) { return nil, u.err }
 
-// ecrRegistry is an install registry whose credential cannot be resolved for
-// it: ECR keys for a host that is not ECR.
+// refusedKey is an image registry adapter whose credential cannot be had: an
+// ECR key AWS refuses.
+type refusedKey struct{ api.ImageRegistryAdapter }
+
+func (refusedKey) ImageRegistryCapabilities() api.ImageRegistryCapabilities {
+	return api.ImageRegistryCapabilities{Host: "registry.internal:5000", RepositoryPerApp: true}
+}
+func (refusedKey) Owns(ref string) bool {
+	return strings.HasPrefix(ref, "registry.internal:5000/apps/")
+}
+func (refusedKey) PullAuth(context.Context) (*api.RegistryAuth, error) {
+	return nil, errs.Wrap(errs.ValidInvalid, "AWS refused the image registry's access key when Pando asked ECR in us-east-1 for a registry password.",
+		errors.New("UnrecognizedClientException: The security token included in the request is invalid."))
+}
+func (k refusedKey) Target(ctx context.Context, _, _, _ string) (api.PushTarget, error) {
+	_, err := k.PullAuth(ctx)
+	return api.PushTarget{}, err
+}
+
+// ecrRegistry is an install registry whose credential cannot be resolved.
 func ecrRegistry(t *testing.T) imageregistry.Provider {
 	t.Helper()
-	reg, err := imageregistry.New(imageregistry.Config{URL: "https://registry.internal:5000", Kind: "ecr",
-		Username: "AKIAEXAMPLE", Password: secret.New("ecr-secret-do-not-log")})
-	require.NoError(t, err)
-	return imageregistry.Static(reg)
+	return imageregistry.Static(imageregistry.Of("reg_ecr", refusedKey{}))
 }
 
 // TestR254_ABuildWhoseRegistryCannotBeUsedIsNotBuilt asserts that a deploy
@@ -50,7 +66,7 @@ func TestR254_ABuildWhoseRegistryCannotBeUsedIsNotBuilt(t *testing.T) {
 	_, err = buildRunner(t, b, &importingRuntime{caps: pulling}).WithBuildRegistry(ecrRegistry(t)).
 		build(context.Background(), buildApp(), &source.Checkout{}, &strings.Builder{}, nil, "app_01HQ8", "dep_1")
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
-	require.Contains(t, errs.As(err).Message, "not an ECR registry")
+	require.Contains(t, errs.As(err).Message, "AWS refused the image registry's access key")
 	require.Empty(t, b.asked.Strategy, "nothing was built")
 
 	failed := errs.New(errs.BuildFailed, "The push to the registry was refused.")

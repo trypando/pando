@@ -570,7 +570,7 @@ func (a *Adapter) RestoreVolume(ctx context.Context, vh api.VolumeHandle, src io
 func (a *Adapter) ImportImage(context.Context, io.Reader) (string, error) {
 	return "", errs.New(errs.PlanCapabilityUnsupported,
 		"The Docker hosts runtime takes images from a registry, not from Pando's host.").
-		WithRemedy("Configure an image registry for the install, so builds are pushed there and each host pulls what it runs.")
+		WithRemedy("Add an image registry adapter under System → Adapters, or with pando adapter add image_registry/oci, so builds are pushed there and each host pulls what it runs.")
 }
 
 func (a *Adapter) Logs(ctx context.Context, ref api.WorkloadRef, opts api.LogOptions) (io.ReadCloser, error) {

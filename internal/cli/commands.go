@@ -55,7 +55,6 @@ func Commands() []*cobra.Command {
 		withServer(sectionCmd(client)),
 		withServer(auditCmd(client)),
 		withServer(configCmd(client)),
-		withServer(imageRegistryCmd(client)),
 		withServer(updatesCmd(client)),
 		withServer(upgradeCmd(client)),
 		withServer(rollbackCmd(client)),

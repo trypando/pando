@@ -42,6 +42,13 @@ const (
 	// repositories live, which apps from private repositories are cloned
 	// with. See source.go.
 	CategorySource Category = "source"
+
+	// CategoryImageRegistry is the twelfth (R-252, issue #153): the registry
+	// Pando pushes a build to when the runtime pulls rather than imports. It
+	// was install configuration until the providers' differences — which
+	// create a repository on push, which mint a password — turned out to be
+	// the planner's questions. See imageregistry.go.
+	CategoryImageRegistry Category = "image_registry"
 )
 
 // Adapter is implemented by every adapter in every category.

@@ -81,7 +81,7 @@ internal/
     planner/            spec + policy + adapters -> plan, or a plan-time error.
     reconciler/         The loop and the state machine.
     state/              sqlc-generated queries and repository types.
-  adapter/              The seven adapter categories, and their implementations.
+  adapter/              The adapter categories, and their implementations.
   detect/               Build detection: the auction, the detectors, the trial run.
   proxy/                The identity-aware reverse proxy.
   httpapi/              chi handlers. No business logic.
@@ -148,8 +148,9 @@ the shortcut that stops the check finding the thing it exists to find.
 ## Writing an adapter
 
 Adapters are compiled into the binary and contributed by pull request; there is no external plugin
-system, and none is planned. Seven categories: runtime, routing, builder, secrets, services,
-identity, notifications.
+system, and none is planned. Twelve categories: runtime, routing, builder, secrets, services,
+identity, notifications, backup, scanner, AI, source and image registry. A new category is welcome
+when it passes design 03 §8.1's test; R-252 is amended in the same pull request.
 
 Start with [`docs/design/03-adapter-interfaces.md`](docs/design/03-adapter-interfaces.md). Two rules
 shape every adapter:

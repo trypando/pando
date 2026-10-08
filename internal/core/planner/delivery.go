@@ -9,9 +9,10 @@ import (
 	"github.com/trypando/pando/internal/errs"
 )
 
-// InstallRegistry is what the planner asks of the install's image registry:
-// only whether there is one, and whether builds always go through it (issue
-// #72, PR 5). *imageregistry.Registry satisfies it, a nil one included.
+// InstallRegistry is what the planner asks of the install's image registry
+// adapter (issue #72, PR 5; R-252): whether there is one, and whether builds
+// always go through it — its capabilities, read through
+// *imageregistry.Registry, which satisfies this, a nil one included.
 type InstallRegistry interface {
 	Configured() bool
 	Always() bool
@@ -70,10 +71,10 @@ func ChooseDelivery(runtimeRef string, rc api.RuntimeCapabilities, builderRef st
 			WithRemedy("Run this app on a runtime that can run built images, or point it at a published image instead.")
 	case !configured:
 		return "", errs.Newf(errs.PlanCapabilityUnsupported,
-			"This app runs on the runtime %q, which pulls every image from a registry. This install has no registry configured.", runtimeRef).
+			"This app runs on the runtime %q, which pulls every image from a registry. This install has no image registry adapter to push built images to.", runtimeRef).
 			WithDetail("runtime", runtimeRef).
-			WithDetail("setting", "PANDO_REGISTRY_URL").
-			WithRemedy("Set PANDO_REGISTRY_URL to the registry Pando should push built images to, then restart Pando.")
+			WithDetail("category", "image_registry").
+			WithRemedy("Add an image registry adapter for the registry Pando should push built images to, under System → Adapters or with pando adapter add image_registry/oci. It is used from the moment it is saved.")
 	default:
 		return "", errs.Newf(errs.PlanCapabilityUnsupported,
 			"This app runs on the runtime %q, which pulls every image from a registry, and the builder %q cannot push to one.", runtimeRef, builderRef).

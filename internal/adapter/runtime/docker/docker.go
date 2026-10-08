@@ -308,7 +308,7 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		// A single daemon can load an image from a stream, which is how a build
 		// reaches the runtime without a registry (O-34). It can also pull a
 		// build from the install's registry by digest, when one is configured
-		// and the install asks for that (PANDO_REGISTRY_ALWAYS).
+		// and the install asks for that (the image registry adapter's always).
 		ImageDelivery: []api.ImageDelivery{api.ImageDeliveryImport, api.ImageDeliveryRegistry},
 
 		// Traefik reads route files from a directory Pando writes and the

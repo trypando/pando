@@ -90,7 +90,7 @@ func TestR254_NoWayToDeliverABuildIsAPlanTimeRefusal(t *testing.T) {
 	require.NotNil(t, e)
 	require.Equal(t, errs.PlanCapabilityUnsupported, e.Code)
 	require.Contains(t, e.Message, "pulls every image from a registry")
-	require.Contains(t, e.Remedy, "PANDO_REGISTRY_URL")
+	require.Contains(t, e.Remedy, "image_registry")
 
 	_, err = planner.ChooseDelivery("rt_k8s", pulls, "bld_kaniko", noPush, has)
 	require.Equal(t, errs.PlanCapabilityUnsupported, errs.CodeOf(err))

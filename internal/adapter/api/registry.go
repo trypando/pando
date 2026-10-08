@@ -107,6 +107,8 @@ func satisfiesCategory(a Adapter) error {
 		_, ok = a.(AIAdapter)
 	case CategorySource:
 		_, ok = a.(SourceAdapter)
+	case CategoryImageRegistry:
+		_, ok = a.(ImageRegistryAdapter)
 	default:
 		return fmt.Errorf("unknown category %q", a.Category())
 	}
@@ -282,6 +284,16 @@ func (r *Registry) Backup(ref string) (BackupAdapter, bool) {
 	}
 	b, ok := a.(BackupAdapter)
 	return b, ok
+}
+
+// ImageRegistry returns an image registry adapter by reference (R-252).
+func (r *Registry) ImageRegistry(ref string) (ImageRegistryAdapter, bool) {
+	a, ok := r.Get(ref)
+	if !ok {
+		return nil, false
+	}
+	g, ok := a.(ImageRegistryAdapter)
+	return g, ok
 }
 
 // AI returns an AI adapter by reference (R-258).

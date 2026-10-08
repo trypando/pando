@@ -31,11 +31,12 @@ import (
 	"github.com/trypando/pando/internal/adapter/identity/local"
 	oidcidentity "github.com/trypando/pando/internal/adapter/identity/oidc"
 	samlidentity "github.com/trypando/pando/internal/adapter/identity/saml"
+	registryecr "github.com/trypando/pando/internal/adapter/imageregistry/ecr"
+	registryoci "github.com/trypando/pando/internal/adapter/imageregistry/oci"
 	"github.com/trypando/pando/internal/adapter/notify/chat"
 	notifyconsole "github.com/trypando/pando/internal/adapter/notify/console"
 	notifyntfy "github.com/trypando/pando/internal/adapter/notify/ntfy"
 	notifysmtp "github.com/trypando/pando/internal/adapter/notify/smtp"
-	"github.com/trypando/pando/internal/adapter/registry/ociprobe"
 	"github.com/trypando/pando/internal/adapter/routing/cloudflare"
 	"github.com/trypando/pando/internal/adapter/routing/loopback"
 	"github.com/trypando/pando/internal/adapter/routing/traefik"
@@ -87,6 +88,7 @@ import (
 	"github.com/trypando/pando/internal/core/tokenkey"
 	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/detect"
+	"github.com/trypando/pando/internal/detect/registryprobe"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/httpapi"
 	"github.com/trypando/pando/internal/log"
@@ -466,24 +468,24 @@ func serve(ctx context.Context, configPath string) error {
 		logger.Info("private images may be pulled with the Docker login on this server (apps.docker_credentials)")
 	}
 
-	// The install's image registry (issue #72, PR 5): where builds go for a
-	// runtime that pulls. None on a single host, which imports (O-34).
-	// Startup configuration wins field by field over what the console stored,
-	// and both are read afresh on every push and pull, so a credential
-	// rotated on one replica reaches every replica without a restart.
-	buildRegistry, err := installRegistry(cfg, state.NewInstallRegistry(db, secretsAdapter, secretsRef))
-	if err != nil {
-		return err
+	// The install's image registry (issue #72, PR 5; an adapter since issue
+	// #153): where builds go for a runtime that pulls. None on a single host,
+	// which imports (O-34). A stored one is built from its row on every push,
+	// pull and plan, so a credential rotated on one replica reaches every
+	// replica without a restart; one declared at startup (PANDO_REGISTRY_* or
+	// the config file) was built with the other adapters, above.
+	buildRegistry := &imageregistry.Service{
+		Configs:     adapters,
+		Credentials: adapterCredentials,
+		New:         newImageRegistryAdapter,
+		Declared:    declaredImageRegistries(registry),
 	}
 	if current, err := buildRegistry.Current(ctx); err != nil {
-		if len(cfg.RegistrySet) > 0 {
-			return fmt.Errorf("the install registry is misconfigured: %w", err)
-		}
-		logger.Warn("the install registry stored from the console cannot be used; builds that need it will be refused",
+		logger.Warn("the install's image registry cannot be used; builds that need it will be refused",
 			zap.Error(err))
 	} else if current.Configured() {
-		logger.Info("built images may be pushed to the install registry", zap.String("registry", current.Host()),
-			zap.Bool("always", current.Always()))
+		logger.Info("built images may be pushed to the install's image registry", zap.String("adapter", current.ID()),
+			zap.String("registry", current.Host()), zap.Bool("always", current.Always()))
 	}
 
 	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps).WithImages(images).
@@ -600,7 +602,7 @@ func serve(ctx context.Context, configPath string) error {
 			// no relationship to the GitHub owner of the same name, so a match
 			// there is not evidence that the image belongs to the project
 			// (docs/design/notes-registry-tier-namespaces.md).
-			Registry: ociprobe.New(),
+			Registry: registryprobe.New(),
 		},
 	}
 
@@ -846,17 +848,17 @@ func serve(ctx context.Context, configPath string) error {
 
 		SourceConnections: sourceConnections,
 
-		ImageRegistry: buildRegistry,
-		DB:            db,
-		Identity:      identity,
-		IDP:           identityService,
-		Users:         users,
-		Sessions:      sessions,
-		Tokens:        tokens,
-		Apps:          apps,
-		Volumes:       volumes,
-		Auditor:       auditor,
-		Policy:        hostPolicy,
+		ImageRegistries: buildRegistry,
+		DB:              db,
+		Identity:        identity,
+		IDP:             identityService,
+		Users:           users,
+		Sessions:        sessions,
+		Tokens:          tokens,
+		Apps:            apps,
+		Volumes:         volumes,
+		Auditor:         auditor,
+		Policy:          hostPolicy,
 
 		Registry:    registry,
 		Adapters:    adapters,
@@ -1484,6 +1486,12 @@ func registerAdapters(ctx context.Context, db *state.DB, store *state.Adapters, 
 		if c.Category == string(adapterapi.CategorySource) && e.decl == nil {
 			continue
 		}
+		// The same for an image registry (issue #153): a stored one is built
+		// from its row on every push, pull and plan (core/imageregistry), so
+		// a password rotated on one replica reaches all of them.
+		if c.Category == string(adapterapi.CategoryImageRegistry) && e.decl == nil {
+			continue
+		}
 
 		if c.Category != string(adapterapi.CategorySecrets) && credentials == nil {
 			credentials = adapterCredentialsFor(db, registry)
@@ -1593,6 +1601,14 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 		// Only a source connection the configuration file declares is built
 		// at startup (registerAdapters); a nil interface must stay nil here.
 		if a := newSourceAdapter(kind); a != nil {
+			return a
+		}
+		return nil
+	}
+	if category == string(adapterapi.CategoryImageRegistry) {
+		// Likewise only a declared image registry; a stored one is built
+		// from its row each time it is used (core/imageregistry).
+		if a := newImageRegistryAdapter(kind); a != nil {
 			return a
 		}
 		return nil
@@ -1948,28 +1964,6 @@ func (a registryAdapters) Routing(ref string) (adapterapi.RoutingAdapter, bool) 
 	return a.r.Routing(ref)
 }
 
-// installRegistry is the install's image registry: the startup configuration
-// (PANDO_REGISTRY_*) laid over what the console stored.
-func installRegistry(cfg *config.Config, store imageregistry.Store) (*imageregistry.Service, error) {
-	c := cfg.Registry
-	password, err := c.Secret()
-	if err != nil {
-		return nil, err
-	}
-	fixed := make(map[string]imageregistry.Source, len(cfg.RegistrySet))
-	for k, src := range cfg.RegistrySet {
-		fixed[k] = imageregistry.Source{Kind: src.Kind, Name: src.Name, Key: src.Key}
-	}
-	return &imageregistry.Service{
-		Startup: imageregistry.Config{
-			URL: c.URL, Username: c.Username, Password: secret.New(password),
-			Kind: c.Kind, Layout: c.Layout, Insecure: c.Insecure, Always: c.Always,
-		},
-		Fixed: fixed,
-		Store: store,
-	}, nil
-}
-
 // builtImageAuth is the reconciler's view of the install registry: its
 // credential for an image Pando pushed there, read when it is needed.
 func builtImageAuth(reg imageregistry.Provider) func(context.Context, string) *adapterapi.RegistryAuth {
@@ -2089,6 +2083,31 @@ func newSourceAdapter(kind string) adapterapi.SourceAdapter {
 		return sourcebitbucket.New()
 	}
 	return nil
+}
+
+// newImageRegistryAdapter is an unconfigured image registry adapter of a
+// kind, or nil (R-252, issue #153).
+func newImageRegistryAdapter(kind string) adapterapi.ImageRegistryAdapter {
+	switch kind {
+	case registryoci.Kind:
+		return registryoci.New()
+	case registryecr.Kind:
+		return registryecr.New()
+	}
+	return nil
+}
+
+// declaredImageRegistries are the image registries the startup configuration
+// declares, built at startup with the other adapters.
+func declaredImageRegistries(registry *adapterapi.Registry) []imageregistry.Declared {
+	def, _ := registry.Default(adapterapi.CategoryImageRegistry)
+	var out []imageregistry.Declared
+	for _, ref := range registry.ByCategory(adapterapi.CategoryImageRegistry) {
+		if a, ok := registry.ImageRegistry(ref); ok {
+			out = append(out, imageregistry.Declared{ID: ref, Adapter: a, IsDefault: ref == def})
+		}
+	}
+	return out
 }
 
 // declaredSourceAdapters are the source connections the configuration file
@@ -2253,6 +2272,8 @@ func adapterKinds() []adapterapi.KindInfo {
 		sourcegitea.Info(),
 		sourceazure.Info(),
 		sourcebitbucket.Info(),
+		registryoci.Info(),
+		registryecr.Info(),
 	}
 }
 

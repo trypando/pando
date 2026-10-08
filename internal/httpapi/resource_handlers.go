@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/spec"
@@ -358,7 +359,7 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 	for _, d := range s.declaredAdapters() {
 		if d.ID == req.ID {
 			Error(w, r, errs.Newf(errs.StateSetAtStartup,
-				"The adapter %s is declared in the config file %s, at %s, so it cannot be changed here.", d.ID, d.Source.Name, d.Source.Key).
+				"The adapter %s is declared in the %s, so it cannot be changed here.", d.ID, declaredWhere(d.Source)).
 				WithRemedy("Change it there and restart Pando, or remove it there to manage it here."))
 			return
 		}
@@ -401,6 +402,19 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// An image registry is used the moment it is saved too (issue #153), by
+	// the next build that needs one, so one Pando could not push to — an
+	// address that is not a registry, half a credential, a repository per app
+	// on a registry that cannot create them — is refused here rather than by
+	// that build. One being turned off is not checked: it will not be used,
+	// and settings that stopped working are a reason to turn one off.
+	if req.Category == string(api.CategoryImageRegistry) && enabled && s.ImageRegistries != nil {
+		if err := s.ImageRegistries.Validate(r.Context(), req.ID, req.Kind, req.Config, req.Credentials); err != nil {
+			Error(w, r, err)
+			return
+		}
+	}
+
 	if err := s.Adapters.Upsert(r.Context(), state.AdapterConfig{
 		ID: req.ID, Category: req.Category, Kind: req.Kind, Name: req.Name,
 		Config: req.Config, IsDefault: req.IsDefault, Enabled: enabled,
@@ -432,10 +446,11 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 	// a newly configured one is not live until Pando restarts. Said plainly
 	// rather than implied: a configuration that appears to take effect and does
 	// not is worse than one that says when it will.
-	JSON(w, http.StatusCreated, map[string]any{
-		"id":   req.ID,
-		"note": "Saved. Pando registers adapters at startup, so restart it for this to take effect: POST /api/v1/restart, or pando restart.",
-	})
+	note := "Saved. Pando registers adapters at startup, so restart it for this to take effect: POST /api/v1/restart, or pando restart."
+	if liveCategory(req.Category) {
+		note = "Saved, and in use from now on."
+	}
+	JSON(w, http.StatusCreated, map[string]any{"id": req.ID, "note": note})
 }
 
 // inlineCredential refuses a credential in an adapter's plain configuration.
@@ -501,4 +516,21 @@ func (s *Server) pinnedOrLatest(r *http.Request, app state.App) (*spec.AppSpec, 
 		return nil, nil
 	}
 	return revisions[0].Body, nil
+}
+
+// liveCategory says an adapter of this category is built from its row each
+// time it is used rather than at startup, so saving one needs no restart:
+// source connections (core/sourceconn) and image registries
+// (core/imageregistry).
+func liveCategory(category string) bool {
+	return category == string(api.CategorySource) || category == string(api.CategoryImageRegistry)
+}
+
+// declaredWhere says in words where an adapter was declared: a key in the
+// config file, or an environment variable such as PANDO_REGISTRY_URL (R-271).
+func declaredWhere(src config.Source) string {
+	if src.Kind == "env" {
+		return "environment variable " + src.Name
+	}
+	return "config file " + src.Name + ", at " + src.Key
 }

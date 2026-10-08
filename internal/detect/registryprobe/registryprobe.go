@@ -1,10 +1,10 @@
-// Package ociprobe looks for images a project already publishes.
+// Package registryprobe looks for images a project already publishes.
 //
 // R-094 tier 1, the top of the confidence ladder: an image the maintainers
 // publish themselves is their own answer to "how is this built", already built
 // and already shipped. Nothing Pando infers about the source beats it, and
 // running it skips the build entirely.
-package ociprobe
+package registryprobe
 
 import (
 	"context"
@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/detect"
 )
 
 // Probe checks public registries for an image matching a source repository.
@@ -57,7 +57,7 @@ func New() *Probe {
 // being deployed, which is why the proposal goes through review before anything
 // is pinned (R-098). Docker Hub has no such correspondence at all and is off
 // unless IncludeDockerHub is set.
-func (p *Probe) Published(ctx context.Context, src spec.Source) ([]api.PublishedImage, error) {
+func (p *Probe) Published(ctx context.Context, src spec.Source) ([]detect.PublishedImage, error) {
 	owner, name, ok := ownerAndName(src.URL)
 	if !ok {
 		return nil, nil
@@ -69,15 +69,15 @@ func (p *Probe) Published(ctx context.Context, src spec.Source) ([]api.Published
 		return nil, nil
 	}
 
-	var found []api.PublishedImage
+	var found []detect.PublishedImage
 	if p.existsOnGHCR(ctx, owner, name) {
-		found = append(found, api.PublishedImage{
+		found = append(found, detect.PublishedImage{
 			Ref:      fmt.Sprintf("ghcr.io/%s/%s:latest", owner, name),
 			Registry: "ghcr.io",
 		})
 	}
 	if p.IncludeDockerHub && p.existsOnDockerHub(ctx, owner, name) {
-		found = append(found, api.PublishedImage{
+		found = append(found, detect.PublishedImage{
 			Ref:      fmt.Sprintf("docker.io/%s/%s:latest", owner, name),
 			Registry: "docker.io",
 		})
@@ -213,4 +213,4 @@ func (p *Probe) existsOnDockerHub(ctx context.Context, owner, name string) bool 
 	return !body.IsPrivate
 }
 
-var _ api.RegistryProbe = (*Probe)(nil)
+var _ detect.RegistryProbe = (*Probe)(nil)

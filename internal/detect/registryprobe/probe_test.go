@@ -1,4 +1,4 @@
-package ociprobe_test
+package registryprobe_test
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/trypando/pando/internal/adapter/registry/ociprobe"
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/detect/registryprobe"
 )
 
 // registry stands in for ghcr.io and hub.docker.com. The probe's URLs are
@@ -71,8 +71,8 @@ func (t redirect) RoundTrip(req *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(clone)
 }
 
-func probeAgainst(r *registry, includeHub bool) *ociprobe.Probe {
-	p := ociprobe.New()
+func probeAgainst(r *registry, includeHub bool) *registryprobe.Probe {
+	p := registryprobe.New()
 	p.HTTP = &http.Client{Transport: redirect{to: r.Listener.Addr().String()}}
 	p.IncludeDockerHub = includeHub
 	return p
@@ -157,7 +157,7 @@ func TestAnImageThatIsNotThereIsNotProposed(t *testing.T) {
 // Best effort on the path of every app anyone adds: a registry that is down
 // must not fail detection.
 func TestAnUnreachableRegistryIsNotAnError(t *testing.T) {
-	p := ociprobe.New()
+	p := registryprobe.New()
 	p.HTTP = &http.Client{Transport: redirect{err: errors.New("no route to host")}}
 	p.IncludeDockerHub = true
 
@@ -287,7 +287,7 @@ func TestARepositorySubdirectorySkipsTierOne(t *testing.T) {
 // This is a best-effort lookup on the path of every app anyone adds, and a slow
 // registry must not hold up detection.
 func TestTheDefaultProbeHasAShortTimeout(t *testing.T) {
-	p := ociprobe.New()
+	p := registryprobe.New()
 	require.NotNil(t, p.HTTP)
 	require.NotZero(t, p.HTTP.Timeout)
 	require.LessOrEqual(t, p.HTTP.Timeout.Seconds(), 10.0)

@@ -1,4 +1,4 @@
-package ociprobe_test
+package registryprobe_test
 
 import (
 	"context"
@@ -6,14 +6,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/trypando/pando/internal/adapter/registry/ociprobe"
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/detect/registryprobe"
 )
 
 // The owner/name convention is the whole basis of tier 1, so what it does and
 // does not recognize matters more than the network calls that follow it.
 func TestWhichSourceURLsHaveARegistryConvention(t *testing.T) {
-	p := ociprobe.New()
+	p := registryprobe.New()
 
 	for name, src := range map[string]spec.Source{
 		"no URL at all":       {Type: spec.SourceGit},
@@ -32,7 +32,7 @@ func TestWhichSourceURLsHaveARegistryConvention(t *testing.T) {
 // A subdir is the case worth its own test: the repository may well publish an
 // image, and that image is not the project one directory down.
 func TestASubdirectoryIsNotTheRepositorysImage(t *testing.T) {
-	found, err := ociprobe.New().Published(context.Background(), spec.Source{
+	found, err := registryprobe.New().Published(context.Background(), spec.Source{
 		Type:   spec.SourceGit,
 		URL:    "https://github.com/vercel/turbo",
 		Subdir: "examples/with-docker/apps/web",
@@ -45,7 +45,7 @@ func TestASubdirectoryIsNotTheRepositorysImage(t *testing.T) {
 // ghcr.io and Docker Hub are not the same kind of evidence, and the default
 // reflects that rather than treating "tier 1" as one thing.
 func TestDockerHubIsOffByDefault(t *testing.T) {
-	require.False(t, ociprobe.New().IncludeDockerHub,
+	require.False(t, registryprobe.New().IncludeDockerHub,
 		"a Docker Hub username has no relationship to a GitHub owner of the same name, "+
 			"so a match there is not evidence that this is the project's own image")
 }

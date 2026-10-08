@@ -91,9 +91,10 @@ bool. It lists, in the runtime's order of preference, how an image Pando built c
 the install's registry and the runtime pulls by digest, with `WorkloadPlan.PullAuth`). Single-host
 Docker reports `[import, registry]`; a runtime spanning machines reports `[registry]`; empty means it
 runs only published images. The planner decides from data (`planner.ChooseDelivery`, plan step 5a):
-import when the runtime takes it and the install does not send every build through its registry
-(`PANDO_REGISTRY_ALWAYS`); otherwise the registry when the runtime pulls, one is configured
-(`PANDO_REGISTRY_URL`) and the builder has `SupportsPush`; otherwise `PLAN_CAPABILITY_UNSUPPORTED`
+import when the runtime takes it and the install's image registry adapter does not send every build
+through it (`ImageRegistryCapabilities.SendsEveryBuild`); otherwise the registry when the runtime pulls,
+the install has an image registry adapter (§11) and the builder has `SupportsPush`; otherwise
+`PLAN_CAPABILITY_UNSUPPORTED`
 naming what is missing. The deploy asks again before building. `BuildRequest` carries exactly one of
 `ImageSink` and `Push`, and a `Tag` (the deployment ID) so no build is ever named by a tag the next
 build moves (R-146). `ImportImage` returns the loaded image's content-addressed ID; a push returns
@@ -253,7 +254,8 @@ planner asks it nothing — a credential either opens the registry or it does no
 password for a host" is no vocabulary worth hiding. ECR's token minting is the one provider-specific
 part, and it is a dozen lines in `core/oci` behind the credential's `kind`. A category would add a
 `Capabilities()` nobody consults. If GCR, Artifact Registry or ACR are wanted, each is another `kind`
-there.
+there. This is about the credential an *image app* pulls its own image with, which belongs to the app
+(issue #41). The registry Pando pushes *builds* to is a different thing and is an adapter: §11.
 
 **[D]** `NetworkPlan.Private` is always true. It is a field rather than an assumption so an adapter that cannot provide a private network fails loudly at capability check (`SupportsPrivateNetwork`) rather than silently placing workloads on a shared network.
 
@@ -1137,11 +1139,32 @@ invisible to the caller that needs to plan around it.
 destination is worth knowing about *before* the disaster, not at the moment a backup runs. That is
 R-216's argument for verifying a bundle before it is needed, one level up.
 
-**The test to apply before adding a ninth** is unchanged, and it is a good test: **does the planner
-need to ask it a question, and does it have a vocabulary worth hiding?** Backup passes the first half
-— retention ownership and whether the destination can list and expire are questions with plan-time
-consequences. It passes the second thinly: "bucket" and "prefix" are a vocabulary, if a small one.
-A category that passes neither is a library.
+**The test for a new category** is unchanged, and it is a good test: **does the planner need to ask it
+a question, and does it have a vocabulary worth hiding?** Backup passes the first half — retention
+ownership and whether the destination can list and expire are questions with plan-time consequences.
+It passes the second thinly: "bucket" and "prefix" are a vocabulary, if a small one. A category that
+passes neither is a library.
+
+**[D] Adding a category is an ordinary change (issue #153).** The set is not closed, and nothing in
+this document or in R-252 asks for a reason to keep it small. When a thing Pando talks to passes the
+test, it becomes a category in the same change: the interface and its capabilities here, R-252
+amended, the category added to `adapter_configs`' check by migration, and its kinds in
+`adapterKinds()`. Do not reach for the opposite: an adapter-shaped thing built in core — provider
+kinds switched on in a core package, a settings table and screen of its own, a credential sealed
+under its own scope — because a category seemed too large a step. That is how the install image
+registry was built for issue #72, and it was the wrong call: the providers' differences were exactly
+the capabilities a category exists to carry, they were reachable only by reading core's code, and
+the generic adapter surfaces (`POST /adapters`, `pando adapter add`, the adapters screen) had to be
+duplicated for it. Apply the test honestly in both directions. A thing that fails it, such as the
+probe for published images (R-094 tier 1, now `internal/detect/registryprobe`), stays out of
+`internal/adapter/` altogether, so the directory layout says which is which.
+
+**[D] The twelfth is the image registry (R-252, issue #153), and it passes both halves.** Whether
+there is a registry, whether every build goes through it, and whether it creates repositories on push
+are plan-time questions: the first two decide how a build reaches the runtime (`ChooseDelivery`), the
+third whether a repository per app can work at all. ECR's token minting and its repositories that must
+exist first, against a Distribution registry's basic auth and create-on-push, are provider vocabulary
+that core no longer learns. §11.
 
 **[D] The tenth is AI (R-258), and it passes both halves wide.** Whether a screener can read a
 repository, how much of one, and which of R-106's three functions it performs are all questions with
@@ -1179,6 +1202,12 @@ func (r *Registry) Default(c Category) (Adapter, error)
 **[D] A source connection is the exception to startup registration (issue #127).** Its row is built into
 an adapter on every use, by `core/sourceconn`, so connecting one needs no restart and a token it refreshed is
 read back. Only one the config file declares is built at startup. See §10.
+
+**[D] So is an image registry (issue #153).** It is built from its row on every push, pull and plan by
+`core/imageregistry`, so a password rotated through one replica is what every replica uses next, with no
+restart and nothing to watch (R-256). One declared at startup — in the config file, or by
+`PANDO_REGISTRY_*`, which declares the adapter `image_registry` — is built with the other adapters and is
+read-only (R-271). See §11.
 
 ---
 
@@ -1253,7 +1282,53 @@ yet.
 
 ---
 
-## 11. v1 implementations
+## 11. Image registry
+
+**[D] The twelfth category (R-252, issue #153).** An image registry adapter is where Pando pushes a build
+when the runtime pulls images rather than taking one directly (§2, image delivery; issue #72, PR 5). Core
+asks it four things:
+
+```go
+type ImageRegistryAdapter interface {
+    Adapter
+    ImageRegistryCapabilities() ImageRegistryCapabilities
+    Target(ctx, appID, workload, deploymentID string) (PushTarget, error) // repository, tag, push credential
+    Owns(ref string) bool                                                 // a build Pando pushed here. Pure.
+    PullAuth(ctx) (*RegistryAuth, error)                                  // minted fresh where the provider does
+    DeleteApp(ctx, appID string, workloads []string) (int, error)         // R-224
+}
+
+type ImageRegistryCapabilities struct {
+    Host                      string
+    CreatesRepositoriesOnPush bool // without it: one repository, tagged by app and deployment
+    RepositoryPerApp          bool // the layout in effect
+    SendsEveryBuild           bool // even for a runtime that imports (O-34)
+}
+```
+
+**[D] Kinds.** `oci` is any registry that signs in with a username and password or not at all —
+Distribution (the registry `docker-compose.registry.yml` runs), Harbor, GitHub Container Registry,
+Artifact Registry, Zot — and creates repositories on push, so each app may have its own. `ecr` trades an
+AWS access key for a twelve-hour password before each push and pull (`internal/ecr`, shared with image
+apps' own ECR credentials in `core/oci`) and does not create repositories, so every build goes into the
+one its address names; a repository per app is refused when it is configured. What both share —
+addresses, layout, deleting a deleted app's manifests — is `adapter/imageregistry/registrykit`.
+
+**[D] One registry is in use.** The category default, or the only enabled one; several with no default
+is a refusal that says so, never a silent pick. A declared default overrides a stored one (R-271).
+
+**[D] Refused before it is saved.** `POST /adapters` configures an image registry before storing it, as
+it does a source connection, so an address Pando cannot push to or half a credential fails the save
+rather than the next build. Its health check signs in to the registry, so one Pando cannot reach is
+`unreachable` on the adapters screen before a deploy needs it.
+
+**[D] Not this category:** the credential an image app pulls its own image with (issue #41; §2,
+"Registry authentication is not an adapter category"), and the probe for an image a project already
+publishes, which is a step of detection (R-094; `internal/detect/registryprobe`).
+
+---
+
+## 12. v1 implementations
 
 | Category | Kind | Note |
 |---|---|---|
@@ -1279,6 +1354,8 @@ yet.
 | source | `bitbucket` | Cloud and Data Center: workspace/project/repository access token, API token, OAuth consumer, access key (§10) |
 | source | `gitea` | Gitea and Forgejo, Codeberg preset: access token, OAuth, deploy key (§10) |
 | source | `git` | any git host: username and token over HTTPS, or an SSH key with the host's key pinned. No repository listing (§10) |
+| image_registry | `oci` | Distribution, Harbor, GHCR, Artifact Registry, Zot: basic auth or anonymous, a repository per app (§11). Not seeded — a single Docker host needs none. |
+| image_registry | `ecr` | Amazon ECR: a password minted from an access key before each push and pull, one repository for every build (§11). Not seeded. |
 
 **[P] Podman is the Docker adapter pointed at a different socket, not an adapter of its own.** Its
 Docker-compatible API does what this adapter asks, and the adapter's integration suite passes against

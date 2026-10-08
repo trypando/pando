@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/detect"
 )
@@ -119,9 +118,9 @@ func TestR021_AnImageWithAWebPortBesideADatabasePortIsNotRefused(t *testing.T) {
 	require.Equal(t, 8080, primary.Ports[0].Number, "the web port is the one routed to")
 }
 
-type publishedProbe struct{ images []api.PublishedImage }
+type publishedProbe struct{ images []detect.PublishedImage }
 
-func (p publishedProbe) Published(context.Context, spec.Source) ([]api.PublishedImage, error) {
+func (p publishedProbe) Published(context.Context, spec.Source) ([]detect.PublishedImage, error) {
 	return p.images, nil
 }
 
@@ -131,7 +130,7 @@ func (p publishedProbe) Published(context.Context, spec.Source) ([]api.Published
 func TestR094_APublishedImageShortCircuitsTheAuction(t *testing.T) {
 	job := &detect.Job{
 		Auction:  detect.NewAuction(detect.DockerfileDetector{}),
-		Registry: publishedProbe{images: []api.PublishedImage{{Ref: "ghcr.io/acme/notes:latest", Registry: "ghcr.io"}}},
+		Registry: publishedProbe{images: []detect.PublishedImage{{Ref: "ghcr.io/acme/notes:latest", Registry: "ghcr.io"}}},
 		Runtime:  fixedTrial{ports: []int{3000}},
 	}
 	p, err := job.Run(context.Background(), "app_1",

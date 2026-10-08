@@ -57,7 +57,7 @@ linters:
             - pkg: github.com/trypando/pando/internal/core/detection
               desc: 'R-027: adapters must not import core/detection. It orchestrates them; the dependency runs one way.'
             - pkg: github.com/trypando/pando/internal/detect
-              desc: 'R-027: adapters must not import internal/detect. A type an adapter and detection both need belongs in internal/adapter/api, which is the only core-adjacent package an adapter may import. The OCI registry probe reached across this before the rule existed.'
+              desc: 'R-027: adapters must not import internal/detect. A type an adapter and detection both need belongs in internal/adapter/api, which is the only core-adjacent package an adapter may import. The published-image probe reached across this before the rule existed; it is detection, not an adapter, and lives in internal/detect/registryprobe (issue #153).'
 
         # The adapter interface package is a contract, not a place for logic
         # (design 03). It may name the spec's vocabulary — design 03 §3 has Bid
