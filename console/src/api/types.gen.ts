@@ -27,6 +27,7 @@ export interface App {
   icon_updated_at?: string;
   favorite?: boolean;
   section_id?: string;
+  can_manage?: boolean;
   detection?: DetectionSummary;
 }
 

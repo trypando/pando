@@ -101,16 +101,24 @@ export function useInstallVerb(verb: InstallVerb): boolean {
  * for app administration.
  */
 export function useManageableApps(): number {
+  return useManageableAppsTotal().total ?? 0;
+}
+
+/**
+ * The count of manageable apps as GET /apps answers it: `total`, and whether
+ * that is a lower bound (O-53).
+ */
+export function useManageableAppsTotal(): { total?: number; total_is_lower_bound?: boolean } {
   // One row asked for and `total` read: the count, not the list, which can
   // be twenty thousand apps long (issue #72).
   const apps = useQuery({
     queryKey: ['apps', 'count'],
-    queryFn: () => api.get<{ total?: number }>('/apps?limit=1'),
+    queryFn: () => api.get<{ total?: number; total_is_lower_bound?: boolean }>('/apps?limit=1'),
     // A 403 means no control-plane access, which is an answer rather than a
     // failure — so it is not retried and not surfaced as an error.
     retry: false,
   });
-  return apps.data?.total ?? 0;
+  return apps.data ?? {};
 }
 
 /**

@@ -31,7 +31,7 @@ import type { SidebarItem } from '@design';
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
-import { InstallVerb, useInstallVerb, useManageableApps } from '../app/principal';
+import { InstallVerb, useInstallVerb, useManageableAppsTotal } from '../app/principal';
 import { AccountPage } from '../install/Account';
 import { Accounts, messageOf } from '../install/Accounts';
 import { filtersFrom, linkQuery } from '../install/audit';
@@ -65,7 +65,7 @@ import { Terminal } from './Terminal';
 import { Sheet } from '../ui/Sheet';
 import { TopoBackground } from '../ui/TopoBackground';
 import { SearchField } from '../ui/SearchField';
-import { ShowMore, usePaged, useSettled, type PageOf } from '../ui/paged';
+import { ShowMore, totalLabel, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { APP_LIST_KEY, useWatchedRows } from './appList';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
@@ -145,7 +145,7 @@ export function AdminConsole({
   const rows = useWatchedRows(apps.rows, administrative);
   // Every app, whatever the search: the same count the Admin entry is decided
   // by, so it is already in the cache.
-  const appCount = useManageableApps();
+  const appCount = totalLabel(useManageableAppsTotal());
 
   // The count alone, for the sidebar: one row asked for, and `total` read.
   // Only asked for by somebody who may read it — the endpoint refuses the
@@ -153,7 +153,7 @@ export function AdminConsole({
   // the log.
   const accounts = useQuery({
     queryKey: ['users', 'count'],
-    queryFn: () => api.get<{ total?: number }>('/users?limit=1'),
+    queryFn: () => api.get<PageOf>('/users?limit=1'),
     enabled: canView || canManageUsers,
   });
 
@@ -167,7 +167,7 @@ export function AdminConsole({
   // offering to add one they cannot create is a screen that answers 403.
   const items: SidebarItem[] = [];
   if (administrative) {
-    items.push({ value: 'apps', label: 'Apps', trailing: <Badge count={appCount} /> });
+    items.push({ value: 'apps', label: 'Apps', trailing: <Badge>{appCount}</Badge> });
   }
   // Beside Apps: a request is about an app, and answering one is app work.
   if (canApproveAll || waiting.length > 0 || section === 'approvals') {
@@ -180,7 +180,7 @@ export function AdminConsole({
     items.push({
       value: 'accounts',
       label: 'Accounts',
-      trailing: <Badge count={accounts.data?.total ?? 0} />,
+      trailing: <Badge>{totalLabel(accounts.data)}</Badge>,
     });
   }
   // Groups and roles are the same verb pair as accounts, and a separate screen:
