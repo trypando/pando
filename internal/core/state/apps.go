@@ -1447,8 +1447,9 @@ func (a *Apps) PruneSpecRevisions(ctx context.Context) (int, error) {
 			return total, errs.Wrap(errs.Internal, "Could not prune old spec revisions.", err)
 		}
 		total += n
+		// A canceled pass stops between statements; the next starts over.
 		if last == nil || ctx.Err() != nil {
-			return total, nil
+			return total, nil //nolint:nilerr // cancellation ends a pass early, it is not a failure
 		}
 		after = *last
 	}
