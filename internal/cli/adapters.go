@@ -75,14 +75,15 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 
 	var id, name string
 	var set []string
-	var isDefault bool
+	var isDefault, disabled bool
 	add := &cobra.Command{
 		Use:   "add <category>/<kind>",
 		Short: "Add an adapter, or change one, by kind",
 		Long: "Adds an adapter of a kind from `pando adapter kinds`. Ordinary settings go in --set KEY=VALUE;\n" +
 			"a secret setting such as an API key is asked for without echoing it, so it never lands in\n" +
 			"your shell history (piped in when stdin is not a terminal). Adding with an existing --id\n" +
-			"changes that adapter. Pando loads adapters at startup: restart it afterwards.\n\n" +
+			"changes that adapter. Pando loads adapters at startup: restart it afterwards, except after\n" +
+			"a source connection or an image registry, which are used from the moment they are saved.\n\n" +
 			"With a kind named, --help lists its settings and their defaults, the advanced ones under\n" +
 			"their own heading. Advanced settings take --set like any other.\n\n" +
 			"  pando adapter add ai/anthropic --set model=claude-sonnet-5",
@@ -177,6 +178,9 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 			if len(credentials) > 0 {
 				body["credentials"] = credentials
 			}
+			if disabled {
+				body["enabled"] = false
+			}
 			if category == "source" {
 				// Many source connections, none of them the default: the
 				// one covering a repository is chosen for it.
@@ -189,6 +193,10 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "Saved %s. It is used from now on; `pando source list` shows whether it is ready.\n", id)
 				return nil
 			}
+			if category == "image_registry" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Saved %s. The next build that goes through a registry is pushed there; `pando adapter list` shows whether Pando can sign in to it.\n", id)
+				return nil
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Saved %s. Restart Pando to use it: pando restart\n", id)
 			return nil
 		},
@@ -197,6 +205,7 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 	add.Flags().StringVar(&name, "name", "", "what the console calls it (default: the kind's name)")
 	add.Flags().StringArrayVar(&set, "set", nil, "a setting, KEY=VALUE; repeat for more")
 	add.Flags().BoolVar(&isDefault, "default", true, "make it the default adapter of its category")
+	add.Flags().BoolVar(&disabled, "disabled", false, "save it turned off: Pando keeps its settings and does not use it. A secret left empty keeps the stored one")
 
 	// Help for a named kind lists its settings after the flags, the basic ones
 	// first and the advanced ones under their own heading, each with its

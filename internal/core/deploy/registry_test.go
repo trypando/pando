@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	registryoci "github.com/trypando/pando/internal/adapter/imageregistry/oci"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/spec"
@@ -20,12 +21,12 @@ var pulling = api.RuntimeCapabilities{ImageDelivery: []api.ImageDelivery{api.Ima
 
 func installRegistry(t *testing.T, always bool) imageregistry.Provider {
 	t.Helper()
-	reg, err := imageregistry.New(imageregistry.Config{
-		URL: "https://registry.internal:5000", Username: "pando", Password: secret.New("registry-password-9"),
-		Always: always,
-	})
+	a := registryoci.New()
+	raw, err := json.Marshal(map[string]any{"url": "https://registry.internal:5000", "username": "pando", "always": always,
+		"credentials": map[string]string{"password": "registry-password-9"}})
 	require.NoError(t, err)
-	return imageregistry.Static(reg)
+	require.NoError(t, a.Configure(context.Background(), raw))
+	return imageregistry.Static(imageregistry.Of("reg_1", a))
 }
 
 // TestR120_ABuiltImageIsPinnedByDigest asserts R-120 for a build pushed to the
@@ -94,7 +95,7 @@ func TestR254_ARuntimeThatPullsWithNoRegistryIsRefusedBeforeBuilding(t *testing.
 	_, err := buildRunner(t, b, &importingRuntime{caps: pulling}).
 		build(context.Background(), buildApp(), &source.Checkout{}, &strings.Builder{}, nil, "app_01HQ8", "dep_1")
 	require.Equal(t, errs.PlanCapabilityUnsupported, errs.CodeOf(err))
-	require.Contains(t, errs.As(err).Remedy, "PANDO_REGISTRY_URL")
+	require.Contains(t, errs.As(err).Remedy, "image_registry")
 	require.Empty(t, b.asked.Strategy, "nothing was built")
 }
 

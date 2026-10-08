@@ -9,6 +9,41 @@ default, and that setup may point at the organization's own instead. This note i
 PR 5 implemented it; [What was built](#what-was-built-pr-5) says how, and what was left for later.
 The rest of the note is the design as it was decided.
 
+## Since issue #153: the registry is an adapter
+
+**[D] (owner, 2026-10-08).** This note made the install registry configuration, "like the database",
+on the argument that the planner asks it nothing. That was wrong, and the registry is now the twelfth
+adapter category (R-252; design 03 §8.1 and §11). The planner does ask it questions — is there one,
+does every build go through it, does it create repositories on push — and ECR's minted passwords and
+pre-created repositories against a Distribution registry's basic auth are provider vocabulary. Built
+as configuration, those differences lived in a core package switched on `PANDO_REGISTRY_KIND`, with a
+settings table, endpoints, CLI commands, MCP tools and a console form duplicating what every adapter
+gets from the generic surfaces.
+
+What changed, against the tables below:
+
+- The kinds are `image_registry/oci` and `image_registry/ecr` (`internal/adapter/imageregistry`). ECR
+  always puts every build in one repository, and a repository per app is refused when one is
+  configured, rather than at the first push.
+- It is configured with `POST /adapters`, `pando adapter add image_registry/<kind>` and the adapters
+  screen. `GET`/`PUT`/`DELETE /image-registry`, `pando image-registry`, the three
+  `pando_*_image_registry` MCP tools and the console's own form are gone; MCP gained
+  `pando_list_adapters`, `pando_list_adapter_kinds` and `pando_configure_adapter`, which it had lacked for
+  every category (R-261). Turning one off, which clearing it did, is `enabled: false`: a checkbox in the
+  console's adapter dialog, `pando adapter add --disabled`, or the MCP tool. A registry being turned off is
+  not checked first.
+- Migration 000066 drops `install_registry` and `install_registry_credentials`, which shipped in no
+  release; nothing in them is carried over. Its URL check is kept on `adapter_configs`.
+- `PANDO_REGISTRY_*` still works. It declares the adapter `image_registry`, read-only while it is set,
+  as one under `adapters:` in the config file is (R-271). That replaces "startup configuration wins
+  field by field": a declared adapter is fixed as a whole. A password is read from
+  `PANDO_REGISTRY_PASSWORD` or `_PASSWORD_FILE`; one written inline in the config file is refused.
+- It is still built from its row on every push, pull and plan (`core/imageregistry`), so a rotated
+  password reaches every replica without a restart.
+- The probe for an image a project already publishes (R-094 tier 1), which sat at
+  `internal/adapter/registry/ociprobe` without being an adapter, is detection and moved to
+  `internal/detect/registryprobe`.
+
 ## What was built (PR 5)
 
 One migration, `000051_install_registry`, for the registry set from the console (below). What a
@@ -243,7 +278,9 @@ Harbor needs the project to exist. Artifact Registry and GHCR create repositorie
 down and is not a target.
 
 Registry authentication remains outside the adapter categories (design 03 §2.1's reasoning holds: the
-planner asks it nothing). The install registry is configuration, like the database.
+planner asks it nothing). The install registry is configuration, like the database. *Reversed with issue
+#153: the install registry is an adapter; see the top of this note. Registry authentication for image
+apps is still not one.*
 
 ### Garbage collection (R-224)
 

@@ -11,9 +11,12 @@
 # PANDO_REGISTRY_ALWAYS=true.
 #
 # Pando does not start or run the registry. Like Postgres, it is state the
-# topology supplies, and Pando connects to it (PANDO_REGISTRY_URL). To use the
-# organization's own registry instead, leave this file out and set
-# PANDO_REGISTRY_URL and the credential on the pando service.
+# topology supplies, and Pando connects to it. PANDO_REGISTRY_URL declares the
+# image registry adapter that points at it (design 03 §11), read-only while it
+# is set. To use the organization's own registry instead, leave this file out
+# and either set PANDO_REGISTRY_URL and the credential on the pando service, or
+# add an image registry adapter from the console or with
+# pando adapter add image_registry/oci.
 #
 # Before the first `up`:
 #

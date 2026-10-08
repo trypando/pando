@@ -29,7 +29,6 @@ import { AdapterDialog } from './AdapterDialog';
 import { AuthorizeDialog, covers, useSources } from './Sources';
 import type { SourceConnection } from './Sources';
 import { Capacity } from './Capacity';
-import { ImageRegistry } from './ImageRegistry';
 import { useAIFunctionOn } from './AIFunctions';
 import { RestartButton } from './Restart';
 import { categoryLabel, categoryNote, orderCategories } from './adapters';
@@ -63,9 +62,11 @@ import { TagField } from '../ui/TagField';
 import { useNarrow } from '../ui/narrow';
 import { useSettled, withParams } from '../ui/paged';
 
-/** Where the config file declares an adapter, in words. */
+/** Where the startup configuration declares an adapter, in words: a key in
+ *  the config file, or a variable such as PANDO_REGISTRY_URL. */
 function declaredAt(row: AdapterRow): string {
-  const src = row.source as { name?: string; key?: string } | undefined;
+  const src = row.source as { kind?: string; name?: string; key?: string } | undefined;
+  if (src?.kind === 'env' && src.name) return `the environment variable ${src.name}`;
   return src?.key ? `${src.name ?? 'the config file'}, at ${src.key}` : 'the config file';
 }
 
@@ -94,8 +95,9 @@ export function Installation({ query }: { query?: string } = {}) {
   // notice itself follows the server's restart_needed, so it stays until
   // Pando has restarted — across a reload, and for everyone who looks.
   const [saved, setSaved] = useState<string | null>(null);
-  // A source connection (R-091) is used the moment it is saved, so saving one
-  // says that instead of asking for a restart.
+  // A source connection (R-091) and an image registry (issue #153) are used
+  // the moment they are saved, so saving one says that instead of asking for
+  // a restart.
   const [notice, setNotice] = useState<string | null>(null);
   const [authorizing, setAuthorizing] = useState<SourceConnection | null>(null);
   const [disconnecting, setDisconnecting] = useState<SourceConnection | null>(null);
@@ -235,9 +237,9 @@ export function Installation({ query }: { query?: string } = {}) {
           onClose={() => setEditing(null)}
           onSaved={(name, category) => {
             setEditing(null);
-            if (category === 'source') {
+            if (category === 'source' || category === 'image_registry') {
               setNotice(`${name} is saved and in use. No restart is needed.`);
-              void queries.invalidateQueries({ queryKey: ['sources'] });
+              if (category === 'source') void queries.invalidateQueries({ queryKey: ['sources'] });
             } else {
               setSaved(name);
             }
@@ -285,10 +287,6 @@ export function Installation({ query }: { query?: string } = {}) {
 
       {/* Each runtime by the name its kind goes by, as in the table above. */}
       <Capacity names={Object.fromEntries(grouped.map((r) => [r.id, r.kindName]))} />
-
-      {/* The registry builds go to when a runtime pulls them (issue #72):
-          infrastructure the builder and runtimes use, so beside them. */}
-      <ImageRegistry />
     </Screen>
   );
 }
@@ -2174,7 +2172,7 @@ function GroupedAdapters({
                   (R-271); the file is where it changes. */}
               {row.declared ? (
                 <span title={declaredAt(row)} style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
-                  Set in config file
+                  {(row.source as { kind?: string } | undefined)?.kind === 'env' ? 'Set at startup' : 'Set in config file'}
                 </span>
               ) : (
                 canManage &&

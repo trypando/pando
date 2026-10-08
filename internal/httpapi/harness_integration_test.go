@@ -23,6 +23,7 @@ import (
 	identitylocal "github.com/trypando/pando/internal/adapter/identity/local"
 	identityoidc "github.com/trypando/pando/internal/adapter/identity/oidc"
 	identitysaml "github.com/trypando/pando/internal/adapter/identity/saml"
+	registryoci "github.com/trypando/pando/internal/adapter/imageregistry/oci"
 	notifyconsole "github.com/trypando/pando/internal/adapter/notify/console"
 	secretslocal "github.com/trypando/pando/internal/adapter/secrets/local"
 	"github.com/trypando/pando/internal/config"
@@ -211,7 +212,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 			Policy: overlay.Wrap(policyStore), Overlay: overlay, Audit: audit.NewReader(db.Pool),
 			Reference: func() string { return reference.Markdown(httpapi.Reference()) },
 		},
-		AdapterKinds: []adapterapi.KindInfo{aianthropic.Info(), secretslocal.Info()},
+		AdapterKinds: []adapterapi.KindInfo{aianthropic.Info(), secretslocal.Info(), registryoci.Info()},
 		Allocations:  allocations,
 		Capacity:     &capacity.Snapshots{Registry: registry, Allocations: allocations},
 
@@ -226,8 +227,14 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Detections:         state.NewDetections(db),
 		Sources:            sources,
 		Images:             &oci.Images{Credentials: state.NewRegistryCredentials(db, secretsAdapter, "sec_local")},
-		ImageRegistry: &imageregistry.Service{Fixed: map[string]imageregistry.Source{},
-			Store: state.NewInstallRegistry(db, secretsAdapter, "sec_local")},
+		ImageRegistries: &imageregistry.Service{Configs: adapters,
+			Credentials: state.NewAdapterCredentials(db, secretsAdapter, "sec_local"),
+			New: func(kind string) adapterapi.ImageRegistryAdapter {
+				if kind == registryoci.Kind {
+					return registryoci.New()
+				}
+				return nil
+			}},
 
 		Authz:   authorizer,
 		Authent: authenticator,

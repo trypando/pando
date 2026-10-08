@@ -46,8 +46,8 @@ replica to the new image with whatever runs them.
 | `PANDO_SERVER_ADVERTISE_URL` reachable between replicas | A deploy's live log is read from the replica running the deploy | default `http://<hostname>:8080`, which resolves on a Compose network; in Kubernetes set `http://$(POD_IP):8080` |
 
 **Shared files rather than object storage [P].** Moving uploads, backup staging and keys into
-Postgres or an object store would remove the shared-volume prerequisite at the cost of a storage
-adapter category Pando does not have. Every replica in the supported topology is on one Docker host,
+Postgres or an object store would remove the shared-volume prerequisite, and an object store would be
+a storage adapter category of its own (design 03 §8.1). Every replica in the supported topology is on one Docker host,
 where a shared named volume costs nothing, so the volume is the requirement. The secrets key and the
 API token key are the two files that must never move into Postgres — the threat each defends against
 is a leaked database dump (R-190, R-063) — and both are now checked at start (below, and design 02

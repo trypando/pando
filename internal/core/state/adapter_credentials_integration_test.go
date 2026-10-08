@@ -74,6 +74,26 @@ func TestR190_TheDatabaseRefusesCredentialsInPlainConfiguration(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestR190_TheDatabaseRefusesARegistryAddressCarryingAPassword asserts the
+// mechanism 000051 had for the install registry, kept when it became an
+// adapter (issue #153): an image registry whose address carries a username
+// and password is refused by a check constraint, not only by the adapter.
+func TestR190_TheDatabaseRefusesARegistryAddressCarryingAPassword(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	adapters := state.NewAdapters(connected(t))
+	err := adapters.Upsert(ctx, state.AdapterConfig{
+		ID: "reg_sneaky", Category: "image_registry", Kind: "oci", Name: "x", Enabled: true,
+		Config: json.RawMessage(`{"url":"https://pando:hunter2@registry.internal"}`),
+	})
+	require.Error(t, err)
+
+	require.NoError(t, adapters.Upsert(ctx, state.AdapterConfig{
+		ID: "reg_plain", Category: "image_registry", Kind: "oci", Name: "x", Enabled: true,
+		Config: json.RawMessage(`{"url":"https://registry.internal/pando"}`),
+	}), "the category is one the database accepts")
+}
+
 // TestO20_ACredentialIsBoundToItsAdapter asserts that ciphertext sealed for one
 // adapter cannot be opened as another's: the adapter ID is authenticated data.
 func TestO20_ACredentialIsBoundToItsAdapter(t *testing.T) {

@@ -29,6 +29,7 @@ import (
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/idp"
+	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/planner"
@@ -197,10 +198,11 @@ type Server struct {
 	// #41). Nil on an install that cannot store one, where setting one says so.
 	Images RegistryCredentials
 
-	// ImageRegistry is the install's image registry, which builds are pushed
-	// to for a runtime that pulls (issue #72). Nil reports none and stores
-	// nothing.
-	ImageRegistry ImageRegistry
+	// ImageRegistries builds the install's image registry adapters (R-252,
+	// issue #153), which are configured with POST /adapters like any adapter
+	// but built from their rows each time they are used, so saving one needs
+	// no restart. Nil checks nothing before saving one.
+	ImageRegistries *imageregistry.Service
 
 	// Defaults fills in what an author left out of a spec — the install's
 	// adapters, its routing shape, and the retention caps R-211 and R-223 set.
@@ -614,12 +616,6 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/authorize/poll", s.handlePollSourceAuthorization)
 			})
 		})
-
-		// The install's image registry (issue #72): read with install.view,
-		// changed with install.adapters.manage, like the adapters.
-		r.Get("/image-registry", s.handleGetImageRegistry)
-		r.Put("/image-registry", s.handlePutImageRegistry)
-		r.Delete("/image-registry", s.handleDeleteImageRegistry)
 
 		// Which AI adapter handles each AI function, and on which model
 		// (R-259). Read with install.view, changed with

@@ -460,47 +460,18 @@ adapter under the scope `registry:`, which no app ID can collide with, so a ciph
 replayed as an app secret (the same arrangement as `adapter_credentials`, §2.5). Apps soft-delete, so the
 cascade does not fire on deletion; the GC's teardown removes the rows.
 
-```sql
-CREATE TABLE install_registry (               -- migration 000051
-    id         boolean PRIMARY KEY DEFAULT true CHECK (id),   -- one per install
-    url        text NOT NULL DEFAULT '' CHECK (url !~ '://[^/]*@'),
-    username   text NOT NULL DEFAULT '',
-    kind       text NOT NULL DEFAULT 'basic' CHECK (kind IN ('basic','ecr')),
-    layout     text NOT NULL DEFAULT 'per_app' CHECK (layout IN ('per_app','single')),
-    insecure   boolean NOT NULL DEFAULT false,
-    always     boolean NOT NULL DEFAULT false,
-    updated_by text,
-    updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE install_registry_credentials (
-    registry_id  text NOT NULL CHECK (registry_id = 'install'),
-    field        text NOT NULL CHECK (field = 'password'),
-    adapter_ref  text NOT NULL,
-    ciphertext   bytea,
-    external_ref text,
-    version      integer NOT NULL DEFAULT 1,
-    created_at   timestamptz NOT NULL DEFAULT now(),
-    updated_at   timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (registry_id, field),
-    CHECK (ciphertext IS NOT NULL OR external_ref IS NOT NULL)
-);
-```
-
-**[D]** The install's image registry (issue #72, PR 5), as set from the console, `PUT /image-registry`,
-the CLI and MCP. Settings and password apart, as `adapter_configs` and `adapter_credentials` are: the
-settings row has no column a credential could go in, and its URL may not carry one either
-(`https://user:pass@host` is refused by the CHECK). The password is sealed by the secrets adapter under
-the scope `install-registry:` (R-190). The startup configuration (`PANDO_REGISTRY_*`) wins field by
-field and is shown as fixed (R-271). Nothing is cached: every push, pull and plan reads these rows, so a
-password rotated through one replica is the one every replica uses next, without a restart.
+**[D]** The install's image registry is an adapter (R-252, issue #153): an `adapter_configs` row of
+category `image_registry`, its password or AWS secret key in `adapter_credentials` (§2.5). Migration
+000066 dropped the `install_registry` and `install_registry_credentials` tables 000051 had added for it,
+which shipped in no release. 000051's refusal of an address carrying a username and password is kept as
+`adapter_configs_registry_url_no_credential`.
 
 ### 2.5 Policy and adapters
 
 ```sql
 CREATE TABLE adapter_configs (
     id          text PRIMARY KEY,             -- rt_..., rte_..., bld_..., sec_..., ntf_...
-    category    text NOT NULL,                -- runtime|routing|builder|secrets|services|identity|notify|backup|ai
+    category    text NOT NULL,                -- runtime|routing|builder|secrets|services|identity|notify|backup|scanner|ai|source|image_registry
     kind        text NOT NULL,                -- docker | traefik | buildkit | local | ...
     name        text NOT NULL,
     config      jsonb NOT NULL DEFAULT '{}',
@@ -511,6 +482,9 @@ CREATE TABLE adapter_configs (
 CREATE UNIQUE INDEX ON adapter_configs (category) WHERE is_default;
 -- config is never a credential store (O-20).
 ALTER TABLE adapter_configs ADD CHECK (NOT (config ? 'credentials'));
+-- Nor is an image registry's address (R-190, migration 000066).
+ALTER TABLE adapter_configs ADD CONSTRAINT adapter_configs_registry_url_no_credential
+    CHECK (category <> 'image_registry' OR coalesce(config->>'url', '') !~ '://[^/]*@');
 
 -- An adapter's credentials, sealed by the secrets adapter (R-190, O-20). The same
 -- shape as `secrets`, one scope up: no plaintext column.

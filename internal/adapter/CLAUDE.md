@@ -6,6 +6,23 @@ R-250: **the app declares requirements; adapters translate.** R-251: **core neve
 vocabulary.** These interfaces are where that promise is kept or broken — if a Docker-shaped concept
 appears in an interface signature, the design has failed.
 
+## Adding a category
+
+The categories are not a fixed list. When a new thing Pando talks to passes design 03 §8.1's test —
+the planner asks it a question, and it has a provider's vocabulary worth hiding — it becomes a category,
+and R-252 is amended in the same change. Every file a category touches: the interface and capabilities
+struct in `api/`, the constant in `api/identity.go`, `satisfiesCategory` and a typed accessor in
+`api/registry.go`, the kinds under `internal/adapter/<category>/`, a migration re-creating
+`adapter_configs_category_check`, `categories()` in `internal/config/adapters.go`, `newAdapter` and
+`adapterKinds()` in `cmd/pando/main.go`, and the console's `CATEGORY_ORDER` and `CATEGORY_NOTES`. The
+generic surfaces — `POST /adapters`, `pando adapter add`, the adapters screen — then work for it with no
+code of their own. Do not build an adapter-shaped thing in core instead; see design 03 §8.1 for why the
+install image registry was converted (issue #153).
+
+A category whose adapters must change without a restart — source connections, image registries — is
+built from its row on each use by a core service rather than registered at startup; `liveCategory` in
+`internal/httpapi` lists them.
+
 ## Hard boundary (R-027)
 
 Nothing under `internal/adapter/` may import `internal/core/authz`, `internal/core/audit`, or

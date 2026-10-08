@@ -726,53 +726,6 @@ var toolList = []tool{
 		},
 	},
 	{
-		Name: "pando_get_image_registry",
-		Description: "The image registry builds are pushed to when a runtime pulls rather than " +
-			"imports: its URL, username, kind, layout, whether plain HTTP is allowed, and whether a " +
-			"password is set — never the password. `fixed` lists settings made in the startup " +
-			"configuration, which cannot be changed through the API.",
-		Schema: schema(map[string]any{}),
-		request: func(map[string]any) (string, string, any, error) {
-			return "GET", "/image-registry", nil, nil
-		},
-	},
-	{
-		Name: "pando_set_image_registry",
-		Description: "Change the stored image registry. Fields left out are unchanged. The password " +
-			"is stored encrypted and never shown again; an empty password removes it. Every Pando " +
-			"replica uses the change at its next push or pull.",
-		Schema: schema(map[string]any{
-			"url":      str("The registry and an optional path prefix, such as https://registry.internal:5000."),
-			"username": str("The username Pando pushes and pulls with, or the AWS access key ID for ecr."),
-			"password": str("The password, or the AWS secret access key for ecr. Empty removes it."),
-			"kind":     map[string]any{"type": "string", "enum": []string{"basic", "ecr"}},
-			"layout":   map[string]any{"type": "string", "enum": []string{"per_app", "single"}},
-			"insecure": map[string]any{"type": "boolean", "description": "Allow plain HTTP to the registry."},
-			"always": map[string]any{"type": "boolean",
-				"description": "Send every build through the registry, even on a runtime that can import it."},
-		}),
-		request: func(args map[string]any) (string, string, any, error) {
-			body := map[string]any{}
-			for _, k := range []string{"url", "username", "password", "kind", "layout", "insecure", "always"} {
-				if v, ok := args[k]; ok {
-					body[k] = v
-				}
-			}
-			if len(body) == 0 {
-				return "", "", nil, fmt.Errorf("give at least one of url, username, password, kind, layout, insecure or always")
-			}
-			return "PUT", "/image-registry", body, nil
-		},
-	},
-	{
-		Name:        "pando_clear_image_registry",
-		Description: "Remove the stored image registry and its password. Settings made in the startup configuration still apply.",
-		Schema:      schema(map[string]any{}),
-		request: func(map[string]any) (string, string, any, error) {
-			return "DELETE", "/image-registry", nil, nil
-		},
-	},
-	{
 		Name: "pando_favorite_app",
 		Description: "Pin an app to the top of your own launcher. It grants nothing and only you " +
 			"see it; you must be able to open the app.",
@@ -1007,6 +960,52 @@ var toolList = []tool{
 		Schema: schema(map[string]any{}),
 		request: func(map[string]any) (string, string, any, error) {
 			return "GET", "/upgrade/last", nil, nil
+		},
+	},
+	{
+		Name: "pando_list_adapters",
+		Description: "The adapters this installation is configured with — runtimes, routing, builders, " +
+			"image registries, secrets, backup, scanners, AI, source connections and the rest — each " +
+			"with its live capabilities, whether it is reachable, which credentials are set (never " +
+			"their values), and whether it waits on a restart. One declared at startup is read-only.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/adapters", nil, nil
+		},
+	},
+	{
+		Name: "pando_list_adapter_kinds",
+		Description: "The kinds of adapter this build of Pando can run, and the settings each takes: " +
+			"which are credentials, which are required, and the default each takes when left out.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/adapters/kinds", nil, nil
+		},
+	},
+	{
+		Name: "pando_configure_adapter",
+		Description: "Add an adapter, or change one by its id. Settings go in config; a secret such " +
+			"as an API key or a registry password goes in credentials, which is stored encrypted " +
+			"and never shown again. A source connection or an image registry is used from the " +
+			"moment it is saved; any other adapter after Pando restarts. enabled: false turns one off.",
+		Schema: schema(map[string]any{
+			"id":          str("The adapter's id, such as reg_main. An existing id changes that adapter."),
+			"category":    str("The category, such as image_registry, as pando_list_adapter_kinds lists it."),
+			"kind":        str("The kind within the category, such as oci or ecr."),
+			"name":        str("A name for people to read."),
+			"config":      map[string]any{"type": "object", "description": "The kind's settings, by key."},
+			"credentials": map[string]any{"type": "object", "description": "The kind's secret settings, by key. A key sent empty removes that credential."},
+			"is_default":  map[string]any{"type": "boolean", "description": "Make it the default in its category."},
+			"enabled":     map[string]any{"type": "boolean", "description": "false turns it off. Left out, it is on."},
+		}, "id", "category", "kind"),
+		request: func(args map[string]any) (string, string, any, error) {
+			body := map[string]any{}
+			for _, k := range []string{"id", "category", "kind", "name", "config", "credentials", "is_default", "enabled"} {
+				if v, ok := args[k]; ok {
+					body[k] = v
+				}
+			}
+			return "POST", "/adapters", body, nil
 		},
 	},
 	{

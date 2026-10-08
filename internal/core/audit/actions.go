@@ -94,8 +94,6 @@ var Actions = []string{
 	"identity_provider.scim.rotate",
 	"identity_provider.test",
 	"identity_provider.update",
-	"install.registry.clear",
-	"install.registry.update",
 	"install.restart",
 	"launcher.section.create",
 	"launcher.section.delete",

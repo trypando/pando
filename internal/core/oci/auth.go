@@ -2,15 +2,10 @@ package oci
 
 import (
 	"context"
-	"encoding/base64"
-	"fmt"
 	"regexp"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/ecr"
-
+	"github.com/trypando/pando/internal/ecr"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -148,8 +143,12 @@ func (r Resolver) Resolve(ctx context.Context, c Credential, reference string) (
 					WithRemedy("Use an image from an ECR registry such as 123456789012.dkr.ecr.us-east-1.amazonaws.com/team/app, or replace the credential with a username and token for " + registry + ".")
 			}
 		}
-		user, pass, err := r.mintECR(ctx, c, region)
+		user, pass, err := ecr.Mint(ctx, ecr.Key{AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey,
+			Region: region, Endpoint: r.ECREndpoint}, "the app's")
 		if err != nil {
+			if e := errs.As(err); e != nil && e.Code == errs.ValidInvalid {
+				e.Remedy = "Check that the access key is active and that its policy allows ecr:GetAuthorizationToken, then replace the credential in the app's settings."
+			}
 			return nil, err
 		}
 		return &Auth{Registry: registry, Username: user, Password: pass}, nil
@@ -157,47 +156,8 @@ func (r Resolver) Resolve(ctx context.Context, c Credential, reference string) (
 	return nil, errs.Newf(errs.Internal, "unhandled credential kind %q", c.Kind)
 }
 
-var (
-	regionPattern = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d+$`)
-	ecrHost       = regexp.MustCompile(`^\d{12}\.dkr\.ecr(-fips)?\.([a-z0-9-]+)\.amazonaws\.com(\.cn)?$`)
-)
+var regionPattern = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d+$`)
 
 // ECRRegion reads the region from an ECR registry host:
 // 123456789012.dkr.ecr.us-east-1.amazonaws.com is us-east-1.
-func ECRRegion(registry string) (string, bool) {
-	m := ecrHost.FindStringSubmatch(strings.ToLower(registry))
-	if m == nil {
-		return "", false
-	}
-	return m[2], true
-}
-
-// mintECR asks ECR for a registry password from an access key.
-func (r Resolver) mintECR(ctx context.Context, c Credential, region string) (string, secret.Value, error) {
-	opts := ecr.Options{
-		Region:      region,
-		Credentials: credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.SecretAccessKey.Reveal(), ""),
-	}
-	if r.ECREndpoint != "" {
-		opts.BaseEndpoint = aws.String(r.ECREndpoint)
-	}
-	out, err := ecr.New(opts).GetAuthorizationToken(ctx, &ecr.GetAuthorizationTokenInput{})
-	if err != nil {
-		return "", secret.Value{}, errs.Wrap(errs.ValidInvalid,
-			fmt.Sprintf("AWS refused the app's access key when Pando asked ECR in %s for a registry password.", region), err).
-			WithRemedy("Check that the access key is active and that its policy allows ecr:GetAuthorizationToken, then replace the credential in the app's settings.")
-	}
-	if len(out.AuthorizationData) == 0 || out.AuthorizationData[0].AuthorizationToken == nil {
-		return "", secret.Value{}, errs.Newf(errs.AdapterFailed,
-			"ECR in %s answered without a registry password.", region)
-	}
-	raw, err := base64.StdEncoding.DecodeString(*out.AuthorizationData[0].AuthorizationToken)
-	if err != nil {
-		return "", secret.Value{}, errs.Wrap(errs.AdapterFailed, "ECR returned a registry password Pando could not read.", err)
-	}
-	user, pass, ok := strings.Cut(string(raw), ":")
-	if !ok {
-		return "", secret.Value{}, errs.New(errs.AdapterFailed, "ECR returned a registry password Pando could not read.")
-	}
-	return user, secret.New(pass), nil
-}
+func ECRRegion(registry string) (string, bool) { return ecr.Region(registry) }

@@ -434,7 +434,7 @@ func TestR254_ConfigurationThatCannotWorkIsRefused(t *testing.T) {
 
 	_, err = New().ImportImage(context.Background(), strings.NewReader(""))
 	require.Equal(t, errs.PlanCapabilityUnsupported, errs.CodeOf(err))
-	require.Contains(t, errs.As(err).Remedy, "PANDO_REGISTRY_URL")
+	require.Contains(t, errs.As(err).Remedy, "image registry adapter")
 
 	err = checkWorkloadName("___")
 	require.Contains(t, errs.As(err).Remedy, `Rename it to "web"`, "a name with nothing usable gets a usable suggestion")

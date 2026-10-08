@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -43,12 +42,6 @@ type Config struct {
 	// Adapters are the adapters declared in the config file, with the AI
 	// functions each handles (adapters.go).
 	Adapters []AdapterDecl `mapstructure:"-"`
-
-	// RegistrySet is each install registry field the startup configuration
-	// sets, with where (url, username, password, kind, layout, insecure,
-	// always). Those win over what is stored from the console, which shows
-	// them as fixed (R-271).
-	RegistrySet map[string]Source `mapstructure:"-"`
 }
 
 // Reconciler tunes R-149's retry backoff and R-150's give-up rule.
@@ -111,11 +104,6 @@ type Retention struct {
 	DeletedApps       time.Duration `mapstructure:"deleted_apps"`
 }
 
-// Registry is the install's image registry, where builds go for a runtime
-// that pulls rather than imports (issue #72, PR 5,
-// docs/design/notes-image-registry-issue-72.md). Startup configuration only,
-// like the database URL. Empty URL: no registry, which single-host Docker does
-// not need (O-34).
 // ACME is the certificate authority the edge's certificates are ordered from
 // when Pando issues them itself — the Kubernetes edge (O-49, R-169).
 type ACME struct {
@@ -133,6 +121,12 @@ type ACME struct {
 // LetsEncryptDirectory is ACME.DirectoryURL's default.
 const LetsEncryptDirectory = "https://acme-v02.api.letsencrypt.org/directory"
 
+// Registry is the startup shorthand for declaring the install's image
+// registry adapter (R-252, issue #153): PANDO_REGISTRY_URL and the variables
+// beside it, or registry: in the config file. It becomes the adapter
+// declaration image_registry (registry.go), read-only while it is set (R-271),
+// as one written under adapters: would be. Empty URL: no registry, which
+// single-host Docker does not need (O-34).
 type Registry struct {
 	// URL is the registry and an optional path prefix:
 	// https://registry.internal:5000, or the organization's registry such as
@@ -159,36 +153,6 @@ type Registry struct {
 	// Always sends every build through the registry, even for a runtime that
 	// can import it. Off by default.
 	Always bool `mapstructure:"always"`
-}
-
-// registryFields are the install registry's fields, as the API names them.
-var registryFields = []string{"url", "username", "password", "kind", "layout", "insecure", "always"}
-
-func registrySetOf(v *viper.Viper, path string) map[string]Source {
-	out := map[string]Source{}
-	for _, f := range registryFields {
-		src := sourceOf(v, "registry."+f, path)
-		if f == "password" && src.Kind == "default" {
-			src = sourceOf(v, "registry.password_file", path)
-		}
-		if src.Kind != "default" {
-			out[f] = src
-		}
-	}
-	return out
-}
-
-// Secret is the registry password: PasswordFile's contents when it is set,
-// with surrounding whitespace removed, and Password otherwise.
-func (r Registry) Secret() (string, error) {
-	if r.PasswordFile == "" {
-		return r.Password, nil
-	}
-	raw, err := os.ReadFile(r.PasswordFile)
-	if err != nil {
-		return "", fmt.Errorf("PANDO_REGISTRY_PASSWORD_FILE is %q, which Pando could not read: %w", r.PasswordFile, err)
-	}
-	return strings.TrimSpace(string(raw)), nil
 }
 
 // Apps holds the resource limits every new app inherits (R-240).
@@ -444,7 +408,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("registry.password", "")
 	v.SetDefault("registry.password_file", "")
 	v.SetDefault("registry.kind", "basic")
-	v.SetDefault("registry.layout", "per_app")
+	v.SetDefault("registry.layout", "")
 	v.SetDefault("registry.insecure", false)
 	v.SetDefault("registry.always", false)
 	v.SetDefault("acme.directory_url", LetsEncryptDirectory)
@@ -474,8 +438,9 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg.Adapters = adapters
-	cfg.RegistrySet = registrySetOf(v, path)
+	if cfg.Adapters, err = withRegistry(v, path, cfg.Registry, adapters); err != nil {
+		return nil, err
+	}
 	return &cfg, cfg.validate()
 }
 

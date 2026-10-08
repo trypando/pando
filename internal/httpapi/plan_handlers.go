@@ -245,10 +245,11 @@ func (s *Server) handleListAdapters(w http.ResponseWriter, r *http.Request) {
 		// adapter is not loaded at all, a changed one still runs as it was.
 		// Without this a just-added adapter reads as reachable, having never
 		// been asked.
-		// A source connection is the exception: it is built from its row
-		// each time it is used (core/sourceconn), so it never waits for one.
+		// A source connection and an image registry are the exceptions:
+		// each is built from its row every time it is used, so neither ever
+		// waits for one.
 		if !isDeclared && !s.StartedAt.IsZero() && c.UpdatedAt.After(s.StartedAt) &&
-			c.Category != string(api.CategorySource) {
+			!liveCategory(c.Category) {
 			entry["pending_restart"] = true
 			entry["status"] = "pending_restart"
 			restartNeeded = true
@@ -291,6 +292,24 @@ func (s *Server) handleListAdapters(w http.ResponseWriter, r *http.Request) {
 			if ai, ok := s.Registry.AI(c.ID); ok {
 				if caps, err := ai.Capabilities(r.Context()); err == nil {
 					entry["capabilities"] = caps
+				}
+			}
+		case api.CategoryImageRegistry:
+			// Built from its row now, as the next push will be (issue #153),
+			// and signed in to: one whose settings or credential no longer
+			// work is unreachable here before a build finds out. A declared
+			// one was health-checked with the registered adapters above.
+			if s.ImageRegistries != nil && c.Enabled {
+				a, err := s.ImageRegistries.Adapter(r.Context(), c.ID)
+				if err == nil {
+					entry["capabilities"] = a.ImageRegistryCapabilities()
+					if !isDeclared {
+						err = a.HealthCheck(r.Context())
+					}
+				}
+				if err != nil {
+					entry["healthy"] = false
+					entry["status"] = "unreachable"
 				}
 			}
 		}

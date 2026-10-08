@@ -880,7 +880,7 @@ Events tab and `GET /apps/{id}/events`. The feed holds what the outbox keeps (R-
 
 **R-251 [D]** Core never learns a provider's vocabulary. A requirement crossing the interface is expressed in Pando's terms — "2 GB, one persistent volume, one exposed HTTP port" — and the adapter turns it into a VM profile or container arguments.
 
-**R-252 [D]** Adapter categories: identity, routing/ingress, builder, runtime, secrets, services, notification, **backup**. **Scanner** is the ninth (R-317), **AI** the tenth (R-258) and **source** the eleventh (R-091): a connection to a place repositories live, which clones what it covers. It holds no state; core stores its credential and decides which connection reads which repository.
+**R-252 [D]** Adapter categories: identity, routing/ingress, builder, runtime, secrets, services, notification, **backup**. **Scanner** is the ninth (R-317), **AI** the tenth (R-258) and **source** the eleventh (R-091): a connection to a place repositories live, which clones what it covers. It holds no state; core stores its credential and decides which connection reads which repository. **Image registry** is the twelfth (amended with issue #153): where Pando pushes a build when the runtime pulls images, configured like any adapter rather than as install settings of its own. The list is not closed: a thing Pando talks to that passes design 03 §8.1's test — the planner asks it a question, and it has a provider's vocabulary to hide — becomes a category, with this requirement amended in the same change.
 
 Backup was added in phase 9, reversing an earlier decision that a backup destination was a byte sink
 rather than a category (design 03 §8.1). The earlier reasoning still describes a *destination*

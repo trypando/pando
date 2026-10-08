@@ -671,7 +671,7 @@ func errNoUsage() error {
 func (a *Adapter) ImportImage(context.Context, io.Reader) (string, error) {
 	return "", errs.New(errs.PlanCapabilityUnsupported,
 		"The Kubernetes runtime pulls every image from a registry and cannot take a built image directly.").
-		WithRemedy("Set PANDO_REGISTRY_URL to the registry Pando should push built images to.")
+		WithRemedy("Add an image registry adapter under System → Adapters, or with pando adapter add image_registry/oci, so builds are pushed there and every node pulls what it runs.")
 }
 
 // --- names -----------------------------------------------------------------

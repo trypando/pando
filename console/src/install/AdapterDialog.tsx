@@ -86,9 +86,14 @@ export function AdapterDialog({
 
   const [category, setCategory] = useState(existing?.category ?? startCategory ?? '');
   const [picked, setPicked] = useState(existing ? kindKey(existing) : '');
-  // A source connection is used as soon as it is saved (R-091); every other
-  // category is loaded at startup. The dialog says which.
+  // A source connection is used as soon as it is saved (R-091), and so is an
+  // image registry (issue #153); every other category is loaded at startup.
+  // The dialog says which.
   const isSource = category === 'source';
+  const isRegistry = category === 'image_registry';
+  // An image registry can be turned off here, keeping its settings: what
+  // removing it did before it was an adapter.
+  const [enabled, setEnabled] = useState(existing?.enabled ?? true);
   const categories = orderCategories(catalog.map((k) => k.category));
   const inCategory = catalog.filter((k) => k.category === category);
   // A category with one kind has nothing to choose between.
@@ -138,7 +143,7 @@ export function AdapterDialog({
       // what needs a restart, and choosing functions does not.
       const settingsChanged = draft !== null || !existing;
       if (settingsChanged) {
-        await api.post<{ id: string; note?: string }>('/adapters', adapterRequest(kind!, form!, existing?.enabled));
+        await api.post<{ id: string; note?: string }>('/adapters', adapterRequest(kind!, form!, isRegistry ? enabled : existing?.enabled));
       }
       if (existing && choice) {
         for (const c of choiceChanges(existing.id, had, choice)) {
@@ -191,7 +196,9 @@ export function AdapterDialog({
       description={
         isSource
           ? 'Pando reads the private repositories this connection covers with it, from the moment it is saved.'
-          : 'Pando reads adapters when it starts, so a saved change takes effect after a restart.'
+          : isRegistry
+            ? 'Pando pushes built images here when a runtime pulls them, from the moment it is saved.'
+            : 'Pando reads adapters when it starts, so a saved change takes effect after a restart.'
       }
       onClose={onClose}
       footer={
@@ -343,6 +350,18 @@ export function AdapterDialog({
                     description="Used by anything that needs this kind of adapter and doesn't name one."
                     checked={form.isDefault}
                     onChange={(e) => edit({ isDefault: e.target.checked })}
+                  />
+                )}
+
+                {isRegistry && existing && (
+                  <Checkbox
+                    label="Push builds to this registry"
+                    description="Turned off, Pando does not use it and keeps its settings."
+                    checked={enabled}
+                    onChange={(e) => {
+                      setEnabled(e.target.checked);
+                      if (!draft) edit({});
+                    }}
                   />
                 )}
               </>

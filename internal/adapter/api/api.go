@@ -1063,7 +1063,7 @@ type PushTarget struct {
 	Auth *RegistryAuth
 
 	// Insecure permits plain HTTP to the registry. Only set when the operator
-	// said so (PANDO_REGISTRY_INSECURE, O-35).
+	// said so in the image registry adapter's settings (O-35).
 	Insecure bool
 }
 

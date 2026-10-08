@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/trypando/pando/internal/adapter/api"
+	registryoci "github.com/trypando/pando/internal/adapter/imageregistry/oci"
 	secretslocal "github.com/trypando/pando/internal/adapter/secrets/local"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/state"
@@ -17,58 +19,18 @@ import (
 	"github.com/trypando/pando/internal/secret"
 )
 
-func ptr[T any](v T) *T { return &v }
-
-// TestR190_TheRegistryPasswordIsStoredAsCiphertextOnly asserts R-190 for the
-// install registry's password set from the console: the row holds what the
-// secrets adapter sealed and never the password, the settings table has
-// nowhere to put one, and a URL carrying a credential is refused by the
-// database itself.
-func TestR190_TheRegistryPasswordIsStoredAsCiphertextOnly(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	db, _ := statetest.Connect(t)
-	sa := secretslocal.New()
-	require.NoError(t, sa.Configure(ctx, json.RawMessage(`{"key_path":"`+filepath.Join(t.TempDir(), "k")+`"}`)))
-
-	svc := &imageregistry.Service{Fixed: map[string]imageregistry.Source{}, Store: state.NewInstallRegistry(db, sa, "sec_local")}
-	_, err := svc.Update(ctx, imageregistry.Change{URL: ptr("https://registry.internal:5000"), Username: ptr("pando"),
-		Password: ptr(secret.New("hunter2-registry-password"))}, "usr_1")
-	require.NoError(t, err)
-
-	var ciphertext []byte
-	require.NoError(t, db.QueryRow(ctx,
-		`SELECT ciphertext FROM install_registry_credentials WHERE field = 'password'`).Scan(&ciphertext))
-	require.NotEmpty(t, ciphertext)
-	require.NotContains(t, string(ciphertext), "hunter2-registry-password")
-
-	var columns []string
-	rows, err := db.Query(ctx, `SELECT column_name FROM information_schema.columns WHERE table_name = 'install_registry'`)
-	require.NoError(t, err)
-	for rows.Next() {
-		var c string
-		require.NoError(t, rows.Scan(&c))
-		columns = append(columns, c)
+func newOCI(kind string) api.ImageRegistryAdapter {
+	if kind == registryoci.Kind {
+		return registryoci.New()
 	}
-	rows.Close()
-	require.NotContains(t, columns, "password")
-
-	_, err = db.Exec(ctx, `UPDATE install_registry SET url = 'https://pando:pw@registry.internal'`)
-	require.ErrorContains(t, err, "install_registry_url_no_credential")
-	_, err = db.Exec(ctx, `INSERT INTO install_registry_credentials (registry_id, field, adapter_ref) VALUES ('install', 'other', 'x')`)
-	require.Error(t, err, "no row without ciphertext, and no other field")
-
-	reg, err := svc.Current(ctx)
-	require.NoError(t, err)
-	auth, err := reg.Auth(ctx)
-	require.NoError(t, err)
-	require.Equal(t, "hunter2-registry-password", auth.Password.Reveal())
+	return nil
 }
 
 // TestR256_AReplicaUsesARotatedRegistryPasswordWithoutARestart asserts the
-// rotation contract (issue #72): a password changed through one replica is
-// the one another replica pushes and pulls with next, with no restart, since
-// each reads the stored credential when it needs it.
+// rotation contract (issue #72), kept when the registry became an adapter
+// (issue #153): a password changed through one replica is the one another
+// replica pushes and pulls with next, with no restart, since each builds the
+// adapter from its row and its sealed credential when it needs it.
 func TestR256_AReplicaUsesARotatedRegistryPasswordWithoutARestart(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -79,27 +41,39 @@ func TestR256_AReplicaUsesARotatedRegistryPasswordWithoutARestart(t *testing.T) 
 	t.Cleanup(b.Close)
 
 	keyPath := filepath.Join(t.TempDir(), "k")
-	adapter := func() *secretslocal.Adapter {
+	sealer := func() *secretslocal.Adapter {
 		sa := secretslocal.New()
 		require.NoError(t, sa.Configure(ctx, json.RawMessage(`{"key_path":"`+keyPath+`"}`)))
 		return sa
 	}
-	first := &imageregistry.Service{Fixed: map[string]imageregistry.Source{}, Store: state.NewInstallRegistry(a, adapter(), "sec_local")}
-	second := &imageregistry.Service{Fixed: map[string]imageregistry.Source{}, Store: state.NewInstallRegistry(b, adapter(), "sec_local")}
+	replica := func(db *state.DB) (*imageregistry.Service, *state.AdapterCredentials) {
+		creds := state.NewAdapterCredentials(db, sealer(), "sec_local")
+		return &imageregistry.Service{Configs: state.NewAdapters(db), Credentials: creds, New: newOCI}, creds
+	}
+	_, firstCreds := replica(a)
+	second, _ := replica(b)
 
-	_, err = first.Update(ctx, imageregistry.Change{URL: ptr("https://registry.internal:5000"), Username: ptr("pando"),
-		Password: ptr(secret.New("before"))}, "usr_1")
-	require.NoError(t, err)
+	require.NoError(t, state.NewAdapters(a).Upsert(ctx, state.AdapterConfig{
+		ID: "reg_main", Category: "image_registry", Kind: "oci", Name: "Registry", Enabled: true,
+		Config: json.RawMessage(`{"url":"https://registry.internal:5000","username":"pando"}`),
+	}))
+	require.NoError(t, firstCreds.Put(ctx, "reg_main", "password", secret.New("before")))
+
 	authOn := func(s *imageregistry.Service) string {
 		reg, err := s.Current(ctx)
 		require.NoError(t, err)
+		require.Equal(t, "reg_main", reg.ID())
 		auth, err := reg.Auth(ctx)
 		require.NoError(t, err)
 		return auth.Password.Reveal()
 	}
 	require.Equal(t, "before", authOn(second))
 
-	_, err = first.Update(ctx, imageregistry.Change{Password: ptr(secret.New("after"))}, "usr_1")
-	require.NoError(t, err)
+	require.NoError(t, firstCreds.Put(ctx, "reg_main", "password", secret.New("after")))
 	require.Equal(t, "after", authOn(second), "the other replica's next pull uses the new password")
+
+	var ciphertext []byte
+	require.NoError(t, a.QueryRow(ctx,
+		`SELECT ciphertext FROM adapter_credentials WHERE adapter_id = 'reg_main' AND field = 'password'`).Scan(&ciphertext))
+	require.NotContains(t, string(ciphertext), "after", "stored as ciphertext only (R-190)")
 }

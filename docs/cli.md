@@ -95,7 +95,8 @@ pando adapter add <category>/<kind>
 Adds an adapter of a kind from `pando adapter kinds`. Ordinary settings go in --set KEY=VALUE;
 a secret setting such as an API key is asked for without echoing it, so it never lands in
 your shell history (piped in when stdin is not a terminal). Adding with an existing --id
-changes that adapter. Pando loads adapters at startup: restart it afterwards.
+changes that adapter. Pando loads adapters at startup: restart it afterwards, except after
+a source connection or an image registry, which are used from the moment they are saved.
 
 With a kind named, --help lists its settings and their defaults, the advanced ones under
 their own heading. Advanced settings take --set like any other.
@@ -105,6 +106,7 @@ their own heading. Advanced settings take --set like any other.
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--default` | `true` | make it the default adapter of its category |
+| `--disabled` |  | save it turned off: Pando keeps its settings and does not use it. A secret left empty keeps the stored one |
 | `--id` |  | the adapter's ID (default: the kind's usual prefix and name, e.g. ai_anthropic) |
 | `--name` |  | what the console calls it (default: the kind's name) |
 | `--set` | `[]` | a setting, KEY=VALUE; repeat for more |
@@ -963,54 +965,6 @@ Unlink a provider's identity from an account
 
 ```
 pando identity-provider unlink <user-id> <provider-id> <external-id>
-```
-
-### `image-registry`
-
-See and set the registry builds are pushed to when a runtime pulls
-
-```
-pando image-registry
-```
-
-#### `image-registry clear`
-
-Remove the stored registry and its password; startup settings still apply
-
-```
-pando image-registry clear
-```
-
-#### `image-registry set`
-
-Change the stored registry; settings not given are unchanged
-
-```
-pando image-registry set
-```
-
-Changes the registry stored on the server. The password is read from the terminal
-(--password) and never shown again. Settings made in the server's startup configuration
-(PANDO_REGISTRY_*) win and cannot be changed here. Every replica uses the change at its
-next push or pull.
-
-| Flag | Default | What it does |
-| --- | --- | --- |
-| `--always` |  | send every build through the registry, even on a runtime that imports |
-| `--insecure` |  | allow plain HTTP to the registry |
-| `--kind` |  | basic or ecr |
-| `--layout` |  | per_app or single |
-| `--password` |  | read the password (the secret access key for ecr) from the terminal |
-| `--remove-password` |  | remove the stored password |
-| `--url` |  | the registry and an optional path, such as https://registry.internal:5000 |
-| `--username` |  | the username Pando pushes and pulls with (the access key ID for ecr) |
-
-#### `image-registry show`
-
-Show the registry in effect, which settings are fixed at startup, and whether a password is set
-
-```
-pando image-registry show
 ```
 
 ### `login`

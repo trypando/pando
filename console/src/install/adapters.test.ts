@@ -94,12 +94,16 @@ describe('adding an adapter', () => {
     expect(sortKinds([trivy, anthropic]).map((k) => k.kind)).toEqual(['anthropic', 'trivy']);
     expect(categoryLabel('ai')).toBe('AI');
     expect(categoryLabel('routing')).toBe('Routing');
+    // The twelfth category (issue #153), named as words rather than its key.
+    expect(categoryLabel('image_registry')).toBe('Image registry');
   });
 });
 
 describe('adapter categories', () => {
   it('orders categories as an installation is built up, unknown ones last', () => {
     expect(orderCategories(['ai', 'runtime', 'zeta', 'routing', 'ai'])).toEqual(['runtime', 'routing', 'ai', 'zeta']);
+    // Beside the builder: where what it builds goes.
+    expect(orderCategories(['scanner', 'image_registry', 'builder'])).toEqual(['builder', 'image_registry', 'scanner']);
   });
 });
 

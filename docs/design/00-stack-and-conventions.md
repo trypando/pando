@@ -189,7 +189,7 @@ pando/
 │   │   ├── policy/       # host policy evaluation
 │   │   └── state/        # sqlc-generated queries + repository types
 │   ├── adapter/
-│   │   ├── api/          # the seven interface definitions. No implementations.
+│   │   ├── api/          # one interface per category. No implementations.
 │   │   ├── identity/local/
 │   │   ├── routing/{loopback,traefik}/
 │   │   ├── builder/buildkit/

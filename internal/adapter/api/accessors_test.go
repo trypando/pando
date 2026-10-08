@@ -332,3 +332,17 @@ func (stubRuntime) EdgeVolumes(context.Context) ([]api.VolumeHandle, error) {
 func (stubRuntime) WatchBundles(context.Context, func(api.BundleEvent)) error {
 	return nil
 }
+
+// TestR252_AnImageRegistryMustImplementItsInterface asserts that the twelfth
+// category is checked like the others: an adapter claiming image_registry
+// without the interface is refused at registration, and one that is not an
+// image registry is not returned as one.
+func TestR252_AnImageRegistryMustImplementItsInterface(t *testing.T) {
+	r := api.NewRegistry()
+	require.Error(t, r.Register("reg_fake", base{kind: "oci", cat: api.CategoryImageRegistry}))
+	require.NoError(t, r.Register("bk_local", stubBackup{base{kind: "local", cat: api.CategoryBackup}}))
+	_, ok := r.ImageRegistry("bk_local")
+	require.False(t, ok)
+	_, ok = r.ImageRegistry("reg_missing")
+	require.False(t, ok)
+}
