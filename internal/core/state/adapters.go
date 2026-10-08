@@ -88,6 +88,22 @@ func (a *Adapters) Upsert(ctx context.Context, c AdapterConfig) error {
 	return nil
 }
 
+// DeleteInCategory removes an adapter configuration of one category, with its
+// credentials (ON DELETE CASCADE). The category is part of the condition so a
+// route for one kind of adapter cannot remove another kind's — disconnecting
+// a source cannot remove the runtime.
+func (a *Adapters) DeleteInCategory(ctx context.Context, id, category string) error {
+	tag, err := a.db.Exec(ctx,
+		`DELETE FROM adapter_configs WHERE id = $1 AND category = $2`, id, category)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not remove the adapter configuration.", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errs.Newf(errs.NotFound, "There is no %s adapter %q on this installation.", category, id)
+	}
+	return nil
+}
+
 // Policy reads and writes the host policy singleton.
 type Policy struct{ db *DB }
 

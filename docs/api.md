@@ -66,7 +66,7 @@ one verb says nothing about another (R-082).
 | Endpoint | Verb | What it does |
 | --- | --- | --- |
 | `GET /api/v1/apps` |  | The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection. Newest first, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, which is empty after the last page), `q` to match the name or slug, and `id`, repeatable, to read only those apps; `total` counts every match. |
-| `POST /api/v1/apps` | `app.create` | Create an app. `source` is `{type: git, url, ref}` for a repository, `{type: image, image, credential}` for an image that is already built (`credential` optional, for a private one: see PUT /registry-credential), or `{type: upload}` for files sent next with POST /source. Checked against the source allowlist before anything is fetched (R-092). Returns immediately in draft while detection runs; follow it with GET /detection and `wait`. |
+| `POST /api/v1/apps` | `app.create` | Create an app. `source` is `{type: git, url, ref, connection}` for a repository — `connection` optional, the source connection to read a private one with; left out, the one covering the address most closely is used — `{type: image, image, credential}` for an image that is already built (`credential` optional, for a private one: see PUT /registry-credential), or `{type: upload}` for files sent next with POST /source. Checked against the source allowlist before anything is fetched (R-092), then the repository is checked to be readable, so a private one no connection can read is refused with `VALID_SOURCE_UNREADABLE` saying why (R-091). Returns immediately in draft while detection runs; follow it with GET /detection and `wait`. |
 | `GET /api/v1/apps/{appID}` | `app.view` | One app: name, source, state and pinned spec; `detection` — its status, and its stage while running — once it has been through detection; and `last_backup`, its last daily backup attempt. |
 | `PATCH /api/v1/apps/{appID}` | `app.spec.edit` | Rename an app or change its source. |
 | `DELETE /api/v1/apps/{appID}` | `app.delete` | Delete an app. With storage, `backup=true` keeps a final copy and `force=true` discards it; without either, the request is refused so the decision is taken rather than assumed (R-204, R-205). |
@@ -260,7 +260,7 @@ one verb says nothing about another (R-082).
 | `GET /api/v1/adapters` | `install.view` | The adapters configured here and what they can currently do — live capabilities, not stored configuration. Names which credentials are set, never their values. `pending_restart` marks one saved since Pando started, which is not yet what runs; `restart_needed` says any is. A routing adapter Pando runs a process in front of itself for — Traefik, cloudflared — has `edge`: whether it is running, and why not to whoever may change it (R-174). |
 | `GET /api/v1/adapters/kinds` | `install.view` | The kinds of adapter this build of Pando can run, and the settings each takes — which are credentials (write-only, stored encrypted), which are required, the default each takes when left empty or an example, and which are `advanced`: less common, never required, always with a default, and asked for apart from the rest. |
 | `POST /api/v1/restart` | `install.adapters.manage` | Restart Pando: finish the requests in flight, then start again, loading the adapters and the configuration file afresh. Apps behind Pando are unreachable for the seconds it takes. Environment variables are not re-read. Returns before the restart; `started_at` on GET /api/v1/adapters changes once it is back. |
-| `POST /api/v1/adapters` | `install.adapters.manage` | Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. |
+| `POST /api/v1/adapters` | `install.adapters.manage` | Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. A source connection (category `source`) is used from the moment it is saved, with no restart. |
 | `GET /api/v1/capacity` | `install.view` | What the host has, and what is committed to apps (R-242). |
 | `GET /api/v1/image-registry` | `install.view` | The image registry builds are pushed to when a runtime pulls rather than imports: `url`, `username`, `kind` (`basic` or `ecr`), `layout` (`per_app` or `single`), `insecure`, `always`, and `password_set` — never the password. `fixed` lists the fields set in the startup configuration (PANDO_REGISTRY_*), each with where; those win over what is stored here. |
 | `PUT /api/v1/image-registry` | `install.adapters.manage` | Change the stored image registry. Every field is optional and one left out is unchanged; `password` is sealed by the secrets adapter, never shown again, and `""` removes it. A field fixed at startup is refused unless it is sent with its startup value. Every replica uses the change at its next push or pull, without a restart. |
@@ -287,6 +287,18 @@ one verb says nothing about another (R-082).
 | `POST /api/v1/backups/{backupID}/verify` | `install.backup.manage` | Check a backup before it is needed, rather than at the moment of disaster (R-216). |
 | `POST /api/v1/backups/{backupID}/restore` | `install.backup.manage` | Restore from a backup. Verified first: an incomplete one is refused rather than half-applied (R-215). |
 
+### Sources
+
+| Endpoint | Verb | What it does |
+| --- | --- | --- |
+| `GET /api/v1/sources` | `app.create` | The installation's source connections (R-091): each one's `id`, `name`, `kind` and `capabilities` — its `method`, `host`, `scope`, whether it can list repositories, which OAuth flows it can run, and whether it is `authorized`. `problem` says why one cannot be used. A private repository is read with the connection that covers it most closely; add one with POST /adapters, category `source`. |
+| `GET /api/v1/sources/{sourceID}/repositories` | `app.create` | The repositories a connection can read, to pick one rather than type its address: `url`, `full_name`, `default_branch`, `private`. `q` matches part of the name and `limit` caps the list (default 100). Repositories the source allowlist refuses are left out (R-092). Refused for a connection with no API access, such as an SSH key. |
+| `GET /api/v1/sources/{sourceID}/branches` | `app.create` | The branches of the repository at `url`, through the connection. |
+| `DELETE /api/v1/sources/{sourceID}` | `install.adapters.manage` | Disconnect a source connection and remove its stored credential. Apps read with it keep running; their next deploy fails, saying the connection is gone (R-146). |
+| `POST /api/v1/sources/{sourceID}/authorize` | `install.adapters.manage` | Start an OAuth authorization of a connection. `mode` `device` (the default) returns `user_code` and `verification_url` to show, and `interval_seconds` to poll POST /authorize/poll at; it needs no address the provider can reach. `mode` `web` returns `authorize_url` to send the browser to, which comes back to GET /api/v1/sources/callback. |
+| `POST /api/v1/sources/{sourceID}/authorize/poll` | `install.adapters.manage` | Ask once whether a device authorization was approved: `status` is `pending` (with `slow_down` when the provider asked for slower polling) or `authorized`, when the token is stored and the connection usable. |
+| `GET /api/v1/sources/callback` | `install.adapters.manage` | Where a provider returns a browser authorization. Stores the token and redirects to the console's Sources screen with `authorized` or `error`. |
+
 ### Reference
 
 | Endpoint | Verb | What it does |
@@ -308,6 +320,7 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `VALID_ENV_AMBIGUOUS` | 400 | An environment variable is set twice with different values. |
 | `VALID_INVALID` | 400 | The request or spec is malformed. |
 | `VALID_PRIMARY_WORKLOAD` | 400 | A spec must name exactly one primary workload. |
+| `VALID_SOURCE_UNREADABLE` | 400 | Pando could not read the repository: it is private or missing and no source connection covers it, or the connection's credential was refused (R-091). |
 | `VALID_UNKNOWN_EVENT` | 400 | A subscription names an event, or a pattern, that matches no event in the catalog (R-364). |
 | `AUTH_INVALID` | 401 | The credential presented is not valid. |
 | `AUTH_REQUIRED` | 401 | No credential was presented, or the session has expired. |

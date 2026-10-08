@@ -97,7 +97,11 @@ export function Installation() {
   });
   const restartNeeded = !Array.isArray(adapters.data) && adapters.data?.restart_needed === true;
 
-  const rows = normalize(adapters.data).map((r) => ({ ...r, id: r.id ?? r.ref ?? '' }));
+  // Source connections have their own screen, Sources: they are used the
+  // moment they are saved and are not what this one is about.
+  const rows = normalize(adapters.data)
+    .map((r) => ({ ...r, id: r.id ?? r.ref ?? '' }))
+    .filter((r) => r.category !== 'source');
   // Every kind this build can run: the adapters' proper names, and which
   // categories could be set up and are not. Shared with the dialog's query.
   const kinds = useQuery({
@@ -107,7 +111,7 @@ export function Installation() {
 
   // In category order, then by name, each row told whether it starts its
   // category and what its kind is called — "BuildKit", not "buildkit".
-  const catalog = kinds.data?.kinds ?? [];
+  const catalog = (kinds.data?.kinds ?? []).filter((k) => k.category !== 'source');
   const order = orderCategories([...rows.map((r) => r.category), ...catalog.map((k) => k.category)]);
   const grouped = order.flatMap((category) =>
     rows

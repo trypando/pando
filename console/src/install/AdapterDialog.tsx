@@ -50,6 +50,13 @@ export interface ConfiguredAdapter {
   config?: Record<string, unknown>;
 }
 
+/** The save button's words: one name for the action through the whole flow. */
+function saveLabel(editing: boolean, source: boolean, pending: boolean): string {
+  if (editing) return pending ? 'Saving' : source ? 'Save connection' : 'Save adapter';
+  if (source) return pending ? 'Connecting' : 'Connect';
+  return pending ? 'Adding' : 'Add adapter';
+}
+
 /** An adapter's stored settings as the form's values: text for strings and
  *  numbers, as the inputs hold them, and booleans as they are. */
 function storedValues(config: Record<string, unknown> | undefined): Record<string, string | boolean> {
@@ -86,7 +93,12 @@ export function AdapterDialog({
 
   const [category, setCategory] = useState(existing?.category ?? startCategory ?? '');
   const [picked, setPicked] = useState(existing ? kindKey(existing) : '');
-  const categories = orderCategories(catalog.map((k) => k.category));
+  // A source connection is added from the Sources screen and is used as soon
+  // as it is saved; every other category is added here and loaded at startup.
+  const isSource = (existing?.category ?? startCategory) === 'source';
+  const categories = isSource
+    ? ['source']
+    : orderCategories(catalog.map((k) => k.category)).filter((c) => c !== 'source');
   const inCategory = catalog.filter((k) => k.category === category);
   // A category with one kind has nothing to choose between.
   const only = inCategory.length === 1 ? inCategory[0] : undefined;
@@ -184,8 +196,12 @@ export function AdapterDialog({
   return (
     <Dialog
       open
-      title={existing ? `Edit ${existing.name || existing.id}` : 'Add adapter'}
-      description="Pando reads adapters when it starts, so a saved change takes effect after a restart."
+      title={existing ? `Edit ${existing.name || existing.id}` : isSource ? 'Connect a source' : 'Add adapter'}
+      description={
+        isSource
+          ? 'Pando reads the private repositories this connection covers with it, from the moment it is saved.'
+          : 'Pando reads adapters when it starts, so a saved change takes effect after a restart.'
+      }
       onClose={onClose}
       footer={
         <>
@@ -193,7 +209,7 @@ export function AdapterDialog({
             Cancel
           </Button>
           <Button variant="primary" disabled={!kind || !form || save.isPending} onClick={submit}>
-            {existing ? (save.isPending ? 'Saving' : 'Save adapter') : save.isPending ? 'Adding' : 'Add adapter'}
+            {saveLabel(Boolean(existing), isSource, save.isPending)}
           </Button>
         </>
       }
@@ -227,8 +243,10 @@ export function AdapterDialog({
             ) : (
             <>
             {/* Category first, then the adapter within it: the question someone
-                arrives with is "I need a builder", not a list of every kind. */}
-            <div>
+                arrives with is "I need a builder", not a list of every kind.
+                On the Sources screen the category is the only one, and not
+                asked. */}
+            <div hidden={isSource}>
               <Select
                 label="Category"
                 value={category}
@@ -330,7 +348,7 @@ export function AdapterDialog({
                       After Pando restarts, open this adapter again to choose what it handles.
                     </p>
                   )
-                ) : (
+                ) : isSource ? null : (
                   <Checkbox
                     label={`Use as the default ${kind.category} adapter`}
                     description="Used by anything that needs this kind of adapter and doesn't name one."

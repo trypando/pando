@@ -44,7 +44,8 @@ const (
 
 	// VALID_* — malformed request or spec. 400.
 	ValidInvalid         Code = "VALID_INVALID"
-	ValidUnknownEvent    Code = "VALID_UNKNOWN_EVENT" // R-364: a subscription names no catalogued event
+	SourceUnreadable     Code = "VALID_SOURCE_UNREADABLE" // R-091: no source connection can read the repository
+	ValidUnknownEvent    Code = "VALID_UNKNOWN_EVENT"     // R-364: a subscription names no catalogued event
 	ValidPrimaryWorkload Code = "VALID_PRIMARY_WORKLOAD"
 	ValidDanglingMount   Code = "VALID_DANGLING_MOUNT"
 	ValidEnvAmbiguous    Code = "VALID_ENV_AMBIGUOUS"

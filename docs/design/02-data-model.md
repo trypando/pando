@@ -496,6 +496,21 @@ CREATE TABLE adapter_credentials (
     PRIMARY KEY (adapter_id, field)
 );
 
+-- An OAuth authorization of a source connection in progress (R-091, issue
+-- #127): the device code or PKCE verifier and the hashed state, sealed like a
+-- credential under its own scope, `source-authorization:`. Removed when the
+-- authorization finishes. A source connection itself is an adapter_configs
+-- row of category 'source', its token in adapter_credentials (design 03 §10).
+CREATE TABLE source_authorizations (
+    adapter_id   text NOT NULL REFERENCES adapter_configs(id) ON DELETE CASCADE,
+    field        text NOT NULL,               -- flow, mode, state_hash, expires_at, redirect_url
+    adapter_ref  text NOT NULL,
+    ciphertext   bytea,
+    external_ref text,
+    version      integer NOT NULL DEFAULT 1,
+    PRIMARY KEY (adapter_id, field)
+);
+
 -- One AI adapter per provider (R-259).
 CREATE UNIQUE INDEX adapter_configs_one_ai_adapter_per_kind
     ON adapter_configs (kind) WHERE category = 'ai';

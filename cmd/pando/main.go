@@ -45,6 +45,12 @@ import (
 	trivyscanner "github.com/trypando/pando/internal/adapter/scanner/trivy"
 	secretslocal "github.com/trypando/pando/internal/adapter/secrets/local"
 	servicesdocker "github.com/trypando/pando/internal/adapter/services/docker"
+	sourceazure "github.com/trypando/pando/internal/adapter/source/azuredevops"
+	sourcebitbucket "github.com/trypando/pando/internal/adapter/source/bitbucket"
+	sourcegeneric "github.com/trypando/pando/internal/adapter/source/generic"
+	sourcegitea "github.com/trypando/pando/internal/adapter/source/gitea"
+	sourcegithub "github.com/trypando/pando/internal/adapter/source/github"
+	sourcegitlab "github.com/trypando/pando/internal/adapter/source/gitlab"
 	"github.com/trypando/pando/internal/cli"
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/console"
@@ -72,6 +78,7 @@ import (
 	"github.com/trypando/pando/internal/core/retention"
 	"github.com/trypando/pando/internal/core/security"
 	"github.com/trypando/pando/internal/core/source"
+	"github.com/trypando/pando/internal/core/sourceconn"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/subscription"
@@ -505,6 +512,22 @@ func serve(ctx context.Context, configPath string) error {
 	// (R-262). One value for the deploy path, detection, the API and the GC.
 	sources := source.Sources{UploadDir: source.DefaultUploadDir, WorkDir: cfg.Server.WorkDir}
 
+	// The install's source connections (R-091, issue #127): what a private
+	// repository is cloned with. Sources read through it for a credential,
+	// and it probes through Sources when an app is added.
+	sourceConnections := &sourceconn.Service{
+		Configs:        adapters,
+		Credentials:    adapterCredentials,
+		Authorizations: sourceAuthorizationsFor(db, registry),
+		New:            newSourceAdapter,
+		Declared:       declaredSourceAdapters(registry),
+		Policy:         hostPolicy,
+		Audit:          auditor,
+		Clock:          clock.System{},
+	}
+	sources.Credentials = sourceConnections
+	sourceConnections.Prober = sources
+
 	deployer := deploy.NewRunner(registry, appPlanner, apps, deployments, secrets, reconciles, logStore, volumes, proxyUpstream).
 		WithServices(state.NewServices(db), secrets).
 		WithSecurity(securityService).
@@ -808,6 +831,8 @@ func serve(ctx context.Context, configPath string) error {
 		Sources:  sources,
 		Images:   images,
 
+		SourceConnections: sourceConnections,
+
 		ImageRegistry: buildRegistry,
 		DB:            db,
 		Identity:      identity,
@@ -1044,7 +1069,7 @@ func serve(ctx context.Context, configPath string) error {
 	job("auto-deploy", (&reconciler.AutoDeploy{
 		Apps:        apps,
 		Deployments: deployments,
-		Resolver:    refResolver{},
+		Resolver:    refResolver{sources: sources},
 		// Into the deploy queue, like every other deploy (O-32).
 		Enqueue:     deployQueue.Start,
 		Concurrency: cfg.Work.AutoDeploy,
@@ -1440,6 +1465,13 @@ func registerAdapters(ctx context.Context, db *state.DB, store *state.Adapters, 
 		if !c.Enabled {
 			continue
 		}
+		// A source connection in the table is built from its row each time
+		// it is used (core/sourceconn), so connecting one needs no restart
+		// and a token it refreshes is read back. Only one the configuration
+		// file declares is built here, from where the file says.
+		if c.Category == string(adapterapi.CategorySource) && e.decl == nil {
+			continue
+		}
 
 		if c.Category != string(adapterapi.CategorySecrets) && credentials == nil {
 			credentials = adapterCredentialsFor(db, registry)
@@ -1545,6 +1577,14 @@ func adapterNames(ctx context.Context, store *state.Adapters, decls []config.Ada
 // newAdapter is an unconfigured adapter of a category and kind this build can
 // run, or nil.
 func newAdapter(category, kind string, notifications *state.Notifications) adapterapi.Adapter {
+	if category == string(adapterapi.CategorySource) {
+		// Only a source connection the configuration file declares is built
+		// at startup (registerAdapters); a nil interface must stay nil here.
+		if a := newSourceAdapter(kind); a != nil {
+			return a
+		}
+		return nil
+	}
 	switch {
 	case category == string(adapterapi.CategoryRuntime) && kind == dockerruntime.Kind:
 		return dockerruntime.New()
@@ -2011,11 +2051,59 @@ func (a reconcilerAuditor) Write(ctx context.Context, e reconciler.AuditEvent) e
 	})
 }
 
-// refResolver reads a remote's refs without cloning it.
-type refResolver struct{}
+// refResolver reads a remote's refs without cloning it, with the app's source
+// connection when it has one.
+type refResolver struct{ sources source.Sources }
 
-func (refResolver) Resolve(ctx context.Context, src spec.Source) (string, error) {
-	return source.ResolveRef(ctx, src)
+func (r refResolver) Resolve(ctx context.Context, src spec.Source) (string, error) {
+	return r.sources.ResolveRef(ctx, src)
+}
+
+// newSourceAdapter is an unconfigured source adapter of a kind this build
+// can run, or nil (R-091).
+func newSourceAdapter(kind string) adapterapi.SourceAdapter {
+	switch kind {
+	case sourcegeneric.Kind:
+		return sourcegeneric.New()
+	case sourcegithub.Kind:
+		return sourcegithub.New()
+	case sourcegitlab.Kind:
+		return sourcegitlab.New()
+	case sourcegitea.Kind:
+		return sourcegitea.New()
+	case sourceazure.Kind:
+		return sourceazure.New()
+	case sourcebitbucket.Kind:
+		return sourcebitbucket.New()
+	}
+	return nil
+}
+
+// declaredSourceAdapters are the source connections the configuration file
+// declares, built at startup.
+func declaredSourceAdapters(registry *adapterapi.Registry) map[string]adapterapi.SourceAdapter {
+	out := map[string]adapterapi.SourceAdapter{}
+	for _, ref := range registry.ByCategory(adapterapi.CategorySource) {
+		if a, ok := registry.Get(ref); ok {
+			if sa, ok := a.(adapterapi.SourceAdapter); ok {
+				out[ref] = sa
+			}
+		}
+	}
+	return out
+}
+
+// sourceAuthorizationsFor keeps OAuth authorizations of source connections
+// while they are in progress, sealed like the connections' credentials.
+func sourceAuthorizationsFor(db *state.DB, registry *adapterapi.Registry) *state.AdapterCredentials {
+	ref, ok := registry.Default(adapterapi.CategorySecrets)
+	if !ok {
+		if refs := registry.ByCategory(adapterapi.CategorySecrets); len(refs) > 0 {
+			ref = refs[0]
+		}
+	}
+	sa, _ := registry.Secrets(ref)
+	return state.NewSourceAuthorizations(db, sa, ref)
 }
 
 // consoleHandler returns the embedded console, or nil when the binary was built
@@ -2147,6 +2235,12 @@ func adapterKinds() []adapterapi.KindInfo {
 		chat.Teams.Info(),
 		chat.Discord.Info(),
 		notifyntfy.Info(),
+		sourcegeneric.Info(),
+		sourcegithub.Info(),
+		sourcegitlab.Info(),
+		sourcegitea.Info(),
+		sourceazure.Info(),
+		sourcebitbucket.Info(),
 	}
 }
 

@@ -225,7 +225,7 @@ func (r *Runner) check(ctx context.Context, appID string) (state.App, error) {
 
 func (r *Runner) run(ctx context.Context, appID, slug string, src spec.Source) (detect.Proposal, error) {
 	detect.Report(ctx, detect.StageFetching, nil)
-	checkout, err := r.Sources.Fetch(ctx, src)
+	checkout, err := r.Sources.Fetch(source.ForApp(ctx, appID), src)
 	if err != nil {
 		return detect.Proposal{}, err
 	}

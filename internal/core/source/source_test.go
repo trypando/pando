@@ -100,7 +100,7 @@ func TestFetchGitReportsAnUnreachableRepository(t *testing.T) {
 	_, err := source.Sources{}.Fetch(ctx(), spec.Source{
 		Type: spec.SourceGit, URL: filepath.Join(t.TempDir(), "not-a-repo"),
 	})
-	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
+	require.Equal(t, errs.SourceUnreadable, errs.CodeOf(err))
 	require.NotEmpty(t, errs.As(err).Remedy)
 }
 
@@ -150,12 +150,12 @@ func TestResolveRefAnswersWithoutCloning(t *testing.T) {
 	require.NoError(t, err)
 	branch := ref.Name().Short()
 
-	got, err := source.ResolveRef(ctx(), spec.Source{Type: spec.SourceGit, URL: dir, Ref: branch})
+	got, err := source.Sources{}.ResolveRef(ctx(), spec.Source{Type: spec.SourceGit, URL: dir, Ref: branch})
 	require.NoError(t, err)
 	require.Equal(t, shas[0], got)
 
 	// A fully qualified ref resolves too.
-	got, err = source.ResolveRef(ctx(), spec.Source{
+	got, err = source.Sources{}.ResolveRef(ctx(), spec.Source{
 		Type: spec.SourceGit, URL: dir, Ref: "refs/heads/" + branch,
 	})
 	require.NoError(t, err)
@@ -165,7 +165,7 @@ func TestResolveRefAnswersWithoutCloning(t *testing.T) {
 func TestResolveRefOfAnUnknownBranchIsEmptyRatherThanAnError(t *testing.T) {
 	dir, _ := repo(t, map[string]string{"main.go": "package main"})
 
-	got, err := source.ResolveRef(ctx(), spec.Source{Type: spec.SourceGit, URL: dir, Ref: "no-such-branch"})
+	got, err := source.Sources{}.ResolveRef(ctx(), spec.Source{Type: spec.SourceGit, URL: dir, Ref: "no-such-branch"})
 	require.NoError(t, err, "nothing to deploy is not a failure to check")
 	require.Empty(t, got)
 }
@@ -176,18 +176,18 @@ func TestResolveRefIgnoresSourcesThatCannotHaveOne(t *testing.T) {
 		{Type: spec.SourceUpload, UploadID: "app_01HQ8"},
 		{Type: spec.SourceGit, URL: ""},
 	} {
-		got, err := source.ResolveRef(ctx(), src)
+		got, err := source.Sources{}.ResolveRef(ctx(), src)
 		require.NoError(t, err)
 		require.Empty(t, got)
 	}
 }
 
 func TestResolveRefReportsARepositoryItCannotReach(t *testing.T) {
-	_, err := source.ResolveRef(ctx(), spec.Source{
+	_, err := source.Sources{}.ResolveRef(ctx(), spec.Source{
 		Type: spec.SourceGit, URL: filepath.Join(t.TempDir(), "gone"), Ref: "main",
 	})
-	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
-	require.Contains(t, errs.As(err).Message, "check for new commits")
+	require.Equal(t, errs.SourceUnreadable, errs.CodeOf(err))
+	require.Contains(t, errs.As(err).Message, "does not exist")
 }
 
 // --- the read-only view ----------------------------------------------------
