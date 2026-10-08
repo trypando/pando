@@ -6,7 +6,7 @@ app"). Kubernetes' published scalability thresholds stop at about 10,000 namespa
 Services per cluster, and the Kubernetes runtime makes one namespace per app and one headless Service
 per workload. This note is that measurement: what one app is in the cluster, what the control plane
 did at 2,500, 5,000, 10,000 and 20,000 apps, where it degraded and why, and the options. Nothing in
-it is implemented; the recommendation at the end needs the owner's decision.
+it is implemented; the owner accepted the recommendation at the end as O-55.
 
 `make test-kwok-scale` reproduces it (`test/kwok`).
 
@@ -250,7 +250,7 @@ models no clusters (R-256).
 
 Tradeoff: the most work of the three, and only needed once a real cluster shows a limit.
 
-## Recommendation (needs the owner's decision)
+## Recommendation (decided: O-55)
 
 **Keep namespace per app (O-40 (a)) and do not adopt (b).** The control plane held 20,000 apps —
 20,007 namespaces, 26,003 Services, about 300,000 objects — with no failures and flat per-call
@@ -268,7 +268,7 @@ the runtime cannot keep up with a few dozen apps, whatever the cluster can hold.
 
 Proposed text for `docs/plan/open-decisions.md`, for the owner:
 
-> **O-??** Whether the Kubernetes runtime changes its per-app shape to reach 20,000 apps on one
+> **O-55** (decided as proposed) Whether the Kubernetes runtime changes its per-app shape to reach 20,000 apps on one
 > cluster (O-40's load harness). Measured on kwok (`notes-kubernetes-scale-issue-72.md`): 20,000
 > apps — 20,007 namespaces and 26,003 Services — held with no failures; API server 4 GiB, etcd
 > 703 MiB. **Proposed:** keep namespace per app and a Service per workload; no namespace per team.
