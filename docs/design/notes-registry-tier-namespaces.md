@@ -36,7 +36,7 @@ the interface is actively telling them there is nothing to notice.
 
 ## What was built
 
-`ociprobe.Probe.IncludeDockerHub`, default **off**. ghcr.io is checked; Docker
+`registryprobe.Probe.IncludeDockerHub` (`internal/detect/registryprobe`), default **off**. ghcr.io is checked; Docker
 Hub is opt-in for an operator who knows their own naming and wants it.
 
 ## What needs deciding

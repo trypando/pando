@@ -125,13 +125,28 @@ func (p Proposal) TrialSummary() api.TrialSummary {
 	}
 }
 
-// RegistryProbe and PublishedImage live in the adapter package, because a probe
-// is an adapter: it talks to ghcr.io and Docker Hub, and R-027 says nothing
-// under internal/adapter may reach into core beyond internal/adapter/api.
-type (
-	RegistryProbe  = api.RegistryProbe
-	PublishedImage = api.PublishedImage
-)
+// RegistryProbe looks for an image the maintainer already publishes.
+//
+// R-094 tier 1, the top of the confidence ladder, and it sits there because a
+// published image is the maintainer's own answer to "how is this built" —
+// already built, already shipped by whoever maintains it. Nothing Pando infers
+// about the source beats it.
+//
+// It is part of detection, not an adapter (issue #153): the planner asks it
+// nothing, and the OCI distribution API it speaks is no provider's vocabulary
+// (design 03 §8.1). The registry Pando pushes built images to is the adapter.
+type RegistryProbe interface {
+	// Published reports images published for a source repository, best first.
+	// No result is the normal case and not an error.
+	Published(ctx context.Context, src spec.Source) ([]PublishedImage, error)
+}
+
+// PublishedImage is an image that already exists.
+type PublishedImage struct {
+	Ref      string `json:"ref"`
+	Digest   string `json:"digest,omitempty"`
+	Registry string `json:"registry"`
+}
 
 // TrialRunner starts a draft in throwaway isolation (R-097).
 type TrialRunner interface {

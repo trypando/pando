@@ -35,7 +35,6 @@ import (
 	notifyconsole "github.com/trypando/pando/internal/adapter/notify/console"
 	notifyntfy "github.com/trypando/pando/internal/adapter/notify/ntfy"
 	notifysmtp "github.com/trypando/pando/internal/adapter/notify/smtp"
-	"github.com/trypando/pando/internal/adapter/registry/ociprobe"
 	"github.com/trypando/pando/internal/adapter/routing/cloudflare"
 	"github.com/trypando/pando/internal/adapter/routing/loopback"
 	"github.com/trypando/pando/internal/adapter/routing/traefik"
@@ -87,6 +86,7 @@ import (
 	"github.com/trypando/pando/internal/core/tokenkey"
 	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/detect"
+	"github.com/trypando/pando/internal/detect/registryprobe"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/httpapi"
 	"github.com/trypando/pando/internal/log"
@@ -600,7 +600,7 @@ func serve(ctx context.Context, configPath string) error {
 			// no relationship to the GitHub owner of the same name, so a match
 			// there is not evidence that the image belongs to the project
 			// (docs/design/notes-registry-tier-namespaces.md).
-			Registry: ociprobe.New(),
+			Registry: registryprobe.New(),
 		},
 	}
 
