@@ -60,8 +60,14 @@ func TestR243_CapacityReportsTheSameReadingsForEveryRuntime(t *testing.T) {
 	require.Equal(t, http.StatusOK, got.Code, got.String())
 	var body struct {
 		Runtimes []map[string]any `json:"runtimes"`
+		AsOf     time.Time        `json:"as_of"`
+		Refresh  int              `json:"refresh_seconds"`
 	}
 	got.JSON(t, &body)
+	// The readings are a background snapshot, and say when it was taken
+	// (issue #72).
+	require.WithinDuration(t, time.Now(), body.AsOf, time.Minute)
+	require.Positive(t, body.Refresh)
 
 	byRef := map[string]map[string]any{}
 	for _, r := range body.Runtimes {

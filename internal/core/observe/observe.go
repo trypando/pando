@@ -35,6 +35,12 @@ const (
 	DefaultUsageTTL    = 5 * time.Second
 	DefaultCallTimeout = 15 * time.Second
 
+	// DefaultRuntimeTTL is how long what a runtime says about itself — its
+	// capabilities and its capacity — is reused for a page that shows it
+	// [P]. These change when an adapter is reconfigured or a host is added,
+	// not between two polls of the same app.
+	DefaultRuntimeTTL = 30 * time.Second
+
 	// sweepEvery is how often expired entries are dropped wholesale, on top of
 	// being dropped when they are next asked for. Apps nobody looks at again
 	// would otherwise stay in memory until the process ends.
@@ -51,6 +57,7 @@ type Cache struct {
 	clock       clock.Clock
 	observeTTL  time.Duration
 	usageTTL    time.Duration
+	runtimeTTL  time.Duration
 	callTimeout time.Duration
 
 	group singleflight.Group
@@ -75,6 +82,10 @@ func WithTTLs(observe, usage time.Duration) Option {
 	return func(o *Cache) { o.observeTTL, o.usageTTL = observe, usage }
 }
 
+// WithRuntimeTTL sets how long a runtime's capabilities and capacity are
+// reused.
+func WithRuntimeTTL(d time.Duration) Option { return func(o *Cache) { o.runtimeTTL = d } }
+
 // WithCallTimeout bounds the shared call to the runtime. It runs apart from any
 // one caller's context, so one person closing their tab does not fail it for
 // everyone else waiting on it.
@@ -86,6 +97,7 @@ func New(opts ...Option) *Cache {
 		clock:       clock.System{},
 		observeTTL:  DefaultObserveTTL,
 		usageTTL:    DefaultUsageTTL,
+		runtimeTTL:  DefaultRuntimeTTL,
 		callTimeout: DefaultCallTimeout,
 		entries:     map[key]entry{},
 		forgotten:   map[key]time.Time{},
@@ -102,6 +114,8 @@ type kind uint8
 const (
 	kindObserve kind = iota + 1
 	kindUsage
+	kindCapabilities
+	kindCapacity
 )
 
 // key names one answer: the same app on two runtimes is two answers.
@@ -113,8 +127,13 @@ type key struct {
 
 func (k key) String() string {
 	prefix := "observe"
-	if k.kind == kindUsage {
+	switch k.kind {
+	case kindUsage:
 		prefix = "usage"
+	case kindCapabilities:
+		prefix = "capabilities"
+	case kindCapacity:
+		prefix = "capacity"
 	}
 	return prefix + "\x00" + k.runtime + "\x00" + k.appID
 }
@@ -145,6 +164,26 @@ func (c *Cache) Usage(ctx context.Context, runtimeRef string, runtime api.Runtim
 	}
 	return load(ctx, c, key{kindUsage, runtimeRef, appID}, c.usageTTL,
 		func(ctx context.Context) (api.BundleUsage, error) { return runtime.Usage(ctx, ref) })
+}
+
+// Capabilities returns what the runtime says it can do, asking it at most
+// once per runtime TTL on this replica. Shown with a reading, not used to plan
+// or enforce: the planner asks the runtime itself.
+func (c *Cache) Capabilities(ctx context.Context, runtimeRef string, runtime api.RuntimeAdapter) (api.RuntimeCapabilities, error) {
+	if c == nil {
+		return runtime.Capabilities(ctx)
+	}
+	return load(ctx, c, key{kind: kindCapabilities, runtime: runtimeRef}, c.runtimeTTL, runtime.Capabilities)
+}
+
+// Capacity returns the runtime's totals, asking it at most once per runtime
+// TTL on this replica. For display, like Capabilities: the capacity check at
+// plan time asks the runtime itself (R-242).
+func (c *Cache) Capacity(ctx context.Context, runtimeRef string, runtime api.RuntimeAdapter) (api.Capacity, error) {
+	if c == nil {
+		return runtime.Capacity(ctx)
+	}
+	return load(ctx, c, key{kind: kindCapacity, runtime: runtimeRef}, c.runtimeTTL, runtime.Capacity)
 }
 
 // Forget drops what this replica holds for the app, so the next request asks

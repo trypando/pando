@@ -233,29 +233,44 @@ type SecurityState struct {
 	ScoreFixable *int
 }
 
-// LiveSecurityState returns every app the policy pass has to consider.
+// SecurityThreshold is what the security pass places apps against: host
+// policy's minimum score, and whether it reads the score of fixable findings.
+type SecurityThreshold struct {
+	MinScore        int
+	IgnoreUnfixable bool
+}
+
+// LiveSecurityState returns the apps the security pass has something to
+// decide about under threshold t.
 //
 // Archived apps are not in it, and neither are drafts: an app that has never
-// been deployed cannot be running below a threshold. What is in it is anything
-// with a pinned revision, including a stopped one — an app Pando stopped for
-// being insecure has to be looked at again to be started again.
-func (s *Scans) LiveSecurityState(ctx context.Context) ([]SecurityState, error) {
+// been deployed cannot be running below a threshold. Of the rest, an app is in
+// it when it is marked — insecure, or stopped for being insecure, since an app
+// Pando stopped has to be looked at again to be started again — or when its
+// score does not meet t, including when it has none. An unmarked app that
+// meets the threshold is one the pass would look at and leave alone, and over
+// twenty thousand apps that is nearly all of them (issue #72).
+//
+// One set-based query: the pinned revision's newest scores are kept on the app
+// by trigger (migration 60), so there is no lookup into app_scans per app. The
+// verdict is still security.Evaluate's, in the pass; this only leaves out apps
+// it could not act on.
+func (s *Scans) LiveSecurityState(ctx context.Context, t SecurityThreshold) ([]SecurityState, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT a.id, a.name, coalesce(a.owner_user_id, ''), a.state, a.desired_state,
 		       coalesce(a.pinned_spec_id, ''), a.insecure_since, a.stopped_for_security,
-		       s.score, s.score_fixable
+		       a.pinned_scan_score, a.pinned_scan_score_fixable
 		FROM apps a
-		LEFT JOIN LATERAL (
-		    SELECT sc.score, sc.score_fixable
-		    FROM app_scans sc
-		    WHERE sc.app_id = a.id AND (sc.spec_id = a.pinned_spec_id OR sc.spec_id IS NULL)
-		    ORDER BY (sc.spec_id IS NOT NULL) DESC, sc.ran_at DESC
-		    LIMIT 1
-		) s ON true
 		WHERE a.deleted_at IS NULL
 		  AND a.pinned_spec_id IS NOT NULL
 		  AND a.state <> 'archived'
-		ORDER BY a.id`)
+		  AND (a.insecure_since IS NOT NULL
+		       OR a.stopped_for_security
+		       OR NOT coalesce(
+		            CASE WHEN $2 AND a.pinned_scan_score_fixable IS NOT NULL
+		                 THEN a.pinned_scan_score_fixable
+		                 ELSE a.pinned_scan_score END >= $1, false))
+		ORDER BY a.id`, t.MinScore, t.IgnoreUnfixable)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not list apps for the security pass.", err)
 	}

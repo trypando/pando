@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/planner"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/spec"
@@ -13,7 +14,9 @@ import (
 
 type staticInventory []planner.InventoryApp
 
-func (s staticInventory) LiveApps(context.Context) ([]planner.InventoryApp, error) {
+// LiveApps ignores the filter: every app is read, which is the full
+// evaluation a filtered read must agree with.
+func (s staticInventory) LiveApps(context.Context, planner.InventoryFilter) ([]planner.InventoryApp, error) {
 	return s, nil
 }
 
@@ -140,4 +143,60 @@ func TestPreviewWithoutAnInventoryRefuses(t *testing.T) {
 	)
 	_, err := p.PreviewPolicy(context.Background(), policy.Default())
 	require.Error(t, err)
+}
+
+// filterInventory records the filter it was asked with.
+type filterInventory struct {
+	asked []planner.InventoryFilter
+	apps  []planner.InventoryApp
+}
+
+func (f *filterInventory) LiveApps(_ context.Context, filter planner.InventoryFilter) ([]planner.InventoryApp, error) {
+	f.asked = append(f.asked, filter)
+	return f.apps, nil
+}
+
+// A policy preview asks the store only for what the candidate could block
+// (issue #72), and with nothing configured that a policy could find wanting,
+// asks for nothing at all.
+func TestAPolicyPreviewAsksOnlyForWhatTheCandidateCouldBlock(t *testing.T) {
+	ctx := context.Background()
+
+	empty := &filterInventory{}
+	none, err := planner.New(api.NewRegistry(), policy.Static(policy.Default()), fixedAllocations{}).
+		WithInventory(empty).PreviewPolicy(ctx, policy.Default())
+	require.NoError(t, err)
+	require.Empty(t, none)
+	require.Empty(t, empty.asked, "nothing to check against, so no app is read")
+
+	weak := capableRuntime()
+	inv := &filterInventory{}
+	p := planner.New(registry(t, weak, capableRouting(), capableBuilder()), policy.Static(policy.Default()), fixedAllocations{}).
+		WithInventory(inv)
+
+	candidate := policy.Default()
+	candidate.SourceAllowlist = []string{"github.com"}
+	candidate.PublicSharing = policy.PublicSharingPasscodeOnly
+	candidate.EgressBlockPrivate = true
+	candidate.EgressLoosening = policy.EgressLooseningForbidden
+	candidate.MinRuntimeIsolation = spec.IsolationVM
+	_, err = p.PreviewPolicy(ctx, candidate)
+	require.NoError(t, err)
+	require.Len(t, inv.asked, 1)
+	f := inv.asked[0]
+	require.True(t, f.All, "an allowlist is matched against every source")
+	require.True(t, f.Anonymous)
+	require.True(t, f.AnonymousWithoutPasscode)
+	require.True(t, f.OwnEgress, "loosening forbidden names apps with egress settings of their own")
+	require.Equal(t, []string{"rt_docker"}, f.EgressRuntimes, "a runtime that cannot enforce egress rules")
+	require.True(t, f.EgressRestrictsAll, "blocking private addresses restricts an app with no settings")
+	require.Equal(t, map[string]spec.IsolationClass{"rt_docker": spec.IsolationContainer}, f.Runtimes)
+	require.Equal(t, spec.IsolationVM, f.MinRuntime)
+	require.Equal(t, map[string]spec.IsolationClass{"bld_buildkit": spec.IsolationContainer}, f.Builders)
+
+	_, err = p.PreviewPolicy(ctx, policy.Default())
+	require.NoError(t, err)
+	f = inv.asked[1]
+	require.False(t, f.All || f.Anonymous || f.OwnEgress || f.EgressRestrictsAll,
+		"the default policy blocks no source, no public app and no loosening: %+v", f)
 }

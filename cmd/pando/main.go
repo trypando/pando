@@ -56,6 +56,7 @@ import (
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
+	"github.com/trypando/pando/internal/core/capacity"
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/cluster"
 	"github.com/trypando/pando/internal/core/deploy"
@@ -480,6 +481,7 @@ func serve(ctx context.Context, configPath string) error {
 
 	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps).WithImages(images).
 		WithInstallRegistry(buildRegistry)
+	capacityReadings := &capacity.Snapshots{Registry: registry, Allocations: allocations, Logger: logger}
 
 	// Every route points here (R-023). The proxy is phase 5; until it exists
 	// this is the address routing adapters are told to use, and it is already
@@ -865,6 +867,9 @@ func serve(ctx context.Context, configPath string) error {
 		AdapterCredentials: adapterCredentials,
 
 		Allocations: allocations,
+		// GET /capacity's runtime readings, taken in the background while
+		// somebody is looking rather than on every view (issue #72).
+		Capacity:    capacityReadings,
 		Planner:     appPlanner,
 		Deployments: deployments,
 		Reconciles:  reconciles,
@@ -1108,6 +1113,7 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:        logger,
 	}
 	go dispatcher.Run(loopCtx)
+	go capacityReadings.Run(loopCtx)
 
 	// Retention, hourly, for the tables that otherwise only grow — the event
 	// outbox among them, whose pruning used to run on every replica (issue

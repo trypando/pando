@@ -397,7 +397,9 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             </Button>
             <Button
               variant="secondary"
-              disabled={check.isPending}
+              // Not again while the answer on screen is for this draft: edit
+              // clears it, and asking twice reads every affected app twice.
+              disabled={check.isPending || preview !== null}
               onClick={() => check.mutate(current)}
             >
               {check.isPending ? 'Checking' : 'Check what this affects'}

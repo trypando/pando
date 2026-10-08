@@ -395,6 +395,18 @@ func (s *Subscriptions) Enabled(ctx context.Context) ([]Subscription, time.Time,
 	return subs, asOf, err
 }
 
+// SubscriptionsChannel is the channel a change to what routing reads about a
+// subscription is announced on, by trigger (migration 61): one made, removed,
+// turned on or off, or given other events or another app.
+const SubscriptionsChannel = "pando_subscriptions"
+
+// Watch calls changed whenever any replica commits such a change, until ctx
+// ends. connected says whether it is listening; while it is not, a change can
+// go untold (DB.Listen).
+func (s *Subscriptions) Watch(ctx context.Context, changed func(), connected func(bool)) {
+	s.db.Listen(ctx, SubscriptionsChannel, func(string) { changed() }, connected)
+}
+
 // List returns subscriptions, newest first.
 func (s *Subscriptions) List(ctx context.Context, f SubscriptionFilter) ([]Subscription, error) {
 	rows, err := s.db.Query(ctx, `SELECT `+subscriptionColumns+subscriptionFrom+`
