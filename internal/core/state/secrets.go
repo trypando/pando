@@ -50,7 +50,18 @@ func (s *Secrets) Put(ctx context.Context, appID, key string, v secret.Value) er
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not store the secret.", err)
 	}
+	s.changedApp(ctx, appID)
 	return nil
+}
+
+// changedApp tells the reconciler an app's secrets changed: a rotated value
+// reaches the app by the reconciler seeing the environment fingerprint move
+// (R-193), and a settled app waiting for the slow sweep (O-52) must not wait
+// minutes for that. updated_at too, so a pass looking at the app right now
+// does not release it to the sweep (ReleaseSettled). Best effort: the secret
+// is stored, and the sweep still comes.
+func (s *Secrets) changedApp(ctx context.Context, appID string) {
+	_, _ = s.db.Exec(ctx, `UPDATE apps SET updated_at = now(), `+dueAgain+` WHERE id = $1`, appID)
 }
 
 // Keys lists an app's secret keys and versions. Never values — reading a value
@@ -142,6 +153,7 @@ func (s *Secrets) Delete(ctx context.Context, appID, key string) error {
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not remove the secret.", err)
 	}
+	s.changedApp(ctx, appID)
 	return nil
 }
 

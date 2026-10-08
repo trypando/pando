@@ -737,6 +737,12 @@ func (f *fakeRuntime) EdgeVolumes(context.Context) ([]api.VolumeHandle, error) {
 	return nil, nil
 }
 
+// WatchBundles is never called: this runtime does not report events, so the
+// reconciler visits its apps on every pass as it always has (O-52).
+func (f *fakeRuntime) WatchBundles(context.Context, func(api.BundleEvent)) error {
+	return errors.New("this runtime does not report events")
+}
+
 // TestR203_TheReconcilerRecordsStorageTheRuntimeHolds asserts that Pando's
 // record of an app's storage is brought back in line with the runtime without
 // waiting for a deploy (issue #87).

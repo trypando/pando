@@ -973,6 +973,12 @@ func serve(ctx context.Context, configPath string) error {
 		// Replicas share the apps rather than each visiting every one.
 		MinRevisit: reconciler.DefaultMinRevisit,
 
+		// Every runtime's events are followed, on every replica, so an app
+		// is visited when something happens to it and a settled one only on
+		// the slow sweep (O-52). A runtime without events keeps the fast
+		// cadence.
+		Runtimes: func() []string { return registry.ByCategory(adapterapi.CategoryRuntime) },
+
 		// The owner hears that their app failed (design 05 §4). Unset until
 		// issue #50, which is to say nobody heard.
 		Notifier: notifyRouter,

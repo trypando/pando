@@ -326,8 +326,12 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		// the container's network namespace rather than by exec-ing inside it.
 		// Write observation is ContainerDiff, which the daemon computes itself.
 		// Neither sees into a sandbox (above).
-		SupportsTrialRun:         true,
-		SupportsPortObservation:  observes,
+		SupportsTrialRun:        true,
+		SupportsPortObservation: observes,
+
+		// The daemon's event stream, filtered to Pando's containers (O-52,
+		// events.go).
+		SupportsBundleEvents:     true,
 		SupportsWriteObservation: observes,
 
 		// An edge in front of Pando (R-174, edge.go).

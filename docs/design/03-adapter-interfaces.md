@@ -63,6 +63,7 @@ type RuntimeCapabilities struct {
     ReportsUsage            bool   // R-245
     MaxWorkloadsPerBundle   int    // 0 = unlimited
     SupportsEgressRestriction bool // enforces NetworkPlan.Egress (R-186)
+    SupportsBundleEvents    bool   // WatchBundles reports workload events (O-52, §2.2)
     EdgeConfig              []EdgeConfig    // how an edge here receives routes: "shared_mount" | "kubernetes_api"
     ImageDelivery           []ImageDelivery // how a built image reaches it: import | registry
 }
@@ -131,6 +132,10 @@ type RuntimeAdapter interface {
 
     // Observe reports what actually exists. Drives reconciliation (R-148).
     Observe(ctx context.Context, ref BundleRef) (ObservedBundle, error)
+
+    // WatchBundles streams what happens to bundles' workloads until ctx ends
+    // or the stream is lost (O-52, §2.2). Only when SupportsBundleEvents.
+    WatchBundles(ctx context.Context, sink func(BundleEvent)) error
 
     // What each workload is using now — CPU, memory, disk — and each volume's
     // size (R-245). A reading, never a history (R-016). Only when ReportsUsage.
@@ -340,6 +345,21 @@ type ObservedWorkload struct {
 **[D]** `Observe` reports facts and never remediates. The reconciler (§05) decides what to do. An adapter that silently restarts things makes drift undetectable and breaks R-148's report path.
 
 **[D]** `Healthy` is a pointer because "no health signal" and "unhealthy" are different states and must not collapse (R-221).
+
+**[D] Events (O-52).** A runtime with `SupportsBundleEvents` reports, through `WatchBundles`, what
+happens to the workloads of Pando's bundles: `exited`, `oom_killed`, `started`, `removed`,
+`health_changed`, each with the bundle ID core gave it. Like `Observe` it reports facts and never acts
+on them. Two kinds carry no bundle: `watching` is sent first, once the stream is open, and means every
+change from then on is reported; `missed` means changes may have gone unreported — part of the stream
+was lost and is back, or a change could not be attributed — and asks for everything to be looked at
+again. The call returns when the stream is lost; the caller reopens it. How the reconciler uses this is
+design 05 §2.3.
+
+| Adapter | Stream |
+|---|---|
+| Docker | The daemon's `/events`, filtered by the daemon to `type=container`, `label=io.pando.managed=true` and the actions `start`, `die`, `oom`, `destroy`, `health_status`. The bundle is the container's `io.pando.bundle` label; trial containers are skipped. A daemon that does not answer `Ping` is an error before `watching`. |
+| Docker on several hosts | One stream per host, each reconnected inside the adapter with backoff (1 s, 2 s, 5 s, 15 s, 30 s). `watching` once every host's first attempt has opened or failed; a host whose stream opens after a gap — or after being down at the start — sends `missed`. Returns only when ctx ends, so one host restarting its daemon does not make every app on every host be looked at. |
+| Kubernetes | One cluster-wide pod watch (Pando's role already lists pods cluster-wide, `deploy/kubernetes/rbac.yaml`), selected `managed-by=pando,pando.dev/workload,!pando.dev/role` so the edge, trials and helpers are excluded. The pods are listed first, in pages of 500, and the watch starts from the list's version, so only later changes are events. Each pod's last reading is kept, and an event is a change in it: the app container terminating (`OOMKilled` or not), starting, its readiness changing, the pod being deleted. A watch the API server ends on its timeout is reopened from the last version seen; one that cannot be resumed (`410 Gone`) returns. The bundle is the pod's `pando.dev/bundle-id` annotation, written since O-52 because the labels hold it lowercased; a pod without it sends `missed`, once. |
 
 ### 2.3 Exec
 

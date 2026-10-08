@@ -329,3 +329,6 @@ func (stubRuntime) Edges(context.Context) ([]string, error)  { return nil, nil }
 func (stubRuntime) EdgeVolumes(context.Context) ([]api.VolumeHandle, error) {
 	return nil, nil
 }
+func (stubRuntime) WatchBundles(context.Context, func(api.BundleEvent)) error {
+	return nil
+}
