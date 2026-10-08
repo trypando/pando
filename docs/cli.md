@@ -223,6 +223,7 @@ pando app add <source-url> | --image <reference>
 
 | Flag | Default | What it does |
 | --- | --- | --- |
+| `--connection` |  | read a private repository with this source connection (default: the one covering its address, from `pando source list`) |
 | `--ecr-access-key-id` |  | pull from AWS ECR with this access key; the secret access key is read from the terminal |
 | `--ecr-region` |  | with --ecr-access-key-id, the region (default: read from the registry host) |
 | `--image` |  | run this prebuilt image instead of building a repository, such as ghcr.io/acme/web:1.4 |
@@ -1280,6 +1281,75 @@ pando slot set <app> <key>
 | `--bind` |  | bind to an existing service |
 | `--literal` |  | use this value directly |
 | `--provision` |  | let Pando create the service |
+
+### `source`
+
+See and authorize the connections private repositories are read with
+
+```
+pando source
+```
+
+A source connection is how Pando reads private repositories on GitHub, GitLab, Azure DevOps,
+Bitbucket, Gitea or any git host. Add one with `pando adapter add source/<kind>` — `pando adapter
+kinds` lists the kinds — and every app whose repository it covers is read with it.
+
+#### `source authorize`
+
+Sign a connection in with OAuth
+
+```
+pando source authorize <connection>
+```
+
+Shows a code to enter on the provider's site, then waits until you have. Nothing needs to be
+able to reach this Pando, so it works on a laptop. --web prints an address to open in a browser
+instead, which returns to Pando's own address.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--timeout` | `15m0s` | how long to wait for the code to be approved |
+| `--web` |  | authorize in a browser instead of with a code |
+
+#### `source branches`
+
+List a repository's branches through a connection
+
+```
+pando source branches <connection> <repository-url>
+```
+
+#### `source list`
+
+Show the source connections and whether each is ready
+
+```
+pando source list
+```
+
+#### `source remove`
+
+Disconnect a source connection and delete its stored credential
+
+```
+pando source remove <connection>
+```
+
+Apps read with the connection keep running. Their next deploy fails, saying the connection is
+gone, until another connection covers their repository.
+
+#### `source repos`
+
+List the repositories a connection can read
+
+```
+pando source repos <connection>
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--limit` | `0` | at most this many (default 100) |
+| `--query` |  | only repositories whose name contains this |
 
 ### `subscriptions`
 

@@ -386,6 +386,21 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 		enabled = *req.Enabled
 	}
 
+	// A source connection is used the moment it is saved (R-091), so one
+	// whose settings its adapter refuses — a key that does not parse, an SSH
+	// connection that pins no host — is refused here, saying why, rather than
+	// saved and listed as broken. Many connections, none a default: the one
+	// covering a repository is chosen for it.
+	if req.Category == string(api.CategorySource) {
+		req.IsDefault = false
+		if s.SourceConnections != nil {
+			if err := s.SourceConnections.Validate(r.Context(), req.ID, req.Kind, req.Config, req.Credentials); err != nil {
+				Error(w, r, err)
+				return
+			}
+		}
+	}
+
 	if err := s.Adapters.Upsert(r.Context(), state.AdapterConfig{
 		ID: req.ID, Category: req.Category, Kind: req.Kind, Name: req.Name,
 		Config: req.Config, IsDefault: req.IsDefault, Enabled: enabled,

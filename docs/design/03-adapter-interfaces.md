@@ -1176,9 +1176,84 @@ func (r *Registry) Default(c Category) (Adapter, error)
 
 **[D]** CI enforces an import rule: nothing under `internal/adapter/` may import `internal/core/authz`, `internal/core/audit`, or `internal/core/state`. This is R-027 as a lint rule rather than a convention.
 
+**[D] A source connection is the exception to startup registration (issue #127).** Its row is built into
+an adapter on every use, by `core/sourceconn`, so connecting one needs no restart and a token it refreshed is
+read back. Only one the config file declares is built at startup. See §10.
+
 ---
 
-## 10. v1 implementations
+## 10. Source
+
+**[D] The eleventh category (R-091, R-252; O-56).** A source adapter is one connection from the installation
+to a place repositories live. It answers three questions core asks, and holds nothing between them (R-027):
+
+```go
+type SourceAdapter interface {
+    Adapter
+    SourceCapabilities() SourceCapabilities           // method, host, scope, can it list, which OAuth flows, authorized
+    Covers(repoURL string) int                         // 0: not mine. Higher: narrower. Pure.
+    GitCredential(ctx, repoURL) (GitCredential, error) // what Pando's git client clones with
+    Refresh(ctx) (map[string]secret.Value, error)      // a renewed OAuth token, for core to store
+    ListRepositories(ctx, ListRepositoriesRequest) ([]Repository, error)
+    ListBranches(ctx, repoURL) ([]string, error)
+    BeginAuthorization(ctx, AuthorizationRequest) (Authorization, error)        // OAuth: device or browser
+    CompleteAuthorization(ctx, AuthorizationCompletion) (AuthorizationResult, error)
+}
+```
+
+**[D] The forge's vocabulary stays in the adapter (R-251).** `Covers` is how: core never parses
+`dev.azure.com/{org}/{project}/_git/{repo}` or `/scm/{project}/{repo}.git`. Each adapter reads every address
+form its forge has (HTTPS, user@HTTPS, scp-like SSH, `ssh://` with a port, legacy hosts) and scores it against
+its host and scope. Core picks the highest score among usable connections, ties broken by ID so the answer is
+stable (`sourceconn.Match`).
+
+**[D] The connection belongs to the installation (O-3, re-resolved).** It is an `adapter_configs` row, its
+token or key in `adapter_credentials` as ciphertext (R-190), changed with `install.adapters.manage`. Reading
+the list of connections and the repositories they reach is `app.create` — what adding an app needs — and says
+nothing about any app (R-080). Many connections, none of them the default: `is_default` is forced off.
+
+**[D] What happens when an app is added (`sourceconn.Check`).** After the source allowlist (R-092): an address
+with a password or token in it is refused, because the spec stores it in the clear (R-190); the connection
+covering the address most closely is chosen, or the one the request names; and the repository is probed
+(`ls-remote`) with it, or anonymously when nothing covers it. A private repository nothing can read is refused
+with `VALID_SOURCE_UNREADABLE`, naming the repository and, when there is one, the connection and what to change
+(R-105). The connection's ID goes in the spec's `credential_ref` (design 01 §2.1). A host that does not answer
+is not refused: the address may be right, and detection reports it.
+
+**[D] What happens at every fetch (`sourceconn.Access`).** The allowlist is checked again — every clone,
+probe and ref poll passes through here, so a blocked source never causes a token to be minted or used, whoever
+the caller. The connection is built from its row; one removed or not authorized fails the fetch with what to
+do, and a running app keeps serving (R-146). A credential the adapter refreshed (`GitCredential.Rotated`) is
+stored before it is used, so a rotated refresh token is never lost. Each **clone** is audited as
+`source.connection.use` with the app, the repository and the method; a ref poll is not.
+
+**[D] The credential goes nowhere but Pando's git client (R-112).** go-git clones in Pando's process with the
+credential as an `Authorization` header or an SSH key; the clone's config records the address without it, and
+the builder is handed the checkout. An SSH connection must pin the host's key — `known_hosts` is required,
+except where the adapter embeds the host's published keys (github.com, gitlab.com) — and a host presenting
+another key is refused, saying so. A private certificate authority is a per-connection `ca_bundle`.
+`TestR091_*` in `internal/core/source` clone over smart HTTP and SSH and search the checkout for the token.
+
+**[D] OAuth without an address the provider can reach.** Device authorization (GitHub, GitLab, Entra ID)
+shows a code and is polled (`POST /sources/{id}/authorize`, `/authorize/poll`), so it works on a laptop, from
+the CLI and over MCP. Browser authorization uses PKCE and comes back to `/api/v1/sources/callback`; the state
+names the connection and its hash is checked against the one stored. The flow in progress — device code or
+PKCE verifier — is kept sealed in `source_authorizations` (design 02 §2.5) so a callback reaching another
+replica finds it. Access tokens that expire are renewed by `GitCredential` (clone) or by `Refresh`, which
+core calls before a listing: GitLab rotates its refresh token on every use, and a listing that refreshed on
+its own would lose the new one.
+
+**[D] Submodules are not fetched** (R-021), with or without a connection. Whether to fetch them with the
+parent's connection is O-57.
+
+**[P] Expiry of a token the provider does not report is not warned about.** `GitCredential.ExpiresAt` carries
+what a provider says (an App installation token, an OAuth token), and a token that has stopped working fails
+the next redeploy with the reason. A warning before a PAT expires needs a per-forge API call that is not made
+yet.
+
+---
+
+## 11. v1 implementations
 
 | Category | Kind | Note |
 |---|---|---|
@@ -1198,6 +1273,12 @@ func (r *Registry) Default(c Category) (Adapter, error)
 | ai | `anthropic` | performs the AI functions assigned to it, each on its own model if the assignment names one (design 10 §9). Not seeded — needs a credential. One per install, like any AI provider. |
 | ai | `openai` | the same functions with OpenAI's models, through the Responses API (design 10 §6.2). Not seeded — needs a credential. |
 | ai | `local` | the same functions with a model on the install's own hardware, through any OpenAI-compatible server such as Ollama (design 10 §6.3). Not seeded — needs a server and a model. |
+| source | `github` | github.com and Enterprise Server: App installation, OAuth (device and browser), fine-grained or classic token, deploy key (§10). Not seeded. |
+| source | `gitlab` | gitlab.com and self-managed: OAuth (device and browser), personal/project/group access token, deploy token, deploy key (§10) |
+| source | `azuredevops` | Services and Server: token, Entra ID OAuth (device and browser), service principal, SSH key (§10) |
+| source | `bitbucket` | Cloud and Data Center: workspace/project/repository access token, API token, OAuth consumer, access key (§10) |
+| source | `gitea` | Gitea and Forgejo, Codeberg preset: access token, OAuth, deploy key (§10) |
+| source | `git` | any git host: username and token over HTTPS, or an SSH key with the host's key pinned. No repository listing (§10) |
 
 **[P] Podman is the Docker adapter pointed at a different socket, not an adapter of its own.** Its
 Docker-compatible API does what this adapter asks, and the adapter's integration suite passes against

@@ -48,6 +48,7 @@ func Commands() []*cobra.Command {
 		withServer(userCmd(client)),
 		withServer(groupCmd(client)),
 		withServer(adapterCmd(client)),
+		withServer(sourceCmd(client)),
 		withServer(identityCmd(client)),
 		withServer(aiCmd(client)),
 		withServer(restartCmd(client)),
@@ -291,6 +292,9 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 					name = nameFromURL(args[0])
 				}
 				src = map[string]any{"type": "git", "url": args[0]}
+				if conn, _ := cmd.Flags().GetString("connection"); conn != "" {
+					src["connection"] = conn
+				}
 			}
 
 			var app map[string]any
@@ -324,6 +328,8 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 	add.Flags().String("name", "", "name for the app (defaults to the repository or image name)")
 	add.Flags().String("image", "", "run this prebuilt image instead of building a repository, such as ghcr.io/acme/web:1.4")
 	registryCredentialFlags(add)
+	add.Flags().String("connection", "",
+		"read a private repository with this source connection (default: the one covering its address, from `pando source list`)")
 	add.Flags().Bool("wait", false, "wait for detection to finish, as `pando app detection --wait` does")
 	add.Flags().Duration("timeout", detectionTimeout, "with --wait, how long to wait before giving up")
 	cmd.AddCommand(add)

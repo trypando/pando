@@ -245,7 +245,10 @@ func (s *Server) handleListAdapters(w http.ResponseWriter, r *http.Request) {
 		// adapter is not loaded at all, a changed one still runs as it was.
 		// Without this a just-added adapter reads as reachable, having never
 		// been asked.
-		if !isDeclared && !s.StartedAt.IsZero() && c.UpdatedAt.After(s.StartedAt) {
+		// A source connection is the exception: it is built from its row
+		// each time it is used (core/sourceconn), so it never waits for one.
+		if !isDeclared && !s.StartedAt.IsZero() && c.UpdatedAt.After(s.StartedAt) &&
+			c.Category != string(api.CategorySource) {
 			entry["pending_restart"] = true
 			entry["status"] = "pending_restart"
 			restartNeeded = true

@@ -331,7 +331,7 @@ CREATE TABLE auto_deploy_checks (
     checked_at       timestamptz NOT NULL,     -- the last time auto-deploy looked (R-141)
     found_ref        text,                     -- refs/heads/main, refs/tags/v1.2.0
     found_commit     text,
-    attempted_commit text,                     -- tried once, whatever came of it (O-56)
+    attempted_commit text,                     -- tried once, whatever came of it (O-58)
     attempted_at     timestamptz,
     deployment_id    text REFERENCES deployments(id) ON DELETE SET NULL,
     error            text,                     -- why the last check or attempt went nowhere
@@ -339,7 +339,7 @@ CREATE TABLE auto_deploy_checks (
     updated_at       timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE auto_deploy_webhook_secrets (     -- R-142, one per app (O-56)
+CREATE TABLE auto_deploy_webhook_secrets (     -- R-142, one per app (O-58)
     app_id       text PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
     adapter_ref  text NOT NULL,
     ciphertext   bytea,                        -- sealed by the secrets adapter (R-190)
@@ -352,7 +352,7 @@ CREATE TABLE auto_deploy_webhook_secrets (     -- R-142, one per app (O-56)
 ```
 
 **[D]** `auto_deploy_checks` is what the console shows as an app's last check, and what stops
-auto-deploy trying a commit twice: one that failed to deploy is not retried on every poll (O-56). A
+auto-deploy trying a commit twice: one that failed to deploy is not retried on every poll (O-58). A
 new commit is tried, and a person can deploy the old one by hand.
 
 **[D]** `egress_rules` is the merged rules (`policy.EffectiveEgress.Rules`) resolved when the deploy
@@ -518,6 +518,21 @@ CREATE TABLE adapter_credentials (
     adapter_id   text NOT NULL REFERENCES adapter_configs(id) ON DELETE CASCADE,
     field        text NOT NULL,               -- api_key
     adapter_ref  text NOT NULL,               -- the secrets adapter that sealed it
+    ciphertext   bytea,
+    external_ref text,
+    version      integer NOT NULL DEFAULT 1,
+    PRIMARY KEY (adapter_id, field)
+);
+
+-- An OAuth authorization of a source connection in progress (R-091, issue
+-- #127): the device code or PKCE verifier and the hashed state, sealed like a
+-- credential under its own scope, `source-authorization:`. Removed when the
+-- authorization finishes. A source connection itself is an adapter_configs
+-- row of category 'source', its token in adapter_credentials (design 03 §10).
+CREATE TABLE source_authorizations (
+    adapter_id   text NOT NULL REFERENCES adapter_configs(id) ON DELETE CASCADE,
+    field        text NOT NULL,               -- flow, mode, state_hash, expires_at, redirect_url
+    adapter_ref  text NOT NULL,
     ciphertext   bytea,
     external_ref text,
     version      integer NOT NULL DEFAULT 1,

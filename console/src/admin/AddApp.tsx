@@ -22,13 +22,15 @@
 // goes to it rather than making a second one.
 
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { invalidateAppLists } from './appList';
 import { Banner, Button, Checkbox, Dialog, Input, Select } from '@design';
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
-import { messageOf } from '../install/Accounts';
+import { refusal } from '../install/Accounts';
+import { covers, ready as sourceReady, useSources } from '../install/Sources';
+import { useSettled } from '../ui/paged';
 import { CredentialFields, credentialBody, credentialComplete, emptyCredential, type CredentialDraft } from './RegistryCredential';
 import { FilePicker, sendFiles } from './UploadSource';
 import type { PickedFile } from './pack';
@@ -51,6 +53,23 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
   // attempt sends to it.
   const [created, setCreated] = useState<App | null>(null);
 
+  // A repository may be picked from a source connection that can list them
+  // (R-091) rather than typed. Typing still works for any of them: the
+  // connection covering an address is found by the server.
+  const sources = useSources(kind === 'git');
+  const listable = (sources.data?.sources ?? []).filter((s) => sourceReady(s) && s.capabilities.list_repositories);
+  const [from, setFrom] = useState('');
+  const [search, setSearch] = useState('');
+  const settled = useSettled(search.trim());
+  const repos = useQuery({
+    queryKey: ['source-repositories', from, settled],
+    queryFn: () =>
+      api.get<{ repositories: { url: string; full_name: string }[] | null }>(
+        `/sources/${encodeURIComponent(from)}/repositories${settled ? `?q=${encodeURIComponent(settled)}` : ''}`,
+      ),
+    enabled: kind === 'git' && from !== '',
+  });
+
   const ready =
     name.trim() !== '' &&
     (kind === 'git'
@@ -69,7 +88,7 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
       }
       const source =
         kind === 'git'
-          ? { type: 'git', url: url.trim() }
+          ? { type: 'git', url: url.trim(), ...(from ? { connection: from } : {}) }
           : {
               type: 'image',
               image: image.trim(),
@@ -91,7 +110,7 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
     if (!named) setName(nameFrom(value));
   };
 
-  const error = create.isError ? messageOf(create.error) : undefined;
+  const error = create.isError ? refusal(create.error) : undefined;
 
   return (
     <Dialog
@@ -114,14 +133,55 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-        {kind === 'git' && (
+        {kind === 'git' && listable.length > 0 && (
+          <Select
+            label="Repository from"
+            value={from}
+            options={[
+              { value: '', label: 'An address I enter' },
+              ...listable.map((s) => ({ value: s.id, label: `${s.name} (${covers(s)})` })),
+            ]}
+            onChange={(e) => {
+              if (create.isError) create.reset();
+              setFrom(e.target.value);
+              setSearch('');
+            }}
+          />
+        )}
+        {kind === 'git' && from !== '' && (
+          <>
+            <Input
+              label="Find a repository"
+              value={search}
+              placeholder="api"
+              helper="Part of its name. Pando lists the repositories this connection can read."
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {repos.isError ? (
+              <Banner tone="failed">{refusal(repos.error)}</Banner>
+            ) : (
+              <Select
+                label="Repository"
+                value={url}
+                disabled={repos.isPending}
+                options={[
+                  ...(url ? [] : [{ value: '', label: repos.isPending ? 'Loading repositories' : 'Choose a repository' }]),
+                  ...(repos.data?.repositories ?? []).map((r) => ({ value: r.url, label: r.full_name })),
+                ]}
+                onChange={(e) => edit(setUrl)(e.target.value)}
+              />
+            )}
+            {error && <Banner tone="failed">{error}</Banner>}
+          </>
+        )}
+        {kind === 'git' && from === '' && (
           <Input
             label="Repository"
             mono
             autoFocus
             value={url}
             placeholder="https://github.com/acme/notes"
-            helper="Pando reads it to work out how to build and run the app. Nothing is read from it at deploy time."
+            helper="Pando reads it to work out how to build and run the app, with the source connection that covers it if it is private. Nothing is read from it at deploy time."
             error={error}
             onChange={(e) => edit(setUrl)(e.target.value)}
           />

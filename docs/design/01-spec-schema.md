@@ -72,9 +72,17 @@ type Source struct {
     Image  string     `json:"image,omitempty"`   // when Type == image
     Digest string     `json:"digest,omitempty"`  // resolved, pinned
     UploadID string   `json:"upload_id,omitempty"` // when Type == upload: the app's own ID
-    CredentialRef string `json:"credential_ref,omitempty"` // "registry" when an image pull is authenticated
+    CredentialRef string `json:"credential_ref,omitempty"` // "registry" when an image pull is authenticated;
+                                                             // for git, the source connection it is read with
 }
 ```
+
+**[D] A private repository names the source connection it is read with (R-091, O-3 re-resolved with issue
+#127).** `CredentialRef` on a git source is the ID of an installation source connection (design 03 §10),
+chosen when the app is added — the connection covering the address most closely, or the one the request
+names — and empty for a repository read anonymously. It is a reference, never a credential: the token or key
+is the installation's, sealed in `adapter_credentials`, and an export or a spec revision carries only the ID.
+A connection removed later fails the next fetch with what to do; the running version keeps serving (R-146).
 
 **[D]** `Ref` is what the user asked for; `Commit` is what runs. Auto-deploy (R-141) advances `Commit` and creates a revision. A deploy never resolves `Ref` implicitly at runtime.
 
@@ -300,7 +308,7 @@ type AutoDeploy struct {
     Enabled bool             `json:"enabled"`  // default false, R-141
     Trigger AutoDeployTrigger `json:"trigger"` // branch_updated | release_tagged
     Branch  string           `json:"branch,omitempty"`      // empty: Source.Ref
-    TagPattern string        `json:"tag_pattern,omitempty"` // empty: stable semver tags (O-56)
+    TagPattern string        `json:"tag_pattern,omitempty"` // empty: stable semver tags (O-58)
 }
 ```
 
@@ -309,7 +317,7 @@ release trigger follows the newest tag that counts as a release: with no `TagPat
 semantic version (`v1.2.3` or `1.2.3`, no pre-release suffix); with one, any tag whose name matches the
 glob (`release-*`). Newest is by version order, comparing runs of digits as numbers, because listing a
 remote's refs gives no dates. Many projects never tag a release, which is why the branch trigger is the
-default and the pattern exists (O-56). Both watch a git source; for an image or an upload the last check
+default and the pattern exists (O-58). Both watch a git source; for an image or an upload the last check
 says there is nothing to watch, and an image's tags are R-143.
 
 **[D]** `ModeSource` is retained so the console can show whether a routing mode was inherited or deliberately chosen — relevant when host policy later restricts overrides (R-274 / O-10).

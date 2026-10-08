@@ -115,7 +115,7 @@ func (r *Runner) PrepareRevision(ctx context.Context, rev state.Revision, by str
 		return rev, nil
 	}
 
-	checkout, err := r.sources.Fetch(ctx, s.Source)
+	checkout, err := r.sources.Fetch(source.ForApp(ctx, rev.AppID), s.Source)
 	if err != nil {
 		return state.Revision{}, err
 	}
@@ -336,7 +336,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	} else {
 		fmt.Fprintf(sink, "=> Fetching source at %s\n", short(appSpec.Source.Commit))
 	}
-	checkout, err := r.sources.Fetch(ctx, appSpec.Source)
+	checkout, err := r.sources.Fetch(source.ForApp(ctx, rev.AppID), appSpec.Source)
 	if err != nil {
 		return fail("fetch", err)
 	}

@@ -10,7 +10,7 @@ ALTER TABLE spec_revisions ADD CONSTRAINT spec_revisions_origin_check
 --
 -- found_* is what the watched branch or release pointed at then; the console
 -- shows it. attempted_commit is the last commit auto-deploy tried to deploy,
--- whatever came of it: a commit is tried once (O-56), so a broken push is not
+-- whatever came of it: a commit is tried once (O-58), so a broken push is not
 -- retried every five minutes. A new commit is tried; a person can always
 -- deploy by hand.
 CREATE TABLE auto_deploy_checks (

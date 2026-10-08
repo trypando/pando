@@ -76,7 +76,7 @@ export function AdapterDialog({
   adapters: ConfiguredAdapter[];
   onClose: () => void;
   /** Told the saved adapter's name, for the restart notice. */
-  onSaved: (name: string) => void;
+  onSaved: (name: string, category: string) => void;
 }) {
   const kinds = useQuery({
     queryKey: ['adapter-kinds'],
@@ -86,6 +86,9 @@ export function AdapterDialog({
 
   const [category, setCategory] = useState(existing?.category ?? startCategory ?? '');
   const [picked, setPicked] = useState(existing ? kindKey(existing) : '');
+  // A source connection is used as soon as it is saved (R-091); every other
+  // category is loaded at startup. The dialog says which.
+  const isSource = category === 'source';
   const categories = orderCategories(catalog.map((k) => k.category));
   const inCategory = catalog.filter((k) => k.category === category);
   // A category with one kind has nothing to choose between.
@@ -146,7 +149,7 @@ export function AdapterDialog({
       return settingsChanged;
     },
     onSuccess: (settingsChanged) => {
-      if (settingsChanged) onSaved(form!.name.trim() || kind!.name);
+      if (settingsChanged) onSaved(form!.name.trim() || kind!.name, kind!.category);
       else onClose();
     },
     onSettled: () => void queries.invalidateQueries({ queryKey: ['ai-functions'] }),
@@ -185,7 +188,11 @@ export function AdapterDialog({
     <Dialog
       open
       title={existing ? `Edit ${existing.name || existing.id}` : 'Add adapter'}
-      description="Pando reads adapters when it starts, so a saved change takes effect after a restart."
+      description={
+        isSource
+          ? 'Pando reads the private repositories this connection covers with it, from the moment it is saved.'
+          : 'Pando reads adapters when it starts, so a saved change takes effect after a restart.'
+      }
       onClose={onClose}
       footer={
         <>
@@ -330,7 +337,7 @@ export function AdapterDialog({
                       After Pando restarts, open this adapter again to choose what it handles.
                     </p>
                   )
-                ) : (
+                ) : isSource ? null : (
                   <Checkbox
                     label={`Use as the default ${kind.category} adapter`}
                     description="Used by anything that needs this kind of adapter and doesn't name one."

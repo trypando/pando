@@ -24,7 +24,7 @@ func tags(names ...string) []*plumbing.Reference {
 
 // TestR141_ReleaseTriggerCountsStableSemverTagsByDefault asserts that, with no
 // pattern, a release is a stable semantic version, compared as one: v1.10.0 is
-// newer than v1.9.0, and a pre-release does not count (O-56).
+// newer than v1.9.0, and a pre-release does not count (O-58).
 func TestR141_ReleaseTriggerCountsStableSemverTagsByDefault(t *testing.T) {
 	got := source.NewestRelease(tags("v1.9.0", "v1.10.0", "v2.0.0-rc.1", "nightly", "1.2.3"), "")
 	require.Equal(t, "refs/tags/v1.10.0", got.Ref)
@@ -34,7 +34,7 @@ func TestR141_ReleaseTriggerCountsStableSemverTagsByDefault(t *testing.T) {
 }
 
 // TestR141_ReleaseTriggerFollowsAPattern asserts that a tag pattern decides
-// what counts as a release, for the projects that do not use semver (O-56).
+// what counts as a release, for the projects that do not use semver (O-58).
 func TestR141_ReleaseTriggerFollowsAPattern(t *testing.T) {
 	got := source.NewestRelease(tags("release-9", "release-10", "v3.0.0", "release-2"), "release-*")
 	require.Equal(t, "refs/tags/release-10", got.Ref)
@@ -81,11 +81,11 @@ func TestR141_BranchTriggerFollowsTheChosenBranch(t *testing.T) {
 
 	src := spec.Source{Type: spec.SourceGit, URL: dir, Ref: branch}
 
-	got, err := source.ResolveTracked(ctx(), src, spec.AutoDeploy{Enabled: true})
+	got, err := source.Sources{}.ResolveTracked(ctx(), src, spec.AutoDeploy{Enabled: true})
 	require.NoError(t, err)
 	require.Equal(t, shas[0], got.Commit, "no branch named: the one the app was deployed from")
 
-	got, err = source.ResolveTracked(ctx(), src, spec.AutoDeploy{Enabled: true, Branch: "staging"})
+	got, err = source.Sources{}.ResolveTracked(ctx(), src, spec.AutoDeploy{Enabled: true, Branch: "staging"})
 	require.NoError(t, err)
 	require.Equal(t, staging.String(), got.Commit)
 	require.Equal(t, "refs/heads/staging", got.Ref)
@@ -100,7 +100,7 @@ func TestResolveTrackedFindsAnAnnotatedReleaseTagsCommit(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := source.ResolveTracked(ctx(), spec.Source{Type: spec.SourceGit, URL: dir, Ref: "main"},
+	got, err := source.Sources{}.ResolveTracked(ctx(), spec.Source{Type: spec.SourceGit, URL: dir, Ref: "main"},
 		spec.AutoDeploy{Enabled: true, Trigger: spec.TriggerReleaseTagged})
 	require.NoError(t, err)
 	require.Equal(t, "refs/tags/v1.0.0", got.Ref)

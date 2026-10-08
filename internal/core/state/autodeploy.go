@@ -20,7 +20,7 @@ type AutoDeployCheck struct {
 	FoundRef    string    `json:"found_ref,omitempty"`
 	FoundCommit string    `json:"found_commit,omitempty"`
 
-	// AttemptedCommit is tried once (O-56). Auto-deploy does not try it
+	// AttemptedCommit is tried once (O-58). Auto-deploy does not try it
 	// again, whatever came of it.
 	AttemptedCommit string     `json:"attempted_commit,omitempty"`
 	AttemptedAt     *time.Time `json:"attempted_at,omitempty"`
@@ -100,7 +100,7 @@ func (c *AutoDeployChecks) Attempted(ctx context.Context, appID, ref, commit, de
 // --- webhook secrets -------------------------------------------------------
 
 // AutoDeploySecrets stores each app's auto-deploy webhook secret, sealed by
-// the secrets adapter (R-142, R-190, O-56): ciphertext or an external
+// the secrets adapter (R-142, R-190, O-58): ciphertext or an external
 // reference, never the value. The same arrangement as SubscriptionSecrets.
 type AutoDeploySecrets struct {
 	db         *DB

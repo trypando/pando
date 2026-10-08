@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
@@ -92,6 +93,71 @@ type Sources struct {
 	// small tmpfs that a few concurrent clones fill (issue #72). Empty means
 	// the system temporary directory, for tests and embeddings.
 	WorkDir string
+
+	// Credentials finds what a repository is read with, from the install's
+	// source connections (R-091, issue #127). Nil reads every repository
+	// anonymously, which is what a public one needs.
+	Credentials Credentials
+}
+
+// Purpose is why a repository is being read, so a use that matters — a clone
+// whose code will run — can be audited and a poll for new commits is not.
+type Purpose int
+
+const (
+	// PurposeClone fetches the code.
+	PurposeClone Purpose = iota
+
+	// PurposeCheck only asks the repository what it has: whether it can be
+	// read, or what a branch points at.
+	PurposeCheck
+)
+
+// Access is what a repository is read with.
+type Access struct {
+	Credential api.GitCredential
+
+	// Connection names the source connection it came from, for messages:
+	// "the source connection 'GitHub (acme)'".
+	Connection string
+}
+
+// Credentials finds what a repository is read with. Nil Access with no error
+// means read it anonymously.
+type Credentials interface {
+	Access(ctx context.Context, src spec.Source, purpose Purpose) (*Access, error)
+}
+
+// access resolves what src is read with, as go-git wants it. The returned
+// function removes anything written to disk to build it.
+func (s Sources) access(ctx context.Context, src spec.Source, purpose Purpose) (*gitAccess, error) {
+	out := &gitAccess{url: src.URL}
+	if s.Credentials == nil || src.Type != spec.SourceGit {
+		return out, nil
+	}
+	a, err := s.Credentials.Access(ctx, src, purpose)
+	if err != nil || a == nil {
+		return out, err
+	}
+	out.connection = a.Connection
+	if a.Credential.URL != "" {
+		out.url = a.Credential.URL
+	}
+	out.caBundle = a.Credential.CABundle
+	out.auth, err = authMethod(a.Credential, out.url)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// gitAccess is a resolved Access: the address to use and go-git's
+// authentication for it.
+type gitAccess struct {
+	url        string
+	auth       transport.AuthMethod
+	caBundle   []byte
+	connection string
 }
 
 // tempDir makes a working directory for one fetch under WorkDir, or under the
@@ -115,7 +181,11 @@ func (s Sources) tempDir(pattern string) (string, error) {
 func (s Sources) Fetch(ctx context.Context, src spec.Source) (*Checkout, error) {
 	switch src.Type {
 	case spec.SourceGit:
-		return fetchGit(ctx, src, s.tempDir)
+		acc, err := s.access(ctx, src, PurposeClone)
+		if err != nil {
+			return nil, err
+		}
+		return fetchGit(ctx, src, acc, s.tempDir)
 	case spec.SourceImage:
 		// Nothing to fetch: a prebuilt image is run as it is.
 		return &Checkout{Dir: "", Commit: src.Digest}, nil
@@ -140,11 +210,14 @@ const fetchAttempts = 3
 // the pool by then, so another attempt opens a new one. A wrong address, a
 // missing branch or a commit that is not there fails the same way every time
 // and is reported at once.
-func fetchGit(ctx context.Context, src spec.Source, mkdir func(string) (string, error)) (*Checkout, error) {
+func fetchGit(ctx context.Context, src spec.Source, acc *gitAccess, mkdir func(string) (string, error)) (*Checkout, error) {
+	if acc == nil {
+		acc = &gitAccess{url: src.URL}
+	}
 	var err error
 	for attempt := 1; attempt <= fetchAttempts; attempt++ {
 		var co *Checkout
-		co, err = fetchGitOnce(ctx, src, mkdir)
+		co, err = fetchGitOnce(ctx, src, acc, mkdir)
 		if err == nil || !transient(err) || ctx.Err() != nil || attempt == fetchAttempts {
 			return co, err
 		}
@@ -174,7 +247,7 @@ func transient(err error) bool {
 	return false
 }
 
-func fetchGitOnce(ctx context.Context, src spec.Source, mkdir func(string) (string, error)) (*Checkout, error) {
+func fetchGitOnce(ctx context.Context, src spec.Source, acc *gitAccess, mkdir func(string) (string, error)) (*Checkout, error) {
 	if mkdir == nil {
 		mkdir = func(pattern string) (string, error) { return os.MkdirTemp("", pattern) }
 	}
@@ -185,7 +258,12 @@ func fetchGitOnce(ctx context.Context, src spec.Source, mkdir func(string) (stri
 	cleanup := func() { _ = os.RemoveAll(dir) }
 
 	opts := &git.CloneOptions{
-		URL: src.URL,
+		// The credential is go-git's, in this process (R-112): it is not
+		// written into the clone's config, and the remote recorded there is
+		// the address without it. Nothing the builder is given carries it.
+		URL:      acc.url,
+		Auth:     acc.auth,
+		CABundle: acc.caBundle,
 
 		// Submodules are not initialized. R-021: Pando fills declared slots and
 		// never invents topology, and silently pulling in another repository's
@@ -215,6 +293,9 @@ func fetchGitOnce(ctx context.Context, src spec.Source, mkdir func(string) (stri
 	repo, err := git.PlainCloneContext(ctx, dir, false, opts)
 	if err != nil {
 		cleanup()
+		if denied := accessError(err, src.URL, acc.connection); denied != nil {
+			return nil, denied
+		}
 		return nil, errs.Wrap(errs.ValidInvalid,
 			"Pando could not fetch this app's source.", err).
 			WithDetail("url", src.URL).
@@ -358,7 +439,7 @@ var _ api.SourceView = (*dirView)(nil)
 // the answer is usually "the same as last time". Cloning to find that out would
 // make Pando's largest source of network traffic a question it almost never
 // needs to act on.
-func ResolveRef(ctx context.Context, src spec.Source) (string, error) {
-	tracked, err := ResolveTracked(ctx, src, spec.AutoDeploy{})
+func (s Sources) ResolveRef(ctx context.Context, src spec.Source) (string, error) {
+	tracked, err := s.ResolveTracked(ctx, src, spec.AutoDeploy{})
 	return tracked.Commit, err
 }

@@ -34,6 +34,7 @@ import (
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/source"
+	"github.com/trypando/pando/internal/core/sourceconn"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/subscription"
@@ -185,6 +186,12 @@ type Server struct {
 	// Sources keeps an uploaded source (R-262) and fetches an app's source for
 	// a scan on request.
 	Sources source.Sources
+
+	// SourceConnections is the install's source connections (R-091, issue
+	// #127): which one a new app's repository is read with, and the
+	// repositories each can list. Nil reads every repository anonymously and
+	// answers the /sources routes with an error.
+	SourceConnections *sourceconn.Service
 
 	// Images keeps the credential an image app's image is pulled with (issue
 	// #41). Nil on an install that cannot store one, where setting one says so.
@@ -591,6 +598,22 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/adapters", s.handleListAdapters)
 		r.Post("/adapters", s.handleCreateAdapter)
 		r.Get("/adapters/kinds", s.handleAdapterKinds)
+
+		// Source connections (R-091, issue #127). Configured with POST
+		// /adapters like any adapter; read with app.create, which is what
+		// adding an app from one needs, and changed with
+		// install.adapters.manage. See source_handlers.go.
+		r.Route("/sources", func(r chi.Router) {
+			r.Get("/", s.handleListSources)
+			r.Get("/callback", s.handleSourceCallback)
+			r.Route("/{sourceID}", func(r chi.Router) {
+				r.Delete("/", s.handleDeleteSource)
+				r.Get("/repositories", s.handleListSourceRepositories)
+				r.Get("/branches", s.handleListSourceBranches)
+				r.Post("/authorize", s.handleBeginSourceAuthorization)
+				r.Post("/authorize/poll", s.handlePollSourceAuthorization)
+			})
+		})
 
 		// The install's image registry (issue #72): read with install.view,
 		// changed with install.adapters.manage, like the adapters.

@@ -234,7 +234,7 @@ func TestR141_ReleaseTriggerPollsOnItsOwnInterval(t *testing.T) {
 	require.Less(t, reconciler.BranchPollInterval, reconciler.ReleasePollInterval)
 }
 
-// TestR141_ACommitIsTriedOnce asserts O-56: a commit whose deploy is refused
+// TestR141_ACommitIsTriedOnce asserts O-58: a commit whose deploy is refused
 // is not tried again on the next poll, and the next commit is.
 func TestR141_ACommitIsTriedOnce(t *testing.T) {
 	t.Parallel()

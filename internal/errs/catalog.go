@@ -37,6 +37,7 @@ var meanings = map[Code]string{
 	PolicyAnonymousGrantForbidden: "Host policy does not allow apps to be shared with everyone (R-076).",
 
 	ValidInvalid:         "The request or spec is malformed.",
+	SourceUnreadable:     "Pando could not read the repository: it is private or missing and no source connection covers it, or the connection's credential was refused (R-091).",
 	ValidPrimaryWorkload: "A spec must name exactly one primary workload.",
 	ValidDanglingMount:   "A workload mounts a volume the spec does not declare.",
 	ValidEnvAmbiguous:    "An environment variable is set twice with different values.",

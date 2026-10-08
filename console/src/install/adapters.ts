@@ -139,6 +139,7 @@ const CATEGORY_NOTES: Record<string, string> = {
   ai: 'An AI provider, such as Anthropic. It performs the AI functions chosen on it: repairing plans, drafting access and policy, searching the audit log, answering from the reference.',
   notify: 'Where notifications go, such as the console itself.',
   identity: 'Where accounts come from and how people sign in.',
+  source: 'How Pando reads private repositories: a connection to GitHub, GitLab, Azure DevOps, Bitbucket, Gitea or any git host.',
 };
 
 /** One line on what a category of adapter is for. */

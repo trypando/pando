@@ -232,7 +232,7 @@ func (a *AutoDeploy) check(ctx context.Context, doc policy.Document, app state.A
 		return nil
 	}
 
-	// O-56: a commit is tried once. A push that fails to deploy is not tried
+	// O-58: a commit is tried once. A push that fails to deploy is not tried
 	// again every five minutes; the next commit is, and a person can deploy
 	// this one by hand. The reason it failed stays on the check.
 	last, seen, err := a.Checks.ByApp(ctx, app.ID)

@@ -6,10 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/storage/memory"
 
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
@@ -30,18 +27,23 @@ type Tracked struct {
 // The branch trigger follows AutoDeploy.Branch, or the ref the app was
 // deployed from when that is empty. The release trigger follows the newest tag
 // that counts as a release (NewestRelease).
-func ResolveTracked(ctx context.Context, src spec.Source, ad spec.AutoDeploy) (Tracked, error) {
+//
+// With the credential the app's source connection gives, as every other read
+// of the repository is (issue #127), so a private repository auto-deploys.
+func (s Sources) ResolveTracked(ctx context.Context, src spec.Source, ad spec.AutoDeploy) (Tracked, error) {
 	if src.Type != spec.SourceGit || src.URL == "" {
 		return Tracked{}, nil
 	}
 
-	remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{
-		Name: "origin", URLs: []string{src.URL},
-	})
-	// Peeled, so an annotated tag answers with the commit it names rather
-	// than the tag object, which is not something a checkout can use.
-	refs, err := remote.ListContext(ctx, &git.ListOptions{PeelingOption: git.AppendPeeled})
+	acc, err := s.access(ctx, src, PurposeCheck)
 	if err != nil {
+		return Tracked{}, err
+	}
+	refs, err := listRefs(ctx, acc)
+	if err != nil {
+		if denied := accessError(err, src.URL, acc.connection); denied != nil {
+			return Tracked{}, denied
+		}
 		return Tracked{}, errs.Wrap(errs.ValidInvalid,
 			"Pando could not reach this app's source to check for new commits.", err).
 			WithDetail("url", src.URL)

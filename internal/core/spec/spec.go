@@ -512,7 +512,7 @@ type AutoDeploy struct {
 
 	// TagPattern is what the release trigger counts as a release: a glob
 	// matched against tag names (`release-*`). Empty means a stable semantic
-	// version, v1.2.3 (O-56).
+	// version, v1.2.3 (O-58).
 	TagPattern string `json:"tag_pattern,omitempty"`
 }
 
