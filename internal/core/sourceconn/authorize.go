@@ -152,7 +152,7 @@ func (s *Service) CompleteWebAuthorization(ctx context.Context, state, code stri
 	id, raw, ok := strings.Cut(state, ".")
 	if !ok || id == "" || raw == "" {
 		return "", errs.New(errs.ValidInvalid,
-			"This authorization link is not one Pando started. Start the authorization again from Sources in the console.")
+			"This authorization link is not one Pando started. Start the authorization again from Adapters in the console.")
 	}
 	c, pending, err := s.pending(ctx, id)
 	if err != nil {
@@ -162,7 +162,7 @@ func (s *Service) CompleteWebAuthorization(ctx context.Context, state, code stri
 	if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(pending[pendingState].Reveal())) != 1 ||
 		pending[pendingMode].Reveal() != string(api.AuthorizationWeb) {
 		return "", errs.New(errs.ValidInvalid,
-			"This authorization link is not the one Pando is waiting for. Start the authorization again from Sources in the console.")
+			"This authorization link is not the one Pando is waiting for. Start the authorization again from Adapters in the console.")
 	}
 	res, err := c.adapter.CompleteAuthorization(ctx, api.AuthorizationCompletion{
 		Mode: api.AuthorizationWeb, Flow: pending[pendingFlow], Code: code,
@@ -193,7 +193,7 @@ func (s *Service) pending(ctx context.Context, id string) (Connection, map[strin
 	if len(pending) == 0 || pending[pendingFlow].IsZero() || c.adapter == nil {
 		return Connection{}, nil, errs.Newf(errs.StateInvalid,
 			"No authorization of the source connection %q is in progress.", c.Name).
-			WithRemedy("Start one from Sources in the console, or with pando source authorize.")
+			WithRemedy("Start one from Adapters in the console, or with pando source authorize.")
 	}
 	if at, err := time.Parse(time.RFC3339, pending[pendingExpires].Reveal()); err == nil && s.now().After(at) {
 		s.clear(ctx, id)
@@ -278,7 +278,7 @@ func refuseInlineCredential(raw string) error {
 	if _, hasPassword := u.User.Password(); hasPassword {
 		return errs.New(errs.ValidInvalid,
 			"The repository address has a password or token in it, and Pando would store it in the clear with the app.").
-			WithRemedy("Enter the address without it, and connect the host under Sources in the console so Pando reads the repository with a stored credential.")
+			WithRemedy("Enter the address without it, and connect the host under Adapters in the console so Pando reads the repository with a stored credential.")
 	}
 	return nil
 }

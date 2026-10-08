@@ -42,7 +42,6 @@ import { Events } from '../install/Events';
 import { InboxButton } from '../ui/Inbox';
 import { Updates, useUpdates } from '../install/Updates';
 import { Audit, Installation, Policy } from '../install/Installation';
-import { Sources } from '../install/Sources';
 import { statusLabel, statusSymbol } from '../ui/status';
 import { AppOnboarding } from './AppOnboarding';
 import { DetectionReview } from './DetectionReview';
@@ -119,7 +118,6 @@ export function AdminConsole({
   const canView = useInstallVerb(InstallVerb.View);
   const canManageUsers = useInstallVerb(InstallVerb.UsersManage);
   const canManageAdapters = useInstallVerb(InstallVerb.AdaptersManage);
-  const canCreateApps = useInstallVerb(InstallVerb.AppCreate);
   const canManagePolicy = useInstallVerb(InstallVerb.PolicyManage);
   const canReadAudit = useInstallVerb(InstallVerb.AuditRead);
   const canManageBackups = useInstallVerb(InstallVerb.BackupManage);
@@ -194,9 +192,6 @@ export function AdminConsole({
   // with install.adapters.manage.
   if (canView) items.push({ value: 'sign-in', label: 'Sign-in' });
   if (canView) items.push({ value: 'adapters', label: 'Adapters' });
-  // Source connections (R-091): read with app.create, which adding an app
-  // from one needs, and changed with install.adapters.manage.
-  if (canView || canCreateApps) items.push({ value: 'sources', label: 'Sources' });
   if (canView || canManagePolicy) items.push({ value: 'policy', label: 'Policy' });
   if (canManageBackups) items.push({ value: 'backups', label: 'Backups' });
   if (canReadAudit) items.push({ value: 'audit', label: 'Audit log' });
@@ -364,8 +359,7 @@ export function AdminConsole({
             onClearTest={() => go({ view: 'admin', section: 'sign-in' }, true)}
           />
         )}
-        {section === 'adapters' && <Installation />}
-        {section === 'sources' && <Sources query={route.query} />}
+        {section === 'adapters' && <Installation query={route.query} />}
         {section === 'policy' && <Policy canEdit={canManagePolicy} />}
         {section === 'backups' && <Backups />}
         {section === 'events' && <Events canManageAll={canManageEvents} apps={rows} />}

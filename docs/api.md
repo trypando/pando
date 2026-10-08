@@ -297,7 +297,7 @@ one verb says nothing about another (R-082).
 | `DELETE /api/v1/sources/{sourceID}` | `install.adapters.manage` | Disconnect a source connection and remove its stored credential. Apps read with it keep running; their next deploy fails, saying the connection is gone (R-146). |
 | `POST /api/v1/sources/{sourceID}/authorize` | `install.adapters.manage` | Start an OAuth authorization of a connection. `mode` `device` (the default) returns `user_code` and `verification_url` to show, and `interval_seconds` to poll POST /authorize/poll at; it needs no address the provider can reach. `mode` `web` returns `authorize_url` to send the browser to, which comes back to GET /api/v1/sources/callback. |
 | `POST /api/v1/sources/{sourceID}/authorize/poll` | `install.adapters.manage` | Ask once whether a device authorization was approved: `status` is `pending` (with `slow_down` when the provider asked for slower polling) or `authorized`, when the token is stored and the connection usable. |
-| `GET /api/v1/sources/callback` | `install.adapters.manage` | Where a provider returns a browser authorization. Stores the token and redirects to the console's Sources screen with `authorized` or `error`. |
+| `GET /api/v1/sources/callback` | `install.adapters.manage` | Where a provider returns a browser authorization. Stores the token and redirects to the console's Adapters screen with `authorized` or `error`. |
 
 ### Reference
 

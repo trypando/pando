@@ -310,7 +310,7 @@ func (a *Adapter) client(ctx context.Context) (forgekit.Client, error) {
 			return forgekit.Client{}, errs.Newf(errs.StateInvalid,
 				"This connection's authorization expired at %s, so its repositories cannot be listed until it is renewed.",
 				tokens.ExpiresAt.UTC().Format(time.RFC3339)).
-				WithRemedy("Authorize the connection again under Sources in the console, or with pando source authorize.")
+				WithRemedy("Authorize the connection again under Adapters in the console, or with pando source authorize.")
 		}
 		c.Authorize = func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+tokens.Access.Reveal()) }
 	default:

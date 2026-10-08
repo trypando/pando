@@ -92,7 +92,7 @@ func (o OAuth) Fresh(ctx context.Context, t Tokens, now time.Time) (Tokens, bool
 	if t.Access.IsZero() {
 		return t, false, errs.Newf(errs.StateInvalid,
 			"This %s connection has not been authorized yet.", o.Provider).
-			WithRemedy("Authorize it under Sources in the console, or with pando source authorize.")
+			WithRemedy("Authorize it under Adapters in the console, or with pando source authorize.")
 	}
 	if t.ExpiresAt.IsZero() || now.Add(time.Minute).Before(t.ExpiresAt) {
 		return t, false, nil
@@ -101,7 +101,7 @@ func (o OAuth) Fresh(ctx context.Context, t Tokens, now time.Time) (Tokens, bool
 		return t, false, errs.Newf(errs.StateInvalid,
 			"This %s connection's authorization expired at %s and cannot be renewed without you.",
 			o.Provider, t.ExpiresAt.UTC().Format(time.RFC3339)).
-			WithRemedy("Authorize it again under Sources in the console.")
+			WithRemedy("Authorize it again under Adapters in the console.")
 	}
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
@@ -122,7 +122,7 @@ func (o OAuth) Fresh(ctx context.Context, t Tokens, now time.Time) (Tokens, bool
 		return t, false, errs.Newf(errs.StateInvalid,
 			"%s refused to renew this connection's authorization (%s). It may have been revoked.",
 			o.Provider, tok.Error).
-			WithRemedy("Authorize it again under Sources in the console.")
+			WithRemedy("Authorize it again under Adapters in the console.")
 	}
 	out := tok.tokens(now)
 	if out.Refresh.IsZero() {

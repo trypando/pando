@@ -80,7 +80,7 @@ func (s *Service) usable(ctx context.Context, id string) (Connection, error) {
 		}
 		return Connection{}, errs.Newf(errs.StateInvalid,
 			"The source connection %q cannot be used. %s", c.Name, reason).
-			WithRemedy("Fix or authorize it under Sources in the console.")
+			WithRemedy("Fix or authorize it under Adapters in the console.")
 	}
 	// A token that has expired is renewed and stored before the listing,
 	// and the connection is built again with it, rather than the adapter

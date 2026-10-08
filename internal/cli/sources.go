@@ -10,7 +10,7 @@ import (
 )
 
 // sourceCmd is the installation's source connections (R-091, issue #127), as
-// the console's Sources screen has them. A connection is added with
+// the console's Adapters screen has them. A connection is added with
 // `pando adapter add source/<kind>`; this is what is particular to one.
 func sourceCmd(client func() (*Client, error)) *cobra.Command {
 	cmd := &cobra.Command{

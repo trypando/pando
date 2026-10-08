@@ -157,7 +157,7 @@ func (s *Service) Get(ctx context.Context, id string) (Connection, error) {
 	}
 	return Connection{}, errs.Newf(errs.NotFound,
 		"There is no source connection %q on this installation.", id).
-		WithRemedy("List the connections under Sources in the console, or with pando source list.")
+		WithRemedy("List the connections under Adapters in the console, or with pando source list.")
 }
 
 func connection(id, name, kind string, a api.SourceAdapter, problem string) Connection {
@@ -320,7 +320,7 @@ func (s *Service) Access(ctx context.Context, src spec.Source, purpose source.Pu
 			return nil, errs.Newf(errs.SourceUnreadable,
 				"This app's repository %s is read with the source connection %q, which no longer exists.",
 				src.URL, src.CredentialRef).
-				WithRemedy("Connect the host again under Sources in the console, then choose the connection in the app's source settings.")
+				WithRemedy("Connect the host again under Adapters in the console, then choose the connection in the app's source settings.")
 		}
 		return nil, err
 	}
@@ -332,7 +332,7 @@ func (s *Service) Access(ctx context.Context, src spec.Source, purpose source.Pu
 		return nil, errs.Newf(errs.SourceUnreadable,
 			"This app's repository %s is read with the source connection %q, which cannot be used. %s",
 			src.URL, c.Name, reason).
-			WithRemedy("Fix the connection under Sources in the console, then try again.")
+			WithRemedy("Fix the connection under Adapters in the console, then try again.")
 	}
 
 	cred, err := c.adapter.GitCredential(ctx, src.URL)

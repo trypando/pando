@@ -25,8 +25,9 @@ import (
 // says nothing about any app on this installation (R-080). Changing them is
 // install.adapters.manage, like every adapter.
 
-// sourcesPage is the console screen a browser authorization returns to.
-const sourcesPage = "/admin/sources"
+// sourcesPage is the console screen a browser authorization returns to: the
+// Adapters screen, where source connections are listed with the rest.
+const sourcesPage = "/admin/adapters"
 
 func (s *Server) sourcesConfigured(w http.ResponseWriter, r *http.Request) bool {
 	if s.SourceConnections == nil {

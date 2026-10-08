@@ -50,13 +50,13 @@ func (a *Adapter) apiToken(ctx context.Context) (secret.Value, error) {
 		tokens := forgekit.TokensFrom(a.cfg.Credentials)
 		if tokens.Access.IsZero() {
 			return secret.Value{}, errs.New(errs.StateInvalid, "This GitHub connection has not been authorized yet.").
-				WithRemedy("Authorize it under Sources in the console, or with pando source authorize.")
+				WithRemedy("Authorize it under Adapters in the console, or with pando source authorize.")
 		}
 		if !tokens.ExpiresAt.IsZero() && !a.now().Before(tokens.ExpiresAt) {
 			return secret.Value{}, errs.Newf(errs.StateInvalid,
 				"This GitHub connection's authorization expired at %s and was not renewed.",
 				tokens.ExpiresAt.UTC().Format(time.RFC3339)).
-				WithRemedy("Authorize the connection again under Sources in the console, or with pando source authorize.")
+				WithRemedy("Authorize the connection again under Adapters in the console, or with pando source authorize.")
 		}
 		return tokens.Access, nil
 	default:

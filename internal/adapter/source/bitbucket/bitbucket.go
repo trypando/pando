@@ -277,13 +277,13 @@ func (a *Adapter) storedAccess() (secret.Value, error) {
 	t := forgekit.TokensFrom(a.cfg.Credentials)
 	if t.Access.IsZero() {
 		return secret.Value{}, errs.New(errs.StateInvalid, "This Bitbucket connection has not been authorized yet.").
-			WithRemedy("Authorize it under Sources in the console, or with pando source authorize.")
+			WithRemedy("Authorize it under Adapters in the console, or with pando source authorize.")
 	}
 	if !t.ExpiresAt.IsZero() && !a.now().Before(t.ExpiresAt) {
 		return secret.Value{}, errs.Newf(errs.StateInvalid,
 			"This Bitbucket connection's authorization expired at %s, so its repositories cannot be listed until it is renewed.",
 			t.ExpiresAt.UTC().Format(time.RFC3339)).
-			WithRemedy("Authorize it again under Sources in the console.")
+			WithRemedy("Authorize it again under Adapters in the console.")
 	}
 	return t.Access, nil
 }

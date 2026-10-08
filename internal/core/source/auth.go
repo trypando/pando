@@ -42,7 +42,7 @@ func authMethod(c api.GitCredential, url string) (transport.AuthMethod, error) {
 			// The parse error can quote the key; it is not passed on.
 			return nil, errs.New(errs.ValidInvalid,
 				"The source connection's SSH private key could not be read.").
-				WithRemedy("Replace the key in the connection's settings under Sources in the console.")
+				WithRemedy("Replace the key in the connection's settings under Adapters in the console.")
 		}
 		port := ep.Port
 		if port == 0 {
@@ -75,7 +75,7 @@ func knownHosts(text, hostPort string) (gitssh.HostKeyCallbackHelper, error) {
 	if strings.TrimSpace(text) == "" {
 		return none, errs.New(errs.ValidInvalid,
 			"The source connection uses an SSH key and pins no host key, so Pando cannot tell it is talking to the real host.").
-			WithRemedy("Add the host's public key, as ssh-keyscan <host> prints it, to the connection's known hosts under Sources in the console.")
+			WithRemedy("Add the host's public key, as ssh-keyscan <host> prints it, to the connection's known hosts under Adapters in the console.")
 	}
 	f, err := os.CreateTemp("", "pando-known-hosts-")
 	if err != nil {
@@ -93,7 +93,7 @@ func knownHosts(text, hostPort string) (gitssh.HostKeyCallbackHelper, error) {
 	if err != nil {
 		return none, errs.Wrap(errs.ValidInvalid,
 			"The source connection's known hosts could not be read.", err).
-			WithRemedy("Replace them with the output of ssh-keyscan <host> under Sources in the console.")
+			WithRemedy("Replace them with the output of ssh-keyscan <host> under Adapters in the console.")
 	}
 	return gitssh.HostKeyCallbackHelper{
 		HostKeyCallback:   db.HostKeyCallback(),
@@ -153,7 +153,7 @@ func accessError(err error, url, connection string) error {
 			"Pando did not read %s: the host's SSH key is not the one the source connection %q pins, so it may not be the real host.",
 			url, connection).
 			WithDetail("url", url).
-			WithRemedy("If the host's key really changed, replace the connection's known hosts with the output of ssh-keyscan <host> under Sources in the console.")
+			WithRemedy("If the host's key really changed, replace the connection's known hosts with the output of ssh-keyscan <host> under Adapters in the console.")
 	case (authFailed || notFound) && connection != "":
 		reason := "The connection's credential was not accepted. It may have expired or been revoked, or it may not have access to this repository."
 		if notFound {
@@ -162,12 +162,12 @@ func accessError(err error, url, connection string) error {
 		return errs.Newf(errs.SourceUnreadable,
 			"Pando could not read %s with the source connection %q. %s", url, connection, reason).
 			WithDetail("url", url).
-			WithRemedy("Give the credential read access to the repository, or replace it under Sources in the console, then try again.")
+			WithRemedy("Give the credential read access to the repository, or replace it under Adapters in the console, then try again.")
 	case authFailed || notFound:
 		return errs.Newf(errs.SourceUnreadable,
 			"Pando could not read %s. The repository is private or does not exist, and no source connection on this installation covers it.", url).
 			WithDetail("url", url).
-			WithRemedy("Check the address. If the repository is private, connect the host it is on under Sources in the console, then try again.")
+			WithRemedy("Check the address. If the repository is private, connect the host it is on under Adapters in the console, then try again.")
 	}
 	return nil
 }

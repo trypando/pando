@@ -50,13 +50,6 @@ export interface ConfiguredAdapter {
   config?: Record<string, unknown>;
 }
 
-/** The save button's words: one name for the action through the whole flow. */
-function saveLabel(editing: boolean, source: boolean, pending: boolean): string {
-  if (editing) return pending ? 'Saving' : source ? 'Save connection' : 'Save adapter';
-  if (source) return pending ? 'Connecting' : 'Connect';
-  return pending ? 'Adding' : 'Add adapter';
-}
-
 /** An adapter's stored settings as the form's values: text for strings and
  *  numbers, as the inputs hold them, and booleans as they are. */
 function storedValues(config: Record<string, unknown> | undefined): Record<string, string | boolean> {
@@ -83,7 +76,7 @@ export function AdapterDialog({
   adapters: ConfiguredAdapter[];
   onClose: () => void;
   /** Told the saved adapter's name, for the restart notice. */
-  onSaved: (name: string) => void;
+  onSaved: (name: string, category: string) => void;
 }) {
   const kinds = useQuery({
     queryKey: ['adapter-kinds'],
@@ -93,12 +86,10 @@ export function AdapterDialog({
 
   const [category, setCategory] = useState(existing?.category ?? startCategory ?? '');
   const [picked, setPicked] = useState(existing ? kindKey(existing) : '');
-  // A source connection is added from the Sources screen and is used as soon
-  // as it is saved; every other category is added here and loaded at startup.
-  const isSource = (existing?.category ?? startCategory) === 'source';
-  const categories = isSource
-    ? ['source']
-    : orderCategories(catalog.map((k) => k.category)).filter((c) => c !== 'source');
+  // A source connection is used as soon as it is saved (R-091); every other
+  // category is loaded at startup. The dialog says which.
+  const isSource = category === 'source';
+  const categories = orderCategories(catalog.map((k) => k.category));
   const inCategory = catalog.filter((k) => k.category === category);
   // A category with one kind has nothing to choose between.
   const only = inCategory.length === 1 ? inCategory[0] : undefined;
@@ -158,7 +149,7 @@ export function AdapterDialog({
       return settingsChanged;
     },
     onSuccess: (settingsChanged) => {
-      if (settingsChanged) onSaved(form!.name.trim() || kind!.name);
+      if (settingsChanged) onSaved(form!.name.trim() || kind!.name, kind!.category);
       else onClose();
     },
     onSettled: () => void queries.invalidateQueries({ queryKey: ['ai-functions'] }),
@@ -196,7 +187,7 @@ export function AdapterDialog({
   return (
     <Dialog
       open
-      title={existing ? `Edit ${existing.name || existing.id}` : isSource ? 'Connect a source' : 'Add adapter'}
+      title={existing ? `Edit ${existing.name || existing.id}` : 'Add adapter'}
       description={
         isSource
           ? 'Pando reads the private repositories this connection covers with it, from the moment it is saved.'
@@ -209,7 +200,7 @@ export function AdapterDialog({
             Cancel
           </Button>
           <Button variant="primary" disabled={!kind || !form || save.isPending} onClick={submit}>
-            {saveLabel(Boolean(existing), isSource, save.isPending)}
+            {existing ? (save.isPending ? 'Saving' : 'Save adapter') : save.isPending ? 'Adding' : 'Add adapter'}
           </Button>
         </>
       }
@@ -243,10 +234,8 @@ export function AdapterDialog({
             ) : (
             <>
             {/* Category first, then the adapter within it: the question someone
-                arrives with is "I need a builder", not a list of every kind.
-                On the Sources screen the category is the only one, and not
-                asked. */}
-            <div hidden={isSource}>
+                arrives with is "I need a builder", not a list of every kind. */}
+            <div>
               <Select
                 label="Category"
                 value={category}
