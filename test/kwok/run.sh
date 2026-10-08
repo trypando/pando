@@ -27,6 +27,10 @@ fi
 cleanup() {
   if [ -z "${KWOK_KEEP:-}" ]; then
     "$KWOKCTL" delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
+    # kwokctl has been seen to forget a cluster whose containers it had not
+    # finished removing; remove what is left of this one by name.
+    for c in $(docker ps -aq --filter "name=^kwok-$CLUSTER-"); do docker rm -f "$c" >/dev/null || true; done
+    docker network rm "kwok-$CLUSTER" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
