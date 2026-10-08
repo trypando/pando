@@ -151,7 +151,9 @@ Costs, stated:
   tests. **[D] (O-40)** Namespace per app is kept, and the PR 2 load harness proves 20,000 app
   namespaces on the cluster tier before this PR is done, with the result documented. If the harness
   finds a limit, the fallback is several clusters per install, which needs the proxy to reach pods in a
-  cluster it does not run in (PR 7's host agent would do it).
+  cluster it does not run in (PR 7's host agent would do it). Measured on kwok in
+  `notes-kubernetes-scale-issue-72.md`: the control plane held 20,000 apps; what binds first is
+  Pando's own client.
 
 A shared namespace was the alternative; the rest of this note marks where it would differ.
 
