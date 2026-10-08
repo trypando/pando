@@ -379,26 +379,29 @@ type ListRequest struct {
 	// Everyone lists every person's subscriptions, which needs
 	// install.events.manage. Otherwise the list is the caller's own.
 	Everyone bool
+	// Page is which page, newest first (issue #72).
+	Page state.Page
 }
 
-// List returns the caller's subscriptions, or everybody's.
-func (s *Service) List(ctx context.Context, p authz.Principal, req ListRequest) ([]state.Subscription, error) {
+// List returns one page of the caller's subscriptions, or everybody's, and
+// the cursor for the next page (empty after the last).
+func (s *Service) List(ctx context.Context, p authz.Principal, req ListRequest) ([]state.Subscription, string, error) {
 	f := state.SubscriptionFilter{AppID: req.AppID}
 	if req.Everyone {
 		if err := s.Authz.CheckInstall(ctx, p, authz.InstallEventsManage); err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		return s.Subscriptions.List(ctx, f)
+		return s.Subscriptions.ListPage(ctx, f, req.Page)
 	}
 	user, token, err := ownerOf(p)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	f.OwnerID = user
 	if token != "" {
 		f.OwnerID = token
 	}
-	return s.Subscriptions.List(ctx, f)
+	return s.Subscriptions.ListPage(ctx, f, req.Page)
 }
 
 // UpdateRequest changes a subscription. Nil fields are left alone. The

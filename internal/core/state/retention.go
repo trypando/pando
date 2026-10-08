@@ -39,21 +39,30 @@ func (r *Retention) exec(ctx context.Context, what, query string, args ...any) (
 // Deployments removes up to limit deployments beyond each app's newest
 // keepPerApp, never one in flight, waiting for approval, or the newest
 // successful deploy of a revision the app ever pinned.
+//
+// App by app, each read from deployments_app_idx past its newest keepPerApp,
+// and stopping once limit rows are found, rather than numbering every
+// deployment in the install with a window function on every batch (issue #72).
 func (r *Retention) Deployments(ctx context.Context, keepPerApp, limit int) (int64, error) {
 	return r.exec(ctx, "deploys", `
 		DELETE FROM deployments WHERE id IN (
-		    SELECT ranked.id FROM (
-		        SELECT d.id, d.app_id, d.spec_id, d.status,
-		               row_number() OVER (PARTITION BY d.app_id ORDER BY d.started_at DESC, d.id DESC) AS n,
-		               row_number() OVER (PARTITION BY d.app_id, d.spec_id, d.status
-		                                  ORDER BY d.started_at DESC, d.id DESC) AS of_revision
+		    SELECT old.id
+		    FROM apps a
+		    CROSS JOIN LATERAL (
+		        SELECT d.id, d.spec_id, d.status, d.started_at
 		        FROM deployments d
-		    ) ranked
-		    WHERE ranked.n > $1
-		      AND ranked.status NOT IN ('pending', 'building', 'applying', 'awaiting_approval')
-		      AND NOT (ranked.status = 'succeeded' AND ranked.of_revision = 1
+		        WHERE d.app_id = a.id
+		        ORDER BY d.started_at DESC, d.id DESC
+		        OFFSET $1
+		    ) old
+		    WHERE old.status NOT IN ('pending', 'building', 'applying', 'awaiting_approval')
+		      AND NOT (old.status = 'succeeded'
 		               AND EXISTS (SELECT 1 FROM spec_pins p
-		                           WHERE p.app_id = ranked.app_id AND p.spec_id = ranked.spec_id))
+		                           WHERE p.app_id = a.id AND p.spec_id = old.spec_id)
+		               AND NOT EXISTS (SELECT 1 FROM deployments newer
+		                               WHERE newer.spec_id = old.spec_id AND newer.app_id = a.id
+		                                 AND newer.status = 'succeeded'
+		                                 AND (newer.started_at, newer.id) > (old.started_at, old.id)))
 		    LIMIT $2)`, keepPerApp, limit)
 }
 

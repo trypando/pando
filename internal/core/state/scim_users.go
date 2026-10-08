@@ -230,7 +230,7 @@ func (s *SCIMUsers) Forget(ctx context.Context, adapterID, userID string) error 
 		WHERE adapter_id = $1 AND user_id = $2`, adapterID, userID); err != nil {
 		return errs.Wrap(errs.Internal, "Could not remove the user.", err)
 	}
-	before, err := peopleWhoManage(ctx, tx)
+	before, err := lockoutForUsers(ctx, tx, userID)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not remove the user.", err)
 	}

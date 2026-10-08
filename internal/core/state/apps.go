@@ -99,6 +99,12 @@ type App struct {
 	// /me/apps fills it in.
 	SectionID string `json:"section_id,omitempty"`
 
+	// CanManage, on the launcher list (GET /me/apps), is whether the caller can
+	// also administer the app: whether GET /apps lists it for them. The
+	// control plane's answer beside the data plane's, so the launcher offers
+	// "Manage" without asking about each tile (R-070, R-071).
+	CanManage bool `json:"can_manage,omitempty"`
+
 	// Detection is where the app's detection has got to — running and at
 	// which stage, or how it finished — so a draft says why it is still a
 	// draft (issue #80). Filled in by the API layer on GET /apps and GET
@@ -292,24 +298,36 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 		return nil, "", 0, err
 	}
 
-	// The caller's placeholders first, then the query and the IDs, then the
-	// cursor and limit, which only the list (not the count) takes.
-	var ids any // NULL: no narrowing
-	if len(page.IDs) > 0 {
-		ids = page.IDs
+	// The caller's placeholders first, then the search and the IDs, then the
+	// cursor and limit, which only the list (not the count) takes. Each
+	// narrowing is written only when asked for, rather than as an OR'd test
+	// for an empty value, which a cached generic plan cannot serve from an
+	// index.
+	countArgs := append([]any{}, args...)
+	filter := where
+	if page.Query != "" {
+		countArgs = append(countArgs, likeEscape(page.Query))
+		n := len(countArgs)
+		filter += fmt.Sprintf(`
+		  AND %s ILIKE '%%' || $%d || '%%'`, searchApps, n)
 	}
-	n := len(args)
-	filter := where + fmt.Sprintf(`
-		  AND ($%d = '' OR a.name ILIKE '%%' || $%d || '%%' OR a.slug ILIKE '%%' || $%d || '%%')
-		  AND ($%d::text[] IS NULL OR a.id = ANY($%d::text[]))`, n+1, n+1, n+1, n+2, n+2)
-	countArgs := append(append([]any{}, args...), likeEscape(page.Query), ids)
-	n++
+	if len(page.IDs) > 0 {
+		countArgs = append(countArgs, page.IDs)
+		filter += fmt.Sprintf(`
+		  AND a.id = ANY($%d::text[])`, len(countArgs))
+	}
 
+	list, listArgs := filter, append([]any{}, countArgs...)
+	if have {
+		listArgs = append(listArgs, afterAt, afterID)
+		list += fmt.Sprintf(`
+		  AND (a.created_at, a.id) < ($%d::timestamptz, $%d::text)`, len(listArgs)-1, len(listArgs))
+	}
 	var limit any
 	if page.Limit >= 0 {
 		limit = page.Size() + 1
 	}
-	listArgs := append(append([]any{}, countArgs...), have, afterAt, afterID, limit)
+	listArgs = append(listArgs, limit)
 
 	rows, err := a.db.Query(ctx, `
 		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state,
@@ -331,10 +349,9 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 		    ORDER BY (sc.spec_id IS NOT NULL) DESC, sc.ran_at DESC
 		    LIMIT 1
 		) s ON true
-		`+filter+fmt.Sprintf(`
-		  AND (NOT $%d OR (a.created_at, a.id) < ($%d::timestamptz, $%d::text))
+		`+list+fmt.Sprintf(`
 		ORDER BY a.created_at DESC, a.id DESC
-		LIMIT $%d`, n+2, n+3, n+4, n+5), listArgs...)
+		LIMIT $%d`, len(listArgs)), listArgs...)
 	if err != nil {
 		return nil, "", 0, errs.Wrap(errs.Internal, "Could not list apps.", err)
 	}
@@ -374,15 +391,16 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 		last := out[len(out)-1]
 		next = encodeCursor(last.CreatedAt, last.ID)
 	}
-	var total int
-	if err := a.db.QueryRow(ctx, `SELECT count(*) FROM apps a `+filter, countArgs...).Scan(&total); err != nil {
+	total, err := countCapped(ctx, a.db, `FROM apps a `+filter, countArgs...)
+	if err != nil {
 		return nil, "", 0, errs.Wrap(errs.Internal, "Could not count apps.", err)
 	}
 	return out, next, total, nil
 }
 
-// ListForUse returns apps the principal holds a DATA-plane grant on (R-264),
-// or owns.
+// ListForUse returns one page of the apps the principal holds a DATA-plane
+// grant on (R-264), or owns, with the cursor for the next page (empty after
+// the last).
 //
 // Deliberately a different query from ListForPrincipal. Two planes, two
 // endpoints: the launcher shows what you can open, not what you can manage.
@@ -392,7 +410,45 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 // (grants_data_anonymous_idx) — rather than a join of every app's data grants
 // under OR'd predicates, which read every grant in the install for each
 // launcher load (issue #72).
-func (a *Apps) ListForUse(ctx context.Context, p authz.Principal) ([]App, error) {
+//
+// Paged, because an app shared with everyone is on every person's launcher,
+// and an install can hold 20,000 of them. Favorites come first, then apps
+// filed in one of the person's sections, then the rest, each by name, so the
+// first page holds what the person arranged. The page is chosen before
+// anything else is read: routing, icons and CanManage are read for one page.
+//
+// CanManage says whether the principal can also administer each app: what GET
+// /apps would list for them (control-plane grants, or every app when every is
+// set — install.apps.view, which the caller decides). Read here so the
+// launcher need not ask GET /apps about each tile; it is the control plane's
+// answer, reported beside the data plane's, never mixed into it (R-070).
+//
+// Page.Query matches the name or slug.
+func (a *Apps) ListForUse(ctx context.Context, p authz.Principal, page Page, every bool) ([]App, string, error) {
+	var (
+		afterRank       int
+		afterName, afID string
+	)
+	have, err := decodeCursor(page.Cursor, &afterRank, &afterName, &afID)
+	if err != nil {
+		return nil, "", err
+	}
+	args := []any{nullable(p.UserID), nullable(accountTokenID(p)), every, page.Size() + 1}
+	var narrow string
+	if page.Query != "" {
+		args = append(args, likeEscape(page.Query))
+		n := len(args)
+		narrow += fmt.Sprintf(`
+		      AND %s ILIKE '%%' || $%d || '%%'`, searchApps, n)
+	}
+	var after string
+	if have {
+		args = append(args, afterRank, afterName, afID)
+		n := len(args)
+		after = fmt.Sprintf(`
+		WHERE (ranked.rank, ranked.name, ranked.id) > ($%d::int, $%d::text, $%d::text)`, n-2, n-1, n)
+	}
+
 	rows, err := a.db.Query(ctx, `
 		WITH usable AS (
 		    SELECT id AS app_id FROM apps WHERE owner_user_id = $1 AND deleted_at IS NULL
@@ -409,31 +465,51 @@ func (a *Apps) ListForUse(ctx context.Context, p authz.Principal) ([]App, error)
 		    UNION
 		    SELECT app_id FROM grants
 		    WHERE plane = 'data' AND principal_kind = 'anonymous'
+		), ranked AS (
+		    SELECT a.id, a.name,
+		           CASE WHEN f.app_id IS NOT NULL THEN 0
+		                WHEN lp.section_id IS NOT NULL THEN 1
+		                ELSE 2 END AS rank,
+		           f.app_id IS NOT NULL AS favorite, lp.section_id
+		    FROM usable u
+		    JOIN apps a ON a.id = u.app_id AND a.deleted_at IS NULL
+		    LEFT JOIN app_favorites f ON f.app_id = a.id AND f.user_id = $1
+		    LEFT JOIN launcher_placements lp ON lp.app_id = a.id AND lp.user_id = $1
+		    WHERE true`+narrow+`
+		), page AS (
+		    SELECT * FROM ranked`+after+`
+		    ORDER BY rank, name, id
+		    LIMIT $4
 		)
 		SELECT a.id, a.name, a.slug, a.state, r.body->'routing', i.updated_at,
-		       f.app_id IS NOT NULL, lp.section_id
-		FROM usable u
-		JOIN apps a ON a.id = u.app_id
+		       page.favorite, page.section_id, page.rank,
+		       $3 OR EXISTS (
+		           SELECT 1 FROM grants g
+		           WHERE g.app_id = a.id AND g.plane = 'control'
+		             AND ((g.principal_kind = 'user' AND g.principal_id = $1)
+		               OR (g.principal_kind = 'token' AND g.principal_id = $2)
+		               OR (g.principal_kind = 'group' AND g.principal_id IN (
+		                      SELECT group_id FROM effective_group_members WHERE user_id = $1))))
+		FROM page
+		JOIN apps a ON a.id = page.id
 		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		LEFT JOIN app_icons i ON i.app_id = a.id
-		LEFT JOIN app_favorites f ON f.app_id = a.id AND f.user_id = $1
-		LEFT JOIN launcher_placements lp ON lp.app_id = a.id AND lp.user_id = $1
-		WHERE a.deleted_at IS NULL
-		ORDER BY a.name, a.id`,
-		nullable(p.UserID), nullable(accountTokenID(p)))
+		ORDER BY page.rank, page.name, page.id`, args...)
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not list apps.", err)
+		return nil, "", errs.Wrap(errs.Internal, "Could not list apps.", err)
 	}
 	defer rows.Close()
 
 	var out []App
+	var ranks []int
 	for rows.Next() {
 		var app App
 		var routing []byte
 		var sectionID *string
+		var rank int
 		if err := rows.Scan(&app.ID, &app.Name, &app.Slug, &app.State, &routing, &app.IconUpdatedAt,
-			&app.Favorite, &sectionID); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not list apps.", err)
+			&app.Favorite, &sectionID, &rank, &app.CanManage); err != nil {
+			return nil, "", errs.Wrap(errs.Internal, "Could not list apps.", err)
 		}
 		if sectionID != nil {
 			app.SectionID = *sectionID
@@ -444,8 +520,18 @@ func (a *Apps) ListForUse(ctx context.Context, p authz.Principal) ([]App, error)
 			_ = json.Unmarshal(routing, &app.Routing)
 		}
 		out = append(out, app)
+		ranks = append(ranks, rank)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", errs.Wrap(errs.Internal, "Could not list apps.", err)
+	}
+	var next string
+	if len(out) > page.Size() {
+		out = out[:page.Size()]
+		last := len(out) - 1
+		next = encodeCursor(ranks[last], out[last].Name, out[last].ID)
+	}
+	return out, next, nil
 }
 
 // Rename changes an app's display name.
@@ -1307,54 +1393,88 @@ func (v *Volumes) Handles(ctx context.Context, appID string) (map[string]string,
 //   - **A revision a scan describes is never pruned** (R-319). The scan is
 //     append-only and names its revision; the foreign key refuses the delete.
 //
+// Batched (issue #72): a statement reads pruneAppsPerBatch apps, in ID order,
+// and removes at most prunePerApp revisions from each, oldest first, so no
+// statement's cost or lock grows with the install. The pass walks every app;
+// an app with a longer backlog loses the rest on later passes.
+//
 // Returns how many rows went.
 func (a *Apps) PruneSpecRevisions(ctx context.Context) (int, error) {
-	tag, err := a.db.Exec(ctx, `
-		WITH keep AS (
-		    SELECT r.id
-		    FROM spec_revisions r
-		    JOIN apps app ON app.id = r.app_id
-		    WHERE r.revision > (
-		        SELECT coalesce(max(r2.revision), 0) - coalesce(
-		            (SELECT (pinned.body->'retention'->>'spec_revisions')::int
-		             FROM spec_revisions pinned WHERE pinned.id = app.pinned_spec_id),
-		            10)
-		        FROM spec_revisions r2 WHERE r2.app_id = r.app_id
-		    )
-		)
-		DELETE FROM spec_revisions r
-		WHERE r.id NOT IN (SELECT id FROM keep)
-		  -- Never a revision that was ever pinned: rollback is repointing at
-		  -- something that provably existed, and this is that proof.
-		  AND NOT EXISTS (SELECT 1 FROM spec_pins p WHERE p.spec_id = r.id)
-		  -- Never one a deployment refers to.
-		  AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.spec_id = r.id)
-		  -- Never one a scan describes. A scan is an append-only fact about
-		  -- a revision (R-319); deleting the revision would leave it naming
-		  -- nothing, and the foreign key refuses that.
-		  AND NOT EXISTS (SELECT 1 FROM app_scans s WHERE s.spec_id = r.id)
-	`)
-	if err != nil {
-		return 0, errs.Wrap(errs.Internal, "Could not prune old spec revisions.", err)
+	total := 0
+	after := ""
+	for {
+		var last *string
+		var n int
+		err := a.db.QueryRow(ctx, `
+			WITH batch AS (
+			    SELECT app.id,
+			           coalesce((SELECT (pinned.body->'retention'->>'spec_revisions')::int
+			                     FROM spec_revisions pinned WHERE pinned.id = app.pinned_spec_id), 10) AS keep,
+			           (SELECT max(r2.revision) FROM spec_revisions r2 WHERE r2.app_id = app.id) AS newest
+			    FROM apps app
+			    WHERE app.id > $1
+			    ORDER BY app.id
+			    LIMIT $2
+			), doomed AS (
+			    SELECT r.id
+			    FROM batch b
+			    CROSS JOIN LATERAL (
+			        SELECT r.id FROM spec_revisions r
+			        WHERE r.app_id = b.id
+			          -- Outside the newest keep revisions of the app.
+			          AND r.revision <= b.newest - b.keep
+			          -- Never a revision that was ever pinned: rollback is
+			          -- repointing at something that provably existed, and
+			          -- this is that proof (R-152).
+			          AND NOT EXISTS (SELECT 1 FROM spec_pins p WHERE p.spec_id = r.id)
+			          -- Never one a deployment refers to.
+			          AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.spec_id = r.id)
+			          -- Never one a scan describes. A scan is an append-only
+			          -- fact about a revision (R-319); deleting the revision
+			          -- would leave it naming nothing, and the foreign key
+			          -- refuses that.
+			          AND NOT EXISTS (SELECT 1 FROM app_scans s WHERE s.spec_id = r.id)
+			        ORDER BY r.revision
+			        LIMIT $3
+			    ) r
+			), gone AS (
+			    DELETE FROM spec_revisions WHERE id IN (SELECT id FROM doomed)
+			    RETURNING 1
+			)
+			SELECT (SELECT max(id) FROM batch), (SELECT count(*) FROM gone)`,
+			after, pruneAppsPerBatch, prunePerApp).Scan(&last, &n)
+		if err != nil {
+			return total, errs.Wrap(errs.Internal, "Could not prune old spec revisions.", err)
+		}
+		total += n
+		if last == nil || ctx.Err() != nil {
+			return total, nil
+		}
+		after = *last
 	}
-	return int(tag.RowsAffected()), nil
 }
+
+// How much one statement of PruneSpecRevisions may read and remove. Variables
+// so a test can walk several batches without making hundreds of apps.
+var (
+	pruneAppsPerBatch = 500
+	prunePerApp       = 100
+)
 
 // WithAutoDeploy returns apps that track a ref (R-141).
 //
 // Off by default, so this is normally empty and the poll costs one indexed
-// query. The filter is on the pinned spec rather than a column on the app,
-// because auto-deploy is a property of the spec someone reviewed and pinned —
-// putting it on the app row would let it be changed without a revision.
+// query (apps_auto_deploy_idx). Auto-deploy is a property of the spec someone
+// reviewed and pinned: apps.auto_deploy is derived from the pinned revision by
+// a trigger whenever the pin moves, and nothing else can set it (000056), so
+// it cannot be changed without a revision.
 func (a *Apps) WithAutoDeploy(ctx context.Context) ([]App, error) {
 	rows, err := a.db.Query(ctx, `
 		SELECT app.id, app.name, app.slug, app.owner_user_id, app.state,
 		       app.desired_state, app.pinned_spec_id, app.created_at, app.updated_at
 		FROM apps app
-		JOIN spec_revisions r ON r.id = app.pinned_spec_id
-		WHERE app.deleted_at IS NULL
+		WHERE app.auto_deploy AND app.deleted_at IS NULL
 		  AND app.state NOT IN ('failed', 'archived', 'deploying')
-		  AND (r.body->'deploy'->'auto_deploy'->>'enabled')::boolean IS TRUE
 	`)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not list apps tracking a branch.", err)
