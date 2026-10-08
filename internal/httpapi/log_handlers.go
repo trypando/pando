@@ -11,6 +11,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/logstream"
+	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
 )
 
@@ -44,13 +45,47 @@ func (s *Server) appLogSource(w http.ResponseWriter, r *http.Request) (appLogSou
 		return appLogSource{}, false
 	}
 
-	workload := r.URL.Query().Get("workload")
-	if workload == "" {
-		if primary, ok := rev.Body.PrimaryWorkload(); ok {
-			workload = primary.Name
-		}
+	workload, err := s.logWorkload(r, rev.Body, ref, runtime, app.ID)
+	if err != nil {
+		Error(w, r, err)
+		return appLogSource{}, false
 	}
 	return appLogSource{runtime: runtime, key: logstream.Key{Runtime: ref, AppID: app.ID, Workload: workload}}, true
+}
+
+// logWorkload is the part whose log a request names: the spec's primary when
+// it names none, else one the spec declares or the runtime runs for the app —
+// a provisioned database is the second (/status lists it). The name returned
+// is the spec's or the runtime's, never the request's text: anything else
+// would open a runtime stream, and a log line, for every name someone made
+// up (O-51).
+func (s *Server) logWorkload(r *http.Request, body *spec.AppSpec, ref string, runtime api.RuntimeAdapter, appID string) (string, error) {
+	asked := r.URL.Query().Get("workload")
+	if asked == "" {
+		if primary, ok := body.PrimaryWorkload(); ok {
+			return primary.Name, nil
+		}
+	}
+	for _, candidate := range body.Workloads {
+		if candidate.Name == asked {
+			return candidate.Name, nil
+		}
+	}
+	if asked != "" {
+		// A nil cache asks the runtime directly (observe.Cache.Observe).
+		observed, err := s.Observations.Observe(r.Context(), ref, runtime, appID)
+		if err != nil {
+			return "", err
+		}
+		for _, candidate := range observed.Workloads {
+			if candidate.Name == asked {
+				return candidate.Name, nil
+			}
+		}
+	}
+	return "", errs.Newf(errs.NotFound, "This app has no part called %q.", asked).
+		WithRemedy("Use the name of one of the app's parts, as listed on its overview or by GET /apps/{id}/status.").
+		WithDetail("workload", asked)
 }
 
 // handleAppLogStream is the app's own output as server-sent events, read from

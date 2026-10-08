@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,15 @@ type streamRuntime struct {
 }
 
 func (f *streamRuntime) Category() adapterapi.Category { return adapterapi.CategoryRuntime }
+
+// Observe reports a provisioned database the spec does not declare, as a
+// runtime running one would.
+func (f *streamRuntime) Observe(context.Context, adapterapi.BundleRef) (adapterapi.ObservedBundle, error) {
+	return adapterapi.ObservedBundle{Workloads: []adapterapi.ObservedWorkload{
+		{Name: "web", Present: true, Running: true},
+		{Name: "db", Present: true, Running: true},
+	}}, nil
+}
 
 func (f *streamRuntime) Logs(_ context.Context, _ adapterapi.WorkloadRef, opts adapterapi.LogOptions) (io.ReadCloser, error) {
 	f.mu.Lock()
@@ -216,6 +226,34 @@ func TestR048_ADeployLogStreamEndsWhenTheViewersSessionIsRevoked(t *testing.T) {
 	told := stream.next(t)
 	require.Contains(t, told.data, "access to this app's logs has ended")
 	require.Equal(t, "end", stream.next(t).name)
+}
+
+// TestO51_OnlyAPartTheAppHasIsStreamed asserts that the log endpoints read
+// only a part the spec declares or the runtime runs for the app: a made-up
+// name opens no runtime stream (O-51 shares one per real part) and never
+// reaches a log line as the request wrote it (CodeQL go/log-injection).
+func TestO51_OnlyAPartTheAppHasIsStreamed(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+	id, rt := appOnStreamRuntime(t, i, admin)
+
+	for _, made := range []string{"nope", "web\nforged=1"} {
+		got := i.do(admin, http.MethodGet, "/apps/"+id+"/logs?workload="+url.QueryEscape(made), nil)
+		require.Equal(t, http.StatusNotFound, got.Code, got.String())
+		require.Contains(t, got.String(), "This app has no part called")
+		got = i.do(admin, http.MethodGet, "/apps/"+id+"/logs/stream?workload="+url.QueryEscape(made), nil)
+		require.Equal(t, http.StatusNotFound, got.Code, got.String())
+	}
+	rt.mu.Lock()
+	require.Empty(t, rt.opens, "no runtime stream for a part the app does not have")
+	rt.mu.Unlock()
+
+	// The spec's part, and one only the runtime reports, are both read.
+	for _, part := range []string{"web", "db"} {
+		got := i.do(admin, http.MethodGet, "/apps/"+id+"/logs?workload="+part, nil)
+		require.Equal(t, http.StatusOK, got.Code, part+": "+got.String())
+	}
 }
 
 func TestLogsTailIsCapped(t *testing.T) {
