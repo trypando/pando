@@ -346,3 +346,5 @@ project is organized, how to build it, and what a change needs before it can be 
 AGPL-3.0, with a commercial license available for embedding Pando in a proprietary product or
 offering it as a hosted service without publishing modifications. See
 [`LICENSING.md`](LICENSING.md) for which applies to you, and [`LICENSE`](LICENSE) for the full text.
+Contributors sign the [Contributor License Agreement](CONTRIBUTOR_AGREEMENT.md) once, by posting a
+comment on their first pull request.

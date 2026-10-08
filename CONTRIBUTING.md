@@ -255,7 +255,23 @@ after installing. Signing and notarization would replace that; see the comment i
 
 ## Licensing of contributions
 
-Pando is dual-licensed, so contributions must be available under both licenses. By opening a pull
-request you agree that your contribution may be distributed under the AGPL and under the commercial
-license. You retain copyright; there is no CLA and no copyright assignment. See
+Pando is dual-licensed, so the maintainer has to be able to license every part of it under any terms.
+Before your first pull request is merged, you sign the
+[Contributor License Agreement](CONTRIBUTOR_AGREEMENT.md). You keep the copyright in your
+contribution and grant the maintainer a perpetual, irrevocable license to it under any terms. The
+agreement also guarantees your contribution stays available under the license Pando uses on the day
+you submit it.
+
+To sign, post this comment on your pull request:
+
+```
+I have read the Contributor License Agreement and I agree to it.
+```
+
+You do this once. The **Contributor agreement** check records the signature and covers every later
+pull request. Each commit's author email has to be linked to a GitHub account, because that is how
+the check matches commits to signatures.
+
+If any part of a pull request is not your own work, such as code copied from another project or work
+your employer owns, read section 7 of the agreement before you submit it. See also
 [`LICENSING.md`](LICENSING.md).

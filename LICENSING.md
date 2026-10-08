@@ -20,10 +20,19 @@ Deploying your company's internal tools behind Pando does not place those tools 
 Adapters are compiled into the binary rather than loaded as plugins, so new runtime, routing,
 builder, secrets, services, identity or notification providers are contributed as pull requests.
 
-Because Pando is dual-licensed, contributions must be available under both licenses. By opening a
-pull request, you agree that your contribution may be distributed under the AGPL and under the
-commercial license. You retain copyright in your contribution. There is no CLA and no copyright
-assignment.
+Pando is dual-licensed, which works only if the maintainer can license every part of it under any
+terms. Contributors therefore sign the [Contributor License Agreement](CONTRIBUTOR_AGREEMENT.md),
+which is based on the Harmony Individual Contributor License Agreement:
+
+- You keep the copyright in your contribution.
+- You grant Ben Meeker, who maintains Pando, a perpetual, irrevocable license to use, change,
+  sublicense, sell and transfer your contribution under any terms. The license passes to any
+  successor, such as a company formed to hold Pando.
+- Your contribution is always also available under the license Pando uses on the day you submit it,
+  which is currently the AGPL-3.0.
+
+You sign once, by posting a one-line comment on your first pull request. The **Contributor agreement**
+check asks for it and records it.
 
 If those terms don't work for you, raise it in the pull request before it is merged.
 
