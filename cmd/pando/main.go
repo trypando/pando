@@ -60,7 +60,6 @@ import (
 	"github.com/trypando/pando/internal/core/assist"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
-	"github.com/trypando/pando/internal/core/autodeploy"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
 	"github.com/trypando/pando/internal/core/capacity"
@@ -737,32 +736,9 @@ func serve(ctx context.Context, configPath string) error {
 	// service a person's deploy goes through. Off unless an app's pinned spec
 	// asks for it, so its poll is usually a query returning nothing. A webhook
 	// (R-142) asks the same job to check one app sooner.
-	autoDeployChecks := state.NewAutoDeployChecks(db)
-	autoDeployJob := &reconciler.AutoDeploy{
-		Apps:        apps,
-		Deployments: deployments,
-		Checks:      autoDeployChecks,
-		Resolver:    refResolver{sources: sources},
-		// The plan, the capacity hold, the audit event and the deploy queue,
-		// as for every other deploy (O-32).
-		Deployer:    approvals,
-		Audit:       auditor,
-		Concurrency: cfg.Work.AutoDeploy,
-		Logger:      logger,
-		// An app whose deploys now need approval stops auto-deploying
-		// (R-158).
-		Policy: policyStore,
-	}
-	autoDeploy := &autodeploy.Service{
-		Apps:    apps,
-		Checks:  autoDeployChecks,
-		Secrets: state.NewAutoDeploySecrets(db, secretsAdapter, secretsRef),
-		Policy:  policyStore,
-		Authz:   authorizer,
-		Checker: autoDeployJob,
-		Audit:   httpapi.AuditFunc(auditor),
-		Logger:  logger,
-	}
+	autoDeployJob, autoDeploy := wireAutoDeploy(autoDeployWiring{db: db, apps: apps, deployments: deployments, sources: sources,
+		deployer: approvals, auditor: auditor, policy: policyStore, authz: authorizer, secrets: secretsAdapter,
+		secretsRef: secretsRef, concurrency: cfg.Work.AutoDeploy, logger: logger})
 
 	// One resolver, used by the proxy to route and by the router to tell an
 	// app's hostname from Pando's own.
