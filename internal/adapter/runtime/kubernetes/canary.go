@@ -110,6 +110,9 @@ func (a *Adapter) runCanary(ctx context.Context) (bool, error) {
 	if err := a.bindAppRole(ctx, name); err != nil {
 		return false, cannot("Pando could not be given its role in the canary's namespace", err)
 	}
+	if err := a.awaitServiceAccount(ctx, name); err != nil {
+		return false, cannot("the canary's namespace never became ready for pods", err)
+	}
 	defer func() {
 		// Its own context: the check's may have ended, and leaving the
 		// namespace would leave pods behind.

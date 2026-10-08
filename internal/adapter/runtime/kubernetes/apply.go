@@ -152,7 +152,38 @@ func (a *Adapter) ensureNamespace(ctx context.Context, bundleID string) error {
 			WithRemedy("Remove or rename that namespace. Pando will not put an app in a namespace it does not own.")
 	}
 
-	return a.bindAppRole(ctx, name)
+	if err := a.bindAppRole(ctx, name); err != nil {
+		return err
+	}
+	return a.awaitServiceAccount(ctx, name)
+}
+
+// awaitServiceAccount waits, for accountWait at most, until a namespace has
+// its default ServiceAccount. The ServiceAccount admission plugin refuses
+// every pod in a namespace until the controller manager has made it, even
+// one that mounts no token, and a namespace Pando has just made usually does
+// not have it yet: on a busy cluster one deploy in ten failed its first pod
+// this way (notes-kubernetes-scale-issue-72.md).
+func (a *Adapter) awaitServiceAccount(ctx context.Context, ns string) error {
+	tries := int(a.accountWait/max(a.poll, time.Millisecond)) + 1
+	for i := 0; ; i++ {
+		_, err := a.cs.CoreV1().ServiceAccounts(ns).Get(ctx, "default", metav1.GetOptions{})
+		if err == nil {
+			return nil
+		}
+		if !apierrors.IsNotFound(err) {
+			return errs.Wrap(errs.AdapterUnavailable, fmt.Sprintf("Could not read the namespace %s from the cluster.", ns), err)
+		}
+		if i+1 >= tries {
+			return errs.Newf(errs.AdapterFailed,
+				"The namespace %s still has no default ServiceAccount %s after it was made, and the cluster refuses every pod in a namespace until it has one. The cluster's controller manager makes it.",
+				ns, a.accountWait).
+				WithRemedy("Check that the cluster's kube-controller-manager is running and keeping up (`kubectl -n kube-system get pods`). Pando tries again on its next pass.")
+		}
+		if err := sleep(ctx, a.poll); err != nil {
+			return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Stopped waiting for the namespace %s to be ready for pods.", ns), err)
+		}
+	}
 }
 
 // bindAppRole gives Pando's ServiceAccount its role in a namespace it made:

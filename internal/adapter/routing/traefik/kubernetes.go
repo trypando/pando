@@ -54,9 +54,30 @@ var (
 
 var serviceName = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
 
-// newDynamic connects to the cluster's API: a kubeconfig file when one is set,
-// otherwise the cluster Pando runs in. Replaced in tests.
+// [P] Requests a second to the API, and the burst above that, with delivery
+// kubernetes_api. A settled app's route is read once every five minutes
+// (O-52): 20,000 apps is about 67 a second across the install, which one
+// replica at 100 covers; a deploy's two calls never wait
+// (notes-kubernetes-scale-issue-72.md).
+const (
+	defaultAPIQPS   = 100
+	defaultAPIBurst = 200
+)
+
+// newDynamic connects to the cluster's API. Replaced in tests.
 var newDynamic = func(cfg Config) (dynamic.Interface, error) {
+	rc, err := restConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return dynamic.NewForConfig(rc)
+}
+
+// restConfig is the connection to the cluster's API: a kubeconfig file when
+// one is set, otherwise the cluster Pando runs in, limited to the configured
+// rate. Without a limit set, client-go allows 5 requests a second, which
+// reads about 75 routes in a 15-second pass.
+func restConfig(cfg Config) (*rest.Config, error) {
 	var (
 		rc  *rest.Config
 		err error
@@ -70,7 +91,8 @@ var newDynamic = func(cfg Config) (dynamic.Interface, error) {
 	if err != nil {
 		return nil, err
 	}
-	return dynamic.NewForConfig(rc)
+	rc.QPS, rc.Burst = float32(cfg.APIQPS), cfg.APIBurst
+	return rc, nil
 }
 
 func (a *Adapter) viaAPI() bool { return a.config.Delivery == DeliveryKubernetesAPI }
@@ -92,6 +114,17 @@ func (a *Adapter) configureKubernetes(cfg *Config) error {
 	}
 	if cfg.Namespace == "" {
 		cfg.Namespace = defaultEdgeNamespace
+	}
+	if cfg.APIQPS == 0 {
+		cfg.APIQPS = defaultAPIQPS
+	}
+	if cfg.APIBurst == 0 {
+		cfg.APIBurst = max(defaultAPIBurst, cfg.APIQPS)
+	}
+	if cfg.APIQPS < 0 || cfg.APIBurst < cfg.APIQPS {
+		return errs.Newf(errs.ValidInvalid,
+			"Traefik routing's api_qps is %d and api_burst is %d. Both count requests to the cluster's API: api_qps a second, at least 1, and api_burst at once, at least api_qps.",
+			cfg.APIQPS, cfg.APIBurst)
 	}
 	if (cfg.Managed == nil || *cfg.Managed) && cfg.Certificates == CertsDNS {
 		// On Kubernetes certificates are issued once, by Pando's leader, and

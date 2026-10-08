@@ -17,7 +17,7 @@ import (
 	"github.com/trypando/pando/internal/errs"
 )
 
-func fakeClient() *fake.Clientset { return fake.NewClientset() }
+func fakeClient() *fake.Clientset { return newFake() }
 
 // kubelet plays the cluster's part in the canary: the server comes up, the
 // admitted client connects, and the other client connects or not as the
@@ -169,7 +169,7 @@ func TestO43_AStaleCanaryNamespaceIsSwept(t *testing.T) {
 	}}
 	cfg := Config{PodCIDR: "10.244.0.0/16", ServiceCIDR: "10.96.0.0/12"}
 	require.NoError(t, cfg.validate())
-	cs := fake.NewClientset(stale)
+	cs := newFake(stale)
 	a := &Adapter{poll: 2 * time.Millisecond}
 	a.use(cs, cfg)
 	stop := make(chan struct{})

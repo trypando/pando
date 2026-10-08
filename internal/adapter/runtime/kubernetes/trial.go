@@ -56,6 +56,9 @@ func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialRes
 	if err := a.bindAppRole(ctx, ns); err != nil {
 		return api.TrialResult{}, err
 	}
+	if err := a.awaitServiceAccount(ctx, ns); err != nil {
+		return api.TrialResult{}, err
+	}
 
 	deny := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-in", Namespace: ns},

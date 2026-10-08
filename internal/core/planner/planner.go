@@ -574,6 +574,9 @@ func (p *Planner) checkCapacity(ctx context.Context, s *spec.AppSpec, runtime ap
 		return nil
 	}
 
+	// Capacity and LargestFitFor below may be answered from one reading of
+	// the runtime, made now; nothing read here is kept for another plan.
+	ctx = api.WithReadScope(ctx)
 	capacity, err := runtime.Capacity(ctx)
 	if err != nil {
 		return errs.Wrap(errs.AdapterUnavailable, "Pando could not read how much room is left.", err)
