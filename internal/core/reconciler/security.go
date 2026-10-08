@@ -33,7 +33,7 @@ type SecurityScores interface {
 
 // SecurityState is the store half.
 type SecurityState interface {
-	LiveSecurityState(ctx context.Context) ([]state.SecurityState, error)
+	LiveSecurityState(ctx context.Context, t state.SecurityThreshold) ([]state.SecurityState, error)
 	MarkInsecure(ctx context.Context, appID string, at time.Time) error
 	ClearInsecure(ctx context.Context, appID string) error
 	SetStoppedForSecurity(ctx context.Context, appID string, stopped bool) error
@@ -75,7 +75,11 @@ func (g *GC) enforceSecurity(ctx context.Context) {
 		return
 	}
 
-	apps, err := g.SecurityState.LiveSecurityState(ctx)
+	// Only the apps the pass could act on: marked ones, and ones below the
+	// threshold. The rest would be placed, found fine and left alone.
+	apps, err := g.SecurityState.LiveSecurityState(ctx, state.SecurityThreshold{
+		MinScore: doc.MinSecurityScore, IgnoreUnfixable: doc.IgnoreUnfixableFindings,
+	})
 	if err != nil {
 		g.Logger.Warn("could not list apps for the security pass", zap.Error(err))
 		return

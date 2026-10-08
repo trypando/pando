@@ -145,20 +145,26 @@ func NewAllocations(db *DB) *Allocations { return &Allocations{db: db} }
 // Only apps that are actually running or deploying count. A stopped app holds no
 // CPU or memory, and counting it would refuse deploys to make room for something
 // that is not there.
+//
+// Read live on every call, never from a cache: this is the plan-time check of
+// R-242, and a stale sum is a deploy let through onto a full host. What each
+// app reserves is copied from its pinned revision onto the app by a trigger
+// when the pin moves (migration 60), so the sum is an index-only scan of
+// apps_allocation_idx rather than a JSON walk of every running app's revision
+// (issue #72). Which apps count is still decided here, from state.
 func (a *Allocations) AllocatedOn(ctx context.Context, adapterRef, excludeAppID string) (planner.Allocation, error) {
 	var alloc planner.Allocation
 	err := a.db.QueryRow(ctx, `
 		SELECT
-			coalesce(sum((r.body->'resources'->>'cpu_millis')::int), 0),
-			coalesce(sum((r.body->'resources'->>'memory_bytes')::bigint), 0),
-			coalesce(sum((r.body->'resources'->>'disk_bytes')::bigint), 0),
-			coalesce(sum((r.body->'retention'->>'log_bytes')::bigint), 0)
+			coalesce(sum(a.alloc_cpu_millis), 0)::bigint,
+			coalesce(sum(a.alloc_memory_bytes), 0)::bigint,
+			coalesce(sum(a.alloc_disk_bytes), 0)::bigint,
+			coalesce(sum(a.alloc_log_bytes), 0)::bigint
 		FROM apps a
-		JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		WHERE a.deleted_at IS NULL
-		  AND a.id <> $2
 		  AND a.state IN ('running', 'degraded', 'deploying')
-		  AND r.body->'runtime'->>'adapter_ref' = $1`,
+		  AND a.alloc_runtime_ref = $1
+		  AND a.id <> $2`,
 		adapterRef, excludeAppID).Scan(&alloc.CPUMillis, &alloc.MemoryBytes, &alloc.DiskBytes, &alloc.LogBytes)
 	if err != nil {
 		return planner.Allocation{}, errs.Wrap(errs.Internal, "Could not read how much is already allocated.", err)

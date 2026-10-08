@@ -973,20 +973,53 @@ func scanWithStorage(rows pgx.Rows) ([]AppWithStorage, error) {
 // no spec to detect it in, and an app that anyone on the internet can reach
 // under a policy that says they may not is precisely the case an admin needs
 // named before they save.
-func (a *Apps) LiveApps(ctx context.Context) ([]planner.InventoryApp, error) {
+//
+// Only the apps f names (issue #72): the planner works out from the candidate
+// policy which apps any of its checks could fail, and the rest are not read.
+// Whether an app is shared with everyone comes from one pass over the
+// anonymous grants rather than two lookups per app.
+func (a *Apps) LiveApps(ctx context.Context, f planner.InventoryFilter) ([]planner.InventoryApp, error) {
+	runtimeRefs, runtimeClasses := classes(f.Runtimes)
+	builderRefs, builderClasses := classes(f.Builders)
+	egressRuntimes := f.EgressRuntimes
+	if egressRuntimes == nil {
+		egressRuntimes = []string{}
+	}
 	rows, err := a.db.Query(ctx, `
-		SELECT a.id, a.name, r.body,
-		       EXISTS (SELECT 1 FROM grants g
-		               WHERE g.app_id = a.id AND g.plane = 'data'
-		                 AND g.principal_kind = 'anonymous'),
-		       EXISTS (SELECT 1 FROM grants g
-		               WHERE g.app_id = a.id AND g.plane = 'data'
-		                 AND g.principal_kind = 'anonymous' AND g.passcode_hash IS NOT NULL)
-		FROM apps a
-		JOIN spec_revisions r ON r.id = a.pinned_spec_id
-		WHERE a.deleted_at IS NULL
-		  AND a.state NOT IN ('draft', 'proposed', 'archived')
-		ORDER BY a.name`)
+		WITH anon AS (
+		    SELECT g.app_id, bool_or(g.passcode_hash IS NOT NULL) AS passcode
+		    FROM grants g
+		    WHERE g.plane = 'data' AND g.principal_kind = 'anonymous' AND g.app_id IS NOT NULL
+		    GROUP BY g.app_id
+		), live AS (
+		    SELECT a.id, a.name, r.body,
+		           anon.app_id IS NOT NULL AS anonymous, coalesce(anon.passcode, false) AS passcode,
+		           coalesce(r.body->'egress', 'null'::jsonb) NOT IN
+		               ('null'::jsonb, '{}'::jsonb, '{"mode": ""}'::jsonb,
+		                '{"mode": "allow_all"}'::jsonb, '{"mode": "inherit"}'::jsonb) AS own_egress
+		    FROM apps a
+		    JOIN spec_revisions r ON r.id = a.pinned_spec_id
+		    LEFT JOIN anon ON anon.app_id = a.id
+		    WHERE a.deleted_at IS NULL
+		      AND a.state NOT IN ('draft', 'proposed', 'archived')
+		)
+		SELECT l.id, l.name, l.body, l.anonymous, l.passcode
+		FROM live l
+		WHERE $1
+		   OR ($2 AND l.anonymous AND NOT ($3 AND l.passcode))
+		   OR ($4 AND l.own_egress)
+		   OR (l.body->'runtime'->>'adapter_ref' = ANY($5::text[]) AND ($6 OR l.own_egress))
+		   OR EXISTS (SELECT 1 FROM unnest($7::text[], $8::bigint[]) AS rc(ref, class)
+		              WHERE rc.ref = l.body->'runtime'->>'adapter_ref'
+		                AND rc.class < GREATEST(coalesce(pando_json_bigint(l.body->'runtime'->'isolation_floor'), 0), $9))
+		   OR EXISTS (SELECT 1 FROM unnest($10::text[], $11::bigint[]) AS bc(ref, class)
+		              WHERE bc.ref = l.body->'build'->>'adapter_ref'
+		                AND bc.class < GREATEST(coalesce(pando_json_bigint(l.body->'build'->'isolation_floor'), 0), $12))
+		ORDER BY l.name`,
+		f.All, f.Anonymous, f.AnonymousWithoutPasscode, f.OwnEgress,
+		egressRuntimes, f.EgressRestrictsAll,
+		runtimeRefs, runtimeClasses, int(f.MinRuntime),
+		builderRefs, builderClasses, int(f.MinBuild))
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not list this installation's apps.", err)
 	}
@@ -1001,6 +1034,17 @@ func (a *Apps) LiveApps(ctx context.Context) ([]planner.InventoryApp, error) {
 		out = append(out, app)
 	}
 	return out, rows.Err()
+}
+
+// classes splits adapter isolation classes into the two arrays a query
+// unnests together, in the same order.
+func classes(m map[string]spec.IsolationClass) ([]string, []int64) {
+	refs, out := make([]string, 0, len(m)), make([]int64, 0, len(m))
+	for ref, c := range m {
+		refs = append(refs, ref)
+		out = append(out, int64(c))
+	}
+	return refs, out
 }
 
 // OrphanedVolume is storage whose app is gone and whose data is in a backup.

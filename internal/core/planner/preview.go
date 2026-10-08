@@ -15,7 +15,56 @@ import (
 // that boundary in one direction) and because previewing a policy against a
 // list is the only thing this needs — not a store.
 type Inventory interface {
-	LiveApps(ctx context.Context) ([]InventoryApp, error)
+	// LiveApps lists the live apps f admits. Every app a candidate policy
+	// would block must be among them; others may be too.
+	LiveApps(ctx context.Context, f InventoryFilter) ([]InventoryApp, error)
+}
+
+// InventoryFilter is which live apps a candidate policy could block, worked
+// out from the policy and the adapters before any app is read (issue #72).
+//
+// A preview runs while an administrator edits the policy form, and reading
+// every app's pinned spec for it is twenty thousand specs a keystroke. Most of
+// a policy cannot block most apps: no allowlist blocks no source, sharing
+// allowed blocks no public app, a runtime that meets the floor fails no app's
+// floor unless the app asks for more. Each field below names apps one check
+// could fail; an app no field names passes every check, so reading only the
+// named ones gives the same answer as reading them all. The checks themselves
+// still run on every app read — the filter only decides which are read, never
+// what is reported.
+type InventoryFilter struct {
+	// Every live app with a source: a source allowlist is in force.
+	All bool
+
+	// Apps shared with anyone on the internet; WithoutPasscode narrows that to
+	// those shared without a passcode.
+	Anonymous                bool
+	AnonymousWithoutPasscode bool
+
+	// EgressRuntimes are the runtimes that cannot enforce egress rules. An app
+	// on one is named when the candidate restricts every app's egress
+	// (EgressRestrictsAll), or when the app has egress settings of its own.
+	EgressRuntimes     []string
+	EgressRestrictsAll bool
+
+	// OwnEgress names every app with egress settings of its own: the
+	// candidate forbids loosening, and only an app's own settings loosen.
+	OwnEgress bool
+
+	// Runtimes and Builders are adapter isolation classes. An app is named
+	// when its runtime's class is below the higher of its own runtime floor
+	// and MinRuntime, or its builder's is below the higher of its own build
+	// floor and MinBuild.
+	Runtimes   map[string]spec.IsolationClass
+	MinRuntime spec.IsolationClass
+	Builders   map[string]spec.IsolationClass
+	MinBuild   spec.IsolationClass
+}
+
+// Empty reports whether f names no app at all.
+func (f InventoryFilter) Empty() bool {
+	return !f.All && !f.Anonymous && !f.OwnEgress && len(f.EgressRuntimes) == 0 &&
+		len(f.Runtimes) == 0 && len(f.Builders) == 0
 }
 
 // InventoryApp is one running app as a policy sees it.
@@ -64,7 +113,16 @@ func (p *Planner) PreviewPolicy(ctx context.Context, candidate policy.Document) 
 		return nil, errs.New(errs.Internal, "Pando cannot list this installation's apps to check them.")
 	}
 
-	apps, err := p.inventory.LiveApps(ctx)
+	// Capabilities are read once per adapter, not once per app: this runs
+	// while an admin waits on a form.
+	caps := p.runtimeCapabilities(ctx)
+	filter := p.previewFilter(ctx, candidate, caps)
+	violations := make([]PolicyViolation, 0)
+	if filter.Empty() {
+		return violations, nil
+	}
+
+	apps, err := p.inventory.LiveApps(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -78,11 +136,6 @@ func (p *Planner) PreviewPolicy(ctx context.Context, candidate policy.Document) 
 		allocations: p.allocations,
 	}
 
-	// Capabilities are cached across apps. Twenty apps on one runtime is one
-	// Capabilities call, not twenty: this runs while an admin waits on a form.
-	caps := map[string]api.RuntimeCapabilities{}
-
-	violations := make([]PolicyViolation, 0)
 	for _, app := range apps {
 		if app.Spec == nil {
 			continue
@@ -124,16 +177,7 @@ func (p *Planner) violation(ctx context.Context, app InventoryApp, caps map[stri
 	// reported: that is a broken app, not a policy consequence.
 	runtimeCaps, ok := caps[s.Runtime.AdapterRef]
 	if !ok {
-		rt, found := p.registry.Runtime(s.Runtime.AdapterRef)
-		if !found {
-			return PolicyViolation{}, false
-		}
-		c, err := rt.Capabilities(ctx)
-		if err != nil {
-			return PolicyViolation{}, false
-		}
-		caps[s.Runtime.AdapterRef] = c
-		runtimeCaps = c
+		return PolicyViolation{}, false
 	}
 
 	// Egress (R-183, R-186): a loosening the candidate forbids, or rules it
@@ -158,6 +202,83 @@ func (p *Planner) violation(ctx context.Context, app InventoryApp, caps map[stri
 	}
 
 	return PolicyViolation{}, false
+}
+
+// runtimeCapabilities is every configured runtime that answers, by ref. One
+// that is gone or does not answer is left out, and violation skips its apps.
+func (p *Planner) runtimeCapabilities(ctx context.Context) map[string]api.RuntimeCapabilities {
+	out := map[string]api.RuntimeCapabilities{}
+	for _, ref := range p.registry.ByCategory(api.CategoryRuntime) {
+		rt, ok := p.registry.Runtime(ref)
+		if !ok {
+			continue
+		}
+		if c, err := rt.Capabilities(ctx); err == nil {
+			out[ref] = c
+		}
+	}
+	return out
+}
+
+// previewFilter is which apps the candidate could block, check by check in
+// violation's order. Each clause must name every app its check could fail:
+// an app left out is an app never examined.
+func (p *Planner) previewFilter(ctx context.Context, candidate policy.Document, caps map[string]api.RuntimeCapabilities) InventoryFilter {
+	f := InventoryFilter{
+		// The source allowlist (R-092) is matched against each source, so an
+		// allowlist in force reads every app.
+		All: len(candidate.SourceAllowlist) > 0,
+	}
+
+	// Public sharing (R-076): only an app shared with everyone can fail it.
+	switch candidate.PublicSharingMode() {
+	case policy.PublicSharingNone:
+		f.Anonymous = true
+	case policy.PublicSharingPasscodeOnly:
+		f.Anonymous, f.AnonymousWithoutPasscode = true, true
+	}
+
+	// Egress (R-183, R-186). Only an app's own settings loosen, so loosening
+	// forbidden names the apps that have some. A restriction fails only on a
+	// runtime that cannot enforce it: there, an app with settings of its own
+	// may restrict itself, and an app without them is restricted exactly when
+	// the candidate restricts an app with no settings at all.
+	f.OwnEgress = candidate.EgressLooseningRule() == policy.EgressLooseningForbidden
+	for ref, c := range caps {
+		if !c.SupportsEgressRestriction {
+			f.EgressRuntimes = append(f.EgressRuntimes, ref)
+		}
+	}
+	if len(f.EgressRuntimes) > 0 {
+		f.EgressRestrictsAll = candidate.EgressFor(spec.Egress{}).Restricted
+	}
+
+	// Isolation floors (R-024, R-114), compared per app against the higher of
+	// the candidate's floor and the app's own.
+	f.MinRuntime, f.MinBuild = candidate.MinRuntimeIsolation, candidate.MinBuildIsolation
+	for ref, c := range caps {
+		if f.Runtimes == nil {
+			f.Runtimes = map[string]spec.IsolationClass{}
+		}
+		f.Runtimes[ref] = c.IsolationClass
+	}
+	for _, ref := range p.registry.ByCategory(api.CategoryBuilder) {
+		b, ok := p.registry.Builder(ref)
+		if !ok {
+			continue
+		}
+		// A builder that does not answer fails as unavailable, which
+		// violation does not report.
+		c, err := b.Capabilities(ctx)
+		if err != nil {
+			continue
+		}
+		if f.Builders == nil {
+			f.Builders = map[string]spec.IsolationClass{}
+		}
+		f.Builders[ref] = c.IsolationClass
+	}
+	return f
 }
 
 func asViolation(app InventoryApp, err error) PolicyViolation {
