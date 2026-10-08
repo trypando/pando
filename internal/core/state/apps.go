@@ -760,7 +760,8 @@ func (a *Apps) Pin(ctx context.Context, appID, specID, newState, pinnedBy string
 	if _, err := tx.Exec(ctx,
 		`UPDATE apps SET pinned_spec_id = $2, state = $3, updated_at = now(),
 		        address_hostname = NULLIF($4, ''), address_path = NULLIF($5, ''),
-		        address_port = NULLIF($6, 0)
+		        address_port = NULLIF($6, 0),
+		        `+dueAgain+`
 		 WHERE id = $1`,
 		appID, specID, newState, hostname, path, port); err != nil {
 		if isUniqueViolation(err) {
@@ -1168,7 +1169,7 @@ func (a *Apps) SetDesiredState(ctx context.Context, appID, desired string) error
 		return errs.New(errs.ValidInvalid, "An app is either running or stopped.")
 	}
 	_, err := a.db.Exec(ctx,
-		`UPDATE apps SET desired_state = $2, updated_at = now() WHERE id = $1`, appID, desired)
+		`UPDATE apps SET desired_state = $2, updated_at = now(), `+dueAgain+` WHERE id = $1`, appID, desired)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not update the app.", err)
 	}
@@ -1178,7 +1179,7 @@ func (a *Apps) SetDesiredState(ctx context.Context, appID, desired string) error
 // SetState records what is observed to be true.
 func (a *Apps) SetState(ctx context.Context, appID, appState string) error {
 	_, err := a.db.Exec(ctx,
-		`UPDATE apps SET state = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL`, appID, appState)
+		`UPDATE apps SET state = $2, updated_at = now(), `+dueAgain+` WHERE id = $1 AND deleted_at IS NULL`, appID, appState)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not update the app.", err)
 	}
@@ -1189,7 +1190,7 @@ func (a *Apps) SetState(ctx context.Context, appID, appState string) error {
 // settling its own transition never overwrites one somebody else made since.
 func (a *Apps) SetStateIf(ctx context.Context, appID, from, to string) error {
 	_, err := a.db.Exec(ctx,
-		`UPDATE apps SET state = $3, updated_at = now() WHERE id = $1 AND state = $2 AND deleted_at IS NULL`,
+		`UPDATE apps SET state = $3, updated_at = now(), `+dueAgain+` WHERE id = $1 AND state = $2 AND deleted_at IS NULL`,
 		appID, from, to)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not update the app.", err)
