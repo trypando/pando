@@ -192,6 +192,15 @@ func (p *Planner) violation(ctx context.Context, app InventoryApp, caps map[stri
 		}
 	}
 
+	// The runtime floor applies to every app, built or not: an image app on
+	// a runtime below the floor is refused at its next deploy like any other.
+	if err := p.checkRuntimeFloor(ctx, s, runtimeCaps); err != nil {
+		if errs.CodeOf(err) == errs.PlanNoAdapterMeetsPolicy {
+			return asViolation(app, err), true
+		}
+		return PolicyViolation{}, false
+	}
+
 	if err := p.checkIsolation(ctx, s, runtimeCaps); err != nil {
 		// checkIsolation also reports a missing builder, which is not a policy
 		// consequence — see the note above.

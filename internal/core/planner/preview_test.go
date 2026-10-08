@@ -10,6 +10,7 @@ import (
 	"github.com/trypando/pando/internal/core/planner"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/errs"
 )
 
 type staticInventory []planner.InventoryApp
@@ -110,6 +111,36 @@ func TestR114_RaisingTheIsolationFloorNamesTheAppsThatCannotMeetIt(t *testing.T)
 
 	require.Len(t, violations, 1)
 	require.Equal(t, "notes", violations[0].AppName)
+}
+
+// TestR114_ARaisedRuntimeFloorNamesImageAppsToo asserts R-114 for apps that
+// are not built: an image runs on a runtime like any other app, the deploy
+// refuses it below the floor, so the preview names it — with the words the
+// deploy will use. It used to be skipped because it names no builder.
+func TestR114_ARaisedRuntimeFloorNamesImageAppsToo(t *testing.T) {
+	image := plannableSpec()
+	image.Source = spec.Source{Type: spec.SourceImage, Image: "ghcr.io/acme/web:1"}
+	image.Build = spec.Build{}
+	inv := staticInventory{{AppID: "app_web", Name: "web", Spec: image}}
+
+	raised := policy.Default()
+	raised.MinRuntimeIsolation = spec.IsolationVM
+	violations, err := previewer(t, inv).PreviewPolicy(context.Background(), raised)
+	require.NoError(t, err)
+	require.Len(t, violations, 1)
+	require.Equal(t, "web", violations[0].AppName)
+
+	// The same refusal the deploy gives.
+	p := planner.New(registry(t, capableRuntime(), capableRouting(), capableBuilder()), policy.Static(raised), fixedAllocations{})
+	_, planErr := p.Check(context.Background(), image)
+	require.Error(t, planErr)
+	require.Equal(t, string(errs.CodeOf(planErr)), violations[0].Code)
+	require.Equal(t, errs.As(planErr).Message, violations[0].Message)
+
+	// And an image app on a runtime that meets the floor is not named.
+	none, err := previewer(t, inv).PreviewPolicy(context.Background(), policy.Default())
+	require.NoError(t, err)
+	require.Empty(t, none)
 }
 
 // Previewing changes nothing — not the stored policy, and not any app.
