@@ -78,13 +78,16 @@ func (s *Service) Deliver(ctx context.Context, appID string, d Delivery) (Outcom
 		return Outcome{Message: why}, nil
 	}
 
-	// Detached from the request, which ends when this returns.
+	// Detached from the request, which ends when this returns. The ID is the
+	// one the store gave back, never the request's path: what reaches the log
+	// is an app that exists, not whatever a caller typed.
+	known := app.ID
 	go func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), checkTimeout)
 		defer cancel()
-		if err := s.Checker.CheckApp(ctx, appID, reconciler.DeliveryWebhook); err != nil && s.Logger != nil {
+		if err := s.Checker.CheckApp(ctx, known, reconciler.DeliveryWebhook); err != nil && s.Logger != nil {
 			s.Logger.Warn("could not check for new commits after a webhook",
-				zap.String("app_id", appID), zap.Error(err))
+				zap.String("app_id", known), zap.Error(err))
 		}
 	}()
 	return Outcome{Checking: true, Message: "Pando is checking this app for something new to deploy."}, nil
