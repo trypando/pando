@@ -10,6 +10,7 @@ import (
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/security"
+	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 )
@@ -79,7 +80,7 @@ func (s *Server) handleScanApp(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		checkout, err := s.Sources.Fetch(r.Context(), app.Source)
+		checkout, err := s.Sources.Fetch(source.ForApp(r.Context(), app.ID), app.Source)
 		if err != nil {
 			Error(w, r, err)
 			return

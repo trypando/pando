@@ -11,6 +11,7 @@ import {
   Banner,
   Button,
   CodeBlock,
+  Dialog,
   EmptyState,
   Icon,
   Input,
@@ -25,6 +26,8 @@ import {
 import { api, base } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { AdapterDialog } from './AdapterDialog';
+import { AuthorizeDialog, covers, useSources } from './Sources';
+import type { SourceConnection } from './Sources';
 import { Capacity } from './Capacity';
 import { ImageRegistry } from './ImageRegistry';
 import { useAIFunctionOn } from './AIFunctions';
@@ -81,7 +84,7 @@ interface AdapterRow extends ConfiguredAdapter {
   [key: string]: unknown;
 }
 
-export function Installation() {
+export function Installation({ query }: { query?: string } = {}) {
   const queries = useQueryClient();
   // Only on the verb (R-082): install.view shows the list, and holding it says
   // nothing about being allowed to change what is in it.
@@ -91,6 +94,30 @@ export function Installation() {
   // notice itself follows the server's restart_needed, so it stays until
   // Pando has restarted — across a reload, and for everyone who looks.
   const [saved, setSaved] = useState<string | null>(null);
+  // A source connection (R-091) is used the moment it is saved, so saving one
+  // says that instead of asking for a restart.
+  const [notice, setNotice] = useState<string | null>(null);
+  const [authorizing, setAuthorizing] = useState<SourceConnection | null>(null);
+  const [disconnecting, setDisconnecting] = useState<SourceConnection | null>(null);
+
+  // A browser authorization of a source comes back here with its outcome.
+  const back = new URLSearchParams(query ?? '');
+  const returnedError = back.get('error');
+  const returnedOK = back.get('authorized');
+
+  // Each source connection's state — ready, not authorized, or why it cannot
+  // be used — beside its row.
+  const sources = useSources();
+  const connections = new Map((sources.data?.sources ?? []).map((s) => [s.id, s]));
+  const disconnect = useMutation({
+    mutationFn: (id: string) => api.del<void>(`/sources/${encodeURIComponent(id)}`),
+    onSuccess: (_, id) => {
+      setDisconnecting(null);
+      setNotice(`Disconnected ${id}.`);
+      void queries.invalidateQueries({ queryKey: ['adapters'] });
+      void queries.invalidateQueries({ queryKey: ['sources'] });
+    },
+  });
 
   const adapters = useQuery({
     queryKey: ['adapters'],
@@ -118,6 +145,7 @@ export function Installation() {
         ...r,
         first: i === 0,
         kindName: catalog.find((k) => k.category === r.category && k.kind === r.kind)?.name ?? r.kind,
+        connection: r.category === 'source' ? connections.get(r.id) : undefined,
       })),
   );
   // Categories this build can run that nothing here is set up for.
@@ -142,6 +170,16 @@ export function Installation() {
       }
     >
       {adapters.isError && <Quiet>{messageOf(adapters.error)}</Quiet>}
+      {returnedError && (
+        <div style={{ marginBottom: 'var(--space-4)' }}>
+          <Banner tone="failed">{returnedError}</Banner>
+        </div>
+      )}
+      {(notice || (returnedOK && !returnedError)) && (
+        <div style={{ marginBottom: 'var(--space-4)' }}>
+          <Banner tone="info">{notice ?? `${returnedOK} is authorized and ready.`}</Banner>
+        </div>
+      )}
 
       {(restartNeeded || saved) && (
         <div style={{ marginBottom: 'var(--space-4)' }}>
@@ -159,7 +197,13 @@ export function Installation() {
       {adapters.isPending ? (
         <Table loading columns={adapterColumns(canManage, setEditing)} rows={[]} />
       ) : (
-        <GroupedAdapters rows={grouped} canManage={canManage} onChange={(row) => setEditing({ existing: row })} />
+        <GroupedAdapters
+          rows={grouped}
+          canManage={canManage}
+          onChange={(row) => setEditing({ existing: row })}
+          onAuthorize={setAuthorizing}
+          onDisconnect={setDisconnecting}
+        />
       )}
       {!adapters.isPending && missing.length > 0 && (
         <div
@@ -189,12 +233,54 @@ export function Installation() {
           category={editing.category}
           adapters={rows}
           onClose={() => setEditing(null)}
-          onSaved={(name) => {
+          onSaved={(name, category) => {
             setEditing(null);
-            setSaved(name);
+            if (category === 'source') {
+              setNotice(`${name} is saved and in use. No restart is needed.`);
+              void queries.invalidateQueries({ queryKey: ['sources'] });
+            } else {
+              setSaved(name);
+            }
             void queries.invalidateQueries({ queryKey: ['adapters'] });
           }}
         />
+      )}
+
+      {authorizing && (
+        <AuthorizeDialog
+          source={authorizing}
+          onClose={() => setAuthorizing(null)}
+          onAuthorized={() => {
+            setNotice(`${authorizing.name} is authorized and ready.`);
+            setAuthorizing(null);
+            void queries.invalidateQueries({ queryKey: ['sources'] });
+          }}
+        />
+      )}
+
+      {disconnecting && (
+        <Dialog
+          open
+          title={`Disconnect ${disconnecting.name}`}
+          description="Its stored credential is deleted. Apps read with it keep running; their next deploy fails, saying the connection is gone, until another connection covers their repository."
+          onClose={() => setDisconnecting(null)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setDisconnecting(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={disconnect.isPending}
+                onClick={() => disconnect.mutate(disconnecting.id)}
+              >
+                {disconnect.isPending ? 'Disconnecting' : 'Disconnect'}
+              </Button>
+            </>
+          }
+        >
+          {disconnect.isError && <Banner tone="failed">{messageOf(disconnect.error)}</Banner>}
+        </Dialog>
       )}
 
       {/* Each runtime by the name its kind goes by, as in the table above. */}
@@ -1954,7 +2040,7 @@ export function Field({ children }: { children: React.ReactNode }) {
   return <div style={{ flex: '1 1 18ch', minWidth: '18ch', maxWidth: '28ch' }}>{children}</div>;
 }
 
-type GroupedRow = AdapterRow & { first?: boolean; kindName?: string };
+type GroupedRow = AdapterRow & { first?: boolean; kindName?: string; connection?: SourceConnection };
 
 /** Reachable or not — or, saved since Pando started, not running yet. */
 function AdapterStatus({ row }: { row: AdapterRow }) {
@@ -1974,8 +2060,17 @@ function AdapterStatus({ row }: { row: AdapterRow }) {
   );
 }
 
-// The adapters' columns: name, ID, status, and Edit for whoever may.
-const ADAPTER_GRID = 'minmax(0,1fr) minmax(0,22ch) 16ch 12ch';
+/** A source connection's state (R-091): whether it can read repositories now.
+ *  Not reachability — a connection is built when it is used, and the question
+ *  is whether it holds what it needs. */
+function ConnectionStatus({ connection }: { connection: SourceConnection }) {
+  if (connection.problem) return <StatusIndicator status="failed" label="Cannot be used" title={connection.problem} />;
+  if (!connection.capabilities.authorized) return <StatusIndicator status="info" label="Not authorized" />;
+  return <StatusIndicator status="running" label="Ready" title={covers(connection)} />;
+}
+
+// The adapters' columns: name, ID, status, and the actions for whoever may.
+const ADAPTER_GRID = 'minmax(0,1fr) minmax(0,22ch) 16ch max-content';
 
 /**
  * The adapters, grouped by category.
@@ -1989,10 +2084,14 @@ function GroupedAdapters({
   rows,
   canManage,
   onChange,
+  onAuthorize,
+  onDisconnect,
 }: {
   rows: GroupedRow[];
   canManage: boolean;
   onChange: (row: AdapterRow) => void;
+  onAuthorize: (c: SourceConnection) => void;
+  onDisconnect: (c: SourceConnection) => void;
 }) {
   const cell = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
   const line = {
@@ -2068,7 +2167,7 @@ function GroupedAdapters({
             <span style={cell}>
               {/* Live, not stored: an adapter that was reachable at startup and
                   is not now is exactly what this column exists to show. */}
-              <AdapterStatus row={row} />
+              {row.connection ? <ConnectionStatus connection={row.connection} /> : <AdapterStatus row={row} />}
             </span>
             <span style={{ justifySelf: 'end' }}>
               {/* Declared in the config file, so read-only here while it is
@@ -2080,9 +2179,25 @@ function GroupedAdapters({
               ) : (
                 canManage &&
                 row.status !== 'overridden' && (
-                  <Button variant="secondary" onClick={() => onChange(row)}>
-                    Edit
-                  </Button>
+                  <span style={{ display: 'inline-flex', gap: 'var(--space-2)' }}>
+                    {/* A source connection signed in with OAuth is authorized
+                        here, and disconnected here (R-091). */}
+                    {row.connection &&
+                      (row.connection.capabilities.device_authorization ||
+                        row.connection.capabilities.web_authorization) && (
+                        <Button variant="secondary" onClick={() => onAuthorize(row.connection!)}>
+                          {row.connection.capabilities.authorized ? 'Authorize again' : 'Authorize'}
+                        </Button>
+                      )}
+                    <Button variant="secondary" onClick={() => onChange(row)}>
+                      Edit
+                    </Button>
+                    {row.connection && (
+                      <Button variant="ghost" onClick={() => onDisconnect(row.connection!)}>
+                        Disconnect
+                      </Button>
+                    )}
+                  </span>
                 )
               )}
             </span>

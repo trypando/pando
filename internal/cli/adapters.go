@@ -177,8 +177,17 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 			if len(credentials) > 0 {
 				body["credentials"] = credentials
 			}
+			if category == "source" {
+				// Many source connections, none of them the default: the
+				// one covering a repository is chosen for it.
+				body["is_default"] = false
+			}
 			if err := c.Do("POST", "/adapters", body, nil); err != nil {
 				return err
+			}
+			if category == "source" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Saved %s. It is used from now on; `pando source list` shows whether it is ready.\n", id)
+				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Saved %s. Restart Pando to use it: pando restart\n", id)
 			return nil

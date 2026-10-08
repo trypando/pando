@@ -325,9 +325,9 @@ app, and the security reviewer's role; a custom role may hold any one `install.a
 
 ### 7.1 Input
 
-**R-090 [D]** The user points Pando at a source — a public GitHub repo in v1 — plus routing and hosting choices made in the Pando console. Nothing is read from the repo for permission or policy.
+**R-090 [D]** The user points Pando at a source — a public or private repository on GitHub, GitLab, Azure DevOps, Bitbucket, Gitea or Forgejo, or any git host (amended with issue #127; it read "a public GitHub repo in v1") — plus routing and hosting choices made in the Pando console. Nothing is read from the repo for permission or policy, and nothing about how it is reached: neither the credential nor the provider (R-020).
 
-**R-091 [D] [LATER]** Private repos are in scope, supporting the credential mechanisms GitHub offers (PAT, GitHub App installation, deploy keys). **[O-3]** — whether a credential belongs to the app or to the user who supplied it is unresolved; note that user-owned credentials die at offboarding like delegated tokens.
+**R-091 [D]** **Private repositories are read with source connections that belong to the installation** (amended with issue #127; it was `[LATER]` and named GitHub's mechanisms only). An administrator connects a host once — GitHub (github.com and Enterprise Server), GitLab (gitlab.com and self-managed), Azure DevOps (Services and Server), Bitbucket (Cloud and Data Center), Gitea or Forgejo, or any git host — and any app whose repository the connection covers is read with it. Adding an app from a private repository asks for nothing more than its address: Pando finds the connection that covers it most closely, checks the repository can be read **before the app exists**, and refuses with the reason when it cannot (R-105). Every common way of signing in is supported where the host offers it: an App installation (GitHub), OAuth (device and browser flows), personal, project, group, workspace and repository access tokens, deploy tokens, a service principal (Azure DevOps), and an SSH deploy key with the host's key pinned. A connection with API access also lists repositories and branches to pick from. A source connection is an adapter category (R-250); its credential is held as ciphertext (R-190) and never reaches a build (R-112), a log line or an audit event (R-194). Each clone with one is audited. **[O-3]**, resolved: a credential belongs to the installation, not to an app and not to the person who supplied it — who connected it is in the audit log — so nothing breaks when that person leaves.
 
 **R-092 [D]** **Source allowlist.** Host policy may restrict deployable sources — to named orgs, named repos, a specific forge, or registry namespaces. Evaluated as admission control **before anything is cloned**, so a blocked source never touches disk. Default is empty, meaning anything.
 
@@ -880,7 +880,7 @@ Events tab and `GET /apps/{id}/events`. The feed holds what the outbox keeps (R-
 
 **R-251 [D]** Core never learns a provider's vocabulary. A requirement crossing the interface is expressed in Pando's terms — "2 GB, one persistent volume, one exposed HTTP port" — and the adapter turns it into a VM profile or container arguments.
 
-**R-252 [D]** Adapter categories: identity, routing/ingress, builder, runtime, secrets, services, notification, **backup**. **Scanner** is the ninth (R-317) and **AI** the tenth (R-258).
+**R-252 [D]** Adapter categories: identity, routing/ingress, builder, runtime, secrets, services, notification, **backup**. **Scanner** is the ninth (R-317), **AI** the tenth (R-258) and **source** the eleventh (R-091): a connection to a place repositories live, which clones what it covers. It holds no state; core stores its credential and decides which connection reads which repository.
 
 Backup was added in phase 9, reversing an earlier decision that a backup destination was a byte sink
 rather than a category (design 03 §8.1). The earlier reasoning still describes a *destination*
@@ -1131,7 +1131,7 @@ Confirmed for the first release:
 - Volumes with the undeclared-persistence warning
 - Rolling backups + full-host DR bundle
 
-Explicitly deferred: per-user instances, GitHub OAuth sign-in, private repos, cloud routing adapters other than Cloudflare Tunnel, external secrets adapters, VM runtime adapters, setting profiles, per-user quotas, log masking.
+Explicitly deferred: per-user instances, GitHub OAuth sign-in, cloud routing adapters other than Cloudflare Tunnel, external secrets adapters, VM runtime adapters, setting profiles, per-user quotas, log masking.
 
 ---
 

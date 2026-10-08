@@ -181,6 +181,8 @@ var toolList = []tool{
 			},
 			"registry_credential": registryCredentialSchema(
 				"Optional, with image: the credential a private image is pulled with."),
+			"connection": str("Optional, with source_url: the source connection (from pando_list_sources) " +
+				"to read a private repository with. Left out, the one covering the URL is used."),
 		}, "name"),
 		request: func(args map[string]any) (string, string, any, error) {
 			name, err := stringArg(args, "name", true)
@@ -210,10 +212,89 @@ var toolList = []tool{
 				return "POST", "/apps", map[string]any{"name": name, "source": map[string]string{"type": "upload"}}, nil
 			}
 			ref, _ := stringArg(args, "ref", false)
-			return "POST", "/apps", map[string]any{
-				"name":   name,
-				"source": map[string]string{"type": "git", "url": source, "ref": ref},
-			}, nil
+			src := map[string]string{"type": "git", "url": source, "ref": ref}
+			if conn, _ := stringArg(args, "connection", false); conn != "" {
+				src["connection"] = conn
+			}
+			return "POST", "/apps", map[string]any{"name": name, "source": src}, nil
+		},
+	},
+	{
+		Name: "pando_list_sources",
+		Description: "The installation's source connections: how Pando reads private repositories on " +
+			"GitHub, GitLab, Azure DevOps, Bitbucket, Gitea or any git host. Each has an id, the host " +
+			"and scope it covers, how it signs in, whether it can list repositories, and whether it is " +
+			"authorized; problem says why one cannot be used. A private repository is read with the " +
+			"connection that covers its URL.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/sources", nil, nil
+		},
+	},
+	{
+		Name: "pando_list_source_repositories",
+		Description: "The repositories a source connection can read, to pick one for pando_create_app " +
+			"rather than guess its URL. Refused for a connection with no API access, such as an SSH key.",
+		Schema: schema(map[string]any{
+			"source_id": str("The connection's id, from pando_list_sources."),
+			"query":     str("Optional: only repositories whose name contains this."),
+		}, "source_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "source_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			path := "/sources/" + url.PathEscape(id) + "/repositories"
+			if q, _ := stringArg(args, "query", false); q != "" {
+				path += "?q=" + url.QueryEscape(q)
+			}
+			return "GET", path, nil, nil
+		},
+	},
+	{
+		Name:        "pando_list_source_branches",
+		Description: "The branches of a repository, read through a source connection.",
+		Schema: schema(map[string]any{
+			"source_id": str("The connection's id, from pando_list_sources."),
+			"url":       str("The repository's URL."),
+		}, "source_id", "url"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "source_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			repo, err := stringArg(args, "url", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", "/sources/" + url.PathEscape(id) + "/branches?url=" + url.QueryEscape(repo), nil, nil
+		},
+	},
+	{
+		Name: "pando_authorize_source",
+		Description: "Start signing a source connection in with OAuth by device code. Returns user_code " +
+			"and verification_url: tell the person to open the URL and enter the code, then call " +
+			"pando_poll_source_authorization every interval_seconds until it says authorized.",
+		Schema: schema(map[string]any{"source_id": str("The connection's id, from pando_list_sources.")}, "source_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "source_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "POST", "/sources/" + url.PathEscape(id) + "/authorize", map[string]string{"mode": "device"}, nil
+		},
+	},
+	{
+		Name: "pando_poll_source_authorization",
+		Description: "Ask once whether the person approved a device authorization started with " +
+			"pando_authorize_source: status pending (slow_down asks for slower polling) or authorized.",
+		Schema: schema(map[string]any{"source_id": str("The connection's id.")}, "source_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "source_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "POST", "/sources/" + url.PathEscape(id) + "/authorize/poll", nil, nil
 		},
 	},
 	{

@@ -363,7 +363,7 @@ export function AdminConsole({
             onClearTest={() => go({ view: 'admin', section: 'sign-in' }, true)}
           />
         )}
-        {section === 'adapters' && <Installation />}
+        {section === 'adapters' && <Installation query={route.query} />}
         {section === 'policy' && <Policy canEdit={canManagePolicy} />}
         {section === 'backups' && <Backups />}
         {section === 'events' && <Events canManageAll={canManageEvents} apps={rows} />}

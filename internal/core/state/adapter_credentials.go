@@ -41,10 +41,20 @@ func NewAdapterCredentials(db *DB, adapter api.SecretsAdapter, adapterRef string
 // (issue #41), keyed by the app. Its own table and scope rather than the app's
 // secrets: an app secret can be named by an env entry and so reach the app,
 // and the credential that pulls the app's image is never the app's to read.
-// App-owned, as O-3 decided for source credentials.
+// App-owned (O-30). A source credential is not: since issue #127 a source
+// connection is the install's (O-3), stored in adapter_credentials.
 func NewRegistryCredentials(db *DB, adapter api.SecretsAdapter, adapterRef string) *AdapterCredentials {
 	return &AdapterCredentials{db: db, adapter: adapter, adapterRef: adapterRef,
 		table: "registry_credentials", column: "app_id", scope: "registry:"}
+}
+
+// NewSourceAuthorizations stores an OAuth authorization of a source connection
+// while it is in progress (issue #127): the device code or PKCE verifier, and
+// the state a web callback presents. Sealed like a credential and under its own
+// scope, so a pending flow cannot be replayed as the connection's token.
+func NewSourceAuthorizations(db *DB, adapter api.SecretsAdapter, adapterRef string) *AdapterCredentials {
+	return &AdapterCredentials{db: db, adapter: adapter, adapterRef: adapterRef,
+		table: "source_authorizations", column: "adapter_id", scope: "source-authorization:"}
 }
 
 // NewIdentityCredentials stores identity providers' secrets — an OIDC client

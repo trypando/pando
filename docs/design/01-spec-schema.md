@@ -71,9 +71,17 @@ type Source struct {
     Image  string     `json:"image,omitempty"`   // when Type == image
     Digest string     `json:"digest,omitempty"`  // resolved, pinned
     UploadID string   `json:"upload_id,omitempty"` // when Type == upload: the app's own ID
-    CredentialRef string `json:"credential_ref,omitempty"` // "registry" when an image pull is authenticated
+    CredentialRef string `json:"credential_ref,omitempty"` // "registry" when an image pull is authenticated;
+                                                             // for git, the source connection it is read with
 }
 ```
+
+**[D] A private repository names the source connection it is read with (R-091, O-3 re-resolved with issue
+#127).** `CredentialRef` on a git source is the ID of an installation source connection (design 03 §10),
+chosen when the app is added — the connection covering the address most closely, or the one the request
+names — and empty for a repository read anonymously. It is a reference, never a credential: the token or key
+is the installation's, sealed in `adapter_credentials`, and an export or a spec revision carries only the ID.
+A connection removed later fails the next fetch with what to do; the running version keeps serving (R-146).
 
 **[D]** `Ref` is what the user asked for; `Commit` is what runs. Auto-deploy (R-141) advances `Commit` and creates a revision. A deploy never resolves `Ref` implicitly at runtime.
 

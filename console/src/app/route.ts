@@ -80,6 +80,9 @@ export function parse(pathname: string, search = ''): Route {
   const query = search.replace(/^\?/, '');
   if (parts[1] === 'audit' && query) return { view: 'admin', section: 'audit', query };
   if (parts[1] === 'sign-in' && query) return { view: 'admin', section: 'sign-in', query };
+  // /admin/adapters?… — the outcome of a source connection's browser
+  // authorization (issue #127).
+  if (parts[1] === 'adapters' && query) return { view: 'admin', section: 'adapters', query };
 
   // The adapters screen was called Installation, and a link to it may still
   // say so.
@@ -97,7 +100,7 @@ export function format(route: Route): string {
     return `/admin/apps/${route.appID}${route.tab ? `/${route.tab}` : ''}`;
   }
   if (route.section === 'accounts' && route.userID) return `/admin/accounts/${route.userID}`;
-  if ((route.section === 'audit' || route.section === 'sign-in') && route.query) {
+  if ((route.section === 'audit' || route.section === 'sign-in' || route.section === 'adapters') && route.query) {
     return `/admin/${route.section}?${route.query}`;
   }
   return route.section === 'apps' ? '/admin' : `/admin/${route.section}`;

@@ -37,6 +37,11 @@ const (
 	// everything the auction produces is produced either way (R-106).
 	// Design 10 has the argument for why it is a category at all.
 	CategoryAI Category = "ai"
+
+	// CategorySource is the eleventh (R-091): a connection to a place
+	// repositories live, which apps from private repositories are cloned
+	// with. See source.go.
+	CategorySource Category = "source"
 )
 
 // Adapter is implemented by every adapter in every category.

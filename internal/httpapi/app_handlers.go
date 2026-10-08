@@ -83,10 +83,25 @@ type createAppRequest struct {
 		// Credential pulls a private image (issue #41). Stored before
 		// detection starts, so the first read of the registry already uses it.
 		Credential *oci.Credential `json:"credential"`
+
+		// Connection names the source connection a repository is read with
+		// (R-091), when it was picked from one. Left out, the connection that
+		// covers the address most closely is used, or none for a public
+		// repository.
+		Connection string `json:"connection"`
 	} `json:"source"`
 }
 
 var slugPattern = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// createDetail is what an app's creation records about its source: the
+// source connection a repository is read with, when there is one.
+func createDetail(src spec.Source) map[string]any {
+	if src.Type == spec.SourceGit && src.CredentialRef != "" {
+		return map[string]any{"source_connection": src.CredentialRef}
+	}
+	return nil
+}
 
 // validSourceType refuses a source type Pando cannot fetch, at creation
 // rather than at the first detection. Empty is an app written by hand.
@@ -175,6 +190,27 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Which source connection reads the repository, and that it can — before
+	// the app exists, so a private repository nothing on this installation
+	// can read is a refused request that says why, not a draft whose
+	// detection fails later (R-091, R-105). After the allowlist: a blocked
+	// source never causes a credential to be used (R-092).
+	if req.Source.Connection != "" && src.Type != spec.SourceGit {
+		Error(w, r, errs.New(errs.ValidInvalid,
+			"A source connection reads a repository, and this app is not built from one.").
+			WithRemedy("Leave the connection out."))
+		return
+	}
+	if src.Type == spec.SourceGit && s.SourceConnections != nil {
+		src.CredentialRef = req.Source.Connection
+		ref, err := s.SourceConnections.Check(r.Context(), src)
+		if err != nil {
+			Error(w, r, err)
+			return
+		}
+		src.CredentialRef = ref
+	}
+
 	app, err := s.Apps.Create(r.Context(), req.Name, slugify(req.Name), p.UserID, p.ID, src)
 	if err != nil {
 		Error(w, r, err)
@@ -189,6 +225,7 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		AppID:         app.ID,
 		TargetKind:    "app",
 		TargetID:      app.ID,
+		Detail:        createDetail(app.Source),
 	})
 
 	if req.Source.Credential != nil {

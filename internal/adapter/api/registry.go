@@ -105,6 +105,8 @@ func satisfiesCategory(a Adapter) error {
 		_, ok = a.(ScannerAdapter)
 	case CategoryAI:
 		_, ok = a.(AIAdapter)
+	case CategorySource:
+		_, ok = a.(SourceAdapter)
 	default:
 		return fmt.Errorf("unknown category %q", a.Category())
 	}
