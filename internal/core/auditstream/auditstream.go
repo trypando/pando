@@ -634,15 +634,15 @@ func (s *Service) Statuses(ctx context.Context) ([]Status, error) {
 // Describe is the one-line disclosure the console shows beside the audit log
 // for an enabled sink (R-385).
 func Describe(st Status) string {
-	what := "Every audit event"
+	what, verb := "Every audit event", " is sent to "
 	if len(st.Actions) > 0 {
-		what = "Audit events matching " + strings.Join(st.Actions, ", ")
+		what, verb = "Audit events matching "+strings.Join(st.Actions, ", "), " are sent to "
 	}
 	if len(st.Exclude) > 0 {
 		what += " except " + strings.Join(st.Exclude, ", ")
 	}
 	via := map[string]string{"syslog": "over syslog", "https": "over HTTPS"}[st.Transport]
-	return strings.TrimSpace(what + " is sent to " + st.Endpoint + " " + via + ".")
+	return strings.TrimSpace(what + verb + st.Endpoint + " " + via + ".")
 }
 
 func itoa(n int) string {

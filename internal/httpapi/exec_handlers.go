@@ -91,6 +91,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	var exitCode *int
 	defer func(ctx context.Context) {
 		detail := map[string]any{
+			"command":     command,
 			"workload":    workload,
 			"duration_ms": time.Since(began).Milliseconds(),
 			"reason":      ended,

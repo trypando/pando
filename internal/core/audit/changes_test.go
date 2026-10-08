@@ -36,6 +36,23 @@ func TestR390_ChangesNameTheFieldsAndNeverASecretValue(t *testing.T) {
 	assert.Nil(t, Changes(before, before), "nothing changed, nothing recorded")
 }
 
+// TestChangesOfWhatCannotBeEncodedOrIsEmpty covers the edges: a value with no
+// JSON encoding records nothing rather than a guess, an object emptied is a
+// change of that path, and a whole document of scalars compares at its root.
+func TestChangesOfWhatCannotBeEncodedOrIsEmpty(t *testing.T) {
+	assert.Nil(t, Changes(make(chan int), map[string]any{}), "a value with no encoding records nothing")
+	assert.Nil(t, Changes(map[string]any{}, func() {}))
+
+	got := Changes(map[string]any{"egress": map[string]any{"allow": "x"}}, map[string]any{"egress": map[string]any{}})
+	assert.Equal(t, []string{"egress", "egress.allow"}, got["changed"])
+	assert.Equal(t, map[string]any{"egress.allow": "x"}, got["before"])
+
+	deep := map[string]any{"a": map[string]any{"b": map[string]any{"c": map[string]any{"d": map[string]any{"e": 1}}}}}
+	deeper := map[string]any{"a": map[string]any{"b": map[string]any{"c": map[string]any{"d": map[string]any{"e": 2}}}}}
+	assert.Equal(t, []string{"a.b.c.d"}, Changes(deep, deeper)["changed"], "past four levels, the object is named, not walked")
+	assert.NotContains(t, Changes(deep, deeper), "before", "and is not copied")
+}
+
 func assertString(v any) string {
 	m, _ := flatten(v)
 	s := ""

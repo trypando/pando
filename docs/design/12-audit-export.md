@@ -225,7 +225,8 @@ every 12 h. A destination failing for 24 hours and at least 5 attempts in a row 
 `install.audit.export` notified (`audit_sink_disabled`). Turning it back on is enabling the adapter.
 
 **[D]** Its first failure writes `audit.sink.fail`, and its first success after failing writes
-`audit.sink.recover`. Not one per attempt: a destination down for a day would otherwise write a hundred
+`audit.sink.recover`. A sink Pando turned off and somebody turned back on writes no recovery: turning
+it on is `adapter.configure`, and its failing run ended with `audit.sink.disable`. Not one per attempt: a destination down for a day would otherwise write a hundred
 events about itself into the stream it cannot deliver.
 
 A new destination starts at the oldest event in the live log unless created with `start: now`.
@@ -300,8 +301,9 @@ Classes used, by family:
 
 `role.*` is API Activity rather than User Access Management: creating a role defines a set of verbs and
 grants them to nobody. `actor.user.type_id` is 1 User, 3 System, or 99 Other for a token. Process
-Activity's `process` object is not filled — the audit log records that a session ran, not a process — so
-a validator that requires it will flag `app.exec` and `app.exec.end`.
+Activity requires a `process`: `app.exec` and `app.exec.end` both record the command and the workload,
+which become `process.name`, `process.cmd_line` and `process.container.name`. There is no `pid` — the
+runtime starts the shell inside the container and never reports one — and OCSF does not require it.
 
 CEF and ECS are not shipped (R-384). A destination that wants them is served by a collector that maps
 OCSF or native JSON; a third format is a follow-up issue, added as a row in the same table.

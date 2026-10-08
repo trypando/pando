@@ -222,7 +222,7 @@ func TestR383_SinksListsWhatEachSendsWhereAndHowFarItHasGot(t *testing.T) {
 		{
 			"id": "as_hook", "kind": "https", "enabled": false, "transport": "https", "endpoint": "https://collector.example/ingest",
 			"backlog": 0, "disabled_at": "2026-10-02T00:00:00Z", "disabled_reason": "The collector answered 401 for 24 hours.",
-			"disclosure": "Audit events matching grant. is sent to https://collector.example/ingest over HTTPS.",
+			"disclosure": "Audit events matching grant. are sent to https://collector.example/ingest over HTTPS.",
 		},
 	}})
 

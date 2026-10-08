@@ -2,6 +2,7 @@ package ocsf
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -244,4 +245,27 @@ func TestR194_OCSFAddsNothingToTheLine(t *testing.T) {
 		}
 	}
 	walk("", got)
+}
+
+// TestR384_ATerminalSessionCarriesItsProcess asserts the process object
+// Process Activity requires: the command and the workload, for the start and
+// the end of a session, and a name for a session with no command.
+func TestR384_ATerminalSessionCarriesItsProcess(t *testing.T) {
+	start := encode(t, `{"id": 7, "occurred_at": "2026-10-08T12:00:00Z", "principal_kind": "user",
+		"principal_id": "usr_1", "action": "app.exec", "app_id": "app_1", "target_kind": "workload",
+		"target_id": "web", "detail": {"command": ["sh", "-c", "id"], "workload": "web"}}`)
+	assert.Equal(t, "1007", fmt.Sprint(start["class_uid"]))
+	proc := start["process"].(map[string]any)
+	assert.Equal(t, "sh", proc["name"])
+	assert.Equal(t, "sh -c id", proc["cmd_line"])
+	assert.Equal(t, map[string]any{"name": "web"}, proc["container"])
+
+	end := encode(t, `{"id": 8, "occurred_at": "2026-10-08T12:01:00Z", "principal_kind": "user",
+		"principal_id": "usr_1", "action": "app.exec.end", "detail": {"workload": "web", "reason": "client_closed"}}`)
+	assert.Equal(t, "2", fmt.Sprint(end["activity_id"]))
+	assert.Equal(t, "shell", end["process"].(map[string]any)["name"])
+
+	other := encode(t, `{"id": 9, "occurred_at": "2026-10-08T12:01:00Z", "principal_kind": "system",
+		"principal_id": "system", "action": "app.restart", "detail": {"command": ["x"]}}`)
+	assert.NotContains(t, other, "process", "only Process Activity carries a process")
 }

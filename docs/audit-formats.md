@@ -48,6 +48,16 @@ OCSF 1.3.0. One event per line. Fields absent from a line are omitted, not `null
 | `resources` | `{type: target_kind, uid: target_id}`, then `{type: "app", uid: app_id}` when `app_id` is set and is not the target. |
 | `unmapped` | `detail` whole, `peer_ip`, `schema_version`, `principal_kind` and `on_behalf_of`. |
 
+### Process Activity fields
+
+A terminal session (`app.exec`, `app.exec.end`) is Process Activity, which also carries:
+
+| OCSF | From |
+| --- | --- |
+| `process.name` | The command's first argument; `shell` when the session opened the runtime's default shell. |
+| `process.cmd_line` | The command's arguments, joined with spaces. The command, never the session's input or output (R-086). |
+| `process.container.name` | The workload the session ran in. |
+
 ### Classes
 
 Each action's OCSF class and activity. A denied or failed action is the same activity as

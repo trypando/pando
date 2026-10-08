@@ -275,6 +275,12 @@ func (a *Adapter) Send(ctx context.Context, b api.AuditBatch) error {
 	if len(b.Events) == 0 {
 		return nil
 	}
+	// A send canceled before it starts is not sent: the write's own
+	// cancellation runs on another goroutine and can lose a race with a write
+	// that does not block.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var frames []byte
 	for i, ev := range b.Events {
 		frames = append(frames, a.frame(b, i, ev)...)

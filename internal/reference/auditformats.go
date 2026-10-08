@@ -41,6 +41,13 @@ func AuditFormatsMarkdown() string {
 		fmt.Fprintf(&b, "| %s | %s |\n", strings.Join(names, ", "), f.From)
 	}
 
+	b.WriteString("\n### Process Activity fields\n\n")
+	b.WriteString("A terminal session (`app.exec`, `app.exec.end`) is Process Activity, which also carries:\n\n")
+	b.WriteString("| OCSF | From |\n| --- | --- |\n")
+	for _, f := range ocsf.ProcessFields {
+		fmt.Fprintf(&b, "| `%s` | %s |\n", f.OCSF, f.From)
+	}
+
 	b.WriteString("\n### Classes\n\n")
 	b.WriteString("Each action's OCSF class and activity. A denied or failed action is the same activity as\n")
 	b.WriteString("the attempt, with `status_id` 2. An action not listed here — one written by a newer Pando —\n")

@@ -9,6 +9,7 @@ package ocsf
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/trypando/pando/internal/core/audit"
 )
@@ -54,6 +55,14 @@ var BaseFields = []Field{
 	{"unmapped", "`detail` whole, `peer_ip`, `schema_version`, `principal_kind` and `on_behalf_of`."},
 }
 
+// ProcessFields are the fields Process Activity (1007) adds, which only a
+// terminal session's events carry: `app.exec` and `app.exec.end`.
+var ProcessFields = []Field{
+	{"process.name", "The command's first argument; `shell` when the session opened the runtime's default shell."},
+	{"process.cmd_line", "The command's arguments, joined with spaces. The command, never the session's input or output (R-086)."},
+	{"process.container.name", "The workload the session ran in."},
+}
+
 type event struct {
 	ClassUID     int        `json:"class_uid"`
 	ClassName    string     `json:"class_name"`
@@ -74,9 +83,53 @@ type event struct {
 	Actor        *actor     `json:"actor,omitempty"`
 	SrcEndpoint  *endpoint  `json:"src_endpoint,omitempty"`
 	HTTPRequest  *request   `json:"http_request,omitempty"`
+	Process      *process   `json:"process,omitempty"`
 	API          api        `json:"api"`
 	Resources    []resource `json:"resources"`
 	Unmapped     unmapped   `json:"unmapped"`
+}
+
+const processActivity = 1007
+
+// process is OCSF's process object, which Process Activity requires. A
+// terminal session's audit row names the command and the workload it ran in;
+// it has no process ID, which the runtime starts inside the container and
+// never reports, and OCSF does not require one.
+type process struct {
+	Name      string     `json:"name,omitempty"`
+	CmdLine   string     `json:"cmd_line,omitempty"`
+	Container *container `json:"container,omitempty"`
+}
+
+type container struct {
+	Name string `json:"name"`
+}
+
+// processOf builds the process object from a line's detail: command (the
+// argument list app.exec records, R-086) and workload.
+func processOf(l audit.Line) *process {
+	var p process
+	if args, ok := l.Detail["command"].([]any); ok {
+		var parts []string
+		for _, a := range args {
+			if s, ok := a.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) > 0 {
+			p.Name = parts[0]
+			p.CmdLine = strings.Join(parts, " ")
+		}
+	}
+	if w, ok := l.Detail["workload"].(string); ok && w != "" {
+		p.Container = &container{Name: w}
+	}
+	if p.Name == "" {
+		// The process is required, and a session opened with the runtime's
+		// default shell recorded no command: named for what it is.
+		p.Name = "shell"
+	}
+	return &p
 }
 
 type metadata struct {
@@ -183,6 +236,9 @@ func Encode(line json.RawMessage) (json.RawMessage, error) {
 			PrincipalKind: l.PrincipalKind,
 			OnBehalfOf:    audit.Str(l.OnBehalfOf),
 		},
+	}
+	if m.ClassUID == processActivity {
+		e.Process = processOf(l)
 	}
 	switch outcome {
 	case audit.OutcomeDenied:
