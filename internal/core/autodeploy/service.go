@@ -183,9 +183,6 @@ func (k Secret) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + k.v.Reveal() + `"`), nil
 }
 
-// Reveal returns the secret, for tests.
-func (k Secret) Reveal() string { return k.v.Reveal() }
-
 // secretPrefix marks the secret, so one pasted into the wrong place is
 // recognizable.
 const secretPrefix = "pdwh_"

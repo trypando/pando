@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/trypando/pando/internal/httpapi"
 )
 
 // gitSpec is minimalSpec built from a repository, deploying automatically
@@ -122,6 +124,61 @@ func TestR261_AutoDeploySettingsAreChangedThroughTheAPI(t *testing.T) {
 	bad := i.do(admin, http.MethodPut, "/apps/"+appID+"/auto-deploy", map[string]any{"enabled": true, "tag_pattern": "release-["})
 	require.Equal(t, http.StatusBadRequest, bad.Code, bad.String())
 	require.Contains(t, bad.String(), "release-*", "R-105: the refusal says what a pattern looks like")
+}
+
+// The settings and the secret are the app's: somebody who cannot see the app
+// is refused each endpoint, and a malformed or premature change is refused
+// saying what to send.
+func TestAutoDeployEndpointsRefuseWhatTheyShould(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+	appID := i.createApp(admin, "notes")
+
+	for _, call := range []struct{ method, path string }{
+		{http.MethodGet, "/auto-deploy"},
+		{http.MethodPut, "/auto-deploy"},
+		{http.MethodPost, "/auto-deploy/webhook-secret"},
+		{http.MethodDelete, "/auto-deploy/webhook-secret"},
+	} {
+		got := i.anon(call.method, "/apps/"+appID+call.path, map[string]any{"enabled": true})
+		require.Contains(t, []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound}, got.Code,
+			"%s %s: %s", call.method, call.path, got.String())
+	}
+
+	unconfigured := i.do(admin, http.MethodPut, "/apps/"+appID+"/auto-deploy", map[string]any{"enabled": true})
+	require.Equal(t, http.StatusBadRequest, unconfigured.Code, unconfigured.String())
+	require.Contains(t, unconfigured.String(), "isn't configured yet")
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/apps/"+appID+"/auto-deploy", strings.NewReader("{not json"))
+	req.Header.Set("Cookie", httpapi.SessionCookie+"="+admin.cookie)
+	rec := httptest.NewRecorder()
+	i.handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "branch_updated", "the refusal shows what to send")
+}
+
+// A verified webhook for an app that does not auto-deploy, or is not deployed
+// yet, starts nothing and says why.
+func TestR142_AWebhookForAnAppThatDoesNotAutoDeployStartsNothing(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+
+	off := i.createApp(admin, "off")
+	i.pinSpec(admin, off, i.writeSpec(admin, off, gitSpec(map[string]any{"enabled": false})))
+	key := i.rotateWebhookSecret(admin, off)
+	got := i.webhook(off, "push", key, `{"ref":"refs/heads/main"}`)
+	require.Equal(t, http.StatusOK, got.Code, got.String())
+	require.Contains(t, got.String(), "does not deploy automatically")
+
+	draft := i.createApp(admin, "draft")
+	draftKey := i.rotateWebhookSecret(admin, draft)
+	got = i.webhook(draft, "push", draftKey, `{"ref":"refs/heads/main"}`)
+	require.Equal(t, http.StatusOK, got.Code, got.String())
+	require.Contains(t, got.String(), "isn't deployed yet")
+
+	require.Equal(t, "", i.checked(100*time.Millisecond))
 }
 
 // TestR142_PollingIsTheDefaultAndAWebhookNeedsTheAppsSecret asserts that an
