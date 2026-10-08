@@ -20,13 +20,6 @@ import (
 // largest delivery a git host sends, and well under this.
 const webhookBodyLimit = 10 << 20
 
-// autoDeployView is GET /auto-deploy: the service's view and where the git
-// host should send webhooks.
-type autoDeployView struct {
-	autodeploy.View
-	WebhookURL string `json:"webhook_url"`
-}
-
 func (s *Server) handleGetAutoDeploy(w http.ResponseWriter, r *http.Request) {
 	app, ok := s.requireControl(w, r, authz.AppView)
 	if !ok {
@@ -37,7 +30,8 @@ func (s *Server) handleGetAutoDeploy(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	JSON(w, http.StatusOK, autoDeployView{View: v, WebhookURL: s.webhookURL(r, app.ID)})
+	v.WebhookURL = s.webhookURL(r, app.ID)
+	JSON(w, http.StatusOK, v)
 }
 
 func (s *Server) handleSetAutoDeploy(w http.ResponseWriter, r *http.Request) {

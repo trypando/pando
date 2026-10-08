@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trypando/pando/internal/core/autodeploy"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/security"
@@ -91,6 +92,11 @@ var exported = []any{
 	// The in-place upgrade (R-355 – R-360): its plan and its outcome.
 	upgrade.Plan{},
 	upgrade.Attempt{},
+
+	// Automatic deploys (R-141, R-142): the deploy settings screen's view,
+	// with the last check, and what a save answers.
+	autodeploy.View{},
+	autodeploy.Saved{},
 }
 
 func main() {
@@ -127,7 +133,9 @@ func main() {
 
 // tsNames renames Go types whose names collide in TypeScript's one namespace.
 var tsNames = map[reflect.Type]string{
-	reflect.TypeOf(policy.Document{}): "PolicyDocument",
+	reflect.TypeOf(policy.Document{}):  "PolicyDocument",
+	reflect.TypeOf(autodeploy.View{}):  "AutoDeployView",
+	reflect.TypeOf(autodeploy.Saved{}): "AutoDeploySaved",
 }
 
 func tsName(t reflect.Type) string {

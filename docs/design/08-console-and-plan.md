@@ -353,6 +353,14 @@ where `can_decide` is true and read-only otherwise. An app whose auto-deploy is 
 (`auto_deploy_paused`) says so on the app, and the deploy settings explain why auto-deploy cannot be
 turned on while approval is required (R-158). (Implementation: see `console/src`.)
 
+**[D]** The deploy settings choose what deploys automatically (R-141): each new commit on a branch
+(the default, with the branch defaulting to the one the app was deployed from) or each new release
+tag (with an optional tag pattern), saved in the same revision as the other deploy settings. Once the
+deployed spec auto-deploys, a **Checks** section reads `GET /auto-deploy`: when Pando last checked,
+what it found or why it found nothing, and the webhook URL with *Make webhook secret*, which shows the
+secret once (R-142). An app from an image or uploaded files explains that automatic deploys watch a
+repository.
+
 ### 1.4 Design principle
 
 **[D]** R-005 and R-104. The default path shows almost nothing — name, source, deploy. Everything with a sane default is behind **Advanced** and never surfaced during setup. If a new setting is added to the primary flow, someone must justify why it is a blocker rather than configuration.

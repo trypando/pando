@@ -18,11 +18,12 @@
 // shown as they are, disabled, and there is no Save.
 
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Checkbox, Switch } from '@design';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Banner, Button, Checkbox, Input, Radio, Switch } from '@design';
 
 import { api, RequestFailed } from '@api/client';
-import type { App, AppSpec } from '@api/types.gen';
+import type { App, AppSpec, AutoDeployCheck, AutoDeployView } from '@api/types.gen';
+import { relative } from '../ui/time';
 import { useAppStatus } from './Parts';
 import { MEASURE } from '../ui/layout';
 import { useNewestSpec } from './newestSpec';
@@ -66,7 +67,14 @@ export function DeploySettings({
   );
   const [autoRollback, setAutoRollback] = useState(spec.deploy?.auto_rollback ?? false);
   const [autoDeploy, setAutoDeploy] = useState(spec.deploy?.auto_deploy?.enabled ?? false);
+  const [trigger, setTrigger] = useState(
+    spec.deploy?.auto_deploy?.trigger === 'release_tagged' ? 'release_tagged' : 'branch_updated',
+  );
+  const [branch, setBranch] = useState(spec.deploy?.auto_deploy?.branch ?? '');
+  const [tagPattern, setTagPattern] = useState(spec.deploy?.auto_deploy?.tag_pattern ?? '');
   const [requireApproval, setRequireApproval] = useState(spec.deploy?.require_approval ?? false);
+  // Both triggers watch a repository (R-141). An image's tags are R-143.
+  const fromGit = spec.source?.type === 'git';
 
   const save = useMutation({
     mutationFn: () =>
@@ -76,7 +84,12 @@ export function DeploySettings({
           ...spec.deploy,
           strategy: startThenSwap ? 'start_then_swap' : 'recreate',
           auto_rollback: autoRollback,
-          auto_deploy: { ...spec.deploy?.auto_deploy, enabled: autoDeploy },
+          auto_deploy: {
+            enabled: autoDeploy,
+            trigger,
+            branch: trigger === 'branch_updated' ? branch.trim() : '',
+            tag_pattern: trigger === 'release_tagged' ? tagPattern.trim() : '',
+          },
           require_approval: requireApproval,
         },
       }),
@@ -95,20 +108,36 @@ export function DeploySettings({
       )}
 
       <Setting
-        title="Deploy when the branch changes"
+        title="Deploy when the repository changes"
         control={
-          <Checkbox
-            checked={autoDeploy}
-            onChange={(e) => setAutoDeploy(e.target.checked)}
-            disabled={!canEdit || requireApproval}
-            label="Deploy automatically"
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            <Checkbox
+              checked={autoDeploy}
+              onChange={(e) => setAutoDeploy(e.target.checked)}
+              disabled={!canEdit || requireApproval || !fromGit}
+              label="Deploy automatically"
+            />
+            {autoDeploy && (
+              <AutoDeployTrigger
+                trigger={trigger}
+                onTrigger={setTrigger}
+                branch={branch}
+                onBranch={setBranch}
+                deployedFrom={spec.source?.ref ?? ''}
+                tagPattern={tagPattern}
+                onTagPattern={setTagPattern}
+                disabled={!canEdit}
+              />
+            )}
+          </div>
         }
       >
-        Pando checks the branch every few minutes and deploys when it moves. Off by default, so
-        nothing ships without someone asking for it. Not available while this app’s deploys need
-        approval.
+        {fromGit
+          ? 'Pando checks the repository every few minutes and deploys what it finds. Off by default, so nothing ships without someone asking for it. Not available while this app’s deploys need approval.'
+          : 'Automatic deploys watch a git repository, and this app is deployed from an image or uploaded files. Deploy a new version by hand.'}
       </Setting>
+
+      {fromGit && <AutoDeployActivity appID={appID} canEdit={canEdit} />}
 
       <Setting
         title="Require approval for this app’s deploys"
@@ -216,6 +245,169 @@ function Setting({
       <div style={{ marginTop: 'var(--space-2)' }}>{control}</div>
     </section>
   );
+}
+
+/** What deploys automatically: each commit on a branch, or each new release (R-141). */
+function AutoDeployTrigger({
+  trigger,
+  onTrigger,
+  branch,
+  onBranch,
+  deployedFrom,
+  tagPattern,
+  onTagPattern,
+  disabled,
+}: {
+  trigger: string;
+  onTrigger: (t: 'branch_updated' | 'release_tagged') => void;
+  branch: string;
+  onBranch: (b: string) => void;
+  deployedFrom: string;
+  tagPattern: string;
+  onTagPattern: (p: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+      <fieldset style={{ border: 0, padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
+          What deploys
+        </legend>
+        <Radio
+          name="auto_deploy_trigger"
+          value="branch_updated"
+          label="Each new commit on a branch"
+          description="For a project that does not tag its releases. Every push to the branch ships."
+          checked={trigger === 'branch_updated'}
+          disabled={disabled}
+          onChange={() => onTrigger('branch_updated')}
+        />
+        <Radio
+          name="auto_deploy_trigger"
+          value="release_tagged"
+          label="Each new release"
+          description="Pando deploys the newest release tag, and ignores commits in between."
+          checked={trigger === 'release_tagged'}
+          disabled={disabled}
+          onChange={() => onTrigger('release_tagged')}
+        />
+      </fieldset>
+      {trigger === 'branch_updated' ? (
+        <Input
+          label="Branch"
+          mono
+          autoComplete="off"
+          spellCheck={false}
+          value={branch}
+          placeholder={deployedFrom || 'main'}
+          helper={
+            deployedFrom
+              ? `Leave empty to follow ${deployedFrom}, the branch this app was deployed from.`
+              : 'The branch whose commits deploy.'
+          }
+          disabled={disabled}
+          onChange={(e) => onBranch(e.target.value)}
+        />
+      ) : (
+        <Input
+          label="Release tags"
+          mono
+          autoComplete="off"
+          spellCheck={false}
+          value={tagPattern}
+          placeholder="v1.2.3"
+          helper="Leave empty to count tags such as v1.2.3 as releases, without pre-releases. Or give a pattern such as release-*, where * matches any characters. The highest version wins."
+          disabled={disabled}
+          onChange={(e) => onTagPattern(e.target.value)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * What auto-deploy last found, and the webhook that makes it look sooner
+ * (R-142). Read from GET /auto-deploy, which reports on the deployed settings.
+ */
+function AutoDeployActivity({ appID, canEdit }: { appID: string; canEdit: boolean }) {
+  const queries = useQueryClient();
+  const view = useQuery({
+    queryKey: ['apps', appID, 'auto-deploy'],
+    queryFn: () => api.get<AutoDeployView>(`/apps/${appID}/auto-deploy`),
+  });
+  // The secret is in this response and nowhere else, ever.
+  const rotate = useMutation({
+    mutationFn: () =>
+      api.post<{ webhook_url: string; webhook_secret: string }>(`/apps/${appID}/auto-deploy/webhook-secret`),
+    onSuccess: () => void queries.invalidateQueries({ queryKey: ['apps', appID, 'auto-deploy'] }),
+  });
+  const remove = useMutation({
+    mutationFn: () => api.del(`/apps/${appID}/auto-deploy/webhook-secret`),
+    onSuccess: () => {
+      rotate.reset();
+      void queries.invalidateQueries({ queryKey: ['apps', appID, 'auto-deploy'] });
+    },
+  });
+
+  const v = view.data;
+  if (!v || !v.deployed.enabled) return null;
+  const check = v.last_check;
+
+  return (
+    <Setting
+      title="Checks"
+      control={
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <Input label="Webhook URL" mono readOnly value={v.webhook_url} />
+          {rotate.data && (
+            <Input
+              label="Webhook secret"
+              mono
+              readOnly
+              value={rotate.data.webhook_secret}
+              helper="Shown once. Paste it into the repository’s webhook settings with the URL above, content type application/json."
+            />
+          )}
+          {canEdit && (
+            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+              <Button variant="secondary" onClick={() => rotate.mutate()} disabled={rotate.isPending}>
+                {v.webhook_secret_set ? 'Replace webhook secret' : 'Make webhook secret'}
+              </Button>
+              {v.webhook_secret_set && (
+                <Button variant="ghost" onClick={() => remove.mutate()} disabled={remove.isPending}>
+                  Turn off webhook
+                </Button>
+              )}
+            </div>
+          )}
+          {(rotate.isError || remove.isError) && <Failure error={rotate.error ?? remove.error} />}
+        </div>
+      }
+    >
+      {check ? lastCheck(check) : 'Pando has not checked this app yet.'}{' '}
+      A webhook from the repository makes Pando check as soon as something is pushed, if the
+      repository’s host can reach this installation. Without one, Pando still checks every few
+      minutes.
+    </Setting>
+  );
+}
+
+/** The last check, as a sentence. */
+function lastCheck(c: AutoDeployCheck): string {
+  const when = `Last checked ${relative(c.checked_at).toLowerCase()}.`;
+  if (c.error) return `${when} ${c.error}`;
+  const found = c.found_commit
+    ? ` Found ${shortRef(c.found_ref)} at ${c.found_commit.slice(0, 7)}.`
+    : '';
+  const tried =
+    c.attempted_commit && c.attempted_commit !== c.found_commit
+      ? ` Last deployed automatically: ${c.attempted_commit.slice(0, 7)}.`
+      : '';
+  return `${when}${found}${tried}`;
+}
+
+function shortRef(ref?: string): string {
+  return (ref ?? '').replace(/^refs\/(heads|tags)\//, '');
 }
 
 function Failure({ error }: { error: unknown }) {

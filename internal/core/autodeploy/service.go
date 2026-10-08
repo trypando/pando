@@ -80,6 +80,10 @@ type View struct {
 	// whether its webhook does anything. The secret itself is shown once,
 	// when it is made.
 	WebhookSecretSet bool `json:"webhook_secret_set"`
+
+	// WebhookURL is where the git host sends webhooks. The HTTP layer fills
+	// it in, since only it knows the address Pando is reached at.
+	WebhookURL string `json:"webhook_url"`
 }
 
 // Get is an app's auto-deploy settings, last check and webhook.
