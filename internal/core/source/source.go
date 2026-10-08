@@ -440,29 +440,6 @@ var _ api.SourceView = (*dirView)(nil)
 // make Pando's largest source of network traffic a question it almost never
 // needs to act on.
 func (s Sources) ResolveRef(ctx context.Context, src spec.Source) (string, error) {
-	if src.Type != spec.SourceGit || src.URL == "" {
-		return "", nil
-	}
-
-	acc, err := s.access(ctx, src, PurposeCheck)
-	if err != nil {
-		return "", err
-	}
-	refs, err := listRefs(ctx, acc)
-	if err != nil {
-		if denied := accessError(err, src.URL, acc.connection); denied != nil {
-			return "", denied
-		}
-		return "", errs.Wrap(errs.ValidInvalid,
-			"Pando could not reach this app's source to check for new commits.", err).
-			WithDetail("url", src.URL)
-	}
-
-	wanted := referenceFor(src.Ref)
-	for _, ref := range refs {
-		if ref.Name() == wanted {
-			return ref.Hash().String(), nil
-		}
-	}
-	return "", nil
+	tracked, err := s.ResolveTracked(ctx, src, spec.AutoDeploy{})
+	return tracked.Commit, err
 }

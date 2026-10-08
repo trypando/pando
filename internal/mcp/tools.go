@@ -673,6 +673,59 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_get_auto_deploy",
+		Description: "Whether an app deploys automatically when its repository changes, and how: " +
+			"`settings` on the newest configuration and `deployed` on the running one, with `pending` " +
+			"when they differ; `paused` when approval now stops it; `last_check`, what Pando last found " +
+			"and the last commit it tried (each commit is tried once) and why it went nowhere; and the " +
+			"webhook URL, with whether a webhook secret is set.",
+		Schema: schema(map[string]any{"app_id": str("The app's ID.")}, "app_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", appPath(id, "/auto-deploy"), nil, nil
+		},
+	},
+	{
+		Name: "pando_set_auto_deploy",
+		Description: "Turn automatic deploys on or off for an app, and choose what deploys: each new " +
+			"commit on a branch (trigger branch_updated, the default; branch empty follows the branch " +
+			"the app was deployed from), or each new release tag (trigger release_tagged; a release is " +
+			"a tag such as v1.2.3, or one matching tag_pattern, such as release-*). Saved as a new " +
+			"configuration that takes effect at the app's next deploy. Refused while the app's deploys " +
+			"need approval.",
+		Schema: schema(map[string]any{
+			"app_id":      str("The app's ID."),
+			"enabled":     map[string]any{"type": "boolean", "description": "Whether the app deploys automatically."},
+			"trigger":     map[string]any{"type": "string", "enum": []string{"branch_updated", "release_tagged"}},
+			"branch":      str("With branch_updated: the branch to follow."),
+			"tag_pattern": str("With release_tagged: which tags are releases, such as release-*."),
+		}, "app_id", "enabled"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			enabled, ok := args["enabled"].(bool)
+			if !ok {
+				return "", "", nil, fmt.Errorf("enabled is required, true or false")
+			}
+			body := map[string]any{"enabled": enabled}
+			for _, key := range []string{"trigger", "branch", "tag_pattern"} {
+				v, err := stringArg(args, key, false)
+				if err != nil {
+					return "", "", nil, err
+				}
+				if v != "" {
+					body[key] = v
+				}
+			}
+			return "PUT", appPath(id, "/auto-deploy"), body, nil
+		},
+	},
+	{
 		Name: "pando_get_image_registry",
 		Description: "The image registry builds are pushed to when a runtime pulls rather than " +
 			"imports: its URL, username, kind, layout, whether plain HTTP is allowed, and whether a " +

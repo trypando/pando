@@ -731,6 +731,15 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:      logger,
 	}
 
+	// Auto-deploy is a separate job on its own clock (R-141). It never modifies
+	// a running app — it creates a revision and deploys it through the same
+	// service a person's deploy goes through. Off unless an app's pinned spec
+	// asks for it, so its poll is usually a query returning nothing. A webhook
+	// (R-142) asks the same job to check one app sooner.
+	autoDeployJob, autoDeploy := wireAutoDeploy(autoDeployWiring{db: db, apps: apps, deployments: deployments, sources: sources,
+		deployer: approvals, auditor: auditor, policy: policyStore, authz: authorizer, secrets: secretsAdapter,
+		secretsRef: secretsRef, concurrency: cfg.Work.AutoDeploy, logger: logger})
+
 	// One resolver, used by the proxy to route and by the router to tell an
 	// app's hostname from Pando's own.
 	appResolver := proxy.NewStateResolver(apps)
@@ -901,6 +910,7 @@ func serve(ctx context.Context, configPath string) error {
 		Reconciles:  reconciles,
 		Deployer:    deployer,
 		Approvals:   approvals,
+		AutoDeploy:  autoDeploy,
 
 		Subscriptions: subscriptions,
 		Inbox:         &subscription.Inbox{Store: notifications},
@@ -1077,22 +1087,8 @@ func serve(ctx context.Context, configPath string) error {
 	// adapter asks for any more goes. Docker restarts one that crashed.
 	job("edges", func(ctx context.Context) { edges.Run(ctx, time.Minute) })
 
-	// Auto-deploy is a separate job on its own clock (R-141). It never modifies
-	// a running app — it creates a revision and enqueues a deployment, and
-	// everything flows through the normal path from there. Off unless an app's
-	// pinned spec asks for it, so this is usually a query returning nothing.
-	job("auto-deploy", (&reconciler.AutoDeploy{
-		Apps:        apps,
-		Deployments: deployments,
-		Resolver:    refResolver{sources: sources},
-		// Into the deploy queue, like every other deploy (O-32).
-		Enqueue:     deployQueue.Start,
-		Concurrency: cfg.Work.AutoDeploy,
-		Logger:      logger,
-		// An app whose deploys now need approval stops auto-deploying
-		// (R-158).
-		Policy: policyStore,
-	}).Run)
+	// Auto-deploy's polls (R-141, R-142).
+	job("auto-deploy", autoDeployJob.Run)
 
 	// Audit retention, daily (R-347). As the archiver role, which is the only
 	// one that can remove a month, and only one archived and old enough.
@@ -2071,8 +2067,8 @@ func (a reconcilerAuditor) Write(ctx context.Context, e reconciler.AuditEvent) e
 // connection when it has one.
 type refResolver struct{ sources source.Sources }
 
-func (r refResolver) Resolve(ctx context.Context, src spec.Source) (string, error) {
-	return r.sources.ResolveRef(ctx, src)
+func (r refResolver) Resolve(ctx context.Context, src spec.Source, ad spec.AutoDeploy) (source.Tracked, error) {
+	return r.sources.ResolveTracked(ctx, src, ad)
 }
 
 // newSourceAdapter is an unconfigured source adapter of a kind this build

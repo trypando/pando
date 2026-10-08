@@ -266,6 +266,7 @@ func TestTheJanitorsClockIsInjectableAndDefaultsToTheWallClock(t *testing.T) {
 // trigger records the common one rather than an empty string, because the
 // deployment row is what someone reads to find out why their app redeployed.
 func TestAnAutoDeployIsRecordedWithTheTriggerThatCausedIt(t *testing.T) {
+	triggerFor := func(t spec.AutoDeployTrigger) string { return string(TriggerOf(spec.AutoDeploy{Trigger: t})) }
 	require.Equal(t, "release_tagged", triggerFor(spec.TriggerReleaseTagged))
 	require.Equal(t, "branch_updated", triggerFor(spec.TriggerBranchUpdated))
 	require.Equal(t, "branch_updated", triggerFor(""))

@@ -106,7 +106,12 @@ func listRefs(ctx context.Context, acc *gitAccess) ([]*plumbing.Reference, error
 	remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{
 		Name: "origin", URLs: []string{acc.url},
 	})
-	return remote.ListContext(ctx, &git.ListOptions{Auth: acc.auth, CABundle: acc.caBundle})
+	// Peeled as well, so an annotated tag also answers with the commit it
+	// names (`refs/tags/v1^{}`) — what the release trigger deploys (R-141).
+	// An exact-name lookup never matches the suffixed entry.
+	return remote.ListContext(ctx, &git.ListOptions{
+		Auth: acc.auth, CABundle: acc.caBundle, PeelingOption: git.AppendPeeled,
+	})
 }
 
 // Probe checks that src can be read, with the credential its connection

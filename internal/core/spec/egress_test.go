@@ -132,6 +132,31 @@ func TestR158_AnAppThatRequiresApprovalCannotAlsoAutoDeploy(t *testing.T) {
 	require.NoError(t, spec.Validate(s), "auto-deploy alone is fine")
 }
 
+// TestR141_AutoDeploySettingsAreChecked asserts that a trigger Pando does not
+// know and a tag pattern that is not one are each refused, saying what to
+// change.
+func TestR141_AutoDeploySettingsAreChecked(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(*spec.AppSpec)
+		says string
+	}{
+		{"unknown trigger", func(s *spec.AppSpec) { s.Deploy.AutoDeploy.Trigger = "on_tuesdays" }, "release_tagged"},
+		{"bad pattern", func(s *spec.AppSpec) { s.Deploy.AutoDeploy.TagPattern = "release-[" }, "release-*"},
+	} {
+		s := valid()
+		tc.edit(s)
+		err := spec.Validate(s)
+		require.Error(t, err, tc.name)
+		e := errs.As(err)
+		require.Contains(t, e.Message+" "+e.Remedy, tc.says, tc.name)
+	}
+
+	s := valid()
+	s.Deploy.AutoDeploy = spec.AutoDeploy{Enabled: true, Trigger: spec.TriggerReleaseTagged, TagPattern: "release-*"}
+	require.NoError(t, spec.Validate(s))
+}
+
 // TestR184_ReDetectingKeepsTheAppsEgressAndApproval asserts that accepting a
 // re-detection does not move an app's egress or drop its own approval
 // requirement: neither is read from the repository, and losing either would

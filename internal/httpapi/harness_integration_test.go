@@ -31,6 +31,7 @@ import (
 	"github.com/trypando/pando/internal/core/assist"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
+	"github.com/trypando/pando/internal/core/autodeploy"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
 	"github.com/trypando/pando/internal/core/capacity"
@@ -98,6 +99,9 @@ type install struct {
 	// DeployQueue is the queue deploys start through. Not served unless a
 	// test calls serveDeploys, because most have no runtime to deploy onto.
 	DeployQueue *deploy.Queue
+
+	// Checked receives each auto-deploy check a webhook started.
+	Checked *recordedChecks
 
 	// AdminID and adminPassword are the first-run account (R-046).
 	AdminID       string
@@ -314,6 +318,20 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Logger:      logger,
 	}
 
+	// Automatic deploys, wired as main wires them, except that a check is
+	// recorded rather than run: the harness has no repository to list.
+	checked := &recordedChecks{apps: make(chan string, 16)}
+	srv.AutoDeploy = &autodeploy.Service{
+		Apps:    apps,
+		Checks:  state.NewAutoDeployChecks(db),
+		Secrets: state.NewAutoDeploySecrets(db, secretsAdapter, "sec_local"),
+		Policy:  effectivePolicy,
+		Authz:   authorizer,
+		Checker: checked,
+		Audit:   httpapi.AuditFunc(auditor),
+		Logger:  logger,
+	}
+
 	// External identity, with the kinds main compiles in.
 	srv.IDP = &idp.Service{
 		Providers:   state.NewIdentityProviders(db),
@@ -389,8 +407,17 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		t: t, handler: srv.Routes(), db: db, ownerURL: dbURL, Server: srv, Restarts: restarts, DeployQueue: deployQueue,
 		Apps: apps, Users: users, Grants: grants, Sessions: sessions, Tokens: tokens,
 		Secrets: secrets, Volumes: volumes, Adapters: adapters, PolicyStore: policyStore,
-		AdminID: first.User.ID, adminPassword: adminPassword,
+		AdminID: first.User.ID, adminPassword: adminPassword, Checked: checked,
 	}
+}
+
+// recordedChecks stands in for the auto-deploy job: each app a webhook asked
+// to check, with how it was delivered.
+type recordedChecks struct{ apps chan string }
+
+func (c *recordedChecks) CheckApp(_ context.Context, appID, delivery string) error {
+	c.apps <- appID + " " + delivery
+	return nil
 }
 
 func quote(t *testing.T, s string) string {

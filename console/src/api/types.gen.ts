@@ -384,6 +384,22 @@ export interface Attempt {
   recorded: boolean;
 }
 
+export interface AutoDeployView {
+  settings: AutoDeploy;
+  deployed: AutoDeploy;
+  pending: boolean;
+  paused: boolean;
+  last_check?: AutoDeployCheck;
+  webhook_secret_set: boolean;
+  webhook_url: string;
+}
+
+export interface AutoDeploySaved {
+  changed: boolean;
+  revision?: number;
+  spec_id?: string;
+}
+
 export interface Source {
   type: string;
   url?: string;
@@ -714,6 +730,24 @@ export interface Upgrade {
   instructions: string;
 }
 
+export interface AutoDeploy {
+  enabled: boolean;
+  trigger?: string;
+  branch?: string;
+  tag_pattern?: string;
+}
+
+export interface AutoDeployCheck {
+  app_id: string;
+  checked_at: string;
+  found_ref?: string;
+  found_commit?: string;
+  attempted_commit?: string;
+  attempted_at?: string;
+  deployment_id?: string;
+  error?: string;
+}
+
 export interface Applied {
   amendment: Amendment;
   summary: string;
@@ -781,12 +815,6 @@ export interface Resolution {
   service_ref?: string;
   target?: string;
   secret_ref?: string;
-}
-
-export interface AutoDeploy {
-  enabled: boolean;
-  trigger?: string;
-  branch?: string;
 }
 
 export interface Auth {

@@ -58,6 +58,11 @@ const (
 	OriginRedetect Origin = "redetected"
 	OriginImported Origin = "imported"
 	OriginManual   Origin = "manual"
+
+	// OriginAutoDeploy is a revision auto-deploy cut because the branch or
+	// release it watches moved (R-141): the previous revision with a new
+	// commit and nothing else changed.
+	OriginAutoDeploy Origin = "auto_deploy"
 )
 
 // SourceType is where an app comes from.
@@ -500,7 +505,15 @@ const (
 type AutoDeploy struct {
 	Enabled bool              `json:"enabled"`
 	Trigger AutoDeployTrigger `json:"trigger,omitempty"`
-	Branch  string            `json:"branch,omitempty"`
+
+	// Branch is what the branch trigger follows. Empty follows Source.Ref,
+	// the ref the app was deployed from.
+	Branch string `json:"branch,omitempty"`
+
+	// TagPattern is what the release trigger counts as a release: a glob
+	// matched against tag names (`release-*`). Empty means a stable semantic
+	// version, v1.2.3 (O-58).
+	TagPattern string `json:"tag_pattern,omitempty"`
 }
 
 // Deploy configures deployment behavior.
