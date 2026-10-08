@@ -55,6 +55,11 @@ regexes = [
   # token, the alphabet in order, that the test serves and reads back. ACME
   # tokens are public by design: the CA fetches them over plain HTTP.
   '''abcdefghijklmnopqrstuvwx_-12''',
+
+  # internal/adapter/source/github/github_test.go — a PEM block whose body is
+  # the word "nope", which a GitHub App connection must refuse as its private
+  # key (issue #127). It is the absence of a key, shaped like one.
+  '''-----BEGIN RSA PRIVATE KEY-----\\nnope\\n-----END RSA PRIVATE KEY-----''',
 ]
 
 [[allowlists]]
@@ -68,4 +73,5 @@ regexes = [
   '''tok_01HQ8\.secret''',
   '''cfg\.Certificate\.KeyType = certcrypto\.EC256''',
   '''token = "abcdefghijklmnopqrstuvwx_-12"''',
+  '''-----BEGIN RSA PRIVATE KEY-----\\nnope\\n-----END RSA PRIVATE KEY-----''',
 ]
