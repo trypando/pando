@@ -152,24 +152,77 @@ func NewAllocations(db *DB) *Allocations { return &Allocations{db: db} }
 // when the pin moves (migration 60), so the sum is an index-only scan of
 // apps_allocation_idx rather than a JSON walk of every running app's revision
 // (issue #72). Which apps count is still decided here, from state.
+//
+// A deploy in flight counts too, from the moment it is created: what its
+// revision asks for is reserved on its runtime until it ends (migration 62),
+// so a deploy not yet pinned is not room for another. An app counts once,
+// at the larger of what its pin holds and what its deploy reserves, resource
+// by resource: a redeploy of a running app is not two apps.
 func (a *Allocations) AllocatedOn(ctx context.Context, adapterRef, excludeAppID string) (planner.Allocation, error) {
 	var alloc planner.Allocation
 	err := a.db.QueryRow(ctx, `
 		SELECT
-			coalesce(sum(a.alloc_cpu_millis), 0)::bigint,
-			coalesce(sum(a.alloc_memory_bytes), 0)::bigint,
-			coalesce(sum(a.alloc_disk_bytes), 0)::bigint,
-			coalesce(sum(a.alloc_log_bytes), 0)::bigint
-		FROM apps a
-		WHERE a.deleted_at IS NULL
-		  AND a.state IN ('running', 'degraded', 'deploying')
-		  AND a.alloc_runtime_ref = $1
-		  AND a.id <> $2`,
+			coalesce(sum(cpu), 0)::bigint,
+			coalesce(sum(memory), 0)::bigint,
+			coalesce(sum(disk), 0)::bigint,
+			coalesce(sum(logs), 0)::bigint
+		FROM (
+		    SELECT held.app_id, max(held.cpu) AS cpu, max(held.memory) AS memory,
+		           max(held.disk) AS disk, max(held.logs) AS logs
+		    FROM (
+		        SELECT a.id AS app_id, a.alloc_cpu_millis AS cpu, a.alloc_memory_bytes AS memory,
+		               a.alloc_disk_bytes AS disk, a.alloc_log_bytes AS logs
+		        FROM apps a
+		        WHERE a.deleted_at IS NULL
+		          AND a.state IN ('running', 'degraded', 'deploying')
+		          AND a.alloc_runtime_ref = $1
+		          AND a.id <> $2
+		        UNION ALL
+		        SELECT d.app_id, d.reserve_cpu_millis, d.reserve_memory_bytes,
+		               d.reserve_disk_bytes, d.reserve_log_bytes
+		        FROM deployments d
+		        WHERE d.status IN ('pending', 'building', 'applying')
+		          AND d.reserve_runtime_ref = $1
+		          AND d.app_id <> $2
+		    ) held
+		    GROUP BY held.app_id
+		) per_app`,
 		adapterRef, excludeAppID).Scan(&alloc.CPUMillis, &alloc.MemoryBytes, &alloc.DiskBytes, &alloc.LogBytes)
 	if err != nil {
 		return planner.Allocation{}, errs.Wrap(errs.Internal, "Could not read how much is already allocated.", err)
 	}
 	return alloc, nil
+}
+
+// capacityLockKey namespaces Hold's advisory locks from any other.
+const capacityLockKey = "pando.capacity:"
+
+// Hold runs fn with the runtime's capacity to itself (R-242): no other Hold on
+// the same runtime, on any replica, runs until fn returns. A deploy's plan
+// check and its creation run inside one, so the second of two deploys racing
+// for the last room is planned against the first one's reservation rather
+// than beside it.
+//
+// A transaction-scoped advisory lock, released when the transaction ends and
+// with it if the connection is lost, so a lock cannot outlive the call that
+// took it. On a connection of its own, outside the pool: fn does its work on
+// pooled connections, and callers waiting for the lock while each holding a
+// pooled one could leave the holder none to finish with.
+func (a *Allocations) Hold(ctx context.Context, runtimeRef string, fn func(context.Context) error) error {
+	conn, err := pgx.ConnectConfig(ctx, a.db.Config().ConnConfig.Copy())
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not reserve room on the runtime.", err)
+	}
+	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not reserve room on the runtime.", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, capacityLockKey+runtimeRef); err != nil {
+		return errs.Wrap(errs.Internal, "Could not reserve room on the runtime.", err)
+	}
+	return fn(ctx)
 }
 
 var _ planner.Allocations = (*Allocations)(nil)
