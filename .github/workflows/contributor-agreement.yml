@@ -1,0 +1,49 @@
+name: Contributor agreement
+
+# Checks that everyone who authored a commit in a pull request has signed
+# CONTRIBUTOR_AGREEMENT.md, and records a signature when someone posts the
+# signing comment. The logic is in .github/scripts/contributor-agreement.js.
+#
+# pull_request_target, not pull_request, because a pull request from a fork
+# gets a read-only token under pull_request and this job has to write a commit
+# status and a comment. pull_request_target runs the base branch's copy of this
+# workflow and script, and the checkout below is the base branch too: nothing
+# from the pull request is checked out or run, only its metadata read through
+# the API. Keep it that way — checking out the pull request's head here would
+# hand fork code a write token.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+# One run per pull request at a time, so a signature comment and a push landing
+# together do not both decide the status.
+concurrency:
+  group: contributor-agreement-${{ github.event.pull_request.number || github.event.issue.number }}
+
+jobs:
+  agreement:
+    # A comment on an issue rather than a pull request has nothing to check.
+    if: github.event_name == 'pull_request_target' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    permissions:
+      # Signatures are committed to the contributor-agreement-signatures branch.
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/contributor-agreement.js`);
+            await run({ github, context, core });

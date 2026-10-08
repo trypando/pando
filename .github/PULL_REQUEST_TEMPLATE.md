@@ -26,6 +26,7 @@ which IDs have one.
 - [ ] Console changes use the design system's tokens — no raw hex, no raw `px`, no font outside Newsreader / Public Sans / IBM Plex Mono. `npm run check` in `console/` enforces this.
 - [ ] User-facing error text says what happened and what to do, with no apology and no `Error:` prefix (R-105).
 - [ ] `CHANGELOG.md` has an entry under Unreleased, if an operator would notice this change.
+- [ ] I have signed the [Contributor License Agreement](https://github.com/trypando/pando/blob/main/CONTRIBUTOR_AGREEMENT.md), or will when the **Contributor agreement** check asks. It is one comment, once.
 
 ## Anything that touches authorization, the proxy, or the audit log
 
