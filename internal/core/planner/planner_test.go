@@ -751,6 +751,9 @@ func (f *fakeRuntime) Edges(context.Context) ([]string, error)  { return nil, ni
 func (f *fakeRuntime) EdgeVolumes(context.Context) ([]api.VolumeHandle, error) {
 	return nil, nil
 }
+func (f *fakeRuntime) WatchBundles(context.Context, func(api.BundleEvent)) error {
+	return nil
+}
 func (f *fakeRouting) Edge(context.Context, api.EdgeRequest) (api.EdgePlan, bool, error) {
 	return api.EdgePlan{}, false, nil
 }

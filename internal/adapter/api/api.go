@@ -128,6 +128,14 @@ type RuntimeCapabilities struct {
 	// refuse something is refused, never deployed with them ignored.
 	SupportsEgressRestriction bool
 
+	// SupportsBundleEvents means WatchBundles reports what happens to bundles
+	// as it happens: a workload exiting, being killed for memory, starting,
+	// being removed, changing health (O-52). The reconciler then visits an app
+	// the moment something happens to it and looks at a settled app only on a
+	// slow sweep. Without it every app is looked at on every pass, as before.
+	// Data, never a type assertion (R-254).
+	SupportsBundleEvents bool
+
 	// Platform is the operating system and CPU architecture the runtime runs
 	// images for, as a registry names them: linux/amd64, linux/arm64. Empty
 	// when the runtime cannot say, and then an image's platforms are not
@@ -343,6 +351,53 @@ type RuntimeAdapter interface {
 	// full-host backup (R-212). Each handle works with SnapshotVolume and
 	// RestoreVolume, and restoring into one that does not exist yet creates it.
 	EdgeVolumes(ctx context.Context) ([]VolumeHandle, error)
+
+	// WatchBundles streams what happens to the workloads of Pando's bundles
+	// to sink, for as long as ctx lives (O-52). Only called when
+	// SupportsBundleEvents is true; a runtime without it returns an error at
+	// once.
+	//
+	// It reports facts and never acts on them, as Observe does not (R-148):
+	// what to do about an exited workload is the reconciler's decision.
+	//
+	// The first thing sent is BundleEventWatching, once the stream is open;
+	// every change from then on is sent. A runtime that loses part of its
+	// stream and recovers it without returning — one host of several — sends
+	// BundleEventMissed after the gap. It returns when ctx ends or the stream
+	// is lost; either way, anything after it returned was not seen, and the
+	// caller calls it again. sink is called from one goroutine at a time and
+	// must not block for long.
+	WatchBundles(ctx context.Context, sink func(BundleEvent)) error
+}
+
+// BundleEventKind is what happened to a bundle's workload.
+type BundleEventKind string
+
+const (
+	// BundleEventWatching: the stream is open, and every change from now on
+	// is reported. Anything before it may have been missed. No BundleID.
+	BundleEventWatching BundleEventKind = "watching"
+
+	// BundleEventMissed: changes to any bundle may have gone unreported since
+	// the last event — part of the stream was lost and is back. No BundleID.
+	// Also sent for a change the runtime could not attribute to a bundle.
+	BundleEventMissed BundleEventKind = "missed"
+
+	BundleEventExited    BundleEventKind = "exited"
+	BundleEventOOMKilled BundleEventKind = "oom_killed"
+	BundleEventStarted   BundleEventKind = "started"
+	BundleEventRemoved   BundleEventKind = "removed"
+	BundleEventHealth    BundleEventKind = "health_changed"
+)
+
+// BundleEvent is one thing that happened to one workload.
+type BundleEvent struct {
+	Kind     BundleEventKind
+	BundleID string
+	Workload string
+
+	// At is when the runtime says it happened. Zero when it does not say.
+	At time.Time
 }
 
 // TrialRequest asks a runtime to start something once and watch it.

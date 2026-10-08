@@ -59,6 +59,11 @@ const (
 	// annoCreated is when Pando made a pod, to the nanosecond (newest).
 	annoCreated = "pando.dev/created"
 
+	// annoBundleID is the bundle a pod belongs to, as core named it. The
+	// labels carry it lowercased (toLabel), which a watch cannot turn back
+	// into the app it names (events.go).
+	annoBundleID = "pando.dev/bundle-id"
+
 	// Pod Security Admission, enforced per app namespace: baseline refuses
 	// privileged pods, host namespaces and hostPath, which is what the Docker
 	// adapter allows an app and no more.
@@ -462,6 +467,9 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 
 		// Pando is upgraded by changing the image on its Deployment.
 		SupportsSelfUpgrade: false,
+
+		// A watch on Pando's pods across the cluster (O-52, events.go).
+		SupportsBundleEvents: true,
 
 		SupportsTrialRun: true,
 		// A sidecar in the trial pod shares its network namespace and reads

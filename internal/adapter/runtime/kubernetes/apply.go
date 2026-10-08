@@ -712,7 +712,7 @@ func (a *Adapter) podFor(ns string, p api.BundlePlan, w api.WorkloadPlan, digest
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podName(w.Name), Namespace: ns, Labels: labels,
-			Annotations: map[string]string{annoDigest: digest, annoCreated: a.now().Format(time.RFC3339Nano)},
+			Annotations: map[string]string{annoDigest: digest, annoCreated: a.now().Format(time.RFC3339Nano), annoBundleID: p.BundleID},
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
