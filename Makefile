@@ -129,6 +129,21 @@ test-kubernetes: ## Run Pando on a kind cluster (2 replicas, the edge, a registr
 	fi; \
 	exit $$status
 
+# Where the Kubernetes runtime stops scaling (issue #72,
+# notes-kubernetes-scale-issue-72.md): a kwok cluster of fake nodes, whose
+# pods report Running without running anything, filled to each size in APPS by
+# the real adapters' Apply, with Observe, a capacity read and one more deploy
+# timed at each. Needs kwokctl (`go install sigs.k8s.io/kwok/cmd/kwokctl@v0.7.0`)
+# and Docker; on a Mac, Docker Desktop (DOCKER_CONTEXT=desktop-linux). The
+# results table is written to KWOK_OUT and the cluster is deleted afterwards;
+# KWOK_KEEP=1 keeps it. Never run in CI: behind the kwokscale build tag.
+APPS       ?= 2500,5000,10000,20000
+KWOK_NODES ?= 300
+
+.PHONY: test-kwok-scale
+test-kwok-scale: ## Measure the Kubernetes runtime at APPS=2500,5000,10000,20000 apps on a kwok cluster
+	APPS=$(APPS) KWOK_NODES=$(KWOK_NODES) test/kwok/run.sh
+
 # The docker-hosts runtime against real Docker daemons (issue #72,
 # notes-multi-host-docker-issue-72.md): two Docker-in-Docker app hosts reached
 # over TLS, a third as the control host running two replicas of Pando, with
@@ -227,6 +242,7 @@ vet: ## go vet, including the integration-tagged tests
 	$(GO) vet -tags integration $(PKG)
 	$(GO) vet -tags kubernetes ./test/kubernetes/
 	$(GO) vet -tags multihost ./test/multihost/
+	$(GO) vet -tags kwokscale ./test/kwok/
 
 # `go install` puts binaries in GOPATH/bin, which is not on PATH by default — so
 # following the install line printed below leaves the next `make lint` still
