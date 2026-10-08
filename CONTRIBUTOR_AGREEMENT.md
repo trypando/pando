@@ -34,9 +34,9 @@ paper copy.
 
 ---
 
-Thank you for your interest in contributing to Pando ("We" or "Us"). "We" and "Us" mean Ben Meeker,
-the maintainer of Pando at <https://github.com/trypando/pando>, and Ben Meeker's successors and
-assigns, including any company formed to hold Pando.
+Thank you for your interest in contributing to Pando ("We" or "Us"). "We" and "Us" mean Benjamin
+Meeker, the maintainer of Pando at <https://github.com/trypando/pando>, and Benjamin Meeker's
+successors and assigns, including any company formed to hold Pando.
 
 This contributor agreement ("Agreement") documents the rights granted by contributors to Us. To make
 this document effective, sign it by electronic submission, following the instructions in **How to

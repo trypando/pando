@@ -25,7 +25,7 @@ terms. Contributors therefore sign the [Contributor License Agreement](CONTRIBUT
 which is based on the Harmony Individual Contributor License Agreement:
 
 - You keep the copyright in your contribution.
-- You grant Ben Meeker, who maintains Pando, a perpetual, irrevocable license to use, change,
+- You grant Benjamin Meeker, who maintains Pando, a perpetual, irrevocable license to use, change,
   sublicense, sell and transfer your contribution under any terms. The license passes to any
   successor, such as a company formed to hold Pando.
 - Your contribution is always also available under the license Pando uses on the day you submit it,
