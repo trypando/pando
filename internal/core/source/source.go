@@ -16,9 +16,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/storage/memory"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
@@ -361,26 +359,6 @@ var _ api.SourceView = (*dirView)(nil)
 // make Pando's largest source of network traffic a question it almost never
 // needs to act on.
 func ResolveRef(ctx context.Context, src spec.Source) (string, error) {
-	if src.Type != spec.SourceGit || src.URL == "" {
-		return "", nil
-	}
-
-	remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{
-		Name: "origin", URLs: []string{src.URL},
-	})
-
-	refs, err := remote.ListContext(ctx, &git.ListOptions{})
-	if err != nil {
-		return "", errs.Wrap(errs.ValidInvalid,
-			"Pando could not reach this app's source to check for new commits.", err).
-			WithDetail("url", src.URL)
-	}
-
-	wanted := referenceFor(src.Ref)
-	for _, ref := range refs {
-		if ref.Name() == wanted {
-			return ref.Hash().String(), nil
-		}
-	}
-	return "", nil
+	tracked, err := ResolveTracked(ctx, src, spec.AutoDeploy{})
+	return tracked.Commit, err
 }

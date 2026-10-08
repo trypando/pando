@@ -269,7 +269,7 @@ CREATE TABLE spec_revisions (
     id           text PRIMARY KEY,            -- spec_...
     app_id       text NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     revision     integer NOT NULL,
-    origin       text NOT NULL,               -- detected | edited | redetected | imported | manual
+    origin       text NOT NULL,               -- detected | edited | redetected | imported | manual | auto_deploy
     body         jsonb NOT NULL,              -- the AppSpec (01-spec-schema)
     created_by   text NOT NULL,
     created_at   timestamptz NOT NULL DEFAULT now(),
@@ -325,7 +325,24 @@ CREATE TABLE deployment_approvals (
     decided_at    timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (deployment_id, principal_id)
 );
+
+CREATE TABLE auto_deploy_checks (
+    app_id           text PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+    checked_at       timestamptz NOT NULL,     -- the last time auto-deploy looked (R-141)
+    found_ref        text,                     -- refs/heads/main, refs/tags/v1.2.0
+    found_commit     text,
+    attempted_commit text,                     -- tried once, whatever came of it (O-56)
+    attempted_at     timestamptz,
+    deployment_id    text REFERENCES deployments(id) ON DELETE SET NULL,
+    error            text,                     -- why the last check or attempt went nowhere
+    created_at       timestamptz NOT NULL DEFAULT now(),
+    updated_at       timestamptz NOT NULL DEFAULT now()
+);
 ```
+
+**[D]** `auto_deploy_checks` is what the console shows as an app's last check, and what stops
+auto-deploy trying a commit twice: one that failed to deploy is not retried on every poll (O-56). A
+new commit is tried, and a person can deploy the old one by hand.
 
 **[D]** `egress_rules` is the merged rules (`policy.EffectiveEgress.Rules`) resolved when the deploy
 ran, and the reconciler restores **these**, not a fresh resolution against today's policy. A policy

@@ -16,6 +16,7 @@ var Actions = []string{
 	"ai.function.assign",
 	"ai.function.unassign",
 	"ai.search_audit",
+	"app.auto_deploy",
 	"app.bundle.destroy",
 	"app.corrected",
 	"app.create",

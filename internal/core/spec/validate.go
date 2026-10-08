@@ -40,6 +40,7 @@ func Validate(s *AppSpec) error {
 	validateRouting(s, add)
 	validateBuild(s, add)
 	validateEgress(s, add)
+	validateAutoDeploy(s, add)
 
 	switch len(problems) {
 	case 0:
@@ -467,5 +468,22 @@ func validateEgress(s *AppSpec, add func(*errs.Error)) {
 		add(errs.New(errs.ValidInvalid,
 			"This app asks for its deploys to be approved and also deploys automatically, and the two cannot be combined.").
 			WithRemedy("Turn off automatic deploys, or stop requiring approval. An approval request for every push would queue up faster than anyone could read it (R-158)."))
+	}
+}
+
+// validateAutoDeploy checks the automatic deploy settings (R-141).
+func validateAutoDeploy(s *AppSpec, add func(*errs.Error)) {
+	ad := s.Deploy.AutoDeploy
+	switch ad.Trigger {
+	case "", TriggerBranchUpdated, TriggerReleaseTagged:
+	default:
+		add(errs.Newf(errs.ValidInvalid,
+			"Automatic deploy trigger %q is not one Pando knows.", ad.Trigger).
+			WithRemedy("Use branch_updated to deploy each new commit on a branch, or release_tagged to deploy each new release tag."))
+	}
+	if _, err := path.Match(ad.TagPattern, ""); err != nil {
+		add(errs.Newf(errs.ValidInvalid,
+			"The release tag pattern %q is not a valid pattern.", ad.TagPattern).
+			WithRemedy("Use a pattern such as release-* or v*, where * matches any characters. Leave it empty to count tags like v1.2.3 as releases."))
 	}
 }

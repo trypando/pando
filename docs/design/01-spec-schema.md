@@ -56,6 +56,7 @@ const (
     OriginRedetect  Origin = "redetected" // explicit re-detection, R-022
     OriginImported  Origin = "imported"   // from an export or DR restore
     OriginManual    Origin = "manual"     // escape hatch, R-101
+    OriginAutoDeploy Origin = "auto_deploy" // the watched branch or release moved, R-141
 )
 ```
 
@@ -298,9 +299,18 @@ type Deploy struct {
 type AutoDeploy struct {
     Enabled bool             `json:"enabled"`  // default false, R-141
     Trigger AutoDeployTrigger `json:"trigger"` // branch_updated | release_tagged
-    Branch  string           `json:"branch,omitempty"`
+    Branch  string           `json:"branch,omitempty"`      // empty: Source.Ref
+    TagPattern string        `json:"tag_pattern,omitempty"` // empty: stable semver tags (O-56)
 }
 ```
+
+**[D]** The branch trigger follows `Branch`, or the ref the app was deployed from when it is empty. The
+release trigger follows the newest tag that counts as a release: with no `TagPattern`, a stable
+semantic version (`v1.2.3` or `1.2.3`, no pre-release suffix); with one, any tag whose name matches the
+glob (`release-*`). Newest is by version order, comparing runs of digits as numbers, because listing a
+remote's refs gives no dates. Many projects never tag a release, which is why the branch trigger is the
+default and the pattern exists (O-56). Both watch a git source; for an image or an upload the last check
+says there is nothing to watch, and an image's tags are R-143.
 
 **[D]** `ModeSource` is retained so the console can show whether a routing mode was inherited or deliberately chosen — relevant when host policy later restricts overrides (R-274 / O-10).
 

@@ -475,9 +475,19 @@ being retried forever.
 
 ## 5. Triggers
 
-**[D]** Auto-deploy (R-141) is a separate scheduled job, not the reconciler. It never modifies a running app directly — it creates a spec revision with the new commit SHA and enqueues a deployment in the deploy queue (§3). Everything then flows through the normal path, including plan-time checks.
+**[D]** Auto-deploy (R-141) is a separate scheduled job, not the reconciler. It never modifies a running app directly — it creates a spec revision with the new commit SHA (origin `auto_deploy`) and deploys it through `approval.Service.Deploy` as the system principal, the same call a person's deploy makes. Everything then flows through the normal path: the plan-time checks, the capacity hold, the `app.deploy` audit event and the deploy queue (§3).
 
-**[P]** Poll interval: 5 minutes for branch tracking, 15 for release tags. Apps are checked eight at a
+**[D]** Before it creates anything, the job writes an `app.auto_deploy` audit event under the system
+principal with the trigger, how it was delivered (`poll` or `webhook`), the ref, and the commit it
+moves from and to (R-227, R-228). It refuses to go on if that event cannot be written.
+
+**[D]** A commit is tried once (O-56). `auto_deploy_checks` records the last commit attempted, so a
+commit whose deploy is refused or fails is not retried on every poll; the next commit is, and a person
+can deploy the old one by hand. The same row holds the last check's time, what it found and why it went
+nowhere, for the console. An app in `failed` is not checked at all (R-151).
+
+**[P]** Poll interval: 5 minutes for apps following a branch, 15 for apps following releases, each on
+its own ticker. Apps are checked eight at a
 time (`work.auto_deploy`): in series, a `git ls-remote` per app outlasted the interval past a few
 thousand apps (issue #72).
 

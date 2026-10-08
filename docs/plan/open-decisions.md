@@ -6,7 +6,7 @@ setting up the release build; O-19 was found by turning `gosec` on; O-20 was fou
 first AI adapter; O-21 and O-22 came from issue #74, AI functions beyond detection; O-23 came from
 building the Cloudflare Tunnel adapter; O-24 came from issue #87; O-25 from issue #79, egress rules;
 O-26 from issue #39, deploy approval; O-28 through O-31 from issue #41, deploying prebuilt images
-and uploaded files; O-32 and O-33 from issue #72, running Pando as several replicas; O-34 through O-47 from the design notes for PRs 5–7 of the same issue (an image registry, a Kubernetes runtime adapter, Docker on several hosts); O-48 and O-49 from running the Kubernetes adapter on a kind cluster; O-50 from running Docker on several hosts; O-51 through O-54 from making the console and the API cost what an answer costs at 100,000 accounts and 20,000 apps; O-55 from measuring the Kubernetes runtime at 20,000 apps on kwok. **Forty-seven are resolved; the rest are listed below.** O-51 through O-55 were decided by the owner; `docs/design/notes-console-paths-issue-72.md` has the findings behind them and which part of the change carries each out. O-48 and O-49, from running the Kubernetes adapter on kind, were decided by the owner. O-32 (a deploy and detection work queue) and O-33 (a Kubernetes runtime adapter) were both answered yes, alongside a multi-host Docker adapter and a registry Pando runs by default; `docs/design/notes-multiple-replicas-issue-72.md` has the decisions and the PRs that carry them out. O-34 through O-47 were all decided by the owner, O-42 against the note's recommendation (see the Resolved table). O-4 needs a
+and uploaded files; O-32 and O-33 from issue #72, running Pando as several replicas; O-34 through O-47 from the design notes for PRs 5–7 of the same issue (an image registry, a Kubernetes runtime adapter, Docker on several hosts); O-48 and O-49 from running the Kubernetes adapter on a kind cluster; O-50 from running Docker on several hosts; O-51 through O-54 from making the console and the API cost what an answer costs at 100,000 accounts and 20,000 apps; O-55 from measuring the Kubernetes runtime at 20,000 apps on kwok; O-56 from issue #40, auto-deploy. **Forty-eight are resolved; the rest are listed below.** O-56 was decided by the owner. O-51 through O-55 were decided by the owner; `docs/design/notes-console-paths-issue-72.md` has the findings behind them and which part of the change carries each out. O-48 and O-49, from running the Kubernetes adapter on kind, were decided by the owner. O-32 (a deploy and detection work queue) and O-33 (a Kubernetes runtime adapter) were both answered yes, alongside a multi-host Docker adapter and a registry Pando runs by default; `docs/design/notes-multiple-replicas-issue-72.md` has the decisions and the PRs that carry them out. O-34 through O-47 were all decided by the owner, O-42 against the note's recommendation (see the Resolved table). O-4 needs a
 measurement, O-18 needs somebody to pick a host and pay for it, O-23 is kept open deliberately so
 it is revisited, and O-24 needs a product call on stopped apps.
 
@@ -270,6 +270,7 @@ failure surfaces as a browser warning to a user rather than as a message to an o
 | **O-52** | How the reconciler learns an app crashed | **[D]** From the runtime's own events — Docker events, Kubernetes watches — at once; settled apps are swept on a slow interval as a backstop, rather than every app being polled on a short one | `notes-console-paths-issue-72.md`, design 05 |
 | **O-53** | What a list's `total` is when the list is very long | **[D]** Exact up to 10,000 matches; past that, 10,000 with `total_is_lower_bound`, which the console shows as "10,000+". Counting every match read every match on every page | `notes-console-paths-issue-72.md`, design 04 §1, `internal/core/state/page.go` |
 | **O-54** | How the access assistant reads the install | **[D]** Through search tools that look people, apps and groups up, rather than being handed whole tables in its prompt | `notes-console-paths-issue-72.md`, design 10 |
+| **O-56** | Auto-deploy (issue #40): what counts as a release, whose webhook secret, and what happens after a failed auto-deploy | **[D]** Configurable per app: the branch trigger (the default, since many projects never tag) follows a chosen branch; the release trigger follows the newest tag matching a glob, or a stable semver tag when none is set. One webhook secret per app. A commit is tried once. Auto-deploy and approval do not combine (R-158, already decided) | design 01 §2.6, 02 §2.3, 05 §5 |
 | **O-55** | Whether the Kubernetes runtime changes its per-app shape to reach 20,000 apps on one cluster | **[D]** Keep a namespace per app and a Service per workload; no namespace per team. Measured on kwok: 20,000 apps (20,007 namespaces, 26,003 Services, about 300,000 objects) held with no failures, API server 4 GiB, etcd 703 MiB. Several clusters per runtime, each app assigned to one at creation and never moved (R-010, O-46), stays the fallback, built only if a real cluster with the cluster tier's network plugin shows a limit below 20,000. What bound first was Pando's own client rate limit, the capacity read and a ServiceAccount race, all fixed with this decision | `notes-kubernetes-scale-issue-72.md`, O-40 |
 
 ### O-25 — egress: layered, and only loosening is gated
@@ -336,6 +337,22 @@ notified through the notification adapter; every step audited (R-159); and no pa
 (R-151). One changed: the waiting state is not *before* planning. The plan runs when the deploy is
 requested, so a deploy that cannot succeed is refused before anybody is asked to approve it, and runs
 again at approval because policy may have changed meanwhile.
+
+### O-56 — auto-deploy triggers
+
+Issue #40 left four questions open. The owner's answers:
+
+1. **What is a release?** Whatever the app says. Plenty of projects never tag, so the branch trigger
+   stays the default and follows any branch the app names. The release trigger takes an optional tag
+   pattern, a glob such as `release-*`; without one, a release is a stable semantic version tag
+   (`v1.2.3`), and pre-releases are not. Tags are found with `git ls-remote`, which works on any git
+   host and gives no dates, so the newest is the highest by version order, not the most recent.
+2. **Per-app or per-install webhook secret?** Per app. A leaked secret can start checks on one app,
+   not every app, and GitHub webhooks are configured per repository anyway.
+3. **Retry a commit that failed?** No. Each commit is tried once; the next commit is tried, and a person
+   can deploy the failed one by hand. Retrying a broken push every five minutes produces a failed
+   deploy every five minutes and nothing else.
+4. **Approval?** Already decided by O-26 and R-158: the two do not combine.
 
 ### O-21 — AI functions: assignment, naming and gating
 

@@ -504,14 +504,14 @@ func TestTheRefResolverAnswersForSourcesThatCanAndCannotHaveOne(t *testing.T) {
 	ctx := context.Background()
 
 	// Nothing to resolve is not a failure to resolve.
-	got, err := refResolver{}.Resolve(ctx, spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
+	got, err := refResolver{}.Resolve(ctx, spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"}, spec.AutoDeploy{Enabled: true})
 	require.NoError(t, err)
-	require.Empty(t, got)
+	require.Empty(t, got.Commit)
 
 	// A repository that is not there carries an envelope the caller can render.
 	_, err = refResolver{}.Resolve(ctx, spec.Source{
 		Type: spec.SourceGit, URL: t.TempDir() + "/not-a-repo", Ref: "main",
-	})
+	}, spec.AutoDeploy{Enabled: true})
 	require.Error(t, err)
 	require.NotNil(t, errs.As(err), "the failure carries an envelope")
 	require.False(t, errors.Is(err, context.Canceled))

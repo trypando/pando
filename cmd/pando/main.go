@@ -1053,15 +1053,18 @@ func serve(ctx context.Context, configPath string) error {
 	job("edges", func(ctx context.Context) { edges.Run(ctx, time.Minute) })
 
 	// Auto-deploy is a separate job on its own clock (R-141). It never modifies
-	// a running app — it creates a revision and enqueues a deployment, and
-	// everything flows through the normal path from there. Off unless an app's
-	// pinned spec asks for it, so this is usually a query returning nothing.
+	// a running app — it creates a revision and deploys it through the same
+	// service a person's deploy goes through. Off unless an app's pinned spec
+	// asks for it, so this is usually a query returning nothing.
 	job("auto-deploy", (&reconciler.AutoDeploy{
 		Apps:        apps,
 		Deployments: deployments,
+		Checks:      state.NewAutoDeployChecks(db),
 		Resolver:    refResolver{},
-		// Into the deploy queue, like every other deploy (O-32).
-		Enqueue:     deployQueue.Start,
+		// The plan, the capacity hold, the audit event and the deploy queue,
+		// as for every other deploy (O-32).
+		Deployer:    approvals,
+		Audit:       auditor,
 		Concurrency: cfg.Work.AutoDeploy,
 		Logger:      logger,
 		// An app whose deploys now need approval stops auto-deploying
@@ -2030,8 +2033,8 @@ func (a reconcilerAuditor) Write(ctx context.Context, e reconciler.AuditEvent) e
 // refResolver reads a remote's refs without cloning it.
 type refResolver struct{}
 
-func (refResolver) Resolve(ctx context.Context, src spec.Source) (string, error) {
-	return source.ResolveRef(ctx, src)
+func (refResolver) Resolve(ctx context.Context, src spec.Source, ad spec.AutoDeploy) (source.Tracked, error) {
+	return source.ResolveTracked(ctx, src, ad)
 }
 
 // consoleHandler returns the embedded console, or nil when the binary was built
