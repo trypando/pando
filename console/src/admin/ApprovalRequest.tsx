@@ -13,6 +13,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateApp } from './appList';
 import { Banner, Button, Input, StatusIndicator, Tooltip } from '@design';
 
 import { api } from '@api/client';
@@ -50,7 +51,7 @@ export function ApprovalRequest({
       );
       // The app moves to deploying once enough people approve, so its record
       // and the list both change, as well as this request.
-      void queries.invalidateQueries({ queryKey: ['apps'] });
+      void invalidateApp(queries, d.app_id);
       void queries.invalidateQueries({ queryKey: ['approvals'] });
     },
   });

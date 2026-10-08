@@ -31,7 +31,7 @@ import type { SidebarItem } from '@design';
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
-import { InstallVerb, useInstallVerb, useManageableApps } from '../app/principal';
+import { COUNT_STALE_MS, InstallVerb, useInstallVerb, useManageableAppsTotal } from '../app/principal';
 import { AccountPage } from '../install/Account';
 import { Accounts, messageOf } from '../install/Accounts';
 import { filtersFrom, linkQuery } from '../install/audit';
@@ -48,6 +48,7 @@ import { DetectionReview } from './DetectionReview';
 import { Sharing } from './Sharing';
 import { AppOverview } from './AppOverview';
 import { Logs } from './Logs';
+import { useRecordFollowsStatus } from './Parts';
 import { AppEvents } from './AppEvents';
 import { Resources } from './Resources';
 import { AddApp } from './AddApp';
@@ -65,7 +66,7 @@ import { Terminal } from './Terminal';
 import { Sheet } from '../ui/Sheet';
 import { TopoBackground } from '../ui/TopoBackground';
 import { SearchField } from '../ui/SearchField';
-import { ShowMore, usePaged, useSettled, type PageOf } from '../ui/paged';
+import { ShowMore, totalLabel, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { APP_LIST_KEY, useWatchedRows } from './appList';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
@@ -145,7 +146,7 @@ export function AdminConsole({
   const rows = useWatchedRows(apps.rows, administrative);
   // Every app, whatever the search: the same count the Admin entry is decided
   // by, so it is already in the cache.
-  const appCount = useManageableApps();
+  const appCount = totalLabel(useManageableAppsTotal());
 
   // The count alone, for the sidebar: one row asked for, and `total` read.
   // Only asked for by somebody who may read it — the endpoint refuses the
@@ -153,8 +154,11 @@ export function AdminConsole({
   // the log.
   const accounts = useQuery({
     queryKey: ['users', 'count'],
-    queryFn: () => api.get<{ total?: number }>('/users?limit=1'),
+    queryFn: () => api.get<PageOf>('/users?limit=1'),
     enabled: canView || canManageUsers,
+    // Counted to at most 10,000 (O-53); a change to accounts made here
+    // invalidates ['users'] and asks again at once.
+    staleTime: COUNT_STALE_MS,
   });
 
   // Whether a newer Pando is released (R-351), behind install.view like the
@@ -167,7 +171,7 @@ export function AdminConsole({
   // offering to add one they cannot create is a screen that answers 403.
   const items: SidebarItem[] = [];
   if (administrative) {
-    items.push({ value: 'apps', label: 'Apps', trailing: <Badge count={appCount} /> });
+    items.push({ value: 'apps', label: 'Apps', trailing: <Badge>{appCount}</Badge> });
   }
   // Beside Apps: a request is about an app, and answering one is app work.
   if (canApproveAll || waiting.length > 0 || section === 'approvals') {
@@ -180,7 +184,7 @@ export function AdminConsole({
     items.push({
       value: 'accounts',
       label: 'Accounts',
-      trailing: <Badge count={accounts.data?.total ?? 0} />,
+      trailing: <Badge>{totalLabel(accounts.data)}</Badge>,
     });
   }
   // Groups and roles are the same verb pair as accounts, and a separate screen:
@@ -594,6 +598,9 @@ function AppScreen({
     queryKey: ['apps', appID],
     queryFn: () => api.get<AppWithVerbs>(`/apps/${appID}`),
   });
+  // The record is read again when the app's status moves on, rather than
+  // polled: a deploy finishing is seen within a status poll on every tab.
+  useRecordFollowsStatus(app.data, app.dataUpdatedAt);
 
   // An app with no pinned spec has never been through review, so detection is
   // the only thing worth showing it.
@@ -872,7 +879,7 @@ function AppScreen({
           {tab === 'overview' && <AppOverview app={app.data} onGo={setTab} />}
           {tab === 'logs' && <Logs app={app.data} workload={focus} />}
           {tab === 'events' && <AppEvents app={app.data} />}
-          {tab === 'resources' && <Resources appID={app.data.id} focus={focus} />}
+          {tab === 'resources' && <Resources app={app.data} focus={focus} />}
           {tab === 'terminal' && <Terminal appID={app.data.id} />}
         </div>
       </Sheet>

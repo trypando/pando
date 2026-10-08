@@ -76,6 +76,48 @@ func TestR377_TheInboxShowsWhatPandoToldYouOnTheConsole(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, got.Code)
 }
 
+func (i *install) unread(s *session) int {
+	i.t.Helper()
+	got := i.do(s, http.MethodGet, "/me/notifications/unread", nil)
+	require.Equal(i.t, http.StatusOK, got.Code, got.String())
+	var count struct {
+		Unread *int `json:"unread"`
+	}
+	got.JSON(i.t, &count)
+	require.NotNil(i.t, count.Unread, got.String())
+	return *count.Unread
+}
+
+// TestR377_TheBellCountsUnreadWithoutListingThem asserts R-377: the count of
+// unread notifications beside Settings on every screen is answered on its
+// own, for that person alone, and moves as they read.
+func TestR377_TheBellCountsUnreadWithoutListingThem(t *testing.T) {
+	i := newInstall(t)
+	carol, dave := i.user("carol"), i.user("dave")
+	for _, name := range []string{"billing", "ledger"} {
+		appID := i.createApp(i.admin(), name)
+		got := i.do(carol, http.MethodPut, "/notification-preferences", map[string]any{
+			"choices": []map[string]any{{"kind": "app_shared", "channel": "ntf_console", "enabled": true}},
+		})
+		require.Equal(t, http.StatusOK, got.Code, got.String())
+		got = i.do(i.admin(), http.MethodPost, "/apps/"+appID+"/grants", map[string]any{
+			"plane": "data", "principal_kind": "user", "principal_id": i.userID(carol),
+		})
+		require.Equal(t, http.StatusCreated, got.Code, got.String())
+	}
+
+	require.Equal(t, 2, i.unread(carol))
+	require.Equal(t, i.inbox(carol).Unread, i.unread(carol), "the same count the list carries")
+	require.Zero(t, i.unread(dave), "another person's notifications are not counted")
+
+	got := i.do(carol, http.MethodPost, "/me/notifications/"+i.inbox(carol).Notifications[0].ID+"/read", nil)
+	require.Equal(t, http.StatusNoContent, got.Code)
+	require.Equal(t, 1, i.unread(carol))
+
+	got = i.do(i.serviceToken(i.admin()), http.MethodGet, "/me/notifications/unread", nil)
+	require.Equal(t, http.StatusForbidden, got.Code, "a token that is not a person has no inbox")
+}
+
 // TestR378_AnAppShowsItsOwnEvents asserts R-378: anyone who can see an app
 // reads its recent events, described for a person, and nobody else does.
 func TestR378_AnAppShowsItsOwnEvents(t *testing.T) {

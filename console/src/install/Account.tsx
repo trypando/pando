@@ -254,7 +254,7 @@ function Activity({ userID, onAudit }: { userID: string; onAudit: (query: string
   // A custom range is the Audit log's job; the presets are enough to look.
   const filters: AuditFilters = { ...NO_FILTERS, involving: userID, when };
   const { log, events } = useAuditLog(filters);
-  const people = usePeople();
+  const people = usePeople(events);
 
   return (
     <section>

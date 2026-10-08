@@ -280,6 +280,110 @@ func (l *Lease) Release(ctx context.Context, appID string, visited *time.Time) e
 	return nil
 }
 
+// ReleaseSettled lets go of an app found as it should be, and leaves it until
+// a slow sweep comes round to it again (O-52): it is next due revisit after
+// visited, where an ordinary release is due MinRevisit after it.
+//
+// The lease column carries this as it carries everything else about when an
+// app is due: set to visited plus the difference, a claim with the ordinary
+// cutoff passes over it until the time comes. Nothing is held — the holder is
+// cleared as in Release — so a nudge (Nudge, dueAgain) brings it forward at
+// any moment.
+//
+// Unless the app changed while it was being looked at: a state, desired state
+// or secret written during the visit bumps updated_at past the visit's start,
+// and the app is released as due now instead, so what changed is not left for
+// the sweep.
+func (l *Lease) ReleaseSettled(ctx context.Context, appID string, visited time.Time, extra time.Duration) error {
+	_, err := l.db.Exec(context.WithoutCancel(ctx), `
+		UPDATE apps SET reconcile_lease_until = CASE
+		        WHEN updated_at > $3 THEN $3
+		        ELSE $3 + $4::interval
+		    END,
+		    reconcile_lease_holder = NULL
+		WHERE id = $1 AND reconcile_lease_holder = $2`, appID, l.holder, visited, extra)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not release the reconciliation lease.", err)
+	}
+	return nil
+}
+
+// dueAgain is the SET clause that makes an app due on the next pass if it is
+// waiting for the slow sweep (O-52). Part of every write that changes what
+// the reconciler should do about an app — its state, its desired state, its
+// pinned spec, its secrets — so a settled app is not left for minutes after
+// someone asked for something. An app a pass holds is left alone: its release
+// sees updated_at move (ReleaseSettled).
+const dueAgain = `reconcile_lease_until = CASE
+        WHEN reconcile_lease_holder IS NULL AND reconcile_lease_until > now() THEN NULL
+        ELSE reconcile_lease_until
+    END`
+
+// Nudged is what Nudge did.
+type Nudged struct {
+	// Due: the app will be claimed by the next pass on any replica.
+	Due bool
+	// Held: a pass holds the app now, and it was left alone. Ask again once
+	// that pass lets go, or the change may be one the pass already looked
+	// past.
+	Held bool
+}
+
+// Nudge makes one app due now, because its runtime reported something
+// happening to it (O-52).
+//
+// Only an app the loop acts on: a failed app is not in reconcilableStates, so
+// a nudge for one changes nothing — R-151 holds here by the same absence it
+// holds by everywhere else in the loop. Backoff still applies, since Claim
+// filters on next_attempt_at; a nudge moves an app forward in the queue, not
+// past R-149. A lease that has run out is nobody's, and is cleared with it.
+func (r *Reconciles) Nudge(ctx context.Context, appID string) (Nudged, error) {
+	var out Nudged
+	err := r.db.QueryRow(ctx, `
+		WITH target AS (
+		    SELECT id, (reconcile_lease_holder IS NOT NULL AND reconcile_lease_until > now()) AS held
+		    FROM apps
+		    WHERE id = $1 AND deleted_at IS NULL AND pinned_spec_id IS NOT NULL
+		      AND state IN `+reconcilableIn+`
+		    FOR UPDATE
+		), nudged AS (
+		    UPDATE apps SET reconcile_lease_until = NULL, reconcile_lease_holder = NULL
+		    FROM target
+		    WHERE apps.id = target.id AND NOT target.held
+		    RETURNING apps.id
+		)
+		SELECT coalesce((SELECT held FROM target), false), EXISTS (SELECT 1 FROM nudged)`,
+		appID).Scan(&out.Held, &out.Due)
+	if err != nil {
+		return Nudged{}, errs.Wrap(errs.Internal, "Could not mark the app for reconciliation.", err)
+	}
+	return out, nil
+}
+
+// CatchUp makes every app on one runtime that is waiting for the slow sweep
+// due now, and returns how many (O-52).
+//
+// Called when that runtime's event stream opens: whatever happened to those
+// apps while nobody was listening — before Pando started, or while the stream
+// was down — was not reported, so each is looked at once rather than left for
+// the sweep. Apps not waiting are due within a pass anyway and are left in
+// their place in the queue.
+func (r *Reconciles) CatchUp(ctx context.Context, runtimeRef string) (int64, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE apps a SET reconcile_lease_until = NULL
+		FROM spec_revisions s
+		WHERE s.id = a.pinned_spec_id
+		  AND s.body->'runtime'->>'adapter_ref' = $1
+		  AND a.deleted_at IS NULL
+		  AND a.state IN `+reconcilableIn+`
+		  AND a.reconcile_lease_holder IS NULL
+		  AND a.reconcile_lease_until > now()`, runtimeRef)
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Could not mark the runtime's apps for reconciliation.", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // MarkUnobservable records that the adapter could not be reached.
 //
 // It touches neither state nor the failure counter. An adapter being down is a

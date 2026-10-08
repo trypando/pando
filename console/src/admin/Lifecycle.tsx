@@ -12,6 +12,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateApp } from './appList';
 import { Banner, Button, Dialog } from '@design';
 
 import { api } from '@api/client';
@@ -26,8 +27,8 @@ export function Lifecycle({ app }: { app: App }) {
     mutationFn: (what: 'start' | 'stop' | 'restart') =>
       api.post(`/apps/${app.id}/${what}`, {}),
     onSuccess: () => {
-      // ['apps'], because the list says what each app is doing too.
-      void queries.invalidateQueries({ queryKey: ['apps'] });
+      // This app and the lists, because the list says what each app is doing too.
+      void invalidateApp(queries, app.id);
       setConfirming(false);
     },
   });

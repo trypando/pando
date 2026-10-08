@@ -6,7 +6,7 @@
 // and for somebody holding app.deploy.approve on two apps: what they may answer
 // has buttons, and the rest is shown read-only.
 
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { usePolledHead, type HeadShape } from '../ui/headPoll';
 import { Button, EmptyState } from '@design';
 
 import { api } from '@api/client';
@@ -22,23 +22,31 @@ import type { ApprovalRow } from './approval';
  * so the two cannot disagree. A caller the endpoint refuses has nothing waiting
  * for them, which is an answer rather than an error, so it is not retried.
  */
+type ApprovalsPage = { approvals: ApprovalRow[] | null; next_cursor?: string };
+
+export const APPROVALS_SHAPE: HeadShape<ApprovalsPage, ApprovalRow> = {
+  rowsOf: (p) => p.approvals ?? [],
+  withRows: (p, approvals) => ({ ...p, approvals }),
+  idOf: (r) => r.id,
+  hasMore: (p) => Boolean(p.next_cursor),
+};
+
 export function useApprovals(enabled: boolean) {
-  const query = useInfiniteQuery({
-    queryKey: ['approvals'],
-    initialPageParam: '',
-    queryFn: ({ pageParam }) =>
-      api.get<{ approvals: ApprovalRow[] | null; next_cursor?: string }>(
-        withParams('/approvals', { cursor: pageParam }),
-      ),
+  const query = usePolledHead({
+    key: ['approvals'],
+    headKey: ['approvals-head'],
+    fetchPage: (cursor) => api.get<ApprovalsPage>(withParams('/approvals', { cursor })),
     // A page at a time (issue #72). A page can be short and still have a
     // next one, when the requests it read were on apps this caller can't see.
-    getNextPageParam: (last) => last.next_cursor || undefined,
+    nextParam: (last) => last.next_cursor || undefined,
+    shape: APPROVALS_SHAPE,
     enabled,
     retry: false,
     // Somebody else's answer, or a new request, changes this list. Every open
     // console asks, and each ask checks access app by app, so not often: a
-    // request waits hours for an answer, not seconds.
-    refetchInterval: 60_000,
+    // request waits hours for an answer, not seconds. The first page only —
+    // a request answered further down goes when this screen is next opened.
+    interval: 60_000,
   });
   return { query, rows: query.data?.pages.flatMap((p) => p.approvals ?? []) ?? [] };
 }

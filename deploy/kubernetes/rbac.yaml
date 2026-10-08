@@ -22,6 +22,13 @@ rules:
   - apiGroups: [""]
     resources: [namespaces]
     verbs: [get, list, watch, create, delete]
+  # A new namespace takes no pod until the controller manager has made its
+  # default ServiceAccount, which Pando waits to see (awaitServiceAccount).
+  # Get only, and cluster-wide because the namespace's own binding may not
+  # be in effect yet when Pando first looks.
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [get]
   # Binds pando-app-manager in each app namespace.
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [rolebindings]

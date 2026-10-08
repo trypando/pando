@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -84,9 +85,10 @@ type Dispatcher struct {
 	Interval time.Duration
 
 	// SubscriptionCache is how long the list of enabled subscriptions is
-	// reused for routing [P]: three seconds when zero, and never when
-	// negative. Routing used to read it — three joins — on every pass of
-	// every replica (issue #72). It decides only which deliveries are queued;
+	// reused for routing [P]: when zero, WatchedSubscriptionCache while Run is
+	// listening for changes (migration 61) and three seconds while it is not;
+	// never when negative. Routing used to read it — three joins — on every
+	// pass of every replica (issue #72). It decides only which deliveries are queued;
 	// whether one is sent is decided at send time, as its owner, now (R-368),
 	// and a subscription turned off is not sent to however it was routed.
 	SubscriptionCache time.Duration
@@ -101,7 +103,20 @@ type Dispatcher struct {
 	cacheMu sync.Mutex
 	cache   *subscriptionCache
 	senders work.Pool[state.Delivery]
+
+	// watching is whether this replica is listening for subscription changes
+	// (migration 61), and changes counts what it has been told: a change, a
+	// lost listener, a listener connected again. A list read under one count
+	// is out of date under any other.
+	watching atomic.Bool
+	changes  atomic.Uint64
 }
+
+// WatchedSubscriptionCache is how long the enabled subscriptions are reused
+// while this replica is listening for changes to them [P]: every change, made
+// on any replica, drops the list at once, so this only bounds how long a list
+// lives if a notification is somehow lost.
+const WatchedSubscriptionCache = 5 * time.Minute
 
 // subscriptionCache is the enabled subscriptions, indexed by event name as
 // names are met.
@@ -112,6 +127,13 @@ type subscriptionCache struct {
 	asOf    time.Time
 	expires time.Time
 	subs    []state.Subscription
+
+	// readAt is this replica's clock when the list was read, and gen the
+	// count of changes it was read under. watched is whether a listener was
+	// in place before the read began, so that any change after it is told.
+	readAt  time.Time
+	gen     uint64
+	watched bool
 
 	mu     sync.Mutex
 	byName map[string][]state.Subscription
@@ -215,6 +237,13 @@ func (d *Dispatcher) Run(ctx context.Context) {
 		defer wg.Done()
 		d.senders.Serve(ctx)
 	}()
+	if d.SubscriptionCache >= 0 && d.Subscriptions != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.watch(ctx)
+		}()
+	}
 	defer wg.Wait()
 
 	for {
@@ -262,6 +291,15 @@ func (d *Dispatcher) route(ctx context.Context) ([]state.Event, error) {
 	var before time.Time
 	if d.SubscriptionCache >= 0 {
 		before = cache.asOf.Add(-cacheMargin)
+		if d.current(cache) && cache.watched {
+			// Listening since before the list was read, and told of no change
+			// since: the list is as good now as when it was read, so it
+			// answers for events up to now, less the same margin for a
+			// transaction still committing and its notification on the way.
+			// The time is the database's at the read plus this replica's
+			// elapsed since, so no two clocks are compared.
+			before = cache.asOf.Add(d.now().Sub(cache.readAt)).Add(-cacheMargin)
+		}
 	}
 	routed, err := d.Events.Route(ctx, 100, before, func(_ context.Context, e state.Event) ([]string, error) {
 		return Matching(cache.forName(e.Name), e), nil
@@ -275,13 +313,16 @@ func (d *Dispatcher) route(ctx context.Context) ([]state.Event, error) {
 }
 
 // subscriptions is the enabled subscriptions, read again once the cached list
-// is older than SubscriptionCache.
+// is older than SubscriptionCache or a change has been told since it was read.
 func (d *Dispatcher) subscriptions(ctx context.Context) (*subscriptionCache, error) {
 	d.cacheMu.Lock()
 	defer d.cacheMu.Unlock()
-	if d.cache != nil && d.SubscriptionCache >= 0 && d.now().Before(d.cache.expires) {
+	if d.cache != nil && d.SubscriptionCache >= 0 && d.current(d.cache) && d.now().Before(d.cache.expires) {
 		return d.cache, nil
 	}
+	// Both before the read: a change told during it counts against this list.
+	gen, watched := d.changes.Load(), d.watching.Load()
+	readAt := d.now()
 	subs, asOf, err := d.Subscriptions.Enabled(ctx)
 	if err != nil {
 		return nil, err
@@ -289,12 +330,40 @@ func (d *Dispatcher) subscriptions(ctx context.Context) (*subscriptionCache, err
 	ttl := d.SubscriptionCache
 	if ttl == 0 {
 		ttl = 3 * time.Second
+		if watched {
+			ttl = WatchedSubscriptionCache
+		}
 	}
 	d.cache = &subscriptionCache{
-		asOf: asOf, expires: d.now().Add(ttl), subs: subs,
+		asOf: asOf, expires: readAt.Add(ttl), subs: subs,
+		readAt: readAt, gen: gen, watched: watched,
 		byName: map[string][]state.Subscription{},
 	}
 	return d.cache, nil
+}
+
+// current reports whether nothing has been told since c was read.
+func (d *Dispatcher) current(c *subscriptionCache) bool {
+	return c.gen == d.changes.Load()
+}
+
+// watch listens for subscription changes made on any replica until ctx ends
+// (migration 61, issue #72). Run starts it.
+func (d *Dispatcher) watch(ctx context.Context) {
+	d.Subscriptions.Watch(ctx, func() { d.changes.Add(1) }, func(up bool) {
+		// Either way the list may be out of date: a connection lost may have
+		// missed a change, and one made again cannot say what it missed.
+		// The order matters to a list being read at the same moment: going
+		// down, it must not be read as watched under the new count; coming
+		// up, it may be read as unwatched, which only costs a read.
+		if up {
+			d.changes.Add(1)
+			d.watching.Store(true)
+			return
+		}
+		d.watching.Store(false)
+		d.changes.Add(1)
+	})
 }
 
 // forget drops the cached subscriptions, so the next route reads them again.

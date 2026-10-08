@@ -7,7 +7,7 @@
 // the audit log, not this, is the history.
 
 import { useState } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { usePolledHead, type HeadShape } from '../ui/headPoll';
 import { Button, EmptyState } from '@design';
 
 import { api } from '@api/client';
@@ -32,18 +32,27 @@ interface FeedPage {
   next_before: string;
 }
 
+const FEED_SHAPE: HeadShape<FeedPage, FeedItem> = {
+  rowsOf: (p) => p.events ?? [],
+  withRows: (p, events) => ({ ...p, events }),
+  idOf: (r) => r.id,
+  hasMore: (p) => Boolean(p.next_before),
+};
+
 export function AppEvents({ app }: { app: App }) {
   const [creating, setCreating] = useState(false);
   const canManageAll = useInstallVerb(InstallVerb.EventsManage);
 
-  const feed = useInfiniteQuery({
-    queryKey: ['app-events', app.id],
-    initialPageParam: '',
-    queryFn: ({ pageParam }) =>
-      api.get<FeedPage>(`/apps/${app.id}/events${pageParam ? `?before=${encodeURIComponent(pageParam)}` : ''}`),
-    getNextPageParam: (last) => last.next_before || undefined,
-    // New events arrive while the tab is open.
-    refetchInterval: 15_000,
+  const feed = usePolledHead({
+    key: ['app-events', app.id],
+    headKey: ['app-events-head', app.id],
+    fetchPage: (before) =>
+      api.get<FeedPage>(`/apps/${app.id}/events${before ? `?before=${encodeURIComponent(before)}` : ''}`),
+    nextParam: (last) => last.next_before || undefined,
+    shape: FEED_SHAPE,
+    // New events arrive while the tab is open: the newest page is asked for
+    // again and what is new goes on top, rather than every page read so far.
+    interval: 15_000,
   });
   const rows = feed.data?.pages.flatMap((p) => p.events) ?? [];
 

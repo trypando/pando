@@ -56,9 +56,9 @@ regexes = [
   # tokens are public by design: the CA fetches them over plain HTTP.
   '''abcdefghijklmnopqrstuvwx_-12''',
 
-  # internal/adapter/source/github/github_test.go — a PEM block whose body is
-  # the word "nope", which a GitHub App connection must refuse as its private
-  # key (issue #127). It is the absence of a key, shaped like one.
+  # internal/adapter/source/github/github_test.go — a GitHub App key that is
+  # not a key: a PEM header and footer around the word "nope", which the test
+  # gives Pando to see it refused without the key text reaching the error.
   '''-----BEGIN RSA PRIVATE KEY-----\\nnope\\n-----END RSA PRIVATE KEY-----''',
 ]
 

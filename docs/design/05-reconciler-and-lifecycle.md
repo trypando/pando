@@ -254,6 +254,67 @@ distinction, and both were already observed.
 
 **[D]** On reaching the threshold: transition to `failed`, fire a notification, write an audit event, **and stop**. No long-interval retry (R-151).
 
+### 2.3 Events and the slow sweep (O-52)
+
+Visiting every app every 15 seconds costs one `Observe` per app per pass, plus about seven queries. At
+20,000 apps that is some 1,300 runtime calls a second and a pass that never finishes; nearly every one
+of those visits finds the app as it was. **[D]** So crash detection is event-driven, and the sweep is
+slow for settled apps (O-52):
+
+- A runtime with `SupportsBundleEvents` is followed through `WatchBundles` (design 03 §2.2). An
+  event for an app — exited, killed for memory, started, removed, health changed — makes it due at
+  once (`Reconciles.Nudge` sets `reconcile_lease_until` to `NULL`, the front of the queue) and wakes
+  the loop, so it is visited within moments rather than at the next tick.
+- A visit that finds the app **settled** releases it to the slow sweep: `reconcile_lease_until` is set
+  to the visit's start plus `SettledRevisit − MinRevisit`, so an ordinary claim passes over it until
+  then (`Lease.ReleaseSettled`). Settled means the visit changed nothing: the app was `running`,
+  healthy and without drift, or `stopped` and staying stopped, with no failures counted and not
+  unobservable. Anything else — degraded, backing off, just corrected, just recovered — keeps the
+  fast cadence, so an app that is changing is still looked at on every pass.
+- **A runtime without the capability, or whose stream is not open on the replica doing the visit,
+  keeps today's cadence.** Only a replica that would hear about the app may let it wait.
+
+**[P]** `DefaultSettledRevisit` is **5 minutes** (`reconciler.SettledRevisit` overrides it in code).
+Twenty times the 15-second tick: at 20,000 settled apps, about 67 `Observe` calls a second instead of
+1,300. It is the backstop for anything a stream cannot report — a change made while no stream was
+open that a catch-up missed, a runtime that does not report some kind of change — and it bounds how
+stale a settled app's reading can be.
+
+**[D] Every replica follows every runtime.** The lease (§2) gives no app an owning replica: whichever
+replica claims an app visits it. So the replica that hears about an app is often not the one that will
+visit it, and the nudge goes through the row, where any replica's next claim finds it. A replica
+decides whether an app it visits may wait for the sweep from *its own* stream, which works because
+every replica's stream reports every app. The cost is one stream per replica per runtime, and up to
+one extra visit per replica per event when several hear it — events are rare, and backoff (R-149)
+still gates a crash-looping app, since `Claim` filters on `next_attempt_at` whatever a nudge did.
+
+**[D] An event for an app another pass holds is not lost.** That pass may have observed the app
+before the event. A nudge leaves a held app alone (moving its lease would break the lease) and reports
+it held; the replica tries again every 2 seconds (`nudgeRetry`, [P]) until the holder lets go, for up
+to twice the lease duration.
+
+**[D] A stream that drops is reopened with backoff** — 1, 2, 5, 15, then 30 seconds ([P]) — and
+while it is down the replica's visits use the fast cadence. **Every time a stream opens** — at start,
+after a drop, and when a runtime sends `missed` — every app on that runtime that is waiting for the
+sweep is made due (`Reconciles.CatchUp`), because whatever happened to it while nobody was listening
+was not reported. A burst of events larger than the replica's buffer (4,096, [P]) is handled the same
+way. Apps not waiting are due within a pass anyway and keep their place.
+
+**[D] Changes that are not runtime events bring an app forward too.** A settled app waiting for the
+sweep must not wait minutes after someone asks for something. Every write that changes what the
+reconciler should do — `SetState`, `SetStateIf`, `SetDesiredState`, `Pin`, and a secret's `Put` or
+`Delete` (R-193's rotation is found by the loop) — makes an unheld, waiting app due. A write while a
+pass holds the app moves `updated_at` past the visit's start, and `ReleaseSettled` then releases the
+app as due instead of deferring it.
+
+**[D] R-151 holds here by the same absence.** `Nudge` and `CatchUp` act only on
+`reconcilableStates`, which has no `failed`; an event for a failed app changes nothing, and it is
+never observed. `TestR151_AnEventForAFailedAppTouchesNothing`.
+
+**[P]** Runtimes are re-read every tick (`Reconciler.Runtimes`), so one added in the console is
+followed without a restart. A runtime that does not report events is asked again every 5 minutes, in
+case it has been reconfigured into one that does.
+
 ---
 
 ## 3. Deployment

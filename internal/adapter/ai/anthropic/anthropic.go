@@ -183,6 +183,10 @@ func (a *Adapter) Capabilities(_ context.Context) (api.AICapabilities, error) {
 
 		MaxFiles: a.cfg.MaxFiles,
 		MaxBytes: a.cfg.MaxBytes,
+
+		// The Messages API calls tools reliably, so drafting access and
+		// searching the audit log look people, apps and groups up (O-54).
+		LooksUp: true,
 	}
 	if a.screensPlans() {
 		caps.Functions = append(caps.Functions,

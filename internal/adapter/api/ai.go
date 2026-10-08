@@ -156,6 +156,12 @@ type AICapabilities struct {
 	// lowers them to the install's own limits; it never raises them.
 	MaxFiles int
 	MaxBytes int64
+
+	// LooksUp says the adapter calls tools in a loop during the
+	// administrative functions, so core hands it a Lookup to find people,
+	// apps and groups with instead of a list of them (O-54). Without it core
+	// searches the words of the request and sends the top matches only.
+	LooksUp bool
 }
 
 // Does reports whether the adapter advertises a function.

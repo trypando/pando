@@ -78,15 +78,22 @@ func (a *Adapter) AnswerReference(ctx context.Context, req api.ReferenceRequest)
 // tool_choice is auto with parallel calls off, and the system prompt says to
 // answer through the tool. A model that answers in prose instead is asked once
 // more, in the same conversation, before that counts as a failure.
+//
+// A task with a Lookup also has the lookup tools (O-54). Each lookup the model
+// makes is run and its result handed back, within aikit.MaxLookups lookups
+// and maxIterations rounds, until it submits.
 func (a *Adapter) submit(ctx context.Context, model string, task aikit.Task, out any) error {
 	if !a.ready {
 		return errors.New("anthropic: not configured")
 	}
 
-	tool := anthropic.ToolParam{
-		Name:        task.Tool.Name,
-		Description: anthropic.String(task.Tool.Description),
-		InputSchema: anthropic.ToolInputSchemaParam{Properties: task.Tool.Properties, Required: task.Tool.Required},
+	var tools []anthropic.ToolUnionParam
+	for _, t := range task.Tools() {
+		tools = append(tools, anthropic.ToolUnionParam{OfTool: &anthropic.ToolParam{
+			Name:        t.Name,
+			Description: anthropic.String(t.Description),
+			InputSchema: anthropic.ToolInputSchemaParam{Properties: t.Properties, Required: t.Required},
+		}})
 	}
 
 	params := anthropic.MessageNewParams{
@@ -96,14 +103,19 @@ func (a *Adapter) submit(ctx context.Context, model string, task aikit.Task, out
 			Text:         task.System + aikit.AnswerThroughTool,
 			CacheControl: anthropic.NewCacheControlEphemeralParam(),
 		}},
-		Tools: []anthropic.ToolUnionParam{{OfTool: &tool}},
+		Tools: tools,
 		ToolChoice: anthropic.ToolChoiceUnionParam{
 			OfAuto: &anthropic.ToolChoiceAutoParam{DisableParallelToolUse: anthropic.Bool(true)},
 		},
 		Messages: []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(task.User))},
 	}
 
-	for attempt := 0; attempt < 2; attempt++ {
+	looker := aikit.NewLooker(task.Lookup)
+	nudged := false
+	for range maxIterations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		resp, err := a.client.Messages.New(ctx, params)
 		if err != nil {
 			return fmt.Errorf("anthropic: %w", err)
@@ -111,18 +123,31 @@ func (a *Adapter) submit(ctx context.Context, model string, task aikit.Task, out
 		if resp.StopReason == anthropic.StopReasonRefusal {
 			return fmt.Errorf("anthropic: the model declined to answer (%s)", resp.StopDetails.Category)
 		}
+		var results []anthropic.ContentBlockParamUnion
 		for _, block := range resp.Content {
 			use, ok := block.AsAny().(anthropic.ToolUseBlock)
-			if !ok || use.Name != aikit.ToolSubmit {
+			if !ok {
 				continue
 			}
-			if err := json.Unmarshal([]byte(use.JSON.Input.Raw()), out); err != nil {
-				return fmt.Errorf("anthropic: the answer could not be read: %w", err)
+			if use.Name == aikit.ToolSubmit {
+				if err := json.Unmarshal([]byte(use.JSON.Input.Raw()), out); err != nil {
+					return fmt.Errorf("anthropic: the answer could not be read: %w", err)
+				}
+				return nil
 			}
-			return nil
+			text, isError := looker.Call(ctx, use.Name, use.JSON.Input.Raw())
+			results = append(results, anthropic.NewToolResultBlock(use.ID, text, isError))
+		}
+		if len(results) > 0 {
+			params.Messages = append(params.Messages, resp.ToParam(), anthropic.NewUserMessage(results...))
+			continue
+		}
+		if nudged {
+			break
 		}
 		// Answered in prose. Asked again, appending rather than editing the
 		// conversation, so nothing the model already produced is rewritten.
+		nudged = true
 		params.Messages = append(params.Messages, resp.ToParam(),
 			anthropic.NewUserMessage(anthropic.NewTextBlock("Submit that answer now by calling the submit tool.")))
 	}

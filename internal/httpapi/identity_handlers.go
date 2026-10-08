@@ -47,12 +47,12 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	for _, g := range groups {
 		out = append(out, withRole{g, roles[g.ID]})
 	}
-	JSON(w, http.StatusOK, map[string]any{"groups": out, "next_cursor": next, "total": total})
+	JSON(w, http.StatusOK, withTotal(map[string]any{"groups": out, "next_cursor": next}, total))
 }
 
-// handleGetGroup is one group with its members: what the list leaves out,
-// since a page of groups carrying every member of each grows with the
-// organization (issue #72).
+// handleGetGroup is one group: its member count and its links. The members
+// themselves are GET /groups/{groupID}/members, a page at a time — a group
+// can hold the whole organization (issue #72).
 func (s *Server) handleGetGroup(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireInstall(w, r, authz.InstallView); !ok {
 		return
@@ -67,6 +67,44 @@ func (s *Server) handleGetGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, group)
+}
+
+// handleListGroupMembers is one page of the people directly in a group.
+// `q` matches the username, display name or email; `id`, repeatable, keeps
+// only those accounts — how a client asks whether particular people are in
+// the group without reading all of it.
+func (s *Server) handleListGroupMembers(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireInstall(w, r, authz.InstallView); !ok {
+		return
+	}
+	groupID := chi.URLParam(r, "groupID")
+	if found, err := s.Groups.Exists(r.Context(), groupID); err != nil {
+		Error(w, r, err)
+		return
+	} else if !found {
+		Error(w, r, errs.New(errs.NotFound, "There is no group with that ID."))
+		return
+	}
+	page, err := pageFrom(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	users, next, total, err := s.Groups.MembersPage(r.Context(), groupID, page)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	roles, err := s.Grants.InstallRolesByPrincipal(r.Context())
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(users))
+	for _, u := range users {
+		out = append(out, accountView(u, roles[u.ID]))
+	}
+	JSON(w, http.StatusOK, withTotal(map[string]any{"members": out, "next_cursor": next}, total))
 }
 
 func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +164,7 @@ func (s *Server) handleSetGroupMembers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	groupID := chi.URLParam(r, "groupID")
-	if _, found, err := s.Groups.ByID(r.Context(), groupID); err != nil {
+	if found, err := s.Groups.Exists(r.Context(), groupID); err != nil {
 		Error(w, r, err)
 		return
 	} else if !found {
@@ -205,7 +243,7 @@ func (s *Server) handlePutGroupRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groupID := chi.URLParam(r, "groupID")
-	if _, found, err := s.Groups.ByID(r.Context(), groupID); err != nil {
+	if found, err := s.Groups.Exists(r.Context(), groupID); err != nil {
 		Error(w, r, err)
 		return
 	} else if !found {
@@ -254,14 +292,19 @@ func (s *Server) handleGroupApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groupID := chi.URLParam(r, "groupID")
-	if _, found, err := s.Groups.ByID(r.Context(), groupID); err != nil {
+	if found, err := s.Groups.Exists(r.Context(), groupID); err != nil {
 		Error(w, r, err)
 		return
 	} else if !found {
 		Error(w, r, errs.New(errs.NotFound, "There is no group with that ID."))
 		return
 	}
-	grants, err := s.Grants.ForGroup(r.Context(), groupID)
+	page, err := pageFrom(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	grants, next, err := s.Grants.ForGroup(r.Context(), groupID, page)
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -271,7 +314,7 @@ func (s *Server) handleGroupApps(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"apps": out})
+	JSON(w, http.StatusOK, map[string]any{"apps": out, "next_cursor": next})
 }
 
 func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {

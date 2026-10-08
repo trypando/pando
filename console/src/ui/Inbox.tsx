@@ -32,19 +32,39 @@ interface Page {
 }
 
 const KEY = ['inbox'];
+const COUNT_KEY = ['inbox', 'unread'];
+const LIST_KEY = ['inbox', 'list'];
+
+/** How often the bell asks for its count. */
+export const INBOX_COUNT_MS = 60_000;
 
 export function InboxButton() {
   const [open, setOpen] = useState(false);
-  const inbox = useQuery({
-    queryKey: KEY,
-    queryFn: () => api.get<Page>('/me/notifications'),
-    // Asked again every minute, so the count moves without a reload.
-    refetchInterval: 60_000,
+  // The count alone, asked every minute so it moves without a reload. The bell
+  // is on every screen of every signed-in console, so it asks for a number
+  // rather than a page of the inbox (issue #72); the list is read when the
+  // bell is opened.
+  const count = useQuery({
+    queryKey: COUNT_KEY,
+    queryFn: () => api.get<{ unread: number }>('/me/notifications/unread'),
+    refetchInterval: INBOX_COUNT_MS,
+    // A number, and the first thing somebody coming back to the tab looks at.
+    refetchOnWindowFocus: true,
     // An account the inbox does not apply to (a token) gets a refusal; the
     // bell then shows no count rather than an error.
     retry: false,
   });
-  const unread = inbox.data?.unread ?? 0;
+  const inbox = useQuery({
+    queryKey: LIST_KEY,
+    queryFn: () => api.get<Page>('/me/notifications'),
+    enabled: open,
+    // Read fresh each time the bell opens, rather than whatever an earlier
+    // opening left in the cache.
+    staleTime: 0,
+    retry: false,
+  });
+  // The list's count is the newer of the two while the bell is open.
+  const unread = (open ? inbox.data?.unread : undefined) ?? count.data?.unread ?? 0;
 
   return (
     <>

@@ -32,8 +32,13 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	page, err := pageFrom(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
 	appID := r.URL.Query().Get("app_id")
-	rows, err := s.Backups.List(r.Context(), appID)
+	rows, next, err := s.Backups.List(r.Context(), appID, page)
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -43,12 +48,19 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 	// list above says what exists; this says what was tried and did not
 	// happen, which the list cannot — an app missing from it looks the same
 	// whether it was never due or failed every hour for a week.
-	attempts, err := s.Backups.Attempts(r.Context(), appID)
-	if err != nil {
-		Error(w, r, err)
-		return
+	//
+	// The newest of them, a page's worth, with the first page only: one per
+	// app is as many rows as apps (issue #72).
+	body := map[string]any{"backups": rows, "next_cursor": next}
+	if page.Cursor == "" {
+		attempts, err := s.Backups.Attempts(r.Context(), appID, page.Size())
+		if err != nil {
+			Error(w, r, err)
+			return
+		}
+		body["attempts"] = attempts
 	}
-	JSON(w, http.StatusOK, map[string]any{"backups": rows, "attempts": attempts})
+	JSON(w, http.StatusOK, body)
 }
 
 type createBackupRequest struct {

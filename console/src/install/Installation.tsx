@@ -43,6 +43,7 @@ import { BesideField } from '../ui/BesideField';
 import { FieldSkeleton, LineSkeleton } from '../ui/Loading';
 import { ActorField } from './ActorField';
 import type { Person } from './ActorField';
+import { useNamedPeople } from '../ui/people';
 import { NO_FILTERS, WHEN, auditQuery, filtersFromSearch } from './audit';
 import type { AuditFilters } from './audit';
 import { AIButton } from '../ui/AskAI';
@@ -483,7 +484,9 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             </Button>
             <Button
               variant="secondary"
-              disabled={check.isPending}
+              // Not again while the answer on screen is for this draft: edit
+              // clears it, and asking twice reads every affected app twice.
+              disabled={check.isPending || preview !== null}
               onClick={() => check.mutate(current)}
             >
               {check.isPending ? 'Checking' : 'Check what this affects'}
@@ -1710,18 +1713,16 @@ export function useAuditLog(filters: AuditFilters) {
   return { log, events };
 }
 
-/** Names for the "who" column and the actor pickers. install.audit.read does
- *  not imply install.view — an account can hold only the first — so when the
- *  list is refused, the pickers take an ID and the columns show IDs. The
- *  newest 500 accounts, the most one page holds (issue #72); anyone older
- *  shows by ID. */
-export function usePeople() {
-  const users = useQuery({
-    queryKey: ['users', 'people'],
-    queryFn: () => api.get<{ users: Person[] }>('/users?limit=500'),
-    retry: false,
-  });
-  return users.data?.users ?? [];
+/** Names for the "who" column and the actor pickers: the accounts the events
+ *  on screen and the chosen filters name, asked about by ID (issue #72), not
+ *  the install's whole list. install.audit.read does not imply install.view —
+ *  an account can hold only the first — so when the lookup is refused, the
+ *  pickers take an ID and the columns show IDs. */
+export function usePeople(events: AuditRecord[], chosen: string[] = []): Person[] {
+  return useNamedPeople([
+    ...chosen,
+    ...events.flatMap((e) => [e.principal_id, e.on_behalf_of, e.target_kind === 'user' ? e.target_id : undefined]),
+  ]);
 }
 
 export function Audit({
@@ -1744,7 +1745,7 @@ export function Audit({
   const filtered = JSON.stringify(filters) !== JSON.stringify(NO_FILTERS);
 
   const { log, events } = useAuditLog(filters);
-  const people = usePeople();
+  const people = usePeople(events, [filters.actor, filters.involving]);
 
   // Asking a question with AI (R-345), behind one button. Its answer becomes
   // the filters below, where it can be read and changed; the table is the

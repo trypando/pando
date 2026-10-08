@@ -23,6 +23,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { invalidateAppLists } from './appList';
 import { Banner, Button, Checkbox, Dialog, Input, Select } from '@design';
 
 import { api } from '@api/client';
@@ -96,7 +97,7 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
       return api.post<App>('/apps', { name: name.trim(), source });
     },
     onSuccess: (app) => {
-      void queries.invalidateQueries({ queryKey: ['apps'] });
+      void invalidateAppLists(queries);
       onAdded(app);
     },
   });

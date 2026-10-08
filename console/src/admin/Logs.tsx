@@ -11,7 +11,7 @@
 // page that grows to that length pushes everything else on the screen out of
 // reach and leaves no way back up but the scrollbar.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Button, CodeBlock, Select, Skeleton, StatusIndicator } from '@design';
 import { BesideField } from '../ui/BesideField';
@@ -20,9 +20,11 @@ import { api, base } from '@api/client';
 import type { App, Deployment } from '@api/types.gen';
 import { Quiet, messageOf } from '../install/Accounts';
 import { MEASURE } from '../ui/layout';
-import { Parts, useParts, labelFor } from './Parts';
+import { Parts, useAppStatus, labelFor } from './Parts';
+import { appendCapped, followLog } from './logStream';
 import { deployLabel, deployStatus } from '../ui/deploys';
 import { Table } from '../ui/Table';
+import { deploymentsInterval } from '../ui/polling';
 import { ApprovalRequest } from './ApprovalRequest';
 import { isAwaiting } from './approval';
 import type { ApprovalDeployment } from './approval';
@@ -173,7 +175,9 @@ export function Logs({ app, workload }: { app: App; workload?: string }) {
   const deployments = useQuery({
     queryKey: ['apps', app.id, 'deployments'],
     queryFn: () => api.get<{ deployments: ApprovalDeployment[] | null }>(`/apps/${app.id}/deployments`),
-    refetchInterval: app.state === 'deploying' ? 3_000 : false,
+    // Not polled while a deploy runs: its log streams, and the app screen asks
+    // for this list again when the status says the deploy has finished.
+    refetchInterval: (query) => deploymentsInterval(query.state.data?.deployments),
   });
 
   const rows = deployments.data?.deployments ?? [];
@@ -252,12 +256,20 @@ const NEVER_RAN: Record<string, string> = {
   // part-way through a build has a log worth reading.
 };
 
+/** Lines asked for when the live stream cannot be opened and the plain read is the fallback. */
 const TAIL = 500;
 
 /** The part the app's address resolves to, which is the log shown by default. */
 function primaryName(parts: { name: string; primary: boolean }[]): string {
   return parts.find((part) => part.primary)?.name ?? parts[0]?.name ?? '';
 }
+
+/** Where the live log stands, for what the box shows around it. */
+type Output =
+  | { kind: 'connecting' }
+  | { kind: 'live' }
+  | { kind: 'revoked'; message: string }
+  | { kind: 'error'; message: string };
 
 function AppOutput({ app, workload }: { app: App; workload?: string }) {
   // Only an app that has been deployed has a runtime to ask. The endpoint says
@@ -269,34 +281,54 @@ function AppOutput({ app, workload }: { app: App; workload?: string }) {
   // nothing in the console passed one, so an app made of three containers
   // showed one log — the primary's — and the container that was actually
   // crash-looping had no screen at all.
-  const parts = useParts(app).data?.workloads ?? [];
+  const parts = useAppStatus(app).data?.workloads ?? [];
   const [chosen, setChosen] = useState<string | null>(null);
   const showing = chosen ?? workload ?? '';
 
-  const output = useQuery({
-    queryKey: ['apps', app.id, 'output', showing],
-    queryFn: () =>
-      api.text(
-        `/apps/${app.id}/logs?tail=${TAIL}` +
-          (showing ? `&workload=${encodeURIComponent(showing)}` : ''),
-      ),
-    enabled,
-    // The runtime is asked once and re-asked on demand, except while the app is
-    // running, where a log nobody has to refresh is the point of having one.
-    refetchInterval: app.state === 'running' ? 5_000 : false,
-  });
+  // Followed live over server-sent events (O-51), not polled: every viewer of
+  // this part on the Pando server shares one stream from the runtime, so a
+  // hundred people watching one app is one log read, not a hundred every five
+  // seconds. Refresh opens the stream again.
+  const [lines, setLines] = useState<string[]>([]);
+  const [output, setOutput] = useState<Output>({ kind: 'connecting' });
+  const [generation, setGeneration] = useState(0);
 
-  // A trailing newline is one empty line, not one line of nothing: split it off
-  // so an app that has printed nothing reads as nothing rather than as a black
-  // box with a blank line in it.
-  //
-  // Memoized because the box follows the end of the log while `lines` changes,
-  // and a fresh array on every render is a change on every render — it pulled
-  // itself back to the bottom five seconds after the reader scrolled up.
-  const lines = useMemo(() => {
-    const text = (output.data ?? '').replace(/\n$/, '');
-    return text ? text.split('\n') : [];
-  }, [output.data]);
+  useEffect(() => {
+    if (!enabled) return;
+    setLines([]);
+    setOutput({ kind: 'connecting' });
+    const part = showing ? `workload=${encodeURIComponent(showing)}` : '';
+    let current = true;
+
+    const stop = followLog(`${base}/apps/${app.id}/logs/stream${part ? `?${part}` : ''}`, {
+      reset: () => {
+        setLines([]);
+        setOutput({ kind: 'live' });
+      },
+      lines: (batch) => setLines((previous) => appendCapped(previous, batch)),
+      revoked: (message) => setOutput({ kind: 'revoked', message }),
+      failed: () => {
+        // EventSource does not expose the response that refused it. The same
+        // question asked once, as plain text, gets the error's own words — or,
+        // if it now answers, the recent lines.
+        api
+          .text(`/apps/${app.id}/logs?tail=${TAIL}${part ? `&${part}` : ''}`)
+          .then((text) => {
+            if (!current) return;
+            const body = text.replace(/\n$/, '');
+            setLines(body ? body.split('\n') : []);
+            setOutput({ kind: 'live' });
+          })
+          .catch((error: unknown) => {
+            if (current) setOutput({ kind: 'error', message: messageOf(error) });
+          });
+      },
+    });
+    return () => {
+      current = false;
+      stop();
+    };
+  }, [app.id, enabled, showing, generation]);
 
   return (
     <section style={{ maxWidth: MEASURE }}>
@@ -316,7 +348,7 @@ function AppOutput({ app, workload }: { app: App; workload?: string }) {
             />
           )}
           <BesideField>
-            <Button variant="secondary" disabled={!enabled} onClick={() => void output.refetch()}>
+            <Button variant="secondary" disabled={!enabled} onClick={() => setGeneration((n) => n + 1)}>
               Refresh
             </Button>
           </BesideField>
@@ -326,20 +358,27 @@ function AppOutput({ app, workload }: { app: App; workload?: string }) {
       <div style={{ marginTop: 'var(--space-4)' }}>
         {!enabled ? (
           <Quiet>This app hasn’t been deployed yet, so it hasn’t printed anything.</Quiet>
-        ) : output.isError ? (
-          <Quiet>{messageOf(output.error)}</Quiet>
-        ) : output.isPending ? (
+        ) : output.kind === 'error' ? (
+          <Quiet>{output.message}</Quiet>
+        ) : output.kind === 'connecting' ? (
           // The box's shape, not an empty box with "hasn't printed anything"
           // under it: the runtime has not answered yet, which is not the same.
           <div role="status" aria-label="Loading">
             <Skeleton height="16rem" radius="md" />
           </div>
         ) : (
-          <LogBox
-            title={showing || app.name}
-            lines={lines}
-            empty={<Quiet>This part of the app hasn’t printed anything.</Quiet>}
-          />
+          <>
+            <LogBox
+              title={showing || app.name}
+              lines={lines}
+              empty={<Quiet>This part of the app hasn’t printed anything.</Quiet>}
+            />
+            {output.kind === 'revoked' && (
+              <div style={{ marginTop: 'var(--space-3)' }}>
+                <Quiet>{output.message}</Quiet>
+              </div>
+            )}
+          </>
         )}
       </div>
     </section>

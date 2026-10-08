@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -94,21 +96,44 @@ func (b *Backups) ByID(ctx context.Context, backupID string) (Backup, bool, erro
 	return rec, true, nil
 }
 
-// List returns backups, newest first. An empty appID lists every backup.
-func (b *Backups) List(ctx context.Context, appID string) ([]Backup, error) {
-	var rows pgx.Rows
-	var err error
-
-	const columns = `SELECT id, coalesce(app_id, ''), kind, adapter_ref, object_name,
-	                        coalesce(size_bytes, 0), manifest, retain_until, created_by, created_at
-	                 FROM backups`
-	if appID == "" {
-		rows, err = b.db.Query(ctx, columns+` ORDER BY created_at DESC`)
-	} else {
-		rows, err = b.db.Query(ctx, columns+` WHERE app_id = $1 ORDER BY created_at DESC`, appID)
-	}
+// List returns one page of backups, newest first, keyset-paged on
+// (created_at, id), with the cursor for the next page (empty after the last).
+// An empty appID lists every app's, and the install's bundles.
+//
+// A page rather than every row: each carries its manifest, and an install
+// that takes a rolling backup of 20,000 apps a day holds a great many
+// (issue #72). backups_list_idx and backups_app_idx serve the order.
+func (b *Backups) List(ctx context.Context, appID string, page Page) ([]Backup, string, error) {
+	var (
+		afterAt time.Time
+		afterID string
+	)
+	have, err := decodeCursor(page.Cursor, &afterAt, &afterID)
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read the backups.", err)
+		return nil, "", err
+	}
+	var where []string
+	var args []any
+	if appID != "" {
+		args = append(args, appID)
+		where = append(where, fmt.Sprintf("app_id = $%d", len(args)))
+	}
+	if have {
+		args = append(args, afterAt, afterID)
+		where = append(where, fmt.Sprintf("(created_at, id) < ($%d::timestamptz, $%d::text)", len(args)-1, len(args)))
+	}
+	query := `SELECT id, coalesce(app_id, ''), kind, adapter_ref, object_name,
+	                 coalesce(size_bytes, 0), manifest, retain_until, created_by, created_at
+	          FROM backups`
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	args = append(args, page.Size()+1)
+	query += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d", len(args))
+
+	rows, err := b.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, "", errs.Wrap(errs.Internal, "Could not read the backups.", err)
 	}
 	defer rows.Close()
 
@@ -116,11 +141,20 @@ func (b *Backups) List(ctx context.Context, appID string) ([]Backup, error) {
 	for rows.Next() {
 		rec, err := scanBackup(rows)
 		if err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read the backups.", err)
+			return nil, "", errs.Wrap(errs.Internal, "Could not read the backups.", err)
 		}
 		out = append(out, rec)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", errs.Wrap(errs.Internal, "Could not read the backups.", err)
+	}
+	var next string
+	if len(out) > page.Size() {
+		out = out[:page.Size()]
+		last := out[len(out)-1]
+		next = encodeCursor(last.CreatedAt, last.ID)
+	}
+	return out, next, nil
 }
 
 // Expired returns backups whose retention has passed (R-211).
@@ -388,14 +422,21 @@ func (b *Backups) RecordAttempt(ctx context.Context, a BackupAttempt) error {
 }
 
 // Attempts returns the last scheduled backup attempt of each live app, or of
-// one app when appID is set. Newest first.
-func (b *Backups) Attempts(ctx context.Context, appID string) ([]BackupAttempt, error) {
+// one app when appID is set. Newest first, and at most limit of them
+// (backup_attempts_recent_idx): one row per app is 20,000 rows on a large
+// install, and the newest are the ones to read (issue #72).
+func (b *Backups) Attempts(ctx context.Context, appID string, limit int) ([]BackupAttempt, error) {
+	where, args := "", []any{limit}
+	if appID != "" {
+		where, args = " AND t.app_id = $2", append(args, appID)
+	}
 	rows, err := b.db.Query(ctx, `
 		SELECT t.app_id, a.name, t.attempted_at, t.outcome, coalesce(t.backup_id, ''), t.message, t.remedy
 		FROM backup_attempts t
 		JOIN apps a ON a.id = t.app_id
-		WHERE a.deleted_at IS NULL AND ($1 = '' OR t.app_id = $1)
-		ORDER BY t.attempted_at DESC`, appID)
+		WHERE a.deleted_at IS NULL`+where+`
+		ORDER BY t.attempted_at DESC
+		LIMIT $1`, args...)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not read the backup attempts.", err)
 	}

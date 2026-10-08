@@ -1,16 +1,15 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/authz"
+	"github.com/trypando/pando/internal/core/capacity"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/specgate"
@@ -310,76 +309,61 @@ func (s *Server) handleListAdapters(w http.ResponseWriter, r *http.Request) {
 // (R-242), so the screen and a refused deploy always agree.
 //
 // A total of 0 is a runtime that does not know it. in_use_* is present only
-// when the runtime reports usage (R-245); sampling it takes about a second,
-// so the runtimes are read in parallel.
+// when the runtime reports usage (R-245). The runtimes' readings come from a
+// snapshot refreshed in the background (capacity.Snapshots, issue #72):
+// as_of says when they were taken and refresh_seconds how often they are
+// taken again. Committed is read live, as the planner reads it.
 func (s *Server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireInstall(w, r, authz.InstallView); !ok {
 		return
 	}
-
-	refs := s.Registry.ByCategory(api.CategoryRuntime)
-	out := make([]map[string]any, len(refs))
-	failed := make([]error, len(refs))
-	var wg sync.WaitGroup
-	for i, ref := range refs {
-		rt, ok := s.Registry.Runtime(ref)
-		if !ok {
-			continue
-		}
-		wg.Add(1)
-		go func(ctx context.Context) {
-			defer wg.Done()
-			// A runtime that does not answer is an entry saying so, not a
-			// failed request: the others still have something to say.
-			capacity, err := rt.Capacity(ctx)
-			if err != nil {
-				out[i] = map[string]any{"adapter_ref": ref, "status": "unreachable"}
-				return
-			}
-			out[i], failed[i] = s.runtimeCapacity(ctx, ref, rt, capacity)
-		}(r.Context())
+	if s.Capacity == nil {
+		Error(w, r, errs.New(errs.Internal, "Pando cannot read the runtimes' capacity on this server."))
+		return
 	}
-	wg.Wait()
-
-	runtimes := make([]map[string]any, 0, len(refs))
-	for i := range refs {
-		if failed[i] != nil {
-			Error(w, r, failed[i])
-			return
-		}
-		if out[i] != nil {
-			runtimes = append(runtimes, out[i])
-		}
+	view, err := s.Capacity.View(r.Context())
+	if err != nil {
+		Error(w, r, err)
+		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"runtimes": runtimes})
+
+	runtimes := make([]map[string]any, 0, len(view.Runtimes))
+	for _, rt := range view.Runtimes {
+		runtimes = append(runtimes, runtimeCapacity(rt))
+	}
+	JSON(w, http.StatusOK, map[string]any{
+		"runtimes":        runtimes,
+		"as_of":           view.TakenAt.UTC().Format(time.RFC3339),
+		"refresh_seconds": int(view.Interval / time.Second),
+	})
 }
 
-// runtimeCapacity is one answering runtime's entry in GET /capacity.
-func (s *Server) runtimeCapacity(ctx context.Context, ref string, rt api.RuntimeAdapter, capacity api.Capacity) (map[string]any, error) {
-	allocated, err := s.Allocations.AllocatedOn(ctx, ref, "")
-	if err != nil {
-		return nil, err
+// runtimeCapacity is one runtime's entry in GET /capacity. A runtime that did
+// not answer is an entry saying so, not a failed request: the others still
+// have something to say.
+func runtimeCapacity(rt capacity.Runtime) map[string]any {
+	if !rt.Reachable {
+		return map[string]any{"adapter_ref": rt.AdapterRef, "status": "unreachable"}
 	}
+	c := rt.Capacity
 	entry := map[string]any{
-		"adapter_ref":            ref,
+		"adapter_ref":            rt.AdapterRef,
 		"status":                 "ok",
-		"total_cpu_millis":       capacity.TotalCPUMillis,
-		"total_memory_bytes":     capacity.TotalMemoryBytes,
-		"total_disk_bytes":       capacity.TotalDiskBytes,
-		"allocated_cpu_millis":   allocated.CPUMillis,
-		"allocated_memory_bytes": allocated.MemoryBytes,
-		"allocated_disk_bytes":   allocated.DiskBytes,
-		"running_workloads":      capacity.RunningWorkloads,
-		"details":                capacity.Details,
-		"reported":               capacity.Reported,
+		"total_cpu_millis":       c.TotalCPUMillis,
+		"total_memory_bytes":     c.TotalMemoryBytes,
+		"total_disk_bytes":       c.TotalDiskBytes,
+		"allocated_cpu_millis":   rt.Allocated.CPUMillis,
+		"allocated_memory_bytes": rt.Allocated.MemoryBytes,
+		"allocated_disk_bytes":   rt.Allocated.DiskBytes,
+		"running_workloads":      c.RunningWorkloads,
+		"details":                c.Details,
+		"reported":               c.Reported,
 	}
-	if caps, err := rt.Capabilities(ctx); err == nil && caps.ReportsUsage {
-		if inUse, err := rt.InUse(ctx); err == nil {
-			entry["in_use_cpu_millis"] = inUse.CPUMillis
-			entry["in_use_memory_bytes"] = inUse.MemoryBytes
-		}
+	if rt.InUse != nil {
+		entry["in_use_cpu_millis"] = rt.InUse.CPUMillis
+		entry["in_use_memory_bytes"] = rt.InUse.MemoryBytes
 	}
-	return entry, nil
+	return entry
 }
 
 // declaredAdapters are the adapters the config file declares (R-271).

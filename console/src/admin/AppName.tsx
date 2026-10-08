@@ -6,6 +6,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateAppLists } from './appList';
 import { Button, Input } from '@design';
 
 import { api } from '@api/client';
@@ -21,7 +22,7 @@ export function AppName({ app }: { app: App }) {
     mutationFn: (name: string) => api.patch<App>(`/apps/${app.id}`, { name }),
     onSuccess: (updated) => {
       queries.setQueryData(['apps', app.id], keepVerbs(updated));
-      void queries.invalidateQueries({ queryKey: ['apps'] });
+      void invalidateAppLists(queries);
       void queries.invalidateQueries({ queryKey: ['me', 'apps'] });
       setDraft(null);
     },

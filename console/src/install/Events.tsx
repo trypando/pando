@@ -31,8 +31,10 @@ import { api } from '@api/client';
 import type { App } from '@api/types.gen';
 import { Quiet, Screen, messageOf } from './Accounts';
 import { Table } from '../ui/Table';
+import { ShowMore, usePaged, type PageOf } from '../ui/paged';
 import { relative } from '../ui/time';
 import { Disclosure } from '../ui/Disclosure';
+import { deliveriesInterval } from '../ui/polling';
 
 interface EventDef {
   name: string;
@@ -161,16 +163,17 @@ export function Subscriptions({
   const [open, setOpen] = useState<string | null>(null);
 
   const catalog = useCatalog();
-  const query = new URLSearchParams();
-  if (everyone) query.set('everyone', 'true');
-  if (app) query.set('app_id', app.id);
-  const subs = useQuery({
-    queryKey: ['subscriptions', everyone, app?.id ?? ''],
-    queryFn: () => api.get<{ subscriptions: Subscription[] }>(`/subscriptions${query.size ? `?${query}` : ''}`),
+  // Newest first, a page at a time (issue #72).
+  const paged = usePaged<{ subscriptions: Subscription[] | null } & PageOf, Subscription>({
+    key: ['subscriptions'],
+    path: '/subscriptions',
+    rows: (p) => p.subscriptions,
+    params: { everyone: everyone ? 'true' : undefined, app_id: app?.id },
   });
+  const subs = paged.query;
 
   const destinations = catalog.data?.destinations ?? [];
-  const rows = subs.data?.subscriptions ?? [];
+  const rows = paged.rows;
 
   return (
     <>
@@ -242,6 +245,7 @@ export function Subscriptions({
         ]}
         rows={rows}
       />
+      <ShowMore query={subs} label="Show more subscriptions" />
 
       {creating && (
         <CreateSubscription
@@ -541,8 +545,10 @@ function SubscriptionDetail({
   const deliveries = useQuery({
     queryKey: ['deliveries', id],
     queryFn: () => api.get<{ deliveries: Delivery[] }>(`/subscriptions/${id}/deliveries`),
-    // Pending deliveries move on their own; the list follows them.
-    refetchInterval: (q) => (q.state.data?.deliveries?.some((d) => d.status === 'pending') ? 3_000 : false),
+    // Pending deliveries move on their own; the list follows them, as often
+    // as they can move (deliveriesInterval) rather than every three seconds
+    // through hours of retries.
+    refetchInterval: (q) => deliveriesInterval(q.state.data?.deliveries),
   });
 
   const refresh = () => {

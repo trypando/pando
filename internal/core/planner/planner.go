@@ -385,11 +385,13 @@ func carriesFiles(s *spec.AppSpec) bool {
 	return false
 }
 
-func (p *Planner) checkIsolation(ctx context.Context, s *spec.AppSpec, runtimeCaps api.RuntimeCapabilities) error {
+// checkRuntimeFloor is the runtime half of checkIsolation (R-114): every app
+// runs somewhere, so it applies to an image app as much as a built one.
+func (p *Planner) checkRuntimeFloor(ctx context.Context, s *spec.AppSpec, runtimeCaps api.RuntimeCapabilities) error {
 	if p.policy == nil {
 		return nil
 	}
-	buildFloor, runtimeFloor, err := p.policy.IsolationFloors(ctx)
+	_, runtimeFloor, err := p.policy.IsolationFloors(ctx)
 	if err != nil {
 		return err
 	}
@@ -408,6 +410,20 @@ func (p *Planner) checkIsolation(ctx context.Context, s *spec.AppSpec, runtimeCa
 			WithDetail("adapter_class", int(runtimeCaps.IsolationClass)).
 			WithDetail("configured_runtimes", p.adapterClasses(ctx)).
 			WithRemedy("Use a runtime that provides stronger isolation, or ask an administrator about the installation's requirements.")
+	}
+	return nil
+}
+
+func (p *Planner) checkIsolation(ctx context.Context, s *spec.AppSpec, runtimeCaps api.RuntimeCapabilities) error {
+	if p.policy == nil {
+		return nil
+	}
+	buildFloor, _, err := p.policy.IsolationFloors(ctx)
+	if err != nil {
+		return err
+	}
+	if err := p.checkRuntimeFloor(ctx, s, runtimeCaps); err != nil {
+		return err
 	}
 
 	// R-024: builds never execute on the host, and there is no "just build it
@@ -558,6 +574,9 @@ func (p *Planner) checkCapacity(ctx context.Context, s *spec.AppSpec, runtime ap
 		return nil
 	}
 
+	// Capacity and LargestFitFor below may be answered from one reading of
+	// the runtime, made now; nothing read here is kept for another plan.
+	ctx = api.WithReadScope(ctx)
 	capacity, err := runtime.Capacity(ctx)
 	if err != nil {
 		return errs.Wrap(errs.AdapterUnavailable, "Pando could not read how much room is left.", err)

@@ -472,10 +472,17 @@ var toolList = []tool{
 		Description: "Read an app's recent logs. An app can be made of several parts — a web " +
 			"service, a worker, a database it brought with it — and each has its own log. " +
 			"Without `workload` this is the primary part, the one the app's address resolves " +
-			"to; pando_get_status lists the names.",
+			"to; pando_get_status lists the names. Returns the most recent lines: 200 unless " +
+			"`tail` says otherwise, and never more than 5000.",
 		Schema: schema(map[string]any{
 			"app_id":   str("The app's ID."),
 			"workload": str("Which part of the app to read. Defaults to the primary one."),
+			"tail": map[string]any{
+				"type":        "integer",
+				"description": "Optional. How many of the most recent lines to return, 1 to 5000. Defaults to 200.",
+				"minimum":     1,
+				"maximum":     5000,
+			},
 		}, "app_id"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, err := stringArg(args, "app_id", true)
@@ -486,9 +493,20 @@ var toolList = []tool{
 			if err != nil {
 				return "", "", nil, err
 			}
-			path := "/logs"
+			query := url.Values{}
 			if workload != "" {
-				path += "?workload=" + url.QueryEscape(workload)
+				query.Set("workload", workload)
+			}
+			if raw, ok := args["tail"]; ok && raw != nil {
+				lines, isNumber := raw.(float64)
+				if !isNumber || lines < 1 || lines != float64(int(lines)) {
+					return "", "", nil, fmt.Errorf("tail must be a whole number of lines, 1 to 5000")
+				}
+				query.Set("tail", fmt.Sprint(int(lines)))
+			}
+			path := "/logs"
+			if len(query) > 0 {
+				path += "?" + query.Encode()
 			}
 			return "GET", appPath(id, path), nil, nil
 		},
@@ -747,12 +765,17 @@ var toolList = []tool{
 	},
 	{
 		Name: "pando_list_my_apps",
-		Description: "The apps you can open — your launcher — with which are favorites and which of " +
-			"your sections each is filed under, and your sections. A different list from " +
+		Description: "The apps you can open — your launcher — with which are favorites, which of " +
+			"your sections each is filed under, and whether you can also manage it (can_manage), and your " +
+			"sections. Favorites first, then filed apps, then the rest, a page at a time: pass " +
+			"`next_cursor` back as `cursor` for the next page. A different list from " +
 			"pando_list_apps, which is the apps you can administer.",
-		Schema: schema(map[string]any{}),
-		request: func(map[string]any) (string, string, any, error) {
-			return "GET", "/me/apps", nil, nil
+		Schema: schema(map[string]any{
+			"q":      str("Only apps whose name or slug contains this."),
+			"cursor": str("The next_cursor from a previous page."),
+		}),
+		request: func(args map[string]any) (string, string, any, error) {
+			return pagedGet("/me/apps", args, "q", "cursor")
 		},
 	},
 	{
@@ -769,16 +792,17 @@ var toolList = []tool{
 	},
 	{
 		Name:        "pando_list_user_apps",
-		Description: "The apps an account has access to: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (can_manage).",
+		Description: "The apps an account has access to: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (can_manage). By app name, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
 		Schema: schema(map[string]any{
 			"user_id": str("The account's ID."),
+			"cursor":  str("The next_cursor from a previous page."),
 		}, "user_id"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, err := stringArg(args, "user_id", true)
 			if err != nil {
 				return "", "", nil, err
 			}
-			return "GET", "/users/" + url.PathEscape(id) + "/apps", nil, nil
+			return pagedGet("/users/"+url.PathEscape(id)+"/apps", args, "cursor")
 		},
 	},
 	{
@@ -1089,17 +1113,13 @@ var toolList = []tool{
 	},
 	{
 		Name:        "pando_list_subscriptions",
-		Description: "List your event subscriptions: what each listens for, where it sends, and whether it is on. app_id narrows to one app.",
-		Schema:      schema(map[string]any{"app_id": str("Only subscriptions about this app. Optional.")}),
+		Description: "List your event subscriptions: what each listens for, where it sends, and whether it is on. app_id narrows to one app. Newest first, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
+		Schema: schema(map[string]any{
+			"app_id": str("Only subscriptions about this app. Optional."),
+			"cursor": str("The next_cursor from a previous page."),
+		}),
 		request: func(args map[string]any) (string, string, any, error) {
-			app, err := stringArg(args, "app_id", false)
-			if err != nil {
-				return "", "", nil, err
-			}
-			if app != "" {
-				return "GET", "/subscriptions?app_id=" + url.QueryEscape(app), nil, nil
-			}
-			return "GET", "/subscriptions", nil, nil
+			return pagedGet("/subscriptions", args, "app_id", "cursor")
 		},
 	},
 	{
@@ -1282,6 +1302,14 @@ var toolList = []tool{
 				return "GET", "/me/notifications?unread=true", nil, nil
 			}
 			return "GET", "/me/notifications", nil, nil
+		},
+	},
+	{
+		Name:        "pando_count_unread_notifications",
+		Description: "How many of your notifications are unread, without listing them.",
+		Schema:      schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/me/notifications/unread", nil, nil
 		},
 	},
 	{

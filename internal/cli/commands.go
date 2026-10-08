@@ -961,6 +961,7 @@ func logsCmd(client func() (*Client, error)) *cobra.Command {
 	var (
 		follow   bool
 		workload string
+		tail     int
 	)
 
 	cmd := &cobra.Command{
@@ -984,6 +985,9 @@ func logsCmd(client func() (*Client, error)) *cobra.Command {
 			if workload != "" {
 				query.Set("workload", workload)
 			}
+			if tail > 0 {
+				query.Set("tail", fmt.Sprint(tail))
+			}
 			path := "/apps/" + args[0] + "/logs"
 			if len(query) > 0 {
 				path += "?" + query.Encode()
@@ -1001,6 +1005,8 @@ func logsCmd(client func() (*Client, error)) *cobra.Command {
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "keep the connection open and print new lines")
 	cmd.Flags().StringVarP(&workload, "workload", "w", "",
 		"which part of the app to read (default: the primary one)")
+	cmd.Flags().IntVarP(&tail, "tail", "n", 0,
+		"how many of the most recent lines to print, at most 5000 (default 200; with --follow, the recent lines Pando holds)")
 	return cmd
 }
 

@@ -402,6 +402,31 @@ func TestAPullTheDaemonRefusesOutrightIsReported(t *testing.T) {
 		"a workload with no image is refused before asking the daemon")
 }
 
+const hubLimit = `{"errorDetail":{"message":"toomanyrequests: You have reached your unauthenticated pull rate limit. https://www.docker.com/increase-rate-limit"}}`
+
+// TestR105_DockerHubsPullLimitIsSaidAsTheLimit asserts R-105 for a pull the
+// registry refused for its download limit: it names Docker Hub and the fix,
+// is not tried again, and is not "check that the registry is reachable".
+func TestR105_DockerHubsPullLimitIsSaidAsTheLimit(t *testing.T) {
+	f, a := pullDaemon(t, hubLimit)
+
+	err := a.ensureImage(context.Background(), "nginx:1.27", forBundle("app_x"))
+	e := errs.As(err)
+	require.NotNil(t, e)
+	require.Equal(t, errs.AdapterRegistryRateLimited, e.Code)
+	require.Contains(t, e.Message, "Docker Hub is limiting how many images this server may download")
+	require.Contains(t, e.Message, "nginx:1.27")
+	require.Contains(t, e.Remedy, "Add a registry credential to the app")
+	require.Contains(t, e.Remedy, "paid Docker Hub plan")
+	require.Equal(t, 1, f.called("POST /images/create"), "a download limit is not asked again seconds later")
+
+	// With the app's credential, the limit is that account's.
+	_, a = pullDaemon(t, hubLimit)
+	err = a.ensureImageWith(context.Background(), "nginx:1.27",
+		&api.RegistryAuth{Registry: "index.docker.io", Username: "ben"}, forTrial)
+	require.Contains(t, errs.As(err).Remedy, "The app's registry credential was used")
+}
+
 // Vaultwarden declares VOLUME /data and refuses to start without storage
 // there, so a trial gives every declared path throwaway storage (issue #55).
 func TestATrialGivesEveryDeclaredVolumeThrowawayStorage(t *testing.T) {

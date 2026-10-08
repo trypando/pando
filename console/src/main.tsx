@@ -16,6 +16,14 @@ const queries = new QueryClient({
       // the user cannot act on.
       staleTime: 10_000,
       retry: 1,
+      // Off, and turned on where coming back to the tab should show something
+      // new: who is signed in, the inbox count, an app's status, the first
+      // page of approvals and of an app's events (issue #72). On by default it
+      // read every query on the screen again — a dozen on an app's screen —
+      // each time the window took focus, in every open console. A screen
+      // still reads its queries again when it is opened, once they are older
+      // than staleTime.
+      refetchOnWindowFocus: false,
     },
   },
 });

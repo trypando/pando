@@ -8,7 +8,7 @@
 // policy; Reject discards the proposal. A field the startup configuration
 // fixes is never changed, and says where it is set (R-271).
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Banner, Button, Checkbox } from '@design';
 
@@ -19,6 +19,9 @@ import { Quiet, refusal } from './Accounts';
 import { describeChange } from './policyChange';
 
 type Doc = Record<string, unknown>;
+
+/** How long the kept changes must stay put before their impact is asked for. */
+export const PREVIEW_SETTLE_MS = 400;
 
 interface PolicyProposal {
   proposed: Doc;
@@ -67,13 +70,23 @@ export function PolicyAI({ onClose }: { onClose: () => void }) {
   });
 
   // Asked as soon as there is something to ask about, so the answer is on
-  // screen before Accept rather than after it.
+  // screen before Accept rather than after it — once the changes kept have
+  // stopped changing for a moment. Each preview reads apps on the server, and
+  // unticking three changes in a row is one question, not three (issue #72).
+  const docKey = JSON.stringify(doc);
+  const [settledKey, setSettledKey] = useState(docKey);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettledKey(docKey), PREVIEW_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [docKey]);
+  const settled = settledKey === docKey;
   const impact = useQuery({
-    queryKey: ['policy-preview', doc],
+    queryKey: ['policy-preview', settledKey],
     queryFn: () => api.post<{ violations: Violation[] | null }>('/policy/preview', doc),
-    enabled: keeping.length > 0,
+    enabled: keeping.length > 0 && settled,
   });
-  const violations = impact.data?.violations ?? [];
+  // Never an answer about a proposal that is no longer the one on screen.
+  const violations = settled ? (impact.data?.violations ?? []) : [];
 
   const accept = useMutation({
     mutationFn: () => api.put('/policy', doc),

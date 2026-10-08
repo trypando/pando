@@ -119,7 +119,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	for _, u := range users {
 		out = append(out, accountView(u, roles[u.ID]))
 	}
-	JSON(w, http.StatusOK, map[string]any{"users": out, "next_cursor": next, "total": total})
+	JSON(w, http.StatusOK, withTotal(map[string]any{"users": out, "next_cursor": next}, total))
 }
 
 // accountView is an account as the API shows it, in the list and on its own:

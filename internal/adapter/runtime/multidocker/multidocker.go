@@ -91,6 +91,9 @@ type Adapter struct {
 	// RejoinNetworks for the joins an agent's re-creation needs.
 	ownsMu sync.Mutex
 	owns   func(string) bool
+
+	// watchRetry overrides defaultWatchRetry (events.go). Tests shorten it.
+	watchRetry []time.Duration
 }
 
 // New builds an unconfigured adapter.

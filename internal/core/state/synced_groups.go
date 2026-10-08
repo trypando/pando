@@ -33,7 +33,9 @@ func (g *Groups) SyncMemberships(ctx context.Context, adapterID, userID string, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	before, err := peopleWhoManage(ctx, tx)
+	// Only this person's memberships change (issue #72: every sign-in runs
+	// this, and an ordinary person's sign-in needs no count of managers).
+	before, err := lockoutForUsers(ctx, tx, userID)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not update the account's groups.", err)
 	}
@@ -122,7 +124,7 @@ func (g *Groups) Unlink(ctx context.Context, syncedGroupID, groupID string) erro
 		return errs.Wrap(errs.Internal, "Could not unlink the groups.", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	before, err := peopleWhoManage(ctx, tx)
+	before, err := lockoutForGroups(ctx, tx, groupID)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not unlink the groups.", err)
 	}
@@ -334,7 +336,7 @@ func (s *SCIMGroups) ChangeMembers(ctx context.Context, adapterID, groupID strin
 	if !found {
 		return errs.New(errs.NotFound, "There is no such group for this provider.")
 	}
-	before, err := peopleWhoManage(ctx, tx)
+	before, err := lockoutForGroups(ctx, tx, groupID)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not update the group.", err)
 	}
@@ -357,7 +359,7 @@ func (s *SCIMGroups) ChangeMembers(ctx context.Context, adapterID, groupID strin
 }
 
 func setMembersTx(ctx context.Context, tx pgx.Tx, adapterID, groupID string, members []string, replace bool) error {
-	before, err := peopleWhoManage(ctx, tx)
+	before, err := lockoutForGroups(ctx, tx, groupID)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not update the group.", err)
 	}

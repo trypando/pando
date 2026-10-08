@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 )
@@ -59,6 +60,32 @@ type GroupInfo struct {
 type AppInfo struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	Slug string `json:"slug,omitempty"`
+}
+
+// LookupLimit is the most results one lookup returns. Core asks its stores
+// for no more, and aikit cuts a longer answer to it, so what a lookup puts in
+// a prompt does not grow with the installation (O-54).
+const LookupLimit = 20
+
+// Lookup is how an adapter finds the people, apps and groups a request names,
+// rather than being handed every one (O-54). Each function searches by a
+// name, username, email or slug, case-insensitively, and returns at most
+// LookupLimit matches.
+//
+// Callbacks core passes in, not a store: they run as the person who asked,
+// and return only what that person could read through the API. An adapter
+// sees no more by calling them than its caller could see, and never touches
+// state or authorization itself (R-027). A nil function is a lookup the
+// person may not make, and its tool is not offered.
+//
+// Only an adapter whose capabilities say LooksUp is given one. Any other is
+// given what core found by searching the words of the request itself
+// (design 10 §10.6).
+type Lookup struct {
+	People func(ctx context.Context, query string) ([]PersonInfo, error)
+	Apps   func(ctx context.Context, query string) ([]AppInfo, error)
+	Groups func(ctx context.Context, query string) ([]GroupInfo, error)
 }
 
 // AccessRequest asks for a role and group draft (R-343).
@@ -68,10 +95,18 @@ type AccessRequest struct {
 	// Verbs are every verb the requester could grant. A draft naming one not
 	// listed is refused by core, so a model cannot widen what a person asked
 	// it to draft past what that person could do themselves.
-	Verbs  []VerbInfo
-	Roles  []RoleInfo
+	Verbs []VerbInfo
+	Roles []RoleInfo
+
+	// Groups and People are not every group and account (O-54). They are the
+	// ones the draft so far names and, for an adapter that cannot look
+	// things up, those matching words in Description — at most LookupLimit
+	// of each.
 	Groups []GroupInfo
 	People []PersonInfo
+
+	// Lookup finds anyone else, for an adapter that LooksUp. Nil otherwise.
+	Lookup *Lookup
 
 	// Current is the draft so far, when a person is refining one: what an
 	// earlier call drafted, with whatever they changed by hand. Description is
@@ -155,9 +190,18 @@ type AuditSearchRequest struct {
 	// something.
 	Now time.Time
 
-	People  []PersonInfo
-	Apps    []AppInfo
+	// People and Apps are those matching words in Question, for an adapter
+	// that cannot look things up; empty otherwise (O-54). At most
+	// LookupLimit of each.
+	People []PersonInfo
+	Apps   []AppInfo
+
+	// Actions are every action Pando records, from its own catalog rather
+	// than from the log (O-54).
 	Actions []string
+
+	// Lookup finds people and apps, for an adapter that LooksUp.
+	Lookup *Lookup
 
 	Model string
 }
@@ -209,8 +253,12 @@ type AuditSummaryRequest struct {
 
 	// Truncated is set when more records matched than were sent.
 	Truncated bool
-	People    []PersonInfo
-	Apps      []AppInfo
+
+	// People and Apps are those the records and the filter name, by ID, and
+	// that the person who asked may see: bounded by the records, not by the
+	// installation (O-54).
+	People []PersonInfo
+	Apps   []AppInfo
 
 	Model string
 }

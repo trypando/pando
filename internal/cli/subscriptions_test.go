@@ -101,6 +101,11 @@ func TestR377_NotificationsListAndRead(t *testing.T) {
 
 	got = run(t, newAPI(t), "", "notifications", "read")
 	require.ErrorContains(t, got.err, "--all")
+
+	api = newAPI(t).reply("GET /me/notifications/unread", map[string]any{"unread": 3})
+	got = run(t, api, "", "notifications", "unread")
+	require.NoError(t, got.err)
+	require.Equal(t, "3 unread.\n", got.out)
 }
 
 func TestR378_EventsForAnApp(t *testing.T) {

@@ -18,11 +18,12 @@
 // shown as they are, disabled, and there is no Save.
 
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Banner, Button, Checkbox, Switch } from '@design';
 
 import { api, RequestFailed } from '@api/client';
-import type { AppSpec } from '@api/types.gen';
+import type { App, AppSpec } from '@api/types.gen';
+import { useAppStatus } from './Parts';
 import { MEASURE } from '../ui/layout';
 import { useNewestSpec } from './newestSpec';
 import { AppVerb, useCan } from './verbs';
@@ -31,13 +32,11 @@ import { AppVerb, useCan } from './verbs';
  * The deploy settings of an app, on its newest revision, with the status that
  * says whether approval has paused its auto-deploy (R-158).
  */
-export function DeploySection({ appID }: { appID: string }) {
+export function DeploySection({ app }: { app: App }) {
+  const appID = app.id;
   const newest = useNewestSpec(appID);
-  // The same key Parts reads the status under, so it is one request.
-  const status = useQuery({
-    queryKey: ['apps', appID, 'status'],
-    queryFn: () => api.get<{ auto_deploy_paused?: boolean }>(`/apps/${appID}/status`),
-  });
+  // The same query Parts reads, so it is one request.
+  const status = useAppStatus(app);
   if (!newest.spec) return null;
   return (
     <DeploySettings

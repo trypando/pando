@@ -24,6 +24,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { invalidateApp } from './appList';
 import {
   Button,
   Card,
@@ -127,10 +128,10 @@ export function DetectionReview({ appID, reviewed }: { appID: string; reviewed: 
     // unconfirmed accept on a configured app, and that refusal is the real
     // guard — this just means the console does not walk into it.
     mutationFn: () => api.post(`/apps/${appID}/detection/accept`, reviewed ? { confirm: true } : {}),
-    // ['apps'], not ['apps', appID]: accepting pins a spec and moves the app
+    // This app and the lists, not this app alone: accepting pins a spec and moves the app
     // out of draft, which changes both this screen and its row in the list.
     // The narrower key refreshes the screen and leaves the list saying draft.
-    onSuccess: () => queries.invalidateQueries({ queryKey: ['apps'] }),
+    onSuccess: () => invalidateApp(queries, appID),
   });
 
   // R-022: re-detection is explicit, never automatic. Offered here because a
