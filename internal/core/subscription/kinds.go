@@ -23,6 +23,7 @@ var Kinds = []Kind{
 	{api.NotifyUpdateAvailable, "Pando updates", "A newer Pando is released. Sent to people who may upgrade it.", true},
 	{api.NotifyUpgradeFailed, "Upgrade failed", "An in-place upgrade of Pando did not finish.", true},
 	{api.NotifySubscriptionDisabled, "A subscription was turned off", "One of your event subscriptions kept failing and Pando turned it off.", true},
+	{api.NotifyAuditSinkDisabled, "An audit destination was turned off", "A destination the audit log is sent to kept failing and Pando turned it off. Sent to people who may send the audit log off the installation.", true},
 
 	// R-266: the launcher tile is the notification, so this is off unless a
 	// person turns it on.

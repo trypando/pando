@@ -109,6 +109,8 @@ func satisfiesCategory(a Adapter) error {
 		_, ok = a.(SourceAdapter)
 	case CategoryImageRegistry:
 		_, ok = a.(ImageRegistryAdapter)
+	case CategoryAuditSink:
+		_, ok = a.(AuditSinkAdapter)
 	default:
 		return fmt.Errorf("unknown category %q", a.Category())
 	}
@@ -294,6 +296,16 @@ func (r *Registry) ImageRegistry(ref string) (ImageRegistryAdapter, bool) {
 	}
 	g, ok := a.(ImageRegistryAdapter)
 	return g, ok
+}
+
+// AuditSink returns an audit sink adapter by reference (R-382).
+func (r *Registry) AuditSink(ref string) (AuditSinkAdapter, bool) {
+	a, ok := r.Get(ref)
+	if !ok {
+		return nil, false
+	}
+	s, ok := a.(AuditSinkAdapter)
+	return s, ok
 }
 
 // AI returns an AI adapter by reference (R-258).

@@ -135,6 +135,33 @@ func str(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}
 }
 
+func strList(description string) map[string]any {
+	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": description}
+}
+
+// stringListArg reads an optional array of strings.
+func stringListArg(args map[string]any, key string) ([]string, error) {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return nil, nil
+	}
+	raw, ok := v.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array of strings", key)
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		s, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s must be an array of strings", key)
+		}
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
 var toolList = []tool{
 	{
 		Name: "pando_list_apps",
@@ -925,6 +952,76 @@ var toolList = []tool{
 		Schema: schema(map[string]any{}),
 		request: func(map[string]any) (string, string, any, error) {
 			return "GET", "/audit/archives", nil, nil
+		},
+	},
+	// The stream a page at a time (R-381, design 12 §4). There is no export
+	// tool, for the reason there is no archive download (design 04, 12 §7):
+	// a gzip of the log is nothing an agent's context can use, and this
+	// serves the same events.
+	{
+		Name: "pando_read_audit_stream",
+		Description: "Read the audit log in commit order, oldest first, one page at a time. Returns events, " +
+			"cursor and caught_up. Pass the cursor back as after to read on from where this page ended; " +
+			"keep it to ask later what has happened since. Without after it starts at the oldest event in " +
+			"the live log; after: \"now\" starts after the newest. caught_up says there is nothing past the " +
+			"cursor yet. Delivery is at least once: an event can come back again, and its id is the key to " +
+			"drop it by. Needs install.audit.read.",
+		Schema: schema(map[string]any{
+			"after": str("The cursor a previous page returned, or now. Optional."),
+			"limit": map[string]any{
+				"type":        "integer",
+				"description": "Optional. How many events, 1 to 1000. Defaults to 500.",
+				"minimum":     1,
+				"maximum":     1000,
+			},
+			"action":  strList("Optional. Only actions starting with one of these prefixes, such as grant."),
+			"exclude": strList("Optional. Leave out actions starting with one of these prefixes."),
+			"format":  str("Optional. native (the archive's line format, the default) or ocsf."),
+		}),
+		request: func(args map[string]any) (string, string, any, error) {
+			q := url.Values{}
+			for _, key := range []string{"after", "format"} {
+				v, err := stringArg(args, key, false)
+				if err != nil {
+					return "", "", nil, err
+				}
+				if v != "" {
+					q.Set(key, v)
+				}
+			}
+			if raw, ok := args["limit"]; ok && raw != nil {
+				n, isNumber := raw.(float64)
+				if !isNumber || n < 1 || n > 1000 || n != float64(int(n)) {
+					return "", "", nil, fmt.Errorf("limit must be a whole number of events, 1 to 1000")
+				}
+				q.Set("limit", fmt.Sprint(int(n)))
+			}
+			for _, key := range []string{"action", "exclude"} {
+				list, err := stringListArg(args, key)
+				if err != nil {
+					return "", "", nil, err
+				}
+				for _, v := range list {
+					q.Add(key, v)
+				}
+			}
+			path := "/audit/stream"
+			if len(q) > 0 {
+				path += "?" + q.Encode()
+			}
+			return "GET", path, nil, nil
+		},
+	},
+	{
+		Name: "pando_list_audit_sinks",
+		Description: "The audit sinks: destinations, such as a SIEM's syslog or HTTPS collector, that the " +
+			"audit log is pushed to as it is written. Each with what it sends where (transport, endpoint, " +
+			"format, actions, exclude, and disclosure, the sentence saying what leaves the installation), " +
+			"its last delivery, backlog, last_error and failing_since, why Pando turned it off if it did, " +
+			"and gap_from and gap_to for a range of events it missed. Needs install.audit.read.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/audit/sinks", nil, nil
 		},
 	},
 	{

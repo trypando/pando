@@ -34,6 +34,8 @@ a migration simpler.
 | `user_identities` PK and `users_alias_is_suspended` | O-1 — an identity reaches one account; linking aliases and never merges |
 | `identity_adapters_no_inline_credentials` | R-190 — an identity provider's secret lives only in `identity_adapter_credentials` |
 | `adapter_configs_registry_url_no_credential` | R-190 — an image registry's address never carries its username and password; the password lives only in `adapter_credentials` |
+| `adapter_configs_audit_sink_url_no_credential` | R-190 — an audit sink's collector address never carries a username and password; its token lives only in `adapter_credentials` |
+| `audit_events.txid` defaulting to `pg_current_xact_id()` | R-381 — the stream reads below the oldest running transaction in `(txid, id)` order, so an event that commits late is never behind a cursor. Never give it another default |
 | `pando_private` schema, granted to nobody, holding the restricted roles' passwords | R-348 — the application role cannot read the archiver's password. Never move it into `public`, where `applyGrants` would hand it to `pando_app` |
 | `pando_replicas.assertion_key` is exactly 32 bytes | R-051 — only the public half of a signing key is ever stored |
 

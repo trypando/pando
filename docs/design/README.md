@@ -23,6 +23,7 @@ Tags carry the same meaning throughout: **[D]** decided, **[P]** proposed, **[O]
 | 09 | `09-security-scanning.md` | The security score: the scanner adapter, the arithmetic, and the two places policy enforces it |
 | 10 | `10-ai-assistance.md` | The AI category, and screening a deployment plan (R-106, §7.4) |
 | 11 | `11-events-and-subscriptions.md` | The event catalog and outbox, subscriptions, signed webhooks, notification channels and preferences (issue #50) |
+| 12 | `12-audit-export.md` | The commit-ordered audit cursor, audit sinks (syslog, HTTPS), OCSF, on-demand export, and audit coverage (issue #129) |
 
 ## Reading order
 

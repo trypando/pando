@@ -31,6 +31,8 @@ func main() {
 		"cli.md":    reference.CLIMarkdown(doc),
 		"mcp.md":    reference.MCPMarkdown(doc),
 		"events.md": reference.EventsMarkdown(doc),
+
+		"audit-formats.md": reference.AuditFormatsMarkdown(),
 	} {
 		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil { //nolint:gosec // G306: documentation, world-readable on purpose.

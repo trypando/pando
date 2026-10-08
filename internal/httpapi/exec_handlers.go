@@ -83,6 +83,28 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The session's end is audited too (R-228): how long it ran and how it
+	// ended, whatever ended it. Detached from the request, which may already
+	// be gone when the session is.
+	began := time.Now()
+	ended := "error"
+	var exitCode *int
+	defer func(ctx context.Context) {
+		detail := map[string]any{
+			"workload":    workload,
+			"duration_ms": time.Since(began).Milliseconds(),
+			"reason":      ended,
+		}
+		if exitCode != nil {
+			detail["exit_code"] = *exitCode
+		}
+		s.audit(r.WithContext(ctx), audit.Event{
+			PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
+			Action: "app.exec.end", AppID: app.ID, TargetKind: "workload", TargetID: workload,
+			Detail: detail,
+		})
+	}(context.WithoutCancel(r.Context()))
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// Same-origin only. The console is served from this origin, and an exec
 		// socket reachable cross-origin would be a terminal any page could open
@@ -110,7 +132,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = session.Close() }()
 
-	pump(ctx, cancel, conn, session, log.From(r.Context()))
+	ended, exitCode = pump(ctx, cancel, conn, session, log.From(r.Context()))
 }
 
 // execTarget resolves which workload to open a terminal in.
@@ -206,7 +228,11 @@ type control struct {
 }
 
 // pump copies bytes between the socket and the session until either ends.
-func pump(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, session api.ExecSession, logger *zap.Logger) {
+// pump copies between the socket and the session until either ends. It
+// returns how the session ended — server_closed when the shell ended first,
+// client_closed when the terminal did — and the shell's exit code if it has
+// one, for app.exec.end (R-228).
+func pump(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, session api.ExecSession, logger *zap.Logger) (string, *int) {
 	// Session to socket.
 	go func() {
 		defer cancel()
@@ -252,18 +278,30 @@ func pump(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, 
 		}
 	}
 
+	// The session goroutine cancels ctx when the shell ends; a socket read
+	// that failed with ctx still live is the terminal going away.
+	ended := "client_closed"
+	if ctx.Err() != nil {
+		ended = "server_closed"
+	}
+
 	// The exit code, so the console can say how the shell ended rather than
 	// just going blank.
 	status := websocket.StatusNormalClosure
 	reason := "session ended"
-	if code, ok := session.ExitCode(); ok && code != 0 {
-		reason = "exited with status " + itoa(code)
+	var exitCode *int
+	if code, ok := session.ExitCode(); ok {
+		exitCode = &code
+		if code != 0 {
+			reason = "exited with status " + itoa(code)
+		}
 	}
 
 	shutdown, stop := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer stop()
 	_ = conn.Close(status, reason)
 	<-shutdown.Done()
+	return ended, exitCode
 }
 
 // closeWith reports a failure through the socket, since the HTTP response is

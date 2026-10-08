@@ -376,14 +376,18 @@ func (s *Server) handlePutPolicy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// What applied before, for the audit event's changes (R-390) and the
+	// sign-in check below.
+	before, err := s.PolicyStore.Load(r.Context())
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	before = s.PolicyOverlay.Apply(before)
+
 	// Turning password sign-in off with no identity provider on would leave
 	// nobody able to sign in (issue #51).
 	if s.IDP != nil {
-		before, err := s.PolicyStore.Load(r.Context())
-		if err != nil {
-			Error(w, r, err)
-			return
-		}
 		if err := s.IDP.ValidatePolicy(r.Context(), before.DisablePasswordSignIn, doc.DisablePasswordSignIn); err != nil {
 			Error(w, r, err)
 			return
@@ -397,6 +401,12 @@ func (s *Server) handlePutPolicy(w http.ResponseWriter, r *http.Request) {
 	// What now applies, startup fields included.
 	doc = s.PolicyOverlay.Apply(doc)
 
+	detail := map[string]any{"disabled_verbs": doc.DisabledVerbs,
+		"disable_password_sign_in": doc.DisablePasswordSignIn, "disable_jit_provisioning": doc.DisableJITProvisioning}
+	// Which fields changed, and from what to what (R-390).
+	for k, v := range audit.Changes(before, doc) {
+		detail[k] = v
+	}
 	s.audit(r, audit.Event{
 		PrincipalKind: audit.PrincipalKind(p.Kind),
 		PrincipalID:   p.ID,
@@ -404,8 +414,7 @@ func (s *Server) handlePutPolicy(w http.ResponseWriter, r *http.Request) {
 		Action:        "policy.update",
 		TargetKind:    "policy",
 		TargetID:      "host",
-		Detail: map[string]any{"disabled_verbs": doc.DisabledVerbs,
-			"disable_password_sign_in": doc.DisablePasswordSignIn, "disable_jit_provisioning": doc.DisableJITProvisioning},
+		Detail:        detail,
 	})
 	JSON(w, http.StatusOK, doc)
 }
@@ -469,7 +478,8 @@ func (s *Server) handlePreviewPolicy(w http.ResponseWriter, r *http.Request) {
 // including things they did inside apps they own, so reading it is a different
 // level of trust from seeing how many CPUs the host has.
 func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireInstall(w, r, authz.InstallAuditRead); !ok {
+	principal, ok := s.requireInstall(w, r, authz.InstallAuditRead)
+	if !ok {
 		return
 	}
 	if s.AuditLog == nil {
@@ -529,6 +539,10 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
+	// Who looked at the evidence is evidence (R-388). Written after the read
+	// so a failed query is not recorded as a look; the filters say what was
+	// asked.
+	s.auditRead(r, principal, "audit.read", map[string]any{"via": "list", "filters": r.URL.Query()})
 
 	// The cursor for the next page, or empty when this was the last one. Named
 	// rather than left for the client to derive: deriving it means knowing that
@@ -575,10 +589,11 @@ func (s *Server) handleListAuditArchives(w http.ResponseWriter, r *http.Request)
 // event per line, as the live log held it (R-347). The digest is sent too, so
 // a client can check what it received against the manifest.
 //
-// Not audited, like reading the log: the read is the verb's whole purpose, and
-// an entry per download would be the log recording itself being read.
+// Audited, as every read of the log is (R-388): who took a copy of a month of
+// evidence is itself evidence.
 func (s *Server) handleGetAuditArchive(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireInstall(w, r, authz.InstallAuditRead); !ok {
+	principal, ok := s.requireInstall(w, r, authz.InstallAuditRead)
+	if !ok {
 		return
 	}
 	archiveID := chi.URLParam(r, "archiveID")
@@ -593,6 +608,7 @@ func (s *Server) handleGetAuditArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = body.Close() }()
+	s.auditRead(r, principal, "audit.archive.download", map[string]any{"archive_id": rec.ID, "month": rec.Month})
 
 	h := w.Header()
 	h.Set("Content-Type", "application/gzip")

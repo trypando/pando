@@ -32,6 +32,8 @@ export const VERB_NOTES: Record<string, string> = {
   'install.upgrade': 'Upgrade Pando itself to a newer release, from the Updates screen.',
   'install.events.manage':
     'Subscribe to events across the whole installation, sign-ins included, and see or change anyone’s subscriptions.',
+  'install.audit.export':
+    'Send the audit log off the installation: add, change or remove an audit sink such as a SIEM.',
   'app.create': 'Add new apps.',
 
   'app.view': 'See the app and its settings.',

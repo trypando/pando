@@ -19,6 +19,8 @@ import (
 
 	aianthropic "github.com/trypando/pando/internal/adapter/ai/anthropic"
 	adapterapi "github.com/trypando/pando/internal/adapter/api"
+	sinkhttps "github.com/trypando/pando/internal/adapter/auditsink/https"
+	sinksyslog "github.com/trypando/pando/internal/adapter/auditsink/syslog"
 	backuplocal "github.com/trypando/pando/internal/adapter/backup/local"
 	identitylocal "github.com/trypando/pando/internal/adapter/identity/local"
 	identityoidc "github.com/trypando/pando/internal/adapter/identity/oidc"
@@ -31,6 +33,8 @@ import (
 	"github.com/trypando/pando/internal/core/assertion"
 	"github.com/trypando/pando/internal/core/assist"
 	"github.com/trypando/pando/internal/core/audit"
+	"github.com/trypando/pando/internal/core/audit/ocsf"
+	"github.com/trypando/pando/internal/core/auditstream"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/autodeploy"
 	"github.com/trypando/pando/internal/core/backup"
@@ -212,7 +216,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 			Policy: overlay.Wrap(policyStore), Overlay: overlay, Audit: audit.NewReader(db.Pool),
 			Reference: func() string { return reference.Markdown(httpapi.Reference()) },
 		},
-		AdapterKinds: []adapterapi.KindInfo{aianthropic.Info(), secretslocal.Info(), registryoci.Info()},
+		AdapterKinds: []adapterapi.KindInfo{aianthropic.Info(), secretslocal.Info(), registryoci.Info(), sinkhttps.Info(), sinksyslog.Info()},
 		Allocations:  allocations,
 		Capacity:     &capacity.Snapshots{Registry: registry, Allocations: allocations},
 
@@ -249,6 +253,13 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		PolicyOverlay: overlay,
 		Startup:       startup,
 		AuditLog:      audit.NewReader(db.Pool),
+		AuditStream:   audit.NewReader(db.Pool),
+		AuditReads:    &audit.ReadThrottle{},
+		AuditEncoders: map[string]audit.Encoder{adapterapi.AuditFormatOCSF: ocsf.Encode},
+		AuditSinks: &auditstream.Service{Configs: adapters, States: state.NewAuditSinks(db),
+			Credentials: state.NewAdapterCredentials(db, secretsAdapter, "sec_local"), New: harnessSink},
+		AuditSinkCheck: &auditstream.Service{Configs: adapters,
+			Credentials: state.NewAdapterCredentials(db, secretsAdapter, "sec_local"), New: harnessSink},
 
 		Groups:  state.NewGroups(db),
 		Roles:   state.NewRoles(db),
@@ -636,3 +647,14 @@ func declaredAI(startup *config.Config) []assist.Declared {
 // testTokenKey is the API token key every test install uses. In production it
 // is a random file under /var/lib/pando (core/tokenkey).
 var testTokenKey = []byte("0123456789abcdef0123456789abcdef")
+
+// harnessSink is the audit sinks this harness can build.
+func harnessSink(kind string) adapterapi.AuditSinkAdapter {
+	switch kind {
+	case sinkhttps.Kind:
+		return sinkhttps.New()
+	case sinksyslog.Kind:
+		return sinksyslog.New()
+	}
+	return nil
+}

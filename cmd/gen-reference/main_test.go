@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/trypando/pando/internal/core/audit"
+	"github.com/trypando/pando/internal/core/audit/ocsf"
 	"github.com/trypando/pando/internal/httpapi"
 	"github.com/trypando/pando/internal/reference"
 )
@@ -42,5 +45,18 @@ func TestR261_EveryRouteReachesThePage(t *testing.T) {
 	require.NotEmpty(t, doc.Errors)
 	for _, e := range doc.Errors {
 		require.Contains(t, page, "`"+string(e.Code)+"`")
+	}
+}
+
+// TestR384_EveryActionReachesTheFormatsPage asserts R-384: docs/audit-formats.md
+// lists every catalogued action's OCSF class, and every native column.
+func TestR384_EveryActionReachesTheFormatsPage(t *testing.T) {
+	page := reference.AuditFormatsMarkdown()
+	for _, r := range ocsf.Table() {
+		require.Contains(t, page, fmt.Sprintf("| `%s` | %d %s | %d %s | %d |", r.Action, r.ClassUID, r.ClassName, r.ActivityID, r.ActivityName, r.TypeUID()))
+	}
+	require.Len(t, ocsf.Table(), len(audit.Actions))
+	for _, col := range []string{"`occurred_at`", "`schema_version`", "`actor_email`"} {
+		require.Contains(t, page, col)
 	}
 }

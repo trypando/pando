@@ -305,6 +305,7 @@ Set on the `pando` service in `docker-compose.yml`, or in the environment.
 | `PANDO_BASE_DOMAIN` | `localtest.me` | Domain per-app subdomains are taken from, when using hostname routing. |
 | `PANDO_DATABASE_URL` | the bundled Postgres | Point Pando at an existing database instead. |
 | `PANDO_SERVER_EXTERNAL_URL` | — | The address browsers reach Pando on, such as `https://pando.example.com`. Set this whenever something else terminates TLS — it is what marks the session cookie `Secure`. |
+| `PANDO_SERVER_TRUSTED_PROXIES` | — | The proxies in front of Pando, such as `10.0.0.5`, separated by commas. Set it so the audit log records each client's own address rather than the proxy's. |
 | `PANDO_POLICY_<SETTING>` | — | Fixes a host policy setting, such as `PANDO_POLICY_MIN_SECURITY_SCORE=70`. It cannot then be changed in the console. Compose passes only the variables listed on the `pando` service, so add it there. See [the reference](docs/reference.md#host-policy-at-startup). |
 
 ## What Pando does not do

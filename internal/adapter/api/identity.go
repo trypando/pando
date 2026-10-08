@@ -49,6 +49,13 @@ const (
 	// create a repository on push, which mint a password — turned out to be
 	// the planner's questions. See imageregistry.go.
 	CategoryImageRegistry Category = "image_registry"
+
+	// CategoryAuditSink is the thirteenth (R-252, R-382, issue #129): a
+	// destination the audit log is pushed to as it is written — syslog, a
+	// SIEM's HTTPS ingest. Built from its row on each delivery pass, like the
+	// image registry, so a rotated token is used on whichever replica leads.
+	// See auditsink.go and design 12.
+	CategoryAuditSink Category = "audit_sink"
 )
 
 // Adapter is implemented by every adapter in every category.

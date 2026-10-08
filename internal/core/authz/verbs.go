@@ -80,6 +80,12 @@ const (
 	// every app and about sign-ins, which is why seeing one app is not enough.
 	InstallEventsManage Verb = "install.events.manage"
 
+	// InstallAuditExport sends the audit log off the installation: creating,
+	// changing or removing an audit sink (R-385). Not part of
+	// install.audit.read — an auditor reads the log where it is, and pointing
+	// it somewhere new is a different thing to trust someone with.
+	InstallAuditExport Verb = "install.audit.export"
+
 	// AppCreate is install-scoped despite its name: there is no app yet when it
 	// is checked. Sequence A step 1 has always called it install-level.
 	AppCreate Verb = "app.create"
@@ -149,6 +155,7 @@ var Verbs = []Verb{
 	InstallDeploysApprove,
 	InstallUpgrade,
 	InstallEventsManage,
+	InstallAuditExport,
 	AppCreate,
 
 	AppView,
@@ -253,7 +260,7 @@ func InstallScoped(v Verb) bool {
 	switch v {
 	case InstallView, InstallUsersManage, InstallPolicyManage,
 		InstallAdaptersManage, InstallAuditRead, InstallBackupManage,
-		InstallTokensManage, InstallDeploysApprove, InstallUpgrade, InstallEventsManage, AppCreate:
+		InstallTokensManage, InstallDeploysApprove, InstallUpgrade, InstallEventsManage, InstallAuditExport, AppCreate:
 		return true
 	default:
 		_, ok := everyApp[v]

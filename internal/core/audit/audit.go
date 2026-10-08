@@ -3,10 +3,12 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/trypando/pando/internal/clientaddr"
 	"github.com/trypando/pando/internal/core/events"
 	"github.com/trypando/pando/internal/errs"
 )
@@ -41,6 +43,57 @@ type Event struct {
 	TargetID   string
 	RequestID  string
 	Detail     map[string]any
+
+	// Outcome is success, denied or failed (R-379). Empty derives it from
+	// the action (OutcomeOf), which is right for every event whose action
+	// name already says how it ended. A finished deploy, whose one action
+	// covers both, sets it.
+	Outcome Outcome
+}
+
+// Outcome is how the action an event records ended (R-379).
+type Outcome string
+
+const (
+	OutcomeSuccess Outcome = "success"
+	OutcomeDenied  Outcome = "denied"
+	OutcomeFailed  Outcome = "failed"
+)
+
+// failedActions end in failure without saying so in their last segment.
+var failedActions = map[string]bool{
+	"app.failed":               true,
+	"app.delete.backup_failed": true,
+	"upgrade.rolled_back":      true,
+}
+
+// OutcomeOf is the outcome an action's name says (design 12 §3.1): .denied
+// and .refused are denials, .failed and the few listed above are failures,
+// and everything else succeeded. TestR379_EveryActionHasAnOutcome holds the
+// catalog to it.
+func OutcomeOf(action string) Outcome {
+	switch {
+	case strings.HasSuffix(action, ".denied"), strings.HasSuffix(action, ".refused"):
+		return OutcomeDenied
+	case strings.HasSuffix(action, ".failed"), failedActions[action]:
+		return OutcomeFailed
+	default:
+		return OutcomeSuccess
+	}
+}
+
+// target is what the row records the event as being about. Always set
+// (R-379): an event naming an app and nothing narrower is about the app, and
+// one naming neither is about the installation.
+func (e Event) target() (kind, id string) {
+	switch {
+	case e.TargetKind != "":
+		return e.TargetKind, e.TargetID
+	case e.AppID != "":
+		return "app", e.AppID
+	default:
+		return "install", "install"
+	}
 }
 
 // Writer appends to the audit log.
@@ -72,20 +125,41 @@ func (w *Writer) Write(ctx context.Context, e Event) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	outcome := e.Outcome
+	if outcome == "" {
+		outcome = OutcomeOf(e.Action)
+	}
+	targetKind, targetID := e.target()
+	// Where the request came from (R-379, R-380), set by the API and the
+	// proxy. A system process's context has none, and its rows say so.
+	from, _ := clientaddr.From(ctx)
+
+	// The acting person's name and email as they are now, looked up in the
+	// insert so a renamed user's past events keep the name they acted under,
+	// and a SIEM that cannot join on Pando's IDs still has one. A token acting
+	// for someone is that person; an account token is nobody's.
 	_, err = tx.Exec(ctx, `
 		INSERT INTO audit_events (
 			principal_kind, principal_id, on_behalf_of,
-			action, app_id, target_kind, target_id, request_id, detail
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		e.PrincipalKind,
+			action, app_id, target_kind, target_id, request_id, detail,
+			outcome, source_ip, peer_ip, user_agent, actor_name, actor_email
+		)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, u.display_name, u.email
+		FROM (SELECT 1) AS one
+		LEFT JOIN users u ON u.id = coalesce($3::text, CASE WHEN $1::text = 'user' THEN $2::text END)`,
+		string(e.PrincipalKind),
 		nullable(e.PrincipalID),
 		nullable(e.OnBehalfOf),
 		e.Action,
 		nullable(e.AppID),
-		nullable(e.TargetKind),
-		nullable(e.TargetID),
+		targetKind,
+		nullable(targetID),
 		nullable(e.RequestID),
 		encoded,
+		string(outcome),
+		nullable(from.SourceIP),
+		nullable(from.PeerIP),
+		nullable(from.UserAgent),
 	)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not write an audit event.", err)

@@ -1166,6 +1166,13 @@ third whether a repository per app can work at all. ECR's token minting and its 
 exist first, against a Distribution registry's basic auth and create-on-push, are provider vocabulary
 that core no longer learns. §11.
 
+**[D] The thirteenth is the audit sink (R-252, R-382, issue #129), and it passes on vocabulary.** The
+planner asks it nothing; the delivery engine asks only how many events a batch may hold and in which
+format. What it hides is everything else: Splunk HEC's envelope and `Splunk` auth scheme, Datadog's
+`DD-API-KEY`, Elastic's bulk action lines and partial failures, RFC 5424 framing and a client
+certificate. Built instead as a subscription destination, every one of those would have been a
+provider switch in core. Design 12 §5.
+
 **[D] The tenth is AI (R-258), and it passes both halves wide.** Whether a screener can read a
 repository, how much of one, and which of R-106's three functions it performs are all questions with
 consequences before any work starts — capabilities data, per R-254. And models, context windows,
@@ -1356,6 +1363,8 @@ publishes, which is a step of detection (R-094; `internal/detect/registryprobe`)
 | source | `git` | any git host: username and token over HTTPS, or an SSH key with the host's key pinned. No repository listing (§10) |
 | image_registry | `oci` | Distribution, Harbor, GHCR, Artifact Registry, Zot: basic auth or anonymous, a repository per app (§11). Not seeded — a single Docker host needs none. |
 | image_registry | `ecr` | Amazon ECR: a password minted from an access key before each push and pull, one repository for every build (§11). Not seeded. |
+| audit_sink | `syslog` | RFC 5424 over TCP with TLS (RFC 5425 framing), mutual TLS optional; the event as MSG, the action as MSGID (design 12 §5). Not seeded. |
+| audit_sink | `https` | Batched POST of NDJSON, a JSON array, Splunk HEC envelopes or Elastic bulk lines, with a token; presets for Splunk HEC, Datadog, Elastic, Sumo Logic and Azure Monitor (Sentinel) (design 12 §5). Not seeded. |
 
 **[P] Podman is the Docker adapter pointed at a different socket, not an adapter of its own.** Its
 Docker-compatible API does what this adapter asks, and the adapter's integration suite passes against

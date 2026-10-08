@@ -337,7 +337,7 @@ func inlineCredential(cfg map[string]any) string {
 }
 
 func categories() []string {
-	return []string{"runtime", "routing", "builder", "secrets", "services", "identity", "notify", "backup", "scanner", "ai", "image_registry"}
+	return []string{"runtime", "routing", "builder", "secrets", "services", "identity", "notify", "backup", "scanner", "ai", "image_registry", "audit_sink"}
 }
 
 func knownCategory(c string) bool {
