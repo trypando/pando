@@ -100,6 +100,16 @@ func TestLogsCanNameAPart(t *testing.T) {
 	require.Equal(t, "hello\n", got.out)
 }
 
+// A tail and a follow reach the endpoint as query parameters (O-51): the CLI
+// follows the same shared stream the console does.
+func TestLogsPassTailAndFollow(t *testing.T) {
+	api := newAPI(t).reply("GET /apps/app_01HQ8/logs", "hello\n")
+
+	got := run(t, api, "", "logs", "app_01HQ8", "-n", "50", "--follow")
+	require.NoError(t, got.err, got.errOut)
+	require.True(t, api.sawPath("/apps/app_01HQ8/logs?follow=true&tail=50"), "saw %v", api.calls)
+}
+
 // lineWith returns the output line naming a part.
 func lineWith(t *testing.T, out, name string) string {
 	t.Helper()

@@ -236,7 +236,9 @@ POST /api/v1/apps/{id}/grants
 ### 2.6 Runtime access
 
 ```
-GET  /api/v1/apps/{id}/logs?follow=true      SSE
+GET  /api/v1/apps/{id}/logs?tail=N          plain text, one-shot; tail capped at 5000
+GET  /api/v1/apps/{id}/logs?follow=true      plain text, followed (the CLI's -f)
+GET  /api/v1/apps/{id}/logs/stream           SSE, followed (the console)
 GET  /api/v1/apps/{id}/exec                  WebSocket upgrade; requires app.exec
 GET  /api/v1/apps/{id}/status                observed state, health, restarts
 ```
@@ -244,6 +246,13 @@ GET  /api/v1/apps/{id}/status                observed state, health, restarts
 **[D]** `/exec` checks `app.exec`, then host policy (R-085, returning `POLICY_EXEC_DISABLED`), then writes the audit event, **then** opens the session. Audit before access, so an aborted session is still recorded.
 
 **[D]** It is a `GET`, not the `POST` this line said until phase 8. A WebSocket handshake is a GET by protocol — RFC 6455 requires it and a browser's `new WebSocket()` cannot issue anything else — so `POST` was not implementable from the console the endpoint exists for. Nothing else about the ordering or the checks changes.
+
+**[P]** A followed log is read from one shared runtime stream per app part per replica (O-51), as
+server-sent events at `/logs/stream` for the console and as plain text at `/logs?follow=true` for
+the CLI, which prints the body as it arrives. This line used to say `follow=true` was SSE; the
+handler ignored `follow` until O-51, and splitting the two formats keeps `pando logs -f` printing
+the log rather than SSE framing. Both re-check `app.logs.read` while connected. See
+`notes-shared-log-streams-o51.md`.
 
 ### 2.7 Identity and principals
 

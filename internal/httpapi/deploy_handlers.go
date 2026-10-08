@@ -16,6 +16,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
+	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
@@ -555,39 +556,26 @@ func workloadStatuses(s *spec.AppSpec, observed api.ObservedBundle) []WorkloadSt
 	return out
 }
 
+// handleAppLogs is the app's own output as plain text.
+//
+// One-shot by default: the last `tail` lines, capped at logstream.MaxTail so
+// one request cannot ask the runtime for an app's whole history. With
+// follow=true it stays open on the replica's shared stream for the part
+// (O-51), which is what `pando logs --follow` reads; the console reads the
+// same stream as server-sent events from /logs/stream.
 func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
-	app, ok := s.requireControl(w, r, authz.AppLogsRead)
+	src, ok := s.appLogSource(w, r)
 	if !ok {
 		return
 	}
-	if app.PinnedSpecID == "" {
-		Error(w, r, errs.New(errs.StateInvalid, "This app is not running yet."))
+	if follow, _ := strconv.ParseBool(r.URL.Query().Get("follow")); follow {
+		s.followAppLogs(w, r, src, plainViewer{w: w, rc: http.NewResponseController(w)})
 		return
 	}
 
-	rev, found, err := s.Apps.RevisionByID(r.Context(), app.PinnedSpecID)
-	if err != nil || !found {
-		Error(w, r, orNotFound(err))
-		return
-	}
-	runtime, ok := s.Registry.Runtime(rev.Body.Runtime.AdapterRef)
-	if !ok {
-		Error(w, r, errs.New(errs.AdapterUnavailable, "The app's runtime is not configured."))
-		return
-	}
-
-	workload := r.URL.Query().Get("workload")
-	if workload == "" {
-		if primary, ok := rev.Body.PrimaryWorkload(); ok {
-			workload = primary.Name
-		}
-	}
 	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
-	if tail == 0 {
-		tail = 200
-	}
-
-	rc, err := runtime.Logs(r.Context(), apiWorkloadRef(app.ID, workload), apiLogOptions(false, tail))
+	rc, err := src.runtime.Logs(r.Context(), apiWorkloadRef(src.key.AppID, src.key.Workload),
+		apiLogOptions(false, logstream.ClampTail(tail)))
 	if err != nil {
 		Error(w, r, err)
 		return

@@ -38,6 +38,7 @@ import (
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
+	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
@@ -214,6 +215,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Reconciles:         state.NewReconciles(db),
 		Deployer:           deployer,
 		Logs:               logStore,
+		LogStreams:         logstream.New(),
 		Secrets:            secrets,
 		Detections:         state.NewDetections(db),
 		Sources:            sources,

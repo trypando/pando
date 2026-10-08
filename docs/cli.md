@@ -975,6 +975,7 @@ An app made of several parts — a web service, a worker, a database it brought 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `-f`, `--follow` |  | keep the connection open and print new lines |
+| `-n`, `--tail` | `0` | how many of the most recent lines to print, at most 5000 (default 200; with --follow, the recent lines Pando holds) |
 | `-w`, `--workload` |  | which part of the app to read (default: the primary one) |
 
 ### `mcp`
