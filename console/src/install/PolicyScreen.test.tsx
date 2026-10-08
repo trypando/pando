@@ -15,15 +15,19 @@ function render(policy: object, config?: object) {
   const queries = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   queries.setQueryData(['policy'], policy);
   queries.setQueryData(['config'], config ?? { file: '', settings: [], policy: [] });
-  // The approval section asks for the chosen apps by ID and a search's worth
-  // of others (issue #72); both answers, as the server would give them.
-  const apps = [{ id: 'app_01', name: 'crewmate' }];
+  // The approval section asks for the chosen apps by ID and searches for
+  // others as the administrator types (issue #72); both answers, as the
+  // server would give them.
+  const apps = [
+    { id: 'app_01', name: 'crewmate' },
+    { id: 'app_02', name: 'nginx' },
+  ];
   const chosen = (policy as { deploy_approval_apps?: string[] }).deploy_approval_apps ?? [];
-  queries.setQueryData(['apps', 'approval-policy', chosen, ''], {
-    picked: apps.filter((a) => chosen.includes(a.id)),
-    found: apps,
-    more: false,
-  });
+  queries.setQueryData(
+    ['apps', 'approval-policy', 'picked', chosen.slice(0, 100)],
+    apps.filter((a) => chosen.includes(a.id)),
+  );
+  queries.setQueryData(['apps', 'approval-policy', 'search', ''], apps);
   return renderToString(
     <QueryClientProvider client={queries}>
       <Policy canEdit />
@@ -60,8 +64,17 @@ describe('the Policy screen’s egress and approval settings (R-181, R-183, R-15
     expect(html).toContain('crewmate');
     // An app that has gone is still listed, so it can be taken off.
     expect(html).toContain('app_gone');
+    expect(html).toContain('Pando can’t find app_gone');
+    expect(html).toContain('aria-label="Remove crewmate"');
     expect(html).toContain('Approvals needed');
     expect(html).toContain('value="168"');
+  });
+
+  it('draws only the chosen apps, not every app in the install (issue #72)', () => {
+    const html = render({ deploy_approval_apps: ['app_01'] });
+    expect(html).toContain('crewmate');
+    expect(html).not.toContain('nginx');
+    expect(html).toContain('Apps that always need approval');
   });
 
   it('locks a field fixed at startup', () => {
