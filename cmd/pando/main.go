@@ -698,6 +698,7 @@ func serve(ctx context.Context, configPath string) error {
 		Authz:       authorizer,
 		Policy:      policyStore,
 		Planner:     appPlanner,
+		Capacity:    allocations,
 		Deployer:    deployQueue,
 		Audit:       httpapi.AuditFunc(auditor),
 		Notifier:    notifyRouter,

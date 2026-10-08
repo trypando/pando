@@ -51,10 +51,40 @@ The indexed sum has no such state to drift.
 moves them between runtimes and sizes, changes their states and rolls them back,
 and checks the sum against the old JSON query each time.
 
-Unchanged and worth knowing: a first deploy holds nothing until it is pinned, at
-the end of the deploy, so two first deploys planned at the same moment can each
-see room the other is about to take. That was true before this change and is
-not made worse by it.
+### 2.1 Deploys in flight reserve what they ask for
+
+An app used to hold nothing until it was pinned, at the end of its deploy, so
+two first deploys planned at the same moment could each see room the other was
+about to take, and both pass. Two changes close that:
+
+- **A deploy reserves from the moment it passes.** Migration 62 copies what a
+  deployment's revision asks for onto the deployment row (`reserve_*`, by
+  trigger on insert). `AllocatedOn` counts every deploy that is pending
+  (queued included), building or applying, beside the pinned apps. An app
+  counts once, at the larger of its pin and its deploy's reservation, resource
+  by resource, so a redeploy of a running app is not two apps. Any other
+  status releases the reservation, whatever wrote it: the runner finishing,
+  a cancellation, an approval's plan failing, or `RecoverInFlight` failing a
+  deploy a stopped replica left. A deploy `RecoverInFlight` puts back in the
+  queue keeps its reservation, because it will run.
+- **The check and the reservation are one step per runtime.**
+  `state.Allocations.Hold` takes a transaction-scoped advisory lock keyed on
+  the runtime ref, on a connection outside the pool (callers waiting on the
+  lock while each holding a pooled connection could leave the holder none).
+  `approval.Service.Deploy` runs the plan and the deployment's creation inside
+  it, and `Approve` runs the final plan and `StartApproved` inside it. The
+  lock is database-wide, so it serializes replicas too. Only deploy starts on
+  the same runtime wait on each other; dry-run plans and other runtimes do not.
+
+`TestR242_ConcurrentFirstDeploysCannotBothTakeTheLastRoom` holds two plans'
+reads of what is committed open together. Without the lock both pass; with it
+exactly one is refused with R-242's message. It also covers a failed deploy
+giving its room back, a redeploy counted once, and a deploy a stopped replica
+left being released by `RecoverInFlight`.
+
+Not covered: auto-deploy (`reconciler.AutoDeploy`) creates its deployment
+without a plan, as before. Its deploy reserves like any other once created,
+but it is not refused for room.
 
 ## 3. POST /policy/preview: read only what the candidate could block
 
@@ -74,6 +104,11 @@ filter leaves out passes every check, so the result equals checking every app:
 | Egress loosening forbidden (R-183) | Apps with egress settings of their own (only those loosen). |
 | Egress restriction unsupported (R-186) | On a runtime that cannot enforce egress: apps with settings of their own, or every app when the candidate restricts an app with none. |
 | Isolation floors (R-024, R-114) | Apps whose runtime's (or builder's) class is below the higher of the candidate's floor and the app's own. |
+
+The runtime floor is now its own check (`checkRuntimeFloor`) and is reported
+for every app. It used to be reported only for apps that name a builder, so an
+image app on a runtime below a raised floor was missing from the preview,
+though its next deploy is refused (`TestR114_ARaisedRuntimeFloorNamesImageAppsToo`).
 
 "What the changed fields can affect" was considered and rejected: an app that
 already violates a field the administrator did not touch is still blocked by

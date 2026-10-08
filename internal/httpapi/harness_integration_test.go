@@ -304,6 +304,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Authz:       authorizer,
 		Policy:      effectivePolicy,
 		Planner:     appPlanner,
+		Capacity:    allocations,
 		Deployer:    deployQueue,
 		Audit:       httpapi.AuditFunc(auditor),
 		Approvers:   authzStore,
