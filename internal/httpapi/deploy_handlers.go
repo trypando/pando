@@ -354,10 +354,32 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = rc.Flush()
 
+	// A deploy can run for many minutes, and a stream checked once at the
+	// start would keep showing its log to someone whose access was revoked
+	// meanwhile (R-048). Checked again as the app log stream is (O-51).
+	every := s.DeployLogReauthEvery
+	if every <= 0 {
+		every = logstream.DefaultReauthEvery
+	}
+	reauth := time.NewTicker(every)
+	defer reauth.Stop()
+	allowed := s.stillAllowed(r, app.ID, authz.AppLogsRead)
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-reauth.C:
+			if err := allowed(r.Context()); err != nil {
+				// A line and then the stream's ordinary end, which every
+				// client of this endpoint already stops on: the deploy log
+				// is Pando's own output, so a line from Pando belongs in it.
+				fmt.Fprint(w, "data: Your access to this app's logs has ended, so Pando stopped showing this deploy's log. "+
+					"Someone with permission to manage the app's access can grant app.logs.read again.\n\n")
+				fmt.Fprint(w, "event: end\ndata: \n\n")
+				_ = rc.Flush()
+				return
+			}
 		case line, open := <-updates:
 			if !open {
 				fmt.Fprint(w, "event: end\ndata: \n\n")

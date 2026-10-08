@@ -5,6 +5,7 @@ package httpapi_test
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -185,6 +186,36 @@ func TestR048_ALogStreamEndsWhenTheViewersSessionIsRevoked(t *testing.T) {
 	ended := stream.next(t)
 	require.Equal(t, "revoked", ended.name)
 	require.Contains(t, ended.data, "access")
+}
+
+// TestR048_ADeployLogStreamEndsWhenTheViewersSessionIsRevoked asserts R-048
+// for a deploy's live log: a stream checked only when it opened kept showing
+// a long build's output to someone whose session had since been revoked.
+func TestR048_ADeployLogStreamEndsWhenTheViewersSessionIsRevoked(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	i.Server.DeployLogReauthEvery = 20 * time.Millisecond
+	admin := i.admin()
+	appID := i.appWithSpec(admin, "notes")
+	depID := i.deploymentFor(appID, false)
+	sink := i.Server.Logs.Writer(depID)
+	t.Cleanup(func() { _ = sink.Close() })
+	_, err := fmt.Fprintln(sink, "=> Building")
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(i.handler)
+	t.Cleanup(srv.Close)
+
+	viewer := i.admin()
+	stream := openSSE(t, srv.URL, viewer, "/apps/"+appID+"/deployments/"+depID+"/logs")
+	require.Equal(t, sseEvent{data: "=> Building"}, stream.next(t))
+
+	got := i.do(viewer, http.MethodDelete, "/sessions", nil)
+	require.Less(t, got.Code, 300, got.String())
+
+	told := stream.next(t)
+	require.Contains(t, told.data, "access to this app's logs has ended")
+	require.Equal(t, "end", stream.next(t).name)
 }
 
 func TestLogsTailIsCapped(t *testing.T) {

@@ -144,6 +144,10 @@ type Server struct {
 	// everyone on this replica watching it (O-51). Nil makes the following
 	// endpoints answer that live logs are not available.
 	LogStreams *logstream.Hub
+	// DeployLogReauthEvery is how often a connected deploy-log stream checks
+	// the viewer's access again (R-048). logstream.DefaultReauthEvery when
+	// zero; tests shorten it.
+	DeployLogReauthEvery time.Duration
 	// LogOwner finds the replica running a deploy, so its live log can be
 	// read from any replica (issue #72). Nil with one replica.
 	LogOwner DeployLogOwner
