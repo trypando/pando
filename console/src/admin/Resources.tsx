@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Banner, Button, Dialog, Input, Select, StatusIndicator } from '@design';
 
 import { api } from '@api/client';
+import type { App } from '@api/types.gen';
 import { Quiet, messageOf } from '../install/Accounts';
 import { Environment } from './Environment';
 import { CarriedFiles } from './CarriedFiles';
@@ -37,7 +38,8 @@ interface Volume {
   handle: string;
 }
 
-export function Resources({ appID, focus }: { appID: string; focus?: string }) {
+export function Resources({ app, focus }: { app: App; focus?: string }) {
+  const appID = app.id;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-7)' }}>
       <SourceSection appID={appID} />
@@ -50,7 +52,7 @@ export function Resources({ appID, focus }: { appID: string; focus?: string }) {
           section. */}
       <Volumes appID={appID} focus={focus === 'storage'} />
       <Egress appID={appID} focus={focus === 'egress'} />
-      <DeploySection appID={appID} />
+      <DeploySection app={app} />
     </div>
   );
 }

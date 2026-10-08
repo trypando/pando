@@ -14,6 +14,7 @@
 
 import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateAppLists } from './appList';
 import { Button } from '@design';
 
 import { api, base } from '@api/client';
@@ -35,7 +36,7 @@ export function AppImage({ app }: { app: App }) {
 
   const refresh = (updated: App) => {
     queries.setQueryData(['apps', app.id], keepVerbs(updated));
-    void queries.invalidateQueries({ queryKey: ['apps'] });
+    void invalidateAppLists(queries);
     void queries.invalidateQueries({ queryKey: ['me', 'apps'] });
   };
 

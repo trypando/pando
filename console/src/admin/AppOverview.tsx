@@ -18,6 +18,7 @@ import { useNarrow } from '../ui/narrow';
 import { MEASURE } from '../ui/layout';
 import { LineSkeleton } from '../ui/Loading';
 import { relative } from '../ui/time';
+import { deploymentsInterval } from '../ui/polling';
 import { deployLabel, deployStatus } from '../ui/deploys';
 import { Security } from './Security';
 import { AppImage } from './AppImage';
@@ -58,12 +59,10 @@ export function AppOverview({
     queryFn: () => api.get<{ deployments: ApprovalDeployment[] | null }>(`/apps/${app.id}/deployments`),
     // While a deploy waits for approval, somebody else's answer is what moves
     // it, so it is asked again now and then rather than left until a reload.
-    refetchInterval: (query) =>
-      app.state === 'deploying'
-        ? 3_000
-        : (query.state.data?.deployments ?? []).some(isAwaiting)
-          ? 15_000
-          : false,
+    // While one runs it is not asked at all: the app screen reads it again
+    // when the app's status says the deploy has finished
+    // (useRecordFollowsStatus), and the deploy's own log streams.
+    refetchInterval: (query) => deploymentsInterval(query.state.data?.deployments),
   });
 
   // Every revision, so this screen can tell the pinned one from the newest.

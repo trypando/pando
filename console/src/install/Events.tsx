@@ -34,6 +34,7 @@ import { Table } from '../ui/Table';
 import { ShowMore, usePaged, type PageOf } from '../ui/paged';
 import { relative } from '../ui/time';
 import { Disclosure } from '../ui/Disclosure';
+import { deliveriesInterval } from '../ui/polling';
 
 interface EventDef {
   name: string;
@@ -544,8 +545,10 @@ function SubscriptionDetail({
   const deliveries = useQuery({
     queryKey: ['deliveries', id],
     queryFn: () => api.get<{ deliveries: Delivery[] }>(`/subscriptions/${id}/deliveries`),
-    // Pending deliveries move on their own; the list follows them.
-    refetchInterval: (q) => (q.state.data?.deliveries?.some((d) => d.status === 'pending') ? 3_000 : false),
+    // Pending deliveries move on their own; the list follows them, as often
+    // as they can move (deliveriesInterval) rather than every three seconds
+    // through hours of retries.
+    refetchInterval: (q) => deliveriesInterval(q.state.data?.deliveries),
   });
 
   const refresh = () => {

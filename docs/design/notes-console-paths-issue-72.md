@@ -70,3 +70,53 @@ the target install has more of.
 | The access assistant's search tools for people, apps and groups (O-54) | the access-assistant part |
 | Pinning Docker Hub images with a `HEAD` request, and readable rate-limit errors | the registry part |
 | Console polling: how often each screen asks, and only while it is visible | the console-polling part |
+
+## The console's polling budget (the console-polling part)
+
+What one open console asks the server for while it sits on a screen, after the change. A poll
+stops while the browser tab is hidden (React Query runs no `refetchInterval` in the background),
+and every interval lives in `console/src/ui/polling.ts` so the budget can be read in one place.
+
+| Where | Asks for | How often | Before |
+|---|---|---|---|
+| Every screen, signed in | `GET /me/notifications/unread`, the count alone (R-377); the list is read when the bell opens | 60 s | `GET /me/notifications`, a page of the inbox with its count, every 60 s |
+| An app's screen, any tab | `GET /apps/{id}/status`, one query shared by the parts table, the log's part picker, the deploy settings and the screen | 3 s while deploying; 5 s while degraded or a part is restarting, stopped, missing or unhealthy; 30 s once settled | 5 s, on Overview and Logs only, whatever the state |
+| | the app's record, its deploys and its security report | once, when the status says the app's state moved on (`useRecordFollowsStatus`) | the record never; a finished deploy showed when something else invalidated it |
+| Overview | `GET /apps/{id}/deployments` | 30 s while a deploy waits for approval, otherwise never | 3 s while deploying, 15 s while awaiting approval |
+| | `GET /apps/{id}/usage` | 30 s, only while the section is on screen | 10 s |
+| | `GET /apps/{id}/security` | 5 s while scanning, 10 s while deploying, only while on screen | 2 s while scanning or deploying |
+| Logs | `GET /apps/{id}/deployments` | as Overview; the deploy log and the app's output stream (O-51) | 3 s while deploying |
+| Approvals, and the sidebar's count | the first page of `GET /approvals`, merged into the pages loaded | 60 s | every loaded page, every 60 s |
+| An app's Events tab | the first page of `GET /apps/{id}/events`, merged | 15 s | every loaded page, every 15 s |
+| A subscription's dialog | `GET /subscriptions/{id}/deliveries` | 3 s while a delivery awaits its first attempt; when the next retry is due, 3 to 60 s apart; never once none is pending | 3 s while any was pending, through hours of retries |
+| Admin sidebar | `GET /apps?limit=1` and `GET /users?limit=1`, for `total` (exact to 10,000, O-53) | kept 5 minutes; a change made in the console asks at once | kept 10 s, and read again on focus |
+
+At 5,000 consoles open on settled apps' overviews this is about 5,000 × (1/60 + 1/30 + 1/30) ≈ 420
+requests a second, where it was about 5,000 × (1/60 + 1/5 + 1/10) ≈ 1,580. A console on any other
+screen asks once a minute. Unchanged, and bounded by what one person is doing: the apps list asks
+about the rows that are deploying or being scanned, by ID, every 5 s (at most 100); detection asks
+every 500 ms while it runs, for the app being added; Capacity refreshes at the interval the server
+gives; Updates asks hourly, and every 5 s while an upgrade runs.
+
+**Refetch on focus is off by default [P].** On, React Query read every query on the screen again
+(a dozen on an app's screen) each time the window took focus, in every open console. It is on for
+the queries a person returning to the tab looks at, each one row or one page: who is signed in
+(`GET /me`), the inbox count, the app's status, and the first page of approvals and of an app's
+events. A screen still reads its queries again when it is opened, once they are older than the
+10-second `staleTime`.
+
+**Other changes in the same part.**
+
+- **Pickers and names look accounts up instead of reading them all.** The audit log's names, an
+  account's activity and the access assistant's people picker read the newest 500 accounts and
+  looked everything up in that. They now ask `GET /users?id=…` about the account IDs on screen (100
+  to a request) and `GET /users?q=…&limit=8` for what is typed.
+- **A change invalidates what it changed.** Deploy, accept, approve, start, stop, restart, rename,
+  image and add-app invalidated every `['apps', …]` query: every app's record and every list in the
+  cache. They now invalidate the app's own queries and the app lists (`invalidateApp` and
+  `invalidateAppLists` in `console/src/admin/appList.ts`).
+- **Paged lists poll their first page [P].** A list with "Show more" polls its first page and
+  merges it (`console/src/ui/headPoll.ts`). With one page loaded, the fresh page replaces it. With
+  more, a full fresh page leads and the old first page's rows it pushed down follow; a short one
+  ends the list there; later pages drop what the fresh page holds. A request answered on a later
+  page leaves the list when the screen is next opened.

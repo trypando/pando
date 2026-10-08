@@ -14,7 +14,7 @@ import { Button, Checkbox, Input, Select } from '@design';
 import { api } from '@api/client';
 import { AIDialog, AIHeading, AIPrompt, AnsweredBy } from '../ui/AskAI';
 import { PeopleField } from '../ui/PeopleField';
-import type { Person } from '../ui/PeopleField';
+import { useNamedPeople } from '../ui/people';
 import { AI_PHRASES, AiThinking } from '../ui/AiThinking';
 import { Quiet, refusal } from './Accounts';
 
@@ -46,12 +46,9 @@ export function AccessAI({ onClose }: { onClose: () => void }) {
     queryKey: ['verbs'],
     queryFn: () => api.get<{ verbs: { verb: string; scope: string }[] | null }>('/verbs'),
   });
-  const users = useQuery({
-    queryKey: ['users', 'people'],
-    queryFn: () => api.get<{ users: Person[] }>('/users?limit=500'),
-    retry: false,
-  });
-  const people = users.data?.users ?? [];
+  // The people the draft names, asked about by ID; the field searches the
+  // server for anyone else (issue #72, O-54).
+  const people = useNamedPeople(draft?.group?.members ?? []);
 
   const ask = useMutation({
     mutationFn: (description: string) =>

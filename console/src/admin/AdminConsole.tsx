@@ -31,7 +31,7 @@ import type { SidebarItem } from '@design';
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
-import { InstallVerb, useInstallVerb, useManageableAppsTotal } from '../app/principal';
+import { COUNT_STALE_MS, InstallVerb, useInstallVerb, useManageableAppsTotal } from '../app/principal';
 import { AccountPage } from '../install/Account';
 import { Accounts, messageOf } from '../install/Accounts';
 import { filtersFrom, linkQuery } from '../install/audit';
@@ -48,6 +48,7 @@ import { DetectionReview } from './DetectionReview';
 import { Sharing } from './Sharing';
 import { AppOverview } from './AppOverview';
 import { Logs } from './Logs';
+import { useRecordFollowsStatus } from './Parts';
 import { AppEvents } from './AppEvents';
 import { Resources } from './Resources';
 import { AddApp } from './AddApp';
@@ -155,6 +156,9 @@ export function AdminConsole({
     queryKey: ['users', 'count'],
     queryFn: () => api.get<PageOf>('/users?limit=1'),
     enabled: canView || canManageUsers,
+    // Counted to at most 10,000 (O-53); a change to accounts made here
+    // invalidates ['users'] and asks again at once.
+    staleTime: COUNT_STALE_MS,
   });
 
   // Whether a newer Pando is released (R-351), behind install.view like the
@@ -594,6 +598,9 @@ function AppScreen({
     queryKey: ['apps', appID],
     queryFn: () => api.get<AppWithVerbs>(`/apps/${appID}`),
   });
+  // The record is read again when the app's status moves on, rather than
+  // polled: a deploy finishing is seen within a status poll on every tab.
+  useRecordFollowsStatus(app.data, app.dataUpdatedAt);
 
   // An app with no pinned spec has never been through review, so detection is
   // the only thing worth showing it.
@@ -872,7 +879,7 @@ function AppScreen({
           {tab === 'overview' && <AppOverview app={app.data} onGo={setTab} />}
           {tab === 'logs' && <Logs app={app.data} workload={focus} />}
           {tab === 'events' && <AppEvents app={app.data} />}
-          {tab === 'resources' && <Resources appID={app.data.id} focus={focus} />}
+          {tab === 'resources' && <Resources app={app.data} focus={focus} />}
           {tab === 'terminal' && <Terminal appID={app.data.id} />}
         </div>
       </Sheet>

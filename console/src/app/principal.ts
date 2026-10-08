@@ -48,6 +48,12 @@ export const InstallVerb = {
 
 export type InstallVerb = (typeof InstallVerb)[keyof typeof InstallVerb];
 
+/**
+ * How long an install-wide count — apps, accounts — is kept before a screen
+ * that shows it asks again. A change the console makes asks at once.
+ */
+export const COUNT_STALE_MS = 5 * 60_000;
+
 export interface Principal {
   principal_kind: string;
   id: string;
@@ -67,6 +73,9 @@ export function usePrincipal() {
     queryKey: ['me'],
     queryFn: () => api.get<Principal>('/me'),
     retry: false,
+    // A session that ended, or verbs that changed, while the tab was away is
+    // noticed on return. One row; most queries do not do this (main.tsx).
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -117,6 +126,10 @@ export function useManageableAppsTotal(): { total?: number; total_is_lower_bound
     // A 403 means no control-plane access, which is an answer rather than a
     // failure — so it is not retried and not surfaced as an error.
     retry: false,
+    // Counted to at most 10,000 (O-53), on every screen that shows the Admin
+    // entry: kept for five minutes rather than ten seconds. Adding or removing
+    // an app asks again at once (invalidateAppLists).
+    staleTime: COUNT_STALE_MS,
   });
   return apps.data ?? {};
 }

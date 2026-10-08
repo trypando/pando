@@ -26,6 +26,7 @@ import { ScoreBadge } from '../ui/ScoreBadge';
 import { Table } from '../ui/Table';
 import { LineSkeleton, Loading } from '../ui/Loading';
 import { AppVerb, useCan } from './verbs';
+import { securityInterval, useOnScreen } from '../ui/polling';
 
 export function Security({
   appID,
@@ -57,11 +58,17 @@ export function Security({
   // Polled while a scan runs, whoever started it: the report says so
   // (scanning_since), so a scan from a deploy, detection, the CLI or MCP shows
   // here as well as one started by the button below (R-261).
+  //
+  // Every five seconds while a scan runs and every ten while a deploy that may
+  // start one runs, and only while the section is on screen (issue #72): a
+  // scan takes minutes, and the app screen reads the report again when the
+  // deploy finishes.
+  const [section, visible] = useOnScreen<HTMLElement>();
   const report = useQuery({
     queryKey: ['apps', appID, 'security'],
     queryFn: () => api.get<Report>(`/apps/${appID}/security`),
     refetchInterval: (query) =>
-      query.state.data?.scanning_since || watching || scan.isPending ? 2_000 : false,
+      securityInterval(Boolean(query.state.data?.scanning_since) || scan.isPending, watching, visible),
   });
 
   const scanning = Boolean(report.data?.scanning_since) || scan.isPending;
@@ -81,7 +88,7 @@ export function Security({
   const hidden = everything ? 0 : findings.length - worst.length;
 
   return (
-    <section style={{ maxWidth: everything ? undefined : MEASURE }}>
+    <section ref={section} style={{ maxWidth: everything ? undefined : MEASURE }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
         {!everything && <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Security</h4>}
         {canScan && (

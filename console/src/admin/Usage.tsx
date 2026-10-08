@@ -19,6 +19,7 @@ import { Quiet, messageOf } from '../install/Accounts';
 import { MEASURE } from '../ui/layout';
 import { Table } from '../ui/Table';
 import { bytes, cores } from './usage-format';
+import { USAGE_MS, useOnScreen } from '../ui/polling';
 
 interface VolumeUsage {
   id: string;
@@ -48,13 +49,16 @@ interface Reading {
 }
 
 export function Usage({ app, layout = 'table' }: { app: App; layout?: 'table' | 'stack' }) {
+  const [section, visible] = useOnScreen<HTMLElement>();
   const reading = useQuery({
     queryKey: ['apps', app.id, 'usage'],
     queryFn: () => api.get<Reading>(`/apps/${app.id}/usage`),
     enabled: Boolean(app.pinned_spec_id),
-    // Each reading takes the runtime about a second to sample; every ten is
-    // often enough to watch a part climb toward its limit.
-    refetchInterval: 10_000,
+    // Each reading takes the runtime about a second to sample, and every open
+    // overview asks (issue #72): every thirty seconds, and only while the
+    // section is on screen. Refresh is there for somebody watching a part
+    // climb toward its limit.
+    refetchInterval: visible ? USAGE_MS : false,
   });
 
   if (!app.pinned_spec_id) return null;
@@ -63,16 +67,16 @@ export function Usage({ app, layout = 'table' }: { app: App; layout?: 'table' | 
 
   const asOf = data?.reported_at && (
     <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 'var(--space-2) 0 0' }}>
-      As of {new Date(data.reported_at).toLocaleTimeString()}. Refreshes every ten seconds. Disk is what a part wrote
+      As of {new Date(data.reported_at).toLocaleTimeString()}. Refreshes every thirty seconds. Disk is what a part wrote
       outside its storage.
     </p>
   );
 
   return (
-    <section style={{ maxWidth: MEASURE }}>
+    <section ref={section} style={{ maxWidth: MEASURE }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
         <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>In use</h4>
-        {/* Now, rather than at the next ten-second tick: after a deploy, or
+        {/* Now, rather than at the next thirty-second tick: after a deploy, or
             while watching a part climb. */}
         {data?.supported && (
           <Button variant="secondary" disabled={reading.isFetching} onClick={() => void reading.refetch()}>

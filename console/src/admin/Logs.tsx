@@ -20,10 +20,11 @@ import { api, base } from '@api/client';
 import type { App, Deployment } from '@api/types.gen';
 import { Quiet, messageOf } from '../install/Accounts';
 import { MEASURE } from '../ui/layout';
-import { Parts, useParts, labelFor } from './Parts';
+import { Parts, useAppStatus, labelFor } from './Parts';
 import { appendCapped, followLog } from './logStream';
 import { deployLabel, deployStatus } from '../ui/deploys';
 import { Table } from '../ui/Table';
+import { deploymentsInterval } from '../ui/polling';
 import { ApprovalRequest } from './ApprovalRequest';
 import { isAwaiting } from './approval';
 import type { ApprovalDeployment } from './approval';
@@ -174,7 +175,9 @@ export function Logs({ app, workload }: { app: App; workload?: string }) {
   const deployments = useQuery({
     queryKey: ['apps', app.id, 'deployments'],
     queryFn: () => api.get<{ deployments: ApprovalDeployment[] | null }>(`/apps/${app.id}/deployments`),
-    refetchInterval: app.state === 'deploying' ? 3_000 : false,
+    // Not polled while a deploy runs: its log streams, and the app screen asks
+    // for this list again when the status says the deploy has finished.
+    refetchInterval: (query) => deploymentsInterval(query.state.data?.deployments),
   });
 
   const rows = deployments.data?.deployments ?? [];
@@ -278,7 +281,7 @@ function AppOutput({ app, workload }: { app: App; workload?: string }) {
   // nothing in the console passed one, so an app made of three containers
   // showed one log — the primary's — and the container that was actually
   // crash-looping had no screen at all.
-  const parts = useParts(app).data?.workloads ?? [];
+  const parts = useAppStatus(app).data?.workloads ?? [];
   const [chosen, setChosen] = useState<string | null>(null);
   const showing = chosen ?? workload ?? '';
 

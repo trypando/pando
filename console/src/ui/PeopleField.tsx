@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@design';
 
 import { matches } from './search';
+import { unionPeople, usePeopleSearch } from './people';
 
 export interface Person {
   id: string;
@@ -33,7 +34,8 @@ export function PeopleField({
   onChange,
 }: {
   label: string;
-  /** Everyone who could be chosen. */
+  /** The people already named — the chosen ones, at least. Anyone else is
+   *  found by asking the server for what was typed (issue #72). */
   people: Person[];
   /** The chosen people's IDs, in the order they were added. */
   value: string[];
@@ -56,7 +58,8 @@ export function PeopleField({
     return () => document.removeEventListener('mousedown', outside);
   }, [open]);
 
-  const found = people
+  const searched = usePeopleSearch(text);
+  const found = unionPeople(people, searched)
     .filter((p) => !value.includes(p.id))
     .filter((p) => matches(text, p.display_name, p.email, p.external_id, p.id))
     .slice(0, SHOWN);

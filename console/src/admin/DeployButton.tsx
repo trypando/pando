@@ -20,6 +20,7 @@ import { Button } from '@design';
 
 import { api, RequestFailed } from '@api/client';
 import type { App } from '@api/types.gen';
+import { APP_LIST_KEY } from './appList';
 
 interface SpecRevision {
   id: string;
@@ -80,11 +81,17 @@ export function DeployButton({
         `/apps/${app.id}/deployments`,
         unshipped ? { spec_revision: newest?.revision } : {},
       ),
-    // ['apps'] rather than this app alone, so the list's status follows it
-    // through building to running.
+    // What a deploy changes, and nothing else (issue #72): this app's record,
+    // deploys, status and security report, and the paged list of apps so its
+    // row follows it through building to running. Not every ['apps', …]
+    // query, which was every other app's record and every list in the cache.
     onSuccess: (deployment) => {
       if (deployment?.status === 'awaiting_approval') onWaiting?.();
-      void queries.invalidateQueries({ queryKey: ['apps'] });
+      void queries.invalidateQueries({ queryKey: ['apps', app.id], exact: true });
+      for (const part of ['deployments', 'status', 'security']) {
+        void queries.invalidateQueries({ queryKey: ['apps', app.id, part] });
+      }
+      void queries.invalidateQueries({ queryKey: APP_LIST_KEY });
       void queries.invalidateQueries({ queryKey: ['approvals'] });
     },
   });
