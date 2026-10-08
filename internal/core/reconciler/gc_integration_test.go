@@ -255,7 +255,7 @@ func backupGC(t *testing.T, runner *fakeBackups, recordVolume bool) (*reconciler
 
 func lastAttempt(t *testing.T, gc *reconciler.RollingBackups, appID string) state.BackupAttempt {
 	t.Helper()
-	attempts, err := gc.Backups.Attempts(context.Background(), appID)
+	attempts, err := gc.Backups.Attempts(context.Background(), appID, 1)
 	require.NoError(t, err)
 	require.Len(t, attempts, 1, "every scheduled attempt leaves a record")
 	return attempts[0]

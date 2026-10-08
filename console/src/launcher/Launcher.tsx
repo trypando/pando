@@ -23,7 +23,8 @@
 // a menu sees "Your apps" and nothing else.
 
 import { useEffect, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
 import { Button, EmptyState, Icon, IconButton, Input, Logo, Skeleton } from '@design';
 
 import { api, base } from '@api/client';
@@ -35,26 +36,14 @@ import { Menu, MenuDivider, MenuItem } from '../ui/Menu';
 import { NoMatches, SearchField } from '../ui/SearchField';
 import { matches } from '../ui/search';
 import { useNarrow } from '../ui/narrow';
-import { withParams } from '../ui/paged';
+import { ShowMore, useSettled, withParams } from '../ui/paged';
 import { TopoBackground, TopoTile } from '../ui/TopoBackground';
 
-type MyApps = { apps: App[] | null; sections: Section[] | null };
+type MyApps = { apps: App[] | null; sections: Section[] | null; next_cursor?: string };
+
+type Pages = InfiniteData<MyApps, string>;
 
 const KEY = ['me', 'apps'];
-
-/** IDs per GET /apps: about 3 KB of address, well inside what a load
- *  balancer in front of Pando accepts in a request line. */
-const IDS_PER_REQUEST = 100;
-
-/** Which of these apps the caller may administer, asked a page of IDs at a time. */
-async function manageableOf(ids: string[]): Promise<string[]> {
-  const asks = [];
-  for (let i = 0; i < ids.length; i += IDS_PER_REQUEST) {
-    const chunk = ids.slice(i, i + IDS_PER_REQUEST);
-    asks.push(api.get<{ apps: App[] | null }>(withParams('/apps', { id: chunk, limit: chunk.length })));
-  }
-  return (await Promise.all(asks)).flatMap((r) => (r.apps ?? []).map((a) => a.id));
-}
 
 /** What a dragged tile carries: its app's ID, under a type only tiles use. */
 const DRAG_TYPE = 'application/x-pando-app';
@@ -73,28 +62,26 @@ export function Launcher({
    *  something; each tile then offers it only for an app they administer. */
   onManage?: (appID: string) => void;
 }) {
-  const apps = useQuery({ queryKey: KEY, queryFn: () => api.get<MyApps>('/me/apps') });
-  const narrow = useNarrow();
-
-  // Which of these apps the person can also administer: GET /apps, the
-  // control-plane list, narrowed to the apps on this launcher by ID rather
-  // than read whole — it is paged, and an administrator's runs to every app
-  // in the install (issue #72). Two planes, two lists (R-070, R-071); an app
-  // is offered in admin only when it is on the second one, never because it
-  // is on the first.
-  const launcherIDs = (apps.data?.apps ?? []).map((a) => a.id);
-  const managed = useQuery({
-    queryKey: ['apps', 'managed', launcherIDs],
-    queryFn: () => manageableOf(launcherIDs),
-    enabled: Boolean(onManage) && launcherIDs.length > 0,
-    retry: false,
+  // A page at a time, favorites first, then filed apps, then the rest
+  // (issue #72): an app shared with everyone is on everyone's launcher, and
+  // an install can hold twenty thousand. Search is the server's too, so an
+  // app on a page not yet read is still found.
+  const [query, setQuery] = useState('');
+  const settled = useSettled(query.trim());
+  const apps = useInfiniteQuery({
+    queryKey: [...KEY, settled],
+    initialPageParam: '',
+    queryFn: ({ pageParam }) => api.get<MyApps>(withParams('/me/apps', { q: settled, cursor: pageParam })),
+    getNextPageParam: (last) => last.next_cursor || undefined,
+    placeholderData: keepPreviousData,
   });
-  const manageable = new Set(managed.data ?? []);
+  const narrow = useNarrow();
   const arrange = useArrange();
   const [collapsed, toggleCollapsed] = useCollapsed();
 
-  const all = apps.data?.apps ?? [];
-  const sections = apps.data?.sections ?? [];
+  const pages = apps.data?.pages ?? [];
+  const all = pages.flatMap((p) => p.apps ?? []);
+  const sections = pages[0]?.sections ?? [];
   const known = new Set(sections.map((s) => s.id));
 
   // A favorite shows once, in Favorites, whatever section it is filed under.
@@ -105,7 +92,6 @@ export function Launcher({
   // Search narrows every group at once, by name. A group it finds nothing in
   // is hidden, and a collapsed one is opened — a match folded out of sight is
   // a match not found.
-  const [query, setQuery] = useState('');
   const searching = query.trim() !== '';
   const shown = (app: App) => matches(query, app.name, app.slug);
   const shownPinned = pinned.filter(shown);
@@ -154,7 +140,10 @@ export function Launcher({
       app={app}
       sections={sections}
       arrange={arrange}
-      onManage={onManage && manageable.has(app.id) ? () => onManage(app.id) : undefined}
+      // Whether the person can also administer it is the control plane's
+      // answer, carried on each app (R-070, R-071): an app is offered in
+      // admin only because it is manageable, never because it is usable.
+      onManage={onManage && app.can_manage ? () => onManage(app.id) : undefined}
       onDragChange={(on) => setDragging(on ? app : null)}
     />
   );
@@ -305,6 +294,10 @@ export function Launcher({
           </div>
         )}
 
+        <div style={{ padding: '0 var(--console-padding) var(--space-6)' }}>
+          <ShowMore query={apps} label="Show more apps" />
+        </div>
+
         {apps.data && all.length > 0 && !searching && <NewSection arrange={arrange} />}
       </main>
     </div>
@@ -326,17 +319,17 @@ type Arrange = ReturnType<typeof useArrange>;
 function useArrange() {
   const queries = useQueryClient();
 
+  // Every page of every search held, changed in place.
   const optimistic = async (change: (apps: App[]) => App[]) => {
     await queries.cancelQueries({ queryKey: KEY });
-    const before = queries.getQueryData<MyApps>(KEY);
-    queries.setQueryData<MyApps>(KEY, (old) => ({
-      apps: change(old?.apps ?? []),
-      sections: old?.sections ?? [],
-    }));
+    const before = queries.getQueriesData<Pages>({ queryKey: KEY });
+    queries.setQueriesData<Pages>({ queryKey: KEY }, (old) =>
+      old ? { ...old, pages: old.pages.map((p) => ({ ...p, apps: change(p.apps ?? []) })) } : old,
+    );
     return { before };
   };
-  const rollback = (_e: unknown, _v: unknown, context?: { before?: MyApps }) => {
-    if (context?.before) queries.setQueryData(KEY, context.before);
+  const rollback = (_e: unknown, _v: unknown, context?: { before?: [readonly unknown[], Pages | undefined][] }) => {
+    for (const [key, data] of context?.before ?? []) queries.setQueryData(key, data);
   };
   const settle = () => void queries.invalidateQueries({ queryKey: KEY });
 

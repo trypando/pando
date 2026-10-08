@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -80,4 +82,32 @@ func TestDocumentedVerbsAreRealVerbs(t *testing.T) {
 		}
 		require.True(t, known[doc.Verb], "%s %s names %q, which is not a verb", doc.Method, doc.Path, doc.Verb)
 	}
+}
+
+// TestTheReferenceIsBuiltOnceAndServedWhole asserts GET /reference builds its
+// document once, however often it is asked for, and serves the same JSON the
+// generator writes the docs from.
+func TestTheReferenceIsBuiltOnceAndServedWhole(t *testing.T) {
+	s := &Server{}
+	serve := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		s.handleReference(w, httptest.NewRequest(http.MethodGet, "/api/v1/reference", nil))
+		return w
+	}
+	first := serve()
+	before := referenceBuilds.Load()
+	second := serve()
+	require.Equal(t, before, referenceBuilds.Load(), "the second request built nothing")
+	require.Equal(t, int64(1), before)
+	require.Equal(t, http.StatusOK, second.Code)
+	require.Equal(t, "application/json; charset=utf-8", second.Header().Get("Content-Type"))
+	require.Equal(t, first.Body.String(), second.Body.String())
+
+	var doc struct {
+		API struct {
+			Routes []json.RawMessage `json:"routes"`
+		} `json:"api"`
+	}
+	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &doc))
+	require.Len(t, doc.API.Routes, len(Reference().API.Routes))
 }

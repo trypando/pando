@@ -7,8 +7,9 @@
 // Anything else a runtime says about itself is its own shape, so it is shown
 // as it came, behind Details, and never interpreted here.
 //
-// Read from GET /capacity. Live use takes the runtime about a second to
-// sample, so it is read when the screen opens and on Refresh, not polled.
+// Read from GET /capacity. The runtimes' readings are taken by the server in
+// the background while somebody is looking (issue #72), so the screen says
+// when they were taken; committed is as of the request.
 
 import { useQuery } from '@tanstack/react-query';
 import { Button, Skeleton } from '@design';
@@ -36,12 +37,25 @@ export interface RuntimeCapacity {
   reported?: string;
 }
 
+export interface CapacityView {
+  runtimes: RuntimeCapacity[];
+  /** When the server last read the runtimes. */
+  as_of?: string;
+  /** How often it reads them again while somebody is looking. */
+  refresh_seconds?: number;
+}
+
 export function Capacity({ names }: { names: Record<string, string> }) {
   const capacity = useQuery({
     queryKey: ['capacity'],
-    queryFn: () => api.get<{ runtimes: RuntimeCapacity[] }>('/capacity'),
+    queryFn: () => api.get<CapacityView>('/capacity'),
+    // Asked again as often as the server reads the runtimes: the answer comes
+    // from its reading, so asking costs a sum, not a sample.
+    refetchInterval: (q) => (q.state.data?.refresh_seconds ?? 0) * 1000 || false,
   });
   const runtimes = capacity.data?.runtimes ?? [];
+  const asOf = capacity.data?.as_of;
+  const every = capacity.data?.refresh_seconds;
 
   return (
     <section>
@@ -79,6 +93,12 @@ export function Capacity({ names }: { names: Record<string, string> }) {
         <Quiet>No runtime is set up, so there is no room to report. Add a runtime adapter above.</Quiet>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+          {asOf && (
+            <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>
+              Runtimes read at {new Date(asOf).toLocaleTimeString()}
+              {every ? `, and again every ${every} seconds while this screen is open` : ''}. Committed is as of now.
+            </p>
+          )}
           {runtimes.map((rt) => (
             <Runtime key={rt.adapter_ref} rt={rt} name={names[rt.adapter_ref]} />
           ))}

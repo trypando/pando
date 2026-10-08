@@ -44,6 +44,16 @@ func (b *Inbox) List(ctx context.Context, p authz.Principal, unreadOnly bool, be
 	return page, nil
 }
 
+// UnreadCount is how many of the caller's notifications are unread: the
+// bell's badge, which every open console asks about on every screen, so it
+// reads the count alone rather than a page of the inbox with it (issue #72).
+func (b *Inbox) UnreadCount(ctx context.Context, p authz.Principal) (int, error) {
+	if err := personOnly(p); err != nil {
+		return 0, err
+	}
+	return b.Store.Unread(ctx, p.UserID)
+}
+
 // MarkRead marks one of the caller's notifications read. Another person's is
 // left alone, without saying it exists.
 func (b *Inbox) MarkRead(ctx context.Context, p authz.Principal, notificationID string) error {

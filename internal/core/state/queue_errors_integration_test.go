@@ -118,7 +118,10 @@ func TestR105_TheQueueAndRetentionStoresSayWhatFailedWhenTheDatabaseIsGone(t *te
 			"Could not list subscriptions."},
 		"silent replicas": {func(ctx context.Context) error { _, err := state.NewReplicas(db).StopSilent(ctx); return err },
 			"Could not record silent replicas as stopped."},
-		"security state": {func(ctx context.Context) error { _, err := state.NewScans(db).LiveSecurityState(ctx); return err },
+		"security state": {func(ctx context.Context) error {
+			_, err := state.NewScans(db).LiveSecurityState(ctx, state.SecurityThreshold{MinScore: 50})
+			return err
+		},
 			"Could not list apps for the security pass."},
 		"old deploys": {func(ctx context.Context) error { _, err := retention.Deployments(ctx, 50, 10); return err },
 			"Could not remove old deploys."},

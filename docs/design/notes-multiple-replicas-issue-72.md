@@ -81,6 +81,7 @@ its connection cancels its jobs and waits for them to stop before anyone else ca
 |---|---|---|
 | Deploy and detection queues (PR 4) | every replica | Claim with `FOR UPDATE SKIP LOCKED`, each up to its own limit |
 | Reconciler | every replica | Claims apps under a lease with `SKIP LOCKED` (`state.Lease`, PR 3); replicas share the apps |
+| Runtime event streams (O-52) | every replica | The lease gives no app an owning replica, so each replica follows every runtime and decides from its own stream whether an app it visits may wait for the slow sweep. An event makes the app due in the row, where any replica's claim finds it (design 05 §2.3) |
 | Event delivery | every replica | Claims with `FOR UPDATE SKIP LOCKED` |
 | Network rejoin | every replica, every 15 s | Each replica's container must be on every app's network (below) |
 | Port listeners | every replica | Each replica is a front door; the balancer forwards the range |

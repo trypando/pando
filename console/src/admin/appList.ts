@@ -32,6 +32,16 @@ export function invalidateAppLists(queries: QueryClient) {
   });
 }
 
+/**
+ * Asks the server again about one app — its record and everything read under
+ * it — and about the lists of apps, where its row is. For a change to that app
+ * that the list shows: its state, its name, its image. Not `['apps']`, which
+ * is every other app's queries too (issue #72).
+ */
+export function invalidateApp(queries: QueryClient, appID: string) {
+  return Promise.all([queries.invalidateQueries({ queryKey: ['apps', appID] }), invalidateAppLists(queries)]);
+}
+
 function changing(a: App): boolean {
   return Boolean(a.security_scanning) || a.state === 'deploying';
 }

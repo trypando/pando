@@ -2,6 +2,7 @@ package approval
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -39,6 +40,11 @@ type Planner interface {
 	Check(ctx context.Context, s *spec.AppSpec) (*planner.Plan, error)
 }
 
+// Capacity holds a runtime's capacity while fn runs (state.Allocations.Hold).
+type Capacity interface {
+	Hold(ctx context.Context, runtimeRef string, fn func(context.Context) error) error
+}
+
 // Starter runs a deployment that is pending, in the background.
 type Starter interface {
 	Start(ctx context.Context, dep state.Deployment, rev state.Revision)
@@ -69,6 +75,11 @@ type Service struct {
 	Policy      PolicyLoader
 	Planner     Planner
 	Deployer    Starter
+
+	// Capacity serializes a deploy's plan-time capacity check with its
+	// creation, per runtime (R-242). Optional: without it the two are not
+	// serialized, which is right only where nothing deploys concurrently.
+	Capacity Capacity
 
 	// Audit writes an event. Failing to write one is logged by whoever
 	// supplies it, never turned into a failure of the action.
@@ -135,21 +146,29 @@ func principalEvent(p authz.Principal, action, appID, depID string, detail map[s
 // The plan runs first, so a deploy that cannot succeed is refused here
 // rather than part-way through — and is never put in front of an approver.
 func (s *Service) Deploy(ctx context.Context, p authz.Principal, app state.App, rev state.Revision, trigger string) (state.Deployment, error) {
-	if _, err := s.Planner.Check(ctx, rev.Body); err != nil {
-		return state.Deployment{}, err
-	}
-
-	doc, reasons, err := s.needs(ctx, app, rev, trigger)
-	if err != nil {
-		return state.Deployment{}, err
-	}
-	if len(reasons) > 0 {
-		return s.request(ctx, p, app, rev, trigger, doc, reasons)
-	}
-
-	dep, err := s.Deployments.Create(ctx, app.ID, rev.ID, trigger, p.ID)
-	if err != nil {
-		return state.Deployment{}, err
+	// The plan and the deploy's creation hold the runtime's capacity together
+	// (R-242): once created, the deploy reserves what it asks for, and the
+	// next plan on this runtime counts it.
+	var dep state.Deployment
+	var requested bool
+	err := s.hold(ctx, rev, func(ctx context.Context) error {
+		if _, err := s.Planner.Check(ctx, rev.Body); err != nil {
+			return err
+		}
+		doc, reasons, err := s.needs(ctx, app, rev, trigger)
+		if err != nil {
+			return err
+		}
+		if len(reasons) > 0 {
+			requested = true
+			dep, err = s.request(ctx, p, app, rev, trigger, doc, reasons)
+			return err
+		}
+		dep, err = s.Deployments.Create(ctx, app.ID, rev.ID, trigger, p.ID)
+		return err
+	})
+	if err != nil || requested {
+		return dep, err
 	}
 	// A deploy that needed no approval still supersedes a request waiting
 	// for one: approving the older request afterwards would put back a
@@ -160,6 +179,19 @@ func (s *Service) Deploy(ctx context.Context, p authz.Principal, app state.App, 
 		return state.Deployment{}, err
 	}
 	return s.read(ctx, dep), nil
+}
+
+// errPlanRefused ends a hold whose plan did not pass, which its caller answers
+// from the plan's own error.
+var errPlanRefused = errors.New("the plan did not pass")
+
+// hold runs fn holding the capacity of the runtime rev runs on, when there is
+// a Capacity to hold it with.
+func (s *Service) hold(ctx context.Context, rev state.Revision, fn func(context.Context) error) error {
+	if s.Capacity == nil || rev.Body == nil {
+		return fn(ctx)
+	}
+	return s.Capacity.Hold(ctx, rev.Body.Runtime.AdapterRef, fn)
 }
 
 // read is the deployment as the store has it now, with what only a read
@@ -452,7 +484,30 @@ func (s *Service) Approve(ctx context.Context, p authz.Principal, appID, depID, 
 		return state.Deployment{}, errs.New(errs.NotFound, "The spec revision this deploy was asked for is missing.")
 	}
 
-	if _, planErr := s.Planner.Check(ctx, rev.Body); planErr != nil {
+	// The plan and the start hold the runtime's capacity together, as a
+	// deploy's plan and creation do (R-242): started, the deploy reserves
+	// what it asks for.
+	var planErr error
+	var started bool
+	err = s.hold(ctx, rev, func(ctx context.Context) error {
+		_, planErr = s.Planner.Check(ctx, rev.Body)
+		if planErr != nil {
+			// Not the hold's failure: the request is answered below, and
+			// nothing is started.
+			return errPlanRefused
+		}
+		if err := s.Deployments.Decide(ctx, dep.ID, me, state.DecisionApprove, comment); err != nil {
+			return err
+		}
+		var err error
+		started, err = s.Deployments.StartApproved(ctx, dep.ID)
+		return err
+	})
+	if err != nil && !errors.Is(err, errPlanRefused) {
+		return state.Deployment{}, err
+	}
+
+	if planErr != nil {
 		if !answersTheRevision(planErr) {
 			return state.Deployment{}, planErr
 		}
@@ -476,13 +531,6 @@ func (s *Service) Approve(ctx context.Context, p authz.Principal, appID, depID, 
 		return state.Deployment{}, planErr
 	}
 
-	if err := s.Deployments.Decide(ctx, dep.ID, me, state.DecisionApprove, comment); err != nil {
-		return state.Deployment{}, err
-	}
-	started, err := s.Deployments.StartApproved(ctx, dep.ID)
-	if err != nil {
-		return state.Deployment{}, err
-	}
 	if !started {
 		// Something got there first: another approval started it, it was
 		// rejected or superseded, or a deploy of the app began between the

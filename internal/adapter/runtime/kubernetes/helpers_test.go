@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/remotecommand"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -20,6 +21,28 @@ const testBundle = "app_01HQ8ABC"
 
 var testNS = namespaceFor(testBundle)
 
+// newFake is a fake cluster that plays the controller manager's part every
+// pod depends on: each namespace, given or created, has its default
+// ServiceAccount (awaitServiceAccount).
+func newFake(objs ...runtime.Object) *fake.Clientset {
+	cs := fake.NewClientset(objs...)
+	account := func(ns string) {
+		_ = cs.Tracker().Add(&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: ns}})
+	}
+	for _, o := range objs {
+		if ns, ok := o.(*corev1.Namespace); ok {
+			account(ns.Name)
+		}
+	}
+	cs.PrependReactor("create", "namespaces", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if ns, ok := action.(k8stesting.CreateAction).GetObject().(*corev1.Namespace); ok {
+			account(ns.Name)
+		}
+		return false, nil, nil
+	})
+	return cs
+}
+
 // testAdapter is an adapter on a fake cluster whose canary has passed.
 func testAdapter(t *testing.T, mutate func(*Config), objs ...runtime.Object) (*Adapter, *fake.Clientset) {
 	t.Helper()
@@ -28,7 +51,7 @@ func testAdapter(t *testing.T, mutate func(*Config), objs ...runtime.Object) (*A
 		mutate(&cfg)
 	}
 	require.NoError(t, cfg.validate())
-	cs := fake.NewClientset(objs...)
+	cs := newFake(objs...)
 	a := &Adapter{
 		probe:        func(context.Context) (bool, error) { return true, nil },
 		stream:       func(context.Context, string, string, string, []string, remotecommand.StreamOptions) error { return nil },

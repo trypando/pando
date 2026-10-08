@@ -1,10 +1,15 @@
 package httpapi
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/trypando/pando/internal/core/authz"
+	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/reference"
 )
 
@@ -36,7 +41,7 @@ var routeDocs = []reference.Route{
 	{Method: "POST", Path: "/api/v1/setup", Group: "Session", Summary: "Set up a new installation: the first account (`username`, `display_name`, `password`), made an administrator, and signed in. Public, and refused once any account exists (R-046)."},
 	{Method: "GET", Path: "/api/v1/me", Group: "Session", Summary: "Who the caller is, and the install-level verbs they hold."},
 	{Method: "POST", Path: "/api/v1/me/password", Group: "Session", Summary: "Change your own password. Yours only, whatever verbs you hold."},
-	{Method: "GET", Path: "/api/v1/me/apps", Group: "Session", Summary: "The apps you can open, which is a different list from the apps you can administer (R-070, R-071). `favorite` marks the ones you have pinned, `section_id` the section you filed each under, and `sections` lists your sections."},
+	{Method: "GET", Path: "/api/v1/me/apps", Group: "Session", Summary: "The apps you can open, which is a different list from the apps you can administer (R-070, R-071). `favorite` marks the ones you have pinned, `section_id` the section you filed each under, and `sections` lists your sections. `can_manage` marks the ones you can also administer — those GET /apps lists for you. Favorites first, then apps filed in a section, then the rest, each by name, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, empty after the last page) and `q` to match the name or slug."},
 	{Method: "PUT", Path: "/api/v1/me/favorites/{appID}", Group: "Session", Summary: "Mark an app you can open as a favorite, pinning it to the top of your launcher. Yours only; it grants nothing (R-341)."},
 	{Method: "DELETE", Path: "/api/v1/me/favorites/{appID}", Group: "Session", Summary: "Unpin an app from your favorites."},
 	{Method: "POST", Path: "/api/v1/me/sections", Group: "Session", Summary: "Make a section in your launcher: a named, collapsible grouping of apps. Yours only; it grants nothing (R-342)."},
@@ -53,7 +58,7 @@ var routeDocs = []reference.Route{
 	{Method: "DELETE", Path: "/api/v1/tokens/{tokenID}", Group: "Tokens", Summary: "Revoke a token. Yours; a service token with install.tokens.manage; anyone else's with install.users.manage."},
 
 	// --- apps -------------------------------------------------------------
-	{Method: "GET", Path: "/api/v1/apps", Group: "Apps", Summary: "The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection. Newest first, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, which is empty after the last page), `q` to match the name or slug, and `id`, repeatable, to read only those apps; `total` counts every match."},
+	{Method: "GET", Path: "/api/v1/apps", Group: "Apps", Summary: "The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection. Newest first, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, which is empty after the last page), `q` to match the name or slug, and `id`, repeatable, to read only those apps. `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true (O-53)."},
 	{Method: "POST", Path: "/api/v1/apps", Group: "Apps", Summary: "Create an app. `source` is `{type: git, url, ref}` for a repository, `{type: image, image, credential}` for an image that is already built (`credential` optional, for a private one: see PUT /registry-credential), or `{type: upload}` for files sent next with POST /source. Checked against the source allowlist before anything is fetched (R-092). Returns immediately in draft while detection runs; follow it with GET /detection and `wait`.", Verb: string(authz.AppCreate)},
 	{Method: "GET", Path: "/api/v1/apps/{appID}", Group: "Apps", Summary: "One app: name, source, state and pinned spec; `detection` — its status, and its stage while running — once it has been through detection; and `last_backup`, its last daily backup attempt.", Verb: string(authz.AppView)},
 	{Method: "PATCH", Path: "/api/v1/apps/{appID}", Group: "Apps", Summary: "Rename an app or change its source.", Verb: string(authz.AppSpecEdit)},
@@ -66,7 +71,8 @@ var routeDocs = []reference.Route{
 	{Method: "POST", Path: "/api/v1/apps/{appID}/start", Group: "Apps", Summary: "Set the app's desired state to running. The reconciler converges to it, so it survives a restart.", Verb: string(authz.AppRestart)},
 	{Method: "POST", Path: "/api/v1/apps/{appID}/stop", Group: "Apps", Summary: "Set the app's desired state to stopped.", Verb: string(authz.AppRestart)},
 	{Method: "POST", Path: "/api/v1/apps/{appID}/restart", Group: "Apps", Summary: "Restart the running workloads without changing anything.", Verb: string(authz.AppRestart)},
-	{Method: "GET", Path: "/api/v1/apps/{appID}/logs", Group: "Apps", Summary: "The app's own output, from the runtime. `tail` sets how many lines; `workload` picks which part of the app, defaulting to the primary one.", Verb: string(authz.AppLogsRead)},
+	{Method: "GET", Path: "/api/v1/apps/{appID}/logs", Group: "Apps", Summary: "The app's own output, from the runtime, as plain text. `tail` sets how many of the most recent lines (default 200, at most 5000; a larger number is read as 5000); `workload` picks which part of the app, defaulting to the primary one. `follow=true` keeps the response open and adds each new line as it is printed, from the same shared stream as /logs/stream, starting from the recent lines that stream holds rather than from `tail`.", Verb: string(authz.AppLogsRead)},
+	{Method: "GET", Path: "/api/v1/apps/{appID}/logs/stream", Group: "Apps", Summary: "The app's own output live, as server-sent events (O-51). `workload` picks the part, defaulting to the primary one. Opens with `event: reset` and up to the last 1000 lines, then sends each new line as a `data:` event; `event: notice` reports the runtime's stream ending (a restart) and being reconnected. Access is checked again every two minutes: the stream ends with `event: revoked` when it no longer holds, and a client must not reconnect after it; `event: lagged` means the client fell too far behind and may reconnect. Every viewer of a part on one Pando server shares one stream from the runtime.", Verb: string(authz.AppLogsRead)},
 	{Method: "GET", Path: "/api/v1/apps/{appID}/exec", Group: "Apps", Summary: "A terminal in the running app, over a websocket. Refused when host policy has turned exec off, including for the owner (R-085).", Verb: string(authz.AppExec)},
 
 	// --- detection --------------------------------------------------------
@@ -105,7 +111,7 @@ var routeDocs = []reference.Route{
 	{Method: "POST", Path: "/api/v1/apps/{appID}/deployments/{depID}/reject", Group: "Deploys", Summary: "Reject a deploy that is waiting for approval, with an optional `comment`. One rejection ends the request (R-156). The same permissions as approving.", Verb: string(authz.AppView)},
 	// --- events and subscriptions (issue #50) ------------------------------
 	{Method: "GET", Path: "/api/v1/events", Group: "Events", Summary: "The event catalog: every event a subscription can name — `name`, `scope` (app or install), `source`, `summary` and its data `fields`. The same list as docs/events.md (R-364). `destinations` lists the notification adapters a subscription can send through (`id`, `kind`, and `audience`: people or channel)."},
-	{Method: "GET", Path: "/api/v1/subscriptions", Group: "Events", Summary: "Your event subscriptions, newest first. `app_id` narrows to one app; `everyone=true` lists every person's, which needs `install.events.manage`."},
+	{Method: "GET", Path: "/api/v1/subscriptions", Group: "Events", Summary: "Your event subscriptions, newest first. `app_id` narrows to one app; `everyone=true` lists every person's, which needs `install.events.manage`. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues."},
 	{Method: "POST", Path: "/api/v1/subscriptions", Group: "Events", Summary: "Subscribe to events (`events`: names, prefixes such as `deploy.*`, or `*`) on one app (`app_id`, which needs `app.view`) or install-wide (no `app_id`, which needs `install.events.manage`), sent to a `webhook` (`url`) or through a notification adapter (`notify`, `adapter_id`). A webhook's `signing_key` is in this response and never again (R-367, R-371)."},
 	{Method: "GET", Path: "/api/v1/subscriptions/{subscriptionID}", Group: "Events", Summary: "One subscription: its filter, destination, whether it is on, and why Pando turned it off if it did. Yours, or anybody's with `install.events.manage`."},
 	{Method: "PATCH", Path: "/api/v1/subscriptions/{subscriptionID}", Group: "Events", Summary: "Change a subscription's `events`, `url`, `adapter_id` or `description`, or turn it on or off (`enabled`). Turning one on clears its record of failures."},
@@ -116,6 +122,7 @@ var routeDocs = []reference.Route{
 	{Method: "GET", Path: "/api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}", Group: "Events", Summary: "One delivery: every attempt at it (`attempt_log`) and the `payload` sent."},
 	{Method: "POST", Path: "/api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}/redeliver", Group: "Events", Summary: "Send a delivery again now, with the whole retry schedule ahead of it."},
 	{Method: "GET", Path: "/api/v1/me/notifications", Group: "Events", Summary: "Your notifications inbox, newest first: what Pando told you on the console, each with `kind`, `subject`, `body`, `app_name`, `link` and `read_at`, and `unread`, how many are unread in all. `unread=true` lists only those; `before` and `limit` page (R-377)."},
+	{Method: "GET", Path: "/api/v1/me/notifications/unread", Group: "Events", Summary: "How many of your notifications are unread, as `unread`, without listing any: the count the console's bell asks for (R-377)."},
 	{Method: "POST", Path: "/api/v1/me/notifications/{notificationID}/read", Group: "Events", Summary: "Mark one of your notifications read."},
 	{Method: "POST", Path: "/api/v1/me/notifications/read", Group: "Events", Summary: "Mark every one of your notifications read."},
 	{Method: "GET", Path: "/api/v1/notification-preferences", Group: "Events", Summary: "Which of Pando's own notifications reach you, on which channel: every `kind`, every `channel` that reaches people (the console, email), and your `choices` with defaults filled in (R-373)."},
@@ -138,7 +145,7 @@ var routeDocs = []reference.Route{
 
 	// --- sharing ----------------------------------------------------------
 	{Method: "GET", Path: "/api/v1/apps/{appID}/events", Group: "Events", Summary: "The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days (R-378).", Verb: string(authz.AppView)},
-	{Method: "GET", Path: "/api/v1/apps/{appID}/grants", Group: "Sharing", Summary: "Who can reach this app, and who can administer it — two planes, listed separately (R-070, R-071).", Verb: string(authz.AppView)},
+	{Method: "GET", Path: "/api/v1/apps/{appID}/grants", Group: "Sharing", Summary: "Who can reach this app, and who can administer it — two planes, listed separately (R-070, R-071). By principal, the grant to everyone first, with each principal's grants on both planes on the same page: `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues.", Verb: string(authz.AppView)},
 	{Method: "POST", Path: "/api/v1/apps/{appID}/grants", Group: "Sharing", Summary: "Share the app with a user, a group, a token, or with everyone. The anonymous grant is a real row, refused where host policy forbids it (R-075, R-076).", Verb: string(authz.AppGrantsManage)},
 	{Method: "PATCH", Path: "/api/v1/apps/{appID}/grants/{grantID}", Group: "Sharing", Summary: "Change the role a grant for managing the app carries (`role_id`), one update so the person is never left with nothing in between; or, on the grant to everyone, set `passcode` (\"\" removes it). A new passcode asks everyone let in by the old one again (R-075a).", Verb: string(authz.AppGrantsManage)},
 	{Method: "GET", Path: "/api/v1/apps/{appID}/principals", Group: "Sharing", Summary: "People and groups to share the app with, matching `q` (username, name or email; group name), at most 20 of each.", Verb: string(authz.AppGrantsManage)},
@@ -147,7 +154,7 @@ var routeDocs = []reference.Route{
 	{Method: "DELETE", Path: "/api/v1/apps/{appID}/grants/{grantID}", Group: "Sharing", Summary: "Take a grant away.", Verb: string(authz.AppGrantsManage)},
 
 	// --- accounts, groups, roles -----------------------------------------
-	{Method: "GET", Path: "/api/v1/users", Group: "Identity", Summary: "The accounts on this installation, newest first, each with its `install_role_id`. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, reads only those accounts; `total` counts every match.", Verb: string(authz.InstallView)},
+	{Method: "GET", Path: "/api/v1/users", Group: "Identity", Summary: "The accounts on this installation, newest first, each with its `install_role_id`. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, reads only those accounts; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true (O-53).", Verb: string(authz.InstallView)},
 	{Method: "POST", Path: "/api/v1/users", Group: "Identity", Summary: "Create an account.", Verb: string(authz.InstallUsersManage)},
 	{Method: "GET", Path: "/api/v1/users/{userID}", Group: "Identity", Summary: "One account. Your own needs no verb.", Verb: string(authz.InstallView)},
 	{Method: "PATCH", Path: "/api/v1/users/{userID}", Group: "Identity", Summary: "Change an account: any of `username`, `display_name`, `email` and `status`. Username and email only on a local account; a username only with this verb, even your own. Suspension is not deletion (R-049). Your own name and email need no verb.", Verb: string(authz.InstallUsersManage)},
@@ -156,10 +163,11 @@ var routeDocs = []reference.Route{
 	{Method: "DELETE", Path: "/api/v1/users/{userID}/role", Group: "Identity", Summary: "Take an installation role away. The last administrator cannot be demoted.", Verb: string(authz.InstallUsersManage)},
 	{Method: "POST", Path: "/api/v1/users/{userID}/password", Group: "Identity", Summary: "Reset another local account's password (`password`), ending every session it holds. `must_change_password` defaults to true: whoever set it hands it over, and its holder chooses their own at the next sign-in. Your own is `POST /me/password`.", Verb: string(authz.InstallUsersManage)},
 	{Method: "POST", Path: "/api/v1/passwords/generate", Group: "Identity", Summary: "A strong random password, 18 to 22 characters with upper and lower case, digits and symbols, for creating or resetting an account. Stores nothing.", Verb: string(authz.InstallUsersManage)},
-	{Method: "GET", Path: "/api/v1/users/{userID}/apps", Group: "Identity", Summary: "The apps an account has something on: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (`can_manage`). Only apps you can see are listed. Your own needs nothing.", Verb: string(authz.InstallView)},
-	{Method: "GET", Path: "/api/v1/groups", Group: "Identity", Summary: "Groups, whether Pando's own or an identity adapter's (R-078), Pando's first and then by name, each with `member_count`; GET /groups/{groupID} has the members. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the name; `member` keeps the groups an account is directly in; `total` counts every match.", Verb: string(authz.InstallView)},
+	{Method: "GET", Path: "/api/v1/users/{userID}/apps", Group: "Identity", Summary: "The apps an account has something on: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (`can_manage`). Only apps you can see are listed. Your own needs nothing. By app name, a page of apps at a time: `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues, and a page can hold fewer apps than the limit when some are ones you cannot see.", Verb: string(authz.InstallView)},
+	{Method: "GET", Path: "/api/v1/groups", Group: "Identity", Summary: "Groups, whether Pando's own or an identity adapter's (R-078), Pando's first and then by name, each with `member_count`; GET /groups/{groupID} has the members. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the name; `member` keeps the groups an account is directly in; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true (O-53).", Verb: string(authz.InstallView)},
 	{Method: "POST", Path: "/api/v1/groups", Group: "Identity", Summary: "Create a group.", Verb: string(authz.InstallUsersManage)},
 	{Method: "PUT", Path: "/api/v1/groups/{groupID}/members", Group: "Identity", Summary: "Set a group's members.", Verb: string(authz.InstallUsersManage)},
+	{Method: "GET", Path: "/api/v1/groups/{groupID}/members", Group: "Identity", Summary: "The accounts directly in a group, oldest first, each as GET /users shows it. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, keeps only those accounts, which answers whether they are members. `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true (O-53).", Verb: string(authz.InstallView)},
 	{Method: "PUT", Path: "/api/v1/groups/{groupID}/members/{userID}", Group: "Identity", Summary: "Add one account to a group. It then holds everything the group holds.", Verb: string(authz.InstallUsersManage)},
 	{Method: "DELETE", Path: "/api/v1/groups/{groupID}/members/{userID}", Group: "Identity", Summary: "Remove one account from a group. Refused when it would leave nobody who can manage accounts (R-088).", Verb: string(authz.InstallUsersManage)},
 	{Method: "PUT", Path: "/api/v1/groups/{groupID}/role", Group: "Identity", Summary: "Give a group an installation role (`role_id`), which everyone in it holds.", Verb: string(authz.InstallUsersManage)},
@@ -198,8 +206,8 @@ var routeDocs = []reference.Route{
 	{Method: "PUT", Path: "/api/v1/scim/v2/Groups/{id}", Group: "SCIM", Summary: "Replace a pushed group's name and members."},
 	{Method: "PATCH", Path: "/api/v1/scim/v2/Groups/{id}", Group: "SCIM", Summary: "Add or remove members, or rename, with SCIM PATCH operations. Takes effect on the next request (R-079)."},
 	{Method: "DELETE", Path: "/api/v1/scim/v2/Groups/{id}", Group: "SCIM", Summary: "Delete a pushed group, and every grant made to it."},
-	{Method: "GET", Path: "/api/v1/groups/{groupID}/apps", Group: "Identity", Summary: "A group's app grants: the role everyone in it has on each app, whether they can open it, and whether you can change that (`can_manage`). Only apps you can see. Share an app with a group through `POST /apps/{appID}/grants` with `principal_kind: group`.", Verb: string(authz.InstallView)},
-	{Method: "GET", Path: "/api/v1/groups/{groupID}", Group: "Identity", Summary: "One group with its `members` (account IDs, direct members only), its `linked_from` or `links_to`, and where it comes from.", Verb: string(authz.InstallView)},
+	{Method: "GET", Path: "/api/v1/groups/{groupID}/apps", Group: "Identity", Summary: "A group's app grants: the role everyone in it has on each app, whether they can open it, and whether you can change that (`can_manage`). Only apps you can see. Share an app with a group through `POST /apps/{appID}/grants` with `principal_kind: group`. By app name, a page of apps at a time: `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues.", Verb: string(authz.InstallView)},
+	{Method: "GET", Path: "/api/v1/groups/{groupID}", Group: "Identity", Summary: "One group with its `member_count` (direct members), its `linked_from` or `links_to`, and where it comes from. The members are GET /groups/{groupID}/members.", Verb: string(authz.InstallView)},
 	{Method: "DELETE", Path: "/api/v1/groups/{groupID}", Group: "Identity", Summary: "Delete a group. Everything shared with it goes with it: its members lose that access and keep anything given to them another way. Refused if it would leave nobody who can manage accounts (R-088).", Verb: string(authz.InstallUsersManage)},
 	{Method: "GET", Path: "/api/v1/roles", Group: "Identity", Summary: "Roles, built in and custom. By default the ones granted across the installation; `scope=app` gives the ones granted on an app, and `scope=all` both. Built-in roles are immutable (R-081).", Verb: string(authz.InstallView)},
 	{Method: "POST", Path: "/api/v1/roles", Group: "Identity", Summary: "Compose a custom role from verbs (R-082).", Verb: string(authz.InstallUsersManage)},
@@ -233,7 +241,7 @@ var routeDocs = []reference.Route{
 	{Method: "GET", Path: "/api/v1/upgrade/last", Group: "Installation", Summary: "The most recent in-place upgrade, as `upgrade`, or null: `from`, `to`, `state` (`running`, `succeeded`, `rolled_back` or `failed`), `reason`, the new version's last log lines when it was rolled back, `backup_id` or `skip_backup`, and whether the rollback copy of the database is still kept (`snapshot_gone`, after 24 hours healthy).", Verb: string(authz.InstallView)},
 	{Method: "POST", Path: "/api/v1/upgrade", Group: "Installation", Summary: "Upgrade Pando in place (R-355 – R-360). Body: `version`; `passphrase` for the full backup taken first, or `skip_backup: true` to go without one, which is audited; and `confirm_breaking`, the version again, when the plan lists `breaking` versions. The image's signature is verified before anything else, and Pando refuses one that does not verify. Answers 202 with the upgrade: a helper then stops Pando, copies its database, starts the new version and waits for it to be ready, and puts the previous version and database back if it is not. Every app is unreachable while Pando restarts. `GET /upgrade/last` has the outcome once Pando is back.", Verb: string(authz.InstallUpgrade)},
 	{Method: "GET", Path: "/api/v1/audit/archives/{archiveID}", Group: "Installation", Summary: "Download one archived month: gzipped JSON lines, one audit event per line with every field the live log held. `Repr-Digest` carries its SHA-256, the same as the manifest's `sha256`.", Verb: string(authz.InstallAuditRead)},
-	{Method: "GET", Path: "/api/v1/backups", Group: "Installation", Summary: "The backups this installation holds, and each app's last daily backup attempt with why it was skipped or failed.", Verb: string(authz.InstallBackupManage)},
+	{Method: "GET", Path: "/api/v1/backups", Group: "Installation", Summary: "The backups this installation holds, newest first, a page at a time: `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `app_id` narrows to one app. The first page also carries `attempts`: the most recent apps' last daily backup attempt, with why it was skipped or failed, at most a page of them.", Verb: string(authz.InstallBackupManage)},
 	{Method: "POST", Path: "/api/v1/backups", Group: "Installation", Summary: "Take a backup now.", Verb: string(authz.InstallBackupManage)},
 	{Method: "POST", Path: "/api/v1/backups/{backupID}/verify", Group: "Installation", Summary: "Check a backup before it is needed, rather than at the moment of disaster (R-216).", Verb: string(authz.InstallBackupManage)},
 	{Method: "POST", Path: "/api/v1/backups/{backupID}/restore", Group: "Installation", Summary: "Restore from a backup. Verified first: an incomplete one is refused rather than half-applied (R-215).", Verb: string(authz.InstallBackupManage)},
@@ -254,9 +262,32 @@ var routeDocs = []reference.Route{
 // Nothing in it is a credential and nothing in it is a capability. The verbs it
 // names are the ones every endpoint already returns in its own error envelope
 // when a caller lacks them.
+//
+// Built once, the first time it is asked for: everything in it is fixed when
+// the binary is, and it is the largest document the API serves.
 func (s *Server) handleReference(w http.ResponseWriter, r *http.Request) {
-	JSON(w, http.StatusOK, reference.Build(routeDocs))
+	body, err := referenceJSON()
+	if err != nil {
+		Error(w, r, errs.Wrap(errs.Internal, "Pando could not assemble its API reference.", err))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
+
+// referenceJSON is the reference document, encoded as JSON writes it, built
+// on first use and kept.
+var referenceJSON = sync.OnceValues(func() ([]byte, error) {
+	referenceBuilds.Add(1)
+	var buf bytes.Buffer
+	err := json.NewEncoder(&buf).Encode(reference.Build(routeDocs))
+	return buf.Bytes(), err
+})
+
+// referenceBuilds counts how many times the reference was built, for the
+// test that it is built once.
+var referenceBuilds atomic.Int64
 
 // Reference returns the assembled document, for the generator that writes
 // `docs/` from it.

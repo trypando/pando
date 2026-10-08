@@ -23,10 +23,12 @@ import (
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/backup"
+	"github.com/trypando/pando/internal/core/capacity"
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/idp"
+	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
@@ -114,6 +116,10 @@ type Server struct {
 	Allocations *state.Allocations
 	Deployments *state.Deployments
 
+	// Capacity is GET /capacity's runtime readings, refreshed in the
+	// background (issue #72).
+	Capacity *capacity.Snapshots
+
 	// Security scores apps and answers where one stands (R-310). Nil on an
 	// installation with no scanner, where the endpoints say so rather than
 	// returning a zero.
@@ -138,6 +144,15 @@ type Server struct {
 	}
 
 	Logs *deploy.LogStore
+
+	// LogStreams shares one live runtime log stream per app part between
+	// everyone on this replica watching it (O-51). Nil makes the following
+	// endpoints answer that live logs are not available.
+	LogStreams *logstream.Hub
+	// DeployLogReauthEvery is how often a connected deploy-log stream checks
+	// the viewer's access again (R-048). logstream.DefaultReauthEvery when
+	// zero; tests shorten it.
+	DeployLogReauthEvery time.Duration
 	// LogOwner finds the replica running a deploy, so its live log can be
 	// read from any replica (issue #72). Nil with one replica.
 	LogOwner DeployLogOwner
@@ -513,6 +528,7 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/", s.handleListGroups)
 			r.Post("/", s.handleCreateGroup)
 			r.Put("/{groupID}/members", s.handleSetGroupMembers)
+			r.Get("/{groupID}/members", s.handleListGroupMembers)
 			r.Put("/{groupID}/members/{userID}", s.handleAddGroupMember)
 			r.Delete("/{groupID}/members/{userID}", s.handleRemoveGroupMember)
 
@@ -660,6 +676,7 @@ func (s *Server) Routes() http.Handler {
 			})
 		})
 		r.Get("/me/notifications", s.handleListNotifications)
+		r.Get("/me/notifications/unread", s.handleUnreadNotifications)
 		r.Post("/me/notifications/read", s.handleReadAllNotifications)
 		r.Post("/me/notifications/{notificationID}/read", s.handleReadNotification)
 		r.Get("/notification-preferences", s.handleGetNotificationPreferences)
@@ -737,6 +754,7 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/status", s.handleAppStatus)
 				r.Get("/usage", s.handleAppUsage)
 				r.Get("/logs", s.handleAppLogs)
+				r.Get("/logs/stream", s.handleAppLogStream)
 
 				// A terminal inside a running workload (design 04 §2.4).
 				//

@@ -17,6 +17,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/registrylimit"
 )
 
 // Kind is the adapter's kind string.
@@ -332,9 +333,7 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 				"The build took longer than %s and was stopped.", timeout).
 				WithRemedy("Check the build logs for a step that is hanging, or raise the build timeout for this app.")
 		}
-		return api.BuildResult{}, errs.Wrap(errs.BuildFailed,
-			"The build failed.", err).
-			WithRemedy("Check the build logs above for the failing step.")
+		return api.BuildResult{}, solveFailed(err)
 	}
 
 	// The export just rewrote the cache's index; what it no longer reaches is
@@ -349,6 +348,19 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 		return pushedResult(req.Push, resp)
 	}
 	return api.BuildResult{ImageRef: imageRef}, nil
+}
+
+// solveFailed is a build's failure as a person reads it. A base image the
+// registry refused for its download limit is said as that (R-105), in the
+// words the runtimes use for the same refusal; anything else is in the log.
+func solveFailed(err error) error {
+	if registrylimit.Mentioned(err.Error()) {
+		r := registrylimit.FromText(err.Error(), "")
+		r.Build = true
+		return r.Error(time.Now(), err)
+	}
+	return errs.Wrap(errs.BuildFailed, "The build failed.", err).
+		WithRemedy("Check the build logs above for the failing step.")
 }
 
 // nopWriteCloser lets a plain writer satisfy BuildKit's exporter, which closes

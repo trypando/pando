@@ -19,7 +19,7 @@ import { InstallVerb, useInstallVerb } from '../app/principal';
 import { Table } from '../ui/Table';
 import { FieldSkeleton, LineSkeleton, Loading } from '../ui/Loading';
 import { SearchField } from '../ui/SearchField';
-import { useSettled, withParams } from '../ui/paged';
+import { ShowMore, usePaged, useSettled, withParams, type PageOf } from '../ui/paged';
 import type { Role } from './Accounts';
 import { Quiet, messageOf, sentence } from './Accounts';
 
@@ -70,10 +70,14 @@ export function AccountApps({
   action?: React.ReactNode;
 }) {
   const noun = principal.kind === 'user' ? 'account' : 'group';
-  const access = useQuery({
-    queryKey: listKey(principal),
-    queryFn: () => api.get<{ apps: AppAccess[] }>(`/${principal.kind === 'user' ? 'users' : 'groups'}/${principal.id}/apps`),
+  // A page of apps at a time (issue #72): a group everyone is in can be
+  // granted every app in the install.
+  const paged = usePaged<{ apps: AppAccess[] | null } & PageOf, AppAccess>({
+    key: listKey(principal),
+    path: `/${principal.kind === 'user' ? 'users' : 'groups'}/${principal.id}/apps`,
+    rows: (p) => p.apps,
   });
+  const access = paged.query;
   // The roles an app can be granted with: the three built-ins and any custom
   // app role.
   const roles = useQuery({
@@ -89,7 +93,7 @@ export function AccountApps({
   const everyApp = seesEveryApp && sharesEveryApp;
   const [adding, setAdding] = useState(false);
 
-  const rows = access.data?.apps ?? [];
+  const rows = paged.rows;
 
   return (
     <section>
@@ -165,6 +169,7 @@ export function AccountApps({
           </EmptyState>
         }
       />
+      <ShowMore query={access} label="Show more apps" />
 
       {adding && (
         <GiveAccess

@@ -208,25 +208,6 @@ func (r *Reader) List(ctx context.Context, q Query) ([]Record, error) {
 	return out, rows.Err()
 }
 
-// ActionNames lists the actions the log holds, so a question can be turned
-// into filters that match something.
-func (r *Reader) ActionNames(ctx context.Context) ([]string, error) {
-	rows, err := r.pool.Query(ctx, `SELECT DISTINCT action FROM audit_events ORDER BY action LIMIT 500`)
-	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read the audit log.", err)
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var a string
-		if err := rows.Scan(&a); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read the audit log.", err)
-		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
-}
-
 // escapeLike neutralizes the wildcards in a user-supplied prefix.
 func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)

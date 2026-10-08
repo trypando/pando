@@ -56,6 +56,7 @@ import (
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
+	"github.com/trypando/pando/internal/core/capacity"
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/cluster"
 	"github.com/trypando/pando/internal/core/deploy"
@@ -64,6 +65,7 @@ import (
 	"github.com/trypando/pando/internal/core/edgecert"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
+	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
@@ -479,6 +481,7 @@ func serve(ctx context.Context, configPath string) error {
 
 	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps).WithImages(images).
 		WithInstallRegistry(buildRegistry)
+	capacityReadings := &capacity.Snapshots{Registry: registry, Allocations: allocations, Logger: logger}
 
 	// Every route points here (R-023). The proxy is phase 5; until it exists
 	// this is the address routing adapters are told to use, and it is already
@@ -696,6 +699,7 @@ func serve(ctx context.Context, configPath string) error {
 		Authz:       authorizer,
 		Policy:      policyStore,
 		Planner:     appPlanner,
+		Capacity:    allocations,
 		Deployer:    deployQueue,
 		Audit:       httpapi.AuditFunc(auditor),
 		Notifier:    notifyRouter,
@@ -826,6 +830,8 @@ func serve(ctx context.Context, configPath string) error {
 		// One answer per app per moment for the console's status and usage
 		// polls, rather than one Docker call per open tab (issue #72).
 		Observations: observe.New(),
+		// One live log stream per app part for every viewer of it (O-51).
+		LogStreams: logstream.New(logstream.WithLogger(logger)),
 		Assist: &assist.Service{
 			Registry: registry,
 			Users:    users,
@@ -862,6 +868,9 @@ func serve(ctx context.Context, configPath string) error {
 		AdapterCredentials: adapterCredentials,
 
 		Allocations: allocations,
+		// GET /capacity's runtime readings, taken in the background while
+		// somebody is looking rather than on every view (issue #72).
+		Capacity:    capacityReadings,
 		Planner:     appPlanner,
 		Deployments: deployments,
 		Reconciles:  reconciles,
@@ -963,6 +972,12 @@ func serve(ctx context.Context, configPath string) error {
 
 		// Replicas share the apps rather than each visiting every one.
 		MinRevisit: reconciler.DefaultMinRevisit,
+
+		// Every runtime's events are followed, on every replica, so an app
+		// is visited when something happens to it and a settled one only on
+		// the slow sweep (O-52). A runtime without events keeps the fast
+		// cadence.
+		Runtimes: func() []string { return registry.ByCategory(adapterapi.CategoryRuntime) },
 
 		// The owner hears that their app failed (design 05 §4). Unset until
 		// issue #50, which is to say nobody heard.
@@ -1105,6 +1120,7 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:        logger,
 	}
 	go dispatcher.Run(loopCtx)
+	go capacityReadings.Run(loopCtx)
 
 	// Retention, hourly, for the tables that otherwise only grow — the event
 	// outbox among them, whose pruning used to run on every replica (issue

@@ -272,53 +272,66 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
   const queries = useQueryClient();
   const creating = group === 'new';
   const [name, setName] = useState(creating ? '' : group.name);
-  // The group's members come from the group itself — the list counts them
-  // rather than carrying them (issue #72) — and are held here once changed.
+  // The group counts its members and pages them (issue #72): a group can
+  // hold the whole organization, so neither the group nor this dialog reads
+  // all of them. What changes is held as who was added and who was taken out,
+  // and saved one person at a time.
   const detail = useQuery({
     queryKey: ['groups', creating ? 'new' : group.id],
     queryFn: () => api.get<Group>(`/groups/${creating ? '' : group.id}`),
     enabled: !creating,
   });
-  const [changed, setMembers] = useState<string[] | null>(creating ? [] : null);
-  const members = changed ?? detail.data?.members ?? [];
+  const [added, setAdded] = useState<string[]>([]);
+  const [removed, setRemoved] = useState<string[]>([]);
 
-  // The people offered: the members, by name, and whoever a search finds.
-  // Not every account in the install, which can be a hundred thousand.
+  // The people offered: the first members, and whoever a search finds, with
+  // which of those are members already. Not every account in the install,
+  // which can be a hundred thousand.
   const [search, setSearch] = useState('');
   const settled = useSettled(search.trim());
-  // The members as the group had them, so one taken out stays on the list
-  // to be put back.
-  const named = (detail.data?.members ?? []).slice(0, MEMBERS_NAMED);
   const accounts = useQuery({
-    queryKey: ['users', 'pick', settled, named],
+    queryKey: ['users', 'pick', creating ? 'new' : group.id, settled],
     queryFn: async () => {
-      const [inGroup, found] = await Promise.all([
-        named.length > 0
-          ? api.get<{ users: Account[] | null }>(withParams('/users', { id: named, limit: named.length }))
-          : Promise.resolve({ users: [] as Account[] }),
-        api.get<{ users: Account[] | null }>(withParams('/users', { q: settled, limit: PEOPLE_FOUND })),
+      type Accounts = { users?: Account[] | null; members?: Account[] | null };
+      const membersOf = (params: Record<string, string | string[] | number | undefined>) =>
+        creating
+          ? Promise.resolve<Accounts>({ members: [] })
+          : api.get<Accounts>(withParams(`/groups/${group.id}/members`, params));
+      const [first, found] = await Promise.all([
+        membersOf({ limit: MEMBERS_NAMED }),
+        api.get<Accounts>(withParams('/users', { q: settled, limit: PEOPLE_FOUND })),
       ]);
-      const first = inGroup.users ?? [];
-      return [...first, ...(found.users ?? []).filter((a) => !first.some((m) => m.id === a.id))];
+      const named = first.members ?? [];
+      const others = (found.users ?? []).filter((a) => !named.some((m) => m.id === a.id));
+      const alsoIn = others.length > 0 ? await membersOf({ id: others.map((a) => a.id), limit: others.length }) : {};
+      const inGroup = new Set([...named, ...(alsoIn.members ?? [])].map((a) => a.id));
+      return { people: [...named, ...others], inGroup };
     },
     enabled: creating || detail.isSuccess,
     placeholderData: (previous) => previous,
   });
+  const isMember = (id: string) =>
+    added.includes(id) || (!removed.includes(id) && Boolean(accounts.data?.inGroup.has(id)));
 
   const save = useMutation({
-    mutationFn: () =>
-      creating ? api.post('/groups', { name, members }) : api.put(`/groups/${group.id}/members`, { members }),
-    onSuccess: () => {
-      void queries.invalidateQueries({ queryKey: ['groups'] });
-      onClose();
+    mutationFn: async () => {
+      if (creating) return api.post('/groups', { name, members: added });
+      // In order: a failure part way leaves what succeeded in place, and the
+      // list, refreshed either way, shows how far it got.
+      for (const id of added) await api.put(`/groups/${group.id}/members/${id}`);
+      for (const id of removed) await api.del(`/groups/${group.id}/members/${id}`);
     },
+    onSuccess: () => onClose(),
+    onSettled: () => void queries.invalidateQueries({ queryKey: ['groups'] }),
   });
 
-  const toggle = (id: string) =>
-    setMembers((current) => {
-      const base = current ?? detail.data?.members ?? [];
-      return base.includes(id) ? base.filter((m) => m !== id) : [...base, id];
-    });
+  const toggle = (id: string) => {
+    const wasMember = Boolean(accounts.data?.inGroup.has(id));
+    const on = !isMember(id);
+    setAdded((a) => (on && !wasMember ? [...a, id] : a.filter((m) => m !== id)));
+    setRemoved((r) => (!on && wasMember ? [...r, id] : r.filter((m) => m !== id)));
+  };
+  const count = detail.data?.member_count ?? 0;
 
   return (
     <Dialog
@@ -361,9 +374,9 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
           }}
         >
           <SearchField value={search} onChange={setSearch} placeholder="Search accounts to add" width="100%" />
-          {(detail.data?.members?.length ?? 0) > MEMBERS_NAMED && (
+          {count > MEMBERS_NAMED && (
             <Quiet>
-              The first {MEMBERS_NAMED} of {detail.data?.members?.length} people are listed. Search to find the others.
+              The first {MEMBERS_NAMED} of {count.toLocaleString('en-US')} people are listed. Search to find the others.
             </Quiet>
           )}
           {/* A checkbox's line each, until the accounts arrive. */}
@@ -374,10 +387,10 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
               ))}
             </Loading>
           )}
-          {(accounts.data ?? []).map((a) => (
+          {(accounts.data?.people ?? []).map((a) => (
             <Checkbox
               key={a.id}
-              checked={members.includes(a.id)}
+              checked={isMember(a.id)}
               label={a.display_name || a.email || a.external_id}
               onChange={() => toggle(a.id)}
             />

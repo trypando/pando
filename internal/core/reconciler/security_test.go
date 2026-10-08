@@ -43,6 +43,9 @@ type fakeState struct {
 	marked  map[string]time.Time
 	cleared map[string]bool
 	stopped map[string]bool
+
+	// threshold is what the pass last asked for apps against.
+	threshold state.SecurityThreshold
 }
 
 func newFakeState(apps ...state.SecurityState) *fakeState {
@@ -54,7 +57,8 @@ func newFakeState(apps ...state.SecurityState) *fakeState {
 	}
 }
 
-func (f *fakeState) LiveSecurityState(context.Context) ([]state.SecurityState, error) {
+func (f *fakeState) LiveSecurityState(_ context.Context, t state.SecurityThreshold) ([]state.SecurityState, error) {
+	f.threshold = t
 	return f.apps, nil
 }
 func (f *fakeState) MarkInsecure(_ context.Context, appID string, at time.Time) error {
@@ -223,7 +227,7 @@ func TestR317_WithNoScannerThePassDoesNothing(t *testing.T) {
 // per app.
 func TestR315_TheSecurityPassPlacesEveryAppInOneCall(t *testing.T) {
 	now := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
-	doc := policy.Document{MinSecurityScore: 70}
+	doc := policy.Document{MinSecurityScore: 70, IgnoreUnfixableFindings: true}
 	report := security.Report{Standing: security.Standing{Verdict: security.VerdictInsecure, Score: score(40), Threshold: 70}}
 
 	var apps []state.SecurityState
@@ -238,4 +242,7 @@ func TestR315_TheSecurityPassPlacesEveryAppInOneCall(t *testing.T) {
 
 	require.Equal(t, 1, g.Security.(*fakeScores).calls)
 	require.Len(t, st.marked, 50, "and every app was placed")
+	// The store is asked only for apps the pass could act on, under the
+	// threshold policy sets (issue #72).
+	require.Equal(t, state.SecurityThreshold{MinScore: 70, IgnoreUnfixable: true}, st.threshold)
 }

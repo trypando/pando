@@ -4,6 +4,7 @@
 import { useState } from 'react';
 
 import { matches } from './search';
+import { unionPeople, usePeopleSearch } from './people';
 import { TagField } from './TagField';
 
 export interface Person {
@@ -25,14 +26,18 @@ export function PeopleField({
   onChange,
 }: {
   label: string;
-  /** Everyone who could be chosen. */
+  /** The people already named — the chosen ones, at least. Anyone else is
+   *  found by asking the server for what was typed (issue #72). */
   people: Person[];
   /** The chosen people's IDs, in the order they were added. */
   value: string[];
   onChange: (ids: string[]) => void;
 }) {
   const [text, setText] = useState('');
-  const options = people
+  // The people the page named, and anyone the server finds for what was
+  // typed (issue #72): the page no longer loads every account up front.
+  const known = unionPeople(people, usePeopleSearch(text));
+  const options = known
     .filter((p) => !value.includes(p.id))
     .filter((p) => matches(text, p.display_name, p.email, p.external_id, p.id))
     .map((p) => ({ id: p.id, name: p.display_name || p.external_id || p.id, detail: p.email }));
@@ -44,7 +49,7 @@ export function PeopleField({
       onChange={onChange}
       nameOf={(id) =>
         personName(
-          people.find((p) => p.id === id),
+          known.find((p) => p.id === id),
           id,
         )
       }

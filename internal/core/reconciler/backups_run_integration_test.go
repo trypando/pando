@@ -31,7 +31,7 @@ func TestR211_RollingBackupsRunAsAJobOfTheirOwn(t *testing.T) {
 	}()
 
 	require.Eventually(t, func() bool {
-		attempts, err := job.Backups.Attempts(context.Background(), appID)
+		attempts, err := job.Backups.Attempts(context.Background(), appID, 1)
 		return err == nil && len(attempts) == 1 && attempts[0].Outcome == state.AttemptTaken
 	}, 30*time.Second, 10*time.Millisecond, "the first pass took the due backup")
 	time.Sleep(100 * time.Millisecond) // several more passes
@@ -56,7 +56,7 @@ func TestR211_RollingBackupsWithNowhereToPutThemDoNothing(t *testing.T) {
 
 	job.Pass(context.Background())
 
-	attempts, err := job.Backups.Attempts(context.Background(), appID)
+	attempts, err := job.Backups.Attempts(context.Background(), appID, 1)
 	require.NoError(t, err)
 	require.Empty(t, attempts, "nothing was attempted, so nothing is recorded")
 	require.Empty(t, runner.taken)

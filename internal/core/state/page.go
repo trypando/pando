@@ -1,8 +1,10 @@
 package state
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 
 	"github.com/trypando/pando/internal/errs"
 )
@@ -22,6 +24,22 @@ const (
 	DefaultPageSize = 100
 	MaxPageSize     = 500
 )
+
+// TotalCap is how far a list's total is counted exactly (O-53). Counting
+// every match costs a read of every match, which at 100,000 accounts is the
+// whole table on every page; a count that stops past the cap costs at most
+// the cap. A list holding more reports TotalCap+1, which the API sends as
+// TotalCap with `total_is_lower_bound` ("10,000+").
+const TotalCap = 10000
+
+// countCapped counts the rows `from` (a FROM clause and its WHERE) selects,
+// stopping at TotalCap+1.
+func countCapped(ctx context.Context, db *DB, from string, args ...any) (int, error) {
+	var n int
+	err := db.QueryRow(ctx, fmt.Sprintf(`SELECT count(*) FROM (SELECT 1 %s LIMIT %d) capped`, from, TotalCap+1),
+		args...).Scan(&n)
+	return n, err
+}
 
 // Page asks for one page of a list.
 type Page struct {

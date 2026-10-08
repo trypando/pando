@@ -28,6 +28,9 @@ what was built, with these differences, each a **[P]** the owner may override:
 | `LargestFit` | The eligible node with the most memory (then CPU) left after every pod's requests, Pando's included; `LargestFitFor` adds back the bundle's own pods' requests, so a redeploy that fits where it runs is allowed (merged with PR 7's planner rule) | The planner compares an app's summed workloads with one node, which is stricter than the scheduler needs; Apply turns a `FailedScheduling` refusal into the deploy's error |
 | Keys | `pando-keys` Secret mounted by `subPath` over `/var/lib/pando/secrets.key` and `token.key` on the shared volume | No setting changes, and no replica can write a key of its own. The secrets-key canary and `token_key_check` still run at every start and refuse a replica whose mounted key differs from the one the database was set up with |
 | RBAC | The cluster role adds `pods: get, list, watch` cluster-wide, read-only, and `metrics.k8s.io` `pods`, `nodes`: `get, list` | Capacity subtracts what other pods request on each node; usage reads metrics. Pando cannot change, exec into or read logs of a pod outside its own namespaces |
+| API rate | `api_qps` and `api_burst` settings on the runtime (default 200 and 400) and on the Traefik adapter's IngressRoute delivery (100 and 200); every client to the cluster's API is limited by them, and the runtime asks for the built-in kinds as protobuf | Without them client-go allows 5 requests a second, about 18 apps observed in a 15-second pass. The defaults are sized for a five-minute sweep (O-52) of 20,000 apps across two replicas; see `notes-kubernetes-scale-issue-72.md`, "What changed" |
+| A new namespace's first pod | `Apply`, the trial and the canary wait, up to 30 s and polling as other waits do, for the namespace's `default` ServiceAccount before creating a pod; the cluster role reads ServiceAccounts (`get`) | The ServiceAccount admission plugin refuses every pod until the controller manager has made it; on kwok one deploy in ten of the first 2,500 failed this way |
+| Capacity read | Once per plan (design 03, "One reading per plan"), in pages of 500 pods, only pods not finished, keeping sums rather than the list | It lists every pod in the cluster; not kept between plans, and not from a watch, so R-242 never answers from a reading that can miss a pod |
 | Trial | Writes are not observed; an observer container in the trial pod reads `/proc/net/tcp` through `pods/exec` | As designed, through exec rather than the pod's log |
 
 **Run on a kind cluster.** `make test-kubernetes` (`test/kubernetes`) creates a kind cluster of one
@@ -151,7 +154,9 @@ Costs, stated:
   tests. **[D] (O-40)** Namespace per app is kept, and the PR 2 load harness proves 20,000 app
   namespaces on the cluster tier before this PR is done, with the result documented. If the harness
   finds a limit, the fallback is several clusters per install, which needs the proxy to reach pods in a
-  cluster it does not run in (PR 7's host agent would do it).
+  cluster it does not run in (PR 7's host agent would do it). Measured on kwok in
+  `notes-kubernetes-scale-issue-72.md`: the control plane held 20,000 apps; what binds first is
+  Pando's own client.
 
 A shared namespace was the alternative; the rest of this note marks where it would differ.
 

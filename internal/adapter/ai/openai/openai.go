@@ -159,6 +159,10 @@ func (a *Adapter) Capabilities(_ context.Context) (api.AICapabilities, error) {
 		ChoosesModel: true,
 		MaxFiles:     a.cfg.MaxFiles,
 		MaxBytes:     a.cfg.MaxBytes,
+
+		// Function calling is reliable on the Responses API, so drafting
+		// access and searching the audit log look things up (O-54).
+		LooksUp: true,
 	}
 	if a.screensPlans() {
 		caps.Functions = append(caps.Functions,

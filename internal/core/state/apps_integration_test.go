@@ -241,13 +241,13 @@ func TestR264_LauncherListIsDataPlaneScoped(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, manageable, 1, "bob can manage the app")
 
-	usable, err := apps.ListForUse(ctx, bobPrincipal)
+	usable, _, err := apps.ListForUse(ctx, bobPrincipal, state.Page{}, false)
 	require.NoError(t, err)
 	require.Empty(t, usable, "but it does not appear in his launcher — two planes, two lists")
 
 	// The owner sees it in both.
 	alicePrincipal := authz.Principal{Kind: authz.KindUser, ID: alice.ID, UserID: alice.ID, Status: "active"}
-	usable, err = apps.ListForUse(ctx, alicePrincipal)
+	usable, _, err = apps.ListForUse(ctx, alicePrincipal, state.Page{}, false)
 	require.NoError(t, err)
 	require.Len(t, usable, 1)
 }

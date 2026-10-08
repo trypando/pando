@@ -1,0 +1,10 @@
+DROP INDEX IF EXISTS backup_attempts_recent_idx;
+DROP INDEX IF EXISTS backups_list_idx;
+DROP INDEX IF EXISTS subscriptions_list_idx;
+DROP INDEX IF EXISTS subscriptions_app_list_idx;
+DROP INDEX IF EXISTS subscriptions_owner_token_list_idx;
+DROP INDEX IF EXISTS subscriptions_owner_user_list_idx;
+CREATE INDEX subscriptions_owner_user_idx ON subscriptions (owner_user_id);
+CREATE INDEX subscriptions_owner_token_idx ON subscriptions (owner_token_id);
+CREATE INDEX subscriptions_app_idx ON subscriptions (app_id);
+DROP INDEX IF EXISTS grants_app_list_idx;

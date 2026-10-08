@@ -52,7 +52,7 @@ import { Loading } from '../ui/Loading';
 import { ScoreBadge } from '../ui/ScoreBadge';
 import { Security } from './Security';
 import { deletePath } from './delete-app';
-import { invalidateAppLists } from './appList';
+import { invalidateApp, invalidateAppLists } from './appList';
 import {
   Blocked,
   DetectionFailed,
@@ -413,9 +413,10 @@ export function AppOnboarding({
         });
       }
     },
-    // ['apps']: the app leaves draft, which changes both this screen — it gives
-    // way to the ordinary one, with tabs — and the app's row in the list.
-    onSuccess: () => queries.invalidateQueries({ queryKey: ['apps'] }),
+    // This app and the lists of apps: the app leaves draft, which changes both
+    // this screen — it gives way to the ordinary one, with tabs — and the
+    // app's row in the list. Not every other app's queries (issue #72).
+    onSuccess: () => invalidateApp(queries, appID),
   });
 
   const rejectDialog = (

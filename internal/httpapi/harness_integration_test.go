@@ -33,11 +33,13 @@ import (
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
+	"github.com/trypando/pando/internal/core/capacity"
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
+	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
@@ -207,6 +209,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		},
 		AdapterKinds: []adapterapi.KindInfo{aianthropic.Info(), secretslocal.Info()},
 		Allocations:  allocations,
+		Capacity:     &capacity.Snapshots{Registry: registry, Allocations: allocations},
 
 		AdapterCredentials: state.NewAdapterCredentials(db, secretsAdapter, "sec_local"),
 		Planner:            appPlanner,
@@ -214,6 +217,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Reconciles:         state.NewReconciles(db),
 		Deployer:           deployer,
 		Logs:               logStore,
+		LogStreams:         logstream.New(),
 		Secrets:            secrets,
 		Detections:         state.NewDetections(db),
 		Sources:            sources,
@@ -302,6 +306,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Authz:       authorizer,
 		Policy:      effectivePolicy,
 		Planner:     appPlanner,
+		Capacity:    allocations,
 		Deployer:    deployQueue,
 		Audit:       httpapi.AuditFunc(auditor),
 		Approvers:   authzStore,

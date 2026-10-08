@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -30,6 +31,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/registrylimit"
 )
 
 // Platform is an operating system and CPU architecture, as a registry names
@@ -173,21 +175,45 @@ type Inspector struct {
 // Inspect resolves a reference and reads the configuration for want.
 //
 // auth is nil for an anonymous read. A zero want reads no configuration and
-// only resolves the digest and the platforms.
+// only resolves the digest, with a HEAD where the registry allows: Platforms
+// is then empty.
 func (in Inspector) Inspect(ctx context.Context, reference string, auth *Auth, want Platform) (Inspection, error) {
 	ref, err := in.parse(reference)
 	if err != nil {
 		return Inspection{}, err
 	}
 
-	opts := []remote.Option{remote.WithContext(ctx), remote.WithAuth(auth.authenticator())}
-	if in.Transport != nil {
-		opts = append(opts, remote.WithTransport(in.Transport))
+	base := in.Transport
+	if base == nil {
+		base = remote.DefaultTransport
+	}
+	watch := &limitWatch{base: base}
+	opts := []remote.Option{
+		remote.WithContext(ctx), remote.WithAuth(auth.authenticator()), remote.WithTransport(watch),
+		// The client's own list less 429: a download limit lasts hours, and
+		// asking again seconds later only spends more of it.
+		remote.WithRetryStatusCodes(http.StatusRequestTimeout, http.StatusInternalServerError,
+			http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout),
+	}
+	readable := func(err error) error { return readable(reference, ref, auth, watch.refused(), err) }
+
+	// Only the digest wanted: a HEAD answers it, and Docker Hub counts a
+	// manifest GET against its pull limit and a HEAD not at all. A registry
+	// that answers a HEAD without the digest, or refuses the method, is asked
+	// again with a GET; one that said no for a reason a GET shares is not.
+	if want.OS == "" {
+		head, err := remote.Head(ref, opts...)
+		if err == nil {
+			return Inspection{Reference: reference, Digest: head.Digest.String()}, nil
+		}
+		if final(err) {
+			return Inspection{}, readable(err)
+		}
 	}
 
 	desc, err := remote.Get(ref, opts...)
 	if err != nil {
-		return Inspection{}, readable(reference, ref, auth, err)
+		return Inspection{}, readable(err)
 	}
 
 	out := Inspection{Reference: reference, Digest: desc.Digest.String()}
@@ -195,11 +221,11 @@ func (in Inspector) Inspect(ctx context.Context, reference string, auth *Auth, w
 	if desc.MediaType.IsIndex() {
 		idx, err := desc.ImageIndex()
 		if err != nil {
-			return Inspection{}, readable(reference, ref, auth, err)
+			return Inspection{}, readable(err)
 		}
 		manifest, err := idx.IndexManifest()
 		if err != nil {
-			return Inspection{}, readable(reference, ref, auth, err)
+			return Inspection{}, readable(err)
 		}
 		var chosen *v1.Descriptor
 		for i, m := range manifest.Manifests {
@@ -216,11 +242,11 @@ func (in Inspector) Inspect(ctx context.Context, reference string, auth *Auth, w
 		if chosen != nil {
 			img, err := idx.Image(chosen.Digest)
 			if err != nil {
-				return Inspection{}, readable(reference, ref, auth, err)
+				return Inspection{}, readable(err)
 			}
 			cfg, err := img.ConfigFile()
 			if err != nil {
-				return Inspection{}, readable(reference, ref, auth, err)
+				return Inspection{}, readable(err)
 			}
 			c := configOf(cfg)
 			out.Config = &c
@@ -232,11 +258,11 @@ func (in Inspector) Inspect(ctx context.Context, reference string, auth *Auth, w
 
 	img, err := desc.Image()
 	if err != nil {
-		return Inspection{}, readable(reference, ref, auth, err)
+		return Inspection{}, readable(err)
 	}
 	cfg, err := img.ConfigFile()
 	if err != nil {
-		return Inspection{}, readable(reference, ref, auth, err)
+		return Inspection{}, readable(err)
 	}
 	p := Platform{OS: cfg.OS, Architecture: cfg.Architecture, Variant: cfg.Variant}
 	out.Platforms = []Platform{p}
@@ -302,14 +328,52 @@ func configOf(cfg *v1.ConfigFile) Config {
 	return c
 }
 
+// limitWatch keeps the headers of a registry's last 429, which say when it
+// accepts downloads again and which the client's error does not carry.
+type limitWatch struct {
+	base http.RoundTripper
+	mu   sync.Mutex
+	last http.Header
+}
+
+func (w *limitWatch) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := w.base.RoundTrip(r)
+	if err == nil && resp.StatusCode == http.StatusTooManyRequests {
+		w.mu.Lock()
+		w.last = resp.Header.Clone()
+		w.mu.Unlock()
+	}
+	return resp, err
+}
+
+func (w *limitWatch) refused() http.Header {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.last
+}
+
+// now is the clock a refusal's retry time is read against.
+var now = time.Now
+
 // readable turns a registry failure into something a person can act on
-// (R-105). The three that matter are the image not existing, the registry
-// wanting credentials, and the registry not answering.
-func readable(reference string, ref name.Reference, auth *Auth, err error) error {
+// (R-105). The four that matter are the image not existing, the registry
+// wanting credentials, the registry limiting downloads, and the registry not
+// answering. limited is the headers of the registry's 429, if it sent one.
+func readable(reference string, ref name.Reference, auth *Auth, limited http.Header, err error) error {
 	registry := ref.Context().RegistryStr()
 	repo := ref.Context().RepositoryStr()
 
 	var terr *transport.Error
+	if errors.As(err, &terr) && rateLimited(terr) {
+		signed := registrylimit.Anonymous
+		if auth != nil {
+			signed = registrylimit.SignedIn
+		}
+		at := now()
+		return registrylimit.Refusal{
+			Registry: registry, Image: reference, Signed: signed, RetryAt: registrylimit.RetryAt(limited, at),
+		}.Error(at, err)
+	}
 	if errors.As(err, &terr) {
 		switch terr.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:
@@ -336,6 +400,34 @@ func readable(reference string, ref name.Reference, auth *Auth, err error) error
 		fmt.Sprintf("Pando could not read the image %s from the registry %s.", reference, registry), err).
 		WithRemedy("Check that the registry is reachable from the Pando server, then try again.").
 		WithDetail("registry", registry)
+}
+
+// rateLimited reports a registry's refusal for its download limit: a 429, or
+// the distribution error code a registry may send with another status.
+func rateLimited(terr *transport.Error) bool {
+	if terr.StatusCode == http.StatusTooManyRequests {
+		return true
+	}
+	for _, d := range terr.Errors {
+		if d.Code == transport.TooManyRequestsErrorCode {
+			return true
+		}
+	}
+	return false
+}
+
+// final reports a HEAD refusal a GET would get too: credentials, a missing
+// image, the download limit.
+func final(err error) bool {
+	var terr *transport.Error
+	if !errors.As(err, &terr) {
+		return false
+	}
+	switch terr.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
+	}
+	return rateLimited(terr)
 }
 
 // Pin replaces a reference's tag with a digest:

@@ -17,6 +17,17 @@ import { api } from '@api/client';
 export interface PageOf {
   next_cursor?: string;
   total?: number;
+  /** The list holds more than `total`, which is the count's cap (O-53). */
+  total_is_lower_bound?: boolean;
+}
+
+/**
+ * A list's total as a person reads it: "10,000+" when the server stopped
+ * counting at its cap (O-53), the exact number otherwise.
+ */
+export function totalLabel(page?: PageOf): string {
+  const n = (page?.total ?? 0).toLocaleString('en-US');
+  return page?.total_is_lower_bound ? `${n}+` : n;
 }
 
 /** A path with query parameters added, skipping empty ones. */
@@ -66,6 +77,7 @@ export function usePaged<P extends PageOf, R>({
     query,
     rows: pages.flatMap((p) => rows(p) ?? []),
     total: pages[0]?.total,
+    totalLabel: totalLabel(pages[0]),
   };
 }
 

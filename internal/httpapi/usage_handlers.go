@@ -68,7 +68,10 @@ func (s *Server) handleAppUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	caps, err := runtime.Capabilities(r.Context())
+	// From the same cache as the reading: every open usage panel polls this,
+	// and what a runtime can do does not change between polls (issue #72).
+	ref := rev.Body.Runtime.AdapterRef
+	caps, err := s.Observations.Capabilities(r.Context(), ref, runtime)
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -80,7 +83,7 @@ func (s *Server) handleAppUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reading, err := s.Observations.Usage(r.Context(), rev.Body.Runtime.AdapterRef, runtime, app.ID)
+	reading, err := s.Observations.Usage(r.Context(), ref, runtime, app.ID)
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -90,7 +93,7 @@ func (s *Server) handleAppUsage(w http.ResponseWriter, r *http.Request) {
 		"reported_at": reading.Reported.Format(time.RFC3339),
 		"workloads":   workloadUsages(rev.Body, reading),
 	}
-	if capacity, err := runtime.Capacity(r.Context()); err == nil {
+	if capacity, err := s.Observations.Capacity(r.Context(), ref, runtime); err == nil {
 		body["host_cpu_millis"] = capacity.TotalCPUMillis
 		body["host_memory_bytes"] = capacity.TotalMemoryBytes
 	}

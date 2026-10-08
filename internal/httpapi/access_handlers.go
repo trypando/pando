@@ -147,12 +147,17 @@ func (s *Server) handleListGrants(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	grants, err := s.Grants.ListForApp(r.Context(), app.ID)
+	page, err := pageFrom(r)
 	if err != nil {
 		Error(w, r, err)
 		return
 	}
-	body := map[string]any{"grants": grants, "public_sharing": string(corepolicy.PublicSharingAllowed)}
+	grants, next, err := s.Grants.ListForApp(r.Context(), app.ID, page)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	body := map[string]any{"grants": grants, "next_cursor": next, "public_sharing": string(corepolicy.PublicSharingAllowed)}
 	// The host's rule for sharing with everyone (R-076), so the console offers
 	// only what it allows rather than options the server will refuse.
 	if s.HostPolicy != nil {
@@ -249,7 +254,12 @@ func (s *Server) handleUserApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	grants, err := s.Grants.ForUser(r.Context(), userID)
+	page, err := pageFrom(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	grants, next, err := s.Grants.ForUser(r.Context(), userID, page)
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -260,7 +270,7 @@ func (s *Server) handleUserApps(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"apps": out})
+	JSON(w, http.StatusOK, map[string]any{"apps": out, "next_cursor": next})
 }
 
 // appAccess is an account's or a group's app grants, one row per app, with
@@ -275,32 +285,34 @@ type appAccessRow struct {
 	Data      []state.UserAppGrant `json:"data"`
 }
 
+// What the caller may do is asked of the authorizer once for the page's apps
+// (AllowsEach), not twice per app: the same answers, in one read of the
+// caller's grants (issue #72).
 func (s *Server) appAccess(r *http.Request, p authz.Principal, grants []state.UserAppGrant, ownerID string, all bool) ([]*appAccessRow, error) {
-	type access = appAccessRow
-	out := []*access{}
-	byApp := map[string]*access{}
-	self := all
-	userID := ownerID
-	var err error
+	var appIDs []string
+	seen := map[string]bool{}
 	for _, g := range grants {
-		a, seen := byApp[g.AppID]
-		if !seen {
-			visible := self
-			if !visible {
-				if visible, err = s.Authz.Allows(r.Context(), p, g.AppID, authz.AppView); err != nil {
-					return nil, err
-				}
-			}
-			if !visible {
+		if !seen[g.AppID] {
+			seen[g.AppID] = true
+			appIDs = append(appIDs, g.AppID)
+		}
+	}
+	allowed, err := s.Authz.AllowsEach(r.Context(), p, appIDs, authz.AppView, authz.AppGrantsManage)
+	if err != nil {
+		return nil, err
+	}
+
+	out := []*appAccessRow{}
+	byApp := map[string]*appAccessRow{}
+	for _, g := range grants {
+		a, known := byApp[g.AppID]
+		if !known {
+			if !all && !allowed[g.AppID][authz.AppView] {
 				byApp[g.AppID] = nil
 				continue
 			}
-			manage, err := s.Authz.Allows(r.Context(), p, g.AppID, authz.AppGrantsManage)
-			if err != nil {
-				return nil, err
-			}
-			a = &access{AppID: g.AppID, AppName: g.AppName, Owner: userID != "" && g.AppOwner == userID,
-				CanManage: manage, Control: []state.UserAppGrant{}, Data: []state.UserAppGrant{}}
+			a = &appAccessRow{AppID: g.AppID, AppName: g.AppName, Owner: ownerID != "" && g.AppOwner == ownerID,
+				CanManage: allowed[g.AppID][authz.AppGrantsManage], Control: []state.UserAppGrant{}, Data: []state.UserAppGrant{}}
 			byApp[g.AppID] = a
 			out = append(out, a)
 		}

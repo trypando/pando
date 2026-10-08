@@ -58,15 +58,21 @@ func (s *Server) handleListSubscriptions(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	subs, err := s.Subscriptions.List(r.Context(), p, subscription.ListRequest{
+	page, err := pageFrom(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	subs, next, err := s.Subscriptions.List(r.Context(), p, subscription.ListRequest{
 		AppID:    r.URL.Query().Get("app_id"),
 		Everyone: r.URL.Query().Get("everyone") == "true",
+		Page:     page,
 	})
 	if err != nil {
 		Error(w, r, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"subscriptions": subs})
+	JSON(w, http.StatusOK, map[string]any{"subscriptions": subs, "next_cursor": next})
 }
 
 func (s *Server) handleCreateSubscription(w http.ResponseWriter, r *http.Request) {
@@ -245,6 +251,21 @@ func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	JSON(w, http.StatusOK, page)
+}
+
+// handleUnreadNotifications answers the bell's count alone, without a page of
+// the inbox: every open console asks it on every screen (R-377, issue #72).
+func (s *Server) handleUnreadNotifications(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.inbox(w, r)
+	if !ok {
+		return
+	}
+	unread, err := s.Inbox.UnreadCount(r.Context(), p)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]int{"unread": unread})
 }
 
 func (s *Server) handleReadNotification(w http.ResponseWriter, r *http.Request) {

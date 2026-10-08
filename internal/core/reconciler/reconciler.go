@@ -132,6 +132,21 @@ type Reconciler struct {
 	// LeaseDuration overrides DefaultLeaseDuration. Zero means the default.
 	LeaseDuration time.Duration
 
+	// SettledRevisit is how long an app found as it should be is left before
+	// it is looked at again, when its runtime reports events (O-52, events.go).
+	// Zero means DefaultSettledRevisit.
+	SettledRevisit time.Duration
+
+	// Runtimes names the runtime adapters whose events Run follows (O-52).
+	// Asked again on every tick, so a runtime added in the console is
+	// followed without a restart. Nil follows none, and every app is visited
+	// on every pass, as before events.
+	Runtimes func() []string
+
+	// events is what Run's event watchers share with Tick (events.go).
+	eventsOnce sync.Once
+	ev         *eventState
+
 	// ProxyUpstream is where routes point. Every route points at Pando's proxy
 	// and never at a workload (R-023) — the reconciler re-ensuring a route must
 	// not be the one place that forgets.
@@ -151,9 +166,19 @@ type AuditEvent struct {
 }
 
 // Run ticks until the context is canceled.
+//
+// Every replica runs this, and every replica follows every runtime's events
+// (O-52, events.go): the lease gives no app an owning replica, so the replica
+// that hears about an app is not necessarily the one that will visit it. An
+// event makes the app due in the database, where any replica's next claim
+// finds it, and wakes this replica's loop so it does not wait for the tick.
 func (r *Reconciler) Run(ctx context.Context) {
 	ticker := time.NewTicker(Interval)
 	defer ticker.Stop()
+
+	ev := r.events()
+	go r.nudgeLoop(ctx)
+	r.followRuntimes(ctx)
 
 	// One immediately, so that starting Pando converges rather than waiting a
 	// quarter of a minute to notice anything.
@@ -164,6 +189,9 @@ func (r *Reconciler) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			r.followRuntimes(ctx)
+			r.Tick(ctx)
+		case <-ev.wake:
 			r.Tick(ctx)
 		}
 	}
@@ -230,16 +258,16 @@ func (r *Reconciler) Tick(ctx context.Context) {
 			go func(a state.Reconcilable) {
 				defer wg.Done()
 				defer func() { <-sem }()
+				var seen visit
 				defer func() {
 					keeper.finish(a.ID)
-					visited := a.ClaimedAt
-					if err := lease.Release(ctx, a.ID, &visited); err != nil {
+					if err := r.release(ctx, lease, a, seen); err != nil {
 						r.Logger.Warn("could not release an app after reconciling it",
 							zap.String("app_id", a.ID), zap.Error(err))
 					}
 				}()
 				defer r.recoverPanic(a)
-				r.reconcileOne(appCtx, a)
+				seen = r.reconcileOne(appCtx, a)
 			}(app)
 		}
 	}
@@ -399,15 +427,27 @@ func (r *Reconciler) recoverPanic(app state.Reconcilable) {
 	}
 }
 
+// visit is what one reconciliation found, for deciding when the app is next
+// due (release).
+type visit struct {
+	// runtime is the adapter the app runs on.
+	runtime string
+	// settled: the app was already as it should be and nothing was done or
+	// changed — running and healthy with no drift, or stopped and staying
+	// stopped. Anything else keeps the fast cadence.
+	settled bool
+}
+
 // reconcileOne converges a single app.
-func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) {
+func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) visit {
 	// No lock taken here: the app is this pass's under its lease (Tick), and
 	// ctx is canceled if the lease is lost.
 	rev, found, err := r.Apps.RevisionByID(ctx, app.PinnedSpecID)
 	if err != nil || !found {
-		return
+		return visit{}
 	}
 	s := rev.Body
+	seen := visit{runtime: s.Runtime.AdapterRef}
 
 	runtime, ok := r.Registry.Runtime(s.Runtime.AdapterRef)
 	if !ok {
@@ -415,30 +455,34 @@ func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) {
 		// problem and not the app's fault, so it is reported the same way an
 		// unreachable adapter is rather than counted against the app.
 		r.unobservable(ctx, app, "the runtime adapter "+s.Runtime.AdapterRef+" is not configured")
-		return
+		return seen
 	}
 
 	observed, err := runtime.Observe(ctx, api.BundleRef{BundleID: app.ID})
 	if err != nil {
 		r.unobservable(ctx, app, reason(err))
-		return
+		return seen
 	}
 	if app.UnobservableSince != nil {
 		_ = r.Reconciles.ClearUnobservable(ctx, app.ID)
 	}
+	// Settled only from a visit that changed nothing about the app, so one
+	// that has just recovered — from a failure, from being unobservable, from
+	// any other state — is looked at again on the fast cadence first (O-52).
+	quiet := app.ConsecutiveFailures == 0 && app.UnobservableSince == nil
 
 	// R-140: desired_state is what a person asked for, and it outranks
 	// everything below. An app someone stopped stays stopped.
 	if app.DesiredState == "stopped" {
-		r.holdStopped(ctx, app, runtime, observed)
-		return
+		seen.settled = r.holdStopped(ctx, app, runtime, observed) && quiet && app.State == state.StateStopped
+		return seen
 	}
 
 	want, inputs, err := r.desired(ctx, app, s, observed)
 	if err != nil {
 		r.Logger.Warn("could not work out what should be running",
 			zap.String("app_id", app.ID), zap.Error(err))
-		return
+		return seen
 	}
 
 	drift := Classify(want, observed, inputs)
@@ -447,6 +491,7 @@ func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) {
 	switch {
 	case drift.None() && healthy:
 		r.settle(ctx, app, state.StateRunning)
+		seen.settled = quiet && app.State == state.StateRunning
 
 	case drift.None():
 		// Matches the spec and is not healthy. Nothing to converge — the app
@@ -462,6 +507,7 @@ func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) {
 	case drift.Actionable():
 		r.correct(ctx, app, runtime, want, drift, s)
 	}
+	return seen
 }
 
 // desired builds what should be running, and the facts drift classification
@@ -595,7 +641,9 @@ func (r *Reconciler) settle(ctx context.Context, app state.Reconcilable, to stri
 // the rule about not destroying things: desired_state is what a person asked
 // for, and stopping is exactly what they asked for. Nothing is removed —
 // volumes, the bundle and the spec all stay.
-func (r *Reconciler) holdStopped(ctx context.Context, app state.Reconcilable, runtime api.RuntimeAdapter, observed api.ObservedBundle) {
+//
+// It reports whether nothing was running, so nothing needed stopping.
+func (r *Reconciler) holdStopped(ctx context.Context, app state.Reconcilable, runtime api.RuntimeAdapter, observed api.ObservedBundle) bool {
 	running := false
 	for _, w := range observed.Workloads {
 		if w.Running {
@@ -605,12 +653,12 @@ func (r *Reconciler) holdStopped(ctx context.Context, app state.Reconcilable, ru
 	}
 	if !running {
 		r.settle(ctx, app, state.StateStopped)
-		return
+		return true
 	}
 
 	if err := runtime.Stop(ctx, api.BundleRef{BundleID: app.ID}); err != nil {
 		r.attempt(ctx, app, runtime, reason(err))
-		return
+		return false
 	}
 	_ = r.Auditor.Write(ctx, AuditEvent{
 		Action: "app.stopped_by_reconciler",
@@ -618,6 +666,7 @@ func (r *Reconciler) holdStopped(ctx context.Context, app state.Reconcilable, ru
 		Detail: map[string]any{"reason": "desired_state is stopped and something was running"},
 	})
 	r.settle(ctx, app, state.StateStopped)
+	return false
 }
 
 // correct applies the plan, with backoff and a give-up threshold.

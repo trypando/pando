@@ -59,6 +59,11 @@ const (
 	// annoCreated is when Pando made a pod, to the nanosecond (newest).
 	annoCreated = "pando.dev/created"
 
+	// annoBundleID is the bundle a pod belongs to, as core named it. The
+	// labels carry it lowercased (toLabel), which a watch cannot turn back
+	// into the app it names (events.go).
+	annoBundleID = "pando.dev/bundle-id"
+
 	// Pod Security Admission, enforced per app namespace: baseline refuses
 	// privileged pods, host namespaces and hostPath, which is what the Docker
 	// adapter allows an app and no more.
@@ -99,10 +104,13 @@ type Adapter struct {
 
 	// poll is how often a wait looks again; scheduleWait is how long Apply
 	// waits to see whether a new pod can be placed at all; dependencyWait is
-	// how long a workload waits for a dependency to report ready (R-096).
+	// how long a workload waits for a dependency to report ready (R-096);
+	// accountWait is how long a new namespace waits for its default
+	// ServiceAccount.
 	poll           time.Duration
 	scheduleWait   time.Duration
 	dependencyWait time.Duration
+	accountWait    time.Duration
 
 	now func() time.Time
 }
@@ -177,6 +185,13 @@ type Config struct {
 	EdgeServiceType   string `json:"edge_service_type,omitempty"`
 	EdgeHTTPNodePort  int    `json:"edge_http_node_port,omitempty"`
 	EdgeHTTPSNodePort int    `json:"edge_https_node_port,omitempty"`
+
+	// APIQPS and APIBurst limit the requests a second this adapter makes to
+	// the cluster's API, and how many it may make at once above that. Unset,
+	// client-go allows 5 and 10, which observes about 18 apps in a
+	// 15-second pass (notes-kubernetes-scale-issue-72.md).
+	APIQPS   int `json:"api_qps,omitempty"`
+	APIBurst int `json:"api_burst,omitempty"`
 }
 
 // Defaults.
@@ -193,6 +208,19 @@ const (
 	defaultEdgeReplicas   = 2
 	defaultHTTPNodePort   = 30080
 	defaultHTTPSNodePort  = 30443
+
+	// [P] Requests a second to the API, and the burst above that. A settled
+	// app is looked at every five minutes (O-52), four calls each: 20,000
+	// apps is about 270 a second across the install, which two replicas at
+	// 200 cover; a deploy's 25 to 34 calls fit in one burst. On kwok one API
+	// server answered 670 to 2,000 a second with p99 under 150 ms
+	// (notes-kubernetes-scale-issue-72.md).
+	defaultAPIQPS   = 200
+	defaultAPIBurst = 400
+
+	// defaultAccountWait is how long a new namespace's first pod waits for
+	// the namespace's default ServiceAccount (awaitServiceAccount).
+	defaultAccountWait = 30 * time.Second
 )
 
 // New builds an unconfigured adapter.
@@ -234,7 +262,8 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 				WithRemedy("Run Pando inside the cluster it deploys to, as deploy/kubernetes does, or set the kubeconfig setting to a kubeconfig file.")
 		}
 	}
-	cs, err := kubernetes.NewForConfig(rc)
+	limit(rc, cfg)
+	cs, err := kubernetes.NewForConfig(coreProtobuf(rc))
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not set up the connection to the Kubernetes API.", err)
 	}
@@ -244,6 +273,24 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	}
 	a.use(cs, cfg)
 	return nil
+}
+
+// limit sets the client's rate limit from the configuration. Without it
+// client-go allows 5 requests a second, which is the runtime's first limit
+// long before the cluster's (notes-kubernetes-scale-issue-72.md).
+func limit(rc *rest.Config, cfg Config) {
+	rc.QPS = float32(cfg.APIQPS)
+	rc.Burst = cfg.APIBurst
+}
+
+// coreProtobuf is rc for the built-in kinds, asked for as protobuf: decoding
+// a list of every pod in a large cluster (capacity) is several times faster
+// than JSON. A copy, because the metrics API, made from rc, may not speak it.
+func coreProtobuf(rc *rest.Config) *rest.Config {
+	c := rest.CopyConfig(rc)
+	c.ContentType = "application/vnd.kubernetes.protobuf"
+	c.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
+	return c
 }
 
 // use installs a client and a validated configuration.
@@ -264,6 +311,9 @@ func (a *Adapter) use(cs kubernetes.Interface, cfg Config) {
 	}
 	if a.dependencyWait == 0 {
 		a.dependencyWait = 2 * time.Minute
+	}
+	if a.accountWait == 0 {
+		a.accountWait = defaultAccountWait
 	}
 	if a.now == nil {
 		a.now = func() time.Time { return time.Now().UTC() }
@@ -346,6 +396,17 @@ func (c *Config) validate() error {
 	}
 	if c.ProxyPort < 1 || c.ProxyPort > 65535 {
 		return errs.Newf(errs.ValidInvalid, "%d is not a port number. A port is between 1 and 65535.", c.ProxyPort)
+	}
+	if c.APIQPS == 0 {
+		c.APIQPS = defaultAPIQPS
+	}
+	if c.APIBurst == 0 {
+		c.APIBurst = max(defaultAPIBurst, c.APIQPS)
+	}
+	if c.APIQPS < 0 || c.APIBurst < c.APIQPS {
+		return errs.Newf(errs.ValidInvalid,
+			"The Kubernetes runtime's api_qps is %d and api_burst is %d. Both count requests to the cluster's API: api_qps a second, at least 1, and api_burst at once, at least api_qps.",
+			c.APIQPS, c.APIBurst)
 	}
 	return nil
 }
@@ -463,6 +524,9 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		// Pando is upgraded by changing the image on its Deployment.
 		SupportsSelfUpgrade: false,
 
+		// A watch on Pando's pods across the cluster (O-52, events.go).
+		SupportsBundleEvents: true,
+
 		SupportsTrialRun: true,
 		// A sidecar in the trial pod shares its network namespace and reads
 		// the listening sockets. A sandbox has its own network stack, which
@@ -573,85 +637,6 @@ func (a *Adapter) LargestFitFor(ctx context.Context, bundleID string) (*api.Fit,
 		return nil, err
 	}
 	return c.LargestFit, nil
-}
-
-// capacity reads the cluster's room. ownNS, when set, is a bundle's namespace,
-// whose pods' requests count as free in LargestFit.
-func (a *Adapter) capacity(ctx context.Context, ownNS string) (api.Capacity, error) {
-	nodes, err := a.eligibleNodes(ctx)
-	if err != nil {
-		return api.Capacity{}, errs.Wrap(errs.AdapterUnavailable, "Could not read how much room the cluster has.", err)
-	}
-	ours, err := a.pandoNamespaces(ctx)
-	if err != nil {
-		return api.Capacity{}, errs.Wrap(errs.AdapterUnavailable, "Could not read how much room the cluster has.", err)
-	}
-	pods, err := a.cs.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return api.Capacity{}, errs.Wrap(errs.AdapterUnavailable, "Could not read how much room the cluster has.", err)
-	}
-
-	type room struct{ cpu, mem, otherCPU, otherMem, pandoCPU, pandoMem int64 }
-	byNode := map[string]*room{}
-	for _, n := range nodes {
-		byNode[n.Name] = &room{
-			cpu: n.Status.Allocatable.Cpu().MilliValue(),
-			mem: n.Status.Allocatable.Memory().Value(),
-		}
-	}
-	running := 0
-	for _, p := range pods.Items {
-		r, ok := byNode[p.Spec.NodeName]
-		if !ok || p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
-			continue
-		}
-		if p.Status.Phase == corev1.PodRunning {
-			running++
-		}
-		cpu, mem := podRequests(p)
-		switch {
-		case ownNS != "" && p.Namespace == ownNS:
-			// The bundle being planned: what it holds is free for it.
-		case ours[p.Namespace]:
-			r.pandoCPU += cpu
-			r.pandoMem += mem
-		default:
-			r.otherCPU += cpu
-			r.otherMem += mem
-		}
-	}
-
-	capacity := api.Capacity{RunningWorkloads: running, Reported: a.now()}
-	perNode := make([]map[string]any, 0, len(nodes))
-	for _, n := range nodes {
-		r := byNode[n.Name]
-		cpu, mem := max(r.cpu-r.otherCPU, 0), max(r.mem-r.otherMem, 0)
-		capacity.TotalCPUMillis += int(cpu)
-		capacity.TotalMemoryBytes += mem
-		free := api.Fit{CPUMillis: int(max(cpu-r.pandoCPU, 0)), MemoryBytes: max(mem-r.pandoMem, 0)}
-		if f := capacity.LargestFit; f == nil || free.MemoryBytes > f.MemoryBytes ||
-			(free.MemoryBytes == f.MemoryBytes && free.CPUMillis > f.CPUMillis) {
-			capacity.LargestFit = &free
-		}
-		perNode = append(perNode, map[string]any{
-			"node":                       n.Name,
-			"allocatable_cpu_millis":     r.cpu,
-			"allocatable_memory_bytes":   r.mem,
-			"requested_by_others_millis": r.otherCPU,
-			"requested_by_others_bytes":  r.otherMem,
-			"kubelet_version":            n.Status.NodeInfo.KubeletVersion,
-			"architecture":               n.Status.NodeInfo.Architecture,
-		})
-	}
-	capacity.Details = map[string]any{
-		"nodes":          perNode,
-		"eligible_nodes": len(nodes),
-		"note":           "Totals are the eligible nodes' allocatable CPU and memory, less what pods outside Pando's namespaces request on them. Volume storage comes from the cluster's storage class and is not counted.",
-	}
-	if a.config.NodeSelector != "" {
-		capacity.Details["node_selector"] = a.config.NodeSelector
-	}
-	return capacity, nil
 }
 
 // podRequests sums a pod's containers' CPU and memory requests.
@@ -781,6 +766,10 @@ func Info() api.KindInfo {
 				Help: "Run apps only on nodes with these labels, as key=value pairs separated by commas."},
 			{Key: "helper_image", Label: "Helper image", Type: "string", Advanced: true, Default: defaultHelperImage,
 				Help: "Runs the network policy check, the port observer and volume backups. Any image with a shell, tar, wget and httpd."},
+			{Key: "api_qps", Label: "API requests a second", Type: "int", Advanced: true, Default: "200",
+				Help: "The most requests a second each Pando replica makes to the cluster's API."},
+			{Key: "api_burst", Label: "API request burst", Type: "int", Advanced: true, Default: "400",
+				Help: "How many requests a replica may make at once above that rate. At least the requests a second."},
 			{Key: "edge_namespace", Label: "Edge namespace", Type: "string", Advanced: true, Default: defaultEdgeNamespace},
 			{Key: "edge_replicas", Label: "Edge replicas", Type: "int", Advanced: true, Default: "2",
 				Help: "How many copies of the edge run, spread across nodes. At least 2."},

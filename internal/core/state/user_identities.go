@@ -232,7 +232,7 @@ func (s *Identities) Link(ctx context.Context, userID, adapterID, externalID, by
 		// the last administrator is the lockout reached another way. Moving
 		// its grants would be a merge, which O-1 rules out; the administrator
 		// grants the surviving account what it needs.
-		before, err := peopleWhoManage(ctx, tx)
+		before, err := lockoutForUsers(ctx, tx, current)
 		if err != nil {
 			return "", errs.Wrap(errs.Internal, "Could not link the identity.", err)
 		}
@@ -245,11 +245,11 @@ func (s *Identities) Link(ctx context.Context, userID, adapterID, externalID, by
 			`UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, current); err != nil {
 			return "", errs.Wrap(errs.Internal, "Could not link the identity.", err)
 		}
-		after, err := peopleWhoManage(ctx, tx)
+		lost, err := before.managersLost(ctx, tx)
 		if err != nil {
 			return "", errs.Wrap(errs.Internal, "Could not link the identity.", err)
 		}
-		if before > 0 && after == 0 {
+		if lost {
 			return "", errs.New(errs.ValidInvalid,
 				"The account this identity leaves is the only one that can manage accounts, and it would be suspended.").
 				WithRemedy("Make this account an administrator first, then link the identity.")

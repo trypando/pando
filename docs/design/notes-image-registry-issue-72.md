@@ -299,6 +299,52 @@ reproduced.
 Restoring with the registry intact (same topology, Postgres lost) needs none of this: the recorded
 digests still resolve.
 
+### Pull limits on public registries
+
+Docker Hub limits downloads: 100 every 6 hours per IPv4 address (or IPv6 /64) without signing in,
+200 for a signed-in Personal account, none on a paid plan. A manifest GET counts; a HEAD does not;
+a multi-platform image counts once per platform pulled. Every app on one server shares the
+server's anonymous allowance, so a busy install meets it. Two changes, no migration:
+
+- **Pinning an image's tag uses a HEAD.** `deploy.pinnedSpec` needs only the digest, and
+  `oci.Inspector.Inspect` with a zero `Platform` now resolves it with `remote.Head`, falling back to
+  a GET only when the registry's HEAD answer has no `Docker-Content-Digest` or refuses the method
+  (a 401, 403, 404 or 429 on the HEAD is final). `Inspection.Platforms` is empty in that case;
+  no caller with a zero platform read it. Detection (`detect.readImage`) and the planner's image
+  check (`planner.checkImage`) still GET, because they read the configuration for the host's
+  platform, so each still costs one counted pull each time it runs, by tag or by digest.
+  `update.ImageVerifier` and `imageregistry.DeleteApp` already used HEAD. Test:
+  `TestR120_PinningATagSpendsNoPull`.
+- **A refusal for the limit says so.** A 429, or the distribution error code `TOOMANYREQUESTS`, was
+  "check that the registry is reachable". It is now `ADAPTER_REGISTRY_RATE_LIMITED` (502), worded
+  once in `internal/registrylimit` (a leaf package, so adapters may import it) and raised from all
+  four places a pull happens: the registry read before a deploy (`core/oci`, which keeps the
+  headers of the 429 to say when to retry: `Retry-After` in seconds or as a date, then
+  `ratelimit-reset` in seconds or as a Unix time), the Docker runtime's pull (`toomanyrequests` in
+  the daemon's stream), the Kubernetes trial and `Apply`'s scheduling wait (`ErrImagePull` or
+  `ImagePullBackOff` with the 429 in the kubelet's message), and a BuildKit build's base image.
+  The remedy depends on whose limit it is: anonymous pulls are told to add a registry credential
+  to the app (and, on Docker Hub, the Personal and paid allowances); a pull with the app's
+  credential is told the limit is that account's; a base image is told the builder pulls base
+  images without signing in, so the fix is to wait or to take the image from another registry
+  (Docker's official images are also at `public.ecr.aws/docker/library`). `core/oci` no longer
+  retries a 429, since the limit lasts hours. Tests: `TestR105_ARegistrysDownloadLimitSaysWhoseLimitAndWhen`,
+  `TestR105_TheRefusalSaysWhoseLimitWhenAndWhatLiftsIt`, `TestR105_DockerHubsPullLimitIsSaidAsTheLimit`,
+  `TestR105_ANodesPullRefusedForTheDownloadLimitEndsTheTrial`, `TestR105_ApplySaysWhenANodeWasRefusedTheImage`,
+  `TestR105_ABaseImageRefusedForTheDownloadLimitIsSaidAsThat`.
+
+Not covered: on Kubernetes, `Apply` returns once a pod is scheduled, so a pull refused after that
+is seen only if it has already happened when the wait reads the pod; the reconciler's `Observe` has
+no field for a waiting container's reason. The Trivy scanner's and the multi-host agent's own
+image pulls keep their existing messages.
+
+This is groundwork for a pull-through cache. The Pando-run registry above can also run as a
+Distribution proxy for Docker Hub (`proxy.remoteurl`, with one Docker Hub credential), and the
+Docker daemons, buildkitd and the cluster's nodes pointed at it as a mirror: every app's pull of a
+public image then costs one counted pull per server instead of one per deploy per node, and the
+refusal message above names the mirror's account rather than each node's address. Not built;
+it needs a decision on whether Pando configures each runtime's mirror or the operator does.
+
 ## Interface changes
 
 All data, per R-254.

@@ -21,13 +21,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Input } from '@design';
 
 import { matches } from '../ui/search';
+import { unionPeople, usePeopleSearch, type Person } from '../ui/people';
 
-export interface Person {
-  id: string;
-  external_id: string;
-  display_name?: string;
-  email?: string;
-}
+export type { Person };
 
 interface Option {
   value: string;
@@ -62,13 +58,16 @@ export function ActorField({
   pando?: boolean;
 }) {
   const own = pando ? PANDO : [];
+  const [text, setText] = useState(value);
+  // The accounts already named on the screen, and whoever the server finds
+  // for what was typed (issue #72): not every account in the install.
+  const searched = usePeopleSearch(text.startsWith('usr_') || text.startsWith('tok_') ? '' : text);
+  const accounts = unionPeople(people, searched);
   const options: Option[] = [
     ...own,
-    ...people.map((p) => ({ value: p.id, label: p.external_id, note: p.display_name || p.email })),
+    ...accounts.map((p) => ({ value: p.id, label: p.external_id || p.id, note: p.display_name || p.email })),
   ];
   const labelOf = (v: string) => options.find((o) => o.value === v)?.label ?? v;
-
-  const [text, setText] = useState(() => (value ? labelOf(value) : ''));
 
   // A value that arrived with the page — a link from an account — shows as an
   // ID until the accounts load, and as the username once they have.
@@ -97,7 +96,7 @@ export function ActorField({
   const found = text.trim()
     ? options
         .filter((o) =>
-          matches(text, o.label, o.note, o.value, people.find((p) => p.id === o.value)?.email),
+          matches(text, o.label, o.note, o.value, accounts.find((p) => p.id === o.value)?.email),
         )
         .slice(0, SHOWN)
     : own;

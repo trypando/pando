@@ -245,6 +245,7 @@ func TestEachToolMapsToItsEndpoint(t *testing.T) {
 		// R-261: the console and the CLI can read one part of a multi-part
 		// app's logs, so an agent can too.
 		{"pando_get_logs", `{"app_id":"app_01HQ8","workload":"worker"}`, "GET", "/apps/app_01HQ8/logs?workload=worker"},
+		{"pando_get_logs", `{"app_id":"app_01HQ8","workload":"worker","tail":50}`, "GET", "/apps/app_01HQ8/logs?tail=50&workload=worker"},
 		{"pando_get_status", `{"app_id":"app_01HQ8"}`, "GET", "/apps/app_01HQ8/status"},
 
 		// R-261: stopping an app without deleting it is a thing the API can
@@ -300,6 +301,7 @@ func TestEachToolMapsToItsEndpoint(t *testing.T) {
 		{"pando_get_notification_preferences", `{}`, "GET", "/notification-preferences"},
 		{"pando_list_app_events", `{"app_id":"app_01HQ8"}`, "GET", "/apps/app_01HQ8/events"},
 		{"pando_list_notifications", `{"unread":"true"}`, "GET", "/me/notifications?unread=true"},
+		{"pando_count_unread_notifications", `{}`, "GET", "/me/notifications/unread"},
 		{"pando_mark_notifications_read", `{}`, "POST", "/me/notifications/read"},
 		{"pando_mark_notifications_read", `{"notification_id":"ntf_01"}`, "POST", "/me/notifications/ntf_01/read"},
 		{"pando_set_notification_preference", `{"kind":"app_shared","channel":"ntf_smtp","enabled":"true"}`, "PUT", "/notification-preferences"},
@@ -435,6 +437,21 @@ func TestGetDetectionRefusesAnUnusableWait(t *testing.T) {
 		srv, s := newSession()
 		replies := s.run(t, srv, call(1, "pando_get_detection", args))
 		require.Contains(t, text(t, replies[0]), "wait_seconds must be a whole number of seconds", args)
+		require.Empty(t, s.calls, "a malformed call does not reach the API")
+	}
+}
+
+// A tail that is not a whole number of lines is refused before it reaches the
+// API, saying what is valid.
+func TestGetLogsRefusesAnUnusableTail(t *testing.T) {
+	for _, args := range []string{
+		`{"app_id":"app_01HQ8","tail":0}`,
+		`{"app_id":"app_01HQ8","tail":2.5}`,
+		`{"app_id":"app_01HQ8","tail":"50"}`,
+	} {
+		srv, s := newSession()
+		replies := s.run(t, srv, call(1, "pando_get_logs", args))
+		require.Contains(t, text(t, replies[0]), "tail must be a whole number of lines", args)
 		require.Empty(t, s.calls, "a malformed call does not reach the API")
 	}
 }
