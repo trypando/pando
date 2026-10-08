@@ -111,7 +111,11 @@ func connect(t *testing.T, kubeconfig string, qps float32, burst int) clients {
 	rc.QPS, rc.Burst, rc.Timeout = qps, burst, 5*time.Minute
 	rec := newRecorder()
 	rc.Wrap(rec.wrap)
-	cs, err := kubernetes.NewForConfig(rc)
+	// Protobuf for the built-in kinds, as the adapter's Configure asks.
+	pb := rest.CopyConfig(rc)
+	pb.ContentType = "application/vnd.kubernetes.protobuf"
+	pb.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
+	cs, err := kubernetes.NewForConfig(pb)
 	if err != nil {
 		t.Fatal(err)
 	}

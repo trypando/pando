@@ -5,8 +5,8 @@ on one cluster, with the result documented (`notes-kubernetes-runtime-issue-72.m
 app"). Kubernetes' published scalability thresholds stop at about 10,000 namespaces and 10,000
 Services per cluster, and the Kubernetes runtime makes one namespace per app and one headless Service
 per workload. This note is that measurement: what one app is in the cluster, what the control plane
-did at 2,500, 5,000, 10,000 and 20,000 apps, where it degraded and why, and the options. Nothing in
-it is implemented; the recommendation at the end needs the owner's decision.
+did at 2,500, 5,000, 10,000 and 20,000 apps, where it degraded and why, and the options. The owner
+decided to keep a namespace per app (O-55), and the first three findings are fixed ("What changed").
 
 `make test-kwok-scale` reproduces it (`test/kwok`).
 
@@ -148,8 +148,7 @@ And three things found on the way, none of them a limit of the cluster:
    until the controller manager has created the namespace's `default` ServiceAccount, even with token
    automounting off. `Apply` creates the namespace and reaches the pod within milliseconds, so under
    load (here, 64 deploys at once) the first deploy of a new app fails with an `ADAPTER_FAILED` error
-   that the next pass would not hit. Proposed fix: `ensureNamespace` waits, polling as `waitScheduled`
-   does and for a few seconds at most, until `default` exists. Not made here.
+   that the next pass would not hit. Fixed: see "What changed".
 3. **The ResourceQuota on every app namespace makes each pod create several times slower** (7.7 times
    at the median for 500 creates at once; in the fill, pod creates were 18 ms at the median against
    2–3 ms for every other create). The quota admission plugin checks the namespace's quota on every
@@ -250,7 +249,10 @@ models no clusters (R-256).
 
 Tradeoff: the most work of the three, and only needed once a real cluster shows a limit.
 
-## Recommendation (needs the owner's decision)
+## Recommendation
+
+**Decided (O-55): keep a namespace per app.** The recommendation below is what the owner accepted,
+kept as written.
 
 **Keep namespace per app (O-40 (a)) and do not adopt (b).** The control plane held 20,000 apps —
 20,007 namespaces, 26,003 Services, about 300,000 objects — with no failures and flat per-call
@@ -278,6 +280,54 @@ Proposed text for `docs/plan/open-decisions.md`, for the owner:
 > 5 a second limits a replica to about 18 app observes per 15-second pass), serve Observe and the
 > capacity read from watches (O-52), wait for a new namespace's default ServiceAccount before its
 > first pod, and drop `Apply`'s no-op calls.
+
+## What changed (O-55)
+
+The owner kept a namespace per app and had findings 1 to 3 fixed. Finding 4, the quota's cost per pod
+create, is left as it is.
+
+1. **The clients' rate limit is a setting.** `api_qps` and `api_burst` on the Kubernetes runtime,
+   **[P] 200 and 400**, and on the Traefik adapter's IngressRoute delivery, **[P] 100 and 200**, set
+   on every client either makes. Sized from what was measured: a settled app is looked at every five
+   minutes (O-52), at four runtime calls and one route read, so 20,000 apps is about 270 runtime calls
+   and 67 route reads a second across the install. Two replicas at 200 cover the first and one at 100
+   the second, and a deploy's 25 to 34 calls fit in one burst. The API server on kwok answered 670 to
+   2,000 calls a second with p99 under 150 ms, so the defaults stay well inside what one API server
+   took. The runtime also asks for the built-in kinds as protobuf.
+2. **A new namespace's first pod waits for its ServiceAccount.** `ensureNamespace`, the trial and the
+   canary read the namespace's `default` ServiceAccount after making it, and poll every 2 seconds for
+   up to 30 until it exists, stopping with the request's context. If it never appears, the deploy
+   fails with *"The namespace … still has no default ServiceAccount 30s after it was made, and the
+   cluster refuses every pod in a namespace until it has one. The cluster's controller manager makes
+   it."* and a remedy naming `kube-controller-manager`. The cluster role gains `get` on ServiceAccounts
+   cluster-wide, because the namespace's own role binding may not be in effect yet. One more call per
+   deploy.
+3. **The capacity read is made once per plan, and costs less.** The planner opens a read scope around
+   its capacity check (design 03, "One reading per plan") and the runtime answers `Capacity` and
+   `LargestFitFor` from one reading. The reading lists pods in pages of 500, asks only for pods not
+   finished, and keeps per-node sums rather than the list, so Pando's memory for it stays at one page.
+   A list whose continuation expires part way is read again whole, never answered from part of it.
+
+   **Why not a watch.** The reconciler's pod watch (`WatchBundles`, O-52) follows only Pando's workload
+   pods, and only while the reconciler runs it. Totals kept from it would miss every other pod on the
+   nodes and lag by however far the watch is behind, so a plan could pass R-242's check on room that is
+   already taken. A list is the cluster as it is when the plan is checked; a reading kept between
+   plans has the same flaw as the watch, so none is.
+
+Measured again on kwok with these changes (same harness, 5,000 then 20,000 apps):
+
+| | Before | After |
+|---|---:|---:|
+| First deploys refused for a missing ServiceAccount | 224 of 2,500 in one run; 0 to 84 retries a step in another | 0 (the 19,283 ServiceAccount reads for 15,000 deploys at 20,000 show about 4,300 waits of 2 s) |
+| Capacity reads per plan | 2 | 1 |
+| One capacity read at 20,000 apps | 2.5 s | 2.1 s (protobuf, in pages) |
+| Capacity time per plan at 20,000 apps | about 5 s | about 2.1 s |
+| One more deploy at 20,000 apps | 4.2 s, 34 calls | 6.1 s, 36 calls (the ServiceAccount wait) |
+| Observing every app, one replica at the default limits | about 18 apps per 15 s | about 50 apps a second (200 calls, four an app); 20,000 in about 7 minutes, so two replicas fit a five-minute sweep |
+
+The last row is computed from the limit, not measured: the harness lifts its own client's limit.
+Everything else was as in the first run: no failures, 26,000 pods Running, etcd 655 MiB and the API
+server 3.9 GiB at 20,000 apps.
 
 ## Reproducing it
 
