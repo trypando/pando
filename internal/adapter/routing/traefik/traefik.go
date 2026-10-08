@@ -71,6 +71,12 @@ type Config struct {
 	// kubernetes_api. Empty is the cluster Pando runs in.
 	Kubeconfig string `json:"kubeconfig,omitempty"`
 
+	// APIQPS and APIBurst limit the requests a second made to the cluster's
+	// API with delivery kubernetes_api, and how many may be made at once
+	// above that. Unset, client-go allows 5 and 10.
+	APIQPS   int `json:"api_qps,omitempty"`
+	APIBurst int `json:"api_burst,omitempty"`
+
 	// Dir is the directory Traefik's file provider watches. Pando writes one
 	// file per app here and Traefik picks them up; there is no API call and no
 	// reload signal.
@@ -478,6 +484,12 @@ func Info() api.KindInfo {
 			{Key: "namespace", Label: "IngressRoute namespace", Type: "string", Default: defaultEdgeNamespace, Advanced: true,
 				ShownWhen: &api.Condition{Key: "delivery", Values: []string{DeliveryKubernetesAPI}}},
 			{Key: "kubeconfig", Label: "Kubeconfig file", Type: "string", Default: "The cluster Pando runs in", Advanced: true,
+				ShownWhen: &api.Condition{Key: "delivery", Values: []string{DeliveryKubernetesAPI}}},
+			{Key: "api_qps", Label: "API requests a second", Type: "int", Default: "100", Advanced: true,
+				Help:      "The most requests a second each Pando replica makes to the cluster's API for routes.",
+				ShownWhen: &api.Condition{Key: "delivery", Values: []string{DeliveryKubernetesAPI}}},
+			{Key: "api_burst", Label: "API request burst", Type: "int", Default: "200", Advanced: true,
+				Help:      "How many requests a replica may make at once above that rate. At least the requests a second.",
 				ShownWhen: &api.Condition{Key: "delivery", Values: []string{DeliveryKubernetesAPI}}},
 			{Key: "dir", Label: "Configuration directory", Type: "string", Help: "Where Pando writes Traefik's route files.", Default: "/etc/traefik/dynamic", Advanced: true},
 			{Key: "entrypoint", Label: "Entry point", Type: "string", Help: "The entry point of your Traefik that apps are served on.", Default: "websecure", ShownWhen: &api.Condition{Key: "managed", Values: []string{"false"}}, Advanced: true},

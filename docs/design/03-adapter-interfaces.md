@@ -447,6 +447,14 @@ of its totals already says everything this would. Kubernetes answers the roomies
 bundle's own pods' requests counted as free there; a cluster reschedules freely, so it is not held to
 one node.
 
+**[P] One reading per plan.** The planner asks `Capacity` and then `LargestFitFor` inside one read
+scope (`api.WithReadScope`), and a runtime whose answer to both comes from one expensive read keeps
+it for the scope with `api.ScopedRead`. The Kubernetes runtime's read lists every pod in the cluster,
+2.5 s at 26,000 pods (`notes-kubernetes-scale-issue-72.md`), and was made twice per plan. Nothing read
+in a scope outlives it, so each plan is answered from the cluster as it is when that plan is checked,
+never from an earlier plan's reading, which could leave out pods started since and let R-242's check
+pass an app there is no room for. Outside a scope every call reads.
+
 **[P]** The check compares the sum of an app's workload limits with one place, as multi-host Docker
 places a bundle whole. On Kubernetes each workload is its own pod and could land on a different node,
 so the sum is stricter than the scheduler needs; it errs toward a plan-time refusal over a pod that
