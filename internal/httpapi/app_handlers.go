@@ -255,11 +255,10 @@ func (s *Server) handleListApps(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{
+	JSON(w, http.StatusOK, withTotal(map[string]any{
 		"apps":        s.withVerdicts(r.Context(), withAddresses(r, apps)),
 		"next_cursor": next,
-		"total":       total,
-	})
+	}, total))
 }
 
 // withDetections fills in where each app's detection has got to, so a draft
@@ -329,7 +328,20 @@ func (s *Server) handleMyApps(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.AuthRequired, "You need to sign in."))
 		return
 	}
-	apps, err := s.Apps.ListForUse(r.Context(), p)
+	page, err := pageFrom(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	// Whether the caller administers every app (install.apps.view), for each
+	// tile's can_manage: the same question GET /apps asks to decide what it
+	// lists, so "Manage" is offered on exactly the apps that list holds.
+	every, err := s.seesEveryApp(r, p)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	apps, next, err := s.Apps.ListForUse(r.Context(), p, page, every)
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -345,7 +357,10 @@ func (s *Server) handleMyApps(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	JSON(w, http.StatusOK, map[string]any{"apps": withAddresses(r, apps), "sections": sections})
+	if apps == nil {
+		apps = []state.App{}
+	}
+	JSON(w, http.StatusOK, map[string]any{"apps": withAddresses(r, apps), "sections": sections, "next_cursor": next})
 }
 
 func (s *Server) handleGetApp(w http.ResponseWriter, r *http.Request) {
@@ -375,7 +390,7 @@ func (s *Server) handleGetApp(w http.ResponseWriter, r *http.Request) {
 	// problem, and the Backups screen is only for whoever manages the install.
 	var lastBackup *state.BackupAttempt
 	if s.Backups != nil {
-		attempts, err := s.Backups.Attempts(r.Context(), app.ID)
+		attempts, err := s.Backups.Attempts(r.Context(), app.ID, 1)
 		if err != nil {
 			Error(w, r, err)
 			return

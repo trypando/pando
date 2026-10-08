@@ -16,7 +16,11 @@ R-261: the API is the product. Console, CLI, and MCP are clients of it. None may
 
 **Errors** use the envelope from §00 3.2. Every response carries `X-Request-Id`.
 
-**Pagination [P]:** cursor-based. `?limit=50&cursor=...`, response carries `next_cursor`.
+**Pagination [P]:** cursor-based. `?limit=50&cursor=...`, response carries `next_cursor`. A list that
+reports how many rows match counts them exactly up to 10,000; past that `total` is 10,000 and
+`total_is_lower_bound` is true, and the console shows "10,000+" (O-53). Every list that grows with
+the organization or with one app's reach is paged this way — what each covers and its order is in
+`notes-console-paths-issue-72.md`.
 
 **Idempotency [P]:** `POST` endpoints that create infrastructure accept `Idempotency-Key`. Required for MCP, where an agent retry must not deploy twice.
 

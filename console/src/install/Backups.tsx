@@ -11,13 +11,14 @@
 // what it does.
 
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Banner, Button, Dialog, EmptyState, Input, StatusIndicator, Tag } from '@design';
 
 import { api } from '@api/client';
 import type { BackupAttempt } from '@api/types.gen';
 import { Quiet, Screen, messageOf } from './Accounts';
 import { Table } from '../ui/Table';
+import { ShowMore, usePaged, type PageOf } from '../ui/paged';
 import { relative } from '../ui/time';
 import { attemptDetail, attemptLabel, attemptSymbol } from '../ui/backupAttempt';
 
@@ -35,13 +36,17 @@ export function Backups() {
   const [taking, setTaking] = useState(false);
   const [acting, setActing] = useState<{ row: BackupRow; mode: 'verify' | 'restore' } | null>(null);
 
-  const backups = useQuery({
-    queryKey: ['backups'],
-    queryFn: () => api.get<{ backups: BackupRow[]; attempts?: BackupAttempt[] }>('/backups'),
+  // Newest first, a page at a time (issue #72). The first page carries the
+  // most recent apps' last scheduled attempts.
+  const paged = usePaged<{ backups: BackupRow[] | null; attempts?: BackupAttempt[] } & PageOf, BackupRow>({
+    key: ['backups'],
+    path: '/backups',
+    rows: (p) => p.backups,
   });
+  const backups = paged.query;
 
-  const rows = backups.data?.backups ?? [];
-  const attempts = backups.data?.attempts ?? [];
+  const rows = paged.rows;
+  const attempts = backups.data?.pages[0]?.attempts ?? [];
 
   return (
     <Screen
@@ -124,6 +129,7 @@ export function Backups() {
         ]}
         rows={rows}
       />
+      <ShowMore query={backups} label="Show more backups" />
 
       {/* Each app's last daily backup, including the ones that did not happen
           (R-211, issue #87). The table above lists what exists; a backup that

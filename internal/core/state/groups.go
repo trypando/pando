@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -128,10 +129,35 @@ func (g *Groups) ListPage(ctx context.Context, page Page, f GroupFilter) ([]Grou
 	if err != nil {
 		return nil, "", 0, err
 	}
-	const where = `
-		WHERE ($1 = '' OR g.name ILIKE '%' || $1 || '%')
-		  AND ($2 = '' OR EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = g.id AND gm.user_id = $2))`
-	q := likeEscape(page.Query)
+	// Each narrowing only when asked for, rather than as an OR'd test for an
+	// empty value, which a cached generic plan cannot serve from an index.
+	var conds []string
+	var args []any
+	if page.Query != "" {
+		args = append(args, likeEscape(page.Query))
+		conds = append(conds, fmt.Sprintf(`g.name ILIKE '%%' || $%d || '%%'`, len(args)))
+	}
+	if f.Member != "" {
+		args = append(args, f.Member)
+		conds = append(conds, fmt.Sprintf(
+			`EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = g.id AND gm.user_id = $%d)`, len(args)))
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	listConds, listArgs := append([]string{}, conds...), append([]any{}, args...)
+	if have {
+		listArgs = append(listArgs, synced, name, after)
+		n := len(listArgs)
+		listConds = append(listConds, fmt.Sprintf(
+			`(g.adapter_id IS NOT NULL, lower(g.name), g.id) > ($%d::boolean, $%d::text, $%d::text)`, n-2, n-1, n))
+	}
+	listWhere := ""
+	if len(listConds) > 0 {
+		listWhere = " WHERE " + strings.Join(listConds, " AND ")
+	}
+	listArgs = append(listArgs, page.Size()+1)
 
 	rows, err := g.db.Query(ctx, `
 		SELECT g.id, g.name, coalesce(g.adapter_id, ''), coalesce(a.name, ''), g.created_at,
@@ -140,10 +166,9 @@ func (g *Groups) ListPage(ctx context.Context, page Page, f GroupFilter) ([]Grou
 		       coalesce((SELECT array_agg(l.group_id ORDER BY l.group_id) FROM group_links l WHERE l.synced_group_id = g.id), '{}'),
 		       g.adapter_id IS NOT NULL, lower(g.name)
 		FROM groups g
-		LEFT JOIN identity_adapters a ON a.id = g.adapter_id`+where+`
-		  AND (NOT $3 OR (g.adapter_id IS NOT NULL, lower(g.name), g.id) > ($4::boolean, $5::text, $6::text))
+		LEFT JOIN identity_adapters a ON a.id = g.adapter_id`+listWhere+fmt.Sprintf(`
 		ORDER BY g.adapter_id IS NOT NULL, lower(g.name), g.id
-		LIMIT $7`, q, f.Member, have, synced, name, after, page.Size()+1)
+		LIMIT $%d`, len(listArgs)), listArgs...)
 	if err != nil {
 		return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the groups.", err)
 	}
@@ -179,8 +204,8 @@ func (g *Groups) ListPage(ctx context.Context, page Page, f GroupFilter) ([]Grou
 	for _, k := range got {
 		out = append(out, k.Group)
 	}
-	var total int
-	if err := g.db.QueryRow(ctx, `SELECT count(*) FROM groups g`+where, q, f.Member).Scan(&total); err != nil {
+	total, err := countCapped(ctx, g.db, `FROM groups g`+where, args...)
+	if err != nil {
 		return nil, "", 0, errs.Wrap(errs.Internal, "Could not count the groups.", err)
 	}
 	return out, next, total, nil
@@ -188,11 +213,14 @@ func (g *Groups) ListPage(ctx context.Context, page Page, f GroupFilter) ([]Grou
 
 // Search finds groups by name, case-insensitively, at most limit of them.
 func (g *Groups) Search(ctx context.Context, q string, limit int) ([]Group, error) {
+	match, args := "", []any{limit}
+	if q != "" {
+		match, args = ` WHERE g.name ILIKE '%' || $2 || '%'`, append(args, likeEscape(q))
+	}
 	rows, err := g.db.Query(ctx, `
 		SELECT g.id, g.name, coalesce(g.adapter_id, ''), coalesce(a.name, ''), g.created_at
-		FROM groups g LEFT JOIN identity_adapters a ON a.id = g.adapter_id
-		WHERE $1 = '' OR g.name ILIKE '%' || $1 || '%'
-		ORDER BY g.name LIMIT $2`, likeEscape(q), limit)
+		FROM groups g LEFT JOIN identity_adapters a ON a.id = g.adapter_id`+match+`
+		ORDER BY g.name LIMIT $1`, args...)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not search the groups.", err)
 	}
@@ -208,18 +236,99 @@ func (g *Groups) Search(ctx context.Context, q string, limit int) ([]Group, erro
 	return out, rows.Err()
 }
 
-// ByID returns one group.
+// ByID returns one group, with how many people are in it directly and its
+// links, but not who: a group can hold the whole organization, and the
+// members come a page at a time from MembersPage (issue #72).
 func (g *Groups) ByID(ctx context.Context, groupID string) (Group, bool, error) {
-	group, err := scanGroup(g.db.QueryRow(ctx, groupSelect+`
-		WHERE g.id = $1
-		GROUP BY g.id, g.name, g.adapter_id, a.name, g.created_at`, groupID))
+	var group Group
+	var count int
+	err := g.db.QueryRow(ctx, `
+		SELECT g.id, g.name, coalesce(g.adapter_id, ''), coalesce(a.name, ''), g.created_at,
+		       (SELECT count(*) FROM group_members m WHERE m.group_id = g.id),
+		       coalesce((SELECT array_agg(l.synced_group_id ORDER BY l.synced_group_id) FROM group_links l WHERE l.group_id = g.id), '{}'),
+		       coalesce((SELECT array_agg(l.group_id ORDER BY l.group_id) FROM group_links l WHERE l.synced_group_id = g.id), '{}')
+		FROM groups g
+		LEFT JOIN identity_adapters a ON a.id = g.adapter_id
+		WHERE g.id = $1`, groupID).Scan(&group.ID, &group.Name, &group.Source, &group.SourceName,
+		&group.CreatedAt, &count, &group.LinkedFrom, &group.LinksTo)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Group{}, false, nil
 	}
 	if err != nil {
 		return Group{}, false, errs.Wrap(errs.Internal, "Could not read the group.", err)
 	}
+	group.MemberCount = &count
 	return group, true, nil
+}
+
+// Exists reports whether there is a group with this ID: one primary-key
+// lookup, for a caller that needs nothing else about it.
+func (g *Groups) Exists(ctx context.Context, groupID string) (bool, error) {
+	var found bool
+	if err := g.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM groups WHERE id = $1)`, groupID).Scan(&found); err != nil {
+		return false, errs.Wrap(errs.Internal, "Could not read the group.", err)
+	}
+	return found, nil
+}
+
+// MembersPage is one page of the people directly in a group, oldest account
+// first, with the cursor for the next page and how many match (O-53). In
+// account-ID order because group_members' primary key is in that order, so a
+// page reads a page of rows however large the group. Page.Query
+// matches the username, display name or email; Page.IDs keeps only those
+// accounts, which is how a client asks whether particular people are members.
+func (g *Groups) MembersPage(ctx context.Context, groupID string, page Page) ([]User, string, int, error) {
+	var afterID string
+	have, err := decodeCursor(page.Cursor, &afterID)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	where := []string{`m.group_id = $1`, `u.deleted_at IS NULL`, `u.alias_of IS NULL`}
+	args := []any{groupID}
+	where, args = usersMatch(where, args, page.Query)
+	if len(page.IDs) > 0 {
+		args = append(args, page.IDs)
+		where = append(where, fmt.Sprintf(`m.user_id = ANY($%d::text[])`, len(args)))
+	}
+	from := ` FROM group_members m JOIN users u ON u.id = m.user_id WHERE ` + strings.Join(where, " AND ")
+
+	list, listArgs := from, append([]any{}, args...)
+	if have {
+		listArgs = append(listArgs, afterID)
+		list += fmt.Sprintf(` AND m.user_id > $%d`, len(listArgs))
+	}
+	listArgs = append(listArgs, page.Size()+1)
+	rows, err := g.db.Query(ctx, `
+		SELECT u.id, u.adapter_id, u.external_id, coalesce(u.email, ''), coalesce(u.display_name, ''),
+		       u.status, u.must_change_password, u.created_at`+list+fmt.Sprintf(`
+		ORDER BY m.user_id
+		LIMIT $%d`, len(listArgs)), listArgs...)
+	if err != nil {
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the group's members.", err)
+	}
+	defer rows.Close()
+	out := []User{}
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.AdapterID, &u.ExternalID, &u.Email, &u.DisplayName,
+			&u.Status, &u.MustChangePassword, &u.CreatedAt); err != nil {
+			return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the group's members.", err)
+		}
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the group's members.", err)
+	}
+	var next string
+	if len(out) > page.Size() {
+		out = out[:page.Size()]
+		next = encodeCursor(out[len(out)-1].ID)
+	}
+	total, err := countCapped(ctx, g.db, from, args...)
+	if err != nil {
+		return nil, "", 0, errs.Wrap(errs.Internal, "Could not count the group's members.", err)
+	}
+	return out, next, total, nil
 }
 
 // SetMembers replaces a group's membership.
@@ -237,7 +346,7 @@ func (g *Groups) SetMembers(ctx context.Context, groupID string, userIDs []strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	before, err := peopleWhoManage(ctx, tx)
+	before, err := lockoutForGroups(ctx, tx, groupID)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not change the group's members.", err)
 	}
@@ -296,7 +405,7 @@ func (g *Groups) RemoveMember(ctx context.Context, groupID, userID string) error
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	before, err := peopleWhoManage(ctx, tx)
+	before, err := lockoutForUsers(ctx, tx, userID)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not remove the account from the group.", err)
 	}
@@ -337,29 +446,98 @@ func (g *Groups) native(ctx context.Context, groupID string) error {
 // or through a group — the R-088 quantity when membership changes. Counting
 // grants, as accountManagers does, would count a group holding the
 // administrator role as a manager even with nobody left in it.
+//
+// Read from the grants side: the few install grants carrying
+// install.users.manage, then the people they name or whose groups they name.
+// It costs the managers, not the accounts (issue #72).
 func peopleWhoManage(ctx context.Context, tx pgx.Tx) (int, error) {
 	var n int
 	err := tx.QueryRow(ctx, `
-		SELECT count(DISTINCT u.id)
-		FROM users u
-		JOIN grants g ON g.app_id IS NULL AND g.plane = 'control'
-		JOIN roles r ON r.id = g.role_id
+		WITH managing AS (
+		    SELECT g.principal_kind, g.principal_id
+		    FROM grants g JOIN roles r ON r.id = g.role_id
+		    WHERE g.app_id IS NULL AND g.plane = 'control' AND $1 = ANY (r.verbs)
+		      AND g.principal_kind IN ('user', 'group')
+		)
+		SELECT count(*) FROM users u
 		WHERE u.deleted_at IS NULL AND u.status = 'active'
-		  AND $1 = ANY (r.verbs)
-		  AND (
-		        (g.principal_kind = 'user'  AND g.principal_id = u.id)
-		     OR (g.principal_kind = 'group' AND g.principal_id IN (
-		            SELECT group_id FROM effective_group_members WHERE user_id = u.id))
+		  AND u.id IN (
+		        SELECT principal_id FROM managing WHERE principal_kind = 'user'
+		        UNION
+		        SELECT m.user_id FROM managing
+		        JOIN effective_group_members m ON m.group_id = managing.principal_id
+		        WHERE managing.principal_kind = 'group'
 		  )`, string(authz.InstallUsersManage)).Scan(&n)
 	return n, err
 }
 
-func refuseLockout(ctx context.Context, tx pgx.Tx, before int) error {
+// lockout is what an R-088 check needs from before a change: whether the
+// change can affect who manages accounts at all, and if so how many did.
+//
+// Most membership changes cannot — a sign-in syncing an ordinary person's
+// groups, a SCIM push to a group that holds no administrator role — and for
+// those the count is not taken, before or after (issue #72).
+type lockout struct {
+	check  bool
+	before int
+}
+
+// lockoutForUsers is the check for a change to these people's memberships or
+// status. Only someone who manages accounts now can stop doing so, so a change
+// to anyone else needs no count.
+func lockoutForUsers(ctx context.Context, tx pgx.Tx, userIDs ...string) (lockout, error) {
+	var manages bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1 FROM grants g JOIN roles r ON r.id = g.role_id
+		    WHERE g.app_id IS NULL AND g.plane = 'control' AND $1 = ANY (r.verbs)
+		      AND ((g.principal_kind = 'user' AND g.principal_id = ANY ($2))
+		        OR (g.principal_kind = 'group' AND g.principal_id IN (
+		                SELECT group_id FROM effective_group_members WHERE user_id = ANY ($2)))))`,
+		string(authz.InstallUsersManage), userIDs).Scan(&manages)
+	if err != nil || !manages {
+		return lockout{}, err
+	}
+	before, err := peopleWhoManage(ctx, tx)
+	return lockout{check: true, before: before}, err
+}
+
+// lockoutForGroups is the check for a change to these groups' membership or
+// links. Only a group that carries install.users.manage — itself, or the
+// Pando group a provider's group is linked to — can change who manages.
+func lockoutForGroups(ctx context.Context, tx pgx.Tx, groupIDs ...string) (lockout, error) {
+	var manages bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1 FROM grants g JOIN roles r ON r.id = g.role_id
+		    WHERE g.app_id IS NULL AND g.plane = 'control' AND $1 = ANY (r.verbs)
+		      AND g.principal_kind = 'group'
+		      AND (g.principal_id = ANY ($2)
+		        OR g.principal_id IN (SELECT group_id FROM group_links WHERE synced_group_id = ANY ($2))))`,
+		string(authz.InstallUsersManage), groupIDs).Scan(&manages)
+	if err != nil || !manages {
+		return lockout{}, err
+	}
+	before, err := peopleWhoManage(ctx, tx)
+	return lockout{check: true, before: before}, err
+}
+
+// managersLost reports whether the change made since l was taken left nobody
+// who can manage accounts, where somebody could before.
+func (l lockout) managersLost(ctx context.Context, tx pgx.Tx) (bool, error) {
+	if !l.check || l.before == 0 {
+		return false, nil
+	}
 	after, err := peopleWhoManage(ctx, tx)
+	return after == 0, err
+}
+
+func refuseLockout(ctx context.Context, tx pgx.Tx, l lockout) error {
+	lost, err := l.managersLost(ctx, tx)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not change the group's members.", err)
 	}
-	if before > 0 && after == 0 {
+	if lost {
 		return errs.New(errs.ValidInvalid,
 			"This would leave nobody who can manage accounts, so Pando cannot make this change.").
 			WithRemedy("Make someone else an administrator first, then change this group.")

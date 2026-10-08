@@ -684,12 +684,17 @@ var toolList = []tool{
 	},
 	{
 		Name: "pando_list_my_apps",
-		Description: "The apps you can open — your launcher — with which are favorites and which of " +
-			"your sections each is filed under, and your sections. A different list from " +
+		Description: "The apps you can open — your launcher — with which are favorites, which of " +
+			"your sections each is filed under, and whether you can also manage it (can_manage), and your " +
+			"sections. Favorites first, then filed apps, then the rest, a page at a time: pass " +
+			"`next_cursor` back as `cursor` for the next page. A different list from " +
 			"pando_list_apps, which is the apps you can administer.",
-		Schema: schema(map[string]any{}),
-		request: func(map[string]any) (string, string, any, error) {
-			return "GET", "/me/apps", nil, nil
+		Schema: schema(map[string]any{
+			"q":      str("Only apps whose name or slug contains this."),
+			"cursor": str("The next_cursor from a previous page."),
+		}),
+		request: func(args map[string]any) (string, string, any, error) {
+			return pagedGet("/me/apps", args, "q", "cursor")
 		},
 	},
 	{
@@ -706,16 +711,17 @@ var toolList = []tool{
 	},
 	{
 		Name:        "pando_list_user_apps",
-		Description: "The apps an account has access to: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (can_manage).",
+		Description: "The apps an account has access to: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (can_manage). By app name, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
 		Schema: schema(map[string]any{
 			"user_id": str("The account's ID."),
+			"cursor":  str("The next_cursor from a previous page."),
 		}, "user_id"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, err := stringArg(args, "user_id", true)
 			if err != nil {
 				return "", "", nil, err
 			}
-			return "GET", "/users/" + url.PathEscape(id) + "/apps", nil, nil
+			return pagedGet("/users/"+url.PathEscape(id)+"/apps", args, "cursor")
 		},
 	},
 	{
@@ -1026,17 +1032,13 @@ var toolList = []tool{
 	},
 	{
 		Name:        "pando_list_subscriptions",
-		Description: "List your event subscriptions: what each listens for, where it sends, and whether it is on. app_id narrows to one app.",
-		Schema:      schema(map[string]any{"app_id": str("Only subscriptions about this app. Optional.")}),
+		Description: "List your event subscriptions: what each listens for, where it sends, and whether it is on. app_id narrows to one app. Newest first, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
+		Schema: schema(map[string]any{
+			"app_id": str("Only subscriptions about this app. Optional."),
+			"cursor": str("The next_cursor from a previous page."),
+		}),
 		request: func(args map[string]any) (string, string, any, error) {
-			app, err := stringArg(args, "app_id", false)
-			if err != nil {
-				return "", "", nil, err
-			}
-			if app != "" {
-				return "GET", "/subscriptions?app_id=" + url.QueryEscape(app), nil, nil
-			}
-			return "GET", "/subscriptions", nil, nil
+			return pagedGet("/subscriptions", args, "app_id", "cursor")
 		},
 	},
 	{

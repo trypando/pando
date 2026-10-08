@@ -37,6 +37,7 @@ import type { Role } from '../install/Accounts';
 import { MEASURE } from '../ui/layout';
 import { LineSkeleton } from '../ui/Loading';
 import { Table } from '../ui/Table';
+import { ShowMore, usePaged, type PageOf } from '../ui/paged';
 import { RecipientField, type Chosen } from './RecipientField';
 import { BesideField } from '../ui/BesideField';
 import {
@@ -52,7 +53,7 @@ import {
 } from './share-access';
 import { AppVerb, AppVerbs, changesAnything, useCan } from './verbs';
 
-interface GrantsResponse {
+interface GrantsResponse extends PageOf {
   grants: Grant[] | null;
   /**
    * What host policy allows in sharing with everyone (R-076): both ways, only
@@ -95,10 +96,15 @@ export function Sharing({ appID, appName }: { appID: string; appName: string }) 
   const [passcode, setPasscode] = useState('');
 
   const grantsKey = ['apps', appID, 'grants'];
-  const grants = useQuery({
-    queryKey: grantsKey,
-    queryFn: () => api.get<GrantsResponse>(`/apps/${appID}/grants`),
+  // A page at a time, by principal (issue #72): an app shared with every
+  // person by name holds a grant per person. The grant to everyone, and each
+  // person's grants on both planes, arrive together on one page.
+  const paged = usePaged<GrantsResponse, Grant>({
+    key: grantsKey,
+    path: `/apps/${appID}/grants`,
+    rows: (p) => p.grants,
   });
+  const grants = { ...paged.query, data: paged.query.data?.pages[0] };
 
   // The roles an app can be granted with, custom ones included. GET /roles is
   // an install-level read that some people who manage an app's sharing are
@@ -112,7 +118,7 @@ export function Sharing({ appID, appName }: { appID: string; appName: string }) 
   });
   const appRoles = orderRoles(roles.data?.roles ?? (roles.isError ? BUILT_IN_APP_ROLES : []));
 
-  const rows = grants.data?.grants ?? [];
+  const rows = paged.rows;
 
   const share = useMutation({
     mutationFn: async (who: Chosen) => {
@@ -208,6 +214,7 @@ export function Sharing({ appID, appName }: { appID: string; appName: string }) 
           ]}
           rows={byPrincipal(rows)}
         />
+        <ShowMore query={paged.query} label="Show more people" />
         {revoke.isError && <Failure error={revoke.error} />}
       </section>
 

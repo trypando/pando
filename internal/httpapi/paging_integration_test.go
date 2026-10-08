@@ -124,7 +124,16 @@ func TestTheAccountsGroupsAndAppsListsPage(t *testing.T) {
 	got = i.do(admin, http.MethodGet, "/groups?q=tea", nil)
 	require.Contains(t, got.String(), `"member_count":1`)
 	require.NotContains(t, got.String(), `"members"`)
+	// The group itself counts them too, and its members are a list of their
+	// own, a page at a time (issue #72).
 	got = i.do(admin, http.MethodGet, "/groups/"+group.ID, nil)
 	require.Equal(t, http.StatusOK, got.Code, got.String())
+	require.Contains(t, got.String(), `"member_count":1`)
+	require.NotContains(t, got.String(), `"members"`)
+	got = i.do(admin, http.MethodGet, "/groups/"+group.ID+"/members", nil)
+	require.Equal(t, http.StatusOK, got.Code, got.String())
 	require.Contains(t, got.String(), users.Users[0]["id"].(string))
+	require.Contains(t, got.String(), `"total":1`)
+	got = i.do(admin, http.MethodGet, "/groups/grp_missing/members", nil)
+	require.Equal(t, http.StatusNotFound, got.Code, got.String())
 }

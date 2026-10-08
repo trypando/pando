@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -407,27 +409,85 @@ func (s *Subscriptions) Watch(ctx context.Context, changed func(), connected fun
 	s.db.Listen(ctx, SubscriptionsChannel, func(string) { changed() }, connected)
 }
 
-// List returns subscriptions, newest first.
+// List returns every subscription the filter matches, newest first.
 func (s *Subscriptions) List(ctx context.Context, f SubscriptionFilter) ([]Subscription, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+subscriptionColumns+subscriptionFrom+`
-		WHERE ($1 = '' OR s.owner_user_id = $1 OR s.owner_token_id = $1)
-		  AND ($2 = '' OR s.app_id = $2)
-		  AND (NOT $3 OR s.app_id IS NULL)
-		  AND (NOT $4 OR s.enabled)
-		ORDER BY s.created_at DESC`, f.OwnerID, f.AppID, f.InstallOnly, f.EnabledOnly)
+	out, _, err := s.list(ctx, f, Page{Limit: -1})
+	return out, err
+}
+
+// ListPage is one page of List, keyset-paged on (created_at, id), with the
+// cursor for the next page (empty after the last).
+func (s *Subscriptions) ListPage(ctx context.Context, f SubscriptionFilter, page Page) ([]Subscription, string, error) {
+	return s.list(ctx, f, page)
+}
+
+// list writes each narrowing only when asked for, rather than as an OR'd test
+// for an empty value, which a cached generic plan cannot serve from an index;
+// the (owner, created_at, id) and (app_id, created_at, id) indexes then serve
+// both the narrowing and the order (000058). A negative page limit reads every
+// row.
+func (s *Subscriptions) list(ctx context.Context, f SubscriptionFilter, page Page) ([]Subscription, string, error) {
+	var (
+		afterAt time.Time
+		afterID string
+	)
+	have, err := decodeCursor(page.Cursor, &afterAt, &afterID)
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not list subscriptions.", err)
+		return nil, "", err
+	}
+	var where []string
+	var args []any
+	arg := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+	if f.OwnerID != "" {
+		p := arg(f.OwnerID)
+		where = append(where, "(s.owner_user_id = "+p+" OR s.owner_token_id = "+p+")")
+	}
+	if f.AppID != "" {
+		where = append(where, "s.app_id = "+arg(f.AppID))
+	}
+	if f.InstallOnly {
+		where = append(where, "s.app_id IS NULL")
+	}
+	if f.EnabledOnly {
+		where = append(where, "s.enabled")
+	}
+	if have {
+		where = append(where, fmt.Sprintf("(s.created_at, s.id) < (%s::timestamptz, %s::text)", arg(afterAt), arg(afterID)))
+	}
+	query := `SELECT ` + subscriptionColumns + subscriptionFrom
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY s.created_at DESC, s.id DESC"
+	if page.Limit >= 0 {
+		query += " LIMIT " + arg(page.Size()+1)
+	}
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, "", errs.Wrap(errs.Internal, "Could not list subscriptions.", err)
 	}
 	defer rows.Close()
 	out := []Subscription{}
 	for rows.Next() {
 		sub, err := scanSubscription(rows)
 		if err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not list subscriptions.", err)
+			return nil, "", errs.Wrap(errs.Internal, "Could not list subscriptions.", err)
 		}
 		out = append(out, sub)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", errs.Wrap(errs.Internal, "Could not list subscriptions.", err)
+	}
+	var next string
+	if page.Limit >= 0 && len(out) > page.Size() {
+		out = out[:page.Size()]
+		last := out[len(out)-1]
+		next = encodeCursor(last.CreatedAt, last.ID)
+	}
+	return out, next, nil
 }
 
 // SubscriptionPatch is a partial update. Nil fields are left alone.

@@ -239,6 +239,60 @@ func (a *Authorizer) AppVerbs(ctx context.Context, p Principal, appID string) ([
 	return out, nil
 }
 
+// BatchStore is a Store that can read the principal's control grants on
+// several apps in one call. AllowsEach uses it when the store offers it; a
+// store without it is asked app by app, with the same answers.
+type BatchStore interface {
+	// ControlGrantsForApps returns ControlGrantsFor's answer for each app,
+	// with an entry, possibly empty, for every app asked about.
+	ControlGrantsForApps(ctx context.Context, appIDs []string, p Principal) (map[string][]Grant, error)
+}
+
+// AllowsEach is Allows for several apps and verbs at once: for each app, the
+// verbs CheckControl would allow on it, without auditing a denial. For a list
+// that shows what the caller may do on each of its rows (issue #72).
+//
+// Each answer is the one Allows gives, by the same rules in the same order:
+// the principal, the policy document, the install grants and their roles are
+// read once for the call, as AppVerbs reads them, and the control grants for
+// every app in one query when the store is a BatchStore. None of it outlives
+// the call (R-274).
+func (a *Authorizer) AllowsEach(ctx context.Context, p Principal, appIDs []string, verbs ...Verb) (map[string]map[Verb]bool, error) {
+	for _, verb := range verbs {
+		if InstallScoped(verb) {
+			return nil, errs.Newf(errs.Internal,
+				"%s is an installation-wide permission and cannot be checked against an app.", verb)
+		}
+	}
+	out := make(map[string]map[Verb]bool, len(appIDs))
+	m := &lookups{}
+	if p.Kind != KindSystem && len(appIDs) > 0 {
+		if b, ok := a.store.(BatchStore); ok {
+			grants, err := b.ControlGrantsForApps(ctx, appIDs, p)
+			if err != nil {
+				return nil, err
+			}
+			m.control = grants
+		}
+	}
+	for _, appID := range appIDs {
+		allowed := make(map[Verb]bool, len(verbs))
+		for _, verb := range verbs {
+			if p.Kind == KindSystem {
+				allowed[verb] = true
+				continue
+			}
+			_, denial, err := a.controlWith(ctx, m, p, appID, verb)
+			if err != nil {
+				return nil, err
+			}
+			allowed[verb] = denial == nil
+		}
+		out[appID] = allowed
+	}
+	return out, nil
+}
+
 // lookups holds what control reads, for one call that asks it about several
 // verbs. Each is read the first time a verb needs it, so a call asks the store
 // for nothing a per-verb check would not have asked for. A nil *lookups reads
@@ -251,8 +305,9 @@ type lookups struct {
 	policy     Policy
 	policyErr  error
 
-	controlDone bool
-	control     []Grant
+	// control holds each app's grants once read; an app missing from it
+	// has not been read yet.
+	control map[string][]Grant
 
 	installDone bool
 	install     []Grant
@@ -299,14 +354,18 @@ func (a *Authorizer) controlGrants(ctx context.Context, m *lookups, p Principal,
 	if m == nil {
 		return a.store.ControlGrantsFor(ctx, appID, p)
 	}
-	if !m.controlDone {
-		grants, err := a.store.ControlGrantsFor(ctx, appID, p)
-		if err != nil {
-			return nil, err
-		}
-		m.control, m.controlDone = grants, true
+	if grants, ok := m.control[appID]; ok {
+		return grants, nil
 	}
-	return m.control, nil
+	grants, err := a.store.ControlGrantsFor(ctx, appID, p)
+	if err != nil {
+		return nil, err
+	}
+	if m.control == nil {
+		m.control = map[string][]Grant{}
+	}
+	m.control[appID] = grants
+	return grants, nil
 }
 
 func (a *Authorizer) installGrants(ctx context.Context, m *lookups, p Principal) ([]Grant, error) {

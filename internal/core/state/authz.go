@@ -70,6 +70,43 @@ func (s *AuthzStore) ControlGrantsFor(ctx context.Context, appID string, p authz
 	return out, rows.Err()
 }
 
+// ControlGrantsForApps is ControlGrantsFor for several apps in one query
+// (authz.BatchStore), with an entry for every app asked about, so a list that
+// shows what the caller may do on each row asks once rather than per row
+// (issue #72).
+func (s *AuthzStore) ControlGrantsForApps(ctx context.Context, appIDs []string, p authz.Principal) (map[string][]authz.Grant, error) {
+	out := make(map[string][]authz.Grant, len(appIDs))
+	for _, appID := range appIDs {
+		out[appID] = nil
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT g.id, g.app_id, g.plane, g.principal_kind, coalesce(g.principal_id, ''), coalesce(g.role_id, ''),
+		       `+grantRoleColumns+`
+		FROM grants g
+		LEFT JOIN roles r ON r.id = g.role_id
+		WHERE g.app_id = ANY ($1)
+		  AND g.plane = 'control'
+		  AND (
+		        (g.principal_kind = 'user'  AND g.principal_id = $2)
+		     OR (g.principal_kind = 'token' AND g.principal_id = $3)
+		     OR (g.principal_kind = 'group' AND g.principal_id IN (
+		            SELECT group_id FROM effective_group_members WHERE user_id = $2))
+		  )`,
+		appIDs, nullable(p.UserID), nullable(accountTokenID(p)))
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not read permissions for these apps.", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		g, err := scanGrantWithRole(rows)
+		if err != nil {
+			return nil, errs.Wrap(errs.Internal, "Could not read permissions for these apps.", err)
+		}
+		out[g.AppID] = append(out[g.AppID], g)
+	}
+	return out, rows.Err()
+}
+
 // InstallGrantsFor returns the principal's installation-wide grants (O-17).
 //
 // `app_id IS NULL` is the whole definition of install scope, and the schema
@@ -581,8 +618,26 @@ func (g *Grants) InstallRoles(ctx context.Context) ([]authz.Role, error) {
 	return out, rows.Err()
 }
 
-// ListForApp returns an app's grants.
-func (g *Grants) ListForApp(ctx context.Context, appID string) ([]GrantRow, error) {
+// ListForApp returns one page of an app's grants, with the cursor for the
+// next page (empty after the last).
+//
+// Keyset-paged by principal (grants_app_list_idx), so one principal's grants
+// on both planes arrive together, and the grant to everyone — principal kind
+// "anonymous", which sorts first — is on the first page. An app shared with
+// every person by name is as many grants as people (issue #72).
+func (g *Grants) ListForApp(ctx context.Context, appID string, page Page) ([]GrantRow, string, error) {
+	var afterKind, afterPrincipal, afterPlane, afterID string
+	have, err := decodeCursor(page.Cursor, &afterKind, &afterPrincipal, &afterPlane, &afterID)
+	if err != nil {
+		return nil, "", err
+	}
+	after := ""
+	args := []any{appID, page.Size() + 1}
+	if have {
+		args = append(args, afterKind, afterPrincipal, afterPlane, afterID)
+		after = `
+		  AND (g.principal_kind, coalesce(g.principal_id, ''), g.plane, g.id) > ($3, $4, $5, $6)`
+	}
 	// The name comes from the same query, for both principal kinds a grant can
 	// name. A user's display name falls back to the username it signs in with,
 	// because a local account created without one would otherwise render blank
@@ -598,10 +653,11 @@ func (g *Grants) ListForApp(ctx context.Context, appID string) ([]GrantRow, erro
 		LEFT JOIN groups gr
 		       ON g.principal_kind = 'group' AND gr.id = g.principal_id
 		LEFT JOIN roles r ON r.id = g.role_id
-		WHERE g.app_id = $1
-		ORDER BY g.plane, g.principal_kind`, appID)
+		WHERE g.app_id = $1`+after+`
+		ORDER BY g.principal_kind, coalesce(g.principal_id, ''), g.plane, g.id
+		LIMIT $2`, args...)
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read who this app is shared with.", err)
+		return nil, "", errs.Wrap(errs.Internal, "Could not read who this app is shared with.", err)
 	}
 	defer rows.Close()
 
@@ -610,11 +666,20 @@ func (g *Grants) ListForApp(ctx context.Context, appID string) ([]GrantRow, erro
 		var row GrantRow
 		if err := rows.Scan(&row.ID, &row.AppID, &row.Plane, &row.PrincipalKind,
 			&row.PrincipalID, &row.RoleID, &row.PrincipalName, &row.RoleName, &row.Passcode); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read who this app is shared with.", err)
+			return nil, "", errs.Wrap(errs.Internal, "Could not read who this app is shared with.", err)
 		}
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", errs.Wrap(errs.Internal, "Could not read who this app is shared with.", err)
+	}
+	var next string
+	if len(out) > page.Size() {
+		out = out[:page.Size()]
+		last := out[len(out)-1]
+		next = encodeCursor(last.PrincipalKind, last.PrincipalID, last.Plane, last.ID)
+	}
+	return out, next, nil
 }
 
 // Delete revokes a grant.
@@ -659,67 +724,98 @@ type UserAppGrant struct {
 	GroupName string `json:"group_name,omitempty"`
 }
 
-// ForGroup returns a group's own app grants: what everyone in it gets.
-func (g *Grants) ForGroup(ctx context.Context, groupID string) ([]UserAppGrant, error) {
-	rows, err := g.db.Query(ctx, `
-		SELECT a.id, a.name, coalesce(a.owner_user_id, ''), g.id, g.plane,
-		       coalesce(g.role_id, ''), coalesce(r.name, '')
-		FROM grants g
-		JOIN apps a ON a.id = g.app_id AND a.deleted_at IS NULL
-		LEFT JOIN roles r ON r.id = g.role_id
-		WHERE g.principal_kind = 'group' AND g.principal_id = $1
-		ORDER BY a.name, a.id, g.plane`, groupID)
-	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read the group's apps.", err)
-	}
-	defer rows.Close()
-
-	out := []UserAppGrant{}
-	for rows.Next() {
-		u := UserAppGrant{Via: "group", GroupID: groupID}
-		if err := rows.Scan(&u.AppID, &u.AppName, &u.AppOwner, &u.GrantID, &u.Plane,
-			&u.RoleID, &u.RoleName); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read the group's apps.", err)
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
+// ForGroup returns a group's own app grants, what everyone in it gets, for
+// one page of apps by name (the cursor is the last app's), with the cursor
+// for the next page.
+func (g *Grants) ForGroup(ctx context.Context, groupID string, page Page) ([]UserAppGrant, string, error) {
+	return g.appGrants(ctx, page, `
+		    SELECT app_id FROM grants WHERE principal_kind = 'group' AND principal_id = $1 AND app_id IS NOT NULL`,
+		`g.principal_kind = 'group' AND g.principal_id = $1`, groupID)
 }
 
-// ForUser returns every app grant that reaches a person: their own, and their
-// groups' (resolved live, R-079). Install grants are not app grants and are
-// not here.
-func (g *Grants) ForUser(ctx context.Context, userID string) ([]UserAppGrant, error) {
+// ForUser returns every app grant that reaches a person — their own, and
+// their groups' (resolved live, R-079) — for one page of apps by name, with
+// the cursor for the next page. Install grants are not app grants and are not
+// here.
+func (g *Grants) ForUser(ctx context.Context, userID string, page Page) ([]UserAppGrant, string, error) {
+	return g.appGrants(ctx, page, `
+		    SELECT app_id FROM grants
+		    WHERE principal_kind = 'user' AND principal_id = $1 AND app_id IS NOT NULL
+		    UNION
+		    SELECT g.app_id FROM grants g
+		    JOIN effective_group_members m ON m.group_id = g.principal_id
+		    WHERE g.principal_kind = 'group' AND m.user_id = $1 AND g.app_id IS NOT NULL`,
+		`((g.principal_kind = 'user' AND g.principal_id = $1)
+		     OR (g.principal_kind = 'group' AND g.principal_id IN (
+		            SELECT group_id FROM effective_group_members WHERE user_id = $1)))`, userID)
+}
+
+// appGrants is one page of apps — those `reach` ($1 the principal) selects,
+// live, by name — and every grant `which` matches on each, in one query: the
+// apps are chosen first and the grants read for those apps alone, so a page
+// costs a page of apps however many the principal reaches (issue #72).
+func (g *Grants) appGrants(ctx context.Context, page Page, reach, which, principal string) ([]UserAppGrant, string, error) {
+	var afterName, afterID string
+	have, err := decodeCursor(page.Cursor, &afterName, &afterID)
+	if err != nil {
+		return nil, "", err
+	}
+	args := []any{principal, page.Size() + 1}
+	after := ""
+	if have {
+		args = append(args, afterName, afterID)
+		after = ` AND (a.name, a.id) > ($3, $4)`
+	}
 	rows, err := g.db.Query(ctx, `
-		SELECT a.id, a.name, coalesce(a.owner_user_id, ''), g.id, g.plane,
+		WITH reach AS (`+reach+`
+		), page AS (
+		    SELECT a.id, a.name, coalesce(a.owner_user_id, '') AS owner
+		    FROM reach JOIN apps a ON a.id = reach.app_id
+		    WHERE a.deleted_at IS NULL`+after+`
+		    ORDER BY a.name, a.id
+		    LIMIT $2
+		)
+		SELECT p.id, p.name, p.owner, g.id, g.plane,
 		       coalesce(g.role_id, ''), coalesce(r.name, ''), g.principal_kind,
 		       coalesce(gr.id, ''), coalesce(gr.name, '')
-		FROM grants g
-		JOIN apps a ON a.id = g.app_id AND a.deleted_at IS NULL
+		FROM page p
+		JOIN grants g ON g.app_id = p.id
 		LEFT JOIN roles r ON r.id = g.role_id
 		LEFT JOIN groups gr ON g.principal_kind = 'group' AND gr.id = g.principal_id
-		WHERE g.app_id IS NOT NULL
-		  AND (
-		        (g.principal_kind = 'user'  AND g.principal_id = $1)
-		     OR (g.principal_kind = 'group' AND g.principal_id IN (
-		            SELECT group_id FROM effective_group_members WHERE user_id = $1))
-		  )
-		ORDER BY a.name, a.id, g.plane, g.principal_kind DESC`, userID)
+		WHERE `+which+`
+		ORDER BY p.name, p.id, g.plane, g.principal_kind DESC, g.id`, args...)
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read the account's apps.", err)
+		return nil, "", errs.Wrap(errs.Internal, "Could not read the apps.", err)
 	}
 	defer rows.Close()
 
 	out := []UserAppGrant{}
+	apps := 0
 	for rows.Next() {
 		var u UserAppGrant
 		if err := rows.Scan(&u.AppID, &u.AppName, &u.AppOwner, &u.GrantID, &u.Plane,
 			&u.RoleID, &u.RoleName, &u.Via, &u.GroupID, &u.GroupName); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read the account's apps.", err)
+			return nil, "", errs.Wrap(errs.Internal, "Could not read the apps.", err)
+		}
+		if len(out) == 0 || out[len(out)-1].AppID != u.AppID {
+			apps++
 		}
 		out = append(out, u)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", errs.Wrap(errs.Internal, "Could not read the apps.", err)
+	}
+	// One app more than the page was read, to learn whether there is a next.
+	var next string
+	if apps > page.Size() {
+		extra := out[len(out)-1].AppID
+		for len(out) > 0 && out[len(out)-1].AppID == extra {
+			out = out[:len(out)-1]
+		}
+		last := out[len(out)-1]
+		next = encodeCursor(last.AppName, last.AppID)
+	}
+	return out, next, nil
 }
 
 func (g *Grants) Delete(ctx context.Context, appID, grantID string) error {

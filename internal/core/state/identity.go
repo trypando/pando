@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -165,23 +166,44 @@ func (u *Users) ListPage(ctx context.Context, page Page) ([]User, string, int, e
 	return u.list(ctx, page)
 }
 
-// usersListWhere is the accounts list's filter: live, not an alias, matching
-// $1 when it is not empty, and among the IDs $2 when that is not NULL.
-const usersListWhere = `
-		WHERE deleted_at IS NULL AND alias_of IS NULL
-		  AND ($1 = '' OR external_id ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
-		  AND ($2::text[] IS NULL OR id = ANY($2::text[]))`
+// searchUsers is what an account search matches: the username, display name
+// and email, joined by a character nobody types. It is, character for
+// character, the expression users_search_trgm_idx indexes (000055), which is
+// what lets a substring search read the matches rather than every account.
+const searchUsers = `(external_id || chr(31) || coalesce(display_name, '') || chr(31) || coalesce(email, ''))`
+
+// searchApps is what an app search matches, the name and slug, as
+// apps_search_trgm_idx indexes it (000055).
+const searchApps = `(a.name || chr(31) || a.slug)`
+
+// usersMatch is the accounts' search: the username, display name or email
+// containing q. Left out entirely when there is no search, rather than written
+// as an OR'd test for an empty value, which a cached generic plan cannot serve
+// from an index.
+func usersMatch(where []string, args []any, q string) ([]string, []any) {
+	if q == "" {
+		return where, args
+	}
+	args = append(args, likeEscape(q))
+	return append(where, fmt.Sprintf(`%s ILIKE '%%' || $%d || '%%'`, searchUsers, len(args))), args
+}
 
 func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error) {
 	var after string
 	if _, err := decodeCursor(page.Cursor, &after); err != nil {
 		return nil, "", 0, err
 	}
-	q := likeEscape(page.Query)
-	var ids any // NULL: no narrowing
+
+	// The accounts list's filter: live, not an alias, matching the search,
+	// and among the IDs asked for.
+	where := []string{`deleted_at IS NULL`, `alias_of IS NULL`}
+	var args []any
+	where, args = usersMatch(where, args, page.Query)
 	if len(page.IDs) > 0 {
-		ids = page.IDs
+		args = append(args, page.IDs)
+		where = append(where, fmt.Sprintf(`id = ANY($%d::text[])`, len(args)))
 	}
+	from := ` FROM users WHERE ` + strings.Join(where, " AND ")
 
 	// A negative limit is the unpaginated read, and LIMIT NULL is no limit.
 	// One more row than the page is read to learn whether there is a next.
@@ -189,12 +211,18 @@ func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error
 	if page.Limit >= 0 {
 		limit = page.Size() + 1
 	}
+	// The cursor narrows the page, not the count.
+	list, listArgs := from, append([]any{}, args...)
+	if after != "" {
+		listArgs = append(listArgs, after)
+		list += fmt.Sprintf(` AND id < $%d`, len(listArgs))
+	}
+	listArgs = append(listArgs, limit)
 	rows, err := u.db.Query(ctx, `
-		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, created_at, coalesce(alias_of, '')
-		FROM users`+usersListWhere+`
-		  AND ($3 = '' OR id < $3)
+		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, created_at, coalesce(alias_of, '')`+
+		list+fmt.Sprintf(`
 		ORDER BY id DESC
-		LIMIT $4`, q, ids, after, limit)
+		LIMIT $%d`, len(listArgs)), listArgs...)
 	if err != nil {
 		return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the accounts.", err)
 	}
@@ -228,8 +256,8 @@ func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error
 		out = out[:page.Size()]
 		next = encodeCursor(out[len(out)-1].ID)
 	}
-	var total int
-	if err := u.db.QueryRow(ctx, `SELECT count(*) FROM users`+usersListWhere, q, ids).Scan(&total); err != nil {
+	total, err := countCapped(ctx, u.db, from, args...)
+	if err != nil {
 		return nil, "", 0, errs.Wrap(errs.Internal, "Could not count the accounts.", err)
 	}
 	return out, next, total, nil
@@ -474,13 +502,13 @@ func (u *Users) UpdateProfile(ctx context.Context, userID string, p Profile) err
 // case-insensitively, at most limit of them, ordered by username. An empty
 // query lists the first few.
 func (u *Users) Search(ctx context.Context, q string, limit int) ([]User, error) {
+	where, args := usersMatch([]string{`deleted_at IS NULL`, `alias_of IS NULL`}, []any{limit}, q)
 	rows, err := u.db.Query(ctx, `
 		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, created_at, coalesce(alias_of, '')
 		FROM users
-		WHERE deleted_at IS NULL AND alias_of IS NULL
-		  AND ($1 = '' OR external_id ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
+		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY external_id
-		LIMIT $2`, likeEscape(q), limit)
+		LIMIT $1`, args...)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not search the accounts.", err)
 	}

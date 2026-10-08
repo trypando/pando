@@ -528,6 +528,7 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/", s.handleListGroups)
 			r.Post("/", s.handleCreateGroup)
 			r.Put("/{groupID}/members", s.handleSetGroupMembers)
+			r.Get("/{groupID}/members", s.handleListGroupMembers)
 			r.Put("/{groupID}/members/{userID}", s.handleAddGroupMember)
 			r.Delete("/{groupID}/members/{userID}", s.handleRemoveGroupMember)
 

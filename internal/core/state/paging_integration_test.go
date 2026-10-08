@@ -62,7 +62,7 @@ func TestR264_TheLauncherListsEveryAppItsUserCanOpenOnce(t *testing.T) {
 	require.NoError(t, err)
 	_ = seedApp(t, db, alice.ID) // alice's alone
 
-	usable, err := apps.ListForUse(ctx, userPrincipal(bob))
+	usable, _, err := apps.ListForUse(ctx, userPrincipal(bob), state.Page{}, false)
 	require.NoError(t, err)
 	var got []string
 	for _, a := range usable {
