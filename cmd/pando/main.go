@@ -64,6 +64,7 @@ import (
 	"github.com/trypando/pando/internal/core/edgecert"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
+	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
@@ -826,6 +827,8 @@ func serve(ctx context.Context, configPath string) error {
 		// One answer per app per moment for the console's status and usage
 		// polls, rather than one Docker call per open tab (issue #72).
 		Observations: observe.New(),
+		// One live log stream per app part for every viewer of it (O-51).
+		LogStreams: logstream.New(logstream.WithLogger(logger)),
 		Assist: &assist.Service{
 			Registry: registry,
 			Users:    users,

@@ -391,10 +391,17 @@ var toolList = []tool{
 		Description: "Read an app's recent logs. An app can be made of several parts — a web " +
 			"service, a worker, a database it brought with it — and each has its own log. " +
 			"Without `workload` this is the primary part, the one the app's address resolves " +
-			"to; pando_get_status lists the names.",
+			"to; pando_get_status lists the names. Returns the most recent lines: 200 unless " +
+			"`tail` says otherwise, and never more than 5000.",
 		Schema: schema(map[string]any{
 			"app_id":   str("The app's ID."),
 			"workload": str("Which part of the app to read. Defaults to the primary one."),
+			"tail": map[string]any{
+				"type":        "integer",
+				"description": "Optional. How many of the most recent lines to return, 1 to 5000. Defaults to 200.",
+				"minimum":     1,
+				"maximum":     5000,
+			},
 		}, "app_id"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, err := stringArg(args, "app_id", true)
@@ -405,9 +412,20 @@ var toolList = []tool{
 			if err != nil {
 				return "", "", nil, err
 			}
-			path := "/logs"
+			query := url.Values{}
 			if workload != "" {
-				path += "?workload=" + url.QueryEscape(workload)
+				query.Set("workload", workload)
+			}
+			if raw, ok := args["tail"]; ok && raw != nil {
+				lines, isNumber := raw.(float64)
+				if !isNumber || lines < 1 || lines != float64(int(lines)) {
+					return "", "", nil, fmt.Errorf("tail must be a whole number of lines, 1 to 5000")
+				}
+				query.Set("tail", fmt.Sprint(int(lines)))
+			}
+			path := "/logs"
+			if len(query) > 0 {
+				path += "?" + query.Encode()
 			}
 			return "GET", appPath(id, path), nil, nil
 		},

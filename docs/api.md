@@ -78,7 +78,8 @@ one verb says nothing about another (R-082).
 | `POST /api/v1/apps/{appID}/start` | `app.restart` | Set the app's desired state to running. The reconciler converges to it, so it survives a restart. |
 | `POST /api/v1/apps/{appID}/stop` | `app.restart` | Set the app's desired state to stopped. |
 | `POST /api/v1/apps/{appID}/restart` | `app.restart` | Restart the running workloads without changing anything. |
-| `GET /api/v1/apps/{appID}/logs` | `app.logs.read` | The app's own output, from the runtime. `tail` sets how many lines; `workload` picks which part of the app, defaulting to the primary one. |
+| `GET /api/v1/apps/{appID}/logs` | `app.logs.read` | The app's own output, from the runtime, as plain text. `tail` sets how many of the most recent lines (default 200, at most 5000; a larger number is read as 5000); `workload` picks which part of the app, defaulting to the primary one. `follow=true` keeps the response open and adds each new line as it is printed, from the same shared stream as /logs/stream, starting from the recent lines that stream holds rather than from `tail`. |
+| `GET /api/v1/apps/{appID}/logs/stream` | `app.logs.read` | The app's own output live, as server-sent events (O-51). `workload` picks the part, defaulting to the primary one. Opens with `event: reset` and up to the last 1000 lines, then sends each new line as a `data:` event; `event: notice` reports the runtime's stream ending (a restart) and being reconnected. Access is checked again every two minutes: the stream ends with `event: revoked` when it no longer holds, and a client must not reconnect after it; `event: lagged` means the client fell too far behind and may reconnect. Every viewer of a part on one Pando server shares one stream from the runtime. |
 | `GET /api/v1/apps/{appID}/exec` | `app.exec` | A terminal in the running app, over a websocket. Refused when host policy has turned exec off, including for the owner (R-085). |
 
 ### Detection

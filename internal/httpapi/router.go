@@ -27,6 +27,7 @@ import (
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/idp"
+	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
@@ -138,6 +139,11 @@ type Server struct {
 	}
 
 	Logs *deploy.LogStore
+
+	// LogStreams shares one live runtime log stream per app part between
+	// everyone on this replica watching it (O-51). Nil makes the following
+	// endpoints answer that live logs are not available.
+	LogStreams *logstream.Hub
 	// LogOwner finds the replica running a deploy, so its live log can be
 	// read from any replica (issue #72). Nil with one replica.
 	LogOwner DeployLogOwner
@@ -737,6 +743,7 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/status", s.handleAppStatus)
 				r.Get("/usage", s.handleAppUsage)
 				r.Get("/logs", s.handleAppLogs)
+				r.Get("/logs/stream", s.handleAppLogStream)
 
 				// A terminal inside a running workload (design 04 §2.4).
 				//
