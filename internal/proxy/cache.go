@@ -59,7 +59,7 @@ type cached[T any] struct {
 
 type factsKey struct {
 	appID, kind, id, userID string
-	unlock                  [32]byte
+	unlock                  string
 }
 
 type resolved struct {
@@ -142,12 +142,6 @@ func store[K comparable, T any](c *Cache, m map[K]cached[T], key K, value T, gen
 	return m
 }
 
-func (c *Cache) generation() uint64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.gen
-}
-
 // SessionResolver is an Authenticator that can resolve a session cookie on its
 // own and say when the session ends, which is what lets the cache keep it.
 type SessionResolver interface {
@@ -175,7 +169,10 @@ func (c *Cache) principal(r *http.Request, auth Authenticator) (p authz.Principa
 		}
 	}
 	cookie, cerr := r.Cookie(sessionCookie)
-	if cerr != nil || cookie.Value == "" {
+	if cerr != nil { //nolint:nilerr // no cookie is not a failure; the ordinary path decides
+		return authz.Principal{}, false, nil
+	}
+	if cookie.Value == "" {
 		return authz.Principal{}, false, nil
 	}
 	key := sha256.Sum256([]byte(cookie.Value))
@@ -217,10 +214,9 @@ type cachedStore struct {
 
 // DataFacts implements authz.DataFactsReader.
 func (s *cachedStore) DataFacts(ctx context.Context, appID string, p authz.Principal, passcodeToken string) (authz.DataFacts, error) {
-	key := factsKey{appID: appID, kind: string(p.Kind), id: p.ID, userID: p.UserID}
-	if passcodeToken != "" {
-		key.unlock = sha256.Sum256([]byte(passcodeToken))
-	}
+	// The unlock as it is: a random token, held for the entry's few seconds,
+	// in the memory of the process the request brought it to.
+	key := factsKey{appID: appID, kind: string(p.Kind), id: p.ID, userID: p.UserID, unlock: passcodeToken}
 	c := s.cache
 	c.mu.Lock()
 	hit, found := lookup(c, c.facts, key)

@@ -55,10 +55,10 @@ func TestR048_EveryRevocationReachesTheProxyCache(t *testing.T) {
 
 	notifies := func(t *testing.T, what string, sql string, args ...any) {
 		t.Helper()
-		before := c.generation()
+		before := generationOf(c)
 		_, err := db.Exec(ctx, sql, args...)
 		require.NoError(t, err, what)
-		require.Eventually(t, func() bool { return c.generation() > before }, 5*time.Second, 5*time.Millisecond,
+		require.Eventually(t, func() bool { return generationOf(c) > before }, 5*time.Second, 5*time.Millisecond,
 			"%s must empty the cache on every replica", what)
 	}
 
@@ -68,9 +68,15 @@ func TestR048_EveryRevocationReachesTheProxyCache(t *testing.T) {
 	notifies(t, "an app stopped", `UPDATE apps SET desired_state = 'stopped', state = 'stopped' WHERE id = $1`, app.ID)
 	notifies(t, "a person suspended", `UPDATE users SET status = 'suspended' WHERE id = $1`, owner)
 
-	before := c.generation()
+	before := generationOf(c)
 	_, err = db.Exec(ctx, `UPDATE apps SET reconcile_lease_until = now() + interval '30 seconds' WHERE id = $1`, app.ID)
 	require.NoError(t, err)
-	require.Never(t, func() bool { return c.generation() > before }, 300*time.Millisecond, 10*time.Millisecond,
+	require.Never(t, func() bool { return generationOf(c) > before }, 300*time.Millisecond, 10*time.Millisecond,
 		"a reconcile lease changes nothing the proxy reads")
+}
+
+func generationOf(c *Cache) uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gen
 }

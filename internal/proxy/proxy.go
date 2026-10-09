@@ -96,13 +96,13 @@ type Proxy struct {
 	// Cache, when set, keeps what a request reads about its session for a
 	// few seconds, emptied on every change (cache.go, issue #93). Give the
 	// resolver the same one, and build Authz over Cache.Store.
-	Cache *Cache
-	Authz         *authz.Authorizer
-	Minter        *assertion.Minter
-	Upstreams     Upstreams
-	Auditor       AuditWriter
-	Metrics       Metrics
-	Logger        *zap.Logger
+	Cache     *Cache
+	Authz     *authz.Authorizer
+	Minter    *assertion.Minter
+	Upstreams Upstreams
+	Auditor   AuditWriter
+	Metrics   Metrics
+	Logger    *zap.Logger
 
 	// UsePolicy says whether anonymous use is recorded (R-227). Nil records
 	// it, which is the default.

@@ -93,38 +93,37 @@ func (s *Server) relayDeployLogBody(w http.ResponseWriter, r *http.Request, rc *
 	if err != nil || target.Host == "" {
 		return false
 	}
-	u := *target
-	u.Path, u.RawPath, u.RawQuery = r.URL.Path, r.URL.RawPath, r.URL.RawQuery
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
-	if err != nil {
-		return false
-	}
-	req.Header = r.Header.Clone()
-	req.Header.Set(relayHeader, "1")
-	req.Host = r.Host
 
-	resp, err := s.relayTransport().RoundTrip(req)
-	if err != nil {
-		log.From(r.Context()).Warn("could not reach the replica running the deploy",
-			zap.String("deployment_id", depID), zap.String("replica", target.Host), zap.Error(err))
-		fmt.Fprint(w, "data: Pando could not reach the Pando process running this deploy, so its log can't be shown here. The deploy's outcome will be on the deploy itself.\n\n")
-		fmt.Fprint(w, "event: end\ndata: \n\n")
-		_ = rc.Flush()
-		return true
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	buf := make([]byte, 32*1024)
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			if _, werr := w.Write(buf[:n]); werr != nil {
-				return true
-			}
+	proxy := &httputil.ReverseProxy{
+		Transport: s.relayTransport(),
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			pr.Out.URL.Path = r.URL.Path
+			pr.Out.URL.RawPath = r.URL.RawPath
+			pr.Out.Host = r.Host
+			pr.Out.Header.Set(relayHeader, "1")
+		},
+		FlushInterval: -1,
+		ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
+			log.From(req.Context()).Warn("could not reach the replica running a queued deploy",
+				zap.String("replica", target.Host), zap.Error(err))
+			fmt.Fprint(w, "data: Pando could not reach the Pando process running this deploy, so its log can't be shown here. The deploy's outcome will be on the deploy itself.\n\n")
+			fmt.Fprint(w, "event: end\ndata: \n\n")
 			_ = rc.Flush()
-		}
-		if err != nil {
-			return true
-		}
+		},
 	}
+	proxy.ServeHTTP(&openStream{ResponseWriter: w, rc: rc, header: http.Header{}}, r)
+	return true
 }
+
+// openStream is a response whose status and headers are already sent: the
+// relay's are set aside, and only its body reaches the client.
+type openStream struct {
+	http.ResponseWriter
+	rc     *http.ResponseController
+	header http.Header
+}
+
+func (o *openStream) Header() http.Header { return o.header }
+func (o *openStream) WriteHeader(int)     {}
+func (o *openStream) Flush()              { _ = o.rc.Flush() }
