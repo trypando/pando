@@ -208,7 +208,9 @@ func TestTheCacheIsBounded(t *testing.T) {
 
 type failingSessions struct{ calls atomic.Int32 }
 
-func (*failingSessions) Authenticate(*http.Request) (authz.Principal, error) { return authz.Anonymous(), nil }
+func (*failingSessions) Authenticate(*http.Request) (authz.Principal, error) {
+	return authz.Anonymous(), nil
+}
 func (f *failingSessions) SessionPrincipal(context.Context, string) (authz.Principal, time.Time, error) {
 	f.calls.Add(1)
 	return authz.Anonymous(), time.Time{}, errors.New("the sessions table is unreachable")
