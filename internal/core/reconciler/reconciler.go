@@ -19,6 +19,7 @@ import (
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/telemetry"
 )
 
 // Tunables, all [P] from design 05 §2.
@@ -258,16 +259,7 @@ func (r *Reconciler) Tick(ctx context.Context) {
 			go func(a state.Reconcilable) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				var seen visit
-				defer func() {
-					keeper.finish(a.ID)
-					if err := r.release(ctx, lease, a, seen); err != nil {
-						r.Logger.Warn("could not release an app after reconciling it",
-							zap.String("app_id", a.ID), zap.Error(err))
-					}
-				}()
-				defer r.recoverPanic(a)
-				seen = r.reconcileOne(appCtx, a)
+				r.reconcileClaimed(ctx, appCtx, lease, keeper, a)
 			}(app)
 		}
 	}
@@ -436,6 +428,49 @@ type visit struct {
 	// changed — running and healthy with no drift, or stopped and staying
 	// stopped. Anything else keeps the fast cadence.
 	settled bool
+	// failed: Pando could not look at the app or work out what it should
+	// be, so nothing was compared. Exported as the reconcile's outcome
+	// (R-399); a correction that fails is counted against the app instead.
+	failed bool
+}
+
+// reconcileClaimed reconciles one app this pass holds the lease on, and
+// releases it whatever happens — a panic included. ctx is the pass's; appCtx
+// is the app's own, canceled if its lease is lost.
+func (r *Reconciler) reconcileClaimed(ctx, appCtx context.Context, lease *state.Lease, keeper *leaseKeeper, app state.Reconcilable) {
+	var seen visit
+	defer func() {
+		keeper.finish(app.ID)
+		if err := r.release(ctx, lease, app, seen); err != nil {
+			r.Logger.Warn("could not release an app after reconciling it",
+				zap.String("app_id", app.ID), zap.Error(err))
+		}
+	}()
+	defer r.recoverPanic(app)
+	seen = r.measured(appCtx, app)
+}
+
+// measured is reconcileOne, timed and recorded with how it ended (R-399). A
+// panic is recorded as a failure on its way to recoverPanic.
+func (r *Reconciler) measured(ctx context.Context, app state.Reconcilable) (seen visit) {
+	started, done := time.Now(), false
+	defer func() { telemetry.Reconcile(ctx, reconcileOutcome(ctx, done, seen), time.Since(started)) }()
+	seen = r.reconcileOne(ctx, app)
+	done = true
+	return seen
+}
+
+// reconcileOutcome is how one reconcile ended, for R-399's metric. done is
+// false after a panic.
+func reconcileOutcome(ctx context.Context, done bool, seen visit) telemetry.Outcome {
+	switch {
+	case ctx.Err() != nil:
+		return telemetry.Canceled
+	case !done || seen.failed:
+		return telemetry.Failed
+	default:
+		return telemetry.Succeeded
+	}
 }
 
 // reconcileOne converges a single app.
@@ -444,7 +479,7 @@ func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) v
 	// ctx is canceled if the lease is lost.
 	rev, found, err := r.Apps.RevisionByID(ctx, app.PinnedSpecID)
 	if err != nil || !found {
-		return visit{}
+		return visit{failed: true}
 	}
 	s := rev.Body
 	seen := visit{runtime: s.Runtime.AdapterRef}
@@ -455,12 +490,14 @@ func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) v
 		// problem and not the app's fault, so it is reported the same way an
 		// unreachable adapter is rather than counted against the app.
 		r.unobservable(ctx, app, "the runtime adapter "+s.Runtime.AdapterRef+" is not configured")
+		seen.failed = true
 		return seen
 	}
 
 	observed, err := runtime.Observe(ctx, api.BundleRef{BundleID: app.ID})
 	if err != nil {
 		r.unobservable(ctx, app, reason(err))
+		seen.failed = true
 		return seen
 	}
 	if app.UnobservableSince != nil {
@@ -482,6 +519,7 @@ func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) v
 	if err != nil {
 		r.Logger.Warn("could not work out what should be running",
 			zap.String("app_id", app.ID), zap.Error(err))
+		seen.failed = true
 		return seen
 	}
 

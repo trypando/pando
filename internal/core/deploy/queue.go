@@ -11,6 +11,7 @@ import (
 	"github.com/trypando/pando/internal/core/work"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/log"
+	"github.com/trypando/pando/internal/telemetry"
 )
 
 // DefaultConcurrency is how many deploys one replica runs at once when
@@ -115,6 +116,7 @@ func (q *Queue) Serve(ctx context.Context) {
 func (q *Queue) run(ctx context.Context, dep state.Deployment) {
 	l := log.From(ctx).With(zap.String("deployment_id", dep.ID), zap.String("app_id", dep.AppID))
 	ctx = log.Into(ctx, l)
+	started := time.Now()
 
 	rev, found, err := q.Revisions.RevisionByID(ctx, dep.SpecID)
 	if err == nil && !found {
@@ -131,6 +133,7 @@ func (q *Queue) run(ctx context.Context, dep state.Deployment) {
 			message = e.Message
 		}
 		_ = q.Deployments.Finish(ctx, dep.ID, state.DeployFailed, string(errs.CodeOf(err)), message)
+		telemetry.Deploy(ctx, telemetry.Failed, time.Since(started))
 		l.Warn("a queued deploy could not start", zap.Error(err))
 		return
 	}
@@ -139,7 +142,11 @@ func (q *Queue) run(ctx context.Context, dep state.Deployment) {
 	// belongs — the deployment's record and the log its user is watching —
 	// and an error from a deploy can carry what it was doing with the app's
 	// secrets, which a server log line must never risk (R-194).
-	if err := q.Runner.Run(ctx, dep, rev); err != nil {
+	err = q.Runner.Run(ctx, dep, rev)
+	// Canceled is a deploy this replica stopped, which goes back in the queue
+	// and is counted again when it ends (R-399).
+	telemetry.Deploy(ctx, telemetry.OutcomeOf(ctx, err), time.Since(started))
+	if err != nil {
 		if ctx.Err() != nil {
 			l.Info("deploy stopped by this replica's shutdown; it goes back in the queue")
 			return

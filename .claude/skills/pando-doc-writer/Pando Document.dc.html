@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/pando-27583278-89f3-4207-b9af-3fa14d54764a/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/pando-27583278-89f3-4207-b9af-3fa14d54764a/tokens/colors.css">
+<link rel="stylesheet" href="_ds/pando-27583278-89f3-4207-b9af-3fa14d54764a/tokens/typography.css">
+<link rel="stylesheet" href="_ds/pando-27583278-89f3-4207-b9af-3fa14d54764a/tokens/spacing.css">
+<link rel="stylesheet" href="_ds/pando-27583278-89f3-4207-b9af-3fa14d54764a/tokens/radius.css">
+<link rel="stylesheet" href="_ds/pando-27583278-89f3-4207-b9af-3fa14d54764a/tokens/elevation.css">
+<link rel="stylesheet" href="_ds/pando-27583278-89f3-4207-b9af-3fa14d54764a/tokens/motion.css">
+<link rel="stylesheet" href="_ds/pando-27583278-89f3-4207-b9af-3fa14d54764a/tokens/base.css">
+<link rel="stylesheet" href="_ds/pando-27583278-89f3-4207-b9af-3fa14d54764a/styles.css">
+<script src="_ds/pando-27583278-89f3-4207-b9af-3fa14d54764a/_ds_bundle.js"></script>
+<script src="./doc-page.js"></script>
+<style>
+doc-page:not(:defined){visibility:hidden}
+body{margin:0;background:var(--paper-sunken)}
+a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--rule-strong);text-underline-offset:3px}
+a:hover{text-decoration-color:var(--ink)}
+</style>
+</helmet>
+<doc-page size="letter" margin="0.75in">
+  <div slot="header" style="display:flex;justify-content:space-between;align-items:center;gap:16px;padding-bottom:10px;border-bottom:1px solid var(--rule);font-family:'Public Sans',sans-serif;font-size:12px;line-height:1.4;color:var(--ink-secondary)">
+      <span style="font-family:'Newsreader',serif;font-weight:500;font-size:28px;line-height:1;letter-spacing:-0.02em;color:var(--ink);white-space:nowrap">pando<span style="color:var(--marker)">.</span></span>
+      <span style="display:flex;justify-content:flex-end;flex:1;gap:16px;white-space:nowrap"><span>How Pando isolates builds and running apps</span><span style="font-family:'IBM Plex Mono',monospace">v{{ version }}</span></span>
+    </div>
+  <div slot="footer" style="display:flex;justify-content:space-between;align-items:center;gap:16px;padding-top:10px;border-top:1px solid var(--rule);font-family:'Public Sans',sans-serif;font-size:12px;line-height:1.4;color:var(--ink-secondary)">
+    <span style="white-space:nowrap">Pando · {{ docType }} · {{ date }}</span>
+  </div>
+  <article style="font-family:'Newsreader',serif;color:var(--ink);font-size:16px;line-height:1.65">
+    <sc-if value="{{ heroTopo }}" hint-placeholder-val="{{ false }}">
+    <header style="display:flex;flex-direction:column;gap:24px;position:relative;overflow:hidden;margin:0 -0.75in 0 0;padding:40px 50% 48px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;break-inside:avoid">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px">
+        <span style="font-family:'Newsreader',serif;font-weight:500;font-size:28px;line-height:1;letter-spacing:-0.02em;color:var(--ink)">pando<span style="color:var(--marker)">.</span></span>
+      </div>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr);gap:32px;align-items:center">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <p style="margin:0;font-family:'Public Sans',sans-serif;font-size:14px;color:var(--contour-text)">{{ docType }}</p>
+          <h1 style="margin:0;font-family:'Newsreader',serif;font-weight:500;font-size:36px;line-height:1.15;letter-spacing:-0.015em">How Pando isolates builds and running apps</h1>
+          <p style="margin:4px 0 0;font-size:18px;line-height:1.5;color:var(--ink-secondary);max-width:30em">What separates one app from another on a shared host, where secrets live, and what Pando can and can't see.</p>
+        </div>
+        
+      </div>
+      <svg viewBox="0 0 600 220" preserveAspectRatio="xMaxYMid slice" aria-hidden="true" style="position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%;display:block;pointer-events:none">
+        <sc-for list="{{ topoLines }}" as="ln" hint-placeholder-count="0">
+          <path d="{{ ln.d }}" fill="none" stroke="{{ ln.stroke }}" stroke-width="{{ ln.w }}" stroke-linecap="round" vector-effect="non-scaling-stroke"></path>
+        </sc-for>
+        <path d="{{ summitPath }}" fill="var(--marker)"></path>
+      </svg>
+    </header>
+    </sc-if>
+    <sc-if value="{{ heroStrip }}" hint-placeholder-val="{{ false }}">
+      <header style="display:flex;flex-direction:column;gap:40px;padding-bottom:40px;break-inside:avoid">
+        <div style="position:relative;height:150px;margin:0 -0.75in;overflow:hidden;border-bottom:1px solid var(--rule)">
+          <svg viewBox="0 0 600 220" preserveAspectRatio="xMaxYMid slice" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;display:block">
+          <sc-for list="{{ topoLines }}" as="ln" hint-placeholder-count="0">
+            <path d="{{ ln.d }}" fill="none" stroke="{{ ln.stroke }}" stroke-width="{{ ln.w }}" stroke-linecap="round" vector-effect="non-scaling-stroke"></path>
+          </sc-for>
+          <path d="{{ summitPath }}" fill="var(--marker)"></path>
+        </svg>
+          <div style="position:absolute;left:0.75in;bottom:24px"><span style="font-family:'Newsreader',serif;font-weight:500;font-size:28px;line-height:1;letter-spacing:-0.02em;color:var(--ink)">pando<span style="color:var(--marker)">.</span></span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <p style="margin:0;font-family:'Public Sans',sans-serif;font-size:14px;color:var(--contour-text)">{{ docType }}</p>
+          <h1 style="margin:0;font-family:'Newsreader',serif;font-weight:500;font-size:44px;line-height:1.12;letter-spacing:-0.015em;max-width:14em">How Pando isolates builds and running apps</h1>
+          <p style="margin:4px 0 0;font-size:18px;line-height:1.5;color:var(--ink-secondary);max-width:30em">What separates one app from another on a shared host, where secrets live, and what Pando can and can't see.</p>
+        </div>
+      </header>
+    </sc-if>
+    <sc-if value="{{ heroPlain }}" hint-placeholder-val="{{ true }}">
+      <header style="display:flex;flex-direction:column;gap:72px;padding:32px 0 28px;break-inside:avoid">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <p style="margin:0;font-family:'Public Sans',sans-serif;font-size:14px;color:var(--contour-text)">{{ docType }}</p>
+          <h1 style="margin:0;font-family:'Newsreader',serif;font-weight:500;font-size:48px;line-height:1.12;letter-spacing:-0.015em;max-width:13em">How Pando isolates builds and running apps</h1>
+          <p style="margin:4px 0 0;font-size:18px;line-height:1.5;color:var(--ink-secondary);max-width:30em">What separates one app from another on a shared host, where secrets live, and what Pando can and can't see.</p>
+        </div>
+      </header>
+    </sc-if>
+    <sc-if value="{{ showContents }}" hint-placeholder-val="{{ true }}">
+      <nav style="padding:20px 0;border-top:1px solid var(--rule-strong);border-bottom:1px solid var(--rule)">
+        <h2 style="margin:0 0 8px;font-family:'Newsreader',serif;font-weight:500;font-size:21px;line-height:1.3">Contents</h2>
+        <ol style="margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-flow:column;grid-template-rows:repeat(4,auto);column-gap:48px;font-family:'Newsreader',serif;font-size:16px;line-height:1.6">
+          <li style="position:relative;padding:1px 0"><span style="position:absolute;right:100%;margin-right:16px;color:var(--ink-muted)">1</span><span>Summary</span></li>
+          <li style="position:relative;padding:1px 0"><span style="position:absolute;right:100%;margin-right:16px;color:var(--ink-muted)">2</span><span>Scope</span></li>
+          <li style="position:relative;padding:1px 0"><span style="position:absolute;right:100%;margin-right:16px;color:var(--ink-muted)">3</span><span>Build isolation</span></li>
+          <li style="position:relative;padding:1px 0"><span style="position:absolute;right:100%;margin-right:16px;color:var(--ink-muted)">4</span><span>Runtime isolation</span></li>
+          <li style="position:relative;padding:1px 0"><span style="position:absolute;right:100%;margin-right:16px;color:var(--ink-muted)">5</span><span>Variables and secrets</span></li>
+          <li style="position:relative;padding:1px 0"><span style="position:absolute;right:100%;margin-right:16px;color:var(--ink-muted)">6</span><span>Reporting a vulnerability</span></li>
+          <li style="position:relative;padding:1px 0"><span>Revision history</span></li>
+        </ol>
+      </nav>
+    </sc-if>
+    <section style="padding-top:32px;max-width:40em">
+      <h2 style="position:relative;margin:0 0 12px;font-family:'Newsreader',serif;font-weight:500;font-size:24px;line-height:1.3"><span style="position:absolute;right:100%;top:0;margin-right:16px;color:var(--ink-muted)">1</span><span>Summary</span></h2>
+      <p style="margin:0 0 16px">Every app on Pando builds in its own short-lived environment and runs in its own sandbox. Apps on the same host can't read each other's files, processes or network traffic. Variables you mark as secret are encrypted at rest and only decrypted inside the running app.</p>
+      <p style="margin:0 0 16px">This paper describes those boundaries in plain terms, so you can decide whether Pando fits your own security requirements.</p>
+    </section>
+    <section style="padding-top:32px;max-width:40em">
+      <h2 style="position:relative;margin:0 0 12px;font-family:'Newsreader',serif;font-weight:500;font-size:24px;line-height:1.3"><span style="position:absolute;right:100%;top:0;margin-right:16px;color:var(--ink-muted)">2</span><span>Scope</span></h2>
+      <p style="margin:0 0 16px">This paper covers apps deployed through Pando on hosts you connect. It doesn't cover the security of your own code, its dependencies, or services your app calls.</p>
+      <div style="margin:24px 0;break-inside:avoid">
+        <x-import component-from-global-scope="Pando_275832.Banner" tone="info" hint-size="100%,48px">Apps run only on hosts you connect. App code and data stay on those hosts.</x-import>
+      </div>
+    </section>
+    <section style="padding-top:32px;max-width:40em">
+      <h2 style="position:relative;margin:0 0 12px;font-family:'Newsreader',serif;font-weight:500;font-size:24px;line-height:1.3"><span style="position:absolute;right:100%;top:0;margin-right:16px;color:var(--ink-muted)">3</span><span>Build isolation</span></h2>
+      <p style="margin:0 0 16px">Each build starts from a clean image with no network access to other apps. When the build finishes, the environment is discarded and only the built artifact is kept.</p>
+      <h3 style="margin:24px 0 8px;font-family:'Newsreader',serif;font-size:18px;font-weight:500;line-height:1.4">3.1 Checking a build's environment</h3>
+      <p style="margin:0 0 16px">You can see exactly what a build had access to from the command line:</p>
+      <figure style="margin:16px 0 24px;break-inside:avoid">
+        <x-import component-from-global-scope="Pando_275832.CodeBlock" lines="{{ codeLines }}" prompt="{{ true }}" hint-size="100%,96px"></x-import>
+        <figcaption style="margin-top:8px;font-family:'Public Sans',sans-serif;font-size:12px;color:var(--ink-secondary)">Inspect the most recent build of an app.</figcaption>
+      </figure>
+      <h3 style="margin:24px 0 8px;font-family:'Newsreader',serif;font-size:18px;font-weight:500;line-height:1.4">3.2 Network access during builds</h3>
+      <p style="margin:0 0 16px">Builds can reach public package registries and nothing else. They can't reach your other apps, the host's private network or the Pando control plane.</p>
+    </section>
+    <section style="padding-top:32px;max-width:40em">
+      <h2 style="position:relative;margin:0 0 12px;font-family:'Newsreader',serif;font-weight:500;font-size:24px;line-height:1.3"><span style="position:absolute;right:100%;top:0;margin-right:16px;color:var(--ink-muted)">4</span><span>Runtime isolation</span></h2>
+      <p style="margin:0 0 16px">Each running app gets its own sandbox with a private filesystem, its own process tree and a dedicated network namespace. Traffic between apps on the same host goes through the public URL, the same as traffic from anywhere else.</p>
+      <p style="margin:0 0 16px">Apps can be restarted, stopped or redeployed from the console. Their memory and the files they write while running aren't readable from outside the sandbox.</p>
+    </section>
+    <section style="padding-top:32px">
+      <h2 style="position:relative;margin:0 0 12px;font-family:'Newsreader',serif;font-weight:500;font-size:24px;line-height:1.3"><span style="position:absolute;right:100%;top:0;margin-right:16px;color:var(--ink-muted)">5</span><span>Variables and secrets</span></h2>
+      <p style="margin:0 0 16px;max-width:40em">How a variable is stored and exposed depends on its type.</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0 8px;font-family:'Public Sans',sans-serif;font-size:14px;line-height:1.5">
+        <thead>
+          <tr>
+            <th style="text-align:left;font-weight:600;padding:8px 12px 8px 0;border-bottom:1px solid var(--rule-strong)">Type</th>
+            <th style="text-align:left;font-weight:600;padding:8px 12px;border-bottom:1px solid var(--rule-strong)">Stored</th>
+            <th style="text-align:left;font-weight:600;padding:8px 12px;border-bottom:1px solid var(--rule-strong)">Visible in console</th>
+            <th style="text-align:left;font-weight:600;padding:8px 0 8px 12px;border-bottom:1px solid var(--rule-strong)">Available to</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:10px 12px 10px 0;border-bottom:1px solid var(--rule)">Plain variable</td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--rule);white-space:nowrap">Encrypted at rest</td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--rule);white-space:nowrap">Yes</td>
+            <td style="padding:10px 0 10px 12px;border-bottom:1px solid var(--rule)">Build and running app</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px 10px 0;border-bottom:1px solid var(--rule)">Secret</td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--rule);white-space:nowrap">Encrypted at rest</td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--rule);white-space:nowrap">No, after saving</td>
+            <td style="padding:10px 0 10px 12px;border-bottom:1px solid var(--rule)">Running app only</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px 10px 0;border-bottom:1px solid var(--rule)">Build-time secret</td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--rule);white-space:nowrap">Encrypted at rest</td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--rule);white-space:nowrap">No, after saving</td>
+            <td style="padding:10px 0 10px 12px;border-bottom:1px solid var(--rule)">Build only</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin:0 0 16px;font-family:'Public Sans',sans-serif;font-size:12px;color:var(--ink-secondary)">Table 1. How each variable type is stored and exposed.</p>
+    </section>
+    <section style="padding-top:32px;max-width:40em">
+      <h2 style="position:relative;margin:0 0 12px;font-family:'Newsreader',serif;font-weight:500;font-size:24px;line-height:1.3"><span style="position:absolute;right:100%;top:0;margin-right:16px;color:var(--ink-muted)">6</span><span>Reporting a vulnerability</span></h2>
+      <p style="margin:0 0 16px">Email <a href="mailto:security@pando.dev">security@pando.dev</a> using this format. Pando replies within two working days.</p>
+      <pre style="margin:0 0 16px;padding:16px;border:1px solid var(--rule);border-radius:6px;background:var(--paper-raised);font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:1.6;white-space:pre-wrap;break-inside:avoid">Subject: Vulnerability report: build logs expose secrets
+
+App URL:   https://notes-7f3a.pando.app
+Steps:     1. Add a secret named API_KEY
+           2. Trigger a deploy
+           3. Open the build log
+Expected:  API_KEY is masked
+Actual:    API_KEY appears in plain text on line 42</pre>
+    </section>
+    <section style="margin-top:48px;padding-top:32px;border-top:1px solid var(--rule-strong);border-top:1px solid var(--rule-strong);break-inside:avoid">
+      <h2 style="margin:0 0 12px;font-family:'Newsreader',serif;font-weight:500;font-size:21px;line-height:1.3">Revision history</h2>
+      <table style="width:100%;border-collapse:collapse;font-family:'Public Sans',sans-serif;font-size:14px;line-height:1.5">
+        <thead>
+          <tr>
+            <th style="text-align:left;font-weight:600;padding:8px 12px 8px 0;border-bottom:1px solid var(--rule-strong);width:80px">Version</th>
+            <th style="text-align:left;font-weight:600;padding:8px 12px;border-bottom:1px solid var(--rule-strong);width:140px;white-space:nowrap">Date</th>
+            <th style="text-align:left;font-weight:600;padding:8px 0 8px 12px;border-bottom:1px solid var(--rule-strong)">Changes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:10px 12px 10px 0;border-bottom:1px solid var(--rule);font-family:'IBM Plex Mono',monospace;font-size:13px">{{ version }}</td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--rule);white-space:nowrap">{{ date }}</td>
+            <td style="padding:10px 0 10px 12px;border-bottom:1px solid var(--rule)">Added build-time secrets to section 5.</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px 10px 0;border-bottom:1px solid var(--rule);font-family:'IBM Plex Mono',monospace;font-size:13px">1.1</td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--rule);white-space:nowrap">12 June 2026</td>
+            <td style="padding:10px 0 10px 12px;border-bottom:1px solid var(--rule)">Clarified scope for connected hosts.</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px 10px 0;border-bottom:1px solid var(--rule);font-family:'IBM Plex Mono',monospace;font-size:13px">1.0</td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--rule);white-space:nowrap">3 March 2026</td>
+            <td style="padding:10px 0 10px 12px;border-bottom:1px solid var(--rule)">First published.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </article>
+</doc-page>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;heroStyle&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Topo beside title&quot;,&quot;Topo strip&quot;,&quot;Plain&quot;],&quot;default&quot;:&quot;Plain&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;docType&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Guide&quot;,&quot;Reference&quot;,&quot;Security paper&quot;,&quot;White paper&quot;,&quot;Policy&quot;,&quot;Release notes&quot;],&quot;default&quot;:&quot;Security paper&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Document&quot;},&quot;version&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;1.2&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Document&quot;},&quot;date&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;9 October 2026&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Document&quot;},&quot;showContents&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Layout&quot;}}">
+class Component extends DCLogic {
+  buildTopo() {
+    const W = 600, H = 220, cols = 300, rows = 110;
+    let s = 7;
+    const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    const G = 32, grid = [];
+    for (let i = 0; i <= G; i++) { grid[i] = []; for (let j = 0; j <= G; j++) grid[i][j] = rnd(); }
+    const sm = t => t * t * (3 - 2 * t);
+    const vn = (x, y) => {
+      const xi = Math.floor(x) % G, yi = Math.floor(y) % G, xf = sm(x - Math.floor(x)), yf = sm(y - Math.floor(y));
+      const a = grid[xi][yi], b = grid[xi + 1][yi], c = grid[xi][yi + 1], d = grid[xi + 1][yi + 1];
+      return a + (b - a) * xf + (c - a) * yf + (a - b - c + d) * xf * yf;
+    };
+    const hills = [[450, 40, 165, 75, -0.25, 0.85], [530, 55, 50, 26, -0.35, 0.22], [540, 195, 95, 78, 0.35, 1.05], [660, 100, 80, 120, 0, 0.45]];
+    const f = (x0, y0) => {
+      const fb = (px, py, ox, oy) => { let a = 0, am = 1, fr = 0.007, n = 0; for (let o = 0; o < 2; o++) { a += am * (vn(px * fr + ox, py * fr + oy) - 0.5); n += am; am *= 0.35; fr *= 2; } return a / n; };
+      const x = x0 + 110 * fb(x0, y0, 1.3, 7.1);
+      const y = y0 + 80 * fb(x0, y0, 11.9, 2.6);
+      let v = 0;
+      for (const [hx, hy, sx, sy, rot, amp] of hills) {
+        const c = Math.cos(rot), s2 = Math.sin(rot), u = (x - hx) * c + (y - hy) * s2, w = -(x - hx) * s2 + (y - hy) * c;
+        v += amp * Math.exp(-(u * u) / (2 * sx * sx) - (w * w) / (2 * sy * sy));
+      }
+      return v;
+    };
+    const dx = W / cols, dy = H / rows, F = [];
+    let mx = -1e9, mn = 1e9, peak = [0, 0];
+    for (let j = 0; j <= rows; j++) { F[j] = []; for (let i = 0; i <= cols; i++) { const v = f(i * dx, j * dy); F[j][i] = v; if (v > mx) { mx = v; peak = [i * dx, j * dy]; } if (v < mn) mn = v; } }
+    let tmin = -1e9;
+    for (let j = 0; j <= rows; j++) for (let i = 0; i <= cols * 0.5; i++) tmin = Math.max(tmin, F[j][i]);
+    const levels = 12, out = [];
+    for (let k = 0; k < levels; k++) {
+      const lo = tmin * 1.25, q = (k + 0.5) / levels;
+      const t = lo + (mx - lo) * Math.pow(q, 0.8);
+      let d = '';
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+        const a = F[j][i], b = F[j][i + 1], c = F[j + 1][i + 1], e = F[j + 1][i];
+        const x0 = i * dx, y0 = j * dy, pts = [];
+        const L = (p, q) => (t - p) / (q - p);
+        if ((a < t) !== (b < t)) pts.push([x0 + dx * L(a, b), y0]);
+        if ((b < t) !== (c < t)) pts.push([x0 + dx, y0 + dy * L(b, c)]);
+        if ((e < t) !== (c < t)) pts.push([x0 + dx * L(e, c), y0 + dy]);
+        if ((a < t) !== (e < t)) pts.push([x0, y0 + dy * L(a, e)]);
+        for (let m = 0; m + 1 < pts.length; m += 2) d += 'M' + pts[m][0].toFixed(1) + ' ' + pts[m][1].toFixed(1) + 'L' + pts[m + 1][0].toFixed(1) + ' ' + pts[m + 1][1].toFixed(1);
+      }
+      const idx = k % 5 === 4;
+      out.push({ d, stroke: idx ? 'var(--contour)' : 'var(--contour-line)', w: idx ? 1.5 : 1 });
+    }
+    const [px, py] = peak;
+    this._topo = { lines: out, summit: `M${px.toFixed(1)} ${(py - 4).toFixed(1)}L${(px + 4).toFixed(1)} ${(py + 3).toFixed(1)}L${(px - 4).toFixed(1)} ${(py + 3).toFixed(1)}Z` };
+  }
+  componentDidMount() {
+    const remeasure = () => { const dp = document.querySelector('doc-page'); if (dp && dp._measure) dp._measure(); };
+    [100, 600, 1500].forEach(t => setTimeout(remeasure, t));
+    if (document.fonts) document.fonts.ready.then(remeasure);
+  }
+  renderVals() {
+    if (!this._topo) this.buildTopo();
+    const p = this.props;
+    return {
+      docType: p.docType ?? 'Security paper',
+      version: p.version ?? '1.2',
+      date: p.date ?? '9 October 2026',
+      status: p.status ?? 'Published',
+      classification: p.classification ?? 'Public',
+      showContents: p.showContents ?? true,
+      heroTopo: p.heroStyle === 'Topo beside title',
+      heroStrip: p.heroStyle === 'Topo strip',
+      heroPlain: (p.heroStyle ?? 'Plain') === 'Plain',
+      topoLines: this._topo.lines,
+      summitPath: this._topo.summit,
+      codeLines: ['pando builds inspect my-app --latest', 'pando builds env my-app --latest']
+    };
+  }
+}
+</script>
+</body>
+</html>

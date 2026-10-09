@@ -1,0 +1,9 @@
+/* Pando radii — radius signals hierarchy; don't use one radius on everything.
+   Pills are reserved for status dots. */
+:root {
+  --radius-xs: 2px; /* tags, inline code */
+  --radius-sm: 4px; /* buttons, inputs, banners */
+  --radius-md: 6px; /* bounded objects, code blocks */
+  --radius-lg: 8px; /* dialogs */
+  --radius-pill: 999px; /* status dots only */
+}

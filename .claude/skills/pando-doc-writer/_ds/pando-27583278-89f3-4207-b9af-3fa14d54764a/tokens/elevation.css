@@ -1,0 +1,12 @@
+/* Pando elevation — content has no shadow. Popovers, menus and dialogs get one. */
+:root {
+  --border-width: 1px;
+  --contour-index-width: 1.5px;
+  --contour-line-width: 1px;
+
+  --shadow-popover: 0 8px 24px rgba(26, 28, 27, 0.08);
+  --shadow-none: none;
+
+  --focus-outline-width: 2px;
+  --focus-outline-offset: 2px;
+}

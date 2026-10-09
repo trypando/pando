@@ -120,12 +120,47 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | `PANDO_ACME_DIRECTORY_URL` | Let's Encrypt (`https://acme-v02.api.letsencrypt.org/directory`) | The ACME directory of the certificate authority the edge's certificates are ordered from, where Pando issues them itself (Traefik on Kubernetes). An https URL: an organization's own ACME server, or a test CA such as Pebble. |
 | `PANDO_ACME_CA_FILE` | — | A PEM file of certificates to trust, beside the system's, when connecting to that directory — for an ACME server whose own certificate no public root signs. |
 | `PANDO_RECONCILER_BACKOFF` | see R-149 | Retry schedule. Compressing it is for tests; `pando` warns when it is set faster than the shipped default. |
+| `PANDO_METRICS_OTLP_ENDPOINT` | — | The OpenTelemetry collector Pando pushes metrics about itself to, such as `http://otel-collector:4318`. Unset exports nothing. Over HTTP, an address with no path has `/v1/metrics` added. See [Metrics](#metrics). |
+| `PANDO_METRICS_OTLP_PROTOCOL` | `http/protobuf` | `http/protobuf` (port 4318 on most collectors) or `grpc` (port 4317). |
+| `PANDO_METRICS_OTLP_HEADERS` | — | Headers sent with every push, usually the collector's API key: `key=value` pairs separated by commas, values URL-encoded, as `OTEL_EXPORTER_OTLP_HEADERS` writes them. Never shown in `GET /config` or logged. |
+| `PANDO_METRICS_INTERVAL` | `1m` | How often metrics are pushed. At least a second. |
 
 `PANDO_PORT` is not read by Pando. It is a variable in the shipped `docker-compose.yml`, which uses
 it to choose the host port published in front of the container's fixed `8080`.
 
 A config file is read only when one is named with `pando serve --config <path>`. The environment
 wins over the file.
+
+### Metrics
+
+Pando pushes metrics about itself over OTLP to the collector `PANDO_METRICS_OTLP_ENDPOINT` names
+(R-399): an OpenTelemetry collector, Grafana Alloy, or a vendor's agent such as Datadog's. It serves
+no metrics endpoint of its own, and it stores, graphs and alerts on nothing; that is the collector's
+side. Every replica pushes its own, told apart by `service.instance.id` (the replica's ID) and
+`host.name`, with `service.name` `pando`.
+
+| Metric | Kind | Attributes | What it measures |
+|---|---|---|---|
+| `http.server.request.duration` | histogram, s | `http.request.method`, `http.route`, `http.response.status_code` | Requests to Pando's API and console, by route pattern. Requests to apps are not included. |
+| `pando.proxy.requests` | counter | `pando.proxy.decision` (`allowed`, `denied`), `pando.principal.kind` (`user`, `token`, `anonymous`) | Requests to apps through the proxy, install-wide. |
+| `pando.reconcile.duration` | histogram, s | `pando.outcome` | One reconcile of one app. `failed` is an app Pando could not look at, such as one whose runtime is unreachable. |
+| `pando.deploy.duration` | histogram, s | `pando.outcome` | A deploy, from when this replica took it to when it ended. `canceled` is one this replica stopped, which goes back in the queue. |
+| `pando.build.duration` | histogram, s | `pando.outcome` | The build step of a deploy. |
+| `pando.detection.duration` | histogram, s | `pando.outcome` | One detection. |
+| `pando.detection.active` | gauge | — | Detections this replica is running. |
+| `pando.retention.duration` | histogram, s | `pando.retention.job` (`audit`, `rows`), `pando.outcome` | One pass of a retention job. Reported by the leader. |
+| `pando.retention.removed` | counter | `pando.retention.kind` | Rows a retention job removed, by kind, such as `sessions` or `audit_events`. Reported by the leader. |
+| `pando.adapter.healthy` | gauge | `pando.adapter.category`, `pando.adapter.id` | 1 when an adapter's last health check passed, 0 when it failed. Checked every five minutes, by the leader. |
+| `db.client.connection.count` | gauge | `db.client.connection.state` (`used`, `idle`) | This replica's database connections. |
+| `db.client.connection.max` | gauge | — | The most this replica's pool may open (`PANDO_DATABASE_MAX_CONNS`). |
+| `go.*` | various | — | The Go runtime: memory, garbage collection, goroutines. |
+
+`pando.outcome` is `succeeded`, `failed` or `canceled`. No metric names a person, a token or an app
+(R-400): per-app metrics, traces and logs are not exported.
+
+The endpoint and headers are always Pando's own. The OpenTelemetry SDK's other variables still
+apply, such as `OTEL_EXPORTER_OTLP_CERTIFICATE` for a collector behind a private certificate
+authority.
 
 ### Host policy at startup
 

@@ -16,6 +16,7 @@ import (
 	"github.com/trypando/pando/internal/core/events"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/work"
+	"github.com/trypando/pando/internal/telemetry"
 )
 
 // RetrySchedule is how long to wait after each failed attempt before the next
@@ -99,6 +100,7 @@ type Dispatcher struct {
 	once          sync.Once
 	guarded, open *http.Client
 	health        map[string]bool
+	lastHealth    atomic.Pointer[healthReading]
 
 	cacheMu sync.Mutex
 	cache   *subscriptionCache
@@ -646,6 +648,50 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
+// healthReading is one round of adapter health checks, for R-399's gauge.
+type healthReading struct {
+	at       time.Time
+	adapters []telemetry.AdapterHealth
+}
+
+// recordHealth keeps every configured adapter's result from this round: the
+// failures HealthCheckAll returns, and every other adapter as healthy.
+func (d *Dispatcher) recordHealth(failures map[string]error) {
+	c := d.Clock
+	if c == nil {
+		c = clock.System{}
+	}
+	reading := &healthReading{at: c.Now()}
+	for _, ref := range d.Registry.Refs() {
+		category := ""
+		if a, ok := d.Registry.Get(ref); ok {
+			category = string(a.Category())
+		}
+		_, failed := failures[ref]
+		reading.adapters = append(reading.adapters, telemetry.AdapterHealth{Category: category, ID: ref, Healthy: !failed})
+	}
+	d.lastHealth.Store(reading)
+}
+
+// AdapterHealth is the last round's health checks, or nothing when there has
+// been none within maxAge. Only the leader checks (WatchAdapters is a leader
+// job), so a replica that stopped leading stops reporting rather than repeat
+// what it last saw.
+func (d *Dispatcher) AdapterHealth(maxAge time.Duration) []telemetry.AdapterHealth {
+	reading := d.lastHealth.Load()
+	if reading == nil {
+		return nil
+	}
+	c := d.Clock
+	if c == nil {
+		c = clock.System{}
+	}
+	if c.Now().Sub(reading.at) > maxAge {
+		return nil
+	}
+	return reading.adapters
+}
+
 // WatchAdapters checks every adapter's health every interval and records a
 // change as an event: adapter.unhealthy when a check starts failing,
 // adapter.recovered when it passes again. An adapter healthy since start says
@@ -673,7 +719,9 @@ func (d *Dispatcher) CheckAdapters(ctx context.Context) {
 	if d.health == nil {
 		d.health = map[string]bool{}
 	}
-	for ref, err := range d.Registry.HealthCheckAll(ctx) {
+	failures := d.Registry.HealthCheckAll(ctx)
+	d.recordHealth(failures)
+	for ref, err := range failures {
 		healthy := err == nil
 		was, seen := d.health[ref]
 		d.health[ref] = healthy

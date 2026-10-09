@@ -9,10 +9,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/httpapi"
+	"github.com/trypando/pando/internal/id"
+	"github.com/trypando/pando/internal/telemetry"
+	"github.com/trypando/pando/internal/telemetry/telemetrytest"
 )
 
 type fakeDB struct{ err error }
@@ -158,6 +162,47 @@ func TestR172_SigningInWorksOnAnAppsOwnHostname(t *testing.T) {
 		handler.ServeHTTP(rec, req)
 		require.NotEqual(t, "proxy", reached, "%s must not fall through to the app", path)
 	}
+}
+
+// TestR400_APIRequestsAreMeasuredByRouteNotPath asserts R-399 and R-400 for
+// Pando's own API: a request is recorded under the route's pattern, never the
+// path with an app's ID in it, and a request handed to an app is not recorded
+// here at all — the proxy counts those, without the app.
+func TestR400_APIRequestsAreMeasuredByRouteNotPath(t *testing.T) {
+	metrics := telemetrytest.Install(t, telemetry.Sources{})
+	appProxy := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	handler := (&httpapi.Server{
+		Logger: zap.NewNop(), DB: fakeDB{},
+		Console: http.NotFoundHandler(), AppProxy: appProxy, AppHosts: appHosts{host: "notes.example.com"},
+	}).Routes()
+
+	appID := id.New(id.App)
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	// This server has no app store, so the handler panics; a request that
+	// panics is still counted, as the 500 it is answered with.
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/apps/"+appID, nil))
+
+	toApp := httptest.NewRequest(http.MethodGet, "/dashboard/"+appID, nil)
+	toApp.Host = "notes.example.com"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, toApp)
+	require.Equal(t, http.StatusTeapot, rec.Code, "the request did reach the app")
+
+	require.Equal(t, int64(1), metrics.Count("http.server.request.duration",
+		map[string]string{"http.route": "/readyz", "http.response.status_code": "200"}))
+	m := metrics.Metrics()["http.server.request.duration"]
+	points := m.Data.(metricdata.Histogram[float64]).DataPoints
+	require.Len(t, points, 2, "the readiness check and the API call, and not the app's request")
+	for _, p := range points {
+		route, _ := p.Attributes.Value("http.route")
+		require.NotContains(t, route.AsString(), appID)
+		status, _ := p.Attributes.Value("http.response.status_code")
+		if status.AsString() == "500" {
+			require.Equal(t, "/api/v1/apps/{appID}", route.AsString())
+		}
+	}
+	require.Equal(t, int64(1), metrics.Count("http.server.request.duration",
+		map[string]string{"http.response.status_code": "500"}))
 }
 
 // TestR171_TheAppKeepsItsOwnLoginPath asserts R-171.

@@ -99,6 +99,7 @@ import (
 	"github.com/trypando/pando/internal/proxy"
 	"github.com/trypando/pando/internal/reference"
 	"github.com/trypando/pando/internal/secret"
+	"github.com/trypando/pando/internal/telemetry"
 )
 
 func main() {
@@ -1238,7 +1239,8 @@ func serve(ctx context.Context, configPath string) error {
 	}).Run)
 	// Delivery claims with SKIP LOCKED, so it runs on every replica; a health
 	// change is one event per install, so the watch leads.
-	job("adapter-health", func(ctx context.Context) { dispatcher.WatchAdapters(ctx, 5*time.Minute) })
+	const adapterHealthEvery = 5 * time.Minute
+	job("adapter-health", func(ctx context.Context) { dispatcher.WatchAdapters(ctx, adapterHealthEvery) })
 
 	// Port-mode apps answer at the root of their own port (design 03 §4.2).
 	//
@@ -1417,6 +1419,18 @@ func serve(ctx context.Context, configPath string) error {
 		TeardownNow: askTeardown, Logger: logger,
 	}).Run)
 
+	// Metrics about this process, pushed to the operator's collector (R-399).
+	// Stopped by a defer, so after the server has drained, and its last push
+	// carries those requests; and before the pool closes, which the pool
+	// gauges read.
+	stopMetrics, err := startMetrics(ctx, cfg.Metrics,
+		telemetry.Process{Version: buildVersion, Replica: db.Replica(), Hostname: hostname},
+		metricsSources(db, detectionQueue, dispatcher, adapterHealthEvery), logger)
+	if err != nil {
+		return err
+	}
+	defer stopMetrics()
+
 	// Whichever replica holds the leader lock runs the jobs above; with one
 	// replica, that is this one, a moment after it starts.
 	go (&cluster.Leader{Store: replicas, Jobs: jobs, Logger: logger}).Run(loopCtx)
@@ -1464,6 +1478,42 @@ func serve(ctx context.Context, configPath string) error {
 		return nil
 	}
 	return err
+}
+
+// startMetrics exports metrics as cfg says, and returns what stops it,
+// flushing the last of them. Nothing is exported with no endpoint configured.
+func startMetrics(ctx context.Context, cfg config.Metrics, process telemetry.Process,
+	sources telemetry.Sources, logger *zap.Logger) (func(), error) {
+	stop, err := telemetry.Start(ctx, cfg, process, sources)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Enabled() {
+		logger.Info("exporting metrics over OTLP",
+			zap.String("protocol", cfg.OTLPProtocol), zap.Duration("every", cfg.Interval))
+	}
+	return func() {
+		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if err := stop(flushCtx); err != nil {
+			logger.Warn("could not send the last metrics to the collector", zap.Error(err))
+		}
+	}, nil
+}
+
+// metricsSources are the readings Pando's gauges take at each collection.
+// Adapter health is the leader's last round, given up on after three missed
+// rounds: a replica that has stopped leading no longer checks.
+func metricsSources(db *state.DB, detections *detection.Queue, dispatcher *subscription.Dispatcher,
+	healthEvery time.Duration) telemetry.Sources {
+	return telemetry.Sources{
+		Pool: func() (used, idle, limit int64) {
+			st := db.Stat()
+			return int64(st.AcquiredConns()), int64(st.IdleConns()), int64(st.MaxConns())
+		},
+		Detections: func() int64 { return int64(detections.Running()) },
+		Adapters:   func() []telemetry.AdapterHealth { return dispatcher.AdapterHealth(3 * healthEvery) },
+	}
 }
 
 // detectionAuditor adapts the audit writer to what detection needs.

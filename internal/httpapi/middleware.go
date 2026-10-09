@@ -6,13 +6,28 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/id"
 	"github.com/trypando/pando/internal/log"
+	"github.com/trypando/pando/internal/telemetry"
 )
 
 type ctxKeyRequestID struct{}
+
+// appTraffic notes that a request went to the proxy, so Logger leaves it out
+// of Pando's own request metrics.
+type appTraffic struct{ handed bool }
+
+type appTrafficKey struct{}
+
+// toApp marks r as an app's before it is handed to the proxy.
+func toApp(r *http.Request) {
+	if t, ok := r.Context().Value(appTrafficKey{}).(*appTraffic); ok {
+		t.handed = true
+	}
+}
 
 // RequestIDHeader is returned on every response, including errors.
 const RequestIDHeader = "X-Request-Id"
@@ -44,7 +59,31 @@ func Logger(base *zap.Logger) func(http.Handler) http.Handler {
 			ctx := log.Into(r.Context(), base.With(zap.String("request_id", RequestIDFrom(r.Context()))))
 
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			app := &appTraffic{}
+			ctx = context.WithValue(ctx, appTrafficKey{}, app)
+
+			// Pando's own routes only, by pattern: a path carries IDs (R-400).
+			// A request handed to the proxy is an app's, counted there.
+			// Deferred so a handler that panics is counted, as the 500
+			// Recoverer answers it with.
+			completed := false
+			defer func() {
+				if app.handed {
+					return
+				}
+				status := rec.status
+				if !completed {
+					status = http.StatusInternalServerError
+				}
+				pattern := ""
+				if rctx := chi.RouteContext(ctx); rctx != nil {
+					pattern = rctx.RoutePattern()
+				}
+				telemetry.HTTPRequest(ctx, r.Method, pattern, status, time.Since(started))
+			}()
+
 			next.ServeHTTP(rec, r.WithContext(ctx))
+			completed = true
 
 			log.From(ctx).Info("request",
 				zap.String("method", r.Method),

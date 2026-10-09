@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/core/clock"
+	"github.com/trypando/pando/internal/telemetry"
 )
 
 // Settings is how long each kind of row is kept. A zero field is its default.
@@ -171,11 +172,14 @@ func (j *Job) Pass(ctx context.Context) map[string]int64 {
 		}{"events", func(ctx context.Context, n int) (int64, error) { return j.Outbox.Prune(ctx, now.Add(-s.Events), n) }})
 	}
 
+	started, failed := time.Now(), false
 	out := map[string]int64{}
 	for _, step := range steps {
 		total, err := drain(ctx, s.Batch, step.run)
 		out[step.name] = total
+		telemetry.RetentionRemoved(ctx, step.name, total)
 		if err != nil && ctx.Err() == nil {
+			failed = true
 			logger.Warn("could not remove old rows", zap.String("table", step.name), zap.Error(err))
 		}
 		if total > 0 {
@@ -185,6 +189,11 @@ func (j *Job) Pass(ctx context.Context) map[string]int64 {
 			break
 		}
 	}
+	outcome := telemetry.OutcomeOf(ctx, ctx.Err())
+	if failed {
+		outcome = telemetry.Failed
+	}
+	telemetry.RetentionPass(ctx, telemetry.RetentionRows, outcome, time.Since(started))
 	return out
 }
 
