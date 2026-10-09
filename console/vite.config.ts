@@ -55,7 +55,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.{ts,tsx}'],
-      exclude: ['src/design/**', 'src/api/types.gen.ts', 'src/**/*.test.{ts,tsx}'],
+      exclude: ['src/design/**', 'src/api/types.gen.ts', 'src/**/*.test.{ts,tsx}', 'src/**/*.d.ts'],
       reporter: [['lcov', { projectRoot: '..' }]],
       reportsDirectory: 'coverage',
     },
