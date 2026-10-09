@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -203,4 +204,103 @@ func TestTheCacheIsBounded(t *testing.T) {
 		_, _, _, _ = c.resolve(context.Background(), appKey("hostname", id.New(id.App)), read)
 		require.LessOrEqual(t, len(c.apps), 10, "after %d", i)
 	}
+}
+
+type failingSessions struct{ calls atomic.Int32 }
+
+func (*failingSessions) Authenticate(*http.Request) (authz.Principal, error) { return authz.Anonymous(), nil }
+func (f *failingSessions) SessionPrincipal(context.Context, string) (authz.Principal, time.Time, error) {
+	f.calls.Add(1)
+	return authz.Anonymous(), time.Time{}, errors.New("the sessions table is unreachable")
+}
+
+type failingFacts struct {
+	authz.Store
+	calls atomic.Int32
+}
+
+func (f *failingFacts) DataFacts(context.Context, string, authz.Principal, string) (authz.DataFacts, error) {
+	f.calls.Add(1)
+	return authz.DataFacts{}, errors.New("the grants table is unreachable")
+}
+
+// A failed read is passed on and never kept: the next request reads again,
+// rather than a moment's fault becoming thirty seconds of wrong answers.
+func TestAFailedReadIsNeverKept(t *testing.T) {
+	now := time.Now()
+	c := listeningCache(&now)
+	ctx := context.Background()
+
+	sessions := &failingSessions{}
+	for range 2 {
+		_, ok, err := c.principal(cookieRequest(), sessions)
+		require.True(t, ok)
+		require.Error(t, err)
+	}
+	require.Equal(t, int32(2), sessions.calls.Load())
+
+	facts := &failingFacts{}
+	store := c.Store(facts).(authz.DataFactsReader)
+	for range 2 {
+		_, err := store.DataFacts(ctx, "app_1", authz.Anonymous(), "")
+		require.Error(t, err)
+	}
+	require.Equal(t, int32(2), facts.calls.Load())
+
+	var reads atomic.Int32
+	failing := func(context.Context) (state.App, *spec.AppSpec, bool, error) {
+		reads.Add(1)
+		return state.App{}, nil, false, errors.New("the apps table is unreachable")
+	}
+	for range 2 {
+		_, _, _, err := c.resolve(ctx, appKey("slug", "notes"), failing)
+		require.Error(t, err)
+	}
+	require.Equal(t, int32(2), reads.Load())
+}
+
+// With no cache, or an authenticator that cannot resolve a session on its
+// own, the proxy authenticates the ordinary way.
+func TestWithoutACacheTheOrdinaryPathDecides(t *testing.T) {
+	var nilCache *Cache
+	_, ok, err := nilCache.principal(cookieRequest(), &countingSessions{})
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	now := time.Now()
+	c := listeningCache(&now)
+	_, ok, _ = c.principal(cookieRequest(), staticAuthenticator{})
+	require.False(t, ok, "an authenticator without SessionPrincipal is not cached")
+
+	under := &countingFacts{}
+	require.Same(t, under, nilCache.Store(under), "no cache, the store as it is")
+
+	empty := httptest.NewRequest(http.MethodGet, "/", nil)
+	empty.AddCookie(&http.Cookie{Name: sessionCookie, Value: ""})
+	_, ok, _ = c.principal(empty, &countingSessions{})
+	require.False(t, ok, "an empty session cookie is no session")
+
+	anon := &anonymousSessions{}
+	p, ok, err := c.principal(cookieRequest(), anon)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, authz.KindAnonymous, p.Kind)
+	_, _, _ = c.principal(cookieRequest(), anon)
+	require.Equal(t, int32(2), anon.calls.Load(), "a session that did not resolve is not kept")
+}
+
+type staticAuthenticator struct{}
+
+func (staticAuthenticator) Authenticate(*http.Request) (authz.Principal, error) {
+	return authz.Anonymous(), nil
+}
+
+type anonymousSessions struct{ calls atomic.Int32 }
+
+func (*anonymousSessions) Authenticate(*http.Request) (authz.Principal, error) {
+	return authz.Anonymous(), nil
+}
+func (a *anonymousSessions) SessionPrincipal(context.Context, string) (authz.Principal, time.Time, error) {
+	a.calls.Add(1)
+	return authz.Anonymous(), time.Time{}, nil
 }

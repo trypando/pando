@@ -75,6 +75,50 @@ func TestR048_EveryRevocationReachesTheProxyCache(t *testing.T) {
 		"a reconcile lease changes nothing the proxy reads")
 }
 
+// TestR023_TheResolverKeepsItsLookupsInTheCache asserts the resolver's side
+// of issue #93 against the real store: hostname, slug and port lookups go
+// through the cache, misses included, and the router's hostname check is the
+// same lookup as the proxy's.
+func TestR023_TheResolverKeepsItsLookupsInTheCache(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	db, _ := statetest.Connect(t)
+
+	c := &Cache{}
+	go c.Listen(ctx, db)
+	require.Eventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.listening
+	}, 10*time.Second, 10*time.Millisecond)
+
+	r := NewStateResolver(state.NewApps(db))
+	r.Cache = c
+
+	_, _, found, err := r.ByHostname(ctx, "nobody.example.com")
+	require.NoError(t, err)
+	require.False(t, found)
+	_, _, found, err = r.BySlug(ctx, "nobody")
+	require.NoError(t, err)
+	require.False(t, found)
+	_, _, found, err = r.ByPort(ctx, 9123)
+	require.NoError(t, err)
+	require.False(t, found)
+
+	isApp, err := r.IsAppHostname(ctx, "nobody.example.com")
+	require.NoError(t, err)
+	require.False(t, isApp)
+	isApp, err = r.IsAppHostname(ctx, "")
+	require.NoError(t, err)
+	require.False(t, isApp)
+
+	c.mu.Lock()
+	kept := len(c.apps)
+	c.mu.Unlock()
+	require.Equal(t, 3, kept, "each miss kept once; the router's check reused the proxy's")
+}
+
 func generationOf(c *Cache) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()

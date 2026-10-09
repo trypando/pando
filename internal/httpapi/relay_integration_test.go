@@ -130,6 +130,57 @@ func TestR256_AQueuedDeploysLogFollowsItToTheReplicaThatTakesIt(t *testing.T) {
 	require.Contains(t, gotCookie.Load(), httpapi.SessionCookie+"=")
 }
 
+// TestR256_AQueuedDeploysLogSaysSoWhenItsReplicaCannotBeReached asserts that a
+// stream already open for a queued deploy ends with a line a person can read
+// when the replica that took the deploy does not answer — not with a status
+// code, which can no longer be sent (issue #93).
+func TestR256_AQueuedDeploysLogSaysSoWhenItsReplicaCannotBeReached(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	i.Server.QueuePollEvery = 10 * time.Millisecond
+	admin := i.admin()
+	appID := i.appWithSpec(admin, "notes")
+	depID := i.queuedDeployment(appID)
+
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	i.Server.LogOwner = func(context.Context, string) (string, error) { return gone.URL, nil }
+
+	srv := httptest.NewServer(i.handler)
+	t.Cleanup(srv.Close)
+	stream := openSSE(t, srv.URL, admin, "/apps/"+appID+"/deployments/"+depID+"/logs")
+	require.Equal(t, sseEvent{data: "=> Waiting for a build slot: this deploy is next."}, stream.next(t))
+
+	_, err := i.Server.Deployments.Claim(context.Background(), 1)
+	require.NoError(t, err)
+	require.Contains(t, stream.next(t).data, "could not reach the Pando process running this deploy")
+	require.Equal(t, "end", stream.next(t).name)
+}
+
+// TestR048_AQueuedDeploysLogEndsWhenTheViewersAccessDoes asserts that waiting
+// in the queue is no way around R-048: a viewer whose session is revoked
+// while the deploy waits is told, and the stream ends (issue #93).
+func TestR048_AQueuedDeploysLogEndsWhenTheViewersAccessDoes(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	i.Server.QueuePollEvery = 10 * time.Millisecond
+	i.Server.DeployLogReauthEvery = 20 * time.Millisecond
+	admin := i.admin()
+	appID := i.appWithSpec(admin, "notes")
+	depID := i.queuedDeployment(appID)
+
+	srv := httptest.NewServer(i.handler)
+	t.Cleanup(srv.Close)
+	viewer := i.admin()
+	stream := openSSE(t, srv.URL, viewer, "/apps/"+appID+"/deployments/"+depID+"/logs")
+	require.Equal(t, sseEvent{data: "=> Waiting for a build slot: this deploy is next."}, stream.next(t))
+
+	got := i.do(viewer, http.MethodDelete, "/sessions", nil)
+	require.Less(t, got.Code, 300, got.String())
+	require.Contains(t, stream.next(t).data, "access to this app's logs has ended")
+	require.Equal(t, "end", stream.next(t).name)
+}
+
 // TestR256_OnlyADeploymentIDIsRelayed asserts that a deploy-log request naming
 // something that is not a deployment ID is answered where it lands: never
 // passed to another replica, and never written into a log line (CodeQL
