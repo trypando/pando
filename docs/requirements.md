@@ -603,6 +603,22 @@ Approval is a human sign-off on a change. It is not a test gate (R-011).
 
 **R-153 [D]** One app, one place (R-010). Replica counts from compose are rejected (R-099).
 
+### 10.7 Idle apps
+
+Added by issue #131, so that an install does not fill up with apps nobody uses.
+
+**R-393 [D]** **Host policy may stop, and later delete, apps nobody has used for a set number of days:** `idle_stop_days` and `idle_delete_days`, each 0 — off — by default (R-270). Both count from the app's last activity, so stopping after 30 and deleting after 90 deletes an app 90 days after anybody last used it. When both are set, deleting takes longer than stopping. Either may be set without the other. An app may change both, or turn either off (R-397).
+
+**R-394 [D]** **Activity is a request the proxy let through to the app, a deploy of it, or starting it.** Every request passes the proxy (R-023), so that is where use is seen. A refused request is not activity: a crawler at a private app's sign-in page would otherwise keep it forever. Opening an app's settings, logs or audit is not activity either. An app never deployed counts from its creation. The proxy keeps activity in memory and writes it at most once a minute from each replica, so no request waits on the database for it.
+
+**R-395 [D]** **The owner is told 7 days [P] before an app is stopped or deleted for being idle, and again when it happens**, through the notification adapters (R-230), as `app_idle`. Activity after a notice cancels it, and a later idle stretch has a notice of its own. Nothing is stopped or deleted sooner than 7 days after its notice, whatever the setting, so an app is never stopped or deleted without warning. Each notice, stop and deletion is an audit event.
+
+**R-396 [D]** **An app stopped for being idle stays stopped until somebody starts it.** Its next request does not start it: that would be a workload created on demand, which R-295 and R-296 leave to per-user instances. The app, in the console and in the API, and its address, to a visitor, both say it was stopped for inactivity, so it is not mistaken for a failed app (R-151). Starting it is activity (R-394). A failed app is not stopped by this, since nothing of it is running, but it is deleted like any other.
+
+**R-397 [D]** **An app's idle settings are app settings, not spec fields.** They decide whether Pando keeps the app, not how it runs (R-020), so changing them writes no spec revision and starts no deploy. Anybody holding `app.spec.edit` on the app may set its own stop and delete days, turn either off, or go back to the install's.
+
+**R-398 [D]** **Deleting an idle app is a delete with nobody present to answer R-204's question, so host policy answers it.** With `require_backup_before_destroy` (R-284), an app with volumes is backed up first and the backup is kept until somebody discards it; if the backup fails, the app is not deleted, its owner is told, and the next pass tries again. Without it, the volumes are discarded with the app.
+
 ---
 
 ## 11. Networking and Routing
@@ -900,7 +916,7 @@ Events tab and `GET /apps/{id}/events`. The feed holds what the outbox keeps (R-
 
 **R-245 [P]** **An app's parts show what they are using now**: CPU, memory and disk for each workload, and each volume's size, beside the limits it runs under — reported by the runtime adapter (R-243) and read on demand. A reading, not a history: Pando keeps no metrics store, graphs no trends and alerts on nothing (R-016). A runtime that cannot report it says so rather than showing zeros.
 
-**R-244 [P] [LATER]** Per-user quotas (max apps, max disk) as a policy knob. The counting required already exists for R-242.
+**R-244 [D]** **How many apps a person may own is limited by host policy, by a group, or on their own account.** `max_apps_per_user` in host policy is the default, and a group or a user may carry its own `max_apps`. 0 means unlimited wherever it is set: somebody who may not create apps at all is somebody without `app.create`, not somebody with a limit of 0. A value set on the user applies whatever their groups say. Otherwise the most generous of their groups applies, unlimited beating any number. Otherwise host policy's applies. Every app the person owns counts, whatever its state; a deleted app does not. Creating an app past the limit is refused before anything is created, and the refusal names the limit, where it comes from and who can raise it (R-105). Lowering a limit below what somebody already owns removes nothing; it refuses their next app. A per-user disk quota is not part of this. *(Amended by issue #131: it was `[P] [LATER]`, per user only, and named a disk quota as well.)*
 
 ---
 
@@ -1034,7 +1050,7 @@ R-106 describes and is not an error.
 
 **R-283 [D]** An option to back up before destroying exists, off by default. **Installs using an external IdP are expected to enable it** — offboarding is exactly when someone needs the data later.
 
-**R-284 [D]** Because the correct value differs by install, this belongs to **host policy**, not per-app configuration. An admin sets "never destroy without backup" once and app owners cannot override downward.
+**R-284 [D]** Because the correct value differs by install, this belongs to **host policy**, not per-app configuration. An admin sets "never destroy without backup" once and app owners cannot override downward. The setting is `require_backup_before_destroy`. It holds for every deletion of an app with volumes: a person's delete that would discard them without a backup is refused, and Pando's own deletion of an idle app backs up first (R-398). *(Amended by issue #131: the setting existed and nothing read it.)*
 
 ---
 
@@ -1046,7 +1062,7 @@ R-106 describes and is not an error.
 
 **R-292 [D]** **Instances are created lazily, on first access.** Not eagerly on grant — sharing with a 200-person department must not create 200 containers.
 
-**R-293 [D] [LATER]** Idle reaping is a per-app option, not a global default. The right interval depends entirely on the app, and a chat UI and a long-running simulation want opposite answers.
+**R-293 [D]** Idle reaping is configured per app, because the right interval depends entirely on the app, and a chat UI and a long-running simulation want opposite answers. Host policy may set a default for whole apps, off unless an administrator sets one, and every app may change it or turn it off (§10.7, R-393, R-397). Reaping idle per-user instances remains `[LATER]` with the rest of this section. *(Amended by issue #131: it said idle reaping was not a global default.)*
 
 **R-294 [D]** Data destruction on revoke follows §21.
 
@@ -1161,7 +1177,7 @@ Confirmed for the first release:
 - Volumes with the undeclared-persistence warning
 - Rolling backups + full-host DR bundle
 
-Explicitly deferred: per-user instances, GitHub OAuth sign-in, cloud routing adapters other than Cloudflare Tunnel, external secrets adapters, VM runtime adapters, setting profiles, per-user quotas, log masking.
+Explicitly deferred: per-user instances, GitHub OAuth sign-in, cloud routing adapters other than Cloudflare Tunnel, external secrets adapters, VM runtime adapters, setting profiles, log masking.
 
 ---
 

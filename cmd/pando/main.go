@@ -795,6 +795,7 @@ func serve(ctx context.Context, configPath string) error {
 
 	// The single enforcement point for every request to every app (R-023).
 
+	limitsWire := newLimitsWiring(db, policyStore, logger)
 	appProxy := &proxy.Proxy{
 		Resolver:      appResolver,
 		Authenticator: authenticator,
@@ -811,10 +812,15 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:      logger,
 		LoginPath:   httpapi.LoginPath,
 		Mode:        cfg.Server.RoutingMode,
+
+		// Every request let through is activity, kept in memory and written
+		// once a minute from each replica (R-394).
+		Activity: limitsWire.Recorder,
 	}
 
 	// A delete asks for its teardown now rather than at the next GC pass.
 	teardownNow := make(chan struct{}, 1)
+	askTeardown := signalOnce(teardownNow)
 
 	// Built once and used twice: as the front door, and as what a port-mode
 	// app's own listener falls back to for Pando's reserved path (R-172).
@@ -884,16 +890,11 @@ func serve(ctx context.Context, configPath string) error {
 			PortRangeEnd:   cfg.Server.PortRangeEnd,
 			BaseDomain:     cfg.Server.BaseDomain,
 		},
-		TeardownNow: func() {
-			select {
-			case teardownNow <- struct{}{}:
-			default:
-			}
-		},
-		Logger:   logger,
-		Security: securityService,
-		Sources:  sources,
-		Images:   images,
+		TeardownNow: askTeardown,
+		Logger:      logger,
+		Security:    securityService,
+		Sources:     sources,
+		Images:      images,
 
 		SourceConnections: sourceConnections,
 
@@ -1011,11 +1012,17 @@ func serve(ctx context.Context, configPath string) error {
 		AuditSinkCheck: auditSinks,
 		AuditReads:     &audit.ReadThrottle{},
 
-		Groups:       state.NewGroups(db),
-		Roles:        state.NewRoles(db),
-		Backups:      backups,
-		Backup:       backupService,
-		BundleSource: bundleSource,
+		Groups: state.NewGroups(db),
+		Roles:  state.NewRoles(db),
+
+		// How many apps a person may own (R-244), and an app's own idle
+		// settings (R-397).
+		AppLimits:     limitsWire.Limits,
+		AppLimitStore: limitsWire.AppLimits,
+		IdleSettings:  limitsWire.Settings,
+		Backups:       backups,
+		Backup:        backupService,
+		BundleSource:  bundleSource,
 
 		// Retried deploys replay rather than repeat (R-262). An agent
 		// retries on a timeout, and a deploy that clones regularly outlasts
@@ -1113,6 +1120,9 @@ func serve(ctx context.Context, configPath string) error {
 	// it has room for (issue #72, O-32).
 	go deployQueue.Serve(loopCtx)
 	go detectionQueue.Serve(loopCtx)
+
+	// Each replica writes the activity its proxy saw (R-394).
+	go limitsWire.Recorder.Run(loopCtx)
 
 	// What must happen once per install rather than once per process runs on
 	// the leader alone (issue #72): two replicas each running the GC tore
@@ -1394,6 +1404,17 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:       logger,
 		Clock:        clock.System{},
 		Concurrency:  cfg.Work.Backups,
+	}).Run)
+
+	// Apps nobody uses: a notice, then a stop or a deletion (R-393 – R-398).
+	// Inert until host policy or an app sets a number of days. A deletion
+	// goes through the same service as a person's, so host policy's backup
+	// rule holds for it (R-284).
+	job("idle", limitsWire.idlePass(idlePassDeps{
+		Apps: apps, Volumes: volumes,
+		Backups: backups, Backup: backupService, BundleSource: bundleSource,
+		Policy: policyStore, Notifier: notifyRouter, Auditor: auditor,
+		TeardownNow: askTeardown, Logger: logger,
 	}).Run)
 
 	// Whichever replica holds the leader lock runs the jobs above; with one

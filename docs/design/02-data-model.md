@@ -845,6 +845,23 @@ removes rows past a window, a batch at a time. Windows are `retention.*` setting
 `spec_revisions` and `audit_events` are not in it: revisions are pruned by the GC under R-152's rules,
 and the audit log by R-347's archiver.
 
+### 2.12 Idle apps and app limits (issue #131)
+
+Migration 000069.
+
+| Object | What it holds |
+|---|---|
+| `app_activity (app_id, last_activity_at)` | When an app was last used (R-394). A table of its own, not a column on `apps`, so the proxy's once-a-minute writes do not churn the row the reconciler leases and the proxy cache watches. Written with `GREATEST`, so a replica's older batch never moves a clock back. An app with no row counts from its `created_at`. |
+| Trigger `app_activity_deployed` on `deployments` | A deploy is activity, whatever path inserted it. |
+| Trigger `app_activity_started` on `apps` | `desired_state` becoming `running` is activity, and clears `stopped_for_idle` and both notices in the same row write (R-396). BEFORE, so it is one write. |
+| `apps.idle_stop_days`, `apps.idle_delete_days` | The app's own settings (R-397). NULL is host policy's; 0 is off. |
+| `apps.stopped_for_idle` | Pando stopped it for being idle, as `stopped_for_security` records a security stop. In the proxy cache trigger's column list, because the proxy reads it to tell a visitor why. |
+| `apps.idle_stop_noticed_at`, `apps.idle_delete_noticed_at` | When the owner was told (R-395). A notice older than the last activity was answered and is withdrawn. |
+| `users.max_apps`, `groups.max_apps` | How many apps a person may own (R-244). NULL is not set here; 0 is unlimited. Host policy's default is `max_apps_per_user` in the policy document. |
+
+The limit is counted in the transaction that inserts the app, under `SELECT … FOR UPDATE` on the
+owner's `users` row, so two creates at once cannot both take the last place.
+
 ## 3. Things deliberately not in the schema
 
 - **Hosts.** R-256: multi-machine capability lives entirely in adapters. Adding a `hosts` table would be the first step toward the scheduler R-010 forbids.

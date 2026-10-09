@@ -418,3 +418,25 @@ func TestR105_ANegativeDeployLimitSaysWhatToUse(t *testing.T) {
 	require.NoError(t, policy.Document{MaxConcurrentDeploys: 0}.ValidateRules())
 	require.NoError(t, policy.Document{MaxConcurrentDeploys: 8}.ValidateRules())
 }
+
+// TestR393_DeletingAnIdleAppComesAfterStoppingIt asserts R-393 and R-105:
+// both count from the last use, so a delete no later than the stop is refused
+// with the values that work. Either alone is fine.
+func TestR393_DeletingAnIdleAppComesAfterStoppingIt(t *testing.T) {
+	err := policy.Document{IdleStopDays: 30, IdleDeleteDays: 30}.ValidateRules()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Use more than 30 days for idle_delete_days, or 0 to never delete")
+
+	require.Error(t, policy.Document{IdleStopDays: -1}.ValidateRules())
+	require.NoError(t, policy.Document{IdleStopDays: 30, IdleDeleteDays: 90}.ValidateRules())
+	require.NoError(t, policy.Document{IdleDeleteDays: 10}.ValidateRules())
+	require.NoError(t, policy.Document{IdleStopDays: 10}.ValidateRules())
+}
+
+// TestR244_ANegativeAppLimitSaysWhatToUse asserts R-244 and R-105.
+func TestR244_ANegativeAppLimitSaysWhatToUse(t *testing.T) {
+	err := policy.Document{MaxAppsPerUser: -2}.ValidateRules()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "0 for unlimited")
+	require.NoError(t, policy.Document{MaxAppsPerUser: 5}.ValidateRules())
+}

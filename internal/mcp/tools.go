@@ -784,6 +784,48 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_get_app_idle",
+		Description: "When Pando stops or deletes an app nobody uses (R-393 – R-397): the app's own " +
+			"stop_days and delete_days (null is the installation's, 0 is never), the installation's, the ones " +
+			"in force, last_activity_at, stops_at and deletes_at if nobody uses it before then, and " +
+			"stopped_for_idle when Pando stopped it.",
+		Schema: schema(map[string]any{"app_id": str("The app's ID.")}, "app_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", appPath(id, "/idle"), nil, nil
+		},
+	},
+	{
+		Name: "pando_set_app_idle",
+		Description: "Set when Pando stops and deletes an app nobody uses. Both are replaced, so pass " +
+			"what pando_get_app_idle returned for the one you are not changing. Each is a number of days, " +
+			"\"never\", or \"default\" for the installation's setting. Both count from the last use, so " +
+			"deleting has to come later than stopping. App settings, not spec: nothing is deployed.",
+		Schema: schema(map[string]any{
+			"app_id":      str("The app's ID."),
+			"stop_days":   numberOrWord("Days without use before Pando stops the app, \"never\", or \"default\".", "never", "default"),
+			"delete_days": numberOrWord("Days without use before Pando deletes the app, \"never\", or \"default\".", "never", "default"),
+		}, "app_id", "stop_days", "delete_days"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			stop, err := idleDaysArg(args, "stop_days")
+			if err != nil {
+				return "", "", nil, err
+			}
+			del, err := idleDaysArg(args, "delete_days")
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "PUT", appPath(id, "/idle"), map[string]any{"stop_days": stop, "delete_days": del}, nil
+		},
+	},
+	{
 		Name: "pando_list_my_apps",
 		Description: "The apps you can open — your launcher — with which are favorites, which of " +
 			"your sections each is filed under, and whether you can also manage it (can_manage), and your " +
@@ -823,6 +865,48 @@ var toolList = []tool{
 				return "", "", nil, err
 			}
 			return pagedGet("/users/"+url.PathEscape(id)+"/apps", args, "cursor")
+		},
+	},
+	{
+		Name: "pando_get_app_limit",
+		Description: "How many apps a person may own (R-244). With user_id: the limit in force (0 is " +
+			"unlimited), where it comes from (user, group or policy, with the group's name), how many apps " +
+			"they own, and the value on their own account. With group_id: the group's max_apps, null when it " +
+			"sets none. Your own account needs no permission; anything else needs install.users.manage.",
+		Schema: schema(map[string]any{
+			"user_id":  str("An account's ID. Give this or group_id."),
+			"group_id": str("A group's ID. Give this or user_id."),
+		}),
+		request: func(args map[string]any) (string, string, any, error) {
+			path, err := limitTarget(args)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", path, nil, nil
+		},
+	},
+	{
+		Name: "pando_set_app_limit",
+		Description: "Set how many apps an account, or each person in a group, may own (R-244). A " +
+			"number, 0 for unlimited, or \"clear\" to remove it. An account's own value applies whatever its " +
+			"groups say; otherwise the most generous group's, then host policy's max_apps_per_user. Lowering " +
+			"it removes nothing. Needs install.users.manage, which host policy keeps from agents unless an " +
+			"administrator allows it.",
+		Schema: schema(map[string]any{
+			"user_id":  str("An account's ID. Give this or group_id."),
+			"group_id": str("A group's ID. Give this or user_id."),
+			"max_apps": numberOrWord("A number of apps, 0 for unlimited, or \"clear\".", "clear"),
+		}, "max_apps"),
+		request: func(args map[string]any) (string, string, any, error) {
+			path, err := limitTarget(args)
+			if err != nil {
+				return "", "", nil, err
+			}
+			n, err := maxAppsArg(args)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "PUT", path, map[string]any{"max_apps": n}, nil
 		},
 	},
 	{

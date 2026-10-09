@@ -45,6 +45,8 @@ const (
 	PolicyExecDisabled            Code = "POLICY_EXEC_DISABLED"             // R-085
 	PolicyAnonymousGrantForbidden Code = "POLICY_ANONYMOUS_GRANT_FORBIDDEN" // R-076
 	PolicyWebhookPrivateAddress   Code = "POLICY_WEBHOOK_PRIVATE_ADDRESS"   // R-372
+	PolicyAppLimitReached         Code = "POLICY_APP_LIMIT_REACHED"         // R-244
+	PolicyBackupRequired          Code = "POLICY_BACKUP_REQUIRED"           // R-284
 
 	// VALID_* — malformed request or spec. 400.
 	ValidInvalid         Code = "VALID_INVALID"

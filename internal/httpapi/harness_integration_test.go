@@ -29,6 +29,7 @@ import (
 	notifyconsole "github.com/trypando/pando/internal/adapter/notify/console"
 	secretslocal "github.com/trypando/pando/internal/adapter/secrets/local"
 	"github.com/trypando/pando/internal/config"
+	"github.com/trypando/pando/internal/core/applimit"
 	"github.com/trypando/pando/internal/core/approval"
 	"github.com/trypando/pando/internal/core/assertion"
 	"github.com/trypando/pando/internal/core/assist"
@@ -43,6 +44,7 @@ import (
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/detection"
+	"github.com/trypando/pando/internal/core/idle"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
@@ -261,9 +263,12 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		AuditSinkCheck: &auditstream.Service{Configs: adapters,
 			Credentials: state.NewAdapterCredentials(db, secretsAdapter, "sec_local"), New: harnessSink},
 
-		Groups:  state.NewGroups(db),
-		Roles:   state.NewRoles(db),
-		Backups: state.NewBackups(db),
+		Groups:        state.NewGroups(db),
+		Roles:         state.NewRoles(db),
+		AppLimits:     &applimit.Service{Store: state.NewAppLimits(db), Policy: effectivePolicy},
+		AppLimitStore: state.NewAppLimits(db),
+		IdleSettings:  &idle.Settings{Store: state.NewActivity(db), Policy: effectivePolicy},
+		Backups:       state.NewBackups(db),
 		Backup: &backup.Service{
 			Registry:      registry,
 			DatabaseURL:   secret.New(dbURL),

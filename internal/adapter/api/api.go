@@ -1242,6 +1242,9 @@ const (
 	// NotifyAuditSinkDisabled: Pando turned off an audit sink because it kept
 	// failing (R-383). Sent to everybody holding install.audit.export.
 	NotifyAuditSinkDisabled NotificationKind = "audit_sink_disabled"
+	// NotifyAppIdle: an app nobody uses is about to be stopped or deleted,
+	// or was (R-395). Sent to its owner.
+	NotifyAppIdle NotificationKind = "app_idle"
 )
 
 // NotifyAdapter delivers notifications.

@@ -19,6 +19,7 @@ import { BesideField } from '../ui/BesideField';
 import { withParams } from '../ui/paged';
 import { Identities } from './Identities';
 import { AccountApps } from './AccountApps';
+import { AccountAppLimit } from './AppLimit';
 import { GeneratedPassword, PasswordToCopy } from './GeneratedPassword';
 import type { Account, Role } from './Accounts';
 import { Quiet, RoleLabel, RolePicker, StatusToggle, messageOf, refusal, sentence } from './Accounts';
@@ -232,6 +233,10 @@ export function AccountPage({
                     </span>
                   ))}
               </div>
+            </Detail>
+            {/* R-244: what it may own, and where that comes from. */}
+            <Detail term="Apps they may own">
+              <AccountAppLimit userID={a.id} manage={manage} />
             </Detail>
           </Details>
         </section>

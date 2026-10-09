@@ -124,6 +124,17 @@ type Document struct {
 	// and says how many are ahead of it.
 	MaxConcurrentDeploys int `json:"max_concurrent_deploys,omitempty"`
 
+	// IdleStopDays and IdleDeleteDays stop, and later delete, an app nobody
+	// has used for that many days, both counted from its last activity
+	// (R-393 – R-398, issue #131). Zero is off, the default. An app may set
+	// its own or turn either off (R-397), so these are defaults, not floors.
+	IdleStopDays   int `json:"idle_stop_days,omitempty"`
+	IdleDeleteDays int `json:"idle_delete_days,omitempty"`
+
+	// MaxAppsPerUser is how many apps a person may own unless their account or
+	// a group of theirs says otherwise (R-244). Zero is unlimited.
+	MaxAppsPerUser int `json:"max_apps_per_user,omitempty"`
+
 	// AllowCPUOversubscription and AllowMemoryOversubscription let the apps
 	// on a runtime together ask for more CPU, or more memory, than the runtime
 	// reports having (R-242 as amended for issue #72). Both off by default: a
@@ -591,6 +602,12 @@ func (d Document) ValidateRules() error {
 	if d.MaxConcurrentDeploys < 0 {
 		return fmt.Errorf("max_concurrent_deploys is %d; it is how many deploys each replica runs at once, so use 1 or more (0 means one per CPU, at least two)", d.MaxConcurrentDeploys)
 	}
+	if err := ValidateIdleDays("idle_stop_days", "idle_delete_days", d.IdleStopDays, d.IdleDeleteDays); err != nil {
+		return err
+	}
+	if d.MaxAppsPerUser < 0 {
+		return fmt.Errorf("max_apps_per_user is %d; it is how many apps each person may own, so use 1 or more, or 0 for unlimited", d.MaxAppsPerUser)
+	}
 	if d.DeployApprovalExpiryHours < 0 {
 		return fmt.Errorf("deploy_approval_expiry_hours is %d; use a number of hours, or 0 for requests that wait until somebody answers", d.DeployApprovalExpiryHours)
 	}
@@ -601,6 +618,24 @@ func (d Document) ValidateRules() error {
 		return err
 	}
 	return d.ValidateAuditRetention()
+}
+
+// ValidateIdleDays refuses idle days below zero, and a delete that would come
+// no later than the stop, since both count from the same last activity
+// (R-393). Shared with an app's own settings; the names are the ones the
+// caller's reader typed (R-105).
+func ValidateIdleDays(stopName, deleteName string, stop, del int) error {
+	if stop < 0 {
+		return fmt.Errorf("%s is %d; use a number of days, or 0 for never", stopName, stop)
+	}
+	if del < 0 {
+		return fmt.Errorf("%s is %d; use a number of days, or 0 for never", deleteName, del)
+	}
+	if stop > 0 && del > 0 && del <= stop {
+		return fmt.Errorf("%s is %d and %s is %d; both count from the app's last use, so deleting has to come later than stopping. Use more than %d days for %s, or 0 to never delete",
+			deleteName, del, stopName, stop, stop, deleteName)
+	}
+	return nil
 }
 
 // ValidateAuditRetention refuses retention under the floor and a mode that is
