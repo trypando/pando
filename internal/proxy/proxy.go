@@ -92,6 +92,11 @@ type Metrics interface {
 type Proxy struct {
 	Resolver      Resolver
 	Authenticator Authenticator
+
+	// Cache, when set, keeps what a request reads about its session for a
+	// few seconds, emptied on every change (cache.go, issue #93). Give the
+	// resolver the same one, and build Authz over Cache.Store.
+	Cache *Cache
 	Authz         *authz.Authorizer
 	Minter        *assertion.Minter
 	Upstreams     Upstreams

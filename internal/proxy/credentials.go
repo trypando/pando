@@ -44,6 +44,10 @@ func isPandoToken(value string) bool {
 // a Pando token if the request carries one, and no Authorization header
 // otherwise.
 func (p *Proxy) authenticate(r *http.Request) (authz.Principal, error) {
+	// A session cookie alone, from the cache when it can be (issue #93).
+	if principal, ok, err := p.Cache.principal(r, p.Authenticator); ok {
+		return principal, err
+	}
 	values := r.Header.Values("Authorization")
 	if len(values) == 0 {
 		return p.Authenticator.Authenticate(r)

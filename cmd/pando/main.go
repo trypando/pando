@@ -784,12 +784,22 @@ func serve(ctx context.Context, configPath string) error {
 	// app's hostname from Pando's own.
 	appResolver := proxy.NewStateResolver(apps)
 
+	// What a proxied request reads, kept for seconds and emptied on every
+	// change by the database's notifications (issue #93). Used only on the
+	// proxy's path: the API reads afresh, so a revocation there is never
+	// even a notification late. Listening starts with the loops below, and
+	// until then nothing is kept.
+	proxyCache := &proxy.Cache{}
+	appResolver.Cache = proxyCache
+	proxyAuthorizer := authz.New(proxyCache.Store(authzStore), hostPolicy, auditDenials{auditor})
+
 	// The single enforcement point for every request to every app (R-023).
 
 	appProxy := &proxy.Proxy{
 		Resolver:      appResolver,
 		Authenticator: authenticator,
-		Authz:         authorizer,
+		Cache:         proxyCache,
+		Authz:         proxyAuthorizer,
 		Minter:        minter,
 		Upstreams:     proxy.NewRuntimeUpstreams(registry),
 		Auditor:       auditor,
@@ -1195,6 +1205,7 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:        logger,
 	}
 	go dispatcher.Run(loopCtx)
+	go proxyCache.Listen(loopCtx, db)
 	go capacityReadings.Run(loopCtx)
 
 	// Retention, hourly, for the tables that otherwise only grow — the event
