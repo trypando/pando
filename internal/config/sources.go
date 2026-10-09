@@ -50,11 +50,13 @@ type PolicySetting struct {
 const PolicyEnvPrefix = "PANDO_POLICY_"
 
 // secret keys are never reported, whatever their source (R-194). The database
-// URL carries a password; the admin password is one.
+// URL carries a password; the admin password is one; OTLP headers usually
+// carry a collector's API key.
 var secret = map[string]bool{
 	"database.url":             true,
 	"bootstrap.admin_password": true,
 	"registry.password":        true,
+	"metrics.otlp_headers":     true,
 }
 
 // envName is the variable a key is read from: its explicit bind, or the name

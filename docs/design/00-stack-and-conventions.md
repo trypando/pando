@@ -85,6 +85,7 @@ are in `notes-multiple-replicas-issue-72.md`; `make test-replicas` runs it.
 |---|---|---|
 | HTTP router | `go-chi/chi/v5` | **[D]** |
 | Logging | `uber-go/zap` | **[D]** Structured, one logger threaded through context |
+| Metrics | OpenTelemetry Go SDK, OTLP exporters | **[D]** Pushed, never served (§3.6, R-399) |
 | DB driver | `jackc/pgx/v5` | Native protocol, better types than `lib/pq` |
 | Query layer | `sqlc` | Generates typed Go from SQL. No ORM. |
 | Migrations | `golang-migrate` | Versioned, up/down, embedded in the binary |
@@ -273,6 +274,28 @@ zap, structured, one logger in context. Every log line inside a request carries 
 ### 3.5 Time [P]
 
 All timestamps UTC, `timestamptz` in Postgres, RFC 3339 on the wire. A `Clock` interface in core so the reconciler's backoff (R-149) is testable without sleeping.
+
+### 3.6 Metrics [D]
+
+Pando pushes metrics about itself over OTLP to a collector the operator names, and nothing else
+(R-399, issue #126). It serves no `/metrics` endpoint, keeps no series and draws no graphs (R-016,
+R-245). Configuration is `metrics.otlp_endpoint`, `otlp_protocol`, `otlp_headers` and `interval`
+(`PANDO_METRICS_*`), off until an endpoint is set; the headers are a secret setting, never reported
+or logged. `docs/reference.md` lists every metric.
+
+Code records through `internal/telemetry` and nowhere else: one function per kind of work —
+`telemetry.Deploy(ctx, outcome, duration)` — taking typed, bounded values, never a free-form
+attribute. That is R-400's mechanism (design 06 §7). Until `telemetry.Start` installs a provider every
+function records into a no-op, so an install with no endpoint pays nothing for it. A test that asserts
+something is measured installs a reader with `telemetrytest.Install` and reads it back.
+
+A new metric is a function in `internal/telemetry`, a row in `docs/reference.md`'s table, and its
+attribute keys in `telemetry.AttributeKeys`. Names follow OpenTelemetry's semantic conventions where
+one exists (`http.server.request.duration`, `db.client.connection.count`) and `pando.` otherwise.
+Durations are seconds.
+
+Traces, and logs over OTLP, are not exported [D]: logs are structured zap on stdout (§3.3), for the
+operator's own collector to read.
 
 ---
 

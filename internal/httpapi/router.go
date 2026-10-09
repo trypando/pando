@@ -1009,6 +1009,7 @@ func (s *Server) Routes() http.Handler {
 			if s.answerACMEChallenge(w, req) {
 				return
 			}
+			toApp(req)
 			s.AppProxy.ServeHTTP(w, req)
 		})
 	}
@@ -1050,6 +1051,7 @@ func (s *Server) consoleOrApp() http.Handler {
 				host = h
 			}
 			if isApp, err := s.AppHosts.IsAppHostname(r.Context(), host); err == nil && isApp {
+				toApp(r)
 				s.AppProxy.ServeHTTP(w, r)
 				return
 			}

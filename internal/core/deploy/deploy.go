@@ -30,6 +30,7 @@ import (
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/log"
 	"github.com/trypando/pando/internal/secret"
+	"github.com/trypando/pando/internal/telemetry"
 )
 
 // Secrets resolves an app's stored secrets into values.
@@ -354,7 +355,9 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		if err := r.deploys.SetStatus(ctx, dep.ID, state.DeployBuilding); err != nil {
 			return fail("build", err)
 		}
+		buildStarted := time.Now()
 		built, images, err := r.buildAll(ctx, appSpec, checkout, sink, dep.ID)
+		telemetry.Build(ctx, telemetry.OutcomeOf(ctx, err), time.Since(buildStarted))
 		perWorkload = images
 		if err != nil {
 			// The reason goes into the log the user is watching, not only into

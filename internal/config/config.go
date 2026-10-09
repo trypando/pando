@@ -30,6 +30,7 @@ type Config struct {
 	Retention  Retention  `mapstructure:"retention"`
 	Registry   Registry   `mapstructure:"registry"`
 	ACME       ACME       `mapstructure:"acme"`
+	Metrics    Metrics    `mapstructure:"metrics"`
 
 	// File is the config file read at startup, or empty when there was none.
 	File string `mapstructure:"-"`
@@ -422,6 +423,10 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("registry.always", false)
 	v.SetDefault("acme.directory_url", LetsEncryptDirectory)
 	v.SetDefault("acme.ca_file", "")
+	v.SetDefault("metrics.otlp_endpoint", "")
+	v.SetDefault("metrics.otlp_protocol", OTLPHTTP)
+	v.SetDefault("metrics.otlp_headers", "")
+	v.SetDefault("metrics.interval", DefaultMetricsInterval)
 
 	// Every key in boundEnv is bound explicitly — see there for why that is not
 	// belt-and-braces.
@@ -494,6 +499,11 @@ var boundEnv = map[string]string{
 	"acme.directory_url": "PANDO_ACME_DIRECTORY_URL",
 	"acme.ca_file":       "PANDO_ACME_CA_FILE",
 
+	"metrics.otlp_endpoint": "PANDO_METRICS_OTLP_ENDPOINT",
+	"metrics.otlp_protocol": "PANDO_METRICS_OTLP_PROTOCOL",
+	"metrics.otlp_headers":  "PANDO_METRICS_OTLP_HEADERS",
+	"metrics.interval":      "PANDO_METRICS_INTERVAL",
+
 	// Not PANDO_BOOTSTRAP_ADMIN_PASSWORD, which is what the replacer would
 	// derive — this is the one setting an operator types from memory at the
 	// worst possible moment. That makes this bind load-bearing rather than
@@ -516,7 +526,7 @@ func (c *Config) validate() error {
 		return fmt.Errorf("PANDO_ACME_DIRECTORY_URL is %q, which is not an https URL; it is a certificate authority's ACME directory, such as %s",
 			c.ACME.DirectoryURL, LetsEncryptDirectory)
 	}
-	return nil
+	return c.Metrics.validate()
 }
 
 // Trusted parses TrustedProxies. Checked at startup: a list Pando cannot read,

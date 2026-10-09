@@ -99,6 +99,7 @@ import (
 	"github.com/trypando/pando/internal/proxy"
 	"github.com/trypando/pando/internal/reference"
 	"github.com/trypando/pando/internal/secret"
+	"github.com/trypando/pando/internal/telemetry"
 )
 
 func main() {
@@ -1238,7 +1239,8 @@ func serve(ctx context.Context, configPath string) error {
 	}).Run)
 	// Delivery claims with SKIP LOCKED, so it runs on every replica; a health
 	// change is one event per install, so the watch leads.
-	job("adapter-health", func(ctx context.Context) { dispatcher.WatchAdapters(ctx, 5*time.Minute) })
+	const adapterHealthEvery = 5 * time.Minute
+	job("adapter-health", func(ctx context.Context) { dispatcher.WatchAdapters(ctx, adapterHealthEvery) })
 
 	// Port-mode apps answer at the root of their own port (design 03 §4.2).
 	//
@@ -1416,6 +1418,38 @@ func serve(ctx context.Context, configPath string) error {
 		Policy: policyStore, Notifier: notifyRouter, Auditor: auditor,
 		TeardownNow: askTeardown, Logger: logger,
 	}).Run)
+
+	// Metrics about this process, pushed to the operator's collector (R-399).
+	// Nothing is exported with no endpoint configured. Stopped by a defer, so
+	// after the server has drained, and its last push carries those
+	// requests; and before the pool closes, which the pool gauges read.
+	stopMetrics, err := telemetry.Start(ctx, cfg.Metrics,
+		telemetry.Process{Version: buildVersion, Replica: db.Replica(), Hostname: hostname},
+		telemetry.Sources{
+			Pool: func() (used, idle, limit int64) {
+				st := db.Stat()
+				return int64(st.AcquiredConns()), int64(st.IdleConns()), int64(st.MaxConns())
+			},
+			Detections: func() int64 { return int64(detectionQueue.Running()) },
+			Adapters: func() []telemetry.AdapterHealth {
+				// Three rounds missed is a replica that no longer leads.
+				return dispatcher.AdapterHealth(3 * adapterHealthEvery)
+			},
+		})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if err := stopMetrics(flushCtx); err != nil {
+			logger.Warn("could not send the last metrics to the collector", zap.Error(err))
+		}
+	}()
+	if cfg.Metrics.Enabled() {
+		logger.Info("exporting metrics over OTLP",
+			zap.String("protocol", cfg.Metrics.OTLPProtocol), zap.Duration("every", cfg.Metrics.Interval))
+	}
 
 	// Whichever replica holds the leader lock runs the jobs above; with one
 	// replica, that is this one, a moment after it starts.

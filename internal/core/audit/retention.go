@@ -19,6 +19,7 @@ import (
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/id"
+	"github.com/trypando/pando/internal/telemetry"
 )
 
 // Audit retention (R-347, R-348, design 02 §2.6).
@@ -179,7 +180,13 @@ func (a *Archiver) Run(ctx context.Context) {
 		interval = DefaultArchiveInterval
 	}
 	for {
-		if _, err := a.Pass(ctx); err != nil && ctx.Err() == nil {
+		started := time.Now()
+		records, err := a.Pass(ctx)
+		telemetry.RetentionPass(ctx, telemetry.RetentionAudit, telemetry.OutcomeOf(ctx, err), time.Since(started))
+		for _, rec := range records {
+			telemetry.RetentionRemoved(ctx, "audit_events", rec.RowCount)
+		}
+		if err != nil && ctx.Err() == nil {
 			// Logged, and tried again next pass. Nothing has left the log:
 			// every step before the drop is one a failure leaves undone.
 			a.Logger.Error("audit retention did not finish", zap.Error(err))

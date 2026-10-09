@@ -23,6 +23,7 @@ import (
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/log"
+	"github.com/trypando/pando/internal/telemetry"
 )
 
 // HeaderPrefix is Pando's header namespace.
@@ -219,6 +220,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.Metrics != nil {
 		p.Metrics.Request(app.ID, principal.Kind, allowed)
 	}
+	// Install-wide and without the app (R-400): the kind of principal only.
+	telemetry.ProxyRequest(ctx, allowed, string(principal.Kind))
 
 	if !allowed {
 		if errs.CodeOf(denial) == errs.PermPasscodeRequired {

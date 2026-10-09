@@ -902,6 +902,25 @@ Pando knows its own address (`external_url`). Every surface reaches it (R-261).
 webhook receives them and as a person reads them, and manages its subscriptions, from the app's own
 Events tab and `GET /apps/{id}/events`. The feed holds what the outbox keeps (R-366).
 
+
+### 16.6 Pando's own metrics *(issue #126)*
+
+**R-399 [D]** **Pando exports metrics about itself over OTLP, to a collector the operator names.**
+An install is then watched from Grafana, Prometheus behind an OpenTelemetry collector, Datadog or a
+similar tool. The metrics cover the Pando process and the work it does:
+the Go runtime, API requests, reconcile passes, deploys, builds, detection, audit retention passes,
+adapter health checks, the database pool, and the proxy's allow and deny decisions counted install-wide.
+Export is configuration, not a question (R-104): off until an endpoint is set, and shown in
+`GET /config` with its headers withheld, since they usually carry a credential (R-194). Pando pushes; it
+serves no metrics endpoint, so there is no reader to authorize and nothing new to reach. It stores,
+graphs and alerts on nothing (R-016, R-245): that is the collector's job.
+
+**R-400 [D]** **No metric names a person, a token or an app.** Attributes say what kind of thing
+happened — a route pattern, an outcome, a status code, an adapter, a kind of principal — never who did
+it or which app it happened to, so whoever runs the collector learns how busy Pando is and not who uses
+what (R-029). Per-app metrics, traces, logs over OTLP, and scraping an app's own metrics endpoint are
+not part of this. Each would cross design 06 differently and needs its own requirement first.
+
 ---
 
 ## 17. Resources and Capacity
@@ -914,7 +933,7 @@ Events tab and `GET /apps/{id}/events`. The feed holds what the outbox keeps (R-
 
 **R-243 [D]** **Capacity is adapter-reported, not host-inspected.** The local Docker adapter reports the machine it runs on; a clustered adapter reports what its cluster has. Core does not read `/proc`.
 
-**R-245 [P]** **An app's parts show what they are using now**: CPU, memory and disk for each workload, and each volume's size, beside the limits it runs under — reported by the runtime adapter (R-243) and read on demand. A reading, not a history: Pando keeps no metrics store, graphs no trends and alerts on nothing (R-016). A runtime that cannot report it says so rather than showing zeros.
+**R-245 [P]** **An app's parts show what they are using now**: CPU, memory and disk for each workload, and each volume's size, beside the limits it runs under — reported by the runtime adapter (R-243) and read on demand. A reading, not a history: Pando keeps no metrics store, graphs no trends and alerts on nothing (R-016). A runtime that cannot report it says so rather than showing zeros. What Pando exports for a tool that does graph and alert is R-399's, and covers Pando itself, not its apps. *(Amended by issue #126.)*
 
 **R-244 [D]** **How many apps a person may own is limited by host policy, by a group, or on their own account.** `max_apps_per_user` in host policy is the default, and a group or a user may carry its own `max_apps`. 0 means unlimited wherever it is set: somebody who may not create apps at all is somebody without `app.create`, not somebody with a limit of 0. A value set on the user applies whatever their groups say. Otherwise the most generous of their groups applies, unlimited beating any number. Otherwise host policy's applies. Every app the person owns counts, whatever its state; a deleted app does not. Creating an app past the limit is refused before anything is created, and the refusal names the limit, where it comes from and who can raise it (R-105). Lowering a limit below what somebody already owns removes nothing; it refuses their next app. A per-user disk quota is not part of this. *(Amended by issue #131: it was `[P] [LATER]`, per user only, and named a disk quota as well.)*
 

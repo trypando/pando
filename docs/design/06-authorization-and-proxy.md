@@ -628,3 +628,24 @@ and that records the removal in the log itself. So "the running server cannot re
 reads: it cannot change any event, cannot remove one younger than the floor, and cannot remove an
 older one without an archive holding it. Startup verifies all of this, as it verifies ownership.
 Design 02 §2.6.
+
+## 7. Metrics (issue #126)
+
+**[D] Pando's metrics are about Pando, and never name a person, a token or an app** (R-399, R-400).
+Whoever runs the collector Pando pushes to is outside every grant in this document: they hold no
+verb and pass no check, so what reaches them must be something any operator of the host may see.
+How busy Pando is qualifies. Who uses which app does not, and per-app traffic is not part of this
+either — an app's numbers are about the app, and reading them would need `app.view`, which a push to
+a collector has no way to ask.
+
+So the proxy counts every request after `CheckData` (`pando.proxy.requests`), allowed or denied, with
+the kind of principal — `user`, `token`, `anonymous` — and nothing else: not the app, not the
+principal, not the path. The API's request metric carries the route pattern, never the path, which
+holds IDs. Requests the router hands to the proxy are left out of it, so app traffic is counted once
+and without its app.
+
+The mechanism is the shape of `internal/telemetry`: every recording takes typed, bounded values and
+there is no free-form attribute parameter, so a caller has nowhere to put an ID.
+`TestR400_NoMetricNamesAPersonTokenOrApp` checks every attribute key against the allowed list and
+every value against the shape of an ID. Exporting per-app metrics would need its own requirement
+first, decided against this document.

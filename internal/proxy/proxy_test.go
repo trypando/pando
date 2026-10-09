@@ -22,6 +22,8 @@ import (
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/proxy"
+	"github.com/trypando/pando/internal/telemetry"
+	"github.com/trypando/pando/internal/telemetry/telemetrytest"
 )
 
 // --- doubles ---------------------------------------------------------------
@@ -395,6 +397,25 @@ func TestR029_AnOperatorWithNoDataGrantIsDenied(t *testing.T) {
 	require.Equal(t, int64(1), total)
 	require.Equal(t, int64(0), allowed)
 	require.Equal(t, int64(1), denied)
+}
+
+// TestR399_ARefusedRequestIsInPandosMetrics asserts R-399 at the proxy: a
+// request CheckData refuses is exported as denied, install-wide, with the kind
+// of principal and nothing naming the app or the person (R-400).
+func TestR399_ARefusedRequestIsInPandosMetrics(t *testing.T) {
+	metrics := telemetrytest.Install(t, telemetry.Sources{})
+	front, _, _, _ := harness(t, activeUser("usr_bob"), func(s *store) {
+		s.owner[appID] = "usr_alice"
+	})
+
+	resp, err := http.Get(front.URL + "/")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+
+	require.Equal(t, int64(1), metrics.Count("pando.proxy.requests",
+		map[string]string{"pando.proxy.decision": "denied", "pando.principal.kind": "user"}))
+	require.Zero(t, metrics.Count("pando.proxy.requests", map[string]string{"pando.proxy.decision": "allowed"}))
 }
 
 // TestAnonymousWithoutAccessIsSentToSignIn asserts the other branch: an

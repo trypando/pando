@@ -76,6 +76,13 @@ services:
       # pull whatever the login can read. The login is read from DOCKER_CONFIG,
       # so mount a config.json and point DOCKER_CONFIG at its directory.
       PANDO_APPS_DOCKER_CREDENTIALS: ${PANDO_APPS_DOCKER_CREDENTIALS:-}
+      # Push metrics about Pando itself to an OpenTelemetry collector over
+      # OTLP (R-399), such as http://otel-collector:4318. Unset exports
+      # nothing. See docs/reference.md, Metrics.
+      PANDO_METRICS_OTLP_ENDPOINT: ${PANDO_METRICS_OTLP_ENDPOINT:-}
+      PANDO_METRICS_OTLP_PROTOCOL: ${PANDO_METRICS_OTLP_PROTOCOL:-http/protobuf}
+      PANDO_METRICS_OTLP_HEADERS: ${PANDO_METRICS_OTLP_HEADERS:-}
+      PANDO_METRICS_INTERVAL: ${PANDO_METRICS_INTERVAL:-1m}
       # Port-mode routing hands each app a host port and serves it at the root
       # of that port (design 03 §4.2). The range published below and the range
       # apps are allocated from have to be the same range, or apps past the end

@@ -10,6 +10,7 @@ import (
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/work"
 	"github.com/trypando/pando/internal/log"
+	"github.com/trypando/pando/internal/telemetry"
 )
 
 // Timeout bounds one detection run.
@@ -108,7 +109,11 @@ func (q *Queue) run(parent context.Context, appID string) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
+	started := time.Now()
 	_, err := q.Detect(ctx, appID)
+	// Outcome by the replica's own context: a detection that ran out of time
+	// failed, one this replica stopped was canceled (R-399).
+	telemetry.Detection(ctx, telemetry.OutcomeOf(parent, err), time.Since(started))
 	if err == nil || parent.Err() != nil {
 		// Done, or stopped by this replica's shutdown: a stopped detection
 		// goes back in the queue rather than being recorded as failed.
