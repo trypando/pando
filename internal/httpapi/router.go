@@ -460,6 +460,7 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(s.sameOriginWrites)
 		r.Use(Authenticate(s.Authent))
 		r.Use(s.versionHeader)
 
@@ -926,14 +927,26 @@ func (s *Server) Routes() http.Handler {
 	// app working correctly. A slug cannot contain a dot — slugPattern allows
 	// only [a-z0-9-] — so ".pando" is a path no app can ever claim.
 	//
-	// The whole router rather than the console alone, because a sign-in page
-	// needs somewhere to post to. It re-enters with the prefix removed, which
-	// terminates because the path is shorter every time. Nothing is exposed
-	// that the front door does not already expose to the same caller, with the
-	// same authentication and the same authorization.
+	// The router rather than the console alone, because a sign-in page needs
+	// somewhere to post to. It re-enters with the prefix removed, which
+	// terminates because the path is shorter every time.
+	//
+	// On an app's hostname or port, only the sign-in routes. This used to be
+	// the whole router, on the reasoning that it exposed nothing the front
+	// door did not — but the front door is another origin, and this one is the
+	// app's: its script could call the API with its visitor's cookie and read
+	// the answer (issue #78, origin.go).
 	r.Handle(ReservedPrefix, http.RedirectHandler(ReservedPrefix+"/", http.StatusMovedPermanently))
 	r.Handle(ReservedPrefix+"/*", http.StripPrefix(ReservedPrefix, http.HandlerFunc(
 		func(w http.ResponseWriter, req *http.Request) {
+			if s.onAppAddress(req) && !isSignInRoute(req.Method, req.URL.Path) {
+				Error(w, req, errs.New(errs.NotFound,
+					"This address belongs to an app, and Pando answers only signing in here. "+
+						"Pando's API and console are at Pando's own address.").
+					WithRemedy("Send the request to Pando's own address instead of the app's."))
+				return
+			}
+
 			ctx := req.Context()
 
 			// A fresh routing context. Chi keeps its matching position in the
@@ -1076,7 +1089,9 @@ func ReservedOrApp(pando, app http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == ReservedPrefix || strings.HasPrefix(r.URL.Path, ReservedPrefix+"/") {
-			pando.ServeHTTP(w, r)
+			// Every request on this listener is the app's, so /.pando here
+			// answers signing in and nothing else (origin.go).
+			pando.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), appListenerKey{}, true)))
 			return
 		}
 		app.ServeHTTP(w, r)

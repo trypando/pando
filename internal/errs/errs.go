@@ -32,6 +32,10 @@ const (
 	// passcode, and this request has not shown it (R-075a).
 	PermPasscodeRequired Code = "PERM_PASSCODE_REQUIRED"
 
+	// PermCrossOrigin: a write carried by the session cookie, from a page on
+	// another origin (issue #78).
+	PermCrossOrigin Code = "PERM_CROSS_ORIGIN"
+
 	// RateLimited: too many attempts in too short a time; wait and try again.
 	RateLimited Code = "RATE_LIMITED"
 

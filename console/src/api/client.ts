@@ -48,7 +48,7 @@ export class RequestFailed extends Error {
  */
 export const base = reservedPrefix() + '/api/v1';
 
-function reservedPrefix(): string {
+export function reservedPrefix(): string {
   const prefix = '/.pando';
   const path = window.location.pathname;
   return path === prefix || path.startsWith(prefix + '/') ? prefix : '';

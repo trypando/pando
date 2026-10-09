@@ -334,6 +334,7 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `AUTH_REQUIRED` | 401 | No credential was presented, or the session has expired. |
 | `AUTH_TOKEN_INVALID` | 401 | The token is unknown, revoked or expired. |
 | `AUTH_TOKEN_ORPHANED` | 401 | The token's owner was suspended or deleted, so the token no longer resolves to anyone (R-059). |
+| `PERM_CROSS_ORIGIN` | 403 | A change sent with a browser's Pando sign-in from a page on another origin, such as an app's. Send it from the console, or with an API token. |
 | `PERM_DENIED` | 403 | Authenticated, but not permitted to do this. |
 | `PERM_PASSCODE_REQUIRED` | 403 | The app is shared with everyone who knows its passcode, and this request has not shown it. A browser is sent to the passcode page; entering it there lets the visitor in. |
 | `PERM_VERB_REQUIRED` | 403 | The caller holds no grant carrying the verb this action needs. |

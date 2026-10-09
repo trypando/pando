@@ -171,9 +171,9 @@ func TestTheReservedPrefixCannotCollideWithAnAppSlug(t *testing.T) {
 	require.True(t, strings.HasPrefix(httpapi.LoginPath, httpapi.ReservedPrefix+"/"))
 }
 
-// The reserved mount re-enters the whole router, because a sign-in page needs
-// somewhere to post to. Nothing is exposed that the front door does not already
-// expose to the same caller.
+// On Pando's own hostname the reserved mount re-enters the whole router: under
+// path routing the sign-in page is at /.pando/login there too, and what it
+// reaches is what the front door already serves on that origin.
 func TestTheReservedPrefixReachesPandosOwnAPI(t *testing.T) {
 	r := newRouted(t, func(s *httpapi.Server) {
 		s.Console = marker("console")
@@ -181,9 +181,81 @@ func TestTheReservedPrefixReachesPandosOwnAPI(t *testing.T) {
 		s.AppHosts = hosts{app: map[string]bool{"notes.example.com": true}}
 	})
 
-	got := r.get("notes.example.com", httpapi.ReservedPrefix+"/healthz")
+	got := r.get("pando.example.com", httpapi.ReservedPrefix+"/healthz")
 	require.Equal(t, http.StatusOK, got.Code)
 	require.JSONEq(t, `{"status":"ok"}`, got.Body.String())
+}
+
+// TestR172_AnAppsHostnameAnswersSigningInAndNothingElse asserts R-172 and
+// R-173 together, on an app's own hostname.
+//
+// Signing in there sets the session cookie on the app's origin, so whatever
+// /.pando answers there, the app's own script can call with its visitor's
+// cookie and read. It used to answer the whole API (issue #78): a page an app
+// served could mint a token or open exec as whoever looked at it.
+func TestR172_AnAppsHostnameAnswersSigningInAndNothingElse(t *testing.T) {
+	r := newRouted(t, func(s *httpapi.Server) {
+		s.Console = marker("console")
+		s.AppProxy = marker("proxy")
+		s.AppHosts = hosts{app: map[string]bool{"notes.example.com": true}}
+	})
+
+	for _, path := range []string{"/.pando/", "/.pando/login", "/.pando/assets/index-abc123.js"} {
+		require.Equal(t, "console", r.get("notes.example.com", path).Header().Get("X-Handled-By"), path)
+	}
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/.pando/api/v1/tokens"},
+		{http.MethodGet, "/.pando/api/v1/apps"},
+		{http.MethodGet, "/.pando/api/v1/apps/app_01/secrets"},
+		{http.MethodGet, "/.pando/api/v1/apps/app_01/exec"},
+		{http.MethodPost, "/.pando/api/v1/setup"},
+		{http.MethodGet, "/.pando/healthz"},
+		{http.MethodGet, "/.pando/admin"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Host = "notes.example.com"
+		req.AddCookie(&http.Cookie{Name: httpapi.SessionCookie, Value: "sess_visitor"})
+		rec := httptest.NewRecorder()
+		r.handler.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNotFound, rec.Code, "%s %s", tc.method, tc.path)
+		require.Contains(t, rec.Body.String(), "belongs to an app", "%s %s", tc.method, tc.path)
+	}
+}
+
+// A hostname Pando could not look up is treated as an app's, so a database
+// fault narrows /.pando rather than opening the API on an app's origin.
+func TestR172_AFailedHostnameLookupNarrowsTheReservedPrefix(t *testing.T) {
+	r := newRouted(t, func(s *httpapi.Server) {
+		s.Console = marker("console")
+		s.AppProxy = marker("proxy")
+		s.AppHosts = hosts{err: errors.New("the apps table is unreachable")}
+	})
+
+	require.Equal(t, http.StatusNotFound, r.get("notes.example.com", "/.pando/healthz").Code)
+	require.Equal(t, "console", r.get("notes.example.com", "/.pando/login").Header().Get("X-Handled-By"))
+}
+
+// TestR172_APortModeAppsListenerAnswersSigningInAndNothingElse asserts R-172
+// on a port-mode app's own socket. Browsers do not scope cookies by port, so a
+// visitor signed in at localhost:8080 brings that cookie to an app on
+// localhost:9001 without signing in there at all.
+func TestR172_APortModeAppsListenerAnswersSigningInAndNothingElse(t *testing.T) {
+	r := newRouted(t, func(s *httpapi.Server) { s.Console = marker("console") })
+	h := httpapi.ReservedOrApp(r.handler, marker("app"))
+
+	serve := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+
+	require.Equal(t, "console", serve(httpapi.LoginPath).Header().Get("X-Handled-By"))
+	require.Equal(t, http.StatusNotFound, serve("/.pando/healthz").Code)
+	require.Equal(t, http.StatusNotFound, serve("/.pando/api/v1/apps").Code)
+	require.Equal(t, "app", serve("/api/v1/apps").Header().Get("X-Handled-By"),
+		"the app's own paths are still the app's")
 }
 
 // A port-mode app has a socket of its own whose every path belongs to that app,

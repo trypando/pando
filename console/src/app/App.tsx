@@ -23,6 +23,8 @@ import { useTheme } from '../ui/theme';
 import { useRoute } from './route';
 import type { Route } from './route';
 import { ChangePassword, Login, Passcode } from '../auth/Login';
+import { returnTo } from '../auth/return-to';
+import { reservedPrefix } from '@api/client';
 import { passcodeApp } from '../auth/passcode';
 import { Launcher } from '../launcher/Launcher';
 import { AdminConsole } from '../admin/AdminConsole';
@@ -83,6 +85,15 @@ export function App() {
   // is a suggestion, and R-046 says must.
   if (principal.data?.must_change_password) {
     return <ChangePassword username={principal.data.username} />;
+  }
+
+  // Signed in, on the reserved path. On an app's own hostname that path
+  // answers signing in and nothing else (issue #78), so the console cannot be
+  // drawn here: go where the sign-in was for, or to this address's root —
+  // the app on its own hostname, the launcher on Pando's.
+  if (reservedPrefix() !== '') {
+    window.location.replace(returnTo(window.location.search, window.location.href) ?? '/');
+    return null;
   }
 
   // Signing out lands on the sign-in form at the root, not at whatever admin
