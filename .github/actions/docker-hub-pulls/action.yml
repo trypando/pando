@@ -47,12 +47,8 @@ runs:
         for _ in $(seq 1 30); do docker info > /dev/null 2>&1 && break; sleep 1; done
         docker info --format '{{json .RegistryConfig.Mirrors}}'
 
-    # Never fatal. Signing in only helps what the mirror does not hold, and
-    # Docker Hub being down — its token service timing out, a 500 — failed
-    # whole runs of #170 here that the mirror would have carried.
     - name: Sign in to Docker Hub
       if: inputs.username != ''
-      continue-on-error: true
       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
       with:
         username: ${{ inputs.username }}
