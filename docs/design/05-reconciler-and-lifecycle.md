@@ -323,9 +323,19 @@ A deployment is an operation somebody asked for, not the reconciler's work. The 
 
 **[D] Deployments are queued (O-32, issue #72).** Steps 1–7 run in the request. A deploy that passes
 them is recorded `pending` with no replica and the request returns 202; steps 8–16 run when a replica's
-deploy queue claims it (`FOR UPDATE SKIP LOCKED`, `deploy.Queue`). Each replica runs at most
-`work.deploys` at once **[P: one per CPU, at least two]**, so N replicas run N times as many and none
-takes on more than it can build. Detection is queued the same way (`detection.Queue`,
+deploy queue claims it (`FOR UPDATE SKIP LOCKED`, `deploy.Queue`). Each replica runs at most host
+policy's `max_concurrent_deploys` at once **[P: one per CPU, at least two]**, so N replicas run N times
+as many and none takes on more than it can build. It is policy rather than a startup setting (issue #93),
+so it is set in the console or fixed by configuration like every other policy field, and the queue reads
+it each time it looks for work: raising it takes effect at once, lowering it stops new claims until
+enough have finished. `work.deploys` is its older name and still fixes it.
+
+**[D] A queued deploy says where it is (issue #93).** `queue_position` on the deployment is how many
+unclaimed deploys are ahead of it, in the order `Claim` takes them. Its log stream says the same while it
+waits — "=> Waiting for a build slot: 2 deploys ahead of this one.", again each time the number changes —
+written by the replica serving the stream, because no replica holds a queued deploy's log yet. When a
+replica takes the deploy it writes "=> Starting the deploy" into the log it now holds, and the stream
+that was waiting carries on with that log, relayed if another replica took it. Detection is queued the same way (`detection.Queue`,
 `work.detections`). An app still has at most one deploy in flight — queued counts — and a second is
 refused, as before (§5's reasoning). A queued deploy survives a restart of the replica that took the
 request: nothing is lost until something claims it.

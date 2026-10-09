@@ -566,14 +566,18 @@ func serve(ctx context.Context, configPath string) error {
 		WithBuildRegistry(buildRegistry)
 
 	// The deploy queue (issue #72, O-32): a deploy is queued in Postgres and
-	// run by whichever replica has room, at most work.deploys at once here.
-	// Served once the loops start, below.
+	// run by whichever replica has room, at most host policy's
+	// max_concurrent_deploys at once here, read each time it looks for work
+	// (issue #93). Served once the loops start, below.
 	deployQueue := &deploy.Queue{
 		Runner:      deployer,
 		Deployments: deployments,
 		Revisions:   apps,
-		Limit:       cfg.Work.Deploys,
-		Logger:      logger,
+		Concurrency: func(ctx context.Context) (int, error) {
+			doc, err := hostPolicy.Document(ctx)
+			return doc.MaxConcurrentDeploys, err
+		},
+		Logger: logger,
 	}
 
 	// Detection (Sequence A). Every detector bids; the runtime supplies the
@@ -780,12 +784,22 @@ func serve(ctx context.Context, configPath string) error {
 	// app's hostname from Pando's own.
 	appResolver := proxy.NewStateResolver(apps)
 
+	// What a proxied request reads, kept for seconds and emptied on every
+	// change by the database's notifications (issue #93). Used only on the
+	// proxy's path: the API reads afresh, so a revocation there is never
+	// even a notification late. Listening starts with the loops below, and
+	// until then nothing is kept.
+	proxyCache := &proxy.Cache{}
+	appResolver.Cache = proxyCache
+	proxyAuthorizer := authz.New(proxyCache.Store(authzStore), hostPolicy, auditDenials{auditor})
+
 	// The single enforcement point for every request to every app (R-023).
 
 	appProxy := &proxy.Proxy{
 		Resolver:      appResolver,
 		Authenticator: authenticator,
-		Authz:         authorizer,
+		Cache:         proxyCache,
+		Authz:         proxyAuthorizer,
 		Minter:        minter,
 		Upstreams:     proxy.NewRuntimeUpstreams(registry),
 		Auditor:       auditor,
@@ -1191,6 +1205,7 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:        logger,
 	}
 	go dispatcher.Run(loopCtx)
+	go proxyCache.Listen(loopCtx, db)
 	go capacityReadings.Run(loopCtx)
 
 	// Retention, hourly, for the tables that otherwise only grow — the event

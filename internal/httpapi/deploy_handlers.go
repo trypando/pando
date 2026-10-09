@@ -210,6 +210,10 @@ func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
+	if err := s.Deployments.QueuePositions(r.Context(), deps); err != nil {
+		Error(w, r, err)
+		return
+	}
 	JSON(w, http.StatusOK, map[string]any{"deployments": deps})
 }
 
@@ -228,6 +232,10 @@ func (s *Server) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deps := []state.Deployment{dep}
+	if err := s.Deployments.QueuePositions(r.Context(), deps); err != nil {
+		Error(w, r, err)
+		return
+	}
 	if err := s.Approvals.Describe(r.Context(), PrincipalFrom(r.Context()), deps); err != nil {
 		Error(w, r, err)
 		return
@@ -320,19 +328,34 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rc := http.NewResponseController(w)
+
+	// Queued: no replica holds its log yet, so this one says where it is in
+	// the queue until one takes it (issue #93), then carries on below with
+	// the stream already open.
+	open := false
+	if dep.Status == state.DeployPending && r.Header.Get(relayHeader) == "" {
+		var done bool
+		open, done = s.waitInQueue(w, r, rc, app.ID, depID)
+		if done {
+			return
+		}
+	}
+
 	// A deploy's live log is in the memory of the replica running it (issue
 	// #72). Asked of another replica, the request goes there: the load
 	// balancer chose this replica, not the deploy.
-	if s.relayDeployLog(w, r, depID) {
+	if open {
+		if s.relayDeployLogBody(w, r, rc, depID) {
+			return
+		}
+	} else if s.relayDeployLog(w, r, depID) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-
-	rc := http.NewResponseController(w)
+	if !open {
+		startEventStream(w)
+	}
 	if dep.FinishedAt != nil && !s.Logs.Has(depID) {
 		// Run by a replica that has since stopped, by this one before a
 		// restart, or long enough ago that the log was dropped from memory
@@ -388,6 +411,87 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 			}
 			fmt.Fprintf(w, "data: %s\n\n", line)
 			_ = rc.Flush()
+		}
+	}
+}
+
+func startEventStream(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+}
+
+// queueLine is what a queued deploy's log says while it waits (issue #93).
+func queueLine(ahead int) string {
+	switch ahead {
+	case 0:
+		return "=> Waiting for a build slot: this deploy is next."
+	case 1:
+		return "=> Waiting for a build slot: 1 deploy ahead of this one."
+	default:
+		return fmt.Sprintf("=> Waiting for a build slot: %d deploys ahead of this one.", ahead)
+	}
+}
+
+// waitInQueue streams a queued deploy's place in the queue, a line each time
+// it changes, until a replica takes the deploy. open reports whether the
+// event stream was started; done, that the response is finished — the client
+// left, access ended, or the queue could not be read.
+//
+// Here rather than in the log itself because a queued deploy has no log yet:
+// the replica that takes it starts one, and until then no replica could write
+// a line every reader would see.
+func (s *Server) waitInQueue(w http.ResponseWriter, r *http.Request, rc *http.ResponseController, appID, depID string) (open, done bool) {
+	every := s.QueuePollEvery
+	if every <= 0 {
+		every = time.Second
+	}
+	reauthEvery := s.DeployLogReauthEvery
+	if reauthEvery <= 0 {
+		reauthEvery = logstream.DefaultReauthEvery
+	}
+	allowed := s.stillAllowed(r, appID, authz.AppLogsRead)
+	lastCheck := time.Now()
+	last := -1
+
+	for {
+		ahead, waiting, err := s.Deployments.QueuePosition(r.Context(), depID)
+		if err != nil {
+			if open {
+				fmt.Fprint(w, "event: end\ndata: \n\n")
+				_ = rc.Flush()
+				return true, true
+			}
+			Error(w, r, err)
+			return false, true
+		}
+		if !waiting {
+			return open, false
+		}
+		if !open {
+			startEventStream(w)
+			open = true
+		}
+		if ahead != last {
+			fmt.Fprintf(w, "data: %s\n\n", queueLine(ahead))
+			_ = rc.Flush()
+			last = ahead
+		}
+		if time.Since(lastCheck) >= reauthEvery {
+			lastCheck = time.Now()
+			if err := allowed(r.Context()); err != nil {
+				fmt.Fprint(w, "data: Your access to this app's logs has ended, so Pando stopped showing this deploy's log. "+
+					"Someone with permission to manage the app's access can grant app.logs.read again.\n\n")
+				fmt.Fprint(w, "event: end\ndata: \n\n")
+				_ = rc.Flush()
+				return true, true
+			}
+		}
+		select {
+		case <-r.Context().Done():
+			return open, true
+		case <-time.After(every):
 		}
 	}
 }

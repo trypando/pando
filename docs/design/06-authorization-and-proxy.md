@@ -148,10 +148,17 @@ app, searched and capped at twenty of each: enough to find Dana, not a way to ta
 
 **[P]** Cached per session with a short TTL (60s), invalidated immediately on a SCIM push (R-048). The TTL is the effective propagation delay for a group removal on adapters without push, and must be documented as such rather than implied to be instant.
 
-**[D] As built: not cached at all.** Membership is one indexed read per request
-(`effective_group_members`), so a SCIM push — or an administrator's change — takes effect on the next
-request, and the 60s row in the table below is an upper bound nothing currently reaches. If a cache is
-ever added it is invalidated on every SCIM push, and its TTL stays under the window.
+**[D] As built: read live, and on the proxy's path kept until anything changes (issue #93).** The
+60s per-session cache above was never built. Membership is read from `effective_group_members` with the
+session, in one query. The API reads it afresh on every request. The proxy, which every request to
+every app passes through, keeps what a request reads — the session's principal and groups, the app a
+hostname names, and the facts `CheckData` decides on — in `proxy.Cache`, and empties it on every
+replica whenever anything it may hold changes: triggers on sessions, users, group membership, grants,
+unlocks and apps send a NOTIFY when the change commits (migration 68). So a SCIM push, an
+administrator's change or a revoked session takes effect on the proxy's next request after the
+notification arrives, which is milliseconds. A replica that is not listening keeps nothing, and no
+entry lives longer than 30 seconds, which is what a notification lost in flight can cost. What is kept
+is facts, never a verdict: `CheckData` still runs on every request, so every denial is still audited.
 
 **[D] Where membership comes from (issue #51).** A group with an identity provider as its source is
 **synced**: its members are set by that provider — from the groups claim at each sign-in, or, when SCIM
@@ -169,7 +176,7 @@ that were each chosen locally and never added up:
 | Source | Delay | Effect |
 |---|---|---|
 | Session validity check | none by default — one indexed lookup per request (§02 2.7) | 0 |
-| Group membership cache | 60s, or 0 on a SCIM push (R-048) | up to 60s |
+| Proxy cache (issue #93) | until the next change's NOTIFY arrives; 30s if one is lost; nothing kept while not listening | milliseconds, up to 30s |
 | Assertion lifetime | 120s (R-055) | up to 120s, if the app caches it for its full life |
 | Long-lived connections | re-authorized on an interval (§4.2) | up to that interval |
 
@@ -181,8 +188,8 @@ delay was the answer.
 **[D] One number: 120 seconds.** Everything above is set to that or below it, and the long-lived
 connection interval is set to *exactly* the assertion lifetime rather than to an independently chosen
 value — two clocks measuring the same thing will drift apart the first time someone tunes one of them.
-The 60s group cache stays where it is because a value below the window does not widen it; if it is
-ever raised, it must not be raised past 120.
+The proxy cache's 30 seconds stays under the window, so it does not widen it; if it is ever raised, it
+must not be raised past 120.
 
 **[D]** The console displays this window wherever access is revoked — removing a grant, suspending a
 user, removing someone from a group — as a plain statement that access stops within two minutes.
@@ -193,8 +200,8 @@ display must show the effective window rather than only the adapter's own lifeti
 identity from an assertion for longer than the assertion's life has extended the window itself, which
 is one more reason the app-developer documentation states that assertions are per-request and short.
 
-**[P]** If the session check is ever cached for throughput, its TTL joins this table and the window is
-recomputed. It does not get to be a hidden fifth delay.
+**[D]** The session check is cached on the proxy's path for throughput (issue #93), and its bound is in
+the table above rather than a hidden fifth delay. The API's session check is not cached.
 
 ### 3.2 Redirect sign-in (issue #51)
 
@@ -251,7 +258,7 @@ The single enforcement point (R-023). One path for every request to every app �
 ```
 1.  Resolve app from hostname or path prefix
 2.  App exists and is running?             → 404 / 503
-3.  Extract session cookie or bearer token
+3.  Extract session cookie, or a bearer token shaped like Pando's (tok_…)
 4.  Authenticate → Principal, or anonymous
 5.  CheckData(principal, app)
       passcode required   → redirect to the passcode page (R-075a)
@@ -262,7 +269,7 @@ The single enforcement point (R-023). One path for every request to every app �
 7.  Strip inbound X-Pando-* headers        ← critical, see below
 8.  Set assertion + convenience headers
 9.  Strip path prefix, set X-Forwarded-Prefix (R-167)
-10. Strip every cookie in Pando's namespace (R-173)  ← a credential; see below
+10. Strip every cookie in Pando's namespace, and a Pando API token (R-173)  ← credentials; see below
 11. Forward to the workload
 12. Stream response
 ```
@@ -303,6 +310,17 @@ cookie was set on, so two more rules, in `internal/httpapi/origin.go`:
 on Pando's own origin, where its script is indistinguishable from the console's to the browser and to
 Pando. The console says so in the address dialog when path is chosen. No routing adapter defaults to
 it.
+
+**[D] In front of an app, only a Pando-shaped bearer is Pando's (issue #93).** Step 3 used to read
+every `Authorization` header as a Pando token. An app with its own login sends its own from the
+browser — a Supabase or Firebase JWT, a Basic header — so Pando failed to parse it and treated a
+visitor with a good session cookie as signed out, and a private app's API calls were sent to sign in.
+Now step 3 shows the authenticator `Bearer tok_<ULID>.<secret>` and nothing else, so another value
+leaves the cookie to decide and is forwarded untouched. A Pando-shaped token that fails is anonymous
+and does not fall back to the cookie: two credentials with one quietly winning is how a revoked token
+keeps working. And step 10 removes every Pando-shaped bearer, valid or not, for R-173's reason: an
+app holding one could replay it against the API. The API itself is unchanged; there, any
+`Authorization` header is Pando's and one it cannot read is refused. `internal/proxy/credentials.go`.
 
 **[D] Step 7 is a security requirement, not hygiene.** Any inbound header in Pando's namespace must be stripped unconditionally before step 8. Without it, a client sets `X-Pando-User: admin@corp.com` and an app trusting the convenience headers (R-053) is trivially spoofed. This is the single most likely serious bug in the proxy, and it needs a test asserting that a request with forged headers arrives with them replaced.
 

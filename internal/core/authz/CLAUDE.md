@@ -54,10 +54,11 @@ denormalized flag.
 
 ## Groups
 
-Resolved **live** per request (R-079), never denormalized into grants. Cached per session with a
-short TTL (60s [P]), invalidated immediately on a SCIM push (R-048). That TTL is the effective
-propagation delay for a group removal on adapters without push, and it must be **documented as such**
-in the console — never implied to be instant.
+Resolved **live** per request (R-079), never denormalized into grants. The API reads membership
+afresh every time. The proxy keeps what a request read in `proxy.Cache`, emptied on every replica by a
+NOTIFY whenever membership, a grant, a session, a person or an app changes, and never kept longer than
+30 seconds (issue #93, design 06 §3.1). It keeps the facts `CheckData` reads (`DataFacts`), never its
+verdict, so a denial is audited every time.
 
 ## Verbs
 

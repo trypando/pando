@@ -20,6 +20,8 @@ export const STATUS_UNSETTLED_MS = 5_000;
 export const STATUS_SETTLED_MS = 30_000;
 /** A deploy waiting for somebody else's approval. */
 export const AWAITING_MS = 30_000;
+/** A deploy waiting in the queue for a build slot, whose place moves. */
+export const QUEUED_MS = 5_000;
 /** What the app's parts are using. Each reading costs the runtime a sample. */
 export const USAGE_MS = 30_000;
 /** The security report while a scan runs. */
@@ -56,10 +58,13 @@ export function statusInterval(
 /**
  * How often to ask for an app's deployments. Not at all while a deploy runs:
  * the status poll notices it finish and asks once then. Slowly while a deploy
- * waits for approval, since somebody else's answer is what moves it.
+ * waits for approval, since somebody else's answer is what moves it. Often
+ * while one waits in the queue, whose place moves as others start (issue #93).
  */
 export function deploymentsInterval(deployments: Array<{ status: string }> | null | undefined): number | false {
-  return (deployments ?? []).some((d) => d.status === 'awaiting_approval') ? AWAITING_MS : false;
+  const list = deployments ?? [];
+  if (list.some((d) => d.status === 'pending')) return QUEUED_MS;
+  return list.some((d) => d.status === 'awaiting_approval') ? AWAITING_MS : false;
 }
 
 /**

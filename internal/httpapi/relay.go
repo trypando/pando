@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -49,6 +50,7 @@ func (s *Server) relayDeployLog(w http.ResponseWriter, r *http.Request, depID st
 	}
 
 	proxy := &httputil.ReverseProxy{
+		Transport: s.relayTransport(),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			pr.Out.URL.Path = r.URL.Path
@@ -67,3 +69,61 @@ func (s *Server) relayDeployLog(w http.ResponseWriter, r *http.Request, depID st
 	proxy.ServeHTTP(w, r)
 	return true
 }
+
+func (s *Server) relayTransport() http.RoundTripper {
+	if s.RelayTransport != nil {
+		return s.RelayTransport
+	}
+	return http.DefaultTransport
+}
+
+// relayDeployLogBody is relayDeployLog for a stream this replica has already
+// started — a queued deploy whose place in the queue it was showing (issue
+// #93). The owner's events are copied into it as they arrive; its status and
+// headers are not, because they were sent. Reports whether it relayed.
+func (s *Server) relayDeployLogBody(w http.ResponseWriter, r *http.Request, rc *http.ResponseController, depID string) bool {
+	if !id.Is(id.Deployment, depID) || s.LogOwner == nil || s.Logs.Has(depID) {
+		return false
+	}
+	base, err := s.LogOwner(r.Context(), depID)
+	if err != nil || base == "" {
+		return false
+	}
+	target, err := url.Parse(base)
+	if err != nil || target.Host == "" {
+		return false
+	}
+
+	proxy := &httputil.ReverseProxy{
+		Transport: s.relayTransport(),
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			pr.Out.URL.Path = r.URL.Path
+			pr.Out.URL.RawPath = r.URL.RawPath
+			pr.Out.Host = r.Host
+			pr.Out.Header.Set(relayHeader, "1")
+		},
+		FlushInterval: -1,
+		ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
+			log.From(req.Context()).Warn("could not reach the replica running a queued deploy",
+				zap.String("replica", target.Host), zap.Error(err))
+			fmt.Fprint(w, "data: Pando could not reach the Pando process running this deploy, so its log can't be shown here. The deploy's outcome will be on the deploy itself.\n\n")
+			fmt.Fprint(w, "event: end\ndata: \n\n")
+			_ = rc.Flush()
+		},
+	}
+	proxy.ServeHTTP(&openStream{ResponseWriter: w, rc: rc, header: http.Header{}}, r)
+	return true
+}
+
+// openStream is a response whose status and headers are already sent: the
+// relay's are set aside, and only its body reaches the client.
+type openStream struct {
+	http.ResponseWriter
+	rc     *http.ResponseController
+	header http.Header
+}
+
+func (o *openStream) Header() http.Header { return o.header }
+func (o *openStream) WriteHeader(int)     {}
+func (o *openStream) Flush()              { _ = o.rc.Flush() }

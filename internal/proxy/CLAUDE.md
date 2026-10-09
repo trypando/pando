@@ -20,7 +20,8 @@ adding a fast path, you are adding a security hole.
 ```
  1. Resolve app from Host header, or path prefix in proxy mode
  2. App exists and running?            → 404 / 503
- 3. Session cookie or bearer token
+ 3. Session cookie, or a bearer token shaped like Pando's (tok_…); any other
+    Authorization header is the app's own, ignored here and forwarded (credentials.go)
  4. Authenticate → Principal, or anonymous
  5. CheckData(principal, app)        (principal carries pando_pass_* unlocks, R-075a)
       passcode required  → 302 /.pando/login?passcode=<app>
@@ -29,11 +30,20 @@ adding a fast path, you are adding a security hole.
  5a. Record app.use, once per visit (R-227; see use.go)
  6. Mint assertion (R-051)
  7. STRIP all inbound X-Pando-* headers        ← see below
+    (and pando_* cookies and Pando-shaped bearer tokens, R-173)
  8. Set assertion + convenience headers
  9. Path mode: strip prefix, set X-Forwarded-Prefix (R-167)
 10. Forward, stream unbuffered — through the runtime's Upstream.Dial when it gives one
     (the host agent on a multi-host Docker install, O-45). Steps 1–9 are done first, always.
 ```
+
+## What a request reads is kept, and emptied on every change (issue #93)
+
+`Cache` keeps a session's principal, an app lookup by hostname, slug or port, and the facts `CheckData`
+decides on, for at most 30 seconds, and empties itself on every replica when migration 68's triggers
+NOTIFY a change. Not listening, it keeps nothing. Never keep a verdict here: `CheckData` must run on
+every request so every denial is audited. A new table the proxy's answer depends on needs a trigger in
+the same change, or a revocation through it waits out the TTL.
 
 ## Step 7 is a security requirement, not hygiene
 
@@ -80,6 +90,7 @@ a network fault.
 ## Tests this package owes
 
 - A forged `X-Pando-User` header arrives at the app replaced.
+- An app's own `Authorization` header reaches it untouched; a Pando token never does.
 - An anonymous request to a public app traverses every step and gets `sub: "anonymous"` — assert the
   audit/metrics counter increments, proving no bypass path exists.
 - An assertion minted for app A fails verification at app B (`aud` mismatch).

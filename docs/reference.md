@@ -86,7 +86,7 @@ way for it to tell the difference if the proxy is ever bypassed.
 (database credentials and connection strings) and any secret bound to it. Nothing is read from the
 repository at deploy time (R-020): the spec is the sole record of how an app runs.
 
-An app never receives a `pando_*` cookie. Those are stripped on the way out (R-173).
+An app never receives a `pando_*` cookie, or a Pando API token (`Authorization: Bearer tok_…`). Those are stripped on the way out (R-173). Any other `Authorization` header, such as the app's own bearer JWT or a Basic header, reaches the app untouched, and Pando decides who the visitor is from their session cookie instead.
 
 ## Configuration
 
@@ -158,9 +158,14 @@ The settings are `source_allowlist`, `disabled_verbs`, `agent_disabled_verbs`,
 `deploy_approval_required`, `deploy_approval_apps`, `deploy_approval_count`,
 `deploy_approval_expiry_hours`, `require_backup_before_destroy`, `max_token_lifetime_days`,
 `max_log_disk_bytes`, `allow_cpu_oversubscription`, `allow_memory_oversubscription`,
-`disable_ai_screening`, `disable_anonymous_use_audit`, `disable_anonymous_denial_audit`,
+`max_concurrent_deploys`, `disable_ai_screening`, `disable_anonymous_use_audit`, `disable_anonymous_denial_audit`,
 `disable_password_sign_in`, `disable_jit_provisioning`, `min_security_score`, `insecure_action`,
 `insecure_grace_hours` and `ignore_unfixable_findings`.
+
+`max_concurrent_deploys` is how many deploys each replica runs at once; 0, the default, means one per
+CPU and at least two. It is read each time the deploy queue looks for work, so a change applies without
+a restart, and a deploy past the limit waits with its log saying how many are ahead of it.
+`PANDO_WORK_DEPLOYS`, its older name, still sets it when the policy name is not set.
 
 `allow_cpu_oversubscription` and `allow_memory_oversubscription` let the apps on a runtime together
 ask for more CPU, or more memory, than it reports having. Both are off, so a deploy that would need

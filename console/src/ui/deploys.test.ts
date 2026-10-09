@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { deployLabel, deployStatus } from './deploys';
+import { deployLabel, deployLabelFor, deployStatus } from './deploys';
 
 describe('how a deploy reads in a list', () => {
   it('says when the app it started never came up', () => {
@@ -43,5 +43,16 @@ describe('how a deploy reads in a list', () => {
     expect(deployStatus('failed')).toBe('failed');
     expect(deployLabel('rolled_back')).toBe('Rolled back');
     expect(deployLabel('running')).toBe('Deploying');
+  });
+});
+
+describe('a queued deploy (issue #93)', () => {
+  it('says where it is in the queue', () => {
+    expect(deployLabelFor({ status: 'pending', queue_position: 0 })).toBe('Queued, next');
+    expect(deployLabelFor({ status: 'pending', queue_position: 3 })).toBe('Queued, 3 ahead');
+    expect(deployLabelFor({ status: 'pending' })).toBe('Queued');
+    expect(deployLabelFor({ status: 'succeeded', result_state: 'degraded', queue_position: 2 })).toBe(
+      deployLabel('succeeded', 'degraded'),
+    );
   });
 });

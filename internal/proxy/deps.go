@@ -16,13 +16,20 @@ import (
 // StateResolver resolves apps from the state store.
 type StateResolver struct {
 	apps *state.Apps
+
+	// Cache, when set, keeps lookups by hostname, slug and port (issue #93).
+	// A path lookup is not kept: its key would be every path anyone asks
+	// for, and it is one query (state.Apps.ByPath).
+	Cache *Cache
 }
 
 func NewStateResolver(apps *state.Apps) *StateResolver { return &StateResolver{apps: apps} }
 
 // ByHostname resolves an app by the hostname in its pinned spec.
 func (r *StateResolver) ByHostname(ctx context.Context, hostname string) (state.App, *spec.AppSpec, bool, error) {
-	return r.apps.ByRouting(ctx, "hostname", hostname)
+	return r.Cache.resolve(ctx, appKey("hostname", hostname), func(ctx context.Context) (state.App, *spec.AppSpec, bool, error) {
+		return r.apps.ByRouting(ctx, "hostname", hostname)
+	})
 }
 
 // ByPath resolves a path-mode app by the longest path it holds that the
@@ -33,12 +40,16 @@ func (r *StateResolver) ByPath(ctx context.Context, path string) (state.App, *sp
 
 // BySlug resolves an app by its slug, for path mode.
 func (r *StateResolver) BySlug(ctx context.Context, slug string) (state.App, *spec.AppSpec, bool, error) {
-	return r.apps.ByRouting(ctx, "slug", slug)
+	return r.Cache.resolve(ctx, appKey("slug", slug), func(ctx context.Context) (state.App, *spec.AppSpec, bool, error) {
+		return r.apps.ByRouting(ctx, "slug", slug)
+	})
 }
 
 // ByPort resolves an app by the host port it was given, for port mode.
 func (r *StateResolver) ByPort(ctx context.Context, port int) (state.App, *spec.AppSpec, bool, error) {
-	return r.apps.ByRouting(ctx, "port", strconv.Itoa(port))
+	return r.Cache.resolve(ctx, appKey("port", strconv.Itoa(port)), func(ctx context.Context) (state.App, *spec.AppSpec, bool, error) {
+		return r.apps.ByRouting(ctx, "port", strconv.Itoa(port))
+	})
 }
 
 // RuntimeUpstreams asks the runtime adapter where an app's primary workload is.
@@ -171,6 +182,8 @@ func (r *StateResolver) IsAppHostname(ctx context.Context, hostname string) (boo
 	if hostname == "" {
 		return false, nil
 	}
-	_, _, found, err := r.apps.ByRouting(ctx, "hostname", hostname)
+	// The same lookup the proxy then makes for the same request, so with a
+	// cache the second is free.
+	_, _, found, err := r.ByHostname(ctx, hostname)
 	return found, err
 }

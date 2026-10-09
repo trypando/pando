@@ -144,6 +144,7 @@ Browser → GET https://notes.corp.com/dashboard
  1. resolve app from Host header (or path prefix in proxy mode)
  2. app running? → 503 if not
  3. read session cookie → sessions row → user
+      or a bearer shaped like Pando's (tok_…); any other Authorization is the app's
       no cookie → Principal{anonymous}
  4. principal status: suspended/deleted → deny  (R-049)
  5. CheckData(principal, app)                    (§06 2)
@@ -155,6 +156,7 @@ Browser → GET https://notes.corp.com/dashboard
  5a. record app.use, first request of a visit only  (R-227)
  6. mint assertion: sub, email, name, groups, aud=app_id, exp=+120s  (R-054)
  7. STRIP all inbound X-Pando-* headers          ← R-053 spoofing defense
+    and pando_* cookies and Pando-shaped bearers   (R-173)
  8. set X-Pando-Assertion + convenience headers
  9. path mode: strip prefix, set X-Forwarded-Prefix  (R-167)
 10. forward; stream response unbuffered           (R-170)

@@ -6,6 +6,17 @@
 // an app that had not once served a request, is a true answer to a question
 // nobody asked.
 
+/**
+ * A deploy's label with its place in the queue, while it waits for a build
+ * slot (issue #93): how long a wait is depends on how many are ahead.
+ */
+export function deployLabelFor(d: { status: string; result_state?: string; queue_position?: number }): string {
+  if (d.status === 'pending' && d.queue_position !== undefined) {
+    return d.queue_position === 0 ? 'Queued, next' : `Queued, ${d.queue_position} ahead`;
+  }
+  return deployLabel(d.status, d.result_state);
+}
+
 export function deployLabel(status: string, result?: string): string {
   switch (status) {
     case 'succeeded':

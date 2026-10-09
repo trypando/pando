@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -73,28 +74,25 @@ func (a *Authenticator) fromToken(ctx context.Context, presented secret.Value) (
 }
 
 func (a *Authenticator) fromSession(ctx context.Context, sessionID string) (authz.Principal, error) {
-	sess, ok, err := a.Sessions.Active(ctx, sessionID)
+	p, _, err := a.SessionPrincipal(ctx, sessionID)
+	return p, err
+}
+
+// SessionPrincipal resolves a session cookie to its principal, and says when
+// the session expires so a caller that keeps the answer keeps it no longer
+// (the proxy's cache, issue #93). The session, its account and the account's
+// groups are one query (Sessions.ActiveWithUser); groups are still read live
+// on every call (R-079).
+func (a *Authenticator) SessionPrincipal(ctx context.Context, sessionID string) (authz.Principal, time.Time, error) {
+	sess, user, groups, ok, err := a.Sessions.ActiveWithUser(ctx, sessionID)
 	if err != nil {
-		return authz.Anonymous(), err
+		return authz.Anonymous(), time.Time{}, err
 	}
 	if !ok {
-		// An expired or revoked session is not an error the caller must handle
-		// — it is simply not authenticated, and the anonymous path decides
-		// whether that is enough.
-		return authz.Anonymous(), nil
-	}
-
-	user, found, err := a.Users.ByID(ctx, sess.UserID)
-	if err != nil {
-		return authz.Anonymous(), err
-	}
-	if !found {
-		return authz.Anonymous(), nil
-	}
-
-	groups, err := a.Groups.GroupsForUser(ctx, user.ID)
-	if err != nil {
-		return authz.Anonymous(), err
+		// An expired or revoked session, or one whose account is gone, is not
+		// an error the caller must handle — it is simply not authenticated,
+		// and the anonymous path decides whether that is enough.
+		return authz.Anonymous(), time.Time{}, nil
 	}
 
 	// Email and name go into the assertion an app receives (R-054). Display
@@ -108,7 +106,7 @@ func (a *Authenticator) fromSession(ctx context.Context, sessionID string) (auth
 		DisplayName: user.DisplayName,
 		AdapterID:   user.AdapterID,
 		Status:      user.Status,
-	}, nil
+	}, sess.ExpiresAt, nil
 }
 
 // Authenticate is middleware that attaches a principal to every request.

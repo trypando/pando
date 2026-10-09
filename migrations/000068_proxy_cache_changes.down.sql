@@ -1,0 +1,11 @@
+DROP TRIGGER IF EXISTS proxy_cache_apps_update ON apps;
+DROP TRIGGER IF EXISTS proxy_cache_apps_insert_delete ON apps;
+DROP TRIGGER IF EXISTS proxy_cache_users_update ON users;
+DROP TRIGGER IF EXISTS proxy_cache_users_delete ON users;
+DROP TRIGGER IF EXISTS proxy_cache_sessions_update ON sessions;
+DROP TRIGGER IF EXISTS proxy_cache_sessions_delete ON sessions;
+DROP TRIGGER IF EXISTS proxy_cache_passcode_unlocks ON passcode_unlocks;
+DROP TRIGGER IF EXISTS proxy_cache_group_links ON group_links;
+DROP TRIGGER IF EXISTS proxy_cache_group_members ON group_members;
+DROP TRIGGER IF EXISTS proxy_cache_grants ON grants;
+DROP FUNCTION IF EXISTS proxy_cache_changed();

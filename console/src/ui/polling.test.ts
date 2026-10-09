@@ -10,6 +10,7 @@ import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import {
   AWAITING_MS,
   DELIVERY_FIRST_MS,
+  QUEUED_MS,
   DELIVERY_MAX_MS,
   SCAN_WATCH_MS,
   SCANNING_MS,
@@ -61,6 +62,11 @@ describe('deploymentsInterval', () => {
     expect(deploymentsInterval([{ status: 'running' }])).toBe(false);
     expect(deploymentsInterval(null)).toBe(false);
     expect(deploymentsInterval([{ status: 'succeeded' }, { status: 'awaiting_approval' }])).toBe(AWAITING_MS);
+  });
+
+  it('asks often while a deploy waits in the queue, whose place moves (issue #93)', () => {
+    expect(deploymentsInterval([{ status: 'pending' }])).toBe(QUEUED_MS);
+    expect(deploymentsInterval([{ status: 'awaiting_approval' }, { status: 'pending' }])).toBe(QUEUED_MS);
   });
 });
 

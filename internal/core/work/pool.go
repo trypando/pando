@@ -28,6 +28,11 @@ type Pool[T any] struct {
 	// Limit is the most items this replica runs at once. At least one.
 	Limit int
 
+	// LimitFunc, when set, is read instead of Limit every time the pool looks
+	// for work, so the limit can change while the pool runs (issue #93). A
+	// lower limit takes effect as running items finish: nothing is stopped.
+	LimitFunc func(ctx context.Context) int
+
 	// Poll is how often the pool looks for work when it was not told there is
 	// some (Kick). Work queued on another replica is found this way. Two
 	// seconds when zero.
@@ -88,11 +93,15 @@ func (p *Pool[T]) Running() int {
 	return len(p.running)
 }
 
-func (p *Pool[T]) limit() int {
-	if p.Limit < 1 {
+func (p *Pool[T]) limit(ctx context.Context) int {
+	n := p.Limit
+	if p.LimitFunc != nil {
+		n = p.LimitFunc(ctx)
+	}
+	if n < 1 {
 		return 1
 	}
-	return p.Limit
+	return n
 }
 
 func (p *Pool[T]) logger() *zap.Logger {
@@ -110,7 +119,7 @@ func (p *Pool[T]) Serve(ctx context.Context) {
 	if poll <= 0 {
 		poll = 2 * time.Second
 	}
-	done := make(chan struct{}, p.limit())
+	done := make(chan struct{}, p.limit(ctx))
 	var wg sync.WaitGroup
 
 	for {
@@ -133,7 +142,7 @@ func (p *Pool[T]) Serve(ctx context.Context) {
 // fill claims as many items as there is room for and starts each.
 func (p *Pool[T]) fill(ctx context.Context, wg *sync.WaitGroup, done chan<- struct{}) {
 	for ctx.Err() == nil {
-		free := p.limit() - p.Running()
+		free := p.limit(ctx) - p.Running()
 		if free <= 0 {
 			return
 		}

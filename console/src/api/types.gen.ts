@@ -67,6 +67,7 @@ export interface Deployment {
   approval_reasons?: (ApprovalReason[] | null);
   approvals?: (ApprovalDecision[] | null);
   can_decide?: boolean;
+  queue_position?: number;
 }
 
 export interface AwaitingApproval {
@@ -88,6 +89,7 @@ export interface AwaitingApproval {
   approval_reasons?: (ApprovalReason[] | null);
   approvals?: (ApprovalDecision[] | null);
   can_decide?: boolean;
+  queue_position?: number;
   app_name: string;
   app_slug: string;
 }
@@ -240,6 +242,7 @@ export interface PolicyDocument {
   require_backup_before_destroy?: boolean;
   max_token_lifetime_days?: number;
   max_log_disk_bytes?: number;
+  max_concurrent_deploys?: number;
   allow_cpu_oversubscription?: boolean;
   allow_memory_oversubscription?: boolean;
   audit_retention_months?: number;
