@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -100,18 +99,6 @@ func pull(t *testing.T, ref string) {
 	t.Helper()
 	// Pulled through the same daemon the adapter reads from, so the test does
 	// not depend on what happens to be cached.
-	//
-	// Tried a few times: a registry's passing 500 or 429 is not what this
-	// test is about, and failed a run of #170 that had nothing wrong with it.
-	var out []byte
-	var err error
-	for attempt := range 4 {
-		if attempt > 0 {
-			time.Sleep(time.Duration(1<<attempt) * time.Second)
-		}
-		if out, err = exec.Command("docker", "pull", ref).CombinedOutput(); err == nil {
-			return
-		}
-	}
+	out, err := exec.Command("docker", "pull", ref).CombinedOutput()
 	require.NoError(t, err, "pulling %s: %s", ref, out)
 }
