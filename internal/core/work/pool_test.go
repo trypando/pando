@@ -335,6 +335,7 @@ func TestR256_TheLimitIsReadWhileThePoolRuns(t *testing.T) {
 
 	limit.Store(2)
 	gate <- struct{}{} // one finishes: three left running, over the new limit of two
+	require.Eventually(t, func() bool { return running.Load() == 3 }, time.Second, time.Millisecond)
 	require.Never(t, func() bool { return running.Load() > 3 }, 30*time.Millisecond, time.Millisecond,
 		"lowering it stops new claims; nothing running is stopped")
 	close(gate)
