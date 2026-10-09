@@ -15,6 +15,8 @@
 [![Go 1.27](https://img.shields.io/badge/go-1.27-00ADD8)](go.mod)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/trypando/pando/badge)](https://scorecard.dev/viewer/?uri=github.com/trypando/pando)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14626/badge)](https://www.bestpractices.dev/projects/14626)
+[![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=trypando_pando&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=trypando_pando)
+[![AI Code Assurance](https://sonarcloud.io/api/project_badges/ai_code_assurance?project=trypando_pando)](https://sonarcloud.io/summary/new_code?id=trypando_pando)
 
 </div>
 
