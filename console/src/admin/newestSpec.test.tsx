@@ -14,6 +14,7 @@ import type { AppSpec } from '@api/types.gen';
 import { BuildPlan } from './BuildPlan';
 import { CarriedFiles } from './CarriedFiles';
 import { Environment } from './Environment';
+import { AppVerb, AppVerbs } from './verbs';
 
 const appID = 'app_01NOTES';
 
@@ -61,6 +62,20 @@ describe('screens built on the newest spec revision', () => {
     expect(html).toContain('GREETING');
     expect(html).toContain('hello');
     expect(html).toContain('API_KEY has no value yet.');
+  });
+
+  it('Environment offers to add a variable to someone who may edit the spec', () => {
+    const html = render(
+      <AppVerbs.Provider value={[AppVerb.SpecEdit]}>
+        <Environment appID={appID} />
+      </AppVerbs.Provider>,
+    );
+    expect(html).toContain('Add variable');
+    expect(html).toContain('add anything it missed');
+  });
+
+  it('Environment offers nothing to edit without app.spec.edit', () => {
+    expect(render(<Environment appID={appID} />)).not.toContain('Add variable');
   });
 
   it('Environment says why when the revisions cannot be read', () => {
