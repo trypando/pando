@@ -63,6 +63,7 @@ func TestR399_ABadMetricsSettingStopsStartupSayingWhy(t *testing.T) {
 			"http/protobuf or grpc"},
 		"too often":          {func(m Metrics) Metrics { m.Interval = time.Millisecond; return m }, "at least a second"},
 		"a header with no =": {func(m Metrics) Metrics { m.OTLPHeaders = "hunter2"; return m }, "key=value"},
+		"a bad escape":       {func(m Metrics) Metrics { m.OTLPHeaders = "api-key=hunter2%zz"; return m }, "encode a comma as %2C"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := tc.m(good).validate()

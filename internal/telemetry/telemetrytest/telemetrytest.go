@@ -62,31 +62,36 @@ func (r *Reader) Count(name string, attrs map[string]string) int64 {
 	if !ok {
 		return 0
 	}
-	matches := func(set attribute.Set) bool {
-		for k, want := range attrs {
-			got, ok := set.Value(attribute.Key(k))
-			if !ok || got.String() != want {
-				return false
-			}
-		}
-		return true
-	}
 	var n int64
 	switch d := m.Data.(type) {
 	case metricdata.Histogram[float64]:
 		for _, p := range d.DataPoints {
-			if matches(p.Attributes) {
-				n += int64(p.Count) //nolint:gosec // G115: a test records a handful, nowhere near 2^63.
-			}
+			n += countIf(matches(p.Attributes, attrs), int64(p.Count)) //nolint:gosec // G115: a test records a handful, nowhere near 2^63.
 		}
 	case metricdata.Sum[int64]:
 		for _, p := range d.DataPoints {
-			if matches(p.Attributes) {
-				n += p.Value
-			}
+			n += countIf(matches(p.Attributes, attrs), p.Value)
 		}
 	default:
 		r.t.Fatalf("metric %s is not a histogram or a counter", name)
 	}
 	return n
+}
+
+// matches reports whether set holds every one of attrs.
+func matches(set attribute.Set, attrs map[string]string) bool {
+	for k, want := range attrs {
+		got, ok := set.Value(attribute.Key(k))
+		if !ok || got.String() != want {
+			return false
+		}
+	}
+	return true
+}
+
+func countIf(ok bool, n int64) int64 {
+	if ok {
+		return n
+	}
+	return 0
 }

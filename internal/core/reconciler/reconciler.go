@@ -260,9 +260,7 @@ func (r *Reconciler) Tick(ctx context.Context) {
 				defer wg.Done()
 				defer func() { <-sem }()
 				var seen visit
-				started, done := time.Now(), false
 				defer func() {
-					telemetry.Reconcile(appCtx, reconcileOutcome(appCtx, done, seen), time.Since(started))
 					keeper.finish(a.ID)
 					if err := r.release(ctx, lease, a, seen); err != nil {
 						r.Logger.Warn("could not release an app after reconciling it",
@@ -270,8 +268,7 @@ func (r *Reconciler) Tick(ctx context.Context) {
 					}
 				}()
 				defer r.recoverPanic(a)
-				seen = r.reconcileOne(appCtx, a)
-				done = true
+				seen = r.measured(appCtx, a)
 			}(app)
 		}
 	}
@@ -444,6 +441,16 @@ type visit struct {
 	// be, so nothing was compared. Exported as the reconcile's outcome
 	// (R-399); a correction that fails is counted against the app instead.
 	failed bool
+}
+
+// measured is reconcileOne, timed and recorded with how it ended (R-399). A
+// panic is recorded as a failure on its way to recoverPanic.
+func (r *Reconciler) measured(ctx context.Context, app state.Reconcilable) (seen visit) {
+	started, done := time.Now(), false
+	defer func() { telemetry.Reconcile(ctx, reconcileOutcome(ctx, done, seen), time.Since(started)) }()
+	seen = r.reconcileOne(ctx, app)
+	done = true
+	return seen
 }
 
 // reconcileOutcome is how one reconcile ended, for R-399's metric. done is

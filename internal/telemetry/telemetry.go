@@ -14,6 +14,7 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -104,10 +105,7 @@ type instruments struct {
 
 var current atomic.Pointer[instruments]
 
-func init() {
-	in, _ := build(noop.NewMeterProvider(), Sources{})
-	current.Store(in)
-}
+func init() { Reset() }
 
 // Install records every metric from here on into provider, and registers
 // sources to be read at each collection. It replaces whatever was installed
@@ -123,6 +121,7 @@ func Install(provider metric.MeterProvider, sources Sources) error {
 
 // Reset goes back to recording into a no-op.
 func Reset() {
+	// A no-op provider makes every instrument it is asked for.
 	in, _ := build(noop.NewMeterProvider(), Sources{})
 	current.Store(in)
 }
@@ -134,96 +133,103 @@ var durationBuckets = []float64{
 }
 
 func build(provider metric.MeterProvider, sources Sources) (*instruments, error) {
-	m := provider.Meter(ScopeName)
-	var in instruments
-	var err error
-	duration := func(name, desc string) metric.Float64Histogram {
-		if err != nil {
-			return nil
-		}
-		var h metric.Float64Histogram
-		h, err = m.Float64Histogram(name, metric.WithUnit("s"), metric.WithDescription(desc),
-			metric.WithExplicitBucketBoundaries(durationBuckets...))
-		return h
+	b := &builder{m: provider.Meter(ScopeName)}
+	in := &instruments{
+		httpDuration: b.duration("http.server.request.duration",
+			"Duration of requests to Pando's API and console, by route pattern."),
+		reconcileDuration: b.duration("pando.reconcile.duration",
+			"Duration of one reconcile of one app, by outcome."),
+		deployDuration: b.duration("pando.deploy.duration",
+			"Duration of a deploy, from start to its end state, by outcome."),
+		buildDuration: b.duration("pando.build.duration",
+			"Duration of an image build, by outcome."),
+		detectDuration: b.duration("pando.detection.duration",
+			"Duration of a detection, by outcome."),
+		retentionDuration: b.duration("pando.retention.duration",
+			"Duration of one pass of a retention job, by job and outcome."),
+		proxyRequests: b.counter("pando.proxy.requests", "{request}",
+			"Requests to apps through Pando's proxy, install-wide, by decision and kind of principal."),
+		retentionRemoved: b.counter("pando.retention.removed", "{row}",
+			"Rows the retention job removed, by kind."),
 	}
-
-	in.httpDuration = duration("http.server.request.duration",
-		"Duration of requests to Pando's API and console, by route pattern.")
-	in.reconcileDuration = duration("pando.reconcile.duration",
-		"Duration of one reconcile of one app, by outcome.")
-	in.deployDuration = duration("pando.deploy.duration",
-		"Duration of a deploy, from start to its end state, by outcome.")
-	in.buildDuration = duration("pando.build.duration",
-		"Duration of an image build, by outcome.")
-	in.detectDuration = duration("pando.detection.duration",
-		"Duration of a detection, by outcome.")
-	in.retentionDuration = duration("pando.retention.duration",
-		"Duration of one pass of a retention job, by job and outcome.")
-	if err != nil {
-		return nil, err
-	}
-
-	if in.proxyRequests, err = m.Int64Counter("pando.proxy.requests", metric.WithUnit("{request}"),
-		metric.WithDescription("Requests to apps through Pando's proxy, install-wide, by decision and kind of principal.")); err != nil {
-		return nil, err
-	}
-	if in.retentionRemoved, err = m.Int64Counter("pando.retention.removed", metric.WithUnit("{row}"),
-		metric.WithDescription("Rows the retention job removed, by kind.")); err != nil {
-		return nil, err
-	}
-
 	if sources.Pool != nil {
-		used, err := m.Int64ObservableGauge("db.client.connection.count", metric.WithUnit("{connection}"),
-			metric.WithDescription("Database connections in this replica's pool, by state."))
-		if err != nil {
-			return nil, err
-		}
-		limit, err := m.Int64ObservableGauge("db.client.connection.max", metric.WithUnit("{connection}"),
-			metric.WithDescription("The most database connections this replica's pool may open."))
-		if err != nil {
-			return nil, err
-		}
-		if _, err := m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
-			u, i, max := sources.Pool()
-			o.ObserveInt64(used, u, metric.WithAttributes(attribute.String(keyConnState, "used")))
-			o.ObserveInt64(used, i, metric.WithAttributes(attribute.String(keyConnState, "idle")))
-			o.ObserveInt64(limit, max)
-			return nil
-		}, used, limit); err != nil {
-			return nil, err
-		}
+		b.pool(sources.Pool)
 	}
-
 	if sources.Detections != nil {
-		if _, err := m.Int64ObservableGauge("pando.detection.active", metric.WithUnit("{detection}"),
-			metric.WithDescription("Detections this replica is running now."),
-			metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-				o.Observe(sources.Detections())
-				return nil
-			})); err != nil {
-			return nil, err
-		}
+		b.gauge("pando.detection.active", "{detection}", "Detections this replica is running now.",
+			func(o metric.Int64Observer) { o.Observe(sources.Detections()) })
 	}
-
 	if sources.Adapters != nil {
-		if _, err := m.Int64ObservableGauge("pando.adapter.healthy", metric.WithUnit("1"),
-			metric.WithDescription("1 when an adapter's last health check passed, 0 when it failed."),
-			metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-				for _, a := range sources.Adapters() {
-					v := int64(0)
-					if a.Healthy {
-						v = 1
-					}
-					o.Observe(v, metric.WithAttributes(
-						attribute.String(keyCategory, a.Category), attribute.String(keyAdapter, a.ID)))
-				}
-				return nil
-			})); err != nil {
-			return nil, err
-		}
+		b.gauge("pando.adapter.healthy", "1", "1 when an adapter's last health check passed, 0 when it failed.",
+			func(o metric.Int64Observer) { observeAdapters(o, sources.Adapters()) })
 	}
+	if b.err != nil {
+		return nil, b.err
+	}
+	return in, nil
+}
 
-	return &in, nil
+// builder makes instruments and keeps every error, so build reads as the
+// list of metrics it is.
+type builder struct {
+	m   metric.Meter
+	err error
+}
+
+func (b *builder) keep(err error) { b.err = errors.Join(b.err, err) }
+
+func (b *builder) duration(name, desc string) metric.Float64Histogram {
+	h, err := b.m.Float64Histogram(name, metric.WithUnit("s"), metric.WithDescription(desc),
+		metric.WithExplicitBucketBoundaries(durationBuckets...))
+	b.keep(err)
+	return h
+}
+
+func (b *builder) counter(name, unit, desc string) metric.Int64Counter {
+	c, err := b.m.Int64Counter(name, metric.WithUnit(unit), metric.WithDescription(desc))
+	b.keep(err)
+	return c
+}
+
+// gauge is a reading taken at each collection.
+func (b *builder) gauge(name, unit, desc string, observe func(metric.Int64Observer)) {
+	_, err := b.m.Int64ObservableGauge(name, metric.WithUnit(unit), metric.WithDescription(desc),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			observe(o)
+			return nil
+		}))
+	b.keep(err)
+}
+
+// pool is the database pool's two gauges, read together so they agree.
+func (b *builder) pool(read func() (used, idle, limit int64)) {
+	count, err := b.m.Int64ObservableGauge("db.client.connection.count", metric.WithUnit("{connection}"),
+		metric.WithDescription("Database connections in this replica's pool, by state."))
+	b.keep(err)
+	most, err := b.m.Int64ObservableGauge("db.client.connection.max", metric.WithUnit("{connection}"),
+		metric.WithDescription("The most database connections this replica's pool may open."))
+	b.keep(err)
+	if b.err != nil {
+		return
+	}
+	_, err = b.m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		used, idle, limit := read()
+		o.ObserveInt64(count, used, metric.WithAttributes(attribute.String(keyConnState, "used")))
+		o.ObserveInt64(count, idle, metric.WithAttributes(attribute.String(keyConnState, "idle")))
+		o.ObserveInt64(most, limit)
+		return nil
+	}, count, most)
+	b.keep(err)
+}
+
+func observeAdapters(o metric.Int64Observer, adapters []AdapterHealth) {
+	for _, a := range adapters {
+		v := int64(0)
+		if a.Healthy {
+			v = 1
+		}
+		o.Observe(v, metric.WithAttributes(attribute.String(keyCategory, a.Category), attribute.String(keyAdapter, a.ID)))
+	}
 }
 
 func seconds(d time.Duration) float64 { return d.Seconds() }
