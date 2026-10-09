@@ -259,16 +259,7 @@ func (r *Reconciler) Tick(ctx context.Context) {
 			go func(a state.Reconcilable) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				var seen visit
-				defer func() {
-					keeper.finish(a.ID)
-					if err := r.release(ctx, lease, a, seen); err != nil {
-						r.Logger.Warn("could not release an app after reconciling it",
-							zap.String("app_id", a.ID), zap.Error(err))
-					}
-				}()
-				defer r.recoverPanic(a)
-				seen = r.measured(appCtx, a)
+				r.reconcileClaimed(ctx, appCtx, lease, keeper, a)
 			}(app)
 		}
 	}
@@ -441,6 +432,22 @@ type visit struct {
 	// be, so nothing was compared. Exported as the reconcile's outcome
 	// (R-399); a correction that fails is counted against the app instead.
 	failed bool
+}
+
+// reconcileClaimed reconciles one app this pass holds the lease on, and
+// releases it whatever happens — a panic included. ctx is the pass's; appCtx
+// is the app's own, canceled if its lease is lost.
+func (r *Reconciler) reconcileClaimed(ctx, appCtx context.Context, lease *state.Lease, keeper *leaseKeeper, app state.Reconcilable) {
+	var seen visit
+	defer func() {
+		keeper.finish(app.ID)
+		if err := r.release(ctx, lease, app, seen); err != nil {
+			r.Logger.Warn("could not release an app after reconciling it",
+				zap.String("app_id", app.ID), zap.Error(err))
+		}
+	}()
+	defer r.recoverPanic(app)
+	seen = r.measured(appCtx, app)
 }
 
 // measured is reconcileOne, timed and recorded with how it ended (R-399). A
