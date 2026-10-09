@@ -1,12 +1,54 @@
-# Two uploads make one report: the check job's unit profile (flag "unit") and
-# the integration job's (flag "integration"), which finishes minutes later.
-# Codecov reports on whatever it has when an upload lands, so without this the
-# unit upload alone posted a failing status and comment, judged against a
-# baseline that included the integration coverage, and corrected itself only
-# when the second arrived. It now waits for both.
+# Coverage arrives in two uploads, and neither one is the whole picture.
+#
+# The unit job cannot reach the API handlers, the state store or the runtime
+# adapter: those hold concrete types rather than interfaces, so a test either
+# runs against real Postgres and Docker or it tests nothing. The integration
+# job covers them and uploads under its own flag. Codecov takes the union, and
+# every line it counts was executed by a test that ran.
+#
+# after_n_builds is what stops it reporting before it has both. The two jobs
+# finish minutes apart, so
+# without this every pull request gets a comment saying its coverage collapsed
+# — naming the files only the integration flag covers — and then a silent
+# correction once the second upload lands. That happened twice on #21 before
+# this file existed, and the first number is the one people read.
+#
+# This alone did not stop it: with each job uploading as it finished, the unit
+# upload still drew a failing codecov/patch before the integration one landed.
+# The codecov job in ci.yml now sends both once both jobs are done,
+# integration first.
 codecov:
   notify:
+    # Both uploads before any commit status is sent.
     after_n_builds: 2
+    # And do not settle for one if the other is slow: wait.
+    wait_for_ci: true
 
 comment:
+  # Same rule for the pull request comment, for the same reason.
   after_n_builds: 2
+  require_changes: false
+
+# Test support that lives outside a _test.go file only because more than one
+# package's tests import it. Like a _test.go file, it never ships, and a line of
+# it that no test reaches is a harness error path, not untested product.
+ignore:
+  - "internal/core/state/statetest"
+
+# No `paths` here, deliberately. Both flags measure the whole repository, and
+# constraining them is what broke this file the first time: `paths: - /` became
+# the regex `^/.*`, stored paths are repo-relative with no leading slash, so
+# each flag matched nothing and the commit processed to 0% with state=error.
+# https://codecov.io/validate accepts the syntax without checking that the
+# paths match any file, so it reported the config as valid.
+flags:
+  unit:
+    carryforward: false
+
+  # Carried forward because the integration job is the slow one and the only
+  # one that can cover the packages needing Postgres or Docker. If a run does
+  # not produce it — a cancelled job, a runner that died — the last known value
+  # stands rather than the project appearing to lose a third of its coverage
+  # for a reason that has nothing to do with the change.
+  integration:
+    carryforward: true

@@ -13,14 +13,6 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    # id-token to prove to Codecov which repository and workflow this upload
-    # comes from (OIDC), instead of a stored upload token. A token is a secret
-    # that can be lost — it was, when the repository moved to trypando — and a
-    # protected branch refuses a tokenless upload. Nothing here writes to the
-    # repository; contents stays read.
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -69,26 +61,11 @@ jobs:
       - name: Test
         run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
 
-      # Unit coverage only. The integration job runs separately against real
-      # Postgres and real Docker, and merging the two profiles would report a
-      # number neither job measured.
-      #
-      # always(), because the profile is written as the tests run: a failing
-      # package would otherwise discard the coverage of every package that
-      # passed, and the pull request would be told its coverage collapsed when
-      # what actually happened is that one test failed.
-      - name: Upload coverage
-        if: always()
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
-        with:
-          use_oidc: true
-          files: coverage.out
-          flags: unit
-          fail_ci_if_error: false
-
-      # The same profile, for the sonar job below: SonarCloud reads the
-      # coverage these tests already measured rather than running them again.
-      - name: Keep coverage for SonarCloud
+      # For the codecov and sonar jobs below, which report the coverage these
+      # tests measured rather than running them again. always(), because the
+      # profile is written as the tests run: a failing package would otherwise
+      # discard the coverage of every package that passed.
+      - name: Keep coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -187,14 +164,6 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
-    # id-token to prove to Codecov which repository and workflow this upload
-    # comes from (OIDC), instead of a stored upload token. A token is a secret
-    # that can be lost — it was, when the repository moved to trypando — and a
-    # protected branch refuses a tokenless upload. Nothing here writes to the
-    # repository; contents stays read.
-    permissions:
-      contents: read
-      id-token: write
     # Real Postgres and real Docker, via testcontainers. The four sequences in
     # docs/design/07-sequences.md are the acceptance criteria for v1.
     #
@@ -235,27 +204,11 @@ jobs:
           # runs keep it, because there it is what cleans up.
           TESTCONTAINERS_RYUK_DISABLED: 'true'
 
-      # Uploaded under its own flag rather than merged into the unit profile.
-      #
-      # Merging the two files would report a number neither job measured, which
-      # is why the unit step does not do it. Two flagged uploads are a different
-      # thing: Codecov takes the union, and every line it then counts was
-      # executed by a test that ran. That union is the honest project number,
-      # and without it the packages that need Postgres or Docker — the API
-      # handlers, the state store, the runtime adapter — read as untested when
-      # they are not.
-      - name: Upload coverage
-        if: always()
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
-        with:
-          use_oidc: true
-          files: coverage.integration.out
-          flags: integration
-          fail_ci_if_error: false
-
-      # The same profile, for the sonar job below: SonarCloud reads the
-      # coverage these tests already measured rather than running them again.
-      - name: Keep coverage for SonarCloud
+      # For the codecov and sonar jobs below, which report the coverage these
+      # tests measured rather than running them again. always(), because the
+      # profile is written as the tests run: a failing package would otherwise
+      # discard the coverage of every package that passed.
+      - name: Keep coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -271,6 +224,56 @@ jobs:
             ~/go/pkg/mod
             ~/.cache/go-build
           key: go-integration-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+
+  # Codecov, from one job once both Go test jobs are done, rather than from
+  # each as it finishes. codecov.yml waits for two uploads before it reports,
+  # but uploaded from the jobs themselves the unit profile still drew a failing
+  # codecov/patch minutes before the integration profile arrived: the lines
+  # only an integration test reaches read as uncovered. Integration goes first.
+  # The unit flag is never carried forward, so nothing can stand in for it,
+  # and Codecov has both real uploads before it can report.
+  #
+  # Two flags, not one merged profile: merging would report a number neither
+  # job measured. Codecov takes the union, and every line it counts was
+  # executed by a test that ran. Without the integration flag the packages that
+  # need Postgres or Docker — the API handlers, the state store, the runtime
+  # adapter — read as untested when they are not.
+  codecov:
+    runs-on: ubuntu-latest
+    needs: [check, integration]
+    if: ${{ !cancelled() }}
+    # id-token to prove to Codecov which repository and workflow this upload
+    # comes from (OIDC), instead of a stored upload token. A token is a secret
+    # that can be lost — it was, when the repository moved to trypando — and a
+    # protected branch refuses a tokenless upload. Nothing here writes to the
+    # repository; contents stays read.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: coverage-go-*
+          merge-multiple: true
+          path: coverage
+
+      - name: Upload integration coverage
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        with:
+          use_oidc: true
+          files: coverage/coverage.integration.out
+          flags: integration
+          fail_ci_if_error: false
+
+      - name: Upload unit coverage
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        with:
+          use_oidc: true
+          files: coverage/coverage.out
+          flags: unit
+          fail_ci_if_error: false
 
   # SonarCloud, analyzed here rather than by its Automatic Analysis, because
   # Automatic Analysis cannot read coverage. It takes the profiles the jobs
