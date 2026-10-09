@@ -20,6 +20,29 @@ import (
 // different acts, and null has to mean "not set here" without a PATCH body
 // needing to tell an absent field from a null one.
 
+// msgNoAppLimits is the answer when this server was started without the app
+// limit service, as a test server may be.
+const msgNoAppLimits = "App limits are not set up on this installation."
+
+// limitsReady answers for a server started without the app limit services,
+// as a test server may be, rather than letting a handler reach a nil one.
+func (s *Server) limitsReady(w http.ResponseWriter, r *http.Request) bool {
+	if s.AppLimits == nil || s.AppLimitStore == nil {
+		Error(w, r, errs.New(errs.Internal, msgNoAppLimits))
+		return false
+	}
+	return true
+}
+
+// idleReady is limitsReady for an app's idle settings.
+func (s *Server) idleReady(w http.ResponseWriter, r *http.Request) bool {
+	if s.IdleSettings == nil {
+		Error(w, r, errs.New(errs.Internal, "Idle settings are not set up on this installation."))
+		return false
+	}
+	return true
+}
+
 // appLimit is the limit in force for userID. No limit service, or no user —
 // a token acting for nobody — is no limit.
 func (s *Server) appLimit(ctx context.Context, userID string) (applimit.Limit, error) {
@@ -71,8 +94,7 @@ func (s *Server) handleGetUserAppLimit(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireSelfOrInstall(w, r, userID, authz.InstallUsersManage); !ok {
 		return
 	}
-	if s.AppLimits == nil {
-		Error(w, r, errs.New(errs.Internal, "App limits are not set up on this installation."))
+	if !s.limitsReady(w, r) {
 		return
 	}
 	limit, err := s.AppLimits.For(r.Context(), userID)
@@ -90,8 +112,7 @@ func (s *Server) handlePutUserAppLimit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.AppLimits == nil || s.AppLimitStore == nil {
-		Error(w, r, errs.New(errs.Internal, "App limits are not set up on this installation."))
+	if !s.limitsReady(w, r) {
 		return
 	}
 	maxApps, err := decodeMaxApps(r)
@@ -122,8 +143,7 @@ func (s *Server) handleGetGroupAppLimit(w http.ResponseWriter, r *http.Request) 
 	if _, ok := s.requireInstall(w, r, authz.InstallUsersManage); !ok {
 		return
 	}
-	if s.AppLimitStore == nil {
-		Error(w, r, errs.New(errs.Internal, "App limits are not set up on this installation."))
+	if !s.limitsReady(w, r) {
 		return
 	}
 	maxApps, err := s.AppLimitStore.GroupMaxApps(r.Context(), chi.URLParam(r, "groupID"))
@@ -140,8 +160,7 @@ func (s *Server) handlePutGroupAppLimit(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if s.AppLimits == nil || s.AppLimitStore == nil {
-		Error(w, r, errs.New(errs.Internal, "App limits are not set up on this installation."))
+	if !s.limitsReady(w, r) {
 		return
 	}
 	maxApps, err := decodeMaxApps(r)
@@ -169,8 +188,7 @@ func (s *Server) handleGetAppIdle(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.IdleSettings == nil {
-		Error(w, r, errs.New(errs.Internal, "Idle settings are not set up on this installation."))
+	if !s.idleReady(w, r) {
 		return
 	}
 	report, err := s.IdleSettings.Report(r.Context(), app.ID)
@@ -189,8 +207,7 @@ func (s *Server) handlePutAppIdle(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.IdleSettings == nil {
-		Error(w, r, errs.New(errs.Internal, "Idle settings are not set up on this installation."))
+	if !s.idleReady(w, r) {
 		return
 	}
 	var req state.IdleSettings

@@ -85,11 +85,11 @@ type Metrics interface {
 	Request(appID string, kind authz.PrincipalKind, allowed bool)
 }
 
-// Activity hears that a request was let through to an app, which keeps the
+// ActivityRecorder hears that a request was let through to an app, which keeps the
 // app from being stopped or deleted for being idle (R-394). *idle.Recorder is
 // one: in memory, written to the database once a minute, so the request never
 // waits for it.
-type Activity interface {
+type ActivityRecorder interface {
 	Touch(appID string)
 }
 
@@ -112,7 +112,7 @@ type Proxy struct {
 	Metrics   Metrics
 
 	// Activity, when set, hears of every request let through (R-394).
-	Activity Activity
+	Activity ActivityRecorder
 	Logger   *zap.Logger
 
 	// UsePolicy says whether anonymous use is recorded (R-227). Nil records

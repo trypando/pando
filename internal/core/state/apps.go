@@ -143,6 +143,27 @@ func (e *AppLimitReached) Error() string {
 	return fmt.Sprintf("the owner owns %d apps and may own %d", e.Owned, e.Limit)
 }
 
+// withinLimit refuses with *AppLimitReached when the owner already owns limit
+// apps or more; 0 is no limit. Under a lock on the owner's row, held until tx
+// ends, so a second create for the same owner waits and then counts this one.
+func withinLimit(ctx context.Context, tx pgx.Tx, ownerUserID string, limit int) error {
+	if limit <= 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, ownerUserID); err != nil {
+		return errs.Wrap(errs.Internal, "Could not create the app.", err)
+	}
+	var owned int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*) FROM apps WHERE owner_user_id = $1 AND deleted_at IS NULL`, ownerUserID).Scan(&owned); err != nil {
+		return errs.Wrap(errs.Internal, "Could not create the app.", err)
+	}
+	if owned >= limit {
+		return &AppLimitReached{Owned: owned, Limit: limit}
+	}
+	return nil
+}
+
 // CreateWithin is Create, refused with *AppLimitReached when the owner
 // already owns limit apps or more; 0 is no limit (R-244).
 //
@@ -155,18 +176,8 @@ func (a *Apps) CreateWithin(ctx context.Context, name, slug, ownerUserID, create
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if limit > 0 {
-		var owned int
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, ownerUserID); err != nil {
-			return App{}, errs.Wrap(errs.Internal, "Could not create the app.", err)
-		}
-		if err := tx.QueryRow(ctx,
-			`SELECT count(*) FROM apps WHERE owner_user_id = $1 AND deleted_at IS NULL`, ownerUserID).Scan(&owned); err != nil {
-			return App{}, errs.Wrap(errs.Internal, "Could not create the app.", err)
-		}
-		if owned >= limit {
-			return App{}, &AppLimitReached{Owned: owned, Limit: limit}
-		}
+	if err := withinLimit(ctx, tx, ownerUserID, limit); err != nil {
+		return App{}, err
 	}
 
 	app := App{

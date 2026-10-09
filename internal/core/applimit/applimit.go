@@ -43,20 +43,20 @@ type Limit struct {
 	MaxApps *int `json:"max_apps"`
 }
 
-// Store reads what a limit is decided from.
-type Store interface {
+// FactsReader reads what a limit is decided from.
+type FactsReader interface {
 	Facts(ctx context.Context, userID string) (state.LimitFacts, error)
 }
 
-// Policy reads host policy.
-type Policy interface {
+// PolicyLoader reads host policy.
+type PolicyLoader interface {
 	Load(ctx context.Context) (policy.Document, error)
 }
 
 // Service decides limits.
 type Service struct {
-	Store  Store
-	Policy Policy
+	Store  FactsReader
+	Policy PolicyLoader
 }
 
 // For is the limit in force for userID.

@@ -18,7 +18,7 @@ import { invalidateApp } from './appList';
 import { AppVerb, useCan } from './verbs';
 
 /** GET /apps/{id}/idle. */
-interface IdleReport {
+export interface IdleReport {
   stop_days: number | null;
   delete_days: number | null;
   install_stop_days: number;
@@ -32,13 +32,41 @@ interface IdleReport {
 }
 
 /** One setting: the installation's, off, or a number of days of the app's own. */
-type Choice = 'install' | 'off' | 'days';
+export type Choice = 'install' | 'off' | 'days';
 
-const choiceOf = (own: number | null): Choice => (own === null ? 'install' : own === 0 ? 'off' : 'days');
+/** The choice an app's own value stands for: null is the installation's, 0 is never. */
+export function choiceOf(own: number | null): Choice {
+  if (own === null) return 'install';
+  if (own === 0) return 'off';
+  return 'days';
+}
+
+/** What a choice sends: null for the installation's, 0 for never, or whole days, at least one. */
+export function idleValue(choice: Choice, days: string): number | null {
+  if (choice === 'install') return null;
+  if (choice === 'off') return 0;
+  return Math.max(1, Math.round(Number(days) || 1));
+}
 
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { dateStyle: 'long' });
 
-export function IdleSection({ app }: { app: App }) {
+/**
+ * What will happen to the app, in dates, or null when nothing will. An app
+ * Pando already stopped still says when it would be deleted: that is the date
+ * its owner most needs.
+ */
+export function outlook(report: IdleReport): string | null {
+  const deletes = report.deletes_at ? `Pando deletes it on ${day(report.deletes_at)} if nobody uses it by then.` : '';
+  if (report.stopped_for_idle) {
+    return ['Pando stopped this app because nobody had used it. Start it to use it again.', deletes]
+      .filter(Boolean)
+      .join(' ');
+  }
+  const stops = report.stops_at ? `If nobody uses it, Pando stops it on ${day(report.stops_at)}.` : '';
+  return [stops, deletes].filter(Boolean).join(' ') || null;
+}
+
+export function IdleSection({ app }: Readonly<{ app: App }>) {
   const report = useQuery({
     queryKey: ['apps', app.id, 'idle'],
     queryFn: () => api.get<IdleReport>(`/apps/${app.id}/idle`),
@@ -48,7 +76,7 @@ export function IdleSection({ app }: { app: App }) {
   return <IdleSettings key={JSON.stringify([report.data.stop_days, report.data.delete_days])} app={app} report={report.data} />;
 }
 
-function IdleSettings({ app, report }: { app: App; report: IdleReport }) {
+function IdleSettings({ app, report }: Readonly<{ app: App; report: IdleReport }>) {
   const queries = useQueryClient();
   const canEdit = useCan(AppVerb.SpecEdit);
   const [stop, setStop] = useState<Choice>(choiceOf(report.stop_days));
@@ -56,14 +84,11 @@ function IdleSettings({ app, report }: { app: App; report: IdleReport }) {
   const [del, setDel] = useState<Choice>(choiceOf(report.delete_days));
   const [deleteDays, setDeleteDays] = useState(String(report.delete_days || report.install_delete_days || 90));
 
-  const value = (choice: Choice, days: string) =>
-    choice === 'install' ? null : choice === 'off' ? 0 : Math.max(1, Math.round(Number(days) || 1));
-
   const save = useMutation({
     mutationFn: () =>
       api.put<IdleReport>(`/apps/${app.id}/idle`, {
-        stop_days: value(stop, stopDays),
-        delete_days: value(del, deleteDays),
+        stop_days: idleValue(stop, stopDays),
+        delete_days: idleValue(del, deleteDays),
       }),
     onSuccess: () => {
       void queries.invalidateQueries({ queryKey: ['apps', app.id, 'idle'] });
@@ -72,6 +97,7 @@ function IdleSettings({ app, report }: { app: App; report: IdleReport }) {
   });
 
   const installPhrase = (days: number) => (days > 0 ? `The installation's, ${days} days` : "The installation's, never");
+  const ahead = outlook(report);
 
   return (
     <section style={{ maxWidth: MEASURE }}>
@@ -82,17 +108,7 @@ function IdleSettings({ app, report }: { app: App; report: IdleReport }) {
       </p>
 
       {/* What will happen, in dates, before any control. */}
-      {report.stopped_for_idle ? (
-        <Banner tone="info">Pando stopped this app because nobody had used it. Start it to use it again.</Banner>
-      ) : (
-        (report.stops_at || report.deletes_at) && (
-          <Banner tone="info">
-            {report.stops_at && `If nobody uses it, Pando stops it on ${day(report.stops_at)}.`}
-            {report.stops_at && report.deletes_at && ' '}
-            {report.deletes_at && `Pando deletes it on ${day(report.deletes_at)} if nobody uses it by then.`}
-          </Banner>
-        )
-      )}
+      {ahead && <Banner tone="info">{ahead}</Banner>}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
         <Select

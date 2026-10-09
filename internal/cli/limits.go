@@ -13,6 +13,12 @@ import (
 // /apps/{id}/idle, /users/{id}/app-limit and /groups/{id}/app-limit, so a
 // script or an agent can do what the console does (R-261).
 
+// The idle flags of pando app idle.
+const (
+	flagStopDays   = "stop-days"
+	flagDeleteDays = "delete-days"
+)
+
 // appIdleCmd reads or changes an app's idle settings (R-393 – R-397).
 func appIdleCmd(client func() (*Client, error)) *cobra.Command {
 	var stop, del string
@@ -33,7 +39,7 @@ func appIdleCmd(client func() (*Client, error)) *cobra.Command {
 			}
 			path := "/apps/" + url.PathEscape(args[0]) + "/idle"
 			var report map[string]any
-			if !cmd.Flags().Changed("stop-days") && !cmd.Flags().Changed("delete-days") {
+			if !cmd.Flags().Changed(flagStopDays) && !cmd.Flags().Changed(flagDeleteDays) {
 				if err := c.Do("GET", path, nil, &report); err != nil {
 					return err
 				}
@@ -49,7 +55,7 @@ func appIdleCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			body := map[string]any{"stop_days": current.StopDays, "delete_days": current.DeleteDays}
-			for flag, field := range map[string]string{"stop-days": "stop_days", "delete-days": "delete_days"} {
+			for flag, field := range map[string]string{flagStopDays: "stop_days", flagDeleteDays: "delete_days"} {
 				if !cmd.Flags().Changed(flag) {
 					continue
 				}
@@ -66,8 +72,8 @@ func appIdleCmd(client func() (*Client, error)) *cobra.Command {
 			return printJSON(cmd.OutOrStdout(), report)
 		},
 	}
-	cmd.Flags().StringVar(&stop, "stop-days", "", "days without use before Pando stops the app: a number, never, or default")
-	cmd.Flags().StringVar(&del, "delete-days", "", "days without use before Pando deletes the app: a number, never, or default")
+	cmd.Flags().StringVar(&stop, flagStopDays, "", "days without use before Pando stops the app: a number, never, or default")
+	cmd.Flags().StringVar(&del, flagDeleteDays, "", "days without use before Pando deletes the app: a number, never, or default")
 	return cmd
 }
 
@@ -90,7 +96,7 @@ func idleDays(flag, v string) (*int, error) {
 // appLimitCmd reads or sets the app limit on an account or a group (R-244).
 // what is "user" or "group".
 func appLimitCmd(client func() (*Client, error), what string) *cobra.Command {
-	var clear bool
+	var remove bool
 	short := "Show how many apps an account may own and where that comes from, or set the account's own limit"
 	long := "With only the account, shows the limit in force, where it comes from (the account, a\n" +
 		"group, or host policy) and how many apps the account owns.\n\n" +
@@ -115,9 +121,9 @@ func appLimitCmd(client func() (*Client, error), what string) *cobra.Command {
 			path := "/" + what + "s/" + url.PathEscape(args[0]) + "/app-limit"
 			var out map[string]any
 			switch {
-			case clear && len(args) == 2:
+			case remove && len(args) == 2:
 				return fmt.Errorf("give a number or --clear, not both")
-			case clear:
+			case remove:
 				err = c.Do("PUT", path, map[string]any{"max_apps": nil}, &out)
 			case len(args) == 2:
 				n, convErr := strconv.Atoi(args[1])
@@ -134,6 +140,6 @@ func appLimitCmd(client func() (*Client, error), what string) *cobra.Command {
 			return printJSON(cmd.OutOrStdout(), out)
 		},
 	}
-	cmd.Flags().BoolVar(&clear, "clear", false, "remove the "+what+"'s own limit")
+	cmd.Flags().BoolVar(&remove, "clear", false, "remove the "+what+"'s own limit")
 	return cmd
 }

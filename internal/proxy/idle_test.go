@@ -34,7 +34,7 @@ func (t *touches) count() int {
 	return len(t.apps)
 }
 
-func idleProxy(t *testing.T, app state.App, principal authz.Principal, activity proxy.Activity) *httptest.Server {
+func idleProxy(t *testing.T, app state.App, principal authz.Principal, activity proxy.ActivityRecorder) *httptest.Server {
 	t.Helper()
 	s := newStore()
 	s.owner[appID] = "usr_alice"

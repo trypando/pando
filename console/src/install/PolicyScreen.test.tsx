@@ -86,3 +86,22 @@ describe('the Policy screen’s egress and approval settings (R-181, R-183, R-15
     expect(tag).toContain('disabled');
   });
 });
+
+describe('the Policy screen’s idle apps and app limit (R-393, R-398, R-244)', () => {
+  it('shows the days and the limit, off and unlimited by default', () => {
+    const html = render({});
+    expect(html).toContain('Apps nobody uses');
+    expect(html).toContain('Stop an app nobody has used for this many days');
+    expect(html).toContain('Delete an app nobody has used for this many days');
+    expect(html).toContain('Apps each person may own');
+    expect(html).toContain('Zero means unlimited');
+  });
+
+  it('says what a deletion does with storage, as the backup rule has it', () => {
+    expect(render({ idle_delete_days: 90, require_backup_before_destroy: true })).toContain(
+      'Pando backs up the app&#x27;s storage first',
+    );
+    expect(render({ idle_delete_days: 90 })).toContain('storage is deleted with it unless');
+    expect(render({ idle_stop_days: 30, max_apps_per_user: 5 })).toContain('value="30"');
+  });
+});

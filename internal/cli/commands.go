@@ -702,40 +702,9 @@ func deployCmd(client func() (*Client, error)) *cobra.Command {
 			// than by a flag, because `pando deploy ./` is the form the design
 			// names and a flag would make the common case the verbose one.
 			if info, statErr := os.Stat(target); statErr == nil && info.IsDir() {
-				appID := asApp
-				if appID == "" {
-					// No app named, so make one from the directory. Named for
-					// the directory, which is what a person would have called
-					// it anyway.
-					abs, _ := filepath.Abs(target)
-					var created map[string]any
-					if err := c.Do("POST", "/apps", map[string]any{
-						"name":   filepath.Base(abs),
-						"source": map[string]string{"type": "upload"},
-					}, &created); err != nil {
-						return err
-					}
-					appID, _ = created["id"].(string)
-					fmt.Fprintf(cmd.ErrOrStderr(), "Created %s (%s).\n", filepath.Base(abs), appID)
-				}
-
-				archive, files, err := PackDirectory(target)
-				if err != nil {
+				if target, err = c.uploadDirectory(cmd, target, asApp, env); err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "Uploading %d files (%s)...\n", files, humanBytes(len(archive)))
-				if err := c.UploadSource(appID, archive); err != nil {
-					return err
-				}
-
-				// The source only exists now, so detection has to run against
-				// it — it could not have run at creation, when there was
-				// nothing to look at. Explicit, which is R-022: detection never
-				// re-runs on its own.
-				if err := c.prepareUploadedApp(cmd, appID, env); err != nil {
-					return err
-				}
-				target = appID
 			}
 
 			var dep waitingDeploy
@@ -754,6 +723,43 @@ func deployCmd(client func() (*Client, error)) *cobra.Command {
 	cmd.Flags().StringArrayVar(&env, "env", nil,
 		"KEY=VALUE, set when a new directory's setup is accepted; repeat for more (e.g. --env API_URL=https://api)")
 	return cmd
+}
+
+// uploadDirectory packs a directory, uploads it as an app's source and
+// prepares it to deploy, making the app first when none is named. It returns
+// the app to deploy.
+func (c *Client) uploadDirectory(cmd *cobra.Command, dir, appID string, env []string) (string, error) {
+	if appID == "" {
+		// No app named, so make one from the directory. Named for the
+		// directory, which is what a person would have called it anyway.
+		abs, _ := filepath.Abs(dir)
+		var created map[string]any
+		if err := c.Do("POST", "/apps", map[string]any{
+			"name":   filepath.Base(abs),
+			"source": map[string]string{"type": "upload"},
+		}, &created); err != nil {
+			return "", err
+		}
+		appID, _ = created["id"].(string)
+		fmt.Fprintf(cmd.ErrOrStderr(), "Created %s (%s).\n", filepath.Base(abs), appID)
+	}
+
+	archive, files, err := PackDirectory(dir)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "Uploading %d files (%s)...\n", files, humanBytes(len(archive)))
+	if err := c.UploadSource(appID, archive); err != nil {
+		return "", err
+	}
+
+	// The source only exists now, so detection has to run against it — it
+	// could not have run at creation, when there was nothing to look at.
+	// Explicit, which is R-022: detection never re-runs on its own.
+	if err := c.prepareUploadedApp(cmd, appID, env); err != nil {
+		return "", err
+	}
+	return appID, nil
 }
 
 // prepareUploadedApp runs detection over a freshly uploaded directory and pins
@@ -1208,20 +1214,55 @@ func grantCmd(client func() (*Client, error)) *cobra.Command {
 	return cmd
 }
 
+// generatedPassword asks the server for a password, so the CLI's are the
+// same strength and alphabet as the console's (R-046).
+func generatedPassword(c *Client) (string, error) {
+	var out struct {
+		Password string `json:"password"`
+	}
+	if err := c.Do("POST", "/passwords/generate", nil, &out); err != nil {
+		return "", err
+	}
+	return out.Password, nil
+}
+
+// userUpdateCmd changes an account's profile.
+func userUpdateCmd(client func() (*Client, error)) *cobra.Command {
+	update := &cobra.Command{
+		Use:   "update <user-id>",
+		Short: "Change an account's username, name or email",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			// Only the flags given: an unset flag leaves that field alone.
+			body := map[string]any{}
+			for flag, field := range map[string]string{"username": "username", "name": "display_name", "email": "email"} {
+				if cmd.Flags().Changed(flag) {
+					v, _ := cmd.Flags().GetString(flag)
+					body[field] = v
+				}
+			}
+			if len(body) == 0 {
+				return fmt.Errorf("say what to change: --username, --name or --email")
+			}
+			if err := c.Do("PATCH", "/users/"+args[0], body, nil); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Updated.")
+			return nil
+		},
+	}
+	update.Flags().String("username", "", "the name the account signs in with")
+	update.Flags().String("name", "", "the name shown in the console and the audit log")
+	update.Flags().String("email", "", "the account's email address")
+	return update
+}
+
 func userCmd(client func() (*Client, error)) *cobra.Command {
 	cmd := &cobra.Command{Use: "user", Short: "Work with accounts"}
-
-	// generated asks the server for a password, so the CLI's are the same
-	// strength and alphabet as the console's (R-046).
-	generated := func(c *Client) (string, error) {
-		var out struct {
-			Password string `json:"password"`
-		}
-		if err := c.Do("POST", "/passwords/generate", nil, &out); err != nil {
-			return "", err
-		}
-		return out.Password, nil
-	}
 
 	var name, email string
 	var keep bool
@@ -1236,7 +1277,7 @@ func userCmd(client func() (*Client, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			password, err := generated(c)
+			password, err := generatedPassword(c)
 			if err != nil {
 				return err
 			}
@@ -1268,7 +1309,7 @@ func userCmd(client func() (*Client, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			password, err := generated(c)
+			password, err := generatedPassword(c)
 			if err != nil {
 				return err
 			}
@@ -1283,37 +1324,7 @@ func userCmd(client func() (*Client, error)) *cobra.Command {
 	reset.Flags().BoolVar(&keepReset, "no-change-required", false, "do not require a new password at the next sign-in")
 	cmd.AddCommand(reset)
 
-	update := &cobra.Command{
-		Use:   "update <user-id>",
-		Short: "Change an account's username, name or email",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client()
-			if err != nil {
-				return err
-			}
-			// Only the flags given: an unset flag leaves that field alone.
-			body := map[string]any{}
-			for flag, field := range map[string]string{"username": "username", "name": "display_name", "email": "email"} {
-				if cmd.Flags().Changed(flag) {
-					v, _ := cmd.Flags().GetString(flag)
-					body[field] = v
-				}
-			}
-			if len(body) == 0 {
-				return fmt.Errorf("say what to change: --username, --name or --email")
-			}
-			if err := c.Do("PATCH", "/users/"+args[0], body, nil); err != nil {
-				return err
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Updated.")
-			return nil
-		},
-	}
-	update.Flags().String("username", "", "the name the account signs in with")
-	update.Flags().String("name", "", "the name shown in the console and the audit log")
-	update.Flags().String("email", "", "the account's email address")
-	cmd.AddCommand(update)
+	cmd.AddCommand(userUpdateCmd(client))
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "apps <user-id>",
@@ -1485,6 +1496,40 @@ func exportCmd(client func() (*Client, error)) *cobra.Command {
 	}
 }
 
+// newPassphrase asks for a backup passphrase twice, since a mistyped one
+// can never be recovered (R-214).
+func newPassphrase(cmd *cobra.Command) (string, error) {
+	passphrase, err := promptSecret(cmd, "Passphrase: ")
+	if err != nil {
+		return "", err
+	}
+	again, err := promptSecret(cmd, "Passphrase again: ")
+	if err != nil {
+		return "", err
+	}
+	if passphrase != again {
+		return "", fmt.Errorf("those two passphrases are different")
+	}
+	return passphrase, nil
+}
+
+// confirmRestore asks for the typed confirmation, like the console. A --yes
+// flag alone would make the most destructive action in the system a thing
+// that fits in a shell alias.
+func confirmRestore(cmd *cobra.Command) error {
+	fmt.Fprintln(cmd.ErrOrStderr(),
+		"This replaces everything in this installation: every app, every account,\n"+
+			"every secret. Anything created since the backup is gone.")
+	answer, err := prompt(cmd, "Type replace to confirm: ")
+	if err != nil {
+		return err
+	}
+	if answer != "replace" {
+		return fmt.Errorf("not confirmed, so nothing was changed")
+	}
+	return nil
+}
+
 func backupCmd(client func() (*Client, error)) *cobra.Command {
 	cmd := &cobra.Command{Use: "backup", Short: "Back up and restore this installation"}
 
@@ -1529,16 +1574,9 @@ func backupCmd(client func() (*Client, error)) *cobra.Command {
 				"Pando doesn't keep this passphrase. If you lose it, nothing in this backup\n"+
 					"can be read again — not by you, and not by anyone who takes the file.")
 
-			passphrase, err := promptSecret(cmd, "Passphrase: ")
+			passphrase, err := newPassphrase(cmd)
 			if err != nil {
 				return err
-			}
-			again, err := promptSecret(cmd, "Passphrase again: ")
-			if err != nil {
-				return err
-			}
-			if passphrase != again {
-				return fmt.Errorf("those two passphrases are different")
 			}
 
 			var out map[string]any
@@ -1584,19 +1622,9 @@ func backupCmd(client func() (*Client, error)) *cobra.Command {
 			}
 			yes, _ := cmd.Flags().GetBool("yes")
 
-			// Typed confirmation, like the console. A --yes flag alone would
-			// make the most destructive action in the system a thing that fits
-			// in a shell alias.
 			if !yes {
-				fmt.Fprintln(cmd.ErrOrStderr(),
-					"This replaces everything in this installation: every app, every account,\n"+
-						"every secret. Anything created since the backup is gone.")
-				answer, err := prompt(cmd, "Type replace to confirm: ")
-				if err != nil {
+				if err := confirmRestore(cmd); err != nil {
 					return err
-				}
-				if answer != "replace" {
-					return fmt.Errorf("not confirmed, so nothing was changed")
 				}
 			}
 

@@ -11,8 +11,8 @@ import (
 // FlushEvery is how often a replica writes the activity it has seen (R-394).
 const FlushEvery = time.Minute
 
-// ActivityStore is where activity is written. *state.Activity is one.
-type ActivityStore interface {
+// ActivityWriter is where activity is written. *state.Activity is one.
+type ActivityWriter interface {
 	RecordActivity(ctx context.Context, seen map[string]time.Time) error
 }
 
@@ -23,7 +23,7 @@ type ActivityStore interface {
 // this (R-394). A replica that stops loses at most a minute of it, which moves
 // an app's idle clock by a minute against a setting counted in days.
 type Recorder struct {
-	Store  ActivityStore
+	Store  ActivityWriter
 	Logger *zap.Logger
 
 	mu   sync.Mutex

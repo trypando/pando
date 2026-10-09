@@ -13,6 +13,7 @@ package idle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/errs"
 )
 
 // NoticeDays is how long before a stop or a deletion the owner is told, and
@@ -44,8 +46,8 @@ type Store interface {
 	StopForIdle(ctx context.Context, appID string) (bool, error)
 }
 
-// Apps reads the app a deletion is for.
-type Apps interface {
+// AppReader reads the app a deletion is for.
+type AppReader interface {
 	ByID(ctx context.Context, appID string) (state.App, bool, error)
 }
 
@@ -54,8 +56,8 @@ type Deleter interface {
 	Delete(ctx context.Context, app state.App, req appdelete.Request) (appdelete.Result, error)
 }
 
-// Policy reads host policy.
-type Policy interface {
+// PolicyLoader reads host policy.
+type PolicyLoader interface {
 	Load(ctx context.Context) (policy.Document, error)
 }
 
@@ -72,9 +74,9 @@ type Auditor interface {
 // Pass is the idle job.
 type Pass struct {
 	Store   Store
-	Apps    Apps
+	Apps    AppReader
 	Deleter Deleter
-	Policy  Policy
+	Policy  PolicyLoader
 
 	// Notifier and Auditor are optional, and nil says nothing. Production
 	// wires both: R-395 is a promise that nothing goes without warning.
@@ -133,12 +135,36 @@ func (p *Pass) Once(ctx context.Context) {
 // owed a stop.
 func (p *Pass) visit(ctx context.Context, doc policy.Document, app state.IdleApp, now time.Time) {
 	idleFor := now.Sub(app.LastActivity)
-
-	// A notice older than the app's last activity was answered: somebody used
-	// it. One no longer owed — the setting was turned off, or the owner
-	// stopped the app themselves — is withdrawn too, so it does not hold the
-	// app in this list forever.
 	stopApplies := app.StopDays > 0 && app.DesiredState == state.StateRunning && app.State != state.StateFailed
+	app = p.withdrawStale(ctx, app, stopApplies)
+
+	if app.DeleteDays > 0 {
+		switch owed(idleFor, app.DeleteDays, app.DeleteNoticedAt, now) {
+		case stepNotice:
+			p.notice(ctx, doc, app, state.IdleNoticeDelete, app.DeleteDays, now)
+			return
+		case stepAct:
+			p.delete(ctx, doc, app, idleFor, now)
+			return
+		}
+	}
+
+	if stopApplies {
+		switch owed(idleFor, app.StopDays, app.StopNoticedAt, now) {
+		case stepNotice:
+			p.notice(ctx, doc, app, state.IdleNoticeStop, app.StopDays, now)
+		case stepAct:
+			p.stop(ctx, app, idleFor)
+		}
+	}
+}
+
+// withdrawStale withdraws the notices no longer owed. A notice older than the
+// app's last activity was answered: somebody used it. One for an action that
+// no longer applies — the setting was turned off, or the owner stopped the app
+// themselves — is withdrawn too, so it does not hold the app in the list of
+// candidates forever.
+func (p *Pass) withdrawStale(ctx context.Context, app state.IdleApp, stopApplies bool) state.IdleApp {
 	if app.StopNoticedAt != nil && (app.StopNoticedAt.Before(app.LastActivity) || !stopApplies) {
 		p.clearNotice(ctx, app.AppID, state.IdleNoticeStop)
 		app.StopNoticedAt = nil
@@ -147,27 +173,31 @@ func (p *Pass) visit(ctx context.Context, doc policy.Document, app state.IdleApp
 		p.clearNotice(ctx, app.AppID, state.IdleNoticeDelete)
 		app.DeleteNoticedAt = nil
 	}
+	return app
+}
 
-	if app.DeleteDays > 0 && idleFor >= noticeAfter(app.DeleteDays) {
-		if app.DeleteNoticedAt == nil {
-			p.notice(ctx, doc, app, state.IdleNoticeDelete, app.DeleteDays, now)
-			return
-		}
-		if idleFor >= days(app.DeleteDays) && now.Sub(*app.DeleteNoticedAt) >= days(NoticeDays) {
-			p.delete(ctx, doc, app, idleFor, now)
-			return
-		}
-	}
+// step is what an app is owed under one setting.
+type step int
 
-	if stopApplies && idleFor >= noticeAfter(app.StopDays) {
-		if app.StopNoticedAt == nil {
-			p.notice(ctx, doc, app, state.IdleNoticeStop, app.StopDays, now)
-			return
-		}
-		if idleFor >= days(app.StopDays) && now.Sub(*app.StopNoticedAt) >= days(NoticeDays) {
-			p.stop(ctx, app, idleFor)
-		}
+const (
+	stepNone step = iota
+	stepNotice
+	stepAct
+)
+
+// owed is what an app idle for idleFor is owed under a setting of n days:
+// a notice once it is within the notice of the setting, and the action once
+// it is past the setting and the notice has run its full length (R-395).
+func owed(idleFor time.Duration, n int, noticedAt *time.Time, now time.Time) step {
+	switch {
+	case idleFor < noticeAfter(n):
+		return stepNone
+	case noticedAt == nil:
+		return stepNotice
+	case idleFor >= days(n) && now.Sub(*noticedAt) >= days(NoticeDays):
+		return stepAct
 	}
+	return stepNone
 }
 
 // noticeAfter is how long an app is idle before a notice is owed: the
@@ -274,9 +304,9 @@ func (p *Pass) delete(ctx context.Context, doc policy.Document, app state.IdleAp
 			p.logger().Warn("could not record an idle notice", zap.String("app_id", app.AppID), zap.Error(err))
 		}
 		p.notify(ctx, app, "Pando did not delete "+app.Name,
-			fmt.Sprintf("Nobody has used %s since %s, and Pando was to delete it today, but could not: %s "+
+			fmt.Sprintf("Nobody has used %s since %s, and Pando was to delete it today, but could not. %s "+
 				"Pando tries again on %s unless somebody uses, starts or deploys it before then.",
-				app.Name, date(app.LastActivity), err.Error(), date(now.Add(days(NoticeDays)))))
+				app.Name, date(app.LastActivity), readable(err), date(now.Add(days(NoticeDays)))))
 		return
 	}
 
@@ -289,6 +319,21 @@ func (p *Pass) delete(ctx context.Context, doc policy.Document, app state.IdleAp
 	p.notify(ctx, app, app.Name+" was deleted", body)
 	p.logger().Info("deleted an idle app", zap.String("app_id", app.AppID),
 		zap.Int("idle_days", int(idleFor/day)), zap.Bool("backup_required", doc.RequireBackupBeforeDestroy))
+}
+
+// readable is what a person is told about a failed deletion: the error's
+// message and remedy, written for them (R-105). Never the code or a wrapped
+// cause, which are for the log line above it — this can go out by email or to
+// a chat channel.
+func readable(err error) string {
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		return "Its storage could not be backed up."
+	}
+	if e.Remedy == "" {
+		return e.Message
+	}
+	return e.Message + " " + e.Remedy
 }
 
 func (p *Pass) clearNotice(ctx context.Context, appID string, which state.IdleNotice) {

@@ -586,6 +586,24 @@ func (s *Server) handleGetSpec(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, rev)
 }
 
+// checkRoutingOverride asks for app.routing.override when the routing being
+// written is a mode the adapter does not default to and the pinned spec did
+// not already have (R-163).
+func (s *Server) checkRoutingOverride(ctx context.Context, gate specgate.Authorizer, p authz.Principal, appID string, pinned *spec.AppSpec, routing *spec.Routing) error {
+	if s.Address == nil {
+		return nil
+	}
+	var current *spec.Routing
+	if pinned != nil {
+		current = &pinned.Routing
+	}
+	override, err := s.Address.Overrides(ctx, current, routing)
+	if err != nil || !override {
+		return err
+	}
+	return gate.CheckControl(ctx, p, appID, authz.AppRoutingOverride)
+}
+
 // handleCreateSpec writes a new revision. Editing produces a revision; it never
 // modifies one (R-152).
 func (s *Server) handleCreateSpec(w http.ResponseWriter, r *http.Request) {
@@ -647,22 +665,9 @@ func (s *Server) handleCreateSpec(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	if s.Address != nil {
-		var current *spec.Routing
-		if pinned != nil {
-			current = &pinned.Routing
-		}
-		override, err := s.Address.Overrides(r.Context(), current, &body.Routing)
-		if err != nil {
-			Error(w, r, err)
-			return
-		}
-		if override {
-			if err := gate.CheckControl(r.Context(), p, app.ID, authz.AppRoutingOverride); err != nil {
-				Error(w, r, err)
-				return
-			}
-		}
+	if err := s.checkRoutingOverride(r.Context(), gate, p, app.ID, pinned, &body.Routing); err != nil {
+		Error(w, r, err)
+		return
 	}
 
 	if err := spec.Validate(&body); err != nil {

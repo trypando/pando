@@ -17,6 +17,8 @@ import (
 // batches (RecordActivity); deploys and starts are written by triggers in
 // migration 69, so no path that deploys or starts an app can forget to.
 
+const msgListIdle = "Could not list idle apps."
+
 // Activity is the store half of idle apps.
 type Activity struct{ db *DB }
 
@@ -148,14 +150,15 @@ func (a *Activity) IdleCandidates(ctx context.Context, d IdleDefaults, now time.
 		SELECT id, name, owner, state, desired_state, stopped_for_idle, stop_days, delete_days,
 		       last_activity, idle_stop_noticed_at, idle_delete_noticed_at
 		FROM eff
-		WHERE (stop_days > 0 AND last_activity <= $4::timestamptz - make_interval(days => GREATEST(stop_days - $3::int, 1)))
+		WHERE (stop_days > 0 AND desired_state = 'running' AND state <> 'failed'
+		       AND last_activity <= $4::timestamptz - make_interval(days => GREATEST(stop_days - $3::int, 1)))
 		   OR (delete_days > 0 AND last_activity <= $4::timestamptz - make_interval(days => GREATEST(delete_days - $3::int, 1)))
 		   OR idle_stop_noticed_at IS NOT NULL
 		   OR idle_delete_noticed_at IS NOT NULL
 		ORDER BY id`,
 		d.StopDays, d.DeleteDays, d.NoticeDays, now)
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not list idle apps.", err)
+		return nil, errs.Wrap(errs.Internal, msgListIdle, err)
 	}
 	defer rows.Close()
 
@@ -165,12 +168,12 @@ func (a *Activity) IdleCandidates(ctx context.Context, d IdleDefaults, now time.
 		if err := rows.Scan(&app.AppID, &app.Name, &app.OwnerUserID, &app.State, &app.DesiredState,
 			&app.StoppedForIdle, &app.StopDays, &app.DeleteDays, &app.LastActivity,
 			&app.StopNoticedAt, &app.DeleteNoticedAt); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not list idle apps.", err)
+			return nil, errs.Wrap(errs.Internal, msgListIdle, err)
 		}
 		out = append(out, app)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not list idle apps.", err)
+		return nil, errs.Wrap(errs.Internal, msgListIdle, err)
 	}
 	return out, nil
 }

@@ -23,7 +23,7 @@ type SettingsStore interface {
 // Settings reads and changes an app's idle settings.
 type Settings struct {
 	Store  SettingsStore
-	Policy Policy
+	Policy PolicyLoader
 	Clock  clock.Clock
 }
 

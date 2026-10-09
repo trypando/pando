@@ -12,6 +12,7 @@ import (
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/policy"
+	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 )
@@ -152,4 +153,59 @@ func TestR204_AFailedBackupDeletesNothing(t *testing.T) {
 	assert.False(t, r.apps.archived)
 	assert.False(t, r.volumes.deleted)
 	assert.Equal(t, "app.delete.backup_failed", r.audit.events[0].Action)
+	var e *errs.Error
+	require.ErrorAs(t, err, &e)
+	assert.Contains(t, e.Remedy, "requires a backup", "no force=true offered when policy forbids it")
+}
+
+type pinnedApps struct{ fakeApps }
+
+func (*pinnedApps) RevisionByID(context.Context, string) (state.Revision, bool, error) {
+	return state.Revision{Body: &spec.AppSpec{SchemaVersion: spec.SchemaVersion}}, true, nil
+}
+
+type capturingBackup struct{ req backup.AppCreateRequest }
+
+func (c *capturingBackup) CreateForApp(_ context.Context, _ string, req backup.AppCreateRequest) (backup.Created, error) {
+	c.req = req
+	return backup.Created{ObjectName: "bak_1.tar"}, nil
+}
+
+// TestR204_TheFinalBackupHoldsTheSpecItRan asserts R-204: the backup kept at
+// deletion carries the pinned spec beside the data, so a restore knows what
+// ran it, and it is recorded as whoever deleted it.
+func TestR204_TheFinalBackupHoldsTheSpecItRan(t *testing.T) {
+	apps := &pinnedApps{fakeApps{volumes: 1}}
+	taken := &capturingBackup{}
+	backups := &fakeBackups{}
+	svc := &appdelete.Service{Apps: apps, Volumes: &fakeVolumes{}, Backups: backups, Backup: taken, BundleSource: fakeBundles{}}
+
+	result, err := svc.Delete(context.Background(), state.App{ID: "app_1", PinnedSpecID: "spec_1"}, appdelete.Request{
+		Storage: appdelete.StorageBackUp,
+		Actor:   audit.Event{PrincipalKind: audit.KindSystem, PrincipalID: "idle"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "bak_1", result.BackupID)
+	assert.Contains(t, string(taken.req.Spec), `"schema_version"`)
+	assert.Equal(t, "on_delete", taken.req.Kind)
+	assert.Equal(t, "idle", backups.recorded[0].CreatedBy)
+	assert.True(t, apps.archived)
+}
+
+// TestR204_WithoutBackupsADeleteThatNeedsOneIsRefused asserts R-204: an
+// installation with no backup service cannot keep a final backup, so a delete
+// that asks for one deletes nothing. With no policy, none is required, so the
+// policy's answer is to discard.
+func TestR204_WithoutBackupsADeleteThatNeedsOneIsRefused(t *testing.T) {
+	apps := &fakeApps{volumes: 1}
+	svc := &appdelete.Service{Apps: apps, Volumes: &fakeVolumes{}}
+
+	_, err := svc.Delete(context.Background(), app, appdelete.Request{Storage: appdelete.StorageBackUp})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Backups are not set up")
+	assert.False(t, apps.archived)
+
+	_, err = svc.Delete(context.Background(), app, appdelete.Request{Storage: appdelete.StoragePolicy})
+	require.NoError(t, err)
+	assert.True(t, apps.archived)
 }

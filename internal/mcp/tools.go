@@ -806,8 +806,8 @@ var toolList = []tool{
 			"deleting has to come later than stopping. App settings, not spec: nothing is deployed.",
 		Schema: schema(map[string]any{
 			"app_id":      str("The app's ID."),
-			"stop_days":   daysOrWord("Days without use before Pando stops the app, \"never\", or \"default\"."),
-			"delete_days": daysOrWord("Days without use before Pando deletes the app, \"never\", or \"default\"."),
+			"stop_days":   numberOrWord("Days without use before Pando stops the app, \"never\", or \"default\".", "never", "default"),
+			"delete_days": numberOrWord("Days without use before Pando deletes the app, \"never\", or \"default\".", "never", "default"),
 		}, "app_id", "stop_days", "delete_days"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, err := stringArg(args, "app_id", true)
@@ -895,7 +895,7 @@ var toolList = []tool{
 		Schema: schema(map[string]any{
 			"user_id":  str("An account's ID. Give this or group_id."),
 			"group_id": str("A group's ID. Give this or user_id."),
-			"max_apps": daysOrWord("A number of apps, 0 for unlimited, or \"clear\"."),
+			"max_apps": numberOrWord("A number of apps, 0 for unlimited, or \"clear\".", "clear"),
 		}, "max_apps"),
 		request: func(args map[string]any) (string, string, any, error) {
 			path, err := limitTarget(args)

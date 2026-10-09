@@ -153,4 +153,37 @@ func TestR397_AnAppsIdleSettingsAreItsOwn(t *testing.T) {
 
 	stranger := i.user("idle-stranger")
 	require.Equal(t, http.StatusNotFound, i.do(stranger, http.MethodGet, "/apps/"+app+"/idle", nil).Code)
+	require.Equal(t, http.StatusNotFound, i.do(stranger, http.MethodPut, "/apps/"+app+"/idle", map[string]any{"stop_days": 1}).Code)
+
+	// A body that is not the settings says what to send.
+	garbled := i.do(admin, http.MethodPut, "/apps/"+app+"/idle", "thirty days")
+	require.Equal(t, http.StatusBadRequest, garbled.Code, garbled.String())
+	assert.Contains(t, garbled.String(), "Use 0 to turn either off")
+}
+
+// TestR105_AnAppLimitRequestThatCannotWorkSaysWhy asserts R-244 and R-105:
+// a missing account or group, a body that is not a limit, and a caller who
+// may not read somebody else's limit are each answered, not guessed at.
+func TestR105_AnAppLimitRequestThatCannotWorkSaysWhy(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+
+	for _, path := range []string{"/users/usr_missing/app-limit", "/groups/grp_missing/app-limit"} {
+		got := i.do(admin, http.MethodPut, path, map[string]any{"max_apps": 3})
+		require.Equal(t, http.StatusNotFound, got.Code, path+": "+got.String())
+	}
+	require.Equal(t, http.StatusNotFound, i.do(admin, http.MethodGet, "/users/usr_missing/app-limit", nil).Code)
+	require.Equal(t, http.StatusNotFound, i.do(admin, http.MethodGet, "/groups/grp_missing/app-limit", nil).Code)
+
+	garbled := i.do(admin, http.MethodPut, "/users/"+i.AdminID+"/app-limit", "five")
+	require.Equal(t, http.StatusBadRequest, garbled.Code, garbled.String())
+	assert.Contains(t, garbled.String(), "to clear it")
+	negative := i.do(admin, http.MethodPut, "/users/"+i.AdminID+"/app-limit", map[string]any{"max_apps": -2})
+	require.Equal(t, http.StatusBadRequest, negative.Code, negative.String())
+
+	other := i.user("limit-onlooker")
+	require.Equal(t, http.StatusForbidden, i.do(other, http.MethodGet, "/users/"+i.AdminID+"/app-limit", nil).Code)
+	require.Equal(t, http.StatusForbidden, i.do(other, http.MethodGet, "/groups/grp_missing/app-limit", nil).Code)
+	require.Equal(t, http.StatusForbidden, i.do(other, http.MethodPut, "/groups/grp_missing/app-limit", map[string]any{"max_apps": 1}).Code)
 }

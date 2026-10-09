@@ -66,8 +66,8 @@ type Apps interface {
 	Archive(ctx context.Context, appID string) error
 }
 
-// Volumes removes an app's volume rows once its storage is settled.
-type Volumes interface {
+// VolumeDeleter removes an app's volume rows once its storage is settled.
+type VolumeDeleter interface {
 	DeleteForApp(ctx context.Context, appID string) error
 }
 
@@ -77,18 +77,18 @@ type Backups interface {
 	Record(ctx context.Context, rec state.Backup) error
 }
 
-// Backup takes the backup itself.
-type Backup interface {
+// BackupCreator takes the backup itself.
+type BackupCreator interface {
 	CreateForApp(ctx context.Context, id string, req backup.AppCreateRequest) (backup.Created, error)
 }
 
-// BundleSource resolves an app's volumes to their runtime handles.
-type BundleSource interface {
+// VolumeResolver resolves an app's volumes to their runtime handles.
+type VolumeResolver interface {
 	VolumesForApp(ctx context.Context, appID string) ([]backup.VolumeRef, error)
 }
 
-// Policy reads host policy.
-type Policy interface {
+// PolicyLoader reads host policy.
+type PolicyLoader interface {
 	Load(ctx context.Context) (policy.Document, error)
 }
 
@@ -100,16 +100,16 @@ type Auditor interface {
 // Service deletes apps.
 type Service struct {
 	Apps    Apps
-	Volumes Volumes
+	Volumes VolumeDeleter
 
 	// Backups, Backup and BundleSource take the final backup. Nil leaves
 	// backups unavailable, and a delete that needs one is refused.
 	Backups      Backups
-	Backup       Backup
-	BundleSource BundleSource
+	Backup       BackupCreator
+	BundleSource VolumeResolver
 
 	// Policy is host policy. Nil requires no backup.
-	Policy Policy
+	Policy PolicyLoader
 
 	Auditor Auditor
 
@@ -136,62 +136,18 @@ func (s *Service) Delete(ctx context.Context, app state.App, req Request) (Resul
 		return Result{}, err
 	}
 
-	storage := req.Storage
-	if storage == StoragePolicy {
-		storage = StorageDiscard
-		if required {
-			storage = StorageBackUp
-		}
-	}
-
-	if volumes > 0 {
-		switch storage {
-		case StorageUndecided:
-			remedy := "Delete with backup=true to keep a copy, or force=true to delete without one. A backup made this way is kept until you discard it."
-			if required {
-				remedy = "Delete with backup=true. This installation keeps a final backup of every app with storage it deletes; the backup is kept until you discard it."
-			}
-			return Result{}, errs.New(errs.StateBackupDecisionRequired,
-				"This app has storage attached. Deleting it will remove that storage unless you back it up first.").
-				WithRemedy(remedy).
-				WithDetail("volume_count", volumes)
-		case StorageDiscard:
-			if required {
-				return Result{}, errs.New(errs.PolicyBackupRequired,
-					"This installation keeps a final backup of every app with storage before deleting it, so this app cannot be deleted without one.").
-					WithRemedy("Delete with backup=true. An administrator can change this with require_backup_before_destroy in host policy.").
-					WithDetail("volume_count", volumes)
-			}
-		}
+	storage, err := decide(req.Storage, volumes, required)
+	if err != nil {
+		return Result{}, err
 	}
 
 	// Volumes are ON DELETE RESTRICT (R-204), so they are resolved explicitly
 	// rather than cascading.
 	var result Result
 	if volumes > 0 {
-		if storage == StorageBackUp {
-			id, err := s.backUp(ctx, app, req.Actor)
-			if err != nil {
-				s.audit(ctx, req.Actor, "app.delete.backup_failed", app.ID, map[string]any{"reason": err.Error()})
-				return Result{}, errs.Wrap(errs.StateInvalid,
-					"Pando could not back up this app's storage, so it has not been deleted.", err).
-					WithRemedy(backupFailedRemedy(required)).
-					WithDetail("backup_error", err.Error())
-			}
-			result.BackupID = id
-		}
-
-		if err := s.Volumes.DeleteForApp(ctx, app.ID); err != nil {
+		if result, err = s.settleStorage(ctx, app, req.Actor, storage, volumes, required); err != nil {
 			return Result{}, err
 		}
-
-		// The storage itself goes when the bundle is torn down. The delete has
-		// settled it: discarded, or backed up first (R-204). It used to stay on
-		// disk with no row left to reach it by (issue #55).
-		if err := s.Apps.DiscardStorage(ctx, app.ID); err != nil {
-			return Result{}, err
-		}
-		result.VolumesDiscarded = volumes
 	}
 
 	if err := s.Apps.Archive(ctx, app.ID); err != nil {
@@ -212,6 +168,70 @@ func (s *Service) Delete(ctx context.Context, app state.App, req Request) (Resul
 		detail["reason"] = req.Reason
 	}
 	s.audit(ctx, req.Actor, "app.delete", app.ID, detail)
+	return result, nil
+}
+
+// decide is what to do with an app's storage, or the refusal: host policy
+// answers StoragePolicy, an app with volumes must be told what to do with
+// them, and policy's backup rule refuses discarding them (R-204, R-284).
+func decide(asked Storage, volumes int, required bool) (Storage, error) {
+	storage := asked
+	if storage == StoragePolicy {
+		storage = StorageDiscard
+		if required {
+			storage = StorageBackUp
+		}
+	}
+	if volumes == 0 {
+		return storage, nil
+	}
+	switch {
+	case storage == StorageUndecided:
+		remedy := "Delete with backup=true to keep a copy, or force=true to delete without one. A backup made this way is kept until you discard it."
+		if required {
+			remedy = "Delete with backup=true. This installation keeps a final backup of every app with storage it deletes; the backup is kept until you discard it."
+		}
+		return "", errs.New(errs.StateBackupDecisionRequired,
+			"This app has storage attached. Deleting it will remove that storage unless you back it up first.").
+			WithRemedy(remedy).
+			WithDetail("volume_count", volumes)
+	case storage == StorageDiscard && required:
+		return "", errs.New(errs.PolicyBackupRequired,
+			"This installation keeps a final backup of every app with storage before deleting it, so this app cannot be deleted without one.").
+			WithRemedy("Delete with backup=true. An administrator can change this with require_backup_before_destroy in host policy.").
+			WithDetail("volume_count", volumes)
+	}
+	return storage, nil
+}
+
+// settleStorage backs up the app's storage when it is to be kept, then
+// releases its volumes for the teardown to destroy. A failed backup stops
+// here with nothing removed.
+func (s *Service) settleStorage(ctx context.Context, app state.App, actor audit.Event, storage Storage, volumes int, required bool) (Result, error) {
+	var result Result
+	if storage == StorageBackUp {
+		id, err := s.backUp(ctx, app, actor)
+		if err != nil {
+			s.audit(ctx, actor, "app.delete.backup_failed", app.ID, map[string]any{"reason": err.Error()})
+			return Result{}, errs.Wrap(errs.StateInvalid,
+				"Pando could not back up this app's storage, so it has not been deleted.", err).
+				WithRemedy(backupFailedRemedy(required)).
+				WithDetail("backup_error", err.Error())
+		}
+		result.BackupID = id
+	}
+
+	if err := s.Volumes.DeleteForApp(ctx, app.ID); err != nil {
+		return Result{}, err
+	}
+
+	// The storage itself goes when the bundle is torn down. The delete has
+	// settled it: discarded, or backed up first (R-204). It used to stay on
+	// disk with no row left to reach it by (issue #55).
+	if err := s.Apps.DiscardStorage(ctx, app.ID); err != nil {
+		return Result{}, err
+	}
+	result.VolumesDiscarded = volumes
 	return result, nil
 }
 

@@ -13,6 +13,8 @@ import (
 // policy's default is in the policy document; a user's and a group's own
 // values are here. Nil is not set; zero is unlimited.
 
+const msgReadGroups = "Could not read the user's groups."
+
 // AppLimits reads and writes users' and groups' own limits.
 type AppLimits struct{ db *DB }
 
@@ -58,18 +60,18 @@ func (l *AppLimits) Facts(ctx context.Context, userID string) (LimitFacts, error
 		WHERE m.user_id = $1 AND g.max_apps IS NOT NULL
 		ORDER BY g.id`, userID)
 	if err != nil {
-		return LimitFacts{}, errs.Wrap(errs.Internal, "Could not read the user's groups.", err)
+		return LimitFacts{}, errs.Wrap(errs.Internal, msgReadGroups, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var g GroupLimit
 		if err := rows.Scan(&g.GroupID, &g.Name, &g.MaxApps); err != nil {
-			return LimitFacts{}, errs.Wrap(errs.Internal, "Could not read the user's groups.", err)
+			return LimitFacts{}, errs.Wrap(errs.Internal, msgReadGroups, err)
 		}
 		f.Groups = append(f.Groups, g)
 	}
 	if err := rows.Err(); err != nil {
-		return LimitFacts{}, errs.Wrap(errs.Internal, "Could not read the user's groups.", err)
+		return LimitFacts{}, errs.Wrap(errs.Internal, msgReadGroups, err)
 	}
 	return f, nil
 }

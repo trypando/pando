@@ -109,8 +109,13 @@ func TestR393_IdleCandidatesAreTheAppsOwedSomething(t *testing.T) {
 	ago := func(days int) time.Time { return time.Now().Add(-time.Duration(days) * 24 * time.Hour) }
 	// Made long ago: an app counts from its creation when that is later than
 	// its activity.
-	_, err := db.Exec(ctx, `UPDATE apps SET created_at = $2 WHERE id = ANY($1)`,
+	// And running: only an app meant to be running is owed a stop.
+	_, err := db.Exec(ctx, `UPDATE apps SET created_at = $2, state = 'running', desired_state = 'running' WHERE id = ANY($1)`,
 		[]string{old, recent, optedOut, ownDays}, ago(500))
+	require.NoError(t, err)
+	// Setting them running is a start, which is activity (R-394); the test
+	// wants the activity below instead.
+	_, err = db.Exec(ctx, `DELETE FROM app_activity WHERE app_id = ANY($1)`, []string{old, recent, optedOut, ownDays})
 	require.NoError(t, err)
 	require.NoError(t, activity.RecordActivity(ctx, map[string]time.Time{
 		old: ago(25), recent: ago(2), optedOut: ago(400), ownDays: ago(25),
@@ -131,6 +136,15 @@ func TestR393_IdleCandidatesAreTheAppsOwedSomething(t *testing.T) {
 	assert.NotContains(t, ids, recent)
 	assert.NotContains(t, ids, optedOut)
 	assert.NotContains(t, ids, ownDays, "its own 60 days are not near")
+
+	// An app its owner stopped is owed no stop, so it is not read every pass.
+	_, err = db.Exec(ctx, `UPDATE apps SET desired_state = 'stopped' WHERE id = $1`, old)
+	require.NoError(t, err)
+	got, err = activity.IdleCandidates(ctx, state.IdleDefaults{StopDays: 30, NoticeDays: 7}, time.Now())
+	require.NoError(t, err)
+	for _, a := range got {
+		assert.NotEqual(t, old, a.AppID)
+	}
 }
 
 // TestR244_TwoCreatesAtOnceCannotBothTakeTheLastPlace asserts R-244 at the

@@ -17,6 +17,7 @@ import (
 	"github.com/trypando/pando/internal/core/idle"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/errs"
 )
 
 const day = 24 * time.Hour
@@ -317,7 +318,12 @@ func TestR398_AnIdleAppIsDeletedAsHostPolicySays(t *testing.T) {
 func TestR398_ADeleteThatFailsWaitsAnotherNotice(t *testing.T) {
 	r := newRig(policy.Document{IdleDeleteDays: 10})
 	r.use(r.runningApp("app_1"))
-	r.deleter.err = errors.New("Pando could not back up this app's storage, so it has not been deleted.")
+	// What appdelete returns when the backup fails: a message and remedy for
+	// a person, wrapping a cause for the log.
+	r.deleter.err = errs.Wrap(errs.StateInvalid,
+		"Pando could not back up this app's storage, so it has not been deleted.",
+		errors.New("dial tcp 10.0.0.7:9000: connection refused")).
+		WithRemedy("Fix the problem and try again.")
 	ctx := context.Background()
 
 	r.clock.Advance(3 * day)
@@ -327,7 +333,9 @@ func TestR398_ADeleteThatFailsWaitsAnotherNotice(t *testing.T) {
 	require.Len(t, r.deleter.reqs, 1)
 	last := r.notes.sent[len(r.notes.sent)-1]
 	assert.True(t, strings.HasPrefix(last.Subject, "Pando did not delete"))
-	assert.Contains(t, last.Body, "could not back up")
+	assert.Contains(t, last.Body, "could not back up this app's storage, so it has not been deleted. Fix the problem and try again.")
+	assert.NotContains(t, last.Body, "STATE_INVALID", "the code is for machines")
+	assert.NotContains(t, last.Body, "10.0.0.7", "the cause is for the log, not a notification that may go by email")
 
 	sent := len(r.notes.sent)
 	for range 6 {

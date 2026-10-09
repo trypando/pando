@@ -83,9 +83,14 @@ func maxAppsArg(args map[string]any) (any, error) {
 	return nil, fmt.Errorf("max_apps must be a number of apps, 0 for unlimited, or \"clear\"; got %v", v)
 }
 
-func daysOrWord(description string) map[string]any {
+// numberOrWord is the schema of an argument that is a whole number or one of
+// a few words, which words names. A numeric string is also read.
+func numberOrWord(description string, words ...string) map[string]any {
 	return map[string]any{
 		"description": description,
-		"anyOf":       []any{map[string]any{"type": "integer", "minimum": 0}, map[string]any{"type": "string"}},
+		"anyOf": []any{
+			map[string]any{"type": "integer", "minimum": 0},
+			map[string]any{"type": "string", "pattern": "^(" + strings.Join(words, "|") + "|[0-9]+)$"},
+		},
 	}
 }
