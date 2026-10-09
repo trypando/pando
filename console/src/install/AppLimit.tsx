@@ -107,10 +107,16 @@ function MaxAppsDialog({
 }) {
   const queries = useQueryClient();
   const [value, setValue] = useState(current === null ? '' : String(current));
+  const [badInput, setBadInput] = useState(false);
+  const number = Number(value);
+  const invalid = badInput || (value !== '' && (value.trim() === '' || !Number.isFinite(number) || number < 0));
+  const inputError = 'Enter a number of apps of zero or more, or leave it empty.';
 
   const save = useMutation({
-    mutationFn: () =>
-      api.put<unknown>(path, { max_apps: value.trim() === '' ? null : Math.max(0, Math.round(Number(value) || 0)) }),
+    mutationFn: async () => {
+      if (invalid) throw new Error(inputError);
+      return api.put<unknown>(path, { max_apps: value === '' ? null : Math.round(number) });
+    },
     onSuccess: () => {
       for (const key of invalidate) void queries.invalidateQueries({ queryKey: key });
       onClose();
@@ -128,7 +134,7 @@ function MaxAppsDialog({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={save.isPending} onClick={() => save.mutate()}>
+          <Button variant="primary" disabled={save.isPending || invalid} onClick={() => save.mutate()}>
             {save.isPending ? 'Saving' : 'Save'}
           </Button>
         </>
@@ -141,9 +147,13 @@ function MaxAppsDialog({
           value={value}
           placeholder="Not set"
           helper="Zero means unlimited. Lowering it deletes nothing; it stops new apps past the limit."
-          onChange={(e) => {
+          error={invalid ? inputError : undefined}
+          onInput={(e) => {
             if (save.isError) save.reset();
-            setValue(e.target.value);
+            // Malformed number input can have an empty value. onInput also
+            // fires when that value stays empty, unlike React's onChange.
+            setBadInput(e.currentTarget.validity.badInput);
+            setValue(e.currentTarget.value);
           }}
         />
         {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}

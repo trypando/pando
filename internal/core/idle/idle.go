@@ -24,6 +24,7 @@ import (
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/errs"
 )
 
 // NoticeDays is how long before a stop or a deletion the owner is told, and
@@ -273,10 +274,17 @@ func (p *Pass) delete(ctx context.Context, doc policy.Document, app state.IdleAp
 		if err := p.Store.SetIdleNotice(ctx, app.AppID, state.IdleNoticeDelete, &now); err != nil {
 			p.logger().Warn("could not record an idle notice", zap.String("app_id", app.AppID), zap.Error(err))
 		}
+		message := err.Error()
+		if e := errs.As(err); e != nil {
+			message = e.Message
+			if e.Remedy != "" {
+				message += " " + e.Remedy
+			}
+		}
 		p.notify(ctx, app, "Pando did not delete "+app.Name,
 			fmt.Sprintf("Nobody has used %s since %s, and Pando was to delete it today, but could not: %s "+
 				"Pando tries again on %s unless somebody uses, starts or deploys it before then.",
-				app.Name, date(app.LastActivity), err.Error(), date(now.Add(days(NoticeDays)))))
+				app.Name, date(app.LastActivity), message, date(now.Add(days(NoticeDays)))))
 		return
 	}
 

@@ -83,7 +83,10 @@ function IdleSettings({ app, report }: { app: App; report: IdleReport }) {
 
       {/* What will happen, in dates, before any control. */}
       {report.stopped_for_idle ? (
-        <Banner tone="info">Pando stopped this app because nobody had used it. Start it to use it again.</Banner>
+        <Banner tone="info">
+          Pando stopped this app because nobody had used it. Start it to use it again.
+          {report.deletes_at && ` Pando deletes it on ${day(report.deletes_at)} if nobody uses it by then.`}
+        </Banner>
       ) : (
         (report.stops_at || report.deletes_at) && (
           <Banner tone="info">

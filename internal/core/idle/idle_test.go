@@ -17,6 +17,7 @@ import (
 	"github.com/trypando/pando/internal/core/idle"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/errs"
 )
 
 const day = 24 * time.Hour
@@ -342,6 +343,37 @@ func TestR398_ADeleteThatFailsWaitsAnotherNotice(t *testing.T) {
 	r.pass.Once(ctx)
 	assert.Len(t, r.deleter.reqs, 2)
 	assert.NotContains(t, r.store.apps, "app_1")
+}
+
+// TestR398_DeleteFailureNoticeUsesTheErrorEnvelope asserts R-398 and R-105:
+// the owner gets the explanation and remedy, without internal error details.
+func TestR398_DeleteFailureNoticeUsesTheErrorEnvelope(t *testing.T) {
+	for _, remedy := range []string{"", "Check the backup settings before trying again."} {
+		t.Run(remedy, func(t *testing.T) {
+			r := newRig(policy.Document{IdleDeleteDays: 10})
+			r.use(r.runningApp("app_1"))
+			message := "Pando could not back up this app's storage, so it has not been deleted."
+			cause := "storage backend: connection refused at internal-backup:9000"
+			r.deleter.err = errs.Wrap(errs.StateInvalid, message, errors.New(cause)).WithRemedy(remedy)
+			ctx := context.Background()
+
+			r.clock.Advance(3 * day)
+			r.pass.Once(ctx)
+			r.clock.Advance(7 * day)
+			r.pass.Once(ctx)
+
+			require.Len(t, r.deleter.reqs, 1)
+			require.Len(t, r.notes.sent, 2)
+			body := r.notes.sent[1].Body
+			assert.Contains(t, body, message)
+			if remedy != "" {
+				assert.Contains(t, body, remedy)
+			}
+			assert.NotContains(t, body, string(errs.StateInvalid))
+			assert.NotContains(t, body, cause)
+			assert.Contains(t, body, "Pando tries again on January 18, 2026")
+		})
+	}
 }
 
 // TestR393_OffByDefault asserts R-393 and R-270: with nothing set, nothing
