@@ -31,6 +31,8 @@ func FuzzVerifyEncodedHash(f *testing.F) {
 	f.Add("$argon2id$")
 	f.Add("$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$a2V5")
 	f.Add("$argon2id$v=19$m=0,t=0,p=0$$")
+	f.Add("$argon2id$v=19$m=4294967295,t=3,p=2$c2FsdHNhbHQ$a2V5")
+	f.Add("$argon2id$v=19$m=65536,t=4294967295,p=2$c2FsdHNhbHQ$a2V5")
 	f.Add("$argon2id$v=19$m=65536,t=3,p=2$c2FsdHNhbHQ$") // empty key
 	f.Add("$argon2id$v=19$m=65536,t=0,p=2$c2FsdHNhbHQ$a2V5")
 	f.Add("$argon2id$v=19$m=65536,t=3,p=0$c2FsdHNhbHQ$a2V5")

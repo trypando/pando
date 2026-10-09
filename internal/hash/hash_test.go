@@ -60,7 +60,8 @@ func TestMalformedHashDeniesRatherThanPanics(t *testing.T) {
 // panics rather than erroring on a zero time cost or zero parallelism, and an
 // empty key field compares equal to an empty candidate — so before the bounds
 // check in decode, one malformed row crashed the sign-in path and another
-// accepted every password.
+// accepted every password. The upper bounds are from issue #78: a row naming
+// 4 GiB of memory made every sign-in for that account allocate it.
 func TestR042_AMalformedStoredHashDeniesRatherThanPanics(t *testing.T) {
 	const goodSalt = "c2FsdHNhbHQ" // eight bytes, the RFC 9106 minimum
 	// The derived-key field of a well-formed hash: sixteen bytes, base64.
@@ -75,6 +76,8 @@ func TestR042_AMalformedStoredHashDeniesRatherThanPanics(t *testing.T) {
 		"zero parallelism":   "$argon2id$v=19$m=65536,t=3,p=0$" + goodSalt + "$" + goodDigest,
 		"everything zero":    "$argon2id$v=19$m=0,t=0,p=0$$",
 		"memory below floor": "$argon2id$v=19$m=4,t=3,p=2$" + goodSalt + "$" + goodDigest,
+		"memory above cap":   "$argon2id$v=19$m=4294967295,t=3,p=2$" + goodSalt + "$" + goodDigest,
+		"time above cap":     "$argon2id$v=19$m=65536,t=4294967295,p=2$" + goodSalt + "$" + goodDigest,
 		"empty key":          "$argon2id$v=19$m=65536,t=3,p=2$" + goodSalt + "$",
 		"short salt":         "$argon2id$v=19$m=65536,t=3,p=2$c2E$" + goodDigest,
 		"truncated":          "$argon2id$",

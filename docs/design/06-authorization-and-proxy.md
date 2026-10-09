@@ -282,6 +282,28 @@ Pando's origin. A namespace prefix rather than one cookie name, so the rule cove
 has added yet. What an app is entitled to is the assertion from step 6: scoped to that app (R-054),
 signed, and short-lived.
 
+**[D] Nor may an app's page use Pando's credentials (issue #78).** Stripping the cookie keeps it from
+the app's server. A browser still sends it with any request the app's script makes to a hostname the
+cookie was set on, so two more rules, in `internal/httpapi/origin.go`:
+
+- On an app's hostname or port, `/.pando` answers the sign-in page, its assets and the endpoints that
+  page calls, listed in `signInRoutes`, and nothing else. Signing in there sets the cookie on the
+  app's origin, and before this the whole API was behind `/.pando`, so the app's script could mint a
+  token or open exec as its visitor. A hostname that cannot be looked up counts as an app's. On a
+  port-mode listener this matters even without signing in there: browsers do not scope cookies by
+  port.
+- On the API, a write carried by the session cookie is refused with `PERM_CROSS_ORIGIN` when
+  `Sec-Fetch-Site` says another origin, or, without it, when `Origin` is neither the request's host
+  nor the external URL's. `notes.example.com` and `pando.example.com` are one site, so SameSite=Lax
+  sends the cookie with a request from one to the other. A bearer token is not ambient and is let
+  through; so is the SAML callback, which a provider posts from its own site and which the flow's
+  bind cookie defends.
+
+**[D] Under path routing, neither rule can help, and that is accepted (R-166).** An app at a path is
+on Pando's own origin, where its script is indistinguishable from the console's to the browser and to
+Pando. The console says so in the address dialog when path is chosen. No routing adapter defaults to
+it.
+
 **[D] Step 7 is a security requirement, not hygiene.** Any inbound header in Pando's namespace must be stripped unconditionally before step 8. Without it, a client sets `X-Pando-User: admin@corp.com` and an app trusting the convenience headers (R-053) is trivially spoofed. This is the single most likely serious bug in the proxy, and it needs a test asserting that a request with forged headers arrives with them replaced.
 
 **[D]** The proxy never routes around itself. Routing adapters place traffic in front of it (§00 1.3, §03 4). There is no bypass for public apps (R-075), no bypass for performance, no bypass for websockets.

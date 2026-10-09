@@ -258,6 +258,16 @@ function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; on
           />
         )}
 
+        {/* R-166: path routing puts the app on Pando's own origin, where its
+            script can use Pando as whoever opens it. Accepted for path
+            routing, and said wherever it is chosen. */}
+        {mode === 'path' && (
+          <Banner tone="info">
+            At a path, this app shares Pando’s address, so any script it serves can act in Pando as whoever opens it. Use
+            a hostname for an app whose code you don’t fully trust.
+          </Banner>
+        )}
+
         {view.address && (
           <Banner tone="info">
             Once this is deployed, {shown(view.address)} stops working, and links and bookmarks to it break.

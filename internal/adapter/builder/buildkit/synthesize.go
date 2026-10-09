@@ -386,9 +386,13 @@ func runNixpacks(contextDir string, extra []string) (string, error) {
 	// has, and the container is the boundary either way (R-112, R-114).
 	cmd := exec.Command(nixpacksBinary, args...) //nolint:gosec
 
-	// No network. Generation reads the repository and decides; it does not
-	// fetch, and a generator that can reach the internet while reading
-	// untrusted source is a larger trust boundary than this needs.
+	// A scrubbed environment, so nothing of Pando's (credentials, the
+	// database address) is visible to a generator reading untrusted source.
+	// This is not a network sandbox: nixpacks reaches whatever this process
+	// can (issue #78). Generation reads the repository and does not need to
+	// fetch, but blocking it would take a network namespace the Pando
+	// container lacks the privilege to create. What the repository's own code
+	// can reach is decided by the BuildKit build, not here (R-112, R-114).
 	cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + contextDir}
 
 	out, err := cmd.CombinedOutput()
