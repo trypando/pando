@@ -48,7 +48,13 @@ func credentialHarness(t *testing.T, configure func(*store)) (*httptest.Server, 
 	return front, got, token
 }
 
-func send(t *testing.T, front *httptest.Server, cookie bool, authorization ...string) *http.Response {
+// answer is what a test reads of the proxy's response.
+type answer struct {
+	StatusCode int
+	Location   string
+}
+
+func send(t *testing.T, front *httptest.Server, cookie bool, authorization ...string) answer {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, front.URL+"/api/items", nil)
 	require.NoError(t, err)
@@ -61,8 +67,8 @@ func send(t *testing.T, front *httptest.Server, cookie bool, authorization ...st
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	return resp
+	_ = resp.Body.Close()
+	return answer{StatusCode: resp.StatusCode, Location: resp.Header.Get("Location")}
 }
 
 // TestR173_AnAppsOwnLoginReachesItAndTheCookieDecides asserts R-173's other
@@ -138,6 +144,6 @@ func TestR173_APrivateAppsOwnAPICallIsNotSentToSignIn(t *testing.T) {
 
 	resp := send(t, front, true, appJWT)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Empty(t, resp.Header.Get("Location"))
+	require.Empty(t, resp.Location)
 	require.Equal(t, "/api/items", got.path)
 }
