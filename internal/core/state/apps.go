@@ -118,6 +118,9 @@ type App struct {
 }
 
 // Apps stores apps and their spec revisions.
+// msgCreateApp is what a create that failed inside Pando says.
+const msgCreateApp = "Could not create the app."
+
 type Apps struct{ db *DB }
 
 func NewApps(db *DB) *Apps { return &Apps{db: db} }
@@ -151,12 +154,12 @@ func withinLimit(ctx context.Context, tx pgx.Tx, ownerUserID string, limit int) 
 		return nil
 	}
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, ownerUserID); err != nil {
-		return errs.Wrap(errs.Internal, "Could not create the app.", err)
+		return errs.Wrap(errs.Internal, msgCreateApp, err)
 	}
 	var owned int
 	if err := tx.QueryRow(ctx,
 		`SELECT count(*) FROM apps WHERE owner_user_id = $1 AND deleted_at IS NULL`, ownerUserID).Scan(&owned); err != nil {
-		return errs.Wrap(errs.Internal, "Could not create the app.", err)
+		return errs.Wrap(errs.Internal, msgCreateApp, err)
 	}
 	if owned >= limit {
 		return &AppLimitReached{Owned: owned, Limit: limit}
@@ -172,7 +175,7 @@ func withinLimit(ctx context.Context, tx pgx.Tx, ownerUserID string, limit int) 
 func (a *Apps) CreateWithin(ctx context.Context, name, slug, ownerUserID, createdBy string, src spec.Source, limit int) (App, error) {
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
-		return App{}, errs.Wrap(errs.Internal, "Could not create the app.", err)
+		return App{}, errs.Wrap(errs.Internal, msgCreateApp, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -205,7 +208,7 @@ func (a *Apps) CreateWithin(ctx context.Context, name, slug, ownerUserID, create
 			return App{}, errs.Newf(errs.ValidInvalid, "An app named %q already exists.", name).
 				WithRemedy("Choose a different name.")
 		}
-		return App{}, errs.Wrap(errs.Internal, "Could not create the app.", err)
+		return App{}, errs.Wrap(errs.Internal, msgCreateApp, err)
 	}
 
 	for _, g := range []struct {
@@ -225,7 +228,7 @@ func (a *Apps) CreateWithin(ctx context.Context, name, slug, ownerUserID, create
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return App{}, errs.Wrap(errs.Internal, "Could not create the app.", err)
+		return App{}, errs.Wrap(errs.Internal, msgCreateApp, err)
 	}
 	return app, nil
 }

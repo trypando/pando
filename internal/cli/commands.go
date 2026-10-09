@@ -1214,6 +1214,9 @@ func grantCmd(client func() (*Client, error)) *cobra.Command {
 	return cmd
 }
 
+// usersPath is where accounts are, under the API.
+const usersPath = "/users/"
+
 // generatedPassword asks the server for a password, so the CLI's are the
 // same strength and alphabet as the console's (R-046).
 func generatedPassword(c *Client) (string, error) {
@@ -1248,7 +1251,7 @@ func userUpdateCmd(client func() (*Client, error)) *cobra.Command {
 			if len(body) == 0 {
 				return fmt.Errorf("say what to change: --username, --name or --email")
 			}
-			if err := c.Do("PATCH", "/users/"+args[0], body, nil); err != nil {
+			if err := c.Do("PATCH", usersPath+args[0], body, nil); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Updated.")
@@ -1314,7 +1317,7 @@ func userCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			body := map[string]any{"password": password, "must_change_password": !keepReset}
-			if err := c.Do("POST", "/users/"+args[0]+"/password", body, nil); err != nil {
+			if err := c.Do("POST", usersPath+args[0]+"/password", body, nil); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Password reset. New password: %s\n", password)
@@ -1336,7 +1339,7 @@ func userCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			var out map[string]any
-			if err := c.Do("GET", "/users/"+args[0]+"/apps", nil, &out); err != nil {
+			if err := c.Do("GET", usersPath+args[0]+"/apps", nil, &out); err != nil {
 				return err
 			}
 			return printJSON(cmd.OutOrStdout(), out)

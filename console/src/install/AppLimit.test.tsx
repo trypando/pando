@@ -9,7 +9,7 @@ vi.hoisted(() => {
 import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { AccountAppLimit, describeLimit, parseMaxApps } from './AppLimit';
+import { AccountAppLimit, GroupAppLimit, describeLimit, parseMaxApps } from './AppLimit';
 import type { Limit } from './AppLimit';
 
 const finance: Limit = { limit: 5, source: 'group', group_name: 'Finance', owned: 3, max_apps: null };
@@ -57,5 +57,30 @@ describe('the account page row', () => {
 
   it('holds its place until the limit arrives', () => {
     expect(render(undefined, true)).not.toContain('through');
+  });
+});
+
+function renderGroup(maxApps: number | null | undefined) {
+  const client = new QueryClient();
+  if (maxApps !== undefined) client.setQueryData(['groups', 'grp_x', 'app-limit'], { max_apps: maxApps });
+  return renderToString(
+    <QueryClientProvider client={client}>
+      <GroupAppLimit groupID="grp_x" name="Finance" onClose={() => undefined} />
+    </QueryClientProvider>,
+  );
+}
+
+describe("a group's limit", () => {
+  it('opens on the value the group has, and says what a group limit means', () => {
+    const html = renderGroup(5);
+    expect(html).toContain('Apps each person in Finance may own');
+    expect(html).toContain('the most generous');
+    expect(html).toContain('value="5"');
+    expect(html).toContain('Zero means unlimited');
+  });
+
+  it('opens empty for a group that sets none, and waits for the value', () => {
+    expect(renderGroup(null)).toContain('placeholder="Not set"');
+    expect(renderGroup(undefined)).toBe('');
   });
 });
