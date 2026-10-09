@@ -79,6 +79,24 @@ describe("a group's limit", () => {
     expect(html).toContain('Zero means unlimited');
   });
 
+  it('offers no editor when the value could not be read, so Save cannot clear it', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
+    await client
+      .fetchQuery({
+        queryKey: ['groups', 'grp_x', 'app-limit'],
+        queryFn: () => Promise.reject(new Error('Pando could not be reached.')),
+      })
+      .catch(() => undefined);
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <GroupAppLimit groupID="grp_x" name="Finance" onClose={() => undefined} />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain('Try again');
+    expect(html).not.toContain('placeholder="Not set"');
+    expect(html).not.toContain('>Save<');
+  });
+
   it('opens empty for a group that sets none, and waits for the value', () => {
     expect(renderGroup(null)).toContain('placeholder="Not set"');
     expect(renderGroup(undefined)).toBe('');

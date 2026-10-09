@@ -93,12 +93,36 @@ export function GroupAppLimit({ groupID, name, onClose }: Readonly<{ groupID: st
     queryKey: ['groups', groupID, 'app-limit'],
     queryFn: () => api.get<{ max_apps: number | null }>(`/groups/${groupID}/app-limit`),
   });
+  const title = `Apps each person in ${name} may own`;
   if (current.isPending) return null;
+  // Not an empty editor: Save from one would clear the limit the group has,
+  // which nobody could see because it was never read.
+  if (current.isError || !current.data) {
+    return (
+      <Dialog
+        open
+        title={title}
+        onClose={onClose}
+        footer={
+          <>
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={current.isFetching} onClick={() => void current.refetch()}>
+              {current.isFetching ? 'Trying again' : 'Try again'}
+            </Button>
+          </>
+        }
+      >
+        <Banner tone="failed">{refusal(current.error)}</Banner>
+      </Dialog>
+    );
+  }
   return (
     <MaxAppsDialog
-      title={`Apps each person in ${name} may own`}
+      title={title}
       description="Somebody in several groups gets the most generous of them. A number set on their own account replaces every group's."
-      current={current.data?.max_apps ?? null}
+      current={current.data.max_apps}
       path={`/groups/${groupID}/app-limit`}
       // Every member's limit may have changed.
       invalidate={[['groups', groupID, 'app-limit'], ['users']]}

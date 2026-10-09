@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -38,6 +40,25 @@ func TestR244_AppLimitsFromTheCLI(t *testing.T) {
 	require.ErrorContains(t, got.err, "is not a number of apps")
 	got = run(t, api, "", "group", "app-limit", "grp_01", "3", "--clear")
 	require.Error(t, got.err)
+}
+
+// TestR244_ADirectoryThatCannotBePackedCreatesNoApp asserts R-244: deploying
+// a directory makes an app only once the directory is packed, so a local
+// failure leaves nothing behind to count against its owner's limit.
+func TestR244_ADirectoryThatCannotBePackedCreatesNoApp(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its mode")
+	}
+	dir := t.TempDir()
+	secret := filepath.Join(dir, "unreadable.txt")
+	require.NoError(t, os.WriteFile(secret, []byte("x"), 0o600))
+	require.NoError(t, os.Chmod(secret, 0))
+	t.Cleanup(func() { _ = os.Chmod(secret, 0o600) })
+
+	api := newAPI(t)
+	got := run(t, api, "", "deploy", dir)
+	require.Error(t, got.err)
+	require.False(t, api.sawPath("/apps"), "no app was created")
 }
 
 // TestR397_IdleSettingsFromTheCLI asserts R-397 with R-261: a flag left out

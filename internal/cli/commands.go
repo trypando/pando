@@ -729,6 +729,13 @@ func deployCmd(client func() (*Client, error)) *cobra.Command {
 // prepares it to deploy, making the app first when none is named. It returns
 // the app to deploy.
 func (c *Client) uploadDirectory(cmd *cobra.Command, dir, appID string, env []string) (string, error) {
+	// Packed before anything is created, so a directory that cannot be packed
+	// leaves no empty app behind to count against its owner's limit (R-244).
+	archive, files, err := PackDirectory(dir)
+	if err != nil {
+		return "", err
+	}
+
 	if appID == "" {
 		// No app named, so make one from the directory. Named for the
 		// directory, which is what a person would have called it anyway.
@@ -744,10 +751,6 @@ func (c *Client) uploadDirectory(cmd *cobra.Command, dir, appID string, env []st
 		fmt.Fprintf(cmd.ErrOrStderr(), "Created %s (%s).\n", filepath.Base(abs), appID)
 	}
 
-	archive, files, err := PackDirectory(dir)
-	if err != nil {
-		return "", err
-	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "Uploading %d files (%s)...\n", files, humanBytes(len(archive)))
 	if err := c.UploadSource(appID, archive); err != nil {
 		return "", err
