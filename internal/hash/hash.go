@@ -28,6 +28,20 @@ const (
 	keyLength  = 32
 )
 
+// The most a stored hash may ask Verify to spend: 1 GiB of memory (argon2
+// counts in KiB) and thirty passes, sixteen and ten times what New uses today.
+// The parameters come from the row, so without a ceiling a corrupted or
+// tampered hash makes every sign-in for that account allocate whatever it
+// names — a denial of service on the login path (issue #78). The headroom is
+// so raising the cost in cost.go does not strand the hashes already written.
+// Fixed numbers rather than multiples of cost.go, because the integration
+// build lowers that cost and a hash written by a shipped binary must still
+// verify there.
+const (
+	maxMemoryCost = 1024 * 1024
+	maxTimeCost   = 30
+)
+
 // MinPasswordLength is the only rule a password has to satisfy.
 //
 // Here rather than beside any one of its callers because there are three — the
@@ -143,6 +157,11 @@ func decode(encoded string) (params, []byte, []byte, error) {
 	switch {
 	case p.time < 1:
 		return params{}, nil, nil, fmt.Errorf("argon2id time cost must be at least 1, got %d", p.time)
+	case p.time > maxTimeCost:
+		return params{}, nil, nil, fmt.Errorf("argon2id time cost %d is above the maximum %d", p.time, maxTimeCost)
+	case p.memory > maxMemoryCost:
+		return params{}, nil, nil, fmt.Errorf("argon2id memory cost %d KiB is above the maximum %d KiB",
+			p.memory, maxMemoryCost)
 	case p.parallelism < 1:
 		return params{}, nil, nil, fmt.Errorf("argon2id parallelism must be at least 1, got %d", p.parallelism)
 	case p.memory < 8*uint32(p.parallelism):
