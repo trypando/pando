@@ -86,7 +86,7 @@ way for it to tell the difference if the proxy is ever bypassed.
 (database credentials and connection strings) and any secret bound to it. Nothing is read from the
 repository at deploy time (R-020): the spec is the sole record of how an app runs.
 
-An app never receives a `pando_*` cookie. Those are stripped on the way out (R-173).
+An app never receives a `pando_*` cookie, or a Pando API token (`Authorization: Bearer tok_…`). Those are stripped on the way out (R-173). Any other `Authorization` header, such as the app's own bearer JWT or a Basic header, reaches the app untouched, and Pando decides who the visitor is from their session cookie instead.
 
 ## Configuration
 

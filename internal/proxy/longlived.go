@@ -112,7 +112,7 @@ func (w *reauthorizing) watch(ctx context.Context, r *http.Request, conn *closeW
 // decides whether anonymous is enough. A failure to look the credential up is
 // returned, and closes the connection: an unknown answer is not an allow.
 func (p *Proxy) reauthenticate(r *http.Request) (authz.Principal, error) {
-	principal, err := p.Authenticator.Authenticate(r)
+	principal, err := p.authenticate(r)
 	if err != nil {
 		if errs.CodeOf(err) == errs.Internal {
 			return authz.Anonymous(), err

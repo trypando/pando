@@ -160,6 +160,13 @@ func harness(t *testing.T, principal authz.Principal, configure func(*store)) (*
 // the caller: directly, or through a host agent (agent_test.go).
 func harnessVia(t *testing.T, principal authz.Principal, configure func(*store), via func(upstreamURL string) proxy.Upstreams) (*httptest.Server, *store, *proxy.Counters, *received) {
 	t.Helper()
+	return harnessWith(t, staticAuth{principal: principal}, configure, via)
+}
+
+// harnessWith is harnessVia with the authenticator chosen by the caller, for
+// tests of what the proxy lets the authenticator see (credentials_test.go).
+func harnessWith(t *testing.T, auth proxy.Authenticator, configure func(*store), via func(upstreamURL string) proxy.Upstreams) (*httptest.Server, *store, *proxy.Counters, *received) {
+	t.Helper()
 
 	got := &received{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +197,7 @@ func harnessVia(t *testing.T, principal authz.Principal, configure func(*store),
 					Ports: []spec.Port{{Number: 80, Protocol: "http"}}}},
 			},
 		},
-		Authenticator: staticAuth{principal: principal},
+		Authenticator: auth,
 		Authz:         authz.New(s, nil, nil),
 		Minter:        minter,
 		Upstreams:     via(upstream.URL),

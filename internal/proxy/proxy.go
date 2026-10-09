@@ -176,7 +176,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A bad credential is not fatal here: it resolves to anonymous and the data
 	// check decides. That keeps one code path for every caller rather than a
 	// separate one for "authentication failed".
-	principal, err := p.Authenticator.Authenticate(r)
+	// Only a Pando-shaped bearer is Pando's here; any other Authorization
+	// header is the app's own login and is left to it (credentials.go).
+	principal, err := p.authenticate(r)
 	if err != nil {
 		principal = authz.Anonymous()
 	}
@@ -288,6 +290,11 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target *url.URL,
 			// app (R-054), signed, and short-lived, which a session cookie is
 			// none of.
 			stripCookies(pr.Out)
+
+			// And a Pando API token, for the same reason, whether or not it
+			// authenticated. Any other Authorization value is the app's own
+			// and goes through (credentials.go).
+			stripPandoTokens(pr.Out.Header)
 
 			// 8. Set the assertion and the convenience headers.
 			pr.Out.Header.Set(assertion.Header, token)

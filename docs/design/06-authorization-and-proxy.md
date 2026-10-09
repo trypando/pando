@@ -251,7 +251,7 @@ The single enforcement point (R-023). One path for every request to every app �
 ```
 1.  Resolve app from hostname or path prefix
 2.  App exists and is running?             → 404 / 503
-3.  Extract session cookie or bearer token
+3.  Extract session cookie, or a bearer token shaped like Pando's (tok_…)
 4.  Authenticate → Principal, or anonymous
 5.  CheckData(principal, app)
       passcode required   → redirect to the passcode page (R-075a)
@@ -262,7 +262,7 @@ The single enforcement point (R-023). One path for every request to every app �
 7.  Strip inbound X-Pando-* headers        ← critical, see below
 8.  Set assertion + convenience headers
 9.  Strip path prefix, set X-Forwarded-Prefix (R-167)
-10. Strip every cookie in Pando's namespace (R-173)  ← a credential; see below
+10. Strip every cookie in Pando's namespace, and a Pando API token (R-173)  ← credentials; see below
 11. Forward to the workload
 12. Stream response
 ```
@@ -303,6 +303,17 @@ cookie was set on, so two more rules, in `internal/httpapi/origin.go`:
 on Pando's own origin, where its script is indistinguishable from the console's to the browser and to
 Pando. The console says so in the address dialog when path is chosen. No routing adapter defaults to
 it.
+
+**[D] In front of an app, only a Pando-shaped bearer is Pando's (issue #93).** Step 3 used to read
+every `Authorization` header as a Pando token. An app with its own login sends its own from the
+browser — a Supabase or Firebase JWT, a Basic header — so Pando failed to parse it and treated a
+visitor with a good session cookie as signed out, and a private app's API calls were sent to sign in.
+Now step 3 shows the authenticator `Bearer tok_<ULID>.<secret>` and nothing else, so another value
+leaves the cookie to decide and is forwarded untouched. A Pando-shaped token that fails is anonymous
+and does not fall back to the cookie: two credentials with one quietly winning is how a revoked token
+keeps working. And step 10 removes every Pando-shaped bearer, valid or not, for R-173's reason: an
+app holding one could replay it against the API. The API itself is unchanged; there, any
+`Authorization` header is Pando's and one it cannot read is refused. `internal/proxy/credentials.go`.
 
 **[D] Step 7 is a security requirement, not hygiene.** Any inbound header in Pando's namespace must be stripped unconditionally before step 8. Without it, a client sets `X-Pando-User: admin@corp.com` and an app trusting the convenience headers (R-053) is trivially spoofed. This is the single most likely serious bug in the proxy, and it needs a test asserting that a request with forged headers arrives with them replaced.
 
