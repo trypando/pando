@@ -38,6 +38,8 @@ var descriptions = map[string]string{
 		"backed up before the app or its volumes are deleted.",
 	"max_token_lifetime_days": "Longest a token may live, in days. 0 means no limit.",
 	"max_log_disk_bytes":      "Total disk for app logs across every app, in bytes. 0 means no limit.",
+	"max_concurrent_deploys": "How many deploys each replica of Pando runs at once. A deploy past the limit " +
+		"waits in the queue and its log says how many are ahead of it. 0 means one per CPU, and at least two.",
 	"allow_cpu_oversubscription": "Let apps together ask for more CPU than the runtime has. Off by default: a " +
 		"deploy that would need more CPU than is left is refused. On, busy apps share the CPU and run slower.",
 	"allow_memory_oversubscription": "Let apps together ask for more memory than the runtime has. Off by " +

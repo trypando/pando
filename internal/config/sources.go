@@ -125,6 +125,16 @@ func policyOf(v *viper.Viper, path string) []PolicySetting {
 		key := strings.ToLower(strings.TrimPrefix(name, PolicyEnvPrefix))
 		byKey[key] = PolicySetting{Key: key, Value: value, Source: Source{Kind: "env", Name: name}}
 	}
+	// work.deploys came first, as a startup setting; it is now host policy's
+	// max_concurrent_deploys (issue #93), and an install that set it keeps it,
+	// fixed from where it was set. The policy key wins when both are set.
+	if _, set := byKey["max_concurrent_deploys"]; !set {
+		if src := sourceOf(v, "work.deploys", path); src.Kind != "default" && v.GetInt("work.deploys") != 0 {
+			byKey["max_concurrent_deploys"] = PolicySetting{
+				Key: "max_concurrent_deploys", Value: v.GetInt("work.deploys"), Source: src,
+			}
+		}
+	}
 	out := make([]PolicySetting, 0, len(byKey))
 	for _, s := range byKey {
 		out = append(out, s)

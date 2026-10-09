@@ -322,6 +322,7 @@ interface PolicyDoc {
   // R-242, as amended by issue #72. Disk has no counterpart.
   allow_cpu_oversubscription?: boolean;
   allow_memory_oversubscription?: boolean;
+  max_concurrent_deploys?: number;
 
   // Audit retention (R-347, R-348).
   audit_retention_months?: number;
@@ -899,6 +900,20 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               label="Allow more memory to be promised than the runtime has"
               description="If the host runs out, it stops an app to free memory."
               onChange={(e) => edit({ allow_memory_oversubscription: e.target.checked })}
+            />
+          </Fixed>
+          {/* Issue #93: read each time the deploy queue looks for work, so a
+              change applies without a restart. */}
+          <Fixed field="max_concurrent_deploys">
+            <Input
+              label="Deploys each replica runs at once"
+              type="number"
+              disabled={locked('max_concurrent_deploys')}
+              value={String(current.max_concurrent_deploys ?? 0)}
+              helper="Zero means one per CPU, and at least two. A deploy past the limit waits, and its log says how many are ahead of it."
+              onChange={(e) =>
+                edit({ max_concurrent_deploys: Math.max(0, Math.round(Number(e.target.value) || 0)) })
+              }
             />
           </Fixed>
         </PolicySection>

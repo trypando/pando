@@ -406,3 +406,15 @@ func TestR348_PolicyRefusesRetentionUnderTheFloor(t *testing.T) {
 	got := policy.Document{AuditRetentionMonths: 6, AuditArchive: audit.ArchiveExport, AuditArchiveDestination: "bk_s3"}.AuditRetention()
 	require.Equal(t, audit.Retention{Months: 6, Archive: audit.ArchiveExport, Destination: "bk_s3"}, got)
 }
+
+// TestR105_ANegativeDeployLimitSaysWhatToUse asserts R-105 for
+// max_concurrent_deploys (issue #93): refused, with the values that work.
+func TestR105_ANegativeDeployLimitSaysWhatToUse(t *testing.T) {
+	err := policy.Document{MaxConcurrentDeploys: -1}.ValidateRules()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "max_concurrent_deploys is -1")
+	require.Contains(t, err.Error(), "0 means one per CPU")
+
+	require.NoError(t, policy.Document{MaxConcurrentDeploys: 0}.ValidateRules())
+	require.NoError(t, policy.Document{MaxConcurrentDeploys: 8}.ValidateRules())
+}

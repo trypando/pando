@@ -116,6 +116,14 @@ type Document struct {
 	// because an unrelated app turned chatty.
 	MaxLogDiskBytes int64 `json:"max_log_disk_bytes,omitempty"`
 
+	// MaxConcurrentDeploys is how many deploys each replica runs at once from
+	// the deploy queue (issue #93). Zero means one per CPU, and at least two
+	// (deploy.DefaultConcurrency). Per replica, because a build's cost lands
+	// on the machine that runs it. Read every time the queue looks for work,
+	// so a change applies without a restart; a deploy past the limit waits,
+	// and says how many are ahead of it.
+	MaxConcurrentDeploys int `json:"max_concurrent_deploys,omitempty"`
+
 	// AllowCPUOversubscription and AllowMemoryOversubscription let the apps
 	// on a runtime together ask for more CPU, or more memory, than the runtime
 	// reports having (R-242 as amended for issue #72). Both off by default: a
@@ -579,6 +587,9 @@ func (d Document) ValidateRules() error {
 	}
 	if d.DeployApprovalCount < 0 {
 		return fmt.Errorf("deploy_approval_count is %d; it is how many approvals a deploy needs, so use 1 or more (0 also means 1)", d.DeployApprovalCount)
+	}
+	if d.MaxConcurrentDeploys < 0 {
+		return fmt.Errorf("max_concurrent_deploys is %d; it is how many deploys each replica runs at once, so use 1 or more (0 means one per CPU, at least two)", d.MaxConcurrentDeploys)
 	}
 	if d.DeployApprovalExpiryHours < 0 {
 		return fmt.Errorf("deploy_approval_expiry_hours is %d; use a number of hours, or 0 for requests that wait until somebody answers", d.DeployApprovalExpiryHours)

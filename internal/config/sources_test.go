@@ -70,3 +70,40 @@ policy:
 	require.Equal(t, Source{Kind: "file", Name: path, Key: "policy.disabled_verbs"}, policy["disabled_verbs"].Source)
 	require.Equal(t, false, policy["allow_anonymous_grants"].Value)
 }
+
+func policyNamed(cfg *Config, key string) (PolicySetting, bool) {
+	for _, p := range cfg.Policy {
+		if p.Key == key {
+			return p, true
+		}
+	}
+	return PolicySetting{}, false
+}
+
+// TestR271_WorkDeploysIsTheOlderNameOfAPolicySetting asserts R-271 for a
+// setting that moved: work.deploys was a startup setting and is now host
+// policy's max_concurrent_deploys (issue #93). An install that set it keeps
+// it, fixed and saying where it was set; the policy key wins when both are.
+func TestR271_WorkDeploysIsTheOlderNameOfAPolicySetting(t *testing.T) {
+	t.Setenv("PANDO_DATABASE_URL", "postgres://pando@db/pando")
+	t.Setenv("PANDO_WORK_DEPLOYS", "6")
+	cfg, err := Load("")
+	require.NoError(t, err)
+	got, ok := policyNamed(cfg, "max_concurrent_deploys")
+	require.True(t, ok, "the older setting fixes the policy field")
+	require.Equal(t, 6, got.Value)
+	require.Equal(t, Source{Kind: "env", Name: "PANDO_WORK_DEPLOYS"}, got.Source)
+
+	t.Setenv("PANDO_POLICY_MAX_CONCURRENT_DEPLOYS", "3")
+	cfg, err = Load("")
+	require.NoError(t, err)
+	got, _ = policyNamed(cfg, "max_concurrent_deploys")
+	require.Equal(t, "3", got.Value, "the policy key wins over the older name")
+
+	t.Setenv("PANDO_POLICY_MAX_CONCURRENT_DEPLOYS", "")
+	t.Setenv("PANDO_WORK_DEPLOYS", "")
+	cfg, err = Load("")
+	require.NoError(t, err)
+	_, ok = policyNamed(cfg, "max_concurrent_deploys")
+	require.False(t, ok, "left alone, it is the console's to set")
+}

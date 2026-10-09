@@ -566,14 +566,18 @@ func serve(ctx context.Context, configPath string) error {
 		WithBuildRegistry(buildRegistry)
 
 	// The deploy queue (issue #72, O-32): a deploy is queued in Postgres and
-	// run by whichever replica has room, at most work.deploys at once here.
-	// Served once the loops start, below.
+	// run by whichever replica has room, at most host policy's
+	// max_concurrent_deploys at once here, read each time it looks for work
+	// (issue #93). Served once the loops start, below.
 	deployQueue := &deploy.Queue{
 		Runner:      deployer,
 		Deployments: deployments,
 		Revisions:   apps,
-		Limit:       cfg.Work.Deploys,
-		Logger:      logger,
+		Concurrency: func(ctx context.Context) (int, error) {
+			doc, err := hostPolicy.Document(ctx)
+			return doc.MaxConcurrentDeploys, err
+		},
+		Logger: logger,
 	}
 
 	// Detection (Sequence A). Every detector bids; the runtime supplies the

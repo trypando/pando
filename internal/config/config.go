@@ -73,8 +73,9 @@ type Reconciler struct {
 // Work bounds the background work one replica does at once (issue #72). Zero
 // means the shipped default for each.
 type Work struct {
-	// Deploys is how many deploys this replica runs at once from the deploy
-	// queue. Default: one per CPU, at least two.
+	// Deploys is the older name for host policy's max_concurrent_deploys
+	// (issue #93). Set, it fixes that policy field unless the policy key is
+	// set too (policyOf); nothing reads it from here.
 	Deploys int `mapstructure:"deploys"`
 
 	// Detections is how many detections this replica runs at once. Default:

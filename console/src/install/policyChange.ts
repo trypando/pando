@@ -24,6 +24,7 @@ const LABELS: Record<string, string> = {
   require_backup_before_destroy: 'Require a backup before anything is destroyed',
   max_token_lifetime_days: 'Longest a token may live, in days',
   max_log_disk_bytes: 'Total disk for app logs',
+  max_concurrent_deploys: 'Deploys each replica runs at once',
   allow_cpu_oversubscription: 'Allow more CPU to be promised than the runtime has',
   allow_memory_oversubscription: 'Allow more memory to be promised than the runtime has',
   disable_ai_screening: 'Turn off AI screening of deployment plans',

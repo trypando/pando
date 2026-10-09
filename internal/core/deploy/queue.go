@@ -47,8 +47,14 @@ type Queue struct {
 	Revisions   Revisions
 
 	// Limit is how many deploys this replica runs at once. DefaultConcurrency
-	// when zero.
+	// when zero. Concurrency, when set, is read instead.
 	Limit int
+
+	// Concurrency reads the limit from host policy's max_concurrent_deploys
+	// each time the queue looks for work (issue #93): zero for the default, or
+	// an error. On an error the last limit read stays in force rather than
+	// the queue stopping, or running without one.
+	Concurrency func(ctx context.Context) (int, error)
 
 	// Poll is how often to look for deploys another replica queued. Two
 	// seconds when zero.
@@ -84,6 +90,25 @@ func (q *Queue) Serve(ctx context.Context) {
 	}
 	q.pool.Name = "deploys"
 	q.pool.Limit = limit
+	if q.Concurrency != nil {
+		last := limit
+		q.pool.LimitFunc = func(ctx context.Context) int {
+			n, err := q.Concurrency(ctx)
+			switch {
+			case err != nil:
+				logger.Warn("could not read the deploy limit from host policy; keeping the last one",
+					zap.Int("concurrency", last), zap.Error(err))
+				return last
+			case n <= 0:
+				n = DefaultConcurrency()
+			}
+			if n != last {
+				logger.Info("deploy limit changed", zap.Int("from", last), zap.Int("to", n))
+				last = n
+			}
+			return n
+		}
+	}
 	q.pool.Poll = q.Poll
 	q.pool.Logger = logger
 	q.pool.Claim = q.Deployments.Claim

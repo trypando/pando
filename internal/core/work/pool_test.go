@@ -291,3 +291,59 @@ func TestR211_EachSkipsWhatItHadNotStartedWhenStopped(t *testing.T) {
 	require.Equal(t, int32(2), visited.Load(), "nothing after the context ended")
 	require.Equal(t, int32(1), most.Load(), "a bound of zero runs one at a time")
 }
+
+// TestR256_TheLimitIsReadWhileThePoolRuns asserts issue #93's change to the
+// bound: the deploy limit is host policy, read each time the pool looks for
+// work, so raising it lets more run without a restart and lowering it stops
+// new claims until enough have finished.
+func TestR256_TheLimitIsReadWhileThePoolRuns(t *testing.T) {
+	t.Parallel()
+	q := &queue{}
+	for i := 0; i < 10; i++ {
+		q.waiting = append(q.waiting, i)
+	}
+
+	var limit, running atomic.Int32
+	limit.Store(1)
+	gate := make(chan struct{})
+	pool := &Pool[int]{
+		Name:      "test",
+		Poll:      5 * time.Millisecond,
+		LimitFunc: func(context.Context) int { return int(limit.Load()) },
+		Claim:     q.claim,
+		Run: func(ctx context.Context, _ int) {
+			running.Add(1)
+			defer running.Add(-1)
+			select {
+			case <-gate:
+			case <-ctx.Done():
+			}
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go pool.Serve(ctx)
+
+	require.Eventually(t, func() bool { return running.Load() == 1 }, time.Second, time.Millisecond)
+	require.Never(t, func() bool { return running.Load() > 1 }, 30*time.Millisecond, time.Millisecond,
+		"one at a time while the limit is one")
+
+	limit.Store(4)
+	pool.Kick()
+	require.Eventually(t, func() bool { return running.Load() == 4 }, time.Second, time.Millisecond,
+		"raising the limit takes effect without restarting the pool")
+
+	limit.Store(2)
+	gate <- struct{}{} // one finishes: three left running, over the new limit of two
+	require.Never(t, func() bool { return running.Load() > 3 }, 30*time.Millisecond, time.Millisecond,
+		"lowering it stops new claims; nothing running is stopped")
+	close(gate)
+}
+
+// A limit below one is one: a policy read of zero must not stop the queue.
+func TestALimitBelowOneRunsOne(t *testing.T) {
+	p := &Pool[int]{LimitFunc: func(context.Context) int { return 0 }}
+	require.Equal(t, 1, p.limit(context.Background()))
+	p = &Pool[int]{Limit: -3}
+	require.Equal(t, 1, p.limit(context.Background()))
+}

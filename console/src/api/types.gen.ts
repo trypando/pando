@@ -240,6 +240,7 @@ export interface PolicyDocument {
   require_backup_before_destroy?: boolean;
   max_token_lifetime_days?: number;
   max_log_disk_bytes?: number;
+  max_concurrent_deploys?: number;
   allow_cpu_oversubscription?: boolean;
   allow_memory_oversubscription?: boolean;
   audit_retention_months?: number;
