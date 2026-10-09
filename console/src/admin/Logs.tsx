@@ -22,7 +22,7 @@ import { Quiet, messageOf } from '../install/Accounts';
 import { MEASURE } from '../ui/layout';
 import { Parts, useAppStatus, labelFor } from './Parts';
 import { appendCapped, followLog } from './logStream';
-import { deployLabel, deployStatus } from '../ui/deploys';
+import { deployLabelFor, deployStatus } from '../ui/deploys';
 import { Table } from '../ui/Table';
 import { deploymentsInterval } from '../ui/polling';
 import { ApprovalRequest } from './ApprovalRequest';
@@ -141,8 +141,10 @@ export function DeploymentLog({
     // stays black and empty forever — which is the bug this whole fallback
     // exists for, and the version that only listened for `end` did not catch
     // it. A finished deploy that has said nothing for four seconds has nothing
-    // to say.
-    if (deployment.status !== 'running') {
+    // to say. Only a finished one: this used to compare the status with
+    // 'running', which a deploy never has, so a queued or building deploy
+    // that was quiet for four seconds was shown as having no output.
+    if (deployment.finished_at) {
       silent = window.setTimeout(done, 4_000);
     }
 
@@ -150,7 +152,7 @@ export function DeploymentLog({
       window.clearTimeout(silent);
       stream.close();
     };
-  }, [appID, deployment.id, deployment.status]);
+  }, [appID, deployment.id, deployment.finished_at]);
 
   // Deploy output lives in memory (`deploy.LogStore`) and is written nowhere,
   // so a deploy from before the last restart has none. An empty black box is
@@ -167,7 +169,7 @@ export function DeploymentLog({
     );
   }
 
-  return <LogBox title={`Deploy log · ${deployLabel(deployment.status)}`} lines={lines} />;
+  return <LogBox title={`Deploy log · ${deployLabelFor(deployment)}`} lines={lines} />;
 }
 
 /** The app's own output, from the runtime, and the deploys before this one. */
@@ -212,7 +214,7 @@ export function Logs({ app, workload }: { app: App; workload?: string }) {
                 render: (row: Deployment) => (
                   <StatusIndicator
                     status={deployStatus(row.status, row.result_state)}
-                    label={deployLabel(row.status, row.result_state)}
+                    label={deployLabelFor(row)}
                   />
                 ),
               },

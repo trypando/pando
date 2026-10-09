@@ -163,6 +163,14 @@ type Server struct {
 	// the viewer's access again (R-048). logstream.DefaultReauthEvery when
 	// zero; tests shorten it.
 	DeployLogReauthEvery time.Duration
+
+	// QueuePollEvery is how often a queued deploy's log stream reads its
+	// place in the queue (issue #93). A second when zero.
+	QueuePollEvery time.Duration
+
+	// RelayTransport carries a deploy-log request to the replica holding the
+	// log. http.DefaultTransport when nil.
+	RelayTransport http.RoundTripper
 	// LogOwner finds the replica running a deploy, so its live log can be
 	// read from any replica (issue #72). Nil with one replica.
 	LogOwner DeployLogOwner

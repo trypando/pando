@@ -67,6 +67,7 @@ export interface Deployment {
   approval_reasons?: (ApprovalReason[] | null);
   approvals?: (ApprovalDecision[] | null);
   can_decide?: boolean;
+  queue_position?: number;
 }
 
 export interface AwaitingApproval {
@@ -88,6 +89,7 @@ export interface AwaitingApproval {
   approval_reasons?: (ApprovalReason[] | null);
   approvals?: (ApprovalDecision[] | null);
   can_decide?: boolean;
+  queue_position?: number;
   app_name: string;
   app_slug: string;
 }

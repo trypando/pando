@@ -296,3 +296,51 @@ func TestLogStreamRefusesWhatTheLogsEndpointRefuses(t *testing.T) {
 	got = i.do(admin, http.MethodGet, "/apps/"+id+"/logs/stream", nil)
 	require.Equal(t, "ADAPTER_UNAVAILABLE", got.ErrorCode(), got.String())
 }
+
+// TestR256_AQueuedDeploysLogSaysWhereItIsInTheQueue asserts issue #93's
+// visible half of the bounded queue. A deploy waiting for a build slot used
+// to show nothing until a replica took it; its log now says how many deploys
+// are ahead, again each time that changes, and then carries on as the deploy's
+// own log once it starts. The API says the same as queue_position.
+func TestR256_AQueuedDeploysLogSaysWhereItIsInTheQueue(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	i.Server.QueuePollEvery = 10 * time.Millisecond
+	admin := i.admin()
+	first := i.queuedDeployment(i.appWithSpec(admin, "first"))
+	appID := i.appWithSpec(admin, "second")
+	depID := i.queuedDeployment(appID)
+
+	got := i.do(admin, http.MethodGet, "/apps/"+appID+"/deployments/"+depID, nil)
+	require.Equal(t, http.StatusOK, got.Code, got.String())
+	require.Contains(t, got.String(), `"queue_position":1`)
+
+	srv := httptest.NewServer(i.handler)
+	t.Cleanup(srv.Close)
+	stream := openSSE(t, srv.URL, admin, "/apps/"+appID+"/deployments/"+depID+"/logs")
+	require.Equal(t, "text/event-stream", stream.resp.Header.Get("Content-Type"))
+	require.Equal(t, sseEvent{data: "=> Waiting for a build slot: 1 deploy ahead of this one."}, stream.next(t))
+
+	ctx := context.Background()
+	claimed, err := i.Server.Deployments.Claim(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, first, claimed[0].ID)
+	require.Equal(t, sseEvent{data: "=> Waiting for a build slot: this deploy is next."}, stream.next(t))
+
+	got = i.do(admin, http.MethodGet, "/apps/"+appID+"/deployments", nil)
+	require.Contains(t, got.String(), `"queue_position":0`)
+
+	// The replica that takes it writes the log; the same stream carries it.
+	claimed, err = i.Server.Deployments.Claim(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, depID, claimed[0].ID)
+	sink := i.Server.Logs.Writer(depID)
+	_, err = fmt.Fprintln(sink, "=> Starting the deploy")
+	require.NoError(t, err)
+	require.Equal(t, sseEvent{data: "=> Starting the deploy"}, stream.next(t))
+	require.NoError(t, sink.Close())
+	require.Equal(t, "end", stream.next(t).name)
+
+	got = i.do(admin, http.MethodGet, "/apps/"+appID+"/deployments/"+depID, nil)
+	require.NotContains(t, got.String(), "queue_position", "a deploy that has started is not in the queue")
+}

@@ -328,7 +328,14 @@ policy's `max_concurrent_deploys` at once **[P: one per CPU, at least two]**, so
 as many and none takes on more than it can build. It is policy rather than a startup setting (issue #93),
 so it is set in the console or fixed by configuration like every other policy field, and the queue reads
 it each time it looks for work: raising it takes effect at once, lowering it stops new claims until
-enough have finished. `work.deploys` is its older name and still fixes it. Detection is queued the same way (`detection.Queue`,
+enough have finished. `work.deploys` is its older name and still fixes it.
+
+**[D] A queued deploy says where it is (issue #93).** `queue_position` on the deployment is how many
+unclaimed deploys are ahead of it, in the order `Claim` takes them. Its log stream says the same while it
+waits — "=> Waiting for a build slot: 2 deploys ahead of this one.", again each time the number changes —
+written by the replica serving the stream, because no replica holds a queued deploy's log yet. When a
+replica takes the deploy it writes "=> Starting the deploy" into the log it now holds, and the stream
+that was waiting carries on with that log, relayed if another replica took it. Detection is queued the same way (`detection.Queue`,
 `work.detections`). An app still has at most one deploy in flight — queued counts — and a second is
 refused, as before (§5's reasoning). A queued deploy survives a restart of the replica that took the
 request: nothing is lost until something claims it.

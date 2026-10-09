@@ -265,6 +265,11 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	sink := r.logs.Writer(dep.ID)
 	defer sink.Close()
 
+	// The line after the queue's "Waiting for a build slot" ones (issue #93),
+	// written here because this replica has just taken the deploy and is the
+	// only one that holds its log from now on.
+	fmt.Fprintln(sink, "=> Starting the deploy")
+
 	// Where the app is left if the deploy stops here (design 05 §1.2). The
 	// app was moved to deploying when this started, and the reconciler does
 	// not look at a deploying app — so a deploy that ended without saying

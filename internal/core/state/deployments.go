@@ -92,6 +92,12 @@ type Deployment struct {
 	// by the approval service, per caller, on a deploy that is waiting; the
 	// store never fills it in.
 	CanDecide bool `json:"can_decide,omitempty"`
+
+	// QueuePosition is how many queued deploys a queued one is behind: 0 for
+	// the next to be taken (issue #93). Absent on one that is not waiting in
+	// the queue. Set by the handlers from QueuePositions; the store's own
+	// reads never fill it in.
+	QueuePosition *int `json:"queue_position,omitempty"`
 }
 
 // ApprovalReason is why a deploy needed approval. The store holds the reason;
@@ -294,6 +300,71 @@ func (d *Deployments) QueueDepth(ctx context.Context) (int, error) {
 		return 0, errs.Wrap(errs.Internal, "Could not read the deploy queue.", err)
 	}
 	return n, nil
+}
+
+// QueuePosition is how many queued deploys are ahead of this one, in the
+// order Claim takes them, and whether it is still waiting at all (issue #93).
+func (d *Deployments) QueuePosition(ctx context.Context, deploymentID string) (int, bool, error) {
+	var (
+		ahead   int
+		waiting bool
+	)
+	err := d.db.QueryRow(ctx, `
+		SELECT d.status = $2 AND d.replica_id IS NULL,
+		       (SELECT count(*) FROM deployments o
+		        WHERE o.status = $2 AND o.replica_id IS NULL
+		          AND (o.started_at, o.id) < (d.started_at, d.id))
+		FROM deployments d WHERE d.id = $1`, deploymentID, DeployPending).Scan(&waiting, &ahead)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, errs.Wrap(errs.Internal, "Could not read the deploy queue.", err)
+	}
+	return ahead, waiting, nil
+}
+
+// QueuePositions sets QueuePosition on each of deps still waiting in the
+// queue. One read of the whole queue, which holds at most one deploy per app,
+// and none when no deploy in deps is pending.
+func (d *Deployments) QueuePositions(ctx context.Context, deps []Deployment) error {
+	pending := false
+	for _, dep := range deps {
+		if dep.Status == DeployPending {
+			pending = true
+			break
+		}
+	}
+	if !pending {
+		return nil
+	}
+	rows, err := d.db.Query(ctx, `
+		SELECT id, row_number() OVER (ORDER BY started_at, id) - 1
+		FROM deployments WHERE status = $1 AND replica_id IS NULL`, DeployPending)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not read the deploy queue.", err)
+	}
+	defer rows.Close()
+	position := map[string]int{}
+	for rows.Next() {
+		var (
+			id string
+			n  int
+		)
+		if err := rows.Scan(&id, &n); err != nil {
+			return errs.Wrap(errs.Internal, "Could not read the deploy queue.", err)
+		}
+		position[id] = n
+	}
+	if err := rows.Err(); err != nil {
+		return errs.Wrap(errs.Internal, "Could not read the deploy queue.", err)
+	}
+	for i := range deps {
+		if n, queued := position[deps[i].ID]; queued {
+			deps[i].QueuePosition = &n
+		}
+	}
+	return nil
 }
 
 // Waiting reports whether a deployment is queued and nobody has claimed it.

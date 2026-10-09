@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -49,6 +50,7 @@ func (s *Server) relayDeployLog(w http.ResponseWriter, r *http.Request, depID st
 	}
 
 	proxy := &httputil.ReverseProxy{
+		Transport: s.relayTransport(),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			pr.Out.URL.Path = r.URL.Path
@@ -66,4 +68,63 @@ func (s *Server) relayDeployLog(w http.ResponseWriter, r *http.Request, depID st
 	}
 	proxy.ServeHTTP(w, r)
 	return true
+}
+
+func (s *Server) relayTransport() http.RoundTripper {
+	if s.RelayTransport != nil {
+		return s.RelayTransport
+	}
+	return http.DefaultTransport
+}
+
+// relayDeployLogBody is relayDeployLog for a stream this replica has already
+// started — a queued deploy whose place in the queue it was showing (issue
+// #93). The owner's events are copied into it as they arrive; its status and
+// headers are not, because they were sent. Reports whether it relayed.
+func (s *Server) relayDeployLogBody(w http.ResponseWriter, r *http.Request, rc *http.ResponseController, depID string) bool {
+	if !id.Is(id.Deployment, depID) || s.LogOwner == nil || s.Logs.Has(depID) {
+		return false
+	}
+	base, err := s.LogOwner(r.Context(), depID)
+	if err != nil || base == "" {
+		return false
+	}
+	target, err := url.Parse(base)
+	if err != nil || target.Host == "" {
+		return false
+	}
+	u := *target
+	u.Path, u.RawPath, u.RawQuery = r.URL.Path, r.URL.RawPath, r.URL.RawQuery
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
+	if err != nil {
+		return false
+	}
+	req.Header = r.Header.Clone()
+	req.Header.Set(relayHeader, "1")
+	req.Host = r.Host
+
+	resp, err := s.relayTransport().RoundTrip(req)
+	if err != nil {
+		log.From(r.Context()).Warn("could not reach the replica running the deploy",
+			zap.String("deployment_id", depID), zap.String("replica", target.Host), zap.Error(err))
+		fmt.Fprint(w, "data: Pando could not reach the Pando process running this deploy, so its log can't be shown here. The deploy's outcome will be on the deploy itself.\n\n")
+		fmt.Fprint(w, "event: end\ndata: \n\n")
+		_ = rc.Flush()
+		return true
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return true
+			}
+			_ = rc.Flush()
+		}
+		if err != nil {
+			return true
+		}
+	}
 }
