@@ -37,6 +37,14 @@ adding a fast path, you are adding a security hole.
     (the host agent on a multi-host Docker install, O-45). Steps 1–9 are done first, always.
 ```
 
+## What a request reads is kept, and emptied on every change (issue #93)
+
+`Cache` keeps a session's principal, an app lookup by hostname, slug or port, and the facts `CheckData`
+decides on, for at most 30 seconds, and empties itself on every replica when migration 68's triggers
+NOTIFY a change. Not listening, it keeps nothing. Never keep a verdict here: `CheckData` must run on
+every request so every denial is audited. A new table the proxy's answer depends on needs a trigger in
+the same change, or a revocation through it waits out the TTL.
+
 ## Step 7 is a security requirement, not hygiene
 
 Any inbound header in Pando's namespace **must be stripped unconditionally** before step 8. Without

@@ -678,9 +678,11 @@ func (s *Sessions) Create(ctx context.Context, userID, adapterID string, lifetim
 
 // Active returns a session if it exists, is unrevoked, and has not expired.
 //
-// Checked on every request rather than cached. At single-host scale this is one
-// indexed lookup; caching it would add a delay to the revocation window (design
-// 06 §3.1), and that window is a stated number rather than an accident.
+// The API checks this on every request. The proxy reads it with the account
+// and groups in one query (ActiveWithUser) and keeps the answer until a NOTIFY
+// says something changed, never more than 30 seconds — a bound that is in
+// design 06 §3.1's revocation window, which is a stated number rather than an
+// accident (issue #93).
 func (s *Sessions) Active(ctx context.Context, sessionID string) (Session, bool, error) {
 	var sess Session
 	err := s.db.QueryRow(ctx, `

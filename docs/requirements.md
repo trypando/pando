@@ -137,7 +137,7 @@ exactly this.
 
 **R-047 [D]** Each identity adapter declares its own session policy and revocation mechanism, documented in that adapter's spec. There is no single global answer. The console and `GET /identity-providers` show each provider's session lifetime, revocation mode, and the window that results.
 
-**R-048 [D]** **SCIM support** is the enterprise revocation and provisioning path. Where an IdP supports SCIM, Pando accepts pushed user and group lifecycle events (SCIM 2.0, a bearer token per provider). A pushed deactivation suspends and ends sessions at once; a pushed group change takes effect on the next request.
+**R-048 [D]** **SCIM support** is the enterprise revocation and provisioning path. Where an IdP supports SCIM, Pando accepts pushed user and group lifecycle events (SCIM 2.0, a bearer token per provider). A pushed deactivation suspends and ends sessions at once; a pushed group change takes effect on the next request. On the proxy's path, "the next request" is the next one after the change reaches the proxy, which is told when it commits; if that message is lost, at most 30 seconds (design 06 §3.1, amended with issue #93).
 
 **R-049 [D]** **Suspended is not deleted.** Pando must model at minimum: active, suspended, deleted. A suspended user loses access immediately but their data-destruction rules (R-104) do not fire.
 
@@ -214,7 +214,7 @@ by itself. The consequence is always stated with it: *anyone on the internet, wi
 
 **R-078 [D]** Groups may be Pando-native or pushed from an IdP (R-048). **Permissions attached to a group are defined in Pando**, never inherited from the IdP. The IdP says who is in a group; Pando says what the group can do. A group may hold an installation role and roles on apps, exactly as an account can, and everyone in it holds them for as long as they are in it (R-079) — so adding someone to a team's group is how they get the team's access.
 
-**R-079 [D]** Group membership is evaluated **live** at request time, not expanded to a member list at grant time. Otherwise upstream removals do not take effect.
+**R-079 [D]** Group membership is evaluated **live** at request time, not expanded to a member list at grant time. Otherwise upstream removals do not take effect. The proxy may keep what it read for a request until anything it read changes, and never longer than 30 seconds (design 06 §3.1, amended with issue #93).
 
 ### 6.4 Verbs and roles
 

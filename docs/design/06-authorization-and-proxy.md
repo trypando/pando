@@ -148,10 +148,17 @@ app, searched and capped at twenty of each: enough to find Dana, not a way to ta
 
 **[P]** Cached per session with a short TTL (60s), invalidated immediately on a SCIM push (R-048). The TTL is the effective propagation delay for a group removal on adapters without push, and must be documented as such rather than implied to be instant.
 
-**[D] As built: not cached at all.** Membership is one indexed read per request
-(`effective_group_members`), so a SCIM push — or an administrator's change — takes effect on the next
-request, and the 60s row in the table below is an upper bound nothing currently reaches. If a cache is
-ever added it is invalidated on every SCIM push, and its TTL stays under the window.
+**[D] As built: read live, and on the proxy's path kept until anything changes (issue #93).** The
+60s per-session cache above was never built. Membership is read from `effective_group_members` with the
+session, in one query. The API reads it afresh on every request. The proxy, which every request to
+every app passes through, keeps what a request reads — the session's principal and groups, the app a
+hostname names, and the facts `CheckData` decides on — in `proxy.Cache`, and empties it on every
+replica whenever anything it may hold changes: triggers on sessions, users, group membership, grants,
+unlocks and apps send a NOTIFY when the change commits (migration 68). So a SCIM push, an
+administrator's change or a revoked session takes effect on the proxy's next request after the
+notification arrives, which is milliseconds. A replica that is not listening keeps nothing, and no
+entry lives longer than 30 seconds, which is what a notification lost in flight can cost. What is kept
+is facts, never a verdict: `CheckData` still runs on every request, so every denial is still audited.
 
 **[D] Where membership comes from (issue #51).** A group with an identity provider as its source is
 **synced**: its members are set by that provider — from the groups claim at each sign-in, or, when SCIM
@@ -169,7 +176,7 @@ that were each chosen locally and never added up:
 | Source | Delay | Effect |
 |---|---|---|
 | Session validity check | none by default — one indexed lookup per request (§02 2.7) | 0 |
-| Group membership cache | 60s, or 0 on a SCIM push (R-048) | up to 60s |
+| Proxy cache (issue #93) | until the next change's NOTIFY arrives; 30s if one is lost; nothing kept while not listening | milliseconds, up to 30s |
 | Assertion lifetime | 120s (R-055) | up to 120s, if the app caches it for its full life |
 | Long-lived connections | re-authorized on an interval (§4.2) | up to that interval |
 
@@ -181,8 +188,8 @@ delay was the answer.
 **[D] One number: 120 seconds.** Everything above is set to that or below it, and the long-lived
 connection interval is set to *exactly* the assertion lifetime rather than to an independently chosen
 value — two clocks measuring the same thing will drift apart the first time someone tunes one of them.
-The 60s group cache stays where it is because a value below the window does not widen it; if it is
-ever raised, it must not be raised past 120.
+The proxy cache's 30 seconds stays under the window, so it does not widen it; if it is ever raised, it
+must not be raised past 120.
 
 **[D]** The console displays this window wherever access is revoked — removing a grant, suspending a
 user, removing someone from a group — as a plain statement that access stops within two minutes.
@@ -193,8 +200,8 @@ display must show the effective window rather than only the adapter's own lifeti
 identity from an assertion for longer than the assertion's life has extended the window itself, which
 is one more reason the app-developer documentation states that assertions are per-request and short.
 
-**[P]** If the session check is ever cached for throughput, its TTL joins this table and the window is
-recomputed. It does not get to be a hidden fifth delay.
+**[D]** The session check is cached on the proxy's path for throughput (issue #93), and its bound is in
+the table above rather than a hidden fifth delay. The API's session check is not cached.
 
 ### 3.2 Redirect sign-in (issue #51)
 
