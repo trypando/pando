@@ -26,6 +26,8 @@ import (
 	ailocal "github.com/trypando/pando/internal/adapter/ai/local"
 	aiopenai "github.com/trypando/pando/internal/adapter/ai/openai"
 	adapterapi "github.com/trypando/pando/internal/adapter/api"
+	sinkhttps "github.com/trypando/pando/internal/adapter/auditsink/https"
+	sinksyslog "github.com/trypando/pando/internal/adapter/auditsink/syslog"
 	backuplocal "github.com/trypando/pando/internal/adapter/backup/local"
 	buildkitadapter "github.com/trypando/pando/internal/adapter/builder/buildkit"
 	"github.com/trypando/pando/internal/adapter/identity/local"
@@ -60,6 +62,8 @@ import (
 	"github.com/trypando/pando/internal/core/assertion"
 	"github.com/trypando/pando/internal/core/assist"
 	"github.com/trypando/pando/internal/core/audit"
+	"github.com/trypando/pando/internal/core/audit/ocsf"
+	"github.com/trypando/pando/internal/core/auditstream"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/bootstrap"
@@ -488,6 +492,27 @@ func serve(ctx context.Context, configPath string) error {
 			zap.String("registry", current.Host()), zap.Bool("always", current.Always()))
 	}
 
+	// Audit sinks (R-382, design 12 §5): where the audit log is pushed as it
+	// is written. Built from their rows on every delivery pass, like the
+	// image registry, and delivered by the leader alone (the audit-stream job
+	// below). The OCSF encoder is the one SIEM schema shipped (R-384).
+	ocsf.ProductVersion = buildVersion
+	auditReader := audit.NewReader(db.Pool)
+	auditEncoders := map[string]audit.Encoder{adapterapi.AuditFormatOCSF: ocsf.Encode}
+	auditSinks := &auditstream.Service{
+		Configs:     adapters,
+		Credentials: adapterCredentials,
+		New:         newAuditSinkAdapter,
+		Declared:    declaredAuditSinks(registry),
+		States:      state.NewAuditSinks(db),
+		Reader:      auditReader,
+		Encoders:    auditEncoders,
+		Audit:       func(ctx context.Context, e audit.Event) { _ = auditor.Write(ctx, e) },
+		Holders:     authzStore,
+		Clock:       clock.System{},
+		Logger:      logger,
+	}
+
 	appPlanner := planner.New(registry, hostPolicy, allocations).WithInventory(apps).WithImages(images).
 		WithInstallRegistry(buildRegistry)
 	capacityReadings := &capacity.Snapshots{Registry: registry, Allocations: allocations, Logger: logger}
@@ -673,6 +698,14 @@ func serve(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
+	trustedProxies, err := cfg.Server.Trusted()
+	if err != nil {
+		return err
+	}
+	if !trustedProxies.Empty() {
+		logger.Info("the audit log reads X-Forwarded-For from the trusted proxies",
+			zap.String("setting", "PANDO_SERVER_TRUSTED_PROXIES"), zap.String("proxies", cfg.Server.TrustedProxies))
+	}
 	identityService.ExternalURL = externalURL
 	if externalURL == nil {
 		logger.Info("no external URL configured; session cookies are marked Secure only when Pando itself serves TLS",
@@ -700,6 +733,7 @@ func serve(ctx context.Context, configPath string) error {
 		Users:       users,
 		Logger:      logger,
 	}
+	auditSinks.Notifier = notifyRouter
 	subscriptions := &subscription.Service{
 		Subscriptions: state.NewSubscriptions(db),
 		Deliveries:    state.NewDeliveries(db),
@@ -822,10 +856,11 @@ func serve(ctx context.Context, configPath string) error {
 	}
 
 	apiHandler := (&httpapi.Server{
-		Updates:  updates,
-		Upgrades: upgrades,
-		Version:  buildVersion,
-		Edges:    edges,
+		ClientAddr: trustedProxies,
+		Updates:    updates,
+		Upgrades:   upgrades,
+		Version:    buildVersion,
+		Edges:      edges,
 		// Changing where a configured app is reached (R-162, R-163).
 		Address: &address.Service{
 			Registry:       registry,
@@ -951,11 +986,16 @@ func serve(ctx context.Context, configPath string) error {
 		// things and both are wired: one endpoint edits the document, every
 		// authorization check consults the evaluator, and the evaluator
 		// reads the document per evaluation rather than caching it (R-274).
-		PolicyStore:   policyStore,
-		PolicyOverlay: policyOverlay,
-		Startup:       cfg,
-		AuditLog:      audit.NewReader(db.Pool),
-		AuditArchives: &audit.Archives{Pool: db.Pool, Stores: auditStores},
+		PolicyStore:    policyStore,
+		PolicyOverlay:  policyOverlay,
+		Startup:        cfg,
+		AuditLog:       auditReader,
+		AuditArchives:  &audit.Archives{Pool: db.Pool, Stores: auditStores},
+		AuditStream:    auditReader,
+		AuditEncoders:  auditEncoders,
+		AuditSinks:     auditSinks,
+		AuditSinkCheck: auditSinks,
+		AuditReads:     &audit.ReadThrottle{},
 
 		Groups:       state.NewGroups(db),
 		Roles:        state.NewRoles(db),
@@ -1103,7 +1143,15 @@ func serve(ctx context.Context, configPath string) error {
 		},
 		Clock:  clock.System{},
 		Logger: logger,
+		// A month an enabled audit sink has not been sent stays in the live
+		// log (R-386).
+		Holds: auditSinks.Holding,
+		Audit: func(ctx context.Context, e audit.Event) { _ = auditor.Write(ctx, e) },
 	}).Run)
+
+	// Audit sinks are sent the log as it is written (R-382), by the leader
+	// alone so a destination never receives two interleaved copies.
+	job("audit-stream", auditSinks.Run)
 
 	// Deploy requests nobody answered in time expire (R-156), once a minute.
 	// Approving or rejecting one also expires it on the spot, so the minute
@@ -1180,7 +1228,7 @@ func serve(ctx context.Context, configPath string) error {
 		// Not the bare proxy: a port listener is a front door of its own, and
 		// somebody arriving at it unauthenticated has to have somewhere to
 		// sign in (R-172). Everything else on that socket is the app's.
-		Handler: httpapi.ReservedOrApp(apiHandler, appProxy),
+		Handler: trustedProxies.Middleware(httpapi.ReservedOrApp(apiHandler, appProxy)),
 		Logger:  logger,
 	}).Run(loopCtx)
 
@@ -1609,6 +1657,14 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 		// Likewise only a declared image registry; a stored one is built
 		// from its row each time it is used (core/imageregistry).
 		if a := newImageRegistryAdapter(kind); a != nil {
+			return a
+		}
+		return nil
+	}
+	if category == string(adapterapi.CategoryAuditSink) {
+		// And only a declared audit sink; a stored one is built from its
+		// row on every delivery pass (core/auditstream).
+		if a := newAuditSinkAdapter(kind); a != nil {
 			return a
 		}
 		return nil
@@ -2097,6 +2153,29 @@ func newImageRegistryAdapter(kind string) adapterapi.ImageRegistryAdapter {
 	return nil
 }
 
+// newAuditSinkAdapter is an unconfigured audit sink of a kind, or nil (R-382).
+func newAuditSinkAdapter(kind string) adapterapi.AuditSinkAdapter {
+	switch kind {
+	case sinksyslog.Kind:
+		return sinksyslog.New()
+	case sinkhttps.Kind:
+		return sinkhttps.New()
+	}
+	return nil
+}
+
+// declaredAuditSinks are the audit sinks the startup configuration declares,
+// built at startup with the other adapters.
+func declaredAuditSinks(registry *adapterapi.Registry) []auditstream.Declared {
+	var out []auditstream.Declared
+	for _, ref := range registry.ByCategory(adapterapi.CategoryAuditSink) {
+		if a, ok := registry.AuditSink(ref); ok {
+			out = append(out, auditstream.Declared{ID: ref, Adapter: a})
+		}
+	}
+	return out
+}
+
 // declaredImageRegistries are the image registries the startup configuration
 // declares, built at startup with the other adapters.
 func declaredImageRegistries(registry *adapterapi.Registry) []imageregistry.Declared {
@@ -2274,6 +2353,8 @@ func adapterKinds() []adapterapi.KindInfo {
 		sourcebitbucket.Info(),
 		registryoci.Info(),
 		registryecr.Info(),
+		sinksyslog.Info(),
+		sinkhttps.Info(),
 	}
 }
 

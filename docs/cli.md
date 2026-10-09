@@ -607,6 +607,71 @@ manifest as it arrives, and a file that does not match is removed rather than ke
 | --- | --- | --- |
 | `-o`, `--output` |  | where to save it; - writes to standard output |
 
+#### `audit export`
+
+Export a range of the audit log as gzipped JSON lines
+
+```
+pando audit export
+```
+
+Writes the audit events between --since and --until, in commit order, as gzipped JSON lines:
+to --output, or to standard output when that is not a terminal. --since and --until take a time
+(2026-09-21T09:00:00Z) or a duration back from now (24h); left out, the range is open at that end.
+
+The export covers the live log only. When the range reaches back before it, a note on standard
+error says where the live log starts; `pando audit archives` has the months before that.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--action` | `[]` | only actions starting with this, e.g. grant.; repeatable |
+| `--exclude` | `[]` | leave out actions starting with this; repeatable |
+| `--format` |  | native (the archive's line format, the default) or ocsf |
+| `-o`, `--output` |  | the file to write; - or left out writes to standard output |
+| `--since` |  | from this time, or this long ago (720h) |
+| `--until` |  | up to this time, or this long ago |
+
+#### `audit sinks`
+
+List where the audit log is sent, and how far each destination has got
+
+```
+pando audit sinks
+```
+
+An audit sink is a destination, such as a SIEM's syslog or HTTPS collector, that Pando pushes
+the audit log to as it is written. This lists each one with what it sends where, the events
+waiting to go (BACKLOG), when it last delivered, and its last error. Below the table, each sink's
+line says exactly what leaves the installation, and any range of events it missed.
+
+Audit sinks are adapters: add one with `pando adapter add audit_sink/<kind>`.
+
+#### `audit tail`
+
+Print the audit log in commit order, one JSON event per line
+
+```
+pando audit tail
+```
+
+Prints audit events oldest first, one JSON object per line, from --after: a cursor a previous
+run printed, or now for only what happens from here on. Without --after it starts at the oldest
+event in the live log. Without --follow it stops once it has caught up; with --follow it keeps
+waiting for new events until interrupted.
+
+When it stops, for any reason, it prints the last cursor to standard error as
+`cursor: c1.…`. Pass that back as --after to carry on where it left off. Delivery is at least
+once: an event can be printed again after a resume, and its id is the key to drop it by.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--action` | `[]` | only actions starting with this, e.g. grant.; repeatable |
+| `--after` |  | start after this cursor, as a previous run printed it, or now |
+| `--exclude` | `[]` | leave out actions starting with this; repeatable |
+| `-f`, `--follow` |  | keep waiting for new events until interrupted |
+| `--format` |  | native (the archive's line format, the default) or ocsf |
+| `--limit` | `0` | events per request (default 500, at most 1000) |
+
 ### `backup`
 
 Back up and restore this installation

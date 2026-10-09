@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/spec"
@@ -50,6 +51,14 @@ func (s *Server) appLogSource(w http.ResponseWriter, r *http.Request) (appLogSou
 		Error(w, r, err)
 		return appLogSource{}, false
 	}
+	// Opening an app's logs is reading what it printed (R-392): recorded once
+	// per opening, whether the lines are read once or followed.
+	p := PrincipalFrom(r.Context())
+	s.audit(r, audit.Event{
+		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
+		Action: "app.logs.read", AppID: app.ID, TargetKind: "workload", TargetID: workload,
+		Detail: map[string]any{"workload": workload, "follow": r.URL.Query().Get("follow") == "true" || strings.HasSuffix(r.URL.Path, "/stream")},
+	})
 	return appLogSource{runtime: runtime, key: logstream.Key{Runtime: ref, AppID: app.ID, Workload: workload}}, true
 }
 

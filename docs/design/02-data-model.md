@@ -566,6 +566,11 @@ than in the app's spec so that the app's owner cannot remove it (R-154).
 
 ### 2.6 Audit
 
+Migration 000067 (issue #129) adds `txid`, the transaction that wrote each row, which the audit stream
+reads in `(txid, id)` order below the oldest running transaction; and `schema_version`, `outcome`,
+`source_ip`, `peer_ip`, `user_agent`, `actor_name` and `actor_email`, which every event carries
+(R-379). Design 12 has the reasoning, and `audit_sink_state`, where each audit sink has got to.
+
 ```sql
 CREATE TABLE audit_events (
     id            bigint NOT NULL DEFAULT nextval('audit_events_id_seq'),

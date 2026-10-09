@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -298,6 +299,20 @@ func (s *Server) handleDetectionAnswers(w http.ResponseWriter, r *http.Request) 
 		Error(w, r, err)
 		return
 	}
+	// The answers become the spec when the proposal is accepted, so who gave
+	// them is recorded (R-391). Which questions, not the answers: an answer
+	// can be a value somebody typed.
+	answered := make([]string, 0, len(req.Answers))
+	for k := range req.Answers {
+		answered = append(answered, k)
+	}
+	sort.Strings(answered)
+	p := PrincipalFrom(r.Context())
+	s.audit(r, audit.Event{
+		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
+		Action: "detection.answer", AppID: app.ID, TargetKind: "app", TargetID: app.ID,
+		Detail: map[string]any{"questions": answered},
+	})
 
 	updated, err := s.Detections.Get(r.Context(), app.ID)
 	if err != nil {

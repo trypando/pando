@@ -1239,6 +1239,9 @@ const (
 	// NotifySubscriptionDisabled: Pando turned one of your event
 	// subscriptions off because its endpoint kept failing (R-370).
 	NotifySubscriptionDisabled NotificationKind = "subscription_disabled"
+	// NotifyAuditSinkDisabled: Pando turned off an audit sink because it kept
+	// failing (R-383). Sent to everybody holding install.audit.export.
+	NotifyAuditSinkDisabled NotificationKind = "audit_sink_disabled"
 )
 
 // NotifyAdapter delivers notifications.

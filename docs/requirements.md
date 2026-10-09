@@ -755,6 +755,36 @@ without touching core (O-6 resolved).
 
 **R-348 [P]** Default retention is **three months**, which is also the **floor**: host policy may lengthen it and may not shorten it, and the function that removes a month refuses one that ended less than three months ago, whatever policy says, so nothing the running server can write lowers it. Archives are kept by Pando by default. **[O-27]**
 
+#### Streaming and export *(issue #129, design 12)*
+
+**R-379 [D]** **Every audit event names its actor, target, outcome and source.** The actor is the principal's kind and ID, the user a token acted for (R-229), and that user's display name and email as they were when the event was written. The target is always set: an event about nothing narrower is about the app it names, or else about the installation. The outcome is `success`, `denied` or `failed`. The source is the client's address (R-380), the address that connected to Pando, and the client's user agent, for every event written during a request. Each event carries a schema version, so a consumer survives fields being added.
+
+**R-380 [D]** **The client address is the connecting peer, unless that peer is a configured trusted proxy.** From a trusted proxy, Pando reads `X-Forwarded-For` from the right and records the first address that is not itself a trusted proxy, so a client cannot choose what is written. No proxy is trusted by default. A range covering the whole internet, or most of it, is refused at startup. The connecting address is recorded beside it either way. The list decides the audited address and nothing else (O-19).
+
+**R-381 [D]** **The audit log can be read in commit order from a cursor.** A consumer holding a cursor reads every event written after it, oldest first, and resumes from it after a Pando restart, an upgrade, or with several replicas, missing nothing: an event that commits after a later one is still delivered after the cursor that passed the later one. Delivery is at least once, and an event's ID is its idempotency key. A read may wait for the next event rather than return an empty page. Through the API, the CLI and MCP (R-261), with `install.audit.read`.
+
+**R-382 [D]** **An audit sink is an adapter category** (R-252): a destination the audit log is pushed to as it is written. Built-in: syslog (RFC 5424 over TCP with TLS, mutual TLS optional) and an HTTPS batch sink with presets for Splunk HEC, Datadog, Elastic, Sumo Logic and Azure Monitor (Microsoft Sentinel). An adapter is handed encoded events and cannot read the log, see its own cursor, or write audit (R-027, R-226). Its credentials are stored encrypted (R-190) and never logged (R-194).
+
+**R-383 [D]** **Each destination's delivery state is visible.** The console, API, CLI and MCP show each audit sink's last delivered event and time, its backlog, its last error, and any range it missed. A failed send is retried with backoff. A destination failing for 24 hours and at least five attempts in a row is turned off, which is audited and told to everyone holding `install.audit.export`. Its first failure and its recovery are audited; each retry is not.
+
+**R-384 [D]** **Events are sent as Pando's native JSON or as OCSF.** Native JSON is the archive's line format (R-347), so a live, streamed, exported and archived event are one shape. OCSF (1.3.0) maps every audit action through an explicit table, documented field by field, and an action with no row fails the build. A destination may include or exclude actions by prefix. `app.use` is included by default. CEF and ECS are not shipped in this version.
+
+**R-385 [D]** **Sending the audit log off the installation needs its own verb.** `install.audit.export` is held by the Administrator role alone among built-in roles; configuring, changing, enabling or removing an audit sink needs it in addition to `install.adapters.manage`. The console shows every enabled destination on the audit log screen, as what it is and where it sends, as it does for AI calls (R-337).
+
+**R-386 [D]** **Archiving does not remove what an enabled destination has not received.** A month due for removal (R-347) is archived and verified as usual, but not removed while any enabled audit sink has not delivered past it, and the hold is audited. A destination Pando turned off (R-383) stops holding, and the range it then misses is recorded and shown, with the month's archive offered as the backfill.
+
+**R-387 [D]** **Any range of the live log can be exported on demand,** as gzipped JSON lines in the archive's format or as OCSF, in commit order, through the API and the CLI. An export reaching past the live log says where the live log begins, so the caller knows which archives hold the rest.
+
+**R-388 [P]** **Reading the audit log is audited.** Listing it, exporting it, downloading an archive, and reading the stream — at most once per reader per hour for the stream, so a collector does not fill the log with itself.
+
+**R-389 [D]** **A deploy's outcome is an audit event,** written by the system when it finishes, with the outcome and, on failure, the error code. A rollback records the revision it rolled back from as well as the one it rolled back to.
+
+**R-390 [D]** **A policy or spec change records what changed:** the paths of the fields that changed and, for values that are not secret, before and after. Never a secret value (R-194).
+
+**R-391 [D]** **Every state-changing API route writes an audit event or is exempt by name, with a reason.** A test walks the router and fails for a route that is neither.
+
+**R-392 [P]** **Opening an app's logs is audited** (`app.logs.read`): logs can hold what an app printed, and reading them is reading the app's data.
+
 ### 16.4 Notifications
 
 **R-230 [D]** Notification is an adapter category.
@@ -880,7 +910,7 @@ Events tab and `GET /apps/{id}/events`. The feed holds what the outbox keeps (R-
 
 **R-251 [D]** Core never learns a provider's vocabulary. A requirement crossing the interface is expressed in Pando's terms — "2 GB, one persistent volume, one exposed HTTP port" — and the adapter turns it into a VM profile or container arguments.
 
-**R-252 [D]** Adapter categories: identity, routing/ingress, builder, runtime, secrets, services, notification, **backup**. **Scanner** is the ninth (R-317), **AI** the tenth (R-258) and **source** the eleventh (R-091): a connection to a place repositories live, which clones what it covers. It holds no state; core stores its credential and decides which connection reads which repository. **Image registry** is the twelfth (amended with issue #153): where Pando pushes a build when the runtime pulls images, configured like any adapter rather than as install settings of its own. The list is not closed: a thing Pando talks to that passes design 03 §8.1's test — the planner asks it a question, and it has a provider's vocabulary to hide — becomes a category, with this requirement amended in the same change.
+**R-252 [D]** Adapter categories: identity, routing/ingress, builder, runtime, secrets, services, notification, **backup**. **Scanner** is the ninth (R-317), **AI** the tenth (R-258) and **source** the eleventh (R-091): a connection to a place repositories live, which clones what it covers. It holds no state; core stores its credential and decides which connection reads which repository. **Image registry** is the twelfth (amended with issue #153): where Pando pushes a build when the runtime pulls images, configured like any adapter rather than as install settings of its own. **Audit sink** is the thirteenth (amended with issue #129, R-382): a destination the audit log is pushed to as it is written. The list is not closed: a thing Pando talks to that passes design 03 §8.1's test — the planner asks it a question, and it has a provider's vocabulary to hide — becomes a category, with this requirement amended in the same change.
 
 Backup was added in phase 9, reversing an earlier decision that a backup destination was a byte sink
 rather than a category (design 03 §8.1). The earlier reasoning still describes a *destination*

@@ -147,6 +147,30 @@ func TestR356_TheAdministratorHoldsInstallUpgradeAndAgentsDoNot(t *testing.T) {
 	require.Zero(t, elsewhere, "no other built-in role holds it")
 }
 
+// TestR385_OnlyTheAdministratorHoldsInstallAuditExport asserts migration
+// 000067: sending the audit log off the installation is the Administrator's
+// alone among built-in roles, and the auditor, who reads the log, does not
+// gain it.
+func TestR385_OnlyTheAdministratorHoldsInstallAuditExport(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ownerURL, _ := statetest.Database(t)
+
+	conn, err := pgx.Connect(ctx, ownerURL)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close(ctx) }()
+
+	var held bool
+	require.NoError(t, conn.QueryRow(ctx,
+		`SELECT 'install.audit.export' = ANY (verbs) FROM roles WHERE id = 'role_administrator'`).Scan(&held))
+	require.True(t, held)
+
+	var elsewhere int
+	require.NoError(t, conn.QueryRow(ctx,
+		`SELECT count(*) FROM roles WHERE id <> 'role_administrator' AND 'install.audit.export' = ANY (verbs)`).Scan(&elsewhere))
+	require.Zero(t, elsewhere, "no other built-in role holds it, the auditor included")
+}
+
 // asOwner runs one statement against a database as its owner.
 func asOwner(t *testing.T, ownerURL, stmt string) {
 	t.Helper()

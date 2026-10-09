@@ -154,6 +154,27 @@ func TestR086_AnAbandonedSessionIsStillRecorded(t *testing.T) {
 		"a session authorized and then abandoned must still appear in the audit log")
 }
 
+// TestR228_AnExecSessionsEndIsRecorded asserts R-228's "start and end": when
+// the terminal closes, app.exec.end records how long the session ran and how
+// it ended.
+func TestR228_AnExecSessionsEndIsRecorded(t *testing.T) {
+	c := login(t)
+	app := deployedApp(t, c, "exec-end-"+stamp())
+
+	before := len(auditEvents(t, "app.exec.end"))
+	conn, _, err := dialExec(t, c, app, "")
+	require.NoError(t, err)
+	time.Sleep(time.Second)
+	_ = conn.Close(websocket.StatusNormalClosure, "done")
+
+	require.Eventually(t, func() bool {
+		return len(auditEvents(t, "app.exec.end")) > before
+	}, 15*time.Second, time.Second, "the session's end was not recorded")
+	last := auditEvents(t, "app.exec.end")[0]
+	require.Contains(t, last, `"duration_ms"`)
+	require.Contains(t, last, `"reason"`)
+}
+
 // R-085: host policy may disable exec install-wide, and it denies the owner too.
 func TestR085_HostPolicyCanDisableExecInstallWide(t *testing.T) {
 	c := login(t)

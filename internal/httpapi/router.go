@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/clientaddr"
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/address"
 	"github.com/trypando/pando/internal/core/approval"
@@ -43,6 +45,7 @@ import (
 	"github.com/trypando/pando/internal/core/upgrade"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/log"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // Health reports whether a dependency is reachable.
@@ -267,6 +270,22 @@ type Server struct {
 	// and one that cannot archive look the same from here, and both are true.
 	AuditArchives AuditArchives
 
+	// AuditStream reads the log in commit order, for the stream and exports
+	// (R-381, R-387). AuditEncoders turn native lines into other formats, by
+	// name — "ocsf" (R-384). AuditSinks reports each audit sink's delivery
+	// (R-383). AuditReads decides when a stream read is itself audited
+	// (R-388).
+	AuditStream   AuditStream
+	AuditEncoders map[string]audit.Encoder
+	AuditSinks    AuditSinks
+	AuditReads    *audit.ReadThrottle
+
+	// AuditSinkCheck configures an audit sink as it would be saved, so one
+	// its adapter refuses is refused by POST /adapters (R-382).
+	AuditSinkCheck interface {
+		Validate(ctx context.Context, id, kind string, config json.RawMessage, given map[string]secret.Value) error
+	}
+
 	// Updates is whether a newer Pando is released (R-351). Nil answers that
 	// the check is not running, which is true.
 	Updates Updates
@@ -320,6 +339,10 @@ type Server struct {
 	// catch-all, so Pando's own routes are reachable and everything else goes
 	// through enforcement. There is no path that reaches an app without it.
 	AppProxy http.Handler
+
+	// ClientAddr decides which address each request came from for the audit
+	// log (R-380). The zero value records the connecting peer.
+	ClientAddr clientaddr.Trusted
 }
 
 // PolicyDocument reads and writes host policy.
@@ -401,6 +424,7 @@ func (s *Server) Routes() http.Handler {
 
 	r.Use(middleware.Recoverer)
 	r.Use(RequestID)
+	r.Use(s.ClientAddr.Middleware)
 	r.Use(Logger(s.Logger))
 
 	// The assertion verification keys (R-057). Unauthenticated by design: they
@@ -651,6 +675,15 @@ func (s *Server) Routes() http.Handler {
 		// The audit log (R-227). Its own verb: it records what everyone did,
 		// including inside apps they own.
 		r.Get("/audit", s.handleListAudit)
+
+		// The log in commit order from a cursor, for collectors (R-381), and
+		// any range of it as a download (R-387). Same verb as the log.
+		r.Get("/audit/stream", s.handleAuditStream)
+		r.Get("/audit/export", s.handleAuditExport)
+
+		// Every audit sink, what it sends where, and how far it has got
+		// (R-383, R-385). Configured as adapters, under install.audit.export.
+		r.Get("/audit/sinks", s.handleListAuditSinks)
 
 		// Months past retention, archived and removed from the live log
 		// (R-347). Behind the same verb as the log itself: an archive is the

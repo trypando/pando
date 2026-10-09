@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -336,6 +337,14 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.ValidInvalid, "An adapter needs an id, a category and a kind."))
 		return
 	}
+	// An audit sink sends the whole audit log off the installation, which is
+	// its own verb on top of managing adapters (R-385).
+	if req.Category == string(api.CategoryAuditSink) {
+		if err := s.Authz.CheckInstall(r.Context(), p, authz.InstallAuditExport); err != nil {
+			Error(w, r, err)
+			return
+		}
+	}
 	// A kind this build cannot run would be saved and then skipped at every
 	// startup, with only a log line to say so. Refused here instead, naming
 	// the kinds there are.
@@ -410,6 +419,29 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 	// and settings that stopped working are a reason to turn one off.
 	if req.Category == string(api.CategoryImageRegistry) && enabled && s.ImageRegistries != nil {
 		if err := s.ImageRegistries.Validate(r.Context(), req.ID, req.Kind, req.Config, req.Credentials); err != nil {
+			Error(w, r, err)
+			return
+		}
+	}
+
+	// Saving over a stored audit sink under another category changes it
+	// too: it stops the log being sent there.
+	if req.Category != string(api.CategoryAuditSink) {
+		if sink, err := s.isAuditSink(r.Context(), req.ID); err != nil {
+			Error(w, r, err)
+			return
+		} else if sink {
+			if err := s.Authz.CheckInstall(r.Context(), p, authz.InstallAuditExport); err != nil {
+				Error(w, r, err)
+				return
+			}
+		}
+	}
+
+	// An audit sink is used the moment it is saved, by the next delivery
+	// pass, so one its adapter refuses is refused here, saying why.
+	if req.Category == string(api.CategoryAuditSink) && enabled && s.AuditSinkCheck != nil {
+		if err := s.AuditSinkCheck.Validate(r.Context(), req.ID, req.Kind, req.Config, req.Credentials); err != nil {
 			Error(w, r, err)
 			return
 		}
@@ -520,10 +552,25 @@ func (s *Server) pinnedOrLatest(r *http.Request, app state.App) (*spec.AppSpec, 
 
 // liveCategory says an adapter of this category is built from its row each
 // time it is used rather than at startup, so saving one needs no restart:
-// source connections (core/sourceconn) and image registries
-// (core/imageregistry).
+// source connections (core/sourceconn), image registries
+// (core/imageregistry) and audit sinks (core/auditstream).
 func liveCategory(category string) bool {
-	return category == string(api.CategorySource) || category == string(api.CategoryImageRegistry)
+	return category == string(api.CategorySource) || category == string(api.CategoryImageRegistry) ||
+		category == string(api.CategoryAuditSink)
+}
+
+// isAuditSink reports whether an audit sink is stored under id.
+func (s *Server) isAuditSink(ctx context.Context, id string) (bool, error) {
+	rows, err := s.Adapters.List(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, row := range rows {
+		if row.ID == id && row.Category == string(api.CategoryAuditSink) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // declaredWhere says in words where an adapter was declared: a key in the

@@ -418,8 +418,11 @@ func TestO51_ServeReportsALaggedViewer(t *testing.T) {
 	require.NoError(t, err)
 	defer other.Close()
 
-	rt.print(t, "a", "b", "c")
-	for range 3 {
+	// One line at a time, each read by other before the next is printed:
+	// printed together, all three could arrive before other was read, and
+	// other — buffered like sub — would lag and be closed too.
+	for _, line := range []string{"a", "b", "c"} {
+		rt.print(t, line)
 		next(t, other)
 	}
 

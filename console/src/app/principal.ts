@@ -43,6 +43,8 @@ export const InstallVerb = {
   Upgrade: 'install.upgrade',
   /** Install-wide event subscriptions, and everybody's (R-368). */
   EventsManage: 'install.events.manage',
+  /** Send the audit log to an audit sink, off the installation (R-385). */
+  AuditExport: 'install.audit.export',
   AppCreate: 'app.create',
 } as const;
 

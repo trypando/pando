@@ -102,6 +102,7 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | `PANDO_SERVER_ROUTING_MODE` | port | How apps are addressed: port, subdomain or path. |
 | `PANDO_SERVER_ISSUER` | derived | The `iss` claim in identity assertions. |
 | `PANDO_SERVER_EXTERNAL_URL` | — | The address browsers reach this installation on, such as `https://pando.example.com`. Set it when something other than Pando terminates TLS: it is what marks the session cookie `Secure`. Unset means "use the request", which is right on a localhost install and when Pando serves TLS itself. |
+| `PANDO_SERVER_TRUSTED_PROXIES` | — | The proxies in front of Pando whose `X-Forwarded-For` the audit log believes, as addresses or CIDR ranges separated by commas, such as `10.0.0.5,10.0.1.0/24`. From one of them, the client recorded is the right-most forwarded address that is not itself listed; from anyone else, the connecting address. Unset records the connecting address, which behind a proxy is the proxy's. A range wider than /8 (IPv4) or /16 (IPv6) is refused at startup. It decides the audited address and nothing else. |
 | `PANDO_SERVER_PROXY_UPSTREAM` | — | Where the proxy sends traffic it has authorized. |
 | `PANDO_SERVER_WORK_DIR` | `/var/lib/pando` | Build contexts, uploads and adapter state. |
 | `PANDO_SERVER_TOKEN_KEY_PATH` | `/var/lib/pando/token.key` | The key API tokens are stored under, as HMAC-SHA-256. Created on first start. Every replica must read the same file, and a replica whose key differs from the install's refuses to start. A DR bundle includes it. |

@@ -37,6 +37,55 @@ type Record struct {
 	TargetID      string         `json:"target_id,omitempty"`
 	RequestID     string         `json:"request_id,omitempty"`
 	Detail        map[string]any `json:"detail,omitempty"`
+
+	// What R-379 adds. Empty on events written before it.
+	Outcome       string `json:"outcome,omitempty"`
+	SourceIP      string `json:"source_ip,omitempty"`
+	PeerIP        string `json:"peer_ip,omitempty"`
+	UserAgent     string `json:"user_agent,omitempty"`
+	ActorName     string `json:"actor_name,omitempty"`
+	ActorEmail    string `json:"actor_email,omitempty"`
+	SchemaVersion int    `json:"schema_version"`
+}
+
+// Line is one native line (design 12 §6.1) decoded: the row as row_to_json
+// writes it, every column present and null where unset. What the OCSF mapper
+// and anything else re-encoding the stream reads.
+type Line struct {
+	ID            int64          `json:"id"`
+	OccurredAt    time.Time      `json:"occurred_at"`
+	PrincipalKind string         `json:"principal_kind"`
+	PrincipalID   *string        `json:"principal_id"`
+	OnBehalfOf    *string        `json:"on_behalf_of"`
+	Action        string         `json:"action"`
+	AppID         *string        `json:"app_id"`
+	TargetKind    *string        `json:"target_kind"`
+	TargetID      *string        `json:"target_id"`
+	RequestID     *string        `json:"request_id"`
+	Detail        map[string]any `json:"detail"`
+	SchemaVersion *int           `json:"schema_version"`
+	Outcome       *string        `json:"outcome"`
+	SourceIP      *string        `json:"source_ip"`
+	PeerIP        *string        `json:"peer_ip"`
+	UserAgent     *string        `json:"user_agent"`
+	ActorName     *string        `json:"actor_name"`
+	ActorEmail    *string        `json:"actor_email"`
+}
+
+// Version is the line's schema version: 1 for events written before R-379.
+func (l Line) Version() int {
+	if l.SchemaVersion == nil {
+		return 1
+	}
+	return *l.SchemaVersion
+}
+
+// Str is a nullable column's value, empty for null.
+func Str(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // Query narrows a read. Every field is optional; the zero value reads the whole
@@ -173,7 +222,10 @@ func (r *Reader) List(ctx context.Context, q Query) ([]Record, error) {
 	sql := `SELECT id, occurred_at, principal_kind, coalesce(principal_id, ''),
 	               coalesce(on_behalf_of, ''), action, coalesce(app_id, ''),
 	               coalesce(target_kind, ''), coalesce(target_id, ''),
-	               coalesce(request_id, ''), detail
+	               coalesce(request_id, ''), detail,
+	               coalesce(outcome, ''), coalesce(source_ip, ''), coalesce(peer_ip, ''),
+	               coalesce(user_agent, ''), coalesce(actor_name, ''), coalesce(actor_email, ''),
+	               coalesce(schema_version, 1)
 	        FROM audit_events`
 	if len(where) > 0 {
 		sql += " WHERE " + strings.Join(where, " AND ")
@@ -192,7 +244,9 @@ func (r *Reader) List(ctx context.Context, q Query) ([]Record, error) {
 		var detail []byte
 		if err := rows.Scan(&rec.ID, &rec.OccurredAt, &rec.PrincipalKind, &rec.PrincipalID,
 			&rec.OnBehalfOf, &rec.Action, &rec.AppID, &rec.TargetKind, &rec.TargetID,
-			&rec.RequestID, &detail); err != nil {
+			&rec.RequestID, &detail,
+			&rec.Outcome, &rec.SourceIP, &rec.PeerIP, &rec.UserAgent, &rec.ActorName, &rec.ActorEmail,
+			&rec.SchemaVersion); err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not read the audit log.", err)
 		}
 		if len(detail) > 0 {

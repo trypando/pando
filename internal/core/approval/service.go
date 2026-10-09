@@ -175,7 +175,13 @@ func (s *Service) Deploy(ctx context.Context, p authz.Principal, app state.App, 
 	// revision nobody is asking for any more (R-156).
 	s.supersede(ctx, p, app.ID, dep.ID)
 
-	if err := s.launch(ctx, p, dep, rev, map[string]any{"spec_revision": rev.Revision, "trigger": trigger}); err != nil {
+	detail := map[string]any{"spec_revision": rev.Revision, "trigger": trigger}
+	// A rollback says what it rolled back from as well as to (R-389): the
+	// revision pinned now is the one running, until this deploy succeeds.
+	if trigger == state.TriggerRollback && app.PinnedSpecID != "" {
+		detail["rolled_back_from"] = app.PinnedSpecID
+	}
+	if err := s.launch(ctx, p, dep, rev, detail); err != nil {
 		return state.Deployment{}, err
 	}
 	return s.read(ctx, dep), nil

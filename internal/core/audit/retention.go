@@ -157,6 +157,19 @@ type Archiver struct {
 	Clock     clock.Clock
 	Logger    *zap.Logger
 	Interval  time.Duration
+
+	// Holds names the enabled audit sinks that have not been sent every event
+	// in [lo, hi) (R-386). A month any of them holds is neither archived nor
+	// removed this pass: archiving it now would record an archive for rows
+	// still in the live log. Nil holds nothing.
+	Holds func(ctx context.Context, lo, hi time.Time) ([]string, error)
+
+	// Audit records that a month was held, once per month per process. The
+	// archiver's own role cannot write the log, so this is the application's
+	// writer. Nil records nothing.
+	Audit func(ctx context.Context, e Event)
+
+	held map[string]bool
 }
 
 // Run passes at startup and then every Interval until ctx ends.
@@ -258,6 +271,16 @@ func (a *Archiver) monthsBefore(ctx context.Context, before time.Time) ([]time.T
 // month. Each step is one a failure leaves the month intact behind.
 func (a *Archiver) retire(ctx context.Context, month time.Time, r Retention) (ArchiveRecord, error) {
 	month = monthOf(month)
+	if a.Holds != nil {
+		holders, err := a.Holds(ctx, month, month.AddDate(0, 1, 0))
+		if err != nil {
+			return ArchiveRecord{}, err
+		}
+		if len(holders) > 0 {
+			a.hold(ctx, month, holders)
+			return ArchiveRecord{}, nil
+		}
+	}
 	rec, err := a.archive(ctx, month, r)
 	if err != nil {
 		return ArchiveRecord{}, err
@@ -269,6 +292,27 @@ func (a *Archiver) retire(ctx context.Context, month time.Time, r Retention) (Ar
 			WithRemedy("Nothing was lost: the events are in the live log and in the archive. Pando tries again at its next daily pass.")
 	}
 	return rec, nil
+}
+
+// hold leaves a month in the live log because an audit sink has not been
+// sent all of it, and says so once (R-386). A sink that keeps failing is
+// turned off (R-383) and stops holding, so a dead collector cannot keep the
+// live log growing (R-224).
+func (a *Archiver) hold(ctx context.Context, month time.Time, holders []string) {
+	a.Logger.Warn("audit month kept in the live log until every audit sink has been sent it",
+		zap.String("month", label(month)), zap.Strings("audit_sinks", holders))
+	if a.held == nil {
+		a.held = map[string]bool{}
+	}
+	if a.held[label(month)] || a.Audit == nil {
+		return
+	}
+	a.held[label(month)] = true
+	a.Audit(ctx, Event{
+		PrincipalKind: KindSystem, PrincipalID: "system",
+		Action: "audit.archive.held", TargetKind: "audit_month", TargetID: label(month),
+		Detail: map[string]any{"month": label(month), "audit_sinks": holders},
+	})
 }
 
 // archive returns a verified, recorded archive of every event in month — one

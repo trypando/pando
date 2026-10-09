@@ -29,6 +29,24 @@ Unreleased above it. -->
 
 ### Added
 
+- The audit log can be streamed to a SIEM and exported (#129, design 12). `GET /audit/stream`,
+  `pando audit tail --follow` and the `pando_read_audit_stream` MCP tool read every event in commit
+  order from a cursor, and resume from it after a restart, an upgrade or with several replicas without
+  missing one. **Audit sinks** are a new adapter category, `audit_sink`: `syslog` (RFC 5424 over TLS)
+  and `https`, with presets for Splunk HEC, Datadog, Elastic, Sumo Logic and Azure Monitor (Microsoft
+  Sentinel), sending Pando's native JSON or OCSF 1.3.0 (`docs/audit-formats.md`). Each sink's
+  backlog, last error and any gap are on the Audit log screen, `GET /audit/sinks` and
+  `pando audit sinks`; one that keeps failing for a day is turned off and its administrators are told.
+  A month is not archived while an enabled sink has not been sent it. `GET /audit/export` and
+  `pando audit export` download any range of the live log. Sending the log off the installation needs
+  the new `install.audit.export` permission, which the Administrator role holds.
+- Every audit event now records its outcome (success, denied or failed), the client's address and
+  user agent, and the acting person's name and email. Behind a proxy, list the proxy in
+  `PANDO_SERVER_TRUSTED_PROXIES` for the client's own address to be recorded rather than the proxy's.
+- More is audited: the end of a terminal session (`app.exec.end`), every deploy's outcome
+  (`deploy.finish`), what a rollback rolled back from, which fields a policy or spec change touched,
+  opening an app's logs (`app.logs.read`), and reading the audit log itself (`audit.read`,
+  `audit.export`, `audit.archive.download`).
 - An install image registry (#72). `PANDO_REGISTRY_URL` and its credential name a registry that
   builds are pushed to, by digest, for a runtime that pulls rather than imports; runtimes and the
   scanner pull with the registry's credential, and a deleted app's images are deleted from it.
@@ -247,6 +265,11 @@ Unreleased above it. -->
   backup" only when one was taken.
 
 ### Upgrade notes
+
+- Migration 000067 adds columns to `audit_events` without rewriting the rows already there; events
+  written before it have no outcome, source or actor name, and the stream reads them first, in the
+  order they were written. The audit log grows faster than before, because reading it, opening an
+  app's logs and the end of each terminal session are now recorded.
 
 - **Audit events older than three months leave the live log** at the first daily pass after
   upgrading, archived under `/var/lib/pando/audit-archives` first. To keep everything in the live

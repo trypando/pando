@@ -404,6 +404,7 @@ export function AdminConsole({
               const query = linkQuery(f);
               go(query ? { view: 'admin', section: 'audit', query } : { view: 'admin', section: 'audit' }, true);
             }}
+            onAdapters={canView ? () => go({ view: 'admin', section: 'system', tab: 'adapters' }) : undefined}
           />
         )}
         {section === 'api' && <Reference />}

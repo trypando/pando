@@ -66,6 +66,10 @@ download for each. Four remain:
   written. It does not prove the month was complete when it was written; a chain over the live log
   would, and would matter most once archives leave the host.
 
+  Issue #129 asked the same question of the audit stream, and left it here: one chain would serve the
+  stream and archives alike. The stream's cursor (design 12 §2) proves completeness to a consumer that
+  trusts Pando; a chain would prove it to one that does not.
+
 **O-18** exists because a `.deb` attached to a release and an apt repository are different products.
 The release build publishes `.deb`, `.rpm` and `.apk` packages, which install with
 `sudo apt install ./pando_<version>_linux_amd64.deb` and never upgrade themselves. `apt install pando`
@@ -118,6 +122,13 @@ first sign-in.
 
 Option 2, a trusted-proxy list, was the other real candidate and is a fine answer; it loses on
 having two things to get wrong instead of one, and on a wrong trusted-proxy list failing quietly.
+
+*Issue #129 added a trusted-proxy list for a different question, and this decision stands.* The audit
+log's client address (R-380) is different on every request and exists behind a proxy only in
+`X-Forwarded-For`, so there is no single value for an operator to state; a list is the only correct
+answer there. It decides the audited address and nothing else — not `Secure`, not rate limits — so the
+quiet failure this section worries about costs a wrong address in the log, which is what Pando recorded
+before. Design 12 §3.2.
 Option 1 was never viable and option 4 breaks the README as written. The rest of this section is the
 original write-up, kept because the reasoning is why the answer is what it is.
 

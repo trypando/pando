@@ -38,7 +38,12 @@
 # the Go build cache between runs too (the image job in ci.yml). The paths are
 # set rather than left to each image's defaults because CI names them.
 FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:89778e746908997996f8e1de415d9834154eac97a43298ea54bdb74f78116430 AS console
-ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build npm_config_cache=/cache/npm
+# GOTOOLCHAIN=auto because go.mod requires Go 1.27.2, the security release for
+# GO-2026-6599 – GO-2026-6617, and the hardened image is still 1.27.1. The go
+# command fetches 1.27.2 from the module proxy, checked against the checksum
+# database like any module, into the module cache. Remove it, and bump the
+# digests, once dhi.io/golang:1.27 ships 1.27.2.
+ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build npm_config_cache=/cache/npm GOTOOLCHAIN=auto
 WORKDIR /src
 RUN apk add --no-cache nodejs npm
 
@@ -55,7 +60,7 @@ RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-
     cd console && npm run build
 
 FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:89778e746908997996f8e1de415d9834154eac97a43298ea54bdb74f78116430 AS build
-ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build
+ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build GOTOOLCHAIN=auto
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src

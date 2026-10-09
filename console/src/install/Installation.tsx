@@ -47,6 +47,7 @@ import { NO_FILTERS, WHEN, auditQuery, filtersFromSearch } from './audit';
 import type { AuditFilters } from './audit';
 import { AIButton } from '../ui/AskAI';
 import { AuditAI } from './AuditAI';
+import { ARCHIVES_ANCHOR, AuditSinks } from './AuditSinks';
 import { PolicyAI } from './PolicyAI';
 import {
   EGRESS_MODES,
@@ -1672,6 +1673,20 @@ export interface AuditRecord {
   app_id?: string;
   target_kind?: string;
   target_id?: string;
+  request_id?: string;
+  // What R-379 adds. Absent on events written before it.
+  /** success, denied or failed. */
+  outcome?: string;
+  /** The client's address, from the trusted forwarding chain. */
+  source_ip?: string;
+  /** The address the connection came from: the proxy in front, if any. */
+  peer_ip?: string;
+  user_agent?: string;
+  /** The actor's name and email when the event was written, so an account
+   *  deleted since still reads as who it was. */
+  actor_name?: string;
+  actor_email?: string;
+  schema_version?: number;
 }
 
 // The kinds of thing the server records events against.
@@ -1726,12 +1741,15 @@ export function usePeople(events: AuditRecord[], chosen: string[] = []): Person[
 export function Audit({
   initial = NO_FILTERS,
   onFilters,
+  onAdapters,
 }: {
   /** Filters carried in from a link, such as an account's page. */
   initial?: AuditFilters;
   /** Told of every change, so the address bar can hold the filters and a
    *  reload or a copied link shows the same events. */
   onFilters?: (f: AuditFilters) => void;
+  /** Opens the Adapters screen, where audit sinks are configured. */
+  onAdapters?: () => void;
 }) {
   const [filters, setFilters] = useState<AuditFilters>(initial);
   const change = (next: AuditFilters) => {
@@ -1766,6 +1784,10 @@ export function Audit({
   return (
     <Screen heading="Audit log" action={searchOn && <AIButton onClick={() => setAsking(true)} />}>
       {asking && <AuditAI onClose={() => setAsking(false)} onShow={(f) => change(filtersFromSearch(f))} />}
+
+      {/* R-385: every copy of this log that leaves the installation, said
+          where the log is read rather than only where it is configured. */}
+      <AuditSinks onAdapters={onAdapters} />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', marginBottom: 'var(--space-5)' }}>
         <FilterRow>
@@ -1899,6 +1921,9 @@ export function AuditTable({
   loading?: boolean;
 }) {
   const nameOf = (id?: string) => (id ? (people.find((u) => u.id === id)?.external_id ?? id) : '');
+  // The name the event recorded comes first (R-379): it is who the actor was
+  // when it happened, and needs no lookup. Older events have none.
+  const actorOf = (row: AuditRecord) => row.actor_name || nameOf(row.principal_id);
   return (
     <Table
       dense
@@ -1913,7 +1938,20 @@ export function AuditTable({
           muted: true,
           render: (row: AuditRecord) => new Date(row.occurred_at).toLocaleString(),
         },
-        { key: 'action', header: 'Action', width: 'minmax(0,26ch)', mono: true },
+        {
+          key: 'action',
+          header: 'Action',
+          width: 'minmax(0,30ch)',
+          mono: true,
+          // Success is most of the log and says nothing; a refusal or a
+          // failure is what someone scanning it is looking for.
+          render: (row: AuditRecord) => (
+            <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)' }}>
+              {row.action}
+              <Outcome outcome={row.outcome} />
+            </span>
+          ),
+        },
         {
           key: 'principal_id',
           header: 'Actor',
@@ -1922,10 +1960,14 @@ export function AuditTable({
           // A delegated token records both itself and the person it acted
           // for (R-229). Showing only one of them is how "who did this"
           // stops being answerable.
-          render: (row: AuditRecord) =>
-            row.on_behalf_of && row.on_behalf_of !== row.principal_id
-              ? `${nameOf(row.principal_id)} for ${nameOf(row.on_behalf_of)}`
-              : nameOf(row.principal_id) || row.principal_kind,
+          render: (row: AuditRecord) => {
+            const who =
+              row.on_behalf_of && row.on_behalf_of !== row.principal_id
+                ? `${actorOf(row)} for ${nameOf(row.on_behalf_of)}`
+                : actorOf(row) || row.principal_kind;
+            const more = [row.actor_email, row.actor_name ? row.principal_id : undefined].filter(Boolean).join(' · ');
+            return more ? <Tooltip content={more}>{who}</Tooltip> : who;
+          },
         },
         {
           key: 'target_id',
@@ -1938,10 +1980,38 @@ export function AuditTable({
               ? `${row.target_kind ? row.target_kind + ' ' : ''}${row.target_kind === 'user' ? nameOf(row.target_id) : row.target_id}`
               : row.app_id || '—',
         },
+        {
+          key: 'source_ip',
+          header: 'Source IP',
+          width: 'minmax(0,16ch)',
+          mono: true,
+          muted: true,
+          // The user agent and the connecting address are there on hover:
+          // needed when investigating, noise when scanning.
+          render: (row: AuditRecord) => {
+            if (!row.source_ip) return '—';
+            const more = [
+              row.peer_ip && row.peer_ip !== row.source_ip ? `Through ${row.peer_ip}` : '',
+              row.user_agent ?? '',
+            ]
+              .filter(Boolean)
+              .join(' · ');
+            return more ? <Tooltip content={more}>{row.source_ip}</Tooltip> : row.source_ip;
+          },
+        },
       ]}
       rows={events}
     />
   );
+}
+
+/** An event's outcome when it was not a success, as a symbol and a word:
+ *  denied is a refusal, failed is an attempt that went wrong, and they read
+ *  differently. */
+export function Outcome({ outcome }: { outcome?: string }) {
+  if (outcome === 'denied') return <StatusIndicator status="stopped" label="Denied" />;
+  if (outcome === 'failed') return <StatusIndicator status="failed" label="Failed" />;
+  return null;
 }
 
 interface AuditArchive {
@@ -1965,7 +2035,10 @@ function ArchivedMonths() {
   });
   const rows = archives.data?.archives ?? [];
   return (
-    <section style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-6)', borderTop: 'var(--border-width) solid var(--rule)' }}>
+    <section
+      id={ARCHIVES_ANCHOR}
+      style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-6)', borderTop: 'var(--border-width) solid var(--rule)' }}
+    >
       <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-1)' }}>Archived months</h4>
       <Quiet>Events older than the retention set in Policy. Each download is the month's events, one per line.</Quiet>
       {archives.isError && <Quiet>{messageOf(archives.error)}</Quiet>}

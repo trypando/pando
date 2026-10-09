@@ -121,13 +121,14 @@ export function kindKey(k: { category: string; kind: string }): string {
 export function categoryLabel(category: string): string {
   if (category === 'ai') return 'AI';
   if (category === 'image_registry') return 'Image registry';
+  if (category === 'audit_sink') return 'Audit sink';
   return category.charAt(0).toUpperCase() + category.slice(1);
 }
 
 // The categories in the order an installation is built up: where apps run and
 // how they are reached first, then what they are built with and what they
 // lean on, then the extras. One not listed here sorts after these, by name.
-const CATEGORY_ORDER = ['runtime', 'routing', 'builder', 'image_registry', 'services', 'secrets', 'backup', 'scanner', 'ai', 'notify', 'identity'];
+const CATEGORY_ORDER = ['runtime', 'routing', 'builder', 'image_registry', 'services', 'secrets', 'backup', 'scanner', 'ai', 'notify', 'audit_sink', 'identity'];
 
 const CATEGORY_NOTES: Record<string, string> = {
   runtime: 'Where apps run: it starts, stops and watches the containers each app is made of.',
@@ -141,6 +142,8 @@ const CATEGORY_NOTES: Record<string, string> = {
   scanner: 'What checks apps for known vulnerabilities, for the security score.',
   ai: 'An AI provider, such as Anthropic. It performs the AI functions chosen on it: repairing plans, drafting access and policy, searching the audit log, answering from the reference.',
   notify: 'Where notifications go, such as the console itself.',
+  audit_sink:
+    'Where a copy of the audit log goes: every audit event is sent off the installation as it is written, to a syslog collector or a SIEM\u2019s HTTPS endpoint. Adding one needs the install.audit.export permission, and the Audit log screen shows each one.',
   identity: 'Where accounts come from and how people sign in.',
   source: 'How Pando reads private repositories: a connection to GitHub, GitLab, Azure DevOps, Bitbucket, Gitea or any git host.',
 };

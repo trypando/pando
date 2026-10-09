@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/viper"
 
+	"github.com/trypando/pando/internal/clientaddr"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/tokenkey"
 )
@@ -263,6 +264,13 @@ type Server struct {
 	// the README documents.
 	ExternalURL string `mapstructure:"external_url"`
 
+	// TrustedProxies are the proxies whose X-Forwarded-For names the client
+	// in the audit log (R-380, design 12 §3.2): addresses and CIDRs, separated
+	// by commas. Empty, the default, records the connecting peer. It decides
+	// the audited address and nothing else — not Secure, which ExternalURL
+	// decides, and not rate limits (O-19).
+	TrustedProxies string `mapstructure:"trusted_proxies"`
+
 	// RoutingMode is how apps are addressed — "subdomain" or "path" (design 03
 	// §4.1). Neither is a global setting in the spec sense; this is the
 	// install's default shape, and each app's spec still names its own mode.
@@ -455,16 +463,17 @@ func Load(path string) (*Config, error) {
 //
 // Also where sources.go learns which variable a key came from.
 var boundEnv = map[string]string{
-	"database.url":          "PANDO_DATABASE_URL",
-	"database.max_conns":    "PANDO_DATABASE_MAX_CONNS",
-	"server.base_domain":    "PANDO_SERVER_BASE_DOMAIN",
-	"server.proxy_upstream": "PANDO_SERVER_PROXY_UPSTREAM",
-	"server.issuer":         "PANDO_SERVER_ISSUER",
-	"server.external_url":   "PANDO_SERVER_EXTERNAL_URL",
-	"server.addr":           "PANDO_SERVER_ADDR",
-	"server.routing_mode":   "PANDO_SERVER_ROUTING_MODE",
-	"server.work_dir":       "PANDO_SERVER_WORK_DIR",
-	"server.advertise_url":  "PANDO_SERVER_ADVERTISE_URL",
+	"database.url":           "PANDO_DATABASE_URL",
+	"database.max_conns":     "PANDO_DATABASE_MAX_CONNS",
+	"server.base_domain":     "PANDO_SERVER_BASE_DOMAIN",
+	"server.proxy_upstream":  "PANDO_SERVER_PROXY_UPSTREAM",
+	"server.issuer":          "PANDO_SERVER_ISSUER",
+	"server.external_url":    "PANDO_SERVER_EXTERNAL_URL",
+	"server.trusted_proxies": "PANDO_SERVER_TRUSTED_PROXIES",
+	"server.addr":            "PANDO_SERVER_ADDR",
+	"server.routing_mode":    "PANDO_SERVER_ROUTING_MODE",
+	"server.work_dir":        "PANDO_SERVER_WORK_DIR",
+	"server.advertise_url":   "PANDO_SERVER_ADVERTISE_URL",
 
 	"server.audit_archive_dir": "PANDO_SERVER_AUDIT_ARCHIVE_DIR",
 	"server.token_key_path":    "PANDO_SERVER_TOKEN_KEY_PATH",
@@ -499,11 +508,20 @@ func (c *Config) validate() error {
 	if _, err := c.Server.External(); err != nil {
 		return err
 	}
+	if _, err := c.Server.Trusted(); err != nil {
+		return err
+	}
 	if u, err := url.Parse(c.ACME.DirectoryURL); err != nil || u.Scheme != "https" || u.Host == "" {
 		return fmt.Errorf("PANDO_ACME_DIRECTORY_URL is %q, which is not an https URL; it is a certificate authority's ACME directory, such as %s",
 			c.ACME.DirectoryURL, LetsEncryptDirectory)
 	}
 	return nil
+}
+
+// Trusted parses TrustedProxies. Checked at startup: a list Pando cannot read,
+// or one trusting most of the internet, is refused before the first request.
+func (s Server) Trusted() (clientaddr.Trusted, error) {
+	return clientaddr.Parse(s.TrustedProxies)
 }
 
 // External parses ExternalURL, returning nil when it is unset.

@@ -346,3 +346,23 @@ func TestR252_AnImageRegistryMustImplementItsInterface(t *testing.T) {
 	_, ok = r.ImageRegistry("reg_missing")
 	require.False(t, ok)
 }
+
+type stubAuditSink struct{ base }
+
+func (stubAuditSink) AuditSinkCapabilities() api.AuditSinkCapabilities {
+	return api.AuditSinkCapabilities{Format: api.AuditFormatNative}
+}
+func (stubAuditSink) Send(context.Context, api.AuditBatch) error { return nil }
+
+// TestR382_AnAuditSinkMustImplementItsInterface asserts the thirteenth
+// category is checked like the others.
+func TestR382_AnAuditSinkMustImplementItsInterface(t *testing.T) {
+	r := api.NewRegistry()
+	require.Error(t, r.Register("as_fake", base{kind: "syslog", cat: api.CategoryAuditSink}))
+	require.NoError(t, r.Register("as_real", stubAuditSink{base{kind: "syslog", cat: api.CategoryAuditSink}}))
+	require.NoError(t, r.Register("bk_local", stubBackup{base{kind: "local", cat: api.CategoryBackup}}))
+	_, ok := r.AuditSink("as_real")
+	require.True(t, ok)
+	_, ok = r.AuditSink("bk_local")
+	require.False(t, ok)
+}

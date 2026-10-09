@@ -695,6 +695,47 @@ func TestR157_RollbackToARevisionThatRanNeedsNoApproval(t *testing.T) {
 	require.Equal(t, neverRan, notReally.SpecRevision)
 }
 
+// TestR389_ARollbackRecordsWhatItRolledBackFrom asserts R-389: the rollback's
+// app.deploy event names the revision that was running as well as the one it
+// went back to.
+func TestR389_ARollbackRecordsWhatItRolledBackFrom(t *testing.T) {
+	t.Parallel()
+	a := newApprovals(t)
+	admin := a.admin()
+	ctx := context.Background()
+	appID := a.createApp(admin, "notes")
+
+	first := a.writeSpec(admin, appID, minimalSpec())
+	a.pinSpec(admin, appID, first)
+	app, _, err := a.Apps.ByID(ctx, appID)
+	require.NoError(t, err)
+	ran, err := a.Server.Deployments.Create(ctx, appID, app.PinnedSpecID, state.TriggerManual, a.AdminID)
+	require.NoError(t, err)
+	require.NoError(t, a.Server.Deployments.Finish(ctx, ran.ID, state.DeploySucceeded, "", ""))
+
+	latest := a.writeSpec(admin, appID, minimalSpec())
+	a.pinSpec(admin, appID, latest)
+	running, _, err := a.Apps.ByID(ctx, appID)
+	require.NoError(t, err)
+
+	got := a.do(admin, http.MethodPost, "/apps/"+appID+"/deployments/rollback", map[string]any{"to": first})
+	require.Equal(t, http.StatusAccepted, got.Code, got.String())
+
+	var log struct {
+		Events []struct {
+			Detail map[string]any `json:"detail"`
+		} `json:"events"`
+	}
+	got = a.do(admin, http.MethodGet, "/audit?action=app.deploy&app_id="+appID, nil)
+	require.Equal(t, http.StatusOK, got.Code, got.String())
+	got.JSON(t, &log)
+	require.NotEmpty(t, log.Events)
+	newest := log.Events[0].Detail
+	require.Equal(t, "rollback", newest["trigger"])
+	require.EqualValues(t, first, newest["spec_revision"])
+	require.Equal(t, running.PinnedSpecID, newest["rolled_back_from"])
+}
+
 // TestR158_TheStatusSaysWhenApprovalPausesAutoDeploy asserts what the console
 // reads to say so on the app.
 func TestR158_TheStatusSaysWhenApprovalPausesAutoDeploy(t *testing.T) {

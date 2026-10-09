@@ -775,12 +775,25 @@ func (s *Server) handleCreateSpec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The revision this one follows, for what changed (R-390). A read that
+	// fails costs the event its changes, not the save.
+	previous, _ := s.latestRevisionSpec(r, app)
+
 	rev, err := s.Apps.CreateRevision(r.Context(), app.ID, &body, origin, p.ID)
 	if err != nil {
 		Error(w, r, err)
 		return
 	}
-	s.auditApp(r, app.ID, "spec.create")
+	detail := map[string]any{"spec_revision": rev.Revision}
+	if previous != nil {
+		for k, v := range audit.Changes(previous, &body) {
+			detail[k] = v
+		}
+	}
+	s.audit(r, audit.Event{
+		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
+		Action: "spec.create", AppID: app.ID, TargetKind: "app", TargetID: app.ID, Detail: detail,
+	})
 
 	JSON(w, http.StatusCreated, rev)
 }

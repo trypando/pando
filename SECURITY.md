@@ -120,6 +120,13 @@ to the host beyond the port Pando allocates it.
   `Secure` and one plaintext request to the hostname puts it on the wire. Pando does not infer this
   from `X-Forwarded-Proto`, for the same reason it strips inbound `X-Pando-*`: any client that can
   reach it directly can set that header.
+
+  The audit log records each request's client address. Behind a proxy, list the proxy's addresses in
+  **`PANDO_SERVER_TRUSTED_PROXIES`** (comma-separated CIDRs) and Pando reads `X-Forwarded-For` from
+  those peers only, taking the right-most address that is not itself a listed proxy. With the list
+  empty, the default, the audit log records the proxy's own address. The list decides the audited
+  address and nothing else: not `Secure`, not rate limits. A range covering most of the internet is
+  refused at startup.
 - Accounts are local to the installation in this version. There is no external identity provider yet.
 
 ### Cryptography
