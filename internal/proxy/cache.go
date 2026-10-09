@@ -168,14 +168,17 @@ func (c *Cache) principal(r *http.Request, auth Authenticator) (p authz.Principa
 			return authz.Principal{}, false, nil
 		}
 	}
-	cookie, cerr := r.Cookie(sessionCookie)
-	if cerr != nil { //nolint:nilerr // no cookie is not a failure; the ordinary path decides
-		return authz.Principal{}, false, nil
+	session := ""
+	for _, ck := range r.Cookies() {
+		if ck.Name == sessionCookie {
+			session = ck.Value
+			break
+		}
 	}
-	if cookie.Value == "" {
-		return authz.Principal{}, false, nil
+	if session == "" {
+		return authz.Principal{}, false, nil // no session: the ordinary path decides
 	}
-	key := sha256.Sum256([]byte(cookie.Value))
+	key := sha256.Sum256([]byte(session))
 
 	c.mu.Lock()
 	hit, found := lookup(c, c.sessions, key)
@@ -185,7 +188,7 @@ func (c *Cache) principal(r *http.Request, auth Authenticator) (p authz.Principa
 		return hit, true, nil
 	}
 
-	p, expires, err := resolver.SessionPrincipal(r.Context(), cookie.Value)
+	p, expires, err := resolver.SessionPrincipal(r.Context(), session)
 	if err != nil || p.Kind != authz.KindUser {
 		return p, true, err
 	}
