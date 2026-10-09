@@ -19,6 +19,7 @@ import (
 	"github.com/trypando/pando/internal/clientaddr"
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/address"
+	"github.com/trypando/pando/internal/core/applimit"
 	"github.com/trypando/pando/internal/core/approval"
 	"github.com/trypando/pando/internal/core/assertion"
 	"github.com/trypando/pando/internal/core/assist"
@@ -30,6 +31,7 @@ import (
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/edge"
+	"github.com/trypando/pando/internal/core/idle"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
@@ -317,6 +319,15 @@ type Server struct {
 	Groups *state.Groups
 	Roles  *state.Roles
 
+	// AppLimits decides how many apps a person may own, and AppLimitStore
+	// holds the values set on users and groups (R-244). Nil AppLimits is no
+	// limit.
+	AppLimits     *applimit.Service
+	AppLimitStore *state.AppLimits
+
+	// IdleSettings reads and changes an app's idle settings (R-397).
+	IdleSettings *idle.Settings
+
 	// BundleSource supplies what goes into a backup. Held separately from
 	// Backups because one records what was taken and the other reads what is
 	// being taken — and the record has to outlive the thing (R-204).
@@ -551,6 +562,11 @@ func (s *Server) Routes() http.Handler {
 			r.Put("/{userID}/role", s.handlePutUserRole)
 			r.Delete("/{userID}/role", s.handleDeleteUserRole)
 
+			// How many apps they may own (R-244): the limit in force and
+			// where it comes from, and the value on their own account.
+			r.Get("/{userID}/app-limit", s.handleGetUserAppLimit)
+			r.Put("/{userID}/app-limit", s.handlePutUserAppLimit)
+
 			// An administrator's reset of someone else's password (R-046).
 			r.Post("/{userID}/password", s.handleResetPassword)
 
@@ -584,6 +600,10 @@ func (s *Server) Routes() http.Handler {
 			r.Put("/{groupID}/role", s.handlePutGroupRole)
 			r.Delete("/{groupID}/role", s.handleDeleteGroupRole)
 			r.Get("/{groupID}/apps", s.handleGroupApps)
+
+			// How many apps each of its members may own (R-244).
+			r.Get("/{groupID}/app-limit", s.handleGetGroupAppLimit)
+			r.Put("/{groupID}/app-limit", s.handlePutGroupAppLimit)
 
 			// A provider's group counting as a Pando group's members (R-078).
 			r.Put("/{groupID}/links/{syncedGroupID}", s.handleLinkGroup)
@@ -770,6 +790,11 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/start", s.handleStartApp)
 				r.Post("/stop", s.handleStopApp)
 				r.Post("/restart", s.handleRestartApp)
+
+				// Whether Pando stops or deletes the app when nobody uses
+				// it, and when (R-393 – R-397). Settings, not spec.
+				r.Get("/idle", s.handleGetAppIdle)
+				r.Put("/idle", s.handlePutAppIdle)
 
 				// Slots and volumes: first-class objects in R-030 that had no
 				// way to be reached.

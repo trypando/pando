@@ -15,6 +15,7 @@ export interface App {
   state: string;
   desired_state: string;
   pinned_spec_id?: string;
+  stopped_for_idle?: boolean;
   source: Source;
   created_at: string;
   updated_at: string;
@@ -243,6 +244,9 @@ export interface PolicyDocument {
   max_token_lifetime_days?: number;
   max_log_disk_bytes?: number;
   max_concurrent_deploys?: number;
+  idle_stop_days?: number;
+  idle_delete_days?: number;
+  max_apps_per_user?: number;
   allow_cpu_oversubscription?: boolean;
   allow_memory_oversubscription?: boolean;
   audit_retention_months?: number;

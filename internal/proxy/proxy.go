@@ -85,6 +85,14 @@ type Metrics interface {
 	Request(appID string, kind authz.PrincipalKind, allowed bool)
 }
 
+// Activity hears that a request was let through to an app, which keeps the
+// app from being stopped or deleted for being idle (R-394). *idle.Recorder is
+// one: in memory, written to the database once a minute, so the request never
+// waits for it.
+type Activity interface {
+	Touch(appID string)
+}
+
 // Proxy is the single enforcement point for every request to every app (R-023).
 //
 // There is no bypass — not for public apps, not for performance, not for
@@ -102,7 +110,10 @@ type Proxy struct {
 	Upstreams Upstreams
 	Auditor   AuditWriter
 	Metrics   Metrics
-	Logger    *zap.Logger
+
+	// Activity, when set, hears of every request let through (R-394).
+	Activity Activity
+	Logger   *zap.Logger
 
 	// UsePolicy says whether anonymous use is recorded (R-227). Nil records
 	// it, which is the default.
@@ -171,6 +182,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Is it running?
 	if app.State != state.StateRunning && app.State != state.StateDegraded {
+		// Said apart from "not running right now", which promises it comes
+		// back: this one waits for a person (R-396).
+		if app.StoppedForIdle {
+			p.fail(w, r, http.StatusServiceUnavailable,
+				"This app was stopped because nobody had used it for a while. Ask whoever manages it to start it again in Pando.")
+			return
+		}
 		p.fail(w, r, http.StatusServiceUnavailable,
 			"This app isn't running right now. Try again in a moment.")
 		return
@@ -225,6 +243,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(ctx)
 	p.visitsOnce.Do(func() { p.visits = newVisits() })
 	visit := p.recordUse(r, principal, app.ID)
+
+	// Only an allowed request is activity: a crawler refused at a private
+	// app's sign-in would otherwise keep it from ever being idle (R-394).
+	if p.Activity != nil {
+		p.Activity.Touch(app.ID)
+	}
 
 	// 6. Mint the assertion.
 	token, err := p.Minter.Mint(assertion.Claims{

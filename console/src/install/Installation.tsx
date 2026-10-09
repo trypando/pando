@@ -324,6 +324,12 @@ interface PolicyDoc {
   allow_memory_oversubscription?: boolean;
   max_concurrent_deploys?: number;
 
+  // Apps nobody uses (R-393 – R-398) and how many a person may own (R-244),
+  // issue #131. Zero is off, or unlimited.
+  idle_stop_days?: number;
+  idle_delete_days?: number;
+  max_apps_per_user?: number;
+
   // Audit retention (R-347, R-348).
   audit_retention_months?: number;
   audit_archive?: string;
@@ -857,7 +863,8 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               disabled={locked('require_backup_before_destroy')}
               label="Require a backup before anything is destroyed"
               // R-284: set once, and app owners cannot override downward.
-              description="App owners can't turn this off for their own app."
+              // It also answers for Pando's own deletion of an idle app (R-398).
+              description="App owners can't turn this off for their own app. It also applies when Pando deletes an app nobody uses."
               onChange={(e) => edit({ require_backup_before_destroy: e.target.checked })}
             />
           </Fixed>
@@ -876,6 +883,49 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               onChange={(e) =>
                 edit({ max_log_disk_bytes: Math.max(0, Math.round(Number(e.target.value) || 0)) * 1_000_000 })
               }
+            />
+          </Fixed>
+        </PolicySection>
+
+        {/* Issue #131. Defaults, not floors: an app can set its own days or
+            turn either off (R-397), and a person's account or group can
+            carry its own limit (R-244). */}
+        <PolicySection
+          heading="Apps nobody uses"
+          note="Counted from the last time somebody used, deployed or started an app. The owner is told 7 days before Pando acts. An app can set its own number of days or turn this off."
+        >
+          <Fixed field="idle_stop_days">
+            <Input
+              label="Stop an app nobody has used for this many days"
+              type="number"
+              disabled={locked('idle_stop_days')}
+              value={String(current.idle_stop_days ?? 0)}
+              helper="Zero means never. A stopped app keeps its data and stays stopped until somebody starts it."
+              onChange={(e) => edit({ idle_stop_days: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+            />
+          </Fixed>
+          <Fixed field="idle_delete_days">
+            <Input
+              label="Delete an app nobody has used for this many days"
+              type="number"
+              disabled={locked('idle_delete_days')}
+              value={String(current.idle_delete_days ?? 0)}
+              helper={
+                current.require_backup_before_destroy
+                  ? "Zero means never. Longer than stopping. Pando backs up the app's storage first, as Data and destruction requires."
+                  : "Zero means never. Longer than stopping. The app's storage is deleted with it unless Data and destruction requires a backup."
+              }
+              onChange={(e) => edit({ idle_delete_days: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+            />
+          </Fixed>
+          <Fixed field="max_apps_per_user">
+            <Input
+              label="Apps each person may own"
+              type="number"
+              disabled={locked('max_apps_per_user')}
+              value={String(current.max_apps_per_user ?? 0)}
+              helper="Zero means unlimited. A limit set on a person's account or one of their groups replaces this one."
+              onChange={(e) => edit({ max_apps_per_user: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
             />
           </Fixed>
         </PolicySection>

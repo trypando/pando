@@ -606,7 +606,7 @@ function Tile({
   // without a word. The state is still in the accessible name and the hover
   // title, so the difference is never carried by appearance alone.
   const open = reachable(app);
-  const label = open ? app.name : `${app.name} — ${statusLabel(app.state)}`;
+  const label = open ? app.name : `${app.name} — ${statusLabel(app.state, app.stopped_for_idle)}`;
 
   // The menu button shows when the tile is pointed at or tabbed into, and
   // while its menu is open: twenty buttons at rest are twenty things to look
@@ -705,7 +705,7 @@ function Tile({
           {card}
         </a>
       ) : (
-        <div title={statusLabel(app.state)} aria-label={label} aria-disabled="true">
+        <div title={statusLabel(app.state, app.stopped_for_idle)} aria-label={label} aria-disabled="true">
           {card}
         </div>
       )}

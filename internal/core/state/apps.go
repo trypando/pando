@@ -40,6 +40,11 @@ type App struct {
 	DesiredState string `json:"desired_state"`
 	PinnedSpecID string `json:"pinned_spec_id,omitempty"`
 
+	// StoppedForIdle says Pando stopped this app because nobody had used it
+	// (R-396), so a stopped app is not taken for a failed one, or for one its
+	// owner stopped. Starting it clears this (migration 69).
+	StoppedForIdle bool `json:"stopped_for_idle,omitempty"`
+
 	// Source is where the app comes from, recorded at creation so detection has
 	// something to clone before any spec exists to carry it.
 	Source spec.Source `json:"source"`
@@ -124,11 +129,45 @@ func NewApps(db *DB) *Apps { return &Apps{db: db} }
 // cannot exist without them — a control grant without a data grant would leave
 // the owner able to manage an app they cannot open.
 func (a *Apps) Create(ctx context.Context, name, slug, ownerUserID, createdBy string, src spec.Source) (App, error) {
+	return a.CreateWithin(ctx, name, slug, ownerUserID, createdBy, src, 0)
+}
+
+// AppLimitReached is CreateWithin's refusal: the owner already owns Limit
+// apps or more (R-244).
+type AppLimitReached struct {
+	Owned int
+	Limit int
+}
+
+func (e *AppLimitReached) Error() string {
+	return fmt.Sprintf("the owner owns %d apps and may own %d", e.Owned, e.Limit)
+}
+
+// CreateWithin is Create, refused with *AppLimitReached when the owner
+// already owns limit apps or more; 0 is no limit (R-244).
+//
+// Counted in the transaction that inserts, under a lock on the owner's row,
+// so two creates at once cannot both see room for one more.
+func (a *Apps) CreateWithin(ctx context.Context, name, slug, ownerUserID, createdBy string, src spec.Source, limit int) (App, error) {
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
 		return App{}, errs.Wrap(errs.Internal, "Could not create the app.", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	if limit > 0 {
+		var owned int
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, ownerUserID); err != nil {
+			return App{}, errs.Wrap(errs.Internal, "Could not create the app.", err)
+		}
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM apps WHERE owner_user_id = $1 AND deleted_at IS NULL`, ownerUserID).Scan(&owned); err != nil {
+			return App{}, errs.Wrap(errs.Internal, "Could not create the app.", err)
+		}
+		if owned >= limit {
+			return App{}, &AppLimitReached{Owned: owned, Limit: limit}
+		}
+	}
 
 	app := App{
 		ID:           id.New(id.App),
@@ -189,7 +228,7 @@ func (a *Apps) ByID(ctx context.Context, appID string) (App, bool, error) {
 	err := a.db.QueryRow(ctx, `
 		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state, a.pinned_spec_id,
 		       a.source, a.created_at, a.updated_at, a.deleted_at, r.body->'routing',
-		       s.score, s.score_fixable, i.updated_at
+		       s.score, s.score_fixable, i.updated_at, a.stopped_for_idle
 		FROM apps a
 		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		LEFT JOIN app_icons i ON i.app_id = a.id
@@ -204,7 +243,7 @@ func (a *Apps) ByID(ctx context.Context, appID string) (App, bool, error) {
 		WHERE a.id = $1 AND a.deleted_at IS NULL`, appID).
 		Scan(&app.ID, &app.Name, &app.Slug, &owner, &app.State, &app.DesiredState, &pinned,
 			&source, &app.CreatedAt, &app.UpdatedAt, &app.DeletedAt, &routing,
-			&app.SecurityScore, &app.SecurityScoreFixable, &app.IconUpdatedAt)
+			&app.SecurityScore, &app.SecurityScoreFixable, &app.IconUpdatedAt, &app.StoppedForIdle)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return App{}, false, nil
 	}
@@ -332,7 +371,7 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 	rows, err := a.db.Query(ctx, `
 		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state,
 		       a.pinned_spec_id, a.created_at, a.updated_at, r.body->'routing', s.score, s.score_fixable,
-		       i.updated_at
+		       i.updated_at, a.stopped_for_idle
 		FROM apps a
 		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		LEFT JOIN app_icons i ON i.app_id = a.id
@@ -364,7 +403,7 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 		var routing []byte
 		if err := rows.Scan(&app.ID, &app.Name, &app.Slug, &owner, &app.State, &app.DesiredState,
 			&pinned, &app.CreatedAt, &app.UpdatedAt, &routing,
-			&app.SecurityScore, &app.SecurityScoreFixable, &app.IconUpdatedAt); err != nil {
+			&app.SecurityScore, &app.SecurityScoreFixable, &app.IconUpdatedAt, &app.StoppedForIdle); err != nil {
 			return nil, "", 0, errs.Wrap(errs.Internal, "Could not list apps.", err)
 		}
 		if len(routing) > 0 {
@@ -1373,12 +1412,12 @@ func (a *Apps) ByRouting(ctx context.Context, by, value string) (App, *spec.AppS
 	var body []byte
 	err := a.db.QueryRow(ctx, `
 		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state, a.pinned_spec_id,
-		       a.created_at, a.updated_at, r.body
+		       a.created_at, a.updated_at, r.body, a.stopped_for_idle
 		FROM apps a
 		JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		WHERE a.deleted_at IS NULL AND `+where, arg).
 		Scan(&app.ID, &app.Name, &app.Slug, &owner, &app.State, &app.DesiredState, &app.PinnedSpecID,
-			&app.CreatedAt, &app.UpdatedAt, &body)
+			&app.CreatedAt, &app.UpdatedAt, &body, &app.StoppedForIdle)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return App{}, nil, false, nil
 	}

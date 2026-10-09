@@ -550,6 +550,33 @@ What those jobs do:
   to do (issue #87); "took a rolling backup" is logged only when one was.
 - Expire rolling backups past `BackupDaily` (R-211). Never touches `kind = 'on_delete'` (R-204).
 - Prune spec revisions past `SpecRevisions`, skipping any revision that was ever pinned.
-- Reap idle per-user instances **[LATER]** (R-293).
+- Reap idle per-user instances **[LATER]** (R-293). Idle whole apps are the idle job's, below.
+
+### 6.1 Idle apps (issue #131)
+
+A leader job of its own (`idle`, `internal/core/idle`), hourly, inert until host policy's
+`idle_stop_days` or `idle_delete_days`, or an app's own, is set (R-393).
+
+- **Activity** (R-394) is a request the proxy let through, a deploy, or a start. The proxy calls
+  `Recorder.Touch` after `CheckData` allows a request; each replica writes what it saw once a minute
+  in one statement. Refused requests are not activity. Deploys and starts are written by triggers
+  (design 02 §2.12).
+- **A notice is owed** when an app has been idle for the setting less 7 days **[P]**, and never before
+  a whole day without activity. The owner is notified (`app_idle`) and `app.idle.notice` is audited.
+- **The action** is taken once the app has been idle for the setting *and* 7 days have passed since
+  the notice, so a setting under 8 days still waits out a week (R-395). Deletion is checked first; an
+  app being deleted is not also owed a stop.
+- **Stop** sets `desired_state = stopped` and `stopped_for_idle` in one write, only for an app meant
+  to be running and not `failed` (R-151): the reconciler converges as for any stop. Audited
+  `app.idle.stopped`. Nothing starts it but a person (R-396); the proxy tells a visitor why.
+- **Delete** goes through `appdelete.Service`, the same path as `DELETE /apps/{id}`, with storage
+  decided by host policy (R-398): backed up when `require_backup_before_destroy` is on, discarded
+  otherwise. If it fails, the notice is reset to now and the owner told why, so the next attempt is a
+  week later rather than every pass.
+- A notice the app answered (activity after it), or no longer owed (setting turned off, app stopped by
+  its owner), is withdrawn.
+
+**[D]** No wake on request. Starting a workload because a request arrived is the on-demand path R-295
+and R-296 leave to per-user instances; an idle app is started by a person.
 
 **[D]** R-224 is the reason this job exists. Log retention that is per-app only can still fill a disk with twenty apps. The aggregate check is the real constraint and the per-app cap is a fairness mechanism under it.

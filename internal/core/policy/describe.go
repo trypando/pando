@@ -40,6 +40,14 @@ var descriptions = map[string]string{
 	"max_log_disk_bytes":      "Total disk for app logs across every app, in bytes. 0 means no limit.",
 	"max_concurrent_deploys": "How many deploys each replica of Pando runs at once. A deploy past the limit " +
 		"waits in the queue and its log says how many are ahead of it. 0 means one per CPU, and at least two.",
+	"idle_stop_days": "Stop an app nobody has used for this many days. Its owner is told 7 days before, and " +
+		"somebody starts it again by hand. An app can set its own number or turn this off. 0 means never.",
+	"idle_delete_days": "Delete an app nobody has used for this many days, counted from its last use, so it is " +
+		"longer than idle_stop_days. Its owner is told 7 days before. Storage is backed up first when " +
+		"require_backup_before_destroy is on, and discarded otherwise. An app can set its own number or turn " +
+		"this off. 0 means never.",
+	"max_apps_per_user": "How many apps each person may own, unless their account or one of their groups says " +
+		"otherwise. 0 means unlimited.",
 	"allow_cpu_oversubscription": "Let apps together ask for more CPU than the runtime has. Off by default: a " +
 		"deploy that would need more CPU than is left is refused. On, busy apps share the CPU and run slower.",
 	"allow_memory_oversubscription": "Let apps together ask for more memory than the runtime has. Off by " +

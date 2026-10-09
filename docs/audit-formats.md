@@ -90,6 +90,8 @@ is encoded as 6003 API Activity, 99 Other.
 | `app.favorite` | 6003 API Activity | 3 Update | 600303 |
 | `app.icon.clear` | 6003 API Activity | 4 Delete | 600304 |
 | `app.icon.set` | 6003 API Activity | 1 Create | 600301 |
+| `app.idle.notice` | 6003 API Activity | 99 Other | 600399 |
+| `app.idle.stopped` | 6002 Application Lifecycle | 4 Stop | 600204 |
 | `app.logs.read` | 6003 API Activity | 2 Read | 600302 |
 | `app.passcode.denied` | 6004 Web Resource Access Activity | 2 Access Deny | 600402 |
 | `app.passcode.unlock` | 6004 Web Resource Access Activity | 1 Access Grant | 600401 |
@@ -155,6 +157,7 @@ is encoded as 6003 API Activity, 99 Other.
 | `group.rename` | 3006 Group Management | 99 Other | 300699 |
 | `group.sync.refused` | 3006 Group Management | 99 Other | 300699 |
 | `group.unlink` | 3006 Group Management | 99 Other | 300699 |
+| `group.update` | 3006 Group Management | 99 Other | 300699 |
 | `identity_provider.create` | 6003 API Activity | 1 Create | 600301 |
 | `identity_provider.delete` | 6003 API Activity | 4 Delete | 600304 |
 | `identity_provider.scim.disable` | 6003 API Activity | 3 Update | 600303 |

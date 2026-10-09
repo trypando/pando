@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -12,9 +13,9 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/trypando/pando/internal/core/appdelete"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
-	"github.com/trypando/pando/internal/core/backup"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/specgate"
@@ -190,6 +191,20 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// How many apps the owner may own (R-244). Read here so a person at
+	// their limit is refused before a source connection is tried; counted
+	// again in the transaction that creates, so two creates at once cannot
+	// both take the last place.
+	limit, err := s.appLimit(r.Context(), p.UserID)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	if limit.Limit > 0 && limit.Owned >= limit.Limit {
+		s.refuseOverLimit(w, r, limit, limit.Owned)
+		return
+	}
+
 	// Which source connection reads the repository, and that it can — before
 	// the app exists, so a private repository nothing on this installation
 	// can read is a refused request that says why, not a draft whose
@@ -211,7 +226,12 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		src.CredentialRef = ref
 	}
 
-	app, err := s.Apps.Create(r.Context(), req.Name, slugify(req.Name), p.UserID, p.ID, src)
+	app, err := s.Apps.CreateWithin(r.Context(), req.Name, slugify(req.Name), p.UserID, p.ID, src, limit.Limit)
+	var over *state.AppLimitReached
+	if errors.As(err, &over) {
+		s.refuseOverLimit(w, r, limit, over.Owned)
+		return
+	}
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -481,168 +501,57 @@ func (s *Server) handlePatchApp(w http.ResponseWriter, r *http.Request) {
 // The 409-on-ambiguity shape is what lets the interactive prompt and the
 // non-interactive default coexist without two code paths: a client that has not
 // decided about backups is told to decide, and one that has says so in the
-// query string.
+// query string. The deletion itself is appdelete's, shared with the idle pass
+// so host policy's backup rule holds for both (R-284, R-398).
 func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 	app, ok := s.requireControl(w, r, authz.AppDelete)
 	if !ok {
 		return
 	}
 
-	backup := r.URL.Query().Get("backup")
-	force := r.URL.Query().Get("force") == "true"
-
-	volumes, err := s.Apps.VolumeCount(r.Context(), app.ID)
-	if err != nil {
-		Error(w, r, err)
-		return
-	}
-
-	if backup == "" && !force && volumes > 0 {
-		Error(w, r, errs.New(errs.StateBackupDecisionRequired,
-			"This app has storage attached. Deleting it will remove that storage unless you back it up first.").
-			WithRemedy("Delete with backup=true to keep a copy, or force=true to delete without one. A backup made this way is kept until you discard it.").
-			WithDetail("volume_count", volumes))
-		return
-	}
-
-	// Volumes are ON DELETE RESTRICT (R-204), so they are resolved explicitly
-	// rather than cascading.
-	var keptBackup string
-	if volumes > 0 {
-		if backup == "true" {
-			id, err := s.backUpBeforeDelete(r, app)
-			if err != nil {
-				// The delete stops here. A failed backup means the data is not
-				// safe, so deleting is the one thing not to do — and the caller
-				// is told exactly how to go ahead anyway if they have decided
-				// the data is not worth keeping.
-				s.audit(r, audit.Event{
-					PrincipalKind: audit.PrincipalKind(PrincipalFrom(r.Context()).Kind),
-					PrincipalID:   PrincipalFrom(r.Context()).ID,
-					OnBehalfOf:    PrincipalFrom(r.Context()).UserID,
-					Action:        "app.delete.backup_failed",
-					AppID:         app.ID, TargetKind: "app", TargetID: app.ID,
-					Detail: map[string]any{"reason": reasonOf(err)},
-				})
-				Error(w, r, errs.Wrap(errs.StateInvalid,
-					"Pando could not back up this app's storage, so it has not been deleted.", err).
-					WithRemedy("Fix the problem and try again, or delete with force=true to remove the app and discard its storage.").
-					WithDetail("backup_error", reasonOf(err)))
-				return
-			}
-			keptBackup = id
-		}
-
-		if err := s.Volumes.DeleteForApp(r.Context(), app.ID); err != nil {
-			Error(w, r, err)
-			return
-		}
-
-		// The storage itself goes when the bundle is torn down. The delete has
-		// settled it: discarded, or backed up first (R-204). It used to stay on
-		// disk with no row left to reach it by (issue #55).
-		if err := s.Apps.DiscardStorage(r.Context(), app.ID); err != nil {
-			Error(w, r, err)
-			return
-		}
-	}
-
-	if err := s.Apps.Archive(r.Context(), app.ID); err != nil {
-		Error(w, r, err)
-		return
-	}
-	if s.TeardownNow != nil {
-		s.TeardownNow()
-	}
-
-	s.audit(r, audit.Event{
-		PrincipalKind: audit.PrincipalKind(PrincipalFrom(r.Context()).Kind),
-		PrincipalID:   PrincipalFrom(r.Context()).ID,
-		OnBehalfOf:    PrincipalFrom(r.Context()).UserID,
-		Action:        "app.delete",
-		AppID:         app.ID,
-		TargetKind:    "app",
-		TargetID:      app.ID,
-		Detail: map[string]any{
-			"forced":            force,
-			"volumes_discarded": volumes,
-			// Which backup holds this app's data, if any. The question after a
-			// deletion is always "can we get it back", and this is the answer.
-			"backup_id": keptBackup,
-		},
-	})
-	JSON(w, http.StatusNoContent, nil)
-}
-
-// backUpBeforeDelete takes the final copy R-204 promises.
-//
-// Kept until explicitly discarded, never aged out — which is the whole point of
-// it, and why the row carries no retention.
-func (s *Server) backUpBeforeDelete(r *http.Request, app state.App) (string, error) {
-	if s.Backup == nil || s.Backups == nil || s.BundleSource == nil {
-		return "", errs.New(errs.Internal, "Backups are not set up on this installation.")
-	}
-
-	volumes, err := s.BundleSource.VolumesForApp(r.Context(), app.ID)
-	if err != nil {
-		return "", err
-	}
-
-	var pinned json.RawMessage
-	if app.PinnedSpecID != "" {
-		rev, found, err := s.Apps.RevisionByID(r.Context(), app.PinnedSpecID)
-		if err != nil {
-			return "", err
-		}
-		if found && rev.Body != nil {
-			// Marshalled here rather than stored raw: the bundle holds the spec
-			// as it is served, so a person reading the backup by hand sees the
-			// same document the API would have given them.
-			encoded, err := json.Marshal(rev.Body)
-			if err != nil {
-				return "", errs.Wrap(errs.Internal, "Could not record the app's setup in the backup.", err)
-			}
-			pinned = encoded
-		}
-	}
-
-	id := s.Backups.NewID()
-	created, err := s.Backup.CreateForApp(r.Context(), id, backup.AppCreateRequest{
-		AppID:   app.ID,
-		Kind:    "on_delete",
-		Spec:    pinned,
-		Volumes: volumes,
-	})
-	if err != nil {
-		return "", err
+	storage := appdelete.StorageUndecided
+	switch backup := r.URL.Query().Get("backup"); {
+	case backup == "true":
+		storage = appdelete.StorageBackUp
+	case backup != "" || r.URL.Query().Get("force") == "true":
+		storage = appdelete.StorageDiscard
 	}
 
 	p := PrincipalFrom(r.Context())
-	if err := s.Backups.Record(r.Context(), state.Backup{
-		ID: id, AppID: app.ID, Kind: "on_delete",
-		AdapterRef: created.AdapterRef, ObjectName: created.ObjectName,
-		SizeBytes: created.SizeBytes, Manifest: created.Manifest,
-		// RetainUntil deliberately nil: R-204 keeps this until somebody
-		// discards it, and the schema refuses to let it carry an expiry.
-		CreatedBy: p.ID,
+	if _, err := s.deleter().Delete(r.Context(), app, appdelete.Request{
+		Storage: storage,
+		Actor: audit.Event{
+			PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
+			RequestID: RequestIDFrom(r.Context()),
+		},
 	}); err != nil {
-		return "", err
+		Error(w, r, err)
+		return
 	}
-
-	s.audit(r, audit.Event{
-		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
-		Action: "backup.create", AppID: app.ID, TargetKind: "backup", TargetID: id,
-		Detail: map[string]any{"kind": "on_delete", "volumes": len(volumes)},
-	})
-	return id, nil
+	JSON(w, http.StatusNoContent, nil)
 }
 
-// reasonOf is the message of an error, for an audit detail.
-func reasonOf(err error) string {
-	if err == nil {
-		return ""
+// deleter is the app deletion service over this server's stores. Each
+// optional one is passed only when set, so a nil pointer never becomes a
+// non-nil interface.
+func (s *Server) deleter() *appdelete.Service {
+	d := &appdelete.Service{Apps: s.Apps, Volumes: s.Volumes, TeardownNow: s.TeardownNow}
+	if s.Backups != nil {
+		d.Backups = s.Backups
 	}
-	return err.Error()
+	if s.Backup != nil {
+		d.Backup = s.Backup
+	}
+	if s.BundleSource != nil {
+		d.BundleSource = s.BundleSource
+	}
+	if s.PolicyStore != nil {
+		d.Policy = s.PolicyStore
+	}
+	if s.Auditor != nil {
+		d.Auditor = s.Auditor
+	}
+	return d
 }
 
 // --- specs -----------------------------------------------------------------

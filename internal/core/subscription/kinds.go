@@ -20,6 +20,7 @@ var Kinds = []Kind{
 	{api.NotifyDeployApproval, "Deploy approvals", "A deploy is waiting for your approval, or one you asked for was answered.", true},
 	{api.NotifyPolicyViolation, "Below the security minimum", "An app you own is below the installation's minimum security score.", true},
 	{api.NotifyBackupFailed, "A backup failed", "A backup of an app you own was not taken.", true},
+	{api.NotifyAppIdle, "An app nobody uses", "An app you own is about to be stopped or deleted because nobody has used it, or was.", true},
 	{api.NotifyUpdateAvailable, "Pando updates", "A newer Pando is released. Sent to people who may upgrade it.", true},
 	{api.NotifyUpgradeFailed, "Upgrade failed", "An in-place upgrade of Pando did not finish.", true},
 	{api.NotifySubscriptionDisabled, "A subscription was turned off", "One of your event subscriptions kept failing and Pando turned it off.", true},

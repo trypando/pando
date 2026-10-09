@@ -58,6 +58,8 @@ import (
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/console"
 	"github.com/trypando/pando/internal/core/address"
+	"github.com/trypando/pando/internal/core/appdelete"
+	"github.com/trypando/pando/internal/core/applimit"
 	"github.com/trypando/pando/internal/core/approval"
 	"github.com/trypando/pando/internal/core/assertion"
 	"github.com/trypando/pando/internal/core/assist"
@@ -74,6 +76,7 @@ import (
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/edgecert"
+	"github.com/trypando/pando/internal/core/idle"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
@@ -795,6 +798,9 @@ func serve(ctx context.Context, configPath string) error {
 
 	// The single enforcement point for every request to every app (R-023).
 
+	appActivity := state.NewActivity(db)
+	appLimits := state.NewAppLimits(db)
+	activity := &idle.Recorder{Store: appActivity, Logger: logger}
 	appProxy := &proxy.Proxy{
 		Resolver:      appResolver,
 		Authenticator: authenticator,
@@ -811,10 +817,20 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:      logger,
 		LoginPath:   httpapi.LoginPath,
 		Mode:        cfg.Server.RoutingMode,
+
+		// Every request let through is activity, kept in memory and written
+		// once a minute from each replica (R-394).
+		Activity: activity,
 	}
 
 	// A delete asks for its teardown now rather than at the next GC pass.
 	teardownNow := make(chan struct{}, 1)
+	askTeardown := func() {
+		select {
+		case teardownNow <- struct{}{}:
+		default:
+		}
+	}
 
 	// Built once and used twice: as the front door, and as what a port-mode
 	// app's own listener falls back to for Pando's reserved path (R-172).
@@ -884,16 +900,11 @@ func serve(ctx context.Context, configPath string) error {
 			PortRangeEnd:   cfg.Server.PortRangeEnd,
 			BaseDomain:     cfg.Server.BaseDomain,
 		},
-		TeardownNow: func() {
-			select {
-			case teardownNow <- struct{}{}:
-			default:
-			}
-		},
-		Logger:   logger,
-		Security: securityService,
-		Sources:  sources,
-		Images:   images,
+		TeardownNow: askTeardown,
+		Logger:      logger,
+		Security:    securityService,
+		Sources:     sources,
+		Images:      images,
 
 		SourceConnections: sourceConnections,
 
@@ -1011,11 +1022,17 @@ func serve(ctx context.Context, configPath string) error {
 		AuditSinkCheck: auditSinks,
 		AuditReads:     &audit.ReadThrottle{},
 
-		Groups:       state.NewGroups(db),
-		Roles:        state.NewRoles(db),
-		Backups:      backups,
-		Backup:       backupService,
-		BundleSource: bundleSource,
+		Groups: state.NewGroups(db),
+		Roles:  state.NewRoles(db),
+
+		// How many apps a person may own (R-244), and an app's own idle
+		// settings (R-397).
+		AppLimits:     &applimit.Service{Store: appLimits, Policy: policyStore},
+		AppLimitStore: appLimits,
+		IdleSettings:  &idle.Settings{Store: appActivity, Policy: policyStore, Clock: clock.System{}},
+		Backups:       backups,
+		Backup:        backupService,
+		BundleSource:  bundleSource,
 
 		// Retried deploys replay rather than repeat (R-262). An agent
 		// retries on a timeout, and a deploy that clones regularly outlasts
@@ -1113,6 +1130,9 @@ func serve(ctx context.Context, configPath string) error {
 	// it has room for (issue #72, O-32).
 	go deployQueue.Serve(loopCtx)
 	go detectionQueue.Serve(loopCtx)
+
+	// Each replica writes the activity its proxy saw (R-394).
+	go activity.Run(loopCtx)
 
 	// What must happen once per install rather than once per process runs on
 	// the leader alone (issue #72): two replicas each running the GC tore
@@ -1394,6 +1414,25 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:       logger,
 		Clock:        clock.System{},
 		Concurrency:  cfg.Work.Backups,
+	}).Run)
+
+	// Apps nobody uses: a notice, then a stop or a deletion (R-393 – R-398).
+	// Inert until host policy or an app sets a number of days. A deletion
+	// goes through the same service as a person's, so host policy's backup
+	// rule holds for it (R-284).
+	job("idle", (&idle.Pass{
+		Store: appActivity,
+		Apps:  apps,
+		Deleter: &appdelete.Service{
+			Apps: apps, Volumes: volumes,
+			Backups: backups, Backup: backupService, BundleSource: bundleSource,
+			Policy: policyStore, Auditor: auditor, TeardownNow: askTeardown,
+		},
+		Policy:   policyStore,
+		Notifier: notifyRouter,
+		Auditor:  auditor,
+		Clock:    clock.System{},
+		Logger:   logger,
 	}).Run)
 
 	// Whichever replica holds the leader lock runs the jobs above; with one

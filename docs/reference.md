@@ -158,7 +158,8 @@ The settings are `source_allowlist`, `disabled_verbs`, `agent_disabled_verbs`,
 `deploy_approval_required`, `deploy_approval_apps`, `deploy_approval_count`,
 `deploy_approval_expiry_hours`, `require_backup_before_destroy`, `max_token_lifetime_days`,
 `max_log_disk_bytes`, `allow_cpu_oversubscription`, `allow_memory_oversubscription`,
-`max_concurrent_deploys`, `disable_ai_screening`, `disable_anonymous_use_audit`, `disable_anonymous_denial_audit`,
+`max_concurrent_deploys`, `idle_stop_days`, `idle_delete_days`, `max_apps_per_user`, `disable_ai_screening`,
+`disable_anonymous_use_audit`, `disable_anonymous_denial_audit`,
 `disable_password_sign_in`, `disable_jit_provisioning`, `min_security_score`, `insecure_action`,
 `insecure_grace_hours` and `ignore_unfixable_findings`.
 
@@ -166,6 +167,17 @@ The settings are `source_allowlist`, `disabled_verbs`, `agent_disabled_verbs`,
 CPU and at least two. It is read each time the deploy queue looks for work, so a change applies without
 a restart, and a deploy past the limit waits with its log saying how many are ahead of it.
 `PANDO_WORK_DEPLOYS`, its older name, still sets it when the policy name is not set.
+
+`idle_stop_days` and `idle_delete_days` stop, and later delete, an app nobody has used for that many
+days, both counted from its last use, deploy or start; 0, the default, is never, and deleting must
+come later than stopping. The owner is told 7 days before either. A stopped app stays stopped until
+somebody starts it, and a deleted app's storage is backed up first when
+`require_backup_before_destroy` is on and discarded otherwise. An app sets its own with
+`PUT /api/v1/apps/{id}/idle` (R-393 – R-398).
+
+`max_apps_per_user` is how many apps each person may own; 0, the default, is unlimited. A value set
+on an account (`PUT /api/v1/users/{id}/app-limit`) applies whatever its groups say; otherwise the
+most generous of its groups' (`PUT /api/v1/groups/{id}/app-limit`) applies (R-244).
 
 `allow_cpu_oversubscription` and `allow_memory_oversubscription` let the apps on a runtime together
 ask for more CPU, or more memory, than it reports having. Both are off, so a deploy that would need

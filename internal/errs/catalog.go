@@ -35,6 +35,8 @@ var meanings = map[Code]string{
 	PolicySourceNotAllowed:        "Host policy does not allow apps from this source (R-092).",
 	PolicyExecDisabled:            "Host policy has turned off terminal access, including for an app's owner (R-085).",
 	PolicyWebhookPrivateAddress:   "A webhook points at a private, loopback or link-local address, and host policy does not allow that (R-372).",
+	PolicyAppLimitReached:         "The person who would own the new app already owns as many apps as their limit allows. The message names the limit and where it is set (R-244).",
+	PolicyBackupRequired:          "Host policy requires a final backup before an app with storage is deleted, and the request said to delete without one (R-284).",
 	ValidUnknownEvent:             "A subscription names an event, or a pattern, that matches no event in the catalog (R-364).",
 	PolicyAnonymousGrantForbidden: "Host policy does not allow apps to be shared with everyone (R-076).",
 

@@ -14,6 +14,7 @@ import { api } from '@api/client';
 import { Quiet, RoleLabel, Screen, messageOf, refusal, sentence } from './Accounts';
 import { VERB_NOTES } from './verbNotes';
 import { AccountApps } from './AccountApps';
+import { GroupAppLimit } from './AppLimit';
 import { NoMatches, SearchField } from '../ui/SearchField';
 import { matches } from '../ui/search';
 import { ShowMore, usePaged, useSettled, withParams, type PageOf } from '../ui/paged';
@@ -99,6 +100,7 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
   const [deleting, setDeleting] = useState<Group | null>(null);
   const [showing, setShowing] = useState<string | null>(null);
   const [linking, setLinking] = useState<Group | null>(null);
+  const [limiting, setLimiting] = useState<Group | null>(null);
 
   // A page at a time, searched by name on the server (issue #72). Each row
   // counts its people rather than listing them; the editor reads the group.
@@ -194,13 +196,20 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
             {
               key: 'edit',
               header: '',
-              width: '32ch',
+              width: '42ch',
               align: 'right',
               render: (row: Group) => (
                 <span style={{ display: 'inline-flex', gap: 'var(--space-2)' }}>
                   <Button variant="secondary" onClick={() => setShowing(showing === row.id ? null : row.id)}>
                     Apps
                   </Button>
+                  {/* On a synced group too, like its role: the provider says
+                      who is in it, Pando says what it may do (R-078, R-244). */}
+                  {canEdit && (
+                    <Button variant="secondary" onClick={() => setLimiting(row)}>
+                      App limit
+                    </Button>
+                  )}
                   {/* Not for a synced group: the identity provider would make
                       it again at the next sign-in (R-078). */}
                   {canEdit && !row.source && (
@@ -255,6 +264,7 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
       )}
 
       {editing && <EditGroup group={editing} onClose={() => setEditing(null)} />}
+      {limiting && <GroupAppLimit groupID={limiting.id} name={limiting.name} onClose={() => setLimiting(null)} />}
       {linking && (
         <LinkGroups group={all.find((g) => g.id === linking.id) ?? linking} synced={all.filter((g) => g.source)} onClose={() => setLinking(null)} />
       )}

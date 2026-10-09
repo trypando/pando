@@ -20,6 +20,7 @@ import { Environment } from './Environment';
 import { CarriedFiles } from './CarriedFiles';
 import { BuildPlan } from './BuildPlan';
 import { DeploySection } from './DeploySettings';
+import { IdleSection } from './IdleSettings';
 import { Egress } from './Egress';
 import { SourceSection } from './UploadSource';
 import { Table } from '../ui/Table';
@@ -53,6 +54,7 @@ export function Resources({ app, focus }: { app: App; focus?: string }) {
       <Volumes appID={appID} focus={focus === 'storage'} />
       <Egress appID={appID} focus={focus === 'egress'} />
       <DeploySection app={app} />
+      <IdleSection app={app} />
     </div>
   );
 }
