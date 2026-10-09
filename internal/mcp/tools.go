@@ -53,6 +53,17 @@ func stringArg(args map[string]any, key string, required bool) (string, error) {
 	return s, nil
 }
 
+// twoArgs reads two required string arguments, for a tool that names a thing
+// and something under it.
+func twoArgs(args map[string]any, first, second string) (string, string, error) {
+	a, err := stringArg(args, first, true)
+	if err != nil {
+		return "", "", err
+	}
+	b, err := stringArg(args, second, true)
+	return a, b, err
+}
+
 // appPath builds a path under an app, escaping the ID.
 //
 // Escaped even though app IDs are Pando's own prefixed ULIDs: the ID here comes
@@ -66,11 +77,7 @@ func appPath(id, suffix string) string {
 // (R-154): POST .../deployments/{id}/<action>, with an optional comment.
 func decisionRequest(action string) func(args map[string]any) (string, string, any, error) {
 	return func(args map[string]any) (string, string, any, error) {
-		appID, err := stringArg(args, "app_id", true)
-		if err != nil {
-			return "", "", nil, err
-		}
-		depID, err := stringArg(args, "deployment_id", true)
+		appID, depID, err := twoArgs(args, "app_id", "deployment_id")
 		if err != nil {
 			return "", "", nil, err
 		}
@@ -286,11 +293,7 @@ var toolList = []tool{
 			"url":       str("The repository's URL."),
 		}, "source_id", "url"),
 		request: func(args map[string]any) (string, string, any, error) {
-			id, err := stringArg(args, "source_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			repo, err := stringArg(args, "url", true)
+			id, repo, err := twoArgs(args, "source_id", "url")
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -377,11 +380,7 @@ var toolList = []tool{
 			"answer": str("The answer."),
 		}, "app_id", "key", "answer"),
 		request: func(args map[string]any) (string, string, any, error) {
-			id, err := stringArg(args, "app_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			key, err := stringArg(args, "key", true)
+			id, key, err := twoArgs(args, "app_id", "key")
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -585,11 +584,7 @@ var toolList = []tool{
 			"image_base64": str("The image file's bytes, base64-encoded."),
 		}, "app_id", "image_base64"),
 		request: func(args map[string]any) (string, string, any, error) {
-			id, err := stringArg(args, "app_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			encoded, err := stringArg(args, "image_base64", true)
+			id, encoded, err := twoArgs(args, "app_id", "image_base64")
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -624,11 +619,7 @@ var toolList = []tool{
 			"archive_base64": str("The gzipped tar's bytes, base64-encoded."),
 		}, "app_id", "archive_base64"),
 		request: func(args map[string]any) (string, string, any, error) {
-			id, err := stringArg(args, "app_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			encoded, err := stringArg(args, "archive_base64", true)
+			id, encoded, err := twoArgs(args, "app_id", "archive_base64")
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -785,11 +776,7 @@ var toolList = []tool{
 			"name":   str("The new name."),
 		}, "app_id", "name"),
 		request: func(args map[string]any) (string, string, any, error) {
-			id, err := stringArg(args, "app_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			name, err := stringArg(args, "name", true)
+			id, name, err := twoArgs(args, "app_id", "name")
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -846,11 +833,7 @@ var toolList = []tool{
 			"name":       str("The new name."),
 		}, "section_id", "name"),
 		request: func(args map[string]any) (string, string, any, error) {
-			id, err := stringArg(args, "section_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			name, err := stringArg(args, "name", true)
+			id, name, err := twoArgs(args, "section_id", "name")
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -877,11 +860,7 @@ var toolList = []tool{
 			"app_id":     str("The app's ID."),
 		}, "section_id", "app_id"),
 		request: func(args map[string]any) (string, string, any, error) {
-			sid, err := stringArg(args, "section_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			aid, err := stringArg(args, "app_id", true)
+			sid, aid, err := twoArgs(args, "section_id", "app_id")
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -896,11 +875,7 @@ var toolList = []tool{
 			"app_id":     str("The app's ID."),
 		}, "section_id", "app_id"),
 		request: func(args map[string]any) (string, string, any, error) {
-			sid, err := stringArg(args, "section_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			aid, err := stringArg(args, "app_id", true)
+			sid, aid, err := twoArgs(args, "section_id", "app_id")
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -1167,11 +1142,7 @@ var toolList = []tool{
 			"model":      str("A model for this function only. Omit to use the adapter's own."),
 		}, "function", "adapter_id"),
 		request: func(args map[string]any) (string, string, any, error) {
-			fn, err := stringArg(args, "function", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			adapter, err := stringArg(args, "adapter_id", true)
+			fn, adapter, err := twoArgs(args, "function", "adapter_id")
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -1400,11 +1371,7 @@ var toolList = []tool{
 			"delivery_id":     str("The delivery's ID, dlv_…."),
 		}, "subscription_id", "delivery_id"),
 		request: func(args map[string]any) (string, string, any, error) {
-			id, err := stringArg(args, "subscription_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			dlv, err := stringArg(args, "delivery_id", true)
+			id, dlv, err := twoArgs(args, "subscription_id", "delivery_id")
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -1419,11 +1386,7 @@ var toolList = []tool{
 			"delivery_id":     str("The delivery's ID."),
 		}, "subscription_id", "delivery_id"),
 		request: func(args map[string]any) (string, string, any, error) {
-			id, err := stringArg(args, "subscription_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			dlv, err := stringArg(args, "delivery_id", true)
+			id, dlv, err := twoArgs(args, "subscription_id", "delivery_id")
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -1490,11 +1453,7 @@ var toolList = []tool{
 			"enabled": str("true or false."),
 		}, "kind", "channel", "enabled"),
 		request: func(args map[string]any) (string, string, any, error) {
-			kind, err := stringArg(args, "kind", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			channel, err := stringArg(args, "channel", true)
+			kind, channel, err := twoArgs(args, "kind", "channel")
 			if err != nil {
 				return "", "", nil, err
 			}

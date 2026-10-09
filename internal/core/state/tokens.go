@@ -295,26 +295,15 @@ func errInvalidToken() error {
 // because "this token was revoked" is what someone checking after an incident
 // needs to see; hiding them would make the list agree with nothing.
 func (t *Tokens) ListForUser(ctx context.Context, userID string) ([]Token, error) {
-	rows, err := t.db.Query(ctx, `
+	return queryAll(ctx, t.db, "Could not read your tokens.",
+		func(r pgx.CollectableRow) (tok Token, err error) {
+			return tok, r.Scan(&tok.ID, &tok.Kind, &tok.Name, &tok.OwnerUserID,
+				&tok.ExpiresAt, &tok.LastUsedAt, &tok.RevokedAt)
+		}, `
 		SELECT id, kind, name, coalesce(owner_user_id, ''), expires_at, last_used_at, revoked_at
 		FROM tokens
 		WHERE owner_user_id = $1
 		ORDER BY created_at DESC`, userID)
-	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read your tokens.", err)
-	}
-	defer rows.Close()
-
-	out := make([]Token, 0)
-	for rows.Next() {
-		var tok Token
-		if err := rows.Scan(&tok.ID, &tok.Kind, &tok.Name, &tok.OwnerUserID,
-			&tok.ExpiresAt, &tok.LastUsedAt, &tok.RevokedAt); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read your tokens.", err)
-		}
-		out = append(out, tok)
-	}
-	return out, rows.Err()
 }
 
 // ListAccounts lists account-level tokens (R-060).

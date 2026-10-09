@@ -270,27 +270,8 @@ func (s *Server) handlePutUserRole(w http.ResponseWriter, r *http.Request) {
 // that refusal is transactional — see state.Grants.RevokeInstall. An install
 // that cannot be administered has no recovery path inside the product.
 func (s *Server) handleDeleteUserRole(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.requireInstall(w, r, authz.InstallUsersManage)
-	if !ok {
-		return
-	}
-
-	userID := chi.URLParam(r, "userID")
-	if err := s.Grants.RevokeInstall(r.Context(), "user", userID); err != nil {
-		Error(w, r, err)
-		return
-	}
-
-	s.audit(r, audit.Event{
-		PrincipalKind: audit.PrincipalKind(p.Kind),
-		PrincipalID:   p.ID,
-		OnBehalfOf:    p.UserID,
-		Action:        "grant.delete",
-		TargetKind:    "user",
-		TargetID:      userID,
-		Detail:        map[string]any{"scope": "install"},
-	})
-	JSON(w, http.StatusNoContent, nil)
+	s.deleteManaged(w, r, "userID", "grant.delete", "user", map[string]any{"scope": "install"},
+		func(ctx context.Context, userID string) error { return s.Grants.RevokeInstall(ctx, "user", userID) })
 }
 
 // handleGetPolicy returns the installation's host policy (R-274).

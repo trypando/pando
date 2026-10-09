@@ -1,14 +1,11 @@
 package syslog
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"io"
 	"net"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,36 +22,7 @@ func plainCollector(t *testing.T) (string, <-chan string) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = ln.Close() })
-	frames := make(chan string, 16)
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer func() { _ = conn.Close() }()
-				r := bufio.NewReader(conn)
-				for {
-					n, err := r.ReadString(' ')
-					if err != nil {
-						return
-					}
-					size, err := strconv.Atoi(strings.TrimSpace(n))
-					if err != nil {
-						return
-					}
-					msg := make([]byte, size)
-					if _, err := io.ReadFull(r, msg); err != nil {
-						return
-					}
-					frames <- string(msg)
-				}
-			}()
-		}
-	}()
-	return ln.Addr().String(), frames
+	return serveFrames(t, ln)
 }
 
 // closedAddress is a loopback address nothing listens on.

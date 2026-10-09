@@ -17,6 +17,7 @@ linters:
     - bodyclose
     - contextcheck
     - depguard
+    - dupl
     - errorlint
     - gosec
     - nilerr
@@ -24,6 +25,12 @@ linters:
     - sqlclosecheck
 
   settings:
+    # Copied blocks, by syntax tree rather than text. 100 tokens, below the
+    # linter's default of 150, is about a dozen lines of Go: the size at which a
+    # copy is worth naming. jscpd does the same for the console.
+    dupl:
+      threshold: 100
+
     gosec:
       excludes:
         # G101 matches on identifier *names*, not values. Every hit in this

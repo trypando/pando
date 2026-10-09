@@ -288,24 +288,13 @@ func (b *BundleSource) jsonRows(ctx context.Context, query string) ([]byte, erro
 // its app is gone, and a DR bundle that dropped exactly the data somebody is
 // still deciding whether to keep would defeat the point of keeping it.
 func (b *BundleSource) VolumesToSnapshot(ctx context.Context) ([]backup.VolumeRef, error) {
-	rows, err := b.db.Query(ctx, `
+	return queryAll(ctx, b.db, "Could not read this installation's storage.",
+		func(r pgx.CollectableRow) (v backup.VolumeRef, err error) {
+			return v, r.Scan(&v.AppID, &v.VolumeID, &v.AdapterRef, &v.Handle)
+		}, `
 		SELECT app_id, id, coalesce(adapter_ref, ''), coalesce(handle, '')
 		FROM volumes
 		ORDER BY app_id, id`)
-	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read this installation's storage.", err)
-	}
-	defer rows.Close()
-
-	out := make([]backup.VolumeRef, 0)
-	for rows.Next() {
-		var v backup.VolumeRef
-		if err := rows.Scan(&v.AppID, &v.VolumeID, &v.AdapterRef, &v.Handle); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read this installation's storage.", err)
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
 }
 
 // ServicesToSnapshot lists every provisioned service (R-131, R-212).
@@ -316,23 +305,12 @@ func (b *BundleSource) VolumesToSnapshot(ctx context.Context) ([]backup.VolumeRe
 // says it because the provisioner was unreachable — but only if the first
 // number is counted here rather than inferred from the second.
 func (b *BundleSource) ServicesToSnapshot(ctx context.Context) ([]backup.ServiceRef, error) {
-	rows, err := b.db.Query(ctx, `
+	return queryAll(ctx, b.db, "Could not read this installation's provisioned services.",
+		func(r pgx.CollectableRow) (v backup.ServiceRef, err error) {
+			return v, r.Scan(&v.ServiceID, &v.AppID, &v.AdapterRef, &v.Handle)
+		}, `
 		SELECT id, app_id, adapter_ref, handle
 		FROM service_instances ORDER BY id`)
-	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read this installation's provisioned services.", err)
-	}
-	defer rows.Close()
-
-	out := make([]backup.ServiceRef, 0)
-	for rows.Next() {
-		var v backup.ServiceRef
-		if err := rows.Scan(&v.ServiceID, &v.AppID, &v.AdapterRef, &v.Handle); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read this installation's provisioned services.", err)
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
 }
 
 // VolumesForApp lists one app's volumes, for a per-app backup (R-204).

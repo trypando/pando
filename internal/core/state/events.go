@@ -916,22 +916,12 @@ func NewNotificationPreferences(db *DB) *NotificationPreferences {
 
 // List returns one person's choices. Anything absent is the default.
 func (s *NotificationPreferences) List(ctx context.Context, userID string) ([]NotificationPreference, error) {
-	rows, err := s.db.Query(ctx, `
+	return queryAll(ctx, s.db, "Could not read notification preferences.",
+		func(r pgx.CollectableRow) (p NotificationPreference, err error) {
+			return p, r.Scan(&p.Kind, &p.Channel, &p.Enabled)
+		}, `
 		SELECT kind, channel, enabled FROM notification_preferences
 		WHERE user_id = $1 ORDER BY kind, channel`, userID)
-	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read notification preferences.", err)
-	}
-	defer rows.Close()
-	out := []NotificationPreference{}
-	for rows.Next() {
-		var p NotificationPreference
-		if err := rows.Scan(&p.Kind, &p.Channel, &p.Enabled); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read notification preferences.", err)
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
 }
 
 // Set records choices, replacing any earlier choice for the same kind and

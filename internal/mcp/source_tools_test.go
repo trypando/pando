@@ -12,11 +12,7 @@ import (
 // (R-261): listing them, picking a repository and a branch through one, and
 // authorizing one with a device code.
 func TestR091_SourceConnectionToolsMapToTheirEndpoints(t *testing.T) {
-	for _, tc := range []struct {
-		tool, args   string
-		method, path string
-		body         string
-	}{
+	requireToolCalls(t, []toolCase{
 		{"pando_list_sources", `{}`, "GET", "/sources", ""},
 		{"pando_list_source_repositories", `{"source_id":"src_github"}`, "GET", "/sources/src_github/repositories", ""},
 		{"pando_list_source_repositories", `{"source_id":"src_github","query":"api x"}`, "GET",
@@ -25,20 +21,7 @@ func TestR091_SourceConnectionToolsMapToTheirEndpoints(t *testing.T) {
 			"/sources/src_github/branches?url=https%3A%2F%2Fgithub.com%2Facme%2Fapi.git", ""},
 		{"pando_authorize_source", `{"source_id":"src_github"}`, "POST", "/sources/src_github/authorize", `{"mode":"device"}`},
 		{"pando_poll_source_authorization", `{"source_id":"src_github"}`, "POST", "/sources/src_github/authorize/poll", ""},
-	} {
-		t.Run(tc.tool+" "+tc.args, func(t *testing.T) {
-			srv, s := newSession()
-			s.run(t, srv, call(1, tc.tool, tc.args))
-			require.Len(t, s.calls, 1)
-			require.Equal(t, tc.method, s.calls[0].method)
-			require.Equal(t, tc.path, s.calls[0].path)
-			if tc.body != "" {
-				body, err := json.Marshal(s.calls[0].body)
-				require.NoError(t, err)
-				require.JSONEq(t, tc.body, string(body))
-			}
-		})
-	}
+	})
 }
 
 // The source connection tools refuse a call missing what they need before

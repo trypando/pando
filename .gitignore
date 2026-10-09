@@ -13,6 +13,7 @@
 # writes its results cache to node_modules/.vite there.
 node_modules/
 /console/dist/
+/console/coverage/
 # TypeScript's incremental build state, written by `tsc -b` or an editor.
 *.tsbuildinfo
 

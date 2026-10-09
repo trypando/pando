@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
@@ -46,6 +47,18 @@ export default defineConfig({
     // No source maps in the shipped binary: they would double its size and the
     // console is not debugged in production.
     sourcemap: false,
+  },
+
+  // `npm run coverage`, for SonarCloud. Paths in the report are relative to
+  // the repository root (console/src/…), which is where the scanner runs.
+  test: {
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/design/**', 'src/api/types.gen.ts', 'src/**/*.test.{ts,tsx}'],
+      reporter: [['lcov', { projectRoot: '..' }]],
+      reportsDirectory: 'coverage',
+    },
   },
 
   server: {

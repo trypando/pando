@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -266,19 +267,28 @@ func (s *Server) handlePutGroupRole(w http.ResponseWriter, r *http.Request) {
 // handleDeleteGroupRole takes a group's installation role away. Refused, like
 // an account's, when it would leave nobody who can manage accounts (R-088).
 func (s *Server) handleDeleteGroupRole(w http.ResponseWriter, r *http.Request) {
+	s.deleteManaged(w, r, "groupID", "grant.delete", "group", map[string]any{"scope": "install"},
+		func(ctx context.Context, groupID string) error { return s.Grants.RevokeInstall(ctx, "group", groupID) })
+}
+
+// deleteManaged serves a DELETE that needs install.users.manage: it removes
+// the object named by the URL parameter param and audits action against it,
+// as targetKind.
+func (s *Server) deleteManaged(w http.ResponseWriter, r *http.Request, param, action, targetKind string,
+	detail map[string]any, remove func(ctx context.Context, id string) error,
+) {
 	p, ok := s.requireInstall(w, r, authz.InstallUsersManage)
 	if !ok {
 		return
 	}
-	groupID := chi.URLParam(r, "groupID")
-	if err := s.Grants.RevokeInstall(r.Context(), "group", groupID); err != nil {
+	target := chi.URLParam(r, param)
+	if err := remove(r.Context(), target); err != nil {
 		Error(w, r, err)
 		return
 	}
 	s.audit(r, audit.Event{
 		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
-		Action: "grant.delete", TargetKind: "group", TargetID: groupID,
-		Detail: map[string]any{"scope": "install"},
+		Action: action, TargetKind: targetKind, TargetID: target, Detail: detail,
 	})
 	JSON(w, http.StatusNoContent, nil)
 }
@@ -318,22 +328,7 @@ func (s *Server) handleGroupApps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.requireInstall(w, r, authz.InstallUsersManage)
-	if !ok {
-		return
-	}
-
-	groupID := chi.URLParam(r, "groupID")
-	if err := s.Groups.Delete(r.Context(), groupID); err != nil {
-		Error(w, r, err)
-		return
-	}
-
-	s.audit(r, audit.Event{
-		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
-		Action: "group.delete", TargetKind: "group", TargetID: groupID,
-	})
-	JSON(w, http.StatusNoContent, nil)
+	s.deleteManaged(w, r, "groupID", "group.delete", "group", nil, s.Groups.Delete)
 }
 
 // handleListVerbs returns the catalog, for building custom roles (R-082).
@@ -397,22 +392,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.requireInstall(w, r, authz.InstallUsersManage)
-	if !ok {
-		return
-	}
-
-	roleID := chi.URLParam(r, "roleID")
-	if err := s.Roles.DeleteCustom(r.Context(), roleID); err != nil {
-		Error(w, r, err)
-		return
-	}
-
-	s.audit(r, audit.Event{
-		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
-		Action: "role.delete", TargetKind: "role", TargetID: roleID,
-	})
-	JSON(w, http.StatusNoContent, nil)
+	s.deleteManaged(w, r, "roleID", "role.delete", "role", nil, s.Roles.DeleteCustom)
 }
 
 // handleDeleteUser deletes an account, which fires R-282's destruction rules.

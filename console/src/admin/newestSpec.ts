@@ -1,5 +1,10 @@
 // The app's newest spec revision, which an edit is made on top of.
 //
+// Two requests, because the list deliberately carries no bodies — fifty
+// revisions each with a full spec is a heavy response for a list nobody reads
+// that way. The list says which revision is newest; the second request fetches
+// that one's spec.
+//
 // Newest rather than pinned, as the build plan does: an edit writes a new
 // revision and leaves the pinned one alone (R-152), so a second edit made on
 // the pinned one would quietly drop the first. The query keys are the ones the
@@ -31,6 +36,11 @@ export function useNewestSpec(appID: string) {
     spec: full.data?.body,
     /** Whether the newest revision is the one running, or an edit not yet deployed. */
     pinned: Boolean(newest && specs.data?.pinned_spec_id === newest.id),
+    /** Two requests, and the second waits on the first. `full` is not enabled
+     *  without a revision, and a disabled query is pending for good, so it
+     *  counts only once there is one. */
     pending: specs.isPending || (Boolean(newest) && full.isPending),
+    /** Why the revision list could not be read, or null. */
+    error: specs.error,
   };
 }

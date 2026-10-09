@@ -66,6 +66,34 @@ func newSession() (*mcp.Server, *session) {
 	return &mcp.Server{}, &session{}
 }
 
+// toolCase is one tool call and the API request it should become. An empty
+// body is not checked.
+type toolCase struct {
+	tool, args   string
+	method, path string
+	body         string
+}
+
+// requireToolCalls runs each case in a session of its own and checks that the
+// tool made exactly the API request the case names.
+func requireToolCalls(t *testing.T, cases []toolCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.tool+" "+tc.args, func(t *testing.T) {
+			srv, s := newSession()
+			s.run(t, srv, call(1, tc.tool, tc.args))
+			require.Len(t, s.calls, 1)
+			require.Equal(t, tc.method, s.calls[0].method)
+			require.Equal(t, tc.path, s.calls[0].path)
+			if tc.body != "" {
+				body, err := json.Marshal(s.calls[0].body)
+				require.NoError(t, err)
+				require.JSONEq(t, tc.body, string(body))
+			}
+		})
+	}
+}
+
 func rpc(id int, method, params string) string {
 	if params == "" {
 		return `{"jsonrpc":"2.0","id":` + itoa(id) + `,"method":"` + method + `"}`

@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Icon, IconButton } from '@design';
+import { useCloseOnOutside } from './combobox';
 
 export function Menu({
   label,
@@ -51,14 +52,7 @@ export function Menu({
     if (open) list.current?.querySelector<HTMLElement>('[role="menuitem"], input')?.focus();
   }, [open, view]);
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const outside = (e: MouseEvent) => {
-      if (root.current && !root.current.contains(e.target as Node)) set(false);
-    };
-    document.addEventListener('mousedown', outside);
-    return () => document.removeEventListener('mousedown', outside);
-  }, [open]);
+  useCloseOnOutside(root, open, () => set(false));
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {

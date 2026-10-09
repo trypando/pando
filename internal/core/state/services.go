@@ -37,24 +37,12 @@ func (s *Services) NewID() string { return id.New(id.Service) }
 
 // ForApp lists an app's provisioned services.
 func (s *Services) ForApp(ctx context.Context, appID string) ([]ServiceInstance, error) {
-	rows, err := s.db.Query(ctx, `
+	return queryAll(ctx, s.db, "Could not read this app's provisioned services.",
+		func(r pgx.CollectableRow) (v ServiceInstance, err error) {
+			return v, r.Scan(&v.ID, &v.AppID, &v.SlotKey, &v.SlotType, &v.AdapterRef, &v.Handle, &v.ConnectionRef)
+		}, `
 		SELECT id, app_id, slot_key, slot_type, adapter_ref, handle, secret_key
 		FROM service_instances WHERE app_id = $1 ORDER BY slot_key`, appID)
-	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read this app's provisioned services.", err)
-	}
-	defer rows.Close()
-
-	out := make([]ServiceInstance, 0)
-	for rows.Next() {
-		var v ServiceInstance
-		if err := rows.Scan(&v.ID, &v.AppID, &v.SlotKey, &v.SlotType,
-			&v.AdapterRef, &v.Handle, &v.ConnectionRef); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read this app's provisioned services.", err)
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
 }
 
 // Get returns the instance filling one slot, if there is one.

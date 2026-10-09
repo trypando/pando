@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/id"
 )
@@ -39,23 +41,12 @@ func sectionName(name string) (string, error) {
 // Sections returns a person's sections, oldest first — the order they made
 // them, which is the order they appear in.
 func (a *Apps) Sections(ctx context.Context, userID string) ([]Section, error) {
-	rows, err := a.db.Query(ctx, `
+	return queryAll(ctx, a.db, "Could not read your sections.",
+		func(r pgx.CollectableRow) (s Section, err error) {
+			return s, r.Scan(&s.ID, &s.Name, &s.CreatedAt)
+		}, `
 		SELECT id, name, created_at FROM launcher_sections
 		WHERE user_id = $1 ORDER BY created_at, id`, userID)
-	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read your sections.", err)
-	}
-	defer rows.Close()
-
-	out := []Section{}
-	for rows.Next() {
-		var s Section
-		if err := rows.Scan(&s.ID, &s.Name, &s.CreatedAt); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read your sections.", err)
-		}
-		out = append(out, s)
-	}
-	return out, rows.Err()
 }
 
 // CreateSection makes a new section for a person.

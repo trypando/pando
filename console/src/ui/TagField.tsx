@@ -12,9 +12,10 @@
 // the empty field takes out the last tag, as it does in the address field of
 // most mail clients.
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Icon } from '@design';
+import { stepIndex, useCloseOnOutside } from './combobox';
 
 export interface TagOption {
   id: string;
@@ -58,14 +59,7 @@ export function TagField({
   const input = useRef<HTMLInputElement>(null);
   const id = 'f-' + label.replace(/\W+/g, '-').toLowerCase();
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const outside = (e: MouseEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', outside);
-    return () => document.removeEventListener('mousedown', outside);
-  }, [open]);
+  useCloseOnOutside(root, open, () => setOpen(false));
 
   const found = options.filter((o) => !value.includes(o.id)).slice(0, SHOWN);
 
@@ -167,7 +161,7 @@ export function TagField({
               e.preventDefault();
               if (found.length === 0) return;
               setOpen(true);
-              setAt((i) => (e.key === 'ArrowDown' ? (i + 1) % found.length : (i - 1 + found.length) % found.length));
+              setAt((i) => stepIndex(e.key, i, found.length));
             } else if (e.key === 'Enter') {
               e.preventDefault();
               const chosen = found[at];
