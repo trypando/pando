@@ -415,6 +415,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 	})
 
 	cmd.AddCommand(appIconCmd(client))
+	cmd.AddCommand(appIdleCmd(client))
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "rename <app> <new-name>",
@@ -1330,6 +1331,7 @@ func userCmd(client func() (*Client, error)) *cobra.Command {
 			return printJSON(cmd.OutOrStdout(), out)
 		},
 	})
+	cmd.AddCommand(appLimitCmd(client, "user"))
 	return cmd
 }
 
@@ -1426,6 +1428,7 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 			return printJSON(cmd.OutOrStdout(), out)
 		},
 	})
+	cmd.AddCommand(appLimitCmd(client, "group"))
 	return cmd
 }
 

@@ -378,6 +378,27 @@ Sets the image shown on the app's tile in everyone's launcher.
 PNG, JPEG, WebP or GIF, at most 256 KB. SVG is not accepted. A square image a few
 hundred pixels across is plenty.
 
+#### `app idle`
+
+Show or set when Pando stops or deletes an app nobody uses
+
+```
+pando app idle <app>
+```
+
+With no flags, shows the app's idle settings: its own, the installation's, the ones in
+force, when it was last used, and when Pando would stop or delete it.
+
+--stop-days and --delete-days take a number of days, never, or default for the
+installation's setting. A flag left out keeps what the app has. Both count from the
+app's last use, deploy or start, so deleting has to come later than stopping.
+These are app settings, not spec: nothing is deployed.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--delete-days` |  | days without use before Pando deletes the app: a number, never, or default |
+| `--stop-days` |  | days without use before Pando stops the app: a number, never, or default |
+
 #### `app list`
 
 List the apps you can manage
@@ -861,6 +882,22 @@ Add an account to a group; it then holds what the group holds
 ```
 pando group add-member <group-id> <user-id>
 ```
+
+#### `group app-limit`
+
+Show or set how many apps each person in a group may own
+
+```
+pando group app-limit <group-id> [apps]
+```
+
+With only the group, shows its limit. With a number, sets it; 0 is unlimited.
+--clear removes it. Somebody in several groups gets the most generous, and a limit on
+their own account replaces every group's.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--clear` |  | remove the group's own limit |
 
 #### `group apps`
 
@@ -1565,6 +1602,24 @@ Work with accounts
 ```
 pando user
 ```
+
+#### `user app-limit`
+
+Show how many apps an account may own and where that comes from, or set the account's own limit
+
+```
+pando user app-limit <user-id> [apps]
+```
+
+With only the account, shows the limit in force, where it comes from (the account, a
+group, or host policy) and how many apps the account owns.
+
+With a number, sets the account's own limit, which applies whatever its groups say.
+0 is unlimited. --clear removes it, so its groups' or the installation's applies.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--clear` |  | remove the user's own limit |
 
 #### `user apps`
 
