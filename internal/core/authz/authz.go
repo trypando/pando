@@ -100,6 +100,23 @@ type Store interface {
 	Role(ctx context.Context, roleID string) (Role, error)
 }
 
+// DataFacts is everything CheckData decides on, about one app and one caller
+// (issue #93). Facts only: the decision, and its order, stay in CheckData.
+type DataFacts struct {
+	Owner     bool // the caller is the app's owner of record (R-072)
+	Grant     bool // a data-plane grant reaches the caller: direct, group or account token
+	Anonymous bool // the app is shared with everyone (R-075)
+	Passcode  bool // and that sharing asks for a passcode (R-075a)
+	Unlocked  bool // the unlock this request brought is live
+}
+
+// DataFactsReader is a Store that reads DataFacts in one go — the state
+// store's one query in place of four. A Store without it is asked fact by
+// fact, stopping as soon as the answer is known.
+type DataFactsReader interface {
+	DataFacts(ctx context.Context, appID string, p Principal, passcodeToken string) (DataFacts, error)
+}
+
 // Grant binds a principal to an app on one plane.
 type Grant struct {
 	ID            string
@@ -620,43 +637,25 @@ func (a *Authorizer) CheckData(ctx context.Context, p Principal, appID string) e
 		return a.deny(ctx, p, appID, "app.use", err)
 	}
 
-	if p.UserID != "" {
-		owner, err := a.store.IsOwner(ctx, appID, p.UserID)
-		if err != nil {
-			return err
-		}
-		if owner {
-			return nil // R-072: the sole implication between planes.
-		}
-	}
-
-	granted, err := a.store.HasDataGrant(ctx, appID, p)
+	f, err := a.dataFacts(ctx, p, appID)
 	if err != nil {
 		return err
 	}
-	if granted {
+	if f.Owner {
+		return nil // R-072: the sole implication between planes.
+	}
+	if f.Grant {
 		return nil
 	}
-
-	anon, passcode, err := a.store.AnonymousAccess(ctx, appID)
-	if err != nil {
-		return err
-	}
-	if anon && !passcode {
+	if f.Anonymous && !f.Passcode {
 		return nil // R-075.
 	}
-	if anon && passcode {
+	if f.Anonymous && f.Passcode {
 		// Shared with everyone who knows the passcode (R-075a). Still the
 		// data plane alone — a passcode is a key to using the app, and says
 		// nothing about managing it.
-		if token := p.Passcodes[appID]; token != "" {
-			unlocked, err := a.store.PasscodeUnlocked(ctx, appID, token)
-			if err != nil {
-				return err
-			}
-			if unlocked {
-				return nil
-			}
+		if f.Unlocked {
+			return nil
 		}
 		// Not audited as a denial: every first visit to a passcode app lands
 		// here, and the proxy answers it with the passcode page.
@@ -672,6 +671,37 @@ func (a *Authorizer) CheckData(ctx context.Context, p Principal, appID string) e
 		return denied
 	}
 	return a.deny(ctx, p, appID, "app.use", denied)
+}
+
+// dataFacts reads what CheckData decides on: in one query from a store that
+// can (DataFactsReader), otherwise fact by fact in CheckData's order, stopping
+// at the first that settles it. Ownership is asked only of a principal with a
+// user, as it always was.
+func (a *Authorizer) dataFacts(ctx context.Context, p Principal, appID string) (DataFacts, error) {
+	if r, ok := a.store.(DataFactsReader); ok {
+		return r.DataFacts(ctx, appID, p, p.Passcodes[appID])
+	}
+	var (
+		f   DataFacts
+		err error
+	)
+	if p.UserID != "" {
+		if f.Owner, err = a.store.IsOwner(ctx, appID, p.UserID); err != nil || f.Owner {
+			return f, err
+		}
+	}
+	if f.Grant, err = a.store.HasDataGrant(ctx, appID, p); err != nil || f.Grant {
+		return f, err
+	}
+	if f.Anonymous, f.Passcode, err = a.store.AnonymousAccess(ctx, appID); err != nil {
+		return f, err
+	}
+	if f.Anonymous && f.Passcode {
+		if token := p.Passcodes[appID]; token != "" {
+			f.Unlocked, err = a.store.PasscodeUnlocked(ctx, appID, token)
+		}
+	}
+	return f, err
 }
 
 // auditsAnonymousDenials reports whether host policy wants an anonymous

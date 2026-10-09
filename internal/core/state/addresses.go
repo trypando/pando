@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -136,20 +137,45 @@ func (a *Apps) ByPath(ctx context.Context, requestPath string) (App, *spec.AppSp
 	if len(candidates) == 0 {
 		return App{}, nil, "", false, nil
 	}
-	var appID, prefix string
+	// The app and its pinned spec with the match, in one query rather than a
+	// second ByRouting by ID (issue #93). A LEFT JOIN, so the longest match
+	// is chosen among every app as before, and one with no pinned spec is
+	// "no app here" rather than a shorter path's app.
+	var (
+		app    App
+		owner  *string
+		pinned *string
+		body   []byte
+		prefix string
+	)
 	err := a.db.QueryRow(ctx, `
-		SELECT id, address_path FROM apps
-		WHERE deleted_at IS NULL AND address_path = ANY($1)
-		ORDER BY length(address_path) DESC
-		LIMIT 1`, candidates).Scan(&appID, &prefix)
+		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state, a.pinned_spec_id,
+		       a.created_at, a.updated_at, r.body, a.address_path
+		FROM apps a
+		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
+		WHERE a.deleted_at IS NULL AND a.address_path = ANY($1)
+		ORDER BY length(a.address_path) DESC
+		LIMIT 1`, candidates).
+		Scan(&app.ID, &app.Name, &app.Slug, &owner, &app.State, &app.DesiredState, &pinned,
+			&app.CreatedAt, &app.UpdatedAt, &body, &prefix)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return App{}, nil, "", false, nil
 	}
 	if err != nil {
 		return App{}, nil, "", false, errs.Wrap(errs.Internal, "Could not look up the app for this path.", err)
 	}
-	app, s, found, err := a.ByRouting(ctx, "id", appID)
-	return app, s, prefix, found, err
+	if pinned == nil || body == nil {
+		return App{}, nil, "", false, nil
+	}
+	app.PinnedSpecID = *pinned
+	if owner != nil {
+		app.OwnerUserID = *owner
+	}
+	var s spec.AppSpec
+	if err := json.Unmarshal(body, &s); err != nil {
+		return App{}, nil, "", false, errs.Wrap(errs.Internal, "Could not read the app's spec.", err)
+	}
+	return app, &s, prefix, true, nil
 }
 
 // maxPathCandidates bounds how many prefixes of one request's path are looked
