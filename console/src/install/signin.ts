@@ -8,7 +8,7 @@
 // SAML takes (R-261).
 
 import { boolValue, isShown } from './adapters';
-import type { AdapterKind, KindField } from './adapters';
+import type { AdapterKind } from './adapters';
 
 /** A known provider's starting settings. */
 export interface Preset {
@@ -191,9 +191,4 @@ export function groupsText(o: Outcome | undefined, groups: string[]): string {
     return 'The sign-in carried no groups. Check the groups claim or attribute if you expected some.';
   }
   return `Each sign-in sets the person’s groups from this provider to: ${groups.join(', ')}.`;
-}
-
-/** Field keys whose values are URLs or identifiers, set in mono. */
-export function isMono(f: KindField): boolean {
-  return /url|issuer|claim|attribute|client_id|domain|xml/.test(f.key);
 }

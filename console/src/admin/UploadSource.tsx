@@ -17,7 +17,7 @@ import { RegistryCredential } from './RegistryCredential';
 import { AppVerb, useCan } from './verbs';
 
 /** The most Pando accepts, compressed (maxUploadBytes in the server). */
-export const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 
 /** Packs files and sends them as an app's source, then asks Pando to read them. */
 export async function sendFiles(appID: string, files: readonly PickedFile[]): Promise<void> {
@@ -32,7 +32,7 @@ export async function sendFiles(appID: string, files: readonly PickedFile[]): Pr
   await api.post(`/apps/${appID}/detection/rerun`);
 }
 
-export function describeFiles(files: readonly PickedFile[]): string {
+function describeFiles(files: readonly PickedFile[]): string {
   if (files.length === 0) return '';
   const size = totalBytes(files);
   const amount = size < 1024 * 1024 ? `${Math.max(1, Math.round(size / 1024))} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`;
@@ -123,7 +123,7 @@ export function FilePicker({
 }
 
 /** The files section of an app that was sent from somebody's computer. */
-export function UploadedFiles({ appID }: { appID: string }) {
+function UploadedFiles({ appID }: { appID: string }) {
   const queries = useQueryClient();
   const canEdit = useCan(AppVerb.SpecEdit);
   const [files, setFiles] = useState<PickedFile[]>([]);

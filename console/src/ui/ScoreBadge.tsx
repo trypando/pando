@@ -25,7 +25,7 @@ const TONES = {
 
 export type Verdict = 'ok' | 'insecure' | 'unscanned' | 'inert' | '';
 
-export function tone(score: number | null | undefined, verdict?: Verdict, threshold = 0) {
+function tone(score: number | null | undefined, verdict?: Verdict, threshold = 0) {
   if (score === null || score === undefined) return 'none' as const;
   if (verdict === 'insecure') return 'bad' as const;
 

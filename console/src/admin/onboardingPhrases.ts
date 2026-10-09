@@ -39,6 +39,3 @@ export function phrasesFor(step: string | undefined): string[] {
 
 /** How often the phrase changes. */
 export const PHRASE_MS = 1_500;
-
-// The AI glyphs live with the component that turns them (ui/AiThinking.tsx).
-export { AI_GLYPHS, AI_GLYPH_MS } from '../ui/AiThinking';

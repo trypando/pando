@@ -27,9 +27,9 @@ export type Section =
 /** The tabs of System (issue #154): how the installation itself is set up and
  *  kept, as opposed to its apps or its people. Each was a sidebar item of its
  *  own, and its old address still opens it. */
-export type SystemTab = 'adapters' | 'policy' | 'backups' | 'updates';
+type SystemTab = 'adapters' | 'policy' | 'backups' | 'updates';
 
-export const SYSTEM_TABS: SystemTab[] = ['adapters', 'policy', 'backups', 'updates'];
+const SYSTEM_TABS: SystemTab[] = ['adapters', 'policy', 'backups', 'updates'];
 
 export interface Route {
   /** Settings is its own page, not a section of the admin console: it is

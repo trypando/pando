@@ -103,7 +103,7 @@ export function filtersFrom(query: string | undefined): AuditFilters {
 }
 
 /** The prefixes in an action filter: comma-separated, blanks dropped. */
-export function actionsOf(action: string): string[] {
+function actionsOf(action: string): string[] {
   return action
     .split(',')
     .map((a) => a.trim())

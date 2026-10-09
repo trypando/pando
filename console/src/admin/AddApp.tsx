@@ -263,7 +263,7 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
 }
 
 /** A name from a repository URL or an image reference. */
-export function nameFrom(source: string): string {
+function nameFrom(source: string): string {
   const trimmed = source.trim().replace(/\/+$/, '');
   if (trimmed === '') return '';
 
@@ -282,7 +282,7 @@ export function nameFrom(source: string): string {
  * file's without its extension. index.html names nothing, so it gives way to
  * "site".
  */
-export function nameFromFiles(files: readonly PickedFile[], folder?: string): string {
+function nameFromFiles(files: readonly PickedFile[], folder?: string): string {
   if (folder) return folder;
   if (files.length !== 1) return 'site';
   const base = (files[0]!.path.split('/').pop() ?? '').replace(/\.[^.]+$/, '');

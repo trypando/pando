@@ -15,7 +15,7 @@ export interface Person {
 }
 
 /** What a person is called: their name, else their email, else their ID. */
-export function personName(p: Person | undefined, id: string): string {
+function personName(p: Person | undefined, id: string): string {
   return p?.display_name || p?.email || p?.external_id || id;
 }
 

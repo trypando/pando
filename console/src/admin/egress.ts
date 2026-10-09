@@ -18,14 +18,14 @@ export interface EgressSpec {
   allowlist?: string[] | null;
 }
 
-export interface Loosening {
+interface Loosening {
   kind: string;
   entry?: string;
   message: string;
 }
 
 /** policy.EffectiveEgress: the rules an app runs with, merged (R-188). */
-export interface EffectiveEgress {
+interface EffectiveEgress {
   mode: string;
   list?: Array<{ entry: string; from: string }> | null;
   app_mode?: string;
@@ -38,7 +38,7 @@ export interface EffectiveEgress {
   restricted: boolean;
 }
 
-export interface InstallEgress {
+interface InstallEgress {
   mode?: string;
   list?: string[] | null;
   block_private?: boolean;

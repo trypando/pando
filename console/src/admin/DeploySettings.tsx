@@ -50,7 +50,7 @@ export function DeploySection({ app }: { app: App }) {
   );
 }
 
-export function DeploySettings({
+function DeploySettings({
   appID,
   spec,
   autoDeployPaused = false,

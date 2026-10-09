@@ -11,11 +11,11 @@
     "lint": "eslint src",
     "test": "vitest run",
     "precheck": "node scripts/vendor-design.mjs && npm run types",
-    "check": "npm run lint && tsc --noEmit && npm run test"
+    "knip": "knip",
+    "check": "npm run lint && tsc --noEmit && npm run knip && npm run test"
   },
   "dependencies": {
     "@tanstack/react-query": "5.104.0",
-    "@tanstack/react-router": "1.170.41",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "react": "19.3.0",
@@ -28,7 +28,7 @@
     "@vitejs/plugin-react": "6.1.1",
     "eslint": "^9.38.0",
     "eslint-plugin-react": "^7.37.5",
-    "oxlint": "1.86.0",
+    "knip": "6.41.0",
     "typescript": "6.0.3",
     "vite": "8.3.2",
     "vitest": "5.0.3"

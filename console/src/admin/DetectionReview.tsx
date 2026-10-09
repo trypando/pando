@@ -335,7 +335,7 @@ function WinningBid({ candidate }: { candidate: Candidate }) {
   );
 }
 
-export function QuestionCard({
+function QuestionCard({
   question,
   answer,
   onAnswer,
@@ -456,7 +456,7 @@ function Dependencies({ proposal }: { proposal: Proposal }) {
   );
 }
 
-export const SLOT_NAMES: Record<string, string> = {
+const SLOT_NAMES: Record<string, string> = {
   postgres: 'PostgreSQL',
   mysql: 'MySQL',
   redis: 'Redis',
@@ -466,7 +466,7 @@ export const SLOT_NAMES: Record<string, string> = {
 };
 
 /** The same sentences the settings screen uses, so one app reads one way. */
-export function fills(slot: Slot) {
+function fills(slot: Slot) {
   if (!slot.resolution) {
     return slot.required ? (
       <StatusIndicator status="failed" label="You choose after accepting" />
@@ -486,7 +486,7 @@ export function fills(slot: Slot) {
   }
 }
 
-export interface Slot {
+interface Slot {
   key: string;
   type: string;
   required?: boolean;
@@ -549,7 +549,7 @@ function Warnings({ proposal }: { proposal: Proposal }) {
   );
 }
 
-export function RunnersUp({ candidates }: { candidates: Candidate[] }) {
+function RunnersUp({ candidates }: { candidates: Candidate[] }) {
   const [open, setOpen] = useState(false);
   if (candidates.length === 0) return null;
 

@@ -18,12 +18,6 @@ export interface AIFunction {
   overridden?: { adapter_id: string; model?: string };
 }
 
-/** Where the config file assigns a function, in words (R-271). */
-export function declaredIn(f: AIFunction): string | null {
-  if (f.source?.kind !== 'file') return null;
-  return `${f.source.name ?? 'the config file'}, at ${f.source.key ?? ''}`;
-}
-
 /**
  * Whether an AI function is on, for a screen deciding whether to offer it.
  * AI appears only where it can do something (design 08): a question field for

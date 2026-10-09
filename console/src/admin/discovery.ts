@@ -13,10 +13,10 @@ import type { AppSpec, Candidate, Proposal, Question, Report, Source } from '@ap
 import { describeAmendment } from './screeningText';
 
 /** Where a running detection is. `stage` is set only while it runs. */
-export type Stage = 'fetching' | 'detecting' | 'trying' | 'scanning' | 'screening';
+type Stage = 'fetching' | 'detecting' | 'trying' | 'scanning' | 'screening';
 const ORDER: Stage[] = ['fetching', 'detecting', 'trying', 'scanning', 'screening'];
 
-export type StepState = 'done' | 'current' | 'pending';
+type StepState = 'done' | 'current' | 'pending';
 
 export interface Finding {
   key: string;
@@ -174,7 +174,7 @@ export function startCommand(
 }
 
 /** How far a detection has got: 0 fetching … 3 screening, 4 finished. */
-export function stageIndex(status: string, stage: string | undefined): number {
+function stageIndex(status: string, stage: string | undefined): number {
   if (status !== 'running') return ORDER.length;
   // A stage this console does not know is read as the first: under-claiming
   // progress is harmless, claiming a step finished that is not is not.
@@ -664,7 +664,7 @@ export function composeNote(message: string): ComposeNote {
 // --- Terrain --------------------------------------------------------------------
 
 /** FNV-1a: the terrain is the same every time for the same app and commit. */
-export function hashString(s: string): number {
+function hashString(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
@@ -674,7 +674,7 @@ export function hashString(s: string): number {
 }
 
 /** mulberry32. */
-export function random(seed: number): () => number {
+function random(seed: number): () => number {
   let a = seed || 1;
   return () => {
     a = (a + 0x6d2b79f5) | 0;

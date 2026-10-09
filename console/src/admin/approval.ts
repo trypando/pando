@@ -5,12 +5,11 @@
 
 import type {
   ApprovalDecision,
-  ApprovalReason,
   AwaitingApproval,
   Deployment,
 } from '@api/types.gen';
 
-export type { ApprovalDecision, ApprovalReason };
+export type { ApprovalDecision };
 
 export type ApprovalDeployment = Deployment;
 

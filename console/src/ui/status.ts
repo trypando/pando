@@ -24,7 +24,7 @@
 
 import type { StatusIndicatorProps } from '@design';
 
-export type AppState =
+type AppState =
   | 'draft'
   | 'proposed'
   | 'deploying'
@@ -70,9 +70,4 @@ export function statusSymbol(state: string): Symbol {
 
 export function statusLabel(state: string): string {
   return labels[state as AppState] ?? state;
-}
-
-/** Whether this state means a person has to do something. */
-export function needsAttention(state: string): boolean {
-  return state === 'failed';
 }

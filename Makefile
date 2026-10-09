@@ -258,7 +258,34 @@ lint: ## golangci-lint, including the R-027 adapter import rule
 	$(LINT) run
 
 .PHONY: check
-check: vet lint test reference-check ## Everything CI runs on a pull request
+check: vet lint deadcode test reference-check ## Everything CI runs on a pull request
+
+# Functions no binary and no test reaches. Every build tag `make vet` compiles,
+# so a helper only the integration suite calls counts as used; with -test, so
+# does one only a unit test calls. Pinned, and run with `go run` rather than
+# installed, so CI and a laptop use the same version and nobody has to put
+# GOPATH/bin on PATH. deadcode exits 0 whatever it finds, so any output fails.
+#
+# GOTOOLCHAIN is this module's toolchain, for the reason vulncheck sets it: a
+# `go run pkg@version` otherwise picks the toolchain x/tools' go.mod names,
+# older than this module's, and the deadcode it builds cannot read the source.
+#
+# The packages are listed rather than passed as ./..., which also matches the
+# Go sources some npm packages ship in console/node_modules (flatted has one).
+# Lazy, so the `go list` runs only when this target does.
+DEADCODE_VERSION := v0.51.0
+DEADCODE_TAGS    := integration,kubernetes,multihost,kwokscale
+DEADCODE_PKGS     = $(shell $(GO) list -tags $(DEADCODE_TAGS) $(PKG) | grep -v '/node_modules/')
+
+.PHONY: deadcode
+deadcode: ## Fail on Go functions that no binary or test reaches
+	@out=$$(GOTOOLCHAIN=$$($(GO) env GOVERSION) $(GO) run golang.org/x/tools/cmd/deadcode@$(DEADCODE_VERSION) \
+		-test -tags $(DEADCODE_TAGS) $(DEADCODE_PKGS)) || exit 1; \
+	if [ -n "$$out" ]; then \
+		echo "$$out"; \
+		echo "Nothing reaches the functions above. Delete them, or call them from the code that needs them."; \
+		exit 1; \
+	fi
 
 # Fuzz targets, and how long each one runs. One list so that adding a target
 # means adding a line here, rather than adding a line here and remembering to

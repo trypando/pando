@@ -1997,7 +1997,7 @@ function AiNotes({ notes }: { notes: string[] }) {
  * outcome; these skip codes say there is no adapter, host policy forbids it, or
  * it cannot revise. Anything else — it ran, or was not needed — means it is.
  */
-export function aiAvailable(outcome: DetectionResponse['detection']['screening']): boolean {
+function aiAvailable(outcome: DetectionResponse['detection']['screening']): boolean {
   if (!outcome) return false;
   return !['not_configured', 'policy', 'unsupported'].includes(outcome.skip_code ?? '');
 }

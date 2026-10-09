@@ -15,10 +15,10 @@ import './ai.css';
  * at a glance. An approved exception to the design system's no-unicode-icons
  * rule, for AI at work only (design 08 §1.3).
  */
-export const AI_GLYPHS = ['✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳'] as const;
+const AI_GLYPHS = ['✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳'] as const;
 
 /** How long each glyph shows. */
-export const AI_GLYPH_MS = 120;
+const AI_GLYPH_MS = 120;
 
 /** How often AI's working phrase changes. */
 const THINKING_MS = 2_600;

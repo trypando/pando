@@ -87,7 +87,7 @@ export function usePrincipal() {
  * One query, shared with `usePrincipal` through the query key, so asking twice
  * on one screen costs one request.
  */
-export function useInstallVerbs(): string[] {
+function useInstallVerbs(): string[] {
   const me = usePrincipal();
   return me.data?.verbs ?? [];
 }
@@ -111,7 +111,7 @@ export function useInstallVerb(verb: InstallVerb): boolean {
  * others, which is the "scoped to whatever privileges they hold" half of R-265
  * for app administration.
  */
-export function useManageableApps(): number {
+function useManageableApps(): number {
   return useManageableAppsTotal().total ?? 0;
 }
 

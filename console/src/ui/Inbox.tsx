@@ -36,7 +36,7 @@ const COUNT_KEY = ['inbox', 'unread'];
 const LIST_KEY = ['inbox', 'list'];
 
 /** How often the bell asks for its count. */
-export const INBOX_COUNT_MS = 60_000;
+const INBOX_COUNT_MS = 60_000;
 
 export function InboxButton() {
   const [open, setOpen] = useState(false);
