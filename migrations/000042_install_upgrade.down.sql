@@ -1,5 +1,6 @@
 ALTER TABLE roles DISABLE TRIGGER roles_builtin_immutable;
-UPDATE roles SET verbs = array_remove(verbs, 'install.upgrade'::text);
+UPDATE roles SET verbs = array_remove(verbs, 'install.upgrade'::text)
+WHERE 'install.upgrade' = ANY (verbs);
 ALTER TABLE roles ENABLE TRIGGER roles_builtin_immutable;
 
 UPDATE host_policy
@@ -9,4 +10,5 @@ SET body = jsonb_set(body, '{agent_disabled_verbs}',
          WHERE v <> 'install.upgrade'))
 WHERE body->'agent_disabled_verbs' ? 'install.upgrade';
 
-UPDATE host_policy SET body = body - 'upgrade_in_place' - 'auto_upgrade_patches' - 'maintenance_window';
+UPDATE host_policy SET body = body - 'upgrade_in_place' - 'auto_upgrade_patches' - 'maintenance_window'
+WHERE body ?| array['upgrade_in_place', 'auto_upgrade_patches', 'maintenance_window'];

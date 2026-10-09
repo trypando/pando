@@ -23,7 +23,11 @@
  * origin that can equal this one.
  *
  * What comes back is rebuilt from the parsed URL, so the string the caller
- * navigates to is the string that was checked.
+ * navigates to is the string that was checked. A same-origin URL can still
+ * have a path that starts with two slashes — "https://pando.example.com//evil.example/",
+ * or "/.//evil.example/" once the dot segment is removed — and that path on its
+ * own is a protocol-relative address to evil.example. So the leading slashes
+ * are collapsed to one: the path stays on this origin whatever it was.
  *
  * @param search the query string, including the leading "?" — window.location.search
  * @param here   the address of the page doing the redirect — window.location.href
@@ -43,5 +47,6 @@ export function returnTo(search: string, here: string): string | null {
 
   if (resolved.origin !== base.origin) return null;
 
-  return resolved.pathname + resolved.search + resolved.hash;
+  const path = '/' + resolved.pathname.replace(/^\/+/, '');
+  return path + resolved.search + resolved.hash;
 }

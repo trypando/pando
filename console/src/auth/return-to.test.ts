@@ -45,6 +45,19 @@ describe('R-172 returnTo', () => {
     expect(returnTo('?next=' + encodeURIComponent(next), here)).toBeNull();
   });
 
+  // Each of these passes the origin check and resolves to a path beginning
+  // "//", which on its own is a protocol-relative address to evil.example.
+  it.each([
+    'https://pando.example.com//evil.example/',
+    '/.//evil.example/',
+    'https://pando.example.com/\\evil.example/',
+    '/./\\evil.example/',
+  ])('keeps %s on this origin', (next) => {
+    const out = returnTo('?next=' + encodeURIComponent(next), here);
+    expect(out).toBe('/evil.example/');
+    expect(new URL(out!, here).origin).toBe(new URL(here).origin);
+  });
+
   // A path is resolved against the page doing the redirect, so a relative one
   // cannot climb out of the origin however many segments it walks up.
   it('resolves a relative path inside the origin', () => {
