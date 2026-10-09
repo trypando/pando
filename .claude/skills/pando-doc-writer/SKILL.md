@@ -1,5 +1,5 @@
 ---
-name: doc-writer
+name: pando-doc-writer
 description: Write and update user-facing Pando documents (security papers, release notes, how-to guides, written references, policies, white papers) as a branded document that reads as one long page on the web and exports to paged PDF with a running header and footer. Only for documents published to people who use or evaluate Pando. Not for the repository's own docs (requirements, design docs, plans, open decisions, READMEs, CLAUDE.md, Markdown under docs/) and not for generated docs (API, CLI and MCP reference, OpenAPI/Swagger, changelogs from commits).
 ---
 
