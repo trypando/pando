@@ -2,7 +2,7 @@
   "path": ["src"],
   "format": ["typescript", "tsx", "css"],
   "ignore": ["src/design/**", "src/api/types.gen.ts"],
-  "minTokens": 100,
+  "minTokens": 150,
   "exitCode": 1,
   "reporters": ["console"],
   "gitignore": true

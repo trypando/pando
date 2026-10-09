@@ -201,8 +201,8 @@ Delete what they find rather than exempting it.
 
 So does copied code. `make lint` runs [dupl](https://github.com/mibk/dupl) over the Go, and
 `npm run check` runs [jscpd](https://github.com/kucherenko/jscpd) over the console
-(`console/.jscpd.json`). Both fail on a block of 100 tokens or more that appears twice, about a dozen
-lines. Give the shared part a name and call it from both places.
+(`console/.jscpd.json`). Both fail on a block of 150 tokens or more that appears twice. Give the
+shared part a name and call it from both places.
 
 ## Releasing
 

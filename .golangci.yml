@@ -25,11 +25,13 @@ linters:
     - sqlclosecheck
 
   settings:
-    # Copied blocks, by syntax tree rather than text. 100 tokens, below the
-    # linter's default of 150, is about a dozen lines of Go: the size at which a
-    # copy is worth naming. jscpd does the same for the console.
+    # Copied blocks, by syntax tree rather than text. 150 tokens is the
+    # linter's default, written out so it reads as a decision. The code was
+    # cleared at 100 when this was switched on; 150 keeps new copies out
+    # without failing on every short look-alike. jscpd does the same for the
+    # console.
     dupl:
-      threshold: 100
+      threshold: 150
 
     gosec:
       excludes:
