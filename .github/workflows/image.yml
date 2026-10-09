@@ -79,8 +79,19 @@ jobs:
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "build_date=$(git log -1 --format=%cI)" >> "$GITHUB_ENV"
 
+      # Trivy and the smoke test pull from Docker Hub before the sign-in that
+      # pushes below, so they go through the mirror, signed in, like CI (#170).
+      # The builder has a daemon of its own, so it is given the same mirror.
+      - uses: ./.github/actions/docker-hub-pulls
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       # Every stage of the Dockerfile is a Docker Hardened Image, and dhi.io
       # serves them only to a signed-in Docker account. The same account pushes

@@ -1,0 +1,55 @@
+# Docker Hub pulls that do not fail on someone else's rate limit.
+#
+# Anonymous pulls from Docker Hub are counted per IP address, and GitHub's
+# runners share their addresses with everybody's builds, so a run could fail
+# at random with "toomanyrequests" before pulling anything of its own: the
+# integration job's Postgres and the runtime tests' busybox, alpine and nginx,
+# and the image job's busybox, all lost a run of #170 that way.
+#
+# Two things, each enough alone:
+#
+# - mirror.gcr.io, Google's public mirror of Docker Hub, as the Docker
+#   daemon's registry mirror. Not rate limited, and needs no account, so it
+#   also holds for a pull request from a fork. An image it does not have is
+#   pulled from Docker Hub as before. The daemon's setting covers everything
+#   that pulls through the daemon: testcontainers, `docker run`, `docker pull`.
+#   A buildx builder has its own; jobs that build pass `buildkitd-config-inline`
+#   to setup-buildx-action with the same mirror.
+# - Signing in to Docker Hub, when the run has the account's secrets, so what
+#   does reach Docker Hub is counted against the account rather than the
+#   runner's shared address.
+name: Docker Hub pulls
+description: Pull Docker Hub images through mirror.gcr.io, signed in when an account is available.
+inputs:
+  username:
+    description: Docker Hub username. Empty skips signing in.
+    required: false
+    default: ''
+  password:
+    description: Docker Hub access token.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Pull Docker Hub images through mirror.gcr.io
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Merged into what the runner image already sets, never replacing it.
+        conf=/etc/docker/daemon.json
+        current='{}'
+        if [ -s "$conf" ]; then current="$(sudo cat "$conf")"; fi
+        echo "$current" | jq '.["registry-mirrors"] = ((.["registry-mirrors"] // []) + ["https://mirror.gcr.io"] | unique)' \
+          | sudo tee "$conf" > /dev/null
+        sudo systemctl restart docker
+        # Restarting takes a moment; nothing that follows may race it.
+        for _ in $(seq 1 30); do docker info > /dev/null 2>&1 && break; sleep 1; done
+        docker info --format '{{json .RegistryConfig.Mirrors}}'
+
+    - name: Sign in to Docker Hub
+      if: inputs.username != ''
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      with:
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
