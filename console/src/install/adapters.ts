@@ -7,7 +7,7 @@
 // configurable here without this file changing (R-261).
 
 /** One choice a `select` setting offers. */
-export interface KindOption {
+interface KindOption {
   value: string;
   label: string;
   /** What choosing it means, shown under a radio button. */

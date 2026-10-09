@@ -35,14 +35,6 @@ type Execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// InsertEvent writes an event through q, which may be the transaction an
-// audit row is being written in: the audit writer copies a catalogued action
-// here in the same transaction, so the log and the outbox cannot disagree.
-func InsertEvent(ctx context.Context, q Execer, e Event) error {
-	_, err := insertEvent(ctx, q, e, false)
-	return err
-}
-
 func insertEvent(ctx context.Context, q Execer, e Event, routed bool) (string, error) {
 	data := e.Data
 	if data == nil {

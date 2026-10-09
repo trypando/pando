@@ -15,7 +15,7 @@
 // Kept apart from the component so the protocol can be tested without a DOM.
 
 /** The most lines held on screen. Older lines drop off the top. */
-export const KEEP = 2_000;
+const KEEP = 2_000;
 
 /** Appends `add` to `previous`, keeping at most `keep` lines. */
 export function appendCapped(previous: string[], add: string[], keep = KEEP): string[] {

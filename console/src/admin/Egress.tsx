@@ -37,8 +37,8 @@ import {
   modeWords,
   sameDraft,
   specOf,
-} from './egress';
-import type { DryRunResult, EgressDraft, EgressResponse } from './egress';
+} from './appEgress';
+import type { DryRunResult, EgressDraft, EgressResponse } from './appEgress';
 import { useNewestSpec } from './newestSpec';
 import { AppVerb, useCan } from './verbs';
 

@@ -146,9 +146,6 @@ func (e *Ended) Error() string { return e.Message }
 // Option configures a Hub.
 type Option func(*Hub)
 
-// WithClock sets the time source.
-func WithClock(c clock.Clock) Option { return func(h *Hub) { h.clock = c } }
-
 // WithGrace sets how long a stream with no viewers stays open.
 func WithGrace(d time.Duration) Option { return func(h *Hub) { h.grace = d } }
 

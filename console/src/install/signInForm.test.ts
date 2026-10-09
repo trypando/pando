@@ -8,8 +8,8 @@ import {
   problems,
   providerRequest,
   revocationText,
-} from './signin';
-import type { ProviderKind } from './signin';
+} from './signInForm';
+import type { ProviderKind } from './signInForm';
 
 const oidc: ProviderKind = {
   category: 'identity',

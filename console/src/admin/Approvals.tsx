@@ -24,7 +24,7 @@ import type { ApprovalRow } from './approval';
  */
 type ApprovalsPage = { approvals: ApprovalRow[] | null; next_cursor?: string };
 
-export const APPROVALS_SHAPE: HeadShape<ApprovalsPage, ApprovalRow> = {
+const APPROVALS_SHAPE: HeadShape<ApprovalsPage, ApprovalRow> = {
   rowsOf: (p) => p.approvals ?? [],
   withRows: (p, approvals) => ({ ...p, approvals }),
   idOf: (r) => r.id,

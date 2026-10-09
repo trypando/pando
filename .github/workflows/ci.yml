@@ -61,6 +61,11 @@ jobs:
         with:
           version: v2.14.0
 
+      # Functions nothing calls. Knip does the same for the console, in the
+      # console job's `npm run check`.
+      - name: Dead code
+        run: make deadcode
+
       - name: Test
         run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
 

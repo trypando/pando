@@ -54,7 +54,7 @@ export interface AuditSink {
 /** The id of the Archived months section, which a gap notice points to. */
 export const ARCHIVES_ANCHOR = 'archived-months';
 
-export function useAuditSinks() {
+function useAuditSinks() {
   return useQuery({
     queryKey: ['audit-sinks'],
     queryFn: () => api.get<{ audit_sinks: AuditSink[] | null }>('/audit/sinks'),
@@ -74,7 +74,7 @@ export function AuditSinks({ onAdapters }: { onAdapters?: () => void }) {
   return <AuditSinkList sinks={sinks.data?.audit_sinks ?? []} onAdapters={onAdapters} />;
 }
 
-export function AuditSinkList({ sinks, onAdapters }: { sinks: AuditSink[]; onAdapters?: () => void }) {
+function AuditSinkList({ sinks, onAdapters }: { sinks: AuditSink[]; onAdapters?: () => void }) {
   // No sink is the usual case, and says nothing that needs saying here.
   if (sinks.length === 0) return null;
   const on = sinks.filter((s) => s.enabled);

@@ -12,7 +12,6 @@
 package events
 
 import (
-	"sort"
 	"strings"
 )
 
@@ -234,16 +233,6 @@ func Lookup(name string) (Def, bool) {
 func ForAction(action string) (Def, bool) {
 	d, ok := byAction[action]
 	return d, ok
-}
-
-// Names returns every event name, sorted.
-func Names() []string {
-	out := make([]string, 0, len(byName))
-	for n := range byName {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // ValidPattern reports whether p names an event or matches at least one.

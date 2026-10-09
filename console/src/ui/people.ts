@@ -23,9 +23,9 @@ export interface Person {
 }
 
 /** How many IDs one request asks about, which keeps its address short. */
-export const NAMED_PER_REQUEST = 100;
+const NAMED_PER_REQUEST = 100;
 /** How many matches a picker offers. */
-export const FOUND = 8;
+const FOUND = 8;
 
 /**
  * The account IDs worth asking about, each once and in a stable order so the

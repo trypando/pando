@@ -77,19 +77,9 @@ type Option func(*Cache)
 // WithClock sets the time source, for tests.
 func WithClock(c clock.Clock) Option { return func(o *Cache) { o.clock = c } }
 
-// WithTTLs sets how long an observation and a usage reading are reused.
-func WithTTLs(observe, usage time.Duration) Option {
-	return func(o *Cache) { o.observeTTL, o.usageTTL = observe, usage }
-}
-
 // WithRuntimeTTL sets how long a runtime's capabilities and capacity are
 // reused.
 func WithRuntimeTTL(d time.Duration) Option { return func(o *Cache) { o.runtimeTTL = d } }
-
-// WithCallTimeout bounds the shared call to the runtime. It runs apart from any
-// one caller's context, so one person closing their tab does not fail it for
-// everyone else waiting on it.
-func WithCallTimeout(d time.Duration) Option { return func(o *Cache) { o.callTimeout = d } }
 
 // New returns a Cache with the default TTLs.
 func New(opts ...Option) *Cache {

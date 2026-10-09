@@ -21,7 +21,7 @@ import { describeChange } from './policyChange';
 type Doc = Record<string, unknown>;
 
 /** How long the kept changes must stay put before their impact is asked for. */
-export const PREVIEW_SETTLE_MS = 400;
+const PREVIEW_SETTLE_MS = 400;
 
 interface PolicyProposal {
   proposed: Doc;

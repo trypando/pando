@@ -36,7 +36,7 @@ import type { ApprovalDeployment } from './approval';
  * the reader scrolls up — a log that yanks itself back to the bottom while
  * somebody is reading the failure three screens above is unreadable.
  */
-export function LogBox({
+function LogBox({
   title,
   lines,
   empty,
@@ -102,7 +102,7 @@ export function LogBox({
  * Streamed over EventSource rather than polled, because this is the one place
  * where somebody is watching a thing happen and latency is the experience.
  */
-export function DeploymentLog({
+function DeploymentLog({
   appID,
   deployment,
   fallback,

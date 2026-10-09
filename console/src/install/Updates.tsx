@@ -148,7 +148,7 @@ function ReleaseNotes({ release }: { release: Release }) {
  * shown as the text it is. Never HTML: release notes are text, and this
  * renders them as text.
  */
-export function Changelog({ notes }: { notes: string }) {
+function Changelog({ notes }: { notes: string }) {
   const blocks: React.ReactNode[] = [];
   let bullets: string[] = [];
   let para: string[] = [];

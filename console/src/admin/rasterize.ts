@@ -9,7 +9,7 @@
 // the server is an ordinary PNG, and the server's rule does not change.
 
 /** How big the PNG is: a tile is a few hundred pixels across at most. */
-export const RASTER_SIZE = 512;
+const RASTER_SIZE = 512;
 
 /** Whether a picked file is an SVG, by type or, failing that, by name. */
 export function isSVG(file: File): boolean {

@@ -814,7 +814,7 @@ function DeliveryDetail({
 }
 
 /** How a webhook is sent (R-375), as a form edits it. */
-export interface RequestOptions {
+interface RequestOptions {
   method: string;
   contentType: string;
   /** "Name: value" lines. */
@@ -822,10 +822,10 @@ export interface RequestOptions {
   template: string;
 }
 
-export const DEFAULT_REQUEST: RequestOptions = { method: 'POST', contentType: 'application/json', headers: '', template: '' };
+const DEFAULT_REQUEST: RequestOptions = { method: 'POST', contentType: 'application/json', headers: '', template: '' };
 
 /** Reads "Name: value" lines into headers, or says which line is wrong. */
-export function parseHeaders(text: string): { headers: Record<string, string>; problem?: string } {
+function parseHeaders(text: string): { headers: Record<string, string>; problem?: string } {
   const headers: Record<string, string> = {};
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue;
@@ -838,7 +838,7 @@ export function parseHeaders(text: string): { headers: Record<string, string>; p
 }
 
 /** The request body fields for these options. Headers only when asked to send them. */
-export function requestBody(opts: RequestOptions, withHeaders: boolean): Record<string, unknown> {
+function requestBody(opts: RequestOptions, withHeaders: boolean): Record<string, unknown> {
   const body: Record<string, unknown> = {
     method: opts.method,
     content_type: opts.contentType,

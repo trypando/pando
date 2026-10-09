@@ -2023,7 +2023,7 @@ export function AuditTable({
 /** An event's outcome when it was not a success, as a symbol and a word:
  *  denied is a refusal, failed is an attempt that went wrong, and they read
  *  differently. */
-export function Outcome({ outcome }: { outcome?: string }) {
+function Outcome({ outcome }: { outcome?: string }) {
   if (outcome === 'denied') return <StatusIndicator status="stopped" label="Denied" />;
   if (outcome === 'failed') return <StatusIndicator status="failed" label="Failed" />;
   return null;
@@ -2104,7 +2104,7 @@ export function LoadOlder({ log }: { log: ReturnType<typeof useAuditLog>['log'] 
   );
 }
 
-export function FilterRow({ children }: { children: React.ReactNode }) {
+function FilterRow({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 'var(--space-3) var(--space-4)' }}>
       {children}
@@ -2122,7 +2122,7 @@ function ClearFilters({ onClear }: { onClear: () => void }) {
   );
 }
 
-export function Field({ children }: { children: React.ReactNode }) {
+function Field({ children }: { children: React.ReactNode }) {
   return <div style={{ flex: '1 1 18ch', minWidth: '18ch', maxWidth: '28ch' }}>{children}</div>;
 }
 

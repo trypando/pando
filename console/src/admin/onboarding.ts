@@ -124,10 +124,6 @@ function cleanPath(p: string): string {
   return trimmed.length > 1 ? trimmed.replace(/\/+$/, '') : trimmed;
 }
 
-export function volumePath(p: string): string {
-  return cleanPath(p);
-}
-
 /** One row of the variables form. */
 export interface VariableRow {
   /** Stable across edits, for React. */
@@ -150,7 +146,7 @@ export interface VariableRow {
   fromAddress?: boolean;
 }
 
-export interface RowSlot {
+interface RowSlot {
   key: string;
   type: string;
   required: boolean;
@@ -244,7 +240,7 @@ const OWN_DOMAIN = /(^|_)(DOMAIN|HOSTNAME|PUBLIC_HOST|SERVER_NAME)$/;
  * other name. A person deploying a generated app rarely knows what "domain"
  * means here, and Pando does.
  */
-export function valueFromAddress(key: string, address: string | undefined): string | undefined {
+function valueFromAddress(key: string, address: string | undefined): string | undefined {
   if (!address) return undefined;
   if (OWN_URL.test(key)) return address;
   if (OWN_DOMAIN.test(key)) {
