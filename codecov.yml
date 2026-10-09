@@ -12,6 +12,11 @@
 # — naming the files only the integration flag covers — and then a silent
 # correction once the second upload lands. That happened twice on #21 before
 # this file existed, and the first number is the one people read.
+#
+# This alone did not stop it: with each job uploading as it finished, the unit
+# upload still drew a failing codecov/patch before the integration one landed.
+# The codecov job in ci.yml now sends both once both jobs are done,
+# integration first.
 codecov:
   notify:
     # Both uploads before any commit status is sent.

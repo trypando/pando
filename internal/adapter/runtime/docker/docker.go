@@ -1725,10 +1725,13 @@ type containerSummary struct {
 }
 
 func (a *Adapter) findContainer(ctx context.Context, bundleID, workload string) (*containerSummary, error) {
-	list, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
-		All:     true,
-		Filters: make(client.Filters).Add("label", labelBundle+"="+bundleID).Add("label", labelWorkload+"="+workload),
-	})
+	return a.firstContainer(ctx, make(client.Filters).Add("label", labelBundle+"="+bundleID).Add("label", labelWorkload+"="+workload))
+}
+
+// firstContainer returns a container matching filters, stopped ones included,
+// or nil when there is none.
+func (a *Adapter) firstContainer(ctx context.Context, filters client.Filters) (*containerSummary, error) {
+	list, err := a.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: filters})
 	if err != nil {
 		return nil, errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
 	}

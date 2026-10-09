@@ -17,6 +17,7 @@ linters:
     - bodyclose
     - contextcheck
     - depguard
+    - dupl
     - errorlint
     - gosec
     - nilerr
@@ -24,6 +25,14 @@ linters:
     - sqlclosecheck
 
   settings:
+    # Copied blocks, by syntax tree rather than text. 150 tokens is the
+    # linter's default, written out so it reads as a decision. The code was
+    # cleared at 100 when this was switched on; 150 keeps new copies out
+    # without failing on every short look-alike. jscpd does the same for the
+    # console.
+    dupl:
+      threshold: 150
+
     gosec:
       excludes:
         # G101 matches on identifier *names*, not values. Every hit in this

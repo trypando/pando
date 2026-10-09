@@ -20,6 +20,7 @@ import { Input } from '@design';
 
 import { api } from '@api/client';
 import type { Recipient } from './share-access';
+import { stepIndex, useCloseOnOutside } from '../ui/combobox';
 
 interface Principals {
   users: { id: string; username: string; name?: string }[] | null;
@@ -58,14 +59,7 @@ export function RecipientField({
     if (!value) setText('');
   }, [value]);
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const outside = (e: MouseEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', outside);
-    return () => document.removeEventListener('mousedown', outside);
-  }, [open]);
+  useCloseOnOutside(root, open, () => setOpen(false));
 
   const found = useQuery({
     queryKey: ['apps', appID, 'principals', q],
@@ -116,7 +110,7 @@ export function RecipientField({
             e.preventDefault();
             if (options.length === 0) return;
             setOpen(true);
-            setAt((i) => (e.key === 'ArrowDown' ? (i + 1) % options.length : (i - 1 + options.length) % options.length));
+            setAt((i) => stepIndex(e.key, i, options.length));
           } else if (e.key === 'Enter') {
             e.preventDefault();
             if (open && options[at]) choose(options[at]);

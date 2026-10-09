@@ -415,17 +415,7 @@ func (a *Adapter) gatewayMatches(ctx context.Context, id, bundleID, digest strin
 }
 
 func (a *Adapter) findGateway(ctx context.Context, bundleID string) (*containerSummary, error) {
-	list, err := a.cli.ContainerList(ctx, client.ContainerListOptions{
-		All:     true,
-		Filters: make(client.Filters).Add("label", labelBundle+"="+bundleID).Add("label", labelRole+"="+roleEgressGateway),
-	})
-	if err != nil {
-		return nil, errs.Wrap(errs.AdapterUnavailable, "Could not read what is running.", err)
-	}
-	if len(list.Items) == 0 {
-		return nil, nil
-	}
-	return &containerSummary{ID: list.Items[0].ID, State: string(list.Items[0].State), Labels: list.Items[0].Labels}, nil
+	return a.firstContainer(ctx, make(client.Filters).Add("label", labelBundle+"="+bundleID).Add("label", labelRole+"="+roleEgressGateway))
 }
 
 // removeGateway removes a bundle's gateway and its outbound network, left

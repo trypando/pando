@@ -199,6 +199,11 @@ test reaches, under every build tag the repository uses. In the console, `npm ru
 [Knip](https://knip.dev), which reports unused files, exports and dependencies (`console/knip.json`).
 Delete what they find rather than exempting it.
 
+So does copied code. `make lint` runs [dupl](https://github.com/mibk/dupl) over the Go, and
+`npm run check` runs [jscpd](https://github.com/kucherenko/jscpd) over the console
+(`console/.jscpd.json`). Both fail on a block of 150 tokens or more that appears twice. Give the
+shared part a name and call it from both places.
+
 ## Releasing
 
 What a version number promises to an operator, and how somebody verifies a download, is in

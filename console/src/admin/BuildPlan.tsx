@@ -13,39 +13,20 @@
 // without it the plan is shown and there is no Edit.
 
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Banner, Button, Input, Select } from '@design';
 
 import { api } from '@api/client';
-import type { AppSpec } from '@api/types.gen';
 import { Quiet, messageOf } from '../install/Accounts';
+import { useNewestSpec } from './newestSpec';
 import { AppVerb, useCan } from './verbs';
-
-interface Revision {
-  id: string;
-  revision: number;
-  body: AppSpec;
-}
 
 export function BuildPlan({ appID }: { appID: string }) {
   const queries = useQueryClient();
   const [draft, setDraft] = useState<string | null>(null);
   const canEdit = useCan(AppVerb.SpecEdit);
 
-  const specs = useQuery({
-    queryKey: ['apps', appID, 'specs'],
-    queryFn: () => api.get<{ revisions: Revision[] | null }>(`/apps/${appID}/specs`),
-  });
-
-  const newest = (specs.data?.revisions ?? []).slice().sort((a, b) => b.revision - a.revision)[0];
-
-  const full = useQuery({
-    queryKey: ['apps', appID, 'spec', newest?.revision],
-    queryFn: () => api.get<Revision>(`/apps/${appID}/specs/${newest?.revision}`),
-    enabled: Boolean(newest),
-  });
-
-  const spec = full.data?.body;
+  const { spec } = useNewestSpec(appID);
   const files = spec?.build?.generated_files ?? {};
   const dockerfile = spec?.build?.dockerfile || '.nixpacks/Dockerfile';
 

@@ -22,6 +22,7 @@ import { Input } from '@design';
 
 import { matches } from '../ui/search';
 import { unionPeople, usePeopleSearch, type Person } from '../ui/people';
+import { stepIndex, useCloseOnOutside } from '../ui/combobox';
 
 export type { Person };
 
@@ -84,14 +85,7 @@ export function ActorField({
     if (!value) setText('');
   }, [value]);
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const outside = (e: MouseEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', outside);
-    return () => document.removeEventListener('mousedown', outside);
-  }, [open]);
+  useCloseOnOutside(root, open, () => setOpen(false));
 
   const found = text.trim()
     ? options
@@ -129,7 +123,7 @@ export function ActorField({
             e.preventDefault();
             if (found.length === 0) return;
             setOpen(true);
-            setAt((i) => (e.key === 'ArrowDown' ? (i + 1) % found.length : (i - 1 + found.length) % found.length));
+            setAt((i) => stepIndex(e.key, i, found.length));
           } else if (e.key === 'Enter') {
             e.preventDefault();
             const typed = text.trim();

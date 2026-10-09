@@ -521,24 +521,8 @@ func TestR167_ACustomPathIsServedAndStripped(t *testing.T) {
 
 	s := newStore()
 	s.owner[appID] = "usr_alice"
-	minter, err := assertion.NewMinter("https://pando.test", nil)
-	require.NoError(t, err)
-
-	p := &proxy.Proxy{
-		Resolver: &resolver{
-			app: state.App{ID: appID, Slug: "notes-a1b2c3", State: state.StateRunning},
-			spec: &spec.AppSpec{
-				Routing: spec.Routing{Mode: spec.RoutingPath, PathPrefix: "/team/notes"},
-				Workloads: []spec.Workload{{Name: "web", Primary: true,
-					Ports: []spec.Port{{Number: 80, Protocol: "http"}}}}},
-		},
-		Authenticator: staticAuth{principal: activeUser("usr_alice")},
-		Authz:         authz.New(s, nil, nil),
-		Minter:        minter,
-		Upstreams:     fixedUpstream{addr: upstream.URL},
-		Logger:        zap.NewNop(),
-		Mode:          spec.RoutingPath,
-	}
+	p := routedProxy(t, s, upstream.URL, "notes-a1b2c3",
+		spec.Routing{Mode: spec.RoutingPath, PathPrefix: "/team/notes"}, spec.RoutingPath, activeUser("usr_alice"))
 	front := httptest.NewServer(p)
 	defer front.Close()
 
@@ -707,28 +691,11 @@ func TestAnInstallCanMixAddressingModes(t *testing.T) {
 
 	s := newStore()
 	s.owner[appID] = "usr_alice"
-	minter, err := assertion.NewMinter("https://pando.test", nil)
-	require.NoError(t, err)
 
-	// One app, addressed by path, on an install whose default is subdomain.
-	front := httptest.NewServer(&proxy.Proxy{
-		Resolver: &resolver{
-			app: state.App{ID: appID, Slug: "notes", State: state.StateRunning},
-			spec: &spec.AppSpec{
-				Routing: spec.Routing{Mode: spec.RoutingPath, PathPrefix: "/notes"},
-				Workloads: []spec.Workload{{Name: "web", Primary: true,
-					Ports: []spec.Port{{Number: 80, Protocol: "http"}}}},
-			},
-		},
-		Authenticator: staticAuth{principal: activeUser("usr_alice")},
-		Authz:         authz.New(s, nil, nil),
-		Minter:        minter,
-		Upstreams:     fixedUpstream{addr: upstream.URL},
-		Logger:        zap.NewNop(),
-
-		// The install's default shape, and deliberately the *other* one.
-		Mode: spec.RoutingSubdomain,
-	})
+	// One app, addressed by path, on an install whose default is subdomain:
+	// deliberately the *other* shape.
+	front := httptest.NewServer(routedProxy(t, s, upstream.URL, "notes",
+		spec.Routing{Mode: spec.RoutingPath, PathPrefix: "/notes"}, spec.RoutingSubdomain, activeUser("usr_alice")))
 	defer front.Close()
 
 	resp, err := http.Get(front.URL + "/notes/dashboard")
@@ -760,28 +727,12 @@ func TestR161_APortModeAppIsServedAtTheRootOfItsPort(t *testing.T) {
 
 	s := newStore()
 	s.owner[appID] = "usr_alice"
-	minter, err := assertion.NewMinter("https://pando.test", nil)
-	require.NoError(t, err)
 
 	// Slug "notes" as well, so the test can tell "resolved by port" from
 	// "resolved by first path segment" — a proxy that fell through to the slug
 	// would strip "/assets" and pass this test for the wrong reason.
-	p := &proxy.Proxy{
-		Resolver: &resolver{
-			app: state.App{ID: appID, Slug: "notes", State: state.StateRunning},
-			spec: &spec.AppSpec{
-				Routing: spec.Routing{Mode: spec.RoutingPort, Port: port},
-				Workloads: []spec.Workload{{Name: "web", Primary: true,
-					Ports: []spec.Port{{Number: 80, Protocol: "http"}}}},
-			},
-		},
-		Authenticator: staticAuth{principal: activeUser("usr_alice")},
-		Authz:         authz.New(s, nil, nil),
-		Minter:        minter,
-		Upstreams:     fixedUpstream{addr: upstream.URL},
-		Logger:        zap.NewNop(),
-		Mode:          spec.RoutingPort,
-	}
+	p := routedProxy(t, s, upstream.URL, "notes",
+		spec.Routing{Mode: spec.RoutingPort, Port: port}, spec.RoutingPort, activeUser("usr_alice"))
 
 	listeners := &proxy.PortListeners{Ports: fixedPorts{port}, Handler: p}
 	ctx, stop := context.WithCancel(context.Background())
@@ -815,25 +766,8 @@ func TestR023_APortListenerIsTheSameEnforcementPoint(t *testing.T) {
 
 	// Nobody is granted anything: no owner, no data-plane grant.
 	s := newStore()
-	minter, err := assertion.NewMinter("https://pando.test", nil)
-	require.NoError(t, err)
-
-	p := &proxy.Proxy{
-		Resolver: &resolver{
-			app: state.App{ID: appID, Slug: "notes", State: state.StateRunning},
-			spec: &spec.AppSpec{
-				Routing: spec.Routing{Mode: spec.RoutingPort, Port: port},
-				Workloads: []spec.Workload{{Name: "web", Primary: true,
-					Ports: []spec.Port{{Number: 80, Protocol: "http"}}}},
-			},
-		},
-		Authenticator: staticAuth{principal: activeUser("usr_mallory")},
-		Authz:         authz.New(s, nil, nil),
-		Minter:        minter,
-		Upstreams:     fixedUpstream{addr: upstream.URL},
-		Logger:        zap.NewNop(),
-		Mode:          spec.RoutingPort,
-	}
+	p := routedProxy(t, s, upstream.URL, "notes",
+		spec.Routing{Mode: spec.RoutingPort, Port: port}, spec.RoutingPort, activeUser("usr_mallory"))
 
 	listeners := &proxy.PortListeners{Ports: fixedPorts{port}, Handler: p}
 	ctx, stop := context.WithCancel(context.Background())
@@ -866,6 +800,31 @@ func (f fixedPorts) InUse(context.Context) ([]int, error) { return f, nil }
 // machine running Pando's own Compose stack has 9000-9019 published on it — so
 // a fixed 9010 passed alone and failed in a full run, which is the worst way
 // for a test to fail.
+// routedProxy is a proxy in front of one running app, appID, called slug and
+// routed as routing, on an install whose default shape is mode. principal is
+// who every request comes from; s decides what they may do.
+func routedProxy(t *testing.T, s *store, upstreamURL, slug string, routing spec.Routing, mode spec.RoutingMode, principal authz.Principal) *proxy.Proxy {
+	t.Helper()
+	minter, err := assertion.NewMinter("https://pando.test", nil)
+	require.NoError(t, err)
+	return &proxy.Proxy{
+		Resolver: &resolver{
+			app: state.App{ID: appID, Slug: slug, State: state.StateRunning},
+			spec: &spec.AppSpec{
+				Routing: routing,
+				Workloads: []spec.Workload{{Name: "web", Primary: true,
+					Ports: []spec.Port{{Number: 80, Protocol: "http"}}}},
+			},
+		},
+		Authenticator: staticAuth{principal: principal},
+		Authz:         authz.New(s, nil, nil),
+		Minter:        minter,
+		Upstreams:     fixedUpstream{addr: upstreamURL},
+		Logger:        zap.NewNop(),
+		Mode:          mode,
+	}
+}
+
 func freePort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

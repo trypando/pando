@@ -59,6 +59,13 @@ func collector(t *testing.T, cfg *tls.Config) (string, <-chan string) {
 	t.Helper()
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
 	require.NoError(t, err)
+	return serveFrames(t, ln)
+}
+
+// serveFrames accepts connections on ln until the test ends and sends each
+// octet-counted frame it reads on the returned channel.
+func serveFrames(t *testing.T, ln net.Listener) (string, <-chan string) {
+	t.Helper()
 	t.Cleanup(func() { _ = ln.Close() })
 	frames := make(chan string, 16)
 	go func() {

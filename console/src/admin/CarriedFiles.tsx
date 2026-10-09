@@ -8,19 +8,12 @@
 // the review page that somebody read once.
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Button, CodeBlock, Dialog } from '@design';
 
-import { api } from '@api/client';
 import type { AppSpec, File as CarriedFile, Workload } from '@api/types.gen';
-import { Quiet, messageOf } from '../install/Accounts';
+import { Quiet } from '../install/Accounts';
 import { Table } from '../ui/Table';
-
-interface Revision {
-  id: string;
-  revision: number;
-  body: AppSpec;
-}
+import { useNewestSpec } from './newestSpec';
 
 interface Row {
   path: string;
@@ -32,21 +25,10 @@ interface Row {
 export function CarriedFiles({ appID }: { appID: string }) {
   const [showing, setShowing] = useState<Row | null>(null);
 
-  const specs = useQuery({
-    queryKey: ['apps', appID, 'specs'],
-    queryFn: () =>
-      api.get<{ revisions: Revision[] | null; pinned_spec_id: string }>(`/apps/${appID}/specs`),
-  });
-
-  const newest = (specs.data?.revisions ?? []).slice().sort((a, b) => b.revision - a.revision)[0];
-
-  const full = useQuery({
-    queryKey: ['apps', appID, 'spec', newest?.revision],
-    queryFn: () => api.get<Revision>(`/apps/${appID}/specs/${newest?.revision}`),
-    enabled: Boolean(newest),
-  });
-
-  const rows = fileRows(full.data?.body);
+  // Nothing at all when the app carries no files, and nothing when the
+  // revisions cannot be read: Environment, above this on the same screen,
+  // reads the same list and says why.
+  const rows = fileRows(useNewestSpec(appID).spec);
   if (rows.length === 0) return null;
 
   return (
@@ -56,8 +38,6 @@ export function CarriedFiles({ appID }: { appID: string }) {
         Files Pando copies into the app when it starts, taken from the repository when this app was
         read. Editing them in the repository changes nothing here until the app is read again.
       </Quiet>
-
-      {specs.isError && <Quiet>{messageOf(specs.error)}</Quiet>}
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table

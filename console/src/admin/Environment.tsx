@@ -20,7 +20,7 @@
 // cannot be changed — a Save that stored half of it would be worse than none.
 
 import { useEffect, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Banner, Button, Dialog, Input, Select } from '@design';
 
 import { api } from '@api/client';
@@ -28,13 +28,8 @@ import type { AppSpec, EnvEntry, Workload } from '@api/types.gen';
 import { Quiet, messageOf } from '../install/Accounts';
 import { looksSensitive } from './sensitive';
 import { Table } from '../ui/Table';
+import { useNewestSpec } from './newestSpec';
 import { AppVerb, useCan } from './verbs';
-
-interface Revision {
-  id: string;
-  revision: number;
-  body: AppSpec;
-}
 
 interface Row {
   key: string;
@@ -58,33 +53,14 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
     if (focus) heading.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [focus]);
 
-  // Two requests, because the list deliberately carries no bodies — fifty
-  // revisions each with a full spec is a heavy response for a list nobody
-  // reads that way. The list says which revision is newest; the second request
-  // fetches that one's spec.
-  const specs = useQuery({
-    queryKey: ['apps', appID, 'specs'],
-    queryFn: () => api.get<{ revisions: Revision[] | null; pinned_spec_id: string }>(`/apps/${appID}/specs`),
-  });
-
   // The newest revision is what an edit builds on, not the pinned one: two
   // edits in a row should both survive, and building each on the pinned spec
   // would silently discard the first.
-  const newest = (specs.data?.revisions ?? [])
-    .slice()
-    .sort((a, b) => b.revision - a.revision)[0];
-
-  const full = useQuery({
-    queryKey: ['apps', appID, 'spec', newest?.revision],
-    queryFn: () => api.get<Revision>(`/apps/${appID}/specs/${newest?.revision}`),
-    enabled: Boolean(newest),
-  });
-
-  const latest = full.data;
+  const { spec, pending, error } = useNewestSpec(appID);
 
   const save = useMutation({
     mutationFn: async (entry: { key: string; value: string; secret: boolean; workload: string }) => {
-      if (!latest) throw new Error('no spec');
+      if (!spec) throw new Error('no spec');
 
       let env: EnvEntry;
       if (entry.secret) {
@@ -98,8 +74,8 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
       }
 
       const body: AppSpec = {
-        ...latest.body,
-        workloads: (latest.body.workloads ?? []).map((w: Workload) =>
+        ...spec,
+        workloads: (spec.workloads ?? []).map((w: Workload) =>
           w.name === entry.workload
             ? { ...w, env: [...(w.env ?? []).filter((e) => e.key !== entry.key), env] }
             : w,
@@ -117,10 +93,10 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
 
   const remove = useMutation({
     mutationFn: (row: Row) => {
-      if (!latest) throw new Error('no spec');
+      if (!spec) throw new Error('no spec');
       const body: AppSpec = {
-        ...latest.body,
-        workloads: (latest.body.workloads ?? []).map((w: Workload) =>
+        ...spec,
+        workloads: (spec.workloads ?? []).map((w: Workload) =>
           w.name === row.workload ? { ...w, env: (w.env ?? []).filter((e) => e.key !== row.key) } : w,
         ),
       };
@@ -132,15 +108,15 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
     },
   });
 
-  const rows = envRows(latest?.body);
-  const workloads = (latest?.body?.workloads ?? []).map((w: Workload) => w.name);
+  const rows = envRows(spec);
+  const workloads = (spec?.workloads ?? []).map((w: Workload) => w.name);
   const unset = rows.filter((r) => r.unset);
 
   return (
     <section ref={heading}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Environment</h4>
-        {latest && canEdit && (
+        {spec && canEdit && (
           <Button variant="secondary" onClick={() => setAdding(true)}>
             Add variable
           </Button>
@@ -152,7 +128,7 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
         {canEdit && ' Pando works out what it can; add anything it missed.'}
       </Quiet>
 
-      {specs.isError && <Banner tone="failed">{messageOf(specs.error)}</Banner>}
+      {error && <Banner tone="failed">{messageOf(error)}</Banner>}
       {remove.isError && <Banner tone="failed">{messageOf(remove.error)}</Banner>}
 
       {/* Detection reads the names out of `.env.example` and cannot know the
@@ -160,7 +136,7 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
           are still empty is the difference between a list somebody scans and
           a list somebody finishes. Never a blocker: which of them the app
           actually needs is what the trial run is for (R-133, O-4). */}
-      {!specs.isError && unset.length > 0 && (
+      {!error && unset.length > 0 && (
         <Banner tone="info">
           {unset.length === 1
             ? `${unset[0]?.key} has no value yet. The app starts without it.`
@@ -170,10 +146,7 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table
-          // Two requests, and the second waits on the first. `full` is not
-          // enabled without a revision, and a disabled query is pending for
-          // good, so it counts only once there is one.
-          loading={specs.isPending || (Boolean(newest) && full.isPending)}
+          loading={pending}
           columns={[
             { key: 'key', header: 'Name', width: 'minmax(0,26ch)', mono: true },
             { key: 'shown', header: 'Value', width: 'minmax(0,28ch)', mono: true, muted: true },
@@ -213,7 +186,7 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
         />
       </div>
 
-      {adding && latest && canEdit && (
+      {adding && spec && canEdit && (
         <VariableDialog
           workloads={workloads}
           canWriteSecrets={canWriteSecrets}
@@ -224,7 +197,7 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
         />
       )}
 
-      {editing && latest && canEdit && (
+      {editing && spec && canEdit && (
         <VariableDialog
           workloads={[editing.workload]}
           canWriteSecrets={canWriteSecrets}

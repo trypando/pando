@@ -10,9 +10,11 @@
     "types": "go run ../cmd/gen-api-types",
     "lint": "eslint src",
     "test": "vitest run",
+    "coverage": "vitest run --coverage",
     "precheck": "node scripts/vendor-design.mjs && npm run types",
     "knip": "knip",
-    "check": "npm run lint && tsc --noEmit && npm run knip && npm run test"
+    "duplicates": "jscpd",
+    "check": "npm run lint && tsc --noEmit && npm run knip && npm run duplicates && npm run coverage"
   },
   "dependencies": {
     "@tanstack/react-query": "5.104.0",
@@ -26,8 +28,10 @@
     "@types/react-dom": "19.3.0",
     "@typescript-eslint/parser": "^8.71.0",
     "@vitejs/plugin-react": "6.1.1",
+    "@vitest/coverage-v8": "5.0.3",
     "eslint": "^9.38.0",
     "eslint-plugin-react": "^7.37.5",
+    "jscpd": "5.3.2",
     "knip": "6.41.0",
     "typescript": "6.0.3",
     "vite": "8.3.2",
