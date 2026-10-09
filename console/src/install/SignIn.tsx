@@ -27,8 +27,8 @@ import {
   providerRequest,
   revocationText,
   storedValues,
-} from './signin';
-import type { Outcome, ProviderKind, Values } from './signin';
+} from './signInForm';
+import type { Outcome, ProviderKind, Values } from './signInForm';
 
 interface Listing {
   providers: ProviderView[] | null;

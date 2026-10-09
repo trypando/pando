@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { draftOf, dryRunWords, gateWords, listEdits, modeWords, sameDraft, specOf } from './egress';
-import type { DryRunResult } from './egress';
+import { draftOf, dryRunWords, gateWords, listEdits, modeWords, sameDraft, specOf } from './appEgress';
+import type { DryRunResult } from './appEgress';
 
 describe("an app's egress editor reads and writes the spec (R-182)", () => {
   it('opens an empty spec as following the installation', () => {

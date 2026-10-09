@@ -12,7 +12,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApprovalRequest } from './ApprovalRequest';
 import type { ApprovalDeployment } from './approval';
 import { Egress } from './Egress';
-import type { EgressResponse } from './egress';
+import type { EgressResponse } from './appEgress';
 import { AppVerbs } from './verbs';
 
 function render(node: React.ReactNode, seed?: (q: QueryClient) => void, verbs: string[] = []) {

@@ -197,10 +197,7 @@ Public Sans or IBM Plex Mono fails `npm run check`.
 Code nothing uses fails the build too. `make deadcode` reports Go functions that no binary and no
 test reaches, under every build tag the repository uses. In the console, `npm run check` runs
 [Knip](https://knip.dev), which reports unused files, exports and dependencies (`console/knip.json`).
-Delete what they find rather than exempting it. Knip reads the console's file names case-sensitively
-the way CI's Linux runners do. On macOS, `src/admin/Egress.tsx` and `src/admin/egress.ts`
-(likewise `SignIn.tsx` and `signin.ts`) collide, so run it in a Linux container if it reports either
-pair.
+Delete what they find rather than exempting it.
 
 ## Releasing
 
