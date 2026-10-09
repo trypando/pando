@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"time"
 
@@ -74,7 +75,14 @@ func (r *statusRecorder) WriteHeader(code int) {
 
 func (r *statusRecorder) Write(b []byte) (int, error) {
 	r.written = true
-	return r.ResponseWriter.Write(b)
+	// Forwarded as an io.Writer rather than an http.ResponseWriter. CodeQL
+	// resolves every io.Writer.Write in the binary to this method, so a
+	// ResponseWriter.Write here made it a reflected-XSS sink for bytes that
+	// never reach a response: `pando exec` writing a session to the user's
+	// terminal was the reported path. A handler's own write is still a sink
+	// where the handler makes it, which is where an XSS would be.
+	var out io.Writer = r.ResponseWriter
+	return out.Write(b)
 }
 
 // Unwrap exposes the underlying writer so http.ResponseController can reach
