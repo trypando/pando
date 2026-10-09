@@ -193,13 +193,7 @@ jobs:
           restore-keys: |
             go-integration-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-integration-${{ runner.os }}-
-      # Runners have Docker, so testcontainers works without extra setup —
-      # but pulled anonymously, every image this job runs shares the runner's
-      # Docker Hub rate limit with everybody else's builds (#170).
-      - uses: ./.github/actions/docker-hub-pulls
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # Runners have Docker, so testcontainers works without extra setup.
       - run: make test-integration COVERPROFILE=coverage.integration.out
         env:
           # No Ryuk reaper here. It removes containers a run leaves behind,
@@ -369,20 +363,8 @@ jobs:
       # The build cache only. The module and npm caches mostly hold what `go
       # mod download` and `npm ci` fetch in seconds, and moving a directory
       # into and out of the builder costs time in proportion to its size.
-      # busybox for the cache dance below, and anything else from Docker Hub,
-      # through the mirror and signed in (#170). The builder has a daemon of
-      # its own, so it is given the same mirror.
-      - if: steps.dhi.outputs.available == 'true'
-        uses: ./.github/actions/docker-hub-pulls
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - if: steps.dhi.outputs.available == 'true'
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
 
       # Saved only from main, like the Go jobs' caches: a pull request restores
       # main's latest. Here that also skips taking the cache back out of the
