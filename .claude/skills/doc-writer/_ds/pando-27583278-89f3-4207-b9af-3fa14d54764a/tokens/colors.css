@@ -1,0 +1,89 @@
+/* Pando color — printed survey map: paper, ink, thin rules, contour brown.
+   Roughly 85% paper and ink, 12% rules/tints/browns, under 3% marker red. */
+:root {
+  /* paper and structure */
+  --paper: #F0EDE4;
+  --paper-raised: #F8F6F0;
+  --paper-sunken: #E7E3D8;
+  --rule: #D8D2C3;
+  --rule-strong: #C2BAA7;
+  --field-border: #8F8877;
+
+  /* ink */
+  --ink: #1A1C1B;
+  --ink-secondary: #5C5E58;
+  --ink-muted: #7A7B74;
+
+  /* contour browns */
+  --contour: #A8764A;
+  --contour-line: #D5C2A6;
+  --contour-text: #8A5D35;
+
+  /* vegetation, water, marker */
+  --vegetation: #DCE3D1;
+  --vegetation-deep: #3F6B3A;
+  --water: #3E6A85;
+  --marker: #B23A2C;
+  --marker-deep: #9E2F23;
+
+  /* terminal — identical in both themes */
+  --terminal: #1A1C1B;
+  --terminal-text: #ECE8DE;
+  --terminal-prompt: #C99A6B;
+
+  /* app status */
+  --status-running: var(--vegetation-deep);
+  --status-building: var(--contour-text);
+  --status-failed: var(--marker);
+  --status-stopped: var(--ink-muted);
+  --status-info: var(--water);
+
+  /* status tint backgrounds (banners) */
+  --status-running-tint: #E3EBD9;
+  --status-building-tint: #F3E6D6;
+  --status-failed-tint: #F6E1DC;
+  --status-info-tint: #E2EAEF;
+
+  /* button hover fills */
+  --primary-hover: #2B2E2C;
+  --destructive-hover: #F6E1DC;
+
+  --scrim: rgba(26, 28, 27, 0.4);
+}
+
+[data-theme="dark"] {
+  --paper: #141614;
+  --paper-raised: #1C1F1D;
+  --paper-sunken: #242826;
+  --rule: #2F3431;
+  --rule-strong: #3E4440;
+  --field-border: #6E756E;
+
+  --ink: #ECE8DE;
+  --ink-secondary: #A9A89F;
+  --ink-muted: #7D7E77;
+
+  --contour: #C99A6B;
+  --contour-line: #4A4238;
+  --contour-text: #C99A6B;
+
+  --vegetation: #22301F;
+  --vegetation-deep: #8FB58A;
+  --water: #7FA9C2;
+  --marker: #E0654F;
+  --marker-deep: #E0654F;
+
+  --status-running: var(--vegetation-deep);
+  --status-building: var(--contour);
+  --status-failed: var(--marker);
+  --status-stopped: var(--ink-muted);
+  --status-info: var(--water);
+
+  --status-running-tint: #22301F;
+  --status-building-tint: #2B2419;
+  --status-failed-tint: #33201C;
+  --status-info-tint: #1C2A31;
+
+  --primary-hover: #D9D4C8;
+  --destructive-hover: #33201C;
+}

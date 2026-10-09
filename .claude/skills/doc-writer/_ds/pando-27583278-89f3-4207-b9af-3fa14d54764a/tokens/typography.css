@@ -1,0 +1,43 @@
+/* Pando typography.
+   Newsreader for display and headings, Public Sans for interface and body,
+   IBM Plex Mono only for things a person would type or copy.
+   Sentence case everywhere. Nothing is set in all caps. */
+:root {
+  --font-display: "Newsreader", Georgia, serif;
+  --font-ui: "Public Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* classical sequence */
+  --size-12: 12px;
+  --size-13: 13px;
+  --size-14: 14px;
+  --size-16: 16px;
+  --size-18: 18px;
+  --size-21: 21px;
+  --size-24: 24px;
+  --size-36: 36px;
+  --size-48: 48px;
+  --size-60: 60px;
+  --size-72: 72px;
+
+  --tracking-headline: -0.015em; /* 36px and above only */
+  --tracking-wordmark: -0.02em;
+
+  /* roles: font shorthand = weight size/line-height family */
+  --type-display: 400 72px/76px var(--font-display);
+  --type-display-sm: 400 48px/52px var(--font-display);
+  --type-h1: 400 48px/54px var(--font-display);
+  --type-h2: 400 36px/42px var(--font-display);
+  --type-h3: 500 24px/30px var(--font-display);
+  --type-h4: 600 18px/26px var(--font-ui);
+  --type-body-lg: 400 18px/30px var(--font-ui);
+  --type-body: 400 16px/26px var(--font-ui);
+  --type-body-ui: 400 14px/21px var(--font-ui);
+  --type-body-docs: 400 18px/32px var(--font-display);
+  --type-label: 500 14px/20px var(--font-ui);
+  --type-caption: 400 12px/16px var(--font-ui);
+  --type-code: 400 13px/20px var(--font-mono);
+  --type-code-sm: 400 12px/16px var(--font-mono);
+
+  --measure-body: 68ch;
+}

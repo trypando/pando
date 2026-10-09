@@ -1,0 +1,22 @@
+/* Pando element defaults. Components carry their own styling. */
+html { -webkit-font-smoothing: antialiased; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: var(--type-body); text-wrap: pretty; }
+* { box-sizing: border-box; }
+h1, h2, h3, h4 { margin: 0; font-optical-sizing: auto; }
+h1 { font: var(--type-h1); letter-spacing: var(--tracking-headline); }
+h2 { font: var(--type-h2); letter-spacing: var(--tracking-headline); }
+h3 { font: var(--type-h3); }
+h4 { font: var(--type-h4); }
+p { margin: 0; max-width: var(--measure-body); }
+a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--rule-strong); text-underline-offset: 3px; transition: text-decoration-color var(--dur-fast) var(--ease); }
+a:hover { color: var(--ink); text-decoration-color: var(--ink); }
+code, kbd, pre, samp { font-family: var(--font-mono); }
+table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+:focus-visible { outline: var(--focus-outline-width) solid var(--ink); outline-offset: var(--focus-outline-offset); }
+::selection { background: var(--vegetation); color: var(--ink); }
+
+@keyframes pando-draw { from { stroke-dashoffset: var(--dash, 1200); } to { stroke-dashoffset: 0; } }
+@keyframes pando-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-delay: 0ms !important; transition-duration: 0.001ms !important; }
+}

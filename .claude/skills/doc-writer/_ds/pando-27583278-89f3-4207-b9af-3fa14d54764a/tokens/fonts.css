@@ -1,0 +1,5 @@
+/* Pando webfonts — Newsreader (display), Public Sans (UI/body), IBM Plex Mono (code).
+   All three are free on Google Fonts and are loaded from the CDN; no binaries were
+   supplied with the brand spec. Newsreader is a variable optical-size face: set
+   font-optical-sizing / opsz to match the rendered size. */
+@import url("https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap");

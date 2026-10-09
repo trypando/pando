@@ -1,0 +1,10 @@
+/* Pando motion — responds to what a person does. No bounce, no load animations
+   except the one orchestrated hero contour draw-in. */
+:root {
+  --dur-fast: 120ms; /* @kind other */ /* hover, press */
+  --dur-base: 200ms; /* @kind other */ /* panels */
+  --dur-contour-draw: 900ms; /* @kind other */ /* hero map, first load only */
+  --ease: cubic-bezier(0.2, 0, 0, 1); /* @kind other */
+  --press-scale: 0.98; /* @kind other */
+  --press-duration: 80ms; /* @kind other */
+}

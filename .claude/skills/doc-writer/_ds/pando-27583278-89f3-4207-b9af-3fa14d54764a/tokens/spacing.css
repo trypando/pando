@@ -1,0 +1,34 @@
+/* Pando spacing — 4px base. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+  --space-10: 128px;
+
+  /* marketing grid */
+  --site-max: 1120px;
+  --site-gutter: 24px;
+  --site-columns: 12; /* @kind other */
+  --section-gap: 96px;
+  --section-gap-mobile: 64px;
+
+  /* console */
+  --console-sidebar: 232px;
+  --console-max: 1280px;
+  --console-padding: 32px;
+
+  /* control sizes */
+  --control-console: 32px;
+  --control-marketing: 40px;
+  --control-input: 36px;
+  --row-height: 40px;
+  --row-height-dense: 32px;
+  --button-padding-console: 12px;
+  --button-padding-marketing: 18px;
+}
