@@ -100,8 +100,10 @@ export function gateWords(gate: string | undefined): { status: 'failed' | 'info'
   }
 }
 
+const fromLabels: Record<string, string> = { app: 'This app', install: 'Installation' };
+
 export function fromWords(from: string | undefined): string {
-  return from === 'app' ? 'This app' : from === 'install' ? 'Installation' : '';
+  return (from && fromLabels[from]) ?? '';
 }
 
 /** The editor's fields. */

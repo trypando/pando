@@ -80,11 +80,25 @@ export function storedValues(config: unknown): Values {
   return out;
 }
 
+/**
+ * The first "{…}" in text with something between the braces, or null. A scan
+ * rather than /\{[^}]+\}/, which retries from every "{" and is quadratic on a
+ * value full of them.
+ */
+function placeholder(text: string): string | null {
+  for (let open = text.indexOf('{'); open !== -1; open = text.indexOf('{', open + 1)) {
+    const close = text.indexOf('}', open + 1);
+    if (close === -1) return null;
+    if (close > open + 1) return text.slice(open, close + 1);
+  }
+  return null;
+}
+
 /** A placeholder left in a value, such as "{tenant-id}". */
 export function placeholderIn(values: Values): { field: string; placeholder: string } | null {
   for (const [field, v] of Object.entries(values)) {
-    const m = typeof v === 'string' ? /\{[^}]+\}/.exec(v) : null;
-    if (m) return { field, placeholder: m[0] };
+    const hole = typeof v === 'string' ? placeholder(v) : null;
+    if (hole) return { field, placeholder: hole };
   }
   return null;
 }
@@ -100,8 +114,8 @@ export function problems(kind: ProviderKind, name: string, values: Values, store
     if (text === '' && f.required && !(f.credential && stored.includes(f.key))) {
       out[f.key] = `${f.label} is required.`;
     }
-    const hole = /\{[^}]+\}/.exec(text);
-    if (hole) out[f.key] = `Replace ${hole[0]} with your own value.`;
+    const hole = placeholder(text);
+    if (hole) out[f.key] = `Replace ${hole} with your own value.`;
   }
   return out;
 }
@@ -116,18 +130,8 @@ export interface ProviderRequest {
   enabled?: boolean;
 }
 
-/**
- * The body of POST or PATCH /identity-providers. Secrets go in `credentials`
- * and nowhere else (R-190); an empty credential keeps the stored one. A bool
- * is sent only when it differs from its default.
- */
-export function providerRequest(
-  kind: ProviderKind,
-  name: string,
-  values: Values,
-  flags: { jit: boolean; linkByEmail: boolean },
-  creating: boolean,
-): ProviderRequest {
+/** The shown fields' values, with credentials apart from the rest of the config. */
+function splitFields(kind: ProviderKind, values: Values) {
   const config: Record<string, string | boolean> = {};
   const credentials: Record<string, string> = {};
   for (const f of kind.fields ?? []) {
@@ -143,6 +147,22 @@ export function providerRequest(
     if (f.credential) credentials[f.key] = text;
     else config[f.key] = text;
   }
+  return { config, credentials };
+}
+
+/**
+ * The body of POST or PATCH /identity-providers. Secrets go in `credentials`
+ * and nowhere else (R-190); an empty credential keeps the stored one. A bool
+ * is sent only when it differs from its default.
+ */
+export function providerRequest(
+  kind: ProviderKind,
+  name: string,
+  values: Values,
+  flags: { jit: boolean; linkByEmail: boolean },
+  creating: boolean,
+): ProviderRequest {
+  const { config, credentials } = splitFields(kind, values);
   const body: ProviderRequest = {
     name: name.trim(),
     config,
