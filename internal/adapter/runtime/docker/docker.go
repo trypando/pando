@@ -270,7 +270,10 @@ func isolationOf(ociRuntime string) spec.IsolationClass {
 func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, error) {
 	class := isolationOf(a.config.OCIRuntime)
 	observes := a.observes()
-	limits := a.limits(ctx)
+	limits, err := a.limits(ctx)
+	if err != nil {
+		return api.RuntimeCapabilities{}, err
+	}
 
 	return api.RuntimeCapabilities{
 		// Shared kernel, unless the configured runtime is a sandbox. Stated
@@ -429,7 +432,7 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	capacity.Details["rootless"] = slices.Contains(info.SecurityOptions, "name=rootless")
 	capacity.Details["cgroup_version"] = info.CgroupVersion
 	capacity.Details["cgroup_driver"] = info.CgroupDriver
-	if !a.podman(ctx) { // Podman's answer is not one (limits.go)
+	if podman, err := a.podman(ctx); err == nil && !podman { // Podman's answer is not one (limits.go)
 		capacity.Details["cpu_limits"] = info.CPUCfsQuota && info.CPUCfsPeriod
 		capacity.Details["memory_limits"] = info.MemoryLimit
 	}

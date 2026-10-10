@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/moby/moby/client"
+
+	"github.com/trypando/pando/internal/errs"
 )
 
 // limitSupport is what the daemon says it can enforce, read from `docker info`
@@ -29,21 +31,27 @@ type limitSupport struct {
 // limits reads limit support from the daemon. Not cached, unlike platform: the
 // fix is a change to the daemon's host, and a deploy retried after it should
 // see it without restarting Pando.
-func (a *Adapter) limits(ctx context.Context) limitSupport {
+//
+// A daemon that cannot say is an error, never a yes: the health check only
+// pings, so a failure here would otherwise let a deploy through on a host that
+// drops the limits (CodeRabbit on #177).
+func (a *Adapter) limits(ctx context.Context) (limitSupport, error) {
 	res, err := a.cli.Info(ctx, client.InfoOptions{})
 	if err != nil {
-		// Unknown, not unsupported: a daemon that cannot be asked fails the
-		// health check, which the planner refuses on first and more usefully.
-		return limitSupport{}
+		return limitSupport{}, errs.Wrap(errs.AdapterUnavailable, "Could not ask Docker whether it applies CPU and memory limits.", err)
 	}
 	info := res.Info
-	if a.podman(ctx) {
+	podman, err := a.podman(ctx)
+	if err != nil {
+		return limitSupport{}, err
+	}
+	if podman {
 		// Podman's Docker-compatible info reports CpuCfsQuota false on a
 		// cgroup v2 host whose cpu controller is delegated (seen with Podman
 		// 4.9), so it cannot be read as an answer. Unknown, as before this
 		// check existed; reading Podman's own cgroup controllers is issue
 		// #179.
-		return limitSupport{rootless: slices.Contains(info.SecurityOptions, "name=rootless")}
+		return limitSupport{rootless: slices.Contains(info.SecurityOptions, "name=rootless")}, nil
 	}
 	return limitSupport{
 		known: true,
@@ -54,13 +62,18 @@ func (a *Adapter) limits(ctx context.Context) limitSupport {
 		rootless:      slices.Contains(info.SecurityOptions, "name=rootless"),
 		cgroupVersion: info.CgroupVersion,
 		cgroupDriver:  info.CgroupDriver,
-	}
+	}, nil
 }
 
-// podman reports whether the engine is Podman. False when it cannot be asked.
-func (a *Adapter) podman(ctx context.Context) bool {
+// podman reports whether the engine is Podman. Not knowing is an error: taken
+// for Docker, Podman's info would be read as refusing limits it applies, and
+// every deploy refused (CodeRabbit on #177).
+func (a *Adapter) podman(ctx context.Context) (bool, error) {
 	v, err := a.cli.ServerVersion(ctx, client.ServerVersionOptions{})
-	return err == nil && isPodman(v)
+	if err != nil {
+		return false, errs.Wrap(errs.AdapterUnavailable, "Could not ask the container engine which it is.", err)
+	}
+	return isPodman(v), nil
 }
 
 // enforced is whether both limits every app has (R-240) would be applied.

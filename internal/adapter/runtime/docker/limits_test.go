@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/trypando/pando/internal/errs"
 )
 
 // TestR240_DockerClaimsLimitsOnlyWhereItAppliesThem asserts the adapter asks
@@ -64,13 +66,15 @@ func TestR240_DockerClaimsLimitsOnlyWhereItAppliesThem(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, caps.SupportsResourceLimits, "Podman")
 
-	// A daemon that cannot be asked is the health check's to refuse, with its
-	// own message; capabilities do not invent a second reason.
-	f, a := newFakeDaemon(t, nil)
-	f.on("GET /info", respond(http.StatusInternalServerError, map[string]string{"message": "boom"}))
-	caps, err = a.Capabilities(ctx)
-	require.NoError(t, err)
-	require.True(t, caps.SupportsResourceLimits)
+	// A daemon that cannot say whether it applies limits, or which engine it
+	// is, is unavailable, never a yes: the health check only pings, so a
+	// failure here must not let a deploy through (CodeRabbit on #177).
+	for _, route := range []string{"GET /info", "GET /version"} {
+		f, a := newFakeDaemon(t, nil)
+		f.on(route, respond(http.StatusInternalServerError, map[string]string{"message": "boom"}))
+		_, err = a.Capabilities(ctx)
+		require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err), route)
+	}
 }
 
 // TestR402_DockerReportsWhetherItIsRootless asserts the install shows whether

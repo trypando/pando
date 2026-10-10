@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	dockeradapter "github.com/trypando/pando/internal/adapter/runtime/docker"
 )
 
 // TestR402_RootlessDockerAppliesTheLimitsPandoSets asserts R-402 on a real
@@ -24,7 +26,12 @@ func TestR402_RootlessDockerAppliesTheLimitsPandoSets(t *testing.T) {
 		t.Skip("needs a rootless Docker daemon with delegated cgroup controllers at DOCKER_HOST; set PANDO_TEST_ROOTLESS=1")
 	}
 	ctx := context.Background()
-	a := adapter(t)
+	// Not adapter(t), which skips when Docker cannot be reached: here the job
+	// said a rootless daemon is there, so not reaching it is a failure, or an
+	// adapter regression would leave the job green (CodeRabbit on #177).
+	a := dockeradapter.New()
+	require.NoError(t, a.Configure(ctx, nil))
+	require.NoError(t, a.HealthCheck(ctx), "PANDO_TEST_ROOTLESS=1 says a rootless daemon is at DOCKER_HOST")
 
 	capacity, err := a.Capacity(ctx)
 	require.NoError(t, err)

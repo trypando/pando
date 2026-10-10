@@ -10,16 +10,24 @@ mode, and needs none of this.
 
 ## 1. Prepare the host
 
-As root, once:
+As root, once. The commands are for Ubuntu; on another distribution, follow Docker's install guide
+for it, then continue from the `Delegate` step.
 
 ```bash
+# The account Docker and Pando will run as: an ordinary user, not in the docker group.
+sudo useradd --create-home --shell /bin/bash pando
+
 # Ubuntu 24.04 and later confine the unprivileged user namespaces rootless Docker needs.
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-rootless-docker.conf
 
-# docker-ce-rootless-extras is in Docker's own apt repository, which Docker's
-# install guide for Ubuntu adds: https://docs.docker.com/engine/install/ubuntu/
-sudo apt-get install -y uidmap dbus-user-session docker-ce-rootless-extras
+# Docker's own apt repository: Ubuntu's docker.io package has no rootless extras.
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt-get update
+sudo apt-get install -y uidmap dbus-user-session docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-ce-rootless-extras
 
 # Let the user's Docker apply CPU limits. systemd delegates only memory and
 # pids to a user by default, and Docker drops a CPU limit it has no
@@ -32,9 +40,9 @@ sudo systemctl daemon-reload
 sudo loginctl enable-linger pando
 ```
 
-`pando` is the account Docker and Pando will run as: an ordinary user, not in the `docker` group.
-If rootful Docker is installed, stop it with `sudo systemctl disable --now docker.service
-docker.socket` so the two cannot be confused.
+To use an existing account instead of `pando`, skip `useradd` and put its name wherever `pando`
+appears in this guide. The packages above install rootful Docker too; stop it with
+`sudo systemctl disable --now docker.service docker.socket` so the two cannot be confused.
 
 ## 2. Install rootless Docker
 
