@@ -26,8 +26,6 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
-      buildkit:
-        condition: service_started
     environment:
       # Compose starts both services at once. Pando also retries on its own rather
       # than trusting this healthcheck — see phase 0.
@@ -45,7 +43,10 @@ services:
       # the first run generated a password and printed it to the log as though
       # nothing had been asked for.
       PANDO_ADMIN_PASSWORD: ${PANDO_ADMIN_PASSWORD:-}
-      PANDO_BUILDKIT_ADDRESS: tcp://buildkit:1234
+      # No build service here: Pando starts its own rootless BuildKit on the
+      # Docker it runs apps on, as pando-buildkit (R-111). It has no runtime
+      # socket (R-112), and runs under a seccomp profile compiled into Pando
+      # (issue #130). Set PANDO_BUILDKIT_ADDRESS to use one you run instead.
       # Where per-app subdomains are carved from. localtest.me resolves every
       # subdomain to 127.0.0.1, so a laptop can exercise subdomain routing
       # without touching DNS or /etc/hosts.
@@ -124,28 +125,6 @@ services:
       - traefik-dynamic:/etc/traefik/dynamic
     restart: unless-stopped
 
-  # Rootless BuildKit, in its own container (R-111).
-  #
-  # It has NO container runtime socket, and that absence is the whole point:
-  # mounting one into a build is a host compromise and is categorically
-  # forbidden (R-112). An integration test asserts on this container's actual
-  # mount list rather than on intent, because intent is what drifts.
-  #
-  # It reaches nothing else in this file either — builds talk to the network for
-  # dependencies and nothing more.
-  buildkit:
-    image: moby/buildkit:v0.17.2-rootless
-    command:
-      - --addr
-      - tcp://0.0.0.0:1234
-      - --oci-worker-no-process-sandbox
-    security_opt:
-      - seccomp=unconfined
-      - apparmor=unconfined
-    volumes:
-      - buildkit-cache:/home/user/.local/share/buildkit
-    restart: unless-stopped
-
   # Makes the database password, once, before anything else starts (issue
   # #130). There is no default password: an install whose database password is
   # in every copy of this file has one only in name.
@@ -160,7 +139,7 @@ services:
   # The Postgres image, so there is nothing more to pull, with its own
   # entrypoint set aside: it runs this script and exits.
   secrets:
-    image: postgres:17-alpine
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -187,7 +166,7 @@ services:
     restart: "no"
 
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     depends_on:
       secrets:
         condition: service_completed_successfully
@@ -208,7 +187,6 @@ services:
 volumes:
   pando-data:
   postgres-data:
-  buildkit-cache:
 
   # The database password, made by the secrets service. It and postgres-data
   # belong together: a backup or move of one without the other leaves a

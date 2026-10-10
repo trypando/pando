@@ -27,6 +27,15 @@ Unreleased above it. -->
   R-049) left it open. It now authenticates the connection's session or token again each time, and
   closes it with a policy-violation close frame when that no longer works.
 
+- **BuildKit no longer runs with seccomp unconfined** (#130). Pando starts BuildKit itself, as
+  `pando-buildkit` on the Docker it runs apps on (R-111), under a seccomp profile compiled into Pando:
+  Docker's default plus only the calls rootless BuildKit needs, creating namespaces, mounting inside
+  them, and each build step's keyring and hostname. Builds can no longer load BPF programs, read
+  performance counters, load kernel modules, set the clock or reboot. AppArmor stays unconfined.
+  BuildKit is v0.33.1 (from v0.17.2), pinned by digest, and Postgres is pinned by digest too, which
+  Dependabot now keeps current. The compose file no longer has a `buildkit` service;
+  `PANDO_BUILDKIT_ADDRESS` still points Pando at a BuildKit you run instead.
+
 - **The bundled Postgres no longer defaults to the password `pando`** (#130, R-401). A one-shot
   `secrets` service generates one on the first start and keeps it in the new `pando-secrets` volume;
   Postgres and Pando read it from there as a file, through `POSTGRES_PASSWORD_FILE` and the new
@@ -270,6 +279,18 @@ Unreleased above it. -->
   backup" only when one was taken.
 
 ### Upgrade notes
+
+- **On Ubuntu 23.10 and later, builds need the host to allow unprivileged user namespaces.** Rootless
+  BuildKit cannot start otherwise, and this was as true of the compose file's `buildkit` service as
+  it is of Pando's own. As root: `sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, and the
+  same line in a file under `/etc/sysctl.d/`. The build service's health check now says so.
+
+- **The compose file's `buildkit` service is gone; Pando starts `pando-buildkit` instead.** After
+  `docker compose up -d` with the new file, remove the old one with
+  `docker compose up -d --remove-orphans`. The old `buildkit-cache` volume is no longer used and can
+  be removed with `docker volume rm` once the new build cache has filled. With
+  `docker-compose.registry.yml`, take the new copy of it too: it gives Pando the registry's CA for its
+  BuildKit, rather than configuring a `buildkit` service.
 
 - **An installation made with the old compose file keeps its database password only if you say what
   it is.** Its Postgres was created with `pando`, or with your `POSTGRES_PASSWORD`, and the new

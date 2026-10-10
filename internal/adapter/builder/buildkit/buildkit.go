@@ -12,6 +12,7 @@ import (
 	"time"
 
 	bkclient "github.com/moby/buildkit/client"
+	"github.com/moby/moby/client"
 	"github.com/tonistiigi/fsutil"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -35,6 +36,10 @@ type Adapter struct {
 	config  Config
 	address string
 
+	// managed is the BuildKit Pando runs itself, when no address names one
+	// somebody else runs. Nil otherwise.
+	managed *managed
+
 	// pruneMu keeps cache trims from piling up when builds finish together.
 	pruneMu sync.Mutex
 
@@ -45,9 +50,25 @@ type Adapter struct {
 
 // Config is the adapter's configuration.
 type Config struct {
-	// Address is where buildkitd listens. The bundled Compose file supplies
-	// tcp://buildkit:1234.
+	// Address is a BuildKit somebody else runs: Kubernetes' Deployment, a
+	// multi-host control host's, one with its own registry configuration.
+	// Unset here and in PANDO_BUILDKIT_ADDRESS, Pando runs its own on the
+	// Docker daemon it runs apps on (managed.go, issue #130).
 	Address string `json:"address,omitempty"`
+
+	// RegistryHost and RegistryCAFile let the BuildKit Pando runs trust a
+	// registry signed by the installation's own CA, such as the one
+	// docker-compose.registry.yml runs: host:port, and a file in Pando's
+	// container holding the CA. Default PANDO_BUILDKIT_REGISTRY_HOST and
+	// PANDO_BUILDKIT_REGISTRY_CA. Not used with Address, whose BuildKit is
+	// configured by whoever runs it.
+	RegistryHost   string `json:"registry_host,omitempty"`
+	RegistryCAFile string `json:"registry_ca_file,omitempty"`
+
+	// Networks are Docker networks Pando's own BuildKit joins besides its
+	// own, so it reaches a registry on one of them. Default
+	// PANDO_BUILDKIT_NETWORKS, separated by commas.
+	Networks []string `json:"networks,omitempty"`
 
 	// CacheMaxBytes caps the build service's own cache. Zero uses
 	// defaultCacheMaxBytes; a negative value leaves it unbounded.
@@ -69,6 +90,37 @@ const defaultCacheMaxBytes int64 = 10 << 30
 
 func New() *Adapter { return &Adapter{} }
 
+// registryFiles reads the registry settings for Pando's own BuildKit.
+func (a *Adapter) registryFiles() (map[string][]byte, error) {
+	host := a.config.RegistryHost
+	if host == "" {
+		host = os.Getenv("PANDO_BUILDKIT_REGISTRY_HOST")
+	}
+	caFile := a.config.RegistryCAFile
+	if caFile == "" {
+		caFile = os.Getenv("PANDO_BUILDKIT_REGISTRY_CA")
+	}
+	if host == "" && caFile == "" {
+		return nil, nil
+	}
+	if host == "" || caFile == "" {
+		return nil, errs.New(errs.ValidInvalid,
+			"The build service was given half a registry: PANDO_BUILDKIT_REGISTRY_HOST and PANDO_BUILDKIT_REGISTRY_CA go together.").
+			WithRemedy("Set both — the registry as host:port, and the file in Pando's container holding the CA that signed its certificate — or neither.")
+	}
+	ca, err := os.ReadFile(caFile) //nolint:gosec // G703: the operator's own setting, read from Pando's own filesystem; nothing from a request reaches it.
+	if err != nil {
+		return nil, errs.Wrap(errs.ValidInvalid, "PANDO_BUILDKIT_REGISTRY_CA is "+caFile+", which Pando could not read.", err).
+			WithRemedy("Mount the registry's CA certificate into Pando's container at that path.")
+	}
+	return registryFiles(host, ca), nil
+}
+
+// dockerClient is the daemon Pando runs its own BuildKit on: the one it runs
+// apps on, from DOCKER_HOST or the default socket. A variable so a test can
+// hand it a fake rather than start a real BuildKit.
+var dockerClient = func() (dockerAPI, error) { return client.New(client.FromEnv) }
+
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryBuilder }
 
@@ -84,7 +136,30 @@ func (a *Adapter) Configure(ctx context.Context, raw json.RawMessage) error {
 		a.address = os.Getenv("PANDO_BUILDKIT_ADDRESS")
 	}
 	if a.address == "" {
-		a.address = "tcp://buildkit:1234"
+		// Pando's own. Started now if Docker is up, and by every health
+		// check after that if it is not, or if it stopped.
+		dc, err := dockerClient()
+		if err != nil {
+			return errs.Wrap(errs.AdapterUnavailable, "Could not reach Docker to run the build service on.", err)
+		}
+		a.managed = newManaged(dc)
+		files, err := a.registryFiles()
+		if err != nil {
+			return err
+		}
+		a.managed.files = files
+		a.managed.networks = a.config.Networks
+		if len(a.managed.networks) == 0 && os.Getenv("PANDO_BUILDKIT_NETWORKS") != "" {
+			for _, n := range strings.Split(os.Getenv("PANDO_BUILDKIT_NETWORKS"), ",") {
+				if n = strings.TrimSpace(n); n != "" {
+					a.managed.networks = append(a.managed.networks, n)
+				}
+			}
+		}
+		a.address = a.managed.address(true)
+		if addr, err := a.managed.ensure(ctx); err == nil {
+			a.address = addr
+		}
 	}
 
 	// Dialing is deferred: BuildKit may still be starting when Pando does, and
@@ -104,6 +179,15 @@ func (a *Adapter) Configure(ctx context.Context, raw json.RawMessage) error {
 }
 
 func (a *Adapter) HealthCheck(ctx context.Context) error {
+	if a.managed != nil {
+		addr, err := a.managed.ensure(ctx)
+		if err != nil {
+			return err
+		}
+		if addr != a.address {
+			a.address, a.cli = addr, nil
+		}
+	}
 	if a.cli == nil {
 		cli, err := bkclient.New(ctx, a.address)
 		if err != nil {
@@ -116,7 +200,11 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 	defer cancel()
 
 	if _, err := a.cli.ListWorkers(ctx); err != nil {
-		return errs.Wrap(errs.AdapterUnavailable, "The build service is not responding.", err)
+		e := errs.Wrap(errs.AdapterUnavailable, "The build service is not responding.", err)
+		if a.managed != nil {
+			e = e.WithRemedy(a.managed.notAnswering())
+		}
+		return e
 	}
 	return nil
 }
