@@ -3,6 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#F0EDE4">
+<script>
+  // The theme, set before first paint: the reader's choice on trypando.ai if they made one (the site
+  // stores it as pando-theme), else the system's. Printing always uses the light theme, so a PDF is
+  // dark text on white.
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('pando-theme'); } catch (e) {}
+    if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    var root = document.documentElement;
+    root.setAttribute('data-theme', t);
+    if (t === 'dark') document.querySelector('meta[name="theme-color"]').setAttribute('content', '#141614');
+    addEventListener('beforeprint', function () { root.setAttribute('data-theme', 'light'); });
+    addEventListener('afterprint', function () { root.setAttribute('data-theme', t); });
+  })();
+</script>
 <script src="./support.js"></script>
 </head>
 <body>
@@ -24,6 +40,25 @@ doc-page:not(:defined){visibility:hidden}
 body{margin:0;background:var(--paper-sunken)}
 a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--rule-strong);text-underline-offset:3px}
 a:hover{text-decoration-color:var(--ink)}
+/* doc-page paints a light desk and a white sheet. Take both from the theme instead. */
+doc-page{background:var(--paper-sunken) !important;--doc-sheet:#fff}
+[data-theme="dark"] doc-page{--doc-sheet:var(--paper-raised)}
+/* The design system's InlineCode, so inline code reads apart from the text around it. */
+code{background:var(--vegetation);color:var(--ink);border-radius:var(--radius-xs);padding:1px 4px;font:var(--type-code);line-height:inherit}
+/* CodeBlock's Copy button sits over the first line; keep long lines clear of it. */
+doc-page div:has(> div > button[aria-label="Copy"]){padding-right:var(--space-7) !important}
+/* doc-page lays out one Letter-width sheet. On a screen narrower than that, use the
+ * full width instead of scrolling sideways; print is unchanged. */
+@media screen and (max-width: 920px) {
+  doc-page{min-width:0 !important;padding:0 !important;--doc-page-w:100% !important;--doc-page-margin:16px !important}
+  doc-page article h2>span:first-child:not(:last-child),doc-page nav li>span:first-child:not(:last-child){position:static !important;margin-right:8px !important}
+  doc-page nav ol{grid-template-columns:minmax(0,1fr) !important;grid-template-rows:none !important;grid-auto-flow:row !important}
+  doc-page table{display:block;overflow-x:auto}
+  doc-page h1{font-size:36px !important}
+  doc-page article header,doc-page article header>div{margin-left:0 !important;margin-right:0 !important}
+  doc-page article *{overflow-wrap:anywhere}
+  doc-page [slot="header"] span{white-space:normal !important}
+}
 </style>
 </helmet>
 <doc-page size="letter" margin="0.75in">
@@ -99,9 +134,7 @@ a:hover{text-decoration-color:var(--ink)}
     </sc-if>
     <section style="padding-top:32px;max-width:40em">
       <h2 style="position:relative;margin:0 0 12px;font-family:'Newsreader',serif;font-weight:500;font-size:24px;line-height:1.3"><span style="position:absolute;right:100%;top:0;margin-right:16px;color:var(--ink-muted)">1</span><span>Summary</span></h2>
-      <p style="margin:0 0 16px">Every app on Pando builds in its own short-lived environment and runs in its own sandbox. Apps on the same host can't read each other's files, processes or network traffic. Variables you mark as secret are encrypted at rest and only decrypted inside the running app.</p>
-      <p style="margin:0 0 16px">This paper describes those boundaries in plain terms, so you can decide whether Pando fits your own security requirements.</p>
-    </section>
+      <p style="margin:0 0 16px">Every app on Pando builds in its own short-lived environment and runs in its own sandbox. Apps on the same host can't read each other's files, processes or network traffic. Variables you mark as secret are encrypted at rest and only decrypted inside the running app.</p>    </section>
     <section style="padding-top:32px;max-width:40em">
       <h2 style="position:relative;margin:0 0 12px;font-family:'Newsreader',serif;font-weight:500;font-size:24px;line-height:1.3"><span style="position:absolute;right:100%;top:0;margin-right:16px;color:var(--ink-muted)">2</span><span>Scope</span></h2>
       <p style="margin:0 0 16px">This paper covers apps deployed through Pando on hosts you connect. It doesn't cover the security of your own code, its dependencies, or services your app calls.</p>
@@ -261,6 +294,25 @@ class Component extends DCLogic {
     const remeasure = () => { const dp = document.querySelector('doc-page'); if (dp && dp._measure) dp._measure(); };
     [100, 600, 1500].forEach(t => setTimeout(remeasure, t));
     if (document.fonts) document.fonts.ready.then(remeasure);
+    // doc-page paints its sheet white inside its shadow root. Take the color
+    // from --doc-sheet instead, so the sheet follows the theme.
+    const dp = document.querySelector('doc-page');
+    if (dp && dp.shadowRoot && !dp.shadowRoot.getElementById('sheet-theme')) {
+      const style = document.createElement('style');
+      style.id = 'sheet-theme';
+      style.textContent = '.sheet, .page { background: var(--doc-sheet, #fff) !important; }';
+      dp.shadowRoot.append(style);
+    }
+    // The design system's CodeBlock shows "Copied" without writing to the
+    // clipboard. Copy each line's text, leaving out the "$" prompt and the title.
+    document.addEventListener('click', (e) => {
+      const button = e.composedPath().find((el) => el instanceof Element && el.matches('button[aria-label="Copy"]'));
+      if (!button) return;
+      const block = button.parentElement && button.parentElement.parentElement;
+      if (!block || !navigator.clipboard) return;
+      const rows = [...block.children].filter((el) => el !== button.parentElement && el.style.display === 'flex');
+      navigator.clipboard.writeText(rows.map((row) => row.lastElementChild.textContent).join('\n'));
+    }, true);
   }
   renderVals() {
     if (!this._topo) this.buildTopo();
