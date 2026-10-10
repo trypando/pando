@@ -14,7 +14,9 @@ STATE = os.path.join(OUT, "state.json")
 
 PROJECT = "pando-qa"
 PANDO = f"{PROJECT}-pando-1"
-BUILDKIT = f"{PROJECT}-buildkit-1"
+# Started by the QA instance's Pando, not Compose, and named after its Compose
+# project (internal/adapter/builder/buildkit/managed.go).
+BUILDKIT = f"{PROJECT}-buildkit"
 POSTGRES = f"{PROJECT}-postgres-1"
 # Every test source (the generated apps and the lists of public repositories
 # and images) lives in trypando/pando-qa-fixtures, so Pando's repository does
