@@ -189,14 +189,9 @@ func usersMatch(where []string, args []any, q string) ([]string, []any) {
 	return append(where, fmt.Sprintf(`%s ILIKE '%%' || $%d || '%%'`, searchUsers, len(args))), args
 }
 
-func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error) {
-	var after string
-	if _, err := decodeCursor(page.Cursor, &after); err != nil {
-		return nil, "", 0, err
-	}
-
-	// The accounts list's filter: live, not an alias, matching the search,
-	// and among the IDs asked for.
+// usersFilter is the accounts list's filter: live, not an alias, matching the
+// search, and among the IDs asked for.
+func usersFilter(page Page) (string, []any) {
 	where := []string{`deleted_at IS NULL`, `alias_of IS NULL`}
 	var args []any
 	where, args = usersMatch(where, args, page.Query)
@@ -204,7 +199,16 @@ func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error
 		args = append(args, page.IDs)
 		where = append(where, fmt.Sprintf(`id = ANY($%d::text[])`, len(args)))
 	}
-	from := ` FROM users WHERE ` + strings.Join(where, " AND ")
+	return ` FROM users WHERE ` + strings.Join(where, " AND "), args
+}
+
+func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error) {
+	var after string
+	if _, err := decodeCursor(page.Cursor, &after); err != nil {
+		return nil, "", 0, err
+	}
+
+	from, args := usersFilter(page)
 
 	// A negative limit is the unpaginated read, and LIMIT NULL is no limit.
 	// One more row than the page is read to learn whether there is a next.

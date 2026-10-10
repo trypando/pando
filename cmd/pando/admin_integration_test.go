@@ -172,3 +172,19 @@ func TestR046_ASetupTokenFromTheHostClaimsAFreshInstall(t *testing.T) {
 	_, _, err = run()
 	require.ErrorIs(t, err, state.ErrAlreadySetUp)
 }
+
+// TestASetupTokenIsNotPrintedWhenTheDatabaseCannotBeReached asserts `pando
+// admin setup-token` fails, and prints nothing a script could take for a
+// token, when Postgres is not there.
+func TestASetupTokenIsNotPrintedWhenTheDatabaseCannotBeReached(t *testing.T) {
+	t.Setenv("PANDO_DATABASE_URL", "postgres://pando:x@127.0.0.1:1/pando?sslmode=disable")
+	t.Setenv("PANDO_DATABASE_CONNECT_TIMEOUT", "1s")
+	configPath := ""
+	cmd := adminCmd(&configPath)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"setup-token"})
+	require.Error(t, cmd.ExecuteContext(context.Background()))
+	require.Empty(t, stdout.String())
+}
