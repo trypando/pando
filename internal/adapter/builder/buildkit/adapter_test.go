@@ -61,10 +61,18 @@ func TestConfigureSucceedsEvenWhenBuildKitIsNotUpYet(t *testing.T) {
 	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err))
 }
 
-func TestTheAddressComesFromConfigThenTheEnvironmentThenADefault(t *testing.T) {
+func TestTheAddressComesFromConfigThenTheEnvironmentThenPandosOwn(t *testing.T) {
+	// Pando's own, on a daemon that is a fake: nothing real starts.
+	fake := newFakeDocker("")
+	real := dockerClient
+	dockerClient = func() (dockerAPI, error) { return fake, nil }
+	t.Cleanup(func() { dockerClient = real })
+
 	a := New()
 	require.NoError(t, a.Configure(context.Background(), nil))
-	require.Equal(t, "tcp://buildkit:1234", a.address)
+	require.NotNil(t, a.managed, "no address anywhere: Pando runs its own (issue #130)")
+	require.Equal(t, "tcp://127.0.0.1:1234", a.address, "on loopback, because the test is not in a container")
+	require.Len(t, fake.created, 1)
 
 	t.Setenv("PANDO_BUILDKIT_ADDRESS", "tcp://elsewhere:1234")
 	b := New()

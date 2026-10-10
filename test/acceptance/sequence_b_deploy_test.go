@@ -72,10 +72,9 @@ func TestR112_BuildContainerCannotReachDocker(t *testing.T) {
 }
 
 // TestR111_BuildKitRunsUnderTheShippedSeccompProfile asserts R-111's container
-// is confined by buildkit-seccomp.json rather than seccomp=unconfined (issue
-// #130). Read from the running container, like the socket check above: the
-// profile is a file beside the compose file, and an install missing it or
-// edited back to unconfined is what this is for.
+// is confined by the profile compiled into Pando rather than seccomp=unconfined
+// (issue #130). Read from the running container, like the socket check above,
+// because what Pando asked Docker for and what Docker did can differ.
 func TestR111_BuildKitRunsUnderTheShippedSeccompProfile(t *testing.T) {
 	requireStack(t)
 
@@ -92,7 +91,7 @@ func TestR111_BuildKitRunsUnderTheShippedSeccompProfile(t *testing.T) {
 	require.Contains(t, profile, `"defaultAction":"SCMP_ACT_ERRNO"`,
 		"BuildKit's seccomp profile must refuse what it does not list; got security options %v", opts)
 	require.Contains(t, profile, "Rootless BuildKit",
-		"BuildKit must run under buildkit-seccomp.json, whose rule names rootless BuildKit")
+		"BuildKit must run under the profile compiled into Pando, whose rule names rootless BuildKit")
 }
 
 // TestSequenceB_DeployAPrebuiltImage walks the pipeline end to end.
@@ -305,13 +304,18 @@ func TestR120_DeployPinsACommit(t *testing.T) {
 
 func stamp() string { return time.Now().Format("150405.000") }
 
+// buildkitContainer is the BuildKit this stack's Pando started (R-111), named
+// after the stack's Compose project, as Pando names it.
 func buildkitContainer(t *testing.T) string {
 	t.Helper()
-	out, err := exec.Command("docker", "compose", "ps", "-q", "buildkit").Output()
+	out, err := exec.Command("docker", "compose", "ps", "-q", "pando").Output()
 	require.NoError(t, err)
-	id := strings.TrimSpace(string(out))
-	require.NotEmpty(t, id, "the buildkit service is not running")
-	return id
+	pando := strings.Fields(string(out))
+	require.NotEmpty(t, pando, "the pando service is not running")
+	project := inspect(t, pando[0], `{{index .Config.Labels "com.docker.compose.project"}}`)
+	name := project + "-buildkit"
+	require.Equal(t, "true", inspect(t, name, `{{.State.Running}}`), "Pando has not started %s", name)
+	return name
 }
 
 func inspect(t *testing.T, container, format string) string {

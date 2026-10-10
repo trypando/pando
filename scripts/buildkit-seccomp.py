@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Write buildkit-seccomp.json: Docker's default seccomp profile, plus the system
+"""Write BuildKit's seccomp profile: Docker's default seccomp profile, plus the system
 calls rootless BuildKit needs to run builds, and nothing else (issue #130).
 
-usage: python3 scripts/buildkit-seccomp.py > buildkit-seccomp.json
+usage: python3 scripts/buildkit-seccomp.py > internal/adapter/builder/buildkit/seccomp.json
+
+Compiled into Pando, which passes it to Docker when it starts its BuildKit
+(managed.go): Compose would only read it from a file beside the Compose file.
 
 Rootless BuildKit puts each build step in a user namespace of its own, so it has
 to create namespaces and mount inside them. Docker's default profile allows

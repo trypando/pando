@@ -369,6 +369,11 @@ def cmd_down(a):
     print(f"Removing the QA instance, its volumes and build cache, and anything left of its {len(ulids)} apps…")
     if os.path.exists(state.path("qa.env")):
         compose("down", "-v", "--remove-orphans", timeout=600)
+    # The BuildKit the QA instance's Pando started, outside Compose, by the names it gives it: the
+    # QA project's, never another installation's.
+    sh("docker", "rm", "-f", "-v", state.BUILDKIT)
+    sh("docker", "network", "rm", f"{state.PROJECT}-build")
+    sh("docker", "volume", "rm", "-f", f"{state.PROJECT}-buildkit-cache")
     # Only resources whose name carries one of the QA instance's app IDs. Never by label alone:
     # another install's containers carry the same Pando labels.
     if ulids:

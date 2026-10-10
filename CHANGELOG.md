@@ -27,12 +27,14 @@ Unreleased above it. -->
   R-049) left it open. It now authenticates the connection's session or token again each time, and
   closes it with a policy-violation close frame when that no longer works.
 
-- **BuildKit no longer runs with seccomp unconfined** (#130). It runs under `buildkit-seccomp.json`,
-  Docker's default profile plus only the calls rootless BuildKit needs: creating namespaces, mounting
-  inside them, and each build step's keyring and hostname. Builds can no longer load BPF programs,
-  read performance counters, load kernel modules, set the clock or reboot. AppArmor stays unconfined,
-  and the compose file says why. BuildKit is v0.33.1 (from v0.17.2), and BuildKit and Postgres are
-  pinned by digest, which Dependabot now keeps current.
+- **BuildKit no longer runs with seccomp unconfined** (#130). Pando starts BuildKit itself, as
+  `pando-buildkit` on the Docker it runs apps on (R-111), under a seccomp profile compiled into Pando:
+  Docker's default plus only the calls rootless BuildKit needs, creating namespaces, mounting inside
+  them, and each build step's keyring and hostname. Builds can no longer load BPF programs, read
+  performance counters, load kernel modules, set the clock or reboot. AppArmor stays unconfined.
+  BuildKit is v0.33.1 (from v0.17.2), pinned by digest, and Postgres is pinned by digest too, which
+  Dependabot now keeps current. The compose file no longer has a `buildkit` service;
+  `PANDO_BUILDKIT_ADDRESS` still points Pando at a BuildKit you run instead.
 
 ### Added
 
@@ -273,10 +275,12 @@ Unreleased above it. -->
 
 ### Upgrade notes
 
-- **Download `buildkit-seccomp.json` with the compose file.** The new compose file names it, and
-  Compose does not start BuildKit without it. An installation still on 0.3 shows a command that
-  downloads only the compose file; run this instead, with the new version:
-  `curl -fsSL -O https://github.com/trypando/pando/releases/download/vVERSION/docker-compose.yml -O https://github.com/trypando/pando/releases/download/vVERSION/buildkit-seccomp.json && docker compose up -d`.
+- **The compose file's `buildkit` service is gone; Pando starts `pando-buildkit` instead.** After
+  `docker compose up -d` with the new file, remove the old one with
+  `docker compose up -d --remove-orphans`. The old `buildkit-cache` volume is no longer used and can
+  be removed with `docker volume rm` once the new build cache has filled. With
+  `docker-compose.registry.yml`, take the new copy of it too: it gives Pando the registry's CA for its
+  BuildKit, rather than configuring a `buildkit` service.
 
 - Migration 000067 adds columns to `audit_events` without rewriting the rows already there; events
   written before it have no outcome, source or actor name, and the stream reads them first, in the

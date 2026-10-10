@@ -2,8 +2,6 @@ package buildkit
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 
@@ -16,11 +14,10 @@ import (
 // unconfined by another name.
 //
 // Loosening it is meant to be a deliberate change to the script, this list and
-// the reasons in docker-compose.yml together, never a quick edit to the JSON to
-// get a build through.
+// the reasons in managed.go together, never a quick edit to the JSON to get a
+// build through. Read from what is compiled in, which is what ships.
 func TestR111_TheBuildKitSeccompProfileAddsOnlyWhatRootlessNeeds(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "buildkit-seccomp.json"))
-	require.NoError(t, err)
+	raw := seccompProfile
 
 	var profile struct {
 		DefaultAction string `json:"defaultAction"`

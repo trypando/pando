@@ -124,7 +124,8 @@ updates:
   - package-ecosystem: docker
     directories:
       - /
-      # BuildKit's manifest pins its image by digest, as the compose file does.
+      # BuildKit's manifest pins its image by digest. The BuildKit Pando runs
+      # on Docker is a Go constant (managedImage), which this does not read.
       - /deploy/kubernetes
     registries:
       - dhi
@@ -136,7 +137,7 @@ updates:
       - dependency-name: postgres
         update-types: ["version-update:semver-major"]
 
-  # BuildKit and Postgres are pinned by digest in docker-compose.yml (issue
+  # Postgres is pinned by digest in docker-compose.yml (issue
   # #130). A digest nobody updates is a known vulnerability that stays, so
   # Dependabot moves the tag and the digest together.
   - package-ecosystem: docker-compose

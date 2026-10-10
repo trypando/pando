@@ -420,6 +420,4 @@ jobs:
         if: steps.dhi.outputs.available == 'true'
         run: |
           scripts/release-compose.sh 0.0.0-ci > "$RUNNER_TEMP/docker-compose.yml"
-          # Compose reads BuildKit's seccomp profile from beside the file.
-          cp buildkit-seccomp.json "$RUNNER_TEMP/"
           python3 scripts/smoke-image.py "$RUNNER_TEMP/docker-compose.yml" --version 0.0.0-ci
