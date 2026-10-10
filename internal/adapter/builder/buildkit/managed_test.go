@@ -30,7 +30,12 @@ type fakeDocker struct {
 	removed    int
 	copied     [][]byte
 	self       string // the container Pando is in; "" is on the host
+
+	// fail makes a method return an error, by its name.
+	fail map[string]error
 }
+
+func (f *fakeDocker) failing(method string) error { return f.fail[method] }
 
 func newFakeDocker(self string) *fakeDocker {
 	return &fakeDocker{containers: map[string]*container.InspectResponse{}, networks: map[string]string{},
@@ -38,6 +43,9 @@ func newFakeDocker(self string) *fakeDocker {
 }
 
 func (f *fakeDocker) ContainerInspect(_ context.Context, id string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+	if err := f.failing("ContainerInspect"); err != nil {
+		return client.ContainerInspectResult{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c, ok := f.containers[id]
@@ -48,6 +56,9 @@ func (f *fakeDocker) ContainerInspect(_ context.Context, id string, _ client.Con
 }
 
 func (f *fakeDocker) ContainerCreate(_ context.Context, o client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+	if err := f.failing("ContainerCreate"); err != nil {
+		return client.ContainerCreateResult{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.containers[o.Name]; ok {
@@ -60,6 +71,9 @@ func (f *fakeDocker) ContainerCreate(_ context.Context, o client.ContainerCreate
 }
 
 func (f *fakeDocker) ContainerStart(_ context.Context, id string, _ client.ContainerStartOptions) (client.ContainerStartResult, error) {
+	if err := f.failing("ContainerStart"); err != nil {
+		return client.ContainerStartResult{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.started++
@@ -72,6 +86,9 @@ func (f *fakeDocker) ContainerStart(_ context.Context, id string, _ client.Conta
 }
 
 func (f *fakeDocker) ContainerRemove(_ context.Context, id string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
+	if err := f.failing("ContainerRemove"); err != nil {
+		return client.ContainerRemoveResult{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.removed++
@@ -84,6 +101,9 @@ func (f *fakeDocker) ContainerRemove(_ context.Context, id string, _ client.Cont
 }
 
 func (f *fakeDocker) ImageInspect(context.Context, string, ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+	if err := f.failing("ImageInspect"); err != nil {
+		return client.ImageInspectResult{}, err
+	}
 	return client.ImageInspectResult{}, nil
 }
 
@@ -92,6 +112,9 @@ func (f *fakeDocker) ImagePull(context.Context, string, client.ImagePullOptions)
 }
 
 func (f *fakeDocker) NetworkList(_ context.Context, _ client.NetworkListOptions) (client.NetworkListResult, error) {
+	if err := f.failing("NetworkList"); err != nil {
+		return client.NetworkListResult{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out client.NetworkListResult
@@ -102,6 +125,9 @@ func (f *fakeDocker) NetworkList(_ context.Context, _ client.NetworkListOptions)
 }
 
 func (f *fakeDocker) NetworkCreate(_ context.Context, name string, _ client.NetworkCreateOptions) (client.NetworkCreateResult, error) {
+	if err := f.failing("NetworkCreate"); err != nil {
+		return client.NetworkCreateResult{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.networks[name] = "n-" + name
@@ -109,6 +135,9 @@ func (f *fakeDocker) NetworkCreate(_ context.Context, name string, _ client.Netw
 }
 
 func (f *fakeDocker) NetworkConnect(_ context.Context, id string, o client.NetworkConnectOptions) (client.NetworkConnectResult, error) {
+	if err := f.failing("NetworkConnect"); err != nil {
+		return client.NetworkConnectResult{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if strings.HasPrefix(o.Container, "c-") { // a container the fake made
@@ -126,6 +155,9 @@ func (f *fakeDocker) NetworkConnect(_ context.Context, id string, o client.Netwo
 }
 
 func (f *fakeDocker) CopyToContainer(_ context.Context, _ string, o client.CopyToContainerOptions) (client.CopyToContainerResult, error) {
+	if err := f.failing("CopyToContainer"); err != nil {
+		return client.CopyToContainerResult{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	b, _ := io.ReadAll(o.Content)
@@ -134,6 +166,9 @@ func (f *fakeDocker) CopyToContainer(_ context.Context, _ string, o client.CopyT
 }
 
 func (f *fakeDocker) VolumeCreate(context.Context, client.VolumeCreateOptions) (client.VolumeCreateResult, error) {
+	if err := f.failing("VolumeCreate"); err != nil {
+		return client.VolumeCreateResult{}, err
+	}
 	return client.VolumeCreateResult{}, nil
 }
 

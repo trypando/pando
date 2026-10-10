@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	_ "embed"
+	_ "embed" // go:embed of the seccomp profile, below
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -313,45 +313,51 @@ func (m *managed) copyFiles(ctx context.Context, id string) error {
 	if len(m.files) == 0 {
 		return nil
 	}
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	names := make([]string, 0, len(m.files))
-	for name := range m.files {
-		names = append(names, name)
+	archive, err := tarOf(m.files)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not prepare the build service's configuration.", err)
 	}
-	sort.Strings(names)
+	if _, err := m.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: "/home/user", Content: archive}); err != nil {
+		return errs.Wrap(errs.AdapterFailed, "Could not give the build service its registry configuration.", err)
+	}
+	return nil
+}
+
+// tarOf is files as a tar archive, with every directory they are in, owned by
+// uid and gid 1000.
+func tarOf(files map[string][]byte) (*bytes.Buffer, error) {
+	names := make([]string, 0, len(files))
 	dirs := map[string]bool{}
-	for _, name := range names {
+	for name := range files {
+		names = append(names, name)
 		for d := path.Dir(name); d != "." && !dirs[d]; d = path.Dir(d) {
 			dirs[d] = true
 		}
 	}
-	dirList := make([]string, 0, len(dirs))
+	sort.Strings(names)
+	headers := make([]*tar.Header, 0, len(dirs)+len(names))
 	for d := range dirs {
-		dirList = append(dirList, d)
+		headers = append(headers, &tar.Header{Typeflag: tar.TypeDir, Name: d + "/", Mode: 0o755, Uid: 1000, Gid: 1000})
 	}
-	sort.Strings(dirList) // parents sort before their children
-	for _, d := range dirList {
-		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: d + "/", Mode: 0o755, Uid: 1000, Gid: 1000}); err != nil {
-			return errs.Wrap(errs.Internal, "Could not prepare the build service's configuration.", err)
-		}
-	}
+	// Parents sort before their children.
+	sort.Slice(headers, func(i, j int) bool { return headers[i].Name < headers[j].Name })
 	for _, name := range names {
-		body := m.files[name]
-		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Uid: 1000, Gid: 1000}); err != nil {
-			return errs.Wrap(errs.Internal, "Could not prepare the build service's configuration.", err)
+		headers = append(headers, &tar.Header{Name: name, Mode: 0o644, Size: int64(len(files[name])), Uid: 1000, Gid: 1000})
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for _, h := range headers {
+		if err := tw.WriteHeader(h); err != nil {
+			return nil, err
 		}
-		if _, err := tw.Write(body); err != nil {
-			return errs.Wrap(errs.Internal, "Could not prepare the build service's configuration.", err)
+		if h.Typeflag != tar.TypeDir {
+			if _, err := tw.Write(files[h.Name]); err != nil {
+				return nil, err
+			}
 		}
 	}
-	if err := tw.Close(); err != nil {
-		return errs.Wrap(errs.Internal, "Could not prepare the build service's configuration.", err)
-	}
-	if _, err := m.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: "/home/user", Content: &buf}); err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Could not give the build service its registry configuration.", err)
-	}
-	return nil
+	return &buf, tw.Close()
 }
 
 func (m *managed) start(ctx context.Context, id string) error {

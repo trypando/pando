@@ -64,9 +64,9 @@ func TestConfigureSucceedsEvenWhenBuildKitIsNotUpYet(t *testing.T) {
 func TestTheAddressComesFromConfigThenTheEnvironmentThenPandosOwn(t *testing.T) {
 	// Pando's own, on a daemon that is a fake: nothing real starts.
 	fake := newFakeDocker("")
-	real := dockerClient
+	orig := dockerClient
 	dockerClient = func() (dockerAPI, error) { return fake, nil }
-	t.Cleanup(func() { dockerClient = real })
+	t.Cleanup(func() { dockerClient = orig })
 
 	a := New()
 	require.NoError(t, a.Configure(context.Background(), nil))
@@ -337,9 +337,9 @@ func (viewWithoutRoot) Glob(string) ([]string, error)      { return nil, nil }
 // how to see BuildKit's own account (issue #130).
 func TestR105_PandosBuildKitNotAnsweringSaysWhereToLook(t *testing.T) {
 	fake := newFakeDocker("")
-	real := dockerClient
+	orig := dockerClient
 	dockerClient = func() (dockerAPI, error) { return fake, nil }
-	t.Cleanup(func() { dockerClient = real })
+	t.Cleanup(func() { dockerClient = orig })
 
 	a := New()
 	require.NoError(t, a.Configure(context.Background(), nil))
