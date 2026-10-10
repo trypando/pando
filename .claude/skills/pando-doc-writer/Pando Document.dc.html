@@ -47,6 +47,10 @@ doc-page{background:var(--paper-sunken) !important;--doc-sheet:#fff}
 code{background:var(--vegetation);color:var(--ink);border-radius:var(--radius-xs);padding:1px 4px;font:var(--type-code);line-height:inherit}
 /* CodeBlock's Copy button sits over the first line; keep long lines clear of it. */
 doc-page div:has(> div > button[aria-label="Copy"]){padding-right:var(--space-7) !important}
+/* A download icon (see SKILL.md, Publishing on trypando.ai) and the Copy buttons aren't printed. */
+.doc-download{display:inline-flex;align-items:center;color:var(--ink-secondary);text-decoration:none}
+.doc-download:hover{color:var(--ink)}
+@media print{.doc-download,doc-page button[aria-label="Copy"]{display:none !important}}
 /* doc-page lays out one Letter-width sheet. On a screen narrower than that, use the
  * full width instead of scrolling sideways; print is unchanged. */
 @media screen and (max-width: 920px) {
