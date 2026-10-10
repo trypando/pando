@@ -227,45 +227,68 @@ func (m *managed) ensure(ctx context.Context) (string, error) {
 	}
 	addr := m.address(inContainer)
 
-	want := m.digest()
+	if done, err := m.useExisting(ctx); done || err != nil {
+		if err != nil {
+			return "", err
+		}
+		return addr, nil
+	}
+	if err := m.create(ctx, networkID, inContainer); err != nil {
+		return "", err
+	}
+	return addr, nil
+}
+
+// useExisting acts on the container already there, if any, and says whether
+// that is the whole of it. False with no error means there is none to use —
+// none at all, or one removed here — and create makes it.
+func (m *managed) useExisting(ctx context.Context) (bool, error) {
 	got, err := m.cli.ContainerInspect(ctx, m.name, client.ContainerInspectOptions{})
 	switch {
-	case err == nil && got.Container.Config != nil && got.Container.Config.Labels[labelManagedBuild] == want:
-		state := got.Container.State
-		switch {
-		case state != nil && state.Running:
-			return addr, nil
-		case state != nil && state.Status == container.StateCreated && !abandoned(got.Container.Created):
-			// Never started: the replica that made it is still giving it its
-			// files and networks, and starts it when it has (CodeRabbit on #173).
-			return addr, nil
-		case state != nil && state.Status == container.StateCreated:
-			// Never started, long past any setup: whoever made it stopped
-			// partway. Made again, rather than started without what it lacks.
-			if _, err := m.cli.ContainerRemove(ctx, got.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
-				return "", errs.Wrap(errs.AdapterFailed, "Could not replace a build service that was never finished.", err)
-			}
-		default:
-			// Started before, so set up in full, and stopped since.
-			return addr, m.start(ctx, got.Container.ID)
-		}
-	case err == nil:
+	case cerrdefs.IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, errs.Wrap(errs.AdapterUnavailable, "Could not look for Pando's build service.", err)
+	case got.Container.Config == nil || got.Container.Config.Labels[labelManagedBuild] != m.digest():
 		// Made by a Pando with another image or profile: replaced, so this
 		// one builds with what it was built against.
-		if _, err := m.cli.ContainerRemove(ctx, got.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
-			return "", errs.Wrap(errs.AdapterFailed, "Could not replace Pando's build service with this version's.", err)
-		}
-	case !cerrdefs.IsNotFound(err):
-		return "", errs.Wrap(errs.AdapterUnavailable, "Could not look for Pando's build service.", err)
+		return false, m.remove(ctx, got.Container.ID, "Could not replace Pando's build service with this version's.")
 	}
 
+	state := got.Container.State
+	switch {
+	case state != nil && state.Running:
+		return true, nil
+	case state != nil && state.Status == container.StateCreated && !abandoned(got.Container.Created):
+		// Never started: the replica that made it is still giving it its
+		// files and networks, and starts it when it has (CodeRabbit on #173).
+		return true, nil
+	case state != nil && state.Status == container.StateCreated:
+		// Never started, long past any setup: whoever made it stopped
+		// partway. Made again, rather than started without what it lacks.
+		return false, m.remove(ctx, got.Container.ID, "Could not replace a build service that was never finished.")
+	}
+	// Started before, so set up in full, and stopped since.
+	return true, m.start(ctx, got.Container.ID)
+}
+
+// remove removes a container this one is replacing; gone already is fine.
+func (m *managed) remove(ctx context.Context, id, failure string) error {
+	if _, err := m.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+		return errs.Wrap(errs.AdapterFailed, failure, err)
+	}
+	return nil
+}
+
+// create makes the container, gives it its files and networks, and starts it.
+func (m *managed) create(ctx context.Context, networkID string, inContainer bool) error {
 	if err := m.ensureImage(ctx); err != nil {
-		return "", err
+		return err
 	}
 	if _, err := m.cli.VolumeCreate(ctx, client.VolumeCreateOptions{
 		Name: m.volume, Labels: map[string]string{labelManagedBuild: "cache"},
 	}); err != nil {
-		return "", errs.Wrap(errs.AdapterFailed, "Could not create the build service's cache.", err)
+		return errs.Wrap(errs.AdapterFailed, "Could not create the build service's cache.", err)
 	}
 
 	hostCfg := &container.HostConfig{
@@ -288,7 +311,7 @@ func (m *managed) ensure(ctx context.Context) (string, error) {
 		Config: &container.Config{
 			Image:  managedImage,
 			Cmd:    managedArgs,
-			Labels: map[string]string{labelManagedBuild: want},
+			Labels: map[string]string{labelManagedBuild: m.digest()},
 			ExposedPorts: network.PortSet{
 				network.MustParsePort(managedPort + "/tcp"): {},
 			},
@@ -305,37 +328,36 @@ func (m *managed) ensure(ctx context.Context) (string, error) {
 		// starts — so the replica that made it starts it. This one's next health
 		// check finds it running; or, if the other's setup failed and removed
 		// it, makes it again (CodeRabbit on #173).
-		return addr, nil
+		return nil
 	}
 	if err != nil {
-		return "", errs.Wrap(errs.AdapterFailed, "Could not create Pando's build service.", err)
+		return errs.Wrap(errs.AdapterFailed, "Could not create Pando's build service.", err)
 	}
-	// Labeled at create with everything it is made from, files and networks
-	// included, so one left without them would be found later and started as
-	// though it had them: every push would fail and nothing would replace it.
-	// Removed instead, and made again by the next ensure.
-	discard := func() {
+	if err := m.finish(ctx, created.ID); err != nil {
+		// Labeled at create with everything it is made from, files and
+		// networks included, so one left without them would be found later and
+		// started as though it had them: every push would fail and nothing
+		// would replace it. And one whose first start failed would be left to
+		// its maker for setupGrace. Removed instead, and made again by the
+		// next ensure (CodeRabbit on #173).
 		_, _ = m.cli.ContainerRemove(context.WithoutCancel(ctx), created.ID, client.ContainerRemoveOptions{Force: true})
+		return err
 	}
-	if err := m.copyFiles(ctx, created.ID); err != nil {
-		discard()
-		return "", err
+	return nil
+}
+
+// finish gives a new container its files and networks, then starts it.
+func (m *managed) finish(ctx context.Context, id string) error {
+	if err := m.copyFiles(ctx, id); err != nil {
+		return err
 	}
 	for _, n := range m.networks {
-		if _, err := m.cli.NetworkConnect(ctx, n, client.NetworkConnectOptions{Container: created.ID}); err != nil {
-			discard()
-			return "", errs.Wrap(errs.AdapterFailed, "Could not connect the build service to the network "+n+".", err).
+		if _, err := m.cli.NetworkConnect(ctx, n, client.NetworkConnectOptions{Container: id}); err != nil {
+			return errs.Wrap(errs.AdapterFailed, "Could not connect the build service to the network "+n+".", err).
 				WithRemedy("PANDO_BUILDKIT_NETWORKS names it; check that it exists with docker network ls.")
 		}
 	}
-	// A first start that fails would leave it never started, which every
-	// replica leaves to its maker for setupGrace: removed instead, so the next
-	// ensure tries again at once (CodeRabbit on #173).
-	if err := m.start(ctx, created.ID); err != nil {
-		discard()
-		return "", err
-	}
-	return addr, nil
+	return m.start(ctx, id)
 }
 
 // copyFiles writes m.files into the container before it first starts, owned by
