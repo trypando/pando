@@ -313,7 +313,7 @@ Set on the `pando` service in `docker-compose.yml`, or in the environment.
 | Variable | Default | Purpose |
 |---|---|---|
 | `PANDO_PORT` | `8080` | Port the console and API are served on. |
-| `PANDO_ADMIN_PASSWORD` | generated | Initial admin password. Read only on first run. |
+| `PANDO_ADMIN_PASSWORD` | — | Initial admin password, for an unattended install. Read only on first run; unset, the administrator is set up in the console with the setup token. |
 | `PANDO_APP_PORT_START` / `_END` | `9000` / `9019` | Range of host ports apps are given. Sets both what Compose publishes and what Pando allocates. |
 | `PANDO_BASE_DOMAIN` | `localtest.me` | Domain per-app subdomains are taken from, when using hostname routing. |
 | `PANDO_DATABASE_URL` | the bundled Postgres | Point Pando at an existing database instead. |

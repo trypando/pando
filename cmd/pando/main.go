@@ -251,6 +251,47 @@ func setup(configPath string) (*config.Config, *zap.Logger, error) {
 	return cfg, logger, nil
 }
 
+// logFirstRun says what first run did (R-046): the account it made, or that
+// the installation waits for its administrator, with the setup token when this
+// start made it.
+func logFirstRun(logger *zap.Logger, first bootstrap.Result, adminPasswordSet bool) {
+	switch {
+	case first.Created:
+		// No password field. The operator supplied it and already has it;
+		// printing it would copy a credential into a log for nobody's benefit
+		// (R-194).
+		logger.Warn("first run: created an administrator account",
+			zap.String("username", bootstrap.AdminUsername),
+			zap.String("note", "using the password from PANDO_ADMIN_PASSWORD; it must still be changed on first login"))
+
+	case first.Unclaimed && !first.SetupToken.IsZero():
+		// The one credential Pando prints, on purpose (R-046, issue #130). It
+		// is not a password: it works once, only while there is no account,
+		// and only on the setup form, so this line stops mattering the moment
+		// somebody uses it. Reading the log is the proof that the person
+		// setting Pando up is the one who runs it.
+		logger.Warn("this installation is not set up yet",
+			zap.String("setup_token", first.SetupToken.Reveal()),
+			zap.String("next", "open the console and set up the administrator account with this setup token"),
+			zap.String("note", "the token works once; run `pando admin setup-token` for a new one if this line is lost"))
+
+	case first.Unclaimed:
+		// The token was made on an earlier start and cannot be read back.
+		logger.Warn("this installation is not set up yet",
+			zap.String("next", "open the console and set up the administrator account with the setup token"),
+			zap.Time("setup_token_made", first.SetupTokenMade),
+			zap.String("note", "the setup token was printed when it was made; run `pando admin setup-token` for a new one"))
+
+	case adminPasswordSet:
+		// Said out loud, because the alternative is an operator who set it,
+		// cannot sign in with it, and has no reason to suspect it was never
+		// read.
+		logger.Info("PANDO_ADMIN_PASSWORD was set and ignored",
+			zap.String("reason", "this installation already has accounts"),
+			zap.String("remedy", "run `pando admin reset-password` to set one"))
+	}
+}
+
 func serve(ctx context.Context, configPath string) error {
 	cfg, logger, err := setup(configPath)
 	if err != nil {
@@ -342,41 +383,7 @@ func serve(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
-	switch {
-	case first.Created:
-		// No password field. The operator supplied it and already has it;
-		// printing it would copy a credential into a log for nobody's benefit
-		// (R-194).
-		logger.Warn("first run: created an administrator account",
-			zap.String("username", bootstrap.AdminUsername),
-			zap.String("note", "using the password from PANDO_ADMIN_PASSWORD; it must still be changed on first login"))
-
-	case first.Unclaimed && !first.SetupToken.IsZero():
-		// The one credential Pando prints, on purpose (R-046, issue #130). It
-		// is not a password: it works once, only while there is no account,
-		// and only on the setup form, so this line stops mattering the moment
-		// somebody uses it. Reading the log is the proof that the person
-		// setting Pando up is the one who runs it.
-		logger.Warn("this installation is not set up yet",
-			zap.String("setup_token", first.SetupToken.Reveal()),
-			zap.String("next", "open the console and set up the administrator account with this setup token"),
-			zap.String("note", "the token works once; run `pando admin setup-token` for a new one if this line is lost"))
-
-	case first.Unclaimed:
-		// The token was made on an earlier start and cannot be read back.
-		logger.Warn("this installation is not set up yet",
-			zap.String("next", "open the console and set up the administrator account with the setup token"),
-			zap.Time("setup_token_made", first.SetupTokenMade),
-			zap.String("note", "the setup token was printed when it was made; run `pando admin setup-token` for a new one"))
-
-	case cfg.Bootstrap.AdminPassword != "":
-		// Said out loud, because the alternative is an operator who set it,
-		// cannot sign in with it, and has no reason to suspect it was never
-		// read.
-		logger.Info("PANDO_ADMIN_PASSWORD was set and ignored",
-			zap.String("reason", "this installation already has accounts"),
-			zap.String("remedy", "run `pando admin reset-password` to set one"))
-	}
+	logFirstRun(logger, first, cfg.Bootstrap.AdminPassword != "")
 
 	// Adapter registration happens here, in main, from compiled-in packages
 	// (R-253). There is no plugin protocol and none is planned.
