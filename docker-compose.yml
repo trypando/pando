@@ -104,7 +104,13 @@ services:
       # The runtime adapter needs this. Builds do NOT get it (R-112) — the builder
       # runs rootless and containerized with no socket, which is asserted by an
       # integration test in phase 4.
-      - /var/run/docker.sock:/var/run/docker.sock
+      #
+      # Whoever holds this socket controls the daemon. On Linux, run rootless
+      # Docker and point PANDO_DOCKER_SOCKET at its socket, usually
+      # /run/user/1000/docker.sock (R-402): a compromise of Pando is then the
+      # unprivileged user that daemon runs as, not root on the host. The
+      # default is rootful Docker's socket, which is also Docker Desktop's.
+      - ${PANDO_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       - pando-data:/var/lib/pando
       # Where the Traefik adapter writes its per-app configuration. Mounted
       # even when Traefik is not in use: an empty directory costs nothing, and

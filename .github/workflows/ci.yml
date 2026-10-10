@@ -225,6 +225,64 @@ jobs:
             ~/.cache/go-build
           key: go-integration-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
 
+  # The Docker adapter against rootless Docker with the cgroup controllers
+  # delegated, the recommended Linux install (R-402, issue #130). The setup is
+  # the one docs/rootless.md gives an operator, so a step it needs and the
+  # page forgets fails here first.
+  rootless:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Rootless Docker, with cgroup controllers delegated
+        run: |
+          set -euxo pipefail
+          # Ubuntu 24.04 confines unprivileged user namespaces with AppArmor,
+          # which rootlesskit needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo apt-get update -q
+          sudo apt-get install -y -q uidmap dbus-user-session
+          # The runner's Docker is not from Docker's apt repository, which is
+          # where the rootless extras are; replace it with Docker CE from there.
+          if ! command -v dockerd-rootless-setuptool.sh; then
+            sudo install -m 0755 -d /etc/apt/keyrings
+            sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+              | sudo tee /etc/apt/sources.list.d/docker.list
+            sudo apt-get update -q
+            for p in $(dpkg-query -W -f '${Package}\n' 'moby-*' 2>/dev/null); do sudo apt-get remove -y -q "$p"; done
+            sudo apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras
+          fi
+
+          # systemd delegates only memory and pids to a user by default, and
+          # rootless Docker drops a CPU limit it has no controller for.
+          sudo mkdir -p /etc/systemd/system/user@.service.d
+          printf '[Service]\nDelegate=cpu cpuset io memory pids\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf
+          sudo systemctl daemon-reload
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl restart "user@$(id -u).service"
+
+          # The runner's rootful daemon, out of the way.
+          sudo systemctl disable --now docker.service docker.socket
+
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          dockerd-rootless-setuptool.sh install --force
+          echo "DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock" >> "$GITHUB_ENV"
+
+      - name: The daemon is rootless and applies limits
+        run: |
+          docker info --format '{{json .SecurityOptions}} cfs={{.CPUCfsQuota}} memory={{.MemoryLimit}} cgroup={{.CgroupVersion}}/{{.CgroupDriver}}'
+          docker info --format '{{json .SecurityOptions}}' | grep -q 'name=rootless'
+
+      - run: go test -race -count=1 -timeout=15m -tags=integration ./internal/adapter/runtime/docker/
+        env:
+          PANDO_TEST_ROOTLESS: '1'
+
   # Codecov, from one job once both Go test jobs are done, rather than from
   # each as it finishes. codecov.yml waits for two uploads before it reports,
   # but uploaded from the jobs themselves the unit profile still drew a failing

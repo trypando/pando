@@ -71,6 +71,27 @@ race and the standard fix.
 simply expected to use the external-database path, is unspecified. The external path covers it
 functionally; only the first-run experience differs.
 
+**[D] On Linux the Compose file runs on rootless Docker (R-402, issue #130).** Pando mounts the
+runtime's socket, and a socket is the daemon: on rootful Docker, a compromise of Pando was root on
+the host. The Compose file mounts `${PANDO_DOCKER_SOCKET:-/var/run/docker.sock}`, and the Linux
+install (`docs/rootless.md`) sets it to rootless Docker's socket. The default stays rootful's, because
+it is also Docker Desktop's, and one file cannot tell the two hosts apart — so "by default" is the
+documented install, not the file. Two things rootless Docker does differently are enforced rather
+than documented:
+
+- **Limits it would drop.** Without the cpu and memory cgroup controllers delegated to its user,
+  rootless Docker accepts `--cpus` and `--memory` and starts the container without them. The adapter
+  reads `docker info` before claiming `SupportsResourceLimits`, and the planner refuses every deploy
+  to a runtime without it — not only an app that set its own limits — with the adapter's own remedy
+  (`ResourceLimitsRemedy`, Docker's vocabulary kept out of core, R-251).
+- **Which it is.** Capacity details carry `rootless`, `cgroup_version`, `cgroup_driver`,
+  `cpu_limits` and `memory_limits`, shown under Installation, Capacity.
+
+The `rootless` CI job sets up rootless Docker as `docs/rootless.md` does and runs the adapter's
+integration suite against it, including `TestR402_RootlessDockerAppliesTheLimitsPandoSets`, which reads
+a container's limits back from its cgroup. Podman, the other rootless runtime, is issue #179: its Docker-compatible `info` reports CPU quotas
+unsupported with the controller delegated, so the adapter does not read it as an answer there.
+
 **[P] More than one `pando` (issue #72).** The `pando` service may run as N replicas against the one
 Postgres, behind a load balancer, provided every replica reaches the same Docker daemon and shares
 `/var/lib/pando`. Bootstrap is serialized by an advisory lock, the restricted roles keep their

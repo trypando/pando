@@ -360,10 +360,17 @@ func (p *Planner) checkCapabilities(ctx context.Context, s *spec.AppSpec, runtim
 			map[string]any{"adapter_ref": s.Runtime.AdapterRef, "capability": "start_then_swap"})
 	}
 
-	if s.Resources.Overridden && !runtimeCaps.SupportsResourceLimits {
+	// Every app has limits, its own or the install's (R-240), so a runtime
+	// that would drop them is refused for every app, not only one that set
+	// its own (issue #130). The runtime says why and what fixes it.
+	if !runtimeCaps.SupportsResourceLimits {
+		remedy := runtimeCaps.ResourceLimitsRemedy
+		if remedy == "" {
+			remedy = "Use a runtime that can apply CPU and memory limits."
+		}
 		return runtimeCaps, routingCaps, unsupported(
-			fmt.Sprintf("This app sets its own resource limits, and %q cannot enforce them.", s.Runtime.AdapterRef),
-			"Remove the resource limits, or use a runtime that can apply them.",
+			fmt.Sprintf("Every app runs with CPU and memory limits, and %q would start this one without them.", s.Runtime.AdapterRef),
+			remedy,
 			map[string]any{"adapter_ref": s.Runtime.AdapterRef, "capability": "resource_limits"})
 	}
 

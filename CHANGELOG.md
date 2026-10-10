@@ -27,6 +27,15 @@ Unreleased above it. -->
   R-049) left it open. It now authenticates the connection's session or token again each time, and
   closes it with a policy-violation close frame when that no longer works.
 
+- **On Linux, run Pando on rootless Docker** (#130, R-402). Pando holds the Docker socket, so on
+  rootful Docker a compromise of Pando is root on the host. [`docs/rootless.md`](docs/rootless.md)
+  sets up rootless Docker for it, and the compose file mounts whichever socket
+  `PANDO_DOCKER_SOCKET` names. Installation, Capacity shows whether the runtime is rootless.
+- **Pando refuses to deploy where Docker would drop an app's CPU or memory limits** (#130, R-240).
+  Docker accepts limits its host cannot apply and starts the container without them, which rootless
+  Docker does unless the cpu cgroup controller is delegated to its user. The refusal says which
+  limit and how to fix it. Before, the app ran with the whole host.
+
 ### Added
 
 - The audit log can be streamed to a SIEM and exported (#129, design 12). `GET /audit/stream`,
@@ -265,6 +274,11 @@ Unreleased above it. -->
   backup" only when one was taken.
 
 ### Upgrade notes
+
+- If Docker on your host cannot apply CPU or memory limits, deploys are now refused until it can;
+  the refusal says what to change. To check before upgrading, run `docker info` and look for
+  warnings about CPU quotas, memory limits or cgroups. After upgrading, Installation, Capacity shows
+  `cpu_limits` and `memory_limits` under Show details.
 
 - Migration 000067 adds columns to `audit_events` without rewriting the rows already there; events
   written before it have no outcome, source or actor name, and the stream reads them first, in the
