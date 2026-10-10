@@ -36,6 +36,12 @@ Unreleased above it. -->
   Dependabot now keeps current. The compose file no longer has a `buildkit` service;
   `PANDO_BUILDKIT_ADDRESS` still points Pando at a BuildKit you run instead.
 
+- **Setting up a new installation needs the setup token from Pando's log** (#130). Before, whoever
+  reached the console first became the administrator. Pando now prints a one-time `setup_token` on
+  the startup warning that the installation is not set up yet, and the setup form asks for it.
+  `pando admin setup-token`, run where Pando runs, makes a new one if the log line is gone.
+  `PANDO_ADMIN_PASSWORD` installs are unaffected.
+
 - **On Linux, run Pando on rootless Docker** (#130, R-402). Pando holds the Docker socket, so on
   rootful Docker a compromise of Pando is root on the host. [`docs/rootless.md`](docs/rootless.md)
   sets up rootless Docker for it, and the compose file mounts whichever socket
@@ -295,6 +301,10 @@ Unreleased above it. -->
   be removed with `docker volume rm` once the new build cache has filled. With
   `docker-compose.registry.yml`, take the new copy of it too: it gives Pando the registry's CA for its
   BuildKit, rather than configuring a `buildkit` service.
+
+- An installation upgraded before anyone set it up prints its setup token on the first start of the
+  new version. Scripts that call `POST /api/v1/setup` must now send `setup_token`; take it from
+  `pando admin setup-token`, which prints the token alone on stdout.
 
 - If Docker on your host cannot apply CPU or memory limits, deploys are now refused until it can;
   the refusal says what to change. To check before upgrading, run `docker info` and look for

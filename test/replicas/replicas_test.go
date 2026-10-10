@@ -69,6 +69,22 @@ func compose(t *testing.T, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// setupToken makes a setup token in one of the replicas, as an operator
+// without the log line would (R-046, issue #130). Not compose(): the token is
+// stdout alone, and the command's instructions go to stderr.
+func setupToken(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs("../..")
+	require.NoError(t, err)
+	cmd := exec.Command("docker", "compose", "-p", project(t),
+		"-f", "docker-compose.yml", "-f", "test/replicas/docker-compose.replicas.yml",
+		"exec", "-T", "pando", "pando", "admin", "setup-token")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	require.NoError(t, err, "pando admin setup-token")
+	return strings.TrimSpace(string(out))
+}
+
 func docker(t *testing.T, args ...string) string {
 	t.Helper()
 	out, err := exec.Command("docker", args...).CombinedOutput()
@@ -151,7 +167,7 @@ func login(t *testing.T) session {
 		_ = resp.Body.Close()
 		if setup.Needed {
 			resp, err := fresh().Post(baseURL()+"/setup", "application/json",
-				strings.NewReader(fmt.Sprintf(`{"username":"admin","password":%q}`, password)))
+				strings.NewReader(fmt.Sprintf(`{"setup_token":%q,"username":"admin","password":%q}`, setupToken(t), password)))
 			require.NoError(t, err)
 			_ = resp.Body.Close()
 		}

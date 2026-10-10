@@ -75,6 +75,7 @@ type common struct {
 	url           string
 	adminUser     string
 	adminPassword string
+	setupToken    string
 	userPassword  string
 	tokenSecret   string
 	// Overrides of the tier's sizes; zero keeps the tier's.
@@ -88,6 +89,7 @@ func (c *common) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.url, "url", "http://localhost:28080", "the load balancer in front of Pando")
 	fs.StringVar(&c.adminUser, "admin-user", "admin", "the first administrator's username")
 	fs.StringVar(&c.adminPassword, "admin-password", os.Getenv("LOAD_ADMIN_PASSWORD"), "the first administrator's password; claims setup with it on a fresh install (default $LOAD_ADMIN_PASSWORD)")
+	fs.StringVar(&c.setupToken, "setup-token", os.Getenv("LOAD_SETUP_TOKEN"), "the setup token from `pando admin setup-token`, for a fresh install (default $LOAD_SETUP_TOKEN)")
 	fs.StringVar(&c.userPassword, "user-password", "pando-load-user-password", "the password every seeded user signs in with")
 	fs.StringVar(&c.tokenSecret, "token-secret", "pando-load-token-secret", "the secret half of every seeded API token")
 	fs.IntVar(&c.users, "users", 0, "override the tier's user count")
@@ -149,7 +151,8 @@ func seedCmd(ctx context.Context, args []string) error {
 	}
 	return Seed(ctx, SeedOptions{
 		Tier: t, DatabaseURL: c.db, BaseURL: c.url, BaseDomain: *baseDomain,
-		AdminUser: c.adminUser, AdminPassword: c.adminPassword, UserPassword: c.userPassword, TokenSecret: c.tokenSecret,
+		AdminUser: c.adminUser, AdminPassword: c.adminPassword, SetupToken: c.setupToken,
+		UserPassword: c.userPassword, TokenSecret: c.tokenSecret,
 		RealPortStart: *portStart, Batch: *batch,
 	})
 }

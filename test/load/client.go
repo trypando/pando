@@ -137,8 +137,9 @@ func (c *Client) AwaitHealthy(ctx context.Context, within time.Duration) error {
 }
 
 // ClaimSetup makes the first administrator on a fresh install (R-046), the
-// way test/replicas does. An install already claimed is left alone.
-func (c *Client) ClaimSetup(ctx context.Context, username, password string) error {
+// way test/replicas does, with the setup token from `pando admin setup-token`
+// (issue #130). An install already claimed is left alone, and needs no token.
+func (c *Client) ClaimSetup(ctx context.Context, setupToken, username, password string) error {
 	var setup struct {
 		Needed bool `json:"needed"`
 	}
@@ -148,7 +149,11 @@ func (c *Client) ClaimSetup(ctx context.Context, username, password string) erro
 	if !setup.Needed {
 		return nil
 	}
-	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	if setupToken == "" {
+		return fmt.Errorf("this install is not set up yet and no setup token was given: " +
+			"run `pando admin setup-token` where Pando runs and pass it as -setup-token or $LOAD_SETUP_TOKEN")
+	}
+	body, _ := json.Marshal(map[string]string{"setup_token": setupToken, "username": username, "password": password})
 	_, err := c.JSON(ctx, http.MethodPost, "/setup", Credential{}, string(body), nil)
 	return err
 }

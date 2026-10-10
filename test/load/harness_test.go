@@ -330,18 +330,20 @@ func TestClaimSetupClaimsOnlyAFreshInstall(t *testing.T) {
 	c := NewClient(f.URL, time.Second)
 
 	f.NeedsSetup.Store(true)
-	require.NoError(t, c.ClaimSetup(context.Background(), "admin", "pw"))
+	require.ErrorContains(t, c.ClaimSetup(context.Background(), "", "admin", "pw"), "pando admin setup-token",
+		"a fresh install needs the setup token, and the error says where it comes from")
+	require.NoError(t, c.ClaimSetup(context.Background(), "tok", "admin", "pw"))
 	require.Equal(t, []string{"admin:pw"}, claimed)
 
-	require.NoError(t, c.ClaimSetup(context.Background(), "admin", "other"), "an install already claimed is left alone")
+	require.NoError(t, c.ClaimSetup(context.Background(), "", "admin", "other"), "an install already claimed is left alone")
 	require.Len(t, claimed, 1)
 	require.Equal(t, 1, f.seen("POST /api/v1/setup"))
 
 	f.NeedsSetup.Store(true)
 	f.SetupHook = func(string, string) error { return errors.New("database down") }
-	require.ErrorContains(t, c.ClaimSetup(context.Background(), "admin", "pw"), "500")
+	require.ErrorContains(t, c.ClaimSetup(context.Background(), "tok", "admin", "pw"), "500")
 
-	require.Error(t, NewClient(closedURL(t), time.Second).ClaimSetup(context.Background(), "admin", "pw"))
+	require.Error(t, NewClient(closedURL(t), time.Second).ClaimSetup(context.Background(), "tok", "admin", "pw"))
 }
 
 func TestSignInReturnsTheSessionCookie(t *testing.T) {

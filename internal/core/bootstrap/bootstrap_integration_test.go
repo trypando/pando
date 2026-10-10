@@ -24,8 +24,8 @@ func newInstall(t *testing.T) (*state.DB, *state.Users, *state.Grants, *audit.Wr
 }
 
 // TestR046_AFreshInstallWaitsToBeSetUp asserts R-046's default: with no
-// password supplied, first run creates nothing and prints nothing, and the
-// installation waits for its first administrator.
+// password supplied, first run makes no account, only a setup token to print,
+// and the installation waits for its first administrator.
 func TestR046_AFreshInstallWaitsToBeSetUp(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -35,6 +35,7 @@ func TestR046_AFreshInstallWaitsToBeSetUp(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, first.Created)
 	require.True(t, first.Unclaimed)
+	require.False(t, first.SetupToken.IsZero(), "an unclaimed installation has a setup token to print")
 
 	needed, err := users.NeedsSetup(ctx)
 	require.NoError(t, err)
@@ -43,7 +44,7 @@ func TestR046_AFreshInstallWaitsToBeSetUp(t *testing.T) {
 	// Claimed with the person's own choice, which need not be changed, and made
 	// an administrator.
 	chosen := secret.New("a-password-i-chose")
-	user, err := bootstrap.Claim(ctx, users, auditor, "ada", "Ada", chosen)
+	user, err := bootstrap.Claim(ctx, users, auditor, first.SetupToken, "ada", "Ada", chosen)
 	require.NoError(t, err)
 	rec, found, err := users.ByUsername(ctx, "ada")
 	require.NoError(t, err)
@@ -62,11 +63,109 @@ func TestR046_AFreshInstallWaitsToBeSetUp(t *testing.T) {
 	require.Equal(t, "role_administrator", role)
 
 	// Once. The door exists only until it is used.
-	_, err = bootstrap.Claim(ctx, users, auditor, "mallory", "", secret.New("another-long-password"))
+	_, err = bootstrap.Claim(ctx, users, auditor, first.SetupToken, "mallory", "", secret.New("another-long-password"))
 	require.ErrorIs(t, err, state.ErrAlreadySetUp)
 	again, err := bootstrap.Run(ctx, users, grants, db, auditor, secret.Value{})
 	require.NoError(t, err)
 	require.False(t, again.Unclaimed)
+	require.True(t, again.SetupToken.IsZero())
+	require.Zero(t, setupTokens(t, db), "the claim used the token up")
+}
+
+func setupTokens(t *testing.T, db *state.DB) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRow(context.Background(), `SELECT count(*) FROM setup_token`).Scan(&n))
+	return n
+}
+
+// TestR046_TheSetupFormNeedsTheSetupToken asserts the setup form is not a door
+// for whoever is first to the URL (issue #130): without the token Pando
+// printed, or with a wrong one, the claim is refused and the installation
+// still waits.
+func TestR046_TheSetupFormNeedsTheSetupToken(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, users, grants, auditor := newInstall(t)
+
+	first, err := bootstrap.Run(ctx, users, grants, db, auditor, secret.Value{})
+	require.NoError(t, err)
+
+	for _, token := range []secret.Value{{}, secret.New("not-the-token"), secret.New(first.SetupToken.Reveal() + "x")} {
+		_, err := bootstrap.Claim(ctx, users, auditor, token, "mallory", "", secret.New("a-long-enough-password"))
+		require.ErrorIs(t, err, state.ErrSetupTokenWrong)
+	}
+	needed, err := users.NeedsSetup(ctx)
+	require.NoError(t, err)
+	require.True(t, needed, "a refused claim leaves the installation waiting")
+	require.Equal(t, 1, setupTokens(t, db), "a refused claim does not use the token up")
+
+	_, err = bootstrap.Claim(ctx, users, auditor, first.SetupToken, "ada", "", secret.New("a-long-enough-password"))
+	require.NoError(t, err)
+}
+
+// TestR046_TheSetupTokenIsMadeOnceAndKeptOnlyAsADigest asserts a restart does
+// not make a second token, and that the database never holds the token itself.
+func TestR046_TheSetupTokenIsMadeOnceAndKeptOnlyAsADigest(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, users, grants, auditor := newInstall(t)
+
+	first, err := bootstrap.Run(ctx, users, grants, db, auditor, secret.Value{})
+	require.NoError(t, err)
+	restart, err := bootstrap.Run(ctx, users, grants, db, auditor, secret.Value{})
+	require.NoError(t, err)
+	require.True(t, restart.Unclaimed)
+	require.True(t, restart.SetupToken.IsZero(), "the token is printed once, when it is made")
+	require.True(t, first.SetupTokenMade.Equal(restart.SetupTokenMade), "a restart names the token already made")
+
+	var stored string
+	require.NoError(t, db.QueryRow(ctx, `SELECT token_hash FROM setup_token`).Scan(&stored))
+	require.NotContains(t, stored, first.SetupToken.Reveal())
+
+	_, err = bootstrap.Claim(ctx, users, auditor, first.SetupToken, "ada", "", secret.New("a-long-enough-password"))
+	require.NoError(t, err, "the first token still works after a restart")
+}
+
+// TestR046_ANewSetupTokenRetiresTheOldOne asserts `pando admin setup-token`:
+// for an operator who no longer has the log line, a new token replaces the
+// old, and none can be made once the installation is set up.
+func TestR046_ANewSetupTokenRetiresTheOldOne(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, users, grants, auditor := newInstall(t)
+
+	first, err := bootstrap.Run(ctx, users, grants, db, auditor, secret.Value{})
+	require.NoError(t, err)
+	replacement, err := users.ReplaceSetupToken(ctx)
+	require.NoError(t, err)
+
+	_, err = bootstrap.Claim(ctx, users, auditor, first.SetupToken, "mallory", "", secret.New("a-long-enough-password"))
+	require.ErrorIs(t, err, state.ErrSetupTokenWrong, "the replaced token no longer works")
+	_, err = bootstrap.Claim(ctx, users, auditor, secret.New(replacement), "ada", "", secret.New("a-long-enough-password"))
+	require.NoError(t, err)
+
+	_, err = users.ReplaceSetupToken(ctx)
+	require.ErrorIs(t, err, state.ErrAlreadySetUp)
+	require.Zero(t, setupTokens(t, db))
+}
+
+// TestR046_ASuppliedPasswordLeavesNoSetupToken asserts a token made on an
+// earlier start does not outlive the account PANDO_ADMIN_PASSWORD makes.
+func TestR046_ASuppliedPasswordLeavesNoSetupToken(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, users, grants, auditor := newInstall(t)
+
+	_, err := bootstrap.Run(ctx, users, grants, db, auditor, secret.Value{})
+	require.NoError(t, err)
+	require.Equal(t, 1, setupTokens(t, db))
+
+	first, err := bootstrap.Run(ctx, users, grants, db, auditor, secret.New("correct-horse-battery-staple"))
+	require.NoError(t, err)
+	require.True(t, first.Created)
+	require.True(t, first.SetupToken.IsZero())
+	require.Zero(t, setupTokens(t, db))
 }
 
 // Two people submitting the setup form at once: exactly one becomes the
@@ -74,13 +173,15 @@ func TestR046_AFreshInstallWaitsToBeSetUp(t *testing.T) {
 func TestR046_OnlyOneClaimWins(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	_, users, _, auditor := newInstall(t)
+	db, users, grants, auditor := newInstall(t)
+	first, err := bootstrap.Run(ctx, users, grants, db, auditor, secret.Value{})
+	require.NoError(t, err)
 
 	const n = 8
 	errsCh := make(chan error, n)
 	for i := range n {
 		go func() {
-			_, err := bootstrap.Claim(ctx, users, auditor, fmt.Sprintf("claimant%d", i), "", secret.New("a-long-enough-password"))
+			_, err := bootstrap.Claim(ctx, users, auditor, first.SetupToken, fmt.Sprintf("claimant%d", i), "", secret.New("a-long-enough-password"))
 			errsCh <- err
 		}()
 	}
@@ -199,4 +300,46 @@ func TestR046_ReplicasStartingTogetherMakeOneAdministrator(t *testing.T) {
 	var n int
 	require.NoError(t, db.QueryRow(ctx, `SELECT count(*) FROM users WHERE deleted_at IS NULL`).Scan(&n))
 	require.Equal(t, 1, n)
+}
+
+// TestR046_ReplicasStartingTogetherMakeOneSetupToken asserts replicas starting
+// at once on an unclaimed installation agree on one setup token: exactly one
+// makes and prints it, and the rest find it.
+func TestR046_ReplicasStartingTogetherMakeOneSetupToken(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, ownerURL := statetest.Connect(t)
+	_, appPassword := statetest.Database(t)
+
+	const replicas = 4
+	results := make([]bootstrap.Result, replicas)
+	errs := make([]error, replicas)
+	done := make(chan int)
+	for i := range replicas {
+		go func(i int) {
+			defer func() { done <- i }()
+			conn, err := state.ConnectCopy(ctx, ownerURL, appPassword)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer conn.Close()
+			results[i], errs[i] = bootstrap.Run(ctx, state.NewUsers(conn), state.NewGrants(conn), conn,
+				audit.New(conn.Pool), secret.Value{})
+		}(i)
+	}
+	for range replicas {
+		<-done
+	}
+
+	made := 0
+	for i := range replicas {
+		require.NoError(t, errs[i])
+		require.True(t, results[i].Unclaimed)
+		if !results[i].SetupToken.IsZero() {
+			made++
+		}
+	}
+	require.Equal(t, 1, made, "exactly one replica makes and prints the setup token")
+	require.Equal(t, 1, setupTokens(t, db))
 }
