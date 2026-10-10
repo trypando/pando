@@ -132,7 +132,16 @@ func TestTwoReplicasStartingTogetherShareOneBuildKit(t *testing.T) {
 	addr, err := m.ensure(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "tcp://pando-buildkit:1234", addr)
-	require.True(t, f.containers[managedName].State.Running, "started the winner's")
+	require.False(t, f.containers[managedName].State.Running,
+		"the winner may still be giving it its files: the replica that made it starts it")
+	require.Zero(t, f.started)
+
+	// Its next check, after the winner's setup, finds it and uses it.
+	m.cli = f
+	_, err = m.ensure(context.Background())
+	require.NoError(t, err)
+	require.Len(t, f.created, 1, "the winner's, not a second")
+	require.True(t, f.containers[managedName].State.Running)
 }
 
 // TestTheRegistrySettingsGoTogether asserts half a registry, or a CA Pando

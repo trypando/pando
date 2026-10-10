@@ -284,12 +284,13 @@ func (m *managed) ensure(ctx context.Context) (string, error) {
 		},
 	})
 	if cerrdefs.IsConflict(err) {
-		// Another replica made it between the inspect and the create.
-		got, err := m.cli.ContainerInspect(ctx, m.name, client.ContainerInspectOptions{})
-		if err != nil {
-			return "", errs.Wrap(errs.AdapterUnavailable, "Could not look for Pando's build service.", err)
-		}
-		return addr, m.start(ctx, got.Container.ID)
+		// Another replica made it between the inspect and the create, and is
+		// still giving it its files and networks. Starting it here could start
+		// it before it has them — BuildKit reads its configuration only as it
+		// starts — so the replica that made it starts it. This one's next health
+		// check finds it running; or, if the other's setup failed and removed
+		// it, makes it again (CodeRabbit on #173).
+		return addr, nil
 	}
 	if err != nil {
 		return "", errs.Wrap(errs.AdapterFailed, "Could not create Pando's build service.", err)
