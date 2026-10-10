@@ -89,7 +89,8 @@ than documented:
 
 The `rootless` CI job sets up rootless Docker as `docs/rootless.md` does and runs the adapter's
 integration suite against it, including `TestR402_RootlessDockerAppliesTheLimitsPandoSets`, which reads
-a container's limits back from its cgroup. Podman, the other rootless runtime, is a separate change.
+a container's limits back from its cgroup. Podman, the other rootless runtime, is issue #179: its Docker-compatible `info` reports CPU quotas
+unsupported with the controller delegated, so the adapter does not read it as an answer there.
 
 **[P] More than one `pando` (issue #72).** The `pando` service may run as N replicas against the one
 Postgres, behind a load balancer, provided every replica reaches the same Docker daemon and shares

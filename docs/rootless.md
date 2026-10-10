@@ -72,6 +72,12 @@ Pando refuses to deploy to a Docker that would drop the CPU or memory limits eve
 The refusal says which limit and how to delegate it, so a host where step 1 was missed fails at the
 first deploy, not silently.
 
+## Podman
+
+Pando's Docker adapter talks to rootless Podman through its Docker-compatible socket, but the adapter's
+tests do not pass against it yet, and it cannot tell whether Podman applies CPU limits. Use rootless
+Docker for now; issue #179 tracks Podman.
+
 ## What changes under rootless Docker
 
 - **Ports 80 and 443.** An unprivileged daemon cannot bind them, so the Traefik edge fails to start

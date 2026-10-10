@@ -37,6 +37,14 @@ func (a *Adapter) limits(ctx context.Context) limitSupport {
 		return limitSupport{}
 	}
 	info := res.Info
+	if a.podman(ctx) {
+		// Podman's Docker-compatible info reports CpuCfsQuota false on a
+		// cgroup v2 host whose cpu controller is delegated (seen with Podman
+		// 4.9), so it cannot be read as an answer. Unknown, as before this
+		// check existed; reading Podman's own cgroup controllers is issue
+		// #179.
+		return limitSupport{rootless: slices.Contains(info.SecurityOptions, "name=rootless")}
+	}
 	return limitSupport{
 		known: true,
 		// NanoCPUs is a CFS quota over a period; either missing and it is
@@ -47,6 +55,12 @@ func (a *Adapter) limits(ctx context.Context) limitSupport {
 		cgroupVersion: info.CgroupVersion,
 		cgroupDriver:  info.CgroupDriver,
 	}
+}
+
+// podman reports whether the engine is Podman. False when it cannot be asked.
+func (a *Adapter) podman(ctx context.Context) bool {
+	v, err := a.cli.ServerVersion(ctx, client.ServerVersionOptions{})
+	return err == nil && isPodman(v)
 }
 
 // enforced is whether both limits every app has (R-240) would be applied.

@@ -51,11 +51,24 @@ func TestR240_DockerClaimsLimitsOnlyWhereItAppliesThem(t *testing.T) {
 		}
 	}
 
+	// Podman's Docker-compatible info says CpuCfsQuota false with the cpu
+	// controller delegated (Podman 4.9 in the podman CI run), so its answer is
+	// not taken as one: Podman keeps the support it had.
+	f, pod := newFakeDaemon(t, nil)
+	f.on("GET /version", respond(http.StatusOK, map[string]any{
+		"Version": "4.9.3", "Components": []any{map[string]any{"Name": "Podman Engine", "Version": "4.9.3"}},
+	}))
+	f.on("GET /info", respond(http.StatusOK, map[string]any{"SecurityOptions": []string{"name=rootless"},
+		"CpuCfsQuota": false, "CpuCfsPeriod": false, "MemoryLimit": true}))
+	caps, err := pod.Capabilities(ctx)
+	require.NoError(t, err)
+	require.True(t, caps.SupportsResourceLimits, "Podman")
+
 	// A daemon that cannot be asked is the health check's to refuse, with its
 	// own message; capabilities do not invent a second reason.
 	f, a := newFakeDaemon(t, nil)
 	f.on("GET /info", respond(http.StatusInternalServerError, map[string]string{"message": "boom"}))
-	caps, err := a.Capabilities(ctx)
+	caps, err = a.Capabilities(ctx)
 	require.NoError(t, err)
 	require.True(t, caps.SupportsResourceLimits)
 }

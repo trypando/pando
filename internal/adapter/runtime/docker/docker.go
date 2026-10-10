@@ -429,8 +429,10 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	capacity.Details["rootless"] = slices.Contains(info.SecurityOptions, "name=rootless")
 	capacity.Details["cgroup_version"] = info.CgroupVersion
 	capacity.Details["cgroup_driver"] = info.CgroupDriver
-	capacity.Details["cpu_limits"] = info.CPUCfsQuota && info.CPUCfsPeriod
-	capacity.Details["memory_limits"] = info.MemoryLimit
+	if !a.podman(ctx) { // Podman's answer is not one (limits.go)
+		capacity.Details["cpu_limits"] = info.CPUCfsQuota && info.CPUCfsPeriod
+		capacity.Details["memory_limits"] = info.MemoryLimit
+	}
 
 	// What is left of the totals by the containers' own limits (hosts.go).
 	// One machine is one place, so this is also the largest.
