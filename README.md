@@ -6,7 +6,7 @@
 
 **Deploy and share apps**
 
-[trypando.ai](https://trypando.ai)
+[trypando.ai](https://trypando.ai) · [Quickstart](https://trypando.ai/quickstart)
 
 [![CI](https://github.com/trypando/pando/actions/workflows/ci.yml/badge.svg)](https://github.com/trypando/pando/actions/workflows/ci.yml)
 [![Docker Hub](https://img.shields.io/docker/v/trypando/pando?sort=semver&label=docker%20hub&color=1D63ED)](https://hub.docker.com/r/trypando/pando)
@@ -92,6 +92,9 @@ gating.
   caller and makes the authorization decision. There is no bypass for public apps or for websockets.
 
 ## Install
+
+The [quickstart](https://trypando.ai/quickstart) walks through an install that keeps itself up to
+date, from downloading the Compose file to deploying a first app.
 
 Two pieces, and most people need only the first.
 
