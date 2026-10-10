@@ -13,6 +13,17 @@ import (
 	"github.com/trypando/pando/internal/secret"
 )
 
+// TestR046_NoTokenMeansNoClaim asserts an installation with no setup token —
+// none made yet, or the last one used — is claimed by nobody, whatever token
+// is presented.
+func TestR046_NoTokenMeansNoClaim(t *testing.T) {
+	ctx := context.Background()
+	users := state.NewUsers(connected(t))
+	require.NoError(t, users.EnsureLocalAdapter(ctx))
+	_, _, err := users.ClaimFirst(ctx, secret.New("anything"), "mallory", "", "digest", "role_administrator")
+	require.ErrorIs(t, err, state.ErrSetupTokenWrong)
+}
+
 // TestR046_ASetupTokenIsNeverMadeOrTakenWhenTheDatabaseFails asserts the
 // setup token's store says so when Postgres cannot answer, rather than
 // reporting a token made, cleared or accepted that was not (issue #130).

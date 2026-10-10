@@ -37,12 +37,12 @@ var ErrSetupTokenWrong = errs.New(errs.AuthInvalid, "That setup token is not the
 const couldNotMakeToken = "Could not make a setup token."
 
 // newSetupToken is 256 random bits, as text that survives a copy and paste.
-func newSetupToken() (string, error) {
+// crypto/rand.Read cannot fail: since Go 1.24 it ends the program rather than
+// return an error, so there is none to handle.
+func newSetupToken() string {
 	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", errs.Wrap(errs.Internal, couldNotMakeToken, err)
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // EnsureSetupToken makes the setup token if there is none, and returns it.
@@ -53,12 +53,9 @@ func newSetupToken() (string, error) {
 // so replicas starting together make one token between them, and a token is
 // never made for an installation that is already set up.
 func (u *Users) EnsureSetupToken(ctx context.Context) (string, time.Time, error) {
-	token, err := newSetupToken()
-	if err != nil {
-		return "", time.Time{}, err
-	}
+	token := newSetupToken()
 	var made time.Time
-	err = u.db.QueryRow(ctx, `
+	err := u.db.QueryRow(ctx, `
 		INSERT INTO setup_token (token_hash) VALUES ($1)
 		ON CONFLICT (id) DO NOTHING
 		RETURNING created_at`, tokenHash(token)).Scan(&made)
@@ -91,11 +88,8 @@ func (u *Users) ClearSetupToken(ctx context.Context) error {
 // Under FirstAccountLock, as ClaimFirst is, so a claim cannot land between the
 // check for accounts and the write and leave a token behind a set-up install.
 func (u *Users) ReplaceSetupToken(ctx context.Context) (string, error) {
-	token, err := newSetupToken()
-	if err != nil {
-		return "", err
-	}
-	err = u.db.Exclusive(ctx, FirstAccountLock, func() error {
+	token := newSetupToken()
+	err := u.db.Exclusive(ctx, FirstAccountLock, func() error {
 		needed, err := u.NeedsSetup(ctx)
 		if err != nil {
 			return err
