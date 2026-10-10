@@ -10,6 +10,12 @@ describe('statusLabel', () => {
     expect(statusSymbol('stopped')).toBe('stopped');
   });
 
+  // R-403: and one stopped for staying over its disk limit says that.
+  it('says an app was stopped over its disk limit', () => {
+    expect(statusLabel('stopped', false, true)).toBe('Stopped over disk limit');
+    expect(statusLabel('running', false, true)).toBe('Running');
+  });
+
   it('says only stopped when somebody stopped it', () => {
     expect(statusLabel('stopped')).toBe('Stopped');
     expect(statusLabel('stopped', false)).toBe('Stopped');

@@ -176,7 +176,7 @@ export function AppOverview({
               <AppName app={app} />
             </Row>
             <Row label="Status">
-              <StatusIndicator status={statusSymbol(app.state)} label={statusLabel(app.state, app.stopped_for_idle)} />
+              <StatusIndicator status={statusSymbol(app.state)} label={statusLabel(app.state, app.stopped_for_idle, app.stopped_for_disk)} />
             </Row>
             <Row label="Address">
               <AppAddress app={app} />

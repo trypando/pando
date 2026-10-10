@@ -107,6 +107,8 @@ var classes = map[string]Mapping{
 	"app.delete":                     appRemove,
 	"app.delete.backup_failed":       apiOther,
 	"app.deploy":                     appUpdate,
+	"app.disk.stopped":               appStop,
+	"app.disk.warning":               apiOther,
 	"app.drift_unreconcilable":       apiOther,
 	"app.exec":                       processLaunch,
 	"app.exec.end":                   processTerminate,

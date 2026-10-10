@@ -70,10 +70,12 @@ export function statusSymbol(state: string): Symbol {
 
 /**
  * stoppedForIdle says Pando stopped the app because nobody used it (R-396),
- * which is said in the word: the symbol is the same dash, and a stop nobody
- * chose is not mistaken for one somebody did, or for a failure.
+ * and stoppedForDisk because it stayed over its disk limit (R-403), which is
+ * said in the word: the symbol is the same dash, and a stop nobody chose is
+ * not mistaken for one somebody did, or for a failure.
  */
-export function statusLabel(state: string, stoppedForIdle?: boolean): string {
+export function statusLabel(state: string, stoppedForIdle?: boolean, stoppedForDisk?: boolean): string {
+  if (stoppedForDisk && state === 'stopped') return 'Stopped over disk limit';
   if (stoppedForIdle && state === 'stopped') return 'Stopped for inactivity';
   return labels[state as AppState] ?? state;
 }

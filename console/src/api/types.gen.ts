@@ -16,6 +16,7 @@ export interface App {
   desired_state: string;
   pinned_spec_id?: string;
   stopped_for_idle?: boolean;
+  stopped_for_disk?: boolean;
   source: Source;
   created_at: string;
   updated_at: string;
