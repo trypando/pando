@@ -311,8 +311,9 @@ const suitePassword = "pando-acceptance-suite-admin"
 // PANDO_TEST_PASSWORD wins, for a stack whose password somebody set. Otherwise
 // a stack still waiting for its first administrator is set up here as "admin"
 // with suitePassword, and a stack already set up is assumed to be one the suite
-// set up on an earlier run. Nothing is read from the server log: since R-046
-// changed, a fresh Pando prints no password.
+// set up on an earlier run. The setup token comes from `pando admin
+// setup-token` in the stack's pando service (R-046, issue #130), not from the
+// server log, which a recreated container no longer has.
 func captureAdminPassword() {
 	if adminPassword = os.Getenv("PANDO_TEST_PASSWORD"); adminPassword != "" {
 		return
@@ -332,8 +333,13 @@ func captureAdminPassword() {
 	if !setup.Needed {
 		return
 	}
+	token, err := exec.Command("docker", "compose", "exec", "-T", "pando", "pando", "admin", "setup-token").Output()
+	if err != nil {
+		return
+	}
 	resp, err = c.Post(baseURL()+"/setup", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"username":"admin","password":%q}`, suitePassword)))
+		strings.NewReader(fmt.Sprintf(`{"setup_token":%q,"username":"admin","password":%q}`,
+			strings.TrimSpace(string(token)), suitePassword)))
 	if err == nil {
 		_ = resp.Body.Close()
 	}

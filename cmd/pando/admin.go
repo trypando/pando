@@ -34,6 +34,10 @@ import (
 // command exists so that doing it correctly — a real argon2id digest, sessions
 // ended, an audit event written — is easier than doing it by hand.
 
+// fromTheHostShell is the audit reason every command here records: each runs
+// outside every check the API makes, with no session and no principal.
+const fromTheHostShell = "run from the host shell, outside any session"
+
 func adminCmd(configPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "admin",
@@ -45,7 +49,64 @@ func adminCmd(configPath *string) *cobra.Command {
 	}
 	cmd.AddCommand(resetPasswordCmd(configPath))
 	cmd.AddCommand(enablePasswordSignInCmd(configPath))
+	cmd.AddCommand(setupTokenCmd(configPath))
 	return cmd
+}
+
+// setupTokenCmd makes a new setup token for an installation nobody has set up
+// yet (R-046, issue #130), for the operator who no longer has the log line the
+// first one was printed on: the container was recreated, or the log rotated.
+//
+// The token alone goes to stdout, so a script can take it with $(…); what to do
+// with it goes to stderr.
+func setupTokenCmd(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "setup-token",
+		Short: "Make a new setup token for an installation that is not set up yet",
+		Long: "Prints a new one-time setup token and retires the one Pando printed to its log at startup.\n\n" +
+			"A new installation is set up in the console, and the setup form asks for this token, so that\n" +
+			"reaching the console first is not enough to become its administrator. Refused once the\n" +
+			"installation has an account.",
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, logger, err := setup(*configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = logger.Sync() }()
+			ctx := log.Into(cmd.Context(), logger)
+
+			db, err := state.Connect(ctx, state.ConnectOptions{
+				OwnerURL:       cfg.Database.URL,
+				ConnectTimeout: cfg.Database.ConnectTimeout,
+			})
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+
+			token, err := state.NewUsers(db).ReplaceSetupToken(ctx)
+			if err != nil {
+				return err
+			}
+			// Audited, and fatal if it is not: this hands a way to become the
+			// administrator to whoever holds the host shell.
+			if err := audit.New(db.Pool).Write(ctx, audit.Event{
+				PrincipalKind: audit.KindSystem, PrincipalID: "system", Action: "setup.token.replace",
+				TargetKind: "installation", TargetID: "setup",
+				Detail: map[string]any{"via": "pando admin setup-token",
+					"reason": fromTheHostShell},
+			}); err != nil {
+				return errs.Wrap(errs.Internal,
+					"A setup token was made and Pando could not record it in the audit log. Run the command again.", err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), token)
+			fmt.Fprintln(cmd.ErrOrStderr(),
+				"Open the console and set up the administrator with this setup token. It works once, and any earlier one no longer works.")
+			return nil
+		},
+	}
 }
 
 func resetPasswordCmd(configPath *string) *cobra.Command {
@@ -178,7 +239,7 @@ func resetPassword(ctx context.Context, cfg *config.Config, username string, pas
 		Detail: map[string]any{
 			"username": username,
 			"via":      "pando admin reset-password",
-			"reason":   "run from the host shell, outside any session",
+			"reason":   fromTheHostShell,
 		},
 	}); err != nil {
 		return errs.Wrap(errs.Internal,
@@ -250,7 +311,7 @@ func enablePasswordSignInCmd(configPath *string) *cobra.Command {
 				PrincipalKind: audit.KindSystem, PrincipalID: "system", Action: "policy.update",
 				TargetKind: "policy", TargetID: "host",
 				Detail: map[string]any{"disable_password_sign_in": false, "via": "pando admin enable-password-sign-in",
-					"reason": "run from the host shell, outside any session"},
+					"reason": fromTheHostShell},
 			}); err != nil {
 				return errs.Wrap(errs.Internal,
 					"Password sign-in was turned on and Pando could not record it in the audit log.", err)

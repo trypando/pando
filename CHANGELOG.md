@@ -36,6 +36,12 @@ Unreleased above it. -->
   Dependabot now keeps current. The compose file no longer has a `buildkit` service;
   `PANDO_BUILDKIT_ADDRESS` still points Pando at a BuildKit you run instead.
 
+- **Setting up a new installation needs the setup token from Pando's log** (#130). Before, whoever
+  reached the console first became the administrator. Pando now prints a one-time `setup_token` on
+  the startup warning that the installation is not set up yet, and the setup form asks for it.
+  `pando admin setup-token`, run where Pando runs, makes a new one if the log line is gone.
+  `PANDO_ADMIN_PASSWORD` installs are unaffected.
+
 - **The bundled Postgres no longer defaults to the password `pando`** (#130, R-401). A one-shot
   `secrets` service generates one on the first start and keeps it in the new `pando-secrets` volume;
   Postgres and Pando read it from there as a file, through `POSTGRES_PASSWORD_FILE` and the new
@@ -291,6 +297,10 @@ Unreleased above it. -->
   be removed with `docker volume rm` once the new build cache has filled. With
   `docker-compose.registry.yml`, take the new copy of it too: it gives Pando the registry's CA for its
   BuildKit, rather than configuring a `buildkit` service.
+
+- An installation upgraded before anyone set it up prints its setup token on the first start of the
+  new version. Scripts that call `POST /api/v1/setup` must now send `setup_token`; take it from
+  `pando admin setup-token`, which prints the token alone on stdout.
 
 - **An installation made with the old compose file keeps its database password only if you say what
   it is.** Its Postgres was created with `pando`, or with your `POSTGRES_PASSWORD`, and the new
