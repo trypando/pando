@@ -34,6 +34,10 @@ import (
 // command exists so that doing it correctly — a real argon2id digest, sessions
 // ended, an audit event written — is easier than doing it by hand.
 
+// fromTheHostShell is the audit reason every command here records: each runs
+// outside every check the API makes, with no session and no principal.
+const fromTheHostShell = "run from the host shell, outside any session"
+
 func adminCmd(configPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "admin",
@@ -92,7 +96,7 @@ func setupTokenCmd(configPath *string) *cobra.Command {
 				PrincipalKind: audit.KindSystem, PrincipalID: "system", Action: "setup.token.replace",
 				TargetKind: "installation", TargetID: "setup",
 				Detail: map[string]any{"via": "pando admin setup-token",
-					"reason": "run from the host shell, outside any session"},
+					"reason": fromTheHostShell},
 			}); err != nil {
 				return errs.Wrap(errs.Internal,
 					"A setup token was made and Pando could not record it in the audit log. Run the command again.", err)
@@ -235,7 +239,7 @@ func resetPassword(ctx context.Context, cfg *config.Config, username string, pas
 		Detail: map[string]any{
 			"username": username,
 			"via":      "pando admin reset-password",
-			"reason":   "run from the host shell, outside any session",
+			"reason":   fromTheHostShell,
 		},
 	}); err != nil {
 		return errs.Wrap(errs.Internal,
@@ -307,7 +311,7 @@ func enablePasswordSignInCmd(configPath *string) *cobra.Command {
 				PrincipalKind: audit.KindSystem, PrincipalID: "system", Action: "policy.update",
 				TargetKind: "policy", TargetID: "host",
 				Detail: map[string]any{"disable_password_sign_in": false, "via": "pando admin enable-password-sign-in",
-					"reason": "run from the host shell, outside any session"},
+					"reason": fromTheHostShell},
 			}); err != nil {
 				return errs.Wrap(errs.Internal,
 					"Password sign-in was turned on and Pando could not record it in the audit log.", err)

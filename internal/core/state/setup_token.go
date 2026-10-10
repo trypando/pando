@@ -34,11 +34,13 @@ var ErrSetupTokenWrong = errs.New(errs.AuthInvalid, "That setup token is not the
 		"If the log no longer has it, run pando admin setup-token where Pando runs for a new one " +
 		"(with Docker Compose: docker compose exec pando pando admin setup-token).")
 
+const couldNotMakeToken = "Could not make a setup token."
+
 // newSetupToken is 256 random bits, as text that survives a copy and paste.
 func newSetupToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		return "", errs.Wrap(errs.Internal, "Could not make a setup token.", err)
+		return "", errs.Wrap(errs.Internal, couldNotMakeToken, err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
@@ -64,7 +66,7 @@ func (u *Users) EnsureSetupToken(ctx context.Context) (string, time.Time, error)
 		return token, made, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", time.Time{}, errs.Wrap(errs.Internal, "Could not make a setup token.", err)
+		return "", time.Time{}, errs.Wrap(errs.Internal, couldNotMakeToken, err)
 	}
 	if err := u.db.QueryRow(ctx, `SELECT created_at FROM setup_token WHERE id = 1`).Scan(&made); err != nil {
 		return "", time.Time{}, errs.Wrap(errs.Internal, "Could not read the setup token.", err)
@@ -85,37 +87,32 @@ func (u *Users) ClearSetupToken(ctx context.Context) error {
 // ReplaceSetupToken makes a new setup token in place of any there was, for an
 // operator who no longer has the one Pando printed. Refused with
 // ErrAlreadySetUp once any account exists.
+//
+// Under FirstAccountLock, as ClaimFirst is, so a claim cannot land between the
+// check for accounts and the write and leave a token behind a set-up install.
 func (u *Users) ReplaceSetupToken(ctx context.Context) (string, error) {
 	token, err := newSetupToken()
 	if err != nil {
 		return "", err
 	}
-	tx, err := u.db.Begin(ctx)
+	err = u.db.Exclusive(ctx, FirstAccountLock, func() error {
+		needed, err := u.NeedsSetup(ctx)
+		if err != nil {
+			return err
+		}
+		if !needed {
+			return ErrAlreadySetUp
+		}
+		if _, err := u.db.Exec(ctx, `
+			INSERT INTO setup_token (token_hash) VALUES ($1)
+			ON CONFLICT (id) DO UPDATE SET token_hash = EXCLUDED.token_hash, created_at = now()`,
+			tokenHash(token)); err != nil {
+			return errs.Wrap(errs.Internal, couldNotMakeToken, err)
+		}
+		return nil
+	})
 	if err != nil {
-		return "", errs.Wrap(errs.Internal, "Could not make a setup token.", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	// The same lock as ClaimFirst, so a claim cannot land between the check
-	// for accounts and the write, and leave a token behind a set-up install.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, FirstAccountLock); err != nil {
-		return "", errs.Wrap(errs.Internal, "Could not make a setup token.", err)
-	}
-	var any bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE deleted_at IS NULL)`).Scan(&any); err != nil {
-		return "", errs.Wrap(errs.Internal, "Could not check for existing accounts.", err)
-	}
-	if any {
-		return "", ErrAlreadySetUp
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO setup_token (token_hash) VALUES ($1)
-		ON CONFLICT (id) DO UPDATE SET token_hash = EXCLUDED.token_hash, created_at = now()`,
-		tokenHash(token)); err != nil {
-		return "", errs.Wrap(errs.Internal, "Could not make a setup token.", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return "", errs.Wrap(errs.Internal, "Could not make a setup token.", err)
+		return "", err
 	}
 	return token, nil
 }
