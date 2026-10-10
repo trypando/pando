@@ -53,9 +53,9 @@ type Store interface {
 	StopForDisk(ctx context.Context, appID string) (bool, error)
 }
 
-// Usage reads what an app is using from the runtime it runs on. supported is
+// UsageReader reads what an app is using from the runtime it runs on. supported is
 // false when that runtime cannot say, and then the pass leaves the app alone.
-type Usage interface {
+type UsageReader interface {
 	Usage(ctx context.Context, runtimeRef, appID string) (reading api.BundleUsage, supported bool, err error)
 }
 
@@ -72,7 +72,7 @@ type Auditor interface {
 // Pass is the disk job.
 type Pass struct {
 	Store Store
-	Usage Usage
+	Usage UsageReader
 
 	// Notifier and Auditor are optional, and nil says nothing. Production
 	// wires both.

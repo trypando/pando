@@ -2,6 +2,7 @@ package disklimit
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,11 +17,20 @@ const gib = int64(1) << 30
 
 // fakeStore is one app, and what the pass did to it.
 type fakeStore struct {
+	mu      sync.Mutex
 	app     state.DiskApp
 	stopped bool
 }
 
+func (s *fakeStore) isStopped() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stopped
+}
+
 func (s *fakeStore) DiskCandidates(context.Context) ([]state.DiskApp, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.stopped {
 		return nil, nil
 	}
@@ -28,6 +38,8 @@ func (s *fakeStore) DiskCandidates(context.Context) ([]state.DiskApp, error) {
 }
 
 func (s *fakeStore) SetDiskMark(_ context.Context, _ string, which state.DiskMark, at *time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if which == state.DiskOver {
 		s.app.OverAt = at
 	} else {
@@ -37,6 +49,8 @@ func (s *fakeStore) SetDiskMark(_ context.Context, _ string, which state.DiskMar
 }
 
 func (s *fakeStore) StopForDisk(context.Context, string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.stopped = true
 	return true, nil
 }

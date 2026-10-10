@@ -183,20 +183,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Is it running?
 	if app.State != state.StateRunning && app.State != state.StateDegraded {
-		// Said apart from "not running right now", which promises it comes
-		// back: this one waits for a person (R-396).
-		if app.StoppedForIdle {
-			p.fail(w, r, http.StatusServiceUnavailable,
-				"This app was stopped because nobody had used it for a while. Ask whoever manages it to start it again in Pando.")
-			return
-		}
-		if app.StoppedForDisk {
-			p.fail(w, r, http.StatusServiceUnavailable,
-				"This app was stopped because it used more disk space than it is allowed. Ask whoever manages it to make room and start it again in Pando.")
-			return
-		}
-		p.fail(w, r, http.StatusServiceUnavailable,
-			"This app isn't running right now. Try again in a moment.")
+		p.fail(w, r, http.StatusServiceUnavailable, notRunning(app))
 		return
 	}
 
@@ -672,4 +659,17 @@ func newDialTransport(dials *sync.Map) *http.Transport {
 		return dial.(func(context.Context) (net.Conn, error))(ctx)
 	}
 	return t
+}
+
+// notRunning is what a visitor to an app that is not running is told. A stop
+// Pando made is said apart from "not running right now", which promises it
+// comes back: that one waits for a person (R-396, R-403).
+func notRunning(app state.App) string {
+	switch {
+	case app.StoppedForIdle:
+		return "This app was stopped because nobody had used it for a while. Ask whoever manages it to start it again in Pando."
+	case app.StoppedForDisk:
+		return "This app was stopped because it used more disk space than it is allowed. Ask whoever manages it to make room and start it again in Pando."
+	}
+	return "This app isn't running right now. Try again in a moment."
 }
