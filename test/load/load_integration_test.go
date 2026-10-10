@@ -45,7 +45,12 @@ func installFake(t *testing.T, f *fakePando, db *state.DB, pool *pgxpool.Pool) {
 		if err != nil {
 			return err
 		}
-		_, _, err = users.ClaimFirst(ctx, username, "", digest, "role_administrator")
+		// The token an operator would read from the log (issue #130).
+		token, err := users.ReplaceSetupToken(ctx)
+		if err != nil {
+			return err
+		}
+		_, _, err = users.ClaimFirst(ctx, secret.New(token), username, "", digest, "role_administrator")
 		return err
 	}
 	f.UserID = func(name string) string {
@@ -187,7 +192,7 @@ func TestLoadHarnessSeedsRunsAndCleansUpAnInstall(t *testing.T) {
 
 	flags := []string{
 		"-db", ownerURL, "-url", f.URL + "/api/v1", "-admin-user", f.AdminUser, "-admin-password", f.AdminPassword,
-		"-user-password", f.UserPassword, "-token-secret", f.TokenSecret,
+		"-user-password", f.UserPassword, "-token-secret", f.TokenSecret, "-setup-token", "from-pando-admin-setup-token",
 		"-users", "40", "-apps", "30", "-groups", "4", "-admins", "2", "-tokens", "5", "-real-apps", "2",
 	}
 	seed := append([]string{"-batch", "7", "-base-domain", "load.test"}, flags...)
@@ -336,7 +341,7 @@ func TestLoadHarnessRefusesAnInstallItCannotUse(t *testing.T) {
 
 	// Setup claimed by someone else: the administrator named is not there.
 	f.NeedsSetup.Store(true)
-	require.NoError(t, NewClient(f.URL, time.Second).ClaimSetup(ctx, "someone-else", "pw"))
+	require.NoError(t, NewClient(f.URL, time.Second).ClaimSetup(ctx, "tok", "someone-else", "pw"))
 	err = Seed(ctx, SeedOptions{Tier: tier, DatabaseURL: ownerURL, BaseURL: f.URL, AdminUser: "admin", AdminPassword: "x"})
 	require.ErrorContains(t, err, `finding the administrator "admin"`)
 

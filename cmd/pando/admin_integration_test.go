@@ -128,3 +128,47 @@ func TestR043_PasswordSignInCanBeTurnedBackOnFromTheHost(t *testing.T) {
 	_, err = runAdmin(t, "enable-password-sign-in")
 	require.ErrorContains(t, err, "startup configuration")
 }
+
+// TestR046_ASetupTokenFromTheHostClaimsAFreshInstall asserts `pando admin
+// setup-token` (issue #130): the token alone on stdout, so a script can take
+// it; the one printed at startup retired; audited; and refused once the
+// installation is set up.
+func TestR046_ASetupTokenFromTheHostClaimsAFreshInstall(t *testing.T) {
+	ctx := context.Background()
+	db, dsn := connectedURL(t)
+	users := state.NewUsers(db)
+	auditor := audit.New(db.Pool)
+	first, err := bootstrap.Run(ctx, users, state.NewGrants(db), db, auditor, secret.Value{})
+	require.NoError(t, err)
+	t.Setenv("PANDO_DATABASE_URL", dsn)
+
+	run := func() (string, string, error) {
+		configPath := ""
+		cmd := adminCmd(&configPath)
+		var stdout, stderr bytes.Buffer
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+		cmd.SetArgs([]string{"setup-token"})
+		err := cmd.ExecuteContext(ctx)
+		return stdout.String(), stderr.String(), err
+	}
+
+	stdout, stderr, err := run()
+	require.NoError(t, err)
+	token := strings.TrimSpace(stdout)
+	require.NotEmpty(t, token)
+	require.NotContains(t, token, "\n", "stdout is the token and nothing else")
+	require.Contains(t, stderr, "set up the administrator")
+
+	_, err = bootstrap.Claim(ctx, users, auditor, first.SetupToken, "mallory", "", secret.New("a-long-enough-password"))
+	require.ErrorIs(t, err, state.ErrSetupTokenWrong, "the token printed at startup is retired")
+	_, err = bootstrap.Claim(ctx, users, auditor, secret.New(token), "ada", "", secret.New("a-long-enough-password"))
+	require.NoError(t, err)
+
+	var n int
+	require.NoError(t, db.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action = 'setup.token.replace'`).Scan(&n))
+	require.Equal(t, 1, n)
+
+	_, _, err = run()
+	require.ErrorIs(t, err, state.ErrAlreadySetUp)
+}

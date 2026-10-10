@@ -198,8 +198,14 @@ func claim() {
 	if !setup.Needed {
 		return
 	}
+	// The setup token, as an operator gets one without the log (R-046, issue #130).
+	token, err := kubectl("-n", "pando", "exec", "deploy/pando", "--", "pando", "admin", "setup-token")
+	if err != nil {
+		return
+	}
 	resp, err = c.Post(fwd.base()+"/api/v1/setup", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"username":"admin","password":%q}`, adminPassword)))
+		strings.NewReader(fmt.Sprintf(`{"setup_token":%q,"username":"admin","password":%q}`,
+			strings.TrimSpace(token), adminPassword)))
 	if err == nil {
 		_ = resp.Body.Close()
 	}

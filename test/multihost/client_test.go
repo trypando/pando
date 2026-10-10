@@ -22,10 +22,15 @@ func requireHosts(t *testing.T) {
 	}
 }
 
-// claim sets up the fresh install's administrator.
+// claim sets up the fresh install's administrator, with a setup token from
+// `pando admin setup-token` in the first replica (R-046, issue #130).
 func claim() {
+	token, err := inner(cControl, "exec", cPando, "pando", "admin", "setup-token")
+	if err != nil {
+		return
+	}
 	resp, err := http.Post(base+"/api/v1/setup", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"username":"admin","password":%q}`, adminPassword)))
+		strings.NewReader(fmt.Sprintf(`{"setup_token":%q,"username":"admin","password":%q}`, token, adminPassword)))
 	if err == nil {
 		_ = resp.Body.Close()
 	}

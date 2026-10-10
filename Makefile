@@ -209,6 +209,7 @@ load-test: ## Seed a scale tier (TIER=vm|cluster) into LOAD_REPLICAS replicas, r
 	$(LOAD_COMPOSE) up -d --build --wait --scale pando=$(LOAD_REPLICAS)
 	@status=0; rm -f $(LOAD_DIR)/results-$(TIER).json $(LOAD_DIR)/report-$(TIER).md; \
 	export LOAD_DATABASE_URL="postgres://pando:$${POSTGRES_PASSWORD:-pando}@127.0.0.1:$(LOAD_DB_PORT)/pando?sslmode=disable"; \
+	export LOAD_SETUP_TOKEN="$$($(LOAD_COMPOSE) exec -T pando pando admin setup-token 2>/dev/null)"; \
 	$(LOAD_DIR)/load seed $(LOAD_FLAGS) -real-port-start $(LOAD_APP_PORT_START) || status=1; \
 	if [ $$status = 0 ]; then \
 		$(LOAD_DIR)/load run $(LOAD_FLAGS) -replicas $(LOAD_REPLICAS) -hold $(LOAD_HOLD) \

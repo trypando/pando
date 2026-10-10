@@ -163,11 +163,22 @@ Or skip installing it and use the copy already inside the container, via
 ### First sign-in
 
 A new installation has no accounts. Open the console and Pando asks you to set up the
-administrator: choose a username and password there, and you are signed in.
+administrator: paste the setup token from Pando's log, choose a username and password, and you are
+signed in. The token is what stops whoever reaches the console first from taking the installation:
 
-Whoever reaches the console first sets up the administrator, so do this before anyone else can
-reach Pando. To create the account at startup instead, for an unattended install, supply its
-password; you are asked to change it when you first sign in:
+```bash
+docker compose logs pando | grep setup_token
+```
+
+The token works once, and only until the administrator exists. If the log no longer has it, for
+example because the container was recreated, make a new one:
+
+```bash
+docker compose exec pando pando admin setup-token
+```
+
+To create the account at startup instead, for an unattended install, supply its password; you are
+asked to change it when you first sign in:
 
 ```bash
 # Read only on first run, when there is no account yet.
