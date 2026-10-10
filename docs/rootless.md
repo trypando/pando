@@ -17,6 +17,8 @@ As root, once:
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-rootless-docker.conf
 
+# docker-ce-rootless-extras is in Docker's own apt repository, which Docker's
+# install guide for Ubuntu adds: https://docs.docker.com/engine/install/ubuntu/
 sudo apt-get install -y uidmap dbus-user-session docker-ce-rootless-extras
 
 # Let the user's Docker apply CPU limits. systemd delegates only memory and
