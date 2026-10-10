@@ -54,6 +54,12 @@ func TestR111_PandosOwnBuildKitStartsAndAnswers(t *testing.T) {
 
 	bk, err := bkclient.New(ctx, addr)
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		if t.Failed() {
+			logs, _ := exec.Command("docker", "logs", "--tail", "40", m.name).CombinedOutput()
+			t.Logf("BuildKit's own log:\n%s", logs)
+		}
+	})
 	require.Eventually(t, func() bool {
 		c, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
