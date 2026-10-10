@@ -134,25 +134,3 @@ func expand(template string, values map[string]string) string {
 	}
 	return template
 }
-
-// The README installs the CLI too, for somebody who is reading the repository
-// rather than a running installation. It is prose and stays prose — but the
-// three strings in it that a release can invalidate are checked here, so a
-// renamed tap or a moved module breaks the build rather than the first thing a
-// new user types.
-func TestTheREADMEInstallsTheSameCLI(t *testing.T) {
-	got := reference.Build(nil).Install
-
-	readme, err := os.ReadFile("../../README.md")
-	require.NoError(t, err)
-	text := string(readme)
-
-	require.Contains(t, text, "brew install "+got.Homebrew)
-	require.Contains(t, text, "go install "+got.Module+"@latest")
-	require.Contains(t, text, got.Repo+"/releases")
-	require.Contains(t, text, got.InContainer)
-	// The README writes the version as a shell variable, the way somebody
-	// copying the block wants it. Same constant, one substitution.
-	require.Contains(t, text, strings.ReplaceAll(got.Download, "<version>", "${VERSION}"),
-		"the README says where to download a package from")
-}

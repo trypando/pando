@@ -60,13 +60,14 @@ services:
       PANDO_REGISTRY_INSECURE: ${PANDO_REGISTRY_INSECURE:-false}
       PANDO_REGISTRY_ALWAYS: ${PANDO_REGISTRY_ALWAYS:-false}
 
-  # The build service pushes here with the credential Pando hands it per build
-  # (never written to its configuration). It needs to trust the registry's
-  # certificate, which is what this configuration and the CA mount give it.
-  buildkit:
-    configs:
-      - source: buildkitd
-        target: /home/user/.config/buildkit/buildkitd.toml
+      # The build service Pando runs pushes here, with the credential Pando
+      # hands it per build (never written to its configuration). It trusts
+      # the registry's certificate through the CA Pando gives it, and reaches
+      # the registry on the registry's own network, which it joins: never
+      # Compose's default network, where Postgres is (R-113).
+      PANDO_BUILDKIT_REGISTRY_HOST: ${PANDO_REGISTRY_HOST:-registry}:5000
+      PANDO_BUILDKIT_REGISTRY_CA: /etc/pando-registry/ca.crt
+      PANDO_BUILDKIT_NETWORKS: pando-registry
     volumes:
       - ${PANDO_REGISTRY_CERTS:-./registry/certs}/ca.crt:/etc/pando-registry/ca.crt:ro
 
@@ -93,6 +94,11 @@ services:
       - registry-data:/var/lib/registry
       - ${PANDO_REGISTRY_CERTS:-./registry/certs}:/certs:ro
       - ${PANDO_REGISTRY_AUTH:-./registry/auth}:/auth:ro
+    networks:
+      - default
+      # The network Pando's build service joins to push here
+      # (PANDO_BUILDKIT_NETWORKS above), which holds nothing else.
+      - registry
     restart: unless-stopped
 
   # The weekly blob collection (O-38). Not started by `up`; run by the
@@ -134,10 +140,9 @@ configs:
       http:
         addr: :5000
 
-  buildkitd:
-    content: |
-      [registry."${PANDO_REGISTRY_HOST:-registry}:5000"]
-        ca = ["/etc/pando-registry/ca.crt"]
+networks:
+  registry:
+    name: pando-registry
 
 volumes:
   registry-data:
