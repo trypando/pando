@@ -52,7 +52,13 @@ type RuntimeCapabilities struct {
 	// unusable — it would place workloads somewhere other apps could reach.
 	SupportsPrivateNetwork bool
 
+	// SupportsResourceLimits is whether the runtime applies the CPU and
+	// memory limits every app has (R-240) — applies, not accepts. Docker
+	// accepts limits it then drops, on a host whose cgroups cannot hold them
+	// (issue #130). False, and ResourceLimitsRemedy says why and what fixes it,
+	// in the runtime's own words: the planner refuses with it as the remedy.
 	SupportsResourceLimits bool
+	ResourceLimitsRemedy   string
 	SupportsStartThenSwap  bool // R-145
 
 	// ReportsUsage means Usage works: the runtime can say what each workload

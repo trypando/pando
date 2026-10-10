@@ -5,6 +5,7 @@ package docker_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -111,9 +112,12 @@ func TestR359_TheSwapKeepsPandosConfigurationAndPutsTheOldOneBack(t *testing.T) 
 		require.Equal(t, vol, got.Mounts[0].Name)
 		require.Equal(t, "/data", got.Mounts[0].Destination)
 
-		if runtime.GOOS == "linux" {
+		if runtime.GOOS == "linux" && os.Getenv("PANDO_TEST_ROOTLESS") != "1" {
 			// Docker Desktop does not route to container addresses from the
 			// host; the helper is on the same network, and CI is Linux.
+			// Rootless Docker does not either: its bridge is inside the
+			// daemon's own network namespace (issue #130). The helper, which
+			// is what calls Ready in production, still reaches it.
 			require.NoError(t, r.Ready(ctx, newID, "8080", 30*time.Second))
 		}
 

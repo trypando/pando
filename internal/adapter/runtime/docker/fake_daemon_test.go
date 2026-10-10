@@ -78,7 +78,15 @@ func (f *fakeDaemon) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Unlock()
 
 	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"message": "no such thing: " + key})
+		// Every daemon answers these two; a test that cares registers its own.
+		switch key {
+		case "GET /version":
+			writeJSON(w, http.StatusOK, map[string]any{"Version": "28.0.0", "ApiVersion": "1.47"})
+		case "GET /info":
+			writeJSON(w, http.StatusOK, map[string]any{"CpuCfsQuota": true, "CpuCfsPeriod": true, "MemoryLimit": true})
+		default:
+			writeJSON(w, http.StatusNotFound, map[string]string{"message": "no such thing: " + key})
+		}
 		return
 	}
 	h(w, r)

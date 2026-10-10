@@ -394,6 +394,29 @@ func TestR254_CapabilityUnsupportedBlocksDeploy(t *testing.T) {
 	}
 }
 
+// TestR240_ARuntimeThatWouldDropLimitsIsRefusedForEveryApp asserts R-240's
+// limits are real (issue #130): every app has them, so a runtime that would
+// start it without them is refused even when the app set none of its own, and
+// the refusal carries the runtime's own account of the fix.
+func TestR240_ARuntimeThatWouldDropLimitsIsRefusedForEveryApp(t *testing.T) {
+	rt := capableRuntime()
+	rt.caps.SupportsResourceLimits = false
+	rt.caps.ResourceLimitsRemedy = "Delegate the cpu controller to the user Docker runs as."
+
+	s := plannableSpec()
+	require.False(t, s.Resources.Overridden, "the install's limits, not the app's own")
+
+	p := planner.New(registry(t, rt, capableRouting(), capableBuilder()), policy.Static(policy.Default()), fixedAllocations{})
+	_, err := p.Check(context.Background(), s)
+	require.Equal(t, errs.PlanCapabilityUnsupported, errs.CodeOf(err))
+	require.Equal(t, "resource_limits", errs.As(err).Details["capability"])
+	require.Equal(t, rt.caps.ResourceLimitsRemedy, errs.As(err).Remedy)
+
+	rt.caps.SupportsResourceLimits = true
+	_, err = p.Check(context.Background(), s)
+	require.NoError(t, err)
+}
+
 // TestR242_CapacityWouldOversubscribeBlocksDeploy asserts R-242.
 //
 // Details carry requested, allocated, and the adapter's own total: a capacity

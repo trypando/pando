@@ -47,6 +47,15 @@ Unreleased above it. -->
   Postgres and Pando read it from there as a file, through `POSTGRES_PASSWORD_FILE` and the new
   `PANDO_DATABASE_PASSWORD_FILE`. `POSTGRES_PASSWORD` set before the first start is used instead.
 
+- **On Linux, run Pando on rootless Docker** (#130, R-402). Pando holds the Docker socket, so on
+  rootful Docker a compromise of Pando is root on the host. [`docs/rootless.md`](docs/rootless.md)
+  sets up rootless Docker for it, and the compose file mounts whichever socket
+  `PANDO_DOCKER_SOCKET` names. Installation, Capacity shows whether the runtime is rootless.
+- **Pando refuses to deploy where Docker would drop an app's CPU or memory limits** (#130, R-240).
+  Docker accepts limits its host cannot apply and starts the container without them, which rootless
+  Docker does unless the cpu cgroup controller is delegated to its user. The refusal says which
+  limit and how to fix it. Before, the app ran with the whole host.
+
 - **An app is held to its disk limit** (#130, R-403). Every app has one (10 GiB unless set), and
   until now it was only counted against the host's disk. Pando now measures each running app's
   containers and volumes every 10 minutes, tells its owner at 90% and when it goes over, and stops
@@ -315,6 +324,11 @@ Unreleased above it. -->
   (`POSTGRES_PASSWORD=pando` if you never set one); the `secrets` service writes it to the
   password file, and later starts read it from there. Back up the `pando-secrets` volume with
   `postgres-data` from then on.
+
+- If Docker on your host cannot apply CPU or memory limits, deploys are now refused until it can;
+  the refusal says what to change. To check before upgrading, run `docker info` and look for
+  warnings about CPU quotas, memory limits or cgroups. After upgrading, Installation, Capacity shows
+  `cpu_limits` and `memory_limits` under Show details.
 
 - Migration 000067 adds columns to `audit_events` without rewriting the rows already there; events
   written before it have no outcome, source or actor name, and the stream reads them first, in the

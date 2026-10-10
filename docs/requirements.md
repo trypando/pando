@@ -135,6 +135,8 @@ exactly this.
 
 **R-401 [D]** **The bundled install has no default credential.** The database password is generated on first start, or chosen by the operator before it, and reaches Postgres and Pando as a file rather than as a value in the Compose file, where it would be the same on every install and visible in `docker inspect`. *(Added by issue #130.)*
 
+**R-402 [D]** **On Linux, Pando's documented install runs on a rootless container runtime**, so that a compromise of Pando is the runtime's unprivileged user, not root on the host. Pando reports whether the runtime it drives is rootless, and refuses to deploy to a runtime that would accept the limits every app has (R-240) without applying them, saying which limit and how to fix it. Docker Desktop, which already runs its daemon in a virtual machine, is exempt. *(Added by issue #130.)*
+
 ### 5.3 Sessions and revocation
 
 **R-047 [D]** Each identity adapter declares its own session policy and revocation mechanism, documented in that adapter's spec. There is no single global answer. The console and `GET /identity-providers` show each provider's session lifetime, revocation mode, and the window that results.
