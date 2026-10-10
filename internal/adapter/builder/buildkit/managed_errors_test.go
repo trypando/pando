@@ -103,6 +103,26 @@ func TestAHalfMadeBuildKitIsNotKept(t *testing.T) {
 	require.True(t, f.joined["c-pando-buildkit@pando-registry"])
 }
 
+// TestAFailedFirstStartIsRetriedAtTheNextCheck asserts a container whose
+// first start failed is removed, so the next ensure makes and starts it at once
+// rather than leaving a never-started container alone for setupGrace
+// (CodeRabbit on #173).
+func TestAFailedFirstStartIsRetriedAtTheNextCheck(t *testing.T) {
+	f := newFakeDocker("pando-1")
+	m := newManaged(f)
+	m.self = "pando-1"
+	f.fail = map[string]error{"ContainerStart": errDaemon}
+	_, err := m.ensure(context.Background())
+	require.Equal(t, errs.AdapterFailed, errs.CodeOf(err))
+	require.NotContains(t, f.containers, managedName, "not left never-started")
+
+	f.fail = nil
+	_, err = m.ensure(context.Background())
+	require.NoError(t, err)
+	require.Len(t, f.created, 2)
+	require.True(t, f.containers[managedName].State.Running)
+}
+
 // missingNetworkDocker refuses to connect BuildKit to any network but its own.
 type missingNetworkDocker struct{ *fakeDocker }
 

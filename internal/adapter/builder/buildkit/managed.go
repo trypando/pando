@@ -328,7 +328,14 @@ func (m *managed) ensure(ctx context.Context) (string, error) {
 				WithRemedy("PANDO_BUILDKIT_NETWORKS names it; check that it exists with docker network ls.")
 		}
 	}
-	return addr, m.start(ctx, created.ID)
+	// A first start that fails would leave it never started, which every
+	// replica leaves to its maker for setupGrace: removed instead, so the next
+	// ensure tries again at once (CodeRabbit on #173).
+	if err := m.start(ctx, created.ID); err != nil {
+		discard()
+		return "", err
+	}
+	return addr, nil
 }
 
 // copyFiles writes m.files into the container before it first starts, owned by
