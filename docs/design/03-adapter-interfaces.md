@@ -58,7 +58,8 @@ type RuntimeCapabilities struct {
     SupportsExec            bool
     SupportsMultipleWorkloads bool
     SupportsPrivateNetwork  bool   // required for R-026; an adapter without it is unusable
-    SupportsResourceLimits  bool
+    SupportsResourceLimits  bool   // applies, not accepts: false refuses every deploy (R-240, issue #130)
+    ResourceLimitsRemedy    string // why not and the fix, in the runtime's words, for that refusal
     SupportsStartThenSwap   bool   // R-145
     ReportsUsage            bool   // R-245
     MaxWorkloadsPerBundle   int    // 0 = unlimited

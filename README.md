@@ -99,6 +99,11 @@ Two pieces, and most people need only the first.
 
 Requires Docker and Docker Compose. Nothing else — no Go, no Node, no Postgres of your own.
 
+On a Linux server, install rootless Docker first, as [`docs/rootless.md`](docs/rootless.md) describes,
+and run these commands as its user. Pando holds the Docker socket to run apps, so with rootful Docker
+a compromise of Pando is root on the host; with rootless Docker it is that user. Docker Desktop needs
+nothing extra.
+
 ```bash
 mkdir pando && cd pando
 curl -fsSLO https://github.com/trypando/pando/releases/latest/download/docker-compose.yml
@@ -306,6 +311,7 @@ Set on the `pando` service in `docker-compose.yml`, or in the environment.
 | `PANDO_APP_PORT_START` / `_END` | `9000` / `9019` | Range of host ports apps are given. Sets both what Compose publishes and what Pando allocates. |
 | `PANDO_BASE_DOMAIN` | `localtest.me` | Domain per-app subdomains are taken from, when using hostname routing. |
 | `PANDO_DATABASE_URL` | the bundled Postgres | Point Pando at an existing database instead. |
+| `PANDO_DOCKER_SOCKET` | `/var/run/docker.sock` | The Docker socket Pando's container mounts. Set it to rootless Docker's, usually `/run/user/1000/docker.sock`; see [`docs/rootless.md`](docs/rootless.md). |
 | `PANDO_SERVER_EXTERNAL_URL` | — | The address browsers reach Pando on, such as `https://pando.example.com`. Set this whenever something else terminates TLS — it is what marks the session cookie `Secure`. |
 | `PANDO_SERVER_TRUSTED_PROXIES` | — | The proxies in front of Pando, such as `10.0.0.5`, separated by commas. Set it so the audit log records each client's own address rather than the proxy's. |
 | `PANDO_POLICY_<SETTING>` | — | Fixes a host policy setting, such as `PANDO_POLICY_MIN_SECURITY_SCORE=70`. It cannot then be changed in the console. Compose passes only the variables listed on the `pando` service, so add it there. See [the reference](docs/reference.md#host-policy-at-startup). |

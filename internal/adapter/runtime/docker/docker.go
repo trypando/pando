@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -269,6 +270,7 @@ func isolationOf(ociRuntime string) spec.IsolationClass {
 func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, error) {
 	class := isolationOf(a.config.OCIRuntime)
 	observes := a.observes()
+	limits := a.limits(ctx)
 
 	return api.RuntimeCapabilities{
 		// Shared kernel, unless the configured runtime is a sandbox. Stated
@@ -281,7 +283,10 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		SupportsExec:              true,
 		SupportsMultipleWorkloads: true,
 		SupportsPrivateNetwork:    true,
-		SupportsResourceLimits:    true,
+
+		// Only when the daemon would apply them (limits.go).
+		SupportsResourceLimits: limits.enforced(),
+		ResourceLimitsRemedy:   limits.remedy(),
 
 		// CPU and memory from the daemon's stats, disk from the container's
 		// own layer and its volumes (R-245).
@@ -418,6 +423,14 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	if a.config.OCIRuntime != "" {
 		capacity.Details["oci_runtime"] = a.config.OCIRuntime
 	}
+	// Whether the daemon runs as root, and whether it applies the limits apps
+	// are given (limits.go, issue #130). Rootless is the recommended Linux
+	// install: a compromise of Pando is then not root on the host.
+	capacity.Details["rootless"] = slices.Contains(info.SecurityOptions, "name=rootless")
+	capacity.Details["cgroup_version"] = info.CgroupVersion
+	capacity.Details["cgroup_driver"] = info.CgroupDriver
+	capacity.Details["cpu_limits"] = info.CPUCfsQuota && info.CPUCfsPeriod
+	capacity.Details["memory_limits"] = info.MemoryLimit
 
 	// What is left of the totals by the containers' own limits (hosts.go).
 	// One machine is one place, so this is also the largest.
