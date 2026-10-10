@@ -22,6 +22,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
+      secrets:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       buildkit:
@@ -29,7 +31,11 @@ services:
     environment:
       # Compose starts both services at once. Pando also retries on its own rather
       # than trusting this healthcheck — see phase 0.
-      PANDO_DATABASE_URL: postgres://pando:${POSTGRES_PASSWORD:-pando}@postgres:5432/pando?sslmode=disable
+      #
+      # No password in the URL: Pando reads it from the file the secrets service
+      # wrote, so it is in neither this file nor `docker inspect` (issue #130).
+      PANDO_DATABASE_URL: postgres://pando@postgres:5432/pando?sslmode=disable
+      PANDO_DATABASE_PASSWORD_FILE: /run/pando-secrets/postgres-password
 
       # The initial admin password, read on first run only.
       #
@@ -106,6 +112,7 @@ services:
       # integration test in phase 4.
       - /var/run/docker.sock:/var/run/docker.sock
       - pando-data:/var/lib/pando
+      - pando-secrets:/run/pando-secrets:ro
       # Where the Traefik adapter writes its per-app configuration. Mounted
       # even when Traefik is not in use: an empty directory costs nothing, and
       # the alternative is a compose file that has to be edited before the
@@ -139,14 +146,58 @@ services:
       - buildkit-cache:/home/user/.local/share/buildkit
     restart: unless-stopped
 
+  # Makes the database password, once, before anything else starts (issue
+  # #130). There is no default password: an install whose database password is
+  # in every copy of this file has one only in name.
+  #
+  # Thirty-two random bytes, written to a volume that Postgres and Pando mount
+  # read-only, owned by the user Pando runs as (nonroot, 65532) and readable by
+  # nobody else; Postgres reads it as root before dropping privileges. A later
+  # start finds the file and leaves it, because the database was made with it.
+  # To choose the password yourself, set POSTGRES_PASSWORD before the first
+  # start; it is written to the file instead.
+  #
+  # The Postgres image, so there is nothing more to pull, with its own
+  # entrypoint set aside: it runs this script and exits.
+  secrets:
+    image: postgres:17-alpine
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        f=/run/pando-secrets/postgres-password
+        if [ ! -s "$$f" ]; then
+          umask 077
+          if [ -n "$${POSTGRES_PASSWORD:-}" ]; then
+            printf '%s' "$$POSTGRES_PASSWORD" > "$$f.new"
+          else
+            head -c 32 /dev/urandom | base64 | tr -d '\n=+/' > "$$f.new"
+          fi
+          mv "$$f.new" "$$f"
+          echo "made the database password"
+        elif [ -n "$${POSTGRES_PASSWORD:-}" ] && [ "$$(cat "$$f")" != "$$POSTGRES_PASSWORD" ]; then
+          echo "POSTGRES_PASSWORD is ignored: the database was made with the password already in $$f" >&2
+        fi
+        chown 65532:65532 "$$f"
+        chmod 0400 "$$f"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - pando-secrets:/run/pando-secrets
+    restart: "no"
+
   postgres:
     image: postgres:17-alpine
+    depends_on:
+      secrets:
+        condition: service_completed_successfully
     environment:
       POSTGRES_USER: pando
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pando}
+      POSTGRES_PASSWORD_FILE: /run/pando-secrets/postgres-password
       POSTGRES_DB: pando
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - pando-secrets:/run/pando-secrets:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pando -d pando"]
       interval: 5s
@@ -158,6 +209,11 @@ volumes:
   pando-data:
   postgres-data:
   buildkit-cache:
+
+  # The database password, made by the secrets service. It and postgres-data
+  # belong together: a backup or move of one without the other leaves a
+  # database nobody has the password to.
+  pando-secrets:
 
   # Shared between Pando and Traefik: Pando writes, Traefik reads. Read-only on
   # the Traefik side, because the edge has no business editing the routes it is

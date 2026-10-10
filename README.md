@@ -118,9 +118,11 @@ not start; that is off until you set the image to a moving tag such as `trypando
 [`docs/releasing.md`](docs/releasing.md#in-place-from-the-console-or-pando-upgrade) describes. An installation without
 internet access turns the check off with `PANDO_POLICY_DISABLE_UPDATE_CHECK=true`. Take a backup
 before upgrading: an older Pando does not start against a database a newer one migrated, so going
-back means restoring it. Postgres is only reachable from the other containers, and its password defaults to
-`pando`; to choose your own, put `POSTGRES_PASSWORD=...` in a `.env` file beside the compose file
-before the first start.
+back means restoring it. Postgres is only reachable from the other containers. Its password is
+generated on the first start and kept in the `pando-secrets` volume, which Postgres and Pando read it
+from; it is never in the compose file. To choose your own, put `POSTGRES_PASSWORD=...` in a `.env` file
+beside the compose file before the first start. Back up `pando-secrets` with `postgres-data`: one
+without the other is a database nobody has the password to.
 
 The image is built on [Docker Hardened Images](https://docs.docker.com/dhi/), for `linux/amd64` and
 `linux/arm64`, and signed; checking the signature is in
@@ -306,6 +308,7 @@ Set on the `pando` service in `docker-compose.yml`, or in the environment.
 | `PANDO_APP_PORT_START` / `_END` | `9000` / `9019` | Range of host ports apps are given. Sets both what Compose publishes and what Pando allocates. |
 | `PANDO_BASE_DOMAIN` | `localtest.me` | Domain per-app subdomains are taken from, when using hostname routing. |
 | `PANDO_DATABASE_URL` | the bundled Postgres | Point Pando at an existing database instead. |
+| `PANDO_DATABASE_PASSWORD_FILE` | the generated password | A file holding the password for `PANDO_DATABASE_URL`'s user, which the URL then leaves out. |
 | `PANDO_SERVER_EXTERNAL_URL` | — | The address browsers reach Pando on, such as `https://pando.example.com`. Set this whenever something else terminates TLS — it is what marks the session cookie `Secure`. |
 | `PANDO_SERVER_TRUSTED_PROXIES` | — | The proxies in front of Pando, such as `10.0.0.5`, separated by commas. Set it so the audit log records each client's own address rather than the proxy's. |
 | `PANDO_POLICY_<SETTING>` | — | Fixes a host policy setting, such as `PANDO_POLICY_MIN_SECURITY_SCORE=70`. It cannot then be changed in the console. Compose passes only the variables listed on the `pando` service, so add it there. See [the reference](docs/reference.md#host-policy-at-startup). |
