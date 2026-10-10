@@ -357,11 +357,23 @@ func (m *managed) copyFiles(ctx context.Context, id string) error {
 func (m *managed) start(ctx context.Context, id string) error {
 	if _, err := m.cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not start Pando's build service.", err).
-			WithRemedy("Run docker logs " + m.name + " on the host for BuildKit's own account of why. " +
-				"On a host that confines unprivileged user namespaces, such as Ubuntu 24.04, rootless BuildKit cannot start " +
-				"until kernel.apparmor_restrict_unprivileged_userns is 0.")
+			WithRemedy(m.notAnswering())
 	}
 	return nil
+}
+
+// notAnswering says what to look at when the BuildKit Pando runs is not
+// answering. Most often, on Ubuntu 23.10 and later, it is the host refusing
+// rootless BuildKit the user namespaces it needs (seen on Ubuntu 24.04: the
+// container restarts, logging "rootlesskit ... fork/exec /proc/self/exe:
+// permission denied"). Only root on the host can allow it; nothing Pando can
+// ask Docker for does.
+func (m *managed) notAnswering() string {
+	return "Run docker logs " + m.name + " on the host for BuildKit's own account of why. " +
+		"If it says \"permission denied\" from rootlesskit, the host confines unprivileged user namespaces, " +
+		"as Ubuntu 23.10 and later do, and rootless BuildKit cannot start until it allows them: as root, run " +
+		"sysctl -w kernel.apparmor_restrict_unprivileged_userns=0, and put the same setting in /etc/sysctl.d/ " +
+		"so it outlasts a reboot. Pando starts BuildKit again at its next check."
 }
 
 func (m *managed) ensureImage(ctx context.Context) error {

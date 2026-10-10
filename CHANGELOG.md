@@ -275,6 +275,11 @@ Unreleased above it. -->
 
 ### Upgrade notes
 
+- **On Ubuntu 23.10 and later, builds need the host to allow unprivileged user namespaces.** Rootless
+  BuildKit cannot start otherwise, and this was as true of the compose file's `buildkit` service as
+  it is of Pando's own. As root: `sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, and the
+  same line in a file under `/etc/sysctl.d/`. The build service's health check now says so.
+
 - **The compose file's `buildkit` service is gone; Pando starts `pando-buildkit` instead.** After
   `docker compose up -d` with the new file, remove the old one with
   `docker compose up -d --remove-orphans`. The old `buildkit-cache` volume is no longer used and can

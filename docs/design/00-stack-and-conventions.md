@@ -82,7 +82,10 @@ Postgres is (R-113), and never a socket (R-112). The health check ensures it, so
 started and one from another Pando version replaced; replicas share it by its fixed name. An
 installation registry's CA reaches it as files Pando writes before it starts, and it joins only the
 networks `PANDO_BUILDKIT_NETWORKS` names. AppArmor stays unconfined: the default AppArmor profile
-denies mount, and a narrower one has to be loaded into the host kernel. `PANDO_BUILDKIT_ADDRESS`
+denies mount, and a narrower one has to be loaded into the host kernel. On Ubuntu 23.10 and later,
+the host must also allow unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns=0`)
+for rootless BuildKit to start at all, which only root on the host can do; the health check names it,
+and CI's integration job sets it as an operator would. `PANDO_BUILDKIT_ADDRESS`
 still names a BuildKit somebody else runs — Kubernetes', multi-host's — and then Pando starts none.
 
 **[O]** Whether a non-Docker install topology (Incus, Podman, bare host) ships an equivalent, or is

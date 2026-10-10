@@ -97,7 +97,7 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 |---|---|---|
 | `PANDO_DATABASE_URL` | the bundled Postgres | Point Pando at an existing database. |
 | `PANDO_DATABASE_MAX_CONNS` | `32` | Connections each Pando replica may hold as its application role. Postgres's `max_connections` must cover this for every replica, plus a few each for startup and the audit archiver; the bundled Postgres allows 100, which is three replicas. |
-| `PANDO_BUILDKIT_ADDRESS` | — | A BuildKit you run, such as `tcp://buildkit:1234`. Unset, Pando starts its own rootless BuildKit on the Docker it runs apps on, named after its Compose project (`pando-buildkit`), under a seccomp profile compiled into Pando. |
+| `PANDO_BUILDKIT_ADDRESS` | — | A BuildKit you run, such as `tcp://buildkit:1234`. Unset, Pando starts its own rootless BuildKit on the Docker it runs apps on, named after its Compose project (`pando-buildkit`), under a seccomp profile compiled into Pando. On Ubuntu 23.10 and later, the host must allow it unprivileged user namespaces: `sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` as root. |
 | `PANDO_BUILDKIT_REGISTRY_HOST` / `_CA` | — | For Pando's own BuildKit: a registry as `host:port`, and a file in Pando's container holding the CA that signed its certificate, so builds can push to it. Set together; `docker-compose.registry.yml` sets both. |
 | `PANDO_BUILDKIT_NETWORKS` | — | Docker networks Pando's own BuildKit joins besides its own, separated by commas, so it reaches a registry on one of them. Never Pando's own network, where its database is. |
 | `PANDO_SERVER_ADDR` | `:8080` | Address the console and API listen on. |

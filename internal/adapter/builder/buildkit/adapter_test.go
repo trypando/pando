@@ -330,3 +330,25 @@ type viewWithoutRoot struct{}
 func (viewWithoutRoot) Open(string) (io.ReadCloser, error) { return nil, os.ErrNotExist }
 func (viewWithoutRoot) Stat(string) (api.FileInfo, error)  { return api.FileInfo{}, os.ErrNotExist }
 func (viewWithoutRoot) Glob(string) ([]string, error)      { return nil, nil }
+
+// TestR105_PandosBuildKitNotAnsweringSaysWhereToLook asserts the health check
+// on Pando's own BuildKit names what most often stops it — a host that
+// confines unprivileged user namespaces, as Ubuntu 23.10 and later do — and
+// how to see BuildKit's own account (issue #130).
+func TestR105_PandosBuildKitNotAnsweringSaysWhereToLook(t *testing.T) {
+	fake := newFakeDocker("")
+	real := dockerClient
+	dockerClient = func() (dockerAPI, error) { return fake, nil }
+	t.Cleanup(func() { dockerClient = real })
+
+	a := New()
+	require.NoError(t, a.Configure(context.Background(), nil))
+	a.managed.port = "1" // nothing listens: the BuildKit the fake "started" never answers
+	a.cli = nil
+
+	err := a.HealthCheck(context.Background())
+	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err))
+	remedy := errs.As(err).Remedy
+	require.Contains(t, remedy, "docker logs pando-buildkit")
+	require.Contains(t, remedy, "kernel.apparmor_restrict_unprivileged_userns=0")
+}

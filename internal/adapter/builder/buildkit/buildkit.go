@@ -200,7 +200,11 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 	defer cancel()
 
 	if _, err := a.cli.ListWorkers(ctx); err != nil {
-		return errs.Wrap(errs.AdapterUnavailable, "The build service is not responding.", err)
+		e := errs.Wrap(errs.AdapterUnavailable, "The build service is not responding.", err)
+		if a.managed != nil {
+			e = e.WithRemedy(a.managed.notAnswering())
+		}
+		return e
 	}
 	return nil
 }
