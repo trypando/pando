@@ -97,7 +97,10 @@ bytes, or the operator's `POSTGRES_PASSWORD`, to `/run/pando-secrets/postgres-pa
 `PANDO_DATABASE_PASSWORD_FILE`, which `config.Load` writes into `PANDO_DATABASE_URL`. A file rather than
 an environment variable, because a variable is in `docker inspect` and every child process. The
 service leaves an existing file alone: Postgres was initialized with it, and a new one would lock
-Pando out. The service uses the Postgres image, so nothing extra is pulled.
+Pando out. The service uses the Postgres image, so nothing extra is pulled. A chosen
+`POSTGRES_PASSWORD` reaches it as a Compose config file, not an environment variable, because a
+container's environment is in `docker inspect` for as long as the stopped container exists; the
+script removes its copy once read (CodeRabbit on #176).
 
 **[O]** Whether a non-Docker install topology (Incus, Podman, bare host) ships an equivalent, or is
 simply expected to use the external-database path, is unspecified. The external path covers it

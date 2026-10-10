@@ -136,6 +136,12 @@ services:
   # To choose the password yourself, set POSTGRES_PASSWORD before the first
   # start; it is written to the file instead.
   #
+  # A chosen password reaches this service as a file (the postgres-password
+  # config below), not an environment variable: a container's environment is
+  # in `docker inspect` for as long as the container exists, and this one stays
+  # after it exits. The script removes its copy once read, so the stopped
+  # container holds none either. Unset, the file is empty and one is generated.
+  #
   # The Postgres image, so there is nothing more to pull, with its own
   # entrypoint set aside: it runs this script and exits.
   secrets:
@@ -145,22 +151,28 @@ services:
       - |
         set -eu
         f=/run/pando-secrets/postgres-password
+        in=/run/pando-input/postgres-password
+        chosen=
+        # Unset, Compose mounts a directory here rather than an empty file.
+        if [ -f "$$in" ]; then chosen=$$(cat "$$in"); fi
+        rm -rf "$$in" 2>/dev/null || true
         if [ ! -s "$$f" ]; then
           umask 077
-          if [ -n "$${POSTGRES_PASSWORD:-}" ]; then
-            printf '%s' "$$POSTGRES_PASSWORD" > "$$f.new"
+          if [ -n "$$chosen" ]; then
+            printf '%s' "$$chosen" > "$$f.new"
           else
             head -c 32 /dev/urandom | base64 | tr -d '\n=+/' > "$$f.new"
           fi
           mv "$$f.new" "$$f"
           echo "made the database password"
-        elif [ -n "$${POSTGRES_PASSWORD:-}" ] && [ "$$(cat "$$f")" != "$$POSTGRES_PASSWORD" ]; then
+        elif [ -n "$$chosen" ] && [ "$$(cat "$$f")" != "$$chosen" ]; then
           echo "POSTGRES_PASSWORD is ignored: the database was made with the password already in $$f" >&2
         fi
         chown 65532:65532 "$$f"
         chmod 0400 "$$f"
-    environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    configs:
+      - source: postgres-password
+        target: /run/pando-input/postgres-password
     volumes:
       - pando-secrets:/run/pando-secrets
     restart: "no"
@@ -183,6 +195,13 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+
+configs:
+  # The password an operator chose, if any, for the secrets service above.
+  # `docker compose config` shows it, as it shows everything from .env, which
+  # is where it came from.
+  postgres-password:
+    content: ${POSTGRES_PASSWORD:-}
 
 volumes:
   pando-data:

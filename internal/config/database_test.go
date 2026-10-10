@@ -57,7 +57,14 @@ func TestR401_TheBundledInstallHasNoDefaultDatabasePassword(t *testing.T) {
 			DependsOn   map[string]struct {
 				Condition string `yaml:"condition"`
 			} `yaml:"depends_on"`
+			Configs []struct {
+				Source string `yaml:"source"`
+				Target string `yaml:"target"`
+			} `yaml:"configs"`
 		} `yaml:"services"`
+		Configs map[string]struct {
+			Content string `yaml:"content"`
+		} `yaml:"configs"`
 	}
 	require.NoError(t, yaml.Unmarshal(raw, &compose))
 
@@ -68,6 +75,15 @@ func TestR401_TheBundledInstallHasNoDefaultDatabasePassword(t *testing.T) {
 	require.Equal(t, file, pando.Environment["PANDO_DATABASE_PASSWORD_FILE"])
 	require.NotContains(t, pando.Environment["PANDO_DATABASE_URL"], ":${", "the URL carries no password")
 	require.NotContains(t, pando.Environment["PANDO_DATABASE_URL"], "pando:pando@")
+
+	// A chosen password reaches the secrets service as a file, never its
+	// environment, which docker inspect shows for as long as the stopped
+	// container exists (CodeRabbit on #176).
+	secrets := compose.Services["secrets"]
+	require.NotContains(t, secrets.Environment, "POSTGRES_PASSWORD")
+	require.Len(t, secrets.Configs, 1)
+	require.Equal(t, "/run/pando-input/postgres-password", secrets.Configs[0].Target)
+	require.Equal(t, "${POSTGRES_PASSWORD:-}", compose.Configs[secrets.Configs[0].Source].Content)
 
 	// Both wait for the password to exist before they start.
 	for _, name := range []string{"postgres", "pando"} {
