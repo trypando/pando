@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -66,7 +67,8 @@ func (f *fakeDocker) ContainerCreate(_ context.Context, o client.ContainerCreate
 	}
 	f.created = append(f.created, o)
 	f.containers[o.Name] = &container.InspectResponse{ID: "c-" + o.Name, Name: o.Name, Config: o.Config,
-		HostConfig: o.HostConfig, State: &container.State{}}
+		HostConfig: o.HostConfig, State: &container.State{Status: container.StateCreated},
+		Created: time.Now().UTC().Format(time.RFC3339Nano)}
 	return client.ContainerCreateResult{ID: "c-" + o.Name}, nil
 }
 
@@ -79,7 +81,7 @@ func (f *fakeDocker) ContainerStart(_ context.Context, id string, _ client.Conta
 	f.started++
 	for _, c := range f.containers {
 		if c.ID == id {
-			c.State.Running = true
+			c.State.Running, c.State.Status = true, container.StateRunning
 		}
 	}
 	return client.ContainerStartResult{}, nil
@@ -229,6 +231,7 @@ func TestTheManagedBuildKitIsStartedReplacedOrSharedAsItIsFound(t *testing.T) {
 	require.NoError(t, err)
 
 	f.containers[managedName].State.Running = false
+	f.containers[managedName].State.Status = container.StateExited
 	_, err = m.ensure(ctx)
 	require.NoError(t, err)
 	require.True(t, f.containers[managedName].State.Running, "a stopped one is started")

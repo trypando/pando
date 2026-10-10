@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -230,10 +231,24 @@ func (m *managed) ensure(ctx context.Context) (string, error) {
 	got, err := m.cli.ContainerInspect(ctx, m.name, client.ContainerInspectOptions{})
 	switch {
 	case err == nil && got.Container.Config != nil && got.Container.Config.Labels[labelManagedBuild] == want:
-		if got.Container.State != nil && got.Container.State.Running {
+		state := got.Container.State
+		switch {
+		case state != nil && state.Running:
 			return addr, nil
+		case state != nil && state.Status == container.StateCreated && !abandoned(got.Container.Created):
+			// Never started: the replica that made it is still giving it its
+			// files and networks, and starts it when it has (CodeRabbit on #173).
+			return addr, nil
+		case state != nil && state.Status == container.StateCreated:
+			// Never started, long past any setup: whoever made it stopped
+			// partway. Made again, rather than started without what it lacks.
+			if _, err := m.cli.ContainerRemove(ctx, got.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+				return "", errs.Wrap(errs.AdapterFailed, "Could not replace a build service that was never finished.", err)
+			}
+		default:
+			// Started before, so set up in full, and stopped since.
+			return addr, m.start(ctx, got.Container.ID)
 		}
-		return addr, m.start(ctx, got.Container.ID)
 	case err == nil:
 		// Made by a Pando with another image or profile: replaced, so this
 		// one builds with what it was built against.
@@ -368,6 +383,18 @@ func tarOf(files map[string][]byte) (*bytes.Buffer, error) {
 		}
 	}
 	return &buf, tw.Close()
+}
+
+// setupGrace is how long a never-started container is taken to be another
+// replica's, mid-setup. Setup is a file copy and a network join: seconds.
+const setupGrace = 2 * time.Minute
+
+// abandoned is whether a container created at created, never started, is
+// past any setup still running. An unreadable time is taken as abandoned, so a
+// container can never be waited on for ever.
+func abandoned(created string) bool {
+	at, err := time.Parse(time.RFC3339Nano, created)
+	return err != nil || time.Since(at) > setupGrace
 }
 
 func (m *managed) start(ctx context.Context, id string) error {

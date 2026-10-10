@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -136,12 +137,43 @@ func TestTwoReplicasStartingTogetherShareOneBuildKit(t *testing.T) {
 		"the winner may still be giving it its files: the replica that made it starts it")
 	require.Zero(t, f.started)
 
-	// Its next check, after the winner's setup, finds it and uses it.
+	// Its next check, while the winner is still setting it up: never started,
+	// so not started here either (CodeRabbit on #173).
 	m.cli = f
 	_, err = m.ensure(context.Background())
 	require.NoError(t, err)
+	require.Zero(t, f.started, "a never-started container is its maker's to start")
 	require.Len(t, f.created, 1, "the winner's, not a second")
+
+	// The winner finishes and starts it; the loser's next check uses it.
+	_, err = f.ContainerStart(context.Background(), f.containers[managedName].ID, client.ContainerStartOptions{})
+	require.NoError(t, err)
+	_, err = m.ensure(context.Background())
+	require.NoError(t, err)
+	require.Len(t, f.created, 1)
+	require.Equal(t, 1, f.started)
+}
+
+// TestABuildKitNobodyFinishedSettingUpIsMadeAgain asserts a container that
+// was created and never started, long past any setup — its maker stopped
+// partway — is replaced rather than waited on for ever or started without
+// what it lacks.
+func TestABuildKitNobodyFinishedSettingUpIsMadeAgain(t *testing.T) {
+	f := newFakeDocker("pando-1")
+	m := newManaged(f)
+	m.self = "pando-1"
+	f.containers[managedName] = &container.InspectResponse{ID: "half-made",
+		Config:  &container.Config{Labels: map[string]string{labelManagedBuild: m.digest()}},
+		State:   &container.State{Status: container.StateCreated},
+		Created: time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339Nano)}
+
+	_, err := m.ensure(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, f.removed, "the half-made one is gone")
+	require.Len(t, f.created, 1, "and made again")
 	require.True(t, f.containers[managedName].State.Running)
+
+	require.True(t, abandoned("not a time"), "an unreadable time is never waited on")
 }
 
 // TestTheRegistrySettingsGoTogether asserts half a registry, or a CA Pando
