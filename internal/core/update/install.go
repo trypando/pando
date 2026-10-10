@@ -58,9 +58,13 @@ func (i Install) Upgrade(version string) Upgrade {
 		return Upgrade{
 			Version: version,
 			Image:   image,
-			Command: "curl -fsSLO " + download + version + "/docker-compose.yml && docker compose up -d",
+			// buildkit-seccomp.json goes with the compose file, which names it
+			// (issue #130): without it Compose does not start BuildKit.
+			Command: "curl -fsSL -O " + download + version + "/docker-compose.yml -O " + download + version +
+				"/buildkit-seccomp.json && docker compose up -d",
 			Instructions: "In the directory holding the docker-compose.yml Pando runs from, download Pando " + version +
-				"'s docker-compose.yml over it and run docker compose up -d. If you changed that file, set the pando " +
+				"'s docker-compose.yml and buildkit-seccomp.json over the ones there and run docker compose up -d. " +
+				"If you changed docker-compose.yml, download only buildkit-seccomp.json and set the pando " +
 				"service's image to " + image + " instead. If infrastructure-as-code deploys Pando, change the image " +
 				"there, or the next apply puts the old version back. Take a backup first: an older version does not " +
 				"start against a database a newer one migrated, so going back means restoring one.",

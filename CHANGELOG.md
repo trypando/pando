@@ -27,6 +27,13 @@ Unreleased above it. -->
   R-049) left it open. It now authenticates the connection's session or token again each time, and
   closes it with a policy-violation close frame when that no longer works.
 
+- **BuildKit no longer runs with seccomp unconfined** (#130). It runs under `buildkit-seccomp.json`,
+  Docker's default profile plus only the calls rootless BuildKit needs: creating namespaces, mounting
+  inside them, and each build step's keyring and hostname. Builds can no longer load BPF programs,
+  read performance counters, load kernel modules, set the clock or reboot. AppArmor stays unconfined,
+  and the compose file says why. BuildKit is v0.33.1 (from v0.17.2), and BuildKit and Postgres are
+  pinned by digest, which Dependabot now keeps current.
+
 ### Added
 
 - The audit log can be streamed to a SIEM and exported (#129, design 12). `GET /audit/stream`,
@@ -265,6 +272,11 @@ Unreleased above it. -->
   backup" only when one was taken.
 
 ### Upgrade notes
+
+- **Download `buildkit-seccomp.json` with the compose file.** The new compose file names it, and
+  Compose does not start BuildKit without it. An installation still on 0.3 shows a command that
+  downloads only the compose file; run this instead, with the new version:
+  `curl -fsSL -O https://github.com/trypando/pando/releases/download/vVERSION/docker-compose.yml -O https://github.com/trypando/pando/releases/download/vVERSION/buildkit-seccomp.json && docker compose up -d`.
 
 - Migration 000067 adds columns to `audit_events` without rewriting the rows already there; events
   written before it have no outcome, source or actor name, and the stream reads them first, in the

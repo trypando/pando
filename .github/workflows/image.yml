@@ -122,6 +122,8 @@ jobs:
         run: |
           set -euo pipefail
           scripts/release-compose.sh "$VERSION" pando-scan > "$RUNNER_TEMP/local-compose.yml"
+          # Compose reads BuildKit's seccomp profile from beside the file.
+          cp buildkit-seccomp.json "$RUNNER_TEMP/"
           python3 scripts/smoke-image.py "$RUNNER_TEMP/local-compose.yml" --version "$VERSION"
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -198,15 +200,20 @@ jobs:
           # script runs, which is how the v0.3.0 release lost its compose file.
           mkdir -p "$RUNNER_TEMP/release"
           scripts/release-compose.sh "$TAG" "$IMAGE" > "$RUNNER_TEMP/release/docker-compose.yml"
+          cp buildkit-seccomp.json "$RUNNER_TEMP/release/"
           python3 scripts/smoke-image.py "$RUNNER_TEMP/release/docker-compose.yml" --pull --version "$VERSION"
 
       # The compose file is attached only once the image it names has passed,
       # so the release's install instructions never lead to a failing image.
+      # BuildKit's seccomp profile goes with it: the compose file names it, and
+      # Compose refuses to start BuildKit without it (issue #130).
       - name: Attach the compose file to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.v.outputs.tag }}
-        run: gh release upload "$TAG" "$RUNNER_TEMP/release/docker-compose.yml" --clobber --repo "$GITHUB_REPOSITORY"
+        run: |
+          gh release upload "$TAG" "$RUNNER_TEMP/release/docker-compose.yml" \
+            "$RUNNER_TEMP/release/buildkit-seccomp.json" --clobber --repo "$GITHUB_REPOSITORY"
 
       # Now the moving tags: every tag metadata-action named except the exact
       # version, which is already there. They are pointed at the same digest,

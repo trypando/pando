@@ -122,8 +122,30 @@ updates:
         patterns: ['*']
 
   - package-ecosystem: docker
-    directory: /
+    directories:
+      - /
+      # BuildKit's manifest pins its image by digest, as the compose file does.
+      - /deploy/kubernetes
     registries:
       - dhi
     schedule:
       interval: weekly
+    ignore:
+      # A new Postgres major cannot read the old one's data directory: moving
+      # to it is a dump and restore, not a version bump (issue #130).
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+
+  # BuildKit and Postgres are pinned by digest in docker-compose.yml (issue
+  # #130). A digest nobody updates is a known vulnerability that stays, so
+  # Dependabot moves the tag and the digest together.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      compose-images:
+        patterns: ['*']
+    ignore:
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]

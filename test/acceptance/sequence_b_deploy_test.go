@@ -71,6 +71,30 @@ func TestR112_BuildContainerCannotReachDocker(t *testing.T) {
 		"no runtime socket may be reachable from inside the build container")
 }
 
+// TestR111_BuildKitRunsUnderTheShippedSeccompProfile asserts R-111's container
+// is confined by buildkit-seccomp.json rather than seccomp=unconfined (issue
+// #130). Read from the running container, like the socket check above: the
+// profile is a file beside the compose file, and an install missing it or
+// edited back to unconfined is what this is for.
+func TestR111_BuildKitRunsUnderTheShippedSeccompProfile(t *testing.T) {
+	requireStack(t)
+
+	var opts []string
+	require.NoError(t, json.Unmarshal([]byte(inspect(t, buildkitContainer(t), `{{json .HostConfig.SecurityOpt}}`)), &opts))
+
+	var profile string
+	for _, o := range opts {
+		if p, ok := strings.CutPrefix(o, "seccomp="); ok {
+			profile = p
+		}
+	}
+	require.NotEqual(t, "unconfined", profile, "BuildKit must not run with seccomp unconfined")
+	require.Contains(t, profile, `"defaultAction":"SCMP_ACT_ERRNO"`,
+		"BuildKit's seccomp profile must refuse what it does not list; got security options %v", opts)
+	require.Contains(t, profile, "Rootless BuildKit",
+		"BuildKit must run under buildkit-seccomp.json, whose rule names rootless BuildKit")
+}
+
 // TestSequenceB_DeployAPrebuiltImage walks the pipeline end to end.
 //
 // Uses a prebuilt image so the assertions are about the pipeline — route,

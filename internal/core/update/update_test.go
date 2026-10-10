@@ -179,6 +179,8 @@ func TestR352_AnAvailableUpdateSaysHowToUpgradeThisInstall(t *testing.T) {
 	require.NotNil(t, st.Upgrade)
 	require.Equal(t, "trypando/pando:0.4.1", st.Upgrade.Image)
 	require.Contains(t, st.Upgrade.Command, "/releases/download/v0.4.1/docker-compose.yml")
+	require.Contains(t, st.Upgrade.Command, "/releases/download/v0.4.1/buildkit-seccomp.json",
+		"the compose file names BuildKit's seccomp profile, so an upgrade fetches both")
 	require.Contains(t, st.Upgrade.Command, "docker compose up -d")
 	require.Contains(t, st.Upgrade.Instructions, "infrastructure-as-code")
 

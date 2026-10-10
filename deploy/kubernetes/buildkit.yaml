@@ -7,6 +7,14 @@
 # enforces privileged instead, and holds nothing else. Nothing is privileged
 # and no container runtime socket is mounted, here or anywhere (R-112).
 #
+# The Compose install narrows seccomp with buildkit-seccomp.json instead of
+# Unconfined: the default profile plus only what rootless BuildKit needs
+# (issue #130). Kubernetes reads a custom profile from each node's disk, which
+# a manifest cannot put there. To use it, copy buildkit-seccomp.json to
+# /var/lib/kubelet/seccomp/pando/ on every node that can run this pod, and
+# change seccompProfile below to type Localhost with localhostProfile
+# pando/buildkit-seccomp.json.
+#
 # Its NetworkPolicy (networkpolicy.yaml) admits only Pando's server pods, and
 # lets builds reach DNS, an in-cluster registry and anywhere outside the
 # cluster — nothing else inside it (R-113).
@@ -39,7 +47,7 @@ spec:
           type: Unconfined
       containers:
         - name: buildkitd
-          image: moby/buildkit:v0.17.2-rootless
+          image: moby/buildkit:v0.33.1-rootless@sha256:f8a833b2de9d68e27f0815e4a737abdfaf8a2e4c615650557df11025101557b4
           args: [--addr, tcp://0.0.0.0:1234, --oci-worker-no-process-sandbox]
           ports:
             - containerPort: 1234

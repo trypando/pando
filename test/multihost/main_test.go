@@ -212,7 +212,7 @@ func setup() error {
 	// BuildKit reaches the registry over plain HTTP, as the hosts do.
 	if _, err := docker("create", "--label", "mh-test=1", "--network", netName, "--name", cBuildKit, "--ip", ipBuildKit,
 		"--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
-		"moby/buildkit:v0.17.2-rootless", "--addr", "tcp://0.0.0.0:1234", "--oci-worker-no-process-sandbox"); err != nil {
+		"moby/buildkit:v0.33.1-rootless@sha256:f8a833b2de9d68e27f0815e4a737abdfaf8a2e4c615650557df11025101557b4", "--addr", "tcp://0.0.0.0:1234", "--oci-worker-no-process-sandbox"); err != nil {
 		return err
 	}
 	if _, err := docker("cp", filepath.Join(dir, "buildkit")+"/.", cBuildKit+":/home/user"); err != nil {

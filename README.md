@@ -101,15 +101,17 @@ Requires Docker and Docker Compose. Nothing else — no Go, no Node, no Postgres
 
 ```bash
 mkdir pando && cd pando
-curl -fsSLO https://github.com/trypando/pando/releases/latest/download/docker-compose.yml
+curl -fsSL -O https://github.com/trypando/pando/releases/latest/download/docker-compose.yml \
+  -O https://github.com/trypando/pando/releases/latest/download/buildkit-seccomp.json
 docker compose up -d
 ```
 
 That starts the published image, [`trypando/pando`](https://hub.docker.com/r/trypando/pando), with
-the Postgres and BuildKit it needs beside it. Open **http://localhost:8080**.
+the Postgres and BuildKit it needs beside it. Open **http://localhost:8080**. `buildkit-seccomp.json`
+is the seccomp profile BuildKit runs builds under; the compose file names it, so keep the two together.
 
 The compose file pins the image to its release. To upgrade, download the newer release's
-`docker-compose.yml` over it and run `docker compose up -d` again; your apps and data are kept in
+`docker-compose.yml` and `buildkit-seccomp.json` over them and run `docker compose up -d` again; your apps and data are kept in
 named volumes. Pando checks for new releases itself and shows them, with their changelogs and the
 command to run, on the console's **Updates** screen and in `pando updates`. It can also upgrade itself
 in place, verifying the release's signature and putting the previous version back if the new one does
@@ -139,14 +141,15 @@ macOS, and Linux with Homebrew 4.5 or newer:
 brew install trypando/tap/pando
 ```
 
-Debian and Ubuntu: take a version from the
-[releases page](https://github.com/trypando/pando/releases) and download the `.deb` for your
-architecture.
+Debian and Ubuntu: download the `.deb` for your architecture from the
+[releases page](https://github.com/trypando/pando/releases). This takes the latest:
 
 ```bash
-VERSION=0.2.0   # the release you want
-curl -LO https://github.com/trypando/pando/releases/download/v${VERSION}/pando_${VERSION}_linux_amd64.deb
-sudo apt install ./pando_${VERSION}_linux_amd64.deb
+# The latest release; set VERSION yourself for another one.
+VERSION=$(curl -fsSL https://api.github.com/repos/trypando/pando/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+ARCH=$(dpkg --print-architecture)   # amd64 or arm64
+curl -fsSLO https://github.com/trypando/pando/releases/download/v${VERSION}/pando_${VERSION}_linux_${ARCH}.deb
+sudo apt install ./pando_${VERSION}_linux_${ARCH}.deb
 ```
 
 The same page has `.rpm` and `.apk` packages, and plain tarballs for macOS and Linux on both
