@@ -294,11 +294,20 @@ func (m *managed) ensure(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", errs.Wrap(errs.AdapterFailed, "Could not create Pando's build service.", err)
 	}
+	// Labeled at create with everything it is made from, files and networks
+	// included, so one left without them would be found later and started as
+	// though it had them: every push would fail and nothing would replace it.
+	// Removed instead, and made again by the next ensure.
+	discard := func() {
+		_, _ = m.cli.ContainerRemove(context.WithoutCancel(ctx), created.ID, client.ContainerRemoveOptions{Force: true})
+	}
 	if err := m.copyFiles(ctx, created.ID); err != nil {
+		discard()
 		return "", err
 	}
 	for _, n := range m.networks {
 		if _, err := m.cli.NetworkConnect(ctx, n, client.NetworkConnectOptions{Container: created.ID}); err != nil {
+			discard()
 			return "", errs.Wrap(errs.AdapterFailed, "Could not connect the build service to the network "+n+".", err).
 				WithRemedy("PANDO_BUILDKIT_NETWORKS names it; check that it exists with docker network ls.")
 		}

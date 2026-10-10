@@ -67,6 +67,41 @@ func TestPandosBuildKitSaysWhichStepFailed(t *testing.T) {
 	require.Contains(t, errs.As(err).Remedy, "PANDO_BUILDKIT_NETWORKS")
 }
 
+// TestAHalfMadeBuildKitIsNotKept asserts a container whose files or networks
+// could not be given to it after it was created is removed, and the next
+// ensure makes it again — not started later as though it had them, where every
+// push would fail and nothing would replace it (CodeRabbit on #173).
+func TestAHalfMadeBuildKitIsNotKept(t *testing.T) {
+	ctx := context.Background()
+
+	f := newFakeDocker("pando-1")
+	m := newManaged(f)
+	m.self = "pando-1"
+	m.files = registryFiles("registry:5000", []byte("ca"))
+	f.fail = map[string]error{"CopyToContainer": errDaemon}
+	_, err := m.ensure(ctx)
+	require.Error(t, err)
+	require.NotContains(t, f.containers, managedName, "the container without its files is gone")
+	f.fail = nil
+	_, err = m.ensure(ctx)
+	require.NoError(t, err)
+	require.Len(t, f.created, 2, "made again, files and all")
+	require.Len(t, f.copied, 1)
+
+	f = newFakeDocker("pando-1")
+	m = newManaged(&missingNetworkDocker{fakeDocker: f})
+	m.self = "pando-1"
+	m.networks = []string{"pando-registry"}
+	_, err = m.ensure(ctx)
+	require.Error(t, err)
+	require.NotContains(t, f.containers, managedName, "the container without its network is gone")
+	m.cli = f // the network exists now
+	_, err = m.ensure(ctx)
+	require.NoError(t, err)
+	require.Len(t, f.created, 2)
+	require.True(t, f.joined["c-pando-buildkit@pando-registry"])
+}
+
 // missingNetworkDocker refuses to connect BuildKit to any network but its own.
 type missingNetworkDocker struct{ *fakeDocker }
 
