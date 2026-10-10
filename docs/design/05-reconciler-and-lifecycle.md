@@ -552,6 +552,31 @@ What those jobs do:
 - Prune spec revisions past `SpecRevisions`, skipping any revision that was ever pinned.
 - Reap idle per-user instances **[LATER]** (R-293). Idle whole apps are the idle job's, below.
 
+### 6.0 Disk limits (R-403, issue #130)
+
+A leader job of its own (`disk`, `internal/core/disklimit`), every 10 minutes **[P]**, always on:
+every app has a disk limit (R-240), and before this it was only counted against capacity (R-242).
+A runtime can cap a container's own layer on some storage drivers and never a volume, so Pando
+measures instead.
+
+- **Measured** is the runtime's `Usage` (R-245): every workload's writable layer plus every volume. A
+  part the runtime cannot measure (-1) is left out, so the figure is a lower bound; nothing measurable
+  at all, or a runtime without `ReportsUsage`, and the app is left alone.
+- **At 90%** **[P]** the owner is told once (`app_disk`, `app.disk.warning` with `over: false`); below
+  80% the warning is withdrawn so a later climb is told again.
+- **Over** the limit, the owner is told it will be stopped at the next reading, and `disk_over_at`
+  records it (`app.disk.warning` with `over: true`). A reading back under clears it, so a moment over
+  is not a stop.
+- **Over again** at the next reading, the app is stopped: `desired_state = stopped` and
+  `stopped_for_disk` in one write, only for an app meant to be running and not `failed` (R-151), as
+  for idle stops below. Audited `app.disk.stopped`; the proxy tells a visitor why.
+- **Starting** the app clears `stopped_for_disk` and both marks in the same write (migration 71's
+  `app_activity_started`). If it is still over, it is warned and stopped again two readings later:
+  the way out is a larger `resources.disk_bytes` (R-241) or less data.
+
+**[P]** Two readings, not a grace period in hours: a disk fills in minutes, and the shared disk
+filling stops every app and Pando with it.
+
 ### 6.1 Idle apps (issue #131)
 
 A leader job of its own (`idle`, `internal/core/idle`), hourly, inert until host policy's

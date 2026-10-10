@@ -1419,6 +1419,10 @@ func serve(ctx context.Context, configPath string) error {
 		TeardownNow: askTeardown, Logger: logger,
 	}).Run)
 
+	// Apps over their disk limit: a warning, then a stop if the next reading
+	// is still over (R-403). Every app has a limit (R-240), so this is on.
+	job("disk", diskPass(db, registry, notifyRouter, auditor, logger).Run)
+
 	// Metrics about this process, pushed to the operator's collector (R-399).
 	// Stopped by a defer, so after the server has drained, and its last push
 	// carries those requests; and before the pool closes, which the pool

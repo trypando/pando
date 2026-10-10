@@ -519,11 +519,11 @@ function AppsList({
               header: 'Status',
               width: '16ch',
               filter: 'values',
-              filterValue: (row: App) => statusLabel(row.state, row.stopped_for_idle),
+              filterValue: (row: App) => statusLabel(row.state, row.stopped_for_idle, row.stopped_for_disk),
               render: (row: App) => (
                 <StatusIndicator
                   status={statusSymbol(row.state)}
-                  label={statusLabel(row.state, row.stopped_for_idle)}
+                  label={statusLabel(row.state, row.stopped_for_idle, row.stopped_for_disk)}
                 />
               ),
             },
@@ -788,7 +788,7 @@ function AppScreen({
                 <h3 style={{ font: 'var(--type-h3)', margin: 0 }}>{app.data.name}</h3>
                 <StatusIndicator
                   status={statusSymbol(app.data.state)}
-                  label={statusLabel(app.data.state, app.data.stopped_for_idle)}
+                  label={statusLabel(app.data.state, app.data.stopped_for_idle, app.data.stopped_for_disk)}
                 />
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-3)' }}>

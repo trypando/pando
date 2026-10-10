@@ -1245,6 +1245,9 @@ const (
 	// NotifyAppIdle: an app nobody uses is about to be stopped or deleted,
 	// or was (R-395). Sent to its owner.
 	NotifyAppIdle NotificationKind = "app_idle"
+	// NotifyAppDisk: an app is near or over its disk limit, or was stopped
+	// for staying over it (R-403). Sent to its owner.
+	NotifyAppDisk NotificationKind = "app_disk"
 )
 
 // NotifyAdapter delivers notifications.

@@ -113,3 +113,15 @@ func TestR396_AnAppStoppedForInactivitySaysSo(t *testing.T) {
 	require.NotContains(t, body, "Try again in a moment")
 	require.Zero(t, seen.count(), "a request to a stopped app does not start its clock again (R-396)")
 }
+
+// TestR403_AnAppStoppedForDiskSaysSo asserts a visitor to an app Pando
+// stopped for staying over its disk limit is told why and who can fix it.
+func TestR403_AnAppStoppedForDiskSaysSo(t *testing.T) {
+	stopped := state.App{ID: appID, Slug: "notes", State: state.StateStopped, StoppedForDisk: true}
+
+	status, body := get(t, idleProxy(t, stopped, activeUser("usr_alice"), &touches{}).URL+"/")
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Contains(t, body, "more disk space than it is allowed")
+	require.Contains(t, body, "start it again")
+	require.NotContains(t, body, "Try again in a moment")
+}

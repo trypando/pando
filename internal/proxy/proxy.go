@@ -190,6 +190,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"This app was stopped because nobody had used it for a while. Ask whoever manages it to start it again in Pando.")
 			return
 		}
+		if app.StoppedForDisk {
+			p.fail(w, r, http.StatusServiceUnavailable,
+				"This app was stopped because it used more disk space than it is allowed. Ask whoever manages it to make room and start it again in Pando.")
+			return
+		}
 		p.fail(w, r, http.StatusServiceUnavailable,
 			"This app isn't running right now. Try again in a moment.")
 		return

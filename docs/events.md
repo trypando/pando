@@ -106,6 +106,8 @@ it to produce JSON. `link` points into the console when Pando's `external_url` i
 | --- | --- | --- | --- |
 | `app.created` | app | An app was created. | `name` The app's name.<br>`slug` The app's slug. |
 | `app.deleted` | app | An app was deleted. Its volumes are kept (R-204). | `backup_id` The backup's ID, bkp_….<br>`volumes_discarded` Whether its volumes were discarded rather than kept.<br>`reason` idle when Pando deleted it because nobody used it (R-398). |
+| `app.disk_warning` | app | An app is near its disk limit, or over it and will be stopped if it still is at the next reading (R-403). | `used_bytes` What the app's containers and volumes hold.<br>`limit_bytes` Its disk limit.<br>`over` true when it is over the limit, false when it is near it. |
+| `app.disk_stopped` | app | Pando stopped an app that stayed over its disk limit. It stays stopped until somebody starts it (R-403). | `used_bytes` What the app's containers and volumes hold.<br>`limit_bytes` Its disk limit. |
 | `app.idle_notice` | app | Nobody has used an app for a while, and its owner was told Pando will stop or delete it (R-395). | `action` stop or delete.<br>`days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started.<br>`action_at` When Pando will act. |
 | `app.idle_stopped` | app | Pando stopped an app nobody had used. It stays stopped until somebody starts it (R-396). | `days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started. |
 | `app.state_changed` | app | An app moved from one state to another: running, degraded, failed, stopped, deploying and the rest. A health change is a move between running and degraded. | `from` The state it was in.<br>`to` The state it is in now. |

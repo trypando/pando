@@ -26,6 +26,8 @@ var Actions = []string{
 	"app.delete",
 	"app.delete.backup_failed",
 	"app.deploy",
+	"app.disk.stopped",
+	"app.disk.warning",
 	"app.drift_unreconcilable",
 	"app.exec",
 	"app.exec.end",
