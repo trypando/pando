@@ -432,8 +432,10 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	capacity.Details["rootless"] = slices.Contains(info.SecurityOptions, "name=rootless")
 	capacity.Details["cgroup_version"] = info.CgroupVersion
 	capacity.Details["cgroup_driver"] = info.CgroupDriver
-	if podman, err := a.podman(ctx); err == nil && !podman { // Podman's answer is not one (limits.go)
-		limits := dockerSupport(info)
+	if limits, err := a.support(ctx, info); err == nil {
+		capacity.Details["rootless"] = limits.rootless
+		capacity.Details["cgroup_version"] = limits.cgroupVersion
+		capacity.Details["cgroup_driver"] = limits.cgroupDriver
 		capacity.Details["cpu_limits"] = limits.cpu
 		capacity.Details["memory_limits"] = limits.memory
 	}

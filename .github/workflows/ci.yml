@@ -338,6 +338,40 @@ jobs:
           podman info --format '{{.Host.Security.Rootless}} {{.Host.CgroupsVersion}} {{.Host.CgroupControllers}}'
           podman info --format '{{.Host.Security.Rootless}}' | grep -qx true
 
+      - name: DIAG (temporary)
+        continue-on-error: true
+        run: |
+          set -x
+          S="$XDG_RUNTIME_DIR/podman/podman.sock"; [ -S "$S" ] || S="/run/user/$(id -u)/podman/podman.sock"
+          curl -s --unix-socket "$S" http://d/libpod/info | jq -c '.host | {cgroupManager,cgroupVersion,cgroupControllers,security}'
+          curl -s --unix-socket "$S" http://d/version | jq -c .
+          printf 'FROM alpine:3.20\n' | docker build -q -t diag-local:1 -
+          docker image ls --format '{{.Repository}}:{{.Tag}}' | grep diag
+          docker image inspect diag-local:1 --format '{{.RepoTags}}'
+          docker image inspect localhost/diag-local:1 --format '{{.RepoTags}}'
+          docker run --rm diag-local:1 true && echo RUN-SHORT-OK
+          docker run --rm localhost/diag-local:1 true && echo RUN-LOCALHOST-OK
+          docker tag alpine:3.20 diag-tagged:1; docker image ls --format '{{.Repository}}:{{.Tag}}' | grep diag
+          docker image inspect busybox:1.37 >/dev/null 2>&1 || docker pull -q busybox:1.37
+          docker image inspect busybox:1.37 --format '{{.RepoTags}}'
+          docker network create diag_zz_own
+          docker network create diag_app_plain
+          docker network create -o metric=1000 diag_app_metric
+          podman network inspect diag_app_metric | jq -c '.[0].options'
+          docker run -d --name diag1 --network diag_zz_own alpine:3.20 sleep 600
+          docker exec diag1 ip route
+          docker network connect --gw-priority -1 diag_app_plain diag1 || docker network connect diag_app_plain diag1
+          docker exec diag1 ip route
+          docker run -d --name diag2 --network diag_zz_own alpine:3.20 sleep 600
+          docker network connect diag_app_metric diag2
+          docker exec diag2 ip route
+          docker network create --internal diag_app_internal
+          docker run -d --name diag3 --network diag_zz_own alpine:3.20 sleep 600
+          docker network connect diag_app_internal diag3
+          docker exec diag3 ip route
+          netavark --version || /usr/lib/podman/netavark --version
+          docker rm -f diag1 diag2 diag3; docker network rm diag_zz_own diag_app_plain diag_app_metric diag_app_internal
+
       - run: go test -race -count=1 -timeout=15m -tags=integration ./internal/adapter/runtime/docker/
         env:
           PANDO_TEST_ROOTLESS: '1'
