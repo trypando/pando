@@ -88,6 +88,20 @@ for rootless BuildKit to start at all, which only root on the host can do; the h
 and CI's integration job sets it as an operator would. `PANDO_BUILDKIT_ADDRESS`
 still names a BuildKit somebody else runs — Kubernetes', multi-host's — and then Pando starts none.
 
+**[D] The database password is generated, not defaulted (R-401, issue #130).** The Compose file used to
+give Postgres `${POSTGRES_PASSWORD:-pando}`, so every install that did not set one had the same
+password, written in a public file. A one-shot `secrets` service now runs first: it writes 32 random
+bytes, or the operator's `POSTGRES_PASSWORD`, to `/run/pando-secrets/postgres-password` on the
+`pando-secrets` volume, owned by Pando's user (65532), mode 0400. Postgres reads it through
+`POSTGRES_PASSWORD_FILE`, as root before it drops privileges; Pando through
+`PANDO_DATABASE_PASSWORD_FILE`, which `config.Load` writes into `PANDO_DATABASE_URL`. A file rather than
+an environment variable, because a variable is in `docker inspect` and every child process. The
+service leaves an existing file alone: Postgres was initialized with it, and a new one would lock
+Pando out. The service uses the Postgres image, so nothing extra is pulled. A chosen
+`POSTGRES_PASSWORD` reaches it as a Compose config file, not an environment variable, because a
+container's environment is in `docker inspect` for as long as the stopped container exists; the
+script removes its copy once read (CodeRabbit on #176).
+
 **[O]** Whether a non-Docker install topology (Incus, Podman, bare host) ships an equivalent, or is
 simply expected to use the external-database path, is unspecified. The external path covers it
 functionally; only the first-run experience differs.

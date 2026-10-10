@@ -201,6 +201,7 @@ Set on the `pando` service in `docker-compose.yml`, or in the environment.
 | `PANDO_APP_PORT_START` / `_END` | `9000` / `9019` | Range of host ports apps are given. Sets both what Compose publishes and what Pando allocates. |
 | `PANDO_BASE_DOMAIN` | `localtest.me` | Domain per-app subdomains are taken from, when using hostname routing. |
 | `PANDO_DATABASE_URL` | the bundled Postgres | Point Pando at an existing database instead. |
+| `PANDO_DATABASE_PASSWORD_FILE` | the generated password | A file holding the password for `PANDO_DATABASE_URL`'s user, which the URL then leaves out. The bundled Postgres's password is generated on the first start and kept in the `pando-secrets` volume; back that up with `postgres-data`. |
 | `PANDO_DOCKER_SOCKET` | `/var/run/docker.sock` | The Docker socket Pando's container mounts. On Linux, set it to rootless Docker's, usually `/run/user/1000/docker.sock`; see [`docs/rootless.md`](docs/rootless.md). |
 | `PANDO_SERVER_EXTERNAL_URL` | — | The address browsers reach Pando on, such as `https://pando.example.com`. Set this whenever something else terminates TLS — it is what marks the session cookie `Secure`. |
 | `PANDO_SERVER_TRUSTED_PROXIES` | — | The proxies in front of Pando, such as `10.0.0.5`, separated by commas. Set it so the audit log records each client's own address rather than the proxy's. |

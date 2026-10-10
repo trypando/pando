@@ -42,6 +42,11 @@ Unreleased above it. -->
   `pando admin setup-token`, run where Pando runs, makes a new one if the log line is gone.
   `PANDO_ADMIN_PASSWORD` installs are unaffected.
 
+- **The bundled Postgres no longer defaults to the password `pando`** (#130, R-401). A one-shot
+  `secrets` service generates one on the first start and keeps it in the new `pando-secrets` volume;
+  Postgres and Pando read it from there as a file, through `POSTGRES_PASSWORD_FILE` and the new
+  `PANDO_DATABASE_PASSWORD_FILE`. `POSTGRES_PASSWORD` set before the first start is used instead.
+
 - **On Linux, run Pando on rootless Docker** (#130, R-402). Pando holds the Docker socket, so on
   rootful Docker a compromise of Pando is root on the host. [`docs/rootless.md`](docs/rootless.md)
   sets up rootless Docker for it, and the compose file mounts whichever socket
@@ -305,6 +310,14 @@ Unreleased above it. -->
 - An installation upgraded before anyone set it up prints its setup token on the first start of the
   new version. Scripts that call `POST /api/v1/setup` must now send `setup_token`; take it from
   `pando admin setup-token`, which prints the token alone on stdout.
+
+- **An installation made with the old compose file keeps its database password only if you say what
+  it is.** Its Postgres was created with `pando`, or with your `POSTGRES_PASSWORD`, and the new
+  compose file would otherwise generate a different one that the database does not accept. Before
+  the first `docker compose up -d` with the new file, put that password in a `.env` file beside it
+  (`POSTGRES_PASSWORD=pando` if you never set one); the `secrets` service writes it to the
+  password file, and later starts read it from there. Back up the `pando-secrets` volume with
+  `postgres-data` from then on.
 
 - If Docker on your host cannot apply CPU or memory limits, deploys are now refused until it can;
   the refusal says what to change. To check before upgrading, run `docker info` and look for
