@@ -283,6 +283,50 @@ jobs:
         env:
           PANDO_TEST_ROOTLESS: '1'
 
+  # The same suite against rootless Podman, through its Docker-compatible
+  # socket: the other rootless runtime docs/rootless.md installs Pando on
+  # (R-402). Design 03 says the Docker adapter drives Podman; this keeps that
+  # true.
+  podman:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Rootless Podman, with cgroup controllers delegated
+        run: |
+          set -euxo pipefail
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo apt-get update -q
+          sudo apt-get install -y -q podman uidmap dbus-user-session
+
+          sudo mkdir -p /etc/systemd/system/user@.service.d
+          printf '[Service]\nDelegate=cpu cpuset io memory pids\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf
+          sudo systemctl daemon-reload
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl restart "user@$(id -u).service"
+
+          # The runner's Docker daemon, out of the way; its CLI stays, and the
+          # tests drive Podman with it through DOCKER_HOST.
+          sudo systemctl disable --now docker.service docker.socket
+
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          systemctl --user enable --now podman.socket
+          podman --version
+          echo "DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock" >> "$GITHUB_ENV"
+
+      - name: Podman is rootless and applies limits
+        run: |
+          docker info --format '{{json .SecurityOptions}} cfs={{.CPUCfsQuota}} memory={{.MemoryLimit}} cgroup={{.CgroupVersion}}/{{.CgroupDriver}} {{.ServerVersion}}'
+
+      - run: go test -race -count=1 -timeout=15m -tags=integration ./internal/adapter/runtime/docker/
+        env:
+          PANDO_TEST_ROOTLESS: '1'
+
   # Codecov, from one job once both Go test jobs are done, rather than from
   # each as it finishes. codecov.yml waits for two uploads before it reports,
   # but uploaded from the jobs themselves the unit profile still drew a failing
