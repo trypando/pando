@@ -105,12 +105,13 @@ Content elements:
 - Spacing: 32px above each section, 48px above the revision history
 
 ## Publishing on trypando.ai
-1. Put the document at `public/<slug>/index.html` in the trypando.ai repository, with `support.js`, `doc-page.js` and `_ds/` beside it. Vite copies `public/` as is.
-2. Make every script and stylesheet path absolute (`/<slug>/support.js`, `/<slug>/_ds/…`). Cloudflare Pages serves the page at `/<slug>` without a trailing slash, where relative paths resolve to the site root.
-3. Add a `<title>`, a description, a canonical link and the site's favicons to `<head>`.
-4. Add `${SITE_URL}/<slug>` to the sitemap in `scripts/prerender.mjs`.
-5. Preview with `npm run build` and `npx vite preview`, at `/<slug>/` with the trailing slash. The preview server doesn't serve `/<slug>` as the page.
-6. Check, in a browser: no console errors or failed requests, each Copy button puts its lines on the clipboard, nothing scrolls sideways at 390px wide, and both themes read correctly.
+A document is shown at `/<slug>` between the site's nav and footer, in a frame, so its runtime and styles stay apart from the site's. `/quickstart` is the worked example: `src/pages/Quickstart.tsx` and `public/guides/quickstart/`.
+1. Put the document at `public/guides/<slug>/index.html` in the trypando.ai repository, with `support.js`, `doc-page.js` and `_ds/` beside it. Vite copies `public/` as is. Opened on its own, `/guides/<slug>` is the printable document.
+2. Make every script and stylesheet path absolute (`/guides/<slug>/support.js`, `/guides/<slug>/_ds/…`). Cloudflare Pages serves a page at `/<path>` without a trailing slash, where relative paths resolve to the site root.
+3. In `<head>`, add a `<title>`, a description, a canonical link to `https://trypando.ai/<slug>` and the site's favicons. Copy the quickstart's `<base target="_top">` and frame script: they report the document's height to the page, send section links to the page's address, open other links in the whole window, and follow the site's theme toggle.
+4. Add the site page: a component like `Quickstart.tsx` pointing at `/guides/<slug>`, an entry in `PAGES` and `pageFor` (`src/site.ts`), in `VIEWS` (`src/App.tsx`) and in `routes` (`src/entry-server.tsx`), which also puts it in the sitemap.
+5. Preview with `npm run build`, then a server that serves `/<path>` from `<path>/index.html` as Cloudflare Pages does. `npx vite preview` doesn't, so a link to `/<slug>` lands on the 404 page there.
+6. Check, in a browser: no console errors or failed requests; the frame is as tall as the document, with one scrollbar; a contents link scrolls the page and sets its address; each Copy button puts its lines on the clipboard; the site's theme toggle changes the document; nothing scrolls sideways at 390px wide.
 
 ## Export
 Use the browser's print, or the PDF export. Pages break automatically. Figures, tables, code and example blocks are kept from splitting across pages. Printing always uses the light theme.
