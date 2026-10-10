@@ -27,6 +27,11 @@ Unreleased above it. -->
   R-049) left it open. It now authenticates the connection's session or token again each time, and
   closes it with a policy-violation close frame when that no longer works.
 
+- **The bundled Postgres no longer defaults to the password `pando`** (#130, R-401). A one-shot
+  `secrets` service generates one on the first start and keeps it in the new `pando-secrets` volume;
+  Postgres and Pando read it from there as a file, through `POSTGRES_PASSWORD_FILE` and the new
+  `PANDO_DATABASE_PASSWORD_FILE`. `POSTGRES_PASSWORD` set before the first start is used instead.
+
 ### Added
 
 - The audit log can be streamed to a SIEM and exported (#129, design 12). `GET /audit/stream`,
@@ -265,6 +270,14 @@ Unreleased above it. -->
   backup" only when one was taken.
 
 ### Upgrade notes
+
+- **An installation made with the old compose file keeps its database password only if you say what
+  it is.** Its Postgres was created with `pando`, or with your `POSTGRES_PASSWORD`, and the new
+  compose file would otherwise generate a different one that the database does not accept. Before
+  the first `docker compose up -d` with the new file, put that password in a `.env` file beside it
+  (`POSTGRES_PASSWORD=pando` if you never set one); the `secrets` service writes it to the
+  password file, and later starts read it from there. Back up the `pando-secrets` volume with
+  `postgres-data` from then on.
 
 - Migration 000067 adds columns to `audit_events` without rewriting the rows already there; events
   written before it have no outcome, source or actor name, and the stream reads them first, in the

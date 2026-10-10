@@ -9,10 +9,10 @@ specify it, the phase that builds it, and the tests that prove it. Test coverage
 
 | | Count | Of total |
 |---|---:|---:|
-| Requirements | 307 | — |
-| Specified in a design doc | 273 | 88% |
+| Requirements | 308 | — |
+| Specified in a design doc | 274 | 88% |
 | Assigned to a phase | 137 | 44% |
-| Covered by a named test | 243 | 79% |
+| Covered by a named test | 244 | 79% |
 
 A requirement with no design reference is not necessarily a gap — it may be philosophy (R-002),
 a non-goal (R-010–R-016), or deferred (R-290+). A requirement with no *test* is either
@@ -53,6 +53,7 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-044** | D | Identity adapters perform authentication only. | 5.1 Adapter model | 03 | 01 | `TestR044_AuthenticateReturnsASubjectWithNoPermissions` |
 | **R-045** | P | Multiple identity adapters may be configured simultaneously. | 5.1 Adapter model | 02 | — | `TestR045_AProviderSomeoneSignedInThroughIsKept`, `TestR045_NoAccountWithoutJITOrALink` |
 | **R-046** | P | A new installation has no account until it is set up: the first person to reach the console… | 5.2 Bootstrap | 04 | 08 | `TestR046_AFreshInstallWaitsToBeSetUp`, `TestR046_ASuppliedPasswordStillMustBeChanged`, `TestR046_AdministratorsHandOverGeneratedPasswords`, `TestR046_AnOperatorCanSupplyTheFirstPassword`, `TestR046_FirstRunCreatesOneAdminAndIsIdempotent`, `TestR046_GeneratedPasswordsAreLongAndMixed`, `TestR046_OnlyOneClaimWins`, `TestR046_ReplicasStartingTogetherMakeOneAdministrator`, `TestR046_TheAdminPasswordComesFromTheEnvironment`, `TestR046_TheFirstRunAccountSignsInAndIsToldToChangeItsPassword`, `TestR046_TheFirstVisitorSetsUpTheAdministrator`, `TestR046_TheGeneratedPasswordCanActuallyBeChanged`, `TestR046_UserCreateAndResetUseAGeneratedPassword` |
+| **R-401** | D | The bundled install has no default credential. | 5.2 Bootstrap | 00 | — | `TestR401_TheBundledInstallHasNoDefaultDatabasePassword`, `TestR401_TheDatabasePasswordIsReadFromAFile` |
 | **R-047** | D | Each identity adapter declares its own session policy and revocation mechanism, documented in… | 5.3 Sessions and revocation | 02, 03 | 01 | `TestR047_AdapterDeclaresItsOwnSessionPolicy`, `TestR047_JITFollowsHostPolicyAndPasswordSignInCanBeTurnedOff`, `TestR047_TheCLIListsEachProvidersRevocationWindow`, `TestR047_TheSessionPolicyIsDeclaredAndConfigurable` |
 | **R-048** | D | SCIM support is the enterprise revocation and provisioning path. | 5.3 Sessions and revocation | 02, 03, 04, 06 | 01 | `TestR048_ACachedSessionLivesNoLongerThanItself`, `TestR048_ADeployLogStreamEndsWhenTheViewersSessionIsRevoked`, `TestR048_ALogStreamEndsWhenTheViewersSessionIsRevoked`, `TestR048_AQueuedDeploysLogEndsWhenTheViewersAccessDoes`, `TestR048_ASCIMTokenIsOnlyASCIMToken`, `TestR048_EveryRevocationReachesTheProxyCache`, `TestR048_OktaProvisionsSuspendsAndGroupsPeople`, `TestR048_ResettingAPasswordFromTheHostEndsItsSessions`, `TestR048_RevokedAccessEndsALogStream`, `TestR048_RevokingASessionClosesItsOpenWebsocket`, `TestR048_SCIMRefusesWhatItCannotApplyAndReplacesWhole`, `TestR048_SuspensionEndsEverySessionImmediately`, `TestR048_TheCLIManagesSCIMTokensAndLinks`, `TestR048_TheProxyCacheIsEmptiedByEveryChange` |
 | **R-049** | D | Suspended is not deleted. | 5.3 Sessions and revocation | 02, 04, 06, 07 | 01 | `TestR049_EntraCannotLiftAnAdministratorsSuspension`, `TestR049_SuspendedAdministratorHoldsNothing`, `TestR049_SuspendedIsNotDeletedButBothDeny`, `TestR049_SuspendingAUserClosesTheirOpenWebsocket`, `TestR049_SuspendingAnAccountStopsItSigningInWithoutDeletingIt` |

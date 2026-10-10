@@ -133,6 +133,8 @@ exactly this.
 
 **R-046 [P]** A new installation has no account until it is set up: the first person to reach the console chooses the administrator's username and password there, and nothing is printed to a log. The setup endpoint is public and is refused once any account exists; whoever reaches it first becomes the administrator, which the install documentation says plainly. An operator may instead supply the first password at startup (`PANDO_ADMIN_PASSWORD`), which must be changed on first login. Passwords an administrator sets for someone else — creating an account or resetting one — are generated (18–22 characters, upper and lower case, digits and symbols), handed over out of band, and by default must be changed at the next sign-in. The account is administrative because it holds an install-scoped **Administrator** grant (R-080, R-081) — there is no admin flag on a user — so the power is revocable and grantable like any other.
 
+**R-401 [D]** **The bundled install has no default credential.** The database password is generated on first start, or chosen by the operator before it, and reaches Postgres and Pando as a file rather than as a value in the Compose file, where it would be the same on every install and visible in `docker inspect`. *(Added by issue #130.)*
+
 ### 5.3 Sessions and revocation
 
 **R-047 [D]** Each identity adapter declares its own session policy and revocation mechanism, documented in that adapter's spec. There is no single global answer. The console and `GET /identity-providers` show each provider's session lifetime, revocation mode, and the window that results.

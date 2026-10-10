@@ -343,6 +343,13 @@ type Database struct {
 	URL            string        `mapstructure:"url"`
 	ConnectTimeout time.Duration `mapstructure:"connect_timeout"`
 
+	// PasswordFile names a file holding the password for URL's user, which
+	// URL then leaves out (issue #130). The bundled Compose file generates
+	// one on first start rather than defaulting to a known password, and
+	// hands it to Postgres and Pando as a file, so it is in neither the
+	// Compose file nor `docker inspect`. Load writes it into URL.
+	PasswordFile string `mapstructure:"password_file"`
+
 	// MaxConns caps this replica's pool of connections as the application
 	// role. pgx's own default is the CPU count, at least four, which a
 	// reconciler holding a connection per app it is converging, plus the
@@ -427,6 +434,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("metrics.otlp_protocol", OTLPHTTP)
 	v.SetDefault("metrics.otlp_headers", "")
 	v.SetDefault("metrics.interval", DefaultMetricsInterval)
+	v.SetDefault("database.password_file", "")
 
 	// Every key in boundEnv is bound explicitly — see there for why that is not
 	// belt-and-braces.
@@ -446,6 +454,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing configuration: %w", err)
 	}
 	cfg.File = path
+	if err := cfg.Database.withPasswordFile(); err != nil {
+		return nil, err
+	}
 	cfg.Settings = settingsOf(v, path)
 	cfg.Policy = policyOf(v, path)
 	adapters, err := adaptersOf(v, path)
@@ -470,6 +481,7 @@ func Load(path string) (*Config, error) {
 // Also where sources.go learns which variable a key came from.
 var boundEnv = map[string]string{
 	"database.url":           "PANDO_DATABASE_URL",
+	"database.password_file": "PANDO_DATABASE_PASSWORD_FILE",
 	"database.max_conns":     "PANDO_DATABASE_MAX_CONNS",
 	"server.base_domain":     "PANDO_SERVER_BASE_DOMAIN",
 	"server.proxy_upstream":  "PANDO_SERVER_PROXY_UPSTREAM",
