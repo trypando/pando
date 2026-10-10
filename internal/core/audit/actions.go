@@ -126,6 +126,7 @@ var Actions = []string{
 	"session.create",
 	"session.denied",
 	"session.revoke",
+	"setup.token.replace",
 	"source.connection.authorize",
 	"source.connection.authorized",
 	"source.connection.delete",

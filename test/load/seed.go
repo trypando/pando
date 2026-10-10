@@ -33,6 +33,8 @@ type SeedOptions struct {
 	BaseDomain    string
 	AdminUser     string
 	AdminPassword string
+	// SetupToken claims a fresh install (R-046); unused once it is set up.
+	SetupToken    string
 	UserPassword  string
 	TokenSecret   string
 	RealPortStart int
@@ -54,7 +56,7 @@ func Seed(ctx context.Context, o SeedOptions) error {
 	}
 	// The install must exist before anything is written into it: setup makes
 	// the local identity adapter and the first administrator.
-	if err := c.ClaimSetup(ctx, o.AdminUser, o.AdminPassword); err != nil {
+	if err := c.ClaimSetup(ctx, o.SetupToken, o.AdminUser, o.AdminPassword); err != nil {
 		return fmt.Errorf("claiming setup: %w", err)
 	}
 

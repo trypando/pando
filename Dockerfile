@@ -37,7 +37,7 @@
 # source change recompiles what changed rather than every dependency. CI keeps
 # the Go build cache between runs too (the image job in ci.yml). The paths are
 # set rather than left to each image's defaults because CI names them.
-FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:89778e746908997996f8e1de415d9834154eac97a43298ea54bdb74f78116430 AS console
+FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:9a9160e3c89a37572e35271c65a2b38a2d1671c8ab0d6abee19ce3d6cecb9be9 AS console
 # GOTOOLCHAIN=auto because go.mod requires Go 1.27.2, the security release for
 # GO-2026-6599 – GO-2026-6617, and the hardened image is still 1.27.1. The go
 # command fetches 1.27.2 from the module proxy, checked against the checksum
@@ -59,7 +59,7 @@ COPY . .
 RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-build \
     cd console && npm run build
 
-FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:89778e746908997996f8e1de415d9834154eac97a43298ea54bdb74f78116430 AS build
+FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:9a9160e3c89a37572e35271c65a2b38a2d1671c8ab0d6abee19ce3d6cecb9be9 AS build
 ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build GOTOOLCHAIN=auto
 ARG TARGETOS
 ARG TARGETARCH
@@ -102,7 +102,7 @@ RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-
 # builds, and pinned so the same repository produces the same plan a year from
 # now. It only ever *generates* — `nixpacks build --out` writes a Dockerfile and
 # does not build, so no container runtime socket is involved anywhere (R-112).
-FROM --platform=$BUILDPLATFORM dhi.io/alpine-base:3.24-dev@sha256:eb950d88a309a402e2a731ba80bf9067378580becb611aa699ffb87594cd320b AS nixpacks
+FROM --platform=$BUILDPLATFORM dhi.io/alpine-base:3.24-dev@sha256:08d37dc414e07a688b0c3b9405e0b33688507e41a74bc24118a7f0817b772e27 AS nixpacks
 ARG NIXPACKS_VERSION=1.41.0
 ARG TARGETARCH
 RUN apk add --no-cache curl tar \
@@ -133,7 +133,7 @@ RUN apk add --no-cache curl tar \
 # lists what the image actually holds: a scanner reads it to know what is
 # installed, and an entry for a package manager that is not there is a finding
 # about nothing.
-FROM dhi.io/alpine-base:3.24-dev@sha256:eb950d88a309a402e2a731ba80bf9067378580becb611aa699ffb87594cd320b AS packages
+FROM dhi.io/alpine-base:3.24-dev@sha256:08d37dc414e07a688b0c3b9405e0b33688507e41a74bc24118a7f0817b772e27 AS packages
 RUN apk add --no-cache postgresql17-client su-exec tzdata \
     && apk del --no-cache apk-tools \
     && mkdir /staging \

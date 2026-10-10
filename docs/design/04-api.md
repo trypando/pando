@@ -506,16 +506,26 @@ changing your own password is not administration, and changing somebody else's i
 different action with different consequences, `POST /users/{id}/password`, which did not arrive by
 relaxing this route.
 
-**[D] A new installation is set up in the console, not from a log line (R-046).** Without
-`PANDO_ADMIN_PASSWORD`, first run creates no account and prints nothing. `GET /setup` says whether
-the installation is waiting; `POST /setup` creates the first account with the username and password
-the person chose, grants it Administrator, and signs it in. Both are public, because nobody can sign
-in yet, and `POST /setup` is refused once any account exists — a transaction under an advisory lock,
-so two people submitting at once cannot both win. The account is not flagged must-change: its holder
-chose the password. The exposure is the window before setup, when whoever reaches the console first
-becomes the administrator; the README says to set up before exposing Pando, and startup logs a warning
-until it is done. A generated password printed to the log had its own exposure — anyone who could
-read logs — and was lost when a container was recreated before anyone read it.
+**[D] A new installation is set up in the console, with a token from the log (R-046).** Without
+`PANDO_ADMIN_PASSWORD`, first run creates no account; it makes a one-time setup token and logs it as
+`setup_token` on the warning that the installation is not set up yet. `GET /setup` says whether the
+installation is waiting; `POST /setup` takes the token with the username and password the person
+chose, creates the first account, grants it Administrator, and signs it in. Both are public, because
+nobody can sign in yet, and `POST /setup` is refused once any account exists — a transaction under an
+advisory lock, so two people submitting at once cannot both win. The account is not flagged
+must-change: its holder chose the password.
+
+The token closes the window before setup (issue #130), when whoever reached the console first became
+the administrator. Reading Pando's log is the proof that the person setting it up is the one who runs
+it. It is not a password and it is fine in a log: it works once, only while there is no account, and
+only on this endpoint, so the line holding it stops mattering the moment it is used. Only its SHA-256
+digest is stored (`setup_token`, one row at most) — 256 random bits, like the passcode unlock token, so
+a slow hash buys nothing. Replicas starting together make one token under the same advisory lock, and
+the replica that made it prints it; the others log when it was made. It cannot be read back, so
+`pando admin setup-token`, run on the host, replaces it for an operator whose container was recreated
+before they read the log. A generated *password* printed to the log, which Pando did before this
+section existed, was worse on both counts: it stayed valid after use, and anyone who could read logs
+could sign in with it.
 
 **[P] The first password can still be supplied, as `PANDO_ADMIN_PASSWORD`**, for an unattended
 install. It must be changed at first sign-in, because an environment variable is not a safe place for

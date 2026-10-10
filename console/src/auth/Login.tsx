@@ -4,12 +4,12 @@
 // rendered a link to `/login`. This is that screen.
 //
 // A new installation has no account, and nothing to sign in with. It used to
-// generate an administrator password and print it to the server log, which
-// meant the first person in had to be the person with the log. Now the first
-// person to reach this page creates the administrator account (R-046's single
-// administrative local user) with a password they chose — and the server
-// refuses a second attempt the moment one account exists, so there is exactly
-// one first person.
+// generate an administrator password and print it to the server log; then the
+// first person to reach this page created the administrator account. Now that
+// person also needs the one-time setup token Pando prints to its log (R-046,
+// issue #130), so the administrator is somebody who can read Pando's log, with
+// a password they chose — and the server refuses a second attempt the moment
+// one account exists, so there is exactly one administrator made this way.
 //
 // An external identity provider begins with a redirect, so each one the
 // installation has turned on is a button here rather than a second page —
@@ -302,11 +302,16 @@ export function Passcode({ appID, signedIn }: { appID: string; signedIn: boolean
 /**
  * A new installation's first account.
  *
+ * It needs the setup token Pando printed to its log (R-046, issue #130), so
+ * that being first to this page is not enough to become the administrator.
+ *
  * `onTaken` is asked whenever the server refuses, and answers whether the
  * refusal was somebody else finishing setup first. A refusal is otherwise
- * about this form — a short password, an unusable username — and stays on it.
+ * about this form — a wrong token, a short password, an unusable username —
+ * and stays on it.
  */
 function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) {
+  const [token, setToken] = useState('');
   const [username, setUsername] = useState('admin');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
@@ -317,7 +322,7 @@ function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) 
 
   const create = useMutation({
     mutationFn: () =>
-      api.post<unknown>('/setup', { username, display_name: displayName, password }),
+      api.post<unknown>('/setup', { setup_token: token, username, display_name: displayName, password }),
     // The server set the session cookie; everything downstream reads GET /me,
     // exactly as after signing in.
     onSuccess: () => void queries.invalidateQueries(),
@@ -329,10 +334,15 @@ function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) 
     set(value);
   };
 
+  // A refused token is shown on the token field, with where to find it; every
+  // other refusal on the password field, as before.
+  const tokenRefused =
+    create.isError && create.error instanceof RequestFailed && create.error.code === 'AUTH_INVALID';
+
   return (
     <Frame
       heading="Set up Pando"
-      lede="This installation has no accounts yet. The first person here creates the administrator account."
+      lede="This installation has no accounts yet. Create the administrator account with the setup token Pando printed to its log."
     >
       <form
         onSubmit={(e) => {
@@ -342,10 +352,19 @@ function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) 
         style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
       >
         <Input
+          label="Setup token"
+          value={token}
+          autoComplete="off"
+          spellCheck={false}
+          autoFocus
+          helper="Pando printed it to its log when it started, as setup_token. With Docker Compose, run docker compose logs pando."
+          error={tokenRefused ? withRemedy(create.error) : undefined}
+          onChange={(e) => edit(setToken)(e.target.value.trim())}
+        />
+        <Input
           label="Username"
           value={username}
           autoComplete="username"
-          autoFocus
           onChange={(e) => edit(setUsername)(e.target.value)}
         />
         <Input
@@ -363,7 +382,7 @@ function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) 
           helper="At least 10 characters."
           // The server's refusal, on the field it is most often about (see
           // ChangePassword). A username it cannot use says so in its own words.
-          error={!mismatch && create.isError ? messageOf(create.error) : undefined}
+          error={!mismatch && create.isError && !tokenRefused ? messageOf(create.error) : undefined}
           onChange={(e) => edit(setPassword)(e.target.value)}
         />
         <Input
@@ -378,7 +397,7 @@ function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) 
           type="submit"
           variant="primary"
           fullWidth
-          disabled={create.isPending || username === '' || password === '' || password !== confirm}
+          disabled={create.isPending || token === '' || username === '' || password === '' || password !== confirm}
         >
           {create.isPending ? 'Setting up' : 'Create account'}
         </Button>

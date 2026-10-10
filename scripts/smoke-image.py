@@ -121,8 +121,16 @@ def run(args):
         raise SystemExit(f"FAIL: the console did not load: {code} {body[:300]}")
     step("console served")
 
+    # The setup token, the way an operator who lost the log line gets one
+    # (R-046, issue #130). It goes to stdout alone; the logger writes stderr.
+    token = compose(args, "exec", "-T", "pando", "pando", "admin", "setup-token", capture=True).stdout.strip()
+    if not token:
+        raise SystemExit("FAIL: pando admin setup-token printed no token")
+    code, out = api("POST", "/setup", {"setup_token": "not-the-token", "username": "smoke", "password": "x" * 20})
+    if code != 401:
+        raise SystemExit(f"FAIL: first-run setup without the setup token answered {code}, not 401: {out}")
     password = secrets.token_urlsafe(18)
-    code, out = api("POST", "/setup", {"username": "smoke", "display_name": "Smoke test", "password": password})
+    code, out = api("POST", "/setup", {"setup_token": token, "username": "smoke", "display_name": "Smoke test", "password": password})
     if code >= 300:
         raise SystemExit(f"FAIL: first-run setup answered {code}: {out}")
     step("first administrator set up")
