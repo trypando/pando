@@ -6,7 +6,7 @@
 
 **Deploy and share apps**
 
-[trypando.ai](https://trypando.ai)
+[trypando.ai](https://trypando.ai) · [Quickstart](https://trypando.ai/quickstart)
 
 [![CI](https://github.com/trypando/pando/actions/workflows/ci.yml/badge.svg)](https://github.com/trypando/pando/actions/workflows/ci.yml)
 [![Docker Hub](https://img.shields.io/docker/v/trypando/pando?sort=semver&label=docker%20hub&color=1D63ED)](https://hub.docker.com/r/trypando/pando)
@@ -91,114 +91,6 @@ gating.
 - **One way in.** All traffic reaches applications through Pando's proxy, which authenticates the
   caller and makes the authorization decision. There is no bypass for public apps or for websockets.
 
-## Install
-
-Two pieces, and most people need only the first.
-
-### The server
-
-Requires Docker and Docker Compose. Nothing else — no Go, no Node, no Postgres of your own.
-
-```bash
-mkdir pando && cd pando
-curl -fsSL -O https://github.com/trypando/pando/releases/latest/download/docker-compose.yml \
-  -O https://github.com/trypando/pando/releases/latest/download/buildkit-seccomp.json
-docker compose up -d
-```
-
-That starts the published image, [`trypando/pando`](https://hub.docker.com/r/trypando/pando), with
-the Postgres and BuildKit it needs beside it. Open **http://localhost:8080**. `buildkit-seccomp.json`
-is the seccomp profile BuildKit runs builds under; the compose file names it, so keep the two together.
-
-The compose file pins the image to its release. To upgrade, download the newer release's
-`docker-compose.yml` and `buildkit-seccomp.json` over them and run `docker compose up -d` again; your apps and data are kept in
-named volumes. Pando checks for new releases itself and shows them, with their changelogs and the
-command to run, on the console's **Updates** screen and in `pando updates`. It can also upgrade itself
-in place, verifying the release's signature and putting the previous version back if the new one does
-not start; that is off until you set the image to a moving tag such as `trypando/pando:latest` and
-`PANDO_POLICY_UPGRADE_IN_PLACE: "true"` in the compose file, as
-[`docs/releasing.md`](docs/releasing.md#in-place-from-the-console-or-pando-upgrade) describes. An installation without
-internet access turns the check off with `PANDO_POLICY_DISABLE_UPDATE_CHECK=true`. Take a backup
-before upgrading: an older Pando does not start against a database a newer one migrated, so going
-back means restoring it. Postgres is only reachable from the other containers, and its password defaults to
-`pando`; to choose your own, put `POSTGRES_PASSWORD=...` in a `.env` file beside the compose file
-before the first start.
-
-The image is built on [Docker Hardened Images](https://docs.docker.com/dhi/), for `linux/amd64` and
-`linux/arm64`, and signed; checking the signature is in
-[`docs/releasing.md`](docs/releasing.md#verifying-the-image). Its server runs as a non-root user. To
-build it from source instead, clone the repository, sign in with `docker login dhi.io`, and run
-`docker compose up -d --build`, as described in [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-### The CLI
-
-Optional. It is the same binary as the server and talks to an installation over its API, so it goes
-on your own machine rather than on the host, and everything it does can also be done in the console.
-
-macOS, and Linux with Homebrew 4.5 or newer:
-
-```bash
-brew install trypando/tap/pando
-```
-
-Debian and Ubuntu: download the `.deb` for your architecture from the
-[releases page](https://github.com/trypando/pando/releases). This takes the latest:
-
-```bash
-# The latest release; set VERSION yourself for another one.
-VERSION=$(curl -fsSL https://api.github.com/repos/trypando/pando/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
-ARCH=$(dpkg --print-architecture)   # amd64 or arm64
-curl -fsSLO https://github.com/trypando/pando/releases/download/v${VERSION}/pando_${VERSION}_linux_${ARCH}.deb
-sudo apt install ./pando_${VERSION}_linux_${ARCH}.deb
-```
-
-The same page has `.rpm` and `.apk` packages, and plain tarballs for macOS and Linux on both
-architectures. Every command and flag: [`docs/cli.md`](docs/cli.md). To build it from source
-instead:
-
-```bash
-go install github.com/trypando/pando/cmd/pando@latest
-```
-
-Or skip installing it and use the copy already inside the container, via
-`docker compose exec pando pando …`.
-
-### First sign-in
-
-A new installation has no accounts. Open the console and Pando asks you to set up the
-administrator: choose a username and password there, and you are signed in.
-
-Whoever reaches the console first sets up the administrator, so do this before anyone else can
-reach Pando. To create the account at startup instead, for an unattended install, supply its
-password; you are asked to change it when you first sign in:
-
-```bash
-# Read only on first run, when there is no account yet.
-PANDO_ADMIN_PASSWORD=... docker compose up -d
-```
-
-If the administrator's password is lost, reset it from the host. This ends every session for that
-account:
-
-```bash
-docker compose exec pando pando admin reset-password
-```
-
-`pando admin` talks to the database rather than the API, so it works when nobody can sign in —
-including when password sign-in is turned off and no identity provider works:
-`pando admin enable-password-sign-in` turns it back on.
-
-### Deploying your first app
-
-In the console, choose **Add app** and paste a repository URL. Pando clones it and shows you a
-proposal: which build method it chose, which port it thinks the app listens on, which services it
-appears to need, and what it is unsure about. Review it and accept. Anything it could not determine
-becomes a question rather than a guess.
-
-Apps are reachable on their own port, starting at `http://localhost:9000`, and the address is shown
-on the app's page. Twenty ports are published by default; `PANDO_APP_PORT_START` and
-`PANDO_APP_PORT_END` change the range.
-
 ## Console
 
 `http://localhost:8080`. Two views, depending on your permissions: a page of app tiles for people who
@@ -210,7 +102,7 @@ subscriptions, and a terminal into any running container.
 
 ## CLI
 
-[Installed separately](#the-cli), or used from inside the container with
+[Installed separately](https://trypando.ai/quickstart#cli), or used from inside the container with
 `docker compose exec pando pando …`.
 
 ```bash
