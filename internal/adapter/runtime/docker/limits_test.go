@@ -34,6 +34,14 @@ func TestR240_DockerClaimsLimitsOnlyWhereItAppliesThem(t *testing.T) {
 			remedy: []string{"cannot apply memory limits", "docker info"},
 		},
 		{
+			// Rootless on cgroup v1: the flags say yes, the driver manages
+			// nothing, and Docker ignores the limits.
+			name: "rootless without a cgroup driver",
+			info: map[string]any{"SecurityOptions": []string{"name=rootless"}, "CgroupVersion": "1", "CgroupDriver": "none",
+				"CpuCfsQuota": true, "CpuCfsPeriod": true, "MemoryLimit": true},
+			remedy: []string{"Cgroup Driver: none", "cgroup v2", "systemd.unified_cgroup_hierarchy=1"},
+		},
+		{
 			name:     "both applied",
 			info:     map[string]any{"SecurityOptions": []string{"name=rootless"}, "CpuCfsQuota": true, "CpuCfsPeriod": true, "MemoryLimit": true},
 			enforced: true,

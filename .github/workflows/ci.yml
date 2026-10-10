@@ -250,8 +250,10 @@ jobs:
         run: |
           set -euxo pipefail
           # Ubuntu 24.04 confines unprivileged user namespaces with AppArmor,
-          # which rootlesskit needs.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          # and this job leaves that on: Ubuntu's rootlesskit profile is what
+          # lets rootless Docker run, as docs/rootless.md says. Only Pando's
+          # BuildKit container, not run here, needs the restriction lifted.
+          sysctl kernel.apparmor_restrict_unprivileged_userns
           sudo apt-get update -q
           sudo apt-get install -y -q uidmap dbus-user-session
           # The runner's Docker is not from Docker's apt repository, which is

@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/client"
 
 	"github.com/trypando/pando/internal/errs"
@@ -53,16 +54,25 @@ func (a *Adapter) limits(ctx context.Context) (limitSupport, error) {
 		// #179.
 		return limitSupport{rootless: slices.Contains(info.SecurityOptions, "name=rootless")}, nil
 	}
+	return dockerSupport(info), nil
+}
+
+// dockerSupport reads Docker's (not Podman's) answer from its info.
+func dockerSupport(info system.Info) limitSupport {
+	// Driver "none" is rootless Docker without cgroup v2: it manages no
+	// cgroups, so it ignores every resource flag whatever the flags say
+	// (CodeRabbit on #177).
+	managed := info.CgroupDriver != "none"
 	return limitSupport{
 		known: true,
 		// NanoCPUs is a CFS quota over a period; either missing and it is
 		// dropped.
-		cpu:           info.CPUCfsQuota && info.CPUCfsPeriod,
-		memory:        info.MemoryLimit,
+		cpu:           managed && info.CPUCfsQuota && info.CPUCfsPeriod,
+		memory:        managed && info.MemoryLimit,
 		rootless:      slices.Contains(info.SecurityOptions, "name=rootless"),
 		cgroupVersion: info.CgroupVersion,
 		cgroupDriver:  info.CgroupDriver,
-	}, nil
+	}
 }
 
 // podman reports whether the engine is Podman. Not knowing is an error: taken
@@ -97,6 +107,12 @@ func (l limitSupport) missing() string {
 func (l limitSupport) remedy() string {
 	if l.enforced() {
 		return ""
+	}
+	if l.cgroupDriver == "none" {
+		return "Docker is running without a cgroup driver (docker info reports \"Cgroup Driver: none\"), which rootless Docker does on a host " +
+			"using cgroup v1, so it would start apps without their CPU and memory limits. Rootless Docker applies limits only with cgroup v2: " +
+			"boot the host with systemd.unified_cgroup_hierarchy=1 on the kernel command line, or use a distribution that defaults to cgroup v2, " +
+			"then restart Docker with systemctl --user restart docker."
 	}
 	if l.rootless {
 		return "Docker is running rootless without the " + strings.ToLower(l.missing()) + " cgroup controller delegated to it, " +

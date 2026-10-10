@@ -17,7 +17,9 @@ for it, then continue from the `Delegate` step.
 # The account Docker and Pando will run as: an ordinary user, not in the docker group.
 sudo useradd --create-home --shell /bin/bash pando
 
-# Ubuntu 24.04 and later confine the unprivileged user namespaces rootless Docker needs.
+# Ubuntu 24.04 and later confine unprivileged user namespaces. Rootless Docker does not need this
+# line: Ubuntu's apparmor package allows them for /usr/bin/rootlesskit. Pando's build container
+# does: it runs rootless BuildKit, whose rootlesskit that profile does not cover.
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-rootless-docker.conf
 

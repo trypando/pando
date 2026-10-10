@@ -433,8 +433,9 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	capacity.Details["cgroup_version"] = info.CgroupVersion
 	capacity.Details["cgroup_driver"] = info.CgroupDriver
 	if podman, err := a.podman(ctx); err == nil && !podman { // Podman's answer is not one (limits.go)
-		capacity.Details["cpu_limits"] = info.CPUCfsQuota && info.CPUCfsPeriod
-		capacity.Details["memory_limits"] = info.MemoryLimit
+		limits := dockerSupport(info)
+		capacity.Details["cpu_limits"] = limits.cpu
+		capacity.Details["memory_limits"] = limits.memory
 	}
 
 	// What is left of the totals by the containers' own limits (hosts.go).
