@@ -39,7 +39,7 @@ one verb says nothing about another (R-082).
 | `GET /api/v1/auth/failures/{flowID}` |  | Why a provider sign-in failed (`message`, `remedy`), for the sign-in page. Public. |
 | `DELETE /api/v1/sessions` |  | Sign out, ending this session. |
 | `GET /api/v1/setup` |  | Whether this installation is waiting for its first administrator (`needed`). Public. |
-| `POST /api/v1/setup` |  | Set up a new installation: the first account (`username`, `display_name`, `password`), made an administrator, and signed in. Public, and refused once any account exists (R-046). |
+| `POST /api/v1/setup` |  | Set up a new installation: the first account (`username`, `display_name`, `password`), made an administrator, and signed in. Public, but needs the one-time `setup_token` Pando printed to its log at startup (`pando admin setup-token` makes a new one), and refused once any account exists (R-046). |
 | `GET /api/v1/me` |  | Who the caller is, and the install-level verbs they hold. |
 | `POST /api/v1/me/password` |  | Change your own password. Yours only, whatever verbs you hold. |
 | `GET /api/v1/me/apps` |  | The apps you can open, which is a different list from the apps you can administer (R-070, R-071). `favorite` marks the ones you have pinned, `section_id` the section you filed each under, and `sections` lists your sections. `can_manage` marks the ones you can also administer — those GET /apps lists for you. Favorites first, then apps filed in a section, then the rest, each by name, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, empty after the last page) and `q` to match the name or slug. |

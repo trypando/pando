@@ -14,6 +14,7 @@ import (
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/id"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // LocalAdapterID is the identity adapter seeded on a fresh install (R-041).
@@ -188,14 +189,9 @@ func usersMatch(where []string, args []any, q string) ([]string, []any) {
 	return append(where, fmt.Sprintf(`%s ILIKE '%%' || $%d || '%%'`, searchUsers, len(args))), args
 }
 
-func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error) {
-	var after string
-	if _, err := decodeCursor(page.Cursor, &after); err != nil {
-		return nil, "", 0, err
-	}
-
-	// The accounts list's filter: live, not an alias, matching the search,
-	// and among the IDs asked for.
+// usersFilter is the accounts list's filter: live, not an alias, matching the
+// search, and among the IDs asked for.
+func usersFilter(page Page) (string, []any) {
 	where := []string{`deleted_at IS NULL`, `alias_of IS NULL`}
 	var args []any
 	where, args = usersMatch(where, args, page.Query)
@@ -203,7 +199,16 @@ func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error
 		args = append(args, page.IDs)
 		where = append(where, fmt.Sprintf(`id = ANY($%d::text[])`, len(args)))
 	}
-	from := ` FROM users WHERE ` + strings.Join(where, " AND ")
+	return ` FROM users WHERE ` + strings.Join(where, " AND "), args
+}
+
+func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error) {
+	var after string
+	if _, err := decodeCursor(page.Cursor, &after); err != nil {
+		return nil, "", 0, err
+	}
+
+	from, args := usersFilter(page)
 
 	// A negative limit is the unpaginated read, and LIMIT NULL is no limit.
 	// One more row than the page is read to learn whether there is a next.
@@ -547,7 +552,10 @@ var ErrAlreadySetUp = errs.New(errs.ValidInvalid, "This installation is already 
 // One transaction, serialized by an advisory lock, so two people submitting the
 // setup form at the same moment cannot both become the first administrator:
 // the second waits, then finds an account and is refused.
-func (u *Users) ClaimFirst(ctx context.Context, username, displayName, passwordHash, roleID string) (User, string, error) {
+//
+// The claimant must present the setup token Pando printed to its log (issue
+// #130), checked and used up inside the same transaction.
+func (u *Users) ClaimFirst(ctx context.Context, setupToken secret.Value, username, displayName, passwordHash, roleID string) (User, string, error) {
 	tx, err := u.db.Begin(ctx)
 	if err != nil {
 		return User{}, "", errs.Wrap(errs.Internal, "Could not set up the installation.", err)
@@ -564,6 +572,9 @@ func (u *Users) ClaimFirst(ctx context.Context, username, displayName, passwordH
 	}
 	if count > 0 {
 		return User{}, "", ErrAlreadySetUp
+	}
+	if err := useSetupToken(ctx, tx, setupToken); err != nil {
+		return User{}, "", err
 	}
 
 	user := User{

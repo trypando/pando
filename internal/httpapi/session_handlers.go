@@ -132,9 +132,11 @@ func (s *Server) handleGetSetup(w http.ResponseWriter, r *http.Request) {
 // administrator, with the username and password its holder chose, and signs
 // them in (R-046). Public, because nobody can sign in yet — and refused the
 // moment any account exists, so it is a door that exists only until it is
-// used once.
+// used once. It opens only for the setup token Pando printed to its log
+// (issue #130), so being first to the URL is not enough.
 func (s *Server) handlePostSetup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		SetupToken  string `json:"setup_token"`
 		Username    string `json:"username"`
 		DisplayName string `json:"display_name"`
 		Password    string `json:"password"`
@@ -143,7 +145,7 @@ func (s *Server) handlePostSetup(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
 		return
 	}
-	user, err := bootstrap.Claim(r.Context(), s.Users, s.Auditor, strings.TrimSpace(req.Username),
+	user, err := bootstrap.Claim(r.Context(), s.Users, s.Auditor, secret.New(strings.TrimSpace(req.SetupToken)), strings.TrimSpace(req.Username),
 		strings.TrimSpace(req.DisplayName), secret.New(req.Password))
 	if err != nil {
 		Error(w, r, err)

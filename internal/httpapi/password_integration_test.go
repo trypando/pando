@@ -12,10 +12,11 @@ import (
 	"github.com/trypando/pando/internal/httpapi"
 )
 
-// TestR046_TheFirstVisitorSetsUpTheAdministrator asserts first-run setup over
-// the API: public while there is no account, signs the new administrator in,
-// and refused from then on.
-func TestR046_TheFirstVisitorSetsUpTheAdministrator(t *testing.T) {
+// TestR046_TheSetupTokenHolderSetsUpTheAdministrator asserts first-run setup
+// over the API: public while there is no account but only with the setup
+// token Pando printed (issue #130), signs the new administrator in, and
+// refused from then on.
+func TestR046_TheSetupTokenHolderSetsUpTheAdministrator(t *testing.T) {
 	t.Parallel()
 	i := newInstall(t)
 	// Set up already, by the harness; nothing to claim.
@@ -24,15 +25,27 @@ func TestR046_TheFirstVisitorSetsUpTheAdministrator(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, refused.Code, refused.String())
 	require.Contains(t, refused.String(), "already set up")
 
-	// With no account at all, it is open.
+	// With no account at all, it is open to whoever has the setup token.
 	require.NoError(t, i.Users.Delete(context.Background(), i.AdminID))
+	require.JSONEq(t, `{"needed":true}`, i.do(nil, http.MethodGet, "/setup", nil).String())
+	token, err := i.Users.ReplaceSetupToken(context.Background())
+	require.NoError(t, err)
+
+	for _, wrong := range []string{"", "not-the-token"} {
+		first := i.do(nil, http.MethodPost, "/setup", map[string]string{
+			"setup_token": wrong, "username": "mallory", "password": "a-long-enough-password",
+		})
+		require.Equal(t, http.StatusUnauthorized, first.Code, first.String())
+		require.Contains(t, first.String(), "AUTH_INVALID")
+		require.Contains(t, first.String(), "setup token")
+	}
 	require.JSONEq(t, `{"needed":true}`, i.do(nil, http.MethodGet, "/setup", nil).String())
 
 	short := i.do(nil, http.MethodPost, "/setup", map[string]string{"username": "ada", "password": "short"})
 	require.Equal(t, http.StatusBadRequest, short.Code, short.String())
 
 	got := i.do(nil, http.MethodPost, "/setup", map[string]string{
-		"username": "ada", "display_name": "Ada", "password": "a-password-ada-chose",
+		"setup_token": token, "username": "ada", "display_name": "Ada", "password": "a-password-ada-chose",
 	})
 	require.Equal(t, http.StatusCreated, got.Code, got.String())
 	s := &session{}
@@ -49,7 +62,7 @@ func TestR046_TheFirstVisitorSetsUpTheAdministrator(t *testing.T) {
 	i.do(s, http.MethodGet, "/me", nil).JSON(t, &me)
 	require.Contains(t, me.Verbs, "install.users.manage")
 
-	again := i.do(nil, http.MethodPost, "/setup", map[string]string{"username": "eve", "password": "a-long-enough-password"})
+	again := i.do(nil, http.MethodPost, "/setup", map[string]string{"setup_token": token, "username": "eve", "password": "a-long-enough-password"})
 	require.Equal(t, http.StatusBadRequest, again.Code, again.String())
 }
 

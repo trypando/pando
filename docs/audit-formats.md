@@ -181,6 +181,7 @@ is encoded as 6003 API Activity, 99 Other.
 | `session.create` | 3002 Authentication | 1 Logon | 300201 |
 | `session.denied` | 3002 Authentication | 1 Logon | 300201 |
 | `session.revoke` | 3002 Authentication | 2 Logoff | 300202 |
+| `setup.token.replace` | 6003 API Activity | 1 Create | 600301 |
 | `source.connection.authorize` | 6003 API Activity | 1 Create | 600301 |
 | `source.connection.authorized` | 6003 API Activity | 1 Create | 600301 |
 | `source.connection.delete` | 6003 API Activity | 4 Delete | 600304 |

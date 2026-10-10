@@ -1,14 +1,16 @@
 // Package bootstrap creates the first administrative account on a fresh install.
 //
 // R-046: a fresh installation has no account until somebody claims it. The
-// first person to reach the console sets the administrator's username and
-// password there (POST /setup, Claim), and nothing is printed to a log. An
-// operator who wants the account made unattended supplies PANDO_ADMIN_PASSWORD,
-// and Run makes it at startup instead.
+// person who sets the administrator's username and password up in the console
+// (POST /setup, Claim) must present the one-time setup token Pando printed to
+// its log at startup (issue #130); no password is ever printed. An operator who
+// wants the account made unattended supplies PANDO_ADMIN_PASSWORD, and Run
+// makes it at startup instead.
 package bootstrap
 
 import (
 	"context"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -30,9 +32,15 @@ type Result struct {
 	Created bool
 	User    state.User
 
-	// Unclaimed says the installation has no account and is waiting for the
-	// first person to set one up in the console.
+	// Unclaimed says the installation has no account and is waiting for
+	// somebody to set one up in the console, with the setup token.
 	Unclaimed bool
+
+	// SetupToken is the token Run just made, for the caller to print. Zero
+	// when the installation already had one, which cannot be read back:
+	// SetupTokenMade then says when it was made, so the log can point at it.
+	SetupToken     secret.Value
+	SetupTokenMade time.Time
 }
 
 // Run seeds the local identity adapter and, if no account exists and the
@@ -43,11 +51,11 @@ type Result struct {
 // the seeded admin after creating a real one does not make it reappear on the
 // next restart.
 //
-// Without a supplied password it creates nothing and reports Unclaimed: the
-// first person to open the console sets the administrator up there (R-046).
-// Nothing is generated and nothing is printed, so there is no credential in a
-// log line to be read by whoever can read logs, and none lost when a container
-// is recreated before anybody looked.
+// Without a supplied password it creates no account and reports Unclaimed: the
+// administrator is set up in the console, by whoever has the setup token (R-046).
+// Run makes that token the first time and returns it to be printed. It is not a
+// password: it works once, only while there is no account, and only on the
+// setup form, so the log line holding it stops mattering the moment it is used.
 //
 // A supplied password still must be changed at first sign-in, because an
 // environment variable is not a safe place for one — it is in the Compose
@@ -76,10 +84,16 @@ func run(ctx context.Context, users *state.Users, grants *state.Grants, db *stat
 		return Result{}, errs.Wrap(errs.Internal, "Could not check for existing accounts.", err)
 	}
 	if count > 0 {
-		return Result{}, nil
+		// Set up already, so no token: one left behind would be a second way
+		// in that nothing needs.
+		return Result{}, users.ClearSetupToken(ctx)
 	}
 	if supplied.IsZero() {
-		return Result{Unclaimed: true}, nil
+		token, made, err := users.EnsureSetupToken(ctx)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Unclaimed: true, SetupToken: secret.New(token), SetupTokenMade: made}, nil
 	}
 
 	if supplied.Len() < hash.MinPasswordLength {
@@ -138,6 +152,12 @@ func run(ctx context.Context, users *state.Users, grants *state.Grants, db *stat
 		return Result{}, err
 	}
 
+	// A token from a start before PANDO_ADMIN_PASSWORD was set would otherwise
+	// outlive the setup it was for.
+	if err := users.ClearSetupToken(ctx); err != nil {
+		return Result{}, err
+	}
+
 	log.From(ctx).Info("created the first administrator", zap.String("user_id", user.ID))
 	return Result{Created: true, User: user}, nil
 }
@@ -148,7 +168,9 @@ func run(ctx context.Context, users *state.Users, grants *state.Grants, db *stat
 //
 // They chose the password themselves, so it need not be changed at the next
 // sign-in — unlike one supplied through the environment or handed over.
-func Claim(ctx context.Context, users *state.Users, auditor *audit.Writer, username, displayName string, password secret.Value) (state.User, error) {
+//
+// They must also present the setup token (issue #130), which the claim uses up.
+func Claim(ctx context.Context, users *state.Users, auditor *audit.Writer, setupToken secret.Value, username, displayName string, password secret.Value) (state.User, error) {
 	if username == "" {
 		return state.User{}, errs.New(errs.ValidInvalid, "The administrator needs a username.")
 	}
@@ -164,7 +186,7 @@ func Claim(ctx context.Context, users *state.Users, auditor *audit.Writer, usern
 	if err := users.EnsureLocalAdapter(ctx); err != nil {
 		return state.User{}, err
 	}
-	user, grantID, err := users.ClaimFirst(ctx, username, displayName, digest, authz.RoleAdministrator)
+	user, grantID, err := users.ClaimFirst(ctx, setupToken, username, displayName, digest, authz.RoleAdministrator)
 	if err != nil {
 		return state.User{}, err
 	}

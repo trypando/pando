@@ -205,6 +205,7 @@ var classes = map[string]Mapping{
 	"session.create":                 authLogon,
 	"session.denied":                 authLogon,
 	"session.revoke":                 authLogoff,
+	"setup.token.replace":            apiCreate,
 	"source.connection.authorize":    apiCreate,
 	"source.connection.authorized":   apiCreate,
 	"source.connection.delete":       apiDelete,
