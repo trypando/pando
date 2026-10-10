@@ -24,8 +24,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      buildkit:
-        condition: service_started
     environment:
       # Compose starts both services at once. Pando also retries on its own rather
       # than trusting this healthcheck — see phase 0.
@@ -39,7 +37,10 @@ services:
       # the first run generated a password and printed it to the log as though
       # nothing had been asked for.
       PANDO_ADMIN_PASSWORD: ${PANDO_ADMIN_PASSWORD:-}
-      PANDO_BUILDKIT_ADDRESS: tcp://buildkit:1234
+      # No build service here: Pando starts its own rootless BuildKit on the
+      # Docker it runs apps on, as pando-buildkit (R-111). It has no runtime
+      # socket (R-112), and runs under a seccomp profile compiled into Pando
+      # (issue #130). Set PANDO_BUILDKIT_ADDRESS to use one you run instead.
       # Where per-app subdomains are carved from. localtest.me resolves every
       # subdomain to 127.0.0.1, so a laptop can exercise subdomain routing
       # without touching DNS or /etc/hosts.
@@ -117,30 +118,8 @@ services:
       - traefik-dynamic:/etc/traefik/dynamic
     restart: unless-stopped
 
-  # Rootless BuildKit, in its own container (R-111).
-  #
-  # It has NO container runtime socket, and that absence is the whole point:
-  # mounting one into a build is a host compromise and is categorically
-  # forbidden (R-112). An integration test asserts on this container's actual
-  # mount list rather than on intent, because intent is what drifts.
-  #
-  # It reaches nothing else in this file either — builds talk to the network for
-  # dependencies and nothing more.
-  buildkit:
-    image: moby/buildkit:v0.17.2-rootless
-    command:
-      - --addr
-      - tcp://0.0.0.0:1234
-      - --oci-worker-no-process-sandbox
-    security_opt:
-      - seccomp=unconfined
-      - apparmor=unconfined
-    volumes:
-      - buildkit-cache:/home/user/.local/share/buildkit
-    restart: unless-stopped
-
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     environment:
       POSTGRES_USER: pando
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pando}
@@ -157,7 +136,6 @@ services:
 volumes:
   pando-data:
   postgres-data:
-  buildkit-cache:
 
   # Shared between Pando and Traefik: Pando writes, Traefik reads. Read-only on
   # the Traefik side, because the edge has no business editing the routes it is

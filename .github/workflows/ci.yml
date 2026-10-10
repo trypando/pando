@@ -193,6 +193,14 @@ jobs:
           restore-keys: |
             go-integration-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-integration-${{ runner.os }}-
+      # Rootless BuildKit needs unprivileged user namespaces, which Ubuntu 23.10
+      # and later confine, and only root on the host can allow (issue #130).
+      # The same step an operator takes on such a host; without it,
+      # TestR111_PandosOwnBuildKitStartsAndAnswers sees BuildKit restart with
+      # rootlesskit's "permission denied".
+      - name: Allow the user namespaces rootless BuildKit needs
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       # Runners have Docker, so testcontainers works without extra setup.
       - run: make test-integration COVERPROFILE=coverage.integration.out
         env:

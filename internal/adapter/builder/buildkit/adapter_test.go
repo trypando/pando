@@ -61,10 +61,18 @@ func TestConfigureSucceedsEvenWhenBuildKitIsNotUpYet(t *testing.T) {
 	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err))
 }
 
-func TestTheAddressComesFromConfigThenTheEnvironmentThenADefault(t *testing.T) {
+func TestTheAddressComesFromConfigThenTheEnvironmentThenPandosOwn(t *testing.T) {
+	// Pando's own, on a daemon that is a fake: nothing real starts.
+	fake := newFakeDocker("")
+	orig := dockerClient
+	dockerClient = func() (dockerAPI, error) { return fake, nil }
+	t.Cleanup(func() { dockerClient = orig })
+
 	a := New()
 	require.NoError(t, a.Configure(context.Background(), nil))
-	require.Equal(t, "tcp://buildkit:1234", a.address)
+	require.NotNil(t, a.managed, "no address anywhere: Pando runs its own (issue #130)")
+	require.Equal(t, "tcp://127.0.0.1:1234", a.address, "on loopback, because the test is not in a container")
+	require.Len(t, fake.created, 1)
 
 	t.Setenv("PANDO_BUILDKIT_ADDRESS", "tcp://elsewhere:1234")
 	b := New()
@@ -322,3 +330,25 @@ type viewWithoutRoot struct{}
 func (viewWithoutRoot) Open(string) (io.ReadCloser, error) { return nil, os.ErrNotExist }
 func (viewWithoutRoot) Stat(string) (api.FileInfo, error)  { return api.FileInfo{}, os.ErrNotExist }
 func (viewWithoutRoot) Glob(string) ([]string, error)      { return nil, nil }
+
+// TestR105_PandosBuildKitNotAnsweringSaysWhereToLook asserts the health check
+// on Pando's own BuildKit names what most often stops it — a host that
+// confines unprivileged user namespaces, as Ubuntu 23.10 and later do — and
+// how to see BuildKit's own account (issue #130).
+func TestR105_PandosBuildKitNotAnsweringSaysWhereToLook(t *testing.T) {
+	fake := newFakeDocker("")
+	orig := dockerClient
+	dockerClient = func() (dockerAPI, error) { return fake, nil }
+	t.Cleanup(func() { dockerClient = orig })
+
+	a := New()
+	require.NoError(t, a.Configure(context.Background(), nil))
+	a.managed.port = "1" // nothing listens: the BuildKit the fake "started" never answers
+	a.cli = nil
+
+	err := a.HealthCheck(context.Background())
+	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err))
+	remedy := errs.As(err).Remedy
+	require.Contains(t, remedy, "docker logs pando-buildkit")
+	require.Contains(t, remedy, "kernel.apparmor_restrict_unprivileged_userns=0")
+}
