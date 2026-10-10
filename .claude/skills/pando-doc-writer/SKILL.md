@@ -77,6 +77,7 @@ Dependencies (keep alongside the file):
 
 **Don't edit the dependencies.** `doc-page.js` and `support.js` are a copied starter that is overwritten when it's re-copied, and `_ds/` is regenerated from the Claude Design project. Fixes go in the template, which every document copies:
 - **Light and dark.** A script in `<head>` sets `data-theme` on `<html>` from the reader's choice on trypando.ai (`localStorage` key `pando-theme`), or else the system setting, and switches to light while printing. The colors come from the design tokens, which define both themes. `doc-page` hard-codes a white sheet inside its shadow root, so the template takes the sheet's color from `--doc-sheet` (white, or `--paper-raised` in dark).
+- **Topo map.** A faint contour map in `--contour-line` is drawn on the desk behind the sheet, sized to the document and redrawn when it resizes. It isn't printed.
 - **Inline code.** `<code>` is styled as the design system's `InlineCode`: tinted background, `--radius-xs`, `--type-code`. Mono alone is too close to the body text to tell apart.
 - **Phone screens.** Below 920px the sheet uses the full width with 16px margins, section numbers sit inline, the contents list is one column, wide tables scroll inside themselves, and long commands wrap. Print keeps the Letter layout.
 - **Copy buttons.** The design system's `CodeBlock` shows "Copied" without writing to the clipboard. A click handler in the template copies the block's lines without the `$` prompt or the title. Remove it once `CodeBlock` is fixed in the Claude Design project.

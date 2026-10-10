@@ -304,8 +304,18 @@ class Component extends DCLogic {
     if (dp && dp.shadowRoot && !dp.shadowRoot.getElementById('sheet-theme')) {
       const style = document.createElement('style');
       style.id = 'sheet-theme';
-      style.textContent = '.sheet, .page { background: var(--doc-sheet, #fff) !important; }';
+      style.textContent = '.sheet, .page { background: var(--doc-sheet, #fff) !important; }' +
+        ':host { isolation: isolate; } .sheet { position: relative; z-index: 1; }' +
+        '.desk-topo { position: absolute; top: 0; left: 0; z-index: 0; pointer-events: none; }' +
+        '@media print { .desk-topo { display: none; } }';
       dp.shadowRoot.append(style);
+    }
+    // A faint topo map on the desk behind the sheet, drawn to the document's size.
+    if (dp && dp.shadowRoot) {
+      let timer;
+      const draw = () => { clearTimeout(timer); timer = setTimeout(() => this.drawDeskTopo(dp), 150); };
+      [1600, 3000].forEach((t) => setTimeout(draw, t));
+      if (window.ResizeObserver) new ResizeObserver(draw).observe(dp);
     }
     // The design system's CodeBlock shows "Copied" without writing to the
     // clipboard. Copy each line's text, leaving out the "$" prompt and the title.
@@ -317,6 +327,68 @@ class Component extends DCLogic {
       const rows = [...block.children].filter((el) => el !== button.parentElement && el.style.display === 'flex');
       navigator.clipboard.writeText(rows.map((row) => row.lastElementChild.textContent).join('\n'));
     }, true);
+  }
+  // Contours of a few warped, elongated hills spread down the document, traced
+  // with marching squares. Seeded, so it's the same map on every load.
+  drawDeskTopo(dp) {
+    const w = dp.offsetWidth, h = dp.offsetHeight;
+    const last = this._topoSize;
+    if (!w || !h || (last && Math.abs(last[0] - w) < 40 && Math.abs(last[1] - h) < 40)) return;
+    this._topoSize = [w, h];
+    let s = 11;
+    const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    const hills = [];
+    const n = Math.max(3, Math.round(h / 450));
+    for (let i = 0; i < n; i++) {
+      hills.push([rnd() * w, ((i + rnd()) * h) / n, 180 + rnd() * 260, 110 + rnd() * 200, rnd() * Math.PI, 0.55 + rnd() * 0.6]);
+    }
+    const p = [rnd() * 6, rnd() * 6, rnd() * 6, rnd() * 6];
+    const f = (x0, y0) => {
+      const x = x0 + 70 * Math.sin(y0 / 190 + p[0]) + 35 * Math.sin((x0 + y0) / 120 + p[1]);
+      const y = y0 + 70 * Math.sin(x0 / 210 + p[2]) + 35 * Math.sin((x0 - y0) / 140 + p[3]);
+      let v = 0;
+      for (const [hx, hy, sx, sy, r, a] of hills) {
+        const c = Math.cos(r), si = Math.sin(r);
+        const u = (x - hx) * c + (y - hy) * si, q = -(x - hx) * si + (y - hy) * c;
+        v += a * Math.exp(-(u * u) / (2 * sx * sx) - (q * q) / (2 * sy * sy));
+      }
+      return v;
+    };
+    const cell = 8, cols = Math.ceil(w / cell), rows = Math.ceil(h / cell);
+    const F = [];
+    for (let j = 0; j <= rows; j++) { F[j] = []; for (let i = 0; i <= cols; i++) F[j][i] = f(i * cell, j * cell); }
+    let d = '';
+    for (let k = 1; k <= 10; k++) {
+      const t = k * 0.09;
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+        const a = F[j][i], b = F[j][i + 1], c = F[j + 1][i + 1], e = F[j + 1][i];
+        const x0 = i * cell, y0 = j * cell, pts = [];
+        const L = (m, o) => (t - m) / (o - m);
+        if ((a < t) !== (b < t)) pts.push([x0 + cell * L(a, b), y0]);
+        if ((b < t) !== (c < t)) pts.push([x0 + cell, y0 + cell * L(b, c)]);
+        if ((e < t) !== (c < t)) pts.push([x0 + cell * L(e, c), y0 + cell]);
+        if ((a < t) !== (e < t)) pts.push([x0, y0 + cell * L(a, e)]);
+        for (let m = 0; m + 1 < pts.length; m += 2) {
+          d += 'M' + pts[m][0].toFixed(1) + ' ' + pts[m][1].toFixed(1) + 'L' + pts[m + 1][0].toFixed(1) + ' ' + pts[m + 1][1].toFixed(1);
+        }
+      }
+    }
+    const old = dp.shadowRoot.querySelector('.desk-topo');
+    if (old) old.remove();
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'desk-topo');
+    svg.setAttribute('width', w);
+    svg.setAttribute('height', h);
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'var(--contour-line)');
+    path.setAttribute('stroke-width', '1');
+    path.setAttribute('opacity', '0.55');
+    svg.append(path);
+    dp.shadowRoot.prepend(svg);
   }
   renderVals() {
     if (!this._topo) this.buildTopo();
