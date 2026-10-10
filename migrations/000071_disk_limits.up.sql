@@ -7,10 +7,16 @@
 -- stopped_for_idle does; disk_warned_at is when its owner was told it was
 -- near the limit; disk_over_at is the first reading over it, so one reading
 -- over is a warning and a second is a stop.
+--
+-- started_at is when the app was last started, stamped by the trigger below.
+-- The pass reads it with the marks and writes only while it is unchanged, so a
+-- reading taken before a restart never lands on the app after it: two readings
+-- over means two since the app last started.
 ALTER TABLE apps
     ADD COLUMN stopped_for_disk boolean NOT NULL DEFAULT false,
     ADD COLUMN disk_warned_at   timestamptz,
-    ADD COLUMN disk_over_at     timestamptz;
+    ADD COLUMN disk_over_at     timestamptz,
+    ADD COLUMN started_at       timestamptz;
 
 -- Starting an app clears what Pando recorded about why it stopped it, in the
 -- same write (migration 69), now including the disk marks.
@@ -26,6 +32,9 @@ BEGIN
     NEW.stopped_for_disk := false;
     NEW.disk_warned_at := NULL;
     NEW.disk_over_at := NULL;
+    -- clock_timestamp, not now: a stop and a start in one transaction are
+    -- still two values.
+    NEW.started_at := clock_timestamp();
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

@@ -37,7 +37,7 @@ func (s *fakeStore) DiskCandidates(context.Context) ([]state.DiskApp, error) {
 	return []state.DiskApp{s.app}, nil
 }
 
-func (s *fakeStore) SetDiskMark(_ context.Context, _ string, which state.DiskMark, at *time.Time) error {
+func (s *fakeStore) SetDiskMark(_ context.Context, _ state.DiskApp, which state.DiskMark, at *time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if which == state.DiskOver {
@@ -45,10 +45,10 @@ func (s *fakeStore) SetDiskMark(_ context.Context, _ string, which state.DiskMar
 	} else {
 		s.app.WarnedAt = at
 	}
-	return nil
+	return true, nil
 }
 
-func (s *fakeStore) StopForDisk(context.Context, string) (bool, error) {
+func (s *fakeStore) StopForDisk(context.Context, state.DiskApp) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stopped = true

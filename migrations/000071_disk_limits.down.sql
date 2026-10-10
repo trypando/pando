@@ -27,6 +27,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 ALTER TABLE apps
+    DROP COLUMN started_at,
     DROP COLUMN disk_over_at,
     DROP COLUMN disk_warned_at,
     DROP COLUMN stopped_for_disk;

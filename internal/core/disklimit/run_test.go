@@ -22,6 +22,9 @@ type brokenStore struct {
 	fakeStore
 	listErr, markErr, stopErr error
 	stopNothing               bool
+	// markNothing is an app restarted while the pass measured it: the store
+	// writes no mark.
+	markNothing bool
 }
 
 func (s *brokenStore) DiskCandidates(ctx context.Context) ([]state.DiskApp, error) {
@@ -31,21 +34,24 @@ func (s *brokenStore) DiskCandidates(ctx context.Context) ([]state.DiskApp, erro
 	return s.fakeStore.DiskCandidates(ctx)
 }
 
-func (s *brokenStore) SetDiskMark(ctx context.Context, id string, which state.DiskMark, at *time.Time) error {
+func (s *brokenStore) SetDiskMark(ctx context.Context, app state.DiskApp, which state.DiskMark, at *time.Time) (bool, error) {
 	if s.markErr != nil {
-		return s.markErr
+		return false, s.markErr
 	}
-	return s.fakeStore.SetDiskMark(ctx, id, which, at)
+	if s.markNothing {
+		return false, nil
+	}
+	return s.fakeStore.SetDiskMark(ctx, app, which, at)
 }
 
-func (s *brokenStore) StopForDisk(ctx context.Context, id string) (bool, error) {
+func (s *brokenStore) StopForDisk(ctx context.Context, app state.DiskApp) (bool, error) {
 	if s.stopErr != nil {
 		return false, s.stopErr
 	}
 	if s.stopNothing {
 		return false, nil
 	}
-	return s.fakeStore.StopForDisk(ctx, id)
+	return s.fakeStore.StopForDisk(ctx, app)
 }
 
 type failingUsage struct{}
@@ -117,12 +123,35 @@ func TestR403_APassThatCannotReadOrWriteStopsNothingAndSaysSo(t *testing.T) {
 	require.False(t, store.stopped)
 	require.Equal(t, 1, logs.FilterMessage("could not stop an app over its disk limit").Len())
 
+	// A mark that cannot be written is logged, and its warning is not sent:
+	// sent anyway, it would go out again every pass.
 	logger, logs = logged(t)
 	store = &brokenStore{fakeStore: fakeStore{app: app()}, markErr: errDown}
+	n := &said{}
+	(&Pass{Store: store, Usage: &fakeUsage{bytes: 11 * gib, supported: true}, Logger: logger, Notifier: n}).Once(ctx)
+	require.Positive(t, logs.FilterMessage("could not record an app's disk use").Len())
+	require.Empty(t, n.notes)
+
+	logger, logs = logged(t)
+	store = &brokenStore{fakeStore: fakeStore{app: app()}}
 	(&Pass{Store: store, Usage: &fakeUsage{bytes: 11 * gib, supported: true}, Logger: logger,
 		Notifier: failingNotifier{}, Auditor: failingAuditor{}}).Once(ctx)
-	require.Positive(t, logs.FilterMessage("could not record an app's disk use").Len())
 	require.Equal(t, 1, logs.FilterMessage("could not tell an app's owner about its disk use").Len())
+}
+
+// TestR403_AReadingFromBeforeARestartIsDropped asserts a pass whose app was
+// restarted while it measured writes, says and audits nothing: its reading
+// was of the run before, and two readings over must be of one run
+// (CodeRabbit on #180).
+func TestR403_AReadingFromBeforeARestartIsDropped(t *testing.T) {
+	for _, bytes := range []int64{11 * gib, 95 * gib / 10} { // over, and near
+		store := &brokenStore{fakeStore: fakeStore{app: app()}, markNothing: true}
+		n, a := &said{}, &audited{}
+		(&Pass{Store: store, Usage: &fakeUsage{bytes: bytes, supported: true}, Notifier: n, Auditor: a}).Once(context.Background())
+		require.Empty(t, n.notes, bytes)
+		require.Empty(t, a.actions, bytes)
+		require.False(t, store.stopped)
+	}
 }
 
 // TestR403_AnAppStoppedBySomebodyElseFirstIsLeftToThem asserts a stop that

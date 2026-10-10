@@ -573,6 +573,10 @@ measures instead.
 - **Starting** the app clears `stopped_for_disk` and both marks in the same write (migration 71's
   `app_activity_started`). If it is still over, it is warned and stopped again two readings later:
   the way out is a larger `resources.disk_bytes` (R-241) or less data.
+- **Both readings are of one run.** The same trigger stamps `started_at`, the pass reads it with the
+  marks, and every mark it writes and every stop requires it unchanged; a stop also requires the
+  `disk_over_at` the pass read. A reading taken before a restart therefore never lands on the app
+  after it, so a restarted app is stopped only after two readings over since it started.
 
 **[P]** Two readings, not a grace period in hours: a disk fills in minutes, and the shared disk
 filling stops every app and Pando with it.

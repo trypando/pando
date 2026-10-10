@@ -50,10 +50,18 @@ func TestR403_AnAppStoppedForDiskIsStartedClear(t *testing.T) {
 	assert.Equal(t, int64(3<<30), c.DiskBytes, "its limit from the pinned spec")
 	assert.Equal(t, alice.ID, c.OwnerUserID)
 
+	// Pass one reads the app over its limit and marks it; pass two reads the
+	// mark and stops it.
 	now := time.Now()
-	require.NoError(t, disk.SetDiskMark(ctx, app.ID, state.DiskWarned, &now))
-	require.NoError(t, disk.SetDiskMark(ctx, app.ID, state.DiskOver, &now))
-	stopped, err := disk.StopForDisk(ctx, app.ID)
+	ok, err := disk.SetDiskMark(ctx, *c, state.DiskWarned, &now)
+	require.NoError(t, err)
+	require.True(t, ok)
+	ok, err = disk.SetDiskMark(ctx, *c, state.DiskOver, &now)
+	require.NoError(t, err)
+	require.True(t, ok)
+	c = candidate()
+	require.NotNil(t, c.OverAt)
+	stopped, err := disk.StopForDisk(ctx, *c)
 	require.NoError(t, err)
 	require.True(t, stopped)
 	got, _, err := apps.ByID(ctx, app.ID)
@@ -70,9 +78,29 @@ func TestR403_AnAppStoppedForDiskIsStartedClear(t *testing.T) {
 	require.NotNil(t, c)
 	assert.Nil(t, c.WarnedAt, "and clears the warning")
 	assert.Nil(t, c.OverAt, "and the reading over")
+	require.NotNil(t, c.StartedAt, "and stamps when it started")
+
+	// A restart while a pass measures: what the pass read is of the run
+	// before, so neither its mark nor its stop lands (CodeRabbit on #180).
+	ok, err = disk.SetDiskMark(ctx, *c, state.DiskOver, &now)
+	require.NoError(t, err)
+	require.True(t, ok)
+	before := candidate()
+	require.NoError(t, apps.SetDesiredState(ctx, app.ID, state.StateStopped))
+	require.NoError(t, apps.SetDesiredState(ctx, app.ID, state.StateRunning))
+	ok, err = disk.SetDiskMark(ctx, *before, state.DiskOver, &now)
+	require.NoError(t, err)
+	assert.False(t, ok, "a mark read before the restart is not written after it")
+	stopped, err = disk.StopForDisk(ctx, *before)
+	require.NoError(t, err)
+	assert.False(t, stopped, "one reading since the restart does not stop it")
+	after := candidate()
+	require.NotNil(t, after)
+	assert.Nil(t, after.OverAt)
+	assert.NotEqual(t, *before.StartedAt, *after.StartedAt)
 
 	require.NoError(t, apps.SetDesiredState(ctx, app.ID, state.StateStopped))
-	stopped, err = disk.StopForDisk(ctx, app.ID)
+	stopped, err = disk.StopForDisk(ctx, *before)
 	require.NoError(t, err)
 	assert.False(t, stopped, "an app its owner stopped is left as they left it")
 }

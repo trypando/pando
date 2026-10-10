@@ -49,8 +49,8 @@ const (
 // Store is the state the pass reads and writes. *state.Disk is one.
 type Store interface {
 	DiskCandidates(ctx context.Context) ([]state.DiskApp, error)
-	SetDiskMark(ctx context.Context, appID string, which state.DiskMark, at *time.Time) error
-	StopForDisk(ctx context.Context, appID string) (bool, error)
+	SetDiskMark(ctx context.Context, app state.DiskApp, which state.DiskMark, at *time.Time) (bool, error)
+	StopForDisk(ctx context.Context, app state.DiskApp) (bool, error)
 }
 
 // UsageReader reads what an app is using from the runtime it runs on. supported is
@@ -161,24 +161,28 @@ func Used(r api.BundleUsage) (used int64, known bool) {
 
 func (p *Pass) under(ctx context.Context, app state.DiskApp, used int64, now time.Time) {
 	if app.OverAt != nil {
-		p.mark(ctx, app.AppID, state.DiskOver, nil)
+		p.mark(ctx, app, state.DiskOver, nil)
 	}
 	switch {
 	case app.WarnedAt == nil && float64(used) >= WarnAt*float64(app.DiskBytes):
-		p.mark(ctx, app.AppID, state.DiskWarned, &now)
+		if !p.mark(ctx, app, state.DiskWarned, &now) {
+			return
+		}
 		p.notify(ctx, app, app.Name+" is near its disk limit",
 			fmt.Sprintf("%s is using %s of its %s disk limit, counting its containers and its volumes. "+
 				"If it goes over and stays over, Pando stops it. %s", app.Name, size(used), size(app.DiskBytes), remedy))
 		p.audit(ctx, "app.disk.warning", app, used, map[string]any{"over": false})
 	case app.WarnedAt != nil && float64(used) < ClearAt*float64(app.DiskBytes):
-		p.mark(ctx, app.AppID, state.DiskWarned, nil)
+		p.mark(ctx, app, state.DiskWarned, nil)
 	}
 }
 
 func (p *Pass) over(ctx context.Context, app state.DiskApp, used int64, now time.Time) {
-	p.mark(ctx, app.AppID, state.DiskOver, &now)
+	if !p.mark(ctx, app, state.DiskOver, &now) {
+		return
+	}
 	if app.WarnedAt == nil {
-		p.mark(ctx, app.AppID, state.DiskWarned, &now)
+		p.mark(ctx, app, state.DiskWarned, &now)
 	}
 	p.notify(ctx, app, app.Name+" is over its disk limit",
 		fmt.Sprintf("%s is using %s, over its %s disk limit, counting its containers and its volumes. "+
@@ -188,14 +192,14 @@ func (p *Pass) over(ctx context.Context, app state.DiskApp, used int64, now time
 }
 
 func (p *Pass) stop(ctx context.Context, app state.DiskApp, used int64) {
-	stopped, err := p.Store.StopForDisk(ctx, app.AppID)
+	stopped, err := p.Store.StopForDisk(ctx, app)
 	if err != nil {
 		p.logger().Warn("could not stop an app over its disk limit", zap.String("app_id", app.AppID), zap.Error(err))
 		return
 	}
 	if !stopped {
-		// Stopped or deleted by somebody since the pass read it; theirs is
-		// the newer decision.
+		// Stopped, restarted or deleted by somebody since the pass read it;
+		// theirs is the newer decision.
 		return
 	}
 	p.audit(ctx, "app.disk.stopped", app, used, nil)
@@ -211,10 +215,15 @@ func (p *Pass) stop(ctx context.Context, app state.DiskApp, used int64) {
 const remedy = "To give it more room, raise resources.disk_bytes in its configuration and deploy it, " +
 	"which needs permission to override resource limits; or remove data it no longer needs."
 
-func (p *Pass) mark(ctx context.Context, appID string, which state.DiskMark, at *time.Time) {
-	if err := p.Store.SetDiskMark(ctx, appID, which, at); err != nil {
-		p.logger().Warn("could not record an app's disk use", zap.String("app_id", appID), zap.Error(err))
+// mark reports whether the mark was written: false when the app was stopped,
+// restarted or deleted since the pass read it, or the write failed, and then
+// the pass says nothing about a reading that no longer applies.
+func (p *Pass) mark(ctx context.Context, app state.DiskApp, which state.DiskMark, at *time.Time) bool {
+	ok, err := p.Store.SetDiskMark(ctx, app, which, at)
+	if err != nil {
+		p.logger().Warn("could not record an app's disk use", zap.String("app_id", app.AppID), zap.Error(err))
 	}
+	return ok
 }
 
 func (p *Pass) notify(ctx context.Context, app state.DiskApp, subject, body string) {
