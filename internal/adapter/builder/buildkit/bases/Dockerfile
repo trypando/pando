@@ -10,6 +10,11 @@
 # when its OS packages are patched, and a build resolves the tag when it runs,
 # so a site built by an older Pando still gets those fixes while the line is
 # maintained. Moving to the next line is the pull request Dependabot opens.
+#
+# The builder reads only the FROM lines. Each stage ends with USER nobody so
+# that this file, which no one builds, does not describe an image that runs as
+# root. The user an app's image runs as is set by the Dockerfile the builder
+# writes, not here.
 
 # static-server serves a built static site. [P] nginx because it is the
 # smallest well-understood thing that serves a directory over HTTP, alpine for
@@ -21,6 +26,7 @@
 # TestBaseImagesStayOnMaintainedLines refuses an odd minor, so a
 # Dependabot pull request proposing one cannot merge.
 FROM nginx:1.30-alpine AS static-server
+USER 65534
 
 # program-runtime runs a Go program Pando compiled, or a program committed in
 # the repository. [P] Debian slim, because a binary built for Linux most often
@@ -28,3 +34,4 @@ FROM nginx:1.30-alpine AS static-server
 # images build on it, and a binary linked against a newer glibc than the one it
 # runs on does not start.
 FROM debian:trixie-slim AS program-runtime
+USER 65534
