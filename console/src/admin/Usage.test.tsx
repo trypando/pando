@@ -82,6 +82,7 @@ describe('In use, after a deploy finishes', () => {
 
   it('keeps the reading while nothing has changed', () => {
     expect(usageKey({ ...running })).toEqual(usageKey(running));
+    expect(usageKey({ id: 'app_x', state: 'draft' })).toEqual(['apps', 'app_x', 'usage', 'draft', '']);
   });
 
   it('is still reached by invalidating the app’s usage', async () => {
@@ -109,5 +110,17 @@ describe('In use, after a deploy finishes', () => {
     );
     expect(html).not.toContain('Not running');
     expect(html).toContain('>CPU<');
+  });
+
+  it('never shows the mid-deploy reading once the app is running, even before the new one arrives', () => {
+    const client = new QueryClient();
+    client.setQueryData(usageKey(deploying), { supported: true, workloads: [{ name: 'web', running: false, volumes: [] }] });
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <Usage app={{ ...app, ...running } as App} layout="stack" />
+      </QueryClientProvider>,
+    );
+    expect(html).not.toContain('Not running');
+    expect(html).toContain('aria-label="Loading"');
   });
 });

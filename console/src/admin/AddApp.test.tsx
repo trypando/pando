@@ -6,6 +6,20 @@ vi.hoisted(() => {
   (globalThis as { window?: unknown }).window ??= { location: { pathname: '/' } };
 });
 
+// Every Select's props, by label, so a test can choose an option the way the
+// browser would. Rendered on the server there is no browser to do it.
+const selects = vi.hoisted(() => new Map<string, { onChange: (e: { target: { value: string } }) => void }>());
+vi.mock('@design', async (original) => {
+  const design = await original<typeof import('@design')>();
+  return {
+    ...design,
+    Select: (props: Parameters<typeof design.Select>[0]) => {
+      selects.set(String(props.label), props as never);
+      return design.Select(props);
+    },
+  };
+});
+
 import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -37,6 +51,11 @@ describe('Add an app', () => {
     expect(html).toContain('>Git repository<');
     expect(html).toContain('>Upload<');
     expect(html).toContain('>Container image<');
+  });
+
+  it('takes a choice of source without complaint', () => {
+    render();
+    expect(() => selects.get('Source')!.onChange({ target: { value: 'image' } })).not.toThrow();
   });
 
   it('says only what is in the dialog', () => {
