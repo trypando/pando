@@ -5,8 +5,10 @@
 // there is a plan. The design handoff approved it as an exception to where the
 // contour system may appear; it is the one terrain element on the page.
 //
-// The profile is seeded by the app and commit, so the same app always gets the
-// same hills. Undrawn terrain is a dashed ghost; the drawn part is revealed by
+// The profile is seeded by the app's source alone, known from the first frame,
+// so the same app always gets the same hills: the ridge keeps its shape while
+// detection runs, when the commit arrives, and when the page is reopened later.
+// Undrawn terrain is a dashed ghost; the drawn part is revealed by
 // a clip scaled on X, written straight to the DOM every animation frame so the
 // motion is smooth without re-rendering React sixty times a second. Markers
 // live in a second, unstretched SVG so circles stay circles at any width.
