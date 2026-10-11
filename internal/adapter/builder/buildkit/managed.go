@@ -277,6 +277,12 @@ func (m *managed) useExisting(ctx context.Context) (bool, error) {
 	return true, m.start(ctx, got.Container.ID)
 }
 
+// securityOpts are the build service's security options, with its seccomp
+// profile given as the profile itself or as a path to it (profileOnHost).
+func securityOpts(seccomp string) []string {
+	return []string{"seccomp=" + seccomp, "apparmor=unconfined"}
+}
+
 // profileFileName is the seccomp profile as a file, for an engine that takes
 // only a path.
 const profileFileName = "buildkit-seccomp.json"
@@ -331,23 +337,22 @@ func (m *managed) profileDir() string {
 // hostPath is where a path inside a container is on the host, through the
 // mount that holds it, the deepest when mounts nest.
 func hostPath(mounts []container.MountPoint, inside string) (string, bool) {
-	best := -1
-	for i, mt := range mounts {
+	var best *container.MountPoint
+	for _, mt := range mounts {
 		if mt.Source == "" {
 			continue
 		}
 		if inside != mt.Destination && !strings.HasPrefix(inside, strings.TrimSuffix(mt.Destination, "/")+"/") {
 			continue
 		}
-		if best < 0 || len(mt.Destination) > len(mounts[best].Destination) {
-			best = i
+		if best == nil || len(mt.Destination) > len(best.Destination) {
+			best = &mt
 		}
 	}
-	if best < 0 {
+	if best == nil {
 		return "", false
 	}
-	rel := strings.TrimPrefix(inside, mounts[best].Destination)
-	return filepath.Join(mounts[best].Source, rel), true
+	return filepath.Join(best.Source, strings.TrimPrefix(inside, best.Destination)), true
 }
 
 // remove removes a container this one is replacing; gone already is fine.
@@ -374,7 +379,7 @@ func (m *managed) create(ctx context.Context, networkID string, inContainer bool
 		// Docker's default AppArmor profile denies mount, which builds cannot
 		// do without, and a narrower one has to be loaded into the host's
 		// kernel by root. The seccomp profile is the narrowed one.
-		SecurityOpt:   []string{"seccomp=" + compactProfile(), "apparmor=unconfined"},
+		SecurityOpt:   securityOpts(compactProfile()),
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 	}
 	if !inContainer {
@@ -408,7 +413,7 @@ func (m *managed) create(ctx context.Context, networkID string, inContainer bool
 		if ferr != nil {
 			return ferr
 		}
-		hostCfg.SecurityOpt[0] = "seccomp=" + file
+		hostCfg.SecurityOpt = securityOpts(file)
 		created, err = m.cli.ContainerCreate(ctx, opts)
 	}
 	if cerrdefs.IsConflict(err) {
