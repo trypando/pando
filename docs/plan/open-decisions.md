@@ -126,9 +126,9 @@ having two things to get wrong instead of one, and on a wrong trusted-proxy list
 *Issue #129 added a trusted-proxy list for a different question, and this decision stands.* The audit
 log's client address (R-380) is different on every request and exists behind a proxy only in
 `X-Forwarded-For`, so there is no single value for an operator to state; a list is the only correct
-answer there. It decides the audited address and nothing else — not `Secure`, not rate limits — so the
-quiet failure this section worries about costs a wrong address in the log, which is what Pando recorded
-before. Design 12 §3.2.
+answer there. It decides the audited address, and the address rate limits are kept per (issue #189),
+and nothing else — not `Secure` — so the quiet failure this section worries about costs a wrong address
+in the log and a coarser rate limit, which is what Pando had before. Design 12 §3.2.
 Option 1 was never viable and option 4 breaks the README as written. The rest of this section is the
 original write-up, kept because the reasoning is why the answer is what it is.
 

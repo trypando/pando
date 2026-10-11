@@ -28,6 +28,8 @@ adding a fast path, you are adding a security hole.
       denied + anonymous → 302 login
       denied + authed    → 403
  5a. Record app.use, once per visit (R-227; see use.go)
+ 5b. Anonymous over its rate for this app and address → 429 (R-075; anonymous.go).
+     Runs right after the metrics count, before the allow/deny branch.
  6. Mint assertion (R-051)
  7. STRIP all inbound X-Pando-* headers        ← see below
     (and pando_* cookies and Pando-shaped bearer tokens, R-173)

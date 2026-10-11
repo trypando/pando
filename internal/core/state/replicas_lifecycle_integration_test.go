@@ -185,19 +185,19 @@ func TestR256_ExclusiveWorkRunsOnOneReplicaAtATime(t *testing.T) {
 		"a lock that cannot be taken runs nothing")
 }
 
-// TestR075a_OldPasscodeFailuresAreForgotten asserts that failures outside
+// TestR075a_OldFailedAttemptsAreForgotten asserts that failures outside
 // R-075a's window no longer count, and are pruned.
-func TestR075a_OldPasscodeFailuresAreForgotten(t *testing.T) {
+func TestR075a_OldFailedAttemptsAreForgotten(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := connected(t)
-	failures := state.NewPasscodeFailures(db)
+	failures := state.NewFailedAttempts(db)
 	stale := id.New(id.App) + "|198.51.100.1"
 	fresh := id.New(id.App) + "|198.51.100.2"
 
 	require.NoError(t, failures.Record(ctx, stale, time.Hour))
 	require.NoError(t, failures.Record(ctx, fresh, time.Hour))
-	_, err := db.Exec(ctx, `UPDATE passcode_failures SET failed_at = now() - interval '2 hours' WHERE key = $1`, stale)
+	_, err := db.Exec(ctx, `UPDATE failed_attempts SET failed_at = now() - interval '2 hours' WHERE key = $1`, stale)
 	require.NoError(t, err)
 
 	n, err := failures.Recent(ctx, stale, time.Hour)
@@ -206,7 +206,7 @@ func TestR075a_OldPasscodeFailuresAreForgotten(t *testing.T) {
 
 	require.NoError(t, failures.Prune(ctx, time.Hour))
 	var rows int
-	require.NoError(t, db.QueryRow(ctx, `SELECT count(*) FROM passcode_failures WHERE key = $1`, stale).Scan(&rows))
+	require.NoError(t, db.QueryRow(ctx, `SELECT count(*) FROM failed_attempts WHERE key = $1`, stale).Scan(&rows))
 	require.Zero(t, rows, "pruned")
 	n, err = failures.Recent(ctx, fresh, time.Hour)
 	require.NoError(t, err)
