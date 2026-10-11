@@ -62,6 +62,7 @@ func TestR026_AVMHasOnlyTheAdaptersNICAndItsACL(t *testing.T) {
 	require.Equal(t, "incusbr0", nics[0]["network"])
 	require.Equal(t, "pando-ingress", nics[0]["security.acls"])
 	require.Equal(t, "drop", nics[0]["security.acls.default.ingress.action"])
+	require.Equal(t, "true", nics[0]["security.port_isolation"], "R-025 between VMs on one bridge")
 
 	// Sized from the workloads' limits and the guest's overhead.
 	require.Equal(t, "2", post.Config["limits.cpu"])
@@ -208,6 +209,7 @@ func TestR204_DestroyKeepsTheAppsVolumes(t *testing.T) {
 	require.Equal(t, "pando-vol-1", dev["source"])
 	require.Equal(t, volumeRoot+"/vol_1", dev["path"])
 	require.Contains(t, f.volumes, "default/pando-vol-1")
+	require.Equal(t, "10737418240B", f.volumes["default/pando-vol-1"].Config["size"])
 
 	require.NoError(t, a.Destroy(ctx, api.BundleRef{BundleID: "app_1"}, api.DestroyOptions{KeepVolumes: true}))
 	require.NotContains(t, f.instances, "pando-app-1")

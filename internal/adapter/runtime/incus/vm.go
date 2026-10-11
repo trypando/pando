@@ -119,6 +119,13 @@ func (a *Adapter) nic() map[string]string {
 		"network": a.config.Network,
 		"name":    nicName,
 	}
+	if a.bridge {
+		// Bridge ACLs on the network apply only between the bridge and the
+		// host, never between two instances on it. Port isolation is what
+		// keeps one app's VM from reaching another's on the same bridge
+		// (R-025); traffic routed through the host crosses the ACL.
+		d["security.port_isolation"] = "true"
+	}
 	if !a.aclOnNetwork {
 		d["security.acls"] = a.aclName()
 		d["security.acls.default.ingress.action"] = "drop"
@@ -139,6 +146,7 @@ func (a *Adapter) nic() map[string]string {
 // must be Pando's alone (checkDedicated).
 func (a *Adapter) placeACL(n *incusapi.Network) {
 	a.aclOnNetwork = n.Project != "" && n.Project != a.config.Project
+	a.bridge = n.Type == "bridge"
 }
 
 // checkDedicated refuses, when the ACL goes on the network, a network that
@@ -324,7 +332,7 @@ func (a *Adapter) ensureVM(ctx context.Context, bundleID string, workloads []api
 		return nil, err
 	}
 	for _, vol := range volumes {
-		if _, err := a.createVolume(ctx, pool, bundleID, vol.VolumeID); err != nil {
+		if _, err := a.createVolume(ctx, pool, bundleID, vol.VolumeID, 0); err != nil {
 			return nil, err
 		}
 	}
@@ -447,8 +455,13 @@ func (a *Adapter) waitReady(ctx context.Context, name string) (netip.Addr, error
 		}
 		select {
 		case <-ctx.Done():
+			if !ok {
+				return netip.Addr{}, errs.Newf(errs.AdapterFailed,
+					"The app's VM %s started, and got no IPv4 address on the network %s within %s.", name, a.config.Network, a.readyWait).
+					WithRemedy("Check that the network hands out addresses (DHCP) and that the VM booted: `incus console " + name + " --show-log`.")
+			}
 			return netip.Addr{}, errs.Newf(errs.AdapterFailed,
-				"The app's VM %s started, and Podman inside it did not answer within %s.", name, a.readyWait).
+				"The app's VM %s started at %s, and Podman inside it did not answer within %s.", name, addr, a.readyWait).
 				WithRemedy("Look at the VM's console with `incus console " + name + " --show-log`. A guest image of your own must serve Podman's API on " + podmanSocket + ".")
 		case <-a.after(2):
 		}

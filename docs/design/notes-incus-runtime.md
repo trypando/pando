@@ -54,7 +54,8 @@ What a real two-member Incus 6.21 cluster changed from the design below.
 | Where the ACL goes | On each VM's NIC when the VMs are in the network's project; **on the network** when they are not, and then the network must be Pando's alone | Incus 6.21 resolves a bridge NIC's ACLs from the instance's project when it applies them (`device/nic_bridged.go`), though it validates them from the network's, so a VM in Pando's own project with a bridge in `default` fails to start with "Network ACL not found". The network-level ACL is resolved correctly. `HealthCheck` refuses a network anything else uses, since the ACL would close it to that too |
 | Certificate scope | Pando's project **and** the network's (`default` for a bridge) | A bridge network's ACLs are kept in the network's project. A certificate restricted to Pando's project alone is refused at the ACL, with a message saying so |
 | Docker API latency | About 45 ms a call over the exec bridge, one exec per burst | The websocket, the VM agent and socat, measured. Proxied requests do not take this path: they go to the agent over the network |
-| Guest image root disk | Sized (8 GiB) | A project that limits disk refuses a root device without a size |
+| VM to VM on a bridge | Every NIC on a bridge has `security.port_isolation` | Incus applies a bridge network's ACLs only between the bridge and the host, never between two instances on it (Incus docs, "Bridge limitations"). The first integration run proved it: one app's VM reached another's agent port. Port isolation closes that at the bridge; traffic routed through the host crosses the ACL |
+| Guest image root disk, volumes | Sized: 8 GiB for the image's builder, `volume_size_bytes` (10 GiB) for each volume | A project that limits disk refuses a root device or a custom volume without a size |
 
 ## Reaching an app (R-023, R-025, R-026)
 

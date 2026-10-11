@@ -66,6 +66,10 @@ type Config struct {
 	// RootSizeBytes is each VM's root disk. Zero is 20 GiB.
 	RootSizeBytes int64 `json:"root_size_bytes,omitempty"`
 
+	// VolumeSizeBytes is the size of each app volume, unless the app asks
+	// for more. Zero is 10 GiB. Incus needs one where a project limits disk.
+	VolumeSizeBytes int64 `json:"volume_size_bytes,omitempty"`
+
 	// GuestOverheadBytes is the memory each VM has beyond its workloads'
 	// limits, for the guest kernel, Podman and the agent. Zero is 512 MiB.
 	GuestOverheadBytes int64 `json:"guest_overhead_bytes,omitempty"`
@@ -106,6 +110,7 @@ const (
 	defaultProject            = "default"
 	defaultRootSizeBytes      = 20 << 30
 	defaultGuestOverheadBytes = 512 << 20
+	defaultVolumeSizeBytes    = 10 << 30
 	defaultCPUs               = 1
 	defaultMemoryBytes        = 1 << 30
 	defaultNetworkPool        = "10.213.0.0/16"
@@ -181,6 +186,9 @@ func (c *Config) validate() error {
 	}
 	if c.RootSizeBytes == 0 {
 		c.RootSizeBytes = defaultRootSizeBytes
+	}
+	if c.VolumeSizeBytes == 0 {
+		c.VolumeSizeBytes = defaultVolumeSizeBytes
 	}
 	if c.GuestOverheadBytes == 0 {
 		c.GuestOverheadBytes = defaultGuestOverheadBytes

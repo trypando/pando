@@ -86,6 +86,10 @@ type Adapter struct {
 	// network by HealthCheck and Apply.
 	aclOnNetwork bool
 
+	// bridge is whether the network is a bridge, whose NICs get port
+	// isolation (nic).
+	bridge bool
+
 	guestMu    sync.Mutex
 	guestAlias string
 

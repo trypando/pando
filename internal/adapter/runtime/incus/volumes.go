@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	incusapi "github.com/lxc/incus/v6/shared/api"
@@ -28,7 +29,7 @@ import (
 // contents (R-206).
 
 // createVolume makes a custom volume for a Pando volume, or finds it.
-func (a *Adapter) createVolume(ctx context.Context, pool, bundleID, volumeID string) (string, error) {
+func (a *Adapter) createVolume(ctx context.Context, pool, bundleID, volumeID string, sizeBytes int64) (string, error) {
 	name := volumeName(volumeID)
 	have, err := a.api.Volume(ctx, pool, name)
 	if err == nil {
@@ -47,7 +48,10 @@ func (a *Adapter) createVolume(ctx context.Context, pool, bundleID, volumeID str
 		ContentType: "filesystem",
 		StorageVolumePut: incusapi.StorageVolumePut{
 			Description: "Pando volume " + volumeID + " of " + bundleID,
-			Config:      map[string]string{keyBundle: bundleID, keyVolume: volumeID, keyManaged: "true"},
+			Config: map[string]string{
+				keyBundle: bundleID, keyVolume: volumeID, keyManaged: "true",
+				"size": strconv.FormatInt(max(sizeBytes, a.config.VolumeSizeBytes), 10) + "B",
+			},
 		},
 	})
 	if err != nil {
@@ -61,7 +65,7 @@ func (a *Adapter) CreateVolume(ctx context.Context, req api.VolumeRequest) (api.
 	if err != nil {
 		return api.VolumeHandle{}, err
 	}
-	name, err := a.createVolume(ctx, pool, req.BundleID, req.VolumeID)
+	name, err := a.createVolume(ctx, pool, req.BundleID, req.VolumeID, req.SizeBytes)
 	if err != nil {
 		return api.VolumeHandle{}, err
 	}
@@ -263,7 +267,7 @@ func (a *Adapter) RestoreVolume(ctx context.Context, h api.VolumeHandle, src io.
 		if perr != nil {
 			return perr
 		}
-		if _, cerr := a.createVolume(ctx, pool, "", h.VolumeID); cerr != nil {
+		if _, cerr := a.createVolume(ctx, pool, "", h.VolumeID, 0); cerr != nil {
 			return cerr
 		}
 		c, err = a.files(ctx, h)

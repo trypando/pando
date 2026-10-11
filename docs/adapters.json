@@ -957,6 +957,14 @@
               "default": "21474836480 (20 GiB)"
             },
             {
+              "key": "volume_size_bytes",
+              "label": "Volume size",
+              "help": "The size of each app volume, in bytes, unless the app asks for more.",
+              "type": "int",
+              "advanced": true,
+              "default": "10737418240 (10 GiB)"
+            },
+            {
               "key": "guest_overhead_bytes",
               "label": "VM memory overhead",
               "help": "Memory each VM has beyond its app's limits, in bytes, for the guest system and Podman.",
