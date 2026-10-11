@@ -65,6 +65,11 @@ func TestR261_TheMCPReferenceIsTheToolList(t *testing.T) {
 	for i, tool := range data.Tools {
 		require.NotEmpty(t, tool.Description, tool.Name)
 		require.Equal(t, "object", tool.InputSchema["type"], tool.Name)
+		// An agent and the person reading docs/mcp.md see this text; an R- or
+		// O- ID means nothing to either.
+		text, err := json.Marshal(tool)
+		require.NoError(t, err)
+		require.NotRegexp(t, traceID, string(text), tool.Name)
 		if i > 0 {
 			require.Less(t, data.Tools[i-1].Name, tool.Name)
 		}

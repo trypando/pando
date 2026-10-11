@@ -24,6 +24,9 @@ func TestR261_TheCLIReferenceIsTheWholeTree(t *testing.T) {
 
 	body, err := os.ReadFile(filepath.Join(dir, "cli.json"))
 	require.NoError(t, err)
+	// Read by users here, in docs/cli.md and in --help: no requirement or
+	// decision IDs anywhere in a command's or a flag's text.
+	require.NotRegexp(t, traceID, string(body))
 	var cli reference.CLIData
 	require.NoError(t, json.Unmarshal(body, &cli))
 	paths := map[string]bool{}

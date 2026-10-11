@@ -529,7 +529,7 @@ What each part of an app is using right now: CPU, memory and disk
 pando app usage <app>
 ```
 
-What each part of an app is using right now, beside its limits (R-245).
+What each part of an app is using right now, beside its limits.
 
 CPU is in cores; a part with no limit may use what the host has. A reading, not a history.
 
@@ -761,7 +761,7 @@ pando deploy <app|path>
 With an app ID, deploys that app.
 With a path, packs the directory, uploads it as the app's source, and deploys that.
 
-The second form exists for R-262's agent workflow: something that has just
+The second form is for an agent: something that has just
 generated an app cannot commit and push, but it can run a command.
 
 | Flag | Default | What it does |
