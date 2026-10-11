@@ -602,7 +602,14 @@ func (a *Adapter) Observe(ctx context.Context, ref api.BundleRef) (api.ObservedB
 // Stop stops the app's VM: a stopped app holds no CPU or memory (R-242).
 func (a *Adapter) Stop(ctx context.Context, ref api.BundleRef) error {
 	name := instanceName(ref.BundleID)
-	if _, _, err := a.api.Instance(ctx, name); errors.Is(err, errNotFound) {
+	inst, _, err := a.api.Instance(ctx, name)
+	switch {
+	case errors.Is(err, errNotFound):
+		return nil
+	case err != nil:
+		return errs.Wrap(errs.AdapterUnavailable, msgReadVM, err)
+	case inst.Config[keyBundle] != ref.BundleID:
+		// Not this app's; nothing of it to stop.
 		return nil
 	}
 	return a.stop(ctx, name)

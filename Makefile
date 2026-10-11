@@ -187,7 +187,7 @@ INCUS_AGENT_IMAGE ?= trypando/pando:latest
 test-incus: ## Run the Incus runtime against a real Incus server (VMs, the agent path, volumes, trials)
 	@test -n "$(INCUS_SOURCES)" || { echo "Set INCUS_SOURCES to this machine's address on $(INCUS_NETWORK)."; exit 2; }
 	PANDO_INCUS_ADDRESS=$(INCUS_ADDRESS) PANDO_INCUS_CERTS=$(INCUS_CERTS) PANDO_INCUS_PROJECT=$(INCUS_PROJECT) \
-	PANDO_INCUS_NETWORK=$(INCUS_NETWORK) PANDO_INCUS_SOURCES=$(INCUS_SOURCES) PANDO_INCUS_TARGET=$(INCUS_TARGET) \
+	PANDO_INCUS_NETWORK=$(INCUS_NETWORK) PANDO_INCUS_SOURCES="$(INCUS_SOURCES)" PANDO_INCUS_TARGET=$(INCUS_TARGET) \
 	PANDO_INCUS_POOL=$(INCUS_POOL) PANDO_INCUS_AGENT_IMAGE=$(INCUS_AGENT_IMAGE) \
 	$(GO) test -count=1 -timeout=60m -tags=incus -v ./internal/adapter/runtime/incus/
 

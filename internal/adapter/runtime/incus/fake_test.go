@@ -388,6 +388,20 @@ func (f *fakeIncus) CreateVolume(_ context.Context, _, pool string, post incusap
 	return nil
 }
 
+func (f *fakeIncus) UpdateVolume(_ context.Context, pool, name string, put incusapi.StorageVolumePut) error {
+	if err := f.failure("UpdateVolume"); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.volumes[pool+"/"+name]
+	if !ok {
+		return errNotFound
+	}
+	v.StorageVolumePut = put
+	return nil
+}
+
 func (f *fakeIncus) DeleteVolume(_ context.Context, pool, name string) error {
 	if err := f.failure("DeleteVolume"); err != nil {
 		return err

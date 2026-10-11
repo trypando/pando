@@ -56,6 +56,10 @@ type incusAPI interface {
 	Volumes(ctx context.Context, pool string) ([]incusapi.StorageVolume, error)
 	CreateVolume(ctx context.Context, target, pool string, post incusapi.StorageVolumesPost) error
 	DeleteVolume(ctx context.Context, pool, name string) error
+
+	// UpdateVolume changes a volume's settings, only if nobody changed it
+	// since it was read here.
+	UpdateVolume(ctx context.Context, pool, name string, put incusapi.StorageVolumePut) error
 	VolumeFiles(ctx context.Context, pool, name string) (*sftp.Client, error)
 
 	ImageAlias(ctx context.Context, name string) (*incusapi.ImageAliasesEntry, error)
@@ -235,6 +239,15 @@ func (s *server) CreateVolume(ctx context.Context, target, pool string, post inc
 		c = c.UseTarget(target)
 	}
 	return c.Send(ctx, http.MethodPost, pathPools+esc(pool)+"/volumes/custom", post, "")
+}
+
+func (s *server) UpdateVolume(ctx context.Context, pool, name string, put incusapi.StorageVolumePut) error {
+	var v incusapi.StorageVolume
+	etag, err := s.c.Get(ctx, volumePath(pool, name), nil, &v)
+	if err != nil {
+		return notFound(err)
+	}
+	return notFound(s.c.Send(ctx, http.MethodPut, volumePath(pool, name), put, etag))
 }
 
 func (s *server) DeleteVolume(ctx context.Context, pool, name string) error {

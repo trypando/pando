@@ -99,3 +99,62 @@ func TestR254_AVMWithoutAnAddressSaysSo(t *testing.T) {
 	_, err = a.waitReady(ctx, "pando-x")
 	require.Contains(t, errs.As(err).Message, "Podman inside it did not answer")
 }
+
+// TestR151_StopLeavesAnInstanceThatIsNotTheAppsAlone asserts that Stop, like
+// every other method, touches only the app's own VM.
+func TestR151_StopLeavesAnInstanceThatIsNotTheAppsAlone(t *testing.T) {
+	f := newFakeIncus()
+	a, _, _ := testAdapter(t, f, nil)
+	require.NoError(t, f.CreateInstance(ctx, "", incusapi.InstancesPost{Name: "pando-app-1"}))
+	require.NoError(t, f.SetState(ctx, "pando-app-1", "start", false))
+	f.states = nil
+	require.NoError(t, a.Stop(ctx, api.BundleRef{BundleID: "app_1"}))
+	require.Empty(t, f.states)
+	require.Equal(t, "Running", f.instances["pando-app-1"].Status)
+
+	f.fail = map[string]error{"Instance": io.ErrUnexpectedEOF}
+	require.Equal(t, errs.AdapterUnavailable, errs.As(a.Stop(ctx, api.BundleRef{BundleID: "app_1"})).Code)
+}
+
+// TestR204_ARestoredVolumeIsAdoptedByTheAppThatUsesIt asserts that a volume
+// a restore made, with no owner yet, becomes the app's when it is deployed,
+// so destroying the app with its volumes removes it; and that another app's
+// volume is never taken (R-134).
+func TestR204_ARestoredVolumeIsAdoptedByTheAppThatUsesIt(t *testing.T) {
+	f := newFakeIncus()
+	a, _, _ := testAdapter(t, f, nil)
+	f.files["default/pando-vol-1"] = newMemFS(t)
+	var empty bytes.Buffer
+	require.NoError(t, tar.NewWriter(&empty).Close())
+	require.NoError(t, a.RestoreVolume(ctx, api.VolumeHandle{VolumeID: "vol_1"}, &empty))
+	require.Empty(t, f.volumes["default/pando-vol-1"].Config[keyBundle])
+
+	p := webPlan("app_1")
+	p.Volumes = []api.VolumePlan{{VolumeID: "vol_1"}}
+	_, err := a.Apply(ctx, p)
+	require.NoError(t, err)
+	require.Equal(t, "app_1", f.volumes["default/pando-vol-1"].Config[keyBundle])
+	require.Equal(t, "vol_1", f.volumes["default/pando-vol-1"].Config[keyVolume], "the rest of its settings are kept")
+
+	other := webPlan("app_2")
+	other.Volumes = []api.VolumePlan{{VolumeID: "vol_1"}}
+	_, err = a.Apply(ctx, other)
+	require.Contains(t, errs.As(err).Message, "belongs to another app")
+
+	require.NoError(t, a.Destroy(ctx, api.BundleRef{BundleID: "app_1"}, api.DestroyOptions{KeepVolumes: false}))
+	require.NotContains(t, f.volumes, "default/pando-vol-1")
+}
+
+// TestR212_ARestoreCannotWriteToALinkItMade asserts that an entry named like
+// a link the archive made earlier is refused, not written through the link.
+func TestR212_ARestoreCannotWriteToALinkItMade(t *testing.T) {
+	c := memorySFTP(t)
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "./passwd", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"}))
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "./passwd", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1}))
+	_, _ = tw.Write([]byte("x"))
+	require.NoError(t, tw.Close())
+	err := extract(ctx, c, tar.NewReader(&buf))
+	require.ErrorContains(t, err, "through a link it made")
+}

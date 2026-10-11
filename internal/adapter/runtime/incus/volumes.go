@@ -37,7 +37,7 @@ func (a *Adapter) createVolume(ctx context.Context, pool, bundleID, volumeID str
 			return "", errs.Newf(errs.AdapterFailed, "Incus already has a volume named %s in the pool %s that is not this app's.", name, pool).
 				WithRemedy("Rename or remove that volume; Pando names its volumes pando-<volume ID>.")
 		}
-		return name, nil
+		return name, a.adopt(ctx, pool, name, have, bundleID)
 	}
 	if !errors.Is(err, errNotFound) {
 		return "", errs.Wrap(errs.AdapterUnavailable, "Could not read the app's storage from Incus.", err)
@@ -58,6 +58,32 @@ func (a *Adapter) createVolume(ctx context.Context, pool, bundleID, volumeID str
 		return "", errs.Wrap(errs.AdapterFailed, "Incus could not create storage for the app.", err)
 	}
 	return name, nil
+}
+
+// adopt records bundleID as the owner of a volume that has none, as one a
+// restore created before its app was deployed again, so that destroying the
+// app with its volumes finds it. A volume another app owns is refused: an
+// app's storage is never shared (R-134).
+func (a *Adapter) adopt(ctx context.Context, pool, name string, have *incusapi.StorageVolume, bundleID string) error {
+	owner := have.Config[keyBundle]
+	switch {
+	case bundleID == "" || owner == bundleID:
+		return nil
+	case owner != "":
+		return errs.Newf(errs.AdapterFailed, "The volume %s in the pool %s belongs to another app.", name, pool).
+			WithRemedy("Restore the app's backup into a volume of its own.")
+	}
+	put := have.StorageVolumePut
+	config := make(map[string]string, len(put.Config)+1)
+	for k, v := range put.Config {
+		config[k] = v
+	}
+	config[keyBundle] = bundleID
+	put.Config = config
+	if err := a.api.UpdateVolume(ctx, pool, name, put); err != nil {
+		return errs.Wrap(errs.AdapterFailed, "Could not record which app owns the storage "+name+".", err)
+	}
+	return nil
 }
 
 func (a *Adapter) CreateVolume(ctx context.Context, req api.VolumeRequest) (api.VolumeHandle, error) {
@@ -329,7 +355,7 @@ func extract(ctx context.Context, c *sftp.Client, tr *tar.Reader) error {
 		if name == "/" {
 			continue
 		}
-		if throughLink(links, name) {
+		if links[name] || throughLink(links, name) {
 			return fmt.Errorf("the archive writes %q through a link it made", hdr.Name)
 		}
 		if err := extractEntry(c, tr, hdr, name, links); err != nil {

@@ -397,15 +397,20 @@ Pando builds. Apps that run a published image need none.
 
 To set it up:
 
-1. Choose the Incus network the VMs attach to. Pando must be able to reach addresses on it: run Pando
-   on the Incus server, or in a VM on the same network. On a cluster, use an OVN network, or set
-   `target` to one member, because a bridge network exists separately on each member.
+1. Choose the Incus network the VMs attach to. Pando must be able to reach addresses on it. On a
+   cluster, use an OVN network, or set `target` to one member, because a bridge network exists
+   separately on each member.
 2. Create a project for Pando's VMs, such as `incus project create pando`, with a root disk in its
-   default profile or `storage_pool` set. If the network is a bridge in the `default` project, the
-   network must be used by Pando's VMs alone: Pando puts its ACL on the whole network.
-3. For a remote server, create a client certificate and trust it with `incus config trust
-   add-certificate pando.crt --projects pando,default --restricted`. The `default` project is needed
-   when the network is there, because the network's ACLs are kept with it.
+   default profile or `storage_pool` set. If the network is a bridge in the `default` project, Pando
+   puts its ACL on the whole network, so the network must be used by the apps' VMs alone. Pando
+   itself then runs elsewhere, on the Incus server or in a VM on another network, and reaches the
+   apps' network through the host's routing; set `proxy_sources` to its address as that network
+   sees it. An OVN network in Pando's project takes the ACL on each VM instead, and a VM running
+   Pando can share it.
+3. For a remote server, create a client certificate and trust it, restricted to the projects
+   Pando needs: `incus config trust add-certificate pando.crt --projects pando --restricted` when
+   the network is in Pando's project, or `--projects pando,default` when it is a bridge in `default`,
+   because a network's ACLs are kept in the network's project.
 4. Generate the agents' certificate authority with `pando host-agent new-authority`.
 5. Add the runtime and restart Pando. The first deploy prepares the VM image, Debian with Podman,
    which takes a few minutes; later deploys start a VM in about twenty seconds.

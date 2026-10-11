@@ -145,6 +145,7 @@ func TestR251_TheIncusClientSpeaksIncussPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, vols, 1)
 	require.NoError(t, s.CreateVolume(ctx, "one", "local", incusapi.StorageVolumesPost{Name: "pando-vol-1"}))
+	require.NoError(t, s.UpdateVolume(ctx, "local", "pando-vol-1", incusapi.StorageVolumePut{}))
 	require.NoError(t, s.DeleteVolume(ctx, "local", "pando-vol-1"))
 	_, err = s.ImageAlias(ctx, "pando-guest-1")
 	require.NoError(t, err)
@@ -168,6 +169,7 @@ func TestR251_TheIncusClientSpeaksIncussPaths(t *testing.T) {
 		"POST /1.0/network-acls",
 		"PUT /1.0/network-acls/pando-ingress",
 		"POST /1.0/storage-pools/local/volumes/custom",
+		"PUT /1.0/storage-pools/local/volumes/custom/pando-vol-1",
 		"DELETE /1.0/storage-pools/local/volumes/custom/pando-vol-1",
 		"GET /1.0/images/aliases/pando-guest-1",
 		"POST /1.0/images",
