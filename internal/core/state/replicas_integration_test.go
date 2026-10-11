@@ -233,16 +233,16 @@ func TestR075a_WrongPasscodesAreCountedAcrossReplicas(t *testing.T) {
 
 	key := id.New(id.App) + "|203.0.113.7"
 	for range 4 {
-		require.NoError(t, state.NewPasscodeFailures(a).Record(ctx, key, time.Hour))
+		require.NoError(t, state.NewFailedAttempts(a).Record(ctx, key, time.Hour))
 	}
-	require.NoError(t, state.NewPasscodeFailures(b).Record(ctx, key, time.Hour))
+	require.NoError(t, state.NewFailedAttempts(b).Record(ctx, key, time.Hour))
 
-	n, err := state.NewPasscodeFailures(b).Recent(ctx, key, time.Hour)
+	n, err := state.NewFailedAttempts(b).Recent(ctx, key, time.Hour)
 	require.NoError(t, err)
 	require.Equal(t, 5, n, "a failure on one replica counts on every other")
 
-	require.NoError(t, state.NewPasscodeFailures(a).Clear(ctx, key))
-	n, err = state.NewPasscodeFailures(b).Recent(ctx, key, time.Hour)
+	require.NoError(t, state.NewFailedAttempts(a).Clear(ctx, key))
+	n, err = state.NewFailedAttempts(b).Recent(ctx, key, time.Hour)
 	require.NoError(t, err)
 	require.Zero(t, n)
 }

@@ -129,6 +129,10 @@ type Proxy struct {
 	visits     *visits
 	clock      func() time.Time
 
+	// anonymous limits the rate of anonymous requests (R-075).
+	anonymousOnce sync.Once
+	anonymous     *anonymousLimiter
+
 	// upstream is the one transport every forwarded request shares, so a
 	// connection to an app is reused rather than dialed per request. It was
 	// built per request, which reused nothing and left each request's idle
@@ -214,6 +218,22 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Install-wide and without the app (R-400): the kind of principal only.
 	telemetry.ProxyRequest(ctx, allowed, string(principal.Kind))
+
+	// Anonymous is a real subject, not a bypass, and is rate-limited like
+	// one (R-075): after the count above, so a refused request is still seen.
+	if principal.Kind == authz.KindAnonymous {
+		p.anonymousOnce.Do(func() { p.anonymous = newAnonymousLimiter() })
+		now := time.Now()
+		if p.clock != nil {
+			now = p.clock()
+		}
+		if !p.anonymous.allow(app.ID+"|"+sourceAddr(r), now) {
+			w.Header().Set("Retry-After", "1")
+			p.fail(w, r, http.StatusTooManyRequests,
+				"Too many requests to this app from your network address. Wait a few seconds and try again.")
+			return
+		}
+	}
 
 	if !allowed {
 		if errs.CodeOf(denial) == errs.PermPasscodeRequired {

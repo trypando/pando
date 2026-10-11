@@ -990,12 +990,12 @@ func serve(ctx context.Context, configPath string) error {
 		LogOwner: cluster.LogOwner{
 			Self: member.ID, Deployments: deployments, Replicas: replicas,
 		}.Where,
-		PasscodeFailures: state.NewPasscodeFailures(db),
-		Secrets:          secrets,
-		Detections:       detections,
-		Detector:         detector,
-		DetectionQueue:   detectionQueue,
-		Console:          consoleHandler(logger),
+		FailedAttempts: state.NewFailedAttempts(db),
+		Secrets:        secrets,
+		Detections:     detections,
+		Detector:       detector,
+		DetectionQueue: detectionQueue,
+		Console:        consoleHandler(logger),
 
 		// Policy is evaluated before grants, so it is wired into the
 		// authorizer rather than checked alongside it (R-272).
@@ -1161,7 +1161,7 @@ func serve(ctx context.Context, configPath string) error {
 		Prune: func(ctx context.Context) error {
 			_, err := replicas.Prune(ctx, 24*time.Hour)
 			if err == nil {
-				err = state.NewPasscodeFailures(db).Prune(ctx, time.Hour)
+				err = state.NewFailedAttempts(db).Prune(ctx, time.Hour)
 			}
 			return err
 		},

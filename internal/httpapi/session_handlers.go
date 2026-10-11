@@ -44,11 +44,50 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Over either limit, refused before the password is checked: a right
+	// password answered differently from a wrong one would let guessing carry
+	// on past the limit (R-404).
+	account, addr := signInLimits(req.Username, limitAddr(r))
+	failures := s.failedAttempts()
+	for _, limit := range []struct {
+		attemptLimit
+		what string
+	}{
+		{account, "Too many wrong passwords for this username."},
+		{addr, "Too many wrong passwords from your network address."},
+	} {
+		wait, err := limit.exceeded(r.Context(), failures)
+		if err != nil {
+			Error(w, r, err)
+			return
+		}
+		if wait > 0 {
+			s.audit(r, audit.Event{
+				PrincipalKind: audit.KindAnonymous,
+				Action:        "session.denied",
+				TargetKind:    "user",
+				Detail:        map[string]any{"username": req.Username, "reason": "rate_limited"},
+			})
+			tooManyAttempts(w, r, wait, limit.what)
+			return
+		}
+	}
+
 	subject, err := s.Identity.Authenticate(r.Context(), api.Credential{
 		Username: req.Username,
 		Password: secret.New(req.Password),
 	})
 	if err != nil {
+		// Counted only when the answer was "wrong": a database that could not
+		// be read is not a guess.
+		if errs.CodeOf(err) == errs.AuthInvalid {
+			for _, limit := range []attemptLimit{account, addr} {
+				if err := failures.Record(r.Context(), limit.key, limit.window); err != nil {
+					Error(w, r, err)
+					return
+				}
+			}
+		}
 		// Audited as a denial: a pattern of failed logins is the signal that
 		// matters, and it is the thing most commonly left out.
 		s.audit(r, audit.Event{
@@ -71,7 +110,30 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The right password forgets the username's failures. Not the address's:
+	// signing in to an account of your own would otherwise reset the count
+	// for guessing at everyone else's.
+	_ = failures.Clear(r.Context(), account.key)
+
 	s.startSession(w, r, user, http.StatusOK)
+}
+
+// Wrong passwords allowed before sign-in waits (R-404) [P]. Per username, so
+// guessing at one account is slow wherever it comes from, and per address,
+// higher, so one address spraying many usernames is slow too and a shared
+// office address is not locked out by one person's typos.
+const (
+	signInAccountAttempts = 10
+	signInAddrAttempts    = 50
+	signInWindow          = 15 * time.Minute
+)
+
+// signInLimits are the two counts a password sign-in is held to (R-404). The
+// username is counted whether or not the account exists, so the limit is not
+// a way to learn which ones do.
+func signInLimits(username, addr string) (account, address attemptLimit) {
+	return attemptLimit{key: state.SignInUsernameKey(username), max: signInAccountAttempts, window: signInWindow},
+		attemptLimit{key: state.SignInAddrKey(addr), max: signInAddrAttempts, window: signInWindow}
 }
 
 // startSession signs a user in: a session, its cookie, and the audit event.

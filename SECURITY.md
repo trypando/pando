@@ -90,6 +90,12 @@ in `X-Pando-Assertion`, verified against the JWKS Pando publishes. Outbound `pan
 stripped before reaching an app (R-173), so Pando's session cookie is never exposed to a deployed
 application.
 
+**Guessing is limited.** After 10 wrong passwords for one username, or 50 from one client address, in
+15 minutes, password sign-in is refused until the oldest of them is 15 minutes old, and the refusal
+says when to try again (R-404). An app's passcode allows 10 wrong guesses per visitor in 15 minutes
+(R-075a). These counts are kept in the database, so every replica shares them. Each failure and each
+refusal is in the audit log. Anonymous requests to an app are rate-limited per client address (R-075).
+
 **The audit log cannot be rewritten.** The database role Pando runs as holds no `UPDATE` or `DELETE`
 on `audit_events` (R-027). Neither Pando nor an adapter can alter the record after the fact.
 
@@ -126,8 +132,9 @@ to the host beyond the port Pando allocates it.
   **`PANDO_SERVER_TRUSTED_PROXIES`** (comma-separated CIDRs) and Pando reads `X-Forwarded-For` from
   those peers only, taking the right-most address that is not itself a listed proxy. With the list
   empty, the default, the audit log records the proxy's own address. The list decides the audited
-  address and nothing else: not `Secure`, not rate limits. A range covering most of the internet is
-  refused at startup.
+  address and the address rate limits are kept per, and nothing else: not `Secure`. Without it, every
+  client behind the proxy shares one rate limit. A range covering most of the internet is refused at
+  startup.
 - It has no multi-factor authentication of its own. Accounts can sign in through an identity provider
   over OIDC or SAML 2.0, with SCIM provisioning ([docs/identity-providers.md](docs/identity-providers.md)),
   and MFA is the provider's. Password sign-in to local accounts can be turned off once one is set up.
