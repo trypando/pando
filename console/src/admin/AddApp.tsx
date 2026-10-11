@@ -117,10 +117,7 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
       open
       onClose={onClose}
       title="Add an app"
-      // What happens next, said before it happens. Pando works out how to build
-      // and run it, and shows you what it found before anything deploys
-      // (R-102: ask, never guess).
-      description="Pando works out how to build and run it, then shows you what it found. Nothing deploys until you accept."
+      description="Choose a source and name the app."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -133,6 +130,24 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+        {/* First, because every field after it depends on it. R-101's escape
+            hatch, an image that skips detection, is never the default, because
+            the whole product is the first option working. */}
+        <Select
+          label="Source"
+          value={kind}
+          disabled={created !== null}
+          options={[
+            { value: 'git', label: 'Git repository' },
+            { value: 'upload', label: 'Upload' },
+            { value: 'image', label: 'Container image' },
+          ]}
+          onChange={(e) => {
+            if (create.isError) create.reset();
+            setKind(e.target.value as Kind);
+          }}
+        />
+
         {kind === 'git' && listable.length > 0 && (
           <Select
             label="Repository from"
@@ -181,7 +196,7 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
             autoFocus
             value={url}
             placeholder="https://github.com/acme/notes"
-            helper="Pando reads it to work out how to build and run the app, with the source connection that covers it if it is private. Nothing is read from it at deploy time."
+            helper="Private repositories use a source connection."
             error={error}
             onChange={(e) => edit(setUrl)(e.target.value)}
           />
@@ -193,7 +208,6 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
             autoFocus
             value={image}
             placeholder="ghcr.io/acme/web:1.4"
-            helper="An image that is already built. Pando runs it as it is, pinned to the build the tag names now."
             error={error}
             onChange={(e) => edit(setImage)(e.target.value)}
           />
@@ -216,7 +230,6 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
         <Input
           label="Name"
           value={name}
-          helper="What you will call it here. Taken from the source; change it if you like."
           onChange={(e) => {
             // Typing a name stops it following the source. Somebody who names
             // an app and then corrects the URL should not have their name
@@ -226,29 +239,8 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
           }}
         />
 
-        {/* R-101's escape hatch: supply an image and skip detection. Never the
-            default, because the whole product is the first option working. */}
-        <Select
-          label="Where it comes from"
-          value={kind}
-          disabled={created !== null}
-          options={[
-            { value: 'git', label: 'A Git repository' },
-            { value: 'upload', label: 'Files on this computer' },
-            { value: 'image', label: 'An image that is already built' },
-          ]}
-          onChange={(e) => {
-            if (create.isError) create.reset();
-            setKind(e.target.value as Kind);
-          }}
-        />
-
         {kind === 'image' && (
           <>
-            <Banner tone="info">
-              Pando reads the port, storage and health check the image declares, and asks about anything
-              it cannot tell.
-            </Banner>
             <Checkbox
               checked={isPrivate}
               onChange={(e) => setPrivate(e.target.checked)}

@@ -9,8 +9,8 @@
 // Read from GET /apps/{id}/usage, the same endpoint `pando app usage` and
 // pando_get_usage use.
 
-import { useLayoutEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Button, Skeleton, Tag } from '@design';
 
 import { api } from '@api/client';
@@ -48,8 +48,35 @@ interface Reading {
   host_memory_bytes?: number;
 }
 
+/** What about the app makes a reading out of date: its state and the spec it runs. */
+function moment(app: Pick<App, 'state' | 'pinned_spec_id'>): string {
+  return `${app.state}|${app.pinned_spec_id ?? ''}`;
+}
+
+/**
+ * Reads the usage again when the app has moved on since the last reading — a
+ * deploy finished, a part stopped or started — rather than at the next
+ * thirty-second tick. A reading taken mid-deploy says every part is not
+ * running, and the app's own status would contradict it until then.
+ */
+export function refreshUsageIfMoved(
+  queries: QueryClient,
+  appID: string,
+  before: Pick<App, 'state' | 'pinned_spec_id'>,
+  after: Pick<App, 'state' | 'pinned_spec_id'>,
+): boolean {
+  if (moment(before) === moment(after)) return false;
+  void queries.invalidateQueries({ queryKey: ['apps', appID, 'usage'] });
+  return true;
+}
+
 export function Usage({ app, layout = 'table' }: { app: App; layout?: 'table' | 'stack' }) {
   const [section, visible] = useOnScreen<HTMLElement>();
+  const queries = useQueryClient();
+  const seen = useRef<Pick<App, 'state' | 'pinned_spec_id'>>(app);
+  useEffect(() => {
+    if (refreshUsageIfMoved(queries, app.id, seen.current, app)) seen.current = app;
+  }, [queries, app]);
   const reading = useQuery({
     queryKey: ['apps', app.id, 'usage'],
     queryFn: () => api.get<Reading>(`/apps/${app.id}/usage`),

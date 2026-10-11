@@ -10,7 +10,7 @@ import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { App } from '@api/types.gen';
-import { Usage } from './Usage';
+import { Usage, refreshUsageIfMoved } from './Usage';
 
 const app = { id: 'app_x', name: 'crewmate', pinned_spec_id: 'spec_x' } as unknown as App;
 
@@ -65,5 +65,43 @@ describe('In use, for a part that is not running (#86)', () => {
     const html = render(false, 'table');
     expect(html).toMatch(/font:var\(--type-body-ui\)[^>]*>Not running</);
     expect(html).toMatch(/font:var\(--type-body-ui\)[^>]*>76 KB</);
+  });
+});
+
+describe('In use, after a deploy finishes', () => {
+  const invalidated = (client: QueryClient) => client.getQueryState(['apps', app.id, 'usage'])?.isInvalidated;
+
+  function cached() {
+    const client = new QueryClient();
+    client.setQueryData(['apps', app.id, 'usage'], { supported: true, workloads: [] });
+    return client;
+  }
+
+  it('reads again when the app goes from deploying to running', () => {
+    const client = cached();
+    const moved = refreshUsageIfMoved(
+      client,
+      app.id,
+      { state: 'deploying', pinned_spec_id: 'spec_x' },
+      { state: 'running', pinned_spec_id: 'spec_x' },
+    );
+    expect(moved).toBe(true);
+    expect(invalidated(client)).toBe(true);
+  });
+
+  it('reads again when a new deploy pins another spec', () => {
+    const client = cached();
+    expect(
+      refreshUsageIfMoved(client, app.id, { state: 'running', pinned_spec_id: 'spec_x' }, { state: 'running', pinned_spec_id: 'spec_y' }),
+    ).toBe(true);
+    expect(invalidated(client)).toBe(true);
+  });
+
+  it('leaves the reading alone while nothing has changed', () => {
+    const client = cached();
+    expect(
+      refreshUsageIfMoved(client, app.id, { state: 'running', pinned_spec_id: 'spec_x' }, { state: 'running', pinned_spec_id: 'spec_x' }),
+    ).toBe(false);
+    expect(invalidated(client)).toBe(false);
   });
 });

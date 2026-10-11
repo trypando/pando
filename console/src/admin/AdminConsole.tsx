@@ -508,9 +508,7 @@ function AppsList({
                   Add app
                 </Button>
               }
-            >
-              Point Pando at a repository and it works out how to build and run it.
-            </EmptyState>
+            />
             )
           }
           columns={[
