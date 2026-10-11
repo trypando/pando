@@ -210,8 +210,12 @@ def run_deploy(app_id, name):
 
 def restart_user_services(name, reachable):
     unit = f"user@{os.getuid()}.service"
-    step(f"restarting {unit}")
-    subprocess.run(["sudo", "systemctl", "restart", unit], check=True)
+    step(f"stopping {unit}, then starting it")
+    # Stopped in full first, as a reboot does. `restart` started it again
+    # while the old Podman service was still going, and podman.socket hit
+    # systemd's trigger limit and refused to start, which no boot does.
+    subprocess.run(["sudo", "systemctl", "stop", unit], check=True)
+    subprocess.run(["sudo", "systemctl", "start", unit], check=True)
     wait_ready("Pando did not come back after the restart", 300)
     step("Pando is back")
     subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.State}}\t{{.Status}}"], check=False)
