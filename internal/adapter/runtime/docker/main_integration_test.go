@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/moby/moby/client"
@@ -22,6 +23,21 @@ import (
 // needs the adapter to be the one that pulls it, and nothing else uses it.
 var sharedImages = []string{"alpine:3.20", "busybox:1.37"}
 
+// onPodman is whether DOCKER_HOST is Podman's Docker-compatible socket.
+var onPodman bool
+
+// buildCommand is `docker build` with args, or `podman build` on Podman.
+//
+// Against Podman's socket the docker CLI hands the build to a BuildKit
+// builder of its own, and the image stays in that builder's cache, never in
+// Podman (issue #179). podman, pointed at the same socket, builds into it.
+func buildCommand(args ...string) *exec.Cmd {
+	if onPodman {
+		return exec.Command("podman", append([]string{"--url", os.Getenv("DOCKER_HOST"), "build"}, args...)...)
+	}
+	return exec.Command("docker", append([]string{"build"}, args...)...)
+}
+
 func TestMain(m *testing.M) {
 	// One daemon for both halves of every test. The adapter talks to
 	// DOCKER_HOST or, unset, the client library's default socket; the tests
@@ -32,6 +48,10 @@ func TestMain(m *testing.M) {
 	// the other, and a dozen tests failed on properties that were fine.
 	if os.Getenv("DOCKER_HOST") == "" {
 		_ = os.Setenv("DOCKER_HOST", client.DefaultDockerHost)
+	}
+
+	if out, err := exec.Command("docker", "version", "--format", "{{json .Server.Components}}").Output(); err == nil {
+		onPodman = strings.Contains(strings.ToLower(string(out)), "podman")
 	}
 
 	for _, img := range sharedImages {

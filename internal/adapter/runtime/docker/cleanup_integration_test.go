@@ -5,7 +5,8 @@ package docker_test
 import (
 	"context"
 	"fmt"
-	"os/exec"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -25,13 +26,13 @@ import (
 // Docker takes localhost/ as written.
 func buildTestImage(t *testing.T, name, dockerfile string, labels ...string) {
 	t.Helper()
-	args := []string{"build", "-q", "-t", name}
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0o600))
+	args := []string{"-q", "-t", name}
 	for _, l := range labels {
 		args = append(args, "--label", l)
 	}
-	build := exec.Command("docker", append(args, "-")...)
-	build.Stdin = strings.NewReader(dockerfile)
-	if out, err := build.CombinedOutput(); err != nil {
+	if out, err := buildCommand(append(args, dir)...).CombinedOutput(); err != nil {
 		t.Skipf("could not build the test image: %v %s", err, out)
 	}
 	t.Cleanup(func() { _, _ = dockerCLI("rmi", name) })

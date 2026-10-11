@@ -39,7 +39,7 @@ func gatewayImage(t *testing.T) string {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "Dockerfile"),
 		[]byte("FROM scratch\nCOPY pando /usr/local/bin/pando\n"), 0o600))
 	tag := "localhost/pando-egress-test:" + time.Now().Format("150405")
-	out, err = exec.Command("docker", "build", "-q", "-t", tag, dir).CombinedOutput()
+	out, err = buildCommand("-q", "-t", tag, dir).CombinedOutput()
 	require.NoError(t, err, string(out))
 	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", tag).Run() })
 	return tag
