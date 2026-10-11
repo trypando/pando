@@ -43,6 +43,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/routing/loopback"
 	"github.com/trypando/pando/internal/adapter/routing/traefik"
 	dockerruntime "github.com/trypando/pando/internal/adapter/runtime/docker"
+	incusruntime "github.com/trypando/pando/internal/adapter/runtime/incus"
 	kubernetesruntime "github.com/trypando/pando/internal/adapter/runtime/kubernetes"
 	"github.com/trypando/pando/internal/adapter/runtime/multidocker"
 	trivyscanner "github.com/trypando/pando/internal/adapter/scanner/trivy"
@@ -1785,6 +1786,10 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 		return kubernetesruntime.New()
 	case category == string(adapterapi.CategoryRuntime) && kind == multidocker.Kind:
 		return multidocker.New()
+	case category == string(adapterapi.CategoryRuntime) && kind == incusruntime.Kind:
+		// Not seeded: it needs the Incus network and Pando's address on it
+		// (notes-incus-runtime.md).
+		return incusruntime.New()
 	case category == string(adapterapi.CategoryRouting) && kind == loopback.Kind:
 		return loopback.New()
 	case category == string(adapterapi.CategorySecrets) && kind == secretslocal.Kind:
@@ -2448,6 +2453,7 @@ func adapterKinds() []adapterapi.KindInfo {
 		dockerruntime.Info(),
 		kubernetesruntime.Info(),
 		multidocker.Info(),
+		incusruntime.Info(),
 		loopback.Info(),
 		traefik.Info(),
 		cloudflare.Info(),

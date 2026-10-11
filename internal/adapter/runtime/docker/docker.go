@@ -146,6 +146,13 @@ type Config struct {
 	// no container to take it from, and without this set the adapter reports
 	// that it cannot restrict egress (R-186).
 	EgressGatewayImage string `json:"egress_gateway_image,omitempty"`
+
+	// VolumeRoot, when set, makes each app volume a bind of the directory
+	// VolumeRoot/<volume ID> rather than storage of the engine's own. The
+	// Incus runtime sets it: its volumes are Incus volumes attached to the
+	// app's VM there, so they outlive the VM (R-204, notes-incus-runtime.md).
+	// Not a setting of this adapter's own (Info).
+	VolumeRoot string `json:"-"`
 }
 
 // New builds an unconfigured adapter.
@@ -1213,14 +1220,21 @@ func (a *Adapter) bundleNetworks(ctx context.Context) (occupancy, error) {
 
 func (a *Adapter) CreateVolume(ctx context.Context, req api.VolumeRequest) (api.VolumeHandle, error) {
 	name := volumeName(req.BundleID, req.VolumeID)
-	_, err := a.cli.VolumeCreate(ctx, client.VolumeCreateOptions{
+	opts := client.VolumeCreateOptions{
 		Name: name,
 		Labels: map[string]string{
 			labelBundle:       req.BundleID,
 			labelManaged:      "true",
 			"io.pando.volume": req.VolumeID,
 		},
-	})
+	}
+	if a.config.VolumeRoot != "" {
+		opts.Driver = "local"
+		opts.DriverOpts = map[string]string{
+			"type": "none", "o": "bind", "device": path.Join(a.config.VolumeRoot, req.VolumeID),
+		}
+	}
+	_, err := a.cli.VolumeCreate(ctx, opts)
 	if err != nil {
 		return api.VolumeHandle{}, errs.Wrap(errs.AdapterFailed, "Could not create storage for the app.", err)
 	}

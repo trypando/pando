@@ -67,6 +67,7 @@ func TestNewAdapterBuildsEachShippedKind(t *testing.T) {
 	for _, tc := range []struct{ category, kind string }{
 		{"runtime", "docker"},
 		{"runtime", "docker-hosts"},
+		{"runtime", "incus"},
 		{"routing", "loopback"},
 		{"routing", "traefik"},
 		{"secrets", "local"},

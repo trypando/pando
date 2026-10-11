@@ -77,8 +77,40 @@ type agentKeeper struct {
 	authorities hostagent.Authorities
 	image       func(context.Context) string
 
+	// settings names where agent_image and agent_port are set, for remedies.
+	// Empty is this adapter's.
+	settings string
+
 	mu      sync.Mutex
 	checked time.Time
+}
+
+// AgentContainer is the agent's container name, and what a Docker adapter
+// serving it is given as ProxyContainer.
+const AgentContainer = agentContainer
+
+// AgentKeeper keeps a forwarding agent running on one Docker API. The Incus
+// runtime runs one in each app's VM (notes-incus-runtime.md), with this
+// adapter's code, so the two keep one agent and one protocol.
+type AgentKeeper struct{ k *agentKeeper }
+
+// NewAgentKeeper keeps an agent on cli whose certificate names host, listening
+// on port and forwarding only into pool. settings is where the operator sets
+// agent_image and agent_port, as a remedy names it.
+func NewAgentKeeper(cli *client.Client, host string, port int, pool netip.Prefix, authorities hostagent.Authorities, image func(context.Context) string, settings string) *AgentKeeper {
+	return &AgentKeeper{k: &agentKeeper{
+		cli: cli, host: host, port: port, pool: pool, authorities: authorities, image: image, settings: settings,
+	}}
+}
+
+// Ensure makes sure the agent runs, and reports whether it had to create it.
+func (a *AgentKeeper) Ensure(ctx context.Context) (bool, error) { return a.k.ensure(ctx) }
+
+func (k *agentKeeper) settingsName() string {
+	if k.settings == "" {
+		return "the Docker hosts runtime's settings"
+	}
+	return k.settings
 }
 
 // ensureAgent makes sure the host's agent is running and, when it had to be
@@ -126,7 +158,7 @@ func (k *agentKeeper) ensure(ctx context.Context) (bool, error) {
 	if image == "" {
 		return false, errs.Newf(errs.AdapterFailed,
 			"Pando could not tell which image to run the host agent on %s from.", k.host).
-			WithRemedy("Set agent_image in the Docker hosts runtime's settings to the image of this version of Pando, such as one in the install's registry.")
+			WithRemedy("Set agent_image in " + k.settingsName() + " to the image of this version of Pando, such as one in the install's registry.")
 	}
 	digest := k.digest(image)
 
@@ -219,7 +251,7 @@ func (k *agentKeeper) ensure(ctx context.Context) (bool, error) {
 	if _, err := k.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return false, errs.Wrap(errs.AdapterFailed,
 			fmt.Sprintf("Could not start the host agent on %s. The likeliest cause is something else on the host using port %d.", k.host, k.port), err).
-			WithRemedy("Free that port on the host, or set agent_port in the Docker hosts runtime's settings to one that is free.")
+			WithRemedy("Free that port on the host, or set agent_port in " + k.settingsName() + " to one that is free.")
 	}
 	k.checked = time.Now()
 	return true, nil
