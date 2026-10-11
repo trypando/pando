@@ -19,6 +19,8 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-11
+
 ### Security
 
 - **An open websocket outlived a revoked session or a suspended account** (#72). A long-lived
@@ -805,7 +807,9 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.2.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.4.0...main
+[0.4.0]: https://github.com/trypando/pando/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/trypando/pando/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/trypando/pando/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/trypando/pando/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/trypando/pando/releases/tag/v0.1.0
