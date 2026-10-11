@@ -265,8 +265,14 @@ def main():
     try:
         run(args)
     except BaseException:
-        print("--- pando logs (last 120 lines)", flush=True)
-        compose(args, "logs", "--tail", "120", "pando", check=False)
+        print("--- containers", flush=True)
+        subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"], check=False)
+        # Without the line every request writes, which a wait that polls an
+        # app fills the tail with.
+        print("--- pando logs, requests left out (last 150 lines)", flush=True)
+        out = compose(args, "logs", "--no-color", "pando", check=False, capture=True).stdout.splitlines()
+        noise = ('"msg":"request"', '"msg":"upstream failed"', '"msg":"proxy refused"')
+        print("\n".join([l for l in out if not any(n in l for n in noise)][-150:]), flush=True)
         raise
     finally:
         cleanup(args)
