@@ -298,7 +298,9 @@ def main():
         if args.restart_user_services:
             print("--- user services", flush=True)
             subprocess.run(["systemctl", "--user", "status", "--no-pager", "podman.socket", "pando.service"], check=False)
-            subprocess.run(["journalctl", "--user", "--no-pager", "-n", "40"], check=False)
+            journal = subprocess.run(["journalctl", "--user", "--no-pager", "-n", "20000"],
+                                     capture_output=True, text=True).stdout.splitlines()
+            print("\n".join(l for l in journal if "/start" in l or "/restart" in l), flush=True)
         print("--- containers", flush=True)
         subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}"], check=False)
         for app_id in args.app_ids:
@@ -307,6 +309,9 @@ def main():
         stopped = subprocess.run(["docker", "ps", "-a", "--filter", "status=exited", "--format", "{{.Names}}"],
                                  capture_output=True, text=True).stdout.split()
         for name in [n for n in stopped if n.startswith("pando-app_")]:
+            print(f"--- {name}", flush=True)
+            subprocess.run(["docker", "inspect", "-f", "{{json .State}}", name], check=False)
+            subprocess.run(["docker", "logs", "--tail", "20", name], check=False)
             print(f"--- docker start {name}", flush=True)
             subprocess.run(["docker", "start", name], check=False)
         # Without the line every request writes, which a wait that polls an
