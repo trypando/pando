@@ -105,26 +105,26 @@ it to produce JSON. `link` points into the console when Pando's `external_url` i
 | Event | About | What happened | Data |
 | --- | --- | --- | --- |
 | `app.created` | app | An app was created. | `name` The app's name.<br>`slug` The app's slug. |
-| `app.deleted` | app | An app was deleted. Its volumes are kept (R-204). | `backup_id` The backup's ID, bkp_….<br>`volumes_discarded` Whether its volumes were discarded rather than kept.<br>`reason` idle when Pando deleted it because nobody used it (R-398). |
-| `app.disk_warning` | app | An app is near its disk limit, or over it and will be stopped if it still is at the next reading (R-403). | `used_bytes` What the app's containers and volumes hold.<br>`limit_bytes` Its disk limit.<br>`over` true when it is over the limit, false when it is near it. |
-| `app.disk_stopped` | app | Pando stopped an app that stayed over its disk limit. It stays stopped until somebody starts it (R-403). | `used_bytes` What the app's containers and volumes hold.<br>`limit_bytes` Its disk limit. |
-| `app.idle_notice` | app | Nobody has used an app for a while, and its owner was told Pando will stop or delete it (R-395). | `action` stop or delete.<br>`days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started.<br>`action_at` When Pando will act. |
-| `app.idle_stopped` | app | Pando stopped an app nobody had used. It stays stopped until somebody starts it (R-396). | `days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started. |
+| `app.deleted` | app | An app was deleted. Its volumes are kept. | `backup_id` The backup's ID, bkp_….<br>`volumes_discarded` Whether its volumes were discarded rather than kept.<br>`reason` idle when Pando deleted it because nobody used it. |
+| `app.disk_warning` | app | An app is near its disk limit, or over it and will be stopped if it still is at the next reading. | `used_bytes` What the app's containers and volumes hold.<br>`limit_bytes` Its disk limit.<br>`over` true when it is over the limit, false when it is near it. |
+| `app.disk_stopped` | app | Pando stopped an app that stayed over its disk limit. It stays stopped until somebody starts it. | `used_bytes` What the app's containers and volumes hold.<br>`limit_bytes` Its disk limit. |
+| `app.idle_notice` | app | Nobody has used an app for a while, and its owner was told Pando will stop or delete it. | `action` stop or delete.<br>`days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started.<br>`action_at` When Pando will act. |
+| `app.idle_stopped` | app | Pando stopped an app nobody had used. It stays stopped until somebody starts it. | `days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started. |
 | `app.state_changed` | app | An app moved from one state to another: running, degraded, failed, stopped, deploying and the rest. A health change is a move between running and degraded. | `from` The state it was in.<br>`to` The state it is in now. |
 | `app.restarted` | app | Somebody restarted an app. |  |
-| `app.failed` | app | Pando stopped trying to bring an app back after repeated failures. It stays failed until somebody deploys it (R-151). | `reason` Why, in words a person can act on.<br>`failures` How many attempts failed.<br>`window` Over how long. |
+| `app.failed` | app | Pando stopped trying to bring an app back after repeated failures. It stays failed until somebody deploys it. | `reason` Why, in words a person can act on.<br>`failures` How many attempts failed.<br>`window` Over how long. |
 | `app.restored` | app | An app's data was restored from a backup. | `volumes` The volumes restored. |
-| `app.exec` | app | Somebody opened a shell in one of an app's workloads. The command is named; what was typed is not recorded (R-228). | `workload` The workload.<br>`command` The command the session started. |
-| `app.secret_written` | app | An app's secret was set or changed. The value is never in an event (R-194). | `key` The secret's name. |
-| `deploy.requested` | app | A deploy is waiting for approval (R-154). | `spec_revision` The revision to deploy.<br>`trigger` What started it.<br>`reasons` Why it needs approval.<br>`approvals_required` How many approvals it needs. |
+| `app.exec` | app | Somebody opened a shell in one of an app's workloads. The command is named; what was typed is not recorded. | `workload` The workload.<br>`command` The command the session started. |
+| `app.secret_written` | app | An app's secret was set or changed. The value is never in an event. | `key` The secret's name. |
+| `deploy.requested` | app | A deploy is waiting for approval. | `spec_revision` The revision to deploy.<br>`trigger` What started it.<br>`reasons` Why it needs approval.<br>`approvals_required` How many approvals it needs. |
 | `deploy.approved` | app | Somebody approved a deploy. | `approvals` Approvals so far.<br>`approvals_required` How many it needs. |
 | `deploy.rejected` | app | Somebody rejected a deploy. | `reason` Why, in words a person can act on. |
 | `deploy.started` | app | A deploy started. | `spec_revision` The revision being deployed.<br>`trigger` What started it. |
 | `deploy.succeeded` | app | A deploy finished and the app is running the new revision. | `deployment_id` The deploy's ID, dep_….<br>`spec_id` The revision deployed.<br>`trigger` What started it. |
 | `deploy.failed` | app | A deploy failed. | `deployment_id` The deploy's ID, dep_….<br>`spec_id` The revision that did not deploy.<br>`trigger` What started it.<br>`error_code` The stable error code.<br>`message` What went wrong. |
-| `security.scanned` | app | An app was scanned and has a security score (R-310). | `score` The security score, 0 to 100.<br>`critical` Critical findings.<br>`high` High findings.<br>`medium` Medium findings.<br>`low` Low and unrated findings.<br>`spec_id` The revision scanned. |
+| `security.scanned` | app | An app was scanned and has a security score. | `score` The security score, 0 to 100.<br>`critical` Critical findings.<br>`high` High findings.<br>`medium` Medium findings.<br>`low` Low and unrated findings.<br>`spec_id` The revision scanned. |
 | `security.scan_failed` | app | A scan did not finish. | `reason` Why, in words a person can act on. |
-| `security.insecure` | app | An app's score is below the installation's minimum (R-315). | `grace_hours` Hours before Pando acts.<br>`action` What Pando does then. |
+| `security.insecure` | app | An app's score is below the installation's minimum. | `grace_hours` Hours before Pando acts.<br>`action` What Pando does then. |
 | `security.stopped` | app | Pando stopped an app that stayed below the installation's minimum score. | `grace_hours` The grace period that passed.<br>`insecure_since` When it fell below. |
 | `security.recovered` | app | An app's score is back at or above the minimum. |  |
 | `grant.created` | app | Somebody was given access. On an app, this is a share; install-wide, a role. | `plane` control or data.<br>`role_id` The role granted, on the control plane.<br>`principal_kind` user, group, token or anonymous.<br>`principal_id` Who was given access.<br>`passcode` Whether sharing with everyone needs a passcode. |
@@ -143,9 +143,9 @@ it to produce JSON. `link` points into the console when Pando's `external_url` i
 | `adapter.configured` | install | An adapter was added or changed. It applies after a restart. | `category` The adapter's category.<br>`kind` The adapter's kind.<br>`credentials_changed` Whether a credential changed. |
 | `adapter.unhealthy` | install | An adapter's health check started failing. | `adapter_id` The adapter.<br>`category` Its category.<br>`reason` Why, in words a person can act on. |
 | `adapter.recovered` | install | An adapter's health check passes again. | `adapter_id` The adapter.<br>`category` Its category. |
-| `pando.upgraded` | install | Pando upgraded itself in place (R-359). | `from` The version before.<br>`to` The version now. |
+| `pando.upgraded` | install | Pando upgraded itself in place. | `from` The version before.<br>`to` The version now. |
 | `pando.upgrade_failed` | install | An in-place upgrade did not finish. | `from` The version running.<br>`to` The version attempted.<br>`reason` Why, in words a person can act on. |
-| `subscription.disabled` | app | Pando turned a subscription off because its endpoint failed every delivery for a day (R-370). On an app subscription the event names the app; otherwise it is install-wide. | `subscription_id` The subscription, sub_….<br>`reason` Why, in words a person can act on. |
+| `subscription.disabled` | app | Pando turned a subscription off because its endpoint failed every delivery for a day. On an app subscription the event names the app; otherwise it is install-wide. | `subscription_id` The subscription, sub_….<br>`reason` Why, in words a person can act on. |
 | `subscription.test` | install | A test delivery somebody asked for. Sent only to the subscription it tests, whatever its filter says. | `subscription_id` The subscription being tested. |
 
 Audit-sourced events also carry `target_kind` and `target_id` in `data` when the action had

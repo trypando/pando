@@ -12,6 +12,7 @@ import (
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/config"
+	"github.com/trypando/pando/internal/core/events"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/mcp"
@@ -255,6 +256,33 @@ func Errors() ErrorsData {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
 	return ErrorsData{Errors: out}
+}
+
+// EventsData is docs/events.json.
+type EventsData struct {
+	Events []EventDoc `json:"events"`
+}
+
+// EventDoc is one event a subscription can name: what it is about (one app,
+// or the installation), where Pando learns of it (the audit log, a change of
+// state, or core itself), and the fields its data carries.
+type EventDoc struct {
+	Type        string         `json:"type"`
+	Description string         `json:"description"`
+	Scope       events.Scope   `json:"scope"`
+	Source      events.Source  `json:"source"`
+	Fields      []events.Field `json:"fields"`
+}
+
+// Events is the event catalog, sorted by type.
+func Events() EventsData {
+	out := []EventDoc{}
+	for _, e := range events.Catalog() {
+		fields := append([]events.Field{}, e.Fields...)
+		out = append(out, EventDoc{Type: e.Name, Description: e.Summary, Scope: e.Scope, Source: e.Source, Fields: fields})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
+	return EventsData{Events: out}
 }
 
 // JSON renders a reference file: indented, with a trailing newline, and with

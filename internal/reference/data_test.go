@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/core/events"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/mcp"
@@ -138,6 +139,28 @@ func TestReferenceJSONIsReadable(t *testing.T) {
 	require.Equal(t, "false", policyDefault("bool", nil))
 	require.Equal(t, "0", policyDefault("int", nil))
 	require.Equal(t, "a,b", policyDefault("list", []any{"a", "b"}))
+}
+
+// TestR364_EveryEventIsInTheEventsReference asserts R-364 for
+// docs/events.json: every catalogued event, in type order, with what it means,
+// what it is about and the fields it carries, in text a user can read.
+func TestR364_EveryEventIsInTheEventsReference(t *testing.T) {
+	data := Events()
+	require.Len(t, data.Events, len(events.Catalog()))
+	for i, e := range data.Events {
+		require.NotEmpty(t, e.Description, e.Type)
+		require.Contains(t, []events.Scope{events.ScopeApp, events.ScopeInstall}, e.Scope, e.Type)
+		require.NotNil(t, e.Fields, "%s: an empty list, not null", e.Type)
+		text, err := json.Marshal(e)
+		require.NoError(t, err)
+		require.NotRegexp(t, traceID, string(text), "%s is read by users: no requirement or decision IDs", e.Type)
+		for _, f := range e.Fields {
+			require.NotEmpty(t, f.Description, "%s field %s", e.Type, f.Name)
+		}
+		if i > 0 {
+			require.Less(t, data.Events[i-1].Type, e.Type)
+		}
+	}
 }
 
 // TestR105_EveryErrorCodeHasAMeaning asserts R-105 for docs/errors.json: every

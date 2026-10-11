@@ -49,6 +49,7 @@ func main() {
 		"mcp.json":    reference.MCP(),
 		"config.json": reference.Config(),
 		"errors.json": reference.Errors(),
+		"events.json": reference.Events(),
 	} {
 		body, err := reference.JSON(v)
 		if err == nil {

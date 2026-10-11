@@ -372,7 +372,7 @@ reference-check: ## Fail if the generated reference is out of date
 	@tmp=$$(mktemp -d); \
 	$(GO) run ./cmd/gen-reference $$tmp > /dev/null; \
 	$(GO) run ./cmd/pando reference-data $$tmp > /dev/null; \
-	for f in api.md cli.md mcp.md events.md audit-formats.md cli.json mcp.json adapters.json config.json errors.json; do \
+	for f in api.md cli.md mcp.md events.md audit-formats.md cli.json mcp.json adapters.json config.json errors.json events.json; do \
 		diff -u docs/$$f $$tmp/$$f > /dev/null \
 			|| { echo "docs/$$f is out of date. Run 'make reference' and commit the result."; rm -rf $$tmp; exit 1; }; \
 	done; \
