@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { AppOnboarding } from './AppOnboarding';
@@ -107,5 +108,27 @@ describe('AppOnboarding, watching detection finish', () => {
     for (let i = 0; i < 300; i++) await act(() => vi.advanceTimersByTimeAsync(100));
 
     expect(container.textContent).toContain('Accept and deploy');
+  });
+
+  // The settled page, from seeded queries: a finished detection with its scan
+  // goes straight to the review, score and actions together. Rendered on the
+  // server, so no effect or timer runs — the hold itself is covered above.
+  it('renders the review with the scan’s score and the plan’s actions', () => {
+    const client = new QueryClient();
+    client.setQueryData(['apps', 'app_x', 'detection'], {
+      status: 'needs_answers',
+      answers: {},
+      commit: detection.commit,
+      detection,
+    });
+    client.setQueryData(['apps', 'app_x', 'security'], report);
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <AppOnboarding app={app} onBack={() => {}} onDeployRefused={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain('Plan ready');
+    expect(html).toContain('Security score');
+    expect(html).toContain('Accept and deploy');
   });
 });
