@@ -20,7 +20,7 @@
 
 </div>
 
-<img src="docs/assets/hero.png" alt="Deploy and share any app. Pando runs on your own server and hosts the apps your team builds, including the ones written with AI. Beside the text, a topographic contour map with a red summit marker." width="100%">
+<img src="docs/assets/demo.gif" alt="Adding 2048 to Pando from its GitHub repository: Pando works out how to build it and scores it 100 out of 100, Accept and deploy runs it, and the game opens at its address." width="100%">
 
 ---
 
