@@ -328,9 +328,16 @@ export function AppOnboarding({
     if (!watching || discovering || held.current || failed || blocked) return;
     held.current = true;
     setHolding(true);
+  }, [watching, discovering, failed, blocked]);
+  // The end of the hold hangs on the hold alone. It used to be cleared with the
+  // effect above, so the security report arriving mid-hold — it is asked for
+  // only once detection stops, and adds the scan step — cleared it, nothing
+  // set it again, and the page stayed on "Plan ready" with no way to accept.
+  useEffect(() => {
+    if (!holding) return;
     const timer = window.setTimeout(() => setHolding(false), READY_HOLD_MS);
     return () => window.clearTimeout(timer);
-  }, [watching, discovering, failed, blocked]);
+  }, [holding]);
   const phase: Phase = discovering ? 'discovering' : holding ? 'ready' : 'done';
 
   const fraction = useCallback(() => {
