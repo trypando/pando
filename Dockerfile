@@ -94,27 +94,47 @@ RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
       go build -trimpath -ldflags="-s -w ${stamp}" -o /out/pando ./cmd/pando
 
-# Railpack turns a repository with no deployment instructions into a build
-# plan, which Pando's BuildKit builds through Railpack's frontend image
-# (R-095: wrap an existing implementation rather than reimplementing
-# convention-matching).
+# What the server needs beyond the runtime base, installed where there is a
+# package manager and staged for the copy below:
 #
-# Fetched here rather than at runtime, pinned and checked against the
-# release's checksums, so the same repository produces the same plan a year
-# from now. It only ever *plans* — `railpack prepare` writes a JSON file and
-# builds nothing, so no container runtime socket is involved anywhere (R-112).
+# - postgresql17-client for pg_dump, pg_restore and psql (backups and restore,
+#   R-210, R-212; restore pipes pg_restore into psql). The client
+#   major version has to match the server: pg_dump refuses a server newer than
+#   itself, and discovering that during a restore is discovering it at the worst
+#   possible moment. Bump this with the postgres service in docker-compose.yml,
+#   never separately.
+# - su-exec, which the entrypoint drops privileges with.
+# - tzdata, which the runtime base does not carry.
+# - git and bash, for Railpack's planner. mise lists the Python releases it can
+#   install with pyenv's python-build, a bash script it fetches with git, and
+#   Railpack runs mise with every config file switched off, so there is no
+#   setting that avoids it. Without them every Python app failed to plan with
+#   "env: can't execute 'bash'" (issue #172). Nothing else in Pando runs either.
+# - Railpack, which turns a repository with no deployment instructions into a
+#   build plan that Pando's BuildKit builds through Railpack's frontend image
+#   (R-095: wrap an existing implementation rather than reimplementing
+#   convention-matching). Fetched here rather than at runtime, pinned and
+#   checked against the release's checksums, so the same repository produces
+#   the same plan a year from now. It only ever *plans* — `railpack prepare`
+#   writes a JSON file and builds nothing, so no container runtime socket is
+#   involved anywhere (R-112). mise comes with it, at the release this Railpack
+#   bundles: Railpack resolves language versions by running mise, and
+#   downloads it into /tmp/railpack/mise on first use if it is not already
+#   there. Putting it there now means planning downloads no program; version
+#   lookups still reach the package indexes. Bump RAILPACK_VERSION,
+#   MISE_VERSION, their checksums and the image digests in
+#   internal/adapter/builder/buildkit/railpack.go together. curl fetches them
+#   and is removed again.
 #
-# mise comes with it, at the release this Railpack bundles: Railpack resolves
-# language versions by running mise, and downloads it into /tmp/railpack/mise
-# on first use if it is not already there. Putting it there now means planning
-# downloads no program. Version lookups still reach the package indexes.
-# Bump RAILPACK_VERSION, MISE_VERSION, their checksums and the image digests in
-# internal/adapter/builder/buildkit/railpack.go together.
-FROM --platform=$BUILDPLATFORM dhi.io/alpine-base:3.24-dev@sha256:08d37dc414e07a688b0c3b9405e0b33688507e41a74bc24118a7f0817b772e27 AS railpack
+# apk-tools is removed before staging, so the package database copied below
+# lists what the image actually holds: a scanner reads it to know what is
+# installed, and an entry for a package manager that is not there is a finding
+# about nothing.
+FROM dhi.io/alpine-base:3.24-dev@sha256:08d37dc414e07a688b0c3b9405e0b33688507e41a74bc24118a7f0817b772e27 AS packages
 ARG RAILPACK_VERSION=0.40.0
 ARG MISE_VERSION=2026.9.12
 ARG TARGETARCH
-RUN apk add --no-cache curl tar \
+RUN apk add --no-cache bash curl git postgresql17-client su-exec tzdata \
     && case "$TARGETARCH" in \
          arm64) rp=arm64;   rpsum=86c5a3db888c710b2014262de55fc87a56c85c4e96ba7cd10894e5df210a212b; \
                 mise=arm64; misesum=22e7ecd3c6c84ef36e4d0c78c4eef49a79e3fb83aa88e091e2993fd9c9a3f8a1 ;; \
@@ -132,35 +152,14 @@ RUN apk add --no-cache curl tar \
     && tar xzf /tmp/railpack.tgz -C /usr/local/bin railpack \
     && tar xzf /tmp/mise.tgz -C /tmp mise/bin/mise \
     && mv /tmp/mise/bin/mise "/tmp/railpack/mise/mise-${MISE_VERSION}" \
-    && chmod +x /usr/local/bin/railpack "/tmp/railpack/mise/mise-${MISE_VERSION}"
-
-# What the server needs beyond the runtime base, installed where there is a
-# package manager and staged for the copy below:
-#
-# - postgresql17-client for pg_dump, pg_restore and psql (backups and restore,
-#   R-210, R-212; restore pipes pg_restore into psql). The client
-#   major version has to match the server: pg_dump refuses a server newer than
-#   itself, and discovering that during a restore is discovering it at the worst
-#   possible moment. Bump this with the postgres service in docker-compose.yml,
-#   never separately.
-# - su-exec, which the entrypoint drops privileges with.
-# - tzdata, which the runtime base does not carry.
-# - git and bash, for Railpack's planner. mise lists the Python releases it can
-#   install with pyenv's python-build, a bash script it fetches with git, and
-#   Railpack runs mise with every config file switched off, so there is no
-#   setting that avoids it. Without them every Python app failed to plan with
-#   "env: can't execute 'bash'" (issue #172). Nothing else in Pando runs either.
-#
-# apk-tools is removed before staging, so the package database copied below
-# lists what the image actually holds: a scanner reads it to know what is
-# installed, and an entry for a package manager that is not there is a finding
-# about nothing.
-FROM dhi.io/alpine-base:3.24-dev@sha256:08d37dc414e07a688b0c3b9405e0b33688507e41a74bc24118a7f0817b772e27 AS packages
-RUN apk add --no-cache bash git postgresql17-client su-exec tzdata \
+    && chmod +x /usr/local/bin/railpack "/tmp/railpack/mise/mise-${MISE_VERSION}" \
+    && rm -rf /tmp/railpack.tgz /tmp/mise.tgz /tmp/mise \
+    && apk del --no-cache curl \
     && apk del --no-cache apk-tools \
     && mkdir /staging \
     && tar -cf - /lib /usr/lib /usr/libexec /usr/bin/pg_dump /usr/bin/pg_restore /usr/bin/psql \
-         /sbin/su-exec /usr/share/zoneinfo /usr/bin/git /bin/bash /usr/share/git-core 2>/dev/null \
+         /sbin/su-exec /usr/share/zoneinfo /usr/bin/git /bin/bash /usr/share/git-core \
+         /usr/local/bin/railpack /tmp/railpack 2>/dev/null \
        | tar -xf - -C /staging
 
 FROM dhi.io/alpine-base:3.24@sha256:a741d4f1ccaf31f9394a36477e50df4620a8030dbff3d9a2ea8e84672b683ada
@@ -172,13 +171,12 @@ COPY --from=packages /staging/ /
 # By number: the hardened base has no root entry in /etc/passwd.
 USER 0
 RUN mkdir -p /var/lib/pando /etc/traefik/dynamic \
-    && chown nonroot:nonroot /var/lib/pando /etc/traefik/dynamic
+    && chown nonroot:nonroot /var/lib/pando /etc/traefik/dynamic \
+    && chown -R nonroot:nonroot /tmp/railpack
 
 WORKDIR /var/lib/pando
 
 COPY --from=build /out/pando /usr/local/bin/pando
-COPY --from=railpack /usr/local/bin/railpack /usr/local/bin/railpack
-COPY --from=railpack --chown=nonroot:nonroot /tmp/railpack /tmp/railpack
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # The entrypoint starts as root only long enough to join the runtime socket's
