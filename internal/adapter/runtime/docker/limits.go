@@ -110,7 +110,9 @@ type libpodInfo struct {
 
 // podmanSupport asks Podman through /libpod/info, served on the same socket
 // as its Docker-compatible API. The moby client has no call for it, so the
-// request goes over the client's own connection to the engine.
+// request goes over the client's own connection to the engine. Podman serves
+// its own API only under a version, and 4.0.0's info has these fields on
+// Podman 4 and 5 alike.
 func (a *Adapter) podmanSupport(ctx context.Context) (limitSupport, error) {
 	unavailable := func(err error) (limitSupport, error) {
 		return limitSupport{}, errs.Wrap(errs.AdapterUnavailable, "Could not ask Podman whether it applies CPU and memory limits.", err)
@@ -121,7 +123,7 @@ func (a *Adapter) podmanSupport(ctx context.Context) (limitSupport, error) {
 		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx) }},
 	}
 	defer httpc.CloseIdleConnections()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://podman/libpod/info", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://podman/v4.0.0/libpod/info", nil)
 	if err != nil {
 		return unavailable(err)
 	}

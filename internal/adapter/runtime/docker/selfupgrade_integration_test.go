@@ -62,7 +62,7 @@ const serves = "RUN mkdir -p /www && echo ok > /www/readyz\nCMD [\"httpd\", \"-f
 func TestR359_TheSwapKeepsPandosConfigurationAndPutsTheOldOneBack(t *testing.T) {
 	ctx := context.Background()
 	stamp := strings.ReplaceAll(time.Now().Format("150405.000"), ".", "")
-	oldImage, goodImage, badImage := "pando-upg-old:"+stamp, "pando-upg-good:"+stamp, "pando-upg-bad:"+stamp
+	oldImage, goodImage, badImage := "localhost/pando-upg-old:"+stamp, "localhost/pando-upg-good:"+stamp, "localhost/pando-upg-bad:"+stamp
 	buildTestImage(t, oldImage, "FROM busybox:1.37\nENV FROM_IMAGE=old\n"+serves)
 	buildTestImage(t, goodImage, "FROM busybox:1.37\nENV FROM_IMAGE=new\n"+serves)
 	buildTestImage(t, badImage, "FROM busybox:1.37\nENV FROM_IMAGE=bad\nCMD [\"sh\", \"-c\", \"echo migration 43 failed; exit 3\"]\n")

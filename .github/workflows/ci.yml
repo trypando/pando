@@ -312,10 +312,9 @@ jobs:
       - name: DIAG (temporary)
         continue-on-error: true
         run: |
-          set -x
-          S="$XDG_RUNTIME_DIR/podman/podman.sock"; [ -S "$S" ] || S="/run/user/$(id -u)/podman/podman.sock"
-          curl -s --unix-socket "$S" http://d/libpod/info | jq -c '.host | {cgroupManager,cgroupVersion,cgroupControllers,security}'
-          curl -s --unix-socket "$S" http://d/version | jq -c .
+          set +e -x
+          S="$XDG_RUNTIME_DIR/podman/podman.sock"
+          curl -s --unix-socket "$S" http://d/v4.0.0/libpod/info | jq -c '.host | {cgroupManager,cgroupVersion,cgroupControllers,security}'
           printf 'FROM alpine:3.20\n' | docker build -q -t diag-local:1 -
           docker image ls --format '{{.Repository}}:{{.Tag}}' | grep diag
           docker image inspect diag-local:1 --format '{{.RepoTags}}'

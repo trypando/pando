@@ -18,6 +18,11 @@ import (
 // buildTestImage builds a tiny image from dockerfile under name, removing it
 // when the test ends. Everything it creates is named by the caller with a test-
 // prefix, so nothing else on the host is touched.
+//
+// Name it localhost/…: Podman stores a local build under that name, and its
+// Docker-compatible API reads a short name as docker.io/library/…, so a short
+// name is found on Docker and pulled from Docker Hub on Podman (issue #179).
+// Docker takes localhost/ as written.
 func buildTestImage(t *testing.T, name, dockerfile string, labels ...string) {
 	t.Helper()
 	args := []string{"build", "-q", "-t", name}
@@ -44,7 +49,7 @@ func TestR224_DeletingAnAppRemovesEveryImageBuiltForIt(t *testing.T) {
 	id := "test-built-" + strings.ReplaceAll(stamp, ".", "")
 	other := id + "-other"
 
-	current, previous, kept := "test-built-"+id+":current", "test-built-"+id+":previous", "test-built-"+id+":kept"
+	current, previous, kept := "localhost/test-built-"+id+":current", "localhost/test-built-"+id+":previous", "localhost/test-built-"+id+":kept"
 	buildTestImage(t, current, "FROM alpine:3.20\nLABEL test.generation=2\n", api.ImageLabelBundle+"="+id)
 	buildTestImage(t, previous, "FROM alpine:3.20\nLABEL test.generation=1\n", api.ImageLabelBundle+"="+id)
 	buildTestImage(t, kept, "FROM alpine:3.20\nLABEL test.generation=3\n", api.ImageLabelBundle+"="+other)
@@ -67,7 +72,7 @@ func TestATrialMountsThrowawayStorageWhereTheImageDeclaresAVolume(t *testing.T) 
 	ctx := context.Background()
 	a := adapter(t)
 
-	img := "test-trial-volume-" + time.Now().Format("150405") + ":latest"
+	img := "localhost/test-trial-volume-" + time.Now().Format("150405") + ":latest"
 	buildTestImage(t, img, "FROM alpine:3.20\nVOLUME /data\n")
 
 	result, err := a.Trial(ctx, api.TrialRequest{

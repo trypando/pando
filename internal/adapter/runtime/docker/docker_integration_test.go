@@ -131,7 +131,7 @@ func TestR224_AnAnonymousVolumeGoesWithItsContainer(t *testing.T) {
 	ctx := context.Background()
 	a := adapter(t)
 
-	const img = "pando-it-anonymous-volume:latest"
+	const img = "localhost/pando-it-anonymous-volume:latest"
 	build := exec.Command("docker", "build", "-q", "-t", img, "-")
 	build.Stdin = strings.NewReader("FROM alpine:3.20\nVOLUME /data\n")
 	if out, err := build.CombinedOutput(); err != nil {
