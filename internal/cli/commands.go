@@ -562,7 +562,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "usage <app>",
 		Short: "What each part of an app is using right now: CPU, memory and disk",
-		Long: "What each part of an app is using right now, beside its limits (R-245).\n\n" +
+		Long: "What each part of an app is using right now, beside its limits.\n\n" +
 			"CPU is in cores; a part with no limit may use what the host has. A reading, not a history.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -688,7 +688,7 @@ func deployCmd(client func() (*Client, error)) *cobra.Command {
 		Short: "Deploy an app, or a directory on this machine",
 		Long: "With an app ID, deploys that app.\n" +
 			"With a path, packs the directory, uploads it as the app's source, and deploys that.\n\n" +
-			"The second form exists for R-262's agent workflow: something that has just\n" +
+			"The second form is for an agent: something that has just\n" +
 			"generated an app cannot commit and push, but it can run a command.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

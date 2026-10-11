@@ -14,19 +14,19 @@ type Metrics struct {
 	// HTTP, or http://otel-collector:4317 for gRPC. http:// sends in the
 	// clear, https:// over TLS. Over HTTP, a URL with no path has
 	// /v1/metrics added, as the OpenTelemetry SDKs do.
-	OTLPEndpoint string `mapstructure:"otlp_endpoint"`
+	OTLPEndpoint string `mapstructure:"otlp_endpoint" desc:"The OpenTelemetry collector Pando pushes its own metrics to, such as http://otel-collector:4318 for HTTP or :4317 for gRPC. Empty exports nothing."`
 
 	// OTLPProtocol is http/protobuf (the default) or grpc.
-	OTLPProtocol string `mapstructure:"otlp_protocol"`
+	OTLPProtocol string `mapstructure:"otlp_protocol" desc:"The OTLP protocol: http/protobuf or grpc."`
 
 	// OTLPHeaders are sent with every export, written as
 	// OTEL_EXPORTER_OTLP_HEADERS writes them: key=value pairs separated by
 	// commas, values URL-encoded. Usually an API key, so never reported
 	// (sources.go) or logged (R-194).
-	OTLPHeaders string `mapstructure:"otlp_headers"`
+	OTLPHeaders string `mapstructure:"otlp_headers" desc:"Headers sent with every export, as key=value pairs separated by commas with values URL-encoded, as OTEL_EXPORTER_OTLP_HEADERS takes them. Usually an API key."`
 
 	// Interval is how often metrics are pushed. Default: a minute.
-	Interval time.Duration `mapstructure:"interval"`
+	Interval time.Duration `mapstructure:"interval" desc:"How often metrics are pushed."`
 }
 
 // Metrics protocols.

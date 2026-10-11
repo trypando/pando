@@ -44,6 +44,29 @@ func main() {
 		fmt.Println("wrote", path)
 	}
 
+	// The same, machine-readable. cli.json and adapters.json are written by
+	// `pando reference-data`, which has the whole command tree and the kinds
+	// the server registers; this package cannot import either.
+	for name, v := range map[string]any{
+		"mcp.json":    reference.MCP(),
+		"config.json": reference.Config(),
+		"errors.json": reference.Errors(),
+		"events.json": reference.Events(),
+	} {
+		body, err := reference.JSON(v)
+		if err == nil {
+			path := filepath.Join(dir, name)
+			err = os.WriteFile(path, body, 0o644) //nolint:gosec // G306: documentation, world-readable on purpose.
+			if err == nil {
+				fmt.Println("wrote", path)
+			}
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+
 	writeOpenAPI(dir, doc)
 }
 
