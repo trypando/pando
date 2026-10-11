@@ -13,9 +13,15 @@ creates is removed at the end: the compose project with its volumes, and the
 container and network Pando made for the test app.
 
 With --build it also deploys an app Pando builds itself, from an uploaded
-directory, which runs Pando's BuildKit container on the same runtime.
+directory, which runs Pando's BuildKit container on the same runtime. With
+--reboot CMD it runs CMD once the first app is up, standing in for a restart
+of the host, and requires Pando and the app to come back.
 
-usage: scripts/smoke-image.py COMPOSE_FILE [--version 0.3.0] [--pull] [--build] [--keep]
+SMOKE_PROJECT names the compose project (default pando-smoke), and
+POSTGRES_PASSWORD, if set, is the database password, so the smoke can drive an
+install whose .env names the same.
+
+usage: scripts/smoke-image.py COMPOSE_FILE [--version 0.3.0] [--pull] [--build] [--reboot CMD] [--keep]
 """
 import argparse
 import http.cookiejar
@@ -30,7 +36,7 @@ import time
 import urllib.error
 import urllib.request
 
-PROJECT = "pando-smoke"
+PROJECT = os.environ.get("SMOKE_PROJECT", "pando-smoke")
 PORT = int(os.environ.get("SMOKE_PORT", "18080"))
 APP_PORTS = (19000, 19004)
 APP_IMAGE = "traefik/whoami:v1.10.3"  # small, multi-arch, answers any path
@@ -140,7 +146,7 @@ def run(args):
         raise SystemExit(f"FAIL: first-run setup answered {code}: {out}")
     step("first administrator set up")
 
-    deploy(args, "smoke-whoami", {"type": "image", "image": APP_IMAGE}, "Hostname")
+    deploy(args, "smoke-whoami", {"type": "image", "image": APP_IMAGE}, "Hostname", reboot=args.reboot)
     if args.build:
         deploy(args, "smoke-static", {"type": "upload"}, BUILT_MARKER, files={"index.html": BUILT_PAGE})
     step("PASS")
@@ -151,9 +157,10 @@ BUILT_MARKER = "pando-smoke-built"
 BUILT_PAGE = f"<!doctype html><title>{BUILT_MARKER}</title><p>{BUILT_MARKER}</p>\n"
 
 
-def deploy(args, name, source, expect, files=None):
+def deploy(args, name, source, expect, files=None, reboot=None):
     """Creates an app, deploys it, reads `expect` from it through Pando's
-    proxy, and deletes it. `files` are sent as its source for an upload."""
+    proxy, and deletes it. `files` are sent as its source for an upload;
+    `reboot` is run while it is up, and it must be up again after."""
     code, app = api("POST", "/apps", {"name": name, "source": source})
     if code >= 300:
         raise SystemExit(f"FAIL: creating {name} answered {code}: {app}")
@@ -199,10 +206,18 @@ def deploy(args, name, source, expect, files=None):
     step(f"{name} deployed")
 
     slug = app.get("slug") or api("GET", f"/apps/{app_id}")[1].get("slug")
-    body = wait(f"{name} was not reachable through Pando",
-                lambda: (lambda r: (r[0] == 200 and expect in r[1], r))(request("GET", f"/{slug}/")), 120)
+    reachable = lambda: (lambda r: (r[0] == 200 and expect in r[1], r))(request("GET", f"/{slug}/"))
+    body = wait(f"{name} was not reachable through Pando", reachable, 120)
     step(f"{name} reachable through Pando's proxy at /{slug}/")
     print(body[1].splitlines()[0] if body[1] else "")
+
+    if reboot:
+        step(f"restarting: {reboot}")
+        subprocess.run(["sh", "-c", reboot], check=True)
+        wait("Pando did not come back after the restart", lambda: (request("GET", "/readyz")[0] == 200, request("GET", "/readyz")), 300)
+        step("Pando is back")
+        wait(f"{name} was not reachable through Pando after the restart", reachable, 300)
+        step(f"{name} is back")
 
     code, out = api("DELETE", f"/apps/{app_id}?force=true")
     if code >= 300:
@@ -242,9 +257,10 @@ def main():
     ap.add_argument("--version", help="the version `pando version` must report")
     ap.add_argument("--pull", action="store_true", help="pull the images first (a published release)")
     ap.add_argument("--build", action="store_true", help="also deploy an app Pando builds from uploaded files")
+    ap.add_argument("--reboot", metavar="CMD", help="a shell command standing in for a restart of the host, run once the first app is up")
     ap.add_argument("--keep", action="store_true", help="leave the stack running afterwards")
     args = ap.parse_args()
-    args.db_password = secrets.token_urlsafe(18)
+    args.db_password = os.environ.get("POSTGRES_PASSWORD") or secrets.token_urlsafe(18)
     args.app_ids = []
     try:
         run(args)

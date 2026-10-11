@@ -111,3 +111,19 @@ func TestR245_CPUIsSampledTwiceWhenTheEngineDoesNotDiff(t *testing.T) {
 	require.Equal(t, 2, served, "a second sample was taken")
 	require.Equal(t, 500, u.CPUMillis, "half a core, not the average since boot")
 }
+
+// TestR359_ThePandoThatReplacesItselfOnPodmanStarts asserts the new container
+// is created without the memory swappiness Podman reports for the old one,
+// which crun refuses on cgroup v2, and keeps the rest of its host
+// configuration (issue #179).
+func TestR359_ThePandoThatReplacesItselfOnPodmanStarts(t *testing.T) {
+	zero := int64(0)
+	old := &container.HostConfig{NetworkMode: "pando_default", Binds: []string{"pando-data:/var/lib/pando"}}
+	old.MemorySwappiness = &zero
+	got := recreatedHostConfig(old)
+	require.Nil(t, got.MemorySwappiness)
+	require.Equal(t, old.Binds, got.Binds)
+	require.Equal(t, old.NetworkMode, got.NetworkMode)
+	require.Equal(t, &zero, old.MemorySwappiness, "the old container's inspect is left as it was")
+	require.Nil(t, recreatedHostConfig(nil))
+}

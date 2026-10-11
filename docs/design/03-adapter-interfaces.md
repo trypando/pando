@@ -1369,7 +1369,8 @@ publishes, which is a step of detection (R-094; `internal/detect/registryprobe`)
 
 **[P] Podman is the Docker adapter pointed at a different socket, not an adapter of its own.** Its
 Docker-compatible API does what this adapter asks, and the adapter's integration suite passes against
-rootless Podman 4.9 with the same tests it passes against Docker. A second adapter would have been a
+rootless Podman 4.9 on Ubuntu 24.04 — the `podman` CI job — with the same tests it passes against
+Docker, less one Podman cannot pass (the default route, below). A second adapter would have been a
 copy of this one. What differs is how the two engines *answer*, and each difference had become a
 wrong result before it was handled; they live in `internal/adapter/runtime/docker/engine.go`:
 
@@ -1385,7 +1386,28 @@ wrong result before it was handled; they live in `internal/adapter/runtime/docke
 - It accepts a `HostConfig.Runtime`, lists that runtime, and does not apply it. `oci_runtime` is
   therefore refused on Podman when the adapter is checked, and every container that runs app code is
   checked for the runtime it actually got before it starts (R-255).
+- Its Docker-compatible `info` says `CpuCfsQuota: false` with the cpu controller delegated, which
+  would refuse every deploy (R-240). On Podman, limit support is read from its own
+  `/v4.0.0/libpod/info` instead: `host.cgroupControllers` lists the controllers it can use, and
+  rootless Podman on cgroup v1 applies none (issue #179).
+- It reports a memory swappiness for a container that set none, and crun refuses to start a container
+  given one on cgroup v2. The self-upgrade swap re-created Pando from the old container's inspected
+  host configuration and could not start it; the swappiness is now left out (R-359).
+- It reads a short image name as `docker.io/library/…` and stores a local build as `localhost/…`, so
+  a local build named short is never found. Pando never names one short — a build is run by its ID —
+  and the tests name theirs `localhost/…`.
 
-Installing Pando itself on Podman — the Compose file mounts Docker's socket, and `docker compose
---build` cannot build through rootless Podman — is the install-topology question in design 00 §1.1,
-still open; this note covers only the runtime adapter.
+One difference is not handled, because Podman 4.9 gives the adapter nothing to handle it with.
+Netavark gives every network a container joins a default route at the same metric and ignores
+`GwPriority`, so Pando's container sends its own outbound traffic through the most recently joined
+app's network, NATed to the host as Docker's is. Netavark's per-network `metric` option is not taken through the Docker-compatible API, and
+netavark 1.4, Ubuntu 24.04's, has none. `TestR023_JoiningAnAppsNetworkNeverMovesPandosDefaultRoute`
+is skipped on Podman with that reason; `docs/rootless.md` says it.
+
+Pando itself installs on rootless Podman with the release's compose file, run by Docker's Compose CLI
+against Podman's socket (`PANDO_DOCKER_SOCKET`), and a user service that runs `docker compose up -d`
+at boot, because Podman has no daemon to restart containers. The `image` CI job installs it that way
+from `docs/rootless.md`, deploys a published image and a built app, restarts the user's systemd
+instance — which stops every rootless container, as a reboot does — and requires both back. The
+development compose file's `build: .` does not work on Podman: Docker's CLI hands the build to a
+BuildKit builder of its own, and the image never reaches Podman.

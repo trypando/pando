@@ -34,5 +34,6 @@ podman info --format '{{.Host.Security.Rootless}} cgroup={{.Host.CgroupsVersion}
 podman info --format '{{.Host.Security.Rootless}}' | grep -qx true
 
 echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
 echo "DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock" >> "$GITHUB_ENV"
 echo "PANDO_DOCKER_SOCKET=$XDG_RUNTIME_DIR/podman/podman.sock" >> "$GITHUB_ENV"

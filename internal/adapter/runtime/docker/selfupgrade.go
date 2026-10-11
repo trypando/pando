@@ -234,7 +234,7 @@ func (r *Replacer) Recreate(ctx context.Context, old Old, image string) (string,
 
 	netCfg, rest := networksOf(&old.inspect)
 	created, err := r.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: &cfg, HostConfig: old.inspect.HostConfig, NetworkingConfig: withAliases(netCfg, &old.inspect),
+		Config: &cfg, HostConfig: recreatedHostConfig(old.inspect.HostConfig), NetworkingConfig: withAliases(netCfg, &old.inspect),
 		Name: old.Name,
 	})
 	if err != nil {
@@ -251,6 +251,22 @@ func (r *Replacer) Recreate(ctx context.Context, old Old, image string) (string,
 		return created.ID, fmt.Errorf("starting the new container: %w", err)
 	}
 	return created.ID, nil
+}
+
+// recreatedHostConfig is the old container's host configuration as the new
+// one is created with.
+//
+// Without its memory swappiness: Podman reports one for a container that set
+// none, and crun refuses to start a container given one on cgroup v2, which
+// has no such setting (issue #179). Docker reports none there, and Pando's
+// compose file sets none.
+func recreatedHostConfig(hc *container.HostConfig) *container.HostConfig {
+	if hc == nil {
+		return nil
+	}
+	out := *hc
+	out.MemorySwappiness = nil
+	return &out
 }
 
 // Ready waits until the new container answers /readyz, which it does only
