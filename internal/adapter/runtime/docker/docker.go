@@ -544,12 +544,12 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 			return err
 		}
 		if matches {
-			// Started whatever the list says: after rootless Podman's
+			// Started whatever the list says. After rootless Podman's
 			// containers were killed with the user's systemd instance (a
-			// reboot), its list still called one running that inspect did
-			// not, so the app was never started again (issue #179). The
-			// engine answers a start of a running container with 304, which
-			// is not an error.
+			// reboot), Pando corrected "workload stopped" four times and the
+			// container stayed exited, with no error: the start had been
+			// skipped on the list's state (issue #179). The engine answers a
+			// start of a running container with 304, which is not an error.
 			if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
 				return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start %q.", w.Name), err)
 			}

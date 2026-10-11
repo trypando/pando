@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	dockeradapter "github.com/trypando/pando/internal/adapter/runtime/docker"
@@ -247,11 +248,17 @@ func TestR187_ARestrictedAppReachesOnlyWhatItsRulesAllowThroughTheGateway(t *tes
 		require.NoError(t, err)
 		require.Equal(t, before, after, "new rules recreate the gateway, not the app")
 
-		require.Eventually(t, func() bool {
-			out, _ := inApp(id, "web",
+		var last string
+		ok := assert.Eventually(t, func() bool {
+			last, _ = inApp(id, "web",
 				`printf 'CONNECT `+outIP+`:18080 HTTP/1.1\r\nHost: x\r\n\r\n' | nc -w 5 pando-egress 3128`)
-			return strings.Contains(out, "private addresses are blocked")
+			return strings.Contains(last, "private addresses are blocked")
 		}, 30*time.Second, 500*time.Millisecond)
+		if !ok {
+			lookup, _ := inApp(id, "web", "nslookup pando-egress")
+			gw, _ := dockerCLI("inspect", "-f", "{{.State.Status}} {{json .NetworkSettings.Networks}}", "pando-egress-"+id)
+			t.Fatalf("the gateway answered %q\nnslookup pando-egress: %s\ngateway: %s", last, lookup, gw)
+		}
 	})
 
 	t.Run("and unrestricted again, it runs as it always did", func(t *testing.T) {
