@@ -6,15 +6,21 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
+	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/bootstrap"
+	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/security"
 	"github.com/trypando/pando/internal/core/source"
@@ -242,4 +248,106 @@ func TestR312_AnUnchangedImageAndSourceReuseTheirScan(t *testing.T) {
 	require.True(t, found)
 	require.Empty(t, got.ReusedFrom)
 	require.Equal(t, h.docker.id, got.Image)
+}
+
+// publish pushes a new image to reference in an in-memory registry and
+// returns its digest.
+func publish(t *testing.T, reference string) string {
+	t.Helper()
+	img, err := random.Image(64, 1)
+	require.NoError(t, err)
+	ref, err := name.ParseReference(reference, name.Insecure)
+	require.NoError(t, err)
+	require.NoError(t, remote.Write(ref, img))
+	digest, err := img.Digest()
+	require.NoError(t, err)
+	return digest.String()
+}
+
+// TestR311_ADeployScansThePublishedImageItRuns asserts R-311 for a repository
+// whose own published image Pando runs instead of building it (R-094 tier 1),
+// as it does for bastienwirtz/homer: the score is the image's as well as the
+// repository's. Before, only the repository's files were scanned, and an image
+// with 6 high findings scored 80. The deploy pins the tag to the digest it
+// names now, scans that digest with the checkout, and runs that digest — so
+// what was scanned is what runs. A redeploy of the same digest reuses the
+// scan; a tag that moved to a new image is scanned again.
+func TestR311_ADeployScansThePublishedImageItRuns(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	h := newScanHarness(t)
+
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+	tag := strings.TrimPrefix(srv.URL, "http://") + "/bastienwirtz/homer:latest"
+	first := publish(t, tag)
+	h.runner.WithImages(&oci.Images{Inspector: oci.Inspector{Insecure: true}})
+
+	h.spec.Build = spec.Build{Strategy: spec.BuildPrebuilt}
+	h.spec.Workloads[0].Image = tag
+
+	h.detect()
+	rev, err := h.deploy()
+	require.NoError(t, err)
+
+	scans := h.scanner.requests()
+	require.Len(t, scans, 2, "the deploy scanned, though detection had scanned the repository")
+	pinned := oci.Pin(tag, first)
+	require.Equal(t, pinned, scans[1].Image, "the published image, by the digest its tag named")
+	require.NotEmpty(t, scans[1].SourceDir, "with the repository")
+	require.Equal(t, h.commit, scans[1].Commit)
+	require.Equal(t, []string{pinned}, h.docker.applied, "and the digest scanned is the digest that runs")
+
+	report, err := h.service.Report(ctx, h.app.ID, rev.ID)
+	require.NoError(t, err)
+	require.Equal(t, pinned, report.Scan.Image)
+	require.Equal(t, 2, report.Counts.Critical, "the image's findings reach the score")
+
+	_, err = h.deploy()
+	require.NoError(t, err)
+	require.Len(t, h.scanner.requests(), 2, "an unchanged image and repository are not scanned again")
+
+	second := publish(t, tag)
+	_, err = h.deploy()
+	require.NoError(t, err)
+	scans = h.scanner.requests()
+	require.Len(t, scans, 3, "a tag that now names another image is scanned")
+	require.Equal(t, oci.Pin(tag, second), scans[2].Image)
+}
+
+// TestR311_AnImageAppIsScoredByItsImage asserts R-311 for an app added as an
+// image that is already built: there is no repository, and the scan reads the
+// pinned digest the app runs.
+func TestR311_AnImageAppIsScoredByItsImage(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	h := newScanHarness(t)
+
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+	tag := strings.TrimPrefix(srv.URL, "http://") + "/acme/web:1"
+	digest := publish(t, tag)
+	h.runner.WithImages(&oci.Images{Inspector: oci.Inspector{Insecure: true}})
+
+	h.spec.Source = spec.Source{Type: spec.SourceImage, Image: tag, Digest: digest}
+	h.spec.Build = spec.Build{Strategy: spec.BuildPrebuilt}
+	h.spec.Workloads[0].Image = tag
+
+	rev, err := h.deploy()
+	require.NoError(t, err)
+
+	scans := h.scanner.requests()
+	require.Len(t, scans, 1)
+	require.Equal(t, oci.Pin(tag, digest), scans[0].Image, "the pinned digest, never the tag")
+	require.Empty(t, scans[0].SourceDir, "there is no repository to read")
+
+	report, err := h.service.Report(ctx, h.app.ID, rev.ID)
+	require.NoError(t, err)
+	require.Equal(t, oci.Pin(tag, digest), report.Scan.Image)
+	require.Equal(t, digest, report.Scan.Commit, "the source an image app names is its digest")
+	require.Equal(t, 2, report.Counts.Critical)
+
+	_, err = h.deploy()
+	require.NoError(t, err)
+	require.Len(t, h.scanner.requests(), 1, "the same digest is not scanned again")
 }

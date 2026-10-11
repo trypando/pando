@@ -122,8 +122,13 @@ scan orders the same way twice.
 read. The source: the commit for a repository, the digest for a published image, and for an upload the
 SHA-256 of the archive (`sha256:<hex>`, never written into the spec as a commit — R-120). And the image
 (`app_scans.image`): what the deploy built or pulled, by digest — an image ID (`sha256:…`) for a build
-loaded into the runtime, `repository@sha256:…` for one pushed to the install's registry or pinned from
-a published one — or nothing, for a scan of the source alone. Detection scans the source it reads, a
+loaded into the runtime, `repository@sha256:…` for one pushed to the install's registry, for an image
+app's pinned digest, and for a repository's published image (R-094 tier 1, `prebuilt`) — or nothing,
+for a scan of the source alone. A repository's published image is named in the spec by tag, so the
+deploy pins the tag to the digest it names at that moment, scans that digest with the checkout, and
+runs that digest: the image scanned is the image that runs, and a tag that has moved since is a new
+image and is scanned. A registry that cannot be read leaves the image unscanned and says so in the
+deploy log, as a scanner that cannot run does (R-318). Detection scans the source it reads, a
 person can ask for a scan (`POST /security/scan`), and a deploy scans the source and the image
 together — unless a successful scan **by the scanner configured now** already read that same source and
 that same image, in which case it uses that one and says so in the deploy log ("Using the security scan
@@ -216,10 +221,11 @@ belongs with the other histories on the Logs tab. The section carries the mark, 
 It is not in settings: settings is where an app is configured, and a score is not a setting.
 
 **[D] The section says what the scan read** (R-311), from the scan's `spec_id`, `commit` and `image`:
-"from the source, before this configuration" for detection's, "of the source only, not an image
-built from it" for a revision scored by a scan that read no image, "of the running image only, not its
-source" for **Scan now** on a deployed app, and "of the image and the source it was built from" for a
-deploy's. A number that covered less than both does not stand for both.
+"from the source, before this configuration" for detection's, "of the source only, not the image it
+runs" for a revision scored by a scan that read no image, "of the running image only, not its source"
+for **Scan now** on a deployed app, "of the image it runs" for an image app (its source is the image's
+own digest), and "of the image it runs and its source" for a deploy's scan of a built or published
+image with its repository. A number that covered less than both does not stand for both.
 
 The **apps list** carries the same mark, at `score / 100`, beside status — which is the question a
 list is for: which of these needs me.

@@ -22,7 +22,7 @@ import (
 // with no threshold is scanned too, because the number is worth having before
 // anybody sets one.
 
-func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.AppSpec, image, sourceDir, commit string, sink io.Writer) error {
+func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.AppSpec, image string, pull *api.RegistryAuth, sourceDir, commit string, sink io.Writer) error {
 	if r.security == nil {
 		return nil
 	}
@@ -60,9 +60,10 @@ func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.A
 		Image:     image,
 		SourceDir: sourceDir,
 
-		// A build pushed to the install's registry is not on the scanner's
-		// host; it is fetched with the registry's credential (issue #72).
-		PullAuth: r.builtImageAuth(ctx, image),
+		// A published image is fetched with the app's registry credential,
+		// and a build pushed to the install's registry with the registry's
+		// (issue #72): neither is necessarily on the scanner's host.
+		PullAuth: firstAuth(pull, r.builtImageAuth(ctx, image)),
 	}, audit.Event{
 		PrincipalKind: audit.KindUser,
 		PrincipalID:   dep.CreatedBy,
@@ -81,6 +82,15 @@ func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.A
 	}
 
 	return r.allowed(ctx, dep, scanned.Findings)
+}
+
+func firstAuth(auths ...*api.RegistryAuth) *api.RegistryAuth {
+	for _, a := range auths {
+		if a != nil {
+			return a
+		}
+	}
+	return nil
 }
 
 // describeSource names a scanned source for the deploy log: an upload by what

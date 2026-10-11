@@ -13,7 +13,10 @@ export function scanScope(scan: Pick<Scan, 'spec_id' | 'commit' | 'image'> | und
   // A scan with no revision is the one detection took of the source, before
   // there was a configuration to attach it to.
   if (!scan.spec_id) return 'from the source, before this configuration';
-  if (!scan.image) return 'of the source only, not an image built from it';
+  if (!scan.image) return 'of the source only, not the image it runs';
   if (!scan.commit) return 'of the running image only, not its source';
-  return 'of the image and the source it was built from';
+  // An app added as an image has no source but the image: the source it
+  // names is the image's own digest.
+  if (scan.image === scan.commit || scan.image.endsWith(`@${scan.commit}`)) return 'of the image it runs';
+  return 'of the image it runs and its source';
 }

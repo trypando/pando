@@ -27,12 +27,18 @@ Unreleased above it. -->
   100 / 100 while its image had 2 critical and 41 high findings. A deploy now reuses a scan only when
   that scan read the same source and the same image, named by its digest; otherwise it scans both.
   The deploy log says "(source and image unchanged)" when it reuses one, and the app's security
-  section says what a scan read: the image and its source, the source only, or the running image only.
+  section says what a scan read: the image it runs and its source, the image only, or the source only.
+- **A repository's published image was never scanned** (R-311). When Pando ran a project's own
+  published image instead of building it, only the repository's files were scanned:
+  `bastienwirtz/homer` scored 80 while `ghcr.io/bastienwirtz/homer:latest` has 6 high findings. The
+  deploy now pins the tag to the digest it names, scans that image with the repository, and runs that
+  digest, so the image scanned is the image that runs. An image app's scan now pulls with the app's
+  registry credential.
 
 ### Upgrade notes
 
 - An app whose current score came from a scan of its source alone keeps that score, now labeled
-  "of the source only", until its next deploy scans the image as well.
+  "of the source only, not the image it runs", until its next deploy scans the image as well.
 
 ## [0.4.0] - 2026-10-11
 
