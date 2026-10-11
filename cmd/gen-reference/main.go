@@ -48,6 +48,7 @@ func main() {
 	for name, v := range map[string]any{
 		"mcp.json":    reference.MCP(),
 		"config.json": reference.Config(),
+		"errors.json": reference.Errors(),
 	} {
 		body, err := reference.JSON(v)
 		if err == nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/policy"
+	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/mcp"
 )
 
@@ -126,4 +127,19 @@ func TestReferenceJSONIsReadable(t *testing.T) {
 	require.Equal(t, "false", policyDefault("bool", nil))
 	require.Equal(t, "0", policyDefault("int", nil))
 	require.Equal(t, "a,b", policyDefault("list", []any{"a", "b"}))
+}
+
+// TestR105_EveryErrorCodeHasAMeaning asserts R-105 for docs/errors.json: every
+// code a client can branch on is listed, once, in code order, with the HTTP
+// status it comes with and a sentence saying what it means.
+func TestR105_EveryErrorCodeHasAMeaning(t *testing.T) {
+	data := Errors()
+	require.Len(t, data.Errors, len(errs.Catalog()))
+	for i, e := range data.Errors {
+		require.NotEmpty(t, e.Meaning, "%s has no meaning in errs' catalog", e.Code)
+		require.NotZero(t, e.Status, e.Code)
+		if i > 0 {
+			require.Less(t, data.Errors[i-1].Code, e.Code)
+		}
+	}
 }

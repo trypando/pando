@@ -13,6 +13,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/policy"
+	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/mcp"
 )
 
@@ -229,6 +230,31 @@ func policyDefault(typ string, v any) string {
 		return strings.Join(parts, ",")
 	}
 	return fmt.Sprint(v)
+}
+
+// ErrorsData is docs/errors.json.
+type ErrorsData struct {
+	Errors []ErrorDoc `json:"errors"`
+}
+
+// ErrorDoc is one error code: what a client branches on, the HTTP status it
+// comes with, and what it means. Status is omitted for a code the error
+// package gives none.
+type ErrorDoc struct {
+	Code    errs.Code `json:"code"`
+	Status  int       `json:"status,omitempty"`
+	Meaning string    `json:"meaning"`
+}
+
+// Errors is errs.Catalog, sorted by code rather than by status, so a reader
+// looking a code up finds it where the alphabet says.
+func Errors() ErrorsData {
+	out := []ErrorDoc{}
+	for _, e := range errs.Catalog() {
+		out = append(out, ErrorDoc{Code: e.Code, Status: e.Status, Meaning: e.Meaning})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
+	return ErrorsData{Errors: out}
 }
 
 // JSON renders a reference file: indented, with a trailing newline, and with
