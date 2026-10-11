@@ -64,8 +64,8 @@ pando login https://pando.example.com
 
 `pando login` stores a delegated token under your home directory, which is right
 for a person at a terminal and no use to CI or a container. Those get the same
-thing from the environment — mint a token in the console under **API and tools**,
-or with `pando token create`:
+thing from the environment — make a token in the console under **API and tools** ›
+**Your tokens** › **New token**:
 
 ```
 export PANDO_SERVER=https://pando.example.com

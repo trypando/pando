@@ -13,7 +13,7 @@ opaque — `app_01HQ8…`, `spec_…`, `tok_…`.
 
 **Token** — `Authorization: Bearer <token>`
 
-A token minted from the console or with `pando token create`. A delegated token acts as the person who made it and is bounded by their live grants (R-058, R-059). A service token is its own principal and holds only what has been shared with it (R-060).
+A token made in the console under **API and tools** › **Your tokens** › **New token**, or **Service tokens** › **New token** for a service token. A delegated token acts as the person who made it and is bounded by their live grants. A service token is its own principal and holds only what has been shared with it.
 
 **Session** — `POST /api/v1/sessions, then the session cookie`
 

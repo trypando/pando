@@ -102,8 +102,8 @@ func CLIMarkdown(doc Document) string {
 	b.WriteString("```\n" + strings.Replace(doc.Connect.LoginCmd, "<server-url>", "https://pando.example.com", 1) + "\n```\n\n")
 	b.WriteString("`pando login` stores a delegated token under your home directory, which is right\n")
 	b.WriteString("for a person at a terminal and no use to CI or a container. Those get the same\n")
-	b.WriteString("thing from the environment — mint a token in the console under **API and tools**,\n")
-	b.WriteString("or with `pando token create`:\n\n")
+	b.WriteString("thing from the environment — make a token in the console under **API and tools** ›\n")
+	b.WriteString("**Your tokens** › **New token**:\n\n")
 	b.WriteString("```\nexport " + doc.Connect.ServerEnv + "=https://pando.example.com\nexport " +
 		doc.Connect.TokenEnv + "=tok_…\n```\n\n")
 	b.WriteString("The environment beats the stored file; `--server` beats both.\n\n")

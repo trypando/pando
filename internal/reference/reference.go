@@ -107,10 +107,13 @@ func Build(routes []Route) Document {
 				{
 					Name: "Token",
 					How:  "Authorization: Bearer <token>",
-					Description: "A token minted from the console or with `pando token create`. " +
+					// R-058, R-059, R-060: kept out of the text, which readers of the
+					// published reference see.
+					Description: "A token made in the console under **API and tools** › **Your tokens** › " +
+						"**New token**, or **Service tokens** › **New token** for a service token. " +
 						"A delegated token acts as the person who made it and is bounded by their " +
-						"live grants (R-058, R-059). A service token is its own principal and " +
-						"holds only what has been shared with it (R-060).",
+						"live grants. A service token is its own principal and " +
+						"holds only what has been shared with it.",
 				},
 				{
 					Name: "Session",
