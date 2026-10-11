@@ -14,14 +14,15 @@ container and network Pando made for the test app.
 
 With --build it also deploys an app Pando builds itself, from an uploaded
 directory, which runs Pando's BuildKit container on the same runtime. With
---reboot CMD it runs CMD once the first app is up, standing in for a restart
-of the host, and requires Pando and the app to come back.
+--restart-user-services it restarts this user's systemd instance once the
+first app is up, which stops every rootless container as a reboot does, and
+requires Pando and the app to come back.
 
 SMOKE_PROJECT names the compose project (default pando-smoke), and
 POSTGRES_PASSWORD, if set, is the database password, so the smoke can drive an
 install whose .env names the same.
 
-usage: scripts/smoke-image.py COMPOSE_FILE [--version 0.3.0] [--pull] [--build] [--reboot CMD] [--keep]
+usage: scripts/smoke-image.py COMPOSE_FILE [--version 0.3.0] [--pull] [--build] [--restart-user-services] [--keep]
 """
 import argparse
 import http.cookiejar
@@ -42,6 +43,7 @@ APP_PORTS = (19000, 19004)
 APP_IMAGE = "traefik/whoami:v1.10.3"  # small, multi-arch, answers any path
 
 BASE = f"http://localhost:{PORT}"
+READYZ = "/readyz"
 jar = http.cookiejar.CookieJar()
 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 
@@ -102,7 +104,7 @@ def run(args):
     step("starting the stack")
     compose(args, "up", "-d")
 
-    wait("Pando did not become ready", lambda: (request("GET", "/readyz")[0] == 200, request("GET", "/readyz")), 240)
+    wait_ready("Pando did not become ready", 240)
     code, body = request("GET", "/healthz")
     assert code == 200, f"/healthz answered {code}: {body}"
     step("ready")
@@ -146,7 +148,7 @@ def run(args):
         raise SystemExit(f"FAIL: first-run setup answered {code}: {out}")
     step("first administrator set up")
 
-    deploy(args, "smoke-whoami", {"type": "image", "image": APP_IMAGE}, "Hostname", reboot=args.reboot)
+    deploy(args, "smoke-whoami", {"type": "image", "image": APP_IMAGE}, "Hostname", restart=args.restart_user_services)
     if args.build:
         deploy(args, "smoke-static", {"type": "upload"}, BUILT_MARKER, files={"index.html": BUILT_PAGE})
     step("PASS")
@@ -157,31 +159,30 @@ BUILT_MARKER = "pando-smoke-built"
 BUILT_PAGE = f"<!doctype html><title>{BUILT_MARKER}</title><p>{BUILT_MARKER}</p>\n"
 
 
-def deploy(args, name, source, expect, files=None, reboot=None):
-    """Creates an app, deploys it, reads `expect` from it through Pando's
-    proxy, and deletes it. `files` are sent as its source for an upload;
-    `reboot` is run while it is up, and it must be up again after."""
-    code, app = api("POST", "/apps", {"name": name, "source": source})
+def wait_ready(what, timeout):
+    def ready():
+        r = request("GET", READYZ)
+        return r[0] == 200, r
+    wait(what, ready, timeout)
+
+
+def must(code, what, out):
     if code >= 300:
-        raise SystemExit(f"FAIL: creating {name} answered {code}: {app}")
-    app_id = app["id"]
-    args.app_ids.append(app_id)
+        raise SystemExit(f"FAIL: {what} answered {code}: {str(out)[:300]}")
 
-    if files:
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            for path, text in files.items():
-                data = text.encode()
-                info = tarfile.TarInfo(path)
-                info.size = len(data)
-                tar.addfile(info, io.BytesIO(data))
-        code, out = request("POST", f"/api/v1/apps/{app_id}/source", raw=buf.getvalue(), content_type="application/gzip")
-        if code >= 300:
-            raise SystemExit(f"FAIL: sending {name}'s files answered {code}: {out[:300]}")
-        code, out = api("POST", f"/apps/{app_id}/detection/rerun", {})
-        if code >= 300:
-            raise SystemExit(f"FAIL: detecting {name} again answered {code}: {out}")
 
+def gzipped_tar(files):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for path, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(path)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def detect(app_id, name):
     def detected():
         _, d = api("GET", f"/apps/{app_id}/detection")
         return d.get("status") in ("ready", "needs_answers", "blocked", "failed"), d
@@ -189,13 +190,13 @@ def deploy(args, name, source, expect, files=None, reboot=None):
     if d.get("status") != "ready":
         raise SystemExit(f"FAIL: detection of {name} ended {d.get('status')}: {json.dumps(d)[:800]}")
     code, out = api("POST", f"/apps/{app_id}/detection/accept", {})
-    if code >= 300:
-        raise SystemExit(f"FAIL: accepting {name}'s proposal answered {code}: {out}")
+    must(code, f"accepting {name}'s proposal", out)
     step(f"{name} detected and accepted")
 
+
+def run_deploy(app_id, name):
     code, dep = api("POST", f"/apps/{app_id}/deployments", {})
-    if code >= 300:
-        raise SystemExit(f"FAIL: starting {name}'s deploy answered {code}: {dep}")
+    must(code, f"starting {name}'s deploy", dep)
 
     def deployed():
         _, dd = api("GET", f"/apps/{app_id}/deployments/{dep['id']}")
@@ -205,23 +206,50 @@ def deploy(args, name, source, expect, files=None, reboot=None):
         raise SystemExit(f"FAIL: {name}'s deploy ended {dd.get('status')}: {json.dumps(dd)[:800]}")
     step(f"{name} deployed")
 
+
+def restart_user_services(name, reachable):
+    unit = f"user@{os.getuid()}.service"
+    step(f"restarting {unit}")
+    subprocess.run(["sudo", "systemctl", "restart", unit], check=True)
+    wait_ready("Pando did not come back after the restart", 300)
+    step("Pando is back")
+    wait(f"{name} was not reachable through Pando after the restart", reachable, 300)
+    step(f"{name} is back")
+
+
+def deploy(args, name, source, expect, files=None, restart=False):
+    """Creates an app, deploys it, reads `expect` from it through Pando's
+    proxy, and deletes it. `files` are sent as its source for an upload;
+    with `restart`, the user's services are restarted while it is up, and it
+    must be up again after."""
+    code, app = api("POST", "/apps", {"name": name, "source": source})
+    must(code, f"creating {name}", app)
+    app_id = app["id"]
+    args.app_ids.append(app_id)
+
+    if files:
+        code, out = request("POST", f"/api/v1/apps/{app_id}/source", raw=gzipped_tar(files), content_type="application/gzip")
+        must(code, f"sending {name}'s files", out)
+        code, out = api("POST", f"/apps/{app_id}/detection/rerun", {})
+        must(code, f"detecting {name} again", out)
+
+    detect(app_id, name)
+    run_deploy(app_id, name)
+
     slug = app.get("slug") or api("GET", f"/apps/{app_id}")[1].get("slug")
-    reachable = lambda: (lambda r: (r[0] == 200 and expect in r[1], r))(request("GET", f"/{slug}/"))
+
+    def reachable():
+        r = request("GET", f"/{slug}/")
+        return r[0] == 200 and expect in r[1], r
     body = wait(f"{name} was not reachable through Pando", reachable, 120)
     step(f"{name} reachable through Pando's proxy at /{slug}/")
     print(body[1].splitlines()[0] if body[1] else "")
 
-    if reboot:
-        step(f"restarting: {reboot}")
-        subprocess.run(["sh", "-c", reboot], check=True)
-        wait("Pando did not come back after the restart", lambda: (request("GET", "/readyz")[0] == 200, request("GET", "/readyz")), 300)
-        step("Pando is back")
-        wait(f"{name} was not reachable through Pando after the restart", reachable, 300)
-        step(f"{name} is back")
+    if restart:
+        restart_user_services(name, reachable)
 
     code, out = api("DELETE", f"/apps/{app_id}?force=true")
-    if code >= 300:
-        raise SystemExit(f"FAIL: deleting {name} answered {code}: {out}")
+    must(code, f"deleting {name}", out)
 
 
 def cleanup(args):
@@ -257,7 +285,8 @@ def main():
     ap.add_argument("--version", help="the version `pando version` must report")
     ap.add_argument("--pull", action="store_true", help="pull the images first (a published release)")
     ap.add_argument("--build", action="store_true", help="also deploy an app Pando builds from uploaded files")
-    ap.add_argument("--reboot", metavar="CMD", help="a shell command standing in for a restart of the host, run once the first app is up")
+    ap.add_argument("--restart-user-services", action="store_true",
+                    help="restart this user's systemd instance once the first app is up, standing in for a reboot")
     ap.add_argument("--keep", action="store_true", help="leave the stack running afterwards")
     args = ap.parse_args()
     args.db_password = os.environ.get("POSTGRES_PASSWORD") or secrets.token_urlsafe(18)

@@ -98,14 +98,18 @@ func (a *Adapter) podman(ctx context.Context) (bool, error) {
 // libpodInfo is the part of Podman's own info, GET /libpod/info, that says
 // which limits it can apply.
 type libpodInfo struct {
-	Host struct {
-		CgroupManager     string   `json:"cgroupManager"`
-		CgroupVersion     string   `json:"cgroupVersion"`
-		CgroupControllers []string `json:"cgroupControllers"`
-		Security          struct {
-			Rootless bool `json:"rootless"`
-		} `json:"security"`
-	} `json:"host"`
+	Host libpodHost `json:"host"`
+}
+
+type libpodHost struct {
+	CgroupManager     string         `json:"cgroupManager"`
+	CgroupVersion     string         `json:"cgroupVersion"`
+	CgroupControllers []string       `json:"cgroupControllers"`
+	Security          libpodSecurity `json:"security"`
+}
+
+type libpodSecurity struct {
+	Rootless bool `json:"rootless"`
 }
 
 // podmanSupport asks Podman through /libpod/info, served on the same socket

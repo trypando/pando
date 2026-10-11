@@ -542,5 +542,4 @@ jobs:
           sed -n '/^mkdir -p ~\/.config\/systemd\/user$/,/^systemctl --user enable pando.service$/p' docs/rootless.md > "$RUNNER_TEMP/unit.sh"
           grep -q 'ExecStart=/usr/bin/docker compose up -d' "$RUNNER_TEMP/unit.sh"
           sh -eux "$RUNNER_TEMP/unit.sh"
-          python3 scripts/smoke-image.py ~/pando/docker-compose.yml --version 0.0.0-ci --build \
-            --reboot 'sudo systemctl restart "user@$(id -u).service"'
+          python3 scripts/smoke-image.py ~/pando/docker-compose.yml --version 0.0.0-ci --build --restart-user-services
