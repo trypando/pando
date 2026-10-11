@@ -383,6 +383,59 @@ apps from their backups; what changed since the last backup is lost. To replace 
 the new one before the old one in `agent_authority`, restart, and remove the old one once every
 agent has been replaced.
 
+### Running apps on Incus
+
+The `incus` runtime runs each app in its own Incus virtual machine, so no two apps share a kernel.
+Every workload of the app, and every service provisioned for it, runs inside that VM. Pando itself
+stays a Compose install on a Docker host, which also runs the edge: add the Incus runtime beside the
+Docker runtime and choose it per app, or make it the default for new apps.
+
+Pando reaches each app's VM through a forwarding agent it runs there, as on several Docker hosts. A
+network ACL on the VM admits connections only from Pando's addresses, and only to the agent's port.
+Built images reach the VMs through the install's image registry, so a registry is required for apps
+Pando builds. Apps that run a published image need none.
+
+To set it up:
+
+1. Choose the Incus network the VMs attach to. Pando must be able to reach addresses on it: run Pando
+   on the Incus server, or in a VM on the same network. On a cluster, use an OVN network, or set
+   `target` to one member, because a bridge network exists separately on each member.
+2. Create a project for Pando's VMs, such as `incus project create pando`, with a root disk in its
+   default profile or `storage_pool` set. If the network is a bridge in the `default` project, the
+   network must be used by Pando's VMs alone: Pando puts its ACL on the whole network.
+3. For a remote server, create a client certificate and trust it with `incus config trust
+   add-certificate pando.crt --projects pando,default --restricted`. The `default` project is needed
+   when the network is there, because the network's ACLs are kept with it.
+4. Generate the agents' certificate authority with `pando host-agent new-authority`.
+5. Add the runtime and restart Pando. The first deploy prepares the VM image, Debian with Podman,
+   which takes a few minutes; later deploys start a VM in about twenty seconds.
+
+```yaml
+adapters:
+  rt_incus:
+    category: runtime
+    kind: incus
+    config:
+      address: https://10.0.0.2:8443
+      server_certificate: |
+        -----BEGIN CERTIFICATE-----
+        ...
+      project: pando
+      network: pando0
+      proxy_sources: 10.250.0.1/32      # Pando's address on that network
+      target: incus-1                   # on a cluster with a bridge network
+      agent_image: trypando/pando:0.4.0 # an image of this version every VM can pull
+    credentials:
+      tls_client: {file: /run/secrets/incus_client.pem}   # certificate and key together
+      agent_authority: {file: /run/secrets/pando_agent_authority}
+```
+
+A VM is sized from its app's CPU and memory limits, plus 512 MiB for the guest system. Its volumes
+are Incus volumes, kept when the app is deleted and backed up whether or not the VM is running.
+Stopping an app stops its VM. Capacity is what the cluster's members have, less what every running
+instance the project can see is limited to; set `total_cpu_millis` and `total_memory_bytes` to give
+Pando part of a cluster that runs other things.
+
 ## Guarantees worth relying on
 
 These are requirements, not implementation details, and they will not be changed without a major

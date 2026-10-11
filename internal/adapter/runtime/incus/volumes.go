@@ -330,7 +330,7 @@ func extract(ctx context.Context, c *sftp.Client, tr *tar.Reader) error {
 				return fmt.Errorf("the archive writes %q through a link it made", hdr.Name)
 			}
 		}
-		mode := os.FileMode(hdr.Mode).Perm()
+		mode := hdr.FileInfo().Mode().Perm()
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := c.MkdirAll(name); err != nil {

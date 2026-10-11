@@ -233,11 +233,7 @@ func (c *Config) proxySources() ([]netip.Prefix, error) {
 }
 
 func (c *Config) profiles() []string {
-	var out []string
-	for _, p := range strings.FieldsFunc(c.Profiles, func(r rune) bool { return r == ',' || r == ' ' }) {
-		out = append(out, p)
-	}
-	return out
+	return strings.FieldsFunc(c.Profiles, func(r rune) bool { return r == ',' || r == ' ' })
 }
 
 // clientCertificate reads a certificate and its key from one PEM bundle.

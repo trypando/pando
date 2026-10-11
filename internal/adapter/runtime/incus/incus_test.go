@@ -400,3 +400,37 @@ func TestR212_AVolumeRoundTripsThroughABackup(t *testing.T) {
 	_, err = dst.Stat("/stale")
 	require.Error(t, err, "a restore replaces, never merges")
 }
+
+// TestR026_TheACLGoesOnTheNetworkWhenTheVMsAreInAnotherProject asserts R-026
+// where Incus cannot apply a NIC's ACL across projects: the ACL goes on the
+// network, which then drops every inbound connection it does not admit.
+func TestR026_TheACLGoesOnTheNetworkWhenTheVMsAreInAnotherProject(t *testing.T) {
+	f := newFakeIncus()
+	f.networks["pando0"] = &incusapi.Network{Name: "pando0", Type: "bridge", Project: "default"}
+	a, _, _ := testAdapter(t, f, func(c *Config) { c.Network = "pando0"; c.Project = "pando" })
+	_, err := a.Apply(ctx, webPlan("app_1"))
+	require.NoError(t, err)
+
+	cfg := f.networks["pando0"].Config
+	require.Equal(t, "pando-ingress-pando", cfg["security.acls"])
+	require.Equal(t, "drop", cfg["security.acls.default.ingress.action"])
+	nic := f.created[0].Devices[nicName]
+	require.Empty(t, nic["security.acls"], "the NIC carries none of it")
+}
+
+// TestR026_ASharedNetworkIsRefusedWhenTheACLMustGoOnIt asserts R-026 and
+// R-254: an ACL on a network others use would close it to them too.
+func TestR026_ASharedNetworkIsRefusedWhenTheACLMustGoOnIt(t *testing.T) {
+	f := newFakeIncus()
+	f.project = "pando"
+	f.networks["incusbr0"].Project = "default"
+	f.networks["incusbr0"].UsedBy = []string{"/1.0/instances/pando-app-1?project=pando", "/1.0/instances/homeassistant"}
+	a, _, _ := testAdapter(t, f, func(c *Config) { c.Project = "pando"; c.StoragePool = "default" })
+	err := a.HealthCheck(ctx)
+	require.Error(t, err)
+	require.Contains(t, errs.As(err).Message, "/1.0/instances/homeassistant")
+	require.Contains(t, errs.As(err).Remedy, "network for Pando's VMs alone")
+
+	f.networks["incusbr0"].UsedBy = f.networks["incusbr0"].UsedBy[:1]
+	require.NoError(t, a.HealthCheck(ctx))
+}

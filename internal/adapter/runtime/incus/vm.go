@@ -93,31 +93,113 @@ func (a *Adapter) ensureACL(ctx context.Context) error {
 		if err != nil {
 			return errs.Wrap(errs.AdapterFailed, "Could not create the network ACL that keeps apps' VMs private.", err)
 		}
-		return nil
+		return a.ensureNetworkACL(ctx)
 	}
 	if err != nil {
 		return errs.Wrap(errs.AdapterUnavailable, "Could not read the network ACL that keeps apps' VMs private.", err)
 	}
-	if reflect.DeepEqual(have.Ingress, want.Ingress) && len(have.Egress) == 0 {
+	if !reflect.DeepEqual(have.Ingress, want.Ingress) || len(have.Egress) != 0 {
+		if err := a.api.UpdateACL(ctx, a.aclName(), want, etag); err != nil {
+			return errs.Wrap(errs.AdapterFailed, "Could not update the network ACL that keeps apps' VMs private.", err)
+		}
+	}
+	return a.ensureNetworkACL(ctx)
+}
+
+// nic is the VM's one NIC: on the configured network, behind the ACL, with
+// every inbound connection the ACL does not admit dropped. When the ACL is
+// on the network instead (onNetwork), the NIC carries none of it.
+func (a *Adapter) nic() map[string]string {
+	d := map[string]string{
+		"type":    "nic",
+		"network": a.config.Network,
+		"name":    nicName,
+	}
+	if !a.aclOnNetwork {
+		d["security.acls"] = a.aclName()
+		d["security.acls.default.ingress.action"] = "drop"
+		d["security.acls.default.egress.action"] = "allow"
+	}
+	return d
+}
+
+// placeACL decides whether the ACL goes on each VM's NIC or on the network,
+// from the network's project.
+//
+// On each NIC is the default: it is what keeps two apps apart on a network
+// that other things share. But Incus 6.21 applies a NIC's ACLs from the
+// instance's project, while a bridge network's ACLs live in the network's
+// (default, for a project without features.networks), so a VM in Pando's
+// own project fails to start with "Network ACL not found". There the ACL goes
+// on the network, which Incus applies from the right project, and the network
+// must be Pando's alone (checkDedicated).
+func (a *Adapter) placeACL(n *incusapi.Network) {
+	a.aclOnNetwork = n.Project != "" && n.Project != a.config.Project
+}
+
+// checkDedicated refuses, when the ACL goes on the network, a network that
+// anything but this adapter's VMs uses: the ACL would close it to them too.
+func (a *Adapter) checkDedicated(n *incusapi.Network) error {
+	a.placeACL(n)
+	if !a.aclOnNetwork {
 		return nil
 	}
-	if err := a.api.UpdateACL(ctx, a.aclName(), want, etag); err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Could not update the network ACL that keeps apps' VMs private.", err)
+	for _, user := range n.UsedBy {
+		path, query, _ := strings.Cut(user, "?")
+		name, isInstance := strings.CutPrefix(path, "/1.0/instances/")
+		project := "default"
+		for _, kv := range strings.Split(query, "&") {
+			if v, ok := strings.CutPrefix(kv, "project="); ok {
+				project = v
+			}
+		}
+		if isInstance && project == a.config.Project && strings.HasPrefix(name, "pando-") {
+			continue
+		}
+		return errs.Newf(errs.AdapterUnavailable,
+			"The network %s is in the project %s and Pando's VMs are in %s, so Pando has to put its network ACL on the whole network, and %s also uses it.",
+			a.config.Network, n.Project, a.config.Project, user).
+			WithRemedy("Create a network for Pando's VMs alone, such as `incus network create pando0`, and set network in " + settingIn + " to it. Or run the VMs in the network's project.")
 	}
 	return nil
 }
 
-// nic is the VM's one NIC: on the configured network, behind the ACL, with
-// every inbound connection the ACL does not admit dropped.
-func (a *Adapter) nic() map[string]string {
-	return map[string]string{
-		"type":                                 "nic",
-		"network":                              a.config.Network,
-		"name":                                 nicName,
+// ensureNetworkACL puts the ACL on the network, dropping every other inbound
+// connection, when that is where it goes.
+func (a *Adapter) ensureNetworkACL(ctx context.Context) error {
+	n, etag, err := a.api.Network(ctx, a.config.Network)
+	if err != nil {
+		return errs.Wrap(errs.AdapterUnavailable, "Could not read the network "+a.config.Network+" from Incus.", err)
+	}
+	if err := a.checkDedicated(n); err != nil {
+		return err
+	}
+	if !a.aclOnNetwork {
+		return nil
+	}
+	want := map[string]string{
 		"security.acls":                        a.aclName(),
 		"security.acls.default.ingress.action": "drop",
 		"security.acls.default.egress.action":  "allow",
 	}
+	put := n.Writable()
+	if put.Config == nil {
+		put.Config = map[string]string{}
+	}
+	changed := false
+	for k, v := range want {
+		if put.Config[k] != v {
+			put.Config[k] = v
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if err := a.api.UpdateNetwork(ctx, a.config.Network, put, etag); err != nil {
+		return errs.Wrap(errs.AdapterFailed, "Could not put the network ACL that keeps apps' VMs private on "+a.config.Network+".", err)
+	}
+	return nil
 }
 
 // size is the VM's CPUs and memory for a plan: its workloads' limits summed,

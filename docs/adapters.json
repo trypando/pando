@@ -841,6 +841,182 @@
         },
         {
           "category": "runtime",
+          "kind": "incus",
+          "name": "Incus virtual machines",
+          "description": "Runs each app in its own Incus virtual machine, so no two apps share a kernel. Incus decides which cluster member a VM runs on. Pando reaches each VM through a forwarding agent it runs there, and a network ACL admits nothing else. Built images reach the VMs through the install's image registry. The edge keeps running on the Docker runtime.",
+          "fields": [
+            {
+              "key": "address",
+              "label": "Incus address",
+              "help": "unix:///var/lib/incus/unix.socket when Pando runs on the Incus server, or https://host:8443 with a client certificate.",
+              "type": "string",
+              "placeholder": "unix:///var/lib/incus/unix.socket"
+            },
+            {
+              "key": "server_certificate",
+              "label": "Server certificate",
+              "help": "For an https:// address: the Incus server's certificate, as PEM. On a cluster, any member's.",
+              "type": "string",
+              "multiline": true
+            },
+            {
+              "key": "tls_client",
+              "label": "TLS client certificate",
+              "help": "For an https:// address: a client certificate and its key, as PEM, trusted on the server with `incus config trust add-certificate`. Restrict it to the project below with --projects.",
+              "type": "string",
+              "multiline": true,
+              "credential": true
+            },
+            {
+              "key": "network",
+              "label": "Network",
+              "help": "The Incus network each app's VM is attached to. Pando must be able to reach addresses on it. On a cluster, an OVN network, or a bridge with a target member.",
+              "type": "string",
+              "required": true,
+              "placeholder": "incusbr0"
+            },
+            {
+              "key": "proxy_sources",
+              "label": "Pando's addresses",
+              "help": "The addresses Pando connects to app VMs from, as seen on that network: the only connections a VM accepts. Comma-separated, as addresses or ranges.",
+              "type": "string",
+              "required": true,
+              "placeholder": "10.1.0.10/32"
+            },
+            {
+              "key": "agent_authority",
+              "label": "Agent certificate authority",
+              "help": "The output of `pando host-agent new-authority`. Pando issues its own certificate and each VM's agent's from it.",
+              "type": "string",
+              "multiline": true,
+              "required": true,
+              "credential": true
+            },
+            {
+              "key": "agent_image",
+              "label": "Pando image",
+              "help": "The image of this version of Pando, which each VM's forwarding agent and each restricted app's egress gateway run. Every VM must be able to pull it.",
+              "type": "string",
+              "required": true,
+              "placeholder": "trypando/pando:0.4.0"
+            },
+            {
+              "key": "project",
+              "label": "Project",
+              "help": "The Incus project VMs, volumes and the guest image are made in. A project of Pando's own is recommended.",
+              "type": "string",
+              "advanced": true,
+              "default": "default"
+            },
+            {
+              "key": "storage_pool",
+              "label": "Storage pool",
+              "help": "The pool for each VM's disk and the apps' volumes.",
+              "type": "string",
+              "advanced": true,
+              "default": "The pool of the project's default profile's root disk"
+            },
+            {
+              "key": "target",
+              "label": "Cluster target",
+              "help": "A cluster member, or @ and a cluster group, that VMs run on.",
+              "type": "string",
+              "advanced": true,
+              "default": "Any member, as Incus places them"
+            },
+            {
+              "key": "profiles",
+              "label": "Profiles",
+              "help": "Incus profiles applied to each VM, comma-separated. Pando sets the VM's disk and NIC itself; a profile that adds another NIC gives the VM a way in that skips Pando.",
+              "type": "string",
+              "advanced": true,
+              "default": "None"
+            },
+            {
+              "key": "guest_image",
+              "label": "Guest image",
+              "help": "An Incus image alias or fingerprint to start VMs from, with Podman serving /run/podman/podman.sock and socat installed.",
+              "type": "string",
+              "advanced": true,
+              "default": "Debian 13 with Podman, prepared by Pando on first use"
+            },
+            {
+              "key": "agent_port",
+              "label": "Agent port",
+              "help": "The port each VM's agent listens on, and the only one the network ACL opens, to Pando's addresses.",
+              "type": "int",
+              "advanced": true,
+              "default": "7443"
+            },
+            {
+              "key": "root_size_bytes",
+              "label": "VM disk size",
+              "help": "Each VM's disk, in bytes, for images and what workloads write outside their volumes.",
+              "type": "int",
+              "advanced": true,
+              "default": "21474836480 (20 GiB)"
+            },
+            {
+              "key": "guest_overhead_bytes",
+              "label": "VM memory overhead",
+              "help": "Memory each VM has beyond its app's limits, in bytes, for the guest system and Podman.",
+              "type": "int",
+              "advanced": true,
+              "default": "536870912 (512 MiB)"
+            },
+            {
+              "key": "default_cpus",
+              "label": "Default CPUs",
+              "help": "CPUs for the VM of an app that sets no limits.",
+              "type": "int",
+              "advanced": true,
+              "default": "1"
+            },
+            {
+              "key": "default_memory_bytes",
+              "label": "Default memory",
+              "help": "Memory for the VM of an app that sets no limits, in bytes.",
+              "type": "int",
+              "advanced": true,
+              "default": "1073741824 (1 GiB)"
+            },
+            {
+              "key": "network_pool",
+              "label": "App network range",
+              "help": "The IPv4 range app networks inside each VM take their addresses from. Must not overlap the Incus network.",
+              "type": "string",
+              "advanced": true,
+              "default": "10.213.0.0/16"
+            },
+            {
+              "key": "network_block_bits",
+              "label": "App network size",
+              "help": "The size of each app's private network inside its VM, as a prefix length from 24 to 29.",
+              "type": "int",
+              "advanced": true,
+              "default": "28"
+            },
+            {
+              "key": "total_cpu_millis",
+              "label": "CPU for Pando",
+              "help": "Thousandths of a core Pando may use across the members, when it shares them with other work.",
+              "type": "int",
+              "advanced": true,
+              "default": "What the members have"
+            },
+            {
+              "key": "total_memory_bytes",
+              "label": "Memory for Pando",
+              "help": "Bytes of memory Pando may use across the members, when it shares them with other work.",
+              "type": "int",
+              "advanced": true,
+              "default": "What the members have"
+            }
+          ],
+          "id_prefix": "rt_"
+        },
+        {
+          "category": "runtime",
           "kind": "kubernetes",
           "name": "Kubernetes",
           "description": "Runs apps as pods on the Kubernetes cluster Pando runs in, one namespace per app.",

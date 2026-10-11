@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"net/netip"
 	"strings"
 	"sync"
@@ -80,6 +81,10 @@ type Adapter struct {
 
 	mu  sync.Mutex
 	vms map[string]*vm // by bundle ID
+
+	// aclOnNetwork is where the ingress ACL goes (placeACL), read from the
+	// network by HealthCheck and Apply.
+	aclOnNetwork bool
 
 	guestMu    sync.Mutex
 	guestAlias string
@@ -223,13 +228,16 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 // member at a time, on a cluster where VMs could be placed on another
 // (notes-incus-runtime.md, Which network).
 func (a *Adapter) checkPlacement(ctx context.Context) error {
-	n, err := a.api.Network(ctx, a.config.Network)
-	if err == errNotFound {
+	n, _, err := a.api.Network(ctx, a.config.Network)
+	if errors.Is(err, errNotFound) {
 		return errs.Newf(errs.AdapterUnavailable, "Incus has no network named %s.", a.config.Network).
 			WithRemedy("Create it, or set network in " + settingIn + " to one that exists. `incus network list` shows them.")
 	}
 	if err != nil {
 		return errs.Wrap(errs.AdapterUnavailable, "Could not read the network "+a.config.Network+" from Incus.", err)
+	}
+	if err := a.checkDedicated(n); err != nil {
+		return err
 	}
 	pool, err := a.storagePool(ctx)
 	if err != nil {

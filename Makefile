@@ -170,6 +170,27 @@ test-multihost: ## Run the multi-host Docker runtime on Docker-in-Docker hosts (
 	fi; \
 	exit $$status
 
+# The Incus runtime against a real Incus server (notes-incus-runtime.md). Run
+# where Pando's proxy would run: somewhere that can route to INCUS_NETWORK,
+# because the proxy's path through each VM's agent is part of what is tested.
+# Everything is made in INCUS_PROJECT and removed as each test ends.
+INCUS_ADDRESS     ?= unix:///var/lib/incus/unix.socket
+INCUS_CERTS       ?=
+INCUS_PROJECT     ?= pando-test
+INCUS_NETWORK     ?= incusbr0
+INCUS_SOURCES     ?=
+INCUS_TARGET      ?=
+INCUS_POOL        ?=
+INCUS_AGENT_IMAGE ?= trypando/pando:latest
+
+.PHONY: test-incus
+test-incus: ## Run the Incus runtime against a real Incus server (VMs, the agent path, volumes, trials)
+	@test -n "$(INCUS_SOURCES)" || { echo "Set INCUS_SOURCES to this machine's address on $(INCUS_NETWORK)."; exit 2; }
+	PANDO_INCUS_ADDRESS=$(INCUS_ADDRESS) PANDO_INCUS_CERTS=$(INCUS_CERTS) PANDO_INCUS_PROJECT=$(INCUS_PROJECT) \
+	PANDO_INCUS_NETWORK=$(INCUS_NETWORK) PANDO_INCUS_SOURCES=$(INCUS_SOURCES) PANDO_INCUS_TARGET=$(INCUS_TARGET) \
+	PANDO_INCUS_POOL=$(INCUS_POOL) PANDO_INCUS_AGENT_IMAGE=$(INCUS_AGENT_IMAGE) \
+	$(GO) test -count=1 -timeout=60m -tags=incus -v ./internal/adapter/runtime/incus/
+
 # The load harness (issue #72, test/load/README.md): a scale tier seeded into
 # the replicas stack, scaled to LOAD_REPLICAS, with console, API and proxy
 # traffic ramped through the balancer until it holds or breaks. Its own project
@@ -243,6 +264,7 @@ vet: ## go vet, including the integration-tagged tests
 	$(GO) vet -tags integration $(PKG)
 	$(GO) vet -tags kubernetes ./test/kubernetes/
 	$(GO) vet -tags multihost ./test/multihost/
+	$(GO) vet -tags incus ./internal/adapter/runtime/incus/
 	$(GO) vet -tags kwokscale ./test/kwok/
 
 # `go install` puts binaries in GOPATH/bin, which is not on PATH by default — so
@@ -275,7 +297,7 @@ check: vet lint deadcode test reference-check ## Everything CI runs on a pull re
 # Go sources some npm packages ship in console/node_modules (flatted has one).
 # Lazy, so the `go list` runs only when this target does.
 DEADCODE_VERSION := v0.51.0
-DEADCODE_TAGS    := integration,kubernetes,multihost,kwokscale
+DEADCODE_TAGS    := integration,kubernetes,multihost,kwokscale,incus
 DEADCODE_PKGS     = $(shell $(GO) list -tags $(DEADCODE_TAGS) $(PKG) | grep -v '/node_modules/')
 
 .PHONY: deadcode

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/url"
 	"strconv"
@@ -316,9 +317,9 @@ func (a *Adapter) places(ctx context.Context) ([]place, error) {
 		if err != nil {
 			return place{}, errs.Wrap(errs.AdapterUnavailable, "Could not read the resources of Incus "+member+".", err)
 		}
-		p := place{name: member, cpu: int(res.CPU.Total) * 1000, memory: int64(res.Memory.Total), free: -1}
+		p := place{name: member, cpu: int(clamp(res.CPU.Total)) * 1000, memory: clamp(res.Memory.Total), free: -1}
 		if res.Memory.Used > 0 && res.Memory.Total >= res.Memory.Used {
-			p.free = int64(res.Memory.Total - res.Memory.Used)
+			p.free = clamp(res.Memory.Total - res.Memory.Used)
 		}
 		for _, inst := range all {
 			if member != "" && inst.Location != member {
@@ -393,4 +394,12 @@ func parseBytes(s string) (int64, error) {
 		}
 	}
 	return strconv.ParseInt(s, 10, 64)
+}
+
+// clamp is a count Incus reports, as an int64, never wrapping negative.
+func clamp(n uint64) int64 {
+	if n > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(n)
 }

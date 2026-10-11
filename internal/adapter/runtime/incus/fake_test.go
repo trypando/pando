@@ -203,12 +203,26 @@ func (f *fakeIncus) Exec(_ context.Context, name string, command []string, _ io.
 	return f.execCode, nil
 }
 
-func (f *fakeIncus) Network(_ context.Context, name string) (*incusapi.Network, error) {
+func (f *fakeIncus) Network(_ context.Context, name string) (*incusapi.Network, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	n, ok := f.networks[name]
 	if !ok {
-		return nil, errNotFound
+		return nil, "", errNotFound
 	}
-	return n, nil
+	c := *n
+	return &c, "etag", nil
+}
+
+func (f *fakeIncus) UpdateNetwork(_ context.Context, name string, put incusapi.NetworkPut, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n, ok := f.networks[name]
+	if !ok {
+		return errNotFound
+	}
+	n.NetworkPut = put
+	return nil
 }
 
 func (f *fakeIncus) ACL(_ context.Context, name string) (*incusapi.NetworkACL, string, error) {

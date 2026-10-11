@@ -45,6 +45,17 @@ that runs its apps on Incus is laid out (design 00 §1.1's open question). It de
 - **The adapter owns the VM; the Docker adapter owns what is in it.** Incus-shaped vocabulary
   (instances, profiles, devices, ACLs, storage pools) stays in this package (R-251).
 
+## As built
+
+What a real two-member Incus 6.21 cluster changed from the design below.
+
+| What | As built | Why |
+|---|---|---|
+| Where the ACL goes | On each VM's NIC when the VMs are in the network's project; **on the network** when they are not, and then the network must be Pando's alone | Incus 6.21 resolves a bridge NIC's ACLs from the instance's project when it applies them (`device/nic_bridged.go`), though it validates them from the network's, so a VM in Pando's own project with a bridge in `default` fails to start with "Network ACL not found". The network-level ACL is resolved correctly. `HealthCheck` refuses a network anything else uses, since the ACL would close it to that too |
+| Certificate scope | Pando's project **and** the network's (`default` for a bridge) | A bridge network's ACLs are kept in the network's project. A certificate restricted to Pando's project alone is refused at the ACL, with a message saying so |
+| Docker API latency | About 45 ms a call over the exec bridge, one exec per burst | The websocket, the VM agent and socat, measured. Proxied requests do not take this path: they go to the agent over the network |
+| Guest image root disk | Sized (8 GiB) | A project that limits disk refuses a root device without a size |
+
 ## Reaching an app (R-023, R-025, R-026)
 
 The proxy reaches a workload exactly as on a multi-host Docker install (O-45, design 06 §4): each VM
@@ -62,7 +73,8 @@ Three things keep every other path closed:
 2. **An Incus network ACL on that NIC** admits only the agent's port, only from the addresses Pando's
    proxy connects from (`proxy_sources`), and drops every other inbound connection. Another app's VM,
    the LAN, and the host are all refused at the NIC (R-025, R-026). The ACL is the adapter's, named
-   `pando-ingress`, and rewritten when the settings change.
+   `pando-ingress` (`pando-ingress-<project>` outside `default`), and rewritten when the settings
+   change. Where Incus cannot apply it to a NIC, it goes on the network instead (As built).
 3. **The agent forwards only into the app's own networks.** It refuses any address outside the app
    network range and any of its own interfaces (`hostagent.Permitted`), so a holder of the client
    certificate still cannot use it to reach the VM's host side.

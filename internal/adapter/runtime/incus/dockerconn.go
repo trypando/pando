@@ -2,7 +2,6 @@ package incus
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -104,5 +103,3 @@ type execAddr struct{}
 
 func (execAddr) Network() string { return "incus-exec" }
 func (execAddr) String() string  { return "incus-exec" }
-
-var errNoVM = errors.New("the app's VM does not exist")

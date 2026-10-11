@@ -45,7 +45,8 @@ type incusAPI interface {
 	// its exit status once it ends and its output is copied.
 	Exec(ctx context.Context, name string, command []string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
 
-	Network(ctx context.Context, name string) (*incusapi.Network, error)
+	Network(ctx context.Context, name string) (*incusapi.Network, string, error)
+	UpdateNetwork(ctx context.Context, name string, put incusapi.NetworkPut, etag string) error
 	ACL(ctx context.Context, name string) (*incusapi.NetworkACL, string, error)
 	CreateACL(ctx context.Context, acl incusapi.NetworkACLsPost) error
 	UpdateACL(ctx context.Context, name string, put incusapi.NetworkACLPut, etag string) error
@@ -177,9 +178,13 @@ func (s *server) Exec(ctx context.Context, name string, command []string, stdin 
 	return int(code), nil
 }
 
-func (s *server) Network(_ context.Context, name string) (*incusapi.Network, error) {
-	n, _, err := s.c.GetNetwork(name)
-	return n, notFound(err)
+func (s *server) Network(_ context.Context, name string) (*incusapi.Network, string, error) {
+	n, etag, err := s.c.GetNetwork(name)
+	return n, etag, notFound(err)
+}
+
+func (s *server) UpdateNetwork(_ context.Context, name string, put incusapi.NetworkPut, etag string) error {
+	return notFound(s.c.UpdateNetwork(name, put, etag))
 }
 
 func (s *server) ACL(_ context.Context, name string) (*incusapi.NetworkACL, string, error) {
