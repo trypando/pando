@@ -541,7 +541,7 @@ jobs:
         if: steps.dhi.outputs.available == 'true'
         run: |
           scripts/release-compose.sh 0.0.0-ci > "$RUNNER_TEMP/docker-compose.yml"
-          python3 scripts/smoke-image.py "$RUNNER_TEMP/docker-compose.yml" --version 0.0.0-ci
+          python3 scripts/smoke-image.py "$RUNNER_TEMP/docker-compose.yml" --version 0.0.0-ci --build
 
       # The same install on rootless Podman, as docs/rootless.md gives it: the
       # release's compose file, with PANDO_DOCKER_SOCKET at Podman's socket
@@ -557,4 +557,4 @@ jobs:
         if: steps.dhi.outputs.available == 'true'
         run: |
           podman load -i "$RUNNER_TEMP/pando.tar"
-          python3 scripts/smoke-image.py "$RUNNER_TEMP/docker-compose.yml" --version 0.0.0-ci
+          python3 scripts/smoke-image.py "$RUNNER_TEMP/docker-compose.yml" --version 0.0.0-ci --build

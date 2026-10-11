@@ -12,15 +12,20 @@ Everything runs under its own compose project and ports, and everything it
 creates is removed at the end: the compose project with its volumes, and the
 container and network Pando made for the test app.
 
-usage: scripts/smoke-image.py COMPOSE_FILE [--version 0.3.0] [--pull] [--keep]
+With --build it also deploys an app Pando builds itself, from an uploaded
+directory, which runs Pando's BuildKit container on the same runtime.
+
+usage: scripts/smoke-image.py COMPOSE_FILE [--version 0.3.0] [--pull] [--build] [--keep]
 """
 import argparse
 import http.cookiejar
+import io
 import json
 import os
 import secrets
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -45,10 +50,10 @@ def compose(args, *cmd, check=True, capture=False):
                           env=env, check=check, text=True, capture_output=capture)
 
 
-def request(method, path, body=None, timeout=30):
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(BASE + path, data=data, method=method,
-                                 headers={"Content-Type": "application/json"} if data else {})
+def request(method, path, body=None, timeout=30, raw=None, content_type=None):
+    data = json.dumps(body).encode() if body is not None else raw
+    headers = {"Content-Type": content_type or "application/json"} if data else {}
+    req = urllib.request.Request(BASE + path, data=data, method=method, headers=headers)
     try:
         with opener.open(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", "replace")
@@ -135,73 +140,99 @@ def run(args):
         raise SystemExit(f"FAIL: first-run setup answered {code}: {out}")
     step("first administrator set up")
 
-    code, app = api("POST", "/apps", {"name": "smoke-whoami", "source": {"type": "image", "image": APP_IMAGE}})
+    deploy(args, "smoke-whoami", {"type": "image", "image": APP_IMAGE}, "Hostname")
+    if args.build:
+        deploy(args, "smoke-static", {"type": "upload"}, BUILT_MARKER, files={"index.html": BUILT_PAGE})
+    step("PASS")
+
+
+# What the app Pando builds serves, to be read back through its proxy.
+BUILT_MARKER = "pando-smoke-built"
+BUILT_PAGE = f"<!doctype html><title>{BUILT_MARKER}</title><p>{BUILT_MARKER}</p>\n"
+
+
+def deploy(args, name, source, expect, files=None):
+    """Creates an app, deploys it, reads `expect` from it through Pando's
+    proxy, and deletes it. `files` are sent as its source for an upload."""
+    code, app = api("POST", "/apps", {"name": name, "source": source})
     if code >= 300:
-        raise SystemExit(f"FAIL: creating an app answered {code}: {app}")
+        raise SystemExit(f"FAIL: creating {name} answered {code}: {app}")
     app_id = app["id"]
-    args.app_id = app_id
+    args.app_ids.append(app_id)
+
+    if files:
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for path, text in files.items():
+                data = text.encode()
+                info = tarfile.TarInfo(path)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        code, out = request("POST", f"/api/v1/apps/{app_id}/source", raw=buf.getvalue(), content_type="application/gzip")
+        if code >= 300:
+            raise SystemExit(f"FAIL: sending {name}'s files answered {code}: {out[:300]}")
+        code, out = api("POST", f"/apps/{app_id}/detection/rerun", {})
+        if code >= 300:
+            raise SystemExit(f"FAIL: detecting {name} again answered {code}: {out}")
 
     def detected():
         _, d = api("GET", f"/apps/{app_id}/detection")
         return d.get("status") in ("ready", "needs_answers", "blocked", "failed"), d
-    d = wait("detection did not finish", detected, 300)
+    d = wait(f"detection of {name} did not finish", detected, 300)
     if d.get("status") != "ready":
-        raise SystemExit(f"FAIL: detection ended {d.get('status')}: {json.dumps(d)[:800]}")
+        raise SystemExit(f"FAIL: detection of {name} ended {d.get('status')}: {json.dumps(d)[:800]}")
     code, out = api("POST", f"/apps/{app_id}/detection/accept", {})
     if code >= 300:
-        raise SystemExit(f"FAIL: accepting the proposal answered {code}: {out}")
-    step("detected and accepted")
+        raise SystemExit(f"FAIL: accepting {name}'s proposal answered {code}: {out}")
+    step(f"{name} detected and accepted")
 
     code, dep = api("POST", f"/apps/{app_id}/deployments", {})
     if code >= 300:
-        raise SystemExit(f"FAIL: starting a deploy answered {code}: {dep}")
+        raise SystemExit(f"FAIL: starting {name}'s deploy answered {code}: {dep}")
 
     def deployed():
         _, dd = api("GET", f"/apps/{app_id}/deployments/{dep['id']}")
         return dd.get("status") in ("succeeded", "failed", "canceled"), dd
-    dd = wait("the deploy did not finish", deployed, 420)
+    dd = wait(f"{name}'s deploy did not finish", deployed, 600)
     if dd.get("status") != "succeeded":
-        raise SystemExit(f"FAIL: the deploy ended {dd.get('status')}: {json.dumps(dd)[:800]}")
-    step("deployed")
+        raise SystemExit(f"FAIL: {name}'s deploy ended {dd.get('status')}: {json.dumps(dd)[:800]}")
+    step(f"{name} deployed")
 
     slug = app.get("slug") or api("GET", f"/apps/{app_id}")[1].get("slug")
-    body = wait("the app was not reachable through Pando",
-                lambda: (lambda r: (r[0] == 200 and "Hostname" in r[1], r))(request("GET", f"/{slug}/")), 120)
-    step(f"app reachable through Pando's proxy at /{slug}/")
+    body = wait(f"{name} was not reachable through Pando",
+                lambda: (lambda r: (r[0] == 200 and expect in r[1], r))(request("GET", f"/{slug}/")), 120)
+    step(f"{name} reachable through Pando's proxy at /{slug}/")
     print(body[1].splitlines()[0] if body[1] else "")
 
     code, out = api("DELETE", f"/apps/{app_id}?force=true")
     if code >= 300:
-        raise SystemExit(f"FAIL: deleting the app answered {code}: {out}")
-    step("PASS")
+        raise SystemExit(f"FAIL: deleting {name} answered {code}: {out}")
 
 
 def cleanup(args):
     if args.keep:
         print(f"--keep: leaving compose project {PROJECT} running on {BASE}")
         return
-    if args.app_id:
-        # Wait for Pando's own teardown of the test app before stopping it.
-        ulid = args.app_id.split("_", 1)[1].lower()
-        for _ in range(20):
-            names = subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}"],
-                                   capture_output=True, text=True).stdout
-            if ulid not in names.lower():
-                break
-            time.sleep(3)
+    ulids = [a.split("_", 1)[1].lower() for a in args.app_ids]
+    # Wait for Pando's own teardown of the test apps before stopping it.
+    for _ in range(20 if ulids else 0):
+        names = subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}"],
+                               capture_output=True, text=True).stdout.lower()
+        if not any(u in names for u in ulids):
+            break
+        time.sleep(3)
     compose(args, "down", "-v", "--remove-orphans", check=False)
-    if args.app_id:
+    if ulids:
         # The app's network outlives Pando's container by design (removed at the
         # next start), and there is no next start here. Only what carries this
         # test app's ID is touched.
-        ulid = args.app_id.split("_", 1)[1].lower()
         for kind, ls, rm in (("container", ["ps", "-a"], ["rm", "-f", "-v"]),
                              ("network", ["network", "ls"], ["network", "rm"]),
                              ("volume", ["volume", "ls"], ["volume", "rm"])):
             names = subprocess.run(["docker", *ls, "--format", "{{.Name}}" if kind != "container" else "{{.Names}}"],
                                    capture_output=True, text=True).stdout.split()
             for n in names:
-                if ulid in n.lower():
+                if any(u in n.lower() for u in ulids):
                     subprocess.run(["docker", *rm, n], capture_output=True)
 
 
@@ -210,10 +241,11 @@ def main():
     ap.add_argument("compose")
     ap.add_argument("--version", help="the version `pando version` must report")
     ap.add_argument("--pull", action="store_true", help="pull the images first (a published release)")
+    ap.add_argument("--build", action="store_true", help="also deploy an app Pando builds from uploaded files")
     ap.add_argument("--keep", action="store_true", help="leave the stack running afterwards")
     args = ap.parse_args()
     args.db_password = secrets.token_urlsafe(18)
-    args.app_id = None
+    args.app_ids = []
     try:
         run(args)
     except BaseException:
