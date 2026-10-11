@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -31,6 +32,7 @@ type fakeDocker struct {
 	removed    int
 	copied     [][]byte
 	self       string // the container Pando is in; "" is on the host
+	attached   string // what joining a network already joined says; Docker's when empty
 
 	// fail makes a method return an error, by its name.
 	fail map[string]error
@@ -150,6 +152,9 @@ func (f *fakeDocker) NetworkConnect(_ context.Context, id string, o client.Netwo
 		return client.NetworkConnectResult{}, fmt.Errorf("no such container %s: %w", o.Container, cerrdefs.ErrNotFound)
 	}
 	if f.joined[o.Container] {
+		if f.attached != "" {
+			return client.NetworkConnectResult{}, errors.New(f.attached)
+		}
 		return client.NetworkConnectResult{}, fmt.Errorf("endpoint with name %s already exists in network", o.Container)
 	}
 	f.joined[o.Container] = true
@@ -327,4 +332,30 @@ func TestEachInstallationOnADaemonRunsItsOwnBuildKit(t *testing.T) {
 	require.Equal(t, "pandoqa-buildkit", f.created[0].Name)
 	require.Contains(t, f.networks, "pandoqa-build")
 	require.Equal(t, "pandoqa-buildkit-cache", f.created[0].HostConfig.Mounts[0].Source)
+}
+
+// TestR111_AfterARebootOnPodmanBuildKitIsStartedAgain asserts that Pando, back
+// from a reboot and still on the build network, starts its stopped BuildKit
+// when Podman says so in its own words. Podman answers the join with "network
+// is already connected"; taken as a failure, ensure stopped there, BuildKit
+// stayed down, and no app could be built (issue #179).
+func TestR111_AfterARebootOnPodmanBuildKitIsStartedAgain(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeDocker("pando-1")
+	f.attached = "network is already connected"
+	m := newManaged(f)
+	m.self = "pando-1"
+	_, err := m.ensure(ctx)
+	require.NoError(t, err)
+
+	f.containers[managedName].State.Running = false
+	f.containers[managedName].State.Status = container.StateExited
+	addr, err := m.ensure(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "tcp://pando-buildkit:1234", addr)
+	require.True(t, f.containers[managedName].State.Running, "the stopped one is started")
+
+	f.attached = "boom"
+	_, err = m.ensure(ctx)
+	require.Error(t, err, "any other refusal to join is still one")
 }

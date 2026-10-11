@@ -501,7 +501,11 @@ func (m *managed) joinNetwork(ctx context.Context, networkID string) (bool, erro
 	}
 	_, err := m.cli.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{Container: self})
 	switch {
-	case err == nil, strings.Contains(err.Error(), "already exists"):
+	// On it already: Docker says "already exists", Podman "already
+	// connected". Podman's read as a failure stopped ensure before it started
+	// a stopped BuildKit, so after a reboot nothing could build (issue #179;
+	// alreadyAttached in the Docker runtime adapter is the same rule).
+	case err == nil, strings.Contains(err.Error(), "already exists"), strings.Contains(err.Error(), "already connected"):
 		return true, nil
 	case cerrdefs.IsNotFound(err):
 		// No container by that name: Pando is running on the host.
