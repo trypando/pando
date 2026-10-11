@@ -10,13 +10,13 @@ import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { App } from '@api/types.gen';
-import { Usage } from './Usage';
+import { Usage, usageKey } from './Usage';
 
-const app = { id: 'app_x', name: 'crewmate', pinned_spec_id: 'spec_x' } as unknown as App;
+const app = { id: 'app_x', name: 'crewmate', state: 'running', pinned_spec_id: 'spec_x' } as unknown as App;
 
 function render(running: boolean, layout: 'stack' | 'table') {
   const client = new QueryClient();
-  client.setQueryData(['apps', app.id, 'usage'], {
+  client.setQueryData(usageKey(app), {
     supported: true,
     reported_at: '2026-09-26T22:00:00Z',
     host_cpu_millis: 4000,
@@ -65,5 +65,62 @@ describe('In use, for a part that is not running (#86)', () => {
     const html = render(false, 'table');
     expect(html).toMatch(/font:var\(--type-body-ui\)[^>]*>Not running</);
     expect(html).toMatch(/font:var\(--type-body-ui\)[^>]*>76 KB</);
+  });
+});
+
+describe('In use, after a deploy finishes', () => {
+  const deploying = { id: 'app_x', state: 'deploying', pinned_spec_id: 'spec_x' };
+  const running = { ...deploying, state: 'running' };
+
+  it('asks again when the app goes from deploying to running', () => {
+    expect(usageKey(running)).not.toEqual(usageKey(deploying));
+  });
+
+  it('asks again when a deploy pins another spec', () => {
+    expect(usageKey({ ...running, pinned_spec_id: 'spec_y' })).not.toEqual(usageKey(running));
+  });
+
+  it('keeps the reading while nothing has changed', () => {
+    expect(usageKey({ ...running })).toEqual(usageKey(running));
+    expect(usageKey({ id: 'app_x', state: 'draft' })).toEqual(['apps', 'app_x', 'usage', 'draft', '']);
+  });
+
+  it('is still reached by invalidating the app’s usage', async () => {
+    const client = new QueryClient();
+    client.setQueryData(usageKey(running), { supported: true, workloads: [] });
+    await client.invalidateQueries({ queryKey: ['apps', 'app_x', 'usage'] });
+    expect(client.getQueryState(usageKey(running))?.isInvalidated).toBe(true);
+  });
+
+  it('renders the reading for the app as it is now, not one taken mid-deploy', () => {
+    const client = new QueryClient();
+    const part = { name: 'web', primary: true, cpu_limit_millis: 0, memory_limit_bytes: 0, disk_bytes: 0, volumes: [] };
+    client.setQueryData(usageKey(deploying), {
+      supported: true,
+      workloads: [{ ...part, running: false, cpu_millis: 0, memory_bytes: 0 }],
+    });
+    client.setQueryData(usageKey(running), {
+      supported: true,
+      workloads: [{ ...part, running: true, cpu_millis: 150, memory_bytes: 64 << 20 }],
+    });
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <Usage app={{ ...app, ...running } as App} layout="stack" />
+      </QueryClientProvider>,
+    );
+    expect(html).not.toContain('Not running');
+    expect(html).toContain('>CPU<');
+  });
+
+  it('never shows the mid-deploy reading once the app is running, even before the new one arrives', () => {
+    const client = new QueryClient();
+    client.setQueryData(usageKey(deploying), { supported: true, workloads: [{ name: 'web', running: false, volumes: [] }] });
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <Usage app={{ ...app, ...running } as App} layout="stack" />
+      </QueryClientProvider>,
+    );
+    expect(html).not.toContain('Not running');
+    expect(html).toContain('aria-label="Loading"');
   });
 });

@@ -1114,11 +1114,13 @@ reputation.
 
 **R-312 [D]** **An app is scanned whenever what it runs changes** — on every deploy that changes the
 source it is built from (a new commit, a new upload, a new image digest) or the scanner that looks
-at it — and **on demand** from the app's settings at any time. A deploy of a source that already has
-a successful scan uses that scan and says so; a score depends on what the app is, not on how often
-somebody pressed deploy. A score describes a specific spec revision and the source it was built
-from. *(Amended by issue #84: "which means on every deploy" assumed every deploy changes what runs,
-and a redeploy of an unchanged commit does not.)*
+at it — and **on demand** from the app's settings at any time. A deploy of a source and image that
+already have a successful scan together uses that scan and says so; a score depends on what the app
+is, not on how often somebody pressed deploy. A score describes a specific spec revision and the
+source and image it was built from. *(Amended by issue #84: "which means on every deploy" assumed
+every deploy changes what runs, and a redeploy of an unchanged commit does not. Amended again for
+R-311: a scan of the source alone, taken at detection, does not cover the image a deploy built from
+it, and reusing it left that image unscanned.)*
 
 **R-313 [P]** **The score is derived from findings by severity**, starting at 100 and deducting per
 finding: critical 25, high 10, medium 3, low 1, floored at 0. The weights are a proposal — the

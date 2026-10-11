@@ -83,7 +83,7 @@ export function FilePicker({
       <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
         {files.length > 0
           ? describeFiles(files)
-          : 'Drop a folder or files here, or choose them. A single index.html is enough for a web page.'}
+          : 'Drag a folder or files here.'}
       </p>
       <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
         <Button variant="secondary" disabled={disabled} onClick={() => folderInput.current?.click()}>
@@ -115,9 +115,7 @@ export function FilePicker({
           e.target.value = '';
         }}
       />
-      <Quiet>
-        Pando leaves out .git, node_modules and other folders it rebuilds. Up to 256 MB compressed.
-      </Quiet>
+      <Quiet>Up to 256 MB, compressed.</Quiet>
     </div>
   );
 }

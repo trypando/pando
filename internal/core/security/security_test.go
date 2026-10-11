@@ -1,6 +1,7 @@
 package security_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,18 @@ import (
 
 func finding(s api.Severity, id string) api.Finding {
 	return api.Finding{ID: id, Severity: s, Title: id}
+}
+
+// TestR311_OnlyADigestNamesAnImageAScanCovers asserts the rule a deploy's
+// reuse turns on (R-311, R-312): an image ID or a reference pinned by digest
+// names what the image holds, and a tag does not.
+func TestR311_OnlyADigestNamesAnImageAScanCovers(t *testing.T) {
+	digest := strings.Repeat("ab", 32)
+	require.True(t, security.ContentAddressed("sha256:"+digest))
+	require.True(t, security.ContentAddressed("registry.internal:5000/pando/apps/app_x@sha256:"+digest))
+	require.False(t, security.ContentAddressed("nginx:1.27-alpine"))
+	require.False(t, security.ContentAddressed("pando/app_x:dep_01"))
+	require.False(t, security.ContentAddressed(""))
 }
 
 // TestR313_OneCriticalCostsMoreThanFiftyLows asserts the property the weights

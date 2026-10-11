@@ -22,7 +22,18 @@ import (
 // with no threshold is scanned too, because the number is worth having before
 // anybody sets one.
 
-func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.AppSpec, image, sourceDir, commit string, sink io.Writer) error {
+// scanTarget is what a deploy's scan reads: the image the app runs, by digest,
+// with the credential to pull it, and the checkout it came from, named by its
+// commit or digest (R-311).
+type scanTarget struct {
+	Image     string
+	Pull      *api.RegistryAuth
+	SourceDir string
+	Commit    string
+}
+
+func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.AppSpec, target scanTarget, sink io.Writer) error {
+	image, commit := target.Image, target.Commit
 	if r.security == nil {
 		return nil
 	}
@@ -30,16 +41,24 @@ func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.A
 		return nil
 	}
 
-	// Scanned once per source, not once per deploy (R-312). Detection scans
-	// the source it read, a person can ask for a scan, and a new commit or a
-	// new upload gets one here — but a deploy of a source already scanned by
-	// this scanner uses that scan, attached to this revision. Redeploying an
-	// unchanged source scanned it again every time, and a score that moved
-	// with how often somebody pressed deploy would describe the button rather
-	// than the app. The threshold below is still checked either way.
-	if reused, found, err := r.security.Reuse(ctx, dep.AppID, dep.SpecID, commit); err == nil && found {
-		fmt.Fprintf(sink, "=> Using the security scan of %s from %s (source unchanged)\n",
-			describeSource(appSpec, commit), reused.RanAt.UTC().Format(time.RFC3339))
+	// Scanned once per source and image, not once per deploy (R-312). A deploy
+	// of a source and image already scanned together by this scanner uses that
+	// scan, attached to this revision: a score that moved with how often
+	// somebody pressed deploy would describe the button rather than the app.
+	//
+	// Both, not the source alone (R-311). Detection scans the source before
+	// anything is built, and that scan covers no image — reusing it for the
+	// first deploy left the image that runs unscanned, and an app on a base
+	// image with critical findings showed a clean score. The image is named by
+	// its digest, so a rebuild that produced a different image is scanned. The
+	// threshold below is checked either way.
+	if reused, found, err := r.security.Reuse(ctx, dep.AppID, dep.SpecID, commit, image); err == nil && found {
+		unchanged := "source unchanged"
+		if image != "" {
+			unchanged = "source and image unchanged"
+		}
+		fmt.Fprintf(sink, "=> Using the security scan of %s from %s (%s)\n",
+			describeSource(appSpec, commit), reused.RanAt.UTC().Format(time.RFC3339), unchanged)
 		return r.allowed(ctx, dep, reused.Findings)
 	}
 
@@ -50,11 +69,12 @@ func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.A
 		SpecID:    dep.SpecID,
 		Commit:    commit,
 		Image:     image,
-		SourceDir: sourceDir,
+		SourceDir: target.SourceDir,
 
-		// A build pushed to the install's registry is not on the scanner's
-		// host; it is fetched with the registry's credential (issue #72).
-		PullAuth: r.builtImageAuth(ctx, image),
+		// A published image is fetched with the app's registry credential,
+		// and a build pushed to the install's registry with the registry's
+		// (issue #72): neither is necessarily on the scanner's host.
+		PullAuth: firstAuth(target.Pull, r.builtImageAuth(ctx, image)),
 	}, audit.Event{
 		PrincipalKind: audit.KindUser,
 		PrincipalID:   dep.CreatedBy,
@@ -73,6 +93,15 @@ func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.A
 	}
 
 	return r.allowed(ctx, dep, scanned.Findings)
+}
+
+func firstAuth(auths ...*api.RegistryAuth) *api.RegistryAuth {
+	for _, a := range auths {
+		if a != nil {
+			return a
+		}
+	}
+	return nil
 }
 
 // describeSource names a scanned source for the deploy log: an upload by what

@@ -15666,6 +15666,9 @@
           "commit": {
             "type": "string"
           },
+          "image": {
+            "type": "string"
+          },
           "scanner_ref": {
             "type": "string"
           },

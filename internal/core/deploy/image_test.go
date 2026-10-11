@@ -156,3 +156,66 @@ func TestADigestIsShownTheWayDockerShowsIt(t *testing.T) {
 	require.Equal(t, "ab12ab12ab12", shortDigest("sha256:ab12ab12ab12ab12ab12"))
 	require.Equal(t, "abc", shortDigest("abc"))
 }
+
+// TestR311_APublishedImageIsScannedByItsDigest asserts which image a deploy of
+// a repository's published image scans and runs (R-311): the digest its tag
+// names now, never the tag; nothing for an app Pando builds, an image app or a
+// compose file; and nothing, said in the log, when the registry cannot be read.
+func TestR311_APublishedImageIsScannedByItsDigest(t *testing.T) {
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+	host := strings.TrimPrefix(srv.URL, "http://")
+	img, err := random.Image(32, 1)
+	require.NoError(t, err)
+	ref, err := name.ParseReference(host+"/acme/web:latest", name.Insecure)
+	require.NoError(t, err)
+	require.NoError(t, remote.Write(ref, img))
+	want, err := img.Digest()
+	require.NoError(t, err)
+
+	images := &oci.Images{Inspector: oci.Inspector{Insecure: true}}
+	prebuilt := func(image string) *spec.AppSpec {
+		return &spec.AppSpec{
+			Source:    spec.Source{Type: spec.SourceGit, URL: "https://example.test/acme/web"},
+			Build:     spec.Build{Strategy: spec.BuildPrebuilt},
+			Workloads: []spec.Workload{{Name: "web", Image: image, Primary: true}},
+		}
+	}
+	ctx := context.Background()
+
+	var log bytes.Buffer
+	got, _ := publishedImage(ctx, images, "app_1", prebuilt(host+"/acme/web:latest"), nil, &log)
+	require.Equal(t, host+"/acme/web@"+want.String(), got)
+	require.Contains(t, log.String(), "at "+shortDigest(want.String()))
+
+	already := host + "/acme/web@" + want.String()
+	got, _ = publishedImage(ctx, images, "app_1", prebuilt(already), nil, &log)
+	require.Equal(t, already, got, "a digest is used as it is")
+
+	built := prebuilt(host + "/acme/web:latest")
+	built.Build = spec.Build{Strategy: spec.BuildDockerfile}
+	compose := prebuilt(host + "/acme/web:latest")
+	compose.Build.ComposeFile = "compose.yaml"
+	imageApp := prebuilt(host + "/acme/web:latest")
+	imageApp.Source = spec.Source{Type: spec.SourceImage, Image: host + "/acme/web:latest"}
+	for _, s := range []*spec.AppSpec{built, compose, imageApp, prebuilt("")} {
+		got, _ = publishedImage(ctx, images, "app_1", s, nil, &log)
+		require.Empty(t, got)
+	}
+	got, _ = publishedImage(ctx, images, "app_1", prebuilt(host+"/acme/web:latest"), map[string]string{"web": "x"}, &log)
+	require.Empty(t, got, "a workload whose image is already decided is left alone")
+
+	log.Reset()
+	got, _ = publishedImage(ctx, images, "app_1", prebuilt(host+"/acme/web:nope"), nil, &log)
+	require.Empty(t, got)
+	require.Contains(t, log.String(), "will not be scanned")
+
+	log.Reset()
+	got, _ = publishedImage(ctx, nil, "app_1", prebuilt(host+"/acme/web:latest"), nil, &log)
+	require.Empty(t, got)
+	require.Contains(t, log.String(), "will not be scanned")
+
+	require.Equal(t, map[string]string{"a": "1", "web": "p"}, withWorkloadImage(map[string]string{"a": "1"}, "web", "p"))
+	require.Equal(t, firstAuth(nil, &api.RegistryAuth{Registry: "r"}).Registry, "r")
+	require.Nil(t, firstAuth(nil, nil))
+}

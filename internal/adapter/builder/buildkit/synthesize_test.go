@@ -428,7 +428,7 @@ func TestR094_ACommittedProgramIsPlannedWhenRailpackHasNothingToSay(t *testing.T
 	require.NoError(t, err)
 	body, err := os.ReadFile(filepath.Join(root, name))
 	require.NoError(t, err)
-	require.Contains(t, string(body), "FROM "+committedProgramImage)
+	require.Contains(t, string(body), "FROM "+programRuntimeImage)
 	require.Contains(t, string(body), `CMD ["./server --verbose"]`)
 
 	// An answered start command outranks the Procfile and is what runs.

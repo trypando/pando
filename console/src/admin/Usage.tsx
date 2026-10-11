@@ -48,10 +48,22 @@ interface Reading {
   host_memory_bytes?: number;
 }
 
+/**
+ * The usage query's key. It carries the app's state and the spec it runs, so
+ * a reading is taken again the moment either moves on — a deploy finished, a
+ * part stopped or started — rather than at the next thirty-second tick. A
+ * reading taken mid-deploy says every part is not running, and the app's own
+ * status would contradict it until then. Every usage key starts with
+ * ['apps', id, 'usage'], so invalidating that still reaches it.
+ */
+export function usageKey(app: Pick<App, 'id' | 'state' | 'pinned_spec_id'>) {
+  return ['apps', app.id, 'usage', app.state, app.pinned_spec_id ?? ''] as const;
+}
+
 export function Usage({ app, layout = 'table' }: { app: App; layout?: 'table' | 'stack' }) {
   const [section, visible] = useOnScreen<HTMLElement>();
   const reading = useQuery({
-    queryKey: ['apps', app.id, 'usage'],
+    queryKey: usageKey(app),
     queryFn: () => api.get<Reading>(`/apps/${app.id}/usage`),
     enabled: Boolean(app.pinned_spec_id),
     // Each reading takes the runtime about a second to sample, and every open
@@ -59,6 +71,9 @@ export function Usage({ app, layout = 'table' }: { app: App; layout?: 'table' | 
     // section is on screen. Refresh is there for somebody watching a part
     // climb toward its limit.
     refetchInterval: visible ? USAGE_MS : false,
+    // The last reading stays on screen while the next one is sampled, rather
+    // than the section going back to its loading shape.
+    placeholderData: (previous) => previous,
   });
 
   if (!app.pinned_spec_id) return null;

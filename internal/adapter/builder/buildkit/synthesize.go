@@ -39,14 +39,6 @@ const planDir = ".pando-plan"
 // replayed from it exactly as stored.
 const legacyPlanDir = ".nixpacks"
 
-// staticServerImage serves a built static site.
-//
-// [P]. nginx because it is the smallest well-understood thing that serves a
-// directory over HTTP, alpine for the same reason the provisioned services use
-// alpine, and pinned to a minor version so a rebuild a year from now produces
-// the same server. Listed in design 03 §8 with the other images Pando supplies.
-const staticServerImage = "nginx:1.27-alpine"
-
 // staticConfig makes nginx behave the way a single-page app needs.
 //
 // try_files falling back to index.html is what makes client-side routing work:

@@ -4,6 +4,7 @@ package state_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,7 +94,7 @@ func TestR312_ADeployOfAScannedCommitUsesThatScan(t *testing.T) {
 	require.NoError(t, err)
 	scans := state.NewScans(db)
 
-	_, found, err := scans.ForSource(ctx, app.ID, "abc123", "scn")
+	_, found, err := scans.ForSource(ctx, app.ID, "abc123", "", "scn")
 	require.NoError(t, err)
 	require.False(t, found, "never scanned")
 
@@ -101,25 +102,50 @@ func TestR312_ADeployOfAScannedCommitUsesThatScan(t *testing.T) {
 	require.NoError(t, err)
 	_, err = scans.Record(ctx, state.Scan{AppID: app.ID, ScannerRef: "scn", Score: score(90)})
 	require.NoError(t, err)
-	_, found, err = scans.ForSource(ctx, app.ID, "abc123", "scn")
+	_, found, err = scans.ForSource(ctx, app.ID, "abc123", "", "scn")
 	require.NoError(t, err)
 	require.False(t, found, "a failed scan, and one of no known commit, cover nothing")
 
 	atDiscovery, err := scans.Record(ctx, state.Scan{AppID: app.ID, Commit: "abc123", ScannerRef: "scn", Score: score(72)})
 	require.NoError(t, err)
-	got, found, err := scans.ForSource(ctx, app.ID, "abc123", "scn")
+	got, found, err := scans.ForSource(ctx, app.ID, "abc123", "", "scn")
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, atDiscovery.ID, got.ID)
 	require.Equal(t, 72, *got.Score)
 
-	_, found, err = scans.ForSource(ctx, app.ID, "def456", "scn")
+	_, found, err = scans.ForSource(ctx, app.ID, "def456", "", "scn")
 	require.NoError(t, err)
 	require.False(t, found, "a new commit is scanned")
 
-	_, found, err = scans.ForSource(ctx, app.ID, "abc123", "scn_other")
+	_, found, err = scans.ForSource(ctx, app.ID, "abc123", "", "scn_other")
 	require.NoError(t, err)
 	require.False(t, found, "another scanner's findings are not this scanner's (issue #84)")
+
+	// R-311: the scan above read the source alone. A deploy that built an
+	// image is not covered by it, and a scan of one image does not cover
+	// another built from the same commit.
+	built := "sha256:" + strings.Repeat("a", 64)
+	_, found, err = scans.ForSource(ctx, app.ID, "abc123", built, "scn")
+	require.NoError(t, err)
+	require.False(t, found, "a scan of the source alone does not cover the image built from it")
+
+	ofImage, err := scans.Record(ctx, state.Scan{AppID: app.ID, Commit: "abc123", Image: built, ScannerRef: "scn", Score: score(40)})
+	require.NoError(t, err)
+	got, found, err = scans.ForSource(ctx, app.ID, "abc123", built, "scn")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, ofImage.ID, got.ID)
+	require.Equal(t, built, got.Image)
+
+	_, found, err = scans.ForSource(ctx, app.ID, "abc123", "sha256:"+strings.Repeat("b", 64), "scn")
+	require.NoError(t, err)
+	require.False(t, found, "another image from the same commit is scanned")
+
+	got, found, err = scans.ForSource(ctx, app.ID, "abc123", "", "scn")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, atDiscovery.ID, got.ID, "a deploy with no image is still covered by the source scan")
 }
 
 // TestR312_AReusedScanDescribesTheNewRevision asserts the other half of reuse
@@ -151,7 +177,7 @@ func TestR312_AReusedScanDescribesTheNewRevision(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found, "before the reuse, the new revision has no scan")
 
-	from, found, err := scans.ForSource(ctx, app.ID, "abc123", "scn")
+	from, found, err := scans.ForSource(ctx, app.ID, "abc123", "", "scn")
 	require.NoError(t, err)
 	require.True(t, found)
 	reused, err := scans.Reuse(ctx, from, second.ID)

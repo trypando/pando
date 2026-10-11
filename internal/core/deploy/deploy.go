@@ -170,9 +170,11 @@ func (r *Runner) WithSecurity(s Security) *Runner {
 // deploy path cannot reach for anything else.
 type Security interface {
 	Scan(ctx context.Context, req api.ScanRequest, principal audit.Event) (state.Scan, error)
-	// Reuse returns a successful scan of the app's source, attached to specID,
-	// when there is one: a deploy of an unchanged source uses that scan.
-	Reuse(ctx context.Context, appID, specID, source string) (state.Scan, bool, error)
+	// Reuse returns a successful scan of the app's source and image, attached
+	// to specID, when there is one: a deploy of an unchanged source and image
+	// uses that scan. A scan of the source alone does not cover an image
+	// (R-311).
+	Reuse(ctx context.Context, appID, specID, source, image string) (state.Scan, bool, error)
 	Allows(ctx context.Context, appID, specID string) (security.Standing, error)
 	Configured() (string, bool)
 }
@@ -381,6 +383,18 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		return fail("fetch", err)
 	}
 
+	// What the scan reads as the app's image: what was built, the image app's
+	// pinned digest, or the published image a repository's app runs — pinned
+	// here to the digest its tag names now, so the image scanned is the image
+	// that runs (R-311).
+	scanned, scanAuth := image, pull
+	published, publishedAuth := publishedImage(ctx, r.images, dep.AppID, appSpec, perWorkload, sink)
+	if published != "" {
+		primary, _ := appSpec.PrimaryWorkload()
+		perWorkload = withWorkloadImage(perWorkload, primary.Name, published)
+		scanned, scanAuth = published, publishedAuth
+	}
+
 	// Step 10: scan what was built, and refuse to apply it if this
 	// installation's threshold says so (R-312, R-314).
 	//
@@ -391,7 +405,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	if commit == "" {
 		commit = appSpec.Source.Commit
 	}
-	if err := r.scan(ctx, dep, appSpec, image, checkout.Dir, commit, sink); err != nil {
+	if err := r.scan(ctx, dep, appSpec, scanTarget{Image: scanned, Pull: scanAuth, SourceDir: checkout.Dir, Commit: commit}, sink); err != nil {
 		writeFailure(sink, messageOf(err), err)
 		fmt.Fprintf(sink, "   The running version of this app was not touched.\n")
 		leave()
@@ -471,6 +485,9 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		return fail("apply", err)
 	}
 	withPullAuth(&bundle, image, pull)
+	if published != "" {
+		withPullAuth(&bundle, published, publishedAuth)
+	}
 	r.withBuiltImageAuth(ctx, &bundle)
 	bundle.FirstDeploy = r.firstDeploy(ctx, dep.AppID)
 
@@ -1194,6 +1211,61 @@ func imagePull(ctx context.Context, images *oci.Images, appID string, s *spec.Ap
 		pull = &api.RegistryAuth{Registry: auth.Registry, Username: auth.Username, Password: auth.Password, IdentityToken: auth.IdentityToken}
 	}
 	return pinned, pinWorkloads(s, perWorkload, pinned), pull, nil
+}
+
+// publishedImage is the published image a repository's app runs as it is
+// (spec.BuildPrebuilt: detection found the project's own image, R-094 tier 1),
+// pinned to the digest its reference names now, with the credential to pull
+// it. Empty for every other app — one Pando builds, an image app (imagePull
+// pins those), and a compose file, whose services are not one image.
+//
+// Pinned because a tag is a name and not a content: the scan has to read the
+// image that runs, and an image pulled by tag after the scan could be another
+// one (R-311). A registry that cannot be read leaves the image unscanned and
+// says so; it does not stop the deploy, any more than a scanner that cannot
+// run does (R-318), and the runtime's own pull reports a registry that is
+// really down.
+func publishedImage(ctx context.Context, images *oci.Images, appID string, s *spec.AppSpec,
+	perWorkload map[string]string, sink io.Writer,
+) (string, *api.RegistryAuth) {
+	if s.Build.Strategy != spec.BuildPrebuilt || s.Build.ComposeFile != "" || s.Source.Type == spec.SourceImage {
+		return "", nil
+	}
+	primary, ok := s.PrimaryWorkload()
+	if !ok || primary.Image == "" || perWorkload[primary.Name] != "" {
+		return "", nil
+	}
+
+	var pull *api.RegistryAuth
+	if auth, err := images.Auth(ctx, appID, primary.Image); err == nil && auth != nil {
+		pull = &api.RegistryAuth{Registry: auth.Registry, Username: auth.Username, Password: auth.Password, IdentityToken: auth.IdentityToken}
+	}
+	if strings.Contains(primary.Image, "@sha256:") {
+		return primary.Image, pull
+	}
+	if images == nil {
+		fmt.Fprintf(sink, "   Pando cannot read registries here, so the image %s will not be scanned.\n", primary.Image)
+		return "", nil
+	}
+	insp, err := images.Inspect(ctx, appID, primary.Image, oci.Platform{})
+	if err != nil {
+		fmt.Fprintf(sink, "   Pando could not read the digest of %s, so the image will not be scanned: %s\n",
+			primary.Image, messageOf(err))
+		return "", nil
+	}
+	pinned := oci.Pin(primary.Image, insp.Digest)
+	fmt.Fprintf(sink, "=> Running %s at %s\n", primary.Image, shortDigest(insp.Digest))
+	return pinned, pull
+}
+
+// withWorkloadImage is perWorkload with one workload's image set, as a copy.
+func withWorkloadImage(perWorkload map[string]string, workload, image string) map[string]string {
+	out := make(map[string]string, len(perWorkload)+1)
+	for k, v := range perWorkload {
+		out[k] = v
+	}
+	out[workload] = image
+	return out
 }
 
 // pinnedSpec is the revision body an unpinned image app deploys from: the

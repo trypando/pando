@@ -261,4 +261,21 @@ describe('AppOnboarding', () => {
     expect(html).toContain('Pando couldn’t clone the repository.');
     expect(html).toContain('Reject plan');
   });
+
+  it('says a ready plan is ready, and nothing about what happens on accepting it', () => {
+    const ready = {
+      ...detection,
+      questions: [],
+      screening: { ran: false },
+      draft_spec: {
+        build: { strategy: 'dockerfile', dockerfile: 'Dockerfile' },
+        workloads: [{ name: 'web', primary: true, exposed: true, command: ['npm', 'start'], env: [] }],
+        slots: [],
+      },
+    };
+    const html = render({ status: 'ready', answers: {}, commit: '3f9a2c1d0000', detection: ready } as never);
+    expect(html).toContain('Everything’s answered.');
+    expect(html).toContain('Ready to deploy');
+    expect(html).not.toContain('Nothing runs until you accept');
+  });
 });

@@ -328,9 +328,16 @@ export function AppOnboarding({
     if (!watching || discovering || held.current || failed || blocked) return;
     held.current = true;
     setHolding(true);
+  }, [watching, discovering, failed, blocked]);
+  // The end of the hold hangs on the hold alone. It used to be cleared with the
+  // effect above, so the security report arriving mid-hold — it is asked for
+  // only once detection stops, and adds the scan step — cleared it, nothing
+  // set it again, and the page stayed on "Plan ready" with no way to accept.
+  useEffect(() => {
+    if (!holding) return;
     const timer = window.setTimeout(() => setHolding(false), READY_HOLD_MS);
     return () => window.clearTimeout(timer);
-  }, [watching, discovering, failed, blocked]);
+  }, [holding]);
   const phase: Phase = discovering ? 'discovering' : holding ? 'ready' : 'done';
 
   const fraction = useCallback(() => {
@@ -936,7 +943,7 @@ function subline(
   parts.push(
     missing > 0
       ? `Pando needs ${missing === 1 ? 'one answer' : `${missing} answers`} from you before it can deploy.`
-      : 'Everything’s answered. Nothing runs until you accept.',
+      : 'Everything’s answered.',
   );
   return parts.join(' ');
 }
@@ -2419,7 +2426,7 @@ function barStatus(
   values: VariableRow[],
   canDeploy: boolean,
   canEdit: boolean,
-): { status: 'building' | 'running' | 'info'; label: string; detail: string } {
+): { status: 'building' | 'running' | 'info'; label: string; detail?: string } {
   if (!canEdit) {
     return { status: 'info', label: 'Waiting for review', detail: 'Accepting this plan needs permission to change the app.' };
   }
@@ -2443,7 +2450,6 @@ function barStatus(
   return {
     status: 'running',
     label: canDeploy ? 'Ready to deploy' : 'Ready to accept',
-    detail: 'Nothing runs until you accept.',
   };
 }
 
@@ -2456,7 +2462,7 @@ function ActionBar({
 }: {
   status: 'building' | 'running' | 'info' | 'failed';
   label: string;
-  detail: string;
+  detail?: string;
   error?: unknown;
   children: React.ReactNode;
 }) {
@@ -2465,9 +2471,11 @@ function ActionBar({
       <div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'calc(var(--space-1) / 2)', minWidth: 0 }}>
           <StatusIndicator status={status} label={label} />
-          <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', paddingLeft: 'var(--space-4)' }}>
-            {detail}
-          </span>
+          {detail && (
+            <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', paddingLeft: 'var(--space-4)' }}>
+              {detail}
+            </span>
+          )}
           {Boolean(error) && (
             <div style={{ paddingLeft: 'var(--space-4)' }}>
               <Failure error={error} />
