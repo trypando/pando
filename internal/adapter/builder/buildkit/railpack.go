@@ -294,6 +294,11 @@ func railpackBuild(labels map[string]string) gateway.BuildFunc {
 // exptypes.ExporterImageConfigKey.
 const imageConfigKey = "containerimage.config"
 
+const (
+	msgUnreadableConfig = "The build produced an image configuration Pando could not read."
+	msgCannotLabel      = "Could not label the image."
+)
+
 // labelImage adds labels to the image config in a frontend's result, keeping
 // every other field as it came.
 func labelImage(res *gateway.Result, labels map[string]string) error {
@@ -304,12 +309,12 @@ func labelImage(res *gateway.Result, labels map[string]string) error {
 
 	var image map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &image); err != nil {
-		return errs.Wrap(errs.BuildFailed, "The build produced an image configuration Pando could not read.", err)
+		return errs.Wrap(errs.BuildFailed, msgUnreadableConfig, err)
 	}
 	var config map[string]json.RawMessage
 	if body, ok := image["config"]; ok {
 		if err := json.Unmarshal(body, &config); err != nil {
-			return errs.Wrap(errs.BuildFailed, "The build produced an image configuration Pando could not read.", err)
+			return errs.Wrap(errs.BuildFailed, msgUnreadableConfig, err)
 		}
 	}
 	if config == nil {
@@ -328,14 +333,14 @@ func labelImage(res *gateway.Result, labels map[string]string) error {
 
 	var err error
 	if config["Labels"], err = json.Marshal(existing); err != nil {
-		return errs.Wrap(errs.BuildFailed, "Could not label the image.", err)
+		return errs.Wrap(errs.BuildFailed, msgCannotLabel, err)
 	}
 	if image["config"], err = json.Marshal(config); err != nil {
-		return errs.Wrap(errs.BuildFailed, "Could not label the image.", err)
+		return errs.Wrap(errs.BuildFailed, msgCannotLabel, err)
 	}
 	out, err := json.Marshal(image)
 	if err != nil {
-		return errs.Wrap(errs.BuildFailed, "Could not label the image.", err)
+		return errs.Wrap(errs.BuildFailed, msgCannotLabel, err)
 	}
 	res.AddMeta(imageConfigKey, out)
 	return nil

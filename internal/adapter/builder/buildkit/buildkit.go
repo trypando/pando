@@ -124,6 +124,42 @@ var dockerClient = func() (dockerAPI, error) { return client.New(client.FromEnv)
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryBuilder }
 
+// configureManaged sets up the BuildKit Pando runs itself, when no address
+// names one somebody else runs. Started now if Docker is up, and by every
+// health check after that if it is not, or if it stopped.
+func (a *Adapter) configureManaged(ctx context.Context) error {
+	dc, err := dockerClient()
+	if err != nil {
+		return errs.Wrap(errs.AdapterUnavailable, "Could not reach Docker to run the build service on.", err)
+	}
+	a.managed = newManaged(dc)
+	files, err := a.registryFiles()
+	if err != nil {
+		return err
+	}
+	a.managed.files = files
+	a.managed.networks = a.config.Networks
+	if len(a.managed.networks) == 0 {
+		a.managed.networks = envNetworks()
+	}
+	a.address = a.managed.address(true)
+	if addr, err := a.managed.ensure(ctx); err == nil {
+		a.address = addr
+	}
+	return nil
+}
+
+// envNetworks is PANDO_BUILDKIT_NETWORKS, a comma-separated list.
+func envNetworks() []string {
+	var networks []string
+	for _, n := range strings.Split(os.Getenv("PANDO_BUILDKIT_NETWORKS"), ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			networks = append(networks, n)
+		}
+	}
+	return networks
+}
+
 func (a *Adapter) Configure(ctx context.Context, raw json.RawMessage) error {
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &a.config); err != nil {
@@ -136,29 +172,8 @@ func (a *Adapter) Configure(ctx context.Context, raw json.RawMessage) error {
 		a.address = os.Getenv("PANDO_BUILDKIT_ADDRESS")
 	}
 	if a.address == "" {
-		// Pando's own. Started now if Docker is up, and by every health
-		// check after that if it is not, or if it stopped.
-		dc, err := dockerClient()
-		if err != nil {
-			return errs.Wrap(errs.AdapterUnavailable, "Could not reach Docker to run the build service on.", err)
-		}
-		a.managed = newManaged(dc)
-		files, err := a.registryFiles()
-		if err != nil {
+		if err := a.configureManaged(ctx); err != nil {
 			return err
-		}
-		a.managed.files = files
-		a.managed.networks = a.config.Networks
-		if len(a.managed.networks) == 0 && os.Getenv("PANDO_BUILDKIT_NETWORKS") != "" {
-			for _, n := range strings.Split(os.Getenv("PANDO_BUILDKIT_NETWORKS"), ",") {
-				if n = strings.TrimSpace(n); n != "" {
-					a.managed.networks = append(a.managed.networks, n)
-				}
-			}
-		}
-		a.address = a.managed.address(true)
-		if addr, err := a.managed.ensure(ctx); err == nil {
-			a.address = addr
 		}
 	}
 

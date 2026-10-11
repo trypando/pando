@@ -122,10 +122,10 @@ RUN apk add --no-cache curl tar \
                 mise=x64;   misesum=1b2051d8d3efab4d9c85ceb59849a3eb052db24ad406a3901fd6b45374c56ebe ;; \
          *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
        esac \
-    && curl -fsSL -o /tmp/railpack.tgz \
+    && curl -fsSL --proto =https --tlsv1.2 -o /tmp/railpack.tgz \
        "https://github.com/railwayapp/railpack/releases/download/v${RAILPACK_VERSION}/railpack-v${RAILPACK_VERSION}-${rp}-unknown-linux-musl.tar.gz" \
     && echo "${rpsum}  /tmp/railpack.tgz" | sha256sum -c - \
-    && curl -fsSL -o /tmp/mise.tgz \
+    && curl -fsSL --proto =https --tlsv1.2 -o /tmp/mise.tgz \
        "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${mise}-musl.tar.gz" \
     && echo "${misesum}  /tmp/mise.tgz" | sha256sum -c - \
     && mkdir -p /usr/local/bin /tmp/railpack/mise \
@@ -156,7 +156,7 @@ RUN apk add --no-cache curl tar \
 # installed, and an entry for a package manager that is not there is a finding
 # about nothing.
 FROM dhi.io/alpine-base:3.24-dev@sha256:08d37dc414e07a688b0c3b9405e0b33688507e41a74bc24118a7f0817b772e27 AS packages
-RUN apk add --no-cache postgresql17-client su-exec tzdata git bash \
+RUN apk add --no-cache bash git postgresql17-client su-exec tzdata \
     && apk del --no-cache apk-tools \
     && mkdir /staging \
     && tar -cf - /lib /usr/lib /usr/libexec /usr/bin/pg_dump /usr/bin/pg_restore /usr/bin/psql \
