@@ -9,8 +9,8 @@
 // Read from GET /apps/{id}/usage, the same endpoint `pando app usage` and
 // pando_get_usage use.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Button, Skeleton, Tag } from '@design';
 
 import { api } from '@api/client';
@@ -48,37 +48,22 @@ interface Reading {
   host_memory_bytes?: number;
 }
 
-/** What about the app makes a reading out of date: its state and the spec it runs. */
-function moment(app: Pick<App, 'state' | 'pinned_spec_id'>): string {
-  return `${app.state}|${app.pinned_spec_id ?? ''}`;
-}
-
 /**
- * Reads the usage again when the app has moved on since the last reading — a
- * deploy finished, a part stopped or started — rather than at the next
- * thirty-second tick. A reading taken mid-deploy says every part is not
- * running, and the app's own status would contradict it until then.
+ * The usage query's key. It carries the app's state and the spec it runs, so
+ * a reading is taken again the moment either moves on — a deploy finished, a
+ * part stopped or started — rather than at the next thirty-second tick. A
+ * reading taken mid-deploy says every part is not running, and the app's own
+ * status would contradict it until then. Every usage key starts with
+ * ['apps', id, 'usage'], so invalidating that still reaches it.
  */
-export function refreshUsageIfMoved(
-  queries: QueryClient,
-  appID: string,
-  before: Pick<App, 'state' | 'pinned_spec_id'>,
-  after: Pick<App, 'state' | 'pinned_spec_id'>,
-): boolean {
-  if (moment(before) === moment(after)) return false;
-  void queries.invalidateQueries({ queryKey: ['apps', appID, 'usage'] });
-  return true;
+export function usageKey(app: Pick<App, 'id' | 'state' | 'pinned_spec_id'>) {
+  return ['apps', app.id, 'usage', app.state, app.pinned_spec_id ?? ''] as const;
 }
 
 export function Usage({ app, layout = 'table' }: { app: App; layout?: 'table' | 'stack' }) {
   const [section, visible] = useOnScreen<HTMLElement>();
-  const queries = useQueryClient();
-  const seen = useRef<Pick<App, 'state' | 'pinned_spec_id'>>(app);
-  useEffect(() => {
-    if (refreshUsageIfMoved(queries, app.id, seen.current, app)) seen.current = app;
-  }, [queries, app]);
   const reading = useQuery({
-    queryKey: ['apps', app.id, 'usage'],
+    queryKey: usageKey(app),
     queryFn: () => api.get<Reading>(`/apps/${app.id}/usage`),
     enabled: Boolean(app.pinned_spec_id),
     // Each reading takes the runtime about a second to sample, and every open
@@ -86,6 +71,9 @@ export function Usage({ app, layout = 'table' }: { app: App; layout?: 'table' | 
     // section is on screen. Refresh is there for somebody watching a part
     // climb toward its limit.
     refetchInterval: visible ? USAGE_MS : false,
+    // The last reading stays on screen while the next one is sampled, rather
+    // than the section going back to its loading shape.
+    placeholderData: (previous) => previous,
   });
 
   if (!app.pinned_spec_id) return null;
