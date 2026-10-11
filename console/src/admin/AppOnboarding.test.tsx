@@ -68,12 +68,12 @@ const detection = {
   },
 };
 
-function render(response: Partial<DetectionResponse>): string {
+function render(response: Partial<DetectionResponse>, subject: AppWithVerbs = app): string {
   const client = new QueryClient();
   client.setQueryData(['apps', 'app_x', 'detection'], response);
   return renderToString(
     <QueryClientProvider client={client}>
-      <AppOnboarding app={app} onBack={() => {}} onDeployRefused={() => {}} />
+      <AppOnboarding app={subject} onBack={() => {}} onDeployRefused={() => {}} />
     </QueryClientProvider>,
   );
 }
@@ -253,17 +253,29 @@ describe('AppOnboarding', () => {
 
   it('keeps the same ridge before and after detection learns the commit', () => {
     const ridge = (html: string) => html.match(/<path d="([^"]+)" class="pando-terrain-index"/)?.[1];
-    const running = ridge(
-      render({
-        status: 'running',
-        answers: null,
-        commit: '',
-        detection: { stage: 'detecting' } as DetectionResponse['detection'],
-      }),
-    );
-    const finished = ridge(render({ status: 'needs_answers', answers: {}, commit: '3f9a2c1d0000', detection } as never));
-    expect(running).toBeTruthy();
-    expect(finished).toBe(running);
+    const image = { ...app, source: { type: 'image', image: 'ghcr.io/acme/crewmate:1.4' } } as unknown as AppWithVerbs;
+    const sourceless = { ...app, source: undefined } as unknown as AppWithVerbs;
+    const ridges = [app, image, sourceless].map((subject) => {
+      const running = ridge(
+        render(
+          {
+            status: 'running',
+            answers: null,
+            commit: '',
+            detection: { stage: 'detecting' } as DetectionResponse['detection'],
+          },
+          subject,
+        ),
+      );
+      const finished = ridge(
+        render({ status: 'needs_answers', answers: {}, commit: '3f9a2c1d0000', detection } as never, subject),
+      );
+      expect(running).toBeTruthy();
+      expect(finished).toBe(running);
+      return running;
+    });
+    // Each falls back to a different seed: the repository, the image, the app ID.
+    expect(new Set(ridges).size).toBe(3);
   });
 
   it('renders a failed detection with its reason', () => {
