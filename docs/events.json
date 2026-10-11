@@ -1,4 +1,63 @@
 {
+  "subscribing": "A subscription sends the events it names to a webhook, or through a notification adapter — Slack, Microsoft Teams, Discord, email or ntfy. Make one in the console under Events, with `pando subscriptions create`, with `POST /api/v1/subscriptions`, or with the `pando_create_subscription` tool.\n\nA subscription is about one app, which needs `app.view` on it, or the whole installation, which needs `install.events.manage`. Every delivery is checked against its owner's access at the moment it is sent, so a subscription stops delivering when its owner loses sight of what it is about.",
+  "matching": "A subscription's `events` is a list of names (`deploy.failed`), prefixes (`deploy.*`), or `*` for everything. A name that matches no event is refused when the subscription is saved. An app event reaches subscriptions on its app and install-wide ones; an install event reaches install-wide subscriptions only.",
+  "webhook": {
+    "intro": "Pando sends a `POST` with a JSON body to the subscription's URL:",
+    "body_example": {
+      "id": "evt_01J…",
+      "type": "deploy.failed",
+      "occurred_at": "2026-10-04T12:00:00Z",
+      "app": {
+        "id": "app_01HQ8…",
+        "name": "Billing",
+        "slug": "billing"
+      },
+      "actor": {
+        "kind": "system"
+      },
+      "data": {
+        "deployment_id": "dep_…",
+        "error_code": "BUILD_FAILED",
+        "message": "…"
+      }
+    },
+    "notes": "`app` is absent for an install event. `actor.kind` is `user`, `token`, `system` or `anonymous`. `data` holds the event's fields and nothing else; no event carries a secret value.",
+    "headers": [
+      {
+        "name": "Pando-Event",
+        "meaning": "The event's name."
+      },
+      {
+        "name": "Pando-Event-Id",
+        "meaning": "The event's ID. A delivery can arrive more than once; drop one whose ID you have seen."
+      },
+      {
+        "name": "Pando-Delivery-Id",
+        "meaning": "This delivery's ID, as the delivery log shows it."
+      },
+      {
+        "name": "Pando-Timestamp",
+        "meaning": "When this attempt was signed, in Unix seconds."
+      },
+      {
+        "name": "Pando-Signature",
+        "meaning": "`v1=` and the hex HMAC-SHA256 of the timestamp, a full stop, and the body, keyed by the subscription's signing key."
+      }
+    ],
+    "verifying": "The signing key is shown once, when the subscription is made or its key is rotated. To check a delivery, compute the HMAC over the raw body exactly as received and compare it in constant time; refuse a timestamp more than five minutes from your clock, so a recorded delivery cannot be replayed:",
+    "examples": [
+      {
+        "language": "python",
+        "code": "import hashlib, hmac, time\n\ndef from_pando(key: str, headers, body: bytes) -> bool:\n    ts = headers[\"Pando-Timestamp\"]\n    if abs(time.time() - int(ts)) > 300:\n        return False\n    mac = hmac.new(key.encode(), ts.encode() + b\".\" + body, hashlib.sha256).hexdigest()\n    return hmac.compare_digest(\"v1=\" + mac, headers[\"Pando-Signature\"])\n"
+      }
+    ],
+    "retries": "A `2xx` answer is a delivery. Anything else — another status, a redirect, a timeout after 15 seconds — is retried after 1 minute, 5 minutes, 30 minutes, 2 hours, 6 hours and 12 hours, then marked failed. Every attempt is recorded and shown in the delivery log, and any delivery can be sent again from it. An endpoint that has failed every attempt for a day is turned off, and its owner is told. Turning it back on clears the record.\n\nDelivery is at least once and survives a restart: events are written to an outbox in the same transaction as what they describe.",
+    "private_addresses": "A webhook may not reach a private, loopback or link-local address — the local network, the host itself, a cloud metadata service — unless host policy's `allow_private_webhooks` is on. The check is made on the address actually connected to, and redirects are not followed.",
+    "shaping": "For a receiver that expects a particular request, a webhook may set `method` (POST, PUT or PATCH), `content_type`, `headers` of its own — for an API key the receiver needs; values are stored encrypted and never shown again — and `payload_template`, the body as a Go template. Pando's `Pando-*` headers are always sent and cannot be set, and the signature covers the body actually sent. A template is given `.ID`, `.Type`, `.OccurredAt`, `.App` (`.ID`, `.Name`, `.Slug`), `.Actor`, `.Data`, `.Subject`, `.Body`, `.Fields`, `.Link` and `.Envelope`, and the functions `json` (a value as JSON) and `default`. For a chat tool that takes a `text` field:",
+    "template_example": "{\"text\": {{json .Subject}}, \"url\": {{json .Link}}}",
+    "template_notes": "A template is checked against a sample event when it is saved, and a JSON content type needs it to produce JSON. `link` points into the console when Pando's `external_url` is set."
+  },
+  "data_note": "Audit-sourced events also carry `target_kind` and `target_id` in `data` when the action had a target.",
   "events": [
     {
       "type": "adapter.configured",

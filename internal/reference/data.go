@@ -259,7 +259,11 @@ func Errors() ErrorsData {
 }
 
 // EventsData is docs/events.json.
+//
+// The guide's fields come first, beside the events, so a site can render the
+// whole of docs/events.md from this file.
 type EventsData struct {
+	EventsGuide
 	Events []EventDoc `json:"events"`
 }
 
@@ -282,7 +286,7 @@ func Events() EventsData {
 		out = append(out, EventDoc{Type: e.Name, Description: e.Summary, Scope: e.Scope, Source: e.Source, Fields: fields})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
-	return EventsData{Events: out}
+	return EventsData{EventsGuide: eventsGuide(), Events: out}
 }
 
 // JSON renders a reference file: indented, with a trailing newline, and with

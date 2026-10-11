@@ -3,22 +3,13 @@
 
 # Pando events
 
-A subscription sends the events it names to a webhook, or through a notification adapter —
-Slack, Microsoft Teams, Discord, email or ntfy. Make one in the console under **Events**, with
-`pando subscriptions create`, with `POST /api/v1/subscriptions`, or with the
-`pando_create_subscription` tool.
+A subscription sends the events it names to a webhook, or through a notification adapter — Slack, Microsoft Teams, Discord, email or ntfy. Make one in the console under Events, with `pando subscriptions create`, with `POST /api/v1/subscriptions`, or with the `pando_create_subscription` tool.
 
-A subscription is about one app, which needs `app.view` on it, or the whole installation,
-which needs `install.events.manage`. Every delivery is checked against its owner's access at
-the moment it is sent, so a subscription stops delivering when its owner loses sight of
-what it is about (R-368).
+A subscription is about one app, which needs `app.view` on it, or the whole installation, which needs `install.events.manage`. Every delivery is checked against its owner's access at the moment it is sent, so a subscription stops delivering when its owner loses sight of what it is about.
 
 ## Choosing events
 
-A subscription's `events` is a list of names (`deploy.failed`), prefixes (`deploy.*`), or
-`*` for everything. A name that matches no event is refused when the subscription is saved.
-An **app** event reaches subscriptions on its app and install-wide ones; an **install** event
-reaches install-wide subscriptions only.
+A subscription's `events` is a list of names (`deploy.failed`), prefixes (`deploy.*`), or `*` for everything. A name that matches no event is refused when the subscription is saved. An app event reaches subscriptions on its app and install-wide ones; an install event reaches install-wide subscriptions only.
 
 ## Webhooks
 
@@ -35,9 +26,7 @@ Pando sends a `POST` with a JSON body to the subscription's URL:
 }
 ```
 
-`app` is absent for an install event. `actor.kind` is `user`, `token`, `system` or
-`anonymous`. `data` holds the event's fields below and nothing else; no event carries a
-secret value (R-194).
+`app` is absent for an install event. `actor.kind` is `user`, `token`, `system` or `anonymous`. `data` holds the event's fields and nothing else; no event carries a secret value.
 
 | Header | Meaning |
 | --- | --- |
@@ -49,10 +38,7 @@ secret value (R-194).
 
 ### Checking a delivery came from Pando
 
-The signing key is shown once, when the subscription is made or its key is rotated. To
-check a delivery, compute the HMAC over the raw body exactly as received and compare it in
-constant time; refuse a timestamp more than five minutes from your clock, so a recorded
-delivery cannot be replayed:
+The signing key is shown once, when the subscription is made or its key is rotated. To check a delivery, compute the HMAC over the raw body exactly as received and compare it in constant time; refuse a timestamp more than five minutes from your clock, so a recorded delivery cannot be replayed:
 
 ```python
 import hashlib, hmac, time
@@ -67,38 +53,23 @@ def from_pando(key: str, headers, body: bytes) -> bool:
 
 ### Retries and turning off
 
-A `2xx` answer is a delivery. Anything else — another status, a redirect, a timeout after 15
-seconds — is retried after 1 minute, 5 minutes, 30 minutes, 2 hours, 6 hours and 12 hours,
-then marked failed. Every attempt is recorded and shown in the delivery log, and any
-delivery can be sent again from it. An endpoint that has failed every attempt for a day is
-turned off, and its owner is told (R-370). Turning it back on clears the record.
+A `2xx` answer is a delivery. Anything else — another status, a redirect, a timeout after 15 seconds — is retried after 1 minute, 5 minutes, 30 minutes, 2 hours, 6 hours and 12 hours, then marked failed. Every attempt is recorded and shown in the delivery log, and any delivery can be sent again from it. An endpoint that has failed every attempt for a day is turned off, and its owner is told. Turning it back on clears the record.
 
-Delivery is at least once and survives a restart: events are written to an outbox in
-the same transaction as what they describe (R-366).
+Delivery is at least once and survives a restart: events are written to an outbox in the same transaction as what they describe.
 
 ### Private addresses
 
-A webhook may not reach a private, loopback or link-local address — the local network,
-the host itself, a cloud metadata service — unless host policy's `allow_private_webhooks` is
-on (R-372). The check is made on the address actually connected to, and redirects are not
-followed.
+A webhook may not reach a private, loopback or link-local address — the local network, the host itself, a cloud metadata service — unless host policy's `allow_private_webhooks` is on. The check is made on the address actually connected to, and redirects are not followed.
 
 ### Shaping the request
 
-For a receiver that expects a particular request, a webhook may set `method` (POST, PUT or
-PATCH), `content_type`, `headers` of its own — for an API key the receiver needs; values are
-stored encrypted and never shown again — and `payload_template`, the body as a Go template.
-Pando's `Pando-*` headers are always sent and cannot be set, and the signature covers the body
-actually sent. A template is given `.ID`, `.Type`, `.OccurredAt`, `.App` (`.ID`, `.Name`,
-`.Slug`), `.Actor`, `.Data`, `.Subject`, `.Body`, `.Fields`, `.Link` and `.Envelope`, and the
-functions `json` (a value as JSON) and `default`. For a chat tool that takes a `text` field:
+For a receiver that expects a particular request, a webhook may set `method` (POST, PUT or PATCH), `content_type`, `headers` of its own — for an API key the receiver needs; values are stored encrypted and never shown again — and `payload_template`, the body as a Go template. Pando's `Pando-*` headers are always sent and cannot be set, and the signature covers the body actually sent. A template is given `.ID`, `.Type`, `.OccurredAt`, `.App` (`.ID`, `.Name`, `.Slug`), `.Actor`, `.Data`, `.Subject`, `.Body`, `.Fields`, `.Link` and `.Envelope`, and the functions `json` (a value as JSON) and `default`. For a chat tool that takes a `text` field:
 
 ```
 {"text": {{json .Subject}}, "url": {{json .Link}}}
 ```
 
-A template is checked against a sample event when it is saved, and a JSON content type needs
-it to produce JSON. `link` points into the console when Pando's `external_url` is set.
+A template is checked against a sample event when it is saved, and a JSON content type needs it to produce JSON. `link` points into the console when Pando's `external_url` is set.
 
 ## Events
 
@@ -148,5 +119,4 @@ it to produce JSON. `link` points into the console when Pando's `external_url` i
 | `subscription.disabled` | app | Pando turned a subscription off because its endpoint failed every delivery for a day. On an app subscription the event names the app; otherwise it is install-wide. | `subscription_id` The subscription, sub_….<br>`reason` Why, in words a person can act on. |
 | `subscription.test` | install | A test delivery somebody asked for. Sent only to the subscription it tests, whatever its filter says. | `subscription_id` The subscription being tested. |
 
-Audit-sourced events also carry `target_kind` and `target_id` in `data` when the action had
-a target.
+Audit-sourced events also carry `target_kind` and `target_id` in `data` when the action had a target.

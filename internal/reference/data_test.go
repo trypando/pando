@@ -147,6 +147,25 @@ func TestReferenceJSONIsReadable(t *testing.T) {
 func TestR364_EveryEventIsInTheEventsReference(t *testing.T) {
 	data := Events()
 	require.Len(t, data.Events, len(events.Catalog()))
+
+	// The guide is the same text docs/events.md renders, and is read by users:
+	// no requirement or decision IDs, and no Markdown beyond `code`.
+	guide, err := json.Marshal(data.EventsGuide)
+	require.NoError(t, err)
+	require.NotRegexp(t, traceID, string(guide))
+	require.NotContains(t, string(guide), "**")
+	require.NotEmpty(t, data.Subscribing)
+	require.NotEmpty(t, data.Matching)
+	require.True(t, json.Valid(data.Webhook.BodyExample), "the body example is a JSON object")
+	require.NotEmpty(t, data.Webhook.Headers)
+	require.NotEmpty(t, data.Webhook.Examples)
+	page := EventsMarkdown(Document{Events: events.Catalog()})
+	for _, h := range data.Webhook.Headers {
+		require.Contains(t, page, "| `"+h.Name+"` | "+h.Meaning+" |")
+	}
+	require.Contains(t, page, data.Webhook.Examples[0].Code)
+	require.Contains(t, page, data.Subscribing)
+
 	for i, e := range data.Events {
 		require.NotEmpty(t, e.Description, e.Type)
 		require.Contains(t, []events.Scope{events.ScopeApp, events.ScopeInstall}, e.Scope, e.Type)
