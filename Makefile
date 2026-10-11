@@ -356,8 +356,9 @@ detection-corpus: ## Run detection against the corpus of real repositories (netw
 # ---------------------------------------------------------------------------
 
 .PHONY: reference
-reference: ## Regenerate docs/api.md, cli.md, mcp.md, events.md and audit-formats.md from the code
+reference: ## Regenerate docs/api.md, cli.md, mcp.md, events.md, audit-formats.md and the JSON reference from the code
 	$(GO) run ./cmd/gen-reference docs
+	$(GO) run ./cmd/pando reference-data docs
 
 .PHONY: reference-check
 reference-check: ## Fail if the generated reference is out of date
@@ -370,7 +371,8 @@ reference-check: ## Fail if the generated reference is out of date
 	@# a route.
 	@tmp=$$(mktemp -d); \
 	$(GO) run ./cmd/gen-reference $$tmp > /dev/null; \
-	for f in api.md cli.md mcp.md events.md audit-formats.md; do \
+	$(GO) run ./cmd/pando reference-data $$tmp > /dev/null; \
+	for f in api.md cli.md mcp.md events.md audit-formats.md cli.json mcp.json adapters.json config.json errors.json events.json; do \
 		diff -u docs/$$f $$tmp/$$f > /dev/null \
 			|| { echo "docs/$$f is out of date. Run 'make reference' and commit the result."; rm -rf $$tmp; exit 1; }; \
 	done; \

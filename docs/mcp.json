@@ -1,0 +1,1609 @@
+{
+  "tools": [
+    {
+      "name": "pando_accept_proposal",
+      "description": "Accept what Pando worked out and pin it as the app's setup, optionally setting environment variables in the same step. This does not deploy — call pando_deploy after.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variables to set, name to value, e.g. {\"API_URL\": \"https://api\"}. Stored as ordinary variables, not secrets.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_add_app_to_section",
+      "description": "Move an app you can open into one of your launcher sections, out of any other.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "section_id": {
+            "description": "The section's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_ai_ask_reference",
+      "description": "Ask how to do something with Pando. Answered from Pando's API, CLI and MCP reference, citing the endpoints, commands and tools it relies on. Describes; does nothing.",
+      "input_schema": {
+        "properties": {
+          "question": {
+            "description": "What you want to do.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_ai_draft_access",
+      "description": "Draft a custom role and a group from a description of who should be able to do what. A draft only: nothing is created. Verbs come from Pando's catalog; anything else is listed as refused.",
+      "input_schema": {
+        "properties": {
+          "description": {
+            "description": "Who should be able to do what, in a sentence or two.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_ai_draft_host_rules",
+      "description": "Propose changes to the installation's host policy from a description: the document as it would be saved, and each change. Nothing is saved. Settings fixed in the startup configuration are declined, naming where they are set.",
+      "input_schema": {
+        "properties": {
+          "description": {
+            "description": "What the rules should be, in a sentence or two.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_ai_search_audit",
+      "description": "Ask a question of the audit log, such as \"which apps did Ben Meeker create last month?\". Returns a short summary and the filters used, which pando_list_audit takes as-is.",
+      "input_schema": {
+        "properties": {
+          "question": {
+            "description": "The question.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_answer_detection",
+      "description": "Answer one of the questions from pando_get_detection.",
+      "input_schema": {
+        "properties": {
+          "answer": {
+            "description": "The answer.",
+            "type": "string"
+          },
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "key": {
+            "description": "The question's key.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "key",
+          "answer"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_approve_deploy",
+      "description": "Approve a deploy that is waiting for approval. When it is the last approval the deploy needs, the deploy starts. Approval is a person's sign-off, so by default an installation does not let an agent's token approve; the refusal says so.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "comment": {
+            "description": "Optional. A note recorded with the approval.",
+            "type": "string"
+          },
+          "deployment_id": {
+            "description": "The deploy's ID, as pando_list_approvals or pando_deploy returned it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "deployment_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_assign_ai_function",
+      "description": "Have an AI adapter handle one AI function, optionally on a model of its own. Refused while another adapter handles the function; unassign it there first.",
+      "input_schema": {
+        "properties": {
+          "adapter_id": {
+            "description": "The AI adapter's ID, such as ai_anthropic.",
+            "type": "string"
+          },
+          "function": {
+            "description": "The AI function, such as search_audit. pando_list_ai_functions lists them.",
+            "type": "string"
+          },
+          "model": {
+            "description": "A model for this function only. Omit to use the adapter's own.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "function",
+          "adapter_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_authorize_source",
+      "description": "Start signing a source connection in with OAuth by device code. Returns user_code and verification_url: tell the person to open the URL and enter the code, then call pando_poll_source_authorization every interval_seconds until it says authorized.",
+      "input_schema": {
+        "properties": {
+          "source_id": {
+            "description": "The connection's id, from pando_list_sources.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_clear_app_icon",
+      "description": "Remove the image on an app's launcher tile, so the tile shows the map generated for it.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_configure_adapter",
+      "description": "Add an adapter, or change one by its id. Settings go in config; a secret such as an API key or a registry password goes in credentials, which is stored encrypted and never shown again. A source connection or an image registry is used from the moment it is saved; any other adapter after Pando restarts. enabled: false turns one off.",
+      "input_schema": {
+        "properties": {
+          "category": {
+            "description": "The category, such as image_registry, as pando_list_adapter_kinds lists it.",
+            "type": "string"
+          },
+          "config": {
+            "description": "The kind's settings, by key.",
+            "type": "object"
+          },
+          "credentials": {
+            "description": "The kind's secret settings, by key. A key sent empty removes that credential.",
+            "type": "object"
+          },
+          "enabled": {
+            "description": "false turns it off. Left out, it is on.",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "The adapter's id, such as reg_main. An existing id changes that adapter.",
+            "type": "string"
+          },
+          "is_default": {
+            "description": "Make it the default in its category.",
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "The kind within the category, such as oci or ecr.",
+            "type": "string"
+          },
+          "name": {
+            "description": "A name for people to read.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "kind"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_count_unread_notifications",
+      "description": "How many of your notifications are unread, without listing them.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_create_app",
+      "description": "Create an app from a git repository (source_url), from an image that is already built (image), or from files you will send next (upload: true, then pando_upload_source). Give exactly one. Returns immediately with the app in draft while Pando works out how to run it; call pando_get_detection next, with wait_seconds to wait for it to finish. For an upload, detection starts when pando_upload_source is followed by pando_rerun_detection.",
+      "input_schema": {
+        "properties": {
+          "connection": {
+            "description": "Optional, with source_url: the source connection (from pando_list_sources) to read a private repository with. Left out, the one covering the URL is used.",
+            "type": "string"
+          },
+          "image": {
+            "description": "An image reference such as ghcr.io/acme/web:1.4, run as it is.",
+            "type": "string"
+          },
+          "name": {
+            "description": "A short name for the app.",
+            "type": "string"
+          },
+          "ref": {
+            "description": "Branch or tag. Optional, with source_url.",
+            "type": "string"
+          },
+          "registry_credential": {
+            "description": "Optional, with image: the credential a private image is pulled with. Either kind basic with username and password (a token that can read the image), or kind ecr with access_key_id, secret_access_key and optionally region, for AWS ECR.",
+            "properties": {
+              "access_key_id": {
+                "description": "With ecr: the AWS access key ID.",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "basic",
+                  "ecr"
+                ],
+                "type": "string"
+              },
+              "password": {
+                "description": "With basic: the password or access token.",
+                "type": "string"
+              },
+              "region": {
+                "description": "With ecr: the region. Optional; read from the registry host.",
+                "type": "string"
+              },
+              "secret_access_key": {
+                "description": "With ecr: the AWS secret access key.",
+                "type": "string"
+              },
+              "username": {
+                "description": "With basic: the registry username.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          "source_url": {
+            "description": "The repository URL.",
+            "type": "string"
+          },
+          "upload": {
+            "description": "True to create the app for files sent with pando_upload_source.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_create_section",
+      "description": "Make a section in your own launcher: a named grouping of apps. Only you see it.",
+      "input_schema": {
+        "properties": {
+          "name": {
+            "description": "The section's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_create_subscription",
+      "description": "Subscribe to events and send them to a webhook (url) or through a notification adapter such as Slack or email (adapter_id). events is a comma-separated list of event names, prefixes such as deploy.*, or *; pando_list_events lists them. With app_id it is about one app; without, it is install-wide and needs install.events.manage. A webhook's signing key is in the result once; tell the person to keep it.",
+      "input_schema": {
+        "properties": {
+          "adapter_id": {
+            "description": "A notification adapter's ID. Give this or url.",
+            "type": "string"
+          },
+          "app_id": {
+            "description": "The app. Omit for install-wide.",
+            "type": "string"
+          },
+          "content_type": {
+            "description": "A webhook's content type. Optional; application/json by default.",
+            "type": "string"
+          },
+          "description": {
+            "description": "What the subscription is for. Optional.",
+            "type": "string"
+          },
+          "events": {
+            "description": "Comma-separated event names or patterns, such as deploy.failed,app.state_changed.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "A webhook's own headers, one \"Name: value\" per line, such as an Authorization its receiver needs. Optional.",
+            "type": "string"
+          },
+          "method": {
+            "description": "A webhook's HTTP method: POST, PUT or PATCH. Optional.",
+            "type": "string"
+          },
+          "payload_template": {
+            "description": "A webhook's body as a Go template, such as {\"text\": {{json .Subject}}}. Optional; Pando's envelope by default.",
+            "type": "string"
+          },
+          "url": {
+            "description": "The webhook URL to post to. Give this or adapter_id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_delete_section",
+      "description": "Delete one of your launcher sections. Its apps go back to Your apps; nothing else changes.",
+      "input_schema": {
+        "properties": {
+          "section_id": {
+            "description": "The section's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_delete_subscription",
+      "description": "Delete a subscription, its signing key and its delivery log.",
+      "input_schema": {
+        "properties": {
+          "subscription_id": {
+            "description": "The subscription's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscription_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_deploy",
+      "description": "Deploy an app. Returns once the deployment has been accepted, not once it is running. When the deploy needs somebody's approval, it comes back with status `awaiting_approval` and `approval_reasons` saying why; it runs once a person approves it.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "A key you choose. Retrying with the same key will not deploy twice.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_favorite_app",
+      "description": "Pin an app to the top of your own launcher. It grants nothing and only you see it; you must be able to open the app.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_app",
+      "description": "Get one app: its name, source, state and pinned spec. Once the app has been through detection, `detection` says where that has got to — `status`, and `stage` while it is running — which is why an app in draft is still in draft.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_app_idle",
+      "description": "When Pando stops or deletes an app nobody uses: the app's own stop_days and delete_days (null is the installation's, 0 is never), the installation's, the ones in force, last_activity_at, stops_at and deletes_at if nobody uses it before then, and stopped_for_idle when Pando stopped it.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_app_limit",
+      "description": "How many apps a person may own. With user_id: the limit in force (0 is unlimited), where it comes from (user, group or policy, with the group's name), how many apps they own, and the value on their own account. With group_id: the group's max_apps, null when it sets none. Your own account needs no permission; anything else needs install.users.manage.",
+      "input_schema": {
+        "properties": {
+          "group_id": {
+            "description": "A group's ID. Give this or user_id.",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "An account's ID. Give this or group_id.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_auto_deploy",
+      "description": "Whether an app deploys automatically when its repository changes, and how: `settings` on the newest configuration and `deployed` on the running one, with `pending` when they differ; `paused` when approval now stops it; `last_check`, what Pando last found and the last commit it tried (each commit is tried once) and why it went nowhere; and the webhook URL, with whether a webhook secret is set.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_config",
+      "description": "The configuration the Pando server started with: every non-secret setting, its value and where it was set (an environment variable, the config file, or the default), and the host policy fields fixed there, which cannot be changed through the API while they are set.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_delivery",
+      "description": "One delivery: every attempt at it, with the status code and error each got, and the payload sent.",
+      "input_schema": {
+        "properties": {
+          "delivery_id": {
+            "description": "The delivery's ID, dlv_….",
+            "type": "string"
+          },
+          "subscription_id": {
+            "description": "The subscription's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscription_id",
+          "delivery_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_detection",
+      "description": "What Pando worked out about an app, including any questions it needs answered before it can deploy. The questions are written to be answerable by whatever wrote the app. `status` is `running` while Pando is still working: call again. While running, `stage` says what it is doing — fetching (cloning the repository), detecting (working out what the app is), trying (a trial run), scanning (a security scan) or screening (an AI adapter checking the plan) — and `elapsed_seconds` how long it has taken so far; a trial run can take several minutes. Pass wait_seconds (up to 60) to have the call return as soon as the stage changes or detection finishes, instead of calling repeatedly. When it has finished, `status` is ready (call pando_accept_proposal), needs_answers or unknown (answer the questions with pando_answer_detection), blocked or failed (the `detection` field says why).",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "wait_seconds": {
+            "description": "Optional. While detection is running, wait up to this many seconds (at most 60) for it to move on before answering. 0 or absent answers at once.",
+            "maximum": 60,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_last_upgrade",
+      "description": "The most recent in-place upgrade of Pando: from and to which version, whether it succeeded or was rolled back and why, with the new version's last log lines when it was.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_logs",
+      "description": "Read an app's recent logs. An app can be made of several parts — a web service, a worker, a database it brought with it — and each has its own log. Without `workload` this is the primary part, the one the app's address resolves to; pando_get_status lists the names. Returns the most recent lines: 200 unless `tail` says otherwise, and never more than 5000.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "tail": {
+            "description": "Optional. How many of the most recent lines to return, 1 to 5000. Defaults to 200.",
+            "maximum": 5000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "workload": {
+            "description": "Which part of the app to read. Defaults to the primary one.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_notification_preferences",
+      "description": "Which of Pando's own notifications reach you, on each channel that reaches people, such as the console and email.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_registry_credential",
+      "description": "Whether an image app has a registry credential, and of which kind, with its username or access key ID. Never the password or secret key.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_status",
+      "description": "What an app is doing right now: running, degraded, failed, and why — including each part separately, so a single part that is crash-looping is visible rather than averaged into one word for the app.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_updates",
+      "description": "Whether a newer Pando is released: the version the server runs, the latest on the update channel, and each version in between with its changelog, security fixes and breaking changes marked, plus the command that upgrades the server. The check is host policy (disable_update_check, update_channel).",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_usage",
+      "description": "What each part of an app is using right now: CPU (thousandths of a core), memory and disk in bytes, and each mounted volume's size, beside its limits (0 means none). A reading, not a history.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_adapter_kinds",
+      "description": "The kinds of adapter this build of Pando can run, and the settings each takes: which are credentials, which are required, and the default each takes when left out.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_adapters",
+      "description": "The adapters this installation is configured with — runtimes, routing, builders, image registries, secrets, backup, scanners, AI, source connections and the rest — each with its live capabilities, whether it is reachable, which credentials are set (never their values), and whether it waits on a restart. One declared at startup is read-only.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_ai_functions",
+      "description": "Each AI function Pando has, the AI adapter that handles it and on which model, whether it is on, and whether the startup configuration assigns it.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_app_events",
+      "description": "An app's recent events, newest first: deploys, state and health changes, scans, shares, backups. Each says what happened in a sentence.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_approvals",
+      "description": "List the deploys waiting for approval on every app you can see. Each says which app, why it needs approval, the approvals it has so far, and `can_decide`: whether you may approve or reject it. Oldest first, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
+      "input_schema": {
+        "properties": {
+          "cursor": {
+            "description": "The next_cursor from a previous page.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_apps",
+      "description": "List the apps you can manage, with their current state, newest first, a page at a time. `total` is how many match; pass `next_cursor` back as `cursor` for the next page.",
+      "input_schema": {
+        "properties": {
+          "cursor": {
+            "description": "The next_cursor from a previous page.",
+            "type": "string"
+          },
+          "q": {
+            "description": "Only apps whose name or slug contains this.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_audit",
+      "description": "Read the audit log, newest first. Every filter is optional and they combine: what was done (an action prefix such as app. or grant.delete), who did it, which app, what it was done to, and when (RFC 3339 times; since inclusive, until exclusive).",
+      "input_schema": {
+        "properties": {
+          "action": {
+            "description": "Actions starting with this, e.g. app.",
+            "type": "string"
+          },
+          "app_id": {
+            "description": "Events on this app.",
+            "type": "string"
+          },
+          "before": {
+            "description": "The next_before from a previous page, to read further back.",
+            "type": "string"
+          },
+          "involving": {
+            "description": "Events where this ID is the actor or the target: everything to do with one account.",
+            "type": "string"
+          },
+          "principal_id": {
+            "description": "Who did it: a user or token ID, or system, reconciler or detection.",
+            "type": "string"
+          },
+          "principal_kind": {
+            "description": "What kind of actor: user, token, system or anonymous.",
+            "type": "string"
+          },
+          "since": {
+            "description": "From this time, RFC 3339.",
+            "type": "string"
+          },
+          "target_id": {
+            "description": "The ID of the thing it was done to.",
+            "type": "string"
+          },
+          "target_kind": {
+            "description": "What kind of thing it was done to, e.g. user, role, app.",
+            "type": "string"
+          },
+          "until": {
+            "description": "Up to this time, RFC 3339.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_audit_archives",
+      "description": "The months of the audit log past retention, archived and removed from the live log: each month's row count, first and last event, time range, size, SHA-256 digest, and where it is kept. Events in these months are not in pando_list_audit; the archive itself is a gzip download from GET /api/v1/audit/archives/{id}, or `pando audit archives download`.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_audit_sinks",
+      "description": "The audit sinks: destinations, such as a SIEM's syslog or HTTPS collector, that the audit log is pushed to as it is written. Each with what it sends where (transport, endpoint, format, actions, exclude, and disclosure, the sentence saying what leaves the installation), its last delivery, backlog, last_error and failing_since, why Pando turned it off if it did, and gap_from and gap_to for a range of events it missed. Needs install.audit.read.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_deliveries",
+      "description": "A subscription's recent deliveries, newest first: each event, whether it arrived, how many attempts it took, and the last error.",
+      "input_schema": {
+        "properties": {
+          "subscription_id": {
+            "description": "The subscription's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscription_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_events",
+      "description": "List the events a subscription can name: each event's name, whether it is about one app or the whole installation, and its data fields.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_my_apps",
+      "description": "The apps you can open — your launcher — with which are favorites, which of your sections each is filed under, and whether you can also manage it (can_manage), and your sections. Favorites first, then filed apps, then the rest, a page at a time: pass `next_cursor` back as `cursor` for the next page. A different list from pando_list_apps, which is the apps you can administer.",
+      "input_schema": {
+        "properties": {
+          "cursor": {
+            "description": "The next_cursor from a previous page.",
+            "type": "string"
+          },
+          "q": {
+            "description": "Only apps whose name or slug contains this.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_notifications",
+      "description": "Your notifications inbox, newest first, and how many are unread. unread=true lists only those.",
+      "input_schema": {
+        "properties": {
+          "unread": {
+            "description": "true to list only unread notifications. Optional.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_source_branches",
+      "description": "The branches of a repository, read through a source connection.",
+      "input_schema": {
+        "properties": {
+          "source_id": {
+            "description": "The connection's id, from pando_list_sources.",
+            "type": "string"
+          },
+          "url": {
+            "description": "The repository's URL.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_source_repositories",
+      "description": "The repositories a source connection can read, to pick one for pando_create_app rather than guess its URL. Refused for a connection with no API access, such as an SSH key.",
+      "input_schema": {
+        "properties": {
+          "query": {
+            "description": "Optional: only repositories whose name contains this.",
+            "type": "string"
+          },
+          "source_id": {
+            "description": "The connection's id, from pando_list_sources.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_sources",
+      "description": "The installation's source connections: how Pando reads private repositories on GitHub, GitLab, Azure DevOps, Bitbucket, Gitea or any git host. Each has an id, the host and scope it covers, how it signs in, whether it can list repositories, and whether it is authorized; problem says why one cannot be used. A private repository is read with the connection that covers its URL.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_subscriptions",
+      "description": "List your event subscriptions: what each listens for, where it sends, and whether it is on. app_id narrows to one app. Newest first, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "Only subscriptions about this app. Optional.",
+            "type": "string"
+          },
+          "cursor": {
+            "description": "The next_cursor from a previous page.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_user_apps",
+      "description": "The apps an account has access to: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (can_manage). By app name, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
+      "input_schema": {
+        "properties": {
+          "cursor": {
+            "description": "The next_cursor from a previous page.",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "The account's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_mark_notifications_read",
+      "description": "Mark one of your notifications read, by notification_id, or every one when it is omitted.",
+      "input_schema": {
+        "properties": {
+          "notification_id": {
+            "description": "The notification's ID, ntf_…. Omit to mark every one read.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_plan",
+      "description": "Show what a deploy would do, without doing it. Side-effect free, so it is safe to call after any change to check the change is deployable.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_plan_upgrade",
+      "description": "Whether Pando can upgrade itself in place to a version, and if not, every reason with what to change; which versions in between may break something, with their upgrade notes. Starting an upgrade is not offered here: it takes a backup passphrase, and agents do not hold install.upgrade by default.",
+      "input_schema": {
+        "properties": {
+          "version": {
+            "description": "The version to upgrade to, such as 0.4.0, from pando_get_updates.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_poll_source_authorization",
+      "description": "Ask once whether the person approved a device authorization started with pando_authorize_source: status pending (slow_down asks for slower polling) or authorized.",
+      "input_schema": {
+        "properties": {
+          "source_id": {
+            "description": "The connection's id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_read_audit_stream",
+      "description": "Read the audit log in commit order, oldest first, one page at a time. Returns events, cursor and caught_up. Pass the cursor back as after to read on from where this page ended; keep it to ask later what has happened since. Without after it starts at the oldest event in the live log; after: \"now\" starts after the newest. caught_up says there is nothing past the cursor yet. Delivery is at least once: an event can come back again, and its id is the key to drop it by. Needs install.audit.read.",
+      "input_schema": {
+        "properties": {
+          "action": {
+            "description": "Optional. Only actions starting with one of these prefixes, such as grant.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "after": {
+            "description": "The cursor a previous page returned, or now. Optional.",
+            "type": "string"
+          },
+          "exclude": {
+            "description": "Optional. Leave out actions starting with one of these prefixes.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "format": {
+            "description": "Optional. native (the archive's line format, the default) or ocsf.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Optional. How many events, 1 to 1000. Defaults to 500.",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_redeliver",
+      "description": "Send a delivery again now, with the whole retry schedule ahead of it.",
+      "input_schema": {
+        "properties": {
+          "delivery_id": {
+            "description": "The delivery's ID.",
+            "type": "string"
+          },
+          "subscription_id": {
+            "description": "The subscription's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscription_id",
+          "delivery_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_reject_deploy",
+      "description": "Reject a deploy that is waiting for approval. One rejection ends the request, and the deploy does not run. Approval is a person's sign-off, so by default an installation does not let an agent's token reject either.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "comment": {
+            "description": "Optional. Why, recorded with the rejection and shown to whoever asked.",
+            "type": "string"
+          },
+          "deployment_id": {
+            "description": "The deploy's ID, as pando_list_approvals or pando_deploy returned it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "deployment_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_remove_app_from_section",
+      "description": "Move an app out of one of your launcher sections, back to Your apps.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "section_id": {
+            "description": "The section's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_remove_registry_credential",
+      "description": "Remove an image app's registry credential, so its image is pulled anonymously.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_rename_app",
+      "description": "Change an app's display name. Its ID and address do not change.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The new name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_rename_section",
+      "description": "Rename one of your launcher sections.",
+      "input_schema": {
+        "properties": {
+          "name": {
+            "description": "The new name.",
+            "type": "string"
+          },
+          "section_id": {
+            "description": "The section's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_rerun_detection",
+      "description": "Work out again how to run an app, from its source as it is now: after pando_upload_source, after the repository changed, or after setting a registry credential for a private image. Nothing changes until the new proposal is accepted. Then call pando_get_detection with wait_seconds.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_restart_app",
+      "description": "Restart an app's workloads in place. Nothing is rebuilt and nothing is re-read — the same version, started again.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_set_app_icon",
+      "description": "Set the image shown on an app's launcher tile. The image is a PNG, JPEG, WebP or GIF file of at most 256 KB, base64-encoded. SVG is not accepted.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "image_base64": {
+            "description": "The image file's bytes, base64-encoded.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "image_base64"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_set_app_idle",
+      "description": "Set when Pando stops and deletes an app nobody uses. Both are replaced, so pass what pando_get_app_idle returned for the one you are not changing. Each is a number of days, \"never\", or \"default\" for the installation's setting. Both count from the last use, so deleting has to come later than stopping. App settings, not spec: nothing is deployed.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "delete_days": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "pattern": "^(never|default|[0-9]+)$",
+                "type": "string"
+              }
+            ],
+            "description": "Days without use before Pando deletes the app, \"never\", or \"default\"."
+          },
+          "stop_days": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "pattern": "^(never|default|[0-9]+)$",
+                "type": "string"
+              }
+            ],
+            "description": "Days without use before Pando stops the app, \"never\", or \"default\"."
+          }
+        },
+        "required": [
+          "app_id",
+          "stop_days",
+          "delete_days"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_set_app_limit",
+      "description": "Set how many apps an account, or each person in a group, may own. A number, 0 for unlimited, or \"clear\" to remove it. An account's own value applies whatever its groups say; otherwise the most generous group's, then host policy's max_apps_per_user. Lowering it removes nothing. Needs install.users.manage, which host policy keeps from agents unless an administrator allows it.",
+      "input_schema": {
+        "properties": {
+          "group_id": {
+            "description": "A group's ID. Give this or user_id.",
+            "type": "string"
+          },
+          "max_apps": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "pattern": "^(clear|[0-9]+)$",
+                "type": "string"
+              }
+            ],
+            "description": "A number of apps, 0 for unlimited, or \"clear\"."
+          },
+          "user_id": {
+            "description": "An account's ID. Give this or group_id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "max_apps"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_set_auto_deploy",
+      "description": "Turn automatic deploys on or off for an app, and choose what deploys: each new commit on a branch (trigger branch_updated, the default; branch empty follows the branch the app was deployed from), or each new release tag (trigger release_tagged; a release is a tag such as v1.2.3, or one matching tag_pattern, such as release-*). Saved as a new configuration that takes effect at the app's next deploy. Refused while the app's deploys need approval.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "branch": {
+            "description": "With branch_updated: the branch to follow.",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Whether the app deploys automatically.",
+            "type": "boolean"
+          },
+          "tag_pattern": {
+            "description": "With release_tagged: which tags are releases, such as release-*.",
+            "type": "string"
+          },
+          "trigger": {
+            "enum": [
+              "branch_updated",
+              "release_tagged"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "enabled"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_set_notification_preference",
+      "description": "Turn one of Pando's notifications on or off for you on one channel. kind and channel are as pando_get_notification_preferences lists them.",
+      "input_schema": {
+        "properties": {
+          "channel": {
+            "description": "The channel's adapter ID, such as ntf_console.",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "true or false.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "The notification, such as app_shared.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "channel",
+          "enabled"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_set_registry_credential",
+      "description": "Set the credential an image app's private image is pulled with, replacing any it had. It belongs to the app and is never given to it. Pando never shows it again; pando_get_registry_credential says only which kind is set.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "registry_credential": {
+            "description": "The credential. Either kind basic with username and password (a token that can read the image), or kind ecr with access_key_id, secret_access_key and optionally region, for AWS ECR.",
+            "properties": {
+              "access_key_id": {
+                "description": "With ecr: the AWS access key ID.",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "basic",
+                  "ecr"
+                ],
+                "type": "string"
+              },
+              "password": {
+                "description": "With basic: the password or access token.",
+                "type": "string"
+              },
+              "region": {
+                "description": "With ecr: the region. Optional; read from the registry host.",
+                "type": "string"
+              },
+              "secret_access_key": {
+                "description": "With ecr: the AWS secret access key.",
+                "type": "string"
+              },
+              "username": {
+                "description": "With basic: the registry username.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "app_id",
+          "registry_credential"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_start_app",
+      "description": "Start an app that was stopped, bringing back the version that was running.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_stop_app",
+      "description": "Stop an app without deleting it. Its storage, configuration and address are kept, and it stays stopped until something starts it again.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_test_subscription",
+      "description": "Send a test event to one subscription, whatever its filter says, to check its endpoint. Returns the delivery; read it with pando_get_delivery.",
+      "input_schema": {
+        "properties": {
+          "subscription_id": {
+            "description": "The subscription's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscription_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_unassign_ai_function",
+      "description": "Turn an AI function off by removing the adapter that handles it.",
+      "input_schema": {
+        "properties": {
+          "function": {
+            "description": "The AI function, such as search_audit.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "function"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_unfavorite_app",
+      "description": "Unpin an app from your launcher.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_update_subscription",
+      "description": "Change a subscription's events, url, adapter_id or description, or turn it on or off with enabled (true or false).",
+      "input_schema": {
+        "properties": {
+          "adapter_id": {
+            "description": "A new notification adapter. Optional.",
+            "type": "string"
+          },
+          "content_type": {
+            "description": "A webhook's content type. Optional.",
+            "type": "string"
+          },
+          "description": {
+            "description": "A new description. Optional.",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "true or false. Optional.",
+            "type": "string"
+          },
+          "events": {
+            "description": "Comma-separated event names or patterns. Optional.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "Replace a webhook's headers: one \"Name: value\" per line. Optional.",
+            "type": "string"
+          },
+          "method": {
+            "description": "A webhook's HTTP method: POST, PUT or PATCH. Optional.",
+            "type": "string"
+          },
+          "payload_template": {
+            "description": "A webhook's body as a Go template. Optional.",
+            "type": "string"
+          },
+          "subscription_id": {
+            "description": "The subscription's ID, sub_….",
+            "type": "string"
+          },
+          "url": {
+            "description": "A new webhook URL. Optional.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscription_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_upload_source",
+      "description": "Send an app's files as its source: a gzipped tar of the app's directory, base64-encoded, at most 256 MB compressed. Paths in the archive are relative to the app's root; leave out .git, node_modules and build output. A single index.html is enough for a static site. Replaces any files sent before. Then call pando_rerun_detection so Pando works out how to run them.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "archive_base64": {
+            "description": "The gzipped tar's bytes, base64-encoded.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "archive_base64"
+        ],
+        "type": "object"
+      }
+    }
+  ]
+}

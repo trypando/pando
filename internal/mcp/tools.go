@@ -634,8 +634,8 @@ var toolList = []tool{
 		Name: "pando_rerun_detection",
 		Description: "Work out again how to run an app, from its source as it is now: after " +
 			"pando_upload_source, after the repository changed, or after setting a registry " +
-			"credential for a private image. Nothing changes until the new proposal is accepted " +
-			"(R-022). Then call pando_get_detection with wait_seconds.",
+			"credential for a private image. Nothing changes until the new proposal is accepted. " +
+			"Then call pando_get_detection with wait_seconds.",
 		Schema: schema(map[string]any{"app_id": str("The app's ID.")}, "app_id"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, err := stringArg(args, "app_id", true)
@@ -785,7 +785,7 @@ var toolList = []tool{
 	},
 	{
 		Name: "pando_get_app_idle",
-		Description: "When Pando stops or deletes an app nobody uses (R-393 – R-397): the app's own " +
+		Description: "When Pando stops or deletes an app nobody uses: the app's own " +
 			"stop_days and delete_days (null is the installation's, 0 is never), the installation's, the ones " +
 			"in force, last_activity_at, stops_at and deletes_at if nobody uses it before then, and " +
 			"stopped_for_idle when Pando stopped it.",
@@ -869,7 +869,7 @@ var toolList = []tool{
 	},
 	{
 		Name: "pando_get_app_limit",
-		Description: "How many apps a person may own (R-244). With user_id: the limit in force (0 is " +
+		Description: "How many apps a person may own. With user_id: the limit in force (0 is " +
 			"unlimited), where it comes from (user, group or policy, with the group's name), how many apps " +
 			"they own, and the value on their own account. With group_id: the group's max_apps, null when it " +
 			"sets none. Your own account needs no permission; anything else needs install.users.manage.",
@@ -887,7 +887,7 @@ var toolList = []tool{
 	},
 	{
 		Name: "pando_set_app_limit",
-		Description: "Set how many apps an account, or each person in a group, may own (R-244). A " +
+		Description: "Set how many apps an account, or each person in a group, may own. A " +
 			"number, 0 for unlimited, or \"clear\" to remove it. An account's own value applies whatever its " +
 			"groups say; otherwise the most generous group's, then host policy's max_apps_per_user. Lowering " +
 			"it removes nothing. Needs install.users.manage, which host policy keeps from agents unless an " +

@@ -157,6 +157,8 @@ func rootCmd() *cobra.Command {
 	// started by that runtime; and the authority it and Pando trust.
 	root.AddCommand(hostAgentCmd())
 	root.AddCommand(cli.SelfUpdateCmd())
+	// Hidden: `make reference` writes docs/cli.json and adapters.json with it.
+	root.AddCommand(referenceDataCmd())
 
 	// The client half (design 04 §4). In the same binary because Pando ships as
 	// one, and a client of the API like any other (R-261) — internal/cli
@@ -425,12 +427,9 @@ func serve(ctx context.Context, configPath string) error {
 		SCIMGroups:  state.NewSCIMGroups(db),
 		Policy:      policyStore,
 		Local:       identity,
-		Kinds: map[string]idp.Kind{
-			oidcidentity.Kind: {New: func() adapterapi.IdentityAdapter { return oidcidentity.New() }, Info: oidcidentity.Info()},
-			samlidentity.Kind: {New: func() adapterapi.IdentityAdapter { return samlidentity.New() }, Info: samlidentity.Info()},
-		},
-		Audit: httpapi.AuditFunc(auditor),
-		Clock: clock.System{},
+		Kinds:       identityKinds(),
+		Audit:       httpapi.AuditFunc(auditor),
+		Clock:       clock.System{},
 	}
 
 	// Backup and disaster recovery (Sequence D). The service does the work; the
@@ -2425,6 +2424,16 @@ func startupPolicy(cfg *config.Config) (*corepolicy.Overlay, error) {
 		}
 	}
 	return overlay, nil
+}
+
+// identityKinds are the identity providers this build can connect. Configured
+// through the identity provider endpoints rather than the adapter ones, so
+// they are not in adapterKinds; docs/adapters.json lists both.
+func identityKinds() map[string]idp.Kind {
+	return map[string]idp.Kind{
+		oidcidentity.Kind: {New: func() adapterapi.IdentityAdapter { return oidcidentity.New() }, Info: oidcidentity.Info()},
+		samlidentity.Kind: {New: func() adapterapi.IdentityAdapter { return samlidentity.New() }, Info: samlidentity.Info()},
+	}
 }
 
 // adapterKinds is every kind of adapter this build can run, for the console's

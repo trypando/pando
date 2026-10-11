@@ -334,44 +334,44 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `VALID_ENV_AMBIGUOUS` | 400 | An environment variable is set twice with different values. |
 | `VALID_INVALID` | 400 | The request or spec is malformed. |
 | `VALID_PRIMARY_WORKLOAD` | 400 | A spec must name exactly one primary workload. |
-| `VALID_SOURCE_UNREADABLE` | 400 | Pando could not read the repository: it is private or missing and no source connection covers it, or the connection's credential was refused (R-091). |
-| `VALID_UNKNOWN_EVENT` | 400 | A subscription names an event, or a pattern, that matches no event in the catalog (R-364). |
+| `VALID_SOURCE_UNREADABLE` | 400 | Pando could not read the repository: it is private or missing and no source connection covers it, or the connection's credential was refused. |
+| `VALID_UNKNOWN_EVENT` | 400 | A subscription names an event, or a pattern, that matches no event in the catalog. |
 | `AUTH_INVALID` | 401 | The credential presented is not valid. |
 | `AUTH_REQUIRED` | 401 | No credential was presented, or the session has expired. |
 | `AUTH_TOKEN_INVALID` | 401 | The token is unknown, revoked or expired. |
-| `AUTH_TOKEN_ORPHANED` | 401 | The token's owner was suspended or deleted, so the token no longer resolves to anyone (R-059). |
+| `AUTH_TOKEN_ORPHANED` | 401 | The token's owner was suspended or deleted, so the token no longer resolves to anyone. |
 | `PERM_CROSS_ORIGIN` | 403 | A change sent with a browser's Pando sign-in from a page on another origin, such as an app's. Send it from the console, or with an API token. |
 | `PERM_DENIED` | 403 | Authenticated, but not permitted to do this. |
 | `PERM_PASSCODE_REQUIRED` | 403 | The app is shared with everyone who knows its passcode, and this request has not shown it. A browser is sent to the passcode page; entering it there lets the visitor in. |
 | `PERM_VERB_REQUIRED` | 403 | The caller holds no grant carrying the verb this action needs. |
-| `POLICY_ANONYMOUS_GRANT_FORBIDDEN` | 403 | Host policy does not allow apps to be shared with everyone (R-076). |
-| `POLICY_APP_LIMIT_REACHED` | 403 | The person who would own the new app already owns as many apps as their limit allows. The message names the limit and where it is set (R-244). |
-| `POLICY_BACKUP_REQUIRED` | 403 | Host policy requires a final backup before an app with storage is deleted, and the request said to delete without one (R-284). |
-| `POLICY_EXEC_DISABLED` | 403 | Host policy has turned off terminal access, including for an app's owner (R-085). |
-| `POLICY_SOURCE_NOT_ALLOWED` | 403 | Host policy does not allow apps from this source (R-092). |
-| `POLICY_WEBHOOK_PRIVATE_ADDRESS` | 403 | A webhook points at a private, loopback or link-local address, and host policy does not allow that (R-372). |
+| `POLICY_ANONYMOUS_GRANT_FORBIDDEN` | 403 | Host policy does not allow apps to be shared with everyone. |
+| `POLICY_APP_LIMIT_REACHED` | 403 | The person who would own the new app already owns as many apps as their limit allows. The message names the limit and where it is set. |
+| `POLICY_BACKUP_REQUIRED` | 403 | Host policy requires a final backup before an app with storage is deleted, and the request said to delete without one. |
+| `POLICY_EXEC_DISABLED` | 403 | Host policy has turned off terminal access, including for an app's owner. |
+| `POLICY_SOURCE_NOT_ALLOWED` | 403 | Host policy does not allow apps from this source. |
+| `POLICY_WEBHOOK_PRIVATE_ADDRESS` | 403 | A webhook points at a private, loopback or link-local address, and host policy does not allow that. |
 | `NOT_FOUND` | 404 | No such object, or none the caller may see. |
 | `CAPACITY_NO_FREE_PORT` | 409 | Port-mode routing has no free port in the configured range. |
-| `CAPACITY_WOULD_OVERSUBSCRIBE` | 409 | Running this would commit more of the host than is left (R-242). |
+| `CAPACITY_WOULD_OVERSUBSCRIBE` | 409 | Running this would commit more of the host than is left. |
 | `PLAN_ADAPTER_NOT_CONFIGURED` | 409 | The spec names an adapter this installation does not have. |
-| `PLAN_CAPABILITY_UNSUPPORTED` | 409 | The spec asks for something the chosen adapter does not do (R-254). |
-| `PLAN_COMPOSE_CONSTRUCT_REJECTED` | 409 | The compose file uses a construct Pando will not translate (R-099). |
-| `PLAN_EGRESS_LOOSENING_FORBIDDEN` | 409 | The app loosens the installation's egress rules, and host policy says no app may (R-183). |
+| `PLAN_CAPABILITY_UNSUPPORTED` | 409 | The spec asks for something the chosen adapter does not do. |
+| `PLAN_COMPOSE_CONSTRUCT_REJECTED` | 409 | The compose file uses a construct Pando will not translate. |
+| `PLAN_EGRESS_LOOSENING_FORBIDDEN` | 409 | The app loosens the installation's egress rules, and host policy says no app may. |
 | `PLAN_IMAGE_PLATFORM_UNSUPPORTED` | 409 | The app's image has no build for the operating system and CPU architecture this server runs, so it cannot start here. |
-| `PLAN_NO_ADAPTER_MEETS_POLICY` | 409 | No configured adapter can satisfy this spec under host policy (R-024, R-114). |
-| `PLAN_SECURITY_BELOW_THRESHOLD` | 409 | This installation requires a security score, and this app is below it or has never been scanned (R-314). |
-| `PLAN_SLOT_UNFILLED` | 409 | A required dependency has nothing filling it, so the deploy would start an app that cannot connect (R-132). |
+| `PLAN_NO_ADAPTER_MEETS_POLICY` | 409 | No configured adapter can satisfy this spec under host policy. |
+| `PLAN_SECURITY_BELOW_THRESHOLD` | 409 | This installation requires a security score, and this app is below it or has never been scanned. |
+| `PLAN_SLOT_UNFILLED` | 409 | A required dependency has nothing filling it, so the deploy would start an app that cannot connect. |
 | `STATE_ADDRESS_TAKEN` | 409 | Another app is already reached at this address, or at a path this one would sit inside or around. |
 | `STATE_AI_FUNCTION_ASSIGNED` | 409 | Another AI adapter already handles this AI function. Remove it from that adapter first. |
 | `STATE_APP_EXITED` | 409 | The app started and then stopped, so the deploy has nothing to send traffic to. |
-| `STATE_BACKUP_DECISION_REQUIRED` | 409 | The app has storage and the request did not say whether to keep a final backup of it (R-204, R-205). |
+| `STATE_BACKUP_DECISION_REQUIRED` | 409 | The app has storage and the request did not say whether to keep a final backup of it. |
 | `STATE_INVALID` | 409 | The object is in a state this action does not apply to. |
 | `STATE_SET_AT_STARTUP` | 409 | This is declared in Pando's startup configuration and cannot be changed through the API while it is. |
 | `BACKUP_DECRYPT_FAILED` | 422 | The backup could not be decrypted with the key supplied. |
-| `BACKUP_INCOMPLETE` | 422 | The backup is missing part of what it claims to hold, so it was not applied (R-215). |
+| `BACKUP_INCOMPLETE` | 422 | The backup is missing part of what it claims to hold, so it was not applied. |
 | `BUILD_FAILED` | 422 | The build ran and did not succeed. Its log is the answer. |
 | `BUILD_LISTENS_ON_LOOPBACK` | 422 | The built app listens only on 127.0.0.1 inside its container, where nothing outside it can reach it. |
-| `BUILD_TIMEOUT` | 422 | The build exceeded the time allowed for it (R-119). |
+| `BUILD_TIMEOUT` | 422 | The build exceeded the time allowed for it. |
 | `RATE_LIMITED` | 429 | Too many wrong attempts in a short time, at a passcode or at sign-in. The message and the Retry-After header say how long to wait. |
 | `INTERNAL` | 500 | Pando failed in a way it did not expect. The request ID finds the log line. |
 | `ADAPTER_FAILED` | 502 | The adapter was reached and failed. |
