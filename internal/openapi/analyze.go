@@ -1,14 +1,11 @@
 package openapi
 
 import (
-	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/constant"
-	"go/token"
 	"go/types"
 	"slices"
-	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -22,6 +19,9 @@ const httpapiPath = "github.com/trypando/pando/internal/httpapi"
 const (
 	jsonType = "application/json"
 	scimType = "application/scim+json"
+
+	pkgHTTP = "net/http"
+	pkgURL  = "net/url"
 )
 
 // served is one route the router registers, with the code that answers it.
@@ -60,7 +60,6 @@ type operation struct {
 	responses []response
 	params    map[string]*param // keyed in+name
 
-	errors     bool // answers with the error envelope
 	scimErrors bool // answers with a SCIM error
 
 	problems []string
@@ -71,12 +70,21 @@ func (op *operation) problemf(format string, args ...any) {
 	op.problems = append(op.problems, fmt.Sprintf(format, args...))
 }
 
+func (op *operation) addParam(name, in string, s *Schema) {
+	key := in + " " + name
+	if _, ok := op.params[key]; !ok {
+		op.params[key] = &param{name: name, in: in, schema: s}
+	}
+}
+
 // analysis reads the httpapi package.
 type analysis struct {
 	pkg   *packages.Package
 	info  *types.Info
 	funcs map[*types.Func]*ast.FuncDecl
 	sch   *schemas
+
+	errorName string // the error envelope's component, once names are settled
 }
 
 func load(path string) (*analysis, error) {
@@ -99,14 +107,21 @@ func load(path string) (*analysis, error) {
 	a := &analysis{pkg: pkg, info: pkg.TypesInfo, funcs: map[*types.Func]*ast.FuncDecl{}, sch: newSchemas()}
 	for _, f := range pkg.Syntax {
 		for _, d := range f.Decls {
-			if fd, ok := d.(*ast.FuncDecl); ok && fd.Body != nil {
-				if fn, ok := a.info.Defs[fd.Name].(*types.Func); ok {
-					a.funcs[fn] = fd
-				}
-			}
+			a.index(d)
 		}
 	}
 	return a, nil
+}
+
+// index remembers a function declaration, so a call to it can be followed.
+func (a *analysis) index(d ast.Decl) {
+	fd, ok := d.(*ast.FuncDecl)
+	if !ok || fd.Body == nil {
+		return
+	}
+	if fn, ok := a.info.Defs[fd.Name].(*types.Func); ok {
+		a.funcs[fn] = fd
+	}
 }
 
 // lookupType finds a named type in httpapi or anything it imports.
@@ -119,10 +134,7 @@ func (a *analysis) lookupType(pkgPath, name string) types.Type {
 		}
 		seen[p] = true
 		if p.Path() == pkgPath {
-			if obj := p.Scope().Lookup(name); obj != nil {
-				return obj.Type()
-			}
-			return nil
+			return typeIn(p, name)
 		}
 		for _, imp := range p.Imports() {
 			if t := find(imp); t != nil {
@@ -132,6 +144,23 @@ func (a *analysis) lookupType(pkgPath, name string) types.Type {
 		return nil
 	}
 	return find(a.pkg.Types)
+}
+
+func typeIn(p *types.Package, name string) types.Type {
+	if obj := p.Scope().Lookup(name); obj != nil {
+		return obj.Type()
+	}
+	return nil
+}
+
+// funcOf is the function a call or a function value names, when its body is
+// in the package being read.
+func (a *analysis) funcOf(id *ast.Ident) (*types.Func, *ast.FuncDecl) {
+	fn, ok := a.info.Uses[id].(*types.Func)
+	if !ok {
+		return nil, nil
+	}
+	return fn, a.funcs[fn]
 }
 
 // --- the router ---------------------------------------------------------------
@@ -161,45 +190,50 @@ func isServerMethod(fn *types.Func) bool {
 	return strings.HasSuffix(types.TypeString(sig.Recv().Type(), nil), ".Server")
 }
 
+var routeMethods = map[string]bool{"Get": true, "Post": true, "Put": true, "Patch": true, "Delete": true}
+
 func (a *analysis) walkRouter(body ast.Node, prefix string, out *[]served) {
 	ast.Inspect(body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
+		call, sel := a.routerCall(n)
+		if call == nil {
 			return true
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || !strings.Contains(types.TypeString(a.info.TypeOf(sel.X), nil), "github.com/go-chi/chi") {
+		p, ok := a.constString(call.Args[0])
+		switch {
+		case !ok:
+		case sel == "Route":
+			a.walkSubrouter(call.Args[1], prefix+p, out)
+		case routeMethods[sel]:
+			*out = append(*out, served{method: strings.ToUpper(sel), path: normalize(prefix + p), handler: call.Args[1]})
+		default:
 			return true
 		}
-		switch sel.Sel.Name {
-		case "Route":
-			p, ok := a.constString(call.Args[0])
-			if !ok {
-				return false
-			}
-			switch next := call.Args[1].(type) {
-			case *ast.FuncLit:
-				a.walkRouter(next.Body, prefix+p, out)
-			case *ast.SelectorExpr:
-				if fn, ok := a.info.Uses[next.Sel].(*types.Func); ok && a.funcs[fn] != nil {
-					a.walkRouter(a.funcs[fn].Body, prefix+p, out)
-				}
-			}
-			return false
-		case "Get", "Post", "Put", "Patch", "Delete":
-			p, ok := a.constString(call.Args[0])
-			if !ok {
-				return false
-			}
-			*out = append(*out, served{
-				method:  strings.ToUpper(sel.Sel.Name),
-				path:    normalize(prefix + p),
-				handler: call.Args[1],
-			})
-			return false
-		}
-		return true
+		return false
 	})
+}
+
+// routerCall is a call of a chi router's method, and the method's name.
+func (a *analysis) routerCall(n ast.Node) (*ast.CallExpr, string) {
+	call, ok := n.(*ast.CallExpr)
+	if !ok || len(call.Args) < 2 {
+		return nil, ""
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || !strings.Contains(types.TypeString(a.info.TypeOf(sel.X), nil), "github.com/go-chi/chi") {
+		return nil, ""
+	}
+	return call, sel.Sel.Name
+}
+
+func (a *analysis) walkSubrouter(next ast.Expr, prefix string, out *[]served) {
+	switch next := next.(type) {
+	case *ast.FuncLit:
+		a.walkRouter(next.Body, prefix, out)
+	case *ast.SelectorExpr:
+		if _, decl := a.funcOf(next.Sel); decl != nil {
+			a.walkRouter(decl.Body, prefix, out)
+		}
+	}
 }
 
 func normalize(path string) string {
@@ -229,31 +263,31 @@ type bound struct {
 
 // handlerFrames are the bodies that answer a route, and the name to call it by.
 func (a *analysis) handlerFrames(h ast.Expr) ([]*frame, string) {
+	var id *ast.Ident
 	switch h := h.(type) {
 	case *ast.SelectorExpr:
-		if fn, ok := a.info.Uses[h.Sel].(*types.Func); ok && a.funcs[fn] != nil {
-			return []*frame{a.newFrame(a.funcs[fn], a.funcs[fn].Body, nil)}, fn.Name()
-		}
+		id = h.Sel
 	case *ast.Ident:
-		if fn, ok := a.info.Uses[h].(*types.Func); ok && a.funcs[fn] != nil {
-			return []*frame{a.newFrame(a.funcs[fn], a.funcs[fn].Body, nil)}, fn.Name()
-		}
+		id = h
 	case *ast.FuncLit:
-		return []*frame{a.newFrame(h, h.Body, nil)}, ""
+		return []*frame{newFrame(h, h.Body, nil)}, ""
 	case *ast.CallExpr:
 		// A wrapper given the handler, as s.scim(func ...) is.
 		var out []*frame
 		for _, arg := range h.Args {
 			if lit, ok := arg.(*ast.FuncLit); ok {
-				out = append(out, a.newFrame(lit, lit.Body, nil))
+				out = append(out, newFrame(lit, lit.Body, nil))
 			}
 		}
 		return out, ""
 	}
+	if fn, decl := a.funcOf(id); decl != nil {
+		return []*frame{newFrame(decl, decl.Body, nil)}, fn.Name()
+	}
 	return nil, ""
 }
 
-func (a *analysis) newFrame(node ast.Node, body *ast.BlockStmt, parent *frame) *frame {
+func newFrame(node ast.Node, body *ast.BlockStmt, parent *frame) *frame {
 	f := &frame{node: node, body: body, bind: map[types.Object]bound{}, stack: map[ast.Node]bool{node: true}}
 	if parent != nil {
 		for n := range parent.stack {
@@ -261,18 +295,6 @@ func (a *analysis) newFrame(node ast.Node, body *ast.BlockStmt, parent *frame) *
 		}
 	}
 	return f
-}
-
-// helpers the reading does not follow: the error envelope is described once,
-// and a replayed idempotent response is the response the handler wrote the
-// first time.
-var notFollowed = map[string]bool{
-	"httpapi.Error":              true,
-	"httpapi.scimFail":           true,
-	"httpapi.JSON":               true,
-	"httpapi.scimJSON":           true,
-	"(*httpapi.Server).replayed": true,
-	"(*httpapi.Server).remember": true,
 }
 
 func (a *analysis) analyze(h ast.Expr) *operation {
@@ -289,6 +311,7 @@ func (a *analysis) analyze(h ast.Expr) *operation {
 	return op
 }
 
+// visit reads one function body.
 func (a *analysis) visit(f *frame, op *operation) {
 	consumed := map[ast.Node]bool{} // r.Body read as JSON
 
@@ -296,31 +319,12 @@ func (a *analysis) visit(f *frame, op *operation) {
 		switch n := n.(type) {
 		case *ast.CallExpr:
 			return a.call(n, f, op, consumed)
-
 		case *ast.IndexExpr:
-			// q["id"], where q is the request's query.
-			if isNamed(a.info.TypeOf(n.X), "net/url", "Values") && a.fromQuery(n.X, f) {
-				if k, ok := a.constString(n.Index); ok {
-					op.addParam(k, "query", a.queryParamSchema(n, f, true))
-				}
-			}
-
+			a.queryIndex(n, f, op)
 		case *ast.AssignStmt:
-			// r.Body = ...: a body the handler made itself, for a handler
-			// it calls (rollback is a deploy), unless it wraps the one sent.
-			for i, l := range n.Lhs {
-				sel, ok := l.(*ast.SelectorExpr)
-				if !ok || sel.Sel.Name != "Body" || !isRequest(a.info.TypeOf(sel.X)) {
-					continue
-				}
-				consumed[sel] = true
-				if i < len(n.Rhs) && !a.readsBody(n.Rhs[i]) {
-					op.bodyReplaced = true
-				}
-			}
-
+			a.bodyAssignment(n, op, consumed)
 		case *ast.SelectorExpr:
-			if n.Sel.Name == "Body" && isRequest(a.info.TypeOf(n.X)) && !consumed[n] && !op.bodyReplaced {
+			if a.isBody(n) && !consumed[n] && !op.bodyReplaced {
 				op.rawBody = true
 			}
 		}
@@ -328,11 +332,86 @@ func (a *analysis) visit(f *frame, op *operation) {
 	})
 }
 
-func (op *operation) addParam(name, in string, s *Schema) {
-	key := in + " " + name
-	if _, ok := op.params[key]; !ok {
-		op.params[key] = &param{name: name, in: in, schema: s}
+// queryIndex reads q["id"], where q is the request's query.
+func (a *analysis) queryIndex(n *ast.IndexExpr, f *frame, op *operation) {
+	if !isNamed(a.info.TypeOf(n.X), pkgURL, "Values") || !a.fromQuery(n.X, f) {
+		return
 	}
+	if k, ok := a.constString(n.Index); ok {
+		op.addParam(k, "query", a.queryParamSchema(n, f, true))
+	}
+}
+
+// bodyAssignment reads r.Body = ...: a body the handler made itself, for a
+// handler it calls (rollback is a deploy), unless it wraps the one sent.
+func (a *analysis) bodyAssignment(n *ast.AssignStmt, op *operation, consumed map[ast.Node]bool) {
+	for i, l := range n.Lhs {
+		sel, ok := l.(*ast.SelectorExpr)
+		if !ok || !a.isBody(sel) {
+			continue
+		}
+		consumed[sel] = true
+		if i < len(n.Rhs) && !a.readsBody(n.Rhs[i]) {
+			op.bodyReplaced = true
+		}
+	}
+}
+
+// isBody reports whether a selector is a request's Body.
+func (a *analysis) isBody(sel *ast.SelectorExpr) bool {
+	return sel.Sel.Name == "Body" && isRequest(a.info.TypeOf(sel.X))
+}
+
+// readsBody reports whether an expression mentions the request's body.
+func (a *analysis) readsBody(e ast.Expr) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && a.isBody(sel) {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// callSite is one call being read.
+type callSite struct {
+	call     *ast.CallExpr
+	fn       *types.Func
+	f        *frame
+	op       *operation
+	consumed map[ast.Node]bool
+}
+
+// A reader handles a call to one function, and says whether to read the
+// call's arguments too.
+type reader func(a *analysis, c callSite) bool
+
+// readers are the calls that say something about a request or a response,
+// by the function called. The API package's own functions are named as
+// "httpapi.<name>" whatever package is being read.
+var readers = map[string]reader{
+	"httpapi.JSON":     func(a *analysis, c callSite) bool { return a.respondCall(c, jsonType) },
+	"httpapi.scimJSON": func(a *analysis, c callSite) bool { return a.respondCall(c, scimType) },
+	// The error envelope is described once, for every operation.
+	"httpapi.Error":    func(*analysis, callSite) bool { return false },
+	"httpapi.scimFail": func(_ *analysis, c callSite) bool { c.op.scimErrors = true; return false },
+	// A replayed idempotent response is the response the handler wrote the
+	// first time.
+	"(*httpapi.Server).replayed": func(*analysis, callSite) bool { return false },
+	"(*httpapi.Server).remember": func(*analysis, callSite) bool { return false },
+
+	"httpapi.decodeWithKey":                 (*analysis).decodeWithKey,
+	"(*encoding/json.Decoder).Decode":       (*analysis).decode,
+	"net/http.Redirect":                     (*analysis).redirect,
+	"github.com/coder/websocket.Accept":     (*analysis).websocket,
+	"(net/url.Values).Get":                  (*analysis).queryGet,
+	"(net/url.Values).Has":                  (*analysis).queryGet,
+	"(*net/http.Request).FormValue":         (*analysis).formValue,
+	"(net/http.Header).Get":                 (*analysis).headerGet,
+	"(net/http.Header).Values":              (*analysis).headerGet,
+	"(net/http.Header).Set":                 (*analysis).headerSet,
+	"(net/http.ResponseWriter).WriteHeader": (*analysis).writeHeader,
 }
 
 func (a *analysis) call(call *ast.CallExpr, f *frame, op *operation, consumed map[ast.Node]bool) bool {
@@ -342,153 +421,166 @@ func (a *analysis) call(call *ast.CallExpr, f *frame, op *operation, consumed ma
 	}
 	full := fn.FullName()
 	if fn.Pkg() != nil && fn.Pkg().Path() == a.pkg.PkgPath {
-		// The API package's own functions, by the names its source gives them.
 		full = strings.Replace(full, a.pkg.PkgPath, "httpapi", 1)
 	}
-
-	switch full {
-	case "httpapi.JSON":
-		a.respond(call.Args[1], call.Args[2], jsonType, f, op)
-		return true // the body may read the query too
-	case "httpapi.scimJSON":
-		a.respond(call.Args[1], call.Args[2], scimType, f, op)
-		return true
-	case "httpapi.Error":
-		op.errors = true
-		return false
-	case "httpapi.scimFail":
-		op.scimErrors = true
-		return false
-	case "httpapi.decodeWithKey":
-		// Reads the body as JSON into its second argument, and takes an
-		// idempotency key from the header or the body.
-		a.requestBody(call.Args[1], f, op)
-		op.addParam("Idempotency-Key", "header", &Schema{
-			Type: "string",
-			Description: "Makes a retry of this request return the first response rather than act twice. " +
-				"Also accepted as `idempotency_key` in the body.",
-		})
-		return false
-
-	case "(*encoding/json.Decoder).Decode":
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if dec, ok := unparen(sel.X).(*ast.CallExpr); ok && len(dec.Args) == 1 {
-			if body := a.requestBodyExpr(dec.Args[0], f); body != nil {
-				consumed[body] = true
-				a.requestBody(call.Args[0], f, op)
-			}
-		}
-		return true
-
-	case "net/http.Redirect":
-		for _, st := range a.constInts(call.Args[3], f, op) {
-			op.responses = append(op.responses, response{status: st, redirect: true})
-		}
-		return true
-
-	case "github.com/coder/websocket.Accept":
-		op.responses = append(op.responses, response{status: 101})
-		return true
-
-	case "(net/url.Values).Get", "(net/url.Values).Has":
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && a.fromQuery(sel.X, f) {
-			if k, ok := a.constString(call.Args[0]); ok {
-				op.addParam(k, "query", a.queryParamSchema(call, f, fn.Name() == "Has"))
-			}
-		}
-		return true
-
-	case "(*net/http.Request).FormValue":
-		if k, ok := a.constString(call.Args[0]); ok {
-			op.addParam(k, "query", a.queryParamSchema(call, f, false))
-		}
-		return true
-
-	case "(net/http.Header).Get", "(net/http.Header).Values":
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if hs, ok := unparen(sel.X).(*ast.SelectorExpr); ok && hs.Sel.Name == "Header" && isRequest(a.info.TypeOf(hs.X)) {
-			if k, ok := a.constString(call.Args[0]); ok && !ignoredHeaders[strings.ToLower(k)] {
-				op.addParam(k, "header", &Schema{Type: "string"})
-			}
-		}
-		return true
-
-	case "(net/http.Header).Set":
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || !a.responseHeader(sel.X, f) {
-			return true
-		}
-		if k, ok := a.constString(call.Args[0]); ok && strings.EqualFold(k, "Content-Type") {
-			if v, ok := a.constString(call.Args[1]); ok {
-				f.contentType = v
-			} else {
-				f.contentType = "?"
-			}
-		}
-		return true
-
-	case "(net/http.ResponseWriter).WriteHeader":
-		ct := f.contentType
-		for _, st := range a.constInts(call.Args[0], f, op) {
-			switch {
-			case ct == "":
-				op.responses = append(op.responses, response{status: st})
-			case ct == "?" || strings.HasPrefix(ct, jsonType):
-				op.responses = append(op.responses, response{status: st, unread: fmt.Sprintf("writes a %d response whose body this generator cannot read (Content-Type %s)", st, ct)})
-			default:
-				op.responses = append(op.responses, response{status: st, contentType: ct, schema: rawSchema(ct)})
-			}
-		}
-		return true
+	c := callSite{call: call, fn: fn, f: f, op: op, consumed: consumed}
+	if read, ok := readers[full]; ok {
+		return read(a, c)
 	}
-
-	if notFollowed[full] {
-		return false
-	}
-
-	// A helper in this package given the request or the response writer is
-	// part of the handler: follow it, with its parameters bound to what the
-	// handler passed.
-	decl := a.funcs[fn]
-	if decl == nil || f.stack[decl] || len(f.stack) > 8 {
-		return true
-	}
-	passes := false
-	for _, arg := range call.Args {
-		if t := a.info.TypeOf(arg); isRequest(t) || isWriter(t) {
-			passes = true
-		}
-	}
-	if !passes {
-		return true
-	}
-	callee := a.newFrame(decl, decl.Body, f)
-	a.bindParams(decl, call, f, callee)
-	a.visit(callee, op)
+	a.follow(c)
 	return true
 }
 
+// follow reads a helper in this package that is given the request or the
+// response writer, as part of the handler, with its parameters bound to what
+// the handler passed.
+func (a *analysis) follow(c callSite) {
+	decl := a.funcs[c.fn]
+	if decl == nil || c.f.stack[decl] || len(c.f.stack) > 8 || !a.passesRequest(c.call) {
+		return
+	}
+	callee := newFrame(decl, decl.Body, c.f)
+	a.bindParams(decl, c.call, c.f, callee)
+	a.visit(callee, c.op)
+}
+
+func (a *analysis) passesRequest(call *ast.CallExpr) bool {
+	return slices.ContainsFunc(call.Args, func(arg ast.Expr) bool {
+		t := a.info.TypeOf(arg)
+		return isRequest(t) || isWriter(t)
+	})
+}
+
 func (a *analysis) bindParams(decl *ast.FuncDecl, call *ast.CallExpr, caller, callee *frame) {
-	i := 0
+	var names []*ast.Ident
 	for _, field := range decl.Type.Params.List {
-		for _, name := range field.Names {
-			if i < len(call.Args) {
-				if obj := a.info.Defs[name]; obj != nil {
-					callee.bind[obj] = bound{e: call.Args[i], f: caller}
-				}
-			}
-			i++
-		}
 		if len(field.Names) == 0 {
-			i++
+			names = append(names, nil)
+		}
+		names = append(names, field.Names...)
+	}
+	for i, name := range names {
+		if i >= len(call.Args) || name == nil {
+			continue
+		}
+		if obj := a.info.Defs[name]; obj != nil {
+			callee.bind[obj] = bound{e: call.Args[i], f: caller}
 		}
 	}
+}
+
+func (a *analysis) respondCall(c callSite, contentType string) bool {
+	a.respond(c.call.Args[1], c.call.Args[2], contentType, c.f, c.op)
+	return true // the body may read the query too
+}
+
+// decodeWithKey reads the body as JSON into its second argument, and takes
+// an idempotency key from the header or the body.
+func (a *analysis) decodeWithKey(c callSite) bool {
+	a.requestBody(c.call.Args[1], c.f, c.op)
+	c.op.addParam("Idempotency-Key", "header", &Schema{
+		Type: "string",
+		Description: "Makes a retry of this request return the first response rather than act twice. " +
+			"Also accepted as `idempotency_key` in the body.",
+	})
+	return false
+}
+
+// decode reads json.NewDecoder(r.Body).Decode(&v).
+func (a *analysis) decode(c callSite) bool {
+	sel, ok := c.call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return true
+	}
+	dec, ok := unparen(sel.X).(*ast.CallExpr)
+	if !ok || len(dec.Args) != 1 {
+		return true
+	}
+	if body := a.requestBodyExpr(dec.Args[0], c.f); body != nil {
+		c.consumed[body] = true
+		a.requestBody(c.call.Args[0], c.f, c.op)
+	}
+	return true
+}
+
+func (a *analysis) redirect(c callSite) bool {
+	for _, st := range a.constInts(c.call.Args[3], c.f, c.op) {
+		c.op.responses = append(c.op.responses, response{status: st, redirect: true})
+	}
+	return true
+}
+
+func (a *analysis) websocket(c callSite) bool {
+	c.op.responses = append(c.op.responses, response{status: 101})
+	return true
+}
+
+func (a *analysis) queryGet(c callSite) bool {
+	sel, ok := c.call.Fun.(*ast.SelectorExpr)
+	if !ok || !a.fromQuery(sel.X, c.f) {
+		return true
+	}
+	if k, ok := a.constString(c.call.Args[0]); ok {
+		c.op.addParam(k, "query", a.queryParamSchema(c.call, c.f, c.fn.Name() == "Has"))
+	}
+	return true
+}
+
+func (a *analysis) formValue(c callSite) bool {
+	if k, ok := a.constString(c.call.Args[0]); ok {
+		c.op.addParam(k, "query", a.queryParamSchema(c.call, c.f, false))
+	}
+	return true
+}
+
+// headerGet reads r.Header.Get("X-Name").
+func (a *analysis) headerGet(c callSite) bool {
+	sel, ok := c.call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return true
+	}
+	hs, ok := unparen(sel.X).(*ast.SelectorExpr)
+	if !ok || hs.Sel.Name != "Header" || !isRequest(a.info.TypeOf(hs.X)) {
+		return true
+	}
+	if k, ok := a.constString(c.call.Args[0]); ok && !ignoredHeaders[strings.ToLower(k)] {
+		c.op.addParam(k, "header", &Schema{Type: "string"})
+	}
+	return true
+}
+
+// headerSet reads w.Header().Set("Content-Type", ...).
+func (a *analysis) headerSet(c callSite) bool {
+	sel, ok := c.call.Fun.(*ast.SelectorExpr)
+	if !ok || !a.responseHeader(sel.X, c.f) {
+		return true
+	}
+	if k, ok := a.constString(c.call.Args[0]); !ok || !strings.EqualFold(k, "Content-Type") {
+		return true
+	}
+	c.f.contentType = "?"
+	if v, ok := a.constString(c.call.Args[1]); ok {
+		c.f.contentType = v
+	}
+	return true
+}
+
+// writeHeader reads w.WriteHeader(status): no body, or the bytes of the
+// Content-Type set before it.
+func (a *analysis) writeHeader(c callSite) bool {
+	ct := c.f.contentType
+	for _, st := range a.constInts(c.call.Args[0], c.f, c.op) {
+		r := response{status: st}
+		switch {
+		case ct == "":
+		case ct == "?" || strings.HasPrefix(ct, jsonType):
+			r.unread = fmt.Sprintf("writes a %d response whose body this generator cannot read (Content-Type %s)", st, ct)
+		default:
+			r.contentType, r.schema = ct, rawSchema(ct)
+		}
+		c.op.responses = append(c.op.responses, r)
+	}
+	return true
 }
 
 // Headers that are not the API's own parameters: credentials, which the
@@ -513,16 +605,13 @@ func rawSchema(contentType string) *Schema {
 // limit, or nil when it reads something else.
 func (a *analysis) requestBodyExpr(e ast.Expr, f *frame) ast.Node {
 	e, _ = a.resolve(e, f)
-	switch e := unparen(e).(type) {
-	case *ast.SelectorExpr:
-		if e.Sel.Name == "Body" && isRequest(a.info.TypeOf(e.X)) {
-			return e
-		}
-	case *ast.CallExpr:
-		for _, arg := range e.Args {
-			if s, ok := unparen(arg).(*ast.SelectorExpr); ok && s.Sel.Name == "Body" && isRequest(a.info.TypeOf(s.X)) {
-				return s
-			}
+	args := []ast.Expr{e}
+	if call, ok := unparen(e).(*ast.CallExpr); ok {
+		args = call.Args
+	}
+	for _, arg := range args {
+		if s, ok := unparen(arg).(*ast.SelectorExpr); ok && a.isBody(s) {
+			return s
 		}
 	}
 	return nil
@@ -535,36 +624,36 @@ func (a *analysis) requestBody(target ast.Expr, f *frame, op *operation) {
 	}
 	target, _ = a.resolve(target, f)
 	t := a.info.TypeOf(target)
-	if t == nil {
+	switch {
+	case t == nil:
 		op.problemf("decodes the body into something whose type is unknown")
 		return
-	}
-	if b, ok := t.(*types.Basic); ok && b.Kind() == types.UntypedNil {
+	case isUntypedNil(t):
 		return
 	}
-	if p, ok := types.Unalias(t).(*types.Pointer); ok {
-		t = p.Elem()
-	}
+	t = deref(t)
 	if _, ok := t.Underlying().(*types.Interface); ok {
 		op.problemf("decodes the body into an interface, which says nothing about its shape")
 		return
 	}
 	s := a.sch.forType(t)
 	if op.request != nil {
-		if mustJSON(op.request) == mustJSON(s) {
-			return
-		}
 		s = union([]*Schema{op.request, s})
 	}
 	op.request = s
 	op.requestContentType = jsonType
 }
 
+func isUntypedNil(t types.Type) bool {
+	b, ok := t.(*types.Basic)
+	return ok && b.Kind() == types.UntypedNil
+}
+
 // respond records one JSON response.
 func (a *analysis) respond(statusExpr, bodyExpr ast.Expr, contentType string, f *frame, op *operation) {
 	statuses := a.constInts(statusExpr, f, op)
 	body, bf := a.resolve(bodyExpr, f)
-	if id, ok := unparen(body).(*ast.Ident); ok && id.Name == "nil" && a.info.Uses[id] == types.Universe.Lookup("nil") {
+	if id, ok := unparen(body).(*ast.Ident); ok && a.info.Uses[id] == types.Universe.Lookup("nil") {
 		for _, st := range statuses {
 			op.responses = append(op.responses, response{status: st})
 		}
@@ -585,8 +674,7 @@ func (a *analysis) resolve(e ast.Expr, f *frame) (ast.Expr, *frame) {
 		if !ok {
 			return e, f
 		}
-		obj := a.info.Uses[id]
-		b, ok := f.bind[obj]
+		b, ok := f.bind[a.info.Uses[id]]
 		if !ok {
 			return e, f
 		}
@@ -613,334 +701,71 @@ func (a *analysis) constInts(e ast.Expr, f *frame, op *operation) []int {
 			return []int{int(v)}
 		}
 	}
+	var out []int
 	if id, ok := unparen(e).(*ast.Ident); ok {
-		var out []int
 		for _, def := range a.assignments(id, f) {
 			out = append(out, a.constInts(def, f, op)...)
 		}
-		if len(out) > 0 {
-			sort.Ints(out)
-			return dedupeInts(out)
-		}
 	}
-	op.problemf("answers with a status code that is not a constant: %s", exprString(e))
-	return nil
+	if len(out) == 0 {
+		op.problemf("answers with a status code that is not a constant: %s", exprString(e))
+		return nil
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
-func dedupeInts(in []int) []int {
-	out := in[:0]
-	for i, v := range in {
-		if i == 0 || v != in[i-1] {
-			out = append(out, v)
-		}
+func (a *analysis) objectOf(id *ast.Ident) types.Object {
+	if obj := a.info.Uses[id]; obj != nil {
+		return obj
 	}
-	return out
+	return a.info.Defs[id]
 }
 
 // assignments are the expressions a local variable is given in its function.
 func (a *analysis) assignments(id *ast.Ident, f *frame) []ast.Expr {
-	obj := a.info.Uses[id]
-	if obj == nil {
-		obj = a.info.Defs[id]
-	}
+	obj := a.objectOf(id)
 	if obj == nil {
 		return nil
+	}
+	is := func(e ast.Expr) bool {
+		lid, ok := e.(*ast.Ident)
+		return ok && a.objectOf(lid) == obj
 	}
 	var out []ast.Expr
 	ast.Inspect(f.node, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.AssignStmt:
-			if len(n.Lhs) != len(n.Rhs) {
-				return true
-			}
-			for i, l := range n.Lhs {
-				if lid, ok := l.(*ast.Ident); ok && (a.info.Defs[lid] == obj || a.info.Uses[lid] == obj) {
-					out = append(out, n.Rhs[i])
-				}
-			}
+			out = append(out, pairsWhere(n.Lhs, n.Rhs, is)...)
 		case *ast.ValueSpec:
-			for i, name := range n.Names {
-				if a.info.Defs[name] == obj && i < len(n.Values) && len(n.Names) == len(n.Values) {
-					out = append(out, n.Values[i])
-				}
-			}
+			out = append(out, pairsWhere(identExprs(n.Names), n.Values, is)...)
 		}
 		return true
 	})
 	return out
 }
 
-// indexAssignments are the keys set on a map variable after it is made:
-// body["x"] = v.
-func (a *analysis) indexAssignments(obj types.Object, f *frame) []keyAssign {
-	var out []keyAssign
-	// An assignment in the body itself always happens; one inside an if or
-	// a loop may not, and its key is optional.
-	always := map[ast.Stmt]bool{}
-	for _, st := range f.body.List {
-		always[st] = true
-	}
-	ast.Inspect(f.node, func(n ast.Node) bool {
-		as, ok := n.(*ast.AssignStmt)
-		if !ok || len(as.Lhs) != len(as.Rhs) {
-			return true
-		}
-		for i, l := range as.Lhs {
-			ix, ok := l.(*ast.IndexExpr)
-			if !ok {
-				continue
-			}
-			if id, ok := unparen(ix.X).(*ast.Ident); ok && a.info.Uses[id] == obj {
-				if k, ok := a.constString(ix.Index); ok {
-					out = append(out, keyAssign{name: k, value: as.Rhs[i], always: always[as]})
-				}
-			}
-		}
-		return true
-	})
-	return out
-}
-
-type keyAssign struct {
-	name   string
-	value  ast.Expr
-	always bool
-}
-
-// shape is the schema of a value about to be serialized. Where the value is a
-// map literal, its keys are the object's properties, read from the literal;
-// otherwise its type says.
-func (a *analysis) shape(e ast.Expr, f *frame, op *operation, top bool) *Schema {
-	e, f = a.resolve(e, f)
-	e = unparen(e)
-	t := a.info.TypeOf(e)
-
-	switch x := e.(type) {
-	case *ast.UnaryExpr:
-		if x.Op == token.AND {
-			return a.shape(x.X, f, op, top)
-		}
-
-	case *ast.CompositeLit:
-		if m, ok := t.Underlying().(*types.Map); ok && isString(m.Key()) {
-			obj := &Schema{Type: "object", Properties: Props{}}
-			for _, el := range x.Elts {
-				kv, ok := el.(*ast.KeyValueExpr)
-				if !ok {
-					continue
-				}
-				k, ok := a.constString(kv.Key)
-				if !ok {
-					op.problemf("answers with a map whose key %s is not a constant", exprString(kv.Key))
-					continue
-				}
-				obj.Properties = append(obj.Properties, Prop{Name: k, Schema: a.shape(kv.Value, f, op, false)})
-				obj.Required = append(obj.Required, k)
-			}
-			return obj
-		}
-
-	case *ast.Ident:
-		if items := a.appended(x, t, f, op); items != nil {
-			return items
-		}
-		if !loose(t) {
-			break
-		}
-		obj := a.info.Uses[x]
-		if obj == nil || obj.Parent() == a.pkg.Types.Scope() {
-			break
-		}
-		defs := a.assignments(x, f)
-		var shapes []*Schema
-		for _, d := range defs {
-			shapes = append(shapes, a.shape(d, f, op, top))
-		}
-		s := union(shapes)
-		if s == nil {
-			break
-		}
-		// Keys set afterwards, which may or may not be: optional.
-		if extra := a.indexAssignments(obj, f); len(extra) > 0 && s.Type == "object" {
-			c := *s
-			c.Properties = append(Props{}, s.Properties...)
-			for _, p := range extra {
-				c.Properties = setProp(c.Properties, p.name, a.shape(p.value, f, op, false))
-				if p.always {
-					c.Required = appendOnce(append([]string{}, c.Required...), p.name)
-				}
-			}
-			s = &c
-		}
-		return s
-
-	case *ast.CallExpr:
-		if !loose(t) {
-			break
-		}
-		fn, _ := typeutil.Callee(a.info, x).(*types.Func)
-		if fn == nil || a.funcs[fn] == nil {
-			break
-		}
-		decl := a.funcs[fn]
-		callee := a.newFrame(decl, decl.Body, f)
-		a.bindParams(decl, x, f, callee)
-		var shapes []*Schema
-		ast.Inspect(decl.Body, func(n ast.Node) bool {
-			if _, ok := n.(*ast.FuncLit); ok {
-				return false
-			}
-			if ret, ok := n.(*ast.ReturnStmt); ok && len(ret.Results) > 0 {
-				shapes = append(shapes, a.shape(ret.Results[0], callee, op, top))
-			}
-			return true
-		})
-		if s := union(shapes); s != nil {
-			// Keys a helper sets on its parameter before returning it, as
-			// withTotal does.
-			if s.Type == "object" {
-				for obj := range callee.bind {
-					for _, p := range a.indexAssignments(obj, callee) {
-						s.Properties = setProp(s.Properties, p.name, a.shape(p.value, callee, op, false))
-						if p.always {
-							s.Required = appendOnce(s.Required, p.name)
-						}
-					}
-				}
-			}
-			return s
-		}
-	}
-
-	if t == nil {
-		op.problemf("answers with %s, whose type is unknown", exprString(e))
-		return anySchema()
-	}
-	// A struct field declared as free-form — an adapter's own details, say —
-	// is described as its declaration says, as it would be inside the struct.
-	if sel, ok := e.(*ast.SelectorExpr); ok && !top {
-		if s := a.info.Selections[sel]; s != nil && s.Kind() == types.FieldVal {
-			return a.sch.forType(t)
-		}
-	}
-	if loose(t) || looseList(t) {
-		msg := fmt.Sprintf("answers with %s, a %s whose shape is not in the code this generator reads", exprString(e), t)
-		if top {
-			op.unread = msg
-		} else {
-			op.problemf("%s", msg)
-		}
-		return a.sch.forType(t)
-	}
-	return a.sch.forType(t)
-}
-
-// loose is a type that says nothing about its JSON: an interface, or a map of
-// interfaces.
-func loose(t types.Type) bool {
-	if t == nil {
-		return false
-	}
-	switch u := t.Underlying().(type) {
-	case *types.Interface:
-		return true
-	case *types.Map:
-		_, ok := u.Elem().Underlying().(*types.Interface)
-		return ok
-	}
-	return false
-}
-
-func setProp(props Props, name string, s *Schema) Props {
-	for i, p := range props {
-		if p.Name == name {
-			props[i].Schema = s
-			return props
-		}
-	}
-	return append(props, Prop{Name: name, Schema: s})
-}
-
-func appendOnce(list []string, s string) []string {
-	for _, v := range list {
-		if v == s {
-			return list
-		}
-	}
-	return append(list, s)
-}
-
-// union is one schema for several: the one when they agree, oneOf when not.
-func union(shapes []*Schema) *Schema {
-	var out []*Schema
-	seen := map[string]bool{}
-	for _, s := range shapes {
-		if s == nil {
-			continue
-		}
-		k := mustJSON(s)
-		if seen[k] {
-			continue
-		}
-		seen[k] = true
-		out = append(out, s)
-	}
-	switch len(out) {
-	case 0:
+// pairsWhere is the right-hand sides whose left-hand side matches, in an
+// assignment of as many values as names.
+func pairsWhere(lhs, rhs []ast.Expr, match func(ast.Expr) bool) []ast.Expr {
+	if len(lhs) != len(rhs) {
 		return nil
-	case 1:
-		return out[0]
 	}
-	if merged := mergeObjects(out); merged != nil {
-		return merged
-	}
-	// anyOf rather than oneOf: the shapes can overlap, and a value matching
-	// two of them is still a value the handler sends.
-	return &Schema{AnyOf: out}
-}
-
-// mergeObjects is one object for several map literals a handler answers with
-// on different branches: every key any of them has, required where all of
-// them have it.
-func mergeObjects(shapes []*Schema) *Schema {
-	for _, s := range shapes {
-		if s.Ref != "" || s.Type != "object" || s.AdditionalProperties != nil || len(s.AnyOf) > 0 || len(s.OneOf) > 0 {
-			return nil
-		}
-	}
-	out := &Schema{Type: "object", Properties: Props{}}
-	byName := map[string][]*Schema{}
-	for _, s := range shapes {
-		for _, p := range s.Properties {
-			if _, ok := byName[p.Name]; !ok {
-				out.Properties = append(out.Properties, Prop{Name: p.Name})
-			}
-			byName[p.Name] = append(byName[p.Name], p.Schema)
-		}
-	}
-	for i, p := range out.Properties {
-		out.Properties[i].Schema = union(byName[p.Name])
-	}
-	for _, name := range shapes[0].Required {
-		all := true
-		for _, s := range shapes[1:] {
-			if !slices.Contains(s.Required, name) {
-				all = false
-			}
-		}
-		if all {
-			out.Required = append(out.Required, name)
+	var out []ast.Expr
+	for i, l := range lhs {
+		if match(l) {
+			out = append(out, rhs[i])
 		}
 	}
 	return out
 }
 
-func mustJSON(s *Schema) string {
-	b, err := json.Marshal(s)
-	if err != nil {
-		panic(err)
+func identExprs(ids []*ast.Ident) []ast.Expr {
+	out := make([]ast.Expr, len(ids))
+	for i, id := range ids {
+		out[i] = id
 	}
-	return string(b)
+	return out
 }
 
 func (a *analysis) constString(e ast.Expr) (string, bool) {
@@ -951,135 +776,43 @@ func (a *analysis) constString(e ast.Expr) (string, bool) {
 	return constant.StringVal(tv.Value), true
 }
 
-// fromQuery reports whether a url.Values is the request's query string.
-func (a *analysis) fromQuery(e ast.Expr, f *frame) bool {
+// derivesFrom reports whether an expression is, or is a variable given, a
+// call that match accepts.
+func (a *analysis) derivesFrom(e ast.Expr, f *frame, match func(*ast.CallExpr) bool) bool {
 	e, f = a.resolve(e, f)
 	switch x := unparen(e).(type) {
 	case *ast.CallExpr:
-		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Query" && isNamed(deref(a.info.TypeOf(sel.X)), "net/url", "URL") {
-			return true
-		}
+		return match(x)
 	case *ast.Ident:
-		for _, d := range a.assignments(x, f) {
-			if a.fromQuery(d, f) {
-				return true
-			}
-		}
+		return slices.ContainsFunc(a.assignments(x, f), func(d ast.Expr) bool { return a.derivesFrom(d, f, match) })
 	}
 	return false
+}
+
+// fromQuery reports whether a url.Values is the request's query string.
+func (a *analysis) fromQuery(e ast.Expr, f *frame) bool {
+	return a.derivesFrom(e, f, func(x *ast.CallExpr) bool {
+		sel, ok := x.Fun.(*ast.SelectorExpr)
+		return ok && sel.Sel.Name == "Query" && isNamed(deref(a.info.TypeOf(sel.X)), pkgURL, "URL")
+	})
 }
 
 // responseHeader reports whether an http.Header is the response's.
 func (a *analysis) responseHeader(e ast.Expr, f *frame) bool {
-	e, f = a.resolve(e, f)
-	switch x := unparen(e).(type) {
-	case *ast.CallExpr:
-		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Header" && isWriter(a.info.TypeOf(sel.X)) {
-			return true
-		}
-	case *ast.Ident:
-		for _, d := range a.assignments(x, f) {
-			if a.responseHeader(d, f) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// queryParamSchema is a query parameter's type, from what the handler does
-// with the value: a whole number when it is parsed as one, a boolean when it
-// is compared with "true" or parsed as one, and a string otherwise.
-func (a *analysis) queryParamSchema(read ast.Expr, f *frame, multi bool) *Schema {
-	// The value read, or the variable it is put in.
-	var uses []ast.Node
-	ast.Inspect(f.node, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.AssignStmt:
-			for i, r := range n.Rhs {
-				if r == read && i < len(n.Lhs) && len(n.Lhs) == len(n.Rhs) {
-					if id, ok := n.Lhs[i].(*ast.Ident); ok {
-						obj := a.info.Defs[id]
-						if obj == nil {
-							obj = a.info.Uses[id]
-						}
-						uses = append(uses, a.usesOf(obj, f)...)
-					}
-				}
-			}
-		}
-		return true
+	return a.derivesFrom(e, f, func(x *ast.CallExpr) bool {
+		sel, ok := x.Fun.(*ast.SelectorExpr)
+		return ok && sel.Sel.Name == "Header" && isWriter(a.info.TypeOf(sel.X))
 	})
-	uses = append(uses, read)
-
-	kind := ""
-	ast.Inspect(f.node, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.CallExpr:
-			fn, _ := typeutil.Callee(a.info, n).(*types.Func)
-			if fn == nil || len(n.Args) == 0 || !containsNode(uses, n.Args[0]) {
-				return true
-			}
-			switch fn.FullName() {
-			case "strconv.Atoi", "strconv.ParseInt", "strconv.ParseUint":
-				kind = "integer"
-			case "strconv.ParseBool":
-				kind = "boolean"
-			}
-		case *ast.BinaryExpr:
-			if (n.Op == token.EQL || n.Op == token.NEQ) && (containsNode(uses, n.X) || containsNode(uses, n.Y)) {
-				if v, ok := a.constString(n.Y); ok && (v == "true" || v == "1") {
-					kind = "boolean"
-				}
-			}
-		}
-		return true
-	})
-	s := &Schema{Type: "string"}
-	if kind != "" {
-		s = &Schema{Type: kind}
-	}
-	if multi && isNamed(a.info.TypeOf(read), "net/url", "Values") {
-		return &Schema{Type: "array", Items: s}
-	}
-	if _, ok := read.(*ast.IndexExpr); ok {
-		return &Schema{Type: "array", Items: s}
-	}
-	return s
-}
-
-func (a *analysis) usesOf(obj types.Object, f *frame) []ast.Node {
-	if obj == nil {
-		return nil
-	}
-	var out []ast.Node
-	ast.Inspect(f.node, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && a.info.Uses[id] == obj {
-			out = append(out, id)
-		}
-		return true
-	})
-	return out
-}
-
-func containsNode(list []ast.Node, e ast.Expr) bool {
-	e = unparen(e)
-	for _, n := range list {
-		if n == e {
-			return true
-		}
-	}
-	return false
 }
 
 func isRequest(t types.Type) bool {
 	if p, ok := types.Unalias(t).(*types.Pointer); ok {
-		return isNamed(p.Elem(), "net/http", "Request")
+		return isNamed(p.Elem(), pkgHTTP, "Request")
 	}
 	return false
 }
 
-func isWriter(t types.Type) bool { return isNamed(t, "net/http", "ResponseWriter") }
+func isWriter(t types.Type) bool { return isNamed(t, pkgHTTP, "ResponseWriter") }
 
 func isNamed(t types.Type, pkg, name string) bool {
 	if t == nil {
@@ -1098,66 +831,9 @@ func exprString(e ast.Expr) string {
 	return types.ExprString(e)
 }
 
-// readsBody reports whether an expression mentions the request's body.
-func (a *analysis) readsBody(e ast.Expr) bool {
-	found := false
-	ast.Inspect(e, func(n ast.Node) bool {
-		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "Body" && isRequest(a.info.TypeOf(sel.X)) {
-			found = true
-		}
-		return !found
-	})
-	return found
-}
-
-// looseList is a list of loose values.
-func looseList(t types.Type) bool {
-	switch u := types.Unalias(t).Underlying().(type) {
-	case *types.Slice:
-		return loose(u.Elem()) || looseList(u.Elem())
-	case *types.Array:
-		return loose(u.Elem()) || looseList(u.Elem())
-	case *types.Pointer:
-		return loose(u.Elem()) || looseList(u.Elem())
-	}
-	return false
-}
-
 func deref(t types.Type) types.Type {
 	if p, ok := types.Unalias(t).(*types.Pointer); ok {
 		return p.Elem()
 	}
 	return t
-}
-
-// appended is a list of maps built up in the handler: its items are the map
-// literals appended to it, or listed in it where it is made.
-func (a *analysis) appended(id *ast.Ident, t types.Type, f *frame, op *operation) *Schema {
-	if t == nil {
-		return nil
-	}
-	sl, ok := types.Unalias(t).Underlying().(*types.Slice)
-	if !ok || !loose(sl.Elem()) {
-		return nil
-	}
-	var items []*Schema
-	for _, d := range a.assignments(id, f) {
-		switch d := unparen(d).(type) {
-		case *ast.CallExpr:
-			if b, ok := typeutil.Callee(a.info, d).(*types.Builtin); ok && b.Name() == "append" && !d.Ellipsis.IsValid() {
-				for _, v := range d.Args[1:] {
-					items = append(items, a.shape(v, f, op, false))
-				}
-			}
-		case *ast.CompositeLit:
-			for _, v := range d.Elts {
-				items = append(items, a.shape(v, f, op, false))
-			}
-		}
-	}
-	item := union(items)
-	if item == nil {
-		return nil
-	}
-	return &Schema{Type: []string{"array", "null"}, Items: item}
 }

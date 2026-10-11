@@ -3,7 +3,7 @@
   "info": {
     "title": "Pando API",
     "version": "dev",
-    "description": "The HTTP API of a Pando installation.\n\nAuthenticate with a token in the `Authorization: Bearer <token>` header, or with the session cookie `POST /api/v1/sessions` sets.\n\nA failed request answers with the error envelope: a stable `code` to branch on, a `message` to show, and often a `remedy` saying what to do.\n\nA field listed as required is always present in a response. A request may leave out any field it does not need; Pando answers `VALID_INVALID` naming what is missing."
+    "description": "Send requests to your installation's address followed by `/api/v1`, for example `https://pando.example.com/api/v1`.\n\nAuthenticate with a token. Create one in the console under **API and tools** › **Tokens** › **New token**; it is shown once. Send it in the `Authorization` header:\n\n```\nexport PANDO_TOKEN=tok_…\ncurl -H \"Authorization: Bearer $PANDO_TOKEN\" https://pando.example.com/api/v1/apps\n```\n\nA failed request answers with a JSON envelope: `code`, `message` and often `remedy`. Each code is described at `https://trypando.ai/docs/errors#<CODE>`, for example [PLAN_SLOT_UNFILLED](https://trypando.ai/docs/errors#PLAN_SLOT_UNFILLED).\n\nA field listed as required is always present in a response. A request may leave out any field it does not need; Pando answers `VALID_INVALID` naming what is missing."
   },
   "servers": [
     {
@@ -388,7 +388,7 @@
     "/api/v1/ai/audit/search": {
       "post": {
         "operationId": "searchAudit",
-        "summary": "Search the audit log with AI",
+        "summary": "Search audit log with AI",
         "description": "Turn a question into audit filters, run them, and summarize what they found. Body: `question`. The filters are ordinary GET /audit parameters.\n\nNeeds `install.audit.read`.",
         "tags": [
           "Installation"
@@ -1174,7 +1174,7 @@
     "/api/v1/apps/{appID}/auto-deploy/webhook": {
       "post": {
         "operationId": "autoDeployWebhook",
-        "summary": "Receive a git host webhook",
+        "summary": "Git host webhook",
         "description": "Where a git host sends push and release events: GitHub's format, `X-GitHub-Event` and `X-Hub-Signature-256` signed with the app's webhook secret. A verified delivery about what the app watches starts a check (202); one about something else is ignored (200). The check reads the repository itself, so nothing in the payload decides what deploys. Public: the signature is the credential.",
         "tags": [
           "Configuration"
@@ -3016,7 +3016,7 @@
     "/api/v1/apps/{appID}/passcode": {
       "get": {
         "operationId": "getPasscodeApp",
-        "summary": "Get a passcode page",
+        "summary": "Get a passcode prompt",
         "description": "The name of an app that asks for a passcode, for its passcode page. Public; not-found for any other app.",
         "tags": [
           "Sharing"
@@ -5452,7 +5452,7 @@
     "/api/v1/auth/failures/{flowID}": {
       "get": {
         "operationId": "ssoFailure",
-        "summary": "Get sign-in failure",
+        "summary": "Get a sign-in failure",
         "description": "Why a provider sign-in failed (`message`, `remedy`), for the sign-in page. Public.",
         "tags": [
           "Session"
@@ -5514,7 +5514,7 @@
     "/api/v1/auth/providers/{providerID}/callback": {
       "get": {
         "operationId": "ssoCallbackGet",
-        "summary": "Receive OpenID Connect callback",
+        "summary": "OIDC callback",
         "description": "Where an OpenID Connect provider returns the browser: the redirect URI to register with it. Public.",
         "tags": [
           "Session"
@@ -5573,7 +5573,7 @@
       },
       "post": {
         "operationId": "ssoCallbackPost",
-        "summary": "Receive SAML response",
+        "summary": "SAML assertion consumer",
         "description": "Where a SAML provider posts its response: the Assertion Consumer Service URL to register with it. Public.",
         "tags": [
           "Session"
@@ -5628,7 +5628,7 @@
     "/api/v1/auth/providers/{providerID}/metadata": {
       "get": {
         "operationId": "samlMetadata",
-        "summary": "Get SAML metadata",
+        "summary": "SAML metadata",
         "description": "Pando's SAML service provider metadata for this provider. Its URL is also the entity ID. Public.",
         "tags": [
           "Session"
@@ -7480,7 +7480,7 @@
     "/api/v1/me": {
       "get": {
         "operationId": "me",
-        "summary": "Get the caller",
+        "summary": "Get the current caller",
         "description": "Who the caller is, and the install-level verbs they hold.",
         "tags": [
           "Session"
@@ -7967,7 +7967,7 @@
     "/api/v1/me/sections/{sectionID}/apps/{appID}": {
       "delete": {
         "operationId": "unplaceApp",
-        "summary": "Remove an app from a section",
+        "summary": "Remove app from a section",
         "description": "Take an app out of a section, back to Your apps.",
         "tags": [
           "Session"
@@ -8001,7 +8001,7 @@
       },
       "put": {
         "operationId": "placeApp",
-        "summary": "Add an app to a section",
+        "summary": "Add app to a section",
         "description": "File an app you can open into one of your sections, moving it out of any other.",
         "tags": [
           "Session"
@@ -9172,7 +9172,7 @@
     "/api/v1/setup": {
       "get": {
         "operationId": "getSetup",
-        "summary": "Check whether setup is needed",
+        "summary": "Get setup status",
         "description": "Whether this installation is waiting for its first administrator (`needed`). Public.",
         "tags": [
           "Session"
@@ -9320,7 +9320,7 @@
     "/api/v1/sources/callback": {
       "get": {
         "operationId": "sourceCallback",
-        "summary": "Receive a source authorization",
+        "summary": "Source OAuth callback",
         "description": "Where a provider returns a browser authorization. Stores the token and redirects to the console's Adapters screen with `authorized` or `error`.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Sources"
@@ -13412,7 +13412,7 @@
         "properties": {
           "code": {
             "type": "string",
-            "description": "A stable code to branch on. Renaming one is a breaking change.\n\n| Code | Status | Meaning |\n|---|---|---|\n| `VALID_DANGLING_MOUNT` | 400 | A workload mounts a volume the spec does not declare. |\n| `VALID_DANGLING_SLOT_REF` | 400 | The spec refers to a slot it does not declare. |\n| `VALID_DEPENDENCY_CYCLE` | 400 | The workloads depend on each other in a cycle. |\n| `VALID_ENV_AMBIGUOUS` | 400 | An environment variable is set twice with different values. |\n| `VALID_INVALID` | 400 | The request or spec is malformed. |\n| `VALID_PRIMARY_WORKLOAD` | 400 | A spec must name exactly one primary workload. |\n| `VALID_SOURCE_UNREADABLE` | 400 | Pando could not read the repository: it is private or missing and no source connection covers it, or the connection's credential was refused. |\n| `VALID_UNKNOWN_EVENT` | 400 | A subscription names an event, or a pattern, that matches no event in the catalog. |\n| `AUTH_INVALID` | 401 | The credential presented is not valid. |\n| `AUTH_REQUIRED` | 401 | No credential was presented, or the session has expired. |\n| `AUTH_TOKEN_INVALID` | 401 | The token is unknown, revoked or expired. |\n| `AUTH_TOKEN_ORPHANED` | 401 | The token's owner was suspended or deleted, so the token no longer resolves to anyone. |\n| `PERM_CROSS_ORIGIN` | 403 | A change sent with a browser's Pando sign-in from a page on another origin, such as an app's. Send it from the console, or with an API token. |\n| `PERM_DENIED` | 403 | Authenticated, but not permitted to do this. |\n| `PERM_PASSCODE_REQUIRED` | 403 | The app is shared with everyone who knows its passcode, and this request has not shown it. A browser is sent to the passcode page; entering it there lets the visitor in. |\n| `PERM_VERB_REQUIRED` | 403 | The caller holds no grant carrying the verb this action needs. |\n| `POLICY_ANONYMOUS_GRANT_FORBIDDEN` | 403 | Host policy does not allow apps to be shared with everyone. |\n| `POLICY_APP_LIMIT_REACHED` | 403 | The person who would own the new app already owns as many apps as their limit allows. The message names the limit and where it is set. |\n| `POLICY_BACKUP_REQUIRED` | 403 | Host policy requires a final backup before an app with storage is deleted, and the request said to delete without one. |\n| `POLICY_EXEC_DISABLED` | 403 | Host policy has turned off terminal access, including for an app's owner. |\n| `POLICY_SOURCE_NOT_ALLOWED` | 403 | Host policy does not allow apps from this source. |\n| `POLICY_WEBHOOK_PRIVATE_ADDRESS` | 403 | A webhook points at a private, loopback or link-local address, and host policy does not allow that. |\n| `NOT_FOUND` | 404 | No such object, or none the caller may see. |\n| `CAPACITY_NO_FREE_PORT` | 409 | Port-mode routing has no free port in the configured range. |\n| `CAPACITY_WOULD_OVERSUBSCRIBE` | 409 | Running this would commit more of the host than is left. |\n| `PLAN_ADAPTER_NOT_CONFIGURED` | 409 | The spec names an adapter this installation does not have. |\n| `PLAN_CAPABILITY_UNSUPPORTED` | 409 | The spec asks for something the chosen adapter does not do. |\n| `PLAN_COMPOSE_CONSTRUCT_REJECTED` | 409 | The compose file uses a construct Pando will not translate. |\n| `PLAN_EGRESS_LOOSENING_FORBIDDEN` | 409 | The app loosens the installation's egress rules, and host policy says no app may. |\n| `PLAN_IMAGE_PLATFORM_UNSUPPORTED` | 409 | The app's image has no build for the operating system and CPU architecture this server runs, so it cannot start here. |\n| `PLAN_NO_ADAPTER_MEETS_POLICY` | 409 | No configured adapter can satisfy this spec under host policy. |\n| `PLAN_SECURITY_BELOW_THRESHOLD` | 409 | This installation requires a security score, and this app is below it or has never been scanned. |\n| `PLAN_SLOT_UNFILLED` | 409 | A required dependency has nothing filling it, so the deploy would start an app that cannot connect. |\n| `STATE_ADDRESS_TAKEN` | 409 | Another app is already reached at this address, or at a path this one would sit inside or around. |\n| `STATE_AI_FUNCTION_ASSIGNED` | 409 | Another AI adapter already handles this AI function. Remove it from that adapter first. |\n| `STATE_APP_EXITED` | 409 | The app started and then stopped, so the deploy has nothing to send traffic to. |\n| `STATE_BACKUP_DECISION_REQUIRED` | 409 | The app has storage and the request did not say whether to keep a final backup of it. |\n| `STATE_INVALID` | 409 | The object is in a state this action does not apply to. |\n| `STATE_SET_AT_STARTUP` | 409 | This is declared in Pando's startup configuration and cannot be changed through the API while it is. |\n| `BACKUP_DECRYPT_FAILED` | 422 | The backup could not be decrypted with the key supplied. |\n| `BACKUP_INCOMPLETE` | 422 | The backup is missing part of what it claims to hold, so it was not applied. |\n| `BUILD_FAILED` | 422 | The build ran and did not succeed. Its log is the answer. |\n| `BUILD_LISTENS_ON_LOOPBACK` | 422 | The built app listens only on 127.0.0.1 inside its container, where nothing outside it can reach it. |\n| `BUILD_TIMEOUT` | 422 | The build exceeded the time allowed for it. |\n| `RATE_LIMITED` | 429 | Too many attempts in a short time — at a passcode, for example. Wait a few minutes and try again. |\n| `INTERNAL` | 500 | Pando failed in a way it did not expect. The request ID finds the log line. |\n| `ADAPTER_FAILED` | 502 | The adapter was reached and failed. |\n| `ADAPTER_REGISTRY_RATE_LIMITED` | 502 | A registry refused an image because this server, or the app's registry account, has downloaded too many images recently. The message says when it accepts downloads again, where the registry said. |\n| `ADAPTER_UNAVAILABLE` | 502 | The adapter needed for this is not configured or not reachable. |",
+            "description": "A stable code to branch on. Each is described at `https://trypando.ai/docs/errors#<CODE>`, for example [PLAN_SLOT_UNFILLED](https://trypando.ai/docs/errors#PLAN_SLOT_UNFILLED).",
             "enum": [
               "VALID_DANGLING_MOUNT",
               "VALID_DANGLING_SLOT_REF",
@@ -13466,17 +13466,21 @@
             ]
           },
           "message": {
-            "type": "string"
+            "type": "string",
+            "description": "What went wrong, written to be shown to a person."
           },
           "remedy": {
-            "type": "string"
+            "type": "string",
+            "description": "What to do about it, when there is something to do."
           },
           "details": {
             "type": "object",
+            "description": "Facts about this failure, such as the field that was refused.",
             "additionalProperties": {}
           },
           "request_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The request's ID, for finding it in Pando's log."
           }
         },
         "required": [

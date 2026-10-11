@@ -2,7 +2,6 @@ package openapi
 
 import (
 	"encoding/json"
-	"net/http"
 	"regexp"
 	"slices"
 	"strconv"
@@ -101,85 +100,98 @@ func TestTheOpenAPIDocumentIsWellFormed(t *testing.T) {
 	require.NotEmpty(t, info["title"])
 	require.Equal(t, "test", info["version"])
 
-	components := doc["components"].(map[string]any)
-	schemes := components["securitySchemes"].(map[string]any)
-	checkSecurity := func(where string, reqs any) {
-		for _, req := range reqs.([]any) {
-			for name := range req.(map[string]any) {
-				require.Contains(t, schemes, name, "%s names the security scheme %q, which is not declared", where, name)
-			}
-		}
-	}
-	checkSecurity("the document", doc["security"])
+	schemes := doc["components"].(map[string]any)["securitySchemes"].(map[string]any)
+	checkSecurity(t, schemes, "the document", doc["security"])
+	require.Positive(t, checkRefs(t, doc, "#", doc))
 
-	// Every $ref resolves.
-	refs := 0
-	var walk func(where string, v any)
-	walk = func(where string, v any) {
-		switch v := v.(type) {
-		case map[string]any:
-			if ref, ok := v["$ref"].(string); ok {
-				refs++
-				require.NotNil(t, resolve(doc, ref), "%s refers to %s, which is not in the document", where, ref)
-			}
-			for k, child := range v {
-				walk(where+"/"+k, child)
-			}
-		case []any:
-			for i, child := range v {
-				walk(where+"/"+strconv.Itoa(i), child)
-			}
-		}
-	}
-	walk("#", doc)
-	require.Positive(t, refs)
-
-	template := regexp.MustCompile(`\{([^}]+)\}`)
-	status := regexp.MustCompile(`^[1-5]\d\d$`)
 	for path, item := range doc["paths"].(map[string]any) {
 		require.True(t, strings.HasPrefix(path, "/"), "%s is not a path", path)
-		var inPath []string
-		for _, m := range template.FindAllStringSubmatch(path, -1) {
-			inPath = append(inPath, m[1])
-		}
 		for method, raw := range item.(map[string]any) {
 			op := raw.(map[string]any)
 			where := strings.ToUpper(method) + " " + path
 			require.Contains(t, []string{"get", "put", "post", "delete", "patch"}, method, where)
-
-			var declared []string
-			for _, p := range asList(op["parameters"]) {
-				param := p.(map[string]any)
-				require.Contains(t, []string{"path", "query", "header", "cookie"}, param["in"], where)
-				require.NotNil(t, param["schema"], "%s: parameter %v has no schema", where, param["name"])
-				if param["in"] == "path" {
-					require.Equal(t, true, param["required"], "%s: a path parameter is required", where)
-					declared = append(declared, param["name"].(string))
-				}
-			}
-			slices.Sort(declared)
-			want := slices.Clone(inPath)
-			slices.Sort(want)
-			require.Equal(t, want, declared, "%s: path parameters", where)
-
-			for code, raw := range op["responses"].(map[string]any) {
-				require.True(t, code == "default" || status.MatchString(code), "%s answers %q, which is not a status", where, code)
-				resp := raw.(map[string]any)
-				if _, isRef := resp["$ref"]; !isRef {
-					require.NotEmpty(t, resp["description"], "%s %s has no description", where, code)
-				}
-				for ct, mt := range asMap(resp["content"]) {
-					require.NotEmpty(t, ct, where)
-					require.NotNil(t, mt.(map[string]any)["schema"], "%s %s %s has no schema", where, code, ct)
-				}
-			}
+			checkParameters(t, where, path, op)
+			checkResponses(t, where, op)
 			if body, ok := op["requestBody"].(map[string]any); ok {
 				require.NotEmpty(t, body["content"], "%s has a request body with no content", where)
-				require.NotEqual(t, http.MethodGet, strings.ToUpper(method), "%s takes a body", where)
+				require.NotEqual(t, "get", method, "%s takes a body", where)
 			}
 			if sec, ok := op["security"]; ok {
-				checkSecurity(where, sec)
+				checkSecurity(t, schemes, where, sec)
 			}
+		}
+	}
+}
+
+// checkSecurity asserts every security requirement names a declared scheme.
+func checkSecurity(t *testing.T, schemes map[string]any, where string, reqs any) {
+	t.Helper()
+	for _, req := range reqs.([]any) {
+		for name := range req.(map[string]any) {
+			require.Contains(t, schemes, name, "%s names the security scheme %q, which is not declared", where, name)
+		}
+	}
+}
+
+// checkRefs asserts every $ref under v resolves, and counts them.
+func checkRefs(t *testing.T, doc map[string]any, where string, v any) int {
+	t.Helper()
+	refs := 0
+	switch v := v.(type) {
+	case map[string]any:
+		if ref, ok := v["$ref"].(string); ok {
+			refs++
+			require.NotNil(t, resolve(doc, ref), "%s refers to %s, which is not in the document", where, ref)
+		}
+		for k, child := range v {
+			refs += checkRefs(t, doc, where+"/"+k, child)
+		}
+	case []any:
+		for i, child := range v {
+			refs += checkRefs(t, doc, where+"/"+strconv.Itoa(i), child)
+		}
+	}
+	return refs
+}
+
+var pathTemplate = regexp.MustCompile(`\{([^}]+)\}`)
+
+// checkParameters asserts every parameter has a schema and a place, and the
+// path parameters are exactly the path's.
+func checkParameters(t *testing.T, where, path string, op map[string]any) {
+	t.Helper()
+	var want, declared []string
+	for _, m := range pathTemplate.FindAllStringSubmatch(path, -1) {
+		want = append(want, m[1])
+	}
+	for _, p := range asList(op["parameters"]) {
+		param := p.(map[string]any)
+		require.Contains(t, []string{"path", "query", "header", "cookie"}, param["in"], where)
+		require.NotNil(t, param["schema"], "%s: parameter %v has no schema", where, param["name"])
+		if param["in"] == "path" {
+			require.Equal(t, true, param["required"], "%s: a path parameter is required", where)
+			declared = append(declared, param["name"].(string))
+		}
+	}
+	slices.Sort(want)
+	slices.Sort(declared)
+	require.Equal(t, want, declared, "%s: path parameters", where)
+}
+
+var statusCode = regexp.MustCompile(`^[1-5]\d\d$`)
+
+// checkResponses asserts every response is keyed by a status, described,
+// and has a schema for each content type.
+func checkResponses(t *testing.T, where string, op map[string]any) {
+	t.Helper()
+	for code, raw := range op["responses"].(map[string]any) {
+		require.True(t, code == "default" || statusCode.MatchString(code), "%s answers %q, which is not a status", where, code)
+		resp := raw.(map[string]any)
+		if _, isRef := resp["$ref"]; !isRef {
+			require.NotEmpty(t, resp["description"], "%s %s has no description", where, code)
+		}
+		for ct, mt := range asMap(resp["content"]) {
+			require.NotNil(t, mt.(map[string]any)["schema"], "%s %s %s has no schema", where, code, ct)
 		}
 	}
 }

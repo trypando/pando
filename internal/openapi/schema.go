@@ -27,6 +27,10 @@ type Schema struct {
 	AdditionalProperties *Schema   `json:"additionalProperties,omitempty"`
 	AnyOf                []*Schema `json:"anyOf,omitempty"`
 	OneOf                []*Schema `json:"oneOf,omitempty"`
+
+	// empty marks an empty list literal, which a union drops when it has
+	// anything else to say what the list holds.
+	empty bool
 }
 
 // Prop is one property, kept in declaration order.
@@ -47,13 +51,13 @@ func (p Props) MarshalJSON() ([]byte, error) {
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		k, err := json.Marshal(prop.Name)
+		k, err := marshalPlain(prop.Name)
 		if err != nil {
 			return nil, err
 		}
 		buf.Write(k)
 		buf.WriteByte(':')
-		v, err := json.Marshal(prop.Schema)
+		v, err := marshalPlain(prop.Schema)
 		if err != nil {
 			return nil, err
 		}
@@ -61,6 +65,18 @@ func (p Props) MarshalJSON() ([]byte, error) {
 	}
 	buf.WriteByte('}')
 	return buf.Bytes(), nil
+}
+
+// marshalPlain is json.Marshal without HTML escaping, as the document itself
+// is written: a description's `<CODE>` stays readable.
+func marshalPlain(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 // anySchema is the schema that accepts anything: arbitrary JSON.
@@ -257,7 +273,7 @@ func hasMethod(t types.Type, name string) bool {
 func (s *schemas) named(n *types.Named) *Schema {
 	key := typeKey(n)
 	if key == "time.Time" {
-		return &Schema{Type: "string", Format: "date-time"}
+		return &Schema{Type: "string", Format: formatDateTime}
 	}
 	// A type declared inside a function is that function's shape, not a
 	// name anyone else can use: it is described where it is used.
@@ -290,50 +306,54 @@ func (s *schemas) fields(st *types.Struct, out *Schema, seen map[string]bool) {
 			continue
 		}
 		name, opts, _ := strings.Cut(tag, ",")
-
-		if f.Embedded() && name == "" {
-			// encoding/json flattens an embedded struct's fields into the
-			// outer object, exported or not.
-			inner := types.Unalias(f.Type())
-			if p, ok := inner.(*types.Pointer); ok {
-				inner = types.Unalias(p.Elem())
-			}
-			if est, ok := inner.Underlying().(*types.Struct); ok {
-				if _, own := s.marshaled(inner); !own {
-					s.fields(est, out, seen)
-					continue
-				}
-			}
-		}
-		if !f.Exported() {
+		if est := s.flattened(f, name); est != nil {
+			s.fields(est, out, seen)
 			continue
 		}
 		if name == "" {
 			name = f.Name()
 		}
-		if seen[name] {
+		if !f.Exported() || seen[name] {
 			continue // the shallower field wins, as in encoding/json
 		}
 		seen[name] = true
 
 		omit := strings.Contains(opts, "omitempty") || strings.Contains(opts, "omitzero")
-		var fs *Schema
-		switch {
-		case strings.Contains(opts, "string"):
-			fs = &Schema{Type: "string"}
-		case omit:
-			// Left out when empty, so present means not null.
-			fs = s.forType(stripPointer(f.Type()))
-			fs = notNull(fs)
-		default:
-			fs = s.forType(f.Type())
-		}
-
-		out.Properties = append(out.Properties, Prop{Name: name, Schema: fs})
+		out.Properties = append(out.Properties, Prop{Name: name, Schema: s.field(f.Type(), opts, omit)})
 		if !omit && !isPointer(f.Type()) {
 			out.Required = append(out.Required, name)
 		}
 	}
+}
+
+// flattened is the struct an embedded field's fields are flattened from, as
+// encoding/json flattens them into the outer object, exported or not; nil
+// for any other field.
+func (s *schemas) flattened(f *types.Var, name string) *types.Struct {
+	if !f.Embedded() || name != "" {
+		return nil
+	}
+	inner := types.Unalias(stripPointer(f.Type()))
+	est, ok := inner.Underlying().(*types.Struct)
+	if !ok {
+		return nil
+	}
+	if _, own := s.marshaled(inner); own {
+		return nil
+	}
+	return est
+}
+
+// field is one field's schema, by its type and its tag's options.
+func (s *schemas) field(t types.Type, opts string, omit bool) *Schema {
+	switch {
+	case strings.Contains(opts, "string"):
+		return &Schema{Type: "string"}
+	case omit:
+		// Left out when empty, so present means not null.
+		return notNull(s.forType(stripPointer(t)))
+	}
+	return s.forType(t)
 }
 
 func stripPointer(t types.Type) types.Type {

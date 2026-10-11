@@ -84,17 +84,21 @@ func TestDocumentedVerbsAreRealVerbs(t *testing.T) {
 	}
 }
 
-// Every row has a title a list of endpoints can show: a few words in sentence
-// case, no closing period and no code, and no two alike. The summary is the
-// whole of it; a title is what someone scanning the list reads.
+// Every row has a title a list of endpoints can show: two to five words in
+// sentence case, at most 40 characters, with no period, colon or code, and no
+// two alike. The summary is the whole of it; a title is what someone scanning
+// the list reads.
 func TestEveryRouteHasATitle(t *testing.T) {
 	seen := map[string]string{}
 	for _, doc := range routeDocs {
 		key := doc.Method + " " + doc.Path
 		title := doc.Title
 		require.NotEmpty(t, title, "%s has no Title", key)
-		require.LessOrEqual(t, len(strings.Fields(title)), 6, "%s: %q is longer than six words", key, title)
-		require.False(t, strings.HasSuffix(title, "."), "%s: %q ends with a period", key, title)
+		words := len(strings.Fields(title))
+		require.True(t, words >= 2 && words <= 5, "%s: %q is not two to five words", key, title)
+		require.LessOrEqual(t, len(title), 40, "%s: %q is longer than 40 characters", key, title)
+		require.NotContains(t, title, ".", "%s: %q has a period", key, title)
+		require.NotContains(t, title, ":", "%s: %q has a colon", key, title)
 		require.NotContains(t, title, "`", "%s: %q has code in it", key, title)
 		require.Equal(t, strings.ToUpper(title[:1]), title[:1], "%s: %q does not start with a capital", key, title)
 		require.Empty(t, seen[title], "%s and %s are both titled %q", key, seen[title], title)

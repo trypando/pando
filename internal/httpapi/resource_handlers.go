@@ -38,7 +38,7 @@ func (s *Server) handleListSlots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if appSpec == nil {
-		JSON(w, http.StatusOK, map[string]any{"slots": []spec.Slot{}})
+		JSON(w, http.StatusOK, map[string]any{"slots": []any{}})
 		return
 	}
 	JSON(w, http.StatusOK, map[string]any{"slots": appSpec.Slots})

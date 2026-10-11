@@ -18,7 +18,7 @@ func marshalers() map[string]*Schema {
 		return &Schema{Type: "string", Description: what}
 	}
 	return map[string]*Schema{
-		"time.Time": {Type: "string", Format: "date-time"},
+		"time.Time": {Type: "string", Format: formatDateTime},
 
 		// secret.Value writes "[redacted]" in every marshaler (R-194).
 		"github.com/trypando/pando/internal/secret.Value": {
@@ -132,20 +132,21 @@ func overrides() map[string]override {
 	patch := &body{contentType: scimType, schema: scimRef("ScimPatchOp")}
 	discovery := &body{contentType: scimType, schema: &Schema{Type: "object", Description: "SCIM discovery (RFC 7644 §4)."}}
 	scim := "/api/v1/scim/v2"
+	scimUser, scimGroup := scim+"/Users/{id}", scim+"/Groups/{id}"
 	for key, o := range map[string]override{
 		"GET " + scim + "/ServiceProviderConfig": {responses: map[int]*body{200: discovery}},
 		"GET " + scim + "/ResourceTypes":         {responses: map[int]*body{200: discovery}},
 		"GET " + scim + "/Schemas":               {responses: map[int]*body{200: discovery}},
 		"GET " + scim + "/Users":                 {responses: map[int]*body{200: list}},
 		"POST " + scim + "/Users":                {request: user, responses: map[int]*body{201: user}},
-		"GET " + scim + "/Users/{id}":            {responses: map[int]*body{200: user}},
-		"PUT " + scim + "/Users/{id}":            {request: user, responses: map[int]*body{200: user}},
-		"PATCH " + scim + "/Users/{id}":          {request: patch, responses: map[int]*body{200: user}},
+		"GET " + scimUser:                        {responses: map[int]*body{200: user}},
+		"PUT " + scimUser:                        {request: user, responses: map[int]*body{200: user}},
+		"PATCH " + scimUser:                      {request: patch, responses: map[int]*body{200: user}},
 		"GET " + scim + "/Groups":                {responses: map[int]*body{200: list}},
 		"POST " + scim + "/Groups":               {request: group, responses: map[int]*body{201: group}},
-		"GET " + scim + "/Groups/{id}":           {responses: map[int]*body{200: group}},
-		"PUT " + scim + "/Groups/{id}":           {request: group, responses: map[int]*body{200: group}},
-		"PATCH " + scim + "/Groups/{id}":         {request: patch},
+		"GET " + scimGroup:                       {responses: map[int]*body{200: group}},
+		"PUT " + scimGroup:                       {request: group, responses: map[int]*body{200: group}},
+		"PATCH " + scimGroup:                     {request: patch},
 	} {
 		out[key] = o
 	}
@@ -167,8 +168,8 @@ func scimSchemas() map[string]*Schema {
 	meta := &Schema{Type: "object", Properties: Props{
 		{Name: "resourceType", Schema: str("")},
 		{Name: "location", Schema: str("")},
-		{Name: "created", Schema: &Schema{Type: "string", Format: "date-time"}},
-		{Name: "lastModified", Schema: &Schema{Type: "string", Format: "date-time"}},
+		{Name: "created", Schema: &Schema{Type: "string", Format: formatDateTime}},
+		{Name: "lastModified", Schema: &Schema{Type: "string", Format: formatDateTime}},
 	}}
 	open := anySchema()
 	return map[string]*Schema{

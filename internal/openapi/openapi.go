@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"go/types"
 	"regexp"
 	"slices"
 	"sort"
@@ -141,6 +142,11 @@ const (
 
 const scimPrefix = "/api/v1/scim/v2/"
 
+const formatDateTime = "date-time"
+
+// errorsPage describes every error code, each at an anchor named for the code.
+const errorsPage = "https://trypando.ai/docs/errors"
+
 // Generate reads the handlers and writes the document. It fails, naming each
 // one, when a route has an answer it could not read: a document that guessed
 // would be the hand-written second opinion this exists to avoid.
@@ -173,24 +179,57 @@ func (a *analysis) document(ref reference.Document, version string, ov map[strin
 	if err != nil {
 		return nil, nil, err
 	}
-	handlers := map[string]served{}
+	b := &assembly{
+		a:        a,
+		d:        newDocument(ref, version),
+		ov:       ov,
+		handlers: map[string]served{},
+		used:     map[string]bool{},
+		ids:      map[string]int{},
+		tags:     map[string]bool{},
+	}
 	for _, s := range registered {
-		handlers[s.method+" "+s.path] = s
+		b.handlers[s.method+" "+s.path] = s
+	}
+	b.d.Components.Responses["Error"] = &Response{
+		Description: "The error envelope: what went wrong, a stable code to branch on, and often what to do about it.",
+		Content:     map[string]MediaType{jsonType: {Schema: a.sch.forType(a.errorType())}},
+	}
+	for name, s := range scimSchemas() {
+		b.d.Components.Schemas[name] = s
+	}
+	b.d.Components.Responses["ScimError"] = &Response{
+		Description: "A SCIM error.",
+		Content:     map[string]MediaType{scimType: {Schema: &Schema{Ref: "#/components/schemas/ScimError"}}},
 	}
 
-	d := &Document{
+	for _, route := range ref.API.Routes {
+		b.add(route)
+	}
+	b.settleIDs()
+	b.unusedOverrides()
+
+	problems := append(b.problems, a.sch.problems...)
+	problems = append(problems, a.settleNames(b.d)...)
+	sort.Strings(problems)
+	problems = slices.Compact(problems)
+
+	prune(b.d)
+	if es := b.d.Components.Schemas[a.errorName]; es != nil {
+		describeCodes(es, ref.Errors)
+	}
+	return b.d, problems, nil
+}
+
+const errsPath = "github.com/trypando/pando/internal/errs"
+
+func (a *analysis) errorType() types.Type { return a.lookupType(errsPath, "Error") }
+
+// newDocument is the document before any route is in it.
+func newDocument(ref reference.Document, version string) *Document {
+	return &Document{
 		OpenAPI: "3.1.0",
-		Info: Info{
-			Title:   "Pando API",
-			Version: version,
-			Description: "The HTTP API of a Pando installation.\n\n" +
-				"Authenticate with a token in the `Authorization: Bearer <token>` header, or with the session cookie " +
-				"`POST /api/v1/sessions` sets.\n\n" +
-				"A failed request answers with the error envelope: a stable `code` to branch on, a `message` to show, " +
-				"and often a `remedy` saying what to do.\n\n" +
-				"A field listed as required is always present in a response. A request may leave out any field it does " +
-				"not need; Pando answers `VALID_INVALID` naming what is missing.",
-		},
+		Info:    Info{Title: "Pando API", Version: version, Description: intro(ref.API.BasePath)},
 		Servers: []Server{{
 			URL:         "https://{host}",
 			Description: "Your Pando installation",
@@ -206,88 +245,104 @@ func (a *analysis) document(ref reference.Document, version string, ov map[strin
 			SecuritySchemes: securitySchemes(ref.API.Auth),
 		},
 	}
+}
 
-	errorRef := a.sch.forType(a.lookupType("github.com/trypando/pando/internal/errs", "Error"))
-	d.Components.Responses["Error"] = &Response{
-		Description: "The error envelope: what went wrong, a stable code to branch on, and often what to do about it.",
-		Content:     map[string]MediaType{jsonType: {Schema: errorRef}},
-	}
-	for name, s := range scimSchemas() {
-		d.Components.Schemas[name] = s
-	}
-	d.Components.Responses["ScimError"] = &Response{
-		Description: "A SCIM error.",
-		Content:     map[string]MediaType{scimType: {Schema: &Schema{Ref: "#/components/schemas/ScimError"}}},
-	}
+// intro is the document's description: how to reach the API, then how it
+// answers.
+func intro(base string) string {
+	return "Send requests to your installation's address followed by `" + base + "`, " +
+		"for example `https://pando.example.com" + base + "`.\n\n" +
+		"Authenticate with a token. Create one in the console under **API and tools** › **Tokens** › **New token**; " +
+		"it is shown once. Send it in the `Authorization` header:\n\n" +
+		"```\n" +
+		"export PANDO_TOKEN=tok_…\n" +
+		"curl -H \"Authorization: Bearer $PANDO_TOKEN\" https://pando.example.com" + base + "/apps\n" +
+		"```\n\n" +
+		"A failed request answers with a JSON envelope: `code`, `message` and often `remedy`. " +
+		"Each code is described at `" + errorsPage + "#<CODE>`, for example " +
+		"[PLAN_SLOT_UNFILLED](" + errorsPage + "#PLAN_SLOT_UNFILLED).\n\n" +
+		"A field listed as required is always present in a response. A request may leave out any field it does " +
+		"not need; Pando answers `VALID_INVALID` naming what is missing."
+}
 
-	usedOverrides := map[string]bool{}
+// assembly is the document being put together, route by route.
+type assembly struct {
+	a        *analysis
+	d        *Document
+	ov       map[string]override
+	handlers map[string]served
+	used     map[string]bool // overrides used
+	ids      map[string]int  // operationIds, and how many operations have each
+	tags     map[string]bool
+	ops      []builtOp
+	problems []string
+}
+
+type builtOp struct {
+	method string
+	op     *Operation
+	id     string
+}
+
+func (b *assembly) problem(key string, ps ...string) {
+	for _, p := range ps {
+		b.problems = append(b.problems, key+": "+p)
+	}
+}
+
+// add reads one documented route's handler and puts its operation in.
+func (b *assembly) add(route reference.Route) {
+	path := normalize(route.Path)
+	key := route.Method + " " + path
+	s, ok := b.handlers[key]
+	if !ok {
+		b.problem(key, "documented in routeDocs, and no handler for it was found in (*Server).Routes")
+		return
+	}
+	res := b.a.analyze(s.handler)
+	o, hasOverride := b.ov[key]
+	b.used[key] = hasOverride
+	b.problem(key, res.problems...)
+
+	op, problems := b.a.operation(route, res, o)
+	b.problem(key, problems...)
+
+	if !b.tags[route.Group] {
+		b.tags[route.Group] = true
+		b.d.Tags = append(b.d.Tags, Tag{Name: route.Group})
+	}
+	id := operationID(res.handlerName, route.Method, route.Path)
+	b.ids[id]++
+	b.ops = append(b.ops, builtOp{method: route.Method, op: op, id: id})
+
+	if b.d.Paths[path] == nil {
+		b.d.Paths[path] = map[string]*Operation{}
+	}
+	b.d.Paths[path][strings.ToLower(route.Method)] = op
+}
+
+// settleIDs names each operation: one handler on two methods is told apart by
+// the method.
+func (b *assembly) settleIDs() {
+	for _, o := range b.ops {
+		o.op.OperationID = o.id
+		if b.ids[o.id] > 1 {
+			o.op.OperationID = o.id + pascal(strings.ToLower(o.method))
+		}
+	}
+}
+
+func (b *assembly) unusedOverrides() {
+	for key := range b.ov {
+		if !b.used[key] {
+			b.problem(key, "has an entry in overrides.go and is not a documented route")
+		}
+	}
+}
+
+// settleNames names each component and points every reference at it.
+func (a *analysis) settleNames(d *Document) []string {
 	var problems []string
-	opIDs := map[string]int{}
-	seenTags := map[string]bool{}
-
-	type built struct {
-		key string
-		op  *Operation
-		id  string
-	}
-	var ops []built
-
-	for _, route := range ref.API.Routes {
-		key := route.Method + " " + normalize(route.Path)
-		s, ok := handlers[key]
-		if !ok {
-			problems = append(problems, key+": documented in routeDocs, and no handler for it was found in (*Server).Routes")
-			continue
-		}
-		res := a.analyze(s.handler)
-		o, hasOverride := ov[key]
-		if hasOverride {
-			usedOverrides[key] = true
-		}
-		for _, p := range res.problems {
-			problems = append(problems, key+": "+p)
-		}
-
-		op, opProblems := a.operation(route, res, o, hasOverride)
-		for _, p := range opProblems {
-			problems = append(problems, key+": "+p)
-		}
-
-		if !seenTags[route.Group] {
-			seenTags[route.Group] = true
-			d.Tags = append(d.Tags, Tag{Name: route.Group})
-		}
-
-		id := operationID(res.handlerName, route.Method, route.Path)
-		opIDs[id]++
-		ops = append(ops, built{key: key, op: op, id: id})
-
-		path := normalize(route.Path)
-		if d.Paths[path] == nil {
-			d.Paths[path] = map[string]*Operation{}
-		}
-		d.Paths[path][strings.ToLower(route.Method)] = op
-	}
-
-	// One handler on two methods: the method tells them apart.
-	for _, b := range ops {
-		b.op.OperationID = b.id
-		if opIDs[b.id] > 1 {
-			b.op.OperationID = b.id + pascal(strings.ToLower(b.key[:strings.IndexByte(b.key, ' ')]))
-		}
-	}
-
-	for key := range ov {
-		if !usedOverrides[key] {
-			problems = append(problems, key+": has an entry in overrides.go and is not a documented route")
-		}
-	}
-
-	problems = append(problems, a.sch.problems...)
-	sort.Strings(problems)
-	problems = slices.Compact(problems)
-
-	// Settle component names, and point every reference at them.
 	names := a.sch.names()
 	for key, c := range a.sch.byKey {
 		if d.Components.Schemas[names[key]] != nil {
@@ -295,46 +350,46 @@ func (a *analysis) document(ref reference.Document, version string, ov map[strin
 		}
 		d.Components.Schemas[names[key]] = c.schema
 	}
-	fix := func(s *Schema) {
+	a.errorName = names[typeKey(namedOf(a.errorType()))]
+	roots := d.schemaRoots()
+	for _, s := range d.Components.Schemas {
+		roots = append(roots, s)
+	}
+	for _, s := range roots {
 		walk(s, func(s *Schema) {
 			if s.Ref != "" && !strings.HasPrefix(s.Ref, "#/") {
 				s.Ref = "#/components/schemas/" + names[s.Ref]
 			}
 		})
 	}
-	for _, s := range d.Components.Schemas {
-		fix(s)
+	return problems
+}
+
+// schemaRoots are the schemas the paths and the shared responses use.
+func (d *Document) schemaRoots() []*Schema {
+	var out []*Schema
+	content := func(c map[string]MediaType) {
+		for _, m := range c {
+			out = append(out, m.Schema)
+		}
 	}
 	for _, r := range d.Components.Responses {
-		for _, m := range r.Content {
-			fix(m.Schema)
-		}
+		content(r.Content)
 	}
 	for _, methods := range d.Paths {
 		for _, op := range methods {
 			if op.RequestBody != nil {
-				for _, m := range op.RequestBody.Content {
-					fix(m.Schema)
-				}
+				content(op.RequestBody.Content)
 			}
 			for _, r := range op.Responses {
-				for _, m := range r.Content {
-					fix(m.Schema)
-				}
+				content(r.Content)
 			}
 			for _, p := range op.Parameters {
-				fix(p.Schema)
+				out = append(out, p.Schema)
 			}
 		}
 	}
-	prune(d)
-
-	// The error codes, from the catalog the server is tested against.
-	if es := d.Components.Schemas[names[typeKey(namedOf(a.lookupType("github.com/trypando/pando/internal/errs", "Error")))]]; es != nil {
-		describeCodes(es, ref.Errors)
-	}
-
-	return d, problems, nil
+	return out
 }
 
 // prune drops the component schemas nothing refers to: a type met while
@@ -351,28 +406,7 @@ func prune(d *Document) {
 			}
 		})
 	}
-	for _, r := range d.Components.Responses {
-		for _, m := range r.Content {
-			add(m.Schema)
-		}
-	}
-	for _, methods := range d.Paths {
-		for _, op := range methods {
-			if op.RequestBody != nil {
-				for _, m := range op.RequestBody.Content {
-					add(m.Schema)
-				}
-			}
-			for _, r := range op.Responses {
-				for _, m := range r.Content {
-					add(m.Schema)
-				}
-			}
-			for _, p := range op.Parameters {
-				add(p.Schema)
-			}
-		}
-	}
+	queue = d.schemaRoots()
 	for len(queue) > 0 {
 		s := queue[0]
 		queue = queue[1:]
@@ -400,20 +434,22 @@ func securitySchemes(auth []reference.Auth) map[string]SecurityScheme {
 }
 
 func describeCodes(es *Schema, codes []errs.CodeDoc) {
+	about := map[string]string{
+		"code": "A stable code to branch on. Each is described at `" + errorsPage + "#<CODE>`, " +
+			"for example [PLAN_SLOT_UNFILLED](" + errorsPage + "#PLAN_SLOT_UNFILLED).",
+		"message":    "What went wrong, written to be shown to a person.",
+		"remedy":     "What to do about it, when there is something to do.",
+		"details":    "Facts about this failure, such as the field that was refused.",
+		"request_id": "The request's ID, for finding it in Pando's log.",
+	}
 	for i, p := range es.Properties {
-		if p.Name != "code" {
-			continue
-		}
-		var b strings.Builder
-		b.WriteString("A stable code to branch on. Renaming one is a breaking change.\n\n| Code | Status | Meaning |\n|---|---|---|\n")
-		var enum []string
-		for _, c := range codes {
-			enum = append(enum, string(c.Code))
-			fmt.Fprintf(&b, "| `%s` | %d | %s |\n", c.Code, c.Status, strings.ReplaceAll(forReaders(c.Meaning), "|", "\\|"))
-		}
 		c := *p.Schema
-		c.Enum = enum
-		c.Description = strings.TrimSuffix(b.String(), "\n")
+		c.Description = about[p.Name]
+		if p.Name == "code" {
+			for _, code := range codes {
+				c.Enum = append(c.Enum, string(code.Code))
+			}
+		}
 		es.Properties[i].Schema = &c
 	}
 }
@@ -451,9 +487,9 @@ func forReaders(s string) string {
 
 var pathParam = regexp.MustCompile(`\{([^}:]+)(:[^}]*)?\}`)
 
-// operation assembles one operation from what the reading found.
-func (a *analysis) operation(route reference.Route, res *operation, o override, hasOverride bool) (*Operation, []string) {
-	var problems []string
+// operation assembles one operation from what the reading found and what
+// overrides.go says.
+func (a *analysis) operation(route reference.Route, res *operation, o override) (*Operation, []string) {
 	path := normalize(route.Path)
 	op := &Operation{
 		Summary:     route.Title,
@@ -473,9 +509,27 @@ func (a *analysis) operation(route reference.Route, res *operation, o override, 
 	case route.Public:
 		op.Security = &[]map[string][]string{}
 	}
+	op.Parameters = append(parameters(path, res), o.params...)
 
+	var problems []string
+	op.RequestBody, problems = a.requestBodyOf(res, o)
+	problems = append(problems, a.responsesOf(op, res, o)...)
+
+	// Every route can answer with the envelope: an unauthenticated request
+	// is refused before the handler, and anything can fail.
+	op.Responses["default"] = &Response{Ref: "#/components/responses/Error"}
+	if scim || res.scimErrors {
+		op.Responses["default"] = &Response{Ref: "#/components/responses/ScimError"}
+	}
+	return op, problems
+}
+
+// parameters are the path's, then the query's and the headers the handler
+// reads, in order.
+func parameters(path string, res *operation) []Parameter {
+	var out []Parameter
 	for _, m := range pathParam.FindAllStringSubmatch(path, -1) {
-		op.Parameters = append(op.Parameters, Parameter{Name: m[1], In: "path", Required: true, Schema: &Schema{Type: "string"}})
+		out = append(out, Parameter{Name: m[1], In: "path", Required: true, Schema: &Schema{Type: "string"}})
 	}
 	var extra []*param
 	for _, p := range res.params {
@@ -488,43 +542,43 @@ func (a *analysis) operation(route reference.Route, res *operation, o override, 
 		return extra[i].name < extra[j].name
 	})
 	for _, p := range extra {
-		op.Parameters = append(op.Parameters, Parameter{Name: p.name, In: p.in, Schema: p.schema})
+		out = append(out, Parameter{Name: p.name, In: p.in, Schema: p.schema})
 	}
-	op.Parameters = append(op.Parameters, o.params...)
+	return out
+}
 
-	// The request body.
+func (a *analysis) requestBodyOf(res *operation, o override) (*RequestBody, []string) {
 	switch {
-	case hasOverride && o.request != nil:
+	case o.request != nil:
 		mt, err := a.media(o.request)
+		body := &RequestBody{Description: o.request.description, Content: map[string]MediaType{o.request.contentType: mt}}
 		if err != nil {
-			problems = append(problems, err.Error())
+			return body, []string{err.Error()}
 		}
-		op.RequestBody = &RequestBody{Description: o.request.description, Content: map[string]MediaType{o.request.contentType: mt}}
+		return body, nil
 	case res.request != nil:
-		op.RequestBody = &RequestBody{Content: map[string]MediaType{res.requestContentType: {Schema: res.request}}}
+		return &RequestBody{Content: map[string]MediaType{res.requestContentType: {Schema: res.request}}}, nil
 	case res.rawBody && !o.noRequestBody:
-		problems = append(problems, "reads the request body other than as JSON; say what it takes in overrides.go")
+		return nil, []string{"reads the request body other than as JSON; say what it takes in overrides.go"}
 	}
+	return nil, nil
+}
 
-	// The responses, by status.
+// responsesOf fills in an operation's responses, by status.
+func (a *analysis) responsesOf(op *Operation, res *operation, o override) []string {
+	var problems []string
 	byStatus := map[int][]response{}
 	for _, r := range res.responses {
 		byStatus[r.status] = append(byStatus[r.status], r)
 	}
-	if hasOverride {
-		for st, b := range o.responses {
-			mt, err := a.media(b)
-			if err != nil {
-				problems = append(problems, err.Error())
-			}
-			r := response{status: st, contentType: b.contentType, schema: mt.Schema}
-			if b.contentType == "" {
-				r.schema = nil
-			}
-			byStatus[st] = []response{r}
-			if b.description != "" {
-				op.Responses[strconv.Itoa(st)] = &Response{Description: b.description}
-			}
+	for st, b := range o.responses {
+		mt, err := a.media(b)
+		if err != nil {
+			problems = append(problems, err.Error())
+		}
+		byStatus[st] = []response{{status: st, contentType: b.contentType, schema: mt.Schema}}
+		if b.description != "" {
+			op.Responses[strconv.Itoa(st)] = &Response{Description: b.description}
 		}
 	}
 	if len(byStatus) == 0 {
@@ -532,43 +586,35 @@ func (a *analysis) operation(route reference.Route, res *operation, o override, 
 	}
 	for st, rs := range byStatus {
 		code := strconv.Itoa(st)
-		resp := op.Responses[code]
-		if resp == nil {
-			resp = &Response{Description: statusText(st)}
-			op.Responses[code] = resp
+		if op.Responses[code] == nil {
+			op.Responses[code] = &Response{Description: statusText(st)}
 		}
-		byType := map[string][]*Schema{}
-		for _, r := range rs {
-			if r.unread != "" {
-				problems = append(problems, r.unread+"; say what it sends in overrides.go")
-				continue
-			}
-			if r.redirect {
-				resp.Headers = map[string]Header{"Location": {Description: "Where the browser is sent.", Schema: &Schema{Type: "string"}}}
-				continue
-			}
-			if r.contentType == "" {
-				continue
-			}
+		problems = append(problems, fillResponse(op.Responses[code], rs)...)
+	}
+	return problems
+}
+
+// fillResponse puts one status's answers in its response.
+func fillResponse(resp *Response, rs []response) []string {
+	var problems []string
+	byType := map[string][]*Schema{}
+	for _, r := range rs {
+		switch {
+		case r.unread != "":
+			problems = append(problems, r.unread+"; say what it sends in overrides.go")
+		case r.redirect:
+			resp.Headers = map[string]Header{"Location": {Description: "Where the browser is sent.", Schema: &Schema{Type: "string"}}}
+		case r.contentType != "":
 			byType[r.contentType] = append(byType[r.contentType], r.schema)
 		}
-		for ct, shapes := range byType {
-			if resp.Content == nil {
-				resp.Content = map[string]MediaType{}
-			}
-			resp.Content[ct] = MediaType{Schema: union(shapes)}
+	}
+	for ct, shapes := range byType {
+		if resp.Content == nil {
+			resp.Content = map[string]MediaType{}
 		}
+		resp.Content[ct] = MediaType{Schema: union(shapes)}
 	}
-
-	switch {
-	case scim || res.scimErrors:
-		op.Responses["default"] = &Response{Ref: "#/components/responses/ScimError"}
-	default:
-		// Every route can answer with the envelope: an unauthenticated
-		// request is refused before the handler, and anything can fail.
-		op.Responses["default"] = &Response{Ref: "#/components/responses/Error"}
-	}
-	return op, problems
+	return problems
 }
 
 // media turns an override's body into a media type.
