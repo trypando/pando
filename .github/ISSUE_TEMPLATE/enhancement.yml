@@ -5,12 +5,11 @@ body:
   - type: markdown
     attributes:
       value: >-
-        Worth reading first: **What Pando does not do**, at the end of the
-        [README](https://github.com/trypando/pando#what-pando-does-not-do).
-        Some of what is missing is missing deliberately — it does not schedule
-        across machines, does not run your tests, is not a marketplace, and
-        serves one organization per installation. A request that runs into one
-        of those gets a straight answer rather than a maybe.
+        Worth reading first: [what Pando is built
+        for](https://trypando.ai/why#fit). Some of what is missing is missing
+        deliberately — Pando does not schedule, does not run your tests and is
+        not a marketplace. A request that runs into one of those gets a straight
+        answer rather than a maybe.
 
   - type: textarea
     id: problem
