@@ -417,6 +417,7 @@ func TestR111_OnPodmanBuildKitGetsItsProfileAsAFile(t *testing.T) {
 
 func TestHostPathTakesTheDeepestMount(t *testing.T) {
 	mounts := []container.MountPoint{
+		{Destination: "/var/lib/pando", Source: ""}, // tmpfs: on no path of the host's
 		{Destination: "/var/lib", Source: "/a"},
 		{Destination: "/var/lib/pando", Source: "/b"},
 		{Destination: "/var/lib/pandora", Source: "/c"},

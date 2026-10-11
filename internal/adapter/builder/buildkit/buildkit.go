@@ -40,6 +40,10 @@ type Adapter struct {
 	// somebody else runs. Nil otherwise.
 	managed *managed
 
+	// answers asks BuildKit whether it is up; nil asks it for its workers.
+	// For tests, which have no BuildKit to ask.
+	answers func(context.Context) error
+
 	// pruneMu keeps cache trims from piling up when builds finish together.
 	pruneMu sync.Mutex
 
@@ -213,6 +217,9 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 // answer, when the build is what found it stopped or missing.
 const buildKitStartWait = time.Minute
 
+// buildKitRetryEvery is how often startBuildKit asks again.
+var buildKitRetryEvery = time.Second
+
 // startBuildKit makes sure the BuildKit Pando runs is there and answering
 // before a build, creating or starting it as ensure does.
 //
@@ -229,10 +236,17 @@ func (a *Adapter) startBuildKit(ctx context.Context, wait time.Duration) error {
 	if _, err := a.managed.ensure(ctx); err != nil {
 		return err
 	}
+	answers := a.answers
+	if answers == nil {
+		answers = func(ctx context.Context) error {
+			_, err := a.cli.ListWorkers(ctx)
+			return err
+		}
+	}
 	deadline := time.Now().Add(wait)
 	for {
 		check, cancel := context.WithTimeout(ctx, 5*time.Second)
-		_, err := a.cli.ListWorkers(check)
+		err := answers(check)
 		cancel()
 		if err == nil {
 			return nil
@@ -243,7 +257,7 @@ func (a *Adapter) startBuildKit(ctx context.Context, wait time.Duration) error {
 		}
 		select {
 		case <-ctx.Done():
-		case <-time.After(time.Second):
+		case <-time.After(buildKitRetryEvery):
 		}
 	}
 }
