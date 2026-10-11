@@ -267,6 +267,14 @@ def main():
     except BaseException:
         print("--- containers", flush=True)
         subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"], check=False)
+        for app_id in args.app_ids:
+            print(f"--- {app_id}: {json.dumps(api('GET', f'/apps/{app_id}')[1])[:1500]}", flush=True)
+        # What the engine says when asked to start a stopped app by hand.
+        stopped = subprocess.run(["docker", "ps", "-a", "--filter", "status=exited", "--format", "{{.Names}}"],
+                                 capture_output=True, text=True).stdout.split()
+        for name in [n for n in stopped if n.startswith("pando-app_")]:
+            print(f"--- docker start {name}", flush=True)
+            subprocess.run(["docker", "start", name], check=False)
         # Without the line every request writes, which a wait that polls an
         # app fills the tail with.
         print("--- pando logs, requests left out (last 150 lines)", flush=True)
