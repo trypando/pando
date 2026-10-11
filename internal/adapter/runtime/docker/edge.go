@@ -445,7 +445,7 @@ func (a *Adapter) ensureEdgeNetwork(ctx context.Context, alias string) (string, 
 		Container: self, EndpointConfig: &network.EndpointSettings{Aliases: aliases, GwPriority: joinedNetworkGwPriority},
 	})
 	switch {
-	case err == nil, strings.Contains(err.Error(), "already exists"):
+	case err == nil, alreadyAttached(err):
 		return networkID, true, nil
 	case cerrdefs.IsNotFound(err):
 		return networkID, false, nil

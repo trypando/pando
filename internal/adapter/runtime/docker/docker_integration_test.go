@@ -131,13 +131,8 @@ func TestR224_AnAnonymousVolumeGoesWithItsContainer(t *testing.T) {
 	ctx := context.Background()
 	a := adapter(t)
 
-	const img = "pando-it-anonymous-volume:latest"
-	build := exec.Command("docker", "build", "-q", "-t", img, "-")
-	build.Stdin = strings.NewReader("FROM alpine:3.20\nVOLUME /data\n")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Skipf("could not build the test image: %v %s", err, out)
-	}
-	t.Cleanup(func() { _, _ = dockerCLI("rmi", img) })
+	const img = "localhost/pando-it-anonymous-volume:latest"
+	buildTestImage(t, img, "FROM alpine:3.20\nVOLUME /data\n")
 
 	id := "test-anon-" + time.Now().Format("150405")
 	plan := bundle(id, nil)
@@ -589,6 +584,11 @@ func TestR023_ProxyRejoinsRunningAppsNetworksAfterItIsReplaced(t *testing.T) {
 // the API refused connections for a second or two, which is how the
 // acceptance suite came to report the server gone after its first deploy.
 func TestR023_JoiningAnAppsNetworkNeverMovesPandosDefaultRoute(t *testing.T) {
+	if onPodman {
+		t.Skip("Podman limitation: netavark gives every network a container joins a default route at the same metric, " +
+			"newest first, and ignores the gateway priority; its route metric option is not taken through the " +
+			"Docker-compatible API, and netavark 1.4 (Ubuntu 24.04) has none. Design 03, Podman (issue #179).")
+	}
 	ctx := context.Background()
 	stamp := time.Now().Format("150405")
 

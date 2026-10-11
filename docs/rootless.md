@@ -1,6 +1,6 @@
-# Running Pando on rootless Docker
+# Running Pando on rootless Docker or Podman
 
-On Linux, run Pando on rootless Docker (R-402). Pando's server holds the Docker socket so it can
+On Linux, run Pando on rootless Docker (R-402), or on rootless [Podman](#podman). Pando's server holds the Docker socket so it can
 start and stop apps, and whoever holds a socket controls that daemon. With rootful Docker, that
 means a compromise of Pando is root on the host. With rootless Docker, it is the unprivileged user
 the daemon runs as.
@@ -84,9 +84,123 @@ first deploy, not silently.
 
 ## Podman
 
-Pando's Docker adapter talks to rootless Podman through its Docker-compatible socket, but the adapter's
-tests do not pass against it yet, and it cannot tell whether Podman applies CPU limits. Use rootless
-Docker for now; issue #179 tracks Podman.
+Pando also runs on rootless Podman, through Podman's Docker-compatible socket. These steps are for
+Podman 4.9 on Ubuntu 24.04.
+
+### 1. Prepare the host
+
+As root, once:
+
+```bash
+# The account Podman and Pando will run as.
+sudo useradd --create-home --shell /bin/bash pando
+
+# More subordinate IDs than the 65,536 useradd gives: Pando's build container runs rootless
+# BuildKit, which maps IDs of its own inside the container. Any free range of 200,000 will do.
+sudo usermod --add-subuids 1000000-1199999 --add-subgids 1000000-1199999 pando
+
+# Pando's build container runs rootless BuildKit, which Ubuntu 24.04's confinement of unprivileged
+# user namespaces blocks.
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-rootless-podman.conf
+
+sudo apt-get update
+sudo apt-get install -y podman uidmap dbus-user-session
+
+# Docker's CLI and its Compose plugin, from Docker's apt repository, to run Pando's compose file
+# against Podman. Not Docker's daemon.
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt-get update
+sudo apt-get install -y docker-ce-cli docker-compose-plugin
+
+# Let the user's Podman apply CPU limits; systemd delegates only memory and pids by default.
+sudo mkdir -p /etc/systemd/system/user@.service.d
+printf '[Service]\nDelegate=cpu cpuset io memory pids\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf
+sudo systemctl daemon-reload
+
+sudo loginctl enable-linger pando
+```
+
+### 2. Start Podman's socket
+
+As that user, in a login session (`sudo machinectl shell pando@`):
+
+```bash
+podman system migrate   # takes up the new subordinate IDs, if this user has run Podman before
+systemctl --user enable --now podman.socket
+echo 'export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock' >> ~/.bashrc
+export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock
+podman info --format '{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}'
+```
+
+The last line should print `true` and a list that includes `cpu` and `memory`. If `cpu` is missing,
+run `sudo systemctl restart user@$(id -u pando).service` and log in again.
+
+### 3. Install Pando
+
+As the same user. Use the release's compose file, which names the published image: Compose cannot
+build Pando's image through Podman.
+
+```bash
+mkdir ~/pando && cd ~/pando
+curl -fsSLO https://github.com/trypando/pando/releases/latest/download/docker-compose.yml
+echo "PANDO_DOCKER_SOCKET=$XDG_RUNTIME_DIR/podman/podman.sock" >> .env   # usually /run/user/1000/podman/podman.sock
+docker compose up -d
+```
+
+### 4. Start Pando at boot
+
+Podman has no daemon to start containers again after a reboot, so a user service runs Compose:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/pando.service <<'EOF'
+[Unit]
+Description=Pando
+Requires=podman.socket
+After=podman.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%h/pando
+Environment=DOCKER_HOST=unix://%t/podman/podman.sock
+ExecStart=/usr/bin/docker compose up -d
+
+[Install]
+WantedBy=default.target
+EOF
+systemctl --user daemon-reload
+systemctl --user enable pando.service
+```
+
+Pando starts the apps it runs once it is up.
+
+### 5. Check
+
+As step 4 of the Docker steps: under **Installation**, **Capacity**, the Docker runtime's details
+show `rootless`, `cpu_limits` and `memory_limits` as `true`. Pando reads them from Podman's own
+`podman info`, and refuses to deploy while either limit would be dropped, saying how to delegate it.
+
+### What changes under Podman
+
+- **Ports 80 and 443** and **disk** are as under rootless Docker, below; Podman keeps images,
+  containers and volumes under `~/.local/share/containers`. Check one sign-in's address in the audit
+  log after installing, as there.
+- **Pando's own outbound connections.** Podman gives every network a container joins an equal
+  default route, so Pando's container sends its own traffic out (cloning repositories, for example)
+  through the most recently joined app's network. It still leaves through Podman's NAT, as Docker's
+  does; only the network differs.
+- **A registry without TLS.** Docker reads a registry on `127.0.0.1` as plain HTTP. Podman does not;
+  list it in `/etc/containers/registries.conf.d/` with `insecure = true`.
+- **`oci_runtime` is refused.** Podman's Docker-compatible API accepts a runtime such as gVisor and
+  does not apply it, so the sandboxed isolation class is Docker only.
+- **Changing an app's egress rules.** Pando replaces the app's egress gateway, and Podman 4.9's DNS
+  server can stop answering on the app's network when it does, so the app cannot reach the gateway
+  by name. Check that a restricted app still connects out after changing its rules.
 
 ## What changes under rootless Docker
 

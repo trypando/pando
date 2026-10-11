@@ -1,0 +1,3178 @@
+{
+  "categories": [
+    {
+      "category": "identity",
+      "kinds": [
+        {
+          "category": "identity",
+          "kind": "oidc",
+          "name": "OpenID Connect",
+          "description": "Sign in through any OpenID Connect provider: Okta, Microsoft Entra ID, Google Workspace, Keycloak, Authentik and others.",
+          "fields": [
+            {
+              "key": "issuer",
+              "label": "Issuer URL",
+              "help": "The provider's issuer. Pando reads <issuer>/.well-known/openid-configuration for the rest.",
+              "type": "string",
+              "required": true,
+              "placeholder": "https://example.okta.com"
+            },
+            {
+              "key": "client_id",
+              "label": "Client ID",
+              "help": "The client ID of the web application you registered for Pando.",
+              "type": "string",
+              "required": true
+            },
+            {
+              "key": "client_secret",
+              "label": "Client secret",
+              "help": "The application's client secret. Stored encrypted and never shown again.",
+              "type": "string",
+              "credential": true
+            },
+            {
+              "key": "scopes",
+              "label": "Scopes",
+              "help": "Space-separated. Add groups if your provider needs a scope to send them.",
+              "type": "string",
+              "default": "openid email profile"
+            },
+            {
+              "key": "groups_claim",
+              "label": "Groups claim",
+              "help": "The claim that lists the person's groups. Each one becomes a synced group in Pando.",
+              "type": "string",
+              "default": "groups"
+            },
+            {
+              "key": "subject_claim",
+              "label": "Subject claim",
+              "help": "The claim that identifies a person and never changes. Microsoft Entra ID needs oid.",
+              "type": "string",
+              "default": "sub"
+            },
+            {
+              "key": "username_claim",
+              "label": "Username claim",
+              "help": "The claim holding the person's username in Pando.",
+              "type": "string",
+              "default": "preferred_username"
+            },
+            {
+              "key": "email_claim",
+              "label": "Email claim",
+              "help": "The claim holding the person's email address.",
+              "type": "string",
+              "default": "email"
+            },
+            {
+              "key": "name_claim",
+              "label": "Name claim",
+              "help": "The claim holding the person's display name. When it is empty, given_name and family_name are used.",
+              "type": "string",
+              "default": "name"
+            },
+            {
+              "key": "hosted_domain",
+              "label": "Google Workspace domain",
+              "help": "Only accept Google accounts from this domain. Without it, anyone with a Google account can sign in.",
+              "type": "string",
+              "placeholder": "example.com"
+            },
+            {
+              "key": "prompt",
+              "label": "Prompt",
+              "help": "Ask the provider to always show its sign-in form or account chooser.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "",
+                  "label": "Provider's choice"
+                },
+                {
+                  "value": "login",
+                  "label": "Always ask for credentials"
+                },
+                {
+                  "value": "select_account",
+                  "label": "Always offer an account choice"
+                }
+              ]
+            },
+            {
+              "key": "disable_userinfo",
+              "label": "Skip the userinfo endpoint",
+              "help": "Use only the ID token's claims. By default Pando fills in missing claims from userinfo.",
+              "type": "bool"
+            },
+            {
+              "key": "session_max_lifetime",
+              "label": "Session length",
+              "help": "How long a sign-in lasts. Without SCIM this is also how long access can outlive its removal at the provider.",
+              "type": "string",
+              "default": "12h"
+            }
+          ],
+          "id_prefix": "idp_",
+          "presets": [
+            {
+              "id": "okta",
+              "label": "Okta",
+              "help": "In Okta, create an OIDC Web Application, set its sign-in redirect URI to the one Pando shows, and assign it to people. Add a groups claim (Filter: Matches regex .*) to send groups.",
+              "values": {
+                "groups_claim": "groups",
+                "issuer": "https://{your-okta-domain}",
+                "scopes": "openid email profile groups"
+              }
+            },
+            {
+              "id": "entra",
+              "label": "Microsoft Entra ID",
+              "help": "In Entra, register an application with a Web redirect URI set to the one Pando shows, create a client secret, and add the groups claim under Token configuration. Entra does not vouch for email addresses, so accounts are never linked by email.",
+              "values": {
+                "groups_claim": "groups",
+                "issuer": "https://login.microsoftonline.com/{tenant-id}/v2.0",
+                "scopes": "openid email profile",
+                "subject_claim": "oid"
+              }
+            },
+            {
+              "id": "google",
+              "label": "Google Workspace",
+              "help": "In Google Cloud, create an OAuth client of type Web application with the redirect URI Pando shows. Google sends no groups; use SCIM or Pando groups for access.",
+              "values": {
+                "hosted_domain": "{your-domain.com}",
+                "issuer": "https://accounts.google.com",
+                "scopes": "openid email profile"
+              }
+            },
+            {
+              "id": "keycloak",
+              "label": "Keycloak",
+              "help": "In the realm, create an OpenID Connect client with client authentication on and the redirect URI Pando shows. Add a Group Membership mapper named groups, with Full group path off.",
+              "values": {
+                "groups_claim": "groups",
+                "issuer": "https://{keycloak-host}/realms/{realm}"
+              }
+            },
+            {
+              "id": "authentik",
+              "label": "Authentik",
+              "help": "Create an OAuth2/OpenID Provider with a confidential client and the redirect URI Pando shows, and an application using it. Authentik sends groups in the profile scope.",
+              "values": {
+                "groups_claim": "groups",
+                "issuer": "https://{authentik-host}/application/o/{application-slug}/"
+              }
+            }
+          ]
+        },
+        {
+          "category": "identity",
+          "kind": "saml",
+          "name": "SAML 2.0",
+          "description": "Sign in through a SAML 2.0 identity provider. Pando publishes its own metadata for the provider to import.",
+          "fields": [
+            {
+              "key": "idp_metadata_url",
+              "label": "Provider metadata URL",
+              "help": "Where the provider publishes this application's metadata. Pando re-reads it daily, so certificate rollovers are followed.",
+              "type": "string",
+              "placeholder": "https://example.okta.com/app/…/sso/saml/metadata"
+            },
+            {
+              "key": "idp_metadata_xml",
+              "label": "Provider metadata XML",
+              "help": "Or paste the metadata instead of giving a URL.",
+              "type": "string",
+              "multiline": true
+            },
+            {
+              "key": "name_id_format",
+              "label": "NameID format",
+              "help": "What Pando asks the provider to identify people by. The NameID must never change for a person.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "",
+                  "label": "Unspecified",
+                  "description": "Whatever the provider is set to send."
+                },
+                {
+                  "value": "persistent",
+                  "label": "Persistent",
+                  "description": "An opaque ID that never changes."
+                },
+                {
+                  "value": "email",
+                  "label": "Email address"
+                }
+              ]
+            },
+            {
+              "key": "groups_attribute",
+              "label": "Groups attribute",
+              "help": "The attribute listing the person's groups. Empty tries groups, memberOf, member and Microsoft's groups claim.",
+              "type": "string"
+            },
+            {
+              "key": "subject_attribute",
+              "label": "Subject attribute",
+              "help": "Identify people by this attribute instead of the NameID.",
+              "type": "string"
+            },
+            {
+              "key": "email_attribute",
+              "label": "Email attribute",
+              "help": "Empty tries email, mail and Microsoft's emailaddress claim.",
+              "type": "string"
+            },
+            {
+              "key": "name_attribute",
+              "label": "Name attribute",
+              "help": "Empty tries displayName, name, and first and last name.",
+              "type": "string"
+            },
+            {
+              "key": "username_attribute",
+              "label": "Username attribute",
+              "help": "The attribute holding the person's username in Pando. Empty tries username, uid, login and Microsoft's name claim.",
+              "type": "string"
+            },
+            {
+              "key": "trust_email",
+              "label": "The provider's email addresses are verified",
+              "help": "Only if people cannot set their own email in the provider. Needed to link accounts by email.",
+              "type": "bool"
+            },
+            {
+              "key": "allow_idp_initiated",
+              "label": "Allow sign-in from the provider's dashboard",
+              "help": "Off is safer: a sign-in the provider starts is not tied to the browser that presents it.",
+              "type": "bool"
+            },
+            {
+              "key": "session_max_lifetime",
+              "label": "Session length",
+              "help": "How long a sign-in lasts. Without SCIM this is also how long access can outlive its removal at the provider.",
+              "type": "string",
+              "default": "12h"
+            }
+          ],
+          "id_prefix": "idp_",
+          "presets": [
+            {
+              "id": "okta",
+              "label": "Okta",
+              "help": "In Okta, create a SAML 2.0 app. Single sign-on URL is Pando's ACS URL; Audience URI is Pando's entity ID. Add attribute statements email, displayName, and a group attribute statement groups (Matches regex .*). Then paste the app's Metadata URL here.",
+              "values": {
+                "groups_attribute": "groups",
+                "name_id_format": "persistent",
+                "trust_email": "true"
+              }
+            },
+            {
+              "id": "entra",
+              "label": "Microsoft Entra ID",
+              "help": "In Entra, create an enterprise application with SAML. Identifier is Pando's entity ID, Reply URL is the ACS URL. Add a group claim. Paste the App Federation Metadata Url here.",
+              "values": {
+                "groups_attribute": "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"
+              }
+            },
+            {
+              "id": "google",
+              "label": "Google Workspace",
+              "help": "In the Admin console, add a custom SAML app. ACS URL and Entity ID are Pando's. Map Primary email to email and group membership to groups. Download the IdP metadata and paste it here.",
+              "values": {
+                "groups_attribute": "groups",
+                "name_id_format": "email",
+                "trust_email": "true"
+              }
+            },
+            {
+              "id": "keycloak",
+              "label": "Keycloak",
+              "help": "Create a SAML client whose Client ID is Pando's entity ID and whose valid redirect URI is the ACS URL. Add a Group list mapper named groups. The metadata is at /realms/<realm>/protocol/saml/descriptor.",
+              "values": {
+                "groups_attribute": "groups",
+                "idp_metadata_url": "https://{keycloak-host}/realms/{realm}/protocol/saml/descriptor",
+                "name_id_format": "persistent"
+              }
+            },
+            {
+              "id": "authentik",
+              "label": "Authentik",
+              "help": "Create a SAML Provider with Pando's ACS URL and entity ID as audience, and an application using it. Its metadata can be downloaded from the provider page.",
+              "values": {
+                "groups_attribute": "http://schemas.xmlsoap.org/claims/Group"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "category": "routing",
+      "kinds": [
+        {
+          "category": "routing",
+          "kind": "cloudflare",
+          "name": "Cloudflare Tunnel",
+          "description": "Gives apps their own hostnames through a Cloudflare Tunnel. Nothing on this machine needs to be reachable from the internet, and Cloudflare issues the certificates.",
+          "fields": [
+            {
+              "key": "api_token",
+              "label": "API token",
+              "help": "In Cloudflare, go to My Profile, API Tokens, Create Token, Create Custom Token. Permissions: Account / Cloudflare Tunnel / Edit; Zone / DNS / Edit; Zone / Zone / Read. Account Resources: your account. Zone Resources: the zone below. Pando uses it to create the tunnel and to point each app's hostname at it.",
+              "type": "string",
+              "required": true,
+              "credential": true
+            },
+            {
+              "key": "account_id",
+              "label": "Account ID",
+              "help": "Shown on the account's overview page in Cloudflare's dashboard.",
+              "type": "string",
+              "required": true,
+              "placeholder": "0123456789abcdef0123456789abcdef"
+            },
+            {
+              "key": "zone",
+              "label": "Zone",
+              "help": "Your domain in Cloudflare. Apps are served at <app>.<zone>.",
+              "type": "string",
+              "required": true,
+              "placeholder": "example.com"
+            },
+            {
+              "key": "console_hostname",
+              "label": "Console hostname",
+              "help": "Where the console is served, and the hostname apps on a path are served under. Empty is the zone itself.",
+              "type": "string",
+              "placeholder": "pando.example.com"
+            },
+            {
+              "key": "tunnel_id",
+              "label": "Existing tunnel",
+              "help": "Leave empty and Pando creates a tunnel of its own. Or give a tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
+              "type": "string",
+              "advanced": true,
+              "default": "A tunnel of Pando's own",
+              "placeholder": "6ff42ae2-765d-4adf-8112-31c55c1551ef"
+            },
+            {
+              "key": "image",
+              "label": "cloudflared image",
+              "help": "Set to run a different cloudflared release than this Pando ships with.",
+              "type": "string",
+              "advanced": true,
+              "default": "cloudflare/cloudflared:2025.1.0"
+            }
+          ],
+          "id_prefix": "rte_"
+        },
+        {
+          "category": "routing",
+          "kind": "loopback",
+          "name": "Built in",
+          "description": "Serves apps from Pando itself, on a path or a port.",
+          "fields": [
+            {
+              "key": "base_url",
+              "label": "Base URL",
+              "help": "The address apps are reached at.",
+              "type": "string",
+              "default": "The address each request arrives on"
+            }
+          ],
+          "id_prefix": "rte_"
+        },
+        {
+          "category": "routing",
+          "kind": "traefik",
+          "name": "Traefik",
+          "description": "Gives apps their own hostnames through a Traefik Pando runs on ports 80 and 443, with certificates.",
+          "fields": [
+            {
+              "key": "base_domain",
+              "label": "Base domain",
+              "help": "Apps are served at <app>.<base domain>. Point this domain and *.<base domain> at this machine.",
+              "type": "string",
+              "placeholder": "apps.example.com"
+            },
+            {
+              "key": "console_hostname",
+              "label": "Console hostname",
+              "help": "Where the console is served over HTTPS. Any hostname pointed at this machine that is not an app's shows the console; this is the one a certificate is issued for.",
+              "type": "string",
+              "placeholder": "pando.example.com"
+            },
+            {
+              "key": "certificates",
+              "label": "Certificates",
+              "type": "select",
+              "options": [
+                {
+                  "value": "http",
+                  "label": "One per hostname",
+                  "description": "Let's Encrypt checks each hostname over port 80, which has to be reachable from the internet."
+                },
+                {
+                  "value": "dns",
+                  "label": "One wildcard for the base domain",
+                  "description": "Covers every app before it exists. Needs your DNS provider's credentials."
+                },
+                {
+                  "value": "none",
+                  "label": "None",
+                  "description": "Apps are served over plain HTTP on port 80."
+                }
+              ],
+              "default": "none"
+            },
+            {
+              "key": "acme_email",
+              "label": "Certificate email",
+              "help": "The address Let's Encrypt registers the certificates to.",
+              "type": "string",
+              "shown_when": {
+                "key": "certificates",
+                "values": [
+                  "http",
+                  "dns"
+                ]
+              },
+              "placeholder": "ops@example.com"
+            },
+            {
+              "key": "dns_provider",
+              "label": "DNS provider",
+              "help": "Who hosts the base domain's DNS. Choose Other for any provider Traefik supports, and enter its code, such as gcloud or ovh.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "cloudflare",
+                  "label": "Cloudflare"
+                },
+                {
+                  "value": "route53",
+                  "label": "Amazon Route 53"
+                },
+                {
+                  "value": "digitalocean",
+                  "label": "DigitalOcean"
+                },
+                {
+                  "value": "porkbun",
+                  "label": "Porkbun"
+                },
+                {
+                  "value": "namecheap",
+                  "label": "Namecheap"
+                }
+              ],
+              "other": true,
+              "shown_when": {
+                "key": "certificates",
+                "values": [
+                  "dns"
+                ]
+              }
+            },
+            {
+              "key": "dns_credentials",
+              "label": "DNS provider credentials",
+              "help": "One NAME=value per line. Cloudflare: CF_DNS_API_TOKEN, or CF_API_EMAIL and CF_API_KEY. Amazon Route 53: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. DigitalOcean: DO_AUTH_TOKEN. Porkbun: PORKBUN_API_KEY and PORKBUN_SECRET_API_KEY. Namecheap: NAMECHEAP_API_USER and NAMECHEAP_API_KEY. For another provider, the variables Traefik's documentation lists for it.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "certificates",
+                "values": [
+                  "dns"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "managed",
+              "label": "Pando runs Traefik",
+              "help": "Off if this machine already runs a Traefik that should serve Pando's apps. Pando then only writes route files into the directory that Traefik watches.",
+              "type": "bool",
+              "default": "true"
+            },
+            {
+              "key": "http_port",
+              "label": "HTTP port",
+              "help": "The host port Traefik takes for HTTP.",
+              "type": "int",
+              "shown_when": {
+                "key": "managed",
+                "values": [
+                  "true"
+                ]
+              },
+              "advanced": true,
+              "default": "80"
+            },
+            {
+              "key": "https_port",
+              "label": "HTTPS port",
+              "help": "The host port Traefik takes for HTTPS.",
+              "type": "int",
+              "shown_when": {
+                "key": "managed",
+                "values": [
+                  "true"
+                ]
+              },
+              "advanced": true,
+              "default": "443"
+            },
+            {
+              "key": "image",
+              "label": "Traefik image",
+              "help": "Set to run a different Traefik release than this Pando ships with.",
+              "type": "string",
+              "shown_when": {
+                "key": "managed",
+                "values": [
+                  "true"
+                ]
+              },
+              "advanced": true,
+              "default": "traefik:v3.2"
+            },
+            {
+              "key": "delivery",
+              "label": "Route delivery",
+              "help": "How routes reach Traefik. Use IngressRoutes with the Kubernetes runtime.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "shared_mount",
+                  "label": "Files",
+                  "description": "Route files in a directory Traefik mounts. The Docker runtime."
+                },
+                {
+                  "value": "kubernetes_api",
+                  "label": "IngressRoutes",
+                  "description": "IngressRoute objects Traefik watches in the cluster's API. The Kubernetes runtime."
+                }
+              ],
+              "advanced": true,
+              "default": "shared_mount"
+            },
+            {
+              "key": "namespace",
+              "label": "IngressRoute namespace",
+              "help": "The namespace Pando writes IngressRoute objects to, which Traefik watches.",
+              "type": "string",
+              "shown_when": {
+                "key": "delivery",
+                "values": [
+                  "kubernetes_api"
+                ]
+              },
+              "advanced": true,
+              "default": "pando-edge"
+            },
+            {
+              "key": "kubeconfig",
+              "label": "Kubeconfig file",
+              "help": "A kubeconfig file, for reaching the cluster from outside it.",
+              "type": "string",
+              "shown_when": {
+                "key": "delivery",
+                "values": [
+                  "kubernetes_api"
+                ]
+              },
+              "advanced": true,
+              "default": "The cluster Pando runs in"
+            },
+            {
+              "key": "api_qps",
+              "label": "API requests a second",
+              "help": "The most requests a second each Pando replica makes to the cluster's API for routes.",
+              "type": "int",
+              "shown_when": {
+                "key": "delivery",
+                "values": [
+                  "kubernetes_api"
+                ]
+              },
+              "advanced": true,
+              "default": "100"
+            },
+            {
+              "key": "api_burst",
+              "label": "API request burst",
+              "help": "How many requests a replica may make at once above that rate. At least the requests a second.",
+              "type": "int",
+              "shown_when": {
+                "key": "delivery",
+                "values": [
+                  "kubernetes_api"
+                ]
+              },
+              "advanced": true,
+              "default": "200"
+            },
+            {
+              "key": "dir",
+              "label": "Configuration directory",
+              "help": "Where Pando writes Traefik's route files.",
+              "type": "string",
+              "advanced": true,
+              "default": "/etc/traefik/dynamic"
+            },
+            {
+              "key": "entrypoint",
+              "label": "Entry point",
+              "help": "The entry point of your Traefik that apps are served on.",
+              "type": "string",
+              "shown_when": {
+                "key": "managed",
+                "values": [
+                  "false"
+                ]
+              },
+              "advanced": true,
+              "default": "websecure"
+            },
+            {
+              "key": "cert_resolver",
+              "label": "Certificate resolver",
+              "help": "The certificate resolver your Traefik has configured.",
+              "type": "string",
+              "shown_when": {
+                "key": "managed",
+                "values": [
+                  "false"
+                ]
+              },
+              "placeholder": "letsencrypt"
+            }
+          ],
+          "id_prefix": "rte_"
+        }
+      ]
+    },
+    {
+      "category": "builder",
+      "kinds": [
+        {
+          "category": "builder",
+          "kind": "buildkit",
+          "name": "BuildKit",
+          "description": "Builds images from source in an isolated BuildKit daemon.",
+          "fields": [
+            {
+              "key": "address",
+              "label": "BuildKit address",
+              "help": "Where the BuildKit daemon listens. PANDO_BUILDKIT_ADDRESS is used when this is empty.",
+              "type": "string",
+              "advanced": true,
+              "default": "tcp://buildkit:1234"
+            }
+          ],
+          "id_prefix": "bld_"
+        }
+      ]
+    },
+    {
+      "category": "runtime",
+      "kinds": [
+        {
+          "category": "runtime",
+          "kind": "docker",
+          "name": "Docker",
+          "description": "Runs apps as containers on a Docker host.",
+          "fields": [
+            {
+              "key": "host",
+              "label": "Docker host",
+              "help": "The Docker endpoint. Empty uses the environment, which the bundled Compose file relies on.",
+              "type": "string",
+              "advanced": true,
+              "default": "DOCKER_HOST, or the local socket"
+            },
+            {
+              "key": "total_cpu_millis",
+              "label": "CPU available",
+              "help": "Thousandths of a core Pando may allocate.",
+              "type": "int",
+              "advanced": true,
+              "default": "The whole machine"
+            },
+            {
+              "key": "total_memory_bytes",
+              "label": "Memory available",
+              "help": "Bytes Pando may allocate.",
+              "type": "int",
+              "advanced": true,
+              "default": "The whole machine"
+            },
+            {
+              "key": "total_disk_bytes",
+              "label": "Disk available",
+              "help": "Bytes of disk Pando may allocate.",
+              "type": "int",
+              "advanced": true,
+              "default": "No limit"
+            },
+            {
+              "key": "network_pool",
+              "label": "App network range",
+              "help": "The IPv4 range each app's private network takes its addresses from. A /16 holds about 4,000 apps; a wider range such as 10.208.0.0/12 holds more. \"off\" uses Docker's own pool, which holds about 30 networks.",
+              "type": "string",
+              "advanced": true,
+              "default": "10.213.0.0/16"
+            },
+            {
+              "key": "network_block_bits",
+              "label": "App network size",
+              "help": "The size of each app's private network, as a prefix length from 24 to 29. 28 holds 13 containers; an app with more workloads than fit gets a larger network.",
+              "type": "int",
+              "advanced": true,
+              "default": "28"
+            },
+            {
+              "key": "egress_gateway_image",
+              "label": "Egress gateway image",
+              "help": "The image an app's egress gateway runs from when its egress rules restrict anything: any image with Pando's binary at /usr/local/bin/pando. Without one, and with Pando not running in a container, apps whose egress is restricted cannot be deployed.",
+              "type": "string",
+              "advanced": true,
+              "default": "The image Pando's own container runs"
+            },
+            {
+              "key": "oci_runtime",
+              "label": "Container runtime",
+              "help": "The runtime Docker starts apps with, by the name it is registered under in daemon.json. \"runsc\" (gVisor) or a Kata runtime makes this a sandboxed runtime, which host policy can require; the port and file-write checks when an app is added then cannot see inside the sandbox, so Pando asks for the port instead.",
+              "type": "string",
+              "advanced": true,
+              "default": "Docker's default, runc"
+            }
+          ],
+          "id_prefix": "rt_"
+        },
+        {
+          "category": "runtime",
+          "kind": "docker-hosts",
+          "name": "Docker on several hosts",
+          "description": "Runs apps as containers on several Docker hosts. Each app is placed on one host and stays there: a new app goes to the host with the most free memory that fits it. Pando reaches each host's apps through a forwarding agent it runs there, which accepts only Pando's certificate. Built images reach the hosts through the install's image registry.",
+          "fields": [
+            {
+              "key": "hosts",
+              "label": "Hosts",
+              "help": "The hosts as a JSON list. Each has a name; an endpoint (unix:///var/run/docker.sock, tcp://host:2376 with the Docker TLS credential, or ssh://user@host with the SSH key and the host's ssh_host_key); an agent_address where Pando reaches the host's agent; and optionally no_placement to keep new apps off it. Exactly one is \"control\": true, the host Pando runs on.",
+              "type": "string",
+              "multiline": true,
+              "required": true,
+              "placeholder": "[{\"name\":\"control\",\"control\":true,\"agent_address\":\"10.0.0.5:7443\"},{\"name\":\"app-1\",\"endpoint\":\"tcp://10.0.0.6:2376\"}]"
+            },
+            {
+              "key": "agent_authority",
+              "label": "Agent certificate authority",
+              "help": "The output of `pando host-agent new-authority`. Pando issues its own certificate and each agent's from it.",
+              "type": "string",
+              "multiline": true,
+              "required": true,
+              "credential": true
+            },
+            {
+              "key": "docker_tls",
+              "label": "Docker TLS client certificate",
+              "help": "For tcp:// hosts: the CA (ca.pem), the client certificate (cert.pem) and its key (key.pem), pasted together.",
+              "type": "string",
+              "multiline": true,
+              "credential": true
+            },
+            {
+              "key": "ssh_key",
+              "label": "SSH private key",
+              "help": "For ssh:// hosts: an unencrypted private key for a user in the docker group, or root.",
+              "type": "string",
+              "multiline": true,
+              "credential": true
+            },
+            {
+              "key": "agent_image",
+              "label": "Agent image",
+              "help": "The image of Pando each host's agent and each restricted app's egress gateway run. Every host must be able to pull it.",
+              "type": "string",
+              "advanced": true,
+              "default": "The image Pando's own container runs"
+            },
+            {
+              "key": "agent_port",
+              "label": "Agent port",
+              "help": "The one port each host publishes, for its agent. Restrict it to the control host's address with the host's firewall.",
+              "type": "int",
+              "advanced": true,
+              "default": "7443"
+            },
+            {
+              "key": "network_pool",
+              "label": "App network range",
+              "help": "The IPv4 range each host's app networks take their addresses from. Each host uses the whole range for its own apps. Cannot be \"off\" here.",
+              "type": "string",
+              "advanced": true,
+              "default": "10.213.0.0/16"
+            },
+            {
+              "key": "network_block_bits",
+              "label": "App network size",
+              "help": "The size of each app's private network, as a prefix length from 24 to 29.",
+              "type": "int",
+              "advanced": true,
+              "default": "28"
+            },
+            {
+              "key": "oci_runtime",
+              "label": "Container runtime",
+              "help": "The runtime every host's Docker starts apps with, by the name it is registered under in daemon.json, such as runsc.",
+              "type": "string",
+              "advanced": true,
+              "default": "Docker's default, runc"
+            }
+          ],
+          "id_prefix": "rt_"
+        },
+        {
+          "category": "runtime",
+          "kind": "kubernetes",
+          "name": "Kubernetes",
+          "description": "Runs apps as pods on the Kubernetes cluster Pando runs in, one namespace per app.",
+          "fields": [
+            {
+              "key": "pod_cidr",
+              "label": "Pod address range",
+              "help": "The range the cluster gives pods. Apps may open connections out of the cluster, never into this range.",
+              "type": "string",
+              "required": true,
+              "placeholder": "10.244.0.0/16"
+            },
+            {
+              "key": "service_cidr",
+              "label": "Service address range",
+              "help": "The range the cluster gives Services. Apps may not open connections into it.",
+              "type": "string",
+              "required": true,
+              "placeholder": "10.96.0.0/12"
+            },
+            {
+              "key": "egress_gateway_image",
+              "label": "Egress gateway image",
+              "help": "An image with Pando's binary at /usr/local/bin/pando, run in front of an app whose egress rules restrict anything. Without one, such apps cannot be deployed.",
+              "type": "string",
+              "placeholder": "ghcr.io/trypando/pando:latest"
+            },
+            {
+              "key": "kubeconfig",
+              "label": "Kubeconfig file",
+              "help": "A kubeconfig file, for running Pando outside the cluster during development. Pando's proxy reaches apps by cluster DNS names, so in production Pando runs inside the cluster.",
+              "type": "string",
+              "advanced": true,
+              "default": "The cluster Pando runs in"
+            },
+            {
+              "key": "context",
+              "label": "Kubeconfig context",
+              "help": "The context in the kubeconfig file to use.",
+              "type": "string",
+              "advanced": true,
+              "default": "The file's current context"
+            },
+            {
+              "key": "pando_namespace",
+              "label": "Pando's namespace",
+              "help": "Where Pando's server pods run. Apps admit connections only from Pando's server pods in this namespace.",
+              "type": "string",
+              "advanced": true,
+              "default": "pando"
+            },
+            {
+              "key": "pando_service",
+              "label": "Pando's Service",
+              "help": "The Service in front of Pando's server pods, in Pando's namespace. The edge sends traffic to it.",
+              "type": "string",
+              "advanced": true,
+              "default": "pando"
+            },
+            {
+              "key": "service_account",
+              "label": "Pando's ServiceAccount",
+              "help": "The ServiceAccount Pando's server pods run as, in Pando's namespace. It is bound to the app namespace role in each app namespace.",
+              "type": "string",
+              "advanced": true,
+              "default": "pando"
+            },
+            {
+              "key": "proxy_port",
+              "label": "Proxy port",
+              "help": "The port Pando's proxy listens on in its pods.",
+              "type": "int",
+              "advanced": true,
+              "default": "8080"
+            },
+            {
+              "key": "app_role",
+              "label": "App namespace role",
+              "help": "The ClusterRole bound to Pando's ServiceAccount in each app namespace.",
+              "type": "string",
+              "advanced": true,
+              "default": "pando-app-manager"
+            },
+            {
+              "key": "cluster_domain",
+              "label": "Cluster domain",
+              "help": "The cluster's DNS domain, which Service names end in.",
+              "type": "string",
+              "advanced": true,
+              "default": "cluster.local"
+            },
+            {
+              "key": "api_server_cidr",
+              "label": "API server address",
+              "help": "Only needed when the API server's address is inside the pod or Service range: the edge reads its routes from it.",
+              "type": "string",
+              "advanced": true,
+              "default": "Reached by the rule for addresses outside the cluster"
+            },
+            {
+              "key": "storage_class",
+              "label": "Storage class",
+              "help": "The StorageClass app volumes are made with.",
+              "type": "string",
+              "advanced": true,
+              "default": "The cluster's default class"
+            },
+            {
+              "key": "volume_size_bytes",
+              "label": "Volume size",
+              "help": "Bytes for a volume whose app does not say how large it is.",
+              "type": "int",
+              "advanced": true,
+              "default": "10737418240 (10 GiB)"
+            },
+            {
+              "key": "runtime_class",
+              "label": "RuntimeClass",
+              "help": "A RuntimeClass to run apps under. One whose handler is gVisor (runsc) or Kata makes this a sandboxed runtime, which host policy can require.",
+              "type": "string",
+              "advanced": true,
+              "default": "The cluster's default"
+            },
+            {
+              "key": "node_selector",
+              "label": "Node selector",
+              "help": "Run apps only on nodes with these labels, as key=value pairs separated by commas.",
+              "type": "string",
+              "advanced": true,
+              "default": "Every schedulable node"
+            },
+            {
+              "key": "helper_image",
+              "label": "Helper image",
+              "help": "Runs the network policy check, the port observer and volume backups. Any image with a shell, tar, wget and httpd.",
+              "type": "string",
+              "advanced": true,
+              "default": "busybox:1.37"
+            },
+            {
+              "key": "api_qps",
+              "label": "API requests a second",
+              "help": "The most requests a second each Pando replica makes to the cluster's API.",
+              "type": "int",
+              "advanced": true,
+              "default": "200"
+            },
+            {
+              "key": "api_burst",
+              "label": "API request burst",
+              "help": "How many requests a replica may make at once above that rate. At least the requests a second.",
+              "type": "int",
+              "advanced": true,
+              "default": "400"
+            },
+            {
+              "key": "edge_namespace",
+              "label": "Edge namespace",
+              "help": "The namespace the edge runs in: the Traefik that takes ports 80 and 443 and passes traffic to Pando.",
+              "type": "string",
+              "advanced": true,
+              "default": "pando-edge"
+            },
+            {
+              "key": "edge_replicas",
+              "label": "Edge replicas",
+              "help": "How many copies of the edge run, spread across nodes. At least 2.",
+              "type": "int",
+              "advanced": true,
+              "default": "2"
+            },
+            {
+              "key": "edge_service_type",
+              "label": "Edge Service type",
+              "type": "select",
+              "options": [
+                {
+                  "value": "LoadBalancer",
+                  "label": "LoadBalancer",
+                  "description": "The cluster's load balancer publishes ports 80 and 443."
+                },
+                {
+                  "value": "NodePort",
+                  "label": "NodePort",
+                  "description": "Every node listens on the node ports below, and a load balancer outside the cluster points at them."
+                }
+              ],
+              "advanced": true,
+              "default": "LoadBalancer"
+            },
+            {
+              "key": "edge_http_node_port",
+              "label": "Edge HTTP node port",
+              "help": "The port every node listens on for the edge's HTTP.",
+              "type": "int",
+              "shown_when": {
+                "key": "edge_service_type",
+                "values": [
+                  "NodePort"
+                ]
+              },
+              "advanced": true,
+              "default": "30080"
+            },
+            {
+              "key": "edge_https_node_port",
+              "label": "Edge HTTPS node port",
+              "help": "The port every node listens on for the edge's HTTPS.",
+              "type": "int",
+              "shown_when": {
+                "key": "edge_service_type",
+                "values": [
+                  "NodePort"
+                ]
+              },
+              "advanced": true,
+              "default": "30443"
+            }
+          ],
+          "id_prefix": "rt_"
+        }
+      ]
+    },
+    {
+      "category": "secrets",
+      "kinds": [
+        {
+          "category": "secrets",
+          "kind": "local",
+          "name": "Local",
+          "description": "Keeps secrets encrypted in Pando’s own database.",
+          "fields": [
+            {
+              "key": "key_path",
+              "label": "Key file",
+              "help": "The file holding the encryption key.",
+              "type": "string",
+              "advanced": true,
+              "default": "/var/lib/pando/secrets.key"
+            }
+          ],
+          "id_prefix": "sek_"
+        }
+      ]
+    },
+    {
+      "category": "services",
+      "kinds": [
+        {
+          "category": "services",
+          "kind": "docker",
+          "name": "Docker",
+          "description": "Provisions the databases and caches apps declare, as containers.",
+          "fields": [],
+          "id_prefix": "svcs_"
+        }
+      ]
+    },
+    {
+      "category": "notify",
+      "kinds": [
+        {
+          "category": "notify",
+          "kind": "console",
+          "name": "Console",
+          "description": "Shows notifications in the console.",
+          "fields": [
+            {
+              "key": "retain_days",
+              "label": "Keep for",
+              "help": "Days a notification is kept.",
+              "type": "int",
+              "advanced": true,
+              "default": "30"
+            }
+          ],
+          "id_prefix": "ntf_"
+        },
+        {
+          "category": "notify",
+          "kind": "discord",
+          "name": "Discord",
+          "description": "Posts the events a subscription chooses to a Discord channel, through a channel webhook.",
+          "fields": [
+            {
+              "key": "webhook_url",
+              "label": "Webhook URL",
+              "help": "The webhook URL from the Discord channel's Integrations settings. Stored encrypted and never shown again.",
+              "type": "string",
+              "required": true,
+              "credential": true,
+              "placeholder": "https://discord.com/api/webhooks/…"
+            },
+            {
+              "key": "timeout_seconds",
+              "label": "Timeout",
+              "help": "Seconds to wait for Discord to answer.",
+              "type": "int",
+              "advanced": true,
+              "default": "10"
+            }
+          ],
+          "id_prefix": "ntf_"
+        },
+        {
+          "category": "notify",
+          "kind": "ntfy",
+          "name": "ntfy",
+          "description": "Publishes the events a subscription chooses to an ntfy topic, on ntfy.sh or your own server, for push notifications on a phone or desktop.",
+          "fields": [
+            {
+              "key": "topic",
+              "label": "Topic",
+              "help": "The topic to publish to. On ntfy.sh anyone who knows a topic's name can read it, so pick one nobody would guess. Stored encrypted.",
+              "type": "string",
+              "required": true,
+              "credential": true,
+              "placeholder": "pando-alerts-7f3k"
+            },
+            {
+              "key": "server_url",
+              "label": "Server",
+              "help": "The ntfy server.",
+              "type": "string",
+              "default": "https://ntfy.sh"
+            },
+            {
+              "key": "access_token",
+              "label": "Access token",
+              "help": "A token for a server that requires one. Stored encrypted and never shown again.",
+              "type": "string",
+              "credential": true
+            },
+            {
+              "key": "priority",
+              "label": "Priority",
+              "help": "How insistently the phone announces a message.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "min",
+                  "label": "Min"
+                },
+                {
+                  "value": "low",
+                  "label": "Low"
+                },
+                {
+                  "value": "default",
+                  "label": "Default"
+                },
+                {
+                  "value": "high",
+                  "label": "High"
+                },
+                {
+                  "value": "urgent",
+                  "label": "Urgent"
+                }
+              ],
+              "advanced": true,
+              "default": "default"
+            },
+            {
+              "key": "timeout_seconds",
+              "label": "Timeout",
+              "help": "Seconds to wait for the server to answer.",
+              "type": "int",
+              "advanced": true,
+              "default": "10"
+            }
+          ],
+          "id_prefix": "ntf_"
+        },
+        {
+          "category": "notify",
+          "kind": "slack",
+          "name": "Slack",
+          "description": "Posts the events a subscription chooses to a Slack channel, through an incoming webhook.",
+          "fields": [
+            {
+              "key": "webhook_url",
+              "label": "Webhook URL",
+              "help": "The incoming webhook URL Slack gives you for the channel. Stored encrypted and never shown again.",
+              "type": "string",
+              "required": true,
+              "credential": true,
+              "placeholder": "https://hooks.slack.com/services/…"
+            },
+            {
+              "key": "timeout_seconds",
+              "label": "Timeout",
+              "help": "Seconds to wait for Slack to answer.",
+              "type": "int",
+              "advanced": true,
+              "default": "10"
+            }
+          ],
+          "id_prefix": "ntf_"
+        },
+        {
+          "category": "notify",
+          "kind": "smtp",
+          "name": "Email (SMTP)",
+          "description": "Emails Pando's notifications to the people they are for, at the address on their account, through any SMTP server — SendGrid, Mailgun and Amazon SES included. Event subscriptions can send to it too.",
+          "fields": [
+            {
+              "key": "host",
+              "label": "Server",
+              "help": "The mail server's host name.",
+              "type": "string",
+              "required": true,
+              "placeholder": "smtp.sendgrid.net"
+            },
+            {
+              "key": "from",
+              "label": "From",
+              "help": "The address email comes from.",
+              "type": "string",
+              "required": true,
+              "placeholder": "Pando <pando@example.com>"
+            },
+            {
+              "key": "username",
+              "label": "Username",
+              "help": "For SendGrid, apikey.",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "label": "Password",
+              "help": "For SendGrid, an API key. Stored encrypted and never shown again.",
+              "type": "string",
+              "credential": true
+            },
+            {
+              "key": "security",
+              "label": "Security",
+              "help": "How the connection is encrypted.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "starttls",
+                  "label": "STARTTLS"
+                },
+                {
+                  "value": "tls",
+                  "label": "TLS"
+                },
+                {
+                  "value": "none",
+                  "label": "None"
+                }
+              ],
+              "advanced": true,
+              "default": "starttls"
+            },
+            {
+              "key": "port",
+              "label": "Port",
+              "help": "587 for STARTTLS, 465 for TLS.",
+              "type": "int",
+              "advanced": true,
+              "default": "587"
+            },
+            {
+              "key": "timeout_seconds",
+              "label": "Timeout",
+              "help": "Seconds to wait for the server.",
+              "type": "int",
+              "advanced": true,
+              "default": "15"
+            }
+          ],
+          "id_prefix": "ntf_"
+        },
+        {
+          "category": "notify",
+          "kind": "teams",
+          "name": "Microsoft Teams",
+          "description": "Posts the events a subscription chooses to a Microsoft Teams channel, as an adaptive card, through a Workflows webhook.",
+          "fields": [
+            {
+              "key": "webhook_url",
+              "label": "Webhook URL",
+              "help": "The URL of a Teams workflow that posts a webhook's adaptive card to the channel. Stored encrypted and never shown again.",
+              "type": "string",
+              "required": true,
+              "credential": true,
+              "placeholder": "https://….logic.azure.com/workflows/…"
+            },
+            {
+              "key": "timeout_seconds",
+              "label": "Timeout",
+              "help": "Seconds to wait for Microsoft Teams to answer.",
+              "type": "int",
+              "advanced": true,
+              "default": "10"
+            }
+          ],
+          "id_prefix": "ntf_"
+        }
+      ]
+    },
+    {
+      "category": "backup",
+      "kinds": [
+        {
+          "category": "backup",
+          "kind": "local",
+          "name": "Local disk",
+          "description": "Writes backups to a directory on the host.",
+          "fields": [
+            {
+              "key": "path",
+              "label": "Directory",
+              "help": "Where backups are written.",
+              "type": "string",
+              "default": "/var/lib/pando/backups"
+            }
+          ],
+          "id_prefix": "bkp_"
+        }
+      ]
+    },
+    {
+      "category": "scanner",
+      "kinds": [
+        {
+          "category": "scanner",
+          "kind": "trivy",
+          "name": "Trivy",
+          "description": "Scans source and images for known vulnerabilities and gives each app a security score.",
+          "fields": [
+            {
+              "key": "image",
+              "label": "Image",
+              "help": "The Trivy image to run.",
+              "type": "string",
+              "advanced": true,
+              "default": "aquasec/trivy:0.74.0 (pinned)"
+            },
+            {
+              "key": "host",
+              "label": "Docker host",
+              "help": "Where to run it.",
+              "type": "string",
+              "advanced": true,
+              "default": "DOCKER_HOST, or the local socket"
+            },
+            {
+              "key": "timeout_seconds",
+              "label": "Timeout",
+              "help": "Seconds a scan may take.",
+              "type": "int",
+              "advanced": true,
+              "default": "600"
+            }
+          ],
+          "id_prefix": "scn_"
+        }
+      ]
+    },
+    {
+      "category": "ai",
+      "kinds": [
+        {
+          "category": "ai",
+          "kind": "anthropic",
+          "name": "Anthropic",
+          "description": "Performs the AI functions assigned to it: repairing a failed plan, answering detection's questions, revising a plan on request, drafting access and policy, searching the audit log, and answering from the reference. Needs an Anthropic API key.",
+          "fields": [
+            {
+              "key": "api_key",
+              "label": "API key",
+              "help": "An Anthropic API key. Stored encrypted and never shown again. Leave empty to use ANTHROPIC_API_KEY from Pando’s environment.",
+              "type": "string",
+              "credential": true,
+              "placeholder": "sk-ant-…"
+            },
+            {
+              "key": "model",
+              "label": "Model",
+              "help": "The Claude model each function uses unless its assignment names another.",
+              "type": "string",
+              "default": "claude-opus-5-5"
+            },
+            {
+              "key": "base_url",
+              "label": "Base URL",
+              "help": "A gateway or proxy in front of the Anthropic API. Empty is the API itself.",
+              "type": "string",
+              "advanced": true,
+              "default": "https://api.anthropic.com"
+            },
+            {
+              "key": "api_key_env",
+              "label": "API key variable",
+              "help": "The environment variable to read the key from, instead of a stored one.",
+              "type": "string",
+              "advanced": true,
+              "default": "ANTHROPIC_API_KEY"
+            }
+          ],
+          "id_prefix": "ai_"
+        },
+        {
+          "category": "ai",
+          "kind": "local",
+          "name": "Local model",
+          "description": "Performs the AI functions assigned to it with a model on your own hardware, through any server that speaks the OpenAI API: Ollama, LM Studio, llama.cpp or vLLM. Nothing is sent to a provider.",
+          "fields": [
+            {
+              "key": "base_url",
+              "label": "Server URL",
+              "help": "The server’s OpenAI-compatible address, ending in /v1. The default is Ollama on the machine running Pando’s container.",
+              "type": "string",
+              "default": "http://host.docker.internal:11434/v1"
+            },
+            {
+              "key": "model",
+              "label": "Model",
+              "help": "The model each function uses unless its assignment names another, as the server names it.",
+              "type": "string",
+              "required": true,
+              "placeholder": "qwen2.5:7b"
+            },
+            {
+              "key": "api_key",
+              "label": "API key",
+              "help": "Only if your server asks for one. Stored encrypted and never shown again.",
+              "type": "string",
+              "credential": true
+            },
+            {
+              "key": "timeout_seconds",
+              "label": "Timeout, in seconds",
+              "help": "How long one request may take. Local models are slower than hosted ones.",
+              "type": "int",
+              "advanced": true,
+              "default": "300"
+            }
+          ],
+          "id_prefix": "ai_"
+        },
+        {
+          "category": "ai",
+          "kind": "openai",
+          "name": "OpenAI",
+          "description": "Performs the AI functions assigned to it with OpenAI's models. Uses OpenAI's Responses API, which stores each conversation on OpenAI's servers under OpenAI's retention terms; Pando does not store it. Needs an OpenAI API key.",
+          "fields": [
+            {
+              "key": "api_key",
+              "label": "API key",
+              "help": "An OpenAI API key. Stored encrypted and never shown again. Leave empty to use OPENAI_API_KEY from Pando’s environment.",
+              "type": "string",
+              "credential": true,
+              "placeholder": "sk-…"
+            },
+            {
+              "key": "model",
+              "label": "Model",
+              "help": "The model each function uses unless its assignment names another.",
+              "type": "string",
+              "default": "gpt-5.5"
+            },
+            {
+              "key": "base_url",
+              "label": "Base URL",
+              "help": "A gateway or proxy in front of the OpenAI API. Empty is the API itself.",
+              "type": "string",
+              "advanced": true,
+              "default": "https://api.openai.com/v1"
+            },
+            {
+              "key": "api_key_env",
+              "label": "API key variable",
+              "help": "The environment variable to read the key from, instead of a stored one.",
+              "type": "string",
+              "advanced": true,
+              "default": "OPENAI_API_KEY"
+            }
+          ],
+          "id_prefix": "ai_"
+        }
+      ]
+    },
+    {
+      "category": "source",
+      "kinds": [
+        {
+          "category": "source",
+          "kind": "azuredevops",
+          "name": "Azure DevOps",
+          "description": "Clone from Azure DevOps Services or Azure DevOps Server with a personal access token, Microsoft Entra ID or an SSH key, and pick repositories from a list.",
+          "fields": [
+            {
+              "key": "method",
+              "label": "How Pando signs in",
+              "type": "select",
+              "options": [
+                {
+                  "value": "token",
+                  "label": "Personal access token",
+                  "description": "A token with Code (Read) scope. Works with Azure DevOps Services and Server."
+                },
+                {
+                  "value": "oauth",
+                  "label": "Microsoft Entra ID sign-in",
+                  "description": "A person authorizes Pando with their Microsoft account, by device code or in the browser. Azure DevOps Services only."
+                },
+                {
+                  "value": "service_principal",
+                  "label": "Service principal",
+                  "description": "An app registration signs in with its client secret. It must be added to the organization. Azure DevOps Services only."
+                },
+                {
+                  "value": "ssh",
+                  "label": "SSH key",
+                  "description": "A key added to a user's SSH public keys. Repositories are entered by address."
+                }
+              ],
+              "required": true,
+              "default": "token"
+            },
+            {
+              "key": "host",
+              "label": "Host",
+              "help": "The host repositories are on. Change it for a self-managed server.",
+              "type": "string",
+              "default": "dev.azure.com",
+              "placeholder": "dev.azure.com"
+            },
+            {
+              "key": "scope",
+              "label": "Organization",
+              "help": "The organization, or organization/project to limit the connection to one project. On Azure DevOps Server, the collection, or collection/project.",
+              "type": "string",
+              "placeholder": "acme or acme/Payments"
+            },
+            {
+              "key": "token",
+              "label": "Personal access token",
+              "help": "A personal access token with the Code (Read) scope.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "tenant_id",
+              "label": "Directory (tenant) ID",
+              "help": "The Microsoft Entra tenant. A service principal needs its own tenant's ID; a person's sign-in can use organizations.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth",
+                  "service_principal"
+                ]
+              },
+              "default": "organizations"
+            },
+            {
+              "key": "client_id",
+              "label": "Application (client) ID",
+              "help": "The app registration's application (client) ID, from Microsoft Entra ID.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth",
+                  "service_principal"
+                ]
+              }
+            },
+            {
+              "key": "client_secret",
+              "label": "Client secret",
+              "help": "The app registration's client secret. Required for a service principal and for browser authorization; device authorization works without one.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth",
+                  "service_principal"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_private_key",
+              "label": "SSH private key",
+              "help": "The private half of a deploy key or access key added to the repository. Pando reads the repository with it and never writes.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_passphrase",
+              "label": "Key passphrase",
+              "help": "Only if the key has one.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "known_hosts",
+              "label": "Known hosts",
+              "help": "The host's public key, as ssh-keyscan ssh.dev.azure.com (or your server's host) prints it.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "key": "api_url",
+              "label": "API address",
+              "help": "Where the host's API is, if not where Pando would look for it.",
+              "type": "string",
+              "advanced": true,
+              "default": "https://dev.azure.com/{organization}, or https://HOST/{collection} on Azure DevOps Server"
+            },
+            {
+              "key": "ca_bundle",
+              "label": "Certificate authority",
+              "help": "PEM certificates to trust for a self-managed host on a private certificate authority, beside the system's.",
+              "type": "string",
+              "multiline": true,
+              "advanced": true,
+              "default": "The system's trusted certificates"
+            }
+          ],
+          "id_prefix": "src_"
+        },
+        {
+          "category": "source",
+          "kind": "bitbucket",
+          "name": "Bitbucket",
+          "description": "Clone from Bitbucket Cloud or Bitbucket Data Center with an access token, an OAuth consumer or an SSH access key, and pick repositories from a list.",
+          "fields": [
+            {
+              "key": "method",
+              "label": "How Pando signs in",
+              "type": "select",
+              "options": [
+                {
+                  "value": "token",
+                  "label": "Access token",
+                  "description": "Bitbucket Cloud: a workspace, project or repository access token, or an API token. Data Center: an HTTP access token."
+                },
+                {
+                  "value": "oauth",
+                  "label": "OAuth consumer",
+                  "description": "A person authorizes Pando in the browser. Bitbucket Cloud only."
+                },
+                {
+                  "value": "ssh",
+                  "label": "SSH access key",
+                  "description": "A key added to a repository or project as an access key. Repositories are entered by address."
+                }
+              ],
+              "required": true,
+              "default": "token"
+            },
+            {
+              "key": "host",
+              "label": "Host",
+              "help": "The host repositories are on. Change it for a self-managed server.",
+              "type": "string",
+              "default": "bitbucket.org",
+              "placeholder": "bitbucket.org"
+            },
+            {
+              "key": "scope",
+              "label": "Workspace or project",
+              "help": "Bitbucket Cloud: the workspace ID, such as acme. Data Center: the project key, such as PAY. Empty is every repository the credential can read.",
+              "type": "string",
+              "placeholder": "acme"
+            },
+            {
+              "key": "token_type",
+              "label": "Token type",
+              "help": "Bitbucket Cloud only. Data Center takes an HTTP access token whichever is chosen.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "access_token",
+                  "label": "Access token",
+                  "description": "A workspace, project or repository access token."
+                },
+                {
+                  "value": "api_token",
+                  "label": "API token",
+                  "description": "An Atlassian account's API token, with your Bitbucket username."
+                }
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "default": "access_token"
+            },
+            {
+              "key": "username",
+              "label": "Username",
+              "help": "Bitbucket Cloud API token: your Bitbucket username. Data Center: the account the token belongs to, if git should sign in as it; x-token-auth otherwise.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "placeholder": "alice"
+            },
+            {
+              "key": "email",
+              "label": "Atlassian account email",
+              "help": "Bitbucket Cloud API token only: the email of the Atlassian account the token was created under, which Bitbucket's API signs in with. The username when empty.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "placeholder": "alice@example.com"
+            },
+            {
+              "key": "token",
+              "label": "Token",
+              "help": "Read access to repositories is enough.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "client_id",
+              "label": "OAuth consumer key",
+              "help": "From the workspace's settings → OAuth consumers. Give the consumer Pando's callback address and the Repositories: Read permission.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              }
+            },
+            {
+              "key": "client_secret",
+              "label": "OAuth consumer secret",
+              "help": "The consumer's secret, shown beside its key.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_private_key",
+              "label": "SSH private key",
+              "help": "The private half of a deploy key or access key added to the repository. Pando reads the repository with it and never writes.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_passphrase",
+              "label": "Key passphrase",
+              "help": "Only if the key has one.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "known_hosts",
+              "label": "Known hosts",
+              "help": "The host's public key, as ssh-keyscan bitbucket.org prints it. For Data Center, ssh-keyscan -p 7999 HOST, whose lines begin [HOST]:7999.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "key": "ssh_port",
+              "label": "SSH port",
+              "help": "Bitbucket Data Center's SSH port, for turning an HTTPS address into an SSH one. Not used on Bitbucket Cloud.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "advanced": true,
+              "default": "7999"
+            },
+            {
+              "key": "api_url",
+              "label": "API address",
+              "help": "Where the host's API is, if not where Pando would look for it.",
+              "type": "string",
+              "advanced": true,
+              "default": "https://api.bitbucket.org/2.0 on Bitbucket Cloud, https://HOST/rest/api/1.0 on Data Center"
+            },
+            {
+              "key": "ca_bundle",
+              "label": "Certificate authority",
+              "help": "PEM certificates to trust for a self-managed host on a private certificate authority, beside the system's.",
+              "type": "string",
+              "multiline": true,
+              "advanced": true,
+              "default": "The system's trusted certificates"
+            }
+          ],
+          "id_prefix": "src_"
+        },
+        {
+          "category": "source",
+          "kind": "git",
+          "name": "Any git host",
+          "description": "Clone from any git server with a username and token over HTTPS, or an SSH key. Repositories are entered by address.",
+          "fields": [
+            {
+              "key": "method",
+              "label": "How Pando signs in",
+              "type": "select",
+              "options": [
+                {
+                  "value": "token",
+                  "label": "Username and token",
+                  "description": "HTTPS, with an access token or password as the password."
+                },
+                {
+                  "value": "ssh",
+                  "label": "SSH key",
+                  "description": "A deploy key. The host's public key is pinned."
+                }
+              ],
+              "required": true,
+              "default": "token"
+            },
+            {
+              "key": "host",
+              "label": "Host",
+              "help": "The host repositories are on. Change it for a self-managed server.",
+              "type": "string",
+              "required": true,
+              "placeholder": "git.example.com"
+            },
+            {
+              "key": "scope",
+              "label": "Path prefix",
+              "help": "Limit the connection to repositories under this path, such as acme. Empty is every repository on the host.",
+              "type": "string",
+              "placeholder": "acme"
+            },
+            {
+              "key": "username",
+              "label": "Username",
+              "help": "The account the token belongs to. Defaults to git.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "placeholder": "git"
+            },
+            {
+              "key": "token",
+              "label": "Token or password",
+              "help": "Read access to the repositories is enough.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_private_key",
+              "label": "SSH private key",
+              "help": "The private half of a deploy key or access key added to the repository. Pando reads the repository with it and never writes.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_passphrase",
+              "label": "Key passphrase",
+              "help": "Only if the key has one.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "known_hosts",
+              "label": "Known hosts",
+              "help": "The host's public key, as ssh-keyscan <host> prints it.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "key": "ca_bundle",
+              "label": "Certificate authority",
+              "help": "PEM certificates to trust for a self-managed host on a private certificate authority, beside the system's.",
+              "type": "string",
+              "multiline": true,
+              "advanced": true,
+              "default": "The system's trusted certificates"
+            }
+          ],
+          "id_prefix": "src_"
+        },
+        {
+          "category": "source",
+          "kind": "gitea",
+          "name": "Gitea or Forgejo",
+          "description": "Clone from a Gitea or Forgejo server, Codeberg included, with an access token, an OAuth2 application, or a deploy key, optionally limited to one owner.",
+          "fields": [
+            {
+              "key": "method",
+              "label": "How Pando signs in",
+              "type": "select",
+              "options": [
+                {
+                  "value": "token",
+                  "label": "Access token",
+                  "description": "An access token with read permission on repositories. Repositories can be picked from a list."
+                },
+                {
+                  "value": "oauth",
+                  "label": "OAuth2 application",
+                  "description": "Authorize once in the browser. Needs an address the host can send you back to."
+                },
+                {
+                  "value": "ssh",
+                  "label": "Deploy key",
+                  "description": "An SSH key added to the repository as a deploy key. Repositories are entered by address."
+                }
+              ],
+              "required": true,
+              "default": "token"
+            },
+            {
+              "key": "host",
+              "label": "Host",
+              "help": "The host repositories are on. Change it for a self-managed server.",
+              "type": "string",
+              "required": true,
+              "placeholder": "git.example.com"
+            },
+            {
+              "key": "scope",
+              "label": "Owner",
+              "help": "Limit the connection to one user's or organization's repositories, such as acme. Empty is every repository the credential can read.",
+              "type": "string",
+              "placeholder": "acme"
+            },
+            {
+              "key": "username",
+              "label": "Username",
+              "help": "The account the token belongs to. Defaults to oauth2, which Gitea and Forgejo accept beside a token.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "placeholder": "oauth2"
+            },
+            {
+              "key": "token",
+              "label": "Access token",
+              "help": "Create one under Settings → Applications with read permission on repositories.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "client_id",
+              "label": "OAuth2 client ID",
+              "help": "The client ID of an OAuth2 application created under Settings → Applications, with Pando's callback as its redirect URI.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              }
+            },
+            {
+              "key": "client_secret",
+              "label": "OAuth2 client secret",
+              "help": "The application's client secret. Gitea and Forgejo authorize only in the browser, so it is required.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_private_key",
+              "label": "SSH private key",
+              "help": "The private half of a deploy key or access key added to the repository. Pando reads the repository with it and never writes.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_passphrase",
+              "label": "Key passphrase",
+              "help": "Only if the key has one.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "known_hosts",
+              "label": "Known hosts",
+              "help": "The host's public key, as ssh-keyscan <host> prints it.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "key": "api_url",
+              "label": "API address",
+              "help": "Where the host's API is, if not where Pando would look for it.",
+              "type": "string",
+              "advanced": true,
+              "default": "https://<host>/api/v1"
+            },
+            {
+              "key": "ca_bundle",
+              "label": "Certificate authority",
+              "help": "PEM certificates to trust for a self-managed host on a private certificate authority, beside the system's.",
+              "type": "string",
+              "multiline": true,
+              "advanced": true,
+              "default": "The system's trusted certificates"
+            }
+          ],
+          "id_prefix": "src_",
+          "presets": [
+            {
+              "id": "codeberg",
+              "label": "Codeberg",
+              "help": "Create an access token on Codeberg under Settings → Applications, with read permission on repositories.",
+              "values": {
+                "host": "codeberg.org"
+              }
+            }
+          ]
+        },
+        {
+          "category": "source",
+          "kind": "github",
+          "name": "GitHub",
+          "description": "Clone private repositories from github.com or GitHub Enterprise Server, and pick them from a list, with a GitHub App, an OAuth application, a personal access token or a deploy key.",
+          "fields": [
+            {
+              "key": "method",
+              "label": "How Pando signs in",
+              "type": "select",
+              "options": [
+                {
+                  "value": "app",
+                  "label": "GitHub App",
+                  "description": "An App installed on an organization or user. Tokens are short-lived and limited to the repositories the installation allows."
+                },
+                {
+                  "value": "oauth",
+                  "label": "OAuth application",
+                  "description": "Authorize as a GitHub user, with a code entered on GitHub or in the browser."
+                },
+                {
+                  "value": "token",
+                  "label": "Personal access token",
+                  "description": "A fine-grained or classic token with read access to repository contents."
+                },
+                {
+                  "value": "ssh",
+                  "label": "Deploy key",
+                  "description": "An SSH key added to one repository. Repositories are entered by address."
+                }
+              ],
+              "required": true,
+              "default": "app"
+            },
+            {
+              "key": "host",
+              "label": "Host",
+              "help": "The host repositories are on. Change it for a self-managed server.",
+              "type": "string",
+              "default": "github.com",
+              "placeholder": "github.com"
+            },
+            {
+              "key": "scope",
+              "label": "Owner",
+              "help": "The organization or user on GitHub. Empty is every repository the credential can read.",
+              "type": "string",
+              "placeholder": "acme"
+            },
+            {
+              "key": "app_id",
+              "label": "App ID",
+              "help": "The App's ID, shown on its settings page in GitHub under General → About.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "app"
+                ]
+              },
+              "placeholder": "123456"
+            },
+            {
+              "key": "installation_id",
+              "label": "Installation ID",
+              "help": "The number at the end of the installation's settings address. Empty looks it up from the owner.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "app"
+                ]
+              },
+              "placeholder": "45678901"
+            },
+            {
+              "key": "app_private_key",
+              "label": "App private key",
+              "help": "The PEM private key generated on the App's settings page, beginning -----BEGIN RSA PRIVATE KEY-----.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "app"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "client_id",
+              "label": "OAuth client ID",
+              "help": "From the OAuth application registered in GitHub under Settings → Developer settings → OAuth Apps, with device flow enabled.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              }
+            },
+            {
+              "key": "client_secret",
+              "label": "OAuth client secret",
+              "help": "Needed for browser authorization. Device authorization works without one.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "token",
+              "label": "Personal access token",
+              "help": "A fine-grained token with read access to contents and metadata, or a classic token with the repo scope.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_private_key",
+              "label": "SSH private key",
+              "help": "The private half of a deploy key or access key added to the repository. Pando reads the repository with it and never writes.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_passphrase",
+              "label": "Key passphrase",
+              "help": "Only if the key has one.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "known_hosts",
+              "label": "Known hosts",
+              "help": "The host's public key, as ssh-keyscan <host> prints it. For github.com it may be left empty: Pando uses the keys GitHub publishes.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "key": "api_url",
+              "label": "API address",
+              "help": "Where the host's API is, if not where Pando would look for it.",
+              "type": "string",
+              "advanced": true,
+              "default": "https://api.github.com for github.com, https://<host>/api/v3 for GitHub Enterprise Server"
+            },
+            {
+              "key": "ca_bundle",
+              "label": "Certificate authority",
+              "help": "PEM certificates to trust for a self-managed host on a private certificate authority, beside the system's.",
+              "type": "string",
+              "multiline": true,
+              "advanced": true,
+              "default": "The system's trusted certificates"
+            }
+          ],
+          "id_prefix": "src_",
+          "presets": [
+            {
+              "id": "github.com",
+              "label": "GitHub.com",
+              "help": "Install a GitHub App on the organization, or create a personal access token under Settings → Developer settings.",
+              "values": {
+                "host": "github.com"
+              }
+            },
+            {
+              "id": "ghes",
+              "label": "GitHub Enterprise Server",
+              "help": "Enter the server's host. Its API is at https://<host>/api/v3 unless it was moved."
+            }
+          ]
+        },
+        {
+          "category": "source",
+          "kind": "gitlab",
+          "name": "GitLab",
+          "description": "Clone from gitlab.com or a self-managed GitLab with an OAuth application, an access or deploy token, or a deploy key, optionally limited to one group.",
+          "fields": [
+            {
+              "key": "method",
+              "label": "How Pando signs in",
+              "type": "select",
+              "options": [
+                {
+                  "value": "oauth",
+                  "label": "OAuth application",
+                  "description": "Authorize once in the browser or with a device code. Repositories can be picked from a list."
+                },
+                {
+                  "value": "token",
+                  "label": "Access token or deploy token",
+                  "description": "A personal, project or group access token, or a deploy token over HTTPS."
+                },
+                {
+                  "value": "ssh",
+                  "label": "Deploy key",
+                  "description": "An SSH key added to the project as a deploy key. Repositories are entered by address."
+                }
+              ],
+              "required": true,
+              "default": "oauth"
+            },
+            {
+              "key": "host",
+              "label": "Host",
+              "help": "The host repositories are on. Change it for a self-managed server.",
+              "type": "string",
+              "default": "gitlab.com",
+              "placeholder": "gitlab.com"
+            },
+            {
+              "key": "scope",
+              "label": "Group",
+              "help": "Limit the connection to projects in this group and its subgroups, such as acme or acme/platform. Empty is every project the credential can read.",
+              "type": "string",
+              "placeholder": "acme/platform"
+            },
+            {
+              "key": "client_id",
+              "label": "OAuth client ID",
+              "help": "The Application ID of a GitLab OAuth application with the read_repository and read_api scopes. Create one under Preferences → Applications, or on a group's or the instance's Applications page.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              }
+            },
+            {
+              "key": "client_secret",
+              "label": "OAuth client secret",
+              "help": "Needed for browser authorization. Device authorization works without one.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "token_type",
+              "label": "Token type",
+              "type": "select",
+              "options": [
+                {
+                  "value": "access_token",
+                  "label": "Access token",
+                  "description": "A personal, project or group access token with read_repository and read_api. Repositories can be picked from a list."
+                },
+                {
+                  "value": "deploy_token",
+                  "label": "Deploy token",
+                  "description": "A deploy token with read_repository. It cannot list repositories, so they are entered by address."
+                }
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "default": "access_token"
+            },
+            {
+              "key": "username",
+              "label": "Username",
+              "help": "For a deploy token, the username GitLab shows beside it, such as gitlab+deploy-token-12. Not used with an access token.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "placeholder": "gitlab+deploy-token-12"
+            },
+            {
+              "key": "token",
+              "label": "Token",
+              "help": "Read access to repositories is enough: read_repository, and read_api to pick repositories from a list.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_private_key",
+              "label": "SSH private key",
+              "help": "The private half of a deploy key or access key added to the repository. Pando reads the repository with it and never writes.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "ssh_passphrase",
+              "label": "Key passphrase",
+              "help": "Only if the key has one.",
+              "type": "string",
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "known_hosts",
+              "label": "Known hosts",
+              "help": "The host's public key, as ssh-keyscan <host> prints it. Leave empty for gitlab.com; Pando knows its key.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "key": "api_url",
+              "label": "API address",
+              "help": "Where the host's API is, if not where Pando would look for it.",
+              "type": "string",
+              "advanced": true,
+              "default": "https://<host>/api/v4"
+            },
+            {
+              "key": "ca_bundle",
+              "label": "Certificate authority",
+              "help": "PEM certificates to trust for a self-managed host on a private certificate authority, beside the system's.",
+              "type": "string",
+              "multiline": true,
+              "advanced": true,
+              "default": "The system's trusted certificates"
+            }
+          ],
+          "id_prefix": "src_"
+        }
+      ]
+    },
+    {
+      "category": "image_registry",
+      "kinds": [
+        {
+          "category": "image_registry",
+          "kind": "ecr",
+          "name": "Amazon ECR",
+          "description": "An ECR repository you created. Every build goes into it, tagged by app and deployment, and Pando gets a registry password from the access key before each push and pull.",
+          "fields": [
+            {
+              "key": "url",
+              "label": "Registry address",
+              "help": "The repository's address, as ECR shows it. It has to exist already.",
+              "type": "string",
+              "required": true,
+              "placeholder": "123456789012.dkr.ecr.us-east-1.amazonaws.com/pando"
+            },
+            {
+              "key": "access_key_id",
+              "label": "Access key ID",
+              "help": "An AWS access key that can push to and pull from the repository.",
+              "type": "string",
+              "required": true,
+              "placeholder": "AKIA…"
+            },
+            {
+              "key": "secret_access_key",
+              "label": "Secret access key",
+              "help": "Stored encrypted, and never shown again.",
+              "type": "string",
+              "required": true,
+              "credential": true
+            },
+            {
+              "key": "always",
+              "label": "Send every build through the registry",
+              "help": "Even on a runtime that can take a built image directly, such as Docker on one host.",
+              "type": "bool",
+              "advanced": true,
+              "default": "false"
+            }
+          ],
+          "id_prefix": "reg_"
+        },
+        {
+          "category": "image_registry",
+          "kind": "oci",
+          "name": "OCI registry",
+          "description": "A registry that signs in with a username and password, or not at all: Distribution, Harbor, GitHub Container Registry, Artifact Registry, Zot. Each app gets a repository of its own.",
+          "fields": [
+            {
+              "key": "url",
+              "label": "Registry address",
+              "help": "The registry, and a path to push under if you want one.",
+              "type": "string",
+              "required": true,
+              "placeholder": "https://registry.internal:5000"
+            },
+            {
+              "key": "username",
+              "label": "Username",
+              "help": "What the registry signs Pando in with. Empty for a registry Pando reaches anonymously.",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "label": "Password",
+              "help": "Stored encrypted, and never shown again.",
+              "type": "string",
+              "credential": true
+            },
+            {
+              "key": "layout",
+              "label": "Where images go",
+              "type": "select",
+              "options": [
+                {
+                  "value": "per_app",
+                  "label": "A repository per app",
+                  "description": "Each app has its own, so a deleted app's images are found and removed together."
+                },
+                {
+                  "value": "single",
+                  "label": "One repository for everything",
+                  "description": "For a registry where a repository has to exist before anything is pushed to it."
+                }
+              ],
+              "advanced": true,
+              "default": "per_app"
+            },
+            {
+              "key": "insecure",
+              "label": "Allow plain HTTP",
+              "help": "Only for a registry on a private network. Every host that pulls must also list it as an insecure registry.",
+              "type": "bool",
+              "advanced": true,
+              "default": "false"
+            },
+            {
+              "key": "always",
+              "label": "Send every build through the registry",
+              "help": "Even on a runtime that can take a built image directly, such as Docker on one host.",
+              "type": "bool",
+              "advanced": true,
+              "default": "false"
+            }
+          ],
+          "id_prefix": "reg_"
+        }
+      ]
+    },
+    {
+      "category": "audit_sink",
+      "kinds": [
+        {
+          "category": "audit_sink",
+          "kind": "https",
+          "name": "HTTPS",
+          "description": "Posts every audit event, in batches as it is written, to a SIEM's HTTPS ingest endpoint: Splunk, Datadog, Elastic, Sumo Logic, Microsoft Sentinel, or anything that takes JSON with a token. A copy of the audit log leaves this installation.",
+          "fields": [
+            {
+              "key": "url",
+              "label": "URL",
+              "help": "The destination's ingest endpoint. Leave empty when the URL itself is the credential, and set secret_url instead.",
+              "type": "string",
+              "placeholder": "https://siem.example.com/ingest"
+            },
+            {
+              "key": "secret_url",
+              "label": "Secret URL",
+              "help": "For a destination whose URL carries its token, such as a Sumo Logic HTTP source: the whole URL, stored encrypted. Only its host is ever shown.",
+              "type": "string",
+              "credential": true
+            },
+            {
+              "key": "token",
+              "label": "Token",
+              "help": "The API key or token the destination checks. Stored encrypted and never shown again.",
+              "type": "string",
+              "credential": true
+            },
+            {
+              "key": "body",
+              "label": "Body",
+              "help": "The shape of each POST's body.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "ndjson",
+                  "label": "NDJSON",
+                  "description": "One event per line."
+                },
+                {
+                  "value": "json_array",
+                  "label": "JSON array",
+                  "description": "The batch as one array."
+                },
+                {
+                  "value": "splunk_hec",
+                  "label": "Splunk HEC",
+                  "description": "Each event in a HEC envelope with a sourcetype."
+                },
+                {
+                  "value": "elastic_bulk",
+                  "label": "Elastic bulk",
+                  "description": "A create action before each event, for a data stream's _bulk endpoint."
+                }
+              ],
+              "default": "ndjson"
+            },
+            {
+              "key": "auth_header",
+              "label": "Auth header",
+              "help": "The header the token is sent in.",
+              "type": "string",
+              "default": "Authorization"
+            },
+            {
+              "key": "auth_scheme",
+              "label": "Auth scheme",
+              "help": "The word before the token in the header.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "Bearer",
+                  "label": "Bearer"
+                },
+                {
+                  "value": "Splunk",
+                  "label": "Splunk"
+                },
+                {
+                  "value": "ApiKey",
+                  "label": "ApiKey"
+                },
+                {
+                  "value": "none",
+                  "label": "None",
+                  "description": "The token is the whole header value."
+                }
+              ],
+              "other": true,
+              "default": "Bearer"
+            },
+            {
+              "key": "ca_certificate",
+              "label": "CA certificate",
+              "help": "PEM certificates to trust for a destination on a private certificate authority. Empty trusts the system's.",
+              "type": "string",
+              "multiline": true
+            },
+            {
+              "key": "extra_headers",
+              "label": "Extra headers",
+              "help": "Headers to add, one per line as Name: value. Not encrypted, so not for anything secret.",
+              "type": "string",
+              "multiline": true,
+              "placeholder": "X-Source: pando"
+            },
+            {
+              "key": "sourcetype",
+              "label": "Splunk sourcetype",
+              "help": "The sourcetype each HEC envelope names.",
+              "type": "string",
+              "shown_when": {
+                "key": "body",
+                "values": [
+                  "splunk_hec"
+                ]
+              },
+              "advanced": true,
+              "default": "pando:audit"
+            },
+            {
+              "key": "allow_http",
+              "label": "Allow http",
+              "help": "Post over plain http, unencrypted. Only for a destination on a trusted network.",
+              "type": "bool",
+              "advanced": true
+            },
+            {
+              "key": "timeout_seconds",
+              "label": "Timeout",
+              "help": "Seconds to wait for the destination to answer a batch.",
+              "type": "int",
+              "advanced": true,
+              "default": "15"
+            },
+            {
+              "key": "actions",
+              "label": "Actions",
+              "help": "Comma-separated action prefixes to send. Empty sends every event.",
+              "type": "string",
+              "placeholder": "deploy, install."
+            },
+            {
+              "key": "exclude",
+              "label": "Exclude",
+              "help": "Comma-separated action prefixes not to send. app.use, a record of each request to an app, is usually most of the volume; exclude it if your SIEM bills by ingest.",
+              "type": "string",
+              "placeholder": "app.use"
+            },
+            {
+              "key": "format",
+              "label": "Event format",
+              "help": "How each event is encoded.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "native",
+                  "label": "Native",
+                  "description": "The event as Pando stores it."
+                },
+                {
+                  "value": "ocsf",
+                  "label": "OCSF",
+                  "description": "OCSF 1.3.0, for a SIEM that maps it."
+                }
+              ],
+              "advanced": true,
+              "default": "native"
+            },
+            {
+              "key": "max_batch",
+              "label": "Batch size",
+              "help": "The most events sent in one delivery.",
+              "type": "int",
+              "advanced": true,
+              "default": "500"
+            },
+            {
+              "key": "start",
+              "label": "Start",
+              "help": "Where a new destination's first delivery begins. Read once, when Pando first sends to it.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "oldest",
+                  "label": "The oldest event in the live log"
+                },
+                {
+                  "value": "now",
+                  "label": "Only events from now on"
+                }
+              ],
+              "advanced": true,
+              "default": "oldest"
+            }
+          ],
+          "id_prefix": "as_",
+          "presets": [
+            {
+              "id": "splunk_hec",
+              "label": "Splunk HTTP Event Collector",
+              "help": "In Splunk, Settings > Data inputs > HTTP Event Collector: create a token and copy its value. The URL is your Splunk host on the HEC port, usually 8088, ending /services/collector/event. On Splunk Cloud the host is http-inputs-<stack>.splunkcloud.com on port 443.",
+              "values": {
+                "auth_scheme": "Splunk",
+                "body": "splunk_hec",
+                "url": "https://splunk.example.com:8088/services/collector/event"
+              }
+            },
+            {
+              "id": "datadog",
+              "label": "Datadog Logs",
+              "help": "In Datadog, Organization Settings > API Keys: create an API key and set it as the token. The URL is for the US1 site; for another site use its intake host, such as http-intake.logs.datadoghq.eu for EU or http-intake.logs.us5.datadoghq.com for US5.",
+              "values": {
+                "auth_header": "DD-API-KEY",
+                "auth_scheme": "none",
+                "body": "json_array",
+                "url": "https://http-intake.logs.datadoghq.com/api/v2/logs?ddsource=pando&service=pando"
+              }
+            },
+            {
+              "id": "elastic",
+              "label": "Elastic",
+              "help": "In Kibana, Stack Management > API keys: create a key that may write to the data stream and set its encoded value as the token. The URL is your Elasticsearch endpoint, then a data stream name such as logs-pando.audit-default, then /_bulk.",
+              "values": {
+                "auth_scheme": "ApiKey",
+                "body": "elastic_bulk",
+                "url": "https://my-deployment.es.example.com/logs-pando.audit-default/_bulk"
+              }
+            },
+            {
+              "id": "sumo_logic",
+              "label": "Sumo Logic HTTP source",
+              "help": "In Sumo Logic, Manage Data > Collection: add an HTTP Logs and Metrics source to a hosted collector and copy its URL. The URL contains the source's token, so set it as the secret URL credential and leave url and token empty.",
+              "values": {
+                "body": "ndjson"
+              }
+            },
+            {
+              "id": "azure_monitor",
+              "label": "Microsoft Sentinel (Azure Monitor Logs ingestion)",
+              "help": "In Azure, create a data collection endpoint and a data collection rule with a stream named Custom-PandoAudit_CL whose columns match the events, then use the endpoint's logs ingestion URL and the rule's immutable ID in the URL. The token is a Microsoft Entra ID access token for the https://monitor.azure.com scope. This adapter sends a static token and does not mint or refresh one, so a token that expires stops delivery until it is replaced.",
+              "values": {
+                "auth_scheme": "Bearer",
+                "body": "json_array",
+                "url": "https://my-dce.eastus-1.ingest.monitor.azure.com/dataCollectionRules/dcr-00000000000000000000000000000000/streams/Custom-PandoAudit_CL?api-version=2023-01-01"
+              }
+            },
+            {
+              "id": "generic",
+              "label": "Generic NDJSON (Google SecOps and others)",
+              "help": "Any endpoint that takes newline-delimited JSON with a token in a header. Set the URL, the header and scheme it expects, and the token.",
+              "values": {
+                "body": "ndjson"
+              }
+            }
+          ]
+        },
+        {
+          "category": "audit_sink",
+          "kind": "syslog",
+          "name": "Syslog",
+          "description": "Sends every audit event, as it is written, to a syslog collector as an RFC 5424 message over TCP, encrypted with TLS unless you turn it off. A copy of the audit log leaves this installation.",
+          "fields": [
+            {
+              "key": "address",
+              "label": "Address",
+              "help": "The collector's host and port. Without a port, 6514 with TLS and 514 without.",
+              "type": "string",
+              "required": true,
+              "placeholder": "siem.example.com:6514"
+            },
+            {
+              "key": "tls",
+              "label": "TLS",
+              "help": "Whether the connection is encrypted. Off sends the audit log across the network in the clear.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "on",
+                  "label": "On",
+                  "description": "TLS, as RFC 5425 describes."
+                },
+                {
+                  "value": "off",
+                  "label": "Off",
+                  "description": "Plain TCP, for a collector on the same host or a trusted network."
+                }
+              ],
+              "default": "on"
+            },
+            {
+              "key": "ca_certificate",
+              "label": "CA certificate",
+              "help": "PEM certificates to trust for a collector on a private certificate authority. Empty trusts the system's.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "tls",
+                "values": [
+                  "on",
+                  ""
+                ]
+              }
+            },
+            {
+              "key": "client_certificate",
+              "label": "Client certificate",
+              "help": "A PEM certificate Pando presents, for a collector that requires mutual TLS. Set with its key, or not at all. Stored encrypted.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "tls",
+                "values": [
+                  "on",
+                  ""
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "client_key",
+              "label": "Client key",
+              "help": "The PEM private key for the client certificate. Stored encrypted and never shown again.",
+              "type": "string",
+              "multiline": true,
+              "shown_when": {
+                "key": "tls",
+                "values": [
+                  "on",
+                  ""
+                ]
+              },
+              "credential": true
+            },
+            {
+              "key": "server_name",
+              "label": "Server name",
+              "help": "The name the collector's certificate must carry, when it differs from the address.",
+              "type": "string",
+              "advanced": true,
+              "default": "the address's host"
+            },
+            {
+              "key": "app_name",
+              "label": "App name",
+              "help": "The APP-NAME each message carries.",
+              "type": "string",
+              "advanced": true,
+              "default": "pando"
+            },
+            {
+              "key": "facility",
+              "label": "Facility",
+              "help": "The syslog facility messages are sent as. authpriv is for security messages a collector keeps apart from the general log.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "authpriv",
+                  "label": "authpriv"
+                },
+                {
+                  "value": "auth",
+                  "label": "auth"
+                },
+                {
+                  "value": "daemon",
+                  "label": "daemon"
+                },
+                {
+                  "value": "user",
+                  "label": "user"
+                },
+                {
+                  "value": "local0",
+                  "label": "local0"
+                },
+                {
+                  "value": "local1",
+                  "label": "local1"
+                },
+                {
+                  "value": "local2",
+                  "label": "local2"
+                },
+                {
+                  "value": "local3",
+                  "label": "local3"
+                },
+                {
+                  "value": "local4",
+                  "label": "local4"
+                },
+                {
+                  "value": "local5",
+                  "label": "local5"
+                },
+                {
+                  "value": "local6",
+                  "label": "local6"
+                },
+                {
+                  "value": "local7",
+                  "label": "local7"
+                }
+              ],
+              "advanced": true,
+              "default": "authpriv"
+            },
+            {
+              "key": "hostname",
+              "label": "Hostname",
+              "help": "The HOSTNAME each message carries.",
+              "type": "string",
+              "advanced": true,
+              "default": "this machine's hostname"
+            },
+            {
+              "key": "timeout_seconds",
+              "label": "Timeout",
+              "help": "Seconds to wait to connect, and for a batch to be written.",
+              "type": "int",
+              "advanced": true,
+              "default": "10"
+            },
+            {
+              "key": "actions",
+              "label": "Actions",
+              "help": "Comma-separated action prefixes to send. Empty sends every event.",
+              "type": "string",
+              "placeholder": "deploy, install."
+            },
+            {
+              "key": "exclude",
+              "label": "Exclude",
+              "help": "Comma-separated action prefixes not to send. app.use, a record of each request to an app, is usually most of the volume; exclude it if your SIEM bills by ingest.",
+              "type": "string",
+              "placeholder": "app.use"
+            },
+            {
+              "key": "format",
+              "label": "Event format",
+              "help": "How each event is encoded.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "native",
+                  "label": "Native",
+                  "description": "The event as Pando stores it."
+                },
+                {
+                  "value": "ocsf",
+                  "label": "OCSF",
+                  "description": "OCSF 1.3.0, for a SIEM that maps it."
+                }
+              ],
+              "advanced": true,
+              "default": "native"
+            },
+            {
+              "key": "max_batch",
+              "label": "Batch size",
+              "help": "The most events sent in one delivery.",
+              "type": "int",
+              "advanced": true,
+              "default": "200"
+            },
+            {
+              "key": "start",
+              "label": "Start",
+              "help": "Where a new destination's first delivery begins. Read once, when Pando first sends to it.",
+              "type": "select",
+              "options": [
+                {
+                  "value": "oldest",
+                  "label": "The oldest event in the live log"
+                },
+                {
+                  "value": "now",
+                  "label": "Only events from now on"
+                }
+              ],
+              "advanced": true,
+              "default": "oldest"
+            }
+          ],
+          "id_prefix": "as_"
+        }
+      ]
+    }
+  ]
+}

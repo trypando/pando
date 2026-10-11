@@ -58,6 +58,15 @@ const (
 	CategoryAuditSink Category = "audit_sink"
 )
 
+// Categories is every category, in R-252's order: the order the reference
+// lists them in.
+var Categories = []Category{
+	CategoryIdentity, CategoryRouting, CategoryBuilder, CategoryRuntime,
+	CategorySecrets, CategoryServices, CategoryNotify, CategoryBackup,
+	CategoryScanner, CategoryAI, CategorySource, CategoryImageRegistry,
+	CategoryAuditSink,
+}
+
 // Adapter is implemented by every adapter in every category.
 type Adapter interface {
 	Kind() string

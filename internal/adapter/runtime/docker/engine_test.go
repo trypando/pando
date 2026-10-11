@@ -111,3 +111,43 @@ func TestR245_CPUIsSampledTwiceWhenTheEngineDoesNotDiff(t *testing.T) {
 	require.Equal(t, 2, served, "a second sample was taken")
 	require.Equal(t, 500, u.CPUMillis, "half a core, not the average since boot")
 }
+
+// TestR359_ThePandoThatReplacesItselfOnPodmanStarts asserts the new container
+// is created without the memory swappiness Podman reports for the old one,
+// which crun refuses on cgroup v2, and keeps the rest of its host
+// configuration (issue #179).
+func TestR359_ThePandoThatReplacesItselfOnPodmanStarts(t *testing.T) {
+	zero := int64(0)
+	old := &container.HostConfig{NetworkMode: "pando_default", Binds: []string{"pando-data:/var/lib/pando"}}
+	old.MemorySwappiness = &zero
+	got := recreatedHostConfig(old)
+	require.Nil(t, got.MemorySwappiness)
+	require.Equal(t, old.Binds, got.Binds)
+	require.Equal(t, old.NetworkMode, got.NetworkMode)
+	require.Equal(t, &zero, old.MemorySwappiness, "the old container's inspect is left as it was")
+	require.Nil(t, recreatedHostConfig(nil))
+}
+
+// TestR023_PandoStillOnAnAppsNetworkIsNotAFailureOnPodman asserts that
+// joining Pando to a network it is on already succeeds in Podman's words as in
+// Docker's. Podman says "network is already connected"; read as a failure, it
+// failed every Apply to an existing app network — after a reboot, every app's —
+// and no app was started again (issue #179).
+func TestR023_PandoStillOnAnAppsNetworkIsNotAFailureOnPodman(t *testing.T) {
+	f, a := newFakeDaemon(t, map[string]any{"proxy_container": "pando"})
+	name := bundleNetworkName("app_1")
+	f.on("GET /networks", respond(http.StatusOK, []map[string]any{{"Name": name, "Id": "net1"}}))
+	for _, msg := range []string{
+		"network is already connected",
+		"endpoint with name pando already exists in network " + name,
+	} {
+		f.on("POST /networks/net1/connect", respond(http.StatusInternalServerError, map[string]string{"message": msg}))
+		id, err := a.ensureNetwork(context.Background(), "app_1", false, 1)
+		require.NoError(t, err, msg)
+		require.Equal(t, "net1", id)
+	}
+
+	f.on("POST /networks/net1/connect", respond(http.StatusInternalServerError, map[string]string{"message": "boom"}))
+	_, err := a.ensureNetwork(context.Background(), "app_1", false, 1)
+	require.Error(t, err, "any other refusal is still one")
+}

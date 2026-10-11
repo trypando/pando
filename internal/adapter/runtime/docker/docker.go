@@ -432,8 +432,10 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	capacity.Details["rootless"] = slices.Contains(info.SecurityOptions, "name=rootless")
 	capacity.Details["cgroup_version"] = info.CgroupVersion
 	capacity.Details["cgroup_driver"] = info.CgroupDriver
-	if podman, err := a.podman(ctx); err == nil && !podman { // Podman's answer is not one (limits.go)
-		limits := dockerSupport(info)
+	if limits, err := a.support(ctx, info); err == nil {
+		capacity.Details["rootless"] = limits.rootless
+		capacity.Details["cgroup_version"] = limits.cgroupVersion
+		capacity.Details["cgroup_driver"] = limits.cgroupDriver
 		capacity.Details["cpu_limits"] = limits.cpu
 		capacity.Details["memory_limits"] = limits.memory
 	}
@@ -1090,7 +1092,7 @@ func (a *Adapter) RejoinNetworks(ctx context.Context, owns func(bundleID string)
 	// Which networks this container is already on, from one inspect of
 	// itself. Unknown — the inspect failed, or Pando is not in a container —
 	// is an empty set, and every network goes on to the checks below as it
-	// did before; attachProxy treats "already exists" and a container that is
+	// did before; attachProxy treats being attached already and a container that is
 	// not there as success.
 	already := a.proxyNetworks(ctx)
 
@@ -1465,8 +1467,8 @@ func (a *Adapter) ensureNetwork(ctx context.Context, bundleID string, restricted
 				// existing app, and the app came back only if something
 				// recreated its network.
 				//
-				// Idempotent: Docker answers "already exists" and attachProxy
-				// treats that as success.
+				// Idempotent: the engine answers that it is attached already,
+				// and attachProxy treats that as success (alreadyAttached).
 				if err := a.attachProxy(ctx, n.ID); err != nil {
 					return "", err
 				}
@@ -1546,7 +1548,7 @@ func (a *Adapter) attachProxy(ctx context.Context, networkID string) error {
 	switch {
 	case err == nil:
 		return nil
-	case strings.Contains(err.Error(), "already exists"):
+	case alreadyAttached(err):
 		return nil
 	case cerrdefs.IsNotFound(err):
 		// Pando is not running as a container — a developer running the binary
@@ -1819,6 +1821,11 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 // it, so it held nothing anybody could reach. RemoveVolumes takes only those;
 // the named volumes Pando manages are kept (R-204).
 func (a *Adapter) removeContainer(ctx context.Context, id string) error {
+	// Killed first, which is what Docker's forced remove does. Podman's stops
+	// it gracefully instead, and waits out the stop timeout, ten seconds, for
+	// a process that ignores SIGTERM on every recreate and teardown (issue
+	// #179). Not running is not an error here.
+	_, _ = a.cli.ContainerKill(ctx, id, client.ContainerKillOptions{Signal: "SIGKILL"})
 	_, err := a.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 	if err != nil && !cerrdefs.IsNotFound(err) {
 		return errs.Wrap(errs.AdapterFailed, "Could not remove the old container.", err)

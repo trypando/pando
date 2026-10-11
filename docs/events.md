@@ -3,22 +3,13 @@
 
 # Pando events
 
-A subscription sends the events it names to a webhook, or through a notification adapter —
-Slack, Microsoft Teams, Discord, email or ntfy. Make one in the console under **Events**, with
-`pando subscriptions create`, with `POST /api/v1/subscriptions`, or with the
-`pando_create_subscription` tool.
+A subscription sends the events it names to a webhook, or through a notification adapter — Slack, Microsoft Teams, Discord, email or ntfy. Make one in the console under Events, with `pando subscriptions create`, with `POST /api/v1/subscriptions`, or with the `pando_create_subscription` tool.
 
-A subscription is about one app, which needs `app.view` on it, or the whole installation,
-which needs `install.events.manage`. Every delivery is checked against its owner's access at
-the moment it is sent, so a subscription stops delivering when its owner loses sight of
-what it is about (R-368).
+A subscription is about one app, which needs `app.view` on it, or the whole installation, which needs `install.events.manage`. Every delivery is checked against its owner's access at the moment it is sent, so a subscription stops delivering when its owner loses sight of what it is about.
 
 ## Choosing events
 
-A subscription's `events` is a list of names (`deploy.failed`), prefixes (`deploy.*`), or
-`*` for everything. A name that matches no event is refused when the subscription is saved.
-An **app** event reaches subscriptions on its app and install-wide ones; an **install** event
-reaches install-wide subscriptions only.
+A subscription's `events` is a list of names (`deploy.failed`), prefixes (`deploy.*`), or `*` for everything. A name that matches no event is refused when the subscription is saved. An app event reaches subscriptions on its app and install-wide ones; an install event reaches install-wide subscriptions only.
 
 ## Webhooks
 
@@ -35,9 +26,7 @@ Pando sends a `POST` with a JSON body to the subscription's URL:
 }
 ```
 
-`app` is absent for an install event. `actor.kind` is `user`, `token`, `system` or
-`anonymous`. `data` holds the event's fields below and nothing else; no event carries a
-secret value (R-194).
+`app` is absent for an install event. `actor.kind` is `user`, `token`, `system` or `anonymous`. `data` holds the event's fields and nothing else; no event carries a secret value.
 
 | Header | Meaning |
 | --- | --- |
@@ -49,10 +38,7 @@ secret value (R-194).
 
 ### Checking a delivery came from Pando
 
-The signing key is shown once, when the subscription is made or its key is rotated. To
-check a delivery, compute the HMAC over the raw body exactly as received and compare it in
-constant time; refuse a timestamp more than five minutes from your clock, so a recorded
-delivery cannot be replayed:
+The signing key is shown once, when the subscription is made or its key is rotated. To check a delivery, compute the HMAC over the raw body exactly as received and compare it in constant time; refuse a timestamp more than five minutes from your clock, so a recorded delivery cannot be replayed:
 
 ```python
 import hashlib, hmac, time
@@ -67,64 +53,49 @@ def from_pando(key: str, headers, body: bytes) -> bool:
 
 ### Retries and turning off
 
-A `2xx` answer is a delivery. Anything else — another status, a redirect, a timeout after 15
-seconds — is retried after 1 minute, 5 minutes, 30 minutes, 2 hours, 6 hours and 12 hours,
-then marked failed. Every attempt is recorded and shown in the delivery log, and any
-delivery can be sent again from it. An endpoint that has failed every attempt for a day is
-turned off, and its owner is told (R-370). Turning it back on clears the record.
+A `2xx` answer is a delivery. Anything else — another status, a redirect, a timeout after 15 seconds — is retried after 1 minute, 5 minutes, 30 minutes, 2 hours, 6 hours and 12 hours, then marked failed. Every attempt is recorded and shown in the delivery log, and any delivery can be sent again from it. An endpoint that has failed every attempt for a day is turned off, and its owner is told. Turning it back on clears the record.
 
-Delivery is at least once and survives a restart: events are written to an outbox in
-the same transaction as what they describe (R-366).
+Delivery is at least once and survives a restart: events are written to an outbox in the same transaction as what they describe.
 
 ### Private addresses
 
-A webhook may not reach a private, loopback or link-local address — the local network,
-the host itself, a cloud metadata service — unless host policy's `allow_private_webhooks` is
-on (R-372). The check is made on the address actually connected to, and redirects are not
-followed.
+A webhook may not reach a private, loopback or link-local address — the local network, the host itself, a cloud metadata service — unless host policy's `allow_private_webhooks` is on. The check is made on the address actually connected to, and redirects are not followed.
 
 ### Shaping the request
 
-For a receiver that expects a particular request, a webhook may set `method` (POST, PUT or
-PATCH), `content_type`, `headers` of its own — for an API key the receiver needs; values are
-stored encrypted and never shown again — and `payload_template`, the body as a Go template.
-Pando's `Pando-*` headers are always sent and cannot be set, and the signature covers the body
-actually sent. A template is given `.ID`, `.Type`, `.OccurredAt`, `.App` (`.ID`, `.Name`,
-`.Slug`), `.Actor`, `.Data`, `.Subject`, `.Body`, `.Fields`, `.Link` and `.Envelope`, and the
-functions `json` (a value as JSON) and `default`. For a chat tool that takes a `text` field:
+For a receiver that expects a particular request, a webhook may set `method` (POST, PUT or PATCH), `content_type`, `headers` of its own — for an API key the receiver needs; values are stored encrypted and never shown again — and `payload_template`, the body as a Go template. Pando's `Pando-*` headers are always sent and cannot be set, and the signature covers the body actually sent. A template is given `.ID`, `.Type`, `.OccurredAt`, `.App` (`.ID`, `.Name`, `.Slug`), `.Actor`, `.Data`, `.Subject`, `.Body`, `.Fields`, `.Link` and `.Envelope`, and the functions `json` (a value as JSON) and `default`. For a chat tool that takes a `text` field:
 
 ```
 {"text": {{json .Subject}}, "url": {{json .Link}}}
 ```
 
-A template is checked against a sample event when it is saved, and a JSON content type needs
-it to produce JSON. `link` points into the console when Pando's `external_url` is set.
+A template is checked against a sample event when it is saved, and a JSON content type needs it to produce JSON. `link` points into the console when Pando's `external_url` is set.
 
 ## Events
 
 | Event | About | What happened | Data |
 | --- | --- | --- | --- |
 | `app.created` | app | An app was created. | `name` The app's name.<br>`slug` The app's slug. |
-| `app.deleted` | app | An app was deleted. Its volumes are kept (R-204). | `backup_id` The backup's ID, bkp_….<br>`volumes_discarded` Whether its volumes were discarded rather than kept.<br>`reason` idle when Pando deleted it because nobody used it (R-398). |
-| `app.disk_warning` | app | An app is near its disk limit, or over it and will be stopped if it still is at the next reading (R-403). | `used_bytes` What the app's containers and volumes hold.<br>`limit_bytes` Its disk limit.<br>`over` true when it is over the limit, false when it is near it. |
-| `app.disk_stopped` | app | Pando stopped an app that stayed over its disk limit. It stays stopped until somebody starts it (R-403). | `used_bytes` What the app's containers and volumes hold.<br>`limit_bytes` Its disk limit. |
-| `app.idle_notice` | app | Nobody has used an app for a while, and its owner was told Pando will stop or delete it (R-395). | `action` stop or delete.<br>`days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started.<br>`action_at` When Pando will act. |
-| `app.idle_stopped` | app | Pando stopped an app nobody had used. It stays stopped until somebody starts it (R-396). | `days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started. |
+| `app.deleted` | app | An app was deleted. Its volumes are kept. | `backup_id` The backup's ID, bkp_….<br>`volumes_discarded` Whether its volumes were discarded rather than kept.<br>`reason` idle when Pando deleted it because nobody used it. |
+| `app.disk_warning` | app | An app is near its disk limit, or over it and will be stopped if it still is at the next reading. | `used_bytes` What the app's containers and volumes hold.<br>`limit_bytes` Its disk limit.<br>`over` true when it is over the limit, false when it is near it. |
+| `app.disk_stopped` | app | Pando stopped an app that stayed over its disk limit. It stays stopped until somebody starts it. | `used_bytes` What the app's containers and volumes hold.<br>`limit_bytes` Its disk limit. |
+| `app.idle_notice` | app | Nobody has used an app for a while, and its owner was told Pando will stop or delete it. | `action` stop or delete.<br>`days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started.<br>`action_at` When Pando will act. |
+| `app.idle_stopped` | app | Pando stopped an app nobody had used. It stays stopped until somebody starts it. | `days` The idle setting in force.<br>`last_activity` When the app was last used, deployed or started. |
 | `app.state_changed` | app | An app moved from one state to another: running, degraded, failed, stopped, deploying and the rest. A health change is a move between running and degraded. | `from` The state it was in.<br>`to` The state it is in now. |
 | `app.restarted` | app | Somebody restarted an app. |  |
-| `app.failed` | app | Pando stopped trying to bring an app back after repeated failures. It stays failed until somebody deploys it (R-151). | `reason` Why, in words a person can act on.<br>`failures` How many attempts failed.<br>`window` Over how long. |
+| `app.failed` | app | Pando stopped trying to bring an app back after repeated failures. It stays failed until somebody deploys it. | `reason` Why, in words a person can act on.<br>`failures` How many attempts failed.<br>`window` Over how long. |
 | `app.restored` | app | An app's data was restored from a backup. | `volumes` The volumes restored. |
-| `app.exec` | app | Somebody opened a shell in one of an app's workloads. The command is named; what was typed is not recorded (R-228). | `workload` The workload.<br>`command` The command the session started. |
-| `app.secret_written` | app | An app's secret was set or changed. The value is never in an event (R-194). | `key` The secret's name. |
-| `deploy.requested` | app | A deploy is waiting for approval (R-154). | `spec_revision` The revision to deploy.<br>`trigger` What started it.<br>`reasons` Why it needs approval.<br>`approvals_required` How many approvals it needs. |
+| `app.exec` | app | Somebody opened a shell in one of an app's workloads. The command is named; what was typed is not recorded. | `workload` The workload.<br>`command` The command the session started. |
+| `app.secret_written` | app | An app's secret was set or changed. The value is never in an event. | `key` The secret's name. |
+| `deploy.requested` | app | A deploy is waiting for approval. | `spec_revision` The revision to deploy.<br>`trigger` What started it.<br>`reasons` Why it needs approval.<br>`approvals_required` How many approvals it needs. |
 | `deploy.approved` | app | Somebody approved a deploy. | `approvals` Approvals so far.<br>`approvals_required` How many it needs. |
 | `deploy.rejected` | app | Somebody rejected a deploy. | `reason` Why, in words a person can act on. |
 | `deploy.started` | app | A deploy started. | `spec_revision` The revision being deployed.<br>`trigger` What started it. |
 | `deploy.succeeded` | app | A deploy finished and the app is running the new revision. | `deployment_id` The deploy's ID, dep_….<br>`spec_id` The revision deployed.<br>`trigger` What started it. |
 | `deploy.failed` | app | A deploy failed. | `deployment_id` The deploy's ID, dep_….<br>`spec_id` The revision that did not deploy.<br>`trigger` What started it.<br>`error_code` The stable error code.<br>`message` What went wrong. |
-| `security.scanned` | app | An app was scanned and has a security score (R-310). | `score` The security score, 0 to 100.<br>`critical` Critical findings.<br>`high` High findings.<br>`medium` Medium findings.<br>`low` Low and unrated findings.<br>`spec_id` The revision scanned. |
+| `security.scanned` | app | An app was scanned and has a security score. | `score` The security score, 0 to 100.<br>`critical` Critical findings.<br>`high` High findings.<br>`medium` Medium findings.<br>`low` Low and unrated findings.<br>`spec_id` The revision scanned. |
 | `security.scan_failed` | app | A scan did not finish. | `reason` Why, in words a person can act on. |
-| `security.insecure` | app | An app's score is below the installation's minimum (R-315). | `grace_hours` Hours before Pando acts.<br>`action` What Pando does then. |
+| `security.insecure` | app | An app's score is below the installation's minimum. | `grace_hours` Hours before Pando acts.<br>`action` What Pando does then. |
 | `security.stopped` | app | Pando stopped an app that stayed below the installation's minimum score. | `grace_hours` The grace period that passed.<br>`insecure_since` When it fell below. |
 | `security.recovered` | app | An app's score is back at or above the minimum. |  |
 | `grant.created` | app | Somebody was given access. On an app, this is a share; install-wide, a role. | `plane` control or data.<br>`role_id` The role granted, on the control plane.<br>`principal_kind` user, group, token or anonymous.<br>`principal_id` Who was given access.<br>`passcode` Whether sharing with everyone needs a passcode. |
@@ -143,10 +114,9 @@ it to produce JSON. `link` points into the console when Pando's `external_url` i
 | `adapter.configured` | install | An adapter was added or changed. It applies after a restart. | `category` The adapter's category.<br>`kind` The adapter's kind.<br>`credentials_changed` Whether a credential changed. |
 | `adapter.unhealthy` | install | An adapter's health check started failing. | `adapter_id` The adapter.<br>`category` Its category.<br>`reason` Why, in words a person can act on. |
 | `adapter.recovered` | install | An adapter's health check passes again. | `adapter_id` The adapter.<br>`category` Its category. |
-| `pando.upgraded` | install | Pando upgraded itself in place (R-359). | `from` The version before.<br>`to` The version now. |
+| `pando.upgraded` | install | Pando upgraded itself in place. | `from` The version before.<br>`to` The version now. |
 | `pando.upgrade_failed` | install | An in-place upgrade did not finish. | `from` The version running.<br>`to` The version attempted.<br>`reason` Why, in words a person can act on. |
-| `subscription.disabled` | app | Pando turned a subscription off because its endpoint failed every delivery for a day (R-370). On an app subscription the event names the app; otherwise it is install-wide. | `subscription_id` The subscription, sub_….<br>`reason` Why, in words a person can act on. |
+| `subscription.disabled` | app | Pando turned a subscription off because its endpoint failed every delivery for a day. On an app subscription the event names the app; otherwise it is install-wide. | `subscription_id` The subscription, sub_….<br>`reason` Why, in words a person can act on. |
 | `subscription.test` | install | A test delivery somebody asked for. Sent only to the subscription it tests, whatever its filter says. | `subscription_id` The subscription being tested. |
 
-Audit-sourced events also carry `target_kind` and `target_id` in `data` when the action had
-a target.
+Audit-sourced events also carry `target_kind` and `target_id` in `data` when the action had a target.

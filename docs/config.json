@@ -1,0 +1,877 @@
+{
+  "settings": [
+    {
+      "env": "PANDO_ACME_CA_FILE",
+      "key": "acme.ca_file",
+      "type": "string",
+      "default": "",
+      "description": "A PEM bundle of certificates trusted, beside the system's, when connecting to the ACME directory: for a private ACME server. Empty trusts the system roots.",
+      "group": "acme",
+      "secret": false
+    },
+    {
+      "env": "PANDO_ACME_DIRECTORY_URL",
+      "key": "acme.directory_url",
+      "type": "string",
+      "default": "https://acme-v02.api.letsencrypt.org/directory",
+      "description": "The ACME directory of the certificate authority that issues the edge's certificates when Pando orders them itself.",
+      "group": "acme",
+      "secret": false
+    },
+    {
+      "env": "PANDO_APPS_CPU_MILLIS",
+      "key": "apps.cpu_millis",
+      "type": "int",
+      "default": "0",
+      "description": "The CPU each new app may use, in thousandths of a CPU. An app can override its own. 0 means 1000, one CPU.",
+      "group": "apps",
+      "secret": false
+    },
+    {
+      "env": "PANDO_APPS_DISK_BYTES",
+      "key": "apps.disk_bytes",
+      "type": "int",
+      "default": "0",
+      "description": "The disk each new app may use, in bytes. An app can override its own. 0 means 10 GiB.",
+      "group": "apps",
+      "secret": false
+    },
+    {
+      "env": "PANDO_APPS_DOCKER_CREDENTIALS",
+      "key": "apps.docker_credentials",
+      "type": "bool",
+      "default": "false",
+      "description": "Pull a private image with the Docker login on the Pando server when the app has no registry credential of its own. Off by default: it lends every app on the install whatever that login can read.",
+      "group": "apps",
+      "secret": false
+    },
+    {
+      "env": "PANDO_APPS_MEMORY_BYTES",
+      "key": "apps.memory_bytes",
+      "type": "int",
+      "default": "0",
+      "description": "The memory each new app may use, in bytes. An app can override its own. 0 means 512 MiB.",
+      "group": "apps",
+      "secret": false
+    },
+    {
+      "env": "PANDO_ADMIN_PASSWORD",
+      "key": "bootstrap.admin_password",
+      "type": "string",
+      "default": "",
+      "description": "The first administrator's password, for an unattended install. Read only on first run, and the account must change it at first sign-in. Empty: the administrator is set up in the console with the setup token Pando prints to its log.",
+      "group": "bootstrap",
+      "secret": true
+    },
+    {
+      "env": "PANDO_DATABASE_CONNECT_TIMEOUT",
+      "key": "database.connect_timeout",
+      "type": "duration",
+      "default": "1m0s",
+      "description": "How long Pando keeps trying to reach Postgres at startup before giving up.",
+      "group": "database",
+      "secret": false
+    },
+    {
+      "env": "PANDO_DATABASE_MAX_CONNS",
+      "key": "database.max_conns",
+      "type": "int",
+      "default": "32",
+      "description": "The most connections this replica opens to Postgres. Postgres's max_connections must allow this for every replica, plus a few more for each.",
+      "group": "database",
+      "secret": false
+    },
+    {
+      "env": "PANDO_DATABASE_PASSWORD_FILE",
+      "key": "database.password_file",
+      "type": "string",
+      "default": "",
+      "description": "A file holding the password for the database URL's user, which the URL then leaves out. The bundled Compose file generates one on first start.",
+      "group": "database",
+      "secret": false
+    },
+    {
+      "env": "PANDO_DATABASE_URL",
+      "key": "database.url",
+      "type": "string",
+      "default": "",
+      "description": "The Postgres connection string. The bundled Compose file supplies it; set it to use an existing database. Its account must be able to manage Pando's application role.",
+      "group": "database",
+      "secret": true
+    },
+    {
+      "env": "PANDO_LOG_DEVELOPMENT",
+      "key": "log.development",
+      "type": "bool",
+      "default": "false",
+      "description": "Write logs as colored, human-readable lines rather than JSON.",
+      "group": "log",
+      "secret": false
+    },
+    {
+      "env": "PANDO_LOG_LEVEL",
+      "key": "log.level",
+      "type": "string",
+      "default": "info",
+      "description": "The least severe log level written: debug, info, warn or error.",
+      "group": "log",
+      "secret": false
+    },
+    {
+      "env": "PANDO_METRICS_INTERVAL",
+      "key": "metrics.interval",
+      "type": "duration",
+      "default": "1m0s",
+      "description": "How often metrics are pushed.",
+      "group": "metrics",
+      "secret": false
+    },
+    {
+      "env": "PANDO_METRICS_OTLP_ENDPOINT",
+      "key": "metrics.otlp_endpoint",
+      "type": "string",
+      "default": "",
+      "description": "The OpenTelemetry collector Pando pushes its own metrics to, such as http://otel-collector:4318 for HTTP or :4317 for gRPC. Empty exports nothing.",
+      "group": "metrics",
+      "secret": false
+    },
+    {
+      "env": "PANDO_METRICS_OTLP_HEADERS",
+      "key": "metrics.otlp_headers",
+      "type": "string",
+      "default": "",
+      "description": "Headers sent with every export, as key=value pairs separated by commas with values URL-encoded, as OTEL_EXPORTER_OTLP_HEADERS takes them. Usually an API key.",
+      "group": "metrics",
+      "secret": true
+    },
+    {
+      "env": "PANDO_METRICS_OTLP_PROTOCOL",
+      "key": "metrics.otlp_protocol",
+      "type": "string",
+      "default": "http/protobuf",
+      "description": "The OTLP protocol: http/protobuf or grpc.",
+      "group": "metrics",
+      "secret": false
+    },
+    {
+      "env": "PANDO_RECONCILER_BACKOFF",
+      "key": "reconciler.backoff",
+      "type": "string",
+      "default": "",
+      "description": "The retry schedule after a failed deploy or restart, as durations separated by commas: the first retry waits the first, and so on. Empty means 0s,5s,15s,60s,5m. Leave it unset in production; Pando warns at startup when it is faster.",
+      "group": "reconciler",
+      "secret": false
+    },
+    {
+      "env": "PANDO_RECONCILER_FAILURE_THRESHOLD",
+      "key": "reconciler.failure_threshold",
+      "type": "int",
+      "default": "0",
+      "description": "How many failures within failure_window before an app is given up on and left failed. 0 means 10.",
+      "group": "reconciler",
+      "secret": false
+    },
+    {
+      "env": "PANDO_RECONCILER_FAILURE_WINDOW",
+      "key": "reconciler.failure_window",
+      "type": "duration",
+      "default": "0s",
+      "description": "The window failures are counted in, measured from the last failure. 0 means 30 minutes.",
+      "group": "reconciler",
+      "secret": false
+    },
+    {
+      "env": "PANDO_RECONCILER_GC_INTERVAL",
+      "key": "reconciler.gc_interval",
+      "type": "duration",
+      "default": "0s",
+      "description": "How often garbage collection runs. 0 means an hour.",
+      "group": "reconciler",
+      "secret": false
+    },
+    {
+      "env": "PANDO_REGISTRY_ALWAYS",
+      "key": "registry.always",
+      "type": "bool",
+      "default": "false",
+      "description": "Send every build through the registry, even when the runtime could import it directly.",
+      "group": "registry",
+      "secret": false
+    },
+    {
+      "env": "PANDO_REGISTRY_INSECURE",
+      "key": "registry.insecure",
+      "type": "bool",
+      "default": "false",
+      "description": "Allow plain HTTP to the registry.",
+      "group": "registry",
+      "secret": false
+    },
+    {
+      "env": "PANDO_REGISTRY_KIND",
+      "key": "registry.kind",
+      "type": "string",
+      "default": "basic",
+      "description": "How Pando signs in to the registry: basic (a username and password) or ecr (an AWS access key).",
+      "group": "registry",
+      "secret": false
+    },
+    {
+      "env": "PANDO_REGISTRY_LAYOUT",
+      "key": "registry.layout",
+      "type": "string",
+      "default": "",
+      "description": "How images are arranged in the registry: per_app (a repository per app) or single (one repository for every image). Empty means the kind's default.",
+      "group": "registry",
+      "secret": false
+    },
+    {
+      "env": "PANDO_REGISTRY_PASSWORD",
+      "key": "registry.password",
+      "type": "string",
+      "default": "",
+      "description": "The registry password or access token. With kind ecr, the AWS secret access key. Read from the environment only, never from the config file.",
+      "group": "registry",
+      "secret": true
+    },
+    {
+      "env": "PANDO_REGISTRY_PASSWORD_FILE",
+      "key": "registry.password_file",
+      "type": "string",
+      "default": "",
+      "description": "A file holding the registry password, in place of password.",
+      "group": "registry",
+      "secret": false
+    },
+    {
+      "env": "PANDO_REGISTRY_URL",
+      "key": "registry.url",
+      "type": "string",
+      "default": "",
+      "description": "The image registry Pando pushes builds to, with an optional path prefix, such as https://registry.internal:5000 or 123456789012.dkr.ecr.us-east-1.amazonaws.com/pando. Set, it declares the install's image registry adapter. Empty: no registry, which single-host Docker does not need.",
+      "group": "registry",
+      "secret": false
+    },
+    {
+      "env": "PANDO_REGISTRY_USERNAME",
+      "key": "registry.username",
+      "type": "string",
+      "default": "",
+      "description": "The registry username. With kind ecr, the AWS access key ID.",
+      "group": "registry",
+      "secret": false
+    },
+    {
+      "env": "PANDO_RETENTION_DELETED_APPS",
+      "key": "retention.deleted_apps",
+      "type": "duration",
+      "default": "0s",
+      "description": "How long a deleted app's detection and backup records are kept. 0 means 30 days.",
+      "group": "retention",
+      "secret": false
+    },
+    {
+      "env": "PANDO_RETENTION_DEPLOYMENTS_PER_APP",
+      "key": "retention.deployments_per_app",
+      "type": "int",
+      "default": "0",
+      "description": "How many deployments are kept for each app. 0 means 50.",
+      "group": "retention",
+      "secret": false
+    },
+    {
+      "env": "PANDO_RETENTION_EVENTS",
+      "key": "retention.events",
+      "type": "duration",
+      "default": "0s",
+      "description": "How long the event outbox is kept. 0 means 30 days.",
+      "group": "retention",
+      "secret": false
+    },
+    {
+      "env": "PANDO_RETENTION_IDEMPOTENCY_KEYS",
+      "key": "retention.idempotency_keys",
+      "type": "duration",
+      "default": "0s",
+      "description": "How long idempotency keys are kept. 0 means a day.",
+      "group": "retention",
+      "secret": false
+    },
+    {
+      "env": "PANDO_RETENTION_SCANS",
+      "key": "retention.scans",
+      "type": "duration",
+      "default": "0s",
+      "description": "How long security scans are kept. 0 means 90 days.",
+      "group": "retention",
+      "secret": false
+    },
+    {
+      "env": "PANDO_RETENTION_SESSIONS",
+      "key": "retention.sessions",
+      "type": "duration",
+      "default": "0s",
+      "description": "How long expired or revoked sessions are kept. 0 means 30 days.",
+      "group": "retention",
+      "secret": false
+    },
+    {
+      "env": "PANDO_RETENTION_SSO_FLOWS",
+      "key": "retention.sso_flows",
+      "type": "duration",
+      "default": "0s",
+      "description": "How long expired sign-in flows are kept. 0 means a day.",
+      "group": "retention",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_ADDR",
+      "key": "server.addr",
+      "type": "string",
+      "default": ":8080",
+      "description": "The address the console, the API and the proxy listen on, as host:port. A bare :port listens on every interface.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_ADVERTISE_URL",
+      "key": "server.advertise_url",
+      "type": "string",
+      "default": "",
+      "description": "Where other Pando replicas reach this one, for a deploy's live log. Empty means http://<hostname> and the port of addr, which is right on a Compose network. In Kubernetes, the pod's address, such as http://$(POD_IP):8080.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_AUDIT_ARCHIVE_DIR",
+      "key": "server.audit_archive_dir",
+      "type": "string",
+      "default": "/var/lib/pando/audit-archives",
+      "description": "Where Pando keeps audit log archives itself, when host policy's audit_archive is keep.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_BASE_DOMAIN",
+      "key": "server.base_domain",
+      "type": "string",
+      "default": "",
+      "description": "The domain per-app subdomains are made under, so an app called notes is reached at notes.example.com. Used only when routing by subdomain.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_EXTERNAL_URL",
+      "key": "server.external_url",
+      "type": "string",
+      "default": "",
+      "description": "The address browsers reach Pando on, such as https://pando.example.com. Set it whenever something else terminates TLS: its scheme is what marks session cookies Secure. Empty is right when Pando serves TLS itself, or on plain-HTTP localhost.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_ISSUER",
+      "key": "server.issuer",
+      "type": "string",
+      "default": "https://pando.local",
+      "description": "The iss claim in every identity assertion Pando sends an app. It names this installation to the apps behind it.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_PORT_RANGE_END",
+      "key": "server.port_range_end",
+      "type": "int",
+      "default": "9999",
+      "description": "The last host port given to an app when apps are reached by port.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_PORT_RANGE_START",
+      "key": "server.port_range_start",
+      "type": "int",
+      "default": "9000",
+      "description": "The first host port given to an app when apps are reached by port.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_PROXY_UPSTREAM",
+      "key": "server.proxy_upstream",
+      "type": "string",
+      "default": "",
+      "description": "The address routing adapters send app traffic to, which is Pando's own proxy. It must be reachable from wherever the routing adapter runs. Empty means http://pando:8080, the Compose service.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_ROUTING_MODE",
+      "key": "server.routing_mode",
+      "type": "string",
+      "default": "path",
+      "description": "How new apps are addressed by default: path (under Pando's own address), subdomain (each app at its own name under base_domain), or port (each app on its own port).",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_SHUTDOWN_TIMEOUT",
+      "key": "server.shutdown_timeout",
+      "type": "duration",
+      "default": "15s",
+      "description": "How long Pando waits for requests in flight to finish when it is stopped.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_TOKEN_KEY_PATH",
+      "key": "server.token_key_path",
+      "type": "string",
+      "default": "/var/lib/pando/token.key",
+      "description": "The file holding the key API tokens are stored under. Made on first start. Every replica must read the same file, and a disaster-recovery bundle carries it.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_TRUSTED_PROXIES",
+      "key": "server.trusted_proxies",
+      "type": "string",
+      "default": "",
+      "description": "The proxies in front of Pando whose X-Forwarded-For header names the client in the audit log: addresses and CIDR ranges, separated by commas. Empty records the connecting address.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_WORK_DIR",
+      "key": "server.work_dir",
+      "type": "string",
+      "default": "/var/lib/pando/work",
+      "description": "Where a disaster-recovery bundle is assembled before it is encrypted and sent. It needs room for a database dump and every app volume.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_WORK_AUTO_DEPLOY",
+      "key": "work.auto_deploy",
+      "type": "int",
+      "default": "0",
+      "description": "How many apps the leader checks for new commits at once. 0 means eight.",
+      "group": "work",
+      "secret": false
+    },
+    {
+      "env": "PANDO_WORK_BACKUPS",
+      "key": "work.backups",
+      "type": "int",
+      "default": "0",
+      "description": "How many rolling backups the leader takes at once. 0 means two.",
+      "group": "work",
+      "secret": false
+    },
+    {
+      "env": "PANDO_WORK_DEPLOYS",
+      "key": "work.deploys",
+      "type": "int",
+      "default": "0",
+      "description": "The older name for host policy's max_concurrent_deploys. Set, it fixes that policy setting unless the policy setting is also set.",
+      "group": "work",
+      "secret": false
+    },
+    {
+      "env": "PANDO_WORK_DETECTIONS",
+      "key": "work.detections",
+      "type": "int",
+      "default": "0",
+      "description": "How many detections this replica runs at once. 0 means one per CPU, and at least two.",
+      "group": "work",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_AGENT_DISABLED_VERBS",
+      "key": "policy.agent_disabled_verbs",
+      "type": "list",
+      "default": "app.exec,app.secrets.read,app.grants.manage,install.policy.manage,install.users.manage,install.backup.manage,install.deploys.approve,app.deploy.approve,install.upgrade",
+      "description": "Verbs an agent's token may not use: denied to CLI and MCP tokens only, not to people.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_ALLOW_ANONYMOUS_GRANTS",
+      "key": "policy.allow_anonymous_grants",
+      "type": "bool",
+      "default": "true",
+      "description": "Older form of public_sharing: false means apps cannot be shared with everyone. Prefer public_sharing.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_ALLOW_CPU_OVERSUBSCRIPTION",
+      "key": "policy.allow_cpu_oversubscription",
+      "type": "bool",
+      "default": "false",
+      "description": "Let apps together ask for more CPU than the runtime has. Off by default: a deploy that would need more CPU than is left is refused. On, busy apps share the CPU and run slower.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_ALLOW_MEMORY_OVERSUBSCRIPTION",
+      "key": "policy.allow_memory_oversubscription",
+      "type": "bool",
+      "default": "false",
+      "description": "Let apps together ask for more memory than the runtime has. Off by default: a deploy that would need more memory than is left is refused. On, the host may run out and stop an app to free memory. Disk is never oversubscribed.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_ALLOW_PRIVATE_WEBHOOKS",
+      "key": "policy.allow_private_webhooks",
+      "type": "bool",
+      "default": "false",
+      "description": "Let event subscription webhooks send to private addresses — the local network, loopback, and link-local addresses such as a cloud metadata service. Off by default, because anyone who can see an app can subscribe to it.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_AUDIT_ARCHIVE",
+      "key": "policy.audit_archive",
+      "type": "string",
+      "default": "",
+      "description": "Where a month of the audit log goes once it is past retention: keep (archived under Pando's own directory), export (to a backup destination), or off (nothing is archived, so nothing is removed).",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_AUDIT_ARCHIVE_DESTINATION",
+      "key": "policy.audit_archive_destination",
+      "type": "string",
+      "default": "",
+      "description": "The backup destination, by adapter ID, that audit archives are exported to when audit_archive is export. Empty means the default backup destination.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_AUDIT_RETENTION_MONTHS",
+      "key": "policy.audit_retention_months",
+      "type": "int",
+      "default": "0",
+      "description": "How many months the audit log keeps before an older month is archived and removed from the live log. 0 means 3, which is also the least it may be.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_AUTO_UPGRADE_PATCHES",
+      "key": "policy.auto_upgrade_patches",
+      "type": "bool",
+      "default": "false",
+      "description": "Upgrade to new patch releases automatically inside maintenance_window. Takes a database copy for rollback but not a full backup. Needs upgrade_in_place.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_DEPLOY_APPROVAL_APPS",
+      "key": "policy.deploy_approval_apps",
+      "type": "list",
+      "default": "",
+      "description": "Apps, by ID, whose deploys need approval whatever their owners say.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_DEPLOY_APPROVAL_COUNT",
+      "key": "policy.deploy_approval_count",
+      "type": "int",
+      "default": "0",
+      "description": "How many approvals a deploy needs. 0 means one.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_DEPLOY_APPROVAL_EXPIRY_HOURS",
+      "key": "policy.deploy_approval_expiry_hours",
+      "type": "int",
+      "default": "168",
+      "description": "How long a deploy waits for approval before it expires, in hours. 0 means it waits until somebody answers.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_DEPLOY_APPROVAL_REQUIRED",
+      "key": "policy.deploy_approval_required",
+      "type": "bool",
+      "default": "false",
+      "description": "Every app's deploys need approval from somebody holding install.deploys.approve or app.deploy.approve. Automatic deploys stop while it is on.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_DISABLE_AI_SCREENING",
+      "key": "policy.disable_ai_screening",
+      "type": "bool",
+      "default": "false",
+      "description": "Turn off AI screening of deployment plans: AI is never sent a repository to repair a plan or answer detection's questions.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_DISABLE_ANONYMOUS_DENIAL_AUDIT",
+      "key": "policy.disable_anonymous_denial_audit",
+      "type": "bool",
+      "default": "false",
+      "description": "Don't record refusals of people who aren't signed in: authz.denied is written for an anonymous visitor to an app not shared with them only while this is off. Refusals of signed-in people and tokens are always recorded.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_DISABLE_ANONYMOUS_USE_AUDIT",
+      "key": "policy.disable_anonymous_use_audit",
+      "type": "bool",
+      "default": "false",
+      "description": "Don't record visits from people who aren't signed in: app.use is written to the audit log for signed-in people and tokens only, not for anonymous visitors to public apps.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_DISABLE_JIT_PROVISIONING",
+      "key": "policy.disable_jit_provisioning",
+      "type": "bool",
+      "default": "false",
+      "description": "Don't make an account when someone first signs in through an identity provider, whatever the provider is set to. People need an account from SCIM or an administrator first.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_DISABLE_PASSWORD_SIGN_IN",
+      "key": "policy.disable_password_sign_in",
+      "type": "bool",
+      "default": "false",
+      "description": "Turn off sign-in with a local username and password, so people sign in through an external identity provider. Needs at least one provider turned on.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_DISABLE_UPDATE_CHECK",
+      "key": "policy.disable_update_check",
+      "type": "bool",
+      "default": "false",
+      "description": "Don't check GitHub for newer Pando releases. Off sends no request at all, for an installation that has no internet access or may not call out.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_DISABLED_VERBS",
+      "key": "policy.disabled_verbs",
+      "type": "list",
+      "default": "",
+      "description": "Permissions nobody may use, install-wide, including an app's owner. app.exec here is the Policy screen's \"Turn off terminal access for the whole installation\".",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_EGRESS_ALLOWLIST",
+      "key": "policy.egress_allowlist",
+      "type": "list",
+      "default": "",
+      "description": "Older form of egress_mode allowlist with egress_list. Prefer those.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_EGRESS_BLOCK_PRIVATE",
+      "key": "policy.egress_block_private",
+      "type": "bool",
+      "default": "false",
+      "description": "Stop apps connecting to private addresses — the local network, loopback, and the cloud metadata address — whatever egress_mode says.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_EGRESS_LIST",
+      "key": "policy.egress_list",
+      "type": "list",
+      "default": "",
+      "description": "The installation's egress list: hostnames, *.wildcards, addresses or ranges, each optionally with a port. Read by egress_mode.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_EGRESS_LOOSENING",
+      "key": "policy.egress_loosening",
+      "type": "string",
+      "default": "",
+      "description": "Whether an app may loosen the installation's egress rules (add to an allowlist, remove from a denylist, unblock private addresses): verb (somebody holding app.egress.loosen may), approval (its deploy needs approval), or forbidden.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_EGRESS_MODE",
+      "key": "policy.egress_mode",
+      "type": "string",
+      "default": "",
+      "description": "Where apps may connect out to: allow_all (anywhere), denylist (anywhere except egress_list), or allowlist (only egress_list). Apps can narrow it; loosening it is governed by egress_loosening.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_IDLE_DELETE_DAYS",
+      "key": "policy.idle_delete_days",
+      "type": "int",
+      "default": "0",
+      "description": "Delete an app nobody has used for this many days, counted from its last use, so it is longer than idle_stop_days. Its owner is told 7 days before. Storage is backed up first when require_backup_before_destroy is on, and discarded otherwise. An app can set its own number or turn this off. 0 means never.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_IDLE_STOP_DAYS",
+      "key": "policy.idle_stop_days",
+      "type": "int",
+      "default": "0",
+      "description": "Stop an app nobody has used for this many days. Its owner is told 7 days before, and somebody starts it again by hand. An app can set its own number or turn this off. 0 means never.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_IGNORE_UNFIXABLE_FINDINGS",
+      "key": "policy.ignore_unfixable_findings",
+      "type": "bool",
+      "default": "false",
+      "description": "Ignore findings with no fix available, in both the security score and the list.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_INSECURE_ACTION",
+      "key": "policy.insecure_action",
+      "type": "string",
+      "default": "",
+      "description": "What happens to a running app that falls below the minimum security score: warn, or stop (after the grace period).",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_INSECURE_GRACE_HOURS",
+      "key": "policy.insecure_grace_hours",
+      "type": "int",
+      "default": "0",
+      "description": "Grace period, in hours, before stop applies to an app below the minimum score.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_MAINTENANCE_WINDOW",
+      "key": "policy.maintenance_window",
+      "type": "string",
+      "default": "",
+      "description": "When automatic upgrades may start, in UTC: weekdays, a start time and a length, such as \"sun,wed 02:00 2h\" or \"daily 03:30 1h\".",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_MAX_APPS_PER_USER",
+      "key": "policy.max_apps_per_user",
+      "type": "int",
+      "default": "0",
+      "description": "How many apps each person may own, unless their account or one of their groups says otherwise. 0 means unlimited.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_MAX_CONCURRENT_DEPLOYS",
+      "key": "policy.max_concurrent_deploys",
+      "type": "int",
+      "default": "0",
+      "description": "How many deploys each replica of Pando runs at once. A deploy past the limit waits in the queue and its log says how many are ahead of it. 0 means one per CPU, and at least two.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_MAX_LOG_DISK_BYTES",
+      "key": "policy.max_log_disk_bytes",
+      "type": "int",
+      "default": "0",
+      "description": "Total disk for app logs across every app, in bytes. 0 means no limit.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_MAX_TOKEN_LIFETIME_DAYS",
+      "key": "policy.max_token_lifetime_days",
+      "type": "int",
+      "default": "0",
+      "description": "Longest a token may live, in days. 0 means no limit.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_MIN_BUILD_ISOLATION",
+      "key": "policy.min_build_isolation",
+      "type": "int",
+      "default": "10",
+      "description": "Minimum isolation for builds, as an isolation class number (10 is a container).",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_MIN_RUNTIME_ISOLATION",
+      "key": "policy.min_runtime_isolation",
+      "type": "int",
+      "default": "10",
+      "description": "Minimum isolation for running apps, as an isolation class number (10 is a container).",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_MIN_SECURITY_SCORE",
+      "key": "policy.min_security_score",
+      "type": "int",
+      "default": "0",
+      "description": "Minimum security score a deploy must reach, 0 to 100. 0 means off.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_PUBLIC_SHARING",
+      "key": "policy.public_sharing",
+      "type": "string",
+      "default": "",
+      "description": "Whether an app may be shared with anyone on the internet: allowed, passcode_only (only behind the app's passcode), or none.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_REQUIRE_BACKUP_BEFORE_DESTROY",
+      "key": "policy.require_backup_before_destroy",
+      "type": "bool",
+      "default": "false",
+      "description": "Require a backup before anything is destroyed: an app's storage is backed up before the app or its volumes are deleted.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_SOURCE_ALLOWLIST",
+      "key": "policy.source_allowlist",
+      "type": "list",
+      "default": "",
+      "description": "Where apps may be created from: a host (github.com), a host suffix (.corp.example), or a host and path (github.com/acme, ghcr.io/acme) — repositories and image registries alike. Add `upload` to allow files sent from a computer. Empty means anywhere.",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_UPDATE_CHANNEL",
+      "key": "policy.update_channel",
+      "type": "string",
+      "default": "",
+      "description": "Which Pando releases the update check offers: stable (releases only) or prerelease (release candidates too).",
+      "group": "policy",
+      "secret": false
+    },
+    {
+      "env": "PANDO_POLICY_UPGRADE_IN_PLACE",
+      "key": "policy.upgrade_in_place",
+      "type": "bool",
+      "default": "false",
+      "description": "Let Pando upgrade itself to a newer release from the Updates screen. Needs Pando's image set to a moving tag such as trypando/pando:latest; usually set in the deployment's configuration.",
+      "group": "policy",
+      "secret": false
+    }
+  ]
+}

@@ -102,7 +102,7 @@ Pando out. The service uses the Postgres image, so nothing extra is pulled. A ch
 container's environment is in `docker inspect` for as long as the stopped container exists; the
 script removes its copy once read (CodeRabbit on #176).
 
-**[O]** Whether a non-Docker install topology (Incus, Podman, bare host) ships an equivalent, or is
+**[O]** Whether a non-Docker install topology (Incus, bare host) ships an equivalent, or is
 simply expected to use the external-database path, is unspecified. The external path covers it
 functionally; only the first-run experience differs.
 
@@ -124,8 +124,10 @@ than documented:
 
 The `rootless` CI job sets up rootless Docker as `docs/rootless.md` does and runs the adapter's
 integration suite against it, including `TestR402_RootlessDockerAppliesTheLimitsPandoSets`, which reads
-a container's limits back from its cgroup. Podman, the other rootless runtime, is issue #179: its Docker-compatible `info` reports CPU quotas
-unsupported with the controller delegated, so the adapter does not read it as an answer there.
+a container's limits back from its cgroup. Rootless Podman runs this same Compose file through its
+Docker-compatible socket, with a user service to start it at boot (`docs/rootless.md`, issue #179).
+Its limit support is read from Podman's own info, and the `podman` CI job runs the same suite against
+it (design 03, Podman).
 
 **[P] More than one `pando` (issue #72).** The `pando` service may run as N replicas against the one
 Postgres, behind a load balancer, provided every replica reaches the same Docker daemon and shares
