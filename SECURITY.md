@@ -110,11 +110,12 @@ to the host beyond the port Pando allocates it.
   compromised installation.
 - It is not multi-tenant (R-015). One installation serves one organization, and the isolation between
   apps is container-level, not a hostile-tenant boundary.
-- It does not terminate TLS itself. TLS is the job of whatever sits in front of it — Traefik, a
-  reverse proxy, or a load balancer. On a public installation, running Pando without TLS in front
-  exposes session cookies and bearer tokens.
+- Its server speaks plain HTTP. TLS is terminated in front of it: by the edge Pando runs itself when
+  that is turned on, which issues and renews certificates over ACME (R-169, R-174), or by a reverse
+  proxy or load balancer the operator runs. On a public installation, reaching Pando without TLS in
+  front exposes session cookies and bearer tokens.
 
-  Behind a TLS-terminating proxy, set **`PANDO_SERVER_EXTERNAL_URL`** to the address browsers use —
+  Behind a TLS-terminating proxy the operator runs, set **`PANDO_SERVER_EXTERNAL_URL`** to the address browsers use —
   `https://pando.example.com`. Pando cannot tell an encrypted browser connection from an unencrypted
   one when every request reaches it over plain HTTP, so without this the session cookie is not marked
   `Secure` and one plaintext request to the hostname puts it on the wire. Pando does not infer this
@@ -127,7 +128,9 @@ to the host beyond the port Pando allocates it.
   empty, the default, the audit log records the proxy's own address. The list decides the audited
   address and nothing else: not `Secure`, not rate limits. A range covering most of the internet is
   refused at startup.
-- Accounts are local to the installation in this version. There is no external identity provider yet.
+- It has no multi-factor authentication of its own. Accounts can sign in through an identity provider
+  over OIDC or SAML 2.0, with SCIM provisioning ([docs/identity-providers.md](docs/identity-providers.md)),
+  and MFA is the provider's. Password sign-in to local accounts can be turned off once one is set up.
 
 ### Cryptography
 
@@ -136,7 +139,8 @@ library or `golang.org/x/crypto`.
 
 | Use | Algorithm | Where |
 |---|---|---|
-| Password and API token hashing | argon2id — 64 MiB, t=3, p=2, 16-byte salt, 32-byte key; parameters encoded in each hash so they can be raised without invalidating credentials | [`internal/hash`](internal/hash/hash.go) |
+| Password hashing | argon2id — 64 MiB, t=3, p=2, 16-byte salt, 32-byte key; parameters encoded in each hash so they can be raised without invalidating credentials | [`internal/hash`](internal/hash/hash.go) |
+| API token digests | HMAC-SHA-256 of the token's secret, under a key kept in a file beside the process rather than in Postgres, so a database dump alone can't test a guess (R-063) | [`internal/core/tokenkey`](internal/core/tokenkey/tokenkey.go), [`internal/core/state/tokens.go`](internal/core/state/tokens.go) |
 | Identity assertions to apps | Ed25519 (JWT `EdDSA`), 120-second lifetime, key ID from SHA-256 of the public key, rotation by JWKS overlap | [`internal/core/assertion`](internal/core/assertion/assertion.go) |
 | Secrets at rest | AES-256-GCM, per-value nonce, adapter reference as additional authenticated data | [`internal/adapter/secrets/local`](internal/adapter/secrets/local/local.go) |
 | Backup and DR bundles | ChaCha20-Poly1305, key derived from the passphrase with argon2id, parameters written into the envelope | [`internal/core/backup`](internal/core/backup/crypt.go) |
