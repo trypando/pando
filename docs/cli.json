@@ -1,0 +1,5666 @@
+{
+  "commands": [
+    {
+      "path": "pando",
+      "use": "pando",
+      "short": "Host your apps without setting up a deployment pipeline",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "inherited_flags": [],
+      "subcommands": [
+        "pando adapter",
+        "pando admin",
+        "pando ai",
+        "pando app",
+        "pando approvals",
+        "pando audit",
+        "pando backup",
+        "pando config",
+        "pando deploy",
+        "pando events",
+        "pando exec",
+        "pando export",
+        "pando grant",
+        "pando group",
+        "pando host-agent",
+        "pando identity-provider",
+        "pando login",
+        "pando logs",
+        "pando mcp",
+        "pando migrate",
+        "pando notifications",
+        "pando plan",
+        "pando policy",
+        "pando restart",
+        "pando rollback",
+        "pando secret",
+        "pando section",
+        "pando self-update",
+        "pando serve",
+        "pando slot",
+        "pando source",
+        "pando subscriptions",
+        "pando token",
+        "pando updates",
+        "pando upgrade",
+        "pando user",
+        "pando version"
+      ]
+    },
+    {
+      "path": "pando adapter",
+      "use": "adapter",
+      "short": "See and configure this installation's adapters",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando adapter add",
+        "pando adapter kinds",
+        "pando adapter list"
+      ]
+    },
+    {
+      "path": "pando adapter add",
+      "use": "add <category>/<kind>",
+      "short": "Add an adapter, or change one, by kind",
+      "long": "Adds an adapter of a kind from `pando adapter kinds`. Ordinary settings go in --set KEY=VALUE;\na secret setting such as an API key is asked for without echoing it, so it never lands in\nyour shell history (piped in when stdin is not a terminal). Adding with an existing --id\nchanges that adapter. Pando loads adapters at startup: restart it afterwards, except after\na source connection or an image registry, which are used from the moment they are saved.\n\nWith a kind named, --help lists its settings and their defaults, the advanced ones under\ntheir own heading. Advanced settings take --set like any other.\n\n  pando adapter add ai/anthropic --set model=claude-sonnet-5",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "default",
+          "shorthand": "",
+          "type": "bool",
+          "default": "true",
+          "usage": "make it the default adapter of its category",
+          "required": false
+        },
+        {
+          "name": "disabled",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "save it turned off: Pando keeps its settings and does not use it. A secret left empty keeps the stored one",
+          "required": false
+        },
+        {
+          "name": "id",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the adapter's ID (default: the kind's usual prefix and name, e.g. ai_anthropic)",
+          "required": false
+        },
+        {
+          "name": "name",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "what the console calls it (default: the kind's name)",
+          "required": false
+        },
+        {
+          "name": "set",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "a setting, KEY=VALUE; repeat for more",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando adapter kinds",
+      "use": "kinds",
+      "short": "Show the kinds of adapter this build can run, and their settings",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando adapter list",
+      "use": "list",
+      "short": "Show the adapters configured here",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando admin",
+      "use": "admin",
+      "short": "Administer this installation from the host",
+      "long": "Commands that work against the database directly, for when nobody can sign in.\n\nRunning these needs shell access on the host and the configuration that names the\ndatabase. That is the whole of the authorization, and it is the same access that\ncould change the row by hand.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando admin enable-password-sign-in",
+        "pando admin reset-password",
+        "pando admin setup-token"
+      ]
+    },
+    {
+      "path": "pando admin enable-password-sign-in",
+      "use": "enable-password-sign-in",
+      "short": "Turn password sign-in back on when no identity provider works",
+      "long": "Clears disable_password_sign_in in host policy, so local accounts can sign in with a password again.\n\nFor when password sign-in is off and nobody can sign in through an identity provider. Follow it with\n`pando admin reset-password` if you also need a password for an account.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando admin reset-password",
+      "use": "reset-password [username]",
+      "short": "Set a local account's password when nobody can sign in",
+      "long": "Sets a new password for a local account and ends every session it has.\n\nThe account must change the password again at its next sign-in: this hands a way\nback in to somebody, which is not the same as choosing their credential.\n\nAccounts that sign in through an external identity provider are changed where they\nlive, not here.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "password",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the new password; prompts on a terminal, and generates one otherwise",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando admin setup-token",
+      "use": "setup-token",
+      "short": "Make a new setup token for an installation that is not set up yet",
+      "long": "Prints a new one-time setup token and retires the one Pando printed to its log at startup.\n\nA new installation is set up in the console, and the setup form asks for this token, so that\nreaching the console first is not enough to become its administrator. Refused once the\ninstallation has an account.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando ai",
+      "use": "ai",
+      "short": "Assign AI functions to adapters, and ask the AI functions",
+      "long": "Each AI function is handled by at most one AI adapter, optionally on a model of its own.\nA function with no adapter is off. The draft commands propose and never apply: create\nwhat they draft with pando group and pando policy, or in the console.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando ai ask",
+        "pando ai assign",
+        "pando ai audit",
+        "pando ai draft-access",
+        "pando ai draft-policy",
+        "pando ai functions",
+        "pando ai unassign"
+      ]
+    },
+    {
+      "path": "pando ai ask",
+      "use": "ask <question>",
+      "short": "Ask how to do something, answered from the API, CLI and MCP reference",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando ai assign",
+      "use": "assign <function> <adapter>",
+      "short": "Have an AI adapter handle a function, optionally on its own model",
+      "long": "Refused while another adapter handles the function: unassign it there first.\n--model needs an adapter that can choose its model.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "model",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "a model for this function only; empty uses the adapter's own",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando ai audit",
+      "use": "audit <question>",
+      "short": "Search the audit log with a question, and summarize what matched",
+      "long": "Prints the summary and the filters it used. Run pando audit with those filters to\nsee the records.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando ai draft-access",
+      "use": "draft-access <description>",
+      "short": "Draft a custom role and a group from a description",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando ai draft-policy",
+      "use": "draft-policy <description>",
+      "short": "Propose host policy from a description",
+      "long": "Prints the proposed document; save it with pando policy set.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando ai functions",
+      "use": "functions",
+      "short": "List each AI function, the adapter that handles it, and on which model",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando ai unassign",
+      "use": "unassign <function>",
+      "short": "Turn an AI function off",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app",
+      "use": "app",
+      "short": "Work with apps",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando app add",
+        "pando app auto-deploy",
+        "pando app delete",
+        "pando app detection",
+        "pando app favorite",
+        "pando app icon",
+        "pando app idle",
+        "pando app list",
+        "pando app registry-credential",
+        "pando app rename",
+        "pando app restart",
+        "pando app show",
+        "pando app start",
+        "pando app status",
+        "pando app stop",
+        "pando app unfavorite",
+        "pando app usage"
+      ]
+    },
+    {
+      "path": "pando app add",
+      "use": "add <source-url> | --image <reference>",
+      "short": "Create an app from a repository, or from an image that is already built",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "connection",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "read a private repository with this source connection (default: the one covering its address, from `pando source list`)",
+          "required": false
+        },
+        {
+          "name": "ecr-access-key-id",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "pull from AWS ECR with this access key; the secret access key is read from the terminal",
+          "required": false
+        },
+        {
+          "name": "ecr-region",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "with --ecr-access-key-id, the region (default: read from the registry host)",
+          "required": false
+        },
+        {
+          "name": "image",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "run this prebuilt image instead of building a repository, such as ghcr.io/acme/web:1.4",
+          "required": false
+        },
+        {
+          "name": "name",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "name for the app (defaults to the repository or image name)",
+          "required": false
+        },
+        {
+          "name": "registry-username",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "pull a private image as this user; the password or token is read from the terminal",
+          "required": false
+        },
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "type": "duration",
+          "default": "10m0s",
+          "usage": "with --wait, how long to wait before giving up",
+          "required": false
+        },
+        {
+          "name": "wait",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "wait for detection to finish, as `pando app detection --wait` does",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app auto-deploy",
+      "use": "auto-deploy",
+      "short": "Deploy an app automatically when its branch or releases change",
+      "long": "Pando checks the app's repository every few minutes and deploys what it finds.\nOff by default. A change here is saved as a new configuration revision and takes\neffect at the app's next deploy.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando app auto-deploy off",
+        "pando app auto-deploy set",
+        "pando app auto-deploy show",
+        "pando app auto-deploy webhook-secret"
+      ]
+    },
+    {
+      "path": "pando app auto-deploy off",
+      "use": "off <app>",
+      "short": "Turn automatic deploys off",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app auto-deploy set",
+      "use": "set <app>",
+      "short": "Turn automatic deploys on, following a branch or new releases",
+      "long": "With --trigger branch (the default), each new commit on the branch deploys. Without\n--branch, that is the branch the app was deployed from.\n\nWith --trigger release, each new release tag deploys. A release is a tag such as\nv1.2.3, or one matching --tag-pattern, a pattern such as release-* where * matches\nany characters.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "branch",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the branch to follow; empty follows the branch the app was deployed from",
+          "required": false
+        },
+        {
+          "name": "tag-pattern",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "which tags are releases, such as release-*; empty means tags like v1.2.3",
+          "required": false
+        },
+        {
+          "name": "trigger",
+          "shorthand": "",
+          "type": "string",
+          "default": "branch",
+          "usage": "what deploys: branch (each new commit) or release (each new release tag)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app auto-deploy show",
+      "use": "show <app>",
+      "short": "Show the settings, the last check and the webhook",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app auto-deploy webhook-secret",
+      "use": "webhook-secret <app>",
+      "short": "Make the app a new webhook secret, and print it with the webhook URL",
+      "long": "A webhook lets the git host tell Pando about a push or a release as it happens,\ninstead of Pando finding out at its next check. It needs Pando to be reachable from\nthe git host. Paste the URL and secret into the repository's webhook settings, with\ncontent type application/json. The secret is printed this once; making a new one\nreplaces it.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "remove",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "remove the secret instead, which turns the webhook off",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app delete",
+      "use": "delete <app>",
+      "short": "Delete an app, keeping a final backup of its data",
+      "long": "Deletes an app. Its storage is backed up first and the backup is kept until you\ndiscard it — not aged out.\n\nIf the backup fails the app is not deleted, because a failed backup means the data\nis not safe. Pass --discard-data to delete without one.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "discard-data",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "delete without keeping a backup of the app's storage",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app detection",
+      "use": "detection <app>",
+      "short": "Show how far detection has got, and what to do next",
+      "long": "Shows where an app's detection stands: running and at which stage, or how it\nfinished — ready, waiting on answers, blocked or failed — and what to do next.\nQuestions are printed exactly as Pando wrote them, to paste into whatever wrote\nthe app.\n\nWith --wait, waits for detection to finish, printing each stage as it is\nreached. It then exits 0 when the app is ready to accept, 2 when there are\nquestions to answer, and 1 when detection failed or was blocked.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "type": "duration",
+          "default": "10m0s",
+          "usage": "with --wait, how long to wait before giving up",
+          "required": false
+        },
+        {
+          "name": "wait",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "wait for detection to finish, and exit non-zero unless it is ready",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app favorite",
+      "use": "favorite <app>",
+      "short": "Pin an app to the top of your launcher",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app icon",
+      "use": "icon",
+      "short": "Set the image on an app's launcher tile",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando app icon clear",
+        "pando app icon set"
+      ]
+    },
+    {
+      "path": "pando app icon clear",
+      "use": "clear <app>",
+      "short": "Remove an app's image, so its tile shows the map generated for it",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app icon set",
+      "use": "set <app> <image-file>",
+      "short": "Set an app's image from a PNG, JPEG, WebP or GIF file",
+      "long": "Sets the image shown on the app's tile in everyone's launcher.\n\nPNG, JPEG, WebP or GIF, at most 256 KB. SVG is not accepted. A square image a few\nhundred pixels across is plenty.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app idle",
+      "use": "idle <app>",
+      "short": "Show or set when Pando stops or deletes an app nobody uses",
+      "long": "With no flags, shows the app's idle settings: its own, the installation's, the ones in\nforce, when it was last used, and when Pando would stop or delete it.\n\n--stop-days and --delete-days take a number of days, never, or default for the\ninstallation's setting. A flag left out keeps what the app has. Both count from the\napp's last use, deploy or start, so deleting has to come later than stopping.\nThese are app settings, not spec: nothing is deployed.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "delete-days",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "days without use before Pando deletes the app: a number, never, or default",
+          "required": false
+        },
+        {
+          "name": "stop-days",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "days without use before Pando stops the app: a number, never, or default",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app list",
+      "use": "list",
+      "short": "List the apps you can manage",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app registry-credential",
+      "use": "registry-credential",
+      "short": "Manage the credential an app's private image is pulled with",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando app registry-credential remove",
+        "pando app registry-credential set",
+        "pando app registry-credential show"
+      ]
+    },
+    {
+      "path": "pando app registry-credential remove",
+      "use": "remove <app>",
+      "short": "Remove the credential, so the image is pulled anonymously",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app registry-credential set",
+      "use": "set <app>",
+      "short": "Set the credential, replacing any the app had",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "ecr-access-key-id",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "pull from AWS ECR with this access key; the secret access key is read from the terminal",
+          "required": false
+        },
+        {
+          "name": "ecr-region",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "with --ecr-access-key-id, the region (default: read from the registry host)",
+          "required": false
+        },
+        {
+          "name": "registry-username",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "pull a private image as this user; the password or token is read from the terminal",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app registry-credential show",
+      "use": "show <app>",
+      "short": "Say whether the app has a credential, and of which kind, without its secret",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app rename",
+      "use": "rename <app> <new-name>",
+      "short": "Change an app's display name",
+      "long": "Changes the name shown for the app in the console and on everyone's launcher.\n\nThe app's ID and address do not change.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app restart",
+      "use": "restart <app>",
+      "short": "Restart an app's workloads, changing nothing",
+      "long": "Restarts the workloads in place.\n\nNothing is rebuilt and nothing is re-read: this is the same version, started again.\nTo ship a change, deploy.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app show",
+      "use": "show <app>",
+      "short": "Show an app",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app start",
+      "use": "start <app>",
+      "short": "Start an app that was stopped",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app status",
+      "use": "status <app>",
+      "short": "What each part of an app is doing right now",
+      "long": "What each part of an app is doing right now.\n\nAn app can be made of several parts, and \"degraded\" is the app's answer for all of them together. This is the per-part answer: which are running, which are restarting and how many times, and which health check is failing. The names are also what `pando logs --workload` takes.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app stop",
+      "use": "stop <app>",
+      "short": "Stop an app without deleting it",
+      "long": "Stops an app.\n\nNothing is removed: its storage, its configuration and its address are kept, and\n`pando app start` brings back the version that was running. A stopped app stays\nstopped — it is the app's desired state, not a one-off act, so it survives Pando\nitself restarting.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app unfavorite",
+      "use": "unfavorite <app>",
+      "short": "Unpin an app from your launcher",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app usage",
+      "use": "usage <app>",
+      "short": "What each part of an app is using right now: CPU, memory and disk",
+      "long": "What each part of an app is using right now, beside its limits (R-245).\n\nCPU is in cores; a part with no limit may use what the host has. A reading, not a history.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando approvals",
+      "use": "approvals",
+      "short": "See and decide deploys waiting for approval",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando approvals approve",
+        "pando approvals list",
+        "pando approvals reject"
+      ]
+    },
+    {
+      "path": "pando approvals approve",
+      "use": "approve <app> <deployment>",
+      "short": "Approve a deploy waiting for approval; the last approval it needs starts it",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "comment",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "a note recorded with the decision",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando approvals list",
+      "use": "list",
+      "short": "Deploys waiting for approval on the apps you can see",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando approvals reject",
+      "use": "reject <app> <deployment>",
+      "short": "Reject a deploy waiting for approval, which ends the request",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "comment",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "a note recorded with the decision",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando audit",
+      "use": "audit",
+      "short": "Read the audit log",
+      "long": "Lists what was done on this installation, newest first. The filters combine.\n\n--since and --until take a time (2026-09-21T09:00:00Z) or a duration back from now\n(24h, 30m), so --since 24h is the last day.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "action",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "actions starting with this, e.g. app. or grant.delete",
+          "required": false
+        },
+        {
+          "name": "actor",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "who did it: a user or token ID, or system, reconciler or detection",
+          "required": false
+        },
+        {
+          "name": "actor-kind",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "what kind of actor: user, token, system or anonymous",
+          "required": false
+        },
+        {
+          "name": "app",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "events on this app",
+          "required": false
+        },
+        {
+          "name": "before",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the page before this cursor, as printed after a full page",
+          "required": false
+        },
+        {
+          "name": "involving",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "events where this ID is the actor or the target, e.g. a user ID",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "shorthand": "",
+          "type": "int",
+          "default": "0",
+          "usage": "how many events (default 100, at most 500)",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        },
+        {
+          "name": "since",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "from this time, or this long ago (24h)",
+          "required": false
+        },
+        {
+          "name": "target",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the ID of the thing it was done to",
+          "required": false
+        },
+        {
+          "name": "target-kind",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "what kind of thing it was done to, e.g. user, role, app",
+          "required": false
+        },
+        {
+          "name": "until",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "up to this time, or this long ago",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando audit archives",
+        "pando audit export",
+        "pando audit sinks",
+        "pando audit tail"
+      ]
+    },
+    {
+      "path": "pando audit archives",
+      "use": "archives",
+      "short": "List the months of the audit log archived past retention",
+      "long": "Months older than host policy's audit_retention_months are archived, checked, and removed\nfrom the live log, so `pando audit` no longer finds them. This lists the archives; download\none with `pando audit archives download <id>`.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando audit archives download"
+      ]
+    },
+    {
+      "path": "pando audit archives download",
+      "use": "download <archive-id>",
+      "short": "Download one archived month, checking it against its digest",
+      "long": "Saves the archive — gzipped JSON lines, one audit event per line — to --output, or to\naudit-<month>.jsonl.gz in the current directory. The SHA-256 is checked against the archive's\nmanifest as it arrives, and a file that does not match is removed rather than kept.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "output",
+          "shorthand": "o",
+          "type": "string",
+          "default": "",
+          "usage": "where to save it; - writes to standard output",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando audit export",
+      "use": "export",
+      "short": "Export a range of the audit log as gzipped JSON lines",
+      "long": "Writes the audit events between --since and --until, in commit order, as gzipped JSON lines:\nto --output, or to standard output when that is not a terminal. --since and --until take a time\n(2026-09-21T09:00:00Z) or a duration back from now (24h); left out, the range is open at that end.\n\nThe export covers the live log only. When the range reaches back before it, a note on standard\nerror says where the live log starts; `pando audit archives` has the months before that.",
+      "example": "  pando audit export --since 720h > audit.jsonl.gz\n  pando audit export --since 2026-09-01T00:00:00Z --until 2026-10-01T00:00:00Z --format ocsf -o september.jsonl.gz",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "action",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "only actions starting with this, e.g. grant.; repeatable",
+          "required": false
+        },
+        {
+          "name": "exclude",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "leave out actions starting with this; repeatable",
+          "required": false
+        },
+        {
+          "name": "format",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "native (the archive's line format, the default) or ocsf",
+          "required": false
+        },
+        {
+          "name": "output",
+          "shorthand": "o",
+          "type": "string",
+          "default": "",
+          "usage": "the file to write; - or left out writes to standard output",
+          "required": false
+        },
+        {
+          "name": "since",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "from this time, or this long ago (720h)",
+          "required": false
+        },
+        {
+          "name": "until",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "up to this time, or this long ago",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando audit sinks",
+      "use": "sinks",
+      "short": "List where the audit log is sent, and how far each destination has got",
+      "long": "An audit sink is a destination, such as a SIEM's syslog or HTTPS collector, that Pando pushes\nthe audit log to as it is written. This lists each one with what it sends where, the events\nwaiting to go (BACKLOG), when it last delivered, and its last error. Below the table, each sink's\nline says exactly what leaves the installation, and any range of events it missed.\n\nAudit sinks are adapters: add one with `pando adapter add audit_sink/<kind>`.",
+      "example": "  pando audit sinks",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando audit tail",
+      "use": "tail",
+      "short": "Print the audit log in commit order, one JSON event per line",
+      "long": "Prints audit events oldest first, one JSON object per line, from --after: a cursor a previous\nrun printed, or now for only what happens from here on. Without --after it starts at the oldest\nevent in the live log. Without --follow it stops once it has caught up; with --follow it keeps\nwaiting for new events until interrupted.\n\nWhen it stops, for any reason, it prints the last cursor to standard error as\n`cursor: c1.…`. Pass that back as --after to carry on where it left off. Delivery is at least\nonce: an event can be printed again after a resume, and its id is the key to drop it by.",
+      "example": "  pando audit tail --follow --after now\n  pando audit tail --after c1.AAAA --action grant. --exclude grant.view 2>cursor.txt >>events.jsonl",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "action",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "only actions starting with this, e.g. grant.; repeatable",
+          "required": false
+        },
+        {
+          "name": "after",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "start after this cursor, as a previous run printed it, or now",
+          "required": false
+        },
+        {
+          "name": "exclude",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "leave out actions starting with this; repeatable",
+          "required": false
+        },
+        {
+          "name": "follow",
+          "shorthand": "f",
+          "type": "bool",
+          "default": "false",
+          "usage": "keep waiting for new events until interrupted",
+          "required": false
+        },
+        {
+          "name": "format",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "native (the archive's line format, the default) or ocsf",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "shorthand": "",
+          "type": "int",
+          "default": "0",
+          "usage": "events per request (default 500, at most 1000)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando backup",
+      "use": "backup",
+      "short": "Back up and restore this installation",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando backup create",
+        "pando backup list",
+        "pando backup restore",
+        "pando backup verify"
+      ]
+    },
+    {
+      "path": "pando backup create",
+      "use": "create",
+      "short": "Take a backup of the whole installation",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando backup list",
+      "use": "list",
+      "short": "List backups",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando backup restore",
+      "use": "restore <backup-id>",
+      "short": "Replace this installation from a backup",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "yes",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "skip the typed confirmation (for scripts that already have one)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando backup verify",
+      "use": "verify <backup-id>",
+      "short": "Check a backup is complete, without restoring it",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando config",
+      "use": "config",
+      "short": "Show the server's startup configuration and where each setting came from",
+      "long": "Lists every setting the server started with, its value, and where it was set: an\nenvironment variable, the config file, or the default. Host policy fields set there are\nlisted separately; they cannot be changed with `pando policy set` while they are set.\nSecrets are never shown.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando deploy",
+      "use": "deploy <app|path>",
+      "short": "Deploy an app, or a directory on this machine",
+      "long": "With an app ID, deploys that app.\nWith a path, packs the directory, uploads it as the app's source, and deploys that.\n\nThe second form exists for R-262's agent workflow: something that has just\ngenerated an app cannot commit and push, but it can run a command.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "app",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "deploy a directory as an existing app, instead of creating one",
+          "required": false
+        },
+        {
+          "name": "env",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "KEY=VALUE, set when a new directory's setup is accepted; repeat for more (e.g. --env API_URL=https://api)",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando events",
+      "use": "events",
+      "short": "List the events a subscription can name, or an app's recent events with --app",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "app",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Show this app's recent events (its ID) instead of the catalog",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando exec",
+      "use": "exec <app> [--workload <name>] [-- <command>...]",
+      "short": "Run a command inside a running app",
+      "long": "Opens a terminal inside a running workload.\n\nThis is the most privileged thing you can do to an app: what runs here can read\nthe app's database directly and read its injected environment, including secrets.\nThe command is recorded in the audit log; what happens inside the session is not.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        },
+        {
+          "name": "workload",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "which part of the app to open a terminal in (default: the one its URL points at)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando export",
+      "use": "export <app>",
+      "short": "Print an app's spec",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando grant",
+      "use": "grant",
+      "short": "Share an app, or stop sharing it",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando grant add",
+        "pando grant list",
+        "pando grant passcode",
+        "pando grant remove",
+        "pando grant role"
+      ]
+    },
+    {
+      "path": "pando grant add",
+      "use": "add <app>",
+      "short": "Give someone access to an app",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "anyone",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "share with anyone on the internet, without signing in",
+          "required": false
+        },
+        {
+          "name": "group",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "group ID to share with",
+          "required": false
+        },
+        {
+          "name": "passcode",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "with --anyone: only those who enter this passcode",
+          "required": false
+        },
+        {
+          "name": "plane",
+          "shorthand": "",
+          "type": "string",
+          "default": "data",
+          "usage": "data (use the app) or control (manage it)",
+          "required": false
+        },
+        {
+          "name": "role",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "role ID, for control-plane grants",
+          "required": false
+        },
+        {
+          "name": "user",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "user ID to share with",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando grant list",
+      "use": "list <app>",
+      "short": "Show who an app is shared with",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando grant passcode",
+      "use": "passcode <app> <grant-id> [passcode]",
+      "short": "Change the passcode on an app shared with everyone, or remove it",
+      "long": "Sets a new passcode on the app's grant to everyone; everyone let in by the old one\nis asked again. With no passcode, removes it: the app is then open to anyone.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando grant remove",
+      "use": "remove <app> <grant-id>",
+      "short": "Take a grant away",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando grant role",
+      "use": "role <app> <grant-id> <role-id>",
+      "short": "Change the role a grant for managing an app carries",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando group",
+      "use": "group",
+      "short": "Work with groups and what they hold",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando group add-member",
+        "pando group app-limit",
+        "pando group apps",
+        "pando group list",
+        "pando group remove-member",
+        "pando group role"
+      ]
+    },
+    {
+      "path": "pando group add-member",
+      "use": "add-member <group-id> <user-id>",
+      "short": "Add an account to a group; it then holds what the group holds",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando group app-limit",
+      "use": "app-limit <group-id> [apps]",
+      "short": "Show or set how many apps each person in a group may own",
+      "long": "With only the group, shows its limit. With a number, sets it; 0 is unlimited.\n--clear removes it. Somebody in several groups gets the most generous, and a limit on\ntheir own account replaces every group's.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "clear",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "remove the group's own limit",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando group apps",
+      "use": "apps <group-id>",
+      "short": "Show the apps a group has access to, and its role on each",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando group list",
+      "use": "list",
+      "short": "Show every group, how many people are in it, and its installation role",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando group remove-member",
+      "use": "remove-member <group-id> <user-id>",
+      "short": "Remove an account from a group",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando group role",
+      "use": "role <group-id> [role-id]",
+      "short": "Give a group an installation role, or take it away with --clear",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "clear",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "take the group's installation role away",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando host-agent",
+      "use": "host-agent",
+      "short": "The forwarding agent on each host of a multi-host Docker install",
+      "long": "Each app host of a multi-host Docker install runs a forwarding agent, which carries connections from Pando's proxy, and only from it, to app containers on that host. The Docker hosts runtime starts and replaces the agents itself; the one command here an operator runs is new-authority.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando host-agent new-authority"
+      ]
+    },
+    {
+      "path": "pando host-agent new-authority",
+      "use": "new-authority",
+      "short": "Print a new certificate authority for the host agents",
+      "long": "Prints a certificate authority, certificate and private key, as PEM. Paste it into the Docker hosts runtime's agent_authority credential, which Pando stores encrypted. Pando issues its own client certificate and each agent's certificate from it. To replace it, put a new one before the old one in the credential, wait for the agents to be replaced, then remove the old one.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando identity-provider",
+      "use": "identity-provider",
+      "short": "Connect identity providers: OpenID Connect, SAML and SCIM",
+      "long": "",
+      "example": "",
+      "aliases": [
+        "idp"
+      ],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando identity-provider add",
+        "pando identity-provider check",
+        "pando identity-provider link",
+        "pando identity-provider link-group",
+        "pando identity-provider list",
+        "pando identity-provider remove",
+        "pando identity-provider scim-token",
+        "pando identity-provider set",
+        "pando identity-provider test",
+        "pando identity-provider unlink"
+      ]
+    },
+    {
+      "path": "pando identity-provider add",
+      "use": "add <oidc|saml>",
+      "short": "Add an identity provider",
+      "long": "Adds an identity provider, turned off until you test it and turn it on. --preset fills in what a\nknown provider needs (okta, entra, google, keycloak, authentik); --set KEY=VALUE sets the rest.\nA client secret is asked for without echoing it.\n\n  pando idp add oidc --preset okta --name Okta --set issuer=https://example.okta.com --set client_id=0oa…\n  pando idp add saml --preset entra --name Entra --set idp_metadata_url=https://login.microsoftonline.com/…",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "enable",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "turn it on now, without testing it first",
+          "required": false
+        },
+        {
+          "name": "jit",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "create an account at someone's first sign-in",
+          "required": false
+        },
+        {
+          "name": "link-by-email",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "link a first sign-in to an existing account by verified email",
+          "required": false
+        },
+        {
+          "name": "name",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "what the sign-in page calls it, such as Okta",
+          "required": false
+        },
+        {
+          "name": "preset",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "a known provider's settings: okta, entra, google, keycloak, authentik",
+          "required": false
+        },
+        {
+          "name": "set",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "a setting, KEY=VALUE; repeat for more",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando identity-provider check",
+      "use": "check <provider-id>",
+      "short": "Check that Pando can reach the provider",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando identity-provider link",
+      "use": "link <user-id> <provider-id> <external-id>",
+      "short": "Link a provider's identity to an account",
+      "long": "Whoever signs in with that identity signs in to that account. Nothing is merged: with --replace,\nan account the identity already reaches is kept, suspended, as an alias.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "replace",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "move the identity here if it already signs in to another account",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando identity-provider link-group",
+      "use": "link-group <group-id> <provider-group-id>",
+      "short": "Make a provider's group count as members of a Pando group",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "remove",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "remove the link instead",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando identity-provider list",
+      "use": "list",
+      "short": "Show the identity providers, what to register with each, and how soon each can revoke",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando identity-provider remove",
+      "use": "remove <provider-id>",
+      "short": "Remove an identity provider nobody has signed in through",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando identity-provider scim-token",
+      "use": "scim-token <provider-id>",
+      "short": "Turn SCIM on for a provider and print its token, or replace it",
+      "long": "Prints the SCIM base URL and a new token. The token is shown once; running this again replaces it.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "off",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "turn SCIM off instead",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando identity-provider set",
+      "use": "set <provider-id>",
+      "short": "Change an identity provider",
+      "long": "Changes a provider. --set KEY=VALUE changes one setting and keeps the rest; --secret asks for a\nnew client secret; --enable and --disable turn it on and off.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "disable",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "turn it off",
+          "required": false
+        },
+        {
+          "name": "enable",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "turn it on",
+          "required": false
+        },
+        {
+          "name": "jit",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "true or false: create an account at first sign-in",
+          "required": false
+        },
+        {
+          "name": "link-by-email",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "true or false: link by verified email",
+          "required": false
+        },
+        {
+          "name": "name",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "a new name",
+          "required": false
+        },
+        {
+          "name": "secret",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "ask for a new client secret",
+          "required": false
+        },
+        {
+          "name": "set",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "a setting, KEY=VALUE; repeat for more",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando identity-provider test",
+      "use": "test <provider-id>",
+      "short": "Print the address that starts a test sign-in in your browser",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando identity-provider unlink",
+      "use": "unlink <user-id> <provider-id> <external-id>",
+      "short": "Unlink a provider's identity from an account",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando login",
+      "use": "login [server-url]",
+      "short": "Sign in and store a token for this machine",
+      "long": "Signs in with a username and password, then creates a token and stores it.\nThe token acts as you and holds nothing you do not.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        },
+        {
+          "name": "username",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "username to sign in as",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando logs",
+      "use": "logs <app>",
+      "short": "Read an app's logs",
+      "long": "Read an app's logs.\n\nAn app made of several parts — a web service, a worker, a database it brought with it — has a log per part. Without --workload this is the primary one, which is the part the app's address resolves to. `pando app status <app>` lists the names.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "follow",
+          "shorthand": "f",
+          "type": "bool",
+          "default": "false",
+          "usage": "keep the connection open and print new lines",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        },
+        {
+          "name": "tail",
+          "shorthand": "n",
+          "type": "int",
+          "default": "0",
+          "usage": "how many of the most recent lines to print, at most 5000 (default 200; with --follow, the recent lines Pando holds)",
+          "required": false
+        },
+        {
+          "name": "workload",
+          "shorthand": "w",
+          "type": "string",
+          "default": "",
+          "usage": "which part of the app to read (default: the primary one)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando mcp",
+      "use": "mcp",
+      "short": "Run an MCP server over stdio, for agents",
+      "long": "Exposes Pando's API as MCP tools, using the token from `pando login`.\n\nAn agent is a principal like any other: nothing here bypasses authorization, and\nevery action lands in the audit log under the token's owner. The most dangerous\nactions — running commands in apps, reading secret values, changing who has access —\nare refused by host policy for tokens by default, and are not offered as tools.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando migrate",
+      "use": "migrate",
+      "short": "Apply pending database migrations and exit",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando notifications",
+      "use": "notifications",
+      "short": "Choose which of Pando's notifications reach you, and where",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando notifications list",
+        "pando notifications preferences",
+        "pando notifications read",
+        "pando notifications unread"
+      ]
+    },
+    {
+      "path": "pando notifications list",
+      "use": "list",
+      "short": "Your notifications, newest first",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "unread",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "Only the ones you have not read",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando notifications preferences",
+      "use": "preferences",
+      "short": "Show your notification preferences, or change them with --set",
+      "long": "Show which of Pando's own notifications reach you on each channel.\n\n--set kind:channel=on|off changes one, and may be repeated, for example:\n\n  pando notifications preferences --set app_shared:ntf_smtp=on --set deploy_approval:ntf_console=off",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "set",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "kind:channel=on|off, repeatable",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando notifications read",
+      "use": "read [notification-id]",
+      "short": "Mark a notification read, or every one with --all",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "all",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "Mark every notification read",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando notifications unread",
+      "use": "unread",
+      "short": "How many of your notifications are unread",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando plan",
+      "use": "plan <app>",
+      "short": "Show what a deploy would do, without doing it",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando policy",
+      "use": "policy",
+      "short": "Read and set host policy",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando policy set",
+        "pando policy show"
+      ]
+    },
+    {
+      "path": "pando policy set",
+      "use": "set",
+      "short": "Replace the policy with a document read from stdin",
+      "long": "Reads a whole policy document as JSON on stdin and replaces the current one.\nReplaces rather than merges: a merge would make it impossible to remove a rule.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando policy show",
+      "use": "show",
+      "short": "Print the installation's policy",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando restart",
+      "use": "restart",
+      "short": "Restart Pando, loading its adapters and configuration file again",
+      "long": "Restart Pando. Requests in flight finish first, and apps behind Pando are unreachable for the seconds it takes. Adapters and the configuration file are read again; environment variables are not.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        },
+        {
+          "name": "wait",
+          "shorthand": "",
+          "type": "duration",
+          "default": "1m30s",
+          "usage": "how long to wait for Pando to come back; 0 returns at once",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando rollback",
+      "use": "rollback <app>",
+      "short": "Roll an app back to an earlier spec",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        },
+        {
+          "name": "to",
+          "shorthand": "",
+          "type": "int",
+          "default": "0",
+          "usage": "spec revision to roll back to (defaults to the previous one)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando secret",
+      "use": "secret",
+      "short": "Manage an app's secrets",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando secret list",
+        "pando secret set"
+      ]
+    },
+    {
+      "path": "pando secret list",
+      "use": "list <app>",
+      "short": "List which secrets are set, without their values",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando secret set",
+      "use": "set <app> <key>",
+      "short": "Set a secret value, read from the terminal",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando section",
+      "use": "section",
+      "short": "Group the apps in your launcher into sections",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando section add",
+        "pando section create",
+        "pando section delete",
+        "pando section list",
+        "pando section remove",
+        "pando section rename"
+      ]
+    },
+    {
+      "path": "pando section add",
+      "use": "add <section-id> <app>",
+      "short": "Move an app into a section",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando section create",
+      "use": "create <name>",
+      "short": "Make a section",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando section delete",
+      "use": "delete <section-id>",
+      "short": "Delete a section. Its apps go back to Your apps",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando section list",
+      "use": "list",
+      "short": "The apps you can open, by section",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando section remove",
+      "use": "remove <section-id> <app>",
+      "short": "Move an app out of a section, back to Your apps",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando section rename",
+      "use": "rename <section-id> <name>",
+      "short": "Rename a section",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando self-update",
+      "use": "self-update [version]",
+      "short": "Replace this pando CLI with the latest release, after checking its signature",
+      "long": "Downloads the release for this platform, checks the release's checksums.txt against its\nsignature from Pando's release workflow and the archive against checksums.txt, and replaces\nthis binary. A CLI installed with Homebrew or a Linux package is upgraded by that package\nmanager instead, and this prints its command.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "prerelease",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "consider release candidates when choosing the latest",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando serve",
+      "use": "serve",
+      "short": "Run the Pando server",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando slot",
+      "use": "slot",
+      "short": "Fill an app's service slots",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando slot set"
+      ]
+    },
+    {
+      "path": "pando slot set",
+      "use": "set <app> <key>",
+      "short": "Say how a slot is filled",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "bind",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "bind to an existing service",
+          "required": false
+        },
+        {
+          "name": "literal",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "use this value directly",
+          "required": false
+        },
+        {
+          "name": "provision",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "let Pando create the service",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando source",
+      "use": "source",
+      "short": "See and authorize the connections private repositories are read with",
+      "long": "A source connection is how Pando reads private repositories on GitHub, GitLab, Azure DevOps,\nBitbucket, Gitea or any git host. Add one with `pando adapter add source/<kind>` — `pando adapter\nkinds` lists the kinds — and every app whose repository it covers is read with it.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando source authorize",
+        "pando source branches",
+        "pando source list",
+        "pando source remove",
+        "pando source repos"
+      ]
+    },
+    {
+      "path": "pando source authorize",
+      "use": "authorize <connection>",
+      "short": "Sign a connection in with OAuth",
+      "long": "Shows a code to enter on the provider's site, then waits until you have. Nothing needs to be\nable to reach this Pando, so it works on a laptop. --web prints an address to open in a browser\ninstead, which returns to Pando's own address.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "type": "duration",
+          "default": "15m0s",
+          "usage": "how long to wait for the code to be approved",
+          "required": false
+        },
+        {
+          "name": "web",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "authorize in a browser instead of with a code",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando source branches",
+      "use": "branches <connection> <repository-url>",
+      "short": "List a repository's branches through a connection",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando source list",
+      "use": "list",
+      "short": "Show the source connections and whether each is ready",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando source remove",
+      "use": "remove <connection>",
+      "short": "Disconnect a source connection and delete its stored credential",
+      "long": "Apps read with the connection keep running. Their next deploy fails, saying the connection is\ngone, until another connection covers their repository.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando source repos",
+      "use": "repos <connection>",
+      "short": "List the repositories a connection can read",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "limit",
+          "shorthand": "",
+          "type": "int",
+          "default": "0",
+          "usage": "at most this many (default 100)",
+          "required": false
+        },
+        {
+          "name": "query",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "only repositories whose name contains this",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando subscriptions",
+      "use": "subscriptions",
+      "short": "Send Pando's events to a webhook, Slack, Teams, Discord, email or ntfy",
+      "long": "",
+      "example": "",
+      "aliases": [
+        "subscription",
+        "subs"
+      ],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando subscriptions create",
+        "pando subscriptions delete",
+        "pando subscriptions deliveries",
+        "pando subscriptions delivery",
+        "pando subscriptions list",
+        "pando subscriptions redeliver",
+        "pando subscriptions rotate-key",
+        "pando subscriptions show",
+        "pando subscriptions test",
+        "pando subscriptions update"
+      ]
+    },
+    {
+      "path": "pando subscriptions create",
+      "use": "create",
+      "short": "Subscribe to events on one app, or install-wide",
+      "long": "Subscribe to events and send them to a webhook (--url) or through a notification adapter (--adapter).\n\n--events takes event names, prefixes such as deploy.*, or * for everything; `pando events` lists them.\nWithout --app the subscription is install-wide, which needs install.events.manage.\n\nA webhook's signing key is printed once. Keep it: Pando signs every delivery with it and cannot show it again.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "adapter",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Send each event through this notification adapter",
+          "required": false
+        },
+        {
+          "name": "app",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "The app's ID; omit for install-wide",
+          "required": false
+        },
+        {
+          "name": "content-type",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "The body's content type; application/json by default",
+          "required": false
+        },
+        {
+          "name": "description",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "What this subscription is for",
+          "required": false
+        },
+        {
+          "name": "events",
+          "shorthand": "",
+          "type": "stringSlice",
+          "default": "[]",
+          "usage": "Events to send: names, prefixes such as deploy.*, or *",
+          "required": true
+        },
+        {
+          "name": "header",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "A header to send, \"Name: value\", repeatable. Values are stored encrypted and never shown again",
+          "required": false
+        },
+        {
+          "name": "method",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "The webhook's HTTP method: POST (the default), PUT or PATCH",
+          "required": false
+        },
+        {
+          "name": "template-file",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "A file holding the body template, in Go template syntax; docs/events.md says what it is given",
+          "required": false
+        },
+        {
+          "name": "url",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Post each event to this webhook URL",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando subscriptions delete",
+      "use": "delete <subscription-id>",
+      "short": "Delete a subscription and its delivery log",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando subscriptions deliveries",
+      "use": "deliveries <subscription-id>",
+      "short": "A subscription's recent deliveries",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando subscriptions delivery",
+      "use": "delivery <subscription-id> <delivery-id>",
+      "short": "One delivery and every attempt at it",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando subscriptions list",
+      "use": "list",
+      "short": "Your subscriptions, or everybody's with --everyone",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "app",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Only subscriptions about this app (its ID)",
+          "required": false
+        },
+        {
+          "name": "everyone",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "Every person's subscriptions (needs install.events.manage)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando subscriptions redeliver",
+      "use": "redeliver <subscription-id> <delivery-id>",
+      "short": "Send a delivery again now",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando subscriptions rotate-key",
+      "use": "rotate-key <subscription-id>",
+      "short": "Replace a webhook's signing key and print the new one, once",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando subscriptions show",
+      "use": "show <subscription-id>",
+      "short": "One subscription",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando subscriptions test",
+      "use": "test <subscription-id>",
+      "short": "Send a test event to one subscription",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando subscriptions update",
+      "use": "update <subscription-id>",
+      "short": "Change a subscription, or turn it on or off",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "adapter",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "A new notification adapter",
+          "required": false
+        },
+        {
+          "name": "content-type",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "The body's content type; application/json by default",
+          "required": false
+        },
+        {
+          "name": "description",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "A new description",
+          "required": false
+        },
+        {
+          "name": "disable",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "Turn it off",
+          "required": false
+        },
+        {
+          "name": "enable",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "Turn it on, clearing its record of failures",
+          "required": false
+        },
+        {
+          "name": "events",
+          "shorthand": "",
+          "type": "stringSlice",
+          "default": "[]",
+          "usage": "Replace the events it sends",
+          "required": false
+        },
+        {
+          "name": "header",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "A header to send, \"Name: value\", repeatable. Values are stored encrypted and never shown again",
+          "required": false
+        },
+        {
+          "name": "method",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "The webhook's HTTP method: POST (the default), PUT or PATCH",
+          "required": false
+        },
+        {
+          "name": "template-file",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "A file holding the body template, in Go template syntax; docs/events.md says what it is given",
+          "required": false
+        },
+        {
+          "name": "url",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "A new webhook URL",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando token",
+      "use": "token",
+      "short": "Manage your API tokens",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando token list",
+        "pando token revoke"
+      ]
+    },
+    {
+      "path": "pando token list",
+      "use": "list",
+      "short": "List your tokens",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando token revoke",
+      "use": "revoke <token-id>",
+      "short": "Revoke a token",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando updates",
+      "use": "updates",
+      "short": "Show whether a newer Pando is released, what changed, and how to upgrade",
+      "long": "Shows the version the server runs, the latest release on the update channel, and the\nchangelog of every version in between, with security fixes and breaking changes marked.\nThen the command that upgrades the server. The check is host policy: disable_update_check\nturns it off and update_channel chooses stable or prerelease (`pando policy set`).",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando upgrade",
+      "use": "upgrade [version]",
+      "short": "Upgrade the Pando server in place to a newer release",
+      "long": "Upgrades the server to the latest release, or to the version given. Pando verifies the\nimage's signature, takes a full backup (or not, with --skip-backup), and starts a helper\nthat replaces Pando's container and puts the previous version back if the new one does\nnot start. Every app is unreachable while Pando restarts. Needs install.upgrade, and\nupgrade_in_place on in host policy. `pando upgrade last` shows how the last one went.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        },
+        {
+          "name": "skip-backup",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "upgrade without taking a full backup first (recorded in the audit log)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando upgrade last"
+      ]
+    },
+    {
+      "path": "pando upgrade last",
+      "use": "last",
+      "short": "Show how the most recent in-place upgrade went",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando user",
+      "use": "user",
+      "short": "Work with accounts",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando user app-limit",
+        "pando user apps",
+        "pando user create",
+        "pando user reset-password",
+        "pando user update"
+      ]
+    },
+    {
+      "path": "pando user app-limit",
+      "use": "app-limit <user-id> [apps]",
+      "short": "Show how many apps an account may own and where that comes from, or set the account's own limit",
+      "long": "With only the account, shows the limit in force, where it comes from (the account, a\ngroup, or host policy) and how many apps the account owns.\n\nWith a number, sets the account's own limit, which applies whatever its groups say.\n0 is unlimited. --clear removes it, so its groups' or the installation's applies.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "clear",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "remove the user's own limit",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando user apps",
+      "use": "apps <user-id>",
+      "short": "Show the apps an account has access to, and its role on each",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando user create",
+      "use": "create <username>",
+      "short": "Create a local account with a generated password",
+      "long": "Creates a local account and prints the password Pando generated for it, once.\nGive it to the account holder yourself; by default they choose their own at first sign-in.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "email",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the account's email address",
+          "required": false
+        },
+        {
+          "name": "name",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the name shown in the console and the audit log",
+          "required": false
+        },
+        {
+          "name": "no-change-required",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "do not require a new password at first sign-in",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando user reset-password",
+      "use": "reset-password <user-id>",
+      "short": "Give an account a new generated password",
+      "long": "Sets a new generated password on a local account, ends every session it holds, and prints\nthe password once. By default its holder chooses their own at the next sign-in.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "no-change-required",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "do not require a new password at the next sign-in",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando user update",
+      "use": "update <user-id>",
+      "short": "Change an account's username, name or email",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "email",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the account's email address",
+          "required": false
+        },
+        {
+          "name": "name",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the name shown in the console and the audit log",
+          "required": false
+        },
+        {
+          "name": "username",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the name the account signs in with",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando version",
+      "use": "version",
+      "short": "Print the version",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    }
+  ]
+}

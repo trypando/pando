@@ -92,7 +92,7 @@ func Info() api.KindInfo {
 			registrykit.URLField("123456789012.dkr.ecr.us-east-1.amazonaws.com/pando",
 				"The repository's address, as ECR shows it. It has to exist already."),
 			{Key: "access_key_id", Label: "Access key ID", Type: "string", Required: true,
-				Placeholder: "AKIA…"},
+				Help: "An AWS access key that can push to and pull from the repository.", Placeholder: "AKIA…"},
 			{Key: "secret_access_key", Label: "Secret access key", Type: "string", Credential: true, Required: true,
 				Help: "Stored encrypted, and never shown again."},
 			registrykit.AlwaysField(),
