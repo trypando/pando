@@ -249,6 +249,40 @@ linking anything, and stores a report — what the provider sent, what Pando rea
 real sign-in would have done — for the administrator who started it. It works on a provider that is
 off, which is when it is needed.
 
+### 3.3 Wrong passwords (issue #189)
+
+**[D]** Password sign-in is held to two counts of wrong passwords (R-404), kept in `failed_attempts`
+beside the passcode count (R-075a) so that every replica shares them (issue #72):
+
+| Count | Limit [P] | Why |
+|---|---|---|
+| Per username, as typed, whether or not the account exists | 10 in 15 minutes | Guessing at one account is slow wherever it comes from. Counting usernames that do not exist the same way keeps the limit from saying which do |
+| Per client address | 50 in 15 minutes | One address spraying many usernames is slow too. Higher than the username's, so a shared office address is not locked out by one person's typos |
+
+- **Checked before the password.** Over either count, the attempt is refused without being verified,
+  so a right password answered differently from a wrong one cannot carry guessing past the limit.
+- **The refusal says when.** `RATE_LIMITED` (429), a message such as *"Too many wrong passwords for
+  this username. Try again in 12 minutes."*, `Retry-After`, and `details.retry_after_seconds`: the time
+  until the oldest failure leaves the window, by the database's clock, which recorded it.
+- **Audited.** A wrong password was already `session.denied`; a refusal is too, with
+  `reason: rate_limited`.
+- **Only a wrong password counts.** An identity adapter's internal error is not a guess.
+- **The right password clears the username's count, not the address's.** Otherwise signing in to an
+  account of your own would reset the count for guessing at everyone else's.
+- **It fails closed**, as the passcode limit does: a count that cannot be read or written refuses the
+  attempt with an internal error rather than letting it through uncounted.
+- **Per username means anyone can lock an account for 15 minutes** by typing wrong passwords for it.
+  That is the cost of the limit, it is bounded by the window, and an account with a provider behind
+  it is not affected, because provider sign-in is not counted here. `pando admin reset-password`,
+  run on the host, clears the username's count along with the password.
+
+The client address is the one the audit log records (design 12 §3.2): the TCP peer, unless the peer
+is a listed trusted proxy. Keying on the bare peer made a single count for the whole install behind
+Traefik or a Cloudflare tunnel, where every request arrives from the same peer, so one person could
+lock everyone out of password sign-in. The check and the record are separate statements, so
+concurrent attempts can pass the limit by as many as are in flight at once. Each one costs an argon2id
+verification, which bounds how many that can be.
+
 ---
 
 ## 4. The proxy
@@ -265,6 +299,7 @@ The single enforcement point (R-023). One path for every request to every app �
       denied + anonymous  → redirect to login
       denied + authed     → 403 page
 5a. Record use: app.use, once per visit (R-227, §6)
+5b. Anonymous over its rate for this app and address? → 429 (R-075)   (counted in 5 first)
 6.  Mint assertion (R-051)
 7.  Strip inbound X-Pando-* headers        ← critical, see below
 8.  Set assertion + convenience headers
@@ -273,6 +308,19 @@ The single enforcement point (R-023). One path for every request to every app �
 11. Forward to the workload
 12. Stream response
 ```
+
+**Step 5b is R-075's "rate-limited" (issue #189).** Numbered after 5a for where it is described, but
+it runs straight after the metrics count in step 5 and before the allow-or-deny branch, so a refused
+request is still counted and an anonymous caller is limited whether it would be let in or redirected.
+**[P]** A token bucket per app and client address: 50 requests a second, with a burst of 300 so that a
+page and its assets load at once. It guards against one address flooding a public app and is not a
+quota. A person browsing never meets it, and signed-in callers are not held to it. It is kept in each
+replica's memory, unlike the limits on guessing (§3.3, R-075a): with N replicas a flood gets N times
+the rate, which still bounds it, and a database write per anonymous request would make the limit the
+cheapest way to load Postgres. The address is the audit log's (design 12 §3.2), so visitors behind a
+listed trusted proxy each have their own bucket. The 429 is plain text with `Retry-After: 1`, like the
+proxy's other error pages, and is logged but not audited: auditing every refused request in a flood
+would make the audit log the flood's target.
 
 **Step 5, "redirect to login", goes to `/.pando/login` (R-172).** Not `/login`: on an app's own
 hostname every path belongs to the app, so the router hands `/login` to the proxy, which redirects to

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -176,11 +177,14 @@ type Server struct {
 	// LogOwner finds the replica running a deploy, so its live log can be
 	// read from any replica (issue #72). Nil with one replica.
 	LogOwner DeployLogOwner
-	// PasscodeFailures is the shared count behind the passcode limit
-	// (R-075a). In memory, for one process, when nil.
-	PasscodeFailures PasscodeFailures
-	Secrets          *state.Secrets
-	Detections       *state.Detections
+	// FailedAttempts is the shared count behind the limits on guessing a
+	// passcode (R-075a) and a password (R-404). In memory, for one process,
+	// when nil.
+	FailedAttempts FailedAttempts
+	attemptsOnce   sync.Once
+	attempts       *memoryFailedAttempts
+	Secrets        *state.Secrets
+	Detections     *state.Detections
 
 	// Clock times a detection wait and how long one has been running. Nil is
 	// the system clock.

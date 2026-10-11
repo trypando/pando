@@ -1,11 +1,9 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -37,61 +35,6 @@ const (
 	passcodeWindow   = 15 * time.Minute
 )
 
-// PasscodeFailures counts wrong passcodes per app and client address.
-//
-// Shared by every replica in production (state.PasscodeFailures): a count kept
-// in one process's memory gave an attacker one allowance per replica behind
-// the load balancer, and a fresh one whenever a replica restarted (issue #72).
-type PasscodeFailures interface {
-	Recent(ctx context.Context, key string, window time.Duration) (int, error)
-	Record(ctx context.Context, key string, window time.Duration) error
-	Clear(ctx context.Context, key string) error
-}
-
-// memoryPasscodeFailures is the count when no store is wired, as in a test
-// that builds a Server by hand. Correct for one process and only one.
-type memoryPasscodeFailures struct {
-	mu   sync.Mutex
-	seen map[string][]time.Time
-}
-
-var passcodeTries = &memoryPasscodeFailures{seen: map[string][]time.Time{}}
-
-func (l *memoryPasscodeFailures) Recent(_ context.Context, key string, window time.Duration) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	now := time.Now()
-	recent := l.seen[key][:0]
-	for _, t := range l.seen[key] {
-		if now.Sub(t) < window {
-			recent = append(recent, t)
-		}
-	}
-	l.seen[key] = recent
-	return len(recent), nil
-}
-
-func (l *memoryPasscodeFailures) Record(_ context.Context, key string, _ time.Duration) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.seen[key] = append(l.seen[key], time.Now())
-	return nil
-}
-
-func (l *memoryPasscodeFailures) Clear(_ context.Context, key string) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.seen, key)
-	return nil
-}
-
-func (s *Server) passcodeFailures() PasscodeFailures {
-	if s.PasscodeFailures != nil {
-		return s.PasscodeFailures
-	}
-	return passcodeTries
-}
-
 // handleGetPasscodeApp names an app for its passcode page. Answers only for an
 // app that asks for a passcode — any other app is not-found here, so this is no
 // way to learn what apps exist or what they are called.
@@ -114,15 +57,16 @@ func (s *Server) handleEnterPasscode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key := app.ID + "|" + clientIP(r)
-	failures := s.passcodeFailures()
-	recent, err := failures.Recent(r.Context(), key, passcodeWindow)
+	limit := attemptLimit{key: app.ID + "|" + limitAddr(r), max: passcodeAttempts, window: passcodeWindow}
+	key := limit.key
+	failures := s.failedAttempts()
+	wait, err := limit.exceeded(r.Context(), failures)
 	if err != nil {
 		Error(w, r, err)
 		return
 	}
-	if recent >= passcodeAttempts {
-		Error(w, r, errs.New(errs.RateLimited, "Too many wrong passcodes. Wait a few minutes and try again."))
+	if wait > 0 {
+		tooManyAttempts(w, r, wait, "Too many wrong passcodes for this app from your network address.")
 		return
 	}
 

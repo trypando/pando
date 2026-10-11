@@ -33,8 +33,8 @@ func TestR075a_ThePasscodeLimitIsKeptInTheSharedStore(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	i := newInstall(t)
-	failures := state.NewPasscodeFailures(i.db)
-	i.Server.PasscodeFailures = failures
+	failures := state.NewFailedAttempts(i.db)
+	i.Server.FailedAttempts = failures
 	appID := passcodeApp(t, i, "open-sesame")
 	guess := func(passcode string) reply {
 		return i.do(nil, http.MethodPost, "/apps/"+appID+"/passcode", map[string]string{"passcode": passcode})
@@ -45,7 +45,7 @@ func TestR075a_ThePasscodeLimitIsKeptInTheSharedStore(t *testing.T) {
 
 	// The request's client address, as the handler keys it.
 	var key string
-	require.NoError(t, i.db.QueryRow(ctx, `SELECT key FROM passcode_failures LIMIT 1`).Scan(&key))
+	require.NoError(t, i.db.QueryRow(ctx, `SELECT key FROM failed_attempts LIMIT 1`).Scan(&key))
 	require.Contains(t, key, appID+"|", "counted in the shared store, per app and client")
 
 	// A right passcode clears the count.
@@ -65,15 +65,6 @@ func TestR075a_ThePasscodeLimitIsKeptInTheSharedStore(t *testing.T) {
 	require.Contains(t, limited.String(), "Too many wrong passcodes")
 }
 
-// brokenFailures is a passcode store whose database is away.
-type brokenFailures struct{ recentErr, recordErr error }
-
-func (b brokenFailures) Recent(context.Context, string, time.Duration) (int, error) {
-	return 0, b.recentErr
-}
-func (b brokenFailures) Record(context.Context, string, time.Duration) error { return b.recordErr }
-func (b brokenFailures) Clear(context.Context, string) error                 { return errors.New("database away") }
-
 // TestR075a_AnUncountablePasscodeAttemptIsRefused asserts that the limit
 // fails closed: when the shared count cannot be read or written, the attempt
 // is refused rather than let through uncounted.
@@ -82,11 +73,11 @@ func TestR075a_AnUncountablePasscodeAttemptIsRefused(t *testing.T) {
 	i := newInstall(t)
 	appID := passcodeApp(t, i, "open-sesame")
 
-	i.Server.PasscodeFailures = brokenFailures{recentErr: errors.New("database away")}
+	i.Server.FailedAttempts = brokenAttempts{recentErr: errors.New("database away")}
 	got := i.do(nil, http.MethodPost, "/apps/"+appID+"/passcode", map[string]string{"passcode": "open-sesame"})
 	require.Equal(t, http.StatusInternalServerError, got.Code, "an unreadable count is not a free attempt")
 
-	i.Server.PasscodeFailures = brokenFailures{recordErr: errors.New("database away")}
+	i.Server.FailedAttempts = brokenAttempts{recordErr: errors.New("database away")}
 	got = i.do(nil, http.MethodPost, "/apps/"+appID+"/passcode", map[string]string{"passcode": "guess"})
 	require.Equal(t, http.StatusInternalServerError, got.Code, "a wrong guess that cannot be counted is refused")
 

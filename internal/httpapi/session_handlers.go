@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -15,6 +16,10 @@ import (
 	"github.com/trypando/pando/internal/hash"
 	"github.com/trypando/pando/internal/secret"
 )
+
+// actionSessionDenied is the audit action for a refused sign-in, whatever
+// refused it: a wrong password, a limit (R-404), or a policy.
+const actionSessionDenied = "session.denied"
 
 type loginRequest struct {
 	Username string `json:"username"`
@@ -33,15 +38,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// answer says nothing about whether it was right.
 	if s.IDP != nil {
 		if err := s.IDP.PasswordSignInAllowed(r.Context()); err != nil {
-			s.audit(r, audit.Event{
-				PrincipalKind: audit.KindAnonymous,
-				Action:        "session.denied",
-				TargetKind:    "user",
-				Detail:        map[string]any{"username": req.Username, "reason": "password_sign_in_disabled"},
-			})
+			s.denySignIn(r, req.Username, "password_sign_in_disabled")
 			Error(w, r, err)
 			return
 		}
+	}
+
+	// Over either limit, refused before the password is checked: a right
+	// password answered differently from a wrong one would let guessing carry
+	// on past the limit (R-404).
+	account, addr := signInLimits(req.Username, limitAddr(r))
+	failures := s.failedAttempts()
+	if s.signInLimited(w, r, req.Username, failures, account, addr) {
+		return
 	}
 
 	subject, err := s.Identity.Authenticate(r.Context(), api.Credential{
@@ -49,14 +58,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password: secret.New(req.Password),
 	})
 	if err != nil {
+		// Counted only when the answer was "wrong": a database that could not
+		// be read is not a guess.
+		if errs.CodeOf(err) == errs.AuthInvalid {
+			if err := recordFailures(r.Context(), failures, account, addr); err != nil {
+				Error(w, r, err)
+				return
+			}
+		}
 		// Audited as a denial: a pattern of failed logins is the signal that
 		// matters, and it is the thing most commonly left out.
-		s.audit(r, audit.Event{
-			PrincipalKind: audit.KindAnonymous,
-			Action:        "session.denied",
-			TargetKind:    "user",
-			Detail:        map[string]any{"username": req.Username},
-		})
+		s.denySignIn(r, req.Username, "")
 		Error(w, r, err)
 		return
 	}
@@ -71,7 +83,80 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The right password forgets the username's failures. Not the address's:
+	// signing in to an account of your own would otherwise reset the count
+	// for guessing at everyone else's.
+	_ = failures.Clear(r.Context(), account.key)
+
 	s.startSession(w, r, user, http.StatusOK)
+}
+
+// Wrong passwords allowed before sign-in waits (R-404) [P]. Per username, so
+// guessing at one account is slow wherever it comes from, and per address,
+// higher, so one address spraying many usernames is slow too and a shared
+// office address is not locked out by one person's typos.
+const (
+	signInAccountAttempts = 10
+	signInAddrAttempts    = 50
+	signInWindow          = 15 * time.Minute
+)
+
+// signInLimits are the two counts a password sign-in is held to (R-404). The
+// username is counted whether or not the account exists, so the limit is not
+// a way to learn which ones do.
+func signInLimits(username, addr string) (account, address attemptLimit) {
+	return attemptLimit{key: state.SignInUsernameKey(username), max: signInAccountAttempts, window: signInWindow},
+		attemptLimit{key: state.SignInAddrKey(addr), max: signInAddrAttempts, window: signInWindow}
+}
+
+// denySignIn audits a refused sign-in, with why when it was not simply a
+// wrong password.
+func (s *Server) denySignIn(r *http.Request, username, reason string) {
+	detail := map[string]any{"username": username}
+	if reason != "" {
+		detail["reason"] = reason
+	}
+	s.audit(r, audit.Event{
+		PrincipalKind: audit.KindAnonymous,
+		Action:        actionSessionDenied,
+		TargetKind:    "user",
+		Detail:        detail,
+	})
+}
+
+// signInLimited answers a sign-in over the username's or the address's limit
+// (R-404), audited, and reports whether it did. An unreadable count answers
+// too: it is an error, never a free attempt.
+func (s *Server) signInLimited(w http.ResponseWriter, r *http.Request, username string, failures FailedAttempts, account, addr attemptLimit) bool {
+	for _, limit := range []struct {
+		attemptLimit
+		what string
+	}{
+		{account, "Too many wrong passwords for this username."},
+		{addr, "Too many wrong passwords from your network address."},
+	} {
+		wait, err := limit.exceeded(r.Context(), failures)
+		if err != nil {
+			Error(w, r, err)
+			return true
+		}
+		if wait > 0 {
+			s.denySignIn(r, username, "rate_limited")
+			tooManyAttempts(w, r, wait, limit.what)
+			return true
+		}
+	}
+	return false
+}
+
+// recordFailures counts one wrong guess against each limit.
+func recordFailures(ctx context.Context, failures FailedAttempts, limits ...attemptLimit) error {
+	for _, limit := range limits {
+		if err := failures.Record(ctx, limit.key, limit.window); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // startSession signs a user in: a session, its cookie, and the audit event.
