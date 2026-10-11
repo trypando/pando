@@ -125,7 +125,7 @@ func runRailpack(contextDir string, env []string) (string, error) {
 			"Pando could not work out how to build this app: %s", trim(out)).
 			WithRemedy("Add a Dockerfile to the repository saying how it should be built.")
 	}
-	body, err = finishRailpackPlan(body)
+	body, err = finishRailpackPlan(body, contextDir)
 	if err != nil {
 		return "", err
 	}
@@ -146,7 +146,12 @@ func runRailpack(contextDir string, env []string) (string, error) {
 //     secrets nobody provides. None of them is a secret.
 //   - The plan's own directory is left out of the image: it is in the build
 //     context only because the checkout is.
-func finishRailpackPlan(body []byte) ([]byte, error) {
+//   - A copy of an optional file (`config/config.exs*`) from a directory the
+//     repository does not have is dropped. Railpack writes those for files an
+//     app may or may not have, and BuildKit fails the whole build when the
+//     directory is missing ("lstat /config: no such file or directory", issue
+//     #172) where it would have copied nothing.
+func finishRailpackPlan(body []byte, contextDir string) ([]byte, error) {
 	var plan map[string]any
 	if err := json.Unmarshal(body, &plan); err != nil {
 		return nil, errs.Wrap(errs.BuildFailed, "Railpack wrote a build plan Pando could not read.", err)
@@ -157,6 +162,7 @@ func finishRailpackPlan(body []byte) ([]byte, error) {
 		for _, s := range steps {
 			if step, ok := s.(map[string]any); ok {
 				delete(step, "secrets")
+				dropCopiesFromMissingDirs(step, contextDir)
 			}
 		}
 	}
@@ -170,6 +176,32 @@ func finishRailpackPlan(body []byte) ([]byte, error) {
 		return nil, errs.Wrap(errs.BuildFailed, "Could not write the build plan.", err)
 	}
 	return append(out, '\n'), nil
+}
+
+// dropCopiesFromMissingDirs removes a step's copies of an optional file from
+// the repository whose directory the repository does not have. A copy from an
+// image, or of a path with no wildcard, is kept: that one is meant to exist.
+func dropCopiesFromMissingDirs(step map[string]any, contextDir string) {
+	commands, ok := step["commands"].([]any)
+	if !ok {
+		return
+	}
+	kept := commands[:0]
+	for _, c := range commands {
+		cmd, ok := c.(map[string]any)
+		src, isCopy := cmd["src"].(string)
+		_, fromImage := cmd["image"]
+		if ok && isCopy && !fromImage && strings.Contains(src, "*") {
+			dir := path.Dir(path.Clean("/" + src))
+			if dir != "/" {
+				if info, err := os.Stat(filepath.Join(contextDir, filepath.FromSlash(dir))); err != nil || !info.IsDir() {
+					continue
+				}
+			}
+		}
+		kept = append(kept, c)
+	}
+	step["commands"] = kept
 }
 
 // railpackPins maps the tags Railpack's plans name to the digests Pando pins.

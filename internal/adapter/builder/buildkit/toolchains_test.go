@@ -103,7 +103,8 @@ func TestR104_APythonWebAppIsStartedUnderItsServer(t *testing.T) {
 		"app.py":           "from flask import Flask\napp = Flask(__name__)\nif __name__ == '__main__':\n    app.run()\n",
 		"requirements.txt": "flask\ngunicorn\n",
 	})
-	require.Empty(t, pythonAppStart(selfStarting), "an app that starts itself is left to")
+	require.Equal(t, "python app.py", pythonAppStart(selfStarting),
+		"an app that starts itself is run as it is, not as Railpack's gunicorn main:app")
 
 	noServer := writeFiles(t, map[string]string{
 		"main.py": "from fastapi import FastAPI\napi = FastAPI()\n", "requirements.txt": "fastapi\n",

@@ -99,13 +99,18 @@ func synthesize(req api.BuildRequest, contextDir string) (generated, error) {
 			if err := writeInto(contextDir, req.GeneratedFiles); err != nil {
 				return generated{}, err
 			}
-			// The same .ruby-version a nixpacks plan was made with, since a
-			// fresh checkout does not have the one planning wrote. Only a
-			// plan stored before Railpack reads it.
-			ensureRubyVersion(contextDir)
 			name := req.Dockerfile
 			if name == "" {
 				name = filepath.Join(legacyPlanDir, "Dockerfile")
+			}
+			// The same .ruby-version a nixpacks plan was made with, since a
+			// fresh checkout does not have the one planning wrote. Only for a
+			// plan stored before Railpack: Railpack's mise reads the file too,
+			// and one written here overrode the Ruby its plan names, so gems
+			// were compiled for one Ruby and run on another ("missing
+			// extensions", issue #172).
+			if !isRailpackPlan(name) {
+				ensureRubyVersion(contextDir)
 			}
 			return generated{
 				Dir:     filepath.Dir(filepath.Join(contextDir, name)),
@@ -279,7 +284,17 @@ func pythonAppStart(contextDir string) string {
 	deps := strings.ToLower(readFile(contextDir, "requirements.txt") + readFile(contextDir, "pyproject.toml"))
 	for _, module := range []string{"main", "app", "server", "asgi", "wsgi"} {
 		body := readFile(contextDir, module+".py")
-		if body == "" || runsItself.MatchString(body) {
+		if body == "" {
+			continue
+		}
+		// A module that starts its own server is run as it is. Said rather
+		// than left to Railpack, which serves any Flask app it finds with
+		// gunicorn as main:app, and an app.py has no module main
+		// ("ModuleNotFoundError: No module named 'main'", issue #172).
+		if runsItself.MatchString(body) {
+			if fastAPIApp.MatchString(body) || flaskApp.MatchString(body) {
+				return "python " + module + ".py"
+			}
 			continue
 		}
 		if m := fastAPIApp.FindStringSubmatch(body); m != nil && strings.Contains(deps, "uvicorn") {
@@ -534,8 +549,41 @@ func (a *Adapter) Plan(_ context.Context, src api.SourceView) (api.BuildPlan, er
 	// is left for detection to read the way it reads any Dockerfile.
 	if isRailpackPlan(name) {
 		plan.Start = railpackStartCommand([]byte(files[plan.Entry]))
+		// A start command that runs a script the repository does not have is
+		// a guess, not an answer, and detection asks instead. Railpack starts
+		// a Node app with no start script as `node <main>`, and main defaults
+		// to an index.js the app may keep elsewhere (src/index.js), so the
+		// app exited with "Cannot find module '/app/index.js'" (issue #172).
+		if runsMissingScript(root, plan.Start) {
+			plan.Start = ""
+		}
 	}
 	return plan, nil
+}
+
+// scriptRunners are the commands whose first argument is a script in the
+// repository.
+var scriptRunners = map[string]bool{
+	"node": true, "bun": true, "deno": true, "python": true, "python3": true, "ruby": true, "php": true,
+}
+
+// runsMissingScript reports a start command of the form `node path/to/x.js`
+// whose script is not in the repository.
+func runsMissingScript(root, start string) bool {
+	fields := strings.Fields(start)
+	if len(fields) < 2 || !scriptRunners[fields[0]] {
+		return false
+	}
+	for _, arg := range fields[1:] {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if path.Ext(arg) == "" || strings.ContainsAny(arg, "$`") {
+			return false
+		}
+		return !fileExists(root, arg)
+	}
+	return false
 }
 
 // collectPlan reads back everything the generator wrote, as content.

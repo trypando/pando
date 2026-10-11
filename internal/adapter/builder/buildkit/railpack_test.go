@@ -231,3 +231,57 @@ func TestAStoredRailpackPlanIsBuiltThroughTheFrontend(t *testing.T) {
 	require.Contains(t, []errs.Code{errs.BuildFailed, errs.BuildTimeout}, errs.CodeOf(err))
 	require.True(t, isRailpackPlan(entry))
 }
+
+// Railpack copies optional files from directories an app may not have, and
+// BuildKit fails the build on the missing directory. Those copies go; a copy
+// from an image, of a path at the root, or from a directory that is there
+// stays (issue #172).
+func TestACopyFromADirectoryTheAppDoesNotHaveIsDropped(t *testing.T) {
+	root := withFiles(t, map[string]string{"lib/app.ex": "", "priv/static/x": ""})
+	step := map[string]any{"commands": []any{
+		map[string]any{"src": "config/config.exs*", "dest": "config/"},
+		map[string]any{"src": "lib*", "dest": "."},
+		map[string]any{"src": "priv/static*", "dest": "priv/"},
+		map[string]any{"src": "/usr/bin/composer", "dest": "/usr/bin/", "image": "composer:2"},
+		map[string]any{"src": "config/required.exs", "dest": "config/"},
+		map[string]any{"cmd": "mix release"},
+	}}
+	dropCopiesFromMissingDirs(step, root)
+	body, _ := json.Marshal(step)
+	require.NotContains(t, string(body), "config.exs*")
+	for _, kept := range []string{"lib*", "priv/static*", "composer", "config/required.exs", "mix release"} {
+		require.Contains(t, string(body), kept)
+	}
+}
+
+// A start command that runs a script the repository does not have is not
+// reported to detection, which asks instead (issue #172).
+func TestAStartCommandRunningAMissingScriptIsNotReported(t *testing.T) {
+	root := withFiles(t, map[string]string{"src/index.js": "", "app.py": ""})
+	require.True(t, runsMissingScript(root, "node index.js"))
+	require.False(t, runsMissingScript(root, "node src/index.js"))
+	require.False(t, runsMissingScript(root, "node --enable-source-maps src/index.js"))
+	require.False(t, runsMissingScript(root, "python app.py"))
+	require.False(t, runsMissingScript(root, "deno run --allow-all main.ts"), "the first argument is a subcommand")
+	require.False(t, runsMissingScript(root, "gunicorn app:app"))
+	require.False(t, runsMissingScript(root, "node"))
+
+	fakeRailpack(t, `echo '{"steps": [], "deploy": {"startCommand": "node index.js"}}' > "$PLAN"`)
+	plan, err := New().Plan(t.Context(), view{root: withFiles(t, map[string]string{"package.json": `{"main":"index.js"}`, "src/index.js": ""})})
+	require.NoError(t, err)
+	require.Empty(t, plan.Start)
+}
+
+// A Railpack plan is replayed without the .ruby-version a nixpacks plan needed:
+// Railpack's mise reads it too, and it overrode the Ruby the plan names, so
+// native gems were built for one Ruby and run on another (issue #172).
+func TestAReplayedRailpackPlanGetsNoRubyVersionWritten(t *testing.T) {
+	entry := filepath.ToSlash(filepath.Join(planDir, railpackPlanFile))
+	root := writeFiles(t, map[string]string{"Gemfile": "gem 'sinatra'\n"})
+	_, err := synthesize(api.BuildRequest{
+		Strategy: spec.BuildBuildpack, Dockerfile: entry,
+		GeneratedFiles: map[string]string{entry: railpackPlanFromPrepare},
+	}, root)
+	require.NoError(t, err)
+	require.NoFileExists(t, filepath.Join(root, ".ruby-version"))
+}

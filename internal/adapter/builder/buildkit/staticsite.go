@@ -148,6 +148,23 @@ func readStaticSiteBuild(contextDir string) (staticSite, bool) {
 			Node:      nodeMajor(contextDir, pkg.Engines),
 		}, true
 	}
+	// No known framework and nothing that starts a server, but a committed
+	// copy of the site in the directory builds conventionally write to: the
+	// build makes that directory, and it is what is served. html5-boilerplate
+	// builds with gulp into a committed dist/. nixpacks served such a
+	// directory itself; Railpack has no start command for it (issue #172).
+	if start == "" {
+		for _, out := range []string{"dist", "build"} {
+			if fileExists(contextDir, path.Join(out, "index.html")) {
+				return staticSite{
+					Framework: "static",
+					OutDir:    out,
+					Install:   installCommand(contextDir),
+					Node:      nodeMajor(contextDir, pkg.Engines),
+				}, true
+			}
+		}
+	}
 	return staticSite{}, false
 }
 
