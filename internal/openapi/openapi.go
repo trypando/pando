@@ -252,7 +252,7 @@ func newDocument(ref reference.Document, version string) *Document {
 func intro(base string) string {
 	return "Send requests to your installation's address followed by `" + base + "`, " +
 		"for example `https://pando.example.com" + base + "`.\n\n" +
-		"Authenticate with a token. Create one in the console under **API and tools** › **Tokens** › **New token**; " +
+		"Authenticate with a token. Create one in the console under **API and tools** › **Your tokens** › **New token**; " +
 		"it is shown once. Send it in the `Authorization` header:\n\n" +
 		"```\n" +
 		"export PANDO_TOKEN=tok_…\n" +

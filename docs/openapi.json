@@ -3,7 +3,7 @@
   "info": {
     "title": "Pando API",
     "version": "dev",
-    "description": "Send requests to your installation's address followed by `/api/v1`, for example `https://pando.example.com/api/v1`.\n\nAuthenticate with a token. Create one in the console under **API and tools** › **Tokens** › **New token**; it is shown once. Send it in the `Authorization` header:\n\n```\nexport PANDO_TOKEN=tok_…\ncurl -H \"Authorization: Bearer $PANDO_TOKEN\" https://pando.example.com/api/v1/apps\n```\n\nA failed request answers with a JSON envelope: `code`, `message` and often `remedy`. Each code is described at `https://trypando.ai/docs/errors#<CODE>`, for example [PLAN_SLOT_UNFILLED](https://trypando.ai/docs/errors#PLAN_SLOT_UNFILLED).\n\nA field listed as required is always present in a response. A request may leave out any field it does not need; Pando answers `VALID_INVALID` naming what is missing."
+    "description": "Send requests to your installation's address followed by `/api/v1`, for example `https://pando.example.com/api/v1`.\n\nAuthenticate with a token. Create one in the console under **API and tools** › **Your tokens** › **New token**; it is shown once. Send it in the `Authorization` header:\n\n```\nexport PANDO_TOKEN=tok_…\ncurl -H \"Authorization: Bearer $PANDO_TOKEN\" https://pando.example.com/api/v1/apps\n```\n\nA failed request answers with a JSON envelope: `code`, `message` and often `remedy`. Each code is described at `https://trypando.ai/docs/errors#<CODE>`, for example [PLAN_SLOT_UNFILLED](https://trypando.ai/docs/errors#PLAN_SLOT_UNFILLED).\n\nA field listed as required is always present in a response. A request may leave out any field it does not need; Pando answers `VALID_INVALID` naming what is missing."
   },
   "servers": [
     {
