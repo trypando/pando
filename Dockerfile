@@ -163,25 +163,24 @@ RUN apk add --no-cache bash curl git postgresql17-client su-exec tzdata \
     && mkdir /staging \
     && tar -cf - /lib /usr/lib /usr/libexec /usr/bin/pg_dump /usr/bin/pg_restore /usr/bin/psql \
          /sbin/su-exec /usr/share/zoneinfo /usr/bin/git /bin/bash /usr/share/git-core \
-         /usr/local/bin/railpack /tmp/railpack 2>/dev/null \
+         /usr/local/bin/railpack 2>/dev/null \
        | tar -xf - -C /staging
 
 FROM dhi.io/alpine-base:3.24@sha256:a741d4f1ccaf31f9394a36477e50df4620a8030dbff3d9a2ea8e84672b683ada
 COPY --from=packages /staging/ /
+# Railpack's mise directory, writable by the server, which takes locks there.
+# A copy of its own rather than part of the staged tree: staging it under /tmp
+# replaced /tmp's own mode with the staging directory's 755, and the server
+# could no longer make a temporary directory for any build (issue #172).
+COPY --from=packages --chown=nonroot:nonroot /tmp/railpack /tmp/railpack
 
 # The runtime base's own non-root user, nonroot (65532), runs the server. The
 # entrypoint needs root only to join the Docker socket's group, so the image
 # starts as root and the entrypoint drops to nonroot before Pando starts.
 # By number: the hardened base has no root entry in /etc/passwd.
-#
-# /tmp is made world-writable again: copying /tmp/railpack in with the staged
-# packages replaced its mode with the staging directory's 755, and the server
-# could no longer make a temporary directory for any build (issue #172).
 USER 0
 RUN mkdir -p /var/lib/pando /etc/traefik/dynamic \
-    && chown nonroot:nonroot /var/lib/pando /etc/traefik/dynamic \
-    && chown -R nonroot:nonroot /tmp/railpack \
-    && chmod 1777 /tmp
+    && chown nonroot:nonroot /var/lib/pando /etc/traefik/dynamic
 
 WORKDIR /var/lib/pando
 
