@@ -209,6 +209,45 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
+// buildKitStartWait is how long a build waits for the BuildKit Pando runs to
+// answer, when the build is what found it stopped or missing.
+const buildKitStartWait = time.Minute
+
+// startBuildKit makes sure the BuildKit Pando runs is there and answering
+// before a build, creating or starting it as ensure does.
+//
+// Configure did this once, and ignored a failure, and the planner checks no
+// builder's health before a deploy. So a BuildKit stopped after Pando started —
+// every container on rootless Podman, after a reboot, since Podman restarts
+// nothing — stayed down, and each build dialed a name that was not there
+// (issue #179). Not HealthCheck, which also replaces the client: builds run
+// side by side, and this touches only what ensure guards.
+func (a *Adapter) startBuildKit(ctx context.Context, wait time.Duration) error {
+	if a.managed == nil {
+		return nil
+	}
+	if _, err := a.managed.ensure(ctx); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		check, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err := a.cli.ListWorkers(check)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return errs.Wrap(errs.AdapterUnavailable, "The build service is not responding.", err).
+				WithRemedy(a.managed.notAnswering())
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+	}
+}
+
 // Capabilities reports what this builder can do (R-254).
 func (a *Adapter) Capabilities(context.Context) (api.BuilderCapabilities, error) {
 	return api.BuilderCapabilities{
@@ -263,6 +302,9 @@ func (a *Adapter) Bid(_ context.Context, src api.SourceView) (api.Bid, error) {
 func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildResult, error) {
 	if a.cli == nil {
 		return api.BuildResult{}, errs.New(errs.AdapterUnavailable, "The build service is not responding.")
+	}
+	if err := a.startBuildKit(ctx, buildKitStartWait); err != nil {
+		return api.BuildResult{}, err
 	}
 	dir, ok := req.Source.(interface{ Root() string })
 	if !ok {
