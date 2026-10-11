@@ -9,6 +9,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/trypando/pando/internal/clientaddr"
+	"github.com/trypando/pando/internal/core/authz"
 )
 
 // Anonymous requests are rate-limited (R-075), per app and client address
@@ -66,6 +67,27 @@ func (l *anonymousLimiter) allow(key string, now time.Time) bool {
 	}
 	b.seen = now
 	return b.lim.AllowN(now, 1)
+}
+
+// allowAnonymous takes an anonymous request from its app and address's
+// bucket (R-075), or answers 429 and reports false when it is empty. Any
+// other caller is not held to it.
+func (p *Proxy) allowAnonymous(w http.ResponseWriter, r *http.Request, principal authz.Principal, appID string) bool {
+	if principal.Kind != authz.KindAnonymous {
+		return true
+	}
+	p.anonymousOnce.Do(func() { p.anonymous = newAnonymousLimiter() })
+	now := time.Now()
+	if p.clock != nil {
+		now = p.clock()
+	}
+	if p.anonymous.allow(appID+"|"+sourceAddr(r), now) {
+		return true
+	}
+	w.Header().Set("Retry-After", "1")
+	p.fail(w, r, http.StatusTooManyRequests,
+		"Too many requests to this app from your network address. Wait a few seconds and try again.")
+	return false
 }
 
 // sourceAddr is the client address the audit log records for r: the TCP peer

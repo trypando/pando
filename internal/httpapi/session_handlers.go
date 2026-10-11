@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -15,6 +16,10 @@ import (
 	"github.com/trypando/pando/internal/hash"
 	"github.com/trypando/pando/internal/secret"
 )
+
+// actionSessionDenied is the audit action for a refused sign-in, whatever
+// refused it: a wrong password, a limit (R-404), or a policy.
+const actionSessionDenied = "session.denied"
 
 type loginRequest struct {
 	Username string `json:"username"`
@@ -33,12 +38,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// answer says nothing about whether it was right.
 	if s.IDP != nil {
 		if err := s.IDP.PasswordSignInAllowed(r.Context()); err != nil {
-			s.audit(r, audit.Event{
-				PrincipalKind: audit.KindAnonymous,
-				Action:        "session.denied",
-				TargetKind:    "user",
-				Detail:        map[string]any{"username": req.Username, "reason": "password_sign_in_disabled"},
-			})
+			s.denySignIn(r, req.Username, "password_sign_in_disabled")
 			Error(w, r, err)
 			return
 		}
@@ -49,28 +49,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// on past the limit (R-404).
 	account, addr := signInLimits(req.Username, limitAddr(r))
 	failures := s.failedAttempts()
-	for _, limit := range []struct {
-		attemptLimit
-		what string
-	}{
-		{account, "Too many wrong passwords for this username."},
-		{addr, "Too many wrong passwords from your network address."},
-	} {
-		wait, err := limit.exceeded(r.Context(), failures)
-		if err != nil {
-			Error(w, r, err)
-			return
-		}
-		if wait > 0 {
-			s.audit(r, audit.Event{
-				PrincipalKind: audit.KindAnonymous,
-				Action:        "session.denied",
-				TargetKind:    "user",
-				Detail:        map[string]any{"username": req.Username, "reason": "rate_limited"},
-			})
-			tooManyAttempts(w, r, wait, limit.what)
-			return
-		}
+	if s.signInLimited(w, r, req.Username, failures, account, addr) {
+		return
 	}
 
 	subject, err := s.Identity.Authenticate(r.Context(), api.Credential{
@@ -81,21 +61,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// Counted only when the answer was "wrong": a database that could not
 		// be read is not a guess.
 		if errs.CodeOf(err) == errs.AuthInvalid {
-			for _, limit := range []attemptLimit{account, addr} {
-				if err := failures.Record(r.Context(), limit.key, limit.window); err != nil {
-					Error(w, r, err)
-					return
-				}
+			if err := recordFailures(r.Context(), failures, account, addr); err != nil {
+				Error(w, r, err)
+				return
 			}
 		}
 		// Audited as a denial: a pattern of failed logins is the signal that
 		// matters, and it is the thing most commonly left out.
-		s.audit(r, audit.Event{
-			PrincipalKind: audit.KindAnonymous,
-			Action:        "session.denied",
-			TargetKind:    "user",
-			Detail:        map[string]any{"username": req.Username},
-		})
+		s.denySignIn(r, req.Username, "")
 		Error(w, r, err)
 		return
 	}
@@ -134,6 +107,56 @@ const (
 func signInLimits(username, addr string) (account, address attemptLimit) {
 	return attemptLimit{key: state.SignInUsernameKey(username), max: signInAccountAttempts, window: signInWindow},
 		attemptLimit{key: state.SignInAddrKey(addr), max: signInAddrAttempts, window: signInWindow}
+}
+
+// denySignIn audits a refused sign-in, with why when it was not simply a
+// wrong password.
+func (s *Server) denySignIn(r *http.Request, username, reason string) {
+	detail := map[string]any{"username": username}
+	if reason != "" {
+		detail["reason"] = reason
+	}
+	s.audit(r, audit.Event{
+		PrincipalKind: audit.KindAnonymous,
+		Action:        actionSessionDenied,
+		TargetKind:    "user",
+		Detail:        detail,
+	})
+}
+
+// signInLimited answers a sign-in over the username's or the address's limit
+// (R-404), audited, and reports whether it did. An unreadable count answers
+// too: it is an error, never a free attempt.
+func (s *Server) signInLimited(w http.ResponseWriter, r *http.Request, username string, failures FailedAttempts, account, addr attemptLimit) bool {
+	for _, limit := range []struct {
+		attemptLimit
+		what string
+	}{
+		{account, "Too many wrong passwords for this username."},
+		{addr, "Too many wrong passwords from your network address."},
+	} {
+		wait, err := limit.exceeded(r.Context(), failures)
+		if err != nil {
+			Error(w, r, err)
+			return true
+		}
+		if wait > 0 {
+			s.denySignIn(r, username, "rate_limited")
+			tooManyAttempts(w, r, wait, limit.what)
+			return true
+		}
+	}
+	return false
+}
+
+// recordFailures counts one wrong guess against each limit.
+func recordFailures(ctx context.Context, failures FailedAttempts, limits ...attemptLimit) error {
+	for _, limit := range limits {
+		if err := failures.Record(ctx, limit.key, limit.window); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // startSession signs a user in: a session, its cookie, and the audit event.
