@@ -84,8 +84,8 @@ first deploy, not silently.
 
 ## Podman
 
-Pando also runs on rootless Podman, through Podman's Docker-compatible socket. These steps are
-tested with Podman 4.9 on Ubuntu 24.04, the same way as the Docker steps above.
+Pando also runs on rootless Podman, through Podman's Docker-compatible socket. These steps are for
+Podman 4.9 on Ubuntu 24.04.
 
 ### 1. Prepare the host
 

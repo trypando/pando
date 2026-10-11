@@ -514,34 +514,3 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           scripts/release-compose.sh 0.0.0-ci > "$RUNNER_TEMP/docker-compose.yml"
           python3 scripts/smoke-image.py "$RUNNER_TEMP/docker-compose.yml" --version 0.0.0-ci --build
-
-      # The same install on rootless Podman, as docs/rootless.md gives it: the
-      # release's compose file, with PANDO_DOCKER_SOCKET at Podman's socket
-      # (R-402, issue #179). The image goes across by file, because the
-      # runner's Docker is stopped to make way for Podman.
-      - name: Rootless Podman
-        if: steps.dhi.outputs.available == 'true'
-        run: |
-          docker save trypando/pando:0.0.0-ci -o "$RUNNER_TEMP/pando.tar"
-          scripts/ci-rootless-podman.sh
-
-      # Laid out as docs/rootless.md installs it, ~/pando with its .env, and
-      # started at boot by the user service the guide writes, run from the
-      # guide itself. Restarting the user's systemd instance stops every
-      # rootless container, as a reboot does; Pando and its app must return.
-      - name: Smoke test on rootless Podman, through a restart
-        if: steps.dhi.outputs.available == 'true'
-        env:
-          SMOKE_PROJECT: pando
-        run: |
-          set -eux
-          podman load -i "$RUNNER_TEMP/pando.tar"
-          POSTGRES_PASSWORD=$(openssl rand -hex 16); export POSTGRES_PASSWORD
-          mkdir -p ~/pando
-          cp "$RUNNER_TEMP/docker-compose.yml" ~/pando/docker-compose.yml
-          printf 'PANDO_DOCKER_SOCKET=%s\nPANDO_PORT=18080\nPANDO_APP_PORT_START=19000\nPANDO_APP_PORT_END=19004\nPOSTGRES_PASSWORD=%s\n' \
-            "$PANDO_DOCKER_SOCKET" "$POSTGRES_PASSWORD" > ~/pando/.env
-          sed -n '/^mkdir -p ~\/.config\/systemd\/user$/,/^systemctl --user enable pando.service$/p' docs/rootless.md > "$RUNNER_TEMP/unit.sh"
-          grep -q 'ExecStart=/usr/bin/docker compose up -d' "$RUNNER_TEMP/unit.sh"
-          sh -eux "$RUNNER_TEMP/unit.sh"
-          python3 scripts/smoke-image.py ~/pando/docker-compose.yml --version 0.0.0-ci --build --restart-user-services

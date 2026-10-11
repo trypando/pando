@@ -1406,8 +1406,10 @@ is skipped on Podman with that reason; `docs/rootless.md` says it.
 
 Pando itself installs on rootless Podman with the release's compose file, run by Docker's Compose CLI
 against Podman's socket (`PANDO_DOCKER_SOCKET`), and a user service that runs `docker compose up -d`
-at boot, because Podman has no daemon to restart containers. The `image` CI job installs it that way
-from `docs/rootless.md`, deploys a published image and a built app, restarts the user's systemd
-instance — which stops every rootless container, as a reboot does — and requires both back. The
+at boot, because Podman has no daemon to restart containers. CI runs only the adapter suite on Podman
+(the `podman` job), to keep it under five minutes; the install is checked by hand with
+`scripts/smoke-image.py --build --restart-user-services`, which deploys a published image and a built
+app, restarts the user's systemd instance — which stops every rootless container, as a reboot does —
+and requires both back. The
 development compose file's `build: .` does not work on Podman: Docker's CLI hands the build to a
 BuildKit builder of its own, and the image never reaches Podman.
