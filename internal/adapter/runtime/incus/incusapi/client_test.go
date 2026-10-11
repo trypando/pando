@@ -186,12 +186,14 @@ func (f *fakeIncus) finishExec(string) {
 	f.ops["exec"].Metadata = map[string]json.RawMessage{"return": code}
 }
 
-func selfSigned(t *testing.T) (tls.Certificate, string) {
+func selfSigned(t *testing.T) (tls.Certificate, string) { return selfSignedFor(t, "incus-test") }
+
+func selfSignedFor(t *testing.T, names ...string) (tls.Certificate, string) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "root@incus"},
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "root@incus"}, DNSNames: names,
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 	}
@@ -229,10 +231,16 @@ func TestTheServerCertificateIsPinned(t *testing.T) {
 	c, err := ConnectHTTPS(ts.URL, other, clientCert, "pando")
 	require.NoError(t, err)
 	_, err = c.Get(context.Background(), "/1.0", nil, &Server{})
-	require.ErrorContains(t, err, "a certificate other than the one configured")
+	require.ErrorContains(t, err, "failed to verify certificate", "only the configured certificate verifies")
 
 	_, err = ConnectHTTPS(ts.URL, "not a certificate", clientCert, "pando")
 	require.Error(t, err)
+
+	// A certificate that names no host cannot be verified, so it is refused
+	// rather than trusted without a check.
+	_, nameless := selfSignedFor(t)
+	_, err = ConnectHTTPS(ts.URL, nameless, clientCert, "pando")
+	require.ErrorContains(t, err, "names no host")
 }
 
 func TestRequestsCarryTheProjectAndTarget(t *testing.T) {

@@ -49,15 +49,27 @@ func ConnectHTTPS(address, serverCertPEM string, client tls.Certificate, project
 	if block == nil || block.Type != "CERTIFICATE" {
 		return nil, errors.New("the server certificate is not a PEM certificate")
 	}
-	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
 		return nil, fmt.Errorf("the server certificate cannot be read: %w", err)
 	}
+	// Incus names its certificate after the server's hostname, and the
+	// address it is reached at is usually an IP the certificate does not
+	// carry, so the name verified is the certificate's own, as Incus's
+	// client does. The certificate is the only root, so nothing else
+	// verifies.
+	if len(cert.DNSNames) == 0 {
+		return nil, errors.New("the server certificate names no host, so it cannot be verified; Incus's own certificates name the server's hostname")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
 	pinned := block.Bytes
 	tlsConfig := &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{client},
-		// The pin below is the verification.
-		InsecureSkipVerify: true, //nolint:gosec // pinned in VerifyConnection
+		RootCAs:      roots,
+		ServerName:   cert.DNSNames[0],
+		// And it must be that certificate exactly, not one it could sign.
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			if len(cs.PeerCertificates) == 0 || !bytes.Equal(cs.PeerCertificates[0].Raw, pinned) {
 				return errors.New("the Incus server presented a certificate other than the one configured")
