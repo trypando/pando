@@ -154,26 +154,8 @@ func buildpackPlan(req api.BuildRequest, contextDir string) (string, error) {
 	// Railpack (staticsite.go), unless somebody said how it starts — then it
 	// is not being served as files.
 	if req.StartCommand == "" {
-		// A Jekyll site is source for a site, not the site (jekyll.go).
-		if site, ok := readJekyllSite(contextDir); ok {
-			return writeJekyllPlan(contextDir, site)
-		}
-		if site, ok := readStaticSiteBuild(contextDir); ok {
-			return writeStaticSitePlan(contextDir, site)
-		}
-		// A site somebody chose to build rather than serve as committed
-		// (static_source: run-build). Its directory is already known: it is
-		// where the committed copy was found. It had reached the planner with
-		// nothing to start, and been refused (issue #55).
-		if req.StaticDir != "" && safeRelative(req.StaticDir) {
-			if _, err := os.Stat(filepath.Join(contextDir, "package.json")); err == nil {
-				return writeStaticSitePlan(contextDir, staticSite{
-					Framework: "static",
-					OutDir:    path.Clean(req.StaticDir),
-					Install:   installCommand(contextDir),
-					Node:      nodeMajor(contextDir, nil),
-				})
-			}
+		if name, ok, err := siteBuildPlan(req, contextDir); ok {
+			return name, err
 		}
 	}
 	// A Node server, on the official Node image (node.go).
@@ -211,6 +193,34 @@ func buildpackPlan(req api.BuildRequest, contextDir string) (string, error) {
 		return writeCommittedProgramPlan(contextDir, command)
 	}
 	return "", err
+}
+
+// siteBuildPlan plans a site that builds to static files, when the repository
+// is one; ok is false when it is not.
+func siteBuildPlan(req api.BuildRequest, contextDir string) (name string, ok bool, err error) {
+	// A Jekyll site is source for a site, not the site (jekyll.go).
+	if site, found := readJekyllSite(contextDir); found {
+		name, err = writeJekyllPlan(contextDir, site)
+		return name, true, err
+	}
+	if site, found := readStaticSiteBuild(contextDir); found {
+		name, err = writeStaticSitePlan(contextDir, site)
+		return name, true, err
+	}
+	// A site somebody chose to build rather than serve as committed
+	// (static_source: run-build). Its directory is already known: it is
+	// where the committed copy was found. It had reached the planner with
+	// nothing to start, and been refused (issue #55).
+	if req.StaticDir == "" || !safeRelative(req.StaticDir) || !fileExists(contextDir, "package.json") {
+		return "", false, nil
+	}
+	name, err = writeStaticSitePlan(contextDir, staticSite{
+		Framework: "static",
+		OutDir:    path.Clean(req.StaticDir),
+		Install:   installCommand(contextDir),
+		Node:      nodeMajor(contextDir, nil),
+	})
+	return name, true, err
 }
 
 // declaredFor is what the repository and the request together say about the
