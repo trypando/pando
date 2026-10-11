@@ -36,13 +36,12 @@ Install Pando with the [quickstart](https://trypando.ai/quickstart).
 
 ## Documentation
 
-On [trypando.ai/docs](https://trypando.ai/docs), generated from the code at each release:
+On [trypando.ai/docs](https://trypando.ai/docs):
 
 - [API](https://trypando.ai/docs/api), [CLI](https://trypando.ai/docs/cli) and
   [MCP server](https://trypando.ai/docs/mcp)
 - [Errors](https://trypando.ai/docs/errors) and [Events](https://trypando.ai/docs/events)
 - [Adapters](https://trypando.ai/docs/adapters) and [Configuration](https://trypando.ai/docs/configuration)
-- [Shared responsibility](https://trypando.ai/security/shared-responsibility)
 
 In this repository:
 
