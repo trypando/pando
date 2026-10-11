@@ -431,7 +431,8 @@ endpoint was documented before it was routed.
 
 Three readers, one document:
 
-- `GET /api/v1/reference`, which the console's **API and tools** screen renders.
+- `GET /api/v1/reference`, which the console's **API and tools** screen rendered until it
+  switched to linking the published docs at trypando.ai; AI's how-to answers (R-346) read it.
 - `make reference`, which writes `docs/api.md`, `docs/cli.md` and `docs/mcp.md`.
 - `make check` and CI, which fail on a stale one — the same shape as the
   generated API types and the requirements index.

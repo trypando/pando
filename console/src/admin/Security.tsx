@@ -19,7 +19,7 @@ import { Banner, Button, StatusIndicator, Tag } from '@design';
 
 import { api } from '@api/client';
 import type { Finding, Report } from '@api/types.gen';
-import { Quiet, messageOf } from '../install/Accounts';
+import { Quiet } from '../install/Accounts';
 import { MEASURE } from '../ui/layout';
 import { relative } from '../ui/time';
 import { ScoreBadge } from '../ui/ScoreBadge';
@@ -27,6 +27,7 @@ import { Table } from '../ui/Table';
 import { LineSkeleton, Loading } from '../ui/Loading';
 import { AppVerb, useCan } from './verbs';
 import { securityInterval, useOnScreen } from '../ui/polling';
+import { FailedBanner } from '../ui/ErrorCode';
 
 export function Security({
   appID,
@@ -114,8 +115,8 @@ export function Security({
         </div>
       )}
 
-      {report.isError && <Banner tone="failed">{messageOf(report.error)}</Banner>}
-      {scan.isError && <Banner tone="failed">{messageOf(scan.error)}</Banner>}
+      {report.isError && <FailedBanner error={report.error} />}
+      {scan.isError && <FailedBanner error={scan.error} />}
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         {/* The verdict's two lines — badge and standing, then the counts —

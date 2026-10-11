@@ -17,10 +17,10 @@ import { invalidateApp } from './appList';
 import { Banner, Button, Input, StatusIndicator, Tooltip } from '@design';
 
 import { api } from '@api/client';
-import { refusal } from '../install/Accounts';
 import { relative } from '../ui/time';
 import { decider, expiry, progress } from './approval';
 import type { ApprovalDeployment } from './approval';
+import { FailedBanner } from '../ui/ErrorCode';
 
 export function ApprovalRequest({
   deployment,
@@ -108,7 +108,7 @@ export function ApprovalRequest({
       )}
 
       {answered && <Banner tone="running">{answered}</Banner>}
-      {decide.isError && <Banner tone="failed">{refusal(decide.error)}</Banner>}
+      {decide.isError && <FailedBanner error={decide.error} remedy />}
 
       {d.can_decide && !answered ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', maxWidth: '52ch' }}>

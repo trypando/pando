@@ -7,12 +7,13 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Checkbox, Dialog, Input, Select, Tag } from '@design';
+import { Button, Checkbox, Dialog, Input, Select, Tag } from '@design';
 
 import { api } from '@api/client';
 import type { Identity, ProviderView } from '@api/types.gen';
-import { Quiet, refusal } from './Accounts';
+import { Quiet } from './Accounts';
 import { LineSkeleton } from '../ui/Loading';
+import { FailedBanner } from '../ui/ErrorCode';
 
 export function Identities({ userID, manage }: { userID: string; manage: boolean }) {
   const queries = useQueryClient();
@@ -42,7 +43,7 @@ export function Identities({ userID, manage }: { userID: string; manage: boolean
       {ids.isPending ? (
         <LineSkeleton width="30ch" />
       ) : ids.isError ? (
-        <Banner tone="failed">{refusal(ids.error)}</Banner>
+        <FailedBanner error={ids.error} remedy />
       ) : list.length === 0 ? (
         <Quiet>No identity provider signs in to this account.</Quiet>
       ) : (
@@ -68,7 +69,7 @@ export function Identities({ userID, manage }: { userID: string; manage: boolean
           ))}
         </ul>
       )}
-      {unlink.isError && <Banner tone="failed">{refusal(unlink.error)}</Banner>}
+      {unlink.isError && <FailedBanner error={unlink.error} remedy />}
       {linking && <LinkDialog userID={userID} onClose={() => setLinking(false)} />}
     </section>
   );
@@ -138,7 +139,7 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
             />
           </>
         )}
-        {link.isError && <Banner tone="failed">{refusal(link.error)}</Banner>}
+        {link.isError && <FailedBanner error={link.error} remedy />}
       </div>
     </Dialog>
   );

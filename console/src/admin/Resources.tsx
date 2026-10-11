@@ -15,7 +15,7 @@ import { Banner, Button, Dialog, Input, Select, StatusIndicator } from '@design'
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
-import { Quiet, messageOf } from '../install/Accounts';
+import { Quiet } from '../install/Accounts';
 import { Environment } from './Environment';
 import { CarriedFiles } from './CarriedFiles';
 import { BuildPlan } from './BuildPlan';
@@ -25,6 +25,7 @@ import { Egress } from './Egress';
 import { SourceSection } from './UploadSource';
 import { Table } from '../ui/Table';
 import { AppVerb, useCan } from './verbs';
+import { FailedBanner } from '../ui/ErrorCode';
 
 interface Slot {
   key: string;
@@ -104,7 +105,7 @@ function Slots({ appID, focus }: { appID: string; focus?: boolean }) {
         rather than starting an app that can&rsquo;t connect.
       </Quiet>
 
-      {slots.isError && <Banner tone="failed">{messageOf(slots.error)}</Banner>}
+      {slots.isError && <FailedBanner error={slots.error} />}
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table
@@ -284,7 +285,7 @@ function FillSlot({
           </Quiet>
         )}
 
-        {save.isError && <Banner tone="failed">{messageOf(save.error)}</Banner>}
+        {save.isError && <FailedBanner error={save.error} />}
       </div>
     </Dialog>
   );
@@ -342,7 +343,7 @@ function Volumes({ appID, focus }: { appID: string; focus?: boolean }) {
         first and keeps it until you say otherwise.
       </Quiet>
 
-      {volumes.isError && <Banner tone="failed">{messageOf(volumes.error)}</Banner>}
+      {volumes.isError && <FailedBanner error={volumes.error} />}
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table
@@ -402,7 +403,7 @@ function Volumes({ appID, focus }: { appID: string; focus?: boolean }) {
               onChange={(e) => setPath(e.target.value)}
             />
 
-            {add.isError && <Banner tone="failed">{messageOf(add.error)}</Banner>}
+            {add.isError && <FailedBanner error={add.error} />}
           </div>
         </Dialog>
       )}

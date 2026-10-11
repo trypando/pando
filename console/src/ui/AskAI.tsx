@@ -11,6 +11,7 @@ import { Button, Dialog, Input } from '@design';
 import { refusal } from '../install/Accounts';
 import { AiStar } from './AiStar';
 import { BesideField } from './BesideField';
+import { WithCode, codeOf } from './ErrorCode';
 
 /** The one way into an AI function on a screen: the AI mark and "Ask AI". */
 export function AIButton({ onClick, label = 'Ask AI' }: { onClick: () => void; label?: string }) {
@@ -113,7 +114,9 @@ export function AIPrompt({
         </BesideField>
       </form>
       {error != null && (
-        <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>{refusal(error)}</p>
+        <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
+          <WithCode code={codeOf(error)}>{refusal(error)}</WithCode>
+        </p>
       )}
     </div>
   );

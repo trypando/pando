@@ -62,6 +62,7 @@ import { ListField } from '../ui/ListField';
 import { TagField } from '../ui/TagField';
 import { useNarrow } from '../ui/narrow';
 import { useSettled, withParams } from '../ui/paged';
+import { FailedBanner } from '../ui/ErrorCode';
 
 /** Where the startup configuration declares an adapter, in words: a key in
  *  the config file, or a variable such as PANDO_REGISTRY_URL. */
@@ -282,7 +283,7 @@ export function Installation({ query }: { query?: string } = {}) {
             </>
           }
         >
-          {disconnect.isError && <Banner tone="failed">{messageOf(disconnect.error)}</Banner>}
+          {disconnect.isError && <FailedBanner error={disconnect.error} />}
         </Dialog>
       )}
 
@@ -519,13 +520,13 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
 
       {save.isError && (
         <div style={{ marginTop: 'var(--space-4)' }}>
-          <Banner tone="failed">{messageOf(save.error)}</Banner>
+          <FailedBanner error={save.error} />
         </div>
       )}
 
       {check.isError && (
         <div style={{ marginTop: 'var(--space-4)' }}>
-          <Banner tone="failed">{messageOf(check.error)}</Banner>
+          <FailedBanner error={check.error} />
         </div>
       )}
 

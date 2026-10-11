@@ -1,7 +1,7 @@
 // gen-reference writes docs/api.md, docs/cli.md and docs/mcp.md from the
 // binary that serves them.
 //
-// The same document `GET /api/v1/reference` returns and the console renders, in
+// The same document `GET /api/v1/reference` returns and AI answers from, in
 // Markdown, so the repository's documentation of its own API cannot describe a
 // version of Pando that no longer exists. `make reference` writes them and
 // `make check` fails on a diff — the same shape as the generated API types and

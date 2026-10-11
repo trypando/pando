@@ -9,7 +9,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Dialog, EmptyState, Icon, IconButton, Input, Select, StatusIndicator, Tag } from '@design';
+import { Button, Dialog, EmptyState, Icon, IconButton, Input, Select, StatusIndicator, Tag } from '@design';
 
 import { api } from '@api/client';
 import { InstallVerb, useInstallVerb, usePrincipal } from '../app/principal';
@@ -26,6 +26,7 @@ import { Quiet, RoleLabel, RolePicker, StatusToggle, messageOf, refusal, sentenc
 import { NO_FILTERS, WHEN, linkQuery } from './audit';
 import type { AuditFilters } from './audit';
 import { AuditTable, LoadOlder, useAuditLog, usePeople } from './Installation';
+import { FailedBanner } from '../ui/ErrorCode';
 
 /** Groups read for the account page: the most one request returns. */
 const GROUPS_LIMIT = 500;
@@ -93,7 +94,7 @@ export function AccountPage({
   if (account.isError) {
     return (
       <Sheet heading={back}>
-        <Banner tone="failed">{messageOf(account.error)}</Banner>
+        <FailedBanner error={account.error} />
       </Sheet>
     );
   }
@@ -407,7 +408,7 @@ function EditDetails({ account, manage, isSelf }: { account: Account; manage: bo
               helper={local ? undefined : atProvider}
               onChange={edit(setEmail)}
             />
-            {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}
+            {save.isError && <FailedBanner error={save.error} remedy />}
           </div>
         </Dialog>
       )}
@@ -598,7 +599,7 @@ function ResetPassword({ account }: { account: Account }) {
                 mustChange={mustChange}
                 onMustChange={setMustChange}
               />
-              {reset.isError && <Banner tone="failed">{messageOf(reset.error)}</Banner>}
+              {reset.isError && <FailedBanner error={reset.error} />}
             </div>
           </Dialog>
         ))}
@@ -642,7 +643,7 @@ function DeleteAccount({ account, onDeleted }: { account: Account; onDeleted: ()
             </>
           }
         >
-          {remove.isError && <Banner tone="failed">{messageOf(remove.error)}</Banner>}
+          {remove.isError && <FailedBanner error={remove.error} />}
         </Dialog>
       )}
     </>

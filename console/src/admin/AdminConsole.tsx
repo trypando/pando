@@ -33,7 +33,7 @@ import { api } from '@api/client';
 import type { App } from '@api/types.gen';
 import { COUNT_STALE_MS, InstallVerb, useInstallVerb, useManageableAppsTotal } from '../app/principal';
 import { AccountPage } from '../install/Account';
-import { Accounts, messageOf } from '../install/Accounts';
+import { Accounts } from '../install/Accounts';
 import { filtersFrom, linkQuery } from '../install/audit';
 import { Identity } from '../install/Identity';
 import { SignIn } from '../install/SignIn';
@@ -72,6 +72,7 @@ import { APP_LIST_KEY, useWatchedRows } from './appList';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
+import { FailedBanner, WithCode } from '../ui/ErrorCode';
 
 export function AdminConsole({
   route,
@@ -725,7 +726,7 @@ function AppScreen({
             Apps
           </Button>
           {listed && <h3 style={{ font: 'var(--type-h3)', margin: 0 }}>{listed.name}</h3>}
-          <Banner tone="failed">{messageOf(app.error)}</Banner>
+          <FailedBanner error={app.error} />
           <DeleteApp appID={appID} appName={listed?.name ?? 'this app'} onDeleted={onBack} />
         </div>
       </Sheet>
@@ -856,8 +857,10 @@ function AppScreen({
                 )
               }
             >
-              {refusal.message}
-              {refusal.remedy ? ` ${refusal.remedy}` : ''}
+              <WithCode code={refusal.code}>
+                {refusal.message}
+                {refusal.remedy ? ` ${refusal.remedy}` : ''}
+              </WithCode>
             </Banner>
           </div>
         )}

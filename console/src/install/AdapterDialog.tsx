@@ -11,7 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Banner, Button, Checkbox, Dialog, Input, Radio, Select } from '@design';
 
 import { api } from '@api/client';
-import { Quiet, refusal } from './Accounts';
+import { Quiet } from './Accounts';
 import { Term } from '../ui/Term';
 import { FieldSkeleton, Loading } from '../ui/Loading';
 import { Disclosure } from '../ui/Disclosure';
@@ -33,6 +33,7 @@ import type { AdapterForm, AdapterKind, KindField } from './adapters';
 import { AdapterFunctions, choiceChanges, currentChoice } from './AdapterFunctions';
 import type { FunctionChoice } from './AdapterFunctions';
 import type { AIFunction } from './AIFunctions';
+import { FailedBanner } from '../ui/ErrorCode';
 
 /** A configured adapter, as GET /adapters returns it. */
 export interface ConfiguredAdapter {
@@ -219,7 +220,7 @@ export function AdapterDialog({
             <FieldSkeleton />
           </Loading>
         ) : kinds.isError ? (
-          <Banner tone="failed">{refusal(kinds.error)}</Banner>
+          <FailedBanner error={kinds.error} remedy />
         ) : missingKind ? (
           <Quiet>
             This build of Pando has no {existing.category} adapter of kind {existing.kind}, so it can&rsquo;t be
@@ -367,7 +368,7 @@ export function AdapterDialog({
               </>
             )}
 
-            {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}
+            {save.isError && <FailedBanner error={save.error} remedy />}
           </>
         )}
       </div>

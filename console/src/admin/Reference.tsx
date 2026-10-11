@@ -1,15 +1,14 @@
 // API and tools (R-261, R-262).
 //
 // Everything Pando does, it does through the API; the console, the CLI and MCP
-// are clients of it. This screen is that sentence made usable: how to connect,
-// a token to connect with, and the whole surface of all three.
+// are clients of it. This screen is where to find the reference for each of
+// them and where to mint a token to use them with.
 //
-// It renders `GET /api/v1/reference`, which the running binary builds from its
-// own router, its own cobra tree and its own MCP tool list. Nothing on this
-// screen is written here — a page describing the API that was maintained by
-// hand would be wrong the first week and trusted for months. `docs/api.md`,
-// `docs/cli.md` and `docs/mcp.md` are the same document, written by
-// `make reference` and checked in CI.
+// The reference itself is not drawn here. It is generated from Pando's code at
+// each release and published at trypando.ai, so this screen links to it rather
+// than keeping a second copy. `GET /api/v1/reference` still serves the running
+// binary's own reference, built from its router, cobra tree and MCP tool list,
+// for the CLI, for MCP and for AI's answers below (R-346).
 //
 // Open to anyone signed in. A developer with no administrative verb still has
 // apps shared with them, still automates, and still needs a token; hiding the
@@ -18,19 +17,20 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, CodeBlock, Dialog, InlineCode, Input, Skeleton, Tabs, Tag } from '@design';
+import { Button, CodeBlock, Dialog, InlineCode, Input } from '@design';
 
 import { api } from '@api/client';
-import type { Command, Document, Route, Token } from '@api/types.gen';
+import type { Token } from '@api/types.gen';
 import { InstallVerb, useInstallVerb } from '../app/principal';
-import { Quiet, Screen, messageOf } from '../install/Accounts';
+import { Quiet, Screen } from '../install/Accounts';
 import { MEASURE } from '../ui/layout';
 import { relative } from '../ui/time';
 import { Table } from '../ui/Table';
-import { LineSkeleton, Loading } from '../ui/Loading';
 import { AIButton, AIDialog, AIPrompt, AnsweredBy } from '../ui/AskAI';
 import { AI_PHRASES, AiThinking } from '../ui/AiThinking';
 import { useAIFunctionState } from '../install/AIFunctions';
+import { DOCS_URL } from '../ui/docs';
+import { FailedBanner } from '../ui/ErrorCode';
 
 /** What POST /ai/reference/answer answers (R-346). */
 interface ReferenceAnswer {
@@ -42,9 +42,9 @@ interface ReferenceAnswer {
 }
 
 /**
- * "How can I…", answered from this same reference (R-346), in a dialog behind
- * the AI button. The answer describes and cites; the tabs are where to check
- * it. Nothing to accept: it does nothing.
+ * "How can I…", answered from the reference built into this installation
+ * (R-346), in a dialog behind the AI button. The answer describes and cites;
+ * the documentation is where to check it. Nothing to accept: it does nothing.
  */
 function AskHow({ onClose }: { onClose: () => void }) {
   const [question, setQuestion] = useState('');
@@ -55,7 +55,7 @@ function AskHow({ onClose }: { onClose: () => void }) {
   return (
     <AIDialog
       title="Ask AI how to do something"
-      intro="Answered from this reference: the API, the CLI and the MCP tools. AI explains how and cites what it used; it doesn't do anything."
+      intro="Answered from the reference built into this installation: the API, the CLI and the MCP tools. AI explains how and cites what it used; it doesn't do anything."
       onClose={onClose}
       footer={
         <Button variant="ghost" onClick={onClose}>
@@ -92,195 +92,71 @@ function AskHow({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** The published references, one link each. */
+const DOCS = [
+  { label: 'API reference', href: `${DOCS_URL}/api`, about: 'Every endpoint, what it takes and the verb it asks for.' },
+  { label: 'CLI reference', href: `${DOCS_URL}/cli`, about: 'Installing the CLI, signing it in, and every command.' },
+  { label: 'MCP server', href: `${DOCS_URL}/mcp`, about: 'Connecting an agent, and every tool it gets.' },
+  { label: 'Errors', href: `${DOCS_URL}/errors`, about: 'Every error code and what it means.' },
+];
+
 export function Reference() {
-  const [tab, setTab] = useState('connect');
   // Offered to everyone signed in unless reference help is known to be off:
   // most people cannot read which functions are on, and the answer says so.
   const aiState = useAIFunctionState('answer_reference');
   const [asking, setAsking] = useState(false);
 
-  const doc = useQuery({
-    queryKey: ['reference'],
-    queryFn: () => api.get<Document>('/reference'),
-    // The reference changes when the binary changes, which is not while
-    // somebody is reading it.
-    staleTime: 60 * 60 * 1000,
-  });
-
   return (
     <Screen heading="API and tools" action={aiState !== 'off' && <AIButton onClick={() => setAsking(true)} />}>
-      {doc.isError && <Banner tone="failed">{messageOf(doc.error)}</Banner>}
       {asking && <AskHow onClose={() => setAsking(false)} />}
 
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        items={[
-          { value: 'connect', label: 'Connect' },
-          { value: 'tokens', label: 'Tokens' },
-          { value: 'api', label: 'API' },
-          { value: 'cli', label: 'CLI' },
-          { value: 'mcp', label: 'MCP' },
-          { value: 'errors', label: 'Errors' },
-        ]}
-      />
-
-      <div style={{ marginTop: 'var(--space-5)' }}>
-        {/* Every tab but Tokens renders the reference, so until it arrives
-            they share one outline: a heading and a code block, which is how
-            each of them opens. */}
-        {doc.isPending && tab !== 'tokens' && (
-          <Loading>
-            <div style={{ maxWidth: MEASURE, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-              <LineSkeleton width="16ch" font="var(--type-h4)" />
-              <Skeleton height="6rem" radius="md" />
-              <LineSkeleton width="48ch" />
-            </div>
-          </Loading>
-        )}
-        {tab === 'connect' && <Connect doc={doc.data} />}
-        {tab === 'tokens' && <Tokens />}
-        {tab === 'api' && <API doc={doc.data} />}
-        {tab === 'cli' && <CLI doc={doc.data} />}
-        {tab === 'mcp' && <MCP doc={doc.data} />}
-        {tab === 'errors' && <Errors doc={doc.data} />}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-7)', maxWidth: MEASURE }}>
+        <Documentation />
+        <Tokens />
       </div>
     </Screen>
   );
 }
 
-// --- connect ---------------------------------------------------------------
+// --- documentation ---------------------------------------------------------
 
-// Without the reference, each surface renders nothing: while it loads the
-// screen shows its outline, and when it failed the banner above says why. The
-// bare "Loading." these used to show stayed up for good after a failure.
-function Connect({ doc }: { doc?: Document }) {
-  if (!doc) return null;
-
-  // Where this console is, which is where the API is. Written out rather than
-  // left as "your server": the whole point of this screen is that it can be
-  // copied into a terminal without editing.
+function Documentation() {
+  // The one thing the published docs cannot know: where this installation is.
+  // They write https://pando.example.com; this is what goes there.
   const origin = window.location.origin;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-7)', maxWidth: MEASURE }}>
-      <section>
-        <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>The API</h4>
-        <CodeBlock
-          lines={[
-            `curl -H "Authorization: Bearer $${doc.connect.token_env}" \\`,
-            `  ${origin}${doc.api.base_path}/apps`,
-          ]}
-        />
-      </section>
-
-      <section>
-        <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Install the CLI</h4>
-        <Quiet>
-          The same binary as the server, on your machine, talking to this installation over its API.
-        </Quiet>
-        <div style={{ marginTop: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          <CodeBlock title="macOS, and Linux with Homebrew" lines={[`brew install ${doc.install.homebrew}`]} prompt />
-          <CodeBlock
-            title={`Debian and Ubuntu — ${(doc.install.packages ?? [])
-              .filter((p) => p !== 'deb')
-              .map((p) => `.${p}`)
-              .join(' and ')} are published the same way`}
-            lines={packageLines(doc)}
-            prompt
-          />
-          <CodeBlock title="From source" lines={[`go install ${doc.install.module}@latest`]} prompt />
-          <CodeBlock
-            title="Or nothing at all — the installation already has it"
-            lines={[`${doc.install.in_container} app list`]}
-            prompt
-          />
-        </div>
-        <div style={{ marginTop: 'var(--space-3)' }}>
-          <Quiet>
-            Tarballs named <code style={{ font: 'var(--type-code-sm)' }}>{doc.install.archive}</code>{' '}
-            are published for {(doc.install.platforms ?? []).join(', ')}. Every release, with its
-            signed checksums, is on the{' '}
-            <a href={`${doc.install.repo}/releases`} target="_blank" rel="noopener noreferrer">
-              releases page
+    <section>
+      <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Documentation</h4>
+      <ul
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--space-3)',
+        }}
+      >
+        {DOCS.map((d) => (
+          <li key={d.href}>
+            <a href={d.href} target="_blank" rel="noopener noreferrer" style={{ font: 'var(--type-body-ui)' }}>
+              {d.label}
             </a>
-            .
-          </Quiet>
-        </div>
-      </section>
-
-      <section>
-        <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Sign the CLI in</h4>
-        <CodeBlock lines={[doc.connect.login_cmd.replace('<server-url>', origin)]} prompt />
-        <div style={{ marginTop: 'var(--space-4)' }}>
-          <Quiet>
-            For a machine — CI, a container, a script — use a token from the Tokens tab instead of
-            signing in.
-          </Quiet>
-          <div style={{ marginTop: 'var(--space-3)' }}>
-            <CodeBlock
-              lines={[
-                `export ${doc.connect.server_env}=${origin}`,
-                `export ${doc.connect.token_env}=tok_…`,
-              ]}
-            />
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>MCP</h4>
-        <CodeBlock
-          lines={[
-            '{',
-            '  "mcpServers": {',
-            '    "pando": {',
-            '      "command": "pando",',
-            `      "args": ["${doc.connect.mcp_cmd.replace(/^pando /, '')}"],`,
-            '      "env": {',
-            `        "${doc.connect.server_env}": "${origin}",`,
-            `        "${doc.connect.token_env}": "tok_…"`,
-            '      }',
-            '    }',
-            '  }',
-            '}',
-          ]}
-        />
-      </section>
-
-      <section>
-        <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Authenticating</h4>
-        {doc.api.auth?.map((auth) => (
-          <div key={auth.name} style={{ marginBottom: 'var(--space-4)' }}>
-            <p style={{ font: 'var(--type-body-ui)', margin: '0 0 var(--space-1)' }}>
-              <strong>{auth.name}</strong> · <code style={{ font: 'var(--type-code-sm)' }}>{auth.how}</code>
-            </p>
-            <Quiet>{auth.description}</Quiet>
-          </div>
+            <div>
+              <Quiet>{d.about}</Quiet>
+            </div>
+          </li>
         ))}
-      </section>
-    </div>
+      </ul>
+      <div style={{ marginTop: 'var(--space-4)' }}>
+        <Quiet>
+          This installation is at <InlineCode>{origin}</InlineCode>. Use it wherever the documentation
+          shows <InlineCode>https://pando.example.com</InlineCode>.
+        </Quiet>
+      </div>
+    </section>
   );
-}
-
-/**
- * The download-and-install lines, spelled out.
- *
- * An instruction with three angle brackets in it is one somebody has to
- * assemble before they can run it, and assembling it is where they get it
- * wrong. The version is the one variable, at the top.
- */
-function packageLines(doc: Document): string[] {
-  const file = doc.install.package
-    .replace('<format>', 'deb')
-    .replace('<arch>', 'amd64')
-    .replace('<version>', '${VERSION}');
-  const url = doc.install.download.replace('<version>', '${VERSION}') + file;
-  return [
-    'VERSION=0.2.0   # the release you want',
-    `curl -LO ${url}`,
-    `sudo apt install ./${file}`,
-  ];
 }
 
 // --- tokens ----------------------------------------------------------------
@@ -350,7 +226,7 @@ function TokenList({
         <Quiet>{note}</Quiet>
       </div>
 
-      {tokens.isError && <Banner tone="failed">{messageOf(tokens.error)}</Banner>}
+      {tokens.isError && <FailedBanner error={tokens.error} />}
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table
@@ -394,7 +270,7 @@ function TokenList({
         />
       </div>
 
-      {revoke.isError && <Banner tone="failed">{messageOf(revoke.error)}</Banner>}
+      {revoke.isError && <FailedBanner error={revoke.error} />}
 
       {creating && (
         <NewToken
@@ -506,161 +382,9 @@ function NewToken({
           )}
         </div>
 
-        {create.isError && <Banner tone="failed">{messageOf(create.error)}</Banner>}
+        {create.isError && <FailedBanner error={create.error} />}
       </div>
     </Dialog>
   );
 }
 
-// --- the surfaces ----------------------------------------------------------
-
-function API({ doc }: { doc?: Document }) {
-  if (!doc) return null;
-
-  const routes = doc.api.routes ?? [];
-  const groups = [...new Set(routes.map((r) => r.group))];
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-7)' }}>
-      <Quiet>
-        {routes.length} endpoints, read from this installation. The verb is what the endpoint asks
-        for; blank means it asks only that you are signed in.
-      </Quiet>
-
-      {groups.map((group) => (
-        <section key={group}>
-          <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>{group}</h4>
-          <Table
-            columns={[
-              {
-                key: 'path',
-                header: 'Endpoint',
-                width: 'minmax(0,46ch)',
-                mono: true,
-                render: (row: Route) => `${row.method} ${row.path}`,
-              },
-              { key: 'verb', header: 'Verb', width: '22ch', mono: true, muted: true },
-              {
-                key: 'summary',
-                header: 'What it does',
-                width: 'minmax(0,60ch)',
-                render: (row: Route) => (
-                  <span style={{ whiteSpace: 'normal', display: 'block', padding: 'var(--space-2) 0' }}>
-                    {row.summary}
-                  </span>
-                ),
-              },
-            ]}
-            rows={routes.filter((r) => r.group === group)}
-          />
-        </section>
-      ))}
-    </div>
-  );
-}
-
-function CLI({ doc }: { doc?: Document }) {
-  if (!doc) return null;
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: MEASURE }}>
-      {(doc.cli ?? []).map((command) => (
-        <CommandDoc key={command.name} command={command} />
-      ))}
-    </div>
-  );
-}
-
-function CommandDoc({ command, depth = 0 }: { command: Command; depth?: number }) {
-  return (
-    <section style={{ marginLeft: depth ? 'var(--space-5)' : 0 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)' }}>
-        <code style={{ font: 'var(--type-code)', color: 'var(--ink)' }}>{command.use}</code>
-      </div>
-      {command.summary && (
-        <div style={{ marginTop: 'var(--space-1)' }}>
-          <Quiet>{command.summary}</Quiet>
-        </div>
-      )}
-      {(command.flags ?? []).length > 0 && (
-        <div style={{ marginTop: 'var(--space-2)', display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-          {(command.flags ?? []).map((flag) => (
-            <Tag key={flag.name} mono>
-              --{flag.name}
-            </Tag>
-          ))}
-        </div>
-      )}
-      {(command.children ?? []).length > 0 && (
-        <div style={{ marginTop: 'var(--space-4)', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-          {(command.children ?? []).map((child) => (
-            <CommandDoc key={child.name} command={child} depth={depth + 1} />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function MCP({ doc }: { doc?: Document }) {
-  if (!doc) return null;
-
-  return (
-    <div>
-      <Quiet>
-        One tool per endpoint. An agent holds a token and is a principal like any other: it acts as
-        its owner, is bounded by their grants, and its actions are in the audit log under their name.
-      </Quiet>
-      <div style={{ marginTop: 'var(--space-4)' }}>
-        <Table
-          columns={[
-            { key: 'name', header: 'Tool', width: 'minmax(0,30ch)', mono: true },
-            {
-              key: 'description',
-              header: 'What it does',
-              width: 'minmax(0,60ch)',
-              render: (row: { description: string }) => (
-                <span style={{ whiteSpace: 'normal', display: 'block', padding: 'var(--space-2) 0' }}>
-                  {row.description}
-                </span>
-              ),
-            },
-          ]}
-          rows={doc.mcp ?? []}
-        />
-      </div>
-    </div>
-  );
-}
-
-function Errors({ doc }: { doc?: Document }) {
-  if (!doc) return null;
-
-  return (
-    <div>
-      <Quiet>
-        Every error carries a stable code, a message, an optional remedy and the request ID that
-        finds the log line. Branch on the code; the message may be reworded.
-      </Quiet>
-      <div style={{ marginTop: 'var(--space-4)' }}>
-        <Table
-          columns={[
-            { key: 'code', header: 'Code', width: 'minmax(0,34ch)', mono: true },
-            { key: 'status', header: 'HTTP', width: '10ch', muted: true },
-            {
-              key: 'meaning',
-              header: 'Meaning',
-              width: 'minmax(0,60ch)',
-              render: (row: { meaning: string }) => (
-                <span style={{ whiteSpace: 'normal', display: 'block', padding: 'var(--space-2) 0' }}>
-                  {row.meaning}
-                </span>
-              ),
-            },
-          ]}
-          rows={doc.errors ?? []}
-        />
-      </div>
-    </div>
-  );
-}

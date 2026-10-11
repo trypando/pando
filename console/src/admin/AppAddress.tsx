@@ -18,8 +18,8 @@ import { Banner, Button, Dialog, Input, Radio, Select } from '@design';
 
 import { api } from '@api/client';
 import type { App, Routing } from '@api/types.gen';
-import { messageOf } from '../install/Accounts';
 import { AppVerb, useCan } from './verbs';
+import { FailedBanner } from '../ui/ErrorCode';
 
 interface RoutingOption {
   adapter_ref: string;
@@ -273,7 +273,7 @@ function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; on
             Once this is deployed, {shown(view.address)} stops working, and links and bookmarks to it break.
           </Banner>
         )}
-        {change.isError && <Banner tone="failed">{messageOf(change.error)}</Banner>}
+        {change.isError && <FailedBanner error={change.error} />}
       </div>
     </Dialog>
   );

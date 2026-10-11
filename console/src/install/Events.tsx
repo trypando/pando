@@ -35,6 +35,8 @@ import { ShowMore, usePaged, type PageOf } from '../ui/paged';
 import { relative } from '../ui/time';
 import { Disclosure } from '../ui/Disclosure';
 import { deliveriesInterval } from '../ui/polling';
+import { FailedBanner } from '../ui/ErrorCode';
+import { EVENTS_DOCS_URL } from '../ui/docs';
 
 interface EventDef {
   name: string;
@@ -374,7 +376,7 @@ function CreateSubscription({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-        {create.isError && <Banner tone="failed">{messageOf(create.error)}</Banner>}
+        {create.isError && <FailedBanner error={create.error} />}
 
         {!fixedApp && (
           <Select
@@ -514,8 +516,11 @@ function SigningKey({ sub, onClose }: { sub: Subscription; onClose: () => void }
         </Banner>
         <CodeBlock copyable lines={sub.signing_key ?? ''} />
         <Quiet>
-          Check each delivery&rsquo;s <InlineCode>Pando-Signature</InlineCode> header against it. The
-          reference under API and tools shows how.
+          Check each delivery&rsquo;s <InlineCode>Pando-Signature</InlineCode> header against it. The{' '}
+          <a href={EVENTS_DOCS_URL} target="_blank" rel="noopener noreferrer">
+            events reference
+          </a>{' '}
+          shows how.
         </Quiet>
       </div>
     </Dialog>
@@ -621,7 +626,7 @@ function SubscriptionDetail({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
         {sub.isError && <Quiet>{messageOf(sub.error)}</Quiet>}
-        {failure && <Banner tone="failed">{messageOf(failure)}</Banner>}
+        {failure && <FailedBanner error={failure} />}
         {s && !s.enabled && s.disabled_reason && <Banner tone="failed">{s.disabled_reason}</Banner>}
 
         {s && (
@@ -766,7 +771,7 @@ function DeliveryDetail({
           {redeliver.isPending ? 'Sending again' : 'Send again'}
         </Button>
       </div>
-      {redeliver.isError && <Banner tone="failed">{messageOf(redeliver.error)}</Banner>}
+      {redeliver.isError && <FailedBanner error={redeliver.error} />}
       {delivery.status === 'pending' && delivery.next_attempt_at && (
         <Quiet>Next attempt {relative(delivery.next_attempt_at).toLowerCase()}.</Quiet>
       )}
@@ -952,7 +957,7 @@ function EditRequest({ sub, onClose, onSaved }: { sub: Subscription; onClose: ()
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        {save.isError && <Banner tone="failed">{messageOf(save.error)}</Banner>}
+        {save.isError && <FailedBanner error={save.error} />}
         <RequestFields
           value={value}
           onChange={setValue}

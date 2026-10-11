@@ -14,6 +14,7 @@ import type { Attempt, Plan, Release, Status } from '@api/types.gen';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { Quiet, Screen, messageOf } from './Accounts';
 import { relative } from '../ui/time';
+import { FailedBanner } from '../ui/ErrorCode';
 
 /** The same rule as any backup's passphrase (backup.MinPassphraseLength). */
 const MIN_PASSPHRASE = 16;
@@ -344,7 +345,7 @@ function UpgradeDialog({ plan, onClose }: { plan: Plan; onClose: () => void }) {
           checked={skip}
           onChange={(e) => setSkip(e.target.checked)}
         />
-        {start.isError && <Banner tone="failed">{messageOf(start.error)}</Banner>}
+        {start.isError && <FailedBanner error={start.error} />}
       </div>
     </Dialog>
   );

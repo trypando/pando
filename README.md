@@ -187,8 +187,9 @@ suggested fix:
 
 Every endpoint, the verb it asks for and every error code: [`docs/api.md`](docs/api.md) — generated
 from the running code, so it cannot describe a version of Pando that no longer exists. The same
-document is in the console under **API and tools**, which is also where you mint a token, and at
-`GET /api/v1/reference` for anything that would rather read it as JSON.
+reference for the latest release is published at [trypando.ai/docs](https://trypando.ai/docs), which
+the console's **API and tools** screen links to and where you mint a token. Your installation serves
+its own at `GET /api/v1/reference` for anything that would rather read it as JSON.
 
 ## Configuration
 

@@ -13,6 +13,7 @@ import { Banner, Button, CodeBlock, Dialog } from '@design';
 
 import { api } from '@api/client';
 import { Quiet, refusal } from './Accounts';
+import { FailedBanner } from '../ui/ErrorCode';
 
 /** A source connection, as GET /sources returns it. */
 export interface SourceConnection {
@@ -151,7 +152,7 @@ export function AuthorizeDialog({
             <CodeBlock copyable lines={device.user_code ?? ''} />
           </>
         )}
-        {begin.isError && <Banner tone="failed">{refusal(begin.error)}</Banner>}
+        {begin.isError && <FailedBanner error={begin.error} remedy />}
         {pollError && <Banner tone="failed">{pollError}</Banner>}
       </div>
     </Dialog>

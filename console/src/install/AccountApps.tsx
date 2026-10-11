@@ -12,7 +12,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Checkbox, Dialog, EmptyState, Select, Tag } from '@design';
+import { Button, Checkbox, Dialog, EmptyState, Select, Tag } from '@design';
 
 import { api } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
@@ -22,6 +22,7 @@ import { SearchField } from '../ui/SearchField';
 import { ShowMore, usePaged, useSettled, withParams, type PageOf } from '../ui/paged';
 import type { Role } from './Accounts';
 import { Quiet, messageOf, sentence } from './Accounts';
+import { FailedBanner } from '../ui/ErrorCode';
 
 /** Who the grants are for. */
 export interface Principal {
@@ -387,7 +388,7 @@ function GiveAccess({
           options={[{ value: '', label: 'None' }, ...roles.map((r) => ({ value: r.id, label: sentence(r.name) }))]}
         />
         <Checkbox label="Can open the app" checked={opens} onChange={(e) => setOpens(e.target.checked)} />
-        {give.isError && <Banner tone="failed">{messageOf(give.error)}</Banner>}
+        {give.isError && <FailedBanner error={give.error} />}
       </div>
     </Dialog>
   );

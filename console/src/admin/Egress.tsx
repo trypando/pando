@@ -19,7 +19,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Banner, Button, Dialog, Radio, StatusIndicator } from '@design';
 
 import { api } from '@api/client';
-import { Quiet, messageOf, refusal } from '../install/Accounts';
+import { Quiet } from '../install/Accounts';
 import { ListField } from '../ui/ListField';
 import { ENTRY_FORMS } from '../install/policyEgress';
 import { InlineWarning } from '../ui/InlineWarning';
@@ -41,6 +41,7 @@ import {
 import type { DryRunResult, EgressDraft, EgressResponse } from './appEgress';
 import { useNewestSpec } from './newestSpec';
 import { AppVerb, useCan } from './verbs';
+import { FailedBanner } from '../ui/ErrorCode';
 
 export function Egress({ appID, focus }: { appID: string; focus?: boolean }) {
   const heading = useRef<HTMLElement>(null);
@@ -90,7 +91,7 @@ export function Egress({ appID, focus }: { appID: string; focus?: boolean }) {
           <LineSkeleton width="30ch" />
         </Loading>
       )}
-      {egress.isError && <Banner tone="failed">{messageOf(egress.error)}</Banner>}
+      {egress.isError && <FailedBanner error={egress.error} />}
 
       {egress.isSuccess && !eff && (
         <Quiet>This app has no configuration yet, so it has no rules to show.</Quiet>
@@ -360,13 +361,13 @@ function EditEgress({
           ))}
         </fieldset>
 
-        {verdict?.isError && <Banner tone="failed">{refusal(verdict.error)}</Banner>}
+        {verdict?.isError && <FailedBanner error={verdict.error} remedy />}
         {verdict?.data && dryRunWords(verdict.data).length > 0 && (
           <Banner tone="info">
             {dryRunWords(verdict.data).join(' ')}
           </Banner>
         )}
-        {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}
+        {save.isError && <FailedBanner error={save.error} remedy />}
       </div>
     </Dialog>
   );
