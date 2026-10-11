@@ -1,0 +1,54 @@
+# TEMPORARY, for PR #188 only: the Podman install from docs/rootless.md,
+# through a restart of the user's services. Not part of CI; removed before the
+# PR leaves draft.
+name: Podman install (temporary)
+
+on:
+  push:
+    branches: [issue-179-podman]
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: trypando/pando:0.0.0-ci
+          build-args: |
+            VERSION=0.0.0-ci
+            COMMIT=${{ github.sha }}
+
+      - name: Rootless Podman
+        run: |
+          scripts/release-compose.sh 0.0.0-ci > "$RUNNER_TEMP/docker-compose.yml"
+          docker save trypando/pando:0.0.0-ci -o "$RUNNER_TEMP/pando.tar"
+          scripts/ci-rootless-podman.sh
+
+      - name: Install as docs/rootless.md gives it, then restart the user's services
+        env:
+          SMOKE_PROJECT: pando
+        run: |
+          set -eux
+          podman load -i "$RUNNER_TEMP/pando.tar"
+          POSTGRES_PASSWORD=$(openssl rand -hex 16); export POSTGRES_PASSWORD
+          mkdir -p ~/pando
+          cp "$RUNNER_TEMP/docker-compose.yml" ~/pando/docker-compose.yml
+          printf 'PANDO_DOCKER_SOCKET=%s\nPANDO_PORT=18080\nPANDO_APP_PORT_START=19000\nPANDO_APP_PORT_END=19004\nPOSTGRES_PASSWORD=%s\n' \
+            "$PANDO_DOCKER_SOCKET" "$POSTGRES_PASSWORD" > ~/pando/.env
+          sed -n '/^mkdir -p ~\/.config\/systemd\/user$/,/^systemctl --user enable pando.service$/p' docs/rootless.md > "$RUNNER_TEMP/unit.sh"
+          grep -q 'ExecStart=/usr/bin/docker compose up -d' "$RUNNER_TEMP/unit.sh"
+          sh -eux "$RUNNER_TEMP/unit.sh"
+          python3 scripts/smoke-image.py ~/pando/docker-compose.yml --version 0.0.0-ci --build --restart-user-services

@@ -304,8 +304,9 @@ def main():
             print("\n".join(l for l in journal if "/start" in l or "/restart" in l), flush=True)
         print("--- containers", flush=True)
         subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}"], check=False)
-        for app_id in args.app_ids:
-            print(f"--- {app_id}: {json.dumps(api('GET', f'/apps/{app_id}')[1])[:1500]}", flush=True)
+        # Why the reconciler's last correction failed, which only the database holds.
+        compose(args, "exec", "-T", "postgres", "psql", "-U", "pando", "-d", "pando", "-c",
+                "SELECT id, state, consecutive_failures, last_reconcile_error FROM apps", check=False)
         # What the engine says when asked to start a stopped app by hand.
         stopped = subprocess.run(["docker", "ps", "-a", "--filter", "status=exited", "--format", NAMES],
                                  capture_output=True, text=True).stdout.split()
