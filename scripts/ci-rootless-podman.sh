@@ -13,6 +13,11 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 sudo apt-get update -q
 sudo apt-get install -y -q podman uidmap dbus-user-session
 
+# Pando's rootless BuildKit maps a range of IDs of its own inside its
+# container, which the 65,536 subordinate IDs a user is given do not hold
+# (docs/rootless.md).
+sudo usermod --add-subuids 1000000-1199999 --add-subgids 1000000-1199999 "$USER"
+
 # systemd delegates only memory and pids to a user by default.
 sudo mkdir -p /etc/systemd/system/user@.service.d
 printf '[Service]\nDelegate=cpu cpuset io memory pids\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf

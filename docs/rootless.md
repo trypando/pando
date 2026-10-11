@@ -95,6 +95,10 @@ As root, once:
 # The account Podman and Pando will run as.
 sudo useradd --create-home --shell /bin/bash pando
 
+# More subordinate IDs than the 65,536 useradd gives: Pando's build container runs rootless
+# BuildKit, which maps IDs of its own inside the container. Any free range of 200,000 will do.
+sudo usermod --add-subuids 1000000-1199999 --add-subgids 1000000-1199999 pando
+
 # Pando's build container runs rootless BuildKit, which Ubuntu 24.04's confinement of unprivileged
 # user namespaces blocks.
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -125,6 +129,7 @@ sudo loginctl enable-linger pando
 As that user, in a login session (`sudo machinectl shell pando@`):
 
 ```bash
+podman system migrate   # takes up the new subordinate IDs, if this user has run Podman before
 systemctl --user enable --now podman.socket
 echo 'export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock' >> ~/.bashrc
 export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock
