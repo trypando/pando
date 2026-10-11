@@ -20,7 +20,7 @@
 
 </div>
 
-<img src="docs/assets/demo.gif" alt="Adding 2048 to Pando from its GitHub repository: Pando works out how to build it and scores it 100 out of 100, Accept and deploy runs it, and the game opens at its address." width="100%">
+<img src="docs/assets/demo.gif" alt="Adding 2048 to Pando from its GitHub repository: Pando works out how to build it, Accept and deploy runs it, the scan of the running image scores it 61 out of 100, and the game opens at its address." width="100%">
 
 ---
 
