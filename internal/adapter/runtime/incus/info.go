@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/adapter/runtime/docker"
 	"github.com/trypando/pando/internal/hostagent"
 )
 
@@ -31,8 +32,7 @@ func Info() api.KindInfo {
 				Help:        "The Incus network each app's VM is attached to. Pando must be able to reach addresses on it. On a cluster, an OVN network, or a bridge with a target member.",
 				Placeholder: "incusbr0"},
 			{Key: "proxy_sources", Label: "Pando's addresses", Type: "string", Required: true,
-				Help:        "The addresses Pando connects to app VMs from, as seen on that network: the only connections a VM accepts. Comma-separated, as addresses or ranges.",
-				Placeholder: "10.1.0.10/32"},
+				Help: "The addresses Pando connects to app VMs from, as seen on that network: the only connections a VM accepts. Comma-separated, as addresses or ranges."},
 			{Key: "agent_authority", Label: "Agent certificate authority", Type: "string", Multiline: true, Credential: true, Required: true,
 				Help: "The output of `pando host-agent new-authority`. Pando issues its own certificate and each VM's agent's from it."},
 			{Key: "agent_image", Label: "Pando image", Type: "string", Required: true,
@@ -73,7 +73,7 @@ func Info() api.KindInfo {
 				Default: "1073741824 (1 GiB)"},
 			{Key: "network_pool", Label: "App network range", Type: "string", Advanced: true,
 				Help:    "The IPv4 range app networks inside each VM take their addresses from. Must not overlap the Incus network.",
-				Default: defaultNetworkPool},
+				Default: docker.DefaultNetworkPool()},
 			{Key: "network_block_bits", Label: "App network size", Type: "int", Advanced: true,
 				Help:    "The size of each app's private network inside its VM, as a prefix length from 24 to 29.",
 				Default: "28"},

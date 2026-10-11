@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/trypando/pando/internal/adapter/runtime/docker"
 	"github.com/trypando/pando/internal/adapter/runtime/incus/incusapi"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/hostagent"
@@ -112,7 +113,6 @@ const (
 	defaultVolumeSizeBytes    = 10 << 30
 	defaultCPUs               = 1
 	defaultMemoryBytes        = 1 << 30
-	defaultNetworkPool        = "10.213.0.0/16"
 )
 
 var (
@@ -230,10 +230,10 @@ func (c *Config) validateSizes() error {
 		return refuse("A VM needs at least a 4 GiB root disk, 256 MiB of guest overhead, one CPU and 256 MiB of memory.")
 	}
 	if c.NetworkPool == "" {
-		c.NetworkPool = defaultNetworkPool
+		c.NetworkPool = docker.DefaultNetworkPool()
 	}
 	if _, err := netip.ParsePrefix(c.NetworkPool); err != nil {
-		return refuse("The app network range %q is not an address range, such as the default %s.", c.NetworkPool, defaultNetworkPool)
+		return refuse("The app network range %q is not an address range, such as the default %s.", c.NetworkPool, docker.DefaultNetworkPool())
 	}
 	return nil
 }

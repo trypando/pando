@@ -880,8 +880,7 @@
               "label": "Pando's addresses",
               "help": "The addresses Pando connects to app VMs from, as seen on that network: the only connections a VM accepts. Comma-separated, as addresses or ranges.",
               "type": "string",
-              "required": true,
-              "placeholder": "10.1.0.10/32"
+              "required": true
             },
             {
               "key": "agent_authority",

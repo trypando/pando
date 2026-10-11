@@ -33,8 +33,12 @@ func ConnectUnix(path, project string) *Client {
 		var d net.Dialer
 		return d.DialContext(ctx, "unix", path)
 	}
+	// HTTP framing over a local socket, never over a network: the scheme is
+	// what Go's client needs to speak to the socket, and the host is a label
+	// the dialer above ignores.
+	socket := url.URL{Scheme: "http", Host: "incus.socket"}
 	return &Client{
-		base:    "http://incus.socket",
+		base:    socket.String(),
 		hc:      &http.Client{Transport: &http.Transport{DialContext: dial}},
 		project: project,
 	}
@@ -329,7 +333,7 @@ func writeStream(ctx context.Context, ws *websocket.Conn, r io.Reader) {
 		for {
 			n, err := r.Read(buf)
 			if n > 0 {
-				if werr := ws.Write(ctx, websocket.MessageBinary, buf[:n]); werr != nil {
+				if ws.Write(ctx, websocket.MessageBinary, buf[:n]) != nil {
 					return
 				}
 			}

@@ -57,65 +57,82 @@ func (f *fakeIncus) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.requests = append(f.requests, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
 	f.mu.Unlock()
+	path := r.URL.Path
 	switch {
-	case r.URL.Path == "/1.0":
+	case path == "/1.0":
 		sync200(w, Server{APIExtensions: []string{"x"}, Environment: ServerEnvironment{Project: r.URL.Query().Get("project")}})
-	case r.URL.Path == "/1.0/instances/missing":
+	case path == "/1.0/instances/missing":
 		fail(w, http.StatusNotFound, "Instance not found")
-	case r.URL.Path == "/1.0/instances/vm" && r.Method == http.MethodPut:
-		if r.Header.Get("If-Match") != `"tag"` {
-			fail(w, http.StatusPreconditionFailed, "ETag doesn't match")
-			return
-		}
-		asyncOp(w, f.op("put", "Success", nil))
-	case r.URL.Path == "/1.0/instances" && r.Method == http.MethodPost:
+	case path == "/1.0/instances/vm" && r.Method == http.MethodPut:
+		f.put(w, r)
+	case path == "/1.0/instances" && r.Method == http.MethodPost:
 		asyncOp(w, f.op("create", "Failure", nil))
-	case r.URL.Path == "/1.0/instances/vm/exec":
-		var post InstanceExecPost
-		_ = json.NewDecoder(r.Body).Decode(&post)
-		fds, _ := json.Marshal(map[string]string{"0": "s0", "1": "s1", "2": "s2", "control": "sc"})
-		asyncOp(w, f.op("exec", "Running", map[string]json.RawMessage{"fds": fds}))
-	case strings.HasSuffix(r.URL.Path, "/websocket"):
+	case path == "/1.0/instances/vm/exec":
+		f.exec(w, r)
+	case strings.HasSuffix(path, "/websocket"):
 		f.websocket(w, r)
-	case strings.HasPrefix(r.URL.Path, "/1.0/operations/") && strings.HasSuffix(r.URL.Path, "/wait"):
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/1.0/operations/"), "/wait")
-		f.mu.Lock()
-		op := f.ops[id]
-		f.mu.Unlock()
-		if id == "exec" {
-			// Ends once its stdin has.
-			for i := 0; i < 200; i++ {
-				f.mu.Lock()
-				done := op.Status == "Success"
-				f.mu.Unlock()
-				if done {
-					break
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
-		}
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		sync200(w, op)
-	case r.URL.Path == "/1.0/volume/sftp":
-		if r.Header.Get("Upgrade") != "sftp" {
-			fail(w, http.StatusBadRequest, "no upgrade")
-			return
-		}
-		hj, _ := w.(http.Hijacker)
-		conn, rw, _ := hj.Hijack()
-		_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: sftp\r\nConnection: Upgrade\r\n\r\n")
-		_ = rw.Flush()
-		go func() {
-			defer func() { _ = conn.Close() }()
-			line, _ := bufio.NewReader(rw).ReadString('\n')
-			_, _ = conn.Write([]byte("echo " + line))
-		}()
-	case r.URL.Path == "/1.0/volume-missing/sftp":
+	case strings.HasPrefix(path, "/1.0/operations/") && strings.HasSuffix(path, "/wait"):
+		f.wait(w, strings.TrimSuffix(strings.TrimPrefix(path, "/1.0/operations/"), "/wait"))
+	case path == "/1.0/volume/sftp":
+		f.upgrade(w, r)
+	case path == "/1.0/volume-missing/sftp":
 		fail(w, http.StatusNotFound, "Storage volume not found")
 	default:
-		fail(w, http.StatusInternalServerError, "unexpected "+r.URL.Path)
+		fail(w, http.StatusInternalServerError, "unexpected "+path)
 	}
+}
+
+// put accepts an update only with the instance's current ETag.
+func (f *fakeIncus) put(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("If-Match") != `"tag"` {
+		fail(w, http.StatusPreconditionFailed, "ETag doesn't match")
+		return
+	}
+	asyncOp(w, f.op("put", "Success", nil))
+}
+
+// exec starts a command whose stdio is on four websockets.
+func (f *fakeIncus) exec(w http.ResponseWriter, r *http.Request) {
+	var post InstanceExecPost
+	_ = json.NewDecoder(r.Body).Decode(&post)
+	fds, _ := json.Marshal(map[string]string{"0": "s0", "1": "s1", "2": "s2", "control": "sc"})
+	asyncOp(w, f.op("exec", "Running", map[string]json.RawMessage{"fds": fds}))
+}
+
+// wait answers an operation's wait; the exec ends once its stdin has.
+func (f *fakeIncus) wait(w http.ResponseWriter, id string) {
+	f.mu.Lock()
+	op := f.ops[id]
+	f.mu.Unlock()
+	for i := 0; id == "exec" && i < 200 && !f.finished(op); i++ {
+		time.Sleep(5 * time.Millisecond)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sync200(w, op)
+}
+
+func (f *fakeIncus) finished(op *Operation) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return op.Status == "Success"
+}
+
+// upgrade switches to a raw connection that echoes one line.
+func (f *fakeIncus) upgrade(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Upgrade") != "sftp" {
+		fail(w, http.StatusBadRequest, "no upgrade")
+		return
+	}
+	hj, _ := w.(http.Hijacker)
+	conn, rw, _ := hj.Hijack()
+	_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: sftp\r\nConnection: Upgrade\r\n\r\n")
+	_ = rw.Flush()
+	go func() {
+		defer func() { _ = conn.Close() }()
+		line, _ := bufio.NewReader(rw).ReadString('\n')
+		_, _ = conn.Write([]byte("echo " + line))
+	}()
 }
 
 func (f *fakeIncus) op(id, status string, metadata map[string]json.RawMessage) *Operation {

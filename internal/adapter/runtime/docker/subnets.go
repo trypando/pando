@@ -26,6 +26,11 @@ import (
 // more apps — or "off" to go back to Docker's pool.
 const defaultNetworkPool = "10.213.0.0/16"
 
+// DefaultNetworkPool is the range app networks take their addresses from when
+// none is set. The Incus runtime uses it inside each VM, where this adapter
+// makes the networks (notes-incus-runtime.md).
+func DefaultNetworkPool() string { return defaultNetworkPool }
+
 // defaultBlockBits is the size of an app network: a /28, 16 addresses, of
 // which 13 hold containers once the network, broadcast and bridge addresses
 // are taken. [P] (issue #72)

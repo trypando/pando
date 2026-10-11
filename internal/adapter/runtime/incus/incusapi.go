@@ -81,6 +81,12 @@ func forbidden(err error) bool {
 
 func esc(s string) string { return url.PathEscape(s) }
 
+// The API's collections, before an escaped name.
+const (
+	pathInstances = "/1.0/instances/"
+	pathPools     = "/1.0/storage-pools/"
+)
+
 func (s *server) Server(ctx context.Context) (*incusapi.Server, error) {
 	var srv incusapi.Server
 	_, err := s.c.Get(ctx, "/1.0", nil, &srv)
@@ -118,7 +124,7 @@ func (s *server) Instances(ctx context.Context) ([]incusapi.InstanceFull, error)
 
 func (s *server) Instance(ctx context.Context, name string) (*incusapi.Instance, string, error) {
 	var inst incusapi.Instance
-	etag, err := s.c.Get(ctx, "/1.0/instances/"+esc(name), nil, &inst)
+	etag, err := s.c.Get(ctx, pathInstances+esc(name), nil, &inst)
 	if err != nil {
 		return nil, "", notFound(err)
 	}
@@ -127,7 +133,7 @@ func (s *server) Instance(ctx context.Context, name string) (*incusapi.Instance,
 
 func (s *server) InstanceState(ctx context.Context, name string) (*incusapi.InstanceState, error) {
 	var st incusapi.InstanceState
-	if _, err := s.c.Get(ctx, "/1.0/instances/"+esc(name)+"/state", nil, &st); err != nil {
+	if _, err := s.c.Get(ctx, pathInstances+esc(name)+"/state", nil, &st); err != nil {
 		return nil, notFound(err)
 	}
 	return &st, nil
@@ -142,16 +148,16 @@ func (s *server) CreateInstance(ctx context.Context, target string, post incusap
 }
 
 func (s *server) UpdateInstance(ctx context.Context, name string, put incusapi.InstancePut, etag string) error {
-	return notFound(s.c.Send(ctx, http.MethodPut, "/1.0/instances/"+esc(name), put, etag))
+	return notFound(s.c.Send(ctx, http.MethodPut, pathInstances+esc(name), put, etag))
 }
 
 func (s *server) SetState(ctx context.Context, name, action string, force bool) error {
-	return notFound(s.c.Send(ctx, http.MethodPut, "/1.0/instances/"+esc(name)+"/state",
+	return notFound(s.c.Send(ctx, http.MethodPut, pathInstances+esc(name)+"/state",
 		incusapi.InstanceStatePut{Action: action, Force: force, Timeout: -1}, ""))
 }
 
 func (s *server) DeleteInstance(ctx context.Context, name string) error {
-	return notFound(s.c.Send(ctx, http.MethodDelete, "/1.0/instances/"+esc(name), nil, ""))
+	return notFound(s.c.Send(ctx, http.MethodDelete, pathInstances+esc(name), nil, ""))
 }
 
 func (s *server) Exec(ctx context.Context, name string, command []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
@@ -199,14 +205,14 @@ func (s *server) Profile(ctx context.Context, name string) (*incusapi.Profile, e
 
 func (s *server) PoolDriver(ctx context.Context, pool string) (string, error) {
 	var p incusapi.StoragePool
-	if _, err := s.c.Get(ctx, "/1.0/storage-pools/"+esc(pool), nil, &p); err != nil {
+	if _, err := s.c.Get(ctx, pathPools+esc(pool), nil, &p); err != nil {
 		return "", notFound(err)
 	}
 	return p.Driver, nil
 }
 
 func volumePath(pool, name string) string {
-	return "/1.0/storage-pools/" + esc(pool) + "/volumes/custom/" + esc(name)
+	return pathPools + esc(pool) + "/volumes/custom/" + esc(name)
 }
 
 func (s *server) Volume(ctx context.Context, pool, name string) (*incusapi.StorageVolume, error) {
@@ -219,7 +225,7 @@ func (s *server) Volume(ctx context.Context, pool, name string) (*incusapi.Stora
 
 func (s *server) Volumes(ctx context.Context, pool string) ([]incusapi.StorageVolume, error) {
 	var out []incusapi.StorageVolume
-	_, err := s.c.Get(ctx, "/1.0/storage-pools/"+esc(pool)+"/volumes", url.Values{"recursion": {"1"}}, &out)
+	_, err := s.c.Get(ctx, pathPools+esc(pool)+"/volumes", url.Values{"recursion": {"1"}}, &out)
 	return out, err
 }
 
@@ -228,7 +234,7 @@ func (s *server) CreateVolume(ctx context.Context, target, pool string, post inc
 	if target != "" && !strings.HasPrefix(target, "@") {
 		c = c.UseTarget(target)
 	}
-	return c.Send(ctx, http.MethodPost, "/1.0/storage-pools/"+esc(pool)+"/volumes/custom", post, "")
+	return c.Send(ctx, http.MethodPost, pathPools+esc(pool)+"/volumes/custom", post, "")
 }
 
 func (s *server) DeleteVolume(ctx context.Context, pool, name string) error {
