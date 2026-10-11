@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -64,9 +65,17 @@ func (s *Secrets) changedApp(ctx context.Context, appID string) {
 	_, _ = s.db.Exec(ctx, `UPDATE apps SET updated_at = now(), `+dueAgain+` WHERE id = $1`, appID)
 }
 
+// SecretKey is one of an app's secrets as a listing shows it: its key and
+// version, never its value.
+type SecretKey struct {
+	Key       string    `json:"key"`
+	Version   int       `json:"version"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // Keys lists an app's secret keys and versions. Never values — reading a value
 // is a separate, audited endpoint (R-083).
-func (s *Secrets) Keys(ctx context.Context, appID string) ([]map[string]any, error) {
+func (s *Secrets) Keys(ctx context.Context, appID string) ([]SecretKey, error) {
 	rows, err := s.db.Query(ctx,
 		`SELECT key, version, updated_at FROM secrets WHERE app_id = $1 ORDER BY key`, appID)
 	if err != nil {
@@ -74,15 +83,13 @@ func (s *Secrets) Keys(ctx context.Context, appID string) ([]map[string]any, err
 	}
 	defer rows.Close()
 
-	out := make([]map[string]any, 0)
+	out := make([]SecretKey, 0)
 	for rows.Next() {
-		var key string
-		var version int
-		var updated any
-		if err := rows.Scan(&key, &version, &updated); err != nil {
+		var k SecretKey
+		if err := rows.Scan(&k.Key, &k.Version, &k.UpdatedAt); err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not list the app's secrets.", err)
 		}
-		out = append(out, map[string]any{"key": key, "version": version, "updated_at": updated})
+		out = append(out, k)
 	}
 	return out, rows.Err()
 }

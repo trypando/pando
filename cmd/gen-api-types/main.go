@@ -6,11 +6,14 @@
 // hand-written type is a second opinion about what the server returns and the
 // two drift the first time a field is added.
 //
-// It reflects over Go types rather than reading an OpenAPI document, because
-// **there is no OpenAPI document**. Writing one by hand to generate from would
-// reintroduce exactly the drift the requirement forbids, one level removed: the
-// spec would be the thing that fell out of step instead of the types. The Go
-// structs are what the handlers serialize, so they are the only honest source.
+// It reflects over Go types rather than reading an OpenAPI document. Writing one
+// by hand to generate from would reintroduce exactly the drift the requirement
+// forbids, one level removed: the spec would be the thing that fell out of step
+// instead of the types. The Go structs are what the handlers serialize, so they
+// are the only honest source. docs/openapi.json does exist, and it is generated
+// from those same handlers by internal/openapi (`make reference`), with the same
+// rules for how a struct becomes JSON; both are readings of the code, so
+// neither generates from the other.
 //
 // Run through `npm run types` in console/, which the build depends on.
 package main

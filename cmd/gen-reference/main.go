@@ -14,7 +14,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/trypando/pando/internal/cli"
 	"github.com/trypando/pando/internal/httpapi"
+	"github.com/trypando/pando/internal/openapi"
 	"github.com/trypando/pando/internal/reference"
 )
 
@@ -41,4 +43,21 @@ func main() {
 		}
 		fmt.Println("wrote", path)
 	}
+
+	writeOpenAPI(dir, doc)
+}
+
+// writeOpenAPI writes docs/openapi.json, read from the handlers' source.
+func writeOpenAPI(dir string, doc reference.Document) {
+	body, err := openapi.Generate(doc, cli.Version)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	path := filepath.Join(dir, "openapi.json")
+	if err := os.WriteFile(path, body, 0o644); err != nil { //nolint:gosec // G306: documentation, world-readable on purpose.
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("wrote", path)
 }

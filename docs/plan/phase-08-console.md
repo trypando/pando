@@ -45,9 +45,10 @@ see `.claude/skills/pando-design/PROVENANCE.md` for how to pull it.
       neither rule the file uses. Run under ESLint instead, and its per-component prop rules are
       filtered out because they reject `onClick` on a `<Button>`
       ([note](../design/notes-console-findings.md))
-- [x] **API types generated, never hand-written** (R-261) — there is no OpenAPI spec in the
-      repository, so `cmd/gen-api-types` reflects the Go types the handlers serialize. Committed and
-      diff-checked in CI, like the traceability index
+- [x] **API types generated, never hand-written** (R-261) — `cmd/gen-api-types` reflects the Go
+      types the handlers serialize. Committed and diff-checked in CI, like the traceability index.
+      `docs/openapi.json` is generated from the same code by `make reference`, and is not hand-written
+      either
 - [x] Launcher at root: tiles from `GET /me/apps`, data-plane grants only (R-264)
 - [x] Admin entry (R-265) — the entry appears for someone holding an install-scoped verb **or** a
       control-plane grant on at least one app, because "any administrative verb" is two scopes.

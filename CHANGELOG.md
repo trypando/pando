@@ -220,6 +220,10 @@ Unreleased above it. -->
   app and its logs), **App manager** (Owner on every app, without approving deploys) and **Auditor**
   (every app's view and logs, and the audit log). A change allowed through one of these, rather than a
   grant on the app, is written to the audit log as `authz.install_wide`, naming the grant.
+- **An OpenAPI 3.1 document for the API**, `docs/openapi.json` (R-261). Every endpoint with its
+  parameters, request body, responses and the error envelope with every error code, and which
+  credential each takes. It is generated from the code that serves the API by `make reference`, and
+  the build fails when it is out of date.
 
 ### Changed
 

@@ -84,6 +84,21 @@ func TestDocumentedVerbsAreRealVerbs(t *testing.T) {
 	}
 }
 
+// A row whose summary tells a reader the endpoint is public is marked public,
+// so the OpenAPI document, which reads the mark rather than the prose, says so
+// too: a public endpoint described as needing a token is one nobody can call
+// from the sign-in page it exists for.
+func TestARouteSaidToBePublicIsMarkedPublic(t *testing.T) {
+	for _, doc := range routeDocs {
+		if strings.Contains(doc.Summary, "Public") {
+			require.True(t, doc.Public, "%s %s says it is public and is not marked Public", doc.Method, doc.Path)
+		}
+		if doc.Public {
+			require.Empty(t, doc.Verb, "%s %s is public and names a verb", doc.Method, doc.Path)
+		}
+	}
+}
+
 // TestTheReferenceIsBuiltOnceAndServedWhole asserts GET /reference builds its
 // document once, however often it is asked for, and serves the same JSON the
 // generator writes the docs from.

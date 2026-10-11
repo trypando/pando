@@ -99,7 +99,7 @@ jobs:
       - name: Reference is up to date
         run: |
           make reference
-          git diff --exit-code docs/api.md docs/cli.md docs/mcp.md \
+          git diff --exit-code docs/api.md docs/cli.md docs/mcp.md docs/openapi.json \
             || { echo "::error::Run 'make reference' and commit the result."; exit 1; }
 
       - if: github.event_name == 'push'

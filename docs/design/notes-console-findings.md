@@ -203,10 +203,11 @@ secrets, and change the running app in ways that will not appear in its
 configuration. And it says what is recorded — the command, not the session (O-7)
 — because someone about to type a password is entitled to know which.
 
-## No OpenAPI spec exists
+## The OpenAPI document is generated, and the console's types do not come from it
 
 The phase asks for "API types generated from the OpenAPI spec — never
-hand-written (R-261)". There is no OpenAPI document in the repository.
+hand-written (R-261)". There was no OpenAPI document when the console was built,
+and there is no hand-written one now.
 
 `cmd/gen-api-types` reflects over the Go types the handlers serialize instead.
 Writing an OpenAPI document by hand to generate from would reintroduce exactly
@@ -214,6 +215,21 @@ the drift the requirement forbids, one level removed: the spec would be the
 thing that fell out of step. The generated file is committed and CI fails on a
 diff, the same way the traceability index works, so a change to the API's
 surface shows up in review.
+
+`docs/openapi.json` now exists, and it is generated the same way, from the
+code. `make reference` writes it with `internal/openapi`, which reads
+`internal/httpapi` as source: the routes from `(*Server).Routes`, each request
+body from the type its handler decodes into, each response from what its
+handler passes to `JSON` and with which status — a map literal's keys read from
+the literal — and summaries, groups and verbs from `routeDocs`. What the code
+cannot say (a body written as bytes, a type with its own `MarshalJSON`, SCIM's
+resources built in `core/idp`) is in `internal/openapi/overrides.go`, and
+generation fails on any answer it could not read rather than guessing.
+`make reference-check` diffs it like the rest of the reference.
+
+The console's types still come from `cmd/gen-api-types`, not from the
+document: both are generated from the same Go types, so neither is a second
+opinion of the other.
 
 ## The console could not delete an app, and the content column was capped
 

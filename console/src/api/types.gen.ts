@@ -837,6 +837,7 @@ export interface Route {
   group: string;
   summary: string;
   verb?: string;
+  public?: boolean;
 }
 
 export interface Flag {

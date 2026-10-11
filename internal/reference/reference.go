@@ -71,12 +71,17 @@ type Auth struct {
 // Verb is the authorization verb the endpoint asks for, in Pando's own
 // vocabulary (design 06 §5) — empty where the endpoint asks for nothing beyond
 // being signed in, because "no verb" is an answer somebody needs.
+//
+// Public is an endpoint that takes no Pando credential at all: the sign-in
+// steps a browser makes before it has one, the passcode page's, and the
+// webhook a git host signs with the app's own secret.
 type Route struct {
 	Method  string `json:"method"`
 	Path    string `json:"path"`
 	Group   string `json:"group"`
 	Summary string `json:"summary"`
 	Verb    string `json:"verb,omitempty"`
+	Public  bool   `json:"public,omitempty"`
 }
 
 // Command is one CLI command, as cobra has it.

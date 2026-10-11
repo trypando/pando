@@ -159,7 +159,7 @@ own beside Accounts, though identity providers are adapters: it is about who can
 | Forms | React Hook Form + Zod |
 | Styling | Tailwind |
 | Components | **The `pando-design` system** (`.claude/skills/pando-design/`). Radix only for behavior it does not implement, styled from its tokens. |
-| API types | Generated from the OpenAPI spec — never hand-written |
+| API types | Generated from the Go types the API serializes — never hand-written ([note](notes-console-findings.md#the-openapi-document-is-generated-and-the-consoles-types-do-not-come-from-it)) |
 | Streaming | Native `EventSource` for logs, `WebSocket` for exec |
 | Terminal | xterm.js |
 
