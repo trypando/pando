@@ -56,15 +56,13 @@ Out of scope:
 
 ## Supported versions
 
-Before 1.0, only the most recent release receives security fixes. Once 1.0 ships, this table will
-name the supported minor versions and the date each stops receiving fixes.
+Only the most recent release receives security fixes. Fixes land on `main` and go out in the next
+release; to receive one, upgrade to the release that contains it.
 
 | Version | Supported |
 |---|---|
 | Most recent release | Yes |
 | Anything older | No — upgrade |
-
-v0.1.0 is the current release. Security fixes land on `main` and go out in the next release.
 
 ## Security model
 
@@ -114,8 +112,8 @@ to the host beyond the port Pando allocates it.
 
 - It trusts the host it runs on and the container runtime it drives. A compromised host is a
   compromised installation.
-- It is not multi-tenant (R-015). One installation serves one organization, and the isolation between
-  apps is container-level, not a hostile-tenant boundary.
+- Isolation between apps is container-level, not a boundary between hostile tenants. An installation
+  is designed to serve one organization (R-015); separate organizations run separate installations.
 - Its server speaks plain HTTP. TLS is terminated in front of it: by the edge Pando runs itself when
   that is turned on, which issues and renews certificates over ACME (R-169, R-174), or by a reverse
   proxy or load balancer the operator runs. On a public installation, reaching Pando without TLS in
@@ -159,8 +157,8 @@ account does not exist, sign-in verifies against a decoy argon2id hash rather th
 so a failed attempt costs the same whether or not the username is real.
 
 `math/rand` does not appear anywhere in the non-test source. MD5, SHA-1, DES and RC4 are not used.
-Key lengths meet the NIST recommendations through 2030 and beyond: Ed25519 (≈128-bit security),
-AES-256, ChaCha20-Poly1305 (256-bit). There is no configuration that lowers them, because no
+Every key gives at least 128-bit security: Ed25519 (≈128-bit), AES-256 and ChaCha20-Poly1305
+(256-bit). There is no configuration that lowers them, because no
 algorithm or key length is configurable.
 
 Forward secrecy is a property of the TLS terminator in front of Pando, not of Pando itself. Pando

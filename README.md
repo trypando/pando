@@ -210,10 +210,9 @@ Set on the `pando` service in `docker-compose.yml`, or in the environment.
 
 ## What Pando does not do
 
-It does not schedule across machines: one installation runs apps on its host, and multi-machine
-support would come from a runtime adapter that spans machines. It does not run your tests. It is not
-an app marketplace, not a disaster-recovery product with RPO/RTO guarantees, not multi-region, and
-not multi-tenant — one installation serves one organization.
+It does not schedule: each app runs where its runtime adapter places it, and Pando does not move apps
+between machines, autoscale them or bin-pack them. It does not run your tests. It is not an app
+marketplace, and not a disaster-recovery product with RPO/RTO guarantees.
 
 It reports problems rather than working around them. If an app loads its assets from the domain root
 and will break under a path prefix, Pando says so; it does not rewrite the app's pages.
