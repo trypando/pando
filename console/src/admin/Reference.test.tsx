@@ -27,7 +27,7 @@ function render() {
 describe('API and tools', () => {
   it('links to each published reference', () => {
     const html = render();
-    for (const page of ['api', 'cli', 'mcp', 'errors']) {
+    for (const page of ['api', 'cli', 'mcp', 'errors', 'events']) {
       expect(html).toContain(`href="https://trypando.ai/docs/${page}"`);
     }
     expect(html).toContain('API reference');

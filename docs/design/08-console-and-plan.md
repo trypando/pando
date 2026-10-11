@@ -126,7 +126,7 @@ Every answer carries the AI mark and names the adapter and model that wrote it. 
 tell a request to AI from an ordinary control.
 
 **[P] API and tools.** The screen links to the published references at trypando.ai — API, CLI,
-MCP server and Errors, one link each (`ui/docs.ts` holds the base URL) — names this installation's
+MCP server, Errors and Events, one link each (`ui/docs.ts` holds the base URL) — names this installation's
 address, which the published docs write as `https://pando.example.com`, and lists tokens. It does not
 draw the reference itself: the site's copy is generated from the same code at each release, and a
 second copy in the console was duplicated effort. The site describes the latest release, so an older

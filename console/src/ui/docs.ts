@@ -8,9 +8,8 @@
 
 export const DOCS_URL = 'https://trypando.ai/docs';
 
-/** The events reference: the payloads and how to verify a delivery. It is
- *  generated into the repository but not yet published on the site. */
-export const EVENTS_DOCS_URL = 'https://github.com/trypando/pando/blob/main/docs/events.md';
+/** The events reference: every event, its payload, and how to verify a delivery. */
+export const EVENTS_DOCS_URL = `${DOCS_URL}/events`;
 
 /** The page for one error code: each code is an anchor on the errors page. */
 export function errorDocsURL(code: string): string {

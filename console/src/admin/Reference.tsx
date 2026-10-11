@@ -29,7 +29,7 @@ import { Table } from '../ui/Table';
 import { AIButton, AIDialog, AIPrompt, AnsweredBy } from '../ui/AskAI';
 import { AI_PHRASES, AiThinking } from '../ui/AiThinking';
 import { useAIFunctionState } from '../install/AIFunctions';
-import { DOCS_URL } from '../ui/docs';
+import { DOCS_URL, EVENTS_DOCS_URL } from '../ui/docs';
 import { FailedBanner } from '../ui/ErrorCode';
 
 /** What POST /ai/reference/answer answers (R-346). */
@@ -98,6 +98,7 @@ const DOCS = [
   { label: 'CLI reference', href: `${DOCS_URL}/cli`, about: 'Installing the CLI, signing it in, and every command.' },
   { label: 'MCP server', href: `${DOCS_URL}/mcp`, about: 'Connecting an agent, and every tool it gets.' },
   { label: 'Errors', href: `${DOCS_URL}/errors`, about: 'Every error code and what it means.' },
+  { label: 'Events', href: EVENTS_DOCS_URL, about: 'Every event a subscription can receive, and how to verify a delivery.' },
 ];
 
 export function Reference() {
