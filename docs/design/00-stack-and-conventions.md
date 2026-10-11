@@ -102,9 +102,11 @@ Pando out. The service uses the Postgres image, so nothing extra is pulled. A ch
 container's environment is in `docker inspect` for as long as the stopped container exists; the
 script removes its copy once read (CodeRabbit on #176).
 
-**[O]** Whether a non-Docker install topology (Incus, bare host) ships an equivalent, or is
-simply expected to use the external-database path, is unspecified. The external path covers it
-functionally; only the first-run experience differs.
+**[P]** An install whose apps run on Incus is still this Compose install: Pando, Postgres, the
+registry, BuildKit and the edge run on a Docker host — recommended, a VM on the Incus cluster — and the
+Incus runtime adapter is added beside the Docker one and chosen per app (`notes-incus-runtime.md`).
+Postgres is supplied the same two ways as everywhere else. A bare-host install (Pando as a system
+service) uses the external-database path.
 
 **[D] On Linux the Compose file runs on rootless Docker (R-402, issue #130).** Pando mounts the
 runtime's socket, and a socket is the daemon: on rootful Docker, a compromise of Pando was root on

@@ -541,7 +541,8 @@ Firecracker VM — building *inside that environment* is preferred, because buil
 free from the boundary that already exists rather than from a second mechanism layered beside it. This
 is not v1 work: v1 ships a Docker runtime whose isolation class is `container`, so BuildKit supplies
 the build boundary independently. The note is here so that whoever writes the first VM-class runtime
-adapter considers it before building a parallel isolation path. `BuilderCapabilities.IsolationClass`
+adapter considers it before building a parallel isolation path. The Incus runtime considered it and deferred it (O-59,
+`notes-incus-runtime.md`). `BuilderCapabilities.IsolationClass`
 stays independent of the runtime's either way (R-114) — a builder that borrows the runtime's boundary
 reports the class it actually gets.
 
