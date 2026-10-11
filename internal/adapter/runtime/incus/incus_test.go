@@ -84,7 +84,7 @@ func TestR026_TheACLAdmitsOnlyTheProxyOnTheAgentPort(t *testing.T) {
 	acl := f.acls["pando-ingress-pando"]
 	require.NotNil(t, acl)
 	require.Equal(t, []incusapi.NetworkACLRule{{
-		Action: "allow", Source: "10.1.0.10/32,10.1.0.11/32", Protocol: "tcp",
+		Action: aclAllow, Source: "10.1.0.10/32,10.1.0.11/32", Protocol: "tcp",
 		DestinationPort: "7443", State: "enabled", Description: "Pando's proxy to the forwarding agent",
 	}}, acl.Ingress)
 

@@ -19,6 +19,10 @@ import (
 	"github.com/trypando/pando/internal/errs"
 )
 
+// aclAllow is an Incus ACL rule's action: Incus vocabulary, not an audit
+// action (internal/core/audit reads Action: "..." literals as those).
+const aclAllow = "allow"
+
 // nicName is the VM's one NIC (R-026).
 const nicName = "eth0"
 
@@ -70,7 +74,7 @@ func (a *Adapter) ensureACL(ctx context.Context) error {
 	want := incusapi.NetworkACLPut{
 		Description: "Pando: only Pando's proxy reaches an app's VM, on the agent's port (R-026).",
 		Ingress: []incusapi.NetworkACLRule{{
-			Action:          "allow",
+			Action:          aclAllow,
 			Source:          strings.Join(sources, ","),
 			Protocol:        "tcp",
 			DestinationPort: strconv.Itoa(a.config.AgentPort),
@@ -453,24 +457,32 @@ func (a *Adapter) waitReady(ctx context.Context, name string) (netip.Addr, error
 
 // address is the VM's IPv4 address on its NIC.
 func (a *Adapter) address(ctx context.Context, name string) (netip.Addr, bool) {
+	inst, _, err := a.api.Instance(ctx, name)
+	if err != nil {
+		return netip.Addr{}, false
+	}
 	st, err := a.api.InstanceState(ctx, name)
 	if err != nil || st == nil {
 		return netip.Addr{}, false
 	}
-	return addressOf(st)
+	return addressOf(st, inst.Config["volatile."+nicName+".hwaddr"])
 }
 
-func addressOf(st *incusapi.InstanceState) (netip.Addr, bool) {
-	n, ok := st.Network[nicName]
-	if !ok {
-		return netip.Addr{}, false
-	}
-	for _, ad := range n.Addresses {
-		if ad.Family != "inet" || ad.Scope != "global" {
+// addressOf finds the NIC's IPv4 address in the guest's own report. A VM's
+// guest names its interfaces itself (enp5s0, not eth0), so the NIC is found
+// by the MAC address Incus gave it; Podman's bridges have others.
+func addressOf(st *incusapi.InstanceState, hwaddr string) (netip.Addr, bool) {
+	for _, n := range st.Network {
+		if hwaddr == "" || !strings.EqualFold(n.Hwaddr, hwaddr) {
 			continue
 		}
-		if addr, err := netip.ParseAddr(ad.Address); err == nil {
-			return addr, true
+		for _, ad := range n.Addresses {
+			if ad.Family != "inet" || ad.Scope != "global" {
+				continue
+			}
+			if addr, err := netip.ParseAddr(ad.Address); err == nil {
+				return addr, true
+			}
 		}
 	}
 	return netip.Addr{}, false

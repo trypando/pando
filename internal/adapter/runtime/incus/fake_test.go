@@ -130,7 +130,10 @@ func (f *fakeIncus) InstanceState(_ context.Context, name string) (*incusapi.Ins
 	st := &incusapi.InstanceState{Status: i.Status}
 	if i.Status == "Running" {
 		st.Network = map[string]incusapi.InstanceStateNetwork{
-			nicName: {Addresses: []incusapi.InstanceStateNetworkAddress{
+			"podman0": {Hwaddr: "aa:aa:aa:aa:aa:aa", Addresses: []incusapi.InstanceStateNetworkAddress{
+				{Family: "inet", Address: "10.213.0.1", Scope: "global"},
+			}},
+			"enp5s0": {Hwaddr: "00:16:3e:00:00:01", Addresses: []incusapi.InstanceStateNetworkAddress{
 				{Family: "inet6", Address: "fe80::1", Scope: "link"},
 				{Family: "inet", Address: "10.1.0.42", Scope: "global"},
 			}},
@@ -152,6 +155,10 @@ func (f *fakeIncus) CreateInstance(_ context.Context, target string, post incusa
 		Name: post.Name, Type: string(post.Type), Status: "Stopped", Location: location,
 		InstancePut: post.InstancePut,
 	}, State: &incusapi.InstanceState{}}
+	if f.instances[post.Name].Config == nil {
+		f.instances[post.Name].Config = map[string]string{}
+	}
+	f.instances[post.Name].Config["volatile."+nicName+".hwaddr"] = "00:16:3e:00:00:01"
 	return nil
 }
 
