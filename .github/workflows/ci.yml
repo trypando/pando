@@ -307,36 +307,7 @@ jobs:
           cache: false
 
       - name: Rootless Podman, with cgroup controllers delegated
-        run: |
-          set -euxo pipefail
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          sudo apt-get update -q
-          sudo apt-get install -y -q podman uidmap dbus-user-session
-
-          sudo mkdir -p /etc/systemd/system/user@.service.d
-          printf '[Service]\nDelegate=cpu cpuset io memory pids\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf
-          sudo systemctl daemon-reload
-          sudo loginctl enable-linger "$USER"
-          sudo systemctl restart "user@$(id -u).service"
-
-          # Docker treats a registry on 127.0.0.0/8 as plain HTTP; Podman does
-          # not, and the private-image test serves one there.
-          printf '[[registry]]\nlocation = "127.0.0.1"\ninsecure = true\n' | sudo tee /etc/containers/registries.conf.d/pando-test.conf
-
-          # The runner's Docker daemon, out of the way; its CLI stays, and the
-          # tests drive Podman with it through DOCKER_HOST.
-          sudo systemctl disable --now docker.service docker.socket
-
-          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-          systemctl --user enable --now podman.socket
-          podman --version
-          echo "DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock" >> "$GITHUB_ENV"
-
-      - name: Podman is rootless and its cgroup controllers are delegated
-        run: |
-          podman info --format '{{.Host.Security.Rootless}} {{.Host.CgroupsVersion}} {{.Host.CgroupControllers}}'
-          podman info --format '{{.Host.Security.Rootless}}' | grep -qx true
+        run: scripts/ci-rootless-podman.sh
 
       - name: DIAG (temporary)
         continue-on-error: true
@@ -571,4 +542,20 @@ jobs:
         if: steps.dhi.outputs.available == 'true'
         run: |
           scripts/release-compose.sh 0.0.0-ci > "$RUNNER_TEMP/docker-compose.yml"
+          python3 scripts/smoke-image.py "$RUNNER_TEMP/docker-compose.yml" --version 0.0.0-ci
+
+      # The same install on rootless Podman, as docs/rootless.md gives it: the
+      # release's compose file, with PANDO_DOCKER_SOCKET at Podman's socket
+      # (R-402, issue #179). The image goes across by file, because the
+      # runner's Docker is stopped to make way for Podman.
+      - name: Rootless Podman
+        if: steps.dhi.outputs.available == 'true'
+        run: |
+          docker save trypando/pando:0.0.0-ci -o "$RUNNER_TEMP/pando.tar"
+          scripts/ci-rootless-podman.sh
+
+      - name: Smoke test on rootless Podman
+        if: steps.dhi.outputs.available == 'true'
+        run: |
+          podman load -i "$RUNNER_TEMP/pando.tar"
           python3 scripts/smoke-image.py "$RUNNER_TEMP/docker-compose.yml" --version 0.0.0-ci

@@ -48,7 +48,9 @@ func (a *Adapter) Self(ctx context.Context) (api.SelfWorkload, error) {
 			"Pando is not running in a container this Docker daemon manages, so it cannot replace itself.").
 			WithRemedy("Upgrade by replacing the pando binary with the new release's, then start it again.")
 	}
-	return api.SelfWorkload{ID: self.ID, Image: self.Config.Image}, nil
+	// Familiar, as the deployment named it: Podman reports
+	// "docker.io/library/…" for what Compose called by its short name.
+	return api.SelfWorkload{ID: self.ID, Image: familiarRef(self.Config.Image)}, nil
 }
 
 // PullImage implements api.SelfUpgrader.
