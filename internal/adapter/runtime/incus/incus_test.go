@@ -8,8 +8,8 @@ import (
 	"io"
 	"testing"
 
-	incusapi "github.com/lxc/incus/v6/shared/api"
 	"github.com/stretchr/testify/require"
+	"github.com/trypando/pando/internal/adapter/runtime/incus/incusapi"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"

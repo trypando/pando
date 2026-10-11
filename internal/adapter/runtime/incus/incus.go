@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	incusapi "github.com/lxc/incus/v6/shared/api"
 	"github.com/moby/moby/client"
+	"github.com/trypando/pando/internal/adapter/runtime/incus/incusapi"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/adapter/runtime/docker"
@@ -56,8 +56,8 @@ type inner interface {
 	api.RuntimeAdapter
 }
 
-// agent keeps one VM's forwarding agent running.
-type agent interface {
+// agentEnsurer keeps one VM's forwarding agent running.
+type agentEnsurer interface {
 	Ensure(ctx context.Context) (bool, error)
 }
 
@@ -65,7 +65,7 @@ type agent interface {
 type vm struct {
 	name  string
 	rt    inner
-	agent agent
+	agent agentEnsurer
 	addr  netip.Addr
 }
 
@@ -97,7 +97,7 @@ type Adapter struct {
 	connect   func(Config) (incusAPI, error)
 	newDocker func(api incusAPI, instance string) (*client.Client, error)
 	newInner  func(cli *client.Client, cfg docker.Config) inner
-	newAgent  func(cli *client.Client, instance string) agent
+	newAgent  func(cli *client.Client, instance string) agentEnsurer
 	readyWait time.Duration
 	now       func() time.Time
 	sleep     func(time.Duration) <-chan time.Time
@@ -157,7 +157,7 @@ func (a *Adapter) use(cfg Config) {
 			if err != nil {
 				return nil, err
 			}
-			return newServer(conn, c.Project), nil
+			return &server{c: conn}, nil
 		}
 	}
 	if a.newDocker == nil {
@@ -167,7 +167,7 @@ func (a *Adapter) use(cfg Config) {
 		a.newInner = func(cli *client.Client, c docker.Config) inner { return docker.NewWithClient(cli, c) }
 	}
 	if a.newAgent == nil {
-		a.newAgent = func(cli *client.Client, instance string) agent {
+		a.newAgent = func(cli *client.Client, instance string) agentEnsurer {
 			return multidocker.NewAgentKeeper(cli, instance, a.config.AgentPort, a.pool, a.authorities,
 				func(context.Context) string { return a.config.AgentImage }, settingIn)
 		}

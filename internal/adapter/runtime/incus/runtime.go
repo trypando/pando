@@ -11,9 +11,8 @@ import (
 	"strings"
 	"time"
 
-	incusapi "github.com/lxc/incus/v6/shared/api"
-
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/adapter/runtime/incus/incusapi"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/hostagent"
 )
@@ -312,31 +311,8 @@ func (a *Adapter) places(ctx context.Context) ([]place, error) {
 	if err != nil {
 		return nil, errs.Wrap(errs.AdapterUnavailable, "Could not read the instances from Incus.", err)
 	}
-	read := func(member string) (place, error) {
-		res, err := a.api.Resources(ctx, member)
-		if err != nil {
-			return place{}, errs.Wrap(errs.AdapterUnavailable, "Could not read the resources of Incus "+member+".", err)
-		}
-		p := place{name: member, cpu: int(clamp(res.CPU.Total)) * 1000, memory: clamp(res.Memory.Total), free: -1}
-		if res.Memory.Used > 0 && res.Memory.Total >= res.Memory.Used {
-			p.free = clamp(res.Memory.Total - res.Memory.Used)
-		}
-		for _, inst := range all {
-			if member != "" && inst.Location != member {
-				continue
-			}
-			if !strings.EqualFold(inst.Status, "Running") {
-				continue
-			}
-			p.running++
-			l := limitsOf(inst.Config)
-			p.committed.CPUMillis += l.CPUMillis
-			p.committed.MemoryBytes += l.MemoryBytes
-		}
-		return p, nil
-	}
 	if members == nil {
-		p, err := read("")
+		p, err := a.place(ctx, "", all)
 		if err != nil {
 			return nil, err
 		}
@@ -347,7 +323,7 @@ func (a *Adapter) places(ctx context.Context) ([]place, error) {
 		if !strings.EqualFold(m.Status, "Online") {
 			continue
 		}
-		p, err := read(m.ServerName)
+		p, err := a.place(ctx, m.ServerName, all)
 		if err != nil {
 			return nil, err
 		}
@@ -357,6 +333,29 @@ func (a *Adapter) places(ctx context.Context) ([]place, error) {
 		return nil, errs.New(errs.AdapterUnavailable, "No member of the Incus cluster that VMs may be placed on is online.")
 	}
 	return out, nil
+}
+
+// place reads one member's hardware and what its running instances are
+// limited to; member is empty on a server that is not clustered.
+func (a *Adapter) place(ctx context.Context, member string, all []incusapi.InstanceFull) (place, error) {
+	res, err := a.api.Resources(ctx, member)
+	if err != nil {
+		return place{}, errs.Wrap(errs.AdapterUnavailable, "Could not read the resources of Incus "+member+".", err)
+	}
+	p := place{name: member, cpu: int(clamp(res.CPU.Total)) * 1000, memory: clamp(res.Memory.Total), free: -1}
+	if res.Memory.Used > 0 && res.Memory.Total >= res.Memory.Used {
+		p.free = clamp(res.Memory.Total - res.Memory.Used)
+	}
+	for _, inst := range all {
+		if (member != "" && inst.Location != member) || !strings.EqualFold(inst.Status, "Running") {
+			continue
+		}
+		p.running++
+		l := limitsOf(inst.Config)
+		p.committed.CPUMillis += l.CPUMillis
+		p.committed.MemoryBytes += l.MemoryBytes
+	}
+	return p, nil
 }
 
 // limitsOf reads an instance's CPU and memory limits. An instance with none

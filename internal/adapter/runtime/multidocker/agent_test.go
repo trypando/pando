@@ -351,3 +351,22 @@ func TestStaleReadsTheIssueTime(t *testing.T) {
 }
 
 var _ api.RuntimeAdapter = (*rejoinCounter)(nil)
+
+// TestR023_AnotherRuntimeRunsTheSameAgent asserts that the Incus runtime's
+// agent is this one, and its remedies name the settings it is configured in.
+func TestR023_AnotherRuntimeRunsTheSameAgent(t *testing.T) {
+	f := newFakeDaemon(t)
+	caPEM, err := hostagent.NewAuthority()
+	require.NoError(t, err)
+	as, err := hostagent.ParseAuthorities(caPEM)
+	require.NoError(t, err)
+	k := NewAgentKeeper(f.cli, "pando-app-1", 7443, netip.MustParsePrefix(defaultNetworkPool), as,
+		func(context.Context) string { return "" }, "the Incus runtime's settings")
+	_, err = k.Ensure(context.Background())
+	require.Error(t, err)
+	require.Contains(t, errs.As(err).Remedy, "the Incus runtime's settings")
+	require.Equal(t, agentContainer, AgentContainer)
+
+	_, err = newKeeper(t, f, "").ensure(context.Background())
+	require.Contains(t, errs.As(err).Remedy, "the Docker hosts runtime's settings")
+}

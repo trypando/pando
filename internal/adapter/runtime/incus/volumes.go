@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 
-	incusapi "github.com/lxc/incus/v6/shared/api"
 	"github.com/pkg/sftp"
+	"github.com/trypando/pando/internal/adapter/runtime/incus/incusapi"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
@@ -110,7 +110,7 @@ func (a *Adapter) detach(ctx context.Context, instance, volume string) error {
 		return nil
 	}
 	if err != nil {
-		return errs.Wrap(errs.AdapterUnavailable, "Could not read the app's VM from Incus.", err)
+		return errs.Wrap(errs.AdapterUnavailable, msgReadVM, err)
 	}
 	put := inst.Writable()
 	changed := false
@@ -205,45 +205,45 @@ func writeTree(ctx context.Context, c *sftp.Client, tw *tar.Writer, dir, rel str
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	for _, fi := range entries {
-		full := path.Join(dir, fi.Name())
-		name := rel + "/" + fi.Name()
-		hdr, err := tar.FileInfoHeader(fi, "")
+		if err := writeEntry(ctx, c, tw, fi, path.Join(dir, fi.Name()), rel+"/"+fi.Name()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeEntry writes one file, link or directory, and a directory's contents.
+func writeEntry(ctx context.Context, c *sftp.Client, tw *tar.Writer, fi fs.FileInfo, full, name string) error {
+	hdr, err := tar.FileInfoHeader(fi, "")
+	if err != nil {
+		return err
+	}
+	hdr.Name = name
+	if st, ok := fi.Sys().(*sftp.FileStat); ok {
+		hdr.Uid, hdr.Gid = int(st.UID), int(st.GID)
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		if hdr.Linkname, err = c.ReadLink(full); err != nil {
+			return err
+		}
+	}
+	if fi.IsDir() {
+		hdr.Name += "/"
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	switch {
+	case fi.Mode().IsRegular():
+		f, err := c.Open(full)
 		if err != nil {
 			return err
 		}
-		hdr.Name = name
-		if st, ok := fi.Sys().(*sftp.FileStat); ok {
-			hdr.Uid, hdr.Gid = int(st.UID), int(st.GID)
-		}
-		switch {
-		case fi.Mode()&fs.ModeSymlink != 0:
-			target, err := c.ReadLink(full)
-			if err != nil {
-				return err
-			}
-			hdr.Linkname = target
-		case fi.IsDir():
-			hdr.Name += "/"
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		switch {
-		case fi.Mode().IsRegular():
-			f, err := c.Open(full)
-			if err != nil {
-				return err
-			}
-			_, err = io.Copy(tw, f)
-			_ = f.Close()
-			if err != nil {
-				return err
-			}
-		case fi.IsDir():
-			if err := writeTree(ctx, c, tw, full, name); err != nil {
-				return err
-			}
-		}
+		defer func() { _ = f.Close() }()
+		_, err = io.Copy(tw, f)
+		return err
+	case fi.IsDir():
+		return writeTree(ctx, c, tw, full, name)
 	}
 	return nil
 }
@@ -329,46 +329,61 @@ func extract(ctx context.Context, c *sftp.Client, tr *tar.Reader) error {
 		if name == "/" {
 			continue
 		}
-		for dir := path.Dir(name); dir != "/"; dir = path.Dir(dir) {
-			if links[dir] {
-				return fmt.Errorf("the archive writes %q through a link it made", hdr.Name)
-			}
+		if throughLink(links, name) {
+			return fmt.Errorf("the archive writes %q through a link it made", hdr.Name)
 		}
-		mode := hdr.FileInfo().Mode().Perm()
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := c.MkdirAll(name); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			if err := c.MkdirAll(path.Dir(name)); err != nil {
-				return err
-			}
-			f, err := c.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
-			if err != nil {
-				return err
-			}
-			_, err = io.Copy(f, tr)
-			if cerr := f.Close(); err == nil {
-				err = cerr
-			}
-			if err != nil {
-				return err
-			}
-		case tar.TypeSymlink:
-			if err := c.Symlink(hdr.Linkname, name); err != nil {
-				return err
-			}
-			links[name] = true
-			continue
-		default:
-			// Devices, FIFOs and hard links are not app data a volume
-			// should hold; skipped rather than recreated.
-			continue
-		}
-		if err := c.Chmod(name, mode); err != nil {
+		if err := extractEntry(c, tr, hdr, name, links); err != nil {
 			return err
 		}
-		_ = c.Chown(name, hdr.Uid, hdr.Gid)
 	}
+}
+
+// throughLink reports whether name is beneath a link in links.
+func throughLink(links map[string]bool, name string) bool {
+	for dir := path.Dir(name); dir != "/"; dir = path.Dir(dir) {
+		if links[dir] {
+			return true
+		}
+	}
+	return false
+}
+
+// extractEntry writes one entry. Devices, FIFOs and hard links are not app
+// data a volume should hold; they are skipped rather than recreated.
+func extractEntry(c *sftp.Client, tr *tar.Reader, hdr *tar.Header, name string, links map[string]bool) error {
+	switch hdr.Typeflag {
+	case tar.TypeDir:
+		if err := c.MkdirAll(name); err != nil {
+			return err
+		}
+	case tar.TypeReg:
+		if err := writeFile(c, tr, name); err != nil {
+			return err
+		}
+	case tar.TypeSymlink:
+		links[name] = true
+		return c.Symlink(hdr.Linkname, name)
+	default:
+		return nil
+	}
+	if err := c.Chmod(name, hdr.FileInfo().Mode().Perm()); err != nil {
+		return err
+	}
+	_ = c.Chown(name, hdr.Uid, hdr.Gid)
+	return nil
+}
+
+func writeFile(c *sftp.Client, r io.Reader, name string) error {
+	if err := c.MkdirAll(path.Dir(name)); err != nil {
+		return err
+	}
+	f, err := c.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(f, r)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }

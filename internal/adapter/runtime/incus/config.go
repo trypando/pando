@@ -10,8 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	incusclient "github.com/lxc/incus/v6/client"
-
+	"github.com/trypando/pando/internal/adapter/runtime/incus/incusapi"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/hostagent"
 )
@@ -125,9 +124,20 @@ var (
 // validate fills defaults and refuses a configuration that cannot work,
 // before anything is contacted (R-254).
 func (c *Config) validate() error {
-	refuse := func(format string, args ...any) *errs.Error {
-		return errs.Newf(errs.ValidInvalid, format, args...)
+	for _, check := range []func() error{c.validateAddress, c.validateNames, c.validateAgent, c.validateSizes} {
+		if err := check(); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+func refuse(format string, args ...any) *errs.Error {
+	return errs.Newf(errs.ValidInvalid, format, args...)
+}
+
+// validateAddress checks how Incus is reached, and with what credentials.
+func (c *Config) validateAddress() error {
 	if c.Address == "" {
 		c.Address = defaultAddress
 	}
@@ -136,16 +146,22 @@ func (c *Config) validate() error {
 		return refuse("The Incus address %q is not usable. Valid answers: unix:///var/lib/incus/unix.socket, or https://host:8443.", c.Address).
 			WithRemedy("Set address in " + settingIn + ".")
 	}
-	if u.Scheme == "https" {
-		if strings.TrimSpace(c.ServerCertificate) == "" {
-			return refuse("The Incus server at %s is reached over HTTPS, and its certificate is not set, so Pando cannot tell it is talking to that server.", c.Address).
-				WithRemedy("Paste the server's certificate (the output of `incus info | sed -n '/BEGIN CERT/,/END CERT/p'` on the server) into server_certificate in " + settingIn + ".")
-		}
-		if _, err := clientCertificate(c.Credentials.TLSClient); err != nil {
-			return refuse("The Incus server at %s is reached over HTTPS, and the client certificate is not usable: %v.", c.Address, err).
-				WithRemedy("Paste a client certificate and its key, trusted on the server with `incus config trust add-certificate`, into the TLS client certificate credential.")
-		}
+	if u.Scheme != "https" {
+		return nil
 	}
+	if strings.TrimSpace(c.ServerCertificate) == "" {
+		return refuse("The Incus server at %s is reached over HTTPS, and its certificate is not set, so Pando cannot tell it is talking to that server.", c.Address).
+			WithRemedy("Paste the server's certificate (the output of `incus info | sed -n '/BEGIN CERT/,/END CERT/p'` on the server) into server_certificate in " + settingIn + ".")
+	}
+	if _, err := clientCertificate(c.Credentials.TLSClient); err != nil {
+		return refuse("The Incus server at %s is reached over HTTPS, and the client certificate is not usable: %v.", c.Address, err).
+			WithRemedy("Paste a client certificate and its key, trusted on the server with `incus config trust add-certificate`, into the TLS client certificate credential.")
+	}
+	return nil
+}
+
+// validateNames checks the Incus objects the settings name.
+func (c *Config) validateNames() error {
 	if c.Project == "" {
 		c.Project = defaultProject
 	}
@@ -160,7 +176,7 @@ func (c *Config) validate() error {
 		return refuse("%q is not an Incus network name.", c.Network)
 	}
 	if _, err := c.proxySources(); err != nil {
-		return refuse("The proxy sources are not usable: %v. Valid answer: the addresses Pando's proxy connects to app VMs from, such as 10.1.0.10/32.", err).
+		return refuse("The proxy sources are not usable: %v. Valid answer: the addresses Pando's proxy connects to app VMs from, as addresses or ranges.", err).
 			WithRemedy("Set proxy_sources in " + settingIn + ".")
 	}
 	if c.StoragePool != "" && !nameRE.MatchString(c.StoragePool) {
@@ -174,6 +190,11 @@ func (c *Config) validate() error {
 			return refuse("%q is not an Incus profile name.", p)
 		}
 	}
+	return nil
+}
+
+// validateAgent checks what each VM's forwarding agent needs.
+func (c *Config) validateAgent() error {
 	if strings.TrimSpace(c.AgentImage) == "" {
 		return refuse("The Incus runtime needs the image of Pando that each app's VM runs its forwarding agent from, and none is set.").
 			WithRemedy("Set agent_image in " + settingIn + " to this version of Pando's image, such as trypando/pando:<version>, or a copy in the install's registry.")
@@ -184,20 +205,26 @@ func (c *Config) validate() error {
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		return refuse("The agent port %d is not a port number.", c.AgentPort)
 	}
-	if c.RootSizeBytes == 0 {
-		c.RootSizeBytes = defaultRootSizeBytes
+	if strings.TrimSpace(c.Credentials.AgentAuthority) == "" {
+		return refuse("The Incus runtime needs the agents' certificate authority, and none is set.").
+			WithRemedy("Run `pando host-agent new-authority` and paste its output into the agent certificate authority credential.")
 	}
-	if c.VolumeSizeBytes == 0 {
-		c.VolumeSizeBytes = defaultVolumeSizeBytes
+	return nil
+}
+
+// validateSizes fills and checks the VMs' sizes and the app network range.
+func (c *Config) validateSizes() error {
+	fill := func(v *int64, d int64) {
+		if *v == 0 {
+			*v = d
+		}
 	}
-	if c.GuestOverheadBytes == 0 {
-		c.GuestOverheadBytes = defaultGuestOverheadBytes
-	}
+	fill(&c.RootSizeBytes, defaultRootSizeBytes)
+	fill(&c.VolumeSizeBytes, defaultVolumeSizeBytes)
+	fill(&c.GuestOverheadBytes, defaultGuestOverheadBytes)
+	fill(&c.DefaultMemoryBytes, defaultMemoryBytes)
 	if c.DefaultCPUs == 0 {
 		c.DefaultCPUs = defaultCPUs
-	}
-	if c.DefaultMemoryBytes == 0 {
-		c.DefaultMemoryBytes = defaultMemoryBytes
 	}
 	if c.RootSizeBytes < 4<<30 || c.GuestOverheadBytes < 256<<20 || c.DefaultCPUs < 1 || c.DefaultMemoryBytes < 256<<20 {
 		return refuse("A VM needs at least a 4 GiB root disk, 256 MiB of guest overhead, one CPU and 256 MiB of memory.")
@@ -206,11 +233,7 @@ func (c *Config) validate() error {
 		c.NetworkPool = defaultNetworkPool
 	}
 	if _, err := netip.ParsePrefix(c.NetworkPool); err != nil {
-		return refuse("The app network range %q is not an address range such as 10.213.0.0/16.", c.NetworkPool)
-	}
-	if strings.TrimSpace(c.Credentials.AgentAuthority) == "" {
-		return refuse("The Incus runtime needs the agents' certificate authority, and none is set.").
-			WithRemedy("Run `pando host-agent new-authority` and paste its output into the agent certificate authority credential.")
+		return refuse("The app network range %q is not an address range, such as the default %s.", c.NetworkPool, defaultNetworkPool)
 	}
 	return nil
 }
@@ -267,40 +290,19 @@ func clientCertificate(bundle string) (tls.Certificate, error) {
 	return tls.X509KeyPair(certPEM, keyPEM)
 }
 
-// connect opens the Incus API. Connecting does not contact the server over
-// a unix socket; over HTTPS it fetches the server's description once.
-func connect(c Config) (incusclient.InstanceServer, error) {
+// connect opens the Incus API, in the configured project. Nothing is
+// contacted until the first request.
+func connect(c Config) (*incusapi.Client, error) {
 	u, err := url.Parse(c.Address)
 	if err != nil {
 		return nil, err
 	}
 	if u.Scheme == "unix" {
-		return incusclient.ConnectIncusUnix(u.Path, nil)
+		return incusapi.ConnectUnix(u.Path, c.Project), nil
 	}
-	certPEM, keyPEM := splitPEM(c.Credentials.TLSClient)
-	return incusclient.ConnectIncus(c.Address, &incusclient.ConnectionArgs{
-		TLSServerCert: c.ServerCertificate,
-		TLSClientCert: certPEM,
-		TLSClientKey:  keyPEM,
-		SkipGetServer: true,
-	})
-}
-
-// splitPEM separates a bundle into its certificate and its key.
-func splitPEM(bundle string) (string, string) {
-	var cert, key string
-	rest := []byte(bundle)
-	for {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
-			return cert, key
-		}
-		switch {
-		case block.Type == "CERTIFICATE" && cert == "":
-			cert = string(pem.EncodeToMemory(block))
-		case strings.HasSuffix(block.Type, "PRIVATE KEY"):
-			key = string(pem.EncodeToMemory(block))
-		}
+	cert, err := clientCertificate(c.Credentials.TLSClient)
+	if err != nil {
+		return nil, err
 	}
+	return incusapi.ConnectHTTPS(c.Address, c.ServerCertificate, cert, c.Project)
 }

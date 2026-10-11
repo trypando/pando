@@ -9,8 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	incusapi "github.com/lxc/incus/v6/shared/api"
-
+	"github.com/trypando/pando/internal/adapter/runtime/incus/incusapi"
 	"github.com/trypando/pando/internal/errs"
 )
 

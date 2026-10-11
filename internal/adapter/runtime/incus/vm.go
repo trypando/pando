@@ -11,10 +11,9 @@ import (
 	"strings"
 	"time"
 
-	incusapi "github.com/lxc/incus/v6/shared/api"
-
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/adapter/runtime/docker"
+	"github.com/trypando/pando/internal/adapter/runtime/incus/incusapi"
 	"github.com/trypando/pando/internal/adapter/runtime/multidocker"
 	"github.com/trypando/pando/internal/errs"
 )
@@ -23,18 +22,24 @@ import (
 // action (internal/core/audit reads Action: "..." literals as those).
 const aclAllow = "allow"
 
+// namePrefix begins the name of everything the adapter makes in Incus.
+const namePrefix = "pando-"
+
+// msgReadVM is the message for failing to read an app's VM.
+const msgReadVM = "Could not read the app's VM from Incus."
+
 // nicName is the VM's one NIC (R-026).
 const nicName = "eth0"
 
 // instanceName is the VM for a bundle. Incus names are hostnames: letters,
 // digits and dashes. Matched by keyBundle, never by name alone.
-func instanceName(bundleID string) string { return "pando-" + hostname(bundleID) }
+func instanceName(bundleID string) string { return namePrefix + hostname(bundleID) }
 
 // trialName is the throwaway VM for a trial.
-func trialName(trialID string) string { return "pando-trial-" + hostname(trialID) }
+func trialName(trialID string) string { return namePrefix + "trial-" + hostname(trialID) }
 
 // volumeName is an Incus custom volume for a Pando volume.
-func volumeName(volumeID string) string { return "pando-" + hostname(volumeID) }
+func volumeName(volumeID string) string { return namePrefix + hostname(volumeID) }
 
 func hostname(id string) string {
 	var b strings.Builder
@@ -165,7 +170,7 @@ func (a *Adapter) checkDedicated(n *incusapi.Network) error {
 				project = v
 			}
 		}
-		if isInstance && project == a.config.Project && strings.HasPrefix(name, "pando-") {
+		if isInstance && project == a.config.Project && strings.HasPrefix(name, namePrefix) {
 			continue
 		}
 		return errs.Newf(errs.AdapterUnavailable,
@@ -356,7 +361,7 @@ func (a *Adapter) ensureVM(ctx context.Context, bundleID string, workloads []api
 			return nil, errs.Wrap(errs.AdapterFailed, "Incus could not create the app's VM.", err)
 		}
 	case err != nil:
-		return nil, errs.Wrap(errs.AdapterUnavailable, "Could not read the app's VM from Incus.", err)
+		return nil, errs.Wrap(errs.AdapterUnavailable, msgReadVM, err)
 	default:
 		if have.Config[keyBundle] != bundleID {
 			return nil, errs.Newf(errs.AdapterFailed,
@@ -395,7 +400,7 @@ func (a *Adapter) resize(ctx context.Context, name string, have *incusapi.Instan
 	}
 	have, etag, err = a.api.Instance(ctx, name)
 	if err != nil {
-		return errs.Wrap(errs.AdapterUnavailable, "Could not read the app's VM from Incus.", err)
+		return errs.Wrap(errs.AdapterUnavailable, msgReadVM, err)
 	}
 	if err := a.api.UpdateInstance(ctx, name, merged(have, want), etag); err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Incus could not change the app's VM.", err)
@@ -410,7 +415,7 @@ func (a *Adapter) memberTarget() string { return a.config.Target }
 func (a *Adapter) start(ctx context.Context, name string) error {
 	st, err := a.api.InstanceState(ctx, name)
 	if err != nil {
-		return errs.Wrap(errs.AdapterUnavailable, "Could not read the app's VM from Incus.", err)
+		return errs.Wrap(errs.AdapterUnavailable, msgReadVM, err)
 	}
 	if strings.EqualFold(st.Status, "Running") {
 		return nil
@@ -546,7 +551,7 @@ func (a *Adapter) running(ctx context.Context, bundleID string) (*vm, error) {
 		return nil, errs.Newf(errs.NotFound, "The app has no VM on the Incus runtime.")
 	}
 	if err != nil {
-		return nil, errs.Wrap(errs.AdapterUnavailable, "Could not read the app's VM from Incus.", err)
+		return nil, errs.Wrap(errs.AdapterUnavailable, msgReadVM, err)
 	}
 	if !strings.EqualFold(inst.Status, "Running") {
 		return nil, errs.Newf(errs.AdapterFailed, "The app's VM %s is %s.", name, strings.ToLower(inst.Status)).
@@ -570,7 +575,7 @@ func (a *Adapter) Observe(ctx context.Context, ref api.BundleRef) (api.ObservedB
 		return api.ObservedBundle{Exists: false}, nil
 	}
 	if err != nil {
-		return api.ObservedBundle{}, errs.Wrap(errs.AdapterUnavailable, "Could not read the app's VM from Incus.", err)
+		return api.ObservedBundle{}, errs.Wrap(errs.AdapterUnavailable, msgReadVM, err)
 	}
 	if !strings.EqualFold(inst.Status, "Running") {
 		// The workloads are in the stopped VM, and not running. Named from
@@ -611,7 +616,7 @@ func (a *Adapter) Destroy(ctx context.Context, ref api.BundleRef, opts api.Destr
 	switch {
 	case errors.Is(err, errNotFound):
 	case err != nil:
-		return errs.Wrap(errs.AdapterUnavailable, "Could not read the app's VM from Incus.", err)
+		return errs.Wrap(errs.AdapterUnavailable, msgReadVM, err)
 	case inst.Config[keyBundle] != ref.BundleID:
 		// Not ours; nothing of this app's to remove.
 	default:

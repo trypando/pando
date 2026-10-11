@@ -2,6 +2,7 @@ package incus
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -10,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	incusapi "github.com/lxc/incus/v6/shared/api"
 	"github.com/moby/moby/client"
 	"github.com/pkg/sftp"
 	"github.com/stretchr/testify/require"
+	"github.com/trypando/pando/internal/adapter/runtime/incus/incusapi"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/adapter/runtime/docker"
@@ -42,6 +43,14 @@ type fakeIncus struct {
 	states   []string // "name action"
 	execs    [][]string
 	execCode int
+
+	// refuseLive refuses an update to a running instance, as Incus does a
+	// memory decrease; refuseCleanStop refuses a stop that is not forced.
+	refuseLive      bool
+	refuseCleanStop bool
+
+	// fail makes the named method fail with that error.
+	fail map[string]error
 }
 
 func newFakeIncus() *fakeIncus {
@@ -73,6 +82,9 @@ func res(cpus int, memory, used uint64) *incusapi.Resources {
 }
 
 func (f *fakeIncus) Server(context.Context) (*incusapi.Server, error) {
+	if err := f.failure("Server"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	s := &incusapi.Server{}
@@ -84,14 +96,16 @@ func (f *fakeIncus) Server(context.Context) (*incusapi.Server, error) {
 }
 
 func (f *fakeIncus) Members(context.Context) ([]incusapi.ClusterMember, error) {
+	if err := f.failure("Members"); err != nil {
+		return nil, err
+	}
 	return f.members, nil
 }
 
-func (f *fakeIncus) MemberState(context.Context, string) (*incusapi.ClusterMemberState, error) {
-	return &incusapi.ClusterMemberState{}, nil
-}
-
 func (f *fakeIncus) Resources(_ context.Context, member string) (*incusapi.Resources, error) {
+	if err := f.failure("Resources"); err != nil {
+		return nil, err
+	}
 	r, ok := f.resources[member]
 	if !ok {
 		return nil, errNotFound
@@ -100,6 +114,9 @@ func (f *fakeIncus) Resources(_ context.Context, member string) (*incusapi.Resou
 }
 
 func (f *fakeIncus) Instances(context.Context) ([]incusapi.InstanceFull, error) {
+	if err := f.failure("Instances"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []incusapi.InstanceFull
@@ -110,6 +127,9 @@ func (f *fakeIncus) Instances(context.Context) ([]incusapi.InstanceFull, error) 
 }
 
 func (f *fakeIncus) Instance(_ context.Context, name string) (*incusapi.Instance, string, error) {
+	if err := f.failure("Instance"); err != nil {
+		return nil, "", err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	i, ok := f.instances[name]
@@ -121,6 +141,9 @@ func (f *fakeIncus) Instance(_ context.Context, name string) (*incusapi.Instance
 }
 
 func (f *fakeIncus) InstanceState(_ context.Context, name string) (*incusapi.InstanceState, error) {
+	if err := f.failure("InstanceState"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	i, ok := f.instances[name]
@@ -143,6 +166,9 @@ func (f *fakeIncus) InstanceState(_ context.Context, name string) (*incusapi.Ins
 }
 
 func (f *fakeIncus) CreateInstance(_ context.Context, target string, post incusapi.InstancesPost) error {
+	if err := f.failure("CreateInstance"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.created = append(f.created, post)
@@ -163,24 +189,36 @@ func (f *fakeIncus) CreateInstance(_ context.Context, target string, post incusa
 }
 
 func (f *fakeIncus) UpdateInstance(_ context.Context, name string, put incusapi.InstancePut, _ string) error {
+	if err := f.failure("UpdateInstance"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	i, ok := f.instances[name]
 	if !ok {
 		return errNotFound
+	}
+	if f.refuseLive && i.Status == "Running" {
+		return errors.New("Cannot reduce memory of a running VM")
 	}
 	i.InstancePut = put
 	return nil
 }
 
-func (f *fakeIncus) SetState(_ context.Context, name, action string, _ bool) error {
+func (f *fakeIncus) SetState(_ context.Context, name, action string, force bool) error {
+	if err := f.failure("SetState"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	i, ok := f.instances[name]
 	if !ok {
 		return errNotFound
 	}
-	f.states = append(f.states, name+" "+action)
+	f.states = append(f.states, name+" "+action+map[bool]string{true: " force"}[force])
+	if action == "stop" && !force && f.refuseCleanStop {
+		return errors.New("Instance didn't stop within the timeout")
+	}
 	switch action {
 	case "start":
 		i.Status = "Running"
@@ -191,6 +229,9 @@ func (f *fakeIncus) SetState(_ context.Context, name, action string, _ bool) err
 }
 
 func (f *fakeIncus) DeleteInstance(_ context.Context, name string) error {
+	if err := f.failure("DeleteInstance"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.instances[name]; !ok {
@@ -201,6 +242,9 @@ func (f *fakeIncus) DeleteInstance(_ context.Context, name string) error {
 }
 
 func (f *fakeIncus) Exec(_ context.Context, name string, command []string, _ io.Reader, _, _ io.Writer) (int, error) {
+	if err := f.failure("Exec"); err != nil {
+		return -1, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.instances[name]; !ok {
@@ -211,6 +255,9 @@ func (f *fakeIncus) Exec(_ context.Context, name string, command []string, _ io.
 }
 
 func (f *fakeIncus) Network(_ context.Context, name string) (*incusapi.Network, string, error) {
+	if err := f.failure("Network"); err != nil {
+		return nil, "", err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	n, ok := f.networks[name]
@@ -222,6 +269,9 @@ func (f *fakeIncus) Network(_ context.Context, name string) (*incusapi.Network, 
 }
 
 func (f *fakeIncus) UpdateNetwork(_ context.Context, name string, put incusapi.NetworkPut, _ string) error {
+	if err := f.failure("UpdateNetwork"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	n, ok := f.networks[name]
@@ -233,6 +283,9 @@ func (f *fakeIncus) UpdateNetwork(_ context.Context, name string, put incusapi.N
 }
 
 func (f *fakeIncus) ACL(_ context.Context, name string) (*incusapi.NetworkACL, string, error) {
+	if err := f.failure("ACL"); err != nil {
+		return nil, "", err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	acl, ok := f.acls[name]
@@ -244,6 +297,9 @@ func (f *fakeIncus) ACL(_ context.Context, name string) (*incusapi.NetworkACL, s
 }
 
 func (f *fakeIncus) CreateACL(_ context.Context, acl incusapi.NetworkACLsPost) error {
+	if err := f.failure("CreateACL"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.acls[acl.Name] = &incusapi.NetworkACL{NetworkACLPost: acl.NetworkACLPost, NetworkACLPut: acl.NetworkACLPut}
@@ -251,6 +307,9 @@ func (f *fakeIncus) CreateACL(_ context.Context, acl incusapi.NetworkACLsPost) e
 }
 
 func (f *fakeIncus) UpdateACL(_ context.Context, name string, put incusapi.NetworkACLPut, _ string) error {
+	if err := f.failure("UpdateACL"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	acl, ok := f.acls[name]
@@ -262,6 +321,9 @@ func (f *fakeIncus) UpdateACL(_ context.Context, name string, put incusapi.Netwo
 }
 
 func (f *fakeIncus) Profile(_ context.Context, name string) (*incusapi.Profile, error) {
+	if err := f.failure("Profile"); err != nil {
+		return nil, err
+	}
 	p, ok := f.profiles[name]
 	if !ok {
 		return nil, errNotFound
@@ -270,6 +332,9 @@ func (f *fakeIncus) Profile(_ context.Context, name string) (*incusapi.Profile, 
 }
 
 func (f *fakeIncus) PoolDriver(_ context.Context, pool string) (string, error) {
+	if err := f.failure("PoolDriver"); err != nil {
+		return "", err
+	}
 	d, ok := f.drivers[pool]
 	if !ok {
 		return "", errNotFound
@@ -278,6 +343,9 @@ func (f *fakeIncus) PoolDriver(_ context.Context, pool string) (string, error) {
 }
 
 func (f *fakeIncus) Volume(_ context.Context, pool, name string) (*incusapi.StorageVolume, error) {
+	if err := f.failure("Volume"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	v, ok := f.volumes[pool+"/"+name]
@@ -296,6 +364,9 @@ func (f *fakeIncus) Volume(_ context.Context, pool, name string) (*incusapi.Stor
 }
 
 func (f *fakeIncus) Volumes(_ context.Context, pool string) ([]incusapi.StorageVolume, error) {
+	if err := f.failure("Volumes"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []incusapi.StorageVolume
@@ -308,6 +379,9 @@ func (f *fakeIncus) Volumes(_ context.Context, pool string) ([]incusapi.StorageV
 }
 
 func (f *fakeIncus) CreateVolume(_ context.Context, _, pool string, post incusapi.StorageVolumesPost) error {
+	if err := f.failure("CreateVolume"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.volumes[pool+"/"+post.Name] = &incusapi.StorageVolume{Name: post.Name, Type: post.Type, StorageVolumePut: post.StorageVolumePut}
@@ -315,6 +389,9 @@ func (f *fakeIncus) CreateVolume(_ context.Context, _, pool string, post incusap
 }
 
 func (f *fakeIncus) DeleteVolume(_ context.Context, pool, name string) error {
+	if err := f.failure("DeleteVolume"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.volumes[pool+"/"+name]; !ok {
@@ -325,6 +402,9 @@ func (f *fakeIncus) DeleteVolume(_ context.Context, pool, name string) error {
 }
 
 func (f *fakeIncus) VolumeFiles(_ context.Context, pool, name string) (*sftp.Client, error) {
+	if err := f.failure("VolumeFiles"); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.volumes[pool+"/"+name]; !ok {
@@ -338,6 +418,9 @@ func (f *fakeIncus) VolumeFiles(_ context.Context, pool, name string) (*sftp.Cli
 }
 
 func (f *fakeIncus) ImageAlias(_ context.Context, name string) (*incusapi.ImageAliasesEntry, error) {
+	if err := f.failure("ImageAlias"); err != nil {
+		return nil, err
+	}
 	if !f.aliases[name] {
 		return nil, errNotFound
 	}
@@ -345,6 +428,9 @@ func (f *fakeIncus) ImageAlias(_ context.Context, name string) (*incusapi.ImageA
 }
 
 func (f *fakeIncus) Publish(_ context.Context, _, alias string, _ map[string]string) error {
+	if err := f.failure("Publish"); err != nil {
+		return err
+	}
 	f.aliases[alias] = true
 	return nil
 }
@@ -411,6 +497,18 @@ func (f *fakeInner) Trial(context.Context, api.TrialRequest) (api.TrialResult, e
 	return api.TrialResult{Started: true, ObservedPorts: []int{80}}, nil
 }
 
+func (f *fakeInner) Logs(context.Context, api.WorkloadRef, api.LogOptions) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("log")), nil
+}
+
+func (f *fakeInner) Exec(context.Context, api.WorkloadRef, api.ExecRequest) (api.ExecSession, error) {
+	return nil, nil
+}
+
+func (f *fakeInner) Usage(context.Context, api.BundleRef) (api.BundleUsage, error) {
+	return api.BundleUsage{Workloads: []api.WorkloadUsage{{Workload: "web", Running: true}}}, nil
+}
+
 type fakeAgent struct{ ensured int }
 
 func (f *fakeAgent) Ensure(context.Context) (bool, error) { f.ensured++; return f.ensured == 1, nil }
@@ -447,7 +545,7 @@ func testAdapter(t *testing.T, f *fakeIncus, mutate func(*Config)) (*Adapter, ma
 		inners[current] = in
 		return in
 	}
-	a.newAgent = func(_ *client.Client, instance string) agent {
+	a.newAgent = func(_ *client.Client, instance string) agentEnsurer {
 		ag := &fakeAgent{}
 		agents[instance] = ag
 		return ag
@@ -471,4 +569,12 @@ func webPlan(bundleID string) api.BundlePlan {
 		}},
 		Network: api.NetworkPlan{Private: true},
 	}
+}
+
+// failure is the error the fake was told to fail a method with, if any.
+func (f *fakeIncus) failure(method string) error {
+	if f.fail == nil {
+		return nil
+	}
+	return f.fail[method]
 }
