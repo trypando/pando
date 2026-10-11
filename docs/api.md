@@ -178,7 +178,7 @@ one verb says nothing about another (R-082).
 
 | Endpoint | Verb | What it does |
 | --- | --- | --- |
-| `GET /api/v1/apps/{appID}/security` | `app.view` | The app's security score, what it was taken from, and the findings behind it (R-310). |
+| `GET /api/v1/apps/{appID}/security` | `app.view` | The app's security score, what it was taken from, and the findings behind it (R-310). `scope` says what the scan read: `source`, `image` or `image_and_source`. `awaiting_image` says the scan read the source alone before anything was built, so `standing.score` is empty until a scan reads the image the app runs, and `scan.score` is the source's (R-311). |
 | `POST /api/v1/apps/{appID}/security/scan` | `app.deploy` | Scan the app now. A write, not a refresh: the score decides whether the next deploy is allowed (R-312, R-314). |
 
 ### Sharing

@@ -979,6 +979,9 @@
                     "security_scanning": {
                       "type": "boolean"
                     },
+                    "security_awaiting_image": {
+                      "type": "boolean"
+                    },
                     "icon_updated_at": {
                       "type": "string",
                       "format": "date-time"
@@ -3919,7 +3922,7 @@
       "get": {
         "operationId": "appSecurity",
         "summary": "Get the security score",
-        "description": "The app's security score, what it was taken from, and the findings behind it.\n\nNeeds `app.view`.",
+        "description": "The app's security score, what it was taken from, and the findings behind it. `scope` says what the scan read: `source`, `image` or `image_and_source`. `awaiting_image` says the scan read the source alone before anything was built, so `standing.score` is empty until a scan reads the image the app runs, and `scan.score` is the source's.\n\nNeeds `app.view`.",
         "tags": [
           "Security"
         ],
@@ -11533,6 +11536,9 @@
           "security_scanning": {
             "type": "boolean"
           },
+          "security_awaiting_image": {
+            "type": "boolean"
+          },
           "icon_updated_at": {
             "type": "string",
             "format": "date-time"
@@ -15985,6 +15991,12 @@
             "items": {
               "$ref": "#/components/schemas/Finding"
             }
+          },
+          "scope": {
+            "type": "string"
+          },
+          "awaiting_image": {
+            "type": "boolean"
           },
           "scanner": {
             "type": "string"

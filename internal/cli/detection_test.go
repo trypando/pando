@@ -159,7 +159,7 @@ func TestAppDetectionNamesEveryStage(t *testing.T) {
 		"fetching":  "Running: fetching the source.",
 		"detecting": "Running: working out what the app is.",
 		"trying":    "Running: trying a run of the app.",
-		"scanning":  "Running: scanning the source for security problems.",
+		"scanning":  "Running: scanning for security problems.",
 		"screening": "Running: having the AI adapter check the plan.",
 		"":          "Running: starting.",
 		"indexing":  "Running: indexing.",

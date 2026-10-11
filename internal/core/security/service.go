@@ -62,6 +62,16 @@ type Report struct {
 	Counts   Counts        `json:"counts"`
 	Worst    []api.Finding `json:"worst,omitempty"`
 
+	// Scope is what the scan above read: source, image or image_and_source
+	// (R-311). Empty with no scan.
+	Scope Scope `json:"scope,omitempty"`
+
+	// AwaitingImage says the scan above read the source alone, before there
+	// was a revision, so its score is the source's and not the app's (R-311):
+	// standing.score is empty until a scan reads the image the app runs. The
+	// scan's own score and findings are still in scan.
+	AwaitingImage bool `json:"awaiting_image,omitempty"`
+
 	// Scanner is what would run, or what did. Empty when the installation has
 	// none configured, which is what makes a threshold inert (R-317).
 	Scanner string `json:"scanner,omitempty"`
@@ -290,7 +300,10 @@ func (s *Service) Report(ctx context.Context, appID, specID string) (Report, err
 		report.Counts = Count(applied.Findings)
 		report.Worst = Worst(applied.Findings, 5)
 		report.IgnoringUnfixable = doc.IgnoreUnfixableFindings
-		report.Standing = Evaluate(doc, applied.Score, applied.RanAt, configured, security.InsecureSince)
+		report.Scope = ScopeOf(applied)
+		report.AwaitingImage = AwaitsImage(applied)
+		score, ranAt := appScore(applied)
+		report.Standing = Evaluate(doc, score, ranAt, configured, security.InsecureSince)
 		return report, nil
 	}
 
@@ -360,8 +373,18 @@ func (s *Service) Allows(ctx context.Context, appID, specID string) (Standing, e
 	if !found {
 		return Evaluate(doc, nil, time.Time{}, configured, nil), nil
 	}
-	applied := effective(doc, scan)
-	return Evaluate(doc, applied.Score, applied.RanAt, configured, nil), nil
+	score, ranAt := appScore(effective(doc, scan))
+	return Evaluate(doc, score, ranAt, configured, nil), nil
+}
+
+// appScore is the scan's score as the app's score: none for a scan of the
+// source alone taken before there was a revision (AwaitsImage). The app runs
+// an image that scan did not read, so its number is not the app's (R-311).
+func appScore(scan state.Scan) (*int, time.Time) {
+	if AwaitsImage(scan) {
+		return nil, time.Time{}
+	}
+	return scan.Score, scan.RanAt
 }
 
 // effective is the scan as this installation's policy counts it.

@@ -11,6 +11,7 @@
 
 import type { AppSpec, Candidate, Proposal, Question, Report, Source } from '@api/types.gen';
 import { describeAmendment } from './screeningText';
+import { AWAITING_IMAGE } from './scanScope';
 
 /** Where a running detection is. `stage` is set only while it runs. */
 type Stage = 'fetching' | 'detecting' | 'trying' | 'scanning' | 'screening';
@@ -377,7 +378,11 @@ function scanStep(security: Report | undefined, at: number): DiscoveryStep | und
   }
   const counts = security.counts;
   const total = counts.critical + counts.high + counts.medium + counts.low + counts.unknown;
-  if (scan.score !== undefined && scan.score !== null) step.findings.push({ key: 'Score', value: `${scan.score} / 100` });
+  // A scan of the source alone, for an app Pando builds: its number is the
+  // source's, not the app's, so the plan shows the findings and no score until
+  // the image is scanned (R-311).
+  if (security.awaiting_image) step.findings.push({ key: 'Score', value: AWAITING_IMAGE, text: true });
+  else if (scan.score !== undefined && scan.score !== null) step.findings.push({ key: 'Score', value: `${scan.score} / 100` });
   const severities: Array<[string, number]> = [
     ['Critical', counts.critical],
     ['High', counts.high],

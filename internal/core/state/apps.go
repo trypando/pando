@@ -92,6 +92,13 @@ type App struct {
 	// one place that knows (R-310, R-261).
 	SecurityScanning bool `json:"security_scanning,omitempty"`
 
+	// SecurityAwaitingImage says the app's only scan read its source alone,
+	// before there was a revision: detection's, of a repository Pando builds.
+	// That number is the source's and not the app's (R-311), so
+	// SecurityScore is empty until a scan reads the image the app runs. The
+	// source scan's score and findings are at GET /apps/{id}/security.
+	SecurityAwaitingImage bool `json:"security_awaiting_image,omitempty"`
+
 	// IconUpdatedAt is when the app's tile image last changed, and nil when it
 	// has none (R-340). The time rather than a flag so a client can put it in
 	// the image's URL and a browser never shows yesterday's picture from cache.
@@ -246,12 +253,13 @@ func (a *Apps) ByID(ctx context.Context, appID string) (App, bool, error) {
 	err := a.db.QueryRow(ctx, `
 		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state, a.pinned_spec_id,
 		       a.source, a.created_at, a.updated_at, a.deleted_at, r.body->'routing',
-		       s.score, s.score_fixable, i.updated_at, a.stopped_for_idle, a.stopped_for_disk
+		       s.score, s.score_fixable, coalesce(s.awaiting, false), i.updated_at,
+		       a.stopped_for_idle, a.stopped_for_disk
 		FROM apps a
 		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		LEFT JOIN app_icons i ON i.app_id = a.id
 		LEFT JOIN LATERAL (
-		    SELECT sc.score, sc.score_fixable
+		    SELECT sc.score, sc.score_fixable, (sc.spec_id IS NULL AND sc.image IS NULL) AS awaiting
 		    FROM app_scans sc
 		    WHERE sc.app_id = a.id AND sc.score IS NOT NULL
 		      AND (sc.spec_id = a.pinned_spec_id OR sc.spec_id IS NULL)
@@ -261,7 +269,7 @@ func (a *Apps) ByID(ctx context.Context, appID string) (App, bool, error) {
 		WHERE a.id = $1 AND a.deleted_at IS NULL`, appID).
 		Scan(&app.ID, &app.Name, &app.Slug, &owner, &app.State, &app.DesiredState, &pinned,
 			&source, &app.CreatedAt, &app.UpdatedAt, &app.DeletedAt, &routing,
-			&app.SecurityScore, &app.SecurityScoreFixable, &app.IconUpdatedAt, &app.StoppedForIdle, &app.StoppedForDisk)
+			&app.SecurityScore, &app.SecurityScoreFixable, &app.SecurityAwaitingImage, &app.IconUpdatedAt, &app.StoppedForIdle, &app.StoppedForDisk)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return App{}, false, nil
 	}
@@ -280,7 +288,18 @@ func (a *Apps) ByID(ctx context.Context, appID string) (App, bool, error) {
 	if len(routing) > 0 {
 		_ = json.Unmarshal(routing, &app.Routing)
 	}
+	app.withholdSourceScore()
 	return app, true, nil
+}
+
+// withholdSourceScore leaves out the score of a scan that read the source
+// alone, before there was a revision (R-311): that number is the source's, and
+// the app runs an image it did not read. SecurityAwaitingImage says so, and the
+// scan itself is at GET /apps/{id}/security.
+func (app *App) withholdSourceScore() {
+	if app.SecurityAwaitingImage {
+		app.SecurityScore, app.SecurityScoreFixable = nil, nil
+	}
 }
 
 // ListForPrincipal returns apps the principal can see on the control plane.
@@ -389,7 +408,7 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 	rows, err := a.db.Query(ctx, `
 		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state,
 		       a.pinned_spec_id, a.created_at, a.updated_at, r.body->'routing', s.score, s.score_fixable,
-		       i.updated_at, a.stopped_for_idle, a.stopped_for_disk
+		       coalesce(s.awaiting, false), i.updated_at, a.stopped_for_idle, a.stopped_for_disk
 		FROM apps a
 		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		LEFT JOIN app_icons i ON i.app_id = a.id
@@ -399,7 +418,7 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 		-- revision's: a score for a spec the app is not running is not a score
 		-- of what is deployed (design 09 §3).
 		LEFT JOIN LATERAL (
-		    SELECT sc.score, sc.score_fixable
+		    SELECT sc.score, sc.score_fixable, (sc.spec_id IS NULL AND sc.image IS NULL) AS awaiting
 		    FROM app_scans sc
 		    WHERE sc.app_id = a.id AND sc.score IS NOT NULL
 		      AND (sc.spec_id = a.pinned_spec_id OR sc.spec_id IS NULL)
@@ -421,7 +440,7 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 		var routing []byte
 		if err := rows.Scan(&app.ID, &app.Name, &app.Slug, &owner, &app.State, &app.DesiredState,
 			&pinned, &app.CreatedAt, &app.UpdatedAt, &routing,
-			&app.SecurityScore, &app.SecurityScoreFixable, &app.IconUpdatedAt, &app.StoppedForIdle, &app.StoppedForDisk); err != nil {
+			&app.SecurityScore, &app.SecurityScoreFixable, &app.SecurityAwaitingImage, &app.IconUpdatedAt, &app.StoppedForIdle, &app.StoppedForDisk); err != nil {
 			return nil, "", 0, errs.Wrap(errs.Internal, "Could not list apps.", err)
 		}
 		if len(routing) > 0 {
@@ -433,6 +452,7 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 		if pinned != nil {
 			app.PinnedSpecID = *pinned
 		}
+		app.withholdSourceScore()
 		out = append(out, app)
 	}
 	if err := rows.Err(); err != nil {

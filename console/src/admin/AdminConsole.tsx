@@ -69,6 +69,7 @@ import { TopoBackground } from '../ui/TopoBackground';
 import { SearchField } from '../ui/SearchField';
 import { ShowMore, totalLabel, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { APP_LIST_KEY, useWatchedRows } from './appList';
+import { AWAITING_IMAGE } from './scanScope';
 import { useNarrow } from '../ui/narrow';
 import { Table } from '../ui/Table';
 import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loading';
@@ -534,7 +535,9 @@ function AppsList({
               filterValue: (row: App) =>
                 row.security_scanning
                   ? 'Scanning'
-                  : row.security_score == null
+                  : row.security_awaiting_image
+                    ? 'Not scored yet'
+                    : row.security_score == null
                     ? 'Not scanned'
                     : row.security_verdict === 'insecure'
                       ? 'Below minimum'
@@ -544,6 +547,12 @@ function AppsList({
               render: (row: App) =>
                 row.security_scanning ? (
                   <StatusIndicator status="building" label="Scanning" />
+                ) : row.security_awaiting_image ? (
+                  // Its source was scanned and nothing has been built: that
+                  // number is the source's, not the app's (R-311).
+                  <Tooltip content={`${AWAITING_IMAGE}.`}>
+                    <span style={{ font: 'var(--type-code-sm)', color: 'var(--ink-secondary)' }}>Not scored yet</span>
+                  </Tooltip>
                 ) : (
                   <ScoreBadge score={row.security_score} verdict={row.security_verdict as never} full />
                 ),

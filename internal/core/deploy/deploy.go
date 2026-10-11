@@ -1228,33 +1228,33 @@ func imagePull(ctx context.Context, images *oci.Images, appID string, s *spec.Ap
 func publishedImage(ctx context.Context, images *oci.Images, appID string, s *spec.AppSpec,
 	perWorkload map[string]string, sink io.Writer,
 ) (string, *api.RegistryAuth) {
-	if s.Build.Strategy != spec.BuildPrebuilt || s.Build.ComposeFile != "" || s.Source.Type == spec.SourceImage {
+	ref := oci.Published(s)
+	if ref == "" {
 		return "", nil
 	}
-	primary, ok := s.PrimaryWorkload()
-	if !ok || primary.Image == "" || perWorkload[primary.Name] != "" {
+	if primary, _ := s.PrimaryWorkload(); perWorkload[primary.Name] != "" {
 		return "", nil
 	}
 
 	var pull *api.RegistryAuth
-	if auth, err := images.Auth(ctx, appID, primary.Image); err == nil && auth != nil {
+	if auth, err := images.Auth(ctx, appID, ref); err == nil && auth != nil {
 		pull = &api.RegistryAuth{Registry: auth.Registry, Username: auth.Username, Password: auth.Password, IdentityToken: auth.IdentityToken}
 	}
-	if strings.Contains(primary.Image, "@sha256:") {
-		return primary.Image, pull
+	if strings.Contains(ref, "@sha256:") {
+		return ref, pull
 	}
 	if images == nil {
-		fmt.Fprintf(sink, "   Pando cannot read registries here, so the image %s will not be scanned.\n", primary.Image)
+		fmt.Fprintf(sink, "   Pando cannot read registries here, so the image %s will not be scanned.\n", ref)
 		return "", nil
 	}
-	insp, err := images.Inspect(ctx, appID, primary.Image, oci.Platform{})
+	insp, err := images.Inspect(ctx, appID, ref, oci.Platform{})
 	if err != nil {
 		fmt.Fprintf(sink, "   Pando could not read the digest of %s, so the image will not be scanned: %s\n",
-			primary.Image, messageOf(err))
+			ref, messageOf(err))
 		return "", nil
 	}
-	pinned := oci.Pin(primary.Image, insp.Digest)
-	fmt.Fprintf(sink, "=> Running %s at %s\n", primary.Image, shortDigest(insp.Digest))
+	pinned := oci.Pin(ref, insp.Digest)
+	fmt.Fprintf(sink, "=> Running %s at %s\n", ref, shortDigest(insp.Digest))
 	return pinned, pull
 }
 

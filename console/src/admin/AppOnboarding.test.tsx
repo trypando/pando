@@ -68,9 +68,10 @@ const detection = {
   },
 };
 
-function render(response: Partial<DetectionResponse>): string {
+function render(response: Partial<DetectionResponse>, security?: unknown): string {
   const client = new QueryClient();
   client.setQueryData(['apps', 'app_x', 'detection'], response);
+  if (security) client.setQueryData(['apps', 'app_x', 'security'], security);
   return renderToString(
     <QueryClientProvider client={client}>
       <AppOnboarding app={app} onBack={() => {}} onDeployRefused={() => {}} />
@@ -277,5 +278,54 @@ describe('AppOnboarding', () => {
     expect(html).toContain('Everything’s answered.');
     expect(html).toContain('Ready to deploy');
     expect(html).not.toContain('Nothing runs until you accept');
+  });
+
+  describe('the plan’s security score (R-311)', () => {
+    const ready = {
+      ...detection,
+      questions: [],
+      screening: { ran: false },
+      draft_spec: {
+        build: { strategy: 'dockerfile', dockerfile: 'Dockerfile' },
+        workloads: [{ name: 'web', primary: true, exposed: true, command: ['npm', 'start'], env: [] }],
+        slots: [],
+      },
+    };
+    const counts = { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 };
+
+    it('does not score an image not yet built: the source’s findings, and when it is scored', () => {
+      const html = render({ status: 'ready', answers: {}, commit: '3f9a2c1d0000', detection: ready } as never, {
+        standing: { verdict: 'ok', score: null, threshold: 0 },
+        scan: { id: 'scn_1', app_id: 'app_x', commit: '3f9a2c1d0000', scanner_ref: 'scn', score: 100, findings: [], ran_at: '' },
+        counts,
+        scope: 'source',
+        awaiting_image: true,
+        ignoring_unfixable: false,
+      });
+      expect(html).toContain('Scored once the image is built.');
+      expect(html).toContain('No known vulnerabilities in the source');
+      expect(html).not.toContain('100 / 100');
+    });
+
+    it('scores a published image the plan scanned', () => {
+      const html = render({ status: 'ready', answers: {}, commit: '3f9a2c1d0000', detection: ready } as never, {
+        standing: { verdict: 'ok', score: 72, threshold: 0 },
+        scan: {
+          id: 'scn_1',
+          app_id: 'app_x',
+          commit: '3f9a2c1d0000',
+          image: 'ghcr.io/bastienwirtz/homer@sha256:' + 'ab'.repeat(32),
+          scanner_ref: 'scn',
+          score: 72,
+          findings: [],
+          ran_at: '',
+        },
+        counts: { ...counts, high: 2, medium: 2, low: 2 },
+        scope: 'image_and_source',
+        ignoring_unfixable: false,
+      });
+      expect(html).toContain('72 / 100');
+      expect(html).not.toContain('Scored once the image is built');
+    });
   });
 });

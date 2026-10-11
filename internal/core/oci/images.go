@@ -171,3 +171,20 @@ func Reference(src spec.Source) string {
 	}
 	return Pin(src.Image, src.Digest)
 }
+
+// Published is the published image a repository's app runs as it is
+// (spec.BuildPrebuilt: detection found the project's own image, R-094 tier 1),
+// as the spec names it. Empty for every other app: one Pando builds, an image
+// app (Reference names its image), and a compose file, whose services are not
+// one image. Detection and the deploy both read it here, so the image the plan
+// scanned is the image the deploy pins and runs (R-311).
+func Published(s *spec.AppSpec) string {
+	if s == nil || s.Build.Strategy != spec.BuildPrebuilt || s.Build.ComposeFile != "" || s.Source.Type == spec.SourceImage {
+		return ""
+	}
+	primary, ok := s.PrimaryWorkload()
+	if !ok {
+		return ""
+	}
+	return primary.Image
+}

@@ -2373,7 +2373,7 @@ type sourceScanner struct {
 	logger  *zap.Logger
 }
 
-func (s sourceScanner) ScanSource(ctx context.Context, appID, dir, commit string) {
+func (s sourceScanner) ScanSource(ctx context.Context, req adapterapi.ScanRequest) {
 	if s.service == nil {
 		return
 	}
@@ -2384,9 +2384,12 @@ func (s sourceScanner) ScanSource(ctx context.Context, appID, dir, commit string
 	// No spec ID: there is no revision yet, and there may never be one — this
 	// is a scan of what was proposed, which is exactly the thing somebody is
 	// deciding about.
-	// The commit, so a deploy of this same source uses this scan rather than
+	// The commit, and the published image by digest when the app runs one, so
+	// a deploy of this same source and image uses this scan rather than
 	// scanning it again.
-	if _, err := s.service.Scan(ctx, adapterapi.ScanRequest{AppID: appID, SourceDir: dir, Commit: commit},
+	appID := req.AppID
+	req.SpecID = ""
+	if _, err := s.service.Scan(ctx, req,
 		audit.Event{PrincipalKind: audit.KindSystem, PrincipalID: "detection"}); err != nil {
 		// Never fatal. The proposal is what this run is producing, and a
 		// scanner that could not read a checkout is recorded as a failed scan

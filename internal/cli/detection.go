@@ -113,7 +113,7 @@ func stagePhrase(stage string) string {
 	case "trying":
 		return "Trying a run of the app"
 	case "scanning":
-		return "Scanning the source for security problems"
+		return "Scanning for security problems"
 	case "screening":
 		return "Having the AI adapter check the plan"
 	case "":

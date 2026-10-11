@@ -147,7 +147,7 @@ var routeDocs = []reference.Route{
 	{Method: "DELETE", Path: "/api/v1/apps/{appID}/registry-credential", Group: "Secrets", Title: "Remove the registry credential", Summary: "Remove the app's registry credential, so its image is pulled anonymously.", Verb: string(authz.AppSecretsWrite)},
 
 	// --- security ---------------------------------------------------------
-	{Method: "GET", Path: "/api/v1/apps/{appID}/security", Group: "Security", Title: "Get the security score", Summary: "The app's security score, what it was taken from, and the findings behind it (R-310).", Verb: string(authz.AppView)},
+	{Method: "GET", Path: "/api/v1/apps/{appID}/security", Group: "Security", Title: "Get the security score", Summary: "The app's security score, what it was taken from, and the findings behind it (R-310). `scope` says what the scan read: `source`, `image` or `image_and_source`. `awaiting_image` says the scan read the source alone before anything was built, so `standing.score` is empty until a scan reads the image the app runs, and `scan.score` is the source's (R-311).", Verb: string(authz.AppView)},
 	{Method: "POST", Path: "/api/v1/apps/{appID}/security/scan", Group: "Security", Title: "Scan an app", Summary: "Scan the app now. A write, not a refresh: the score decides whether the next deploy is allowed (R-312, R-314).", Verb: string(authz.AppDeploy)},
 
 	// --- sharing ----------------------------------------------------------

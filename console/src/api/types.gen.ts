@@ -26,6 +26,7 @@ export interface App {
   security_score?: number;
   security_verdict?: string;
   security_scanning?: boolean;
+  security_awaiting_image?: boolean;
   icon_updated_at?: string;
   favorite?: boolean;
   section_id?: string;
@@ -219,6 +220,8 @@ export interface Report {
   scan?: Scan;
   counts: Counts;
   worst?: (Finding[] | null);
+  scope?: string;
+  awaiting_image?: boolean;
   scanner?: string;
   scanning_since?: string;
   ignoring_unfixable: boolean;

@@ -221,6 +221,23 @@ describe('the scan step (R-310)', () => {
     expect(scan?.findings).toContainEqual({ key: 'Worst', value: 'CVE-2026-0001' });
   });
 
+  it('does not score an image not yet built, and still shows what the source scan found (R-311)', () => {
+    const sourceOnly = {
+      ...report,
+      standing: { ...report.standing, score: undefined },
+      scan: { ...report.scan, score: 100, commit: 'abc123' },
+      scope: 'source',
+      awaiting_image: true,
+    } as unknown as Report;
+    const scan = discoverySteps({ status: 'ready', proposal: found, source, security: sourceOnly }).find(
+      (s) => s.id === 'scan',
+    );
+    expect(scan?.findings).toContainEqual({ key: 'Score', value: 'Scored once the image is built', text: true });
+    expect(scan?.findings.some((f) => f.value.includes('/ 100'))).toBe(false);
+    expect(scan?.findings).toContainEqual({ key: 'High', value: '2' });
+    expect(scan?.result).toBe('3 vulnerabilities');
+  });
+
   it('is absent on an install with no scanner', () => {
     expect(discoverySteps({ status: 'ready', proposal: found, source }).some((s) => s.id === 'scan')).toBe(false);
   });

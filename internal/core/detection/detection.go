@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/screening"
 	"github.com/trypando/pando/internal/core/source"
@@ -109,10 +110,11 @@ type Runner struct {
 	Scanner SourceScanner
 }
 
-// SourceScanner scans a checkout. One method, so detection cannot reach into
-// the rest of the security service.
+// SourceScanner scans what detection read: the checkout, and the published
+// image the proposal runs when there is one. One method, so detection cannot
+// reach into the rest of the security service.
 type SourceScanner interface {
-	ScanSource(ctx context.Context, appID, dir, commit string)
+	ScanSource(ctx context.Context, req api.ScanRequest)
 }
 
 // PortAllocator hands out host ports for port-mode routing.
@@ -238,13 +240,13 @@ func (r *Runner) run(ctx context.Context, appID, slug string, src spec.Source) (
 
 	// While the checkout exists, and after the proposal is in hand: a scan is
 	// worth having and is not worth failing a detection for.
-	// An app that runs a published image has no checkout: Dir is empty, and
-	// scanning "" would scan whatever directory the server runs in.
-	if r.Scanner != nil && checkout.Dir != "" {
-		// Reported as its own stage: a scan can take a while, and the
-		// onboarding page shows it as a step of the plan.
-		detect.Report(ctx, detect.StageScanning, &proposal)
-		r.Scanner.ScanSource(ctx, appID, checkout.Dir, checkout.Identity())
+	if r.Scanner != nil {
+		if req, ok := r.scanRequest(ctx, appID, src, &proposal, checkout); ok {
+			// Reported as its own stage: a scan can take a while, and the
+			// onboarding page shows it as a step of the plan.
+			detect.Report(ctx, detect.StageScanning, &proposal)
+			r.Scanner.ScanSource(ctx, req)
+		}
 	}
 
 	// Fill in the install's own answers before the proposal is shown, not when

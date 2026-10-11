@@ -85,6 +85,7 @@ func (p *fixedPolicy) Document(context.Context) (policy.Document, error) { retur
 
 type scanHarness struct {
 	t       *testing.T
+	db      *state.DB
 	apps    *state.Apps
 	deploys *state.Deployments
 	app     state.App
@@ -132,7 +133,7 @@ func newScanHarness(t *testing.T) *scanHarness {
 		WithSecurity(svc)
 
 	return &scanHarness{
-		t: t, apps: apps, deploys: deploys, app: app, owner: owner, commit: commit,
+		t: t, db: db, apps: apps, deploys: deploys, app: app, owner: owner, commit: commit,
 		runner: r, docker: docker, scanner: scanner, service: svc, policy: pol,
 		spec: &spec.AppSpec{
 			SchemaVersion: spec.SchemaVersion, AppID: app.ID, Source: src,

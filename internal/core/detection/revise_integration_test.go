@@ -46,10 +46,14 @@ func (r *reviser) RevisePlan(_ context.Context, req adapterapi.ScreenRequest) (a
 }
 
 // sourceScans records what detection asked the scanner to scan.
-type sourceScans struct{ commits []string }
+type sourceScans struct {
+	commits  []string
+	requests []adapterapi.ScanRequest
+}
 
-func (s *sourceScans) ScanSource(_ context.Context, _, _, commit string) {
-	s.commits = append(s.commits, commit)
+func (s *sourceScans) ScanSource(_ context.Context, req adapterapi.ScanRequest) {
+	s.commits = append(s.commits, req.Commit)
+	s.requests = append(s.requests, req)
 }
 
 // TestR336_ARevisionReadsTheReviewedCommitAndIsStored asserts R-336's third

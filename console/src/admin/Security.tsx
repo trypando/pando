@@ -27,7 +27,7 @@ import { Table } from '../ui/Table';
 import { LineSkeleton, Loading } from '../ui/Loading';
 import { AppVerb, useCan } from './verbs';
 import { securityInterval, useOnScreen } from '../ui/polling';
-import { scanScope } from './scanScope';
+import { AWAITING_IMAGE, scanScope } from './scanScope';
 
 export function Security({
   appID,
@@ -253,6 +253,26 @@ function Verdict({ report, scanning }: { report: Report; scanning: boolean }) {
     );
   }
 
+  const taken = report.scan?.ran_at ? relative(report.scan.ran_at) : '';
+
+  if (report.awaiting_image) {
+    // A scan of the source alone, taken before anything was built: what it
+    // found, and no score, because the number is the source's and the app
+    // runs an image that scan did not read (R-311). The deploy's scan of the
+    // image is the app's score.
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink)' }}>{`${AWAITING_IMAGE}.`}</span>
+        <Quiet>
+          {counts.critical} critical, {counts.high} high, {counts.medium} medium,{' '}
+          {counts.low + counts.unknown} low
+          {taken ? ` · scanned ${taken.toLowerCase()}` : ''}
+          {report.scan ? ` · ${scanScope(report.scan)}` : ''}
+        </Quiet>
+      </div>
+    );
+  }
+
   if (score === null || score === undefined) {
     // The first scan is under way, and the line above says so.
     if (scanning) return null;
@@ -264,8 +284,6 @@ function Verdict({ report, scanning }: { report: Report; scanning: boolean }) {
       </Quiet>
     );
   }
-
-  const taken = report.scan?.ran_at ? relative(report.scan.ran_at) : '';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>

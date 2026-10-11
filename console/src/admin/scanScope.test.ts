@@ -35,6 +35,13 @@ describe('a score says what was scanned (R-311)', () => {
     );
   });
 
+  it('names detection’s scan of the published image an app will run', () => {
+    expect(scanScope({ commit: 'abc123', image: `ghcr.io/bastienwirtz/homer@${digest}` })).toBe(
+      'of the image it will run and its source',
+    );
+    expect(scanScope({ commit: digest, image: `ghcr.io/acme/web@${digest}` })).toBe('of the image it will run');
+  });
+
   it('says nothing without a scan', () => {
     expect(scanScope(undefined)).toBe('');
   });

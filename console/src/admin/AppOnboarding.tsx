@@ -51,6 +51,7 @@ import type { Amendment, AppSpec, Question, Report, Source, Turn } from '@api/ty
 import { Loading } from '../ui/Loading';
 import { ScoreBadge } from '../ui/ScoreBadge';
 import { Security } from './Security';
+import { AWAITING_IMAGE } from './scanScope';
 import { deletePath } from './delete-app';
 import { invalidateApp, invalidateAppLists } from './appList';
 import {
@@ -774,25 +775,35 @@ export function AppOnboarding({
 function SecurityScore({ report, onView }: { report: Report; onView: () => void }) {
   const counts = report.counts;
   const total = counts.critical + counts.high + counts.medium + counts.low + counts.unknown;
+  const awaiting = Boolean(report.awaiting_image);
   return (
     <div
       className="pando-onboard-enter"
       style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 'var(--space-2)', marginLeft: 'auto' }}
     >
       <span style={{ font: 'var(--type-label)', color: 'var(--ink-secondary)' }}>Security score</span>
-      <ScoreBadge
-        score={report.scan?.score}
-        verdict={report.standing.verdict as never}
-        threshold={report.standing.threshold}
-        full
-        size={28}
-      />
+      {/* A scan of the source alone, for an app Pando builds: its number is
+          the source's and not the app's, so the plan shows what it found and
+          no score until the image is scanned (R-311). */}
+      {awaiting ? (
+        <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink)' }}>{`${AWAITING_IMAGE}.`}</span>
+      ) : (
+        <ScoreBadge
+          score={report.standing.score}
+          verdict={report.standing.verdict as never}
+          threshold={report.standing.threshold}
+          full
+          size={28}
+        />
+      )}
       {total > 0 ? (
         <button type="button" className="pando-link" style={{ font: 'var(--type-body-ui)' }} onClick={onView}>
-          {total === 1 ? 'View 1 vulnerability' : `View ${total} vulnerabilities`}
+          {`View ${total === 1 ? '1 vulnerability' : `${total} vulnerabilities`}${awaiting ? ' in the source' : ''}`}
         </button>
       ) : (
-        <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)' }}>No known vulnerabilities</span>
+        <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)' }}>
+          {awaiting ? 'No known vulnerabilities in the source' : 'No known vulnerabilities'}
+        </span>
       )}
     </div>
   );

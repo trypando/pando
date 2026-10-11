@@ -92,6 +92,20 @@ after scanning the very source that revision was written from. So the rule is: t
 this revision, and failing that the newest scan of no revision, and never another revision's. The
 console says which of the two it is showing.
 
+**[D] A scan of the source alone, taken before there was a revision, is not the app's score
+(R-311).** That is detection's scan of a repository Pando builds: nothing is built before the plan is
+accepted, so the scan read no image, and its number is the source's. Showing it as the app's score
+made a plan read 100 / 100 for an app whose first deploy, scanning the image it built, scored 61. So
+such a scan keeps its findings and its own number (`scan.score`), and the app has no score until a
+scan reads its image: the report's `standing.score` is empty and `awaiting_image` says why, an app's
+row in `GET /apps` carries `security_awaiting_image` and no `security_score`, and the plan, the
+overview during the first deploy and the apps list say "Scored once the image is built." beside the
+source's findings. The report's `scope` (`source`, `image`, `image_and_source`) says what any scan
+read. A threshold placed against such an app finds no score, as it would for an app never scanned. A
+scan of the source alone that belongs to a revision — a compose app's deploy, which builds no single
+image (§4.1), or a scan from before the image column existed — is still that revision's score, and
+says what it read.
+
 **[D] A score belongs to a revision, not to an app.** `app_scans` is append-only, keyed by
 `(app_id, spec_id, scanner_ref, ran_at)`, and the app's current score is the newest scan of its
 pinned revision. A rollback therefore restores the score of what it rolled back to, with no rescan
@@ -128,8 +142,10 @@ for a scan of the source alone. A repository's published image is named in the s
 deploy pins the tag to the digest it names at that moment, scans that digest with the checkout, and
 runs that digest: the image scanned is the image that runs, and a tag that has moved since is a new
 image and is scanned. A registry that cannot be read leaves the image unscanned and says so in the
-deploy log, as a scanner that cannot run does (R-318). Detection scans the source it reads, a
-person can ask for a scan (`POST /security/scan`), and a deploy scans the source and the image
+deploy log, as a scanner that cannot run does (R-318). Detection scans the source it reads, and the
+published image the plan runs when there is one — a repository's (`prebuilt`) pinned the way a deploy
+pins it, or an image app's pinned digest — so a deploy that resolves the same digest reuses detection's
+scan and the plan's score is the deployed app's. A person can ask for a scan (`POST /security/scan`), and a deploy scans the source and the image
 together — unless a successful scan **by the scanner configured now** already read that same source and
 that same image, in which case it uses that one and says so in the deploy log ("Using the security scan
 of 3f9a2c1 from … (source and image unchanged)", or "of the uploaded source" for an upload). The
@@ -221,14 +237,16 @@ belongs with the other histories on the Logs tab. The section carries the mark, 
 It is not in settings: settings is where an app is configured, and a score is not a setting.
 
 **[D] The section says what the scan read** (R-311), from the scan's `spec_id`, `commit` and `image`:
-"from the source, before this configuration" for detection's, "of the source only, not the image it
-runs" for a revision scored by a scan that read no image, "of the running image only, not its source"
+"from the source, before this configuration" for detection's scan of the source alone (with no score:
+§3), "of the image it will run and its source" or "of the image it will run" for detection's scan of a
+published image, "of the source only, not the image it runs" for a revision scored by a scan that read no image, "of the running image only, not its source"
 for **Scan now** on a deployed app, "of the image it runs" for an image app (its source is the image's
 own digest), and "of the image it runs and its source" for a deploy's scan of a built or published
 image with its repository. A number that covered less than both does not stand for both.
 
 The **apps list** carries the same mark, at `score / 100`, beside status — which is the question a
-list is for: which of these needs me.
+list is for: which of these needs me. An app whose only scan read its source before anything was
+built says "Not scored yet" (§3).
 
 **[D] The score is a shield and a number, together** (R-320). The shield carries the color and the
 number carries the fact; neither appears without the other. Color is the second signal, never the
@@ -274,7 +292,12 @@ because an agent asking Pando to rescan until it passes is a loop nobody wants.
   anybody sees about a new app is "not scanned yet" — when a committed key or a
   vulnerable lockfile is exactly what they want to know before deciding to
   deploy it. The scan has no spec revision, because there is no revision yet.
-  Never fatal: the proposal is what that run is producing.
+  Never fatal: the proposal is what that run is producing. An app that runs a
+  published image has that image already, and detection scans it by digest
+  with the checkout, so the plan carries the score of what will run. An app
+  Pando builds does not: detection does not build before the plan is
+  reviewed, so its source is scanned alone, and the plan shows that scan's
+  findings and "Scored once the image is built" rather than a number (§3).
 - **Deploy**, after the build: the image and the checkout together, against the
   revision being deployed.
 - **On demand**, against whatever the app has. A deployed app's newest
