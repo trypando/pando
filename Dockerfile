@@ -169,10 +169,15 @@ COPY --from=packages /staging/ /
 # entrypoint needs root only to join the Docker socket's group, so the image
 # starts as root and the entrypoint drops to nonroot before Pando starts.
 # By number: the hardened base has no root entry in /etc/passwd.
+#
+# /tmp is made world-writable again: copying /tmp/railpack in with the staged
+# packages replaced its mode with the staging directory's 755, and the server
+# could no longer make a temporary directory for any build (issue #172).
 USER 0
 RUN mkdir -p /var/lib/pando /etc/traefik/dynamic \
     && chown nonroot:nonroot /var/lib/pando /etc/traefik/dynamic \
-    && chown -R nonroot:nonroot /tmp/railpack
+    && chown -R nonroot:nonroot /tmp/railpack \
+    && chmod 1777 /tmp
 
 WORKDIR /var/lib/pando
 
