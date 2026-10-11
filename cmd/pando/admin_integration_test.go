@@ -7,6 +7,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -187,4 +188,24 @@ func TestASetupTokenIsNotPrintedWhenTheDatabaseCannotBeReached(t *testing.T) {
 	cmd.SetArgs([]string{"setup-token"})
 	require.Error(t, cmd.ExecuteContext(context.Background()))
 	require.Empty(t, stdout.String())
+}
+
+// TestR404_ResettingAPasswordFromTheHostLiftsTheSignInLimit asserts that
+// `pando admin reset-password` is a way back in now: the wrong passwords that
+// locked the username out (R-404) do not refuse the new one too.
+func TestR404_ResettingAPasswordFromTheHostLiftsTheSignInLimit(t *testing.T) {
+	ctx := context.Background()
+	db, _ := withAdmin(t)
+	failures := state.NewFailedAttempts(db)
+	key := state.SignInUsernameKey(bootstrap.AdminUsername)
+	for range 10 {
+		require.NoError(t, failures.Record(ctx, key, time.Hour))
+	}
+
+	_, err := runAdmin(t, "reset-password", "--password", "a-brand-new-password-9")
+	require.NoError(t, err)
+
+	n, err := failures.Recent(ctx, key, time.Hour)
+	require.NoError(t, err)
+	require.Zero(t, n)
 }

@@ -139,6 +139,8 @@ exactly this.
 
 ### 5.3 Sessions and revocation
 
+**R-404 [D]** **Wrong passwords are limited.** Password sign-in is refused, without the password being checked, once a username — whether or not the account exists — or a client address has had too many wrong passwords in a short window [P: 10 per username and 50 per address in 15 minutes]. The refusal says how long to wait. Every wrong password and every refusal is audited. The counts are shared by every replica, a right password clears the username's count but not the address's, and resetting a password from the host clears it too. *(Added by issue #189.)*
+
 **R-047 [D]** Each identity adapter declares its own session policy and revocation mechanism, documented in that adapter's spec. There is no single global answer. The console and `GET /identity-providers` show each provider's session lifetime, revocation mode, and the window that results.
 
 **R-048 [D]** **SCIM support** is the enterprise revocation and provisioning path. Where an IdP supports SCIM, Pando accepts pushed user and group lifecycle events (SCIM 2.0, a bearer token per provider). A pushed deactivation suspends and ends sessions at once; a pushed group change takes effect on the next request. On the proxy's path, "the next request" is the next one after the change reaches the proxy, which is told when it commits; if that message is lost, at most 30 seconds (design 06 §3.1, amended with issue #93).

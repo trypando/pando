@@ -115,7 +115,8 @@ func resetPasswordCmd(configPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset-password [username]",
 		Short: "Set a local account's password when nobody can sign in",
-		Long: "Sets a new password for a local account and ends every session it has.\n\n" +
+		Long: "Sets a new password for a local account, ends every session it has, and lifts\n" +
+			"any limit its wrong passwords put on signing in.\n\n" +
 			"The account must change the password again at its next sign-in: this hands a way\n" +
 			"back in to somebody, which is not the same as choosing their credential.\n\n" +
 			"Accounts that sign in through an external identity provider are changed where they\n" +
@@ -219,6 +220,12 @@ func resetPassword(ctx context.Context, cfg *config.Config, username string, pas
 	// access the reset was meant to take back (R-048).
 	sessions := state.NewSessions(db)
 	if err := sessions.RevokeAllForUser(ctx, userID); err != nil {
+		return err
+	}
+
+	// A way back in means now: the wrong passwords that may be why nobody
+	// can sign in would otherwise refuse the new one too (R-404).
+	if err := state.NewFailedAttempts(db).Clear(ctx, state.SignInUsernameKey(username)); err != nil {
 		return err
 	}
 
