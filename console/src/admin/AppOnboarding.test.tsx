@@ -251,6 +251,21 @@ describe('AppOnboarding', () => {
     expect(html).not.toContain('Accept plan');
   });
 
+  it('keeps the same ridge before and after detection learns the commit', () => {
+    const ridge = (html: string) => html.match(/<path d="([^"]+)" class="pando-terrain-index"/)?.[1];
+    const running = ridge(
+      render({
+        status: 'running',
+        answers: null,
+        commit: '',
+        detection: { stage: 'detecting' } as DetectionResponse['detection'],
+      }),
+    );
+    const finished = ridge(render({ status: 'needs_answers', answers: {}, commit: '3f9a2c1d0000', detection } as never));
+    expect(running).toBeTruthy();
+    expect(finished).toBe(running);
+  });
+
   it('renders a failed detection with its reason', () => {
     const html = render({
       status: 'failed',
