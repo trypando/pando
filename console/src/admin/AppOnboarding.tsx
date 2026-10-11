@@ -778,6 +778,7 @@ function SecurityScore({ report, onView }: { report: Report; onView: () => void 
   const counts = report.counts;
   const total = counts.critical + counts.high + counts.medium + counts.low + counts.unknown;
   const awaiting = Boolean(report.awaiting_image);
+  const found = total === 1 ? '1 vulnerability' : `${total} vulnerabilities`;
   return (
     <div
       className="pando-onboard-enter"
@@ -800,7 +801,7 @@ function SecurityScore({ report, onView }: { report: Report; onView: () => void 
       )}
       {total > 0 ? (
         <button type="button" className="pando-link" style={{ font: 'var(--type-body-ui)' }} onClick={onView}>
-          {`View ${total === 1 ? '1 vulnerability' : `${total} vulnerabilities`}${awaiting ? ' in the source' : ''}`}
+          {`View ${found}${awaiting ? ' in the source' : ''}`}
         </button>
       ) : (
         <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)' }}>

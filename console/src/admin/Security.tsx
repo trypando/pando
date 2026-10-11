@@ -241,7 +241,7 @@ export function Security({
 }
 
 function Verdict({ report, scanning }: { report: Report; scanning: boolean }) {
-  const { standing, counts, scanner } = report;
+  const { standing, scanner } = report;
   const score = standing.score;
 
   if (standing.verdict === 'inert') {
@@ -253,8 +253,6 @@ function Verdict({ report, scanning }: { report: Report; scanning: boolean }) {
     );
   }
 
-  const taken = report.scan?.ran_at ? relative(report.scan.ran_at) : '';
-
   if (report.awaiting_image) {
     // A scan of the source alone, taken before anything was built: what it
     // found, and no score, because the number is the source's and the app
@@ -263,12 +261,7 @@ function Verdict({ report, scanning }: { report: Report; scanning: boolean }) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
         <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink)' }}>{`${AWAITING_IMAGE}.`}</span>
-        <Quiet>
-          {counts.critical} critical, {counts.high} high, {counts.medium} medium,{' '}
-          {counts.low + counts.unknown} low
-          {taken ? ` · scanned ${taken.toLowerCase()}` : ''}
-          {report.scan ? ` · ${scanScope(report.scan)}` : ''}
-        </Quiet>
+        <ScanSummary report={report} />
       </div>
     );
   }
@@ -301,15 +294,7 @@ function Verdict({ report, scanning }: { report: Report; scanning: boolean }) {
         />
       </div>
 
-      <Quiet>
-        {counts.critical} critical, {counts.high} high, {counts.medium} medium,{' '}
-        {counts.low + counts.unknown} low
-        {taken ? ` · scanned ${taken.toLowerCase()}` : ''}
-        {/* What the scan read: the source, the image, or both. Saying so is
-            the difference between a number somebody trusts and one they
-            wonder about (R-311). */}
-        {report.scan ? ` · ${scanScope(report.scan)}` : ''}
-      </Quiet>
+      <ScanSummary report={report} />
 
       {standing.verdict === 'insecure' && standing.stop_at && (
         // R-316: the deadline, at the moment it starts, to the person who has
@@ -320,6 +305,23 @@ function Verdict({ report, scanning }: { report: Report; scanning: boolean }) {
         </Banner>
       )}
     </div>
+  );
+}
+
+/** The findings by severity, when the scan ran and what it read. */
+function ScanSummary({ report }: { report: Report }) {
+  const { counts, scan } = report;
+  const taken = scan?.ran_at ? relative(scan.ran_at) : '';
+  return (
+    <Quiet>
+      {counts.critical} critical, {counts.high} high, {counts.medium} medium,{' '}
+      {counts.low + counts.unknown} low
+      {taken ? ` · scanned ${taken.toLowerCase()}` : ''}
+      {/* What the scan read: the source, the image, or both. Saying so is
+          the difference between a number somebody trusts and one they
+          wonder about (R-311). */}
+      {scan ? ` · ${scanScope(scan)}` : ''}
+    </Quiet>
   );
 }
 
