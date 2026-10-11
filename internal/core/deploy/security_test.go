@@ -64,14 +64,14 @@ func TestR312_ADeployOfAScannedCommitDoesNotScanItAgain(t *testing.T) {
 	dep := state.Deployment{AppID: "app_x", SpecID: "spec_1"}
 
 	var log strings.Builder
-	require.NoError(t, r.scan(context.Background(), dep, nil, built, nil, "/src", "3f9a2c1d0000", &log))
+	require.NoError(t, r.scan(context.Background(), dep, nil, scanTarget{Image: built, SourceDir: "/src", Commit: "3f9a2c1d0000"}, &log))
 	require.Empty(t, sec.scans, "the scan of that commit and image is reused")
 	require.Equal(t, []string{"spec_1"}, sec.reusedFor, "and attached to the revision being deployed")
 	require.Contains(t, log.String(), "Using the security scan of 3f9a2c1")
 	require.Contains(t, log.String(), "(source and image unchanged)")
 
 	log.Reset()
-	require.NoError(t, r.scan(context.Background(), dep, nil, built, nil, "/src", "def4560000", &log))
+	require.NoError(t, r.scan(context.Background(), dep, nil, scanTarget{Image: built, SourceDir: "/src", Commit: "def4560000"}, &log))
 	require.Len(t, sec.scans, 1, "a commit nobody scanned is scanned")
 	require.Equal(t, "def4560000", sec.scans[0].Commit)
 	require.Equal(t, built, sec.scans[0].Image, "with the image the deploy built")
@@ -92,7 +92,7 @@ func TestR311_ASourceScanDoesNotCoverTheBuiltImage(t *testing.T) {
 
 	var log strings.Builder
 	dep := state.Deployment{AppID: "app_x", SpecID: "spec_1"}
-	require.NoError(t, r.scan(context.Background(), dep, nil, built, nil, "/src", "3f9a2c1d0000", &log))
+	require.NoError(t, r.scan(context.Background(), dep, nil, scanTarget{Image: built, SourceDir: "/src", Commit: "3f9a2c1d0000"}, &log))
 	require.Empty(t, sec.reusedFor, "the source-only scan is not reused")
 	require.Len(t, sec.scans, 1)
 	require.Equal(t, built, sec.scans[0].Image)
@@ -115,7 +115,7 @@ func TestR314_AReusedScanStillFacesTheThreshold(t *testing.T) {
 	r := &Runner{security: sec}
 
 	var log strings.Builder
-	err := r.scan(context.Background(), state.Deployment{AppID: "app_x"}, nil, built, nil, "/src", "3f9a2c1d0000", &log)
+	err := r.scan(context.Background(), state.Deployment{AppID: "app_x"}, nil, scanTarget{Image: built, SourceDir: "/src", Commit: "3f9a2c1d0000"}, &log)
 	require.Equal(t, errs.PlanSecurityBelowThreshold, errs.CodeOf(err))
 	require.Empty(t, sec.scans)
 	require.Contains(t, errs.As(err).Details, "findings", "the reused scan's findings travel with the refusal")
@@ -141,7 +141,7 @@ func TestR312_UnchangedImageIsNotRescanned(t *testing.T) {
 	for _, specID := range []string{"spec_2", "spec_3"} {
 		var log strings.Builder
 		dep := state.Deployment{AppID: "app_x", SpecID: specID}
-		require.NoError(t, r.scan(context.Background(), dep, upload, built, nil, "/src", archive, &log))
+		require.NoError(t, r.scan(context.Background(), dep, upload, scanTarget{Image: built, SourceDir: "/src", Commit: archive}, &log))
 		require.Contains(t, log.String(),
 			"=> Using the security scan of the uploaded source from 2026-09-29T08:00:00Z (source and image unchanged)")
 		require.NotContains(t, log.String(), "Scanning for known vulnerabilities")
@@ -151,7 +151,7 @@ func TestR312_UnchangedImageIsNotRescanned(t *testing.T) {
 
 	var log strings.Builder
 	dep := state.Deployment{AppID: "app_x", SpecID: "spec_4"}
-	require.NoError(t, r.scan(context.Background(), dep, upload, built, nil, "/src", "sha256:"+strings.Repeat("cd", 32), &log))
+	require.NoError(t, r.scan(context.Background(), dep, upload, scanTarget{Image: built, SourceDir: "/src", Commit: "sha256:" + strings.Repeat("cd", 32)}, &log))
 	require.Len(t, sec.scans, 1, "a new archive is scanned")
 	require.Contains(t, log.String(), "Scanning for known vulnerabilities")
 }

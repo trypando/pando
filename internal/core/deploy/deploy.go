@@ -405,7 +405,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	if commit == "" {
 		commit = appSpec.Source.Commit
 	}
-	if err := r.scan(ctx, dep, appSpec, scanned, scanAuth, checkout.Dir, commit, sink); err != nil {
+	if err := r.scan(ctx, dep, appSpec, scanTarget{Image: scanned, Pull: scanAuth, SourceDir: checkout.Dir, Commit: commit}, sink); err != nil {
 		writeFailure(sink, messageOf(err), err)
 		fmt.Fprintf(sink, "   The running version of this app was not touched.\n")
 		leave()

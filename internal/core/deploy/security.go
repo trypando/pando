@@ -22,7 +22,18 @@ import (
 // with no threshold is scanned too, because the number is worth having before
 // anybody sets one.
 
-func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.AppSpec, image string, pull *api.RegistryAuth, sourceDir, commit string, sink io.Writer) error {
+// scanTarget is what a deploy's scan reads: the image the app runs, by digest,
+// with the credential to pull it, and the checkout it came from, named by its
+// commit or digest (R-311).
+type scanTarget struct {
+	Image     string
+	Pull      *api.RegistryAuth
+	SourceDir string
+	Commit    string
+}
+
+func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.AppSpec, target scanTarget, sink io.Writer) error {
+	image, commit := target.Image, target.Commit
 	if r.security == nil {
 		return nil
 	}
@@ -58,12 +69,12 @@ func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.A
 		SpecID:    dep.SpecID,
 		Commit:    commit,
 		Image:     image,
-		SourceDir: sourceDir,
+		SourceDir: target.SourceDir,
 
 		// A published image is fetched with the app's registry credential,
 		// and a build pushed to the install's registry with the registry's
 		// (issue #72): neither is necessarily on the scanner's host.
-		PullAuth: firstAuth(pull, r.builtImageAuth(ctx, image)),
+		PullAuth: firstAuth(target.Pull, r.builtImageAuth(ctx, image)),
 	}, audit.Event{
 		PrincipalKind: audit.KindUser,
 		PrincipalID:   dep.CreatedBy,
