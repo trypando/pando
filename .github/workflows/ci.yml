@@ -309,7 +309,12 @@ jobs:
       - name: Rootless Podman, with cgroup controllers delegated
         run: scripts/ci-rootless-podman.sh
 
-      - run: go test -race -count=1 -timeout=15m -tags=integration ./internal/adapter/runtime/docker/
+      - shell: bash
+        run: |
+          set -o pipefail
+          go test -v -count=1 -timeout=15m -tags=integration ./internal/adapter/runtime/docker/ 2>&1 | tee "$RUNNER_TEMP/t.log"; s=$?
+          echo "--- slowest"; grep -E -- '--- (PASS|FAIL|SKIP)' "$RUNNER_TEMP/t.log" | sed -E 's/.*--- [A-Z]+: (.*) \(([0-9.]+)s\)/\2 \1/' | sort -rn | head -25
+          exit $s
         env:
           PANDO_TEST_ROOTLESS: '1'
 
