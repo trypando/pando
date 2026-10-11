@@ -44,6 +44,7 @@ APP_IMAGE = "traefik/whoami:v1.10.3"  # small, multi-arch, answers any path
 
 BASE = f"http://localhost:{PORT}"
 READYZ = "/readyz"
+NAMES = "{{.Names}}"  # docker ps --format, a container per line
 jar = http.cookiejar.CookieJar()
 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 
@@ -260,7 +261,7 @@ def cleanup(args):
     ulids = [a.split("_", 1)[1].lower() for a in args.app_ids]
     # Wait for Pando's own teardown of the test apps before stopping it.
     for _ in range(20 if ulids else 0):
-        names = subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}"],
+        names = subprocess.run(["docker", "ps", "-a", "--format", NAMES],
                                capture_output=True, text=True).stdout.lower()
         if not any(u in names for u in ulids):
             break
@@ -273,7 +274,7 @@ def cleanup(args):
         for kind, ls, rm in (("container", ["ps", "-a"], ["rm", "-f", "-v"]),
                              ("network", ["network", "ls"], ["network", "rm"]),
                              ("volume", ["volume", "ls"], ["volume", "rm"])):
-            names = subprocess.run(["docker", *ls, "--format", "{{.Name}}" if kind != "container" else "{{.Names}}"],
+            names = subprocess.run(["docker", *ls, "--format", "{{.Name}}" if kind != "container" else NAMES],
                                    capture_output=True, text=True).stdout.split()
             for n in names:
                 if any(u in n.lower() for u in ulids):
@@ -306,7 +307,7 @@ def main():
         for app_id in args.app_ids:
             print(f"--- {app_id}: {json.dumps(api('GET', f'/apps/{app_id}')[1])[:1500]}", flush=True)
         # What the engine says when asked to start a stopped app by hand.
-        stopped = subprocess.run(["docker", "ps", "-a", "--filter", "status=exited", "--format", "{{.Names}}"],
+        stopped = subprocess.run(["docker", "ps", "-a", "--filter", "status=exited", "--format", NAMES],
                                  capture_output=True, text=True).stdout.split()
         for name in [n for n in stopped if n.startswith("pando-app_")]:
             print(f"--- {name}", flush=True)
