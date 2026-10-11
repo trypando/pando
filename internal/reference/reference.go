@@ -75,10 +75,14 @@ type Auth struct {
 // Public is an endpoint that takes no Pando credential at all: the sign-in
 // steps a browser makes before it has one, the passcode page's, and the
 // webhook a git host signs with the app's own secret.
+//
+// Title is a few words naming what the endpoint does — "List apps" — for a
+// list of endpoints; Summary is the whole of it.
 type Route struct {
 	Method  string `json:"method"`
 	Path    string `json:"path"`
 	Group   string `json:"group"`
+	Title   string `json:"title"`
 	Summary string `json:"summary"`
 	Verb    string `json:"verb,omitempty"`
 	Public  bool   `json:"public,omitempty"`

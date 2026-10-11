@@ -3,7 +3,7 @@
   "info": {
     "title": "Pando API",
     "version": "dev",
-    "description": "The HTTP API of a Pando installation. The console, the `pando` CLI and the MCP server are clients of it, and none of them can do anything it cannot (R-261).\n\nAuthenticate with a token (`Authorization: Bearer <token>`) or the session cookie the console signs in with. A failed request answers with the error envelope: a stable `code` to branch on, a `message` to show, and often a `remedy`.\n\nA field listed as required is always present in a response. A request may leave out any field it does not need; Pando answers `VALID_INVALID` naming what is missing.\n\nGenerated from the code by `make reference`."
+    "description": "The HTTP API of a Pando installation.\n\nAuthenticate with a token in the `Authorization: Bearer <token>` header, or with the session cookie `POST /api/v1/sessions` sets.\n\nA failed request answers with the error envelope: a stable `code` to branch on, a `message` to show, and often a `remedy` saying what to do.\n\nA field listed as required is always present in a response. A request may leave out any field it does not need; Pando answers `VALID_INVALID` naming what is missing."
   },
   "servers": [
     {
@@ -82,8 +82,8 @@
     "/api/v1/adapters": {
       "get": {
         "operationId": "listAdapters",
-        "summary": "The adapters configured here and what they can currently do — live capabilities, not stored configuration.",
-        "description": "The adapters configured here and what they can currently do — live capabilities, not stored configuration. Names which credentials are set, never their values. `pending_restart` marks one saved since Pando started, which is not yet what runs; `restart_needed` says any is. A routing adapter Pando runs a process in front of itself for — Traefik, cloudflared — has `edge`: whether it is running, and why not to whoever may change it (R-174). An image registry is signed in to for its health, and has `capabilities` like a runtime.\n\nNeeds `install.view`.",
+        "summary": "List adapters",
+        "description": "The adapters configured here and what they can currently do — live capabilities, not stored configuration. Names which credentials are set, never their values. `pending_restart` marks one saved since Pando started, which is not yet what runs; `restart_needed` says any is. A routing adapter Pando runs a process in front of itself for — Traefik, cloudflared — has `edge`: whether it is running, and why not to whoever may change it. An image registry is signed in to for its health, and has `capabilities` like a runtime.\n\nNeeds `install.view`.",
         "tags": [
           "Installation"
         ],
@@ -205,8 +205,8 @@
       },
       "post": {
         "operationId": "createAdapter",
-        "summary": "Configure an adapter.",
-        "description": "Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. A source connection (category `source`) and an image registry (category `image_registry`) are used from the moment they are saved, with no restart; an image registry Pando could not push to is refused before it is saved. An audit sink (category `audit_sink`) is used from the next delivery pass too, is refused when its settings are, and needs `install.audit.export` as well, because it sends the audit log off the installation (R-385).\n\nNeeds `install.adapters.manage`.",
+        "summary": "Configure an adapter",
+        "description": "Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. A source connection (category `source`) and an image registry (category `image_registry`) are used from the moment they are saved, with no restart; an image registry Pando could not push to is refused before it is saved. An audit sink (category `audit_sink`) is used from the next delivery pass too, is refused when its settings are, and needs `install.audit.export` as well, because it sends the audit log off the installation.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Installation"
         ],
@@ -245,7 +245,7 @@
                     ],
                     "additionalProperties": {
                       "type": "string",
-                      "description": "Always `[redacted]`: a secret's value is never written to a response (R-194)."
+                      "description": "Always `[redacted]`: a secret's value is never written to a response."
                     }
                   }
                 },
@@ -295,8 +295,8 @@
     "/api/v1/adapters/kinds": {
       "get": {
         "operationId": "adapterKinds",
-        "summary": "The kinds of adapter this build of Pando can run, and the settings each takes — which are credentials (write-only, stored encrypted), which are required, the default each takes when left empty or an example, and which are `advanced`: less common, never required, always with a default, and asked for apart from the rest.",
-        "description": "Needs `install.view`.",
+        "summary": "List adapter kinds",
+        "description": "The kinds of adapter this build of Pando can run, and the settings each takes — which are credentials (write-only, stored encrypted), which are required, the default each takes when left empty or an example, and which are `advanced`: less common, never required, always with a default, and asked for apart from the rest.\n\nNeeds `install.view`.",
         "tags": [
           "Installation"
         ],
@@ -335,8 +335,8 @@
     "/api/v1/ai/access/draft": {
       "post": {
         "operationId": "draftAccess",
-        "summary": "Draft a custom role and a group from a description, with verbs from the catalog only.",
-        "description": "Draft a custom role and a group from a description, with verbs from the catalog only. Body: `description`, and `current` with the draft so far to refine it. A draft: create it with POST /roles and POST /groups (R-343).\n\nNeeds `install.users.manage`.",
+        "summary": "Draft access with AI",
+        "description": "Draft a custom role and a group from a description, with verbs from the catalog only. Body: `description`, and `current` with the draft so far to refine it. A draft: create it with POST /roles and POST /groups.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Installation"
         ],
@@ -388,8 +388,8 @@
     "/api/v1/ai/audit/search": {
       "post": {
         "operationId": "searchAudit",
-        "summary": "Turn a question into audit filters, run them, and summarize what they found.",
-        "description": "Turn a question into audit filters, run them, and summarize what they found. Body: `question`. The filters are ordinary GET /audit parameters (R-345).\n\nNeeds `install.audit.read`.",
+        "summary": "Search the audit log with AI",
+        "description": "Turn a question into audit filters, run them, and summarize what they found. Body: `question`. The filters are ordinary GET /audit parameters.\n\nNeeds `install.audit.read`.",
         "tags": [
           "Installation"
         ],
@@ -429,8 +429,8 @@
     "/api/v1/ai/functions": {
       "get": {
         "operationId": "listAIFunctions",
-        "summary": "List every AI function, the adapter that handles it and on which model, whether it is on, and whether the startup configuration assigns it (R-259, R-271).",
-        "description": "Needs `install.view`.",
+        "summary": "List AI functions",
+        "description": "List every AI function, the adapter that handles it and on which model, whether it is on, and whether the startup configuration assigns it.\n\nNeeds `install.view`.",
         "tags": [
           "Installation"
         ],
@@ -469,8 +469,8 @@
     "/api/v1/ai/functions/{function}": {
       "delete": {
         "operationId": "unassignAIFunction",
-        "summary": "Turn an AI function off by removing its assignment (R-259).",
-        "description": "Needs `install.adapters.manage`.",
+        "summary": "Turn off an AI function",
+        "description": "Turn an AI function off by removing its assignment.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Installation"
         ],
@@ -503,8 +503,8 @@
       },
       "put": {
         "operationId": "assignAIFunction",
-        "summary": "Assign an AI function to an adapter, optionally on a model of its own.",
-        "description": "Assign an AI function to an adapter, optionally on a model of its own. Refused while another adapter handles it (R-259).\n\nNeeds `install.adapters.manage`.",
+        "summary": "Assign an AI function",
+        "description": "Assign an AI function to an adapter, optionally on a model of its own. Refused while another adapter handles it.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Installation"
         ],
@@ -560,8 +560,8 @@
     "/api/v1/ai/policy/draft": {
       "post": {
         "operationId": "draftPolicy",
-        "summary": "Propose host policy from a description: the document as it would be saved, and each change.",
-        "description": "Propose host policy from a description: the document as it would be saved, and each change. Fields fixed in the startup configuration are declined, naming where. Body: `description`, and `proposed` with the document so far to refine it. Save it with PUT /policy (R-344).\n\nNeeds `install.policy.manage`.",
+        "summary": "Draft policy with AI",
+        "description": "Propose host policy from a description: the document as it would be saved, and each change. Fields fixed in the startup configuration are declined, naming where. Body: `description`, and `proposed` with the document so far to refine it. Save it with PUT /policy.\n\nNeeds `install.policy.manage`.",
         "tags": [
           "Installation"
         ],
@@ -613,8 +613,8 @@
     "/api/v1/ai/reference/answer": {
       "post": {
         "operationId": "answerReference",
-        "summary": "Answer a \"How can I…\" question from this reference, citing the endpoints, commands and tools it relies on.",
-        "description": "Answer a \"How can I…\" question from this reference, citing the endpoints, commands and tools it relies on. Body: `question`. Describes; does nothing (R-346).",
+        "summary": "Answer a question with AI",
+        "description": "Answer a \"How can I…\" question from this reference, citing the endpoints, commands and tools it relies on. Body: `question`. Describes; does nothing.",
         "tags": [
           "Reference"
         ],
@@ -653,7 +653,7 @@
     "/api/v1/approvals": {
       "get": {
         "operationId": "listApprovals",
-        "summary": "Deploys waiting for approval on every app you can see, oldest first: each deployment with `app_name`, `app_slug`, its `approval_reasons`, the `approvals` so far, and `can_decide` — whether you may approve or reject it.",
+        "summary": "List pending approvals",
         "description": "Deploys waiting for approval on every app you can see, oldest first: each deployment with `app_name`, `app_slug`, its `approval_reasons`, the `approvals` so far, and `can_decide` — whether you may approve or reject it. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues, and a page can hold fewer than `limit` and still have one.",
         "tags": [
           "Deploys"
@@ -729,8 +729,8 @@
     "/api/v1/apps": {
       "get": {
         "operationId": "listApps",
-        "summary": "The apps you can administer.",
-        "description": "The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection. Newest first, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, which is empty after the last page), `q` to match the name or slug, and `id`, repeatable, to read only those apps. `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true (O-53).",
+        "summary": "List apps",
+        "description": "The apps you can administer. Each carries `detection` — its status, and its stage while running — once it has been through detection. Newest first, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, which is empty after the last page), `q` to match the name or slug, and `id`, repeatable, to read only those apps. `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.",
         "tags": [
           "Apps"
         ],
@@ -812,8 +812,8 @@
       },
       "post": {
         "operationId": "createApp",
-        "summary": "Create an app.",
-        "description": "Create an app. `source` is `{type: git, url, ref, connection}` for a repository — `connection` optional, the source connection to read a private one with; left out, the one covering the address most closely is used — `{type: image, image, credential}` for an image that is already built (`credential` optional, for a private one: see PUT /registry-credential), or `{type: upload}` for files sent next with POST /source. Checked against the source allowlist before anything is fetched (R-092), then the repository is checked to be readable, so a private one no connection can read is refused with `VALID_SOURCE_UNREADABLE` saying why (R-091). Returns immediately in draft while detection runs; follow it with GET /detection and `wait`.\n\nNeeds `app.create`.",
+        "summary": "Create an app",
+        "description": "Create an app. `source` is `{type: git, url, ref, connection}` for a repository — `connection` optional, the source connection to read a private one with; left out, the one covering the address most closely is used — `{type: image, image, credential}` for an image that is already built (`credential` optional, for a private one: see PUT /registry-credential), or `{type: upload}` for files sent next with POST /source. Checked against the source allowlist before anything is fetched, then the repository is checked to be readable, so a private one no connection can read is refused with `VALID_SOURCE_UNREADABLE` saying why. Returns immediately in draft while detection runs; follow it with GET /detection and `wait`.\n\nNeeds `app.create`.",
         "tags": [
           "Apps"
         ],
@@ -857,8 +857,8 @@
     "/api/v1/apps/{appID}": {
       "delete": {
         "operationId": "deleteApp",
-        "summary": "Delete an app.",
-        "description": "Delete an app. With storage, `backup=true` keeps a final copy and `force=true` discards it; without either, the request is refused so the decision is taken rather than assumed (R-204, R-205). When host policy has `require_backup_before_destroy`, `force=true` is refused for an app with storage (R-284).\n\nNeeds `app.delete`.",
+        "summary": "Delete an app",
+        "description": "Delete an app. With storage, `backup=true` keeps a final copy and `force=true` discards it; without either, the request is refused so the decision is taken rather than assumed. When host policy has `require_backup_before_destroy`, `force=true` is refused for an app with storage.\n\nNeeds `app.delete`.",
         "tags": [
           "Apps"
         ],
@@ -898,8 +898,8 @@
       },
       "get": {
         "operationId": "getApp",
-        "summary": "One app: name, source, state and pinned spec; `detection` — its status, and its stage while running — once it has been through detection; and `last_backup`, its last daily backup attempt.",
-        "description": "Needs `app.view`.",
+        "summary": "Get an app",
+        "description": "One app: name, source, state and pinned spec; `detection` — its status, and its stage while running — once it has been through detection; and `last_backup`, its last daily backup attempt.\n\nNeeds `app.view`.",
         "tags": [
           "Apps"
         ],
@@ -1032,8 +1032,8 @@
       },
       "patch": {
         "operationId": "patchApp",
-        "summary": "Rename an app or change its source.",
-        "description": "Needs `app.spec.edit`.",
+        "summary": "Update an app",
+        "description": "Rename an app or change its source.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Apps"
         ],
@@ -1085,8 +1085,8 @@
     "/api/v1/apps/{appID}/auto-deploy": {
       "get": {
         "operationId": "getAutoDeploy",
-        "summary": "The app's automatic deploy settings (R-141): `settings` on the newest revision and `deployed` on the pinned one, with `pending` when they differ; `paused` when approval now stops it (R-158); `last_check`, what the last check found (`found_ref`, `found_commit`), the last commit it tried (`attempted_commit`, each commit is tried once) and why it went nowhere (`error`); and `webhook_url` with `webhook_secret_set`.",
-        "description": "Needs `app.view`.",
+        "summary": "Get auto-deploy settings",
+        "description": "The app's automatic deploy settings: `settings` on the newest revision and `deployed` on the pinned one, with `pending` when they differ; `paused` when approval now stops it; `last_check`, what the last check found (`found_ref`, `found_commit`), the last commit it tried (`attempted_commit`, each commit is tried once) and why it went nowhere (`error`); and `webhook_url` with `webhook_secret_set`.\n\nNeeds `app.view`.",
         "tags": [
           "Configuration"
         ],
@@ -1119,8 +1119,8 @@
       },
       "put": {
         "operationId": "setAutoDeploy",
-        "summary": "Change the automatic deploy settings: `enabled`, `trigger` (`branch_updated`, the default, or `release_tagged`), `branch` (empty follows the branch the app was deployed from) and `tag_pattern` (a glob such as `release-*`; empty counts tags like `v1.2.3` as releases).",
-        "description": "Change the automatic deploy settings: `enabled`, `trigger` (`branch_updated`, the default, or `release_tagged`), `branch` (empty follows the branch the app was deployed from) and `tag_pattern` (a glob such as `release-*`; empty counts tags like `v1.2.3` as releases). Writes a revision the next deploy ships; 200 with `changed: false` when nothing changes. Refused while the app's deploys need approval (R-158).\n\nNeeds `app.spec.edit`.",
+        "summary": "Change auto-deploy settings",
+        "description": "Change the automatic deploy settings: `enabled`, `trigger` (`branch_updated`, the default, or `release_tagged`), `branch` (empty follows the branch the app was deployed from) and `tag_pattern` (a glob such as `release-*`; empty counts tags like `v1.2.3` as releases). Writes a revision the next deploy ships; 200 with `changed: false` when nothing changes. Refused while the app's deploys need approval.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Configuration"
         ],
@@ -1174,8 +1174,8 @@
     "/api/v1/apps/{appID}/auto-deploy/webhook": {
       "post": {
         "operationId": "autoDeployWebhook",
-        "summary": "Where a git host sends push and release events (R-142): GitHub's format, `X-GitHub-Event` and `X-Hub-Signature-256` signed with the app's webhook secret.",
-        "description": "Where a git host sends push and release events (R-142): GitHub's format, `X-GitHub-Event` and `X-Hub-Signature-256` signed with the app's webhook secret. A verified delivery about what the app watches starts a check (202); one about something else is ignored (200). The check reads the repository itself, so nothing in the payload decides what deploys. Public: the signature is the credential.",
+        "summary": "Receive a git host webhook",
+        "description": "Where a git host sends push and release events: GitHub's format, `X-GitHub-Event` and `X-Hub-Signature-256` signed with the app's webhook secret. A verified delivery about what the app watches starts a check (202); one about something else is ignored (200). The check reads the repository itself, so nothing in the payload decides what deploys. Public: the signature is the credential.",
         "tags": [
           "Configuration"
         ],
@@ -1244,7 +1244,7 @@
     "/api/v1/apps/{appID}/auto-deploy/webhook-secret": {
       "delete": {
         "operationId": "removeWebhookSecret",
-        "summary": "Remove the app's webhook secret, which turns its webhook off.",
+        "summary": "Remove the webhook secret",
         "description": "Remove the app's webhook secret, which turns its webhook off. Polling carries on.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Configuration"
@@ -1271,8 +1271,8 @@
       },
       "post": {
         "operationId": "rotateWebhookSecret",
-        "summary": "Make the app a new webhook secret, replacing any it had, and return it with `webhook_url`.",
-        "description": "Make the app a new webhook secret, replacing any it had, and return it with `webhook_url`. The only time the secret is shown. Paste both into the git host's webhook settings (R-142).\n\nNeeds `app.spec.edit`.",
+        "summary": "Create a webhook secret",
+        "description": "Make the app a new webhook secret, replacing any it had, and return it with `webhook_url`. The only time the secret is shown. Paste both into the git host's webhook settings.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Configuration"
         ],
@@ -1320,7 +1320,7 @@
     "/api/v1/apps/{appID}/deployments": {
       "get": {
         "operationId": "listDeployments",
-        "summary": "Every deploy of this app, newest first.",
+        "summary": "List deployments",
         "description": "Every deploy of this app, newest first. One waiting in the queue for a build slot carries `queue_position`: how many queued deploys are ahead of it, 0 for the next.\n\nNeeds `app.view`.",
         "tags": [
           "Deploys"
@@ -1368,8 +1368,8 @@
       },
       "post": {
         "operationId": "deploy",
-        "summary": "Deploy.",
-        "description": "Deploy. Returns 202 with the deployment; the build runs behind it. When the deploy needs approval (R-154) it comes back `awaiting_approval` instead, the app is left as it is, the people who can approve are told, and any older request for the app still waiting is superseded. Retrying with the same idempotency key replays the first answer rather than deploying twice (R-262).\n\nNeeds `app.deploy`.",
+        "summary": "Deploy an app",
+        "description": "Deploy. Returns 202 with the deployment; the build runs behind it. When the deploy needs approval it comes back `awaiting_approval` instead, the app is left as it is, the people who can approve are told, and any older request for the app still waiting is superseded. Retrying with the same idempotency key replays the first answer rather than deploying twice.\n\nNeeds `app.deploy`.",
         "tags": [
           "Deploys"
         ],
@@ -1421,8 +1421,8 @@
     "/api/v1/apps/{appID}/deployments/rollback": {
       "post": {
         "operationId": "rollback",
-        "summary": "Deploy the last revision that ran successfully, or the revision `to` names.",
-        "description": "Deploy the last revision that ran successfully, or the revision `to` names. Rolling back to a revision that ran successfully before never needs approval (R-157).\n\nNeeds `app.deploy`.",
+        "summary": "Roll back an app",
+        "description": "Deploy the last revision that ran successfully, or the revision `to` names. Rolling back to a revision that ran successfully before never needs approval.\n\nNeeds `app.deploy`.",
         "tags": [
           "Deploys"
         ],
@@ -1488,7 +1488,7 @@
     "/api/v1/apps/{appID}/deployments/{depID}": {
       "get": {
         "operationId": "getDeployment",
-        "summary": "One deploy: what it shipped, and how it ended.",
+        "summary": "Get a deployment",
         "description": "One deploy: what it shipped, and how it ended. One that needed approval carries `approvals_required`, `approval_expires_at`, `approval_reasons`, the `approvals` so far and, while it waits, `can_decide`. One waiting in the queue for a build slot carries `queue_position`, how many are ahead of it.\n\nNeeds `app.view`.",
         "tags": [
           "Deploys"
@@ -1532,8 +1532,8 @@
     "/api/v1/apps/{appID}/deployments/{depID}/approve": {
       "post": {
         "operationId": "approveDeploy",
-        "summary": "Approve a deploy that is waiting for approval, with an optional `comment`.",
-        "description": "Approve a deploy that is waiting for approval, with an optional `comment`. Takes `install.deploys.approve`, or `app.deploy.approve` on this app; either may approve its holder's own request (R-155). The last approval it needs plans it again and starts it: 200 with the deployment, `pending` once started and still `awaiting_approval` while it needs more. Refused while another deploy of the app is running; the request keeps waiting.\n\nNeeds `app.view`.",
+        "summary": "Approve a deployment",
+        "description": "Approve a deploy that is waiting for approval, with an optional `comment`. Takes `install.deploys.approve`, or `app.deploy.approve` on this app; either may approve its holder's own request. The last approval it needs plans it again and starts it: 200 with the deployment, `pending` once started and still `awaiting_approval` while it needs more. Refused while another deploy of the app is running; the request keeps waiting.\n\nNeeds `app.view`.",
         "tags": [
           "Deploys"
         ],
@@ -1585,8 +1585,8 @@
     "/api/v1/apps/{appID}/deployments/{depID}/logs": {
       "get": {
         "operationId": "deploymentLogs",
-        "summary": "The deploy's output as server-sent events, flushed per line while it runs (R-170).",
-        "description": "The deploy's output as server-sent events, flushed per line while it runs (R-170). While the deploy waits in the queue, a line saying how many deploys are ahead of it, again each time that changes; then the deploy's own output in the same stream.\n\nNeeds `app.logs.read`.",
+        "summary": "Stream deployment logs",
+        "description": "The deploy's output as server-sent events, flushed per line while it runs. While the deploy waits in the queue, a line saying how many deploys are ahead of it, again each time that changes; then the deploy's own output in the same stream.\n\nNeeds `app.logs.read`.",
         "tags": [
           "Deploys"
         ],
@@ -1632,8 +1632,8 @@
     "/api/v1/apps/{appID}/deployments/{depID}/reject": {
       "post": {
         "operationId": "rejectDeploy",
-        "summary": "Reject a deploy that is waiting for approval, with an optional `comment`.",
-        "description": "Reject a deploy that is waiting for approval, with an optional `comment`. One rejection ends the request (R-156). The same permissions as approving.\n\nNeeds `app.view`.",
+        "summary": "Reject a deployment",
+        "description": "Reject a deploy that is waiting for approval, with an optional `comment`. One rejection ends the request. The same permissions as approving.\n\nNeeds `app.view`.",
         "tags": [
           "Deploys"
         ],
@@ -1685,7 +1685,7 @@
     "/api/v1/apps/{appID}/detection": {
       "get": {
         "operationId": "getDetection",
-        "summary": "What Pando worked out about the repository: the winning bid, its evidence, the runners-up and any outstanding questions.",
+        "summary": "Get detection",
         "description": "What Pando worked out about the repository: the winning bid, its evidence, the runners-up and any outstanding questions. While `status` is `running`, `stage` is one of fetching, detecting, trying, scanning or screening, and `elapsed_seconds` how long it has been going. `wait` (seconds, up to 60) holds the answer until detection reaches a new stage or finishes.\n\nNeeds `app.view`.",
         "tags": [
           "Detection"
@@ -1781,7 +1781,7 @@
     "/api/v1/apps/{appID}/detection/accept": {
       "post": {
         "operationId": "acceptDetection",
-        "summary": "Accept the proposal, writing a spec revision and pinning it.",
+        "summary": "Accept the detection proposal",
         "description": "Accept the proposal, writing a spec revision and pinning it. `values` sets variables in the same step — `{key, value, secret?, workload?}` each; a secret goes to the secrets adapter and needs app.secrets.write. Accepting over a configured app needs `confirm`.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Detection"
@@ -1903,7 +1903,7 @@
     "/api/v1/apps/{appID}/detection/answers": {
       "post": {
         "operationId": "detectionAnswers",
-        "summary": "Answer detection's questions.",
+        "summary": "Answer detection questions",
         "description": "Answer detection's questions. Each answer is a fact detection could not find, not a preference.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Detection"
@@ -2001,8 +2001,8 @@
     "/api/v1/apps/{appID}/detection/diff": {
       "get": {
         "operationId": "detectionDiff",
-        "summary": "What accepting the proposal would change about the running app.",
-        "description": "Needs `app.view`.",
+        "summary": "Preview detection changes",
+        "description": "What accepting the proposal would change about the running app.\n\nNeeds `app.view`.",
         "tags": [
           "Detection"
         ],
@@ -2075,8 +2075,8 @@
     "/api/v1/apps/{appID}/detection/rerun": {
       "post": {
         "operationId": "rerunDetection",
-        "summary": "Run detection again, against the current commit.",
-        "description": "Needs `app.spec.edit`.",
+        "summary": "Run detection again",
+        "description": "Run detection again, against the current commit.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Detection"
         ],
@@ -2161,7 +2161,7 @@
     "/api/v1/apps/{appID}/detection/revise": {
       "post": {
         "operationId": "reviseDetection",
-        "summary": "Tell the AI adapter what is wrong with the plan (`message`).",
+        "summary": "Revise the detection plan",
         "description": "Tell the AI adapter what is wrong with the plan (`message`). It checks the repository, changes what it can show, replies, and records the exchange on the proposal. Needs an AI adapter.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Detection"
@@ -2267,8 +2267,8 @@
     "/api/v1/apps/{appID}/egress": {
       "get": {
         "operationId": "getEgress",
-        "summary": "The installation's egress rules (`install`: mode, list, private-address blocking, and what loosening them needs), the rules the pinned spec runs with, merged, with every loosening and what it needs (`effective`), the pinned spec's own egress settings (`spec`), and which revision those are (`revision`).",
-        "description": "The installation's egress rules (`install`: mode, list, private-address blocking, and what loosening them needs), the rules the pinned spec runs with, merged, with every loosening and what it needs (`effective`), the pinned spec's own egress settings (`spec`), and which revision those are (`revision`). `?revision=N`, or `?revision=latest` for the newest, reads that revision instead — what a saved change not yet deployed would run with. Change them by writing a spec (R-182, R-188).\n\nNeeds `app.view`.",
+        "summary": "Get egress rules",
+        "description": "The installation's egress rules (`install`: mode, list, private-address blocking, and what loosening them needs), the rules the pinned spec runs with, merged, with every loosening and what it needs (`effective`), the pinned spec's own egress settings (`spec`), and which revision those are (`revision`). `?revision=N`, or `?revision=latest` for the newest, reads that revision instead — what a saved change not yet deployed would run with. Change them by writing a spec.\n\nNeeds `app.view`.",
         "tags": [
           "Configuration"
         ],
@@ -2331,8 +2331,8 @@
     "/api/v1/apps/{appID}/events": {
       "get": {
         "operationId": "appEvents",
-        "summary": "The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`subject`, `body`, `fields`).",
-        "description": "The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days (R-378).\n\nNeeds `app.view`.",
+        "summary": "List an app's events",
+        "description": "The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days.\n\nNeeds `app.view`.",
         "tags": [
           "Events"
         ],
@@ -2399,8 +2399,8 @@
     "/api/v1/apps/{appID}/exec": {
       "get": {
         "operationId": "exec",
-        "summary": "A terminal in the running app, over a websocket.",
-        "description": "A terminal in the running app, over a websocket. Refused when host policy has turned exec off, including for the owner (R-085).\n\nNeeds `app.exec`.",
+        "summary": "Open a terminal",
+        "description": "A terminal in the running app, over a websocket. Refused when host policy has turned exec off, including for the owner.\n\nNeeds `app.exec`.",
         "tags": [
           "Apps"
         ],
@@ -2445,8 +2445,8 @@
     "/api/v1/apps/{appID}/export": {
       "get": {
         "operationId": "exportSpec",
-        "summary": "The app's configuration as a document, with every secret redacted (R-194).",
-        "description": "Needs `app.view`.",
+        "summary": "Export an app's configuration",
+        "description": "The app's configuration as a document, with every secret redacted.\n\nNeeds `app.view`.",
         "tags": [
           "Configuration"
         ],
@@ -2488,8 +2488,8 @@
     "/api/v1/apps/{appID}/grants": {
       "get": {
         "operationId": "listGrants",
-        "summary": "Who can reach this app, and who can administer it — two planes, listed separately (R-070, R-071).",
-        "description": "Who can reach this app, and who can administer it — two planes, listed separately (R-070, R-071). By principal, the grant to everyone first, with each principal's grants on both planes on the same page: `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues.\n\nNeeds `app.view`.",
+        "summary": "List grants",
+        "description": "Who can reach this app, and who can administer it — two planes, listed separately. By principal, the grant to everyone first, with each principal's grants on both planes on the same page: `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues.\n\nNeeds `app.view`.",
         "tags": [
           "Sharing"
         ],
@@ -2575,8 +2575,8 @@
       },
       "post": {
         "operationId": "createGrant",
-        "summary": "Share the app with a user, a group, a token, or with everyone.",
-        "description": "Share the app with a user, a group, a token, or with everyone. The anonymous grant is a real row, refused where host policy forbids it (R-075, R-076).\n\nNeeds `app.grants.manage`.",
+        "summary": "Share an app",
+        "description": "Share the app with a user, a group, a token, or with everyone. The anonymous grant is a real row, refused where host policy forbids it.\n\nNeeds `app.grants.manage`.",
         "tags": [
           "Sharing"
         ],
@@ -2620,8 +2620,8 @@
     "/api/v1/apps/{appID}/grants/{grantID}": {
       "delete": {
         "operationId": "deleteGrant",
-        "summary": "Take a grant away.",
-        "description": "Needs `app.grants.manage`.",
+        "summary": "Remove a grant",
+        "description": "Take a grant away.\n\nNeeds `app.grants.manage`.",
         "tags": [
           "Sharing"
         ],
@@ -2655,8 +2655,8 @@
       },
       "patch": {
         "operationId": "setGrantRole",
-        "summary": "Change the role a grant for managing the app carries (`role_id`), one update so the person is never left with nothing in between; or, on the grant to everyone, set `passcode` (\"\" removes it).",
-        "description": "Change the role a grant for managing the app carries (`role_id`), one update so the person is never left with nothing in between; or, on the grant to everyone, set `passcode` (\"\" removes it). A new passcode asks everyone let in by the old one again (R-075a).\n\nNeeds `app.grants.manage`.",
+        "summary": "Change a grant's role",
+        "description": "Change the role a grant for managing the app carries (`role_id`), one update so the person is never left with nothing in between; or, on the grant to everyone, set `passcode` (\"\" removes it). A new passcode asks everyone let in by the old one again.\n\nNeeds `app.grants.manage`.",
         "tags": [
           "Sharing"
         ],
@@ -2715,8 +2715,8 @@
     "/api/v1/apps/{appID}/icon": {
       "delete": {
         "operationId": "clearAppIcon",
-        "summary": "Remove the app's tile image, so the tile goes back to the map generated for it.",
-        "description": "Needs `app.spec.edit`.",
+        "summary": "Remove an app's image",
+        "description": "Remove the app's tile image, so the tile goes back to the map generated for it.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Apps"
         ],
@@ -2749,8 +2749,8 @@
       },
       "get": {
         "operationId": "getAppIcon",
-        "summary": "The image on the app's launcher tile.",
-        "description": "The image on the app's launcher tile. Anyone who can open the app can load it; `icon_updated_at` on the app says whether there is one and when it changed (R-340).",
+        "summary": "Get an app's image",
+        "description": "The image on the app's launcher tile. Anyone who can open the app can load it; `icon_updated_at` on the app says whether there is one and when it changed.",
         "tags": [
           "Apps"
         ],
@@ -2783,8 +2783,8 @@
       },
       "put": {
         "operationId": "setAppIcon",
-        "summary": "Set the app's tile image.",
-        "description": "Set the app's tile image. The body is the image itself — PNG, JPEG, WebP or GIF, at most 256 KB. SVG is refused (R-340).\n\nNeeds `app.spec.edit`.",
+        "summary": "Set an app's image",
+        "description": "Set the app's tile image. The body is the image itself — PNG, JPEG, WebP or GIF, at most 256 KB. SVG is refused.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Apps"
         ],
@@ -2830,8 +2830,8 @@
     "/api/v1/apps/{appID}/idle": {
       "get": {
         "operationId": "getAppIdle",
-        "summary": "Whether Pando stops or deletes this app when nobody uses it (R-393 – R-397): its own `stop_days` and `delete_days` (null is the installation's, 0 is off), the installation's, the ones in force, `last_activity_at`, and `stops_at` and `deletes_at` if nothing happens before then.",
-        "description": "Whether Pando stops or deletes this app when nobody uses it (R-393 – R-397): its own `stop_days` and `delete_days` (null is the installation's, 0 is off), the installation's, the ones in force, `last_activity_at`, and `stops_at` and `deletes_at` if nothing happens before then. `stopped_for_idle` says Pando stopped it.\n\nNeeds `app.view`.",
+        "summary": "Get idle settings",
+        "description": "Whether Pando stops or deletes this app when nobody uses it: its own `stop_days` and `delete_days` (null is the installation's, 0 is off), the installation's, the ones in force, `last_activity_at`, and `stops_at` and `deletes_at` if nothing happens before then. `stopped_for_idle` says Pando stopped it.\n\nNeeds `app.view`.",
         "tags": [
           "Apps"
         ],
@@ -2864,8 +2864,8 @@
       },
       "put": {
         "operationId": "putAppIdle",
-        "summary": "Set this app's own `stop_days` and `delete_days`: a number of days, 0 to turn it off, or null for the installation's.",
-        "description": "Set this app's own `stop_days` and `delete_days`: a number of days, 0 to turn it off, or null for the installation's. Deleting has to come later than stopping. App settings, not spec: no revision is written and nothing is deployed (R-397). Withdraws any notice already given.\n\nNeeds `app.spec.edit`.",
+        "summary": "Set idle settings",
+        "description": "Set this app's own `stop_days` and `delete_days`: a number of days, 0 to turn it off, or null for the installation's. Deleting has to come later than stopping. App settings, not spec: no revision is written and nothing is deployed. Withdraws any notice already given.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Apps"
         ],
@@ -2909,7 +2909,7 @@
     "/api/v1/apps/{appID}/logs": {
       "get": {
         "operationId": "appLogs",
-        "summary": "The app's own output, from the runtime, as plain text.",
+        "summary": "Read app logs",
         "description": "The app's own output, from the runtime, as plain text. `tail` sets how many of the most recent lines (default 200, at most 5000; a larger number is read as 5000); `workload` picks which part of the app, defaulting to the primary one. `follow=true` keeps the response open and adds each new line as it is printed, from the same shared stream as /logs/stream, starting from the recent lines that stream holds rather than from `tail`.\n\nNeeds `app.logs.read`.",
         "tags": [
           "Apps"
@@ -2966,8 +2966,8 @@
     "/api/v1/apps/{appID}/logs/stream": {
       "get": {
         "operationId": "appLogStream",
-        "summary": "The app's own output live, as server-sent events (O-51).",
-        "description": "The app's own output live, as server-sent events (O-51). `workload` picks the part, defaulting to the primary one. Opens with `event: reset` and up to the last 1000 lines, then sends each new line as a `data:` event; `event: notice` reports the runtime's stream ending (a restart) and being reconnected. Access is checked again every two minutes: the stream ends with `event: revoked` when it no longer holds, and a client must not reconnect after it; `event: lagged` means the client fell too far behind and may reconnect. Every viewer of a part on one Pando server shares one stream from the runtime.\n\nNeeds `app.logs.read`.",
+        "summary": "Stream app logs",
+        "description": "The app's own output live, as server-sent events. `workload` picks the part, defaulting to the primary one. Opens with `event: reset` and up to the last 1000 lines, then sends each new line as a `data:` event; `event: notice` reports the runtime's stream ending (a restart) and being reconnected. Access is checked again every two minutes: the stream ends with `event: revoked` when it no longer holds, and a client must not reconnect after it; `event: lagged` means the client fell too far behind and may reconnect. Every viewer of a part on one Pando server shares one stream from the runtime.\n\nNeeds `app.logs.read`.",
         "tags": [
           "Apps"
         ],
@@ -3016,8 +3016,8 @@
     "/api/v1/apps/{appID}/passcode": {
       "get": {
         "operationId": "getPasscodeApp",
-        "summary": "The name of an app that asks for a passcode, for its passcode page.",
-        "description": "The name of an app that asks for a passcode, for its passcode page. Public; not-found for any other app (R-075a).",
+        "summary": "Get a passcode page",
+        "description": "The name of an app that asks for a passcode, for its passcode page. Public; not-found for any other app.",
         "tags": [
           "Sharing"
         ],
@@ -3062,8 +3062,8 @@
       },
       "post": {
         "operationId": "enterPasscode",
-        "summary": "Enter an app's passcode (`passcode`).",
-        "description": "Enter an app's passcode (`passcode`). Right, and the browser is let in for a day by a cookie the app never sees; ten wrong tries in fifteen minutes and it waits. Public (R-075a).",
+        "summary": "Enter a passcode",
+        "description": "Enter an app's passcode (`passcode`). Right, and the browser is let in for a day by a cookie the app never sees; ten wrong tries in fifteen minutes and it waits. Public.",
         "tags": [
           "Sharing"
         ],
@@ -3108,8 +3108,8 @@
     "/api/v1/apps/{appID}/plan": {
       "post": {
         "operationId": "plan",
-        "summary": "What a deploy of the pinned spec would do, and every reason it would refuse — before anything is created.",
-        "description": "What a deploy of the pinned spec would do, and every reason it would refuse — before anything is created. Carries the egress rules the app would run with, merged, with where each part came from and what every loosening needs (`egress`, R-188), `notes`, and whether the deploy would need approval and why (`approval`, R-154).\n\nNeeds `app.view`.",
+        "summary": "Plan a deploy",
+        "description": "What a deploy of the pinned spec would do, and every reason it would refuse — before anything is created. Carries the egress rules the app would run with, merged, with where each part came from and what every loosening needs (`egress`), `notes`, and whether the deploy would need approval and why (`approval`).\n\nNeeds `app.view`.",
         "tags": [
           "Configuration"
         ],
@@ -3194,8 +3194,8 @@
     "/api/v1/apps/{appID}/principals": {
       "get": {
         "operationId": "sharePrincipals",
-        "summary": "People and groups to share the app with, matching `q` (username, name or email; group name), at most 20 of each.",
-        "description": "Needs `app.grants.manage`.",
+        "summary": "Find people to share with",
+        "description": "People and groups to share the app with, matching `q` (username, name or email; group name), at most 20 of each.\n\nNeeds `app.grants.manage`.",
         "tags": [
           "Sharing"
         ],
@@ -3288,8 +3288,8 @@
     "/api/v1/apps/{appID}/registry-credential": {
       "delete": {
         "operationId": "deleteRegistryCredential",
-        "summary": "Remove the app's registry credential, so its image is pulled anonymously.",
-        "description": "Needs `app.secrets.write`.",
+        "summary": "Remove the registry credential",
+        "description": "Remove the app's registry credential, so its image is pulled anonymously.\n\nNeeds `app.secrets.write`.",
         "tags": [
           "Secrets"
         ],
@@ -3315,7 +3315,7 @@
       },
       "get": {
         "operationId": "getRegistryCredential",
-        "summary": "Whether the app has a credential for pulling its image, and of which `kind` (`basic` or `ecr`), with its `username` or `access_key_id` and `region`.",
+        "summary": "Get the registry credential",
         "description": "Whether the app has a credential for pulling its image, and of which `kind` (`basic` or `ecr`), with its `username` or `access_key_id` and `region`. Never the password or secret key.\n\nNeeds `app.view`.",
         "tags": [
           "Secrets"
@@ -3360,7 +3360,7 @@
       },
       "put": {
         "operationId": "putRegistryCredential",
-        "summary": "Set the credential the app's image is pulled with: `kind` `basic` with `username` and `password` (a token), or `kind` `ecr` with `access_key_id`, `secret_access_key` and optionally `region`, from which a registry password is minted for every pull.",
+        "summary": "Set the registry credential",
         "description": "Set the credential the app's image is pulled with: `kind` `basic` with `username` and `password` (a token), or `kind` `ecr` with `access_key_id`, `secret_access_key` and optionally `region`, from which a registry password is minted for every pull. Replaces any credential the app had. It belongs to the app and is never given to it.\n\nNeeds `app.secrets.write`.",
         "tags": [
           "Secrets"
@@ -3398,8 +3398,8 @@
     "/api/v1/apps/{appID}/restart": {
       "post": {
         "operationId": "restartApp",
-        "summary": "Restart the running workloads without changing anything.",
-        "description": "Needs `app.restart`.",
+        "summary": "Restart an app",
+        "description": "Restart the running workloads without changing anything.\n\nNeeds `app.restart`.",
         "tags": [
           "Apps"
         ],
@@ -3446,8 +3446,8 @@
     "/api/v1/apps/{appID}/restore": {
       "post": {
         "operationId": "restoreAppBackup",
-        "summary": "Restore this app's storage from one of its backups.",
-        "description": "Needs `app.deploy`.",
+        "summary": "Restore an app's storage",
+        "description": "Restore this app's storage from one of its backups.\n\nNeeds `app.deploy`.",
         "tags": [
           "Storage"
         ],
@@ -3520,8 +3520,8 @@
     "/api/v1/apps/{appID}/routing": {
       "get": {
         "operationId": "getRouting",
-        "summary": "Where the app is reached, where it will be after the next deploy when a change is saved (`next_address`), and the routing adapters it could move to, with the modes each serves and defaults to.",
-        "description": "Needs `app.view`.",
+        "summary": "Get routing",
+        "description": "Where the app is reached, where it will be after the next deploy when a change is saved (`next_address`), and the routing adapters it could move to, with the modes each serves and defaults to.\n\nNeeds `app.view`.",
         "tags": [
           "Configuration"
         ],
@@ -3615,8 +3615,8 @@
       },
       "put": {
         "operationId": "setRouting",
-        "summary": "Change where a configured app is reached: `adapter_ref`, `mode`, and `hostname` or `path_prefix` (such as `/team/notes`), each defaulting to the adapter's own.",
-        "description": "Change where a configured app is reached: `adapter_ref`, `mode`, and `hostname` or `path_prefix` (such as `/team/notes`), each defaulting to the adapter's own. Writes a revision the next deploy ships. A change needs `confirm: true`, since the old address stops working; a mode the adapter does not default to also needs app.routing.override (R-163). An address another app holds, or a path inside or around another app's, is refused with STATE_ADDRESS_TAKEN.\n\nNeeds `app.spec.edit`.",
+        "summary": "Change routing",
+        "description": "Change where a configured app is reached: `adapter_ref`, `mode`, and `hostname` or `path_prefix` (such as `/team/notes`), each defaulting to the adapter's own. Writes a revision the next deploy ships. A change needs `confirm: true`, since the old address stops working; a mode the adapter does not default to also needs app.routing.override. An address another app holds, or a path inside or around another app's, is refused with STATE_ADDRESS_TAKEN.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Configuration"
         ],
@@ -3723,7 +3723,7 @@
     "/api/v1/apps/{appID}/secrets": {
       "get": {
         "operationId": "listSecrets",
-        "summary": "Which secrets this app has, and where each came from.",
+        "summary": "List secrets",
         "description": "Which secrets this app has, and where each came from. Never their values.\n\nNeeds `app.view`.",
         "tags": [
           "Secrets"
@@ -3773,8 +3773,8 @@
     "/api/v1/apps/{appID}/secrets/{key}": {
       "delete": {
         "operationId": "deleteSecret",
-        "summary": "Remove a secret.",
-        "description": "Needs `app.secrets.write`.",
+        "summary": "Delete a secret",
+        "description": "Remove a secret.\n\nNeeds `app.secrets.write`.",
         "tags": [
           "Secrets"
         ],
@@ -3808,8 +3808,8 @@
       },
       "put": {
         "operationId": "putSecret",
-        "summary": "Set a secret.",
-        "description": "Set a secret. Rotating one recreates the workload rather than leaving it running with the old value (R-193).\n\nNeeds `app.secrets.write`.",
+        "summary": "Set a secret",
+        "description": "Set a secret. Rotating one recreates the workload rather than leaving it running with the old value.\n\nNeeds `app.secrets.write`.",
         "tags": [
           "Secrets"
         ],
@@ -3862,8 +3862,8 @@
     "/api/v1/apps/{appID}/secrets/{key}/value": {
       "get": {
         "operationId": "readSecretValue",
-        "summary": "Read one secret's value.",
-        "description": "Read one secret's value. Its own verb, separate from managing the app, and audited every time (R-083).\n\nNeeds `app.secrets.read`.",
+        "summary": "Read a secret's value",
+        "description": "Read one secret's value. Its own verb, separate from managing the app, and audited every time.\n\nNeeds `app.secrets.read`.",
         "tags": [
           "Secrets"
         ],
@@ -3918,8 +3918,8 @@
     "/api/v1/apps/{appID}/security": {
       "get": {
         "operationId": "appSecurity",
-        "summary": "The app's security score, what it was taken from, and the findings behind it (R-310).",
-        "description": "Needs `app.view`.",
+        "summary": "Get the security score",
+        "description": "The app's security score, what it was taken from, and the findings behind it.\n\nNeeds `app.view`.",
         "tags": [
           "Security"
         ],
@@ -3954,8 +3954,8 @@
     "/api/v1/apps/{appID}/security/scan": {
       "post": {
         "operationId": "scanApp",
-        "summary": "Scan the app now.",
-        "description": "Scan the app now. A write, not a refresh: the score decides whether the next deploy is allowed (R-312, R-314).\n\nNeeds `app.deploy`.",
+        "summary": "Scan an app",
+        "description": "Scan the app now. A write, not a refresh: the score decides whether the next deploy is allowed.\n\nNeeds `app.deploy`.",
         "tags": [
           "Security"
         ],
@@ -3990,8 +3990,8 @@
     "/api/v1/apps/{appID}/slots": {
       "get": {
         "operationId": "listSlots",
-        "summary": "The things the app says it needs, and what fills each one (R-130).",
-        "description": "Needs `app.view`.",
+        "summary": "List slots",
+        "description": "The things the app says it needs, and what fills each one.\n\nNeeds `app.view`.",
         "tags": [
           "Configuration"
         ],
@@ -4040,7 +4040,7 @@
     "/api/v1/apps/{appID}/slots/{key}": {
       "put": {
         "operationId": "setSlot",
-        "summary": "Fill a slot: provision one, bind to something already running, or set a value.",
+        "summary": "Fill a slot",
         "description": "Fill a slot: provision one, bind to something already running, or set a value. Takes effect at the next deploy.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Configuration"
@@ -4130,8 +4130,8 @@
     "/api/v1/apps/{appID}/source": {
       "post": {
         "operationId": "uploadSource",
-        "summary": "Send an app's files as its source: a gzipped tar of the app's directory (Content-Type `application/gzip`, at most 256 MB), paths relative to its root.",
-        "description": "Send an app's files as its source: a gzipped tar of the app's directory (Content-Type `application/gzip`, at most 256 MB), paths relative to its root. A single index.html is enough for a static site. Replaces any files sent before; follow it with POST /detection/rerun. Refused under a source allowlist that does not include `upload` (R-092).\n\nNeeds `app.spec.edit`.",
+        "summary": "Upload an app's source",
+        "description": "Send an app's files as its source: a gzipped tar of the app's directory (Content-Type `application/gzip`, at most 256 MB), paths relative to its root. A single index.html is enough for a static site. Replaces any files sent before; follow it with POST /detection/rerun. Refused under a source allowlist that does not include `upload`.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Detection"
         ],
@@ -4189,8 +4189,8 @@
     "/api/v1/apps/{appID}/specs": {
       "get": {
         "operationId": "listSpecs",
-        "summary": "Every spec revision, and which one is pinned.",
-        "description": "Every spec revision, and which one is pinned. Revisions are append-only (R-152).\n\nNeeds `app.view`.",
+        "summary": "List spec revisions",
+        "description": "Every spec revision, and which one is pinned. Revisions are append-only.\n\nNeeds `app.view`.",
         "tags": [
           "Configuration"
         ],
@@ -4241,8 +4241,8 @@
       },
       "post": {
         "operationId": "createSpec",
-        "summary": "Write a new spec revision.",
-        "description": "Write a new spec revision. It does not deploy and does not become pinned. A routing mode other than its adapter's default, where the app did not already have one, also needs app.routing.override (R-163). A change to `egress` needs app.egress.tighten or app.egress.loosen; one that newly loosens the installation's egress rules needs app.egress.loosen where policy gates loosening by verb, is refused with PLAN_EGRESS_LOOSENING_FORBIDDEN where policy forbids it, and makes the next deploy need approval where policy says so (R-183, R-184). Turning on automatic deploys while the app's deploys need approval is refused (R-158). With `?dry_run=true` nothing is written: the same checks run and refuse with the same errors, and an accepted spec answers 200 with the egress rules it would run with, what it newly loosens, and whether deploying it would need approval and why.\n\nNeeds `app.spec.edit`.",
+        "summary": "Create a spec revision",
+        "description": "Write a new spec revision. It does not deploy and does not become pinned. A routing mode other than its adapter's default, where the app did not already have one, also needs app.routing.override. A change to `egress` needs app.egress.tighten or app.egress.loosen; one that newly loosens the installation's egress rules needs app.egress.loosen where policy gates loosening by verb, is refused with PLAN_EGRESS_LOOSENING_FORBIDDEN where policy forbids it, and makes the next deploy need approval where policy says so. Turning on automatic deploys while the app's deploys need approval is refused. With `?dry_run=true` nothing is written: the same checks run and refuse with the same errors, and an accepted spec answers 200 with the egress rules it would run with, what it newly loosens, and whether deploying it would need approval and why.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Configuration"
         ],
@@ -4351,8 +4351,8 @@
     "/api/v1/apps/{appID}/specs/{a}/diff/{b}": {
       "get": {
         "operationId": "diffSpecs",
-        "summary": "The classified difference between two revisions — what a deploy of it would restart, rebuild or leave alone.",
-        "description": "Needs `app.view`.",
+        "summary": "Compare two spec revisions",
+        "description": "The classified difference between two revisions — what a deploy of it would restart, rebuild or leave alone.\n\nNeeds `app.view`.",
         "tags": [
           "Configuration"
         ],
@@ -4435,8 +4435,8 @@
     "/api/v1/apps/{appID}/specs/{rev}": {
       "get": {
         "operationId": "getSpec",
-        "summary": "One revision, in full.",
-        "description": "Needs `app.view`.",
+        "summary": "Get a spec revision",
+        "description": "One revision, in full.\n\nNeeds `app.view`.",
         "tags": [
           "Configuration"
         ],
@@ -4479,8 +4479,8 @@
     "/api/v1/apps/{appID}/specs/{rev}/pin": {
       "post": {
         "operationId": "pinSpec",
-        "summary": "Pin a revision: what the reconciler converges to, and what the next deploy ships.",
-        "description": "Needs `app.spec.edit`.",
+        "summary": "Pin a spec revision",
+        "description": "Pin a revision: what the reconciler converges to, and what the next deploy ships.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Configuration"
         ],
@@ -4523,7 +4523,7 @@
     "/api/v1/apps/{appID}/start": {
       "post": {
         "operationId": "startApp",
-        "summary": "Set the app's desired state to running.",
+        "summary": "Start an app",
         "description": "Set the app's desired state to running. The reconciler converges to it, so it survives a restart.\n\nNeeds `app.restart`.",
         "tags": [
           "Apps"
@@ -4571,8 +4571,8 @@
     "/api/v1/apps/{appID}/status": {
       "get": {
         "operationId": "appStatus",
-        "summary": "What the app is doing now: its state, and each part separately — running, restarting and how often, health, exit code — so a single crash-looping part is visible rather than averaged into one word.",
-        "description": "What the app is doing now: its state, and each part separately — running, restarting and how often, health, exit code — so a single crash-looping part is visible rather than averaged into one word. `auto_deploy_paused` is true when the spec asks for auto-deploy and approval now stops it (R-158).\n\nNeeds `app.view`.",
+        "summary": "Get an app's status",
+        "description": "What the app is doing now: its state, and each part separately — running, restarting and how often, health, exit code — so a single crash-looping part is visible rather than averaged into one word. `auto_deploy_paused` is true when the spec asks for auto-deploy and approval now stops it.\n\nNeeds `app.view`.",
         "tags": [
           "Apps"
         ],
@@ -4643,8 +4643,8 @@
     "/api/v1/apps/{appID}/stop": {
       "post": {
         "operationId": "stopApp",
-        "summary": "Set the app's desired state to stopped.",
-        "description": "Needs `app.restart`.",
+        "summary": "Stop an app",
+        "description": "Set the app's desired state to stopped.\n\nNeeds `app.restart`.",
         "tags": [
           "Apps"
         ],
@@ -4691,8 +4691,8 @@
     "/api/v1/apps/{appID}/usage": {
       "get": {
         "operationId": "appUsage",
-        "summary": "What each part of the app is using now — CPU in thousandths of a core, memory and disk in bytes, and each mounted volume's size — beside its limits (0 is none; `host_cpu_millis` and `host_memory_bytes` say what none means).",
-        "description": "What each part of the app is using now — CPU in thousandths of a core, memory and disk in bytes, and each mounted volume's size — beside its limits (0 is none; `host_cpu_millis` and `host_memory_bytes` say what none means). A reading, not a history (R-245, R-016). `supported: false` when the runtime cannot report it.\n\nNeeds `app.view`.",
+        "summary": "Get an app's usage",
+        "description": "What each part of the app is using now — CPU in thousandths of a core, memory and disk in bytes, and each mounted volume's size — beside its limits (0 is none; `host_cpu_millis` and `host_memory_bytes` say what none means). A reading, not a history. `supported: false` when the runtime cannot report it.\n\nNeeds `app.view`.",
         "tags": [
           "Apps"
         ],
@@ -4755,8 +4755,8 @@
     "/api/v1/apps/{appID}/volumes": {
       "get": {
         "operationId": "listVolumes",
-        "summary": "The storage this app keeps.",
-        "description": "The storage this app keeps. It outlives the app (R-204).\n\nNeeds `app.view`.",
+        "summary": "List volumes",
+        "description": "The storage this app keeps. It outlives the app.\n\nNeeds `app.view`.",
         "tags": [
           "Storage"
         ],
@@ -4819,8 +4819,8 @@
       },
       "post": {
         "operationId": "createVolume",
-        "summary": "Declare a path the app keeps between deploys.",
-        "description": "Declare a path the app keeps between deploys. Anything written outside one is discarded at the next deploy (R-201).\n\nNeeds `app.spec.edit`.",
+        "summary": "Create a volume",
+        "description": "Declare a path the app keeps between deploys. Anything written outside one is discarded at the next deploy.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Storage"
         ],
@@ -4910,8 +4910,8 @@
     "/api/v1/audit": {
       "get": {
         "operationId": "listAudit",
-        "summary": "The audit log, newest first.",
-        "description": "The audit log, newest first. Filters combine: `action` (a prefix), `principal_id` (who did it, including through a token), `principal_kind` (user, token, system or anonymous), `app_id`, `target_kind` and `target_id` (what it was done to), `involving` (an ID that is the actor or the target — everything to do with one account), and `since`/`until` (RFC 3339; since inclusive, until exclusive). Pages with `before`. Append-only: no endpoint edits or deletes an event, and the database refuses it too (R-027). Each event carries `outcome` (success, denied or failed), `source_ip`, `peer_ip`, `user_agent`, `actor_name`, `actor_email` and `schema_version` (R-379). Reading the log is itself audited, as `audit.read` (R-388).\n\nNeeds `install.audit.read`.",
+        "summary": "List audit events",
+        "description": "The audit log, newest first. Filters combine: `action` (a prefix), `principal_id` (who did it, including through a token), `principal_kind` (user, token, system or anonymous), `app_id`, `target_kind` and `target_id` (what it was done to), `involving` (an ID that is the actor or the target — everything to do with one account), and `since`/`until` (RFC 3339; since inclusive, until exclusive). Pages with `before`. Append-only: no endpoint edits or deletes an event, and the database refuses it too. Each event carries `outcome` (success, denied or failed), `source_ip`, `peer_ip`, `user_agent`, `actor_name`, `actor_email` and `schema_version`. Reading the log is itself audited, as `audit.read`.\n\nNeeds `install.audit.read`.",
         "tags": [
           "Installation"
         ],
@@ -5022,8 +5022,8 @@
     "/api/v1/audit/archives": {
       "get": {
         "operationId": "listAuditArchives",
-        "summary": "The months of the audit log past retention, archived and removed from the live log (R-347).",
-        "description": "The months of the audit log past retention, archived and removed from the live log (R-347). Each with its manifest: `month`, `row_count`, `first_id` and `last_id`, `first_at` and `last_at`, `size_bytes`, `sha256`, and where it is kept — `adapter_ref` when exported to a backup destination, absent when Pando keeps it. Retention is host policy's `audit_retention_months` (at least 3) and `audit_archive` (keep, export or off).\n\nNeeds `install.audit.read`.",
+        "summary": "List audit archives",
+        "description": "The months of the audit log past retention, archived and removed from the live log. Each with its manifest: `month`, `row_count`, `first_id` and `last_id`, `first_at` and `last_at`, `size_bytes`, `sha256`, and where it is kept — `adapter_ref` when exported to a backup destination, absent when Pando keeps it. Retention is host policy's `audit_retention_months` (at least 3) and `audit_archive` (keep, export or off).\n\nNeeds `install.audit.read`.",
         "tags": [
           "Installation"
         ],
@@ -5062,8 +5062,8 @@
     "/api/v1/audit/archives/{archiveID}": {
       "get": {
         "operationId": "getAuditArchive",
-        "summary": "Download one archived month: gzipped JSON lines, one audit event per line with every field the live log held.",
-        "description": "Download one archived month: gzipped JSON lines, one audit event per line with every field the live log held. `Repr-Digest` carries its SHA-256, the same as the manifest's `sha256`. Audited as `audit.archive.download` (R-388).\n\nNeeds `install.audit.read`.",
+        "summary": "Download an audit archive",
+        "description": "Download one archived month: gzipped JSON lines, one audit event per line with every field the live log held. `Repr-Digest` carries its SHA-256, the same as the manifest's `sha256`. Audited as `audit.archive.download`.\n\nNeeds `install.audit.read`.",
         "tags": [
           "Installation"
         ],
@@ -5099,8 +5099,8 @@
     "/api/v1/audit/export": {
       "get": {
         "operationId": "auditExport",
-        "summary": "Any range of the live log as gzipped JSON lines, in commit order (R-387): `since` and `until` (RFC 3339), `action` and `exclude` prefixes, and `format` `native` (the archive's line format) or `ocsf`.",
-        "description": "Any range of the live log as gzipped JSON lines, in commit order (R-387): `since` and `until` (RFC 3339), `action` and `exclude` prefixes, and `format` `native` (the archive's line format) or `ocsf`. When the range reaches before the live log, `Pando-Audit-Live-From` names its oldest event's time, and archives hold the rest. Audited as `audit.export`.\n\nNeeds `install.audit.read`.",
+        "summary": "Export the audit log",
+        "description": "Any range of the live log as gzipped JSON lines, in commit order: `since` and `until` (RFC 3339), `action` and `exclude` prefixes, and `format` `native` (the archive's line format) or `ocsf`. When the range reaches before the live log, `Pando-Audit-Live-From` names its oldest event's time, and archives hold the rest. Audited as `audit.export`.\n\nNeeds `install.audit.read`.",
         "tags": [
           "Installation"
         ],
@@ -5169,8 +5169,8 @@
     "/api/v1/audit/sinks": {
       "get": {
         "operationId": "listAuditSinks",
-        "summary": "Every audit sink — a destination the log is pushed to as it is written (R-382) — with what it sends where (`transport`, `endpoint`, `format`, `actions`, `exclude`, and `disclosure`, the sentence the console shows), its last delivered event (`cursor_at`, `delivered_at`, `delivered_count`), `backlog`, `last_error`, `failing_since`, `disabled_at` and `disabled_reason` when Pando turned it off, and `gap_from`/`gap_to` for a range it missed (R-383, R-386).",
-        "description": "Every audit sink — a destination the log is pushed to as it is written (R-382) — with what it sends where (`transport`, `endpoint`, `format`, `actions`, `exclude`, and `disclosure`, the sentence the console shows), its last delivered event (`cursor_at`, `delivered_at`, `delivered_count`), `backlog`, `last_error`, `failing_since`, `disabled_at` and `disabled_reason` when Pando turned it off, and `gap_from`/`gap_to` for a range it missed (R-383, R-386). Audit sinks are adapters of category `audit_sink`, created with `POST /adapters`, which needs `install.audit.export` for them (R-385).\n\nNeeds `install.audit.read`.",
+        "summary": "List audit sinks",
+        "description": "Every audit sink — a destination the log is pushed to as it is written — with what it sends where (`transport`, `endpoint`, `format`, `actions`, `exclude`, and `disclosure`, the sentence the console shows), its last delivered event (`cursor_at`, `delivered_at`, `delivered_count`), `backlog`, `last_error`, `failing_since`, `disabled_at` and `disabled_reason` when Pando turned it off, and `gap_from`/`gap_to` for a range it missed. Audit sinks are adapters of category `audit_sink`, created with `POST /adapters`, which needs `install.audit.export` for them.\n\nNeeds `install.audit.read`.",
         "tags": [
           "Installation"
         ],
@@ -5320,8 +5320,8 @@
     "/api/v1/audit/stream": {
       "get": {
         "operationId": "auditStream",
-        "summary": "The audit log in commit order, oldest first, from a cursor (R-381): for a collector that must miss nothing across restarts, upgrades and replicas.",
-        "description": "The audit log in commit order, oldest first, from a cursor (R-381): for a collector that must miss nothing across restarts, upgrades and replicas. `after` is the `cursor` a previous read returned; empty starts at the oldest event in the live log, and `now` after the newest. `limit` (default 500, at most 1000); `wait` (0–60 seconds) holds the request until an event arrives; `action` and `exclude` are repeatable prefixes, and the cursor moves past what they drop; `format` is `native` (the archive's line format) or `ocsf`. Answers `events`, `cursor` and `caught_up`. Delivery is at least once: an event's `id` is its idempotency key. Audited as `audit.read` at most once an hour per reader (R-388).\n\nNeeds `install.audit.read`.",
+        "summary": "Stream the audit log",
+        "description": "The audit log in commit order, oldest first, from a cursor: for a collector that must miss nothing across restarts, upgrades and replicas. `after` is the `cursor` a previous read returned; empty starts at the oldest event in the live log, and `now` after the newest. `limit` (default 500, at most 1000); `wait` (0–60 seconds) holds the request until an event arrives; `action` and `exclude` are repeatable prefixes, and the cursor moves past what they drop; `format` is `native` (the archive's line format) or `ocsf`. Answers `events`, `cursor` and `caught_up`. Delivery is at least once: an event's `id` is its idempotency key. Audited as `audit.read` at most once an hour per reader.\n\nNeeds `install.audit.read`.",
         "tags": [
           "Installation"
         ],
@@ -5416,7 +5416,7 @@
     "/api/v1/auth/complete": {
       "get": {
         "operationId": "ssoComplete",
-        "summary": "Finish a provider sign-in in the browser that started it, with the one-time `code` the callback issued.",
+        "summary": "Finish provider sign-in",
         "description": "Finish a provider sign-in in the browser that started it, with the one-time `code` the callback issued. Sets the session cookie and redirects to where the sign-in began. Public.",
         "tags": [
           "Session"
@@ -5452,7 +5452,7 @@
     "/api/v1/auth/failures/{flowID}": {
       "get": {
         "operationId": "ssoFailure",
-        "summary": "Why a provider sign-in failed (`message`, `remedy`), for the sign-in page.",
+        "summary": "Get sign-in failure",
         "description": "Why a provider sign-in failed (`message`, `remedy`), for the sign-in page. Public.",
         "tags": [
           "Session"
@@ -5488,7 +5488,7 @@
     "/api/v1/auth/options": {
       "get": {
         "operationId": "signInOptions",
-        "summary": "How people can sign in here: whether password sign-in is on, and the identity providers that are (`id`, `name`, `kind`).",
+        "summary": "List sign-in options",
         "description": "How people can sign in here: whether password sign-in is on, and the identity providers that are (`id`, `name`, `kind`). Public.",
         "tags": [
           "Session"
@@ -5514,7 +5514,7 @@
     "/api/v1/auth/providers/{providerID}/callback": {
       "get": {
         "operationId": "ssoCallbackGet",
-        "summary": "Where an OpenID Connect provider returns the browser: the redirect URI to register with it.",
+        "summary": "Receive OpenID Connect callback",
         "description": "Where an OpenID Connect provider returns the browser: the redirect URI to register with it. Public.",
         "tags": [
           "Session"
@@ -5573,7 +5573,7 @@
       },
       "post": {
         "operationId": "ssoCallbackPost",
-        "summary": "Where a SAML provider posts its response: the Assertion Consumer Service URL to register with it.",
+        "summary": "Receive SAML response",
         "description": "Where a SAML provider posts its response: the Assertion Consumer Service URL to register with it. Public.",
         "tags": [
           "Session"
@@ -5628,7 +5628,7 @@
     "/api/v1/auth/providers/{providerID}/metadata": {
       "get": {
         "operationId": "samlMetadata",
-        "summary": "Pando's SAML service provider metadata for this provider.",
+        "summary": "Get SAML metadata",
         "description": "Pando's SAML service provider metadata for this provider. Its URL is also the entity ID. Public.",
         "tags": [
           "Session"
@@ -5664,7 +5664,7 @@
     "/api/v1/auth/providers/{providerID}/start": {
       "get": {
         "operationId": "ssoStart",
-        "summary": "Start signing in through an identity provider: a browser navigation, redirected to the provider.",
+        "summary": "Start provider sign-in",
         "description": "Start signing in through an identity provider: a browser navigation, redirected to the provider. `next` is the path to land on afterwards. Works under `/.pando` on an app's own hostname too. Public.",
         "tags": [
           "Session"
@@ -5708,7 +5708,7 @@
     "/api/v1/backups": {
       "get": {
         "operationId": "listBackups",
-        "summary": "The backups this installation holds, newest first, a page at a time: `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `app_id` narrows to one app.",
+        "summary": "List backups",
         "description": "The backups this installation holds, newest first, a page at a time: `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `app_id` narrows to one app. The first page also carries `attempts`: the most recent apps' last daily backup attempt, with why it was skipped or failed, at most a page of them.\n\nNeeds `install.backup.manage`.",
         "tags": [
           "Installation"
@@ -5799,8 +5799,8 @@
       },
       "post": {
         "operationId": "createBackup",
-        "summary": "Take a backup now.",
-        "description": "Needs `install.backup.manage`.",
+        "summary": "Take a backup",
+        "description": "Take a backup now.\n\nNeeds `install.backup.manage`.",
         "tags": [
           "Installation"
         ],
@@ -5834,8 +5834,8 @@
     "/api/v1/backups/{backupID}/restore": {
       "post": {
         "operationId": "restoreBackup",
-        "summary": "Restore from a backup.",
-        "description": "Restore from a backup. Verified first: an incomplete one is refused rather than half-applied (R-215).\n\nNeeds `install.backup.manage`.",
+        "summary": "Restore from a backup",
+        "description": "Restore from a backup. Verified first: an incomplete one is refused rather than half-applied.\n\nNeeds `install.backup.manage`.",
         "tags": [
           "Installation"
         ],
@@ -5908,8 +5908,8 @@
     "/api/v1/backups/{backupID}/verify": {
       "post": {
         "operationId": "verifyBackup",
-        "summary": "Check a backup before it is needed, rather than at the moment of disaster (R-216).",
-        "description": "Needs `install.backup.manage`.",
+        "summary": "Verify a backup",
+        "description": "Check a backup before it is needed, rather than at the moment of disaster.\n\nNeeds `install.backup.manage`.",
         "tags": [
           "Installation"
         ],
@@ -5973,8 +5973,8 @@
     "/api/v1/capacity": {
       "get": {
         "operationId": "capacity",
-        "summary": "What the host has, and what is committed to apps (R-242).",
-        "description": "Needs `install.view`.",
+        "summary": "Get capacity",
+        "description": "What the host has, and what is committed to apps.\n\nNeeds `install.view`.",
         "tags": [
           "Installation"
         ],
@@ -6081,8 +6081,8 @@
     "/api/v1/config": {
       "get": {
         "operationId": "getConfig",
-        "summary": "The configuration Pando started with (R-271): every non-secret setting, its value and where it came from — an environment variable, the config file, or the default — and the host policy fields fixed there, which cannot be changed through the API while they are set.",
-        "description": "The configuration Pando started with (R-271): every non-secret setting, its value and where it came from — an environment variable, the config file, or the default — and the host policy fields fixed there, which cannot be changed through the API while they are set. Secrets are never listed.\n\nNeeds `install.view`.",
+        "summary": "Get startup configuration",
+        "description": "The configuration Pando started with: every non-secret setting, its value and where it came from — an environment variable, the config file, or the default — and the host policy fields fixed there, which cannot be changed through the API while they are set. Secrets are never listed.\n\nNeeds `install.view`.",
         "tags": [
           "Installation"
         ],
@@ -6197,8 +6197,8 @@
     "/api/v1/events": {
       "get": {
         "operationId": "listEvents",
-        "summary": "The event catalog: every event a subscription can name — `name`, `scope` (app or install), `source`, `summary` and its data `fields`.",
-        "description": "The event catalog: every event a subscription can name — `name`, `scope` (app or install), `source`, `summary` and its data `fields`. The same list as docs/events.md (R-364). `destinations` lists the notification adapters a subscription can send through (`id`, `kind`, and `audience`: people or channel).",
+        "summary": "List events",
+        "description": "The event catalog: every event a subscription can name — `name`, `scope` (app or install), `source`, `summary` and its data `fields`. The same list as docs/events.md. `destinations` lists the notification adapters a subscription can send through (`id`, `kind`, and `audience`: people or channel).",
         "tags": [
           "Events"
         ],
@@ -6246,8 +6246,8 @@
     "/api/v1/groups": {
       "get": {
         "operationId": "listGroups",
-        "summary": "Groups, whether Pando's own or an identity adapter's (R-078), Pando's first and then by name, each with `member_count`; GET /groups/{groupID} has the members.",
-        "description": "Groups, whether Pando's own or an identity adapter's (R-078), Pando's first and then by name, each with `member_count`; GET /groups/{groupID} has the members. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the name; `member` keeps the groups an account is directly in; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true (O-53).\n\nNeeds `install.view`.",
+        "summary": "List groups",
+        "description": "Groups, whether Pando's own or an identity adapter's, Pando's first and then by name, each with `member_count`; GET /groups/{groupID} has the members. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the name; `member` keeps the groups an account is directly in; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
         ],
@@ -6386,8 +6386,8 @@
       },
       "post": {
         "operationId": "createGroup",
-        "summary": "Create a group.",
-        "description": "Needs `install.users.manage`.",
+        "summary": "Create a group",
+        "description": "Create a group.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6439,8 +6439,8 @@
     "/api/v1/groups/{groupID}": {
       "delete": {
         "operationId": "deleteGroup",
-        "summary": "Delete a group.",
-        "description": "Delete a group. Everything shared with it goes with it: its members lose that access and keep anything given to them another way. Refused if it would leave nobody who can manage accounts (R-088).\n\nNeeds `install.users.manage`.",
+        "summary": "Delete a group",
+        "description": "Delete a group. Everything shared with it goes with it: its members lose that access and keep anything given to them another way. Refused if it would leave nobody who can manage accounts.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6466,7 +6466,7 @@
       },
       "get": {
         "operationId": "getGroup",
-        "summary": "One group with its `member_count` (direct members), its `linked_from` or `links_to`, and where it comes from.",
+        "summary": "Get a group",
         "description": "One group with its `member_count` (direct members), its `linked_from` or `links_to`, and where it comes from. The members are GET /groups/{groupID}/members.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
@@ -6502,8 +6502,8 @@
     "/api/v1/groups/{groupID}/app-limit": {
       "get": {
         "operationId": "getGroupAppLimit",
-        "summary": "How many apps each member of a group may own: `max_apps`, 0 for unlimited, or null when the group sets none (R-244).",
-        "description": "Needs `install.users.manage`.",
+        "summary": "Get a group's app limit",
+        "description": "How many apps each member of a group may own: `max_apps`, 0 for unlimited, or null when the group sets none.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6536,8 +6536,8 @@
       },
       "put": {
         "operationId": "putGroupAppLimit",
-        "summary": "Set a group's `max_apps`: a number, 0 for unlimited, or null to clear it.",
-        "description": "Set a group's `max_apps`: a number, 0 for unlimited, or null to clear it. A person in several groups gets the most generous; a value on their own account beats every group (R-244).\n\nNeeds `install.users.manage`.",
+        "summary": "Set a group's app limit",
+        "description": "Set a group's `max_apps`: a number, 0 for unlimited, or null to clear it. A person in several groups gets the most generous; a value on their own account beats every group.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6581,7 +6581,7 @@
     "/api/v1/groups/{groupID}/apps": {
       "get": {
         "operationId": "groupApps",
-        "summary": "A group's app grants: the role everyone in it has on each app, whether they can open it, and whether you can change that (`can_manage`).",
+        "summary": "List a group's apps",
         "description": "A group's app grants: the role everyone in it has on each app, whether they can open it, and whether you can change that (`can_manage`). Only apps you can see. Share an app with a group through `POST /apps/{appID}/grants` with `principal_kind: group`. By app name, a page of apps at a time: `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
@@ -6673,8 +6673,8 @@
     "/api/v1/groups/{groupID}/links/{syncedGroupID}": {
       "delete": {
         "operationId": "unlinkGroup",
-        "summary": "Remove such a link.",
-        "description": "Remove such a link. Refused when it would leave nobody who can manage accounts (R-088).\n\nNeeds `install.users.manage`.",
+        "summary": "Unlink a synced group",
+        "description": "Remove such a link. Refused when it would leave nobody who can manage accounts.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6708,8 +6708,8 @@
       },
       "put": {
         "operationId": "linkGroup",
-        "summary": "Make everyone in a group an identity provider syncs count as a member of a group made in Pando, live (R-078, R-079).",
-        "description": "Needs `install.users.manage`.",
+        "summary": "Link a synced group",
+        "description": "Make everyone in a group an identity provider syncs count as a member of a group made in Pando, live.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6745,8 +6745,8 @@
     "/api/v1/groups/{groupID}/members": {
       "get": {
         "operationId": "listGroupMembers",
-        "summary": "The accounts directly in a group, oldest first, each as GET /users shows it.",
-        "description": "The accounts directly in a group, oldest first, each as GET /users shows it. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, keeps only those accounts, which answers whether they are members. `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true (O-53).\n\nNeeds `install.view`.",
+        "summary": "List group members",
+        "description": "The accounts directly in a group, oldest first, each as GET /users shows it. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, keeps only those accounts, which answers whether they are members. `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
         ],
@@ -6881,8 +6881,8 @@
       },
       "put": {
         "operationId": "setGroupMembers",
-        "summary": "Set a group's members.",
-        "description": "Needs `install.users.manage`.",
+        "summary": "Set group members",
+        "description": "Set a group's members.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6933,8 +6933,8 @@
     "/api/v1/groups/{groupID}/members/{userID}": {
       "delete": {
         "operationId": "removeGroupMember",
-        "summary": "Remove one account from a group.",
-        "description": "Remove one account from a group. Refused when it would leave nobody who can manage accounts (R-088).\n\nNeeds `install.users.manage`.",
+        "summary": "Remove a group member",
+        "description": "Remove one account from a group. Refused when it would leave nobody who can manage accounts.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6968,7 +6968,7 @@
       },
       "put": {
         "operationId": "addGroupMember",
-        "summary": "Add one account to a group.",
+        "summary": "Add a group member",
         "description": "Add one account to a group. It then holds everything the group holds.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
@@ -7005,8 +7005,8 @@
     "/api/v1/groups/{groupID}/role": {
       "delete": {
         "operationId": "deleteGroupRole",
-        "summary": "Take a group's installation role away.",
-        "description": "Take a group's installation role away. Refused when it would leave nobody who can manage accounts (R-088).\n\nNeeds `install.users.manage`.",
+        "summary": "Remove a group's role",
+        "description": "Take a group's installation role away. Refused when it would leave nobody who can manage accounts.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -7032,8 +7032,8 @@
       },
       "put": {
         "operationId": "putGroupRole",
-        "summary": "Give a group an installation role (`role_id`), which everyone in it holds.",
-        "description": "Needs `install.users.manage`.",
+        "summary": "Set a group's role",
+        "description": "Give a group an installation role (`role_id`), which everyone in it holds.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -7085,8 +7085,8 @@
     "/api/v1/identity-providers": {
       "get": {
         "operationId": "listIdentityProviders",
-        "summary": "Every identity provider, local accounts included: settings, which credentials are set (never their values), the callback URL and entity ID to register with the provider, the SCIM base URL, and its revocation — session lifetime, mode, and the window that results (R-047, R-050).",
-        "description": "Every identity provider, local accounts included: settings, which credentials are set (never their values), the callback URL and entity ID to register with the provider, the SCIM base URL, and its revocation — session lifetime, mode, and the window that results (R-047, R-050). `kinds` describes the kinds that can be added, with presets for known providers.\n\nNeeds `install.view`.",
+        "summary": "List identity providers",
+        "description": "Every identity provider, local accounts included: settings, which credentials are set (never their values), the callback URL and entity ID to register with the provider, the SCIM base URL, and its revocation — session lifetime, mode, and the window that results. `kinds` describes the kinds that can be added, with presets for known providers.\n\nNeeds `install.view`.",
         "tags": [
           "Identity providers"
         ],
@@ -7133,7 +7133,7 @@
       },
       "post": {
         "operationId": "createIdentityProvider",
-        "summary": "Add an identity provider: `kind` (oidc or saml), `name`, `config`, write-only `credentials`, `jit_provisioning`, `link_by_email`.",
+        "summary": "Add an identity provider",
         "description": "Add an identity provider: `kind` (oidc or saml), `name`, `config`, write-only `credentials`, `jit_provisioning`, `link_by_email`. Off until `enabled` is set, so it can be tested first.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
@@ -7168,7 +7168,7 @@
     "/api/v1/identity-providers/{providerID}": {
       "delete": {
         "operationId": "deleteIdentityProvider",
-        "summary": "Remove an identity provider nobody has signed in through.",
+        "summary": "Remove an identity provider",
         "description": "Remove an identity provider nobody has signed in through. One that has is turned off instead.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
@@ -7195,8 +7195,8 @@
       },
       "get": {
         "operationId": "getIdentityProvider",
-        "summary": "One identity provider.",
-        "description": "Needs `install.view`.",
+        "summary": "Get an identity provider",
+        "description": "One identity provider.\n\nNeeds `install.view`.",
         "tags": [
           "Identity providers"
         ],
@@ -7229,7 +7229,7 @@
       },
       "patch": {
         "operationId": "patchIdentityProvider",
-        "summary": "Change an identity provider.",
+        "summary": "Update an identity provider",
         "description": "Change an identity provider. `config` replaces the settings whole; each `credentials` field replaces that one, and an empty value removes it. Takes effect on the next sign-in, without a restart.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
@@ -7274,8 +7274,8 @@
     "/api/v1/identity-providers/{providerID}/check": {
       "post": {
         "operationId": "checkIdentityProvider",
-        "summary": "Whether the provider answers: its discovery document or metadata can be read (`ok`, `message`).",
-        "description": "Needs `install.adapters.manage`.",
+        "summary": "Check an identity provider",
+        "description": "Whether the provider answers: its discovery document or metadata can be read (`ok`, `message`).\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
         ],
@@ -7324,7 +7324,7 @@
     "/api/v1/identity-providers/{providerID}/scim-token": {
       "delete": {
         "operationId": "disableSCIM",
-        "summary": "Turn SCIM off for a provider.",
+        "summary": "Turn off SCIM",
         "description": "Turn SCIM off for a provider. What it pushed stays.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
@@ -7351,8 +7351,8 @@
       },
       "post": {
         "operationId": "rotateSCIMToken",
-        "summary": "Turn SCIM on for a provider, or replace its token.",
-        "description": "Turn SCIM on for a provider, or replace its token. The token is in this response and never again. With SCIM on, the provider's pushes create and suspend accounts and set its groups' members at once (R-048).\n\nNeeds `install.adapters.manage`.",
+        "summary": "Turn on SCIM",
+        "description": "Turn SCIM on for a provider, or replace its token. The token is in this response and never again. With SCIM on, the provider's pushes create and suspend accounts and set its groups' members at once.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
         ],
@@ -7399,7 +7399,7 @@
     "/api/v1/identity-providers/{providerID}/test": {
       "get": {
         "operationId": "testIdentityProvider",
-        "summary": "Start a test sign-in: a browser navigation to the provider, returning to the console with a report of the claims it sent and what Pando would do with them.",
+        "summary": "Start a test sign-in",
         "description": "Start a test sign-in: a browser navigation to the provider, returning to the console with a report of the claims it sent and what Pando would do with them. Signs nobody in, and works while the provider is off.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
@@ -7436,8 +7436,8 @@
     "/api/v1/identity-providers/{providerID}/tests/{flowID}": {
       "get": {
         "operationId": "identityProviderTest",
-        "summary": "A test sign-in's report, to the administrator who ran it.",
-        "description": "Needs `install.adapters.manage`.",
+        "summary": "Get a test sign-in report",
+        "description": "A test sign-in's report, to the administrator who ran it.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
         ],
@@ -7480,7 +7480,8 @@
     "/api/v1/me": {
       "get": {
         "operationId": "me",
-        "summary": "Who the caller is, and the install-level verbs they hold.",
+        "summary": "Get the caller",
+        "description": "Who the caller is, and the install-level verbs they hold.",
         "tags": [
           "Session"
         ],
@@ -7551,8 +7552,8 @@
     "/api/v1/me/apps": {
       "get": {
         "operationId": "myApps",
-        "summary": "The apps you can open, which is a different list from the apps you can administer (R-070, R-071).",
-        "description": "The apps you can open, which is a different list from the apps you can administer (R-070, R-071). `favorite` marks the ones you have pinned, `section_id` the section you filed each under, and `sections` lists your sections. `can_manage` marks the ones you can also administer — those GET /apps lists for you. Favorites first, then apps filed in a section, then the rest, each by name, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, empty after the last page) and `q` to match the name or slug.",
+        "summary": "List your apps",
+        "description": "The apps you can open, which is a different list from the apps you can administer. `favorite` marks the ones you have pinned, `section_id` the section you filed each under, and `sections` lists your sections. `can_manage` marks the ones you can also administer — those GET /apps lists for you. Favorites first, then apps filed in a section, then the rest, each by name, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, empty after the last page) and `q` to match the name or slug.",
         "tags": [
           "Session"
         ],
@@ -7637,7 +7638,8 @@
     "/api/v1/me/favorites/{appID}": {
       "delete": {
         "operationId": "unfavoriteApp",
-        "summary": "Unpin an app from your favorites.",
+        "summary": "Remove a favorite",
+        "description": "Unpin an app from your favorites.",
         "tags": [
           "Session"
         ],
@@ -7662,8 +7664,8 @@
       },
       "put": {
         "operationId": "favoriteApp",
-        "summary": "Mark an app you can open as a favorite, pinning it to the top of your launcher.",
-        "description": "Mark an app you can open as a favorite, pinning it to the top of your launcher. Yours only; it grants nothing (R-341).",
+        "summary": "Add a favorite",
+        "description": "Mark an app you can open as a favorite, pinning it to the top of your launcher. Yours only; it grants nothing.",
         "tags": [
           "Session"
         ],
@@ -7690,8 +7692,8 @@
     "/api/v1/me/notifications": {
       "get": {
         "operationId": "listNotifications",
-        "summary": "Your notifications inbox, newest first: what Pando told you on the console, each with `kind`, `subject`, `body`, `app_name`, `link` and `read_at`, and `unread`, how many are unread in all.",
-        "description": "Your notifications inbox, newest first: what Pando told you on the console, each with `kind`, `subject`, `body`, `app_name`, `link` and `read_at`, and `unread`, how many are unread in all. `unread=true` lists only those; `before` and `limit` page (R-377).",
+        "summary": "List notifications",
+        "description": "Your notifications inbox, newest first: what Pando told you on the console, each with `kind`, `subject`, `body`, `app_name`, `link` and `read_at`, and `unread`, how many are unread in all. `unread=true` lists only those; `before` and `limit` page.",
         "tags": [
           "Events"
         ],
@@ -7738,7 +7740,8 @@
     "/api/v1/me/notifications/read": {
       "post": {
         "operationId": "readAllNotifications",
-        "summary": "Mark every one of your notifications read.",
+        "summary": "Mark all notifications read",
+        "description": "Mark every one of your notifications read.",
         "tags": [
           "Events"
         ],
@@ -7755,7 +7758,8 @@
     "/api/v1/me/notifications/unread": {
       "get": {
         "operationId": "unreadNotifications",
-        "summary": "How many of your notifications are unread, as `unread`, without listing any: the count the console's bell asks for (R-377).",
+        "summary": "Count unread notifications",
+        "description": "How many of your notifications are unread, as `unread`, without listing any: the count the console's bell asks for.",
         "tags": [
           "Events"
         ],
@@ -7788,7 +7792,8 @@
     "/api/v1/me/notifications/{notificationID}/read": {
       "post": {
         "operationId": "readNotification",
-        "summary": "Mark one of your notifications read.",
+        "summary": "Mark a notification read",
+        "description": "Mark one of your notifications read.",
         "tags": [
           "Events"
         ],
@@ -7815,7 +7820,7 @@
     "/api/v1/me/password": {
       "post": {
         "operationId": "changePassword",
-        "summary": "Change your own password.",
+        "summary": "Change your password",
         "description": "Change your own password. Yours only, whatever verbs you hold.",
         "tags": [
           "Session"
@@ -7842,8 +7847,8 @@
     "/api/v1/me/sections": {
       "post": {
         "operationId": "createSection",
-        "summary": "Make a section in your launcher: a named, collapsible grouping of apps.",
-        "description": "Make a section in your launcher: a named, collapsible grouping of apps. Yours only; it grants nothing (R-342).",
+        "summary": "Create a section",
+        "description": "Make a section in your launcher: a named, collapsible grouping of apps. Yours only; it grants nothing.",
         "tags": [
           "Session"
         ],
@@ -7884,7 +7889,7 @@
     "/api/v1/me/sections/{sectionID}": {
       "delete": {
         "operationId": "deleteSection",
-        "summary": "Delete one of your sections.",
+        "summary": "Delete a section",
         "description": "Delete one of your sections. Its apps go back to Your apps.",
         "tags": [
           "Session"
@@ -7910,7 +7915,8 @@
       },
       "patch": {
         "operationId": "renameSection",
-        "summary": "Rename one of your sections.",
+        "summary": "Rename a section",
+        "description": "Rename one of your sections.",
         "tags": [
           "Session"
         ],
@@ -7961,7 +7967,8 @@
     "/api/v1/me/sections/{sectionID}/apps/{appID}": {
       "delete": {
         "operationId": "unplaceApp",
-        "summary": "Take an app out of a section, back to Your apps.",
+        "summary": "Remove an app from a section",
+        "description": "Take an app out of a section, back to Your apps.",
         "tags": [
           "Session"
         ],
@@ -7994,7 +8001,8 @@
       },
       "put": {
         "operationId": "placeApp",
-        "summary": "File an app you can open into one of your sections, moving it out of any other.",
+        "summary": "Add an app to a section",
+        "description": "File an app you can open into one of your sections, moving it out of any other.",
         "tags": [
           "Session"
         ],
@@ -8029,7 +8037,8 @@
     "/api/v1/notification-preferences": {
       "get": {
         "operationId": "getNotificationPreferences",
-        "summary": "Which of Pando's own notifications reach you, on which channel: every `kind`, every `channel` that reaches people (the console, email), and your `choices` with defaults filled in (R-373).",
+        "summary": "Get notification preferences",
+        "description": "Which of Pando's own notifications reach you, on which channel: every `kind`, every `channel` that reaches people (the console, email), and your `choices` with defaults filled in.",
         "tags": [
           "Events"
         ],
@@ -8051,7 +8060,7 @@
       },
       "put": {
         "operationId": "putNotificationPreferences",
-        "summary": "Set your notification preferences: `choices`, each a `kind`, a `channel` and `enabled`.",
+        "summary": "Set notification preferences",
         "description": "Set your notification preferences: `choices`, each a `kind`, a `channel` and `enabled`. Choices not sent keep their current value.",
         "tags": [
           "Events"
@@ -8099,7 +8108,7 @@
     "/api/v1/passwords/generate": {
       "post": {
         "operationId": "generatePassword",
-        "summary": "A strong random password, 18 to 22 characters with upper and lower case, digits and symbols, for creating or resetting an account.",
+        "summary": "Generate a password",
         "description": "A strong random password, 18 to 22 characters with upper and lower case, digits and symbols, for creating or resetting an account. Stores nothing.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
@@ -8133,8 +8142,8 @@
     "/api/v1/policy": {
       "get": {
         "operationId": "getPolicy",
-        "summary": "Host policy.",
-        "description": "Host policy. Reading the rules you work under is not the same privilege as changing them (R-274).\n\nNeeds `install.view`.",
+        "summary": "Get host policy",
+        "description": "Host policy. Reading the rules you work under is not the same privilege as changing them.\n\nNeeds `install.view`.",
         "tags": [
           "Installation"
         ],
@@ -8157,8 +8166,8 @@
       },
       "put": {
         "operationId": "putPolicy",
-        "summary": "Replace host policy.",
-        "description": "Replace host policy. Policy is a floor, never an override (R-272).\n\nNeeds `install.policy.manage`.",
+        "summary": "Replace host policy",
+        "description": "Replace host policy. Policy is a floor, never an override.\n\nNeeds `install.policy.manage`.",
         "tags": [
           "Installation"
         ],
@@ -8192,8 +8201,8 @@
     "/api/v1/policy/preview": {
       "post": {
         "operationId": "previewPolicy",
-        "summary": "Which apps a candidate policy would block, before it is saved.",
-        "description": "Needs `install.policy.manage`.",
+        "summary": "Preview a policy",
+        "description": "Which apps a candidate policy would block, before it is saved.\n\nNeeds `install.policy.manage`.",
         "tags": [
           "Installation"
         ],
@@ -8241,7 +8250,8 @@
     "/api/v1/reference": {
       "get": {
         "operationId": "reference",
-        "summary": "This document: every endpoint, every CLI command, every MCP tool and every error code, built from the running binary.",
+        "summary": "Get the API reference",
+        "description": "This document: every endpoint, every CLI command, every MCP tool and every error code, built from the running binary.",
         "tags": [
           "Reference"
         ],
@@ -8266,7 +8276,7 @@
     "/api/v1/restart": {
       "post": {
         "operationId": "restart",
-        "summary": "Restart Pando: finish the requests in flight, then start again, loading the adapters and the configuration file afresh.",
+        "summary": "Restart Pando",
         "description": "Restart Pando: finish the requests in flight, then start again, loading the adapters and the configuration file afresh. Apps behind Pando are unreachable for the seconds it takes. Environment variables are not re-read. Returns before the restart; `started_at` on GET /api/v1/adapters changes once it is back.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Installation"
@@ -8304,8 +8314,8 @@
     "/api/v1/roles": {
       "get": {
         "operationId": "listRoles",
-        "summary": "Roles, built in and custom.",
-        "description": "Roles, built in and custom. By default the ones granted across the installation; `scope=app` gives the ones granted on an app, and `scope=all` both. Built-in roles are immutable (R-081).\n\nNeeds `install.view`.",
+        "summary": "List roles",
+        "description": "Roles, built in and custom. By default the ones granted across the installation; `scope=app` gives the ones granted on an app, and `scope=all` both. Built-in roles are immutable.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
         ],
@@ -8394,8 +8404,8 @@
       },
       "post": {
         "operationId": "createRole",
-        "summary": "Compose a custom role from verbs (R-082).",
-        "description": "Needs `install.users.manage`.",
+        "summary": "Create a role",
+        "description": "Compose a custom role from verbs.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -8451,8 +8461,8 @@
     "/api/v1/roles/{roleID}": {
       "delete": {
         "operationId": "deleteRole",
-        "summary": "Delete a custom role, and every grant of it: whoever held it loses what it allowed.",
-        "description": "Delete a custom role, and every grant of it: whoever held it loses what it allowed. Built-in roles cannot be deleted (R-081). Refused if it would leave nobody who can manage accounts (R-088).\n\nNeeds `install.users.manage`.",
+        "summary": "Delete a role",
+        "description": "Delete a custom role, and every grant of it: whoever held it loses what it allowed. Built-in roles cannot be deleted. Refused if it would leave nobody who can manage accounts.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -8480,7 +8490,7 @@
     "/api/v1/scim/v2/Groups": {
       "get": {
         "operationId": "getScimV2Groups",
-        "summary": "This provider's groups.",
+        "summary": "List SCIM groups",
         "description": "This provider's groups. `filter` takes `displayName` or `externalId` with `eq`; `excludedAttributes=members` leaves members out.",
         "tags": [
           "SCIM"
@@ -8538,8 +8548,8 @@
       },
       "post": {
         "operationId": "postScimV2Groups",
-        "summary": "Push a group.",
-        "description": "Push a group. It holds no access until an administrator gives it some or links it to a Pando group (R-078).",
+        "summary": "Push a group",
+        "description": "Push a group. It holds no access until an administrator gives it some or links it to a Pando group.",
         "tags": [
           "SCIM"
         ],
@@ -8577,7 +8587,8 @@
     "/api/v1/scim/v2/Groups/{id}": {
       "delete": {
         "operationId": "deleteScimV2GroupsById",
-        "summary": "Delete a pushed group, and every grant made to it.",
+        "summary": "Delete a SCIM group",
+        "description": "Delete a pushed group, and every grant made to it.",
         "tags": [
           "SCIM"
         ],
@@ -8607,7 +8618,8 @@
       },
       "get": {
         "operationId": "getScimV2GroupsById",
-        "summary": "One pushed group, with its members.",
+        "summary": "Get a SCIM group",
+        "description": "One pushed group, with its members.",
         "tags": [
           "SCIM"
         ],
@@ -8651,8 +8663,8 @@
       },
       "patch": {
         "operationId": "patchScimV2GroupsById",
-        "summary": "Add or remove members, or rename, with SCIM PATCH operations.",
-        "description": "Add or remove members, or rename, with SCIM PATCH operations. Takes effect on the next request (R-079).",
+        "summary": "Patch a SCIM group",
+        "description": "Add or remove members, or rename, with SCIM PATCH operations. Takes effect on the next request.",
         "tags": [
           "SCIM"
         ],
@@ -8691,7 +8703,8 @@
       },
       "put": {
         "operationId": "putScimV2GroupsById",
-        "summary": "Replace a pushed group's name and members.",
+        "summary": "Replace a SCIM group",
+        "description": "Replace a pushed group's name and members.",
         "tags": [
           "SCIM"
         ],
@@ -8739,7 +8752,8 @@
     "/api/v1/scim/v2/ResourceTypes": {
       "get": {
         "operationId": "getScimV2ResourceTypes",
-        "summary": "SCIM resource types: User and Group.",
+        "summary": "List SCIM resource types",
+        "description": "SCIM resource types: User and Group.",
         "tags": [
           "SCIM"
         ],
@@ -8769,7 +8783,8 @@
     "/api/v1/scim/v2/Schemas": {
       "get": {
         "operationId": "getScimV2Schemas",
-        "summary": "The SCIM attributes Pando reads.",
+        "summary": "List SCIM schemas",
+        "description": "The SCIM attributes Pando reads.",
         "tags": [
           "SCIM"
         ],
@@ -8799,7 +8814,7 @@
     "/api/v1/scim/v2/ServiceProviderConfig": {
       "get": {
         "operationId": "getScimV2ServiceProviderConfig",
-        "summary": "SCIM 2.0 service provider configuration.",
+        "summary": "Get SCIM configuration",
         "description": "SCIM 2.0 service provider configuration. Every SCIM endpoint takes the provider's SCIM token as a bearer token, not a Pando token.",
         "tags": [
           "SCIM"
@@ -8830,7 +8845,7 @@
     "/api/v1/scim/v2/Users": {
       "get": {
         "operationId": "getScimV2Users",
-        "summary": "The accounts this provider provisioned.",
+        "summary": "List SCIM users",
         "description": "The accounts this provider provisioned. `filter` takes `userName`, `externalId` or `emails` with `eq`; `startIndex` and `count` page.",
         "tags": [
           "SCIM"
@@ -8881,7 +8896,7 @@
       },
       "post": {
         "operationId": "postScimV2Users",
-        "summary": "Provision an account.",
+        "summary": "Provision a user",
         "description": "Provision an account. An account the provider's sign-in already made is adopted rather than refused.",
         "tags": [
           "SCIM"
@@ -8920,7 +8935,8 @@
     "/api/v1/scim/v2/Users/{id}": {
       "delete": {
         "operationId": "deleteScimV2UsersById",
-        "summary": "Deprovision an account: it is suspended, not deleted (R-049), leaves the provider's groups, and its sessions end.",
+        "summary": "Deprovision a user",
+        "description": "Deprovision an account: it is suspended, not deleted, leaves the provider's groups, and its sessions end.",
         "tags": [
           "SCIM"
         ],
@@ -8950,7 +8966,8 @@
       },
       "get": {
         "operationId": "getScimV2UsersById",
-        "summary": "One provisioned account.",
+        "summary": "Get a SCIM user",
+        "description": "One provisioned account.",
         "tags": [
           "SCIM"
         ],
@@ -8987,7 +9004,8 @@
       },
       "patch": {
         "operationId": "patchScimV2UsersById",
-        "summary": "Change an account's profile or `active` with SCIM PATCH operations.",
+        "summary": "Patch a SCIM user",
+        "description": "Change an account's profile or `active` with SCIM PATCH operations.",
         "tags": [
           "SCIM"
         ],
@@ -9033,8 +9051,8 @@
       },
       "put": {
         "operationId": "putScimV2UsersById",
-        "summary": "Replace an account's profile.",
-        "description": "Replace an account's profile. `active: false` suspends it and ends its sessions at once; `active: true` lifts only a suspension this provider made (R-049).",
+        "summary": "Replace a SCIM user",
+        "description": "Replace an account's profile. `active: false` suspends it and ends its sessions at once; `active: true` lifts only a suspension this provider made.",
         "tags": [
           "SCIM"
         ],
@@ -9082,7 +9100,8 @@
     "/api/v1/sessions": {
       "delete": {
         "operationId": "logout",
-        "summary": "Sign out, ending this session.",
+        "summary": "Sign out",
+        "description": "Sign out, ending this session.",
         "tags": [
           "Session"
         ],
@@ -9097,7 +9116,7 @@
       },
       "post": {
         "operationId": "login",
-        "summary": "Sign in with a username and password.",
+        "summary": "Sign in",
         "description": "Sign in with a username and password. Sets the session cookie. Refused when host policy has `disable_password_sign_in` on.",
         "tags": [
           "Session"
@@ -9153,7 +9172,7 @@
     "/api/v1/setup": {
       "get": {
         "operationId": "getSetup",
-        "summary": "Whether this installation is waiting for its first administrator (`needed`).",
+        "summary": "Check whether setup is needed",
         "description": "Whether this installation is waiting for its first administrator (`needed`). Public.",
         "tags": [
           "Session"
@@ -9185,8 +9204,8 @@
       },
       "post": {
         "operationId": "postSetup",
-        "summary": "Set up a new installation: the first account (`username`, `display_name`, `password`), made an administrator, and signed in.",
-        "description": "Set up a new installation: the first account (`username`, `display_name`, `password`), made an administrator, and signed in. Public, but needs the one-time `setup_token` Pando printed to its log at startup (`pando admin setup-token` makes a new one), and refused once any account exists (R-046).",
+        "summary": "Set up the installation",
+        "description": "Set up a new installation: the first account (`username`, `display_name`, `password`), made an administrator, and signed in. Public, but needs the one-time `setup_token` Pando printed to its log at startup (`pando admin setup-token` makes a new one), and refused once any account exists.",
         "tags": [
           "Session"
         ],
@@ -9261,8 +9280,8 @@
     "/api/v1/sources": {
       "get": {
         "operationId": "listSources",
-        "summary": "The installation's source connections (R-091): each one's `id`, `name`, `kind` and `capabilities` — its `method`, `host`, `scope`, whether it can list repositories, which OAuth flows it can run, and whether it is `authorized`.",
-        "description": "The installation's source connections (R-091): each one's `id`, `name`, `kind` and `capabilities` — its `method`, `host`, `scope`, whether it can list repositories, which OAuth flows it can run, and whether it is `authorized`. `problem` says why one cannot be used. A private repository is read with the connection that covers it most closely; add one with POST /adapters, category `source`.\n\nNeeds `app.create`.",
+        "summary": "List source connections",
+        "description": "The installation's source connections: each one's `id`, `name`, `kind` and `capabilities` — its `method`, `host`, `scope`, whether it can list repositories, which OAuth flows it can run, and whether it is `authorized`. `problem` says why one cannot be used. A private repository is read with the connection that covers it most closely; add one with POST /adapters, category `source`.\n\nNeeds `app.create`.",
         "tags": [
           "Sources"
         ],
@@ -9301,7 +9320,7 @@
     "/api/v1/sources/callback": {
       "get": {
         "operationId": "sourceCallback",
-        "summary": "Where a provider returns a browser authorization.",
+        "summary": "Receive a source authorization",
         "description": "Where a provider returns a browser authorization. Stores the token and redirects to the console's Adapters screen with `authorized` or `error`.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Sources"
@@ -9351,8 +9370,8 @@
     "/api/v1/sources/{sourceID}": {
       "delete": {
         "operationId": "deleteSource",
-        "summary": "Disconnect a source connection and remove its stored credential.",
-        "description": "Disconnect a source connection and remove its stored credential. Apps read with it keep running; their next deploy fails, saying the connection is gone (R-146).\n\nNeeds `install.adapters.manage`.",
+        "summary": "Disconnect a source",
+        "description": "Disconnect a source connection and remove its stored credential. Apps read with it keep running; their next deploy fails, saying the connection is gone.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Sources"
         ],
@@ -9380,7 +9399,7 @@
     "/api/v1/sources/{sourceID}/authorize": {
       "post": {
         "operationId": "beginSourceAuthorization",
-        "summary": "Start an OAuth authorization of a connection.",
+        "summary": "Authorize a source",
         "description": "Start an OAuth authorization of a connection. `mode` `device` (the default) returns `user_code` and `verification_url` to show, and `interval_seconds` to poll POST /authorize/poll at; it needs no address the provider can reach. `mode` `web` returns `authorize_url` to send the browser to, which comes back to GET /api/v1/sources/callback.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Sources"
@@ -9433,8 +9452,8 @@
     "/api/v1/sources/{sourceID}/authorize/poll": {
       "post": {
         "operationId": "pollSourceAuthorization",
-        "summary": "Ask once whether a device authorization was approved: `status` is `pending` (with `slow_down` when the provider asked for slower polling) or `authorized`, when the token is stored and the connection usable.",
-        "description": "Needs `install.adapters.manage`.",
+        "summary": "Poll a source authorization",
+        "description": "Ask once whether a device authorization was approved: `status` is `pending` (with `slow_down` when the provider asked for slower polling) or `authorized`, when the token is stored and the connection usable.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Sources"
         ],
@@ -9469,8 +9488,8 @@
     "/api/v1/sources/{sourceID}/branches": {
       "get": {
         "operationId": "listSourceBranches",
-        "summary": "The branches of the repository at `url`, through the connection.",
-        "description": "Needs `app.create`.",
+        "summary": "List branches",
+        "description": "The branches of the repository at `url`, through the connection.\n\nNeeds `app.create`.",
         "tags": [
           "Sources"
         ],
@@ -9526,8 +9545,8 @@
     "/api/v1/sources/{sourceID}/repositories": {
       "get": {
         "operationId": "listSourceRepositories",
-        "summary": "The repositories a connection can read, to pick one rather than type its address: `url`, `full_name`, `default_branch`, `private`.",
-        "description": "The repositories a connection can read, to pick one rather than type its address: `url`, `full_name`, `default_branch`, `private`. `q` matches part of the name and `limit` caps the list (default 100). Repositories the source allowlist refuses are left out (R-092). Refused for a connection with no API access, such as an SSH key.\n\nNeeds `app.create`.",
+        "summary": "List repositories",
+        "description": "The repositories a connection can read, to pick one rather than type its address: `url`, `full_name`, `default_branch`, `private`. `q` matches part of the name and `limit` caps the list (default 100). Repositories the source allowlist refuses are left out. Refused for a connection with no API access, such as an SSH key.\n\nNeeds `app.create`.",
         "tags": [
           "Sources"
         ],
@@ -9590,7 +9609,7 @@
     "/api/v1/subscriptions": {
       "get": {
         "operationId": "listSubscriptions",
-        "summary": "Your event subscriptions, newest first.",
+        "summary": "List subscriptions",
         "description": "Your event subscriptions, newest first. `app_id` narrows to one app; `everyone=true` lists every person's, which needs `install.events.manage`. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues.",
         "tags": [
           "Events"
@@ -9678,8 +9697,8 @@
       },
       "post": {
         "operationId": "createSubscription",
-        "summary": "Subscribe to events (`events`: names, prefixes such as `deploy.*`, or `*`) on one app (`app_id`, which needs `app.view`) or install-wide (no `app_id`, which needs `install.events.manage`), sent to a `webhook` (`url`) or through a notification adapter (`notify`, `adapter_id`).",
-        "description": "Subscribe to events (`events`: names, prefixes such as `deploy.*`, or `*`) on one app (`app_id`, which needs `app.view`) or install-wide (no `app_id`, which needs `install.events.manage`), sent to a `webhook` (`url`) or through a notification adapter (`notify`, `adapter_id`). A webhook's `signing_key` is in this response and never again (R-367, R-371).",
+        "summary": "Create a subscription",
+        "description": "Subscribe to events (`events`: names, prefixes such as `deploy.*`, or `*`) on one app (`app_id`, which needs `app.view`) or install-wide (no `app_id`, which needs `install.events.manage`), sent to a `webhook` (`url`) or through a notification adapter (`notify`, `adapter_id`). A webhook's `signing_key` is in this response and never again.",
         "tags": [
           "Events"
         ],
@@ -9712,7 +9731,8 @@
     "/api/v1/subscriptions/{subscriptionID}": {
       "delete": {
         "operationId": "deleteSubscription",
-        "summary": "Delete a subscription, its signing key and its delivery log.",
+        "summary": "Delete a subscription",
+        "description": "Delete a subscription, its signing key and its delivery log.",
         "tags": [
           "Events"
         ],
@@ -9737,7 +9757,7 @@
       },
       "get": {
         "operationId": "getSubscription",
-        "summary": "One subscription: its filter, destination, whether it is on, and why Pando turned it off if it did.",
+        "summary": "Get a subscription",
         "description": "One subscription: its filter, destination, whether it is on, and why Pando turned it off if it did. Yours, or anybody's with `install.events.manage`.",
         "tags": [
           "Events"
@@ -9770,7 +9790,7 @@
       },
       "patch": {
         "operationId": "patchSubscription",
-        "summary": "Change a subscription's `events`, `url`, `adapter_id` or `description`, or turn it on or off (`enabled`).",
+        "summary": "Update a subscription",
         "description": "Change a subscription's `events`, `url`, `adapter_id` or `description`, or turn it on or off (`enabled`). Turning one on clears its record of failures.",
         "tags": [
           "Events"
@@ -9814,8 +9834,8 @@
     "/api/v1/subscriptions/{subscriptionID}/deliveries": {
       "get": {
         "operationId": "listDeliveries",
-        "summary": "A subscription's deliveries, newest first: each event, its `status` (pending, succeeded, failed), attempts and last error.",
-        "description": "A subscription's deliveries, newest first: each event, its `status` (pending, succeeded, failed), attempts and last error. `before` and `limit` page; `next_before` continues (R-369).",
+        "summary": "List deliveries",
+        "description": "A subscription's deliveries, newest first: each event, its `status` (pending, succeeded, failed), attempts and last error. `before` and `limit` page; `next_before` continues.",
         "tags": [
           "Events"
         ],
@@ -9881,7 +9901,8 @@
     "/api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}": {
       "get": {
         "operationId": "getDelivery",
-        "summary": "One delivery: every attempt at it (`attempt_log`) and the `payload` sent.",
+        "summary": "Get a delivery",
+        "description": "One delivery: every attempt at it (`attempt_log`) and the `payload` sent.",
         "tags": [
           "Events"
         ],
@@ -9923,7 +9944,8 @@
     "/api/v1/subscriptions/{subscriptionID}/deliveries/{deliveryID}/redeliver": {
       "post": {
         "operationId": "redeliver",
-        "summary": "Send a delivery again now, with the whole retry schedule ahead of it.",
+        "summary": "Redeliver an event",
+        "description": "Send a delivery again now, with the whole retry schedule ahead of it.",
         "tags": [
           "Events"
         ],
@@ -9965,7 +9987,7 @@
     "/api/v1/subscriptions/{subscriptionID}/signing-key": {
       "post": {
         "operationId": "rotateSigningKey",
-        "summary": "Replace a webhook's signing key.",
+        "summary": "Rotate a signing key",
         "description": "Replace a webhook's signing key. The new `signing_key` is in this response and never again; deliveries not yet sent are signed with it.",
         "tags": [
           "Events"
@@ -10000,7 +10022,7 @@
     "/api/v1/subscriptions/{subscriptionID}/test": {
       "post": {
         "operationId": "testSubscription",
-        "summary": "Send a `subscription.test` event to this subscription alone, whatever its filter says.",
+        "summary": "Send a test event",
         "description": "Send a `subscription.test` event to this subscription alone, whatever its filter says. Returns the queued delivery.",
         "tags": [
           "Events"
@@ -10035,7 +10057,7 @@
     "/api/v1/tokens": {
       "get": {
         "operationId": "listTokens",
-        "summary": "Your own tokens.",
+        "summary": "List your tokens",
         "description": "Your own tokens. Never anyone else's.",
         "tags": [
           "Tokens"
@@ -10072,8 +10094,8 @@
       },
       "post": {
         "operationId": "createToken",
-        "summary": "Mint a delegated token.",
-        "description": "Mint a delegated token. It acts as you, is bounded by your live grants, and dies with your account (R-058, R-059). The secret is shown once.",
+        "summary": "Create a delegated token",
+        "description": "Mint a delegated token. It acts as you, is bounded by your live grants, and dies with your account. The secret is shown once.",
         "tags": [
           "Tokens"
         ],
@@ -10135,8 +10157,8 @@
     "/api/v1/tokens/service": {
       "get": {
         "operationId": "listServiceTokens",
-        "summary": "The installation's service tokens.",
-        "description": "Needs `install.tokens.manage`.",
+        "summary": "List service tokens",
+        "description": "The installation's service tokens.\n\nNeeds `install.tokens.manage`.",
         "tags": [
           "Tokens"
         ],
@@ -10173,8 +10195,8 @@
       },
       "post": {
         "operationId": "createServiceToken",
-        "summary": "Mint a service token: its own principal, holding only what is shared with it, outliving whoever created it (R-060).",
-        "description": "Mint a service token: its own principal, holding only what is shared with it, outliving whoever created it (R-060). The secret is shown once.\n\nNeeds `install.tokens.manage`.",
+        "summary": "Create a service token",
+        "description": "Mint a service token: its own principal, holding only what is shared with it, outliving whoever created it. The secret is shown once.\n\nNeeds `install.tokens.manage`.",
         "tags": [
           "Tokens"
         ],
@@ -10237,7 +10259,7 @@
     "/api/v1/tokens/{tokenID}": {
       "delete": {
         "operationId": "revokeToken",
-        "summary": "Revoke a token.",
+        "summary": "Revoke a token",
         "description": "Revoke a token. Yours; a service token with install.tokens.manage; anyone else's with install.users.manage.",
         "tags": [
           "Tokens"
@@ -10265,8 +10287,8 @@
     "/api/v1/updates": {
       "get": {
         "operationId": "getUpdates",
-        "summary": "Whether a newer Pando is released (R-351): `current`, `latest`, `available`, and `releases`, each version after the running one, newest first, with its changelog section as `notes` and `security` and `breaking` marked.",
-        "description": "Whether a newer Pando is released (R-351): `current`, `latest`, `available`, and `releases`, each version after the running one, newest first, with its changelog section as `notes` and `security` and `breaking` marked. `upgrade` says how to move this installation to `latest`. `enabled` and `channel` are host policy's `disable_update_check` and `update_channel`; while the check is off Pando sends no request and reports nothing. `error` says why the last check failed. Every response to a signed-in caller carries the server's version as `Pando-Version`.\n\nNeeds `install.view`.",
+        "summary": "Check for updates",
+        "description": "Whether a newer Pando is released: `current`, `latest`, `available`, and `releases`, each version after the running one, newest first, with its changelog section as `notes` and `security` and `breaking` marked. `upgrade` says how to move this installation to `latest`. `enabled` and `channel` are host policy's `disable_update_check` and `update_channel`; while the check is off Pando sends no request and reports nothing. `error` says why the last check failed. Every response to a signed-in caller carries the server's version as `Pando-Version`.\n\nNeeds `install.view`.",
         "tags": [
           "Installation"
         ],
@@ -10291,8 +10313,8 @@
     "/api/v1/upgrade": {
       "get": {
         "operationId": "getUpgradePlan",
-        "summary": "What an in-place upgrade to `?version=` would do (R-355, R-360): `possible`, and when not, `reasons`, each saying what to change; `image`, how Pando's deployment names its image, and `tag`, the moving tag the upgrade points at the new image; `breaking`, the versions in between that may break what works now, with their notes, which make `confirm_breaking` necessary; and `note`, that every app is unreachable while Pando restarts.",
-        "description": "Needs `install.view`.",
+        "summary": "Plan an upgrade",
+        "description": "What an in-place upgrade to `?version=` would do: `possible`, and when not, `reasons`, each saying what to change; `image`, how Pando's deployment names its image, and `tag`, the moving tag the upgrade points at the new image; `breaking`, the versions in between that may break what works now, with their notes, which make `confirm_breaking` necessary; and `note`, that every app is unreachable while Pando restarts.\n\nNeeds `install.view`.",
         "tags": [
           "Installation"
         ],
@@ -10324,8 +10346,8 @@
       },
       "post": {
         "operationId": "startUpgrade",
-        "summary": "Upgrade Pando in place (R-355 – R-360).",
-        "description": "Upgrade Pando in place (R-355 – R-360). Body: `version`; `passphrase` for the full backup taken first, or `skip_backup: true` to go without one, which is audited; and `confirm_breaking`, the version again, when the plan lists `breaking` versions. The image's signature is verified before anything else, and Pando refuses one that does not verify. Answers 202 with the upgrade: a helper then stops Pando, copies its database, starts the new version and waits for it to be ready, and puts the previous version and database back if it is not. Every app is unreachable while Pando restarts. `GET /upgrade/last` has the outcome once Pando is back.\n\nNeeds `install.upgrade`.",
+        "summary": "Upgrade Pando",
+        "description": "Upgrade Pando in place. Body: `version`; `passphrase` for the full backup taken first, or `skip_backup: true` to go without one, which is audited; and `confirm_breaking`, the version again, when the plan lists `breaking` versions. The image's signature is verified before anything else, and Pando refuses one that does not verify. Answers 202 with the upgrade: a helper then stops Pando, copies its database, starts the new version and waits for it to be ready, and puts the previous version and database back if it is not. Every app is unreachable while Pando restarts. `GET /upgrade/last` has the outcome once Pando is back.\n\nNeeds `install.upgrade`.",
         "tags": [
           "Installation"
         ],
@@ -10359,8 +10381,8 @@
     "/api/v1/upgrade/last": {
       "get": {
         "operationId": "getLastUpgrade",
-        "summary": "The most recent in-place upgrade, as `upgrade`, or null: `from`, `to`, `state` (`running`, `succeeded`, `rolled_back` or `failed`), `reason`, the new version's last log lines when it was rolled back, `backup_id` or `skip_backup`, and whether the rollback copy of the database is still kept (`snapshot_gone`, after 24 hours healthy).",
-        "description": "Needs `install.view`.",
+        "summary": "Get the last upgrade",
+        "description": "The most recent in-place upgrade, as `upgrade`, or null: `from`, `to`, `state` (`running`, `succeeded`, `rolled_back` or `failed`), `reason`, the new version's last log lines when it was rolled back, `backup_id` or `skip_backup`, and whether the rollback copy of the database is still kept (`snapshot_gone`, after 24 hours healthy).\n\nNeeds `install.view`.",
         "tags": [
           "Installation"
         ],
@@ -10400,8 +10422,8 @@
     "/api/v1/users": {
       "get": {
         "operationId": "listUsers",
-        "summary": "The accounts on this installation, newest first, each with its `install_role_id`.",
-        "description": "The accounts on this installation, newest first, each with its `install_role_id`. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, reads only those accounts; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true (O-53).\n\nNeeds `install.view`.",
+        "summary": "List accounts",
+        "description": "The accounts on this installation, newest first, each with its `install_role_id`. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, reads only those accounts; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
         ],
@@ -10528,8 +10550,8 @@
       },
       "post": {
         "operationId": "createUser",
-        "summary": "Create an account.",
-        "description": "Needs `install.users.manage`.",
+        "summary": "Create an account",
+        "description": "Create an account.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -10563,8 +10585,8 @@
     "/api/v1/users/{userID}": {
       "delete": {
         "operationId": "deleteUser",
-        "summary": "Delete an account, with the destruction rules that follow from it (R-282).",
-        "description": "Needs `install.users.manage`.",
+        "summary": "Delete an account",
+        "description": "Delete an account, with the destruction rules that follow from it.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -10590,7 +10612,7 @@
       },
       "get": {
         "operationId": "getUser",
-        "summary": "One account.",
+        "summary": "Get an account",
         "description": "One account. Your own needs no verb.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
@@ -10668,8 +10690,8 @@
       },
       "patch": {
         "operationId": "patchUser",
-        "summary": "Change an account: any of `username`, `display_name`, `email` and `status`.",
-        "description": "Change an account: any of `username`, `display_name`, `email` and `status`. Username and email only on a local account; a username only with this verb, even your own. Suspension is not deletion (R-049). Your own name and email need no verb.\n\nNeeds `install.users.manage`.",
+        "summary": "Update an account",
+        "description": "Change an account: any of `username`, `display_name`, `email` and `status`. Username and email only on a local account; a username only with this verb, even your own. Suspension is not deletion. Your own name and email need no verb.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -10732,8 +10754,8 @@
     "/api/v1/users/{userID}/app-limit": {
       "get": {
         "operationId": "getUserAppLimit",
-        "summary": "How many apps an account may own (R-244): `limit` (0 is unlimited), where it comes from (`source`: user, group or policy, with `group_id` and `group_name` for a group), how many it owns (`owned`), and the value set on the account itself (`max_apps`, null when none is).",
-        "description": "How many apps an account may own (R-244): `limit` (0 is unlimited), where it comes from (`source`: user, group or policy, with `group_id` and `group_name` for a group), how many it owns (`owned`), and the value set on the account itself (`max_apps`, null when none is). Your own needs no verb.\n\nNeeds `install.users.manage`.",
+        "summary": "Get an account's app limit",
+        "description": "How many apps an account may own: `limit` (0 is unlimited), where it comes from (`source`: user, group or policy, with `group_id` and `group_name` for a group), how many it owns (`owned`), and the value set on the account itself (`max_apps`, null when none is). Your own needs no verb.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -10766,8 +10788,8 @@
       },
       "put": {
         "operationId": "putUserAppLimit",
-        "summary": "Set `max_apps` on an account: a number, 0 for unlimited, or null to clear it.",
-        "description": "Set `max_apps` on an account: a number, 0 for unlimited, or null to clear it. It applies whatever the account's groups say. Lowering it below what the account owns removes nothing; it refuses the next app (R-244).\n\nNeeds `install.users.manage`.",
+        "summary": "Set an account's app limit",
+        "description": "Set `max_apps` on an account: a number, 0 for unlimited, or null to clear it. It applies whatever the account's groups say. Lowering it below what the account owns removes nothing; it refuses the next app.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -10811,7 +10833,7 @@
     "/api/v1/users/{userID}/apps": {
       "get": {
         "operationId": "userApps",
-        "summary": "The apps an account has something on: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (`can_manage`).",
+        "summary": "List an account's apps",
         "description": "The apps an account has something on: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (`can_manage`). Only apps you can see are listed. Your own needs nothing. By app name, a page of apps at a time: `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues, and a page can hold fewer apps than the limit when some are ones you cannot see.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
@@ -10903,8 +10925,8 @@
     "/api/v1/users/{userID}/identities": {
       "delete": {
         "operationId": "unlinkIdentity",
-        "summary": "Unlink an identity (`adapter_id`, `external_id` in the query) from an account.",
-        "description": "Needs `install.users.manage`.",
+        "summary": "Unlink an identity",
+        "description": "Unlink an identity (`adapter_id`, `external_id` in the query) from an account.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -10944,7 +10966,7 @@
       },
       "get": {
         "operationId": "listIdentities",
-        "summary": "The external identities that sign in to an account: which provider, its ID for the person, whether it is where the account came from, and whether SCIM manages it.",
+        "summary": "List linked identities",
         "description": "The external identities that sign in to an account: which provider, its ID for the person, whether it is where the account came from, and whether SCIM manages it. Your own, or anyone's with install.view.",
         "tags": [
           "Identity"
@@ -10991,8 +11013,8 @@
       },
       "post": {
         "operationId": "linkIdentity",
-        "summary": "Link a provider's identity (`adapter_id`, `external_id`) to an account, so it signs in there.",
-        "description": "Link a provider's identity (`adapter_id`, `external_id`) to an account, so it signs in there. Adds an alias and never merges accounts (O-1). If it already signs in to another account, `replace_account: true` moves it, and that account is kept, suspended, as an alias.\n\nNeeds `install.users.manage`.",
+        "summary": "Link an identity",
+        "description": "Link a provider's identity (`adapter_id`, `external_id`) to an account, so it signs in there. Adds an alias and never merges accounts. If it already signs in to another account, `replace_account: true` moves it, and that account is kept, suspended, as an alias.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -11071,7 +11093,7 @@
     "/api/v1/users/{userID}/password": {
       "post": {
         "operationId": "resetPassword",
-        "summary": "Reset another local account's password (`password`), ending every session it holds.",
+        "summary": "Reset a password",
         "description": "Reset another local account's password (`password`), ending every session it holds. `must_change_password` defaults to true: whoever set it hands it over, and its holder chooses their own at the next sign-in. Your own is `POST /me/password`.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
@@ -11123,7 +11145,7 @@
     "/api/v1/users/{userID}/role": {
       "delete": {
         "operationId": "deleteUserRole",
-        "summary": "Take an installation role away.",
+        "summary": "Remove an account's role",
         "description": "Take an installation role away. The last administrator cannot be demoted.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
@@ -11150,7 +11172,7 @@
       },
       "put": {
         "operationId": "putUserRole",
-        "summary": "Give an account an installation role.",
+        "summary": "Set an account's role",
         "description": "Give an account an installation role. Deliberately not a field on PATCH: changing someone's status and changing their power are different acts.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
@@ -11203,8 +11225,8 @@
     "/api/v1/verbs": {
       "get": {
         "operationId": "listVerbs",
-        "summary": "Every verb, by scope, for composing a role.",
-        "description": "Every verb, by scope, for composing a role. There is no implication graph: holding one says nothing about another (R-082).\n\nNeeds `install.view`.",
+        "summary": "List verbs",
+        "description": "Every verb, by scope, for composing a role. There is no implication graph: holding one says nothing about another.\n\nNeeds `install.view`.",
         "tags": [
           "Identity"
         ],
@@ -12650,7 +12672,7 @@
             "type": "object",
             "additionalProperties": {
               "type": "string",
-              "description": "Always `[redacted]`: a secret's value is never written to a response (R-194)."
+              "description": "Always `[redacted]`: a secret's value is never written to a response."
             }
           },
           "payload_template": {
@@ -12801,14 +12823,14 @@
           },
           "password": {
             "type": "string",
-            "description": "Always `[redacted]`: a secret's value is never written to a response (R-194)."
+            "description": "Always `[redacted]`: a secret's value is never written to a response."
           },
           "access_key_id": {
             "type": "string"
           },
           "secret_access_key": {
             "type": "string",
-            "description": "Always `[redacted]`: a secret's value is never written to a response (R-194)."
+            "description": "Always `[redacted]`: a secret's value is never written to a response."
           },
           "region": {
             "type": "string"
@@ -13390,7 +13412,7 @@
         "properties": {
           "code": {
             "type": "string",
-            "description": "A stable code to branch on. Renaming one is a breaking change.\n\n| Code | Status | Meaning |\n|---|---|---|\n| `VALID_DANGLING_MOUNT` | 400 | A workload mounts a volume the spec does not declare. |\n| `VALID_DANGLING_SLOT_REF` | 400 | The spec refers to a slot it does not declare. |\n| `VALID_DEPENDENCY_CYCLE` | 400 | The workloads depend on each other in a cycle. |\n| `VALID_ENV_AMBIGUOUS` | 400 | An environment variable is set twice with different values. |\n| `VALID_INVALID` | 400 | The request or spec is malformed. |\n| `VALID_PRIMARY_WORKLOAD` | 400 | A spec must name exactly one primary workload. |\n| `VALID_SOURCE_UNREADABLE` | 400 | Pando could not read the repository: it is private or missing and no source connection covers it, or the connection's credential was refused (R-091). |\n| `VALID_UNKNOWN_EVENT` | 400 | A subscription names an event, or a pattern, that matches no event in the catalog (R-364). |\n| `AUTH_INVALID` | 401 | The credential presented is not valid. |\n| `AUTH_REQUIRED` | 401 | No credential was presented, or the session has expired. |\n| `AUTH_TOKEN_INVALID` | 401 | The token is unknown, revoked or expired. |\n| `AUTH_TOKEN_ORPHANED` | 401 | The token's owner was suspended or deleted, so the token no longer resolves to anyone (R-059). |\n| `PERM_CROSS_ORIGIN` | 403 | A change sent with a browser's Pando sign-in from a page on another origin, such as an app's. Send it from the console, or with an API token. |\n| `PERM_DENIED` | 403 | Authenticated, but not permitted to do this. |\n| `PERM_PASSCODE_REQUIRED` | 403 | The app is shared with everyone who knows its passcode, and this request has not shown it. A browser is sent to the passcode page; entering it there lets the visitor in. |\n| `PERM_VERB_REQUIRED` | 403 | The caller holds no grant carrying the verb this action needs. |\n| `POLICY_ANONYMOUS_GRANT_FORBIDDEN` | 403 | Host policy does not allow apps to be shared with everyone (R-076). |\n| `POLICY_APP_LIMIT_REACHED` | 403 | The person who would own the new app already owns as many apps as their limit allows. The message names the limit and where it is set (R-244). |\n| `POLICY_BACKUP_REQUIRED` | 403 | Host policy requires a final backup before an app with storage is deleted, and the request said to delete without one (R-284). |\n| `POLICY_EXEC_DISABLED` | 403 | Host policy has turned off terminal access, including for an app's owner (R-085). |\n| `POLICY_SOURCE_NOT_ALLOWED` | 403 | Host policy does not allow apps from this source (R-092). |\n| `POLICY_WEBHOOK_PRIVATE_ADDRESS` | 403 | A webhook points at a private, loopback or link-local address, and host policy does not allow that (R-372). |\n| `NOT_FOUND` | 404 | No such object, or none the caller may see. |\n| `CAPACITY_NO_FREE_PORT` | 409 | Port-mode routing has no free port in the configured range. |\n| `CAPACITY_WOULD_OVERSUBSCRIBE` | 409 | Running this would commit more of the host than is left (R-242). |\n| `PLAN_ADAPTER_NOT_CONFIGURED` | 409 | The spec names an adapter this installation does not have. |\n| `PLAN_CAPABILITY_UNSUPPORTED` | 409 | The spec asks for something the chosen adapter does not do (R-254). |\n| `PLAN_COMPOSE_CONSTRUCT_REJECTED` | 409 | The compose file uses a construct Pando will not translate (R-099). |\n| `PLAN_EGRESS_LOOSENING_FORBIDDEN` | 409 | The app loosens the installation's egress rules, and host policy says no app may (R-183). |\n| `PLAN_IMAGE_PLATFORM_UNSUPPORTED` | 409 | The app's image has no build for the operating system and CPU architecture this server runs, so it cannot start here. |\n| `PLAN_NO_ADAPTER_MEETS_POLICY` | 409 | No configured adapter can satisfy this spec under host policy (R-024, R-114). |\n| `PLAN_SECURITY_BELOW_THRESHOLD` | 409 | This installation requires a security score, and this app is below it or has never been scanned (R-314). |\n| `PLAN_SLOT_UNFILLED` | 409 | A required dependency has nothing filling it, so the deploy would start an app that cannot connect (R-132). |\n| `STATE_ADDRESS_TAKEN` | 409 | Another app is already reached at this address, or at a path this one would sit inside or around. |\n| `STATE_AI_FUNCTION_ASSIGNED` | 409 | Another AI adapter already handles this AI function. Remove it from that adapter first. |\n| `STATE_APP_EXITED` | 409 | The app started and then stopped, so the deploy has nothing to send traffic to. |\n| `STATE_BACKUP_DECISION_REQUIRED` | 409 | The app has storage and the request did not say whether to keep a final backup of it (R-204, R-205). |\n| `STATE_INVALID` | 409 | The object is in a state this action does not apply to. |\n| `STATE_SET_AT_STARTUP` | 409 | This is declared in Pando's startup configuration and cannot be changed through the API while it is. |\n| `BACKUP_DECRYPT_FAILED` | 422 | The backup could not be decrypted with the key supplied. |\n| `BACKUP_INCOMPLETE` | 422 | The backup is missing part of what it claims to hold, so it was not applied (R-215). |\n| `BUILD_FAILED` | 422 | The build ran and did not succeed. Its log is the answer. |\n| `BUILD_LISTENS_ON_LOOPBACK` | 422 | The built app listens only on 127.0.0.1 inside its container, where nothing outside it can reach it. |\n| `BUILD_TIMEOUT` | 422 | The build exceeded the time allowed for it (R-119). |\n| `RATE_LIMITED` | 429 | Too many attempts in a short time — at a passcode, for example. Wait a few minutes and try again. |\n| `INTERNAL` | 500 | Pando failed in a way it did not expect. The request ID finds the log line. |\n| `ADAPTER_FAILED` | 502 | The adapter was reached and failed. |\n| `ADAPTER_REGISTRY_RATE_LIMITED` | 502 | A registry refused an image because this server, or the app's registry account, has downloaded too many images recently. The message says when it accepts downloads again, where the registry said. |\n| `ADAPTER_UNAVAILABLE` | 502 | The adapter needed for this is not configured or not reachable. |",
+            "description": "A stable code to branch on. Renaming one is a breaking change.\n\n| Code | Status | Meaning |\n|---|---|---|\n| `VALID_DANGLING_MOUNT` | 400 | A workload mounts a volume the spec does not declare. |\n| `VALID_DANGLING_SLOT_REF` | 400 | The spec refers to a slot it does not declare. |\n| `VALID_DEPENDENCY_CYCLE` | 400 | The workloads depend on each other in a cycle. |\n| `VALID_ENV_AMBIGUOUS` | 400 | An environment variable is set twice with different values. |\n| `VALID_INVALID` | 400 | The request or spec is malformed. |\n| `VALID_PRIMARY_WORKLOAD` | 400 | A spec must name exactly one primary workload. |\n| `VALID_SOURCE_UNREADABLE` | 400 | Pando could not read the repository: it is private or missing and no source connection covers it, or the connection's credential was refused. |\n| `VALID_UNKNOWN_EVENT` | 400 | A subscription names an event, or a pattern, that matches no event in the catalog. |\n| `AUTH_INVALID` | 401 | The credential presented is not valid. |\n| `AUTH_REQUIRED` | 401 | No credential was presented, or the session has expired. |\n| `AUTH_TOKEN_INVALID` | 401 | The token is unknown, revoked or expired. |\n| `AUTH_TOKEN_ORPHANED` | 401 | The token's owner was suspended or deleted, so the token no longer resolves to anyone. |\n| `PERM_CROSS_ORIGIN` | 403 | A change sent with a browser's Pando sign-in from a page on another origin, such as an app's. Send it from the console, or with an API token. |\n| `PERM_DENIED` | 403 | Authenticated, but not permitted to do this. |\n| `PERM_PASSCODE_REQUIRED` | 403 | The app is shared with everyone who knows its passcode, and this request has not shown it. A browser is sent to the passcode page; entering it there lets the visitor in. |\n| `PERM_VERB_REQUIRED` | 403 | The caller holds no grant carrying the verb this action needs. |\n| `POLICY_ANONYMOUS_GRANT_FORBIDDEN` | 403 | Host policy does not allow apps to be shared with everyone. |\n| `POLICY_APP_LIMIT_REACHED` | 403 | The person who would own the new app already owns as many apps as their limit allows. The message names the limit and where it is set. |\n| `POLICY_BACKUP_REQUIRED` | 403 | Host policy requires a final backup before an app with storage is deleted, and the request said to delete without one. |\n| `POLICY_EXEC_DISABLED` | 403 | Host policy has turned off terminal access, including for an app's owner. |\n| `POLICY_SOURCE_NOT_ALLOWED` | 403 | Host policy does not allow apps from this source. |\n| `POLICY_WEBHOOK_PRIVATE_ADDRESS` | 403 | A webhook points at a private, loopback or link-local address, and host policy does not allow that. |\n| `NOT_FOUND` | 404 | No such object, or none the caller may see. |\n| `CAPACITY_NO_FREE_PORT` | 409 | Port-mode routing has no free port in the configured range. |\n| `CAPACITY_WOULD_OVERSUBSCRIBE` | 409 | Running this would commit more of the host than is left. |\n| `PLAN_ADAPTER_NOT_CONFIGURED` | 409 | The spec names an adapter this installation does not have. |\n| `PLAN_CAPABILITY_UNSUPPORTED` | 409 | The spec asks for something the chosen adapter does not do. |\n| `PLAN_COMPOSE_CONSTRUCT_REJECTED` | 409 | The compose file uses a construct Pando will not translate. |\n| `PLAN_EGRESS_LOOSENING_FORBIDDEN` | 409 | The app loosens the installation's egress rules, and host policy says no app may. |\n| `PLAN_IMAGE_PLATFORM_UNSUPPORTED` | 409 | The app's image has no build for the operating system and CPU architecture this server runs, so it cannot start here. |\n| `PLAN_NO_ADAPTER_MEETS_POLICY` | 409 | No configured adapter can satisfy this spec under host policy. |\n| `PLAN_SECURITY_BELOW_THRESHOLD` | 409 | This installation requires a security score, and this app is below it or has never been scanned. |\n| `PLAN_SLOT_UNFILLED` | 409 | A required dependency has nothing filling it, so the deploy would start an app that cannot connect. |\n| `STATE_ADDRESS_TAKEN` | 409 | Another app is already reached at this address, or at a path this one would sit inside or around. |\n| `STATE_AI_FUNCTION_ASSIGNED` | 409 | Another AI adapter already handles this AI function. Remove it from that adapter first. |\n| `STATE_APP_EXITED` | 409 | The app started and then stopped, so the deploy has nothing to send traffic to. |\n| `STATE_BACKUP_DECISION_REQUIRED` | 409 | The app has storage and the request did not say whether to keep a final backup of it. |\n| `STATE_INVALID` | 409 | The object is in a state this action does not apply to. |\n| `STATE_SET_AT_STARTUP` | 409 | This is declared in Pando's startup configuration and cannot be changed through the API while it is. |\n| `BACKUP_DECRYPT_FAILED` | 422 | The backup could not be decrypted with the key supplied. |\n| `BACKUP_INCOMPLETE` | 422 | The backup is missing part of what it claims to hold, so it was not applied. |\n| `BUILD_FAILED` | 422 | The build ran and did not succeed. Its log is the answer. |\n| `BUILD_LISTENS_ON_LOOPBACK` | 422 | The built app listens only on 127.0.0.1 inside its container, where nothing outside it can reach it. |\n| `BUILD_TIMEOUT` | 422 | The build exceeded the time allowed for it. |\n| `RATE_LIMITED` | 429 | Too many attempts in a short time — at a passcode, for example. Wait a few minutes and try again. |\n| `INTERNAL` | 500 | Pando failed in a way it did not expect. The request ID finds the log line. |\n| `ADAPTER_FAILED` | 502 | The adapter was reached and failed. |\n| `ADAPTER_REGISTRY_RATE_LIMITED` | 502 | A registry refused an image because this server, or the app's registry account, has downloaded too many images recently. The message says when it accepts downloads again, where the registry said. |\n| `ADAPTER_UNAVAILABLE` | 502 | The adapter needed for this is not configured or not reachable. |",
             "enum": [
               "VALID_DANGLING_MOUNT",
               "VALID_DANGLING_SLOT_REF",
@@ -15282,7 +15304,7 @@
           },
           "passphrase": {
             "type": "string",
-            "description": "Always `[redacted]`: a secret's value is never written to a response (R-194)."
+            "description": "Always `[redacted]`: a secret's value is never written to a response."
           },
           "skip_backup": {
             "type": "boolean"
@@ -15541,6 +15563,9 @@
           "group": {
             "type": "string"
           },
+          "title": {
+            "type": "string"
+          },
           "summary": {
             "type": "string"
           },
@@ -15555,6 +15580,7 @@
           "method",
           "path",
           "group",
+          "title",
           "summary"
         ]
       },
@@ -15851,7 +15877,7 @@
           },
           "active": {
             "type": "boolean",
-            "description": "False suspends the account (R-049)."
+            "description": "False suspends the account."
           },
           "groups": {
             "type": "array",
@@ -16513,7 +16539,7 @@
             "type": "object",
             "additionalProperties": {
               "type": "string",
-              "description": "Always `[redacted]`: a secret's value is never written to a response (R-194)."
+              "description": "Always `[redacted]`: a secret's value is never written to a response."
             }
           },
           "payload_template": {
@@ -16959,7 +16985,7 @@
       "bearerToken": {
         "type": "http",
         "scheme": "bearer",
-        "description": "A token minted from the console or with `pando token create`. A delegated token acts as the person who made it and is bounded by their live grants (R-058, R-059). A service token is its own principal and holds only what has been shared with it (R-060)."
+        "description": "A token minted from the console or with `pando token create`. A delegated token acts as the person who made it and is bounded by their live grants. A service token is its own principal and holds only what has been shared with it."
       },
       "scimToken": {
         "type": "http",
@@ -16970,7 +16996,7 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "pando_session",
-        "description": "How the console authenticates. Cookies in Pando's namespace never reach an app (R-173)."
+        "description": "How the console authenticates. Cookies in Pando's namespace never reach an app."
       }
     }
   }

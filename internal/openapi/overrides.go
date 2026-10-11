@@ -22,7 +22,7 @@ func marshalers() map[string]*Schema {
 
 		// secret.Value writes "[redacted]" in every marshaler (R-194).
 		"github.com/trypando/pando/internal/secret.Value": {
-			Type: "string", Description: "Always `[redacted]`: a secret's value is never written to a response (R-194).",
+			Type: "string", Description: "Always `[redacted]`: a secret's value is never written to a response.",
 		},
 		// The two keys a response shows once, on purpose.
 		"github.com/trypando/pando/internal/core/autodeploy.Secret":       shown("The webhook secret. Shown in this response only."),
@@ -180,7 +180,7 @@ func scimSchemas() map[string]*Schema {
 				{Name: "id", Schema: str("The Pando account's ID.")},
 				{Name: "userName", Schema: str("")},
 				{Name: "externalId", Schema: str("The provider's ID for the person.")},
-				{Name: "active", Schema: &Schema{Type: "boolean", Description: "False suspends the account (R-049)."}},
+				{Name: "active", Schema: &Schema{Type: "boolean", Description: "False suspends the account."}},
 				{Name: "groups", Schema: &Schema{Type: "array", Items: member}},
 				{Name: "meta", Schema: meta},
 			},

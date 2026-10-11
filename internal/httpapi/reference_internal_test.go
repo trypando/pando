@@ -84,6 +84,24 @@ func TestDocumentedVerbsAreRealVerbs(t *testing.T) {
 	}
 }
 
+// Every row has a title a list of endpoints can show: a few words in sentence
+// case, no closing period and no code, and no two alike. The summary is the
+// whole of it; a title is what someone scanning the list reads.
+func TestEveryRouteHasATitle(t *testing.T) {
+	seen := map[string]string{}
+	for _, doc := range routeDocs {
+		key := doc.Method + " " + doc.Path
+		title := doc.Title
+		require.NotEmpty(t, title, "%s has no Title", key)
+		require.LessOrEqual(t, len(strings.Fields(title)), 6, "%s: %q is longer than six words", key, title)
+		require.False(t, strings.HasSuffix(title, "."), "%s: %q ends with a period", key, title)
+		require.NotContains(t, title, "`", "%s: %q has code in it", key, title)
+		require.Equal(t, strings.ToUpper(title[:1]), title[:1], "%s: %q does not start with a capital", key, title)
+		require.Empty(t, seen[title], "%s and %s are both titled %q", key, seen[title], title)
+		seen[title] = key
+	}
+}
+
 // A row whose summary tells a reader the endpoint is public is marked public,
 // so the OpenAPI document, which reads the mark rather than the prose, says so
 // too: a public endpoint described as needing a token is one nobody can call

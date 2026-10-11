@@ -198,6 +198,30 @@ func TestTheErrorEnvelopeListsEveryCode(t *testing.T) {
 	require.Equal(t, []any{"code", "message"}, envelope["required"])
 }
 
+// The document is for people calling the API: the requirement IDs, design
+// sections and issues the summaries cite for Pando's own developers are left
+// out of it.
+func TestTheOpenAPIDocumentCitesNothingInternal(t *testing.T) {
+	ref := httpapi.Reference()
+	body, err := Generate(ref, "test")
+	require.NoError(t, err)
+	require.NotRegexp(t, `\bR-\d{3}|\bO-\d+\b|issue #\d|design \d`, string(body))
+}
+
+func TestForReaders(t *testing.T) {
+	for in, want := range map[string]string{
+		"Checked first (R-092), then fetched.":           "Checked first, then fetched.",
+		"Stops it (R-393 – R-397).":                      "Stops it.",
+		"The rules (`egress`, R-188) apply.":             "The rules (`egress`) apply.",
+		"Live (O-51), shared (issue #50; design 04 §4).": "Live, shared.",
+		"Kept (see PUT /x) as is.":                       "Kept (see PUT /x) as is.",
+		"Two (R-070, R-071) planes.":                     "Two planes.",
+		"Bare R-261 reference.":                          "Bare reference.",
+	} {
+		require.Equal(t, want, forReaders(in), in)
+	}
+}
+
 func resolve(doc map[string]any, ref string) any {
 	if !strings.HasPrefix(ref, "#/") {
 		return nil
@@ -229,7 +253,7 @@ const fakeAPI = "github.com/trypando/pando/internal/openapi/testdata/fakeapi"
 
 func fakeRoutes() []reference.Route {
 	route := func(method, path string) reference.Route {
-		return reference.Route{Method: method, Path: path, Group: "Things", Summary: "Does a thing. Then more."}
+		return reference.Route{Method: method, Path: path, Group: "Things", Title: "Do a thing", Summary: "Does a thing (R-001). Then more."}
 	}
 	return []reference.Route{
 		route("GET", "/api/v1/things"),
@@ -280,7 +304,8 @@ func TestTheReadingFollowsTheHandlers(t *testing.T) {
 	// A list built from map literals, a helper adding a key, and the query.
 	list := op(t, doc, "get", "/api/v1/things")
 	require.Equal(t, "listThings", list["operationId"])
-	require.Equal(t, "Does a thing.", list["summary"])
+	require.Equal(t, "Do a thing", list["summary"])
+	require.Equal(t, "Does a thing. Then more.", list["description"])
 	require.JSONEq(t, `[
 		{"name":"all","in":"query","schema":{"type":"boolean"}},
 		{"name":"id","in":"query","schema":{"type":"array","items":{"type":"string"}}},
@@ -377,14 +402,6 @@ func TestATypeWithItsOwnJSONMustBeNamed(t *testing.T) {
 }
 
 func TestNames(t *testing.T) {
-	for in, want := range map[string]string{
-		"Does a thing. Then more.":                 "Does a thing.",
-		"One sentence only":                        "One sentence only",
-		"Uses `a.b` and (see c. d) first. Second.": "Uses `a.b` and (see c. d) first.",
-		"Ends with a period.":                      "Ends with a period.",
-	} {
-		require.Equal(t, want, firstSentence(in), in)
-	}
 	for in, want := range map[string]string{
 		"ListApps": "listApps", "SSOComplete": "ssoComplete", "Me": "me", "SAMLMetadata": "samlMetadata", "API": "api",
 	} {

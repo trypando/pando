@@ -221,7 +221,7 @@ code. `make reference` writes it with `internal/openapi`, which reads
 `internal/httpapi` as source: the routes from `(*Server).Routes`, each request
 body from the type its handler decodes into, each response from what its
 handler passes to `JSON` and with which status — a map literal's keys read from
-the literal — and summaries, groups and verbs from `routeDocs`. What the code
+the literal — and titles, summaries, groups and verbs from `routeDocs`. What the code
 cannot say (a body written as bytes, a type with its own `MarshalJSON`, SCIM's
 resources built in `core/idp`) is in `internal/openapi/overrides.go`, and
 generation fails on any answer it could not read rather than guessing.

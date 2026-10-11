@@ -183,13 +183,13 @@ func (a *analysis) document(ref reference.Document, version string, ov map[strin
 		Info: Info{
 			Title:   "Pando API",
 			Version: version,
-			Description: "The HTTP API of a Pando installation. The console, the `pando` CLI and the MCP server are clients of it, " +
-				"and none of them can do anything it cannot (R-261).\n\n" +
-				"Authenticate with a token (`Authorization: Bearer <token>`) or the session cookie the console signs in with. " +
-				"A failed request answers with the error envelope: a stable `code` to branch on, a `message` to show, and often a `remedy`.\n\n" +
-				"A field listed as required is always present in a response. A request may leave out any field it does not need; " +
-				"Pando answers `VALID_INVALID` naming what is missing.\n\n" +
-				"Generated from the code by `make reference`.",
+			Description: "The HTTP API of a Pando installation.\n\n" +
+				"Authenticate with a token in the `Authorization: Bearer <token>` header, or with the session cookie " +
+				"`POST /api/v1/sessions` sets.\n\n" +
+				"A failed request answers with the error envelope: a stable `code` to branch on, a `message` to show, " +
+				"and often a `remedy` saying what to do.\n\n" +
+				"A field listed as required is always present in a response. A request may leave out any field it does " +
+				"not need; Pando answers `VALID_INVALID` naming what is missing.",
 		},
 		Servers: []Server{{
 			URL:         "https://{host}",
@@ -388,7 +388,7 @@ func prune(d *Document) {
 func securitySchemes(auth []reference.Auth) map[string]SecurityScheme {
 	desc := map[string]string{}
 	for _, a := range auth {
-		desc[a.Name] = a.Description
+		desc[a.Name] = forReaders(a.Description)
 	}
 	return map[string]SecurityScheme{
 		schemeToken:   {Type: "http", Scheme: "bearer", Description: desc["Token"]},
@@ -409,13 +409,44 @@ func describeCodes(es *Schema, codes []errs.CodeDoc) {
 		var enum []string
 		for _, c := range codes {
 			enum = append(enum, string(c.Code))
-			fmt.Fprintf(&b, "| `%s` | %d | %s |\n", c.Code, c.Status, strings.ReplaceAll(c.Meaning, "|", "\\|"))
+			fmt.Fprintf(&b, "| `%s` | %d | %s |\n", c.Code, c.Status, strings.ReplaceAll(forReaders(c.Meaning), "|", "\\|"))
 		}
 		c := *p.Schema
 		c.Enum = enum
 		c.Description = strings.TrimSuffix(b.String(), "\n")
 		es.Properties[i].Schema = &c
 	}
+}
+
+// The references a summary carries for the people building Pando: requirement
+// and open-decision IDs, design sections and issues. They mean nothing to
+// someone calling the API, so the document leaves them out.
+var (
+	internalRef  = `(?:R-\d+[a-z]?|O-\d+|issue #\d+|design \d+(?: §[\d.]+)?)`
+	internalRefs = internalRef + `(?:\s*(?:,|;|–|-|and)\s*` + internalRef + `)*`
+	refAside     = regexp.MustCompile(`\s*\(([^()]*)\)`)
+	refInAside   = regexp.MustCompile(`(?:[,;]\s*)?` + internalRefs + `(?:[,;]\s*)?`)
+	refBare      = regexp.MustCompile(`\s*\b` + internalRefs)
+	refAny       = regexp.MustCompile(internalRef)
+)
+
+// forReaders takes the internal references out of text an API reader sees:
+// "(R-092)" goes, and "(`egress`, R-188)" becomes "(`egress`)".
+func forReaders(s string) string {
+	s = refAside.ReplaceAllStringFunc(s, func(aside string) string {
+		m := refAside.FindStringSubmatch(aside)
+		if !refAny.MatchString(m[1]) {
+			return aside
+		}
+		inner := strings.TrimSpace(refInAside.ReplaceAllString(m[1], ", "))
+		inner = strings.TrimSpace(strings.Trim(inner, ", "))
+		if inner == "" {
+			return ""
+		}
+		lead := aside[:strings.IndexByte(aside, '(')]
+		return lead + "(" + inner + ")"
+	})
+	return refBare.ReplaceAllString(s, "")
 }
 
 var pathParam = regexp.MustCompile(`\{([^}:]+)(:[^}]*)?\}`)
@@ -425,14 +456,11 @@ func (a *analysis) operation(route reference.Route, res *operation, o override, 
 	var problems []string
 	path := normalize(route.Path)
 	op := &Operation{
-		Summary:     firstSentence(route.Summary),
-		Description: route.Summary,
+		Summary:     route.Title,
+		Description: forReaders(route.Summary),
 		Tags:        []string{route.Group},
 		Responses:   map[string]*Response{},
 		Verb:        route.Verb,
-	}
-	if op.Description == op.Summary {
-		op.Description = ""
 	}
 	if route.Verb != "" {
 		op.Description = strings.TrimSpace(op.Description + "\n\nNeeds `" + route.Verb + "`.")
@@ -576,28 +604,6 @@ func statusText(st int) string {
 		return "Unavailable"
 	}
 	return "Status " + strconv.Itoa(st)
-}
-
-// firstSentence is a summary's first sentence, which is what a reader scanning
-// a list of operations needs; the whole of it is the description.
-func firstSentence(s string) string {
-	depth := 0
-	inCode := false
-	for i, r := range s {
-		switch r {
-		case '`':
-			inCode = !inCode
-		case '(':
-			depth++
-		case ')':
-			depth--
-		case '.':
-			if !inCode && depth == 0 && (i+1 == len(s) || s[i+1] == ' ') {
-				return s[:i+1]
-			}
-		}
-	}
-	return s
 }
 
 // operationID names an operation after its handler — handleListApps is
