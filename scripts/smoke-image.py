@@ -295,6 +295,10 @@ def main():
     try:
         run(args)
     except BaseException:
+        if args.restart_user_services:
+            print("--- user services", flush=True)
+            subprocess.run(["systemctl", "--user", "status", "--no-pager", "podman.socket", "pando.service"], check=False)
+            subprocess.run(["journalctl", "--user", "--no-pager", "-n", "40"], check=False)
         print("--- containers", flush=True)
         subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}"], check=False)
         for app_id in args.app_ids:
