@@ -106,3 +106,13 @@ func (a *Adapter) verifyRuntime(ctx context.Context, containerID, workload strin
 			"Docker-compatible API does. Pando will not run an app outside the sandbox it reported. Use Docker " +
 			"with the runtime registered in /etc/docker/daemon.json, or clear the container runtime setting.")
 }
+
+// alreadyAttached reports whether a network connect failed only because the
+// container is on that network already. Docker says "endpoint with name … already
+// exists"; Podman says "network is already connected". Read as a failure, Podman's
+// answer failed every Apply to an app whose network Pando was still on — after a
+// reboot, every app — before its container was started (issue #179).
+func alreadyAttached(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "already exists") || strings.Contains(msg, "already connected")
+}

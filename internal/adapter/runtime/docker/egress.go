@@ -311,9 +311,10 @@ func (a *Adapter) ensureGateway(ctx context.Context, p api.BundlePlan, img gatew
 			return err
 		}
 		if ok {
-			// Started whatever the list says, as a workload is (applyWorkload).
-			if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
-				return errs.Wrap(errs.AdapterFailed, "Could not start this app's egress gateway.", err)
+			if !strings.HasPrefix(existing.State, "running") {
+				if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
+					return errs.Wrap(errs.AdapterFailed, "Could not start this app's egress gateway.", err)
+				}
 			}
 			return nil
 		}

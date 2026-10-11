@@ -544,14 +544,10 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 			return err
 		}
 		if matches {
-			// Started whatever the list says. After rootless Podman's
-			// containers were killed with the user's systemd instance (a
-			// reboot), Pando corrected "workload stopped" four times and the
-			// container stayed exited, with no error: the start had been
-			// skipped on the list's state (issue #179). The engine answers a
-			// start of a running container with 304, which is not an error.
-			if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
-				return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start %q.", w.Name), err)
+			if !strings.HasPrefix(existing.State, "running") {
+				if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
+					return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start %q.", w.Name), err)
+				}
 			}
 			return nil
 		}
@@ -1096,7 +1092,7 @@ func (a *Adapter) RejoinNetworks(ctx context.Context, owns func(bundleID string)
 	// Which networks this container is already on, from one inspect of
 	// itself. Unknown — the inspect failed, or Pando is not in a container —
 	// is an empty set, and every network goes on to the checks below as it
-	// did before; attachProxy treats "already exists" and a container that is
+	// did before; attachProxy treats being attached already and a container that is
 	// not there as success.
 	already := a.proxyNetworks(ctx)
 
@@ -1471,8 +1467,8 @@ func (a *Adapter) ensureNetwork(ctx context.Context, bundleID string, restricted
 				// existing app, and the app came back only if something
 				// recreated its network.
 				//
-				// Idempotent: Docker answers "already exists" and attachProxy
-				// treats that as success.
+				// Idempotent: the engine answers that it is attached already,
+				// and attachProxy treats that as success (alreadyAttached).
 				if err := a.attachProxy(ctx, n.ID); err != nil {
 					return "", err
 				}
@@ -1552,7 +1548,7 @@ func (a *Adapter) attachProxy(ctx context.Context, networkID string) error {
 	switch {
 	case err == nil:
 		return nil
-	case strings.Contains(err.Error(), "already exists"):
+	case alreadyAttached(err):
 		return nil
 	case cerrdefs.IsNotFound(err):
 		// Pando is not running as a container — a developer running the binary
