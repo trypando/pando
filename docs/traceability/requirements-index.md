@@ -10,7 +10,7 @@ specify it, the phase that builds it, and the tests that prove it. Test coverage
 | | Count | Of total |
 |---|---:|---:|
 | Requirements | 311 | — |
-| Specified in a design doc | 277 | 89% |
+| Specified in a design doc | 278 | 89% |
 | Assigned to a phase | 137 | 44% |
 | Covered by a named test | 247 | 79% |
 
@@ -318,8 +318,8 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-295** | P | The cold-start path needs specification: a first request arrives with nothing running, and… | 22. Per-User Instances [LATER] | 05 | — | — |
 | **R-296** | D | This does not violate R-010. | 22. Per-User Instances [LATER] | 05 | — | — |
 | **R-310** | D | Every app has a security score: a whole number from 0 to 100. | 23. Security Scanning | 08, 09 | — | `TestR310_AScanInProgressIsVisibleWhoeverStartedIt`, `TestR310_AScanIsRunningUntilTheLastOfItsScansEnds`, `TestR310_TheScoreIsReadableByAnyoneWhoCanSeeTheApp` |
-| **R-311** | D | The score comes from scanning what the app actually deploys — the image that was | 23. Security Scanning | — | — | `TestR311_ABuiltImageIsFetchedFromTheRegistryWithTheRequestsCredential`, `TestR311_ScanningAnImageReportsWhatIsInIt`, `TestR311_ScanningSourceFindsWhatNeverReachesAnImage` |
-| **R-312** | D | An app is scanned whenever what it runs changes — on every deploy that changes the | 23. Security Scanning | 09 | — | `TestR312_ADeployOfAScannedCommitDoesNotScanItAgain`, `TestR312_ADeployOfAScannedCommitUsesThatScan`, `TestR312_ARedeployOfAnUnchangedSourceIsScoredByItsScan`, `TestR312_AReusedScanDescribesTheNewRevision`, `TestR312_AcceptingAProposalDoesNotHideTheScanTakenAtDiscovery`, `TestR312_AnUploadIsKnownByItsArchive`, `TestR312_ScanningAnAppWhoseUploadIsGoneSaysHowToSendItAgain`, `TestR312_UnchangedImageIsNotRescanned` |
+| **R-311** | D | The score comes from scanning what the app actually deploys — the image that was | 23. Security Scanning | 09 | — | `TestR311_ABuiltImageIsFetchedFromTheRegistryWithTheRequestsCredential`, `TestR311_ADeployScansTheImageItBuilt`, `TestR311_ASourceScanDoesNotCoverTheBuiltImage`, `TestR311_OnlyADigestNamesAnImageAScanCovers`, `TestR311_ScanningAnImageReportsWhatIsInIt`, `TestR311_ScanningSourceFindsWhatNeverReachesAnImage` |
+| **R-312** | D | An app is scanned whenever what it runs changes — on every deploy that changes the | 23. Security Scanning | 09 | — | `TestR312_ADeployOfAScannedCommitDoesNotScanItAgain`, `TestR312_ADeployOfAScannedCommitUsesThatScan`, `TestR312_ARedeployOfAnUnchangedSourceIsScoredByItsScan`, `TestR312_AReusedScanDescribesTheNewRevision`, `TestR312_AcceptingAProposalDoesNotHideTheScanTakenAtDiscovery`, `TestR312_AnUnchangedImageAndSourceReuseTheirScan`, `TestR312_AnUploadIsKnownByItsArchive`, `TestR312_ScanningAnAppWhoseUploadIsGoneSaysHowToSendItAgain`, `TestR312_UnchangedImageIsNotRescanned` |
 | **R-313** | P | The score is derived from findings by severity, starting at 100 and deducting per | 23. Security Scanning | 09 | — | `TestR313_OneCriticalCostsMoreThanFiftyLows`, `TestR313_PolicyMayCountOnlyWhatCanBeFixed` |
 | **R-314** | D | Host policy may set a minimum score, 0 to 100. | 23. Security Scanning | 09 | — | `TestR314_AReusedScanStillFacesTheThreshold`, `TestR314_ATresholdOnlyBitesWhenThereIsSomethingToEnforceIt` |
 | **R-315** | D | **An app that is already running when it falls below the threshold is not stopped on | 23. Security Scanning | 09 | — | `TestR315_AnAppThatFallsBelowIsWarnedAndNotStopped`, `TestR315_TheSecurityPassPlacesEveryAppInOneCall`, `TestR315_TheSecurityPassReadsOnlyTheAppsItCouldActOn`, `TestR315_WarnOnlyNeverStops` |
@@ -366,7 +366,6 @@ Check each against the categories above before treating it as a gap.
 - **R-291** (22. Per-User Instances [LATER]) — This is the feature that makes "vibe code it and share it with your team" work for apps…
 - **R-292** (22. Per-User Instances [LATER]) — Instances are created lazily, on first access.
 - **R-294** (22. Per-User Instances [LATER]) — Data destruction on revoke follows §21.
-- **R-311** (23. Security Scanning) — The score comes from scanning what the app actually deploys — the image that was
 - **R-300** (26. Licensing and Governance) — AGPL, dual-licensed with commercial exceptions available.
 - **R-301** (26. Licensing and Governance) — A CLA is required from the first outside contribution, implemented with CLA Assistant as a…
 - **R-302** (26. Licensing and Governance) — Rationale for starting here: AGPL → MIT is reversible; MIT → AGPL is not.

@@ -27,7 +27,11 @@ type Scan struct {
 	// Commit names the source the scan read, when it read one: a git commit,
 	// an image digest, or an upload's archive digest. A deploy of that source
 	// uses this scan rather than scanning again (ForSource).
-	Commit     string `json:"commit,omitempty"`
+	Commit string `json:"commit,omitempty"`
+	// Image names the image the scan read, by digest, when it read one. Empty
+	// for a scan of the source alone — detection's, before anything was built —
+	// which a deploy that built an image does not reuse (R-311).
+	Image      string `json:"image,omitempty"`
 	ScannerRef string `json:"scanner_ref"`
 	Scanner    string `json:"scanner,omitempty"`
 	Score      *int   `json:"score"`
@@ -73,11 +77,11 @@ func (s *Scans) Record(ctx context.Context, scan Scan) (Scan, error) {
 
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO app_scans (id, app_id, spec_id, scanner_ref, scanner, score, score_fixable,
-		                       findings, error, ran_at, commit, reused_from)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		                       findings, error, ran_at, commit, reused_from, image)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 		scan.ID, scan.AppID, nullable(scan.SpecID), scan.ScannerRef, scan.Scanner,
 		scan.Score, scan.ScoreFixable, body, scan.Error, scan.RanAt, nullable(scan.Commit),
-		nullable(scan.ReusedFrom))
+		nullable(scan.ReusedFrom), nullable(scan.Image))
 	if err != nil {
 		return Scan{}, errs.Wrap(errs.Internal, "Could not record the scan.", err)
 	}
@@ -98,7 +102,8 @@ func (s *Scans) Record(ctx context.Context, scan Scan) (Scan, error) {
 func (s *Scans) Latest(ctx context.Context, appID, specID string) (Scan, bool, error) {
 	query := `
 		SELECT id, app_id, coalesce(spec_id, ''), scanner_ref, scanner, score, score_fixable,
-		       findings, error, ran_at, coalesce(reused_from, '')
+		       findings, error, ran_at, coalesce(reused_from, ''),
+		       coalesce(commit, ''), coalesce(image, '')
 		FROM app_scans
 		WHERE app_id = $1 AND ($2 = '' OR spec_id = $2 OR spec_id IS NULL)
 		ORDER BY (spec_id IS NOT NULL) DESC, ran_at DESC
@@ -108,7 +113,8 @@ func (s *Scans) Latest(ctx context.Context, appID, specID string) (Scan, bool, e
 	var findings []byte
 	err := s.db.QueryRow(ctx, query, appID, specID).Scan(
 		&scan.ID, &scan.AppID, &scan.SpecID, &scan.ScannerRef, &scan.Scanner,
-		&scan.Score, &scan.ScoreFixable, &findings, &scan.Error, &scan.RanAt, &scan.ReusedFrom)
+		&scan.Score, &scan.ScoreFixable, &findings, &scan.Error, &scan.RanAt, &scan.ReusedFrom,
+		&scan.Commit, &scan.Image)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Scan{}, false, nil
 	}
@@ -121,11 +127,16 @@ func (s *Scans) Latest(ctx context.Context, appID, specID string) (Scan, bool, e
 	return scan, true, nil
 }
 
-// ForSource returns the newest scan of an app's source that ran, by the
-// scanner named — a scanner that failed produced no finding worth reusing
-// (R-318), and another scanner's findings are not this one's. Found is false
-// for an empty source, which names nothing.
-func (s *Scans) ForSource(ctx context.Context, appID, source, scannerRef string) (Scan, bool, error) {
+// ForSource returns the newest scan of an app's source and image that ran, by
+// the scanner named — a scanner that failed produced no finding worth reusing
+// (R-318), and another scanner's findings are not this one's.
+//
+// Both have to match, because a scan covers what it read (R-311): a scan of
+// the source alone does not cover an image built from it, and a scan of one
+// image does not cover another built from the same commit. Image is empty for
+// a deploy that built none, and then only a scan that read none matches. Found
+// is false for an empty source, which names nothing.
+func (s *Scans) ForSource(ctx context.Context, appID, source, image, scannerRef string) (Scan, bool, error) {
 	if source == "" {
 		return Scan{}, false, nil
 	}
@@ -135,9 +146,10 @@ func (s *Scans) ForSource(ctx context.Context, appID, source, scannerRef string)
 		SELECT id, app_id, coalesce(spec_id, ''), scanner_ref, scanner, score, score_fixable,
 		       findings, error, ran_at, coalesce(reused_from, '')
 		FROM app_scans
-		WHERE app_id = $1 AND commit = $2 AND scanner_ref = $3 AND error = '' AND score IS NOT NULL
+		WHERE app_id = $1 AND commit = $2 AND coalesce(image, '') = $3 AND scanner_ref = $4
+		  AND error = '' AND score IS NOT NULL
 		ORDER BY ran_at DESC, (reused_from IS NULL) DESC
-		LIMIT 1`, appID, source, scannerRef).Scan(
+		LIMIT 1`, appID, source, image, scannerRef).Scan(
 		&scan.ID, &scan.AppID, &scan.SpecID, &scan.ScannerRef, &scan.Scanner,
 		&scan.Score, &scan.ScoreFixable, &findings, &scan.Error, &scan.RanAt, &scan.ReusedFrom)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -150,6 +162,7 @@ func (s *Scans) ForSource(ctx context.Context, appID, source, scannerRef string)
 		_ = json.Unmarshal(findings, &scan.Findings)
 	}
 	scan.Commit = source
+	scan.Image = image
 	return scan, true, nil
 }
 
@@ -188,7 +201,7 @@ func (s *Scans) History(ctx context.Context, appID string, limit int) ([]Scan, e
 
 	rows, err := s.db.Query(ctx, `
 		SELECT id, app_id, coalesce(spec_id, ''), scanner_ref, scanner, score, score_fixable,
-		       findings, error, ran_at
+		       findings, error, ran_at, coalesce(commit, ''), coalesce(image, '')
 		FROM app_scans
 		WHERE app_id = $1 AND reused_from IS NULL
 		ORDER BY ran_at DESC
@@ -203,7 +216,8 @@ func (s *Scans) History(ctx context.Context, appID string, limit int) ([]Scan, e
 		var scan Scan
 		var findings []byte
 		if err := rows.Scan(&scan.ID, &scan.AppID, &scan.SpecID, &scan.ScannerRef, &scan.Scanner,
-			&scan.Score, &scan.ScoreFixable, &findings, &scan.Error, &scan.RanAt); err != nil {
+			&scan.Score, &scan.ScoreFixable, &findings, &scan.Error, &scan.RanAt,
+			&scan.Commit, &scan.Image); err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not read the app's scans.", err)
 		}
 		if len(findings) > 0 {

@@ -1,0 +1,13 @@
+-- The image a scan read (R-311, R-312).
+--
+-- A scan recorded the commit it read and nothing about the image, so a deploy
+-- that found a scan of its commit used it — including the one detection took of
+-- the source before anything was built. The image the deploy built was never
+-- scanned, and an app running an image with critical findings showed a clean
+-- score. What a scan covers is the source and the image together; a scan is
+-- reused only by a deploy of the same commit and the same image, named by its
+-- digest.
+--
+-- Nullable, and null on every row written before this and on every scan of a
+-- source alone: such a scan covers no image, so a deploy that built one scans it.
+ALTER TABLE app_scans ADD COLUMN image text;

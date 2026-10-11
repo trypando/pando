@@ -19,6 +19,21 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Fixed
+
+- **The first deploy of an app never scanned the image it built** (R-311). Detection scans the
+  source before anything is built, and the first deploy reused that scan, so an app's score left
+  out its image's operating system packages: a static site served from `nginx:1.27-alpine` showed
+  100 / 100 while its image had 2 critical and 41 high findings. A deploy now reuses a scan only when
+  that scan read the same source and the same image, named by its digest; otherwise it scans both.
+  The deploy log says "(source and image unchanged)" when it reuses one, and the app's security
+  section says what a scan read: the image and its source, the source only, or the running image only.
+
+### Upgrade notes
+
+- An app whose current score came from a scan of its source alone keeps that score, now labeled
+  "of the source only", until its next deploy scans the image as well.
+
 ## [0.4.0] - 2026-10-11
 
 ### Security

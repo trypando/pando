@@ -170,9 +170,11 @@ func (r *Runner) WithSecurity(s Security) *Runner {
 // deploy path cannot reach for anything else.
 type Security interface {
 	Scan(ctx context.Context, req api.ScanRequest, principal audit.Event) (state.Scan, error)
-	// Reuse returns a successful scan of the app's source, attached to specID,
-	// when there is one: a deploy of an unchanged source uses that scan.
-	Reuse(ctx context.Context, appID, specID, source string) (state.Scan, bool, error)
+	// Reuse returns a successful scan of the app's source and image, attached
+	// to specID, when there is one: a deploy of an unchanged source and image
+	// uses that scan. A scan of the source alone does not cover an image
+	// (R-311).
+	Reuse(ctx context.Context, appID, specID, source, image string) (state.Scan, bool, error)
 	Allows(ctx context.Context, appID, specID string) (security.Standing, error)
 	Configured() (string, bool)
 }

@@ -2,6 +2,7 @@ package security
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,7 +107,7 @@ func (s *Service) Scan(ctx context.Context, req api.ScanRequest, principal audit
 	result, err := scanner.Scan(ctx, req)
 	if err != nil {
 		recorded, recordErr := s.Scans.Record(ctx, state.Scan{
-			AppID: req.AppID, SpecID: req.SpecID, Commit: req.Commit, ScannerRef: ref,
+			AppID: req.AppID, SpecID: req.SpecID, Commit: req.Commit, Image: req.Image, ScannerRef: ref,
 			Error: messageOf(err), RanAt: time.Now().UTC(),
 		})
 		if recordErr != nil {
@@ -130,6 +131,7 @@ func (s *Service) Scan(ctx context.Context, req api.ScanRequest, principal audit
 		AppID:        req.AppID,
 		SpecID:       req.SpecID,
 		Commit:       req.Commit,
+		Image:        req.Image,
 		ScannerRef:   ref,
 		Scanner:      result.Scanner,
 		Score:        &score,
@@ -196,24 +198,33 @@ func (s *Service) Scanning(appID string) (time.Time, bool) {
 	return p.since, true
 }
 
-// Reuse finds a successful scan of this app's source by the scanner that would
-// run now, and makes it the scan of specID: a deploy of that source uses it
-// rather than scanning the same thing again (R-312, design 09 §4.1).
+// Reuse finds a successful scan of this app's source and image by the scanner
+// that would run now, and makes it the scan of specID: a deploy of that source
+// and image uses it rather than scanning the same thing again (R-312, design 09
+// §4.1).
 //
 // Source is what names the source exactly — a commit, an image digest, an
-// upload's archive digest — and a scan by another scanner does not count: its
-// findings are not the ones this installation's scanner would report. Found is
-// false when there is nothing to reuse, and the caller scans.
+// upload's archive digest — and image is what the deploy built or pulled, by
+// digest, or empty when it has none. The scan reused has to have read both
+// (R-311): detection's scan of the source alone does not stand in for the image
+// a deploy built from it, and neither does a scan of another build of the same
+// commit. An image named by anything but its digest is never reused, since the
+// name says nothing about what is in it. A scan by another scanner does not
+// count either: its findings are not the ones this installation's scanner would
+// report. Found is false when there is nothing to reuse, and the caller scans.
 //
 // A scan already attached to specID is returned as it is. One attached to
 // another revision, or to none, is recorded again against specID, so the
 // threshold check and every screen that asks for the revision's score find it.
-func (s *Service) Reuse(ctx context.Context, appID, specID, source string) (state.Scan, bool, error) {
+func (s *Service) Reuse(ctx context.Context, appID, specID, source, image string) (state.Scan, bool, error) {
+	if image != "" && !ContentAddressed(image) {
+		return state.Scan{}, false, nil
+	}
 	ref, configured := s.Configured()
 	if !configured {
 		return state.Scan{}, false, nil
 	}
-	found, ok, err := s.Scans.ForSource(ctx, appID, source, ref)
+	found, ok, err := s.Scans.ForSource(ctx, appID, source, image, ref)
 	if err != nil || !ok {
 		return state.Scan{}, false, err
 	}
@@ -233,6 +244,13 @@ func (s *Service) Reuse(ctx context.Context, appID, specID, source string) (stat
 		return state.Scan{}, false, err
 	}
 	return reused, true, nil
+}
+
+// ContentAddressed reports whether an image reference names its content: an
+// image ID (sha256:…) or a reference pinned by digest (repo@sha256:…). Only
+// such a name says two images are the same image.
+func ContentAddressed(image string) bool {
+	return strings.HasPrefix(image, "sha256:") || strings.Contains(image, "@sha256:")
 }
 
 // Report is where an app stands right now.

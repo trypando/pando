@@ -118,23 +118,29 @@ scan orders the same way twice.
 
 ### 4.1 At deploy (R-314)
 
-**[D] Scanned once per source, not once per deploy (R-312).** A scan records the source it read: the
-commit for a repository, the digest for a published image, and for an upload the SHA-256 of the
-archive (`sha256:<hex>`, never written into the spec as a commit — R-120). Detection scans the source
-it reads, a person can ask for a scan (`POST /security/scan`), and a deploy of a source nobody has
-scanned scans it — but a deploy of a source that already has a successful scan **by the scanner
-configured now** uses that one and says so in the deploy log ("Using the security scan of 3f9a2c1 from
-… (source unchanged)", or "of the uploaded source" for an upload). The threshold below is checked
-either way, and a refusal carries the reused scan's worst findings. The trade: a deploy that reuses the
-source scan does not also scan the built image's OS packages, which only a deploy-time scan saw; a new
-source, a new scanner, or a scan somebody asks for, still does.
+**[D] Scanned once per source and image, not once per deploy (R-311, R-312).** A scan records what it
+read. The source: the commit for a repository, the digest for a published image, and for an upload the
+SHA-256 of the archive (`sha256:<hex>`, never written into the spec as a commit — R-120). And the image
+(`app_scans.image`): what the deploy built or pulled, by digest — an image ID (`sha256:…`) for a build
+loaded into the runtime, `repository@sha256:…` for one pushed to the install's registry or pinned from
+a published one — or nothing, for a scan of the source alone. Detection scans the source it reads, a
+person can ask for a scan (`POST /security/scan`), and a deploy scans the source and the image
+together — unless a successful scan **by the scanner configured now** already read that same source and
+that same image, in which case it uses that one and says so in the deploy log ("Using the security scan
+of 3f9a2c1 from … (source and image unchanged)", or "of the uploaded source" for an upload). The
+threshold below is checked either way, and a refusal carries the reused scan's worst findings.
 
-What is not reused: a failed scan (R-318 — the next deploy tries again), another scanner's scan (its
-findings are not the ones this installation's scanner reports), and a scan of another source. A scan
-somebody asks for always runs.
+What is not reused: detection's scan of the source alone for a deploy that built an image (R-311 — the
+image's OS packages are what it did not read; reusing it once showed an app on a base image with two
+critical findings as 100 / 100), a scan of another image built from the same commit (a rebuild that
+produced a different image is scanned), an image named by a tag rather than a digest (the name says
+nothing about the content), a failed scan (R-318 — the next deploy tries again), another scanner's scan
+(its findings are not the ones this installation's scanner reports), and a scan of another source. A
+scan somebody asks for always runs. A compose app's top-level deploy builds no single image, so its
+deploy scan reads the source alone, and a scan of that source alone matches it.
 
 **A reused scan is attached to the revision being deployed.** A revision's score is the newest scan of
-that revision (§3), and a new revision of an unchanged source — a variable edited, or every
+that revision (§3), and a new revision of an unchanged source and image — a variable edited, or every
 `pando deploy .` of the same directory — would otherwise have none: refused as never scanned where a
 threshold is set. The reuse is recorded as a new `app_scans` row for the new revision with the
 original's findings, score and `ran_at`, and `reused_from` naming the scan that ran. The table stays
@@ -208,6 +214,12 @@ and last deploy — in the column a deploy log used to occupy. The score is a pr
 running, and the person who has to act on it is the one reading that page; a log is a history and
 belongs with the other histories on the Logs tab. The section carries the mark, the counts, when it was taken, every finding, and **Scan now**.
 It is not in settings: settings is where an app is configured, and a score is not a setting.
+
+**[D] The section says what the scan read** (R-311), from the scan's `spec_id`, `commit` and `image`:
+"from the source, before this configuration" for detection's, "of the source only, not an image
+built from it" for a revision scored by a scan that read no image, "of the running image only, not its
+source" for **Scan now** on a deployed app, and "of the image and the source it was built from" for a
+deploy's. A number that covered less than both does not stand for both.
 
 The **apps list** carries the same mark, at `score / 100`, beside status — which is the question a
 list is for: which of these needs me.

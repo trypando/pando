@@ -30,16 +30,24 @@ func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.A
 		return nil
 	}
 
-	// Scanned once per source, not once per deploy (R-312). Detection scans
-	// the source it read, a person can ask for a scan, and a new commit or a
-	// new upload gets one here — but a deploy of a source already scanned by
-	// this scanner uses that scan, attached to this revision. Redeploying an
-	// unchanged source scanned it again every time, and a score that moved
-	// with how often somebody pressed deploy would describe the button rather
-	// than the app. The threshold below is still checked either way.
-	if reused, found, err := r.security.Reuse(ctx, dep.AppID, dep.SpecID, commit); err == nil && found {
-		fmt.Fprintf(sink, "=> Using the security scan of %s from %s (source unchanged)\n",
-			describeSource(appSpec, commit), reused.RanAt.UTC().Format(time.RFC3339))
+	// Scanned once per source and image, not once per deploy (R-312). A deploy
+	// of a source and image already scanned together by this scanner uses that
+	// scan, attached to this revision: a score that moved with how often
+	// somebody pressed deploy would describe the button rather than the app.
+	//
+	// Both, not the source alone (R-311). Detection scans the source before
+	// anything is built, and that scan covers no image — reusing it for the
+	// first deploy left the image that runs unscanned, and an app on a base
+	// image with critical findings showed a clean score. The image is named by
+	// its digest, so a rebuild that produced a different image is scanned. The
+	// threshold below is checked either way.
+	if reused, found, err := r.security.Reuse(ctx, dep.AppID, dep.SpecID, commit, image); err == nil && found {
+		unchanged := "source unchanged"
+		if image != "" {
+			unchanged = "source and image unchanged"
+		}
+		fmt.Fprintf(sink, "=> Using the security scan of %s from %s (%s)\n",
+			describeSource(appSpec, commit), reused.RanAt.UTC().Format(time.RFC3339), unchanged)
 		return r.allowed(ctx, dep, reused.Findings)
 	}
 

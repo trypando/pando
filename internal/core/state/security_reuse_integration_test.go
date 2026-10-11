@@ -5,6 +5,7 @@ package state_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -49,10 +50,12 @@ func scannedSpec() *spec.AppSpec {
 }
 
 // TestR312_ARedeployOfAnUnchangedSourceIsScoredByItsScan asserts R-312 as
-// amended by issue #84, through the service a deploy calls: a new revision of
-// a source that was scanned gets that scan without the scanner running, a
-// second deploy of the same revision adds nothing, and a scan by a scanner
-// that is no longer the configured one is not reused.
+// amended by issue #84 and for R-311, through the service a deploy calls: a new
+// revision of a source and image that were scanned together gets that scan
+// without the scanner running, a second deploy of the same revision adds
+// nothing, and neither a scan of the source alone, nor one of another image,
+// nor an image named by a tag, nor a scan by a scanner that is no longer the
+// configured one is reused.
 func TestR312_ARedeployOfAnUnchangedSourceIsScoredByItsScan(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -71,35 +74,53 @@ func TestR312_ARedeployOfAnUnchangedSourceIsScoredByItsScan(t *testing.T) {
 	registry := api.NewRegistry()
 	svc := &security.Service{Scans: state.NewScans(db), Registry: registry}
 
-	_, found, err := svc.Reuse(ctx, app.ID, second.ID, "abc123")
+	built := "sha256:" + strings.Repeat("a", 64)
+	_, found, err := svc.Reuse(ctx, app.ID, second.ID, "abc123", built)
 	require.NoError(t, err)
 	require.False(t, found, "with no scanner configured there is nothing to reuse")
 
 	require.NoError(t, registry.Register("scn_idle", idleScanner{}))
+	clean := 100
+	_, err = svc.Scans.Record(ctx, state.Scan{
+		AppID: app.ID, Commit: "abc123", ScannerRef: "scn_idle", Score: &clean,
+	})
+	require.NoError(t, err)
+	_, found, err = svc.Reuse(ctx, app.ID, second.ID, "abc123", built)
+	require.NoError(t, err)
+	require.False(t, found, "detection's scan of the source alone does not cover the image (R-311)")
+
 	score := 64
 	ran, err := svc.Scans.Record(ctx, state.Scan{
-		AppID: app.ID, SpecID: first.ID, Commit: "abc123", ScannerRef: "scn_idle", Score: &score,
+		AppID: app.ID, SpecID: first.ID, Commit: "abc123", Image: built, ScannerRef: "scn_idle", Score: &score,
 		Findings: []api.Finding{{ID: "CVE-1", Severity: api.SeverityHigh}},
 	})
 	require.NoError(t, err)
 
-	_, found, err = svc.Reuse(ctx, app.ID, second.ID, "def456")
+	_, found, err = svc.Reuse(ctx, app.ID, second.ID, "def456", built)
 	require.NoError(t, err)
 	require.False(t, found, "a source nobody scanned is scanned")
 
-	reused, found, err := svc.Reuse(ctx, app.ID, second.ID, "abc123")
+	_, found, err = svc.Reuse(ctx, app.ID, second.ID, "abc123", "sha256:"+strings.Repeat("b", 64))
+	require.NoError(t, err)
+	require.False(t, found, "another image built from the same commit is scanned")
+
+	_, found, err = svc.Reuse(ctx, app.ID, second.ID, "abc123", "pando/rota:latest")
+	require.NoError(t, err)
+	require.False(t, found, "a tag says nothing about what the image holds")
+
+	reused, found, err := svc.Reuse(ctx, app.ID, second.ID, "abc123", built)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, second.ID, reused.SpecID, "attached to the revision being deployed")
 	require.Equal(t, ran.ID, reused.ReusedFrom)
 	require.Len(t, reused.Findings, 1)
 
-	again, found, err := svc.Reuse(ctx, app.ID, second.ID, "abc123")
+	again, found, err := svc.Reuse(ctx, app.ID, second.ID, "abc123", built)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, reused.ID, again.ID, "a second deploy of the same revision records nothing new")
 
-	own, found, err := svc.Reuse(ctx, app.ID, "", "abc123")
+	own, found, err := svc.Reuse(ctx, app.ID, "", "abc123", built)
 	require.NoError(t, err)
 	require.True(t, found, "with no revision the scan is returned as it is")
 	require.Equal(t, ran.ID, own.Origin())
@@ -108,7 +129,7 @@ func TestR312_ARedeployOfAnUnchangedSourceIsScoredByItsScan(t *testing.T) {
 	// this one would report.
 	require.NoError(t, registry.Register("scn_other", idleScanner{}))
 	require.NoError(t, registry.SetDefault(api.CategoryScanner, "scn_other"))
-	_, found, err = svc.Reuse(ctx, app.ID, second.ID, "abc123")
+	_, found, err = svc.Reuse(ctx, app.ID, second.ID, "abc123", built)
 	require.NoError(t, err)
 	require.False(t, found, "another scanner's scan is not reused")
 }

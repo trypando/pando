@@ -663,6 +663,7 @@ export interface Scan {
   app_id: string;
   spec_id?: string;
   commit?: string;
+  image?: string;
   scanner_ref: string;
   scanner?: string;
   score?: number;
