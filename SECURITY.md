@@ -115,14 +115,14 @@ to the host beyond the port Pando allocates it.
   proxy or load balancer the operator runs. On a public installation, reaching Pando without TLS in
   front exposes session cookies and bearer tokens.
 
-  Behind a TLS-terminating proxy the operator runs, set **`PANDO_SERVER_EXTERNAL_URL`** to the address browsers use —
-  `https://pando.example.com`. Pando cannot tell an encrypted browser connection from an unencrypted
+  Behind either one, set **`PANDO_SERVER_EXTERNAL_URL`** to the address browsers use —
+  `https://pando.example.com`. Turning on Pando's edge does not set it. Pando cannot tell an encrypted browser connection from an unencrypted
   one when every request reaches it over plain HTTP, so without this the session cookie is not marked
   `Secure` and one plaintext request to the hostname puts it on the wire. Pando does not infer this
   from `X-Forwarded-Proto`, for the same reason it strips inbound `X-Pando-*`: any client that can
   reach it directly can set that header.
 
-  The audit log records each request's client address. Behind a proxy, list the proxy's addresses in
+  The audit log records each request's client address. Behind either one, list its addresses in
   **`PANDO_SERVER_TRUSTED_PROXIES`** (comma-separated CIDRs) and Pando reads `X-Forwarded-For` from
   those peers only, taking the right-most address that is not itself a listed proxy. With the list
   empty, the default, the audit log records the proxy's own address. The list decides the audited
