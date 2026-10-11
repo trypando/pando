@@ -26,13 +26,13 @@ func TestR094_AnEmbedDirectiveAndAClientOutputAreOneDeclaration(t *testing.T) {
 	require.Equal(t, "web/vite.config.ts", d.Source)
 	require.Equal(t, "(cd web && npm ci && npm run build)", d.Before,
 		"a subshell, so the cd does not outlive the client build")
-	require.Empty(t, d.Build, "and what it comes before is nixpacks' business, not ours")
+	require.Empty(t, d.Build, "and what it comes before is Railpack's business, not ours")
 	require.True(t, d.needsSecondPass())
-	require.Contains(t, d.Packages, "nodejs")
+	require.Contains(t, d.Packages, "node")
 
 	// The second pass wraps rather than replaces.
-	args := strings.Join(d.nixpacksArgs("go build -o out ./cmd/server"), " ")
-	require.Contains(t, args, "--build-cmd (cd web && npm ci && npm run build) && go build -o out ./cmd/server")
+	args := strings.Join(d.railpackEnv("go build -o out ./cmd/server"), " ")
+	require.Contains(t, args, "RAILPACK_BUILD_CMD=(cd web && npm ci && npm run build) && go build -o out ./cmd/server")
 }
 
 // The pairing is the whole claim. Either half alone says nothing.

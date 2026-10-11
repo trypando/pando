@@ -10,11 +10,11 @@ import (
 	"strings"
 )
 
-// Go programs are planned by Pando rather than by nixpacks, when nothing in the
+// Go programs are planned by Pando rather than by Railpack, when nothing in the
 // repository declares its own build.
 //
-// nixpacks installs Go from its pinned Nix package set, and a module naming a
-// newer Go than that set has sent it to download a toolchain it could not find
+// nixpacks installed Go from its pinned Nix package set, and a module naming a
+// newer Go than that set sent it to download a toolchain it could not find
 // ("go: download go1.27 for linux/arm64: toolchain not available", issue #55).
 // The official Go image exists for every release. It also builds with cgo, which
 // a SQLite driver needs and nixpacks' static build turned off ("Binary was
@@ -89,7 +89,7 @@ func dirHasMain(dir string) bool {
 }
 
 // writeGoPlan compiles the main package on the Go release the module names and
-// runs it from the repository's files, as nixpacks does, so an app that reads
+// runs it from the repository's files, as Railpack does, so an app that reads
 // its templates or static files from the working directory finds them.
 func writeGoPlan(contextDir string, b goBuild) (string, error) {
 	content := fmt.Sprintf(`# A Go program, built with Go %[1]s.

@@ -3,7 +3,7 @@ package reference
 // How to get the CLI.
 //
 // The server is installed with the Compose file — it needs Postgres, a
-// container runtime and nixpacks, none of which a package manager supplies.
+// container runtime and Railpack, none of which a package manager supplies.
 // What ships as a package is the CLI, which is the same binary (R-253) pointed
 // at an installation over its API.
 //

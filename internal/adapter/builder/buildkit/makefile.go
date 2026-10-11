@@ -23,9 +23,9 @@ import (
 //
 // Nothing here synthesizes a Dockerfile. R-095 says to wrap a buildpack
 // implementation rather than reimplement convention-matching, and that still
-// holds: nixpacks decides the environment, and what this adds is the commands
-// it should run inside it. `--build-cmd`, `--start-cmd` and `--pkgs` are its
-// own flags.
+// holds: Railpack decides the environment, and what this adds is the commands
+// it should run inside it. `RAILPACK_BUILD_CMD`, `RAILPACK_START_CMD` and
+// `RAILPACK_PACKAGES` are its own settings.
 
 // makefileNames are the names GNU make itself looks for, in its order.
 var makefileNames = []string{"GNUmakefile", "makefile", "Makefile"}
@@ -158,7 +158,7 @@ func startCommandFrom(steps []string, invoke string) string {
 		// command would mean guessing which half is the app.
 		//
 		// Quotes, backslashes and `$` go the same way for a duller reason: this
-		// string is handed to nixpacks, which writes it into a Dockerfile CMD,
+		// string is handed to Railpack, which writes it into the plan's commands,
 		// and a value that has to be escaped to survive that round trip is one
 		// where a mistake is silent.
 		if strings.ContainsAny(step, "&|;><\"'`$\\") {
@@ -206,62 +206,39 @@ func readRunnerBuild(contextDir string) declaredBuild {
 	return declaredBuild{}
 }
 
-// runnerPackages is the package each runner needs in the environment. None of
-// nixpacks' providers installs any of them — a language provider has no reason
-// to — so the build command would otherwise be the first thing to fail.
+// runnerPackages is the mise package each runner needs in the environment.
+// No language provider installs one — it has no reason to — so the build
+// command would otherwise be the first thing to fail. make has none: Railpack's
+// builder image carries it, with the rest of build-essential.
 var runnerPackages = map[string]string{
-	"make": "gnumake",
-	"task": "go-task",
+	"task": "task",
 	"just": "just",
 }
 
 // toolchainPackages are the toolchains a declared build may need that the
-// provider nixpacks picked will not bring.
+// provider Railpack picked will not bring, as mise package names.
 //
-// nixpacks chooses one provider from what it finds at the root, so a Go module
-// whose build compiles a client gets Go and not Node. This reads the repository
-// rather than the recipe's text on purpose: a package.json is the client
-// declaring itself, and scanning a shell command for the word "npm" is reading
-// a script and hoping.
+// Railpack chooses its providers from what it finds at the root, so a Go
+// module whose build compiles a client gets Go and not Node. This reads the
+// repository rather than the recipe's text on purpose: a package.json is the
+// client declaring itself, and scanning a shell command for the word "npm" is
+// reading a script and hoping.
+//
+// A C compiler is not among them: Railpack's builder image has one, which the
+// nixpacks environment did not (`make: cc: No such file or directory`, issue
+// #55).
 func toolchainPackages(contextDir string) []string {
-	var pkgs []string
-
-	// A package.json at the root is the repository nixpacks itself reads, so
-	// its node provider already brings the toolchain and naming it again adds
-	// nothing. It is not free either: nixpacks drops the overlay defining
-	// npm-<major>_x as soon as the caller names any package, while still
-	// asking for it, and the plan it writes then fails at the first step with
-	// "undefined variable 'npm-9_x'". Only a client below the root — the case
-	// this exists for — needs Node added.
+	// A package.json at the root is the repository Railpack itself reads, so
+	// its Node provider already brings the toolchain, at the version the
+	// package names. Only a client below the root — the case this exists for —
+	// needs Node added.
 	if _, err := os.Stat(filepath.Join(contextDir, "package.json")); err == nil {
 		return nil
 	}
 	if hasFileNamed(contextDir, "package.json") {
-		pkgs = append(pkgs, "nodejs")
+		return []string{"node"}
 	}
-	// C and C++ sources are compiled by whatever `cc` the environment has, and
-	// none of nixpacks' providers brings one to a repository that is only a
-	// Makefile and sources: `make: cc: No such file or directory` (issue #55).
-	if hasFileWithSuffix(contextDir, ".c", ".cc", ".cpp") {
-		pkgs = append(pkgs, "gcc")
-	}
-	return pkgs
-}
-
-// hasFileWithSuffix reports whether a file ending in one of the suffixes exists
-// in the top two levels of the tree, where a small C program keeps its sources.
-func hasFileWithSuffix(root string, suffixes ...string) bool {
-	for _, pattern := range []string{"*", filepath.Join("*", "*")} {
-		matches, _ := filepath.Glob(filepath.Join(root, pattern))
-		for _, m := range matches {
-			for _, s := range suffixes {
-				if strings.HasSuffix(m, s) {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	return nil
 }
 
 // hasFileNamed reports whether name exists anywhere in the tree.

@@ -92,39 +92,26 @@ func TestR110_AStaticSitesServerConfigIsWrittenAsNginxReadsIt(t *testing.T) {
 // apps whose owners had just typed one (issue #55).
 func TestR104_AnAnsweredStartCommandReachesTheBuildPlan(t *testing.T) {
 	root := repo(t)
-	args := declaredFor(api.BuildRequest{StartCommand: "gunicorn app:app"}, root).nixpacksArgs("")
-	require.Equal(t, []string{"--start-cmd", "gunicorn app:app"}, args)
+	env := declaredFor(api.BuildRequest{StartCommand: "gunicorn app:app"}, root).railpackEnv("")
+	require.Equal(t, []string{"RAILPACK_START_CMD=gunicorn app:app"}, env)
 
-	require.Empty(t, declaredFor(api.BuildRequest{}, root).nixpacksArgs(""),
+	require.Empty(t, declaredFor(api.BuildRequest{}, root).railpackEnv(""),
 		"nothing is invented when nobody said how the app starts")
 }
 
-// A Node app that names no version gets a supported one, and one that names a
-// version keeps it. nixpacks defaults to Node 18, which current frameworks
-// refuse with EBADENGINE (issue #55).
-func TestR095_ANodeAppGetsASupportedNodeUnlessItNamesOne(t *testing.T) {
-	write := func(t *testing.T, files map[string]string) string {
-		root := t.TempDir()
-		for name, body := range files {
-			require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(body), 0o644))
-		}
-		return root
+// A Node app's version is Railpack's to choose. Its default is the current
+// LTS, not the end-of-life 18 nixpacks chose and current frameworks refuse
+// with EBADENGINE (issue #55), and it reads engines.node, .nvmrc and
+// .node-version itself — so Pando passes nothing that would outrank them.
+func TestR095_ANodeAppsVersionIsLeftToTheAppAndRailpack(t *testing.T) {
+	for _, files := range []map[string]string{
+		{"package.json": `{"name":"a"}`},
+		{"package.json": `{}`, ".node-version": "v20.11.1\n"},
+	} {
+		root := writeFiles(t, files)
+		require.Empty(t, railpackDefaults(root))
+		require.Empty(t, declaredFor(api.BuildRequest{}, root).railpackEnv(""))
 	}
-
-	silent := write(t, map[string]string{"package.json": `{"name":"a"}`})
-	require.Equal(t, []string{"--env", "NIXPACKS_NODE_VERSION=" + defaultNodeVersion}, toolchainDefaults(silent))
-
-	engines := write(t, map[string]string{"package.json": `{"engines":{"node":">=20"}}`})
-	require.Empty(t, toolchainDefaults(engines), "engines.node is the author's answer")
-
-	nvmrc := write(t, map[string]string{"package.json": `{}`, ".nvmrc": "20\n"})
-	require.Empty(t, toolchainDefaults(nvmrc), "nixpacks reads .nvmrc itself")
-
-	nodeVersion := write(t, map[string]string{"package.json": `{}`, ".node-version": "v20.11.1\n"})
-	require.Equal(t, []string{"--env", "NIXPACKS_NODE_VERSION=20.11.1"}, toolchainDefaults(nodeVersion))
-
-	require.Empty(t, toolchainDefaults(write(t, map[string]string{"go.mod": "module x"})),
-		"not a Node app")
 }
 
 func TestPrintfFormatSurvivesEveryShellSpecialCharacter(t *testing.T) {
@@ -183,46 +170,52 @@ func TestAnUnknownStrategyIsRefused(t *testing.T) {
 	require.Contains(t, err.Error(), "nonsense")
 }
 
-// TestR095_ABuildpackPlanComesFromNixpacks asserts R-095: wrap an existing
+// TestR095_ABuildpackPlanComesFromRailpack asserts R-095: wrap an existing
 // implementation rather than reimplementing convention-matching.
 //
-// Skipped where nixpacks is not installed, which is every developer machine
-// that has not built the image — the binary ships in the Pando image, not in
-// the repository.
-func TestR095_ABuildpackPlanComesFromNixpacks(t *testing.T) {
-	if _, err := exec.LookPath(nixpacksBinary); err != nil {
-		t.Skip("nixpacks is not on PATH; it ships in the Pando image")
+// Skipped where railpack is not installed, which is every developer machine
+// that has not put it on PATH — the binary ships in the Pando image, not in
+// the repository. It also needs the network: Railpack resolves versions
+// through mise.
+func TestR095_ABuildpackPlanComesFromRailpack(t *testing.T) {
+	if _, err := exec.LookPath(railpackBinary); err != nil {
+		t.Skip("railpack is not on PATH; it ships in the Pando image")
 	}
 
-	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"),
-		[]byte(`{"name":"s","version":"1.0.0","scripts":{"start":"node index.js"}}`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "index.js"), []byte("console.log(1)\n"), 0o644))
+	root := writeFiles(t, map[string]string{
+		"requirements.txt": "flask\ngunicorn\n",
+		"app.py":           "from flask import Flask\napp = Flask(__name__)\n",
+	})
 
 	gen, err := synthesize(api.BuildRequest{Strategy: spec.BuildBuildpack}, root)
 	require.NoError(t, err)
 	defer gen.Cleanup()
 
-	// The generated Dockerfile lives inside the checkout, because the one
-	// nixpacks writes does `COPY . /app/.` and `COPY .nixpacks/...` — the build
-	// context has to be the source with the generated directory inside it.
-	require.Equal(t, "Dockerfile", gen.Name)
-	require.Equal(t, filepath.Join(root, ".nixpacks"), gen.Dir)
+	// The plan lives inside the checkout, beside the source it builds, and is
+	// what BuildKit hands Railpack's frontend.
+	require.Equal(t, railpackPlanFile, gen.Name)
+	require.Equal(t, filepath.Join(root, planDir), gen.Dir)
 
 	body, err := os.ReadFile(filepath.Join(gen.Dir, gen.Name))
 	require.NoError(t, err)
-	require.Contains(t, string(body), "FROM ", "it is a Dockerfile BuildKit can build")
+	plan := string(body)
+	require.Contains(t, plan, railpackRuntimeImage, "Railpack's images are pinned by digest in the plan")
+	require.NotContains(t, plan, `"secrets"`, "no build secret nobody provides")
+	require.Contains(t, plan, `"`+planDir+`"`, "the plan's own directory is left out of the image")
+	require.Equal(t, "gunicorn app:app --bind 0.0.0.0:${PORT:-8000}", railpackStartCommand(body),
+		"Pando's reading of a Flask module reaches the plan")
 }
 
-// A repository nixpacks cannot place fails with its own reason, before a build
+// A repository Railpack cannot place fails with its own reason, before a build
 // is attempted.
 func TestABuildpackPlanThatFailsSaysWhy(t *testing.T) {
-	if _, err := exec.LookPath(nixpacksBinary); err != nil {
-		t.Skip("nixpacks is not on PATH; it ships in the Pando image")
+	if _, err := exec.LookPath(railpackBinary); err != nil {
+		t.Skip("railpack is not on PATH; it ships in the Pando image")
 	}
 
 	_, err := synthesize(api.BuildRequest{Strategy: spec.BuildBuildpack}, t.TempDir())
 	require.Error(t, err)
+	require.Contains(t, errs.As(err).Message, "could not work out how to build this app")
 	require.NotEmpty(t, errs.As(err).Remedy, "R-105 promises a way forward")
 }
 
@@ -232,6 +225,9 @@ func TestABuildpackPlanThatFailsSaysWhy(t *testing.T) {
 // same commit builds differently once the generator is upgraded, and an edit
 // made in the console is overwritten before it reaches the build. Files the
 // spec carries are replayed, not regenerated.
+//
+// The plan here is a nixpacks one, stored before Railpack replaced it: a spec
+// carries its plan, and that plan is still what builds.
 func TestR020_AnEditedPlanIsTheOneThatRuns(t *testing.T) {
 	root := t.TempDir()
 	edited := "FROM alpine:3.21\nCOPY . /app\nCMD [\"/app/out\"]\n"
@@ -275,37 +271,37 @@ func TestAGeneratedFileCannotEscapeTheCheckout(t *testing.T) {
 
 // TestR020_APlansAssetsSurviveIntoTheBuild asserts that a plan is stored whole.
 //
-// A nixpacks plan that serves static files writes its web server's
-// configuration into .nixpacks/assets and a Dockerfile that says
+// A plan that serves static files writes its web server's configuration into
+// a subdirectory and a Dockerfile that copies it — nixpacks' did, with
 // COPY .nixpacks/assets /assets/. Reading back only the top level of the plan
 // directory dropped it, and the build failed on that COPY with
 // "/.nixpacks/assets: not found" — Pando's own plan, refused by Pando.
 func TestR020_APlansAssetsSurviveIntoTheBuild(t *testing.T) {
 	root := t.TempDir()
-	plan := filepath.Join(root, ".nixpacks")
+	plan := filepath.Join(root, planDir)
 	require.NoError(t, os.MkdirAll(filepath.Join(plan, "assets"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(plan, "Dockerfile"),
-		[]byte("FROM alpine:3.21\nCOPY .nixpacks/assets /assets/\n"), 0o644))
+		[]byte("FROM alpine:3.21\nCOPY .pando-plan/assets /assets/\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(plan, "assets", "Caddyfile"),
 		[]byte(":80\nroot * /app/dist\n"), 0o644))
 
 	files, err := collectPlan(root)
 	require.NoError(t, err)
-	require.Equal(t, ":80\nroot * /app/dist\n", files[".nixpacks/assets/Caddyfile"],
+	require.Equal(t, ":80\nroot * /app/dist\n", files[".pando-plan/assets/Caddyfile"],
 		"every path the generated Dockerfile copies is carried, whatever directory it sits in")
-	require.Contains(t, files, ".nixpacks/Dockerfile")
+	require.Contains(t, files, ".pando-plan/Dockerfile")
 
 	// And back out again, into the checkout the build reads.
 	built := t.TempDir()
 	require.NoError(t, writeInto(built, files))
-	_, err = os.Stat(filepath.Join(built, ".nixpacks", "assets", "Caddyfile"))
+	_, err = os.Stat(filepath.Join(built, planDir, "assets", "Caddyfile"))
 	require.NoError(t, err)
 }
 
 // TestR020_APlansBuildArgumentsAreUsed asserts that a stored plan carries the
 // values its Dockerfile's ARG lines need.
 //
-// nixpacks records them beside the Dockerfile, as the docker build command it
+// nixpacks recorded them beside the Dockerfile, as the docker build command it
 // would have run. Ignoring them left every ARG empty: a single-page app's web
 // root resolved to the repository instead of its dist directory, so the site
 // served the source index.html and came up blank — with a 200, and nothing in
@@ -329,9 +325,9 @@ func TestPlanArgumentsAreReadWhateverTheSpelling(t *testing.T) {
 }
 
 // A buildpack build is planned by whichever of Pando's own planners recognizes
-// the repository, in a fixed order, before nixpacks is asked. Each plan is
-// written into .nixpacks/ in the checkout, where detection collects it and the
-// build replays it (R-020).
+// the repository, in a fixed order, before Railpack is asked. Each plan is
+// written into .pando-plan/ in the checkout, where detection collects it and
+// the build replays it (R-020).
 func TestABuildpackRepositoryIsPlannedByTheFirstPlannerThatKnowsIt(t *testing.T) {
 	cases := map[string]struct {
 		files map[string]string
@@ -367,9 +363,9 @@ func TestABuildpackRepositoryIsPlannedByTheFirstPlannerThatKnowsIt(t *testing.T)
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			root := writeFiles(t, tc.files)
-			name, err := buildpackDockerfile(tc.req, root)
+			name, err := buildpackPlan(tc.req, root)
 			require.NoError(t, err)
-			require.Equal(t, filepath.Join(".nixpacks", "Dockerfile"), name)
+			require.Equal(t, filepath.Join(planDir, "Dockerfile"), name)
 			body, err := os.ReadFile(filepath.Join(root, name))
 			require.NoError(t, err)
 			require.Contains(t, string(body), tc.want)
@@ -382,7 +378,7 @@ func TestABuildpackRepositoryIsPlannedByTheFirstPlannerThatKnowsIt(t *testing.T)
 // of the checkout. Otherwise the repository goes on to the planners after it.
 func TestARunBuildStaticDirectoryNeedsSomethingToBuildIt(t *testing.T) {
 	escaping := writeFiles(t, map[string]string{"package.json": `{"scripts":{"start":"node server.js"}}`})
-	name, err := buildpackDockerfile(api.BuildRequest{StaticDir: "../outside"}, escaping)
+	name, err := buildpackPlan(api.BuildRequest{StaticDir: "../outside"}, escaping)
 	require.NoError(t, err)
 	body, err := os.ReadFile(filepath.Join(escaping, name))
 	require.NoError(t, err)
@@ -390,7 +386,7 @@ func TestARunBuildStaticDirectoryNeedsSomethingToBuildIt(t *testing.T) {
 	require.Contains(t, string(body), "A Node server")
 
 	noPackage := writeFiles(t, map[string]string{"pom.xml": "<project/>"})
-	name, err = buildpackDockerfile(api.BuildRequest{StaticDir: "dist"}, noPackage)
+	name, err = buildpackPlan(api.BuildRequest{StaticDir: "dist"}, noPackage)
 	require.NoError(t, err)
 	body, err = os.ReadFile(filepath.Join(noPackage, name))
 	require.NoError(t, err)
@@ -398,37 +394,37 @@ func TestARunBuildStaticDirectoryNeedsSomethingToBuildIt(t *testing.T) {
 }
 
 // An answered start command means the app is run, not served as files, and a
-// Go program with one is left to nixpacks rather than compiled by Pando's plan,
-// because the command runs in nixpacks' image, which has Go on its PATH.
+// Go program with one is left to Railpack rather than compiled by Pando's plan,
+// because the command runs in Railpack's image, which has Go on its PATH.
 func TestAnAnsweredStartCommandSkipsTheStaticAndGoPlanners(t *testing.T) {
 	site := writeFiles(t, map[string]string{"package.json": `{"scripts":{"build":"astro build"},"dependencies":{"astro":"^5"}}`})
-	name, err := buildpackDockerfile(api.BuildRequest{StartCommand: "node serve.js"}, site)
+	name, err := buildpackPlan(api.BuildRequest{StartCommand: "node serve.js"}, site)
 	require.NoError(t, err)
 	body, err := os.ReadFile(filepath.Join(site, name))
 	require.NoError(t, err)
 	require.Contains(t, string(body), `CMD ["node serve.js"]`, "the answered command is the Node server's start")
 
-	if _, lookErr := exec.LookPath(nixpacksBinary); lookErr == nil {
-		t.Skip("nixpacks is on PATH, so the Go case would be planned by it")
+	if _, lookErr := exec.LookPath(railpackBinary); lookErr == nil {
+		t.Skip("railpack is on PATH, so the Go case would be planned by it")
 	}
 	program := writeFiles(t, map[string]string{"go.mod": "module x\ngo 1.24\n", "main.go": "package main\n"})
-	_, err = buildpackDockerfile(api.BuildRequest{StartCommand: "go run ."}, program)
+	_, err = buildpackPlan(api.BuildRequest{StartCommand: "go run ."}, program)
 	require.Equal(t, errs.PlanCapabilityUnsupported, errs.CodeOf(err),
-		"without nixpacks, a Go program with a start command has no planner")
-	_, statErr := os.Stat(filepath.Join(program, ".nixpacks", "Dockerfile"))
+		"without Railpack, a Go program with a start command has no planner")
+	_, statErr := os.Stat(filepath.Join(program, planDir, "Dockerfile"))
 	require.True(t, os.IsNotExist(statErr), "Pando's Go plan was not written")
 }
 
-// When nixpacks cannot plan the repository, a start command that runs a
+// When Railpack cannot plan the repository, a start command that runs a
 // program committed in it is planned as that program, run as it is (issue
-// #55). Without nixpacks installed the generator fails at once, which reaches
+// #55). Without Railpack installed the generator fails at once, which reaches
 // the same fallback.
-func TestR094_ACommittedProgramIsPlannedWhenNixpacksHasNothingToSay(t *testing.T) {
-	if _, err := exec.LookPath(nixpacksBinary); err == nil {
-		t.Skip("nixpacks is on PATH and may plan this repository itself")
+func TestR094_ACommittedProgramIsPlannedWhenRailpackHasNothingToSay(t *testing.T) {
+	if _, err := exec.LookPath(railpackBinary); err == nil {
+		t.Skip("railpack is on PATH and may plan this repository itself")
 	}
 	root := writeFiles(t, map[string]string{"server": "\x7fELF", "Procfile": "web: ./server --verbose\n"})
-	name, err := buildpackDockerfile(api.BuildRequest{}, root)
+	name, err := buildpackPlan(api.BuildRequest{}, root)
 	require.NoError(t, err)
 	body, err := os.ReadFile(filepath.Join(root, name))
 	require.NoError(t, err)
@@ -437,7 +433,7 @@ func TestR094_ACommittedProgramIsPlannedWhenNixpacksHasNothingToSay(t *testing.T
 
 	// An answered start command outranks the Procfile and is what runs.
 	answered := writeFiles(t, map[string]string{"server": "\x7fELF"})
-	name, err = buildpackDockerfile(api.BuildRequest{StartCommand: "./server --port $PORT"}, answered)
+	name, err = buildpackPlan(api.BuildRequest{StartCommand: "./server --port $PORT"}, answered)
 	require.NoError(t, err)
 	body, err = os.ReadFile(filepath.Join(answered, name))
 	require.NoError(t, err)
@@ -445,29 +441,25 @@ func TestR094_ACommittedProgramIsPlannedWhenNixpacksHasNothingToSay(t *testing.T
 }
 
 // A repository nothing recognizes fails with the generator's reason. Without
-// nixpacks on the host, that reason is that this installation has no planner,
-// with a remedy that names what to do instead (R-105). The generator is still
-// prepared for first: a Ruby project gets the .ruby-version nixpacks requires.
+// Railpack on the host, that reason is that this installation has no planner,
+// with a remedy that names what to do instead (R-105).
 func TestAnUnrecognizedRepositoryFailsWithTheGeneratorsReason(t *testing.T) {
-	root := writeFiles(t, map[string]string{"Gemfile": "ruby '3.2.4'\n"})
-	_, err := buildpackDockerfile(api.BuildRequest{}, root)
+	root := writeFiles(t, map[string]string{"notes.txt": "nothing to build\n"})
+	_, err := buildpackPlan(api.BuildRequest{}, root)
 	require.Error(t, err)
 	require.NotEmpty(t, errs.As(err).Remedy, "R-105 promises a way forward")
-	if _, lookErr := exec.LookPath(nixpacksBinary); lookErr != nil {
+	if _, lookErr := exec.LookPath(railpackBinary); lookErr != nil {
 		require.Equal(t, errs.PlanCapabilityUnsupported, errs.CodeOf(err))
 	}
-
-	body, readErr := os.ReadFile(filepath.Join(root, ".ruby-version"))
-	require.NoError(t, readErr)
-	require.Equal(t, "3.2.4\n", string(body))
 }
 
 // Plan returns every file the planner wrote, so the spec carries the plan
 // itself (R-020), and names the Dockerfile among them.
 func TestR020_PlanReturnsThePlanItWrote(t *testing.T) {
 	root := writeFiles(t, map[string]string{"pom.xml": "<project/>"})
-	files, name, _, err := New().Plan(t.Context(), view{root: root})
+	plan, err := New().Plan(t.Context(), view{root: root})
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(".nixpacks", "Dockerfile"), name)
-	require.Contains(t, files[".nixpacks/Dockerfile"], "A Maven project")
+	require.Equal(t, ".pando-plan/Dockerfile", plan.Entry)
+	require.Contains(t, plan.Files[".pando-plan/Dockerfile"], "A Maven project")
+	require.Empty(t, plan.Start, "a Dockerfile plan is read by detection, like any Dockerfile")
 }

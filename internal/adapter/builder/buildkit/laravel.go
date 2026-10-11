@@ -398,7 +398,7 @@ const laravelStart = "php artisan migrate --force --no-interaction && " +
 	"chown -R www-data:www-data storage bootstrap/cache database && " +
 	"exec apache2-foreground"
 
-// writeLaravelPlan writes the plan into .nixpacks/, where detection collects a
+// writeLaravelPlan writes the plan into .pando-plan/, where detection collects a
 // plan and the build replays it (R-020).
 //
 // Dependencies are installed in the Composer image, for the PHP version the

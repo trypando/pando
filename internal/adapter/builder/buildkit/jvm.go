@@ -105,7 +105,7 @@ func jdkFrom(text string, patterns ...*regexp.Regexp) int {
 // safeClass accepts a Java class name and nothing else.
 var safeClass = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
 
-// writeJVMPlan writes the plan into .nixpacks/, where detection collects a plan
+// writeJVMPlan writes the plan into .pando-plan/, where detection collects a plan
 // and the build replays it (R-020).
 func writeJVMPlan(contextDir string, b jvmBuild) (string, error) {
 	var content string
@@ -160,7 +160,7 @@ CMD ["exec java -cp /app/classes %[2]s"]
 		return "", errs.Newf(errs.BuildFailed, "Pando cannot build a %s project.", b.Tool)
 	}
 
-	name := filepath.Join(".nixpacks", "Dockerfile")
+	name := filepath.Join(planDir, "Dockerfile")
 	full := filepath.Join(contextDir, name)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)

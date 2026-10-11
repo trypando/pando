@@ -1343,3 +1343,29 @@ type PlanDeclaration struct {
 	// detector should make when the plan came from it.
 	Confidence float64
 }
+
+// BuildPlan is a plan a builder made for a repository without building it.
+//
+// The files are the builder's vocabulary and opaque to core (R-251): a
+// Dockerfile, a Railpack plan, whatever the builder replays. What detection
+// needs to know about how the app runs is said here in Pando's terms, so
+// detection never has to read a planner's file format.
+type BuildPlan struct {
+	// Files is every generated file, by path relative to the repository root.
+	// The spec carries them (R-020).
+	Files map[string]string
+
+	// Entry is the file the build starts from, one of Files.
+	Entry string
+
+	// Start is the command the built image runs, when the plan says. Empty
+	// means the plan does not know, and detection asks.
+	Start string
+
+	// Ports are the ports the plan says the app serves on, if any.
+	Ports []int
+
+	// Declared is what in the repository dictated the plan, or nil when
+	// convention-matching chose it.
+	Declared *PlanDeclaration
+}

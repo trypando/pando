@@ -192,7 +192,7 @@ func TestSubprocessOutputIsBoundedKeepingTheEnd(t *testing.T) {
 // The same generator the build path uses, so what somebody reviews is what runs
 // (R-102).
 func TestPlanNeedsTheSourceOnDisk(t *testing.T) {
-	_, _, _, err := New().Plan(context.Background(), viewWithoutRoot{})
+	_, err := New().Plan(context.Background(), viewWithoutRoot{})
 	require.Equal(t, errs.BuildFailed, errs.CodeOf(err))
 	require.Contains(t, errs.As(err).Message, "on disk")
 }
@@ -268,7 +268,7 @@ func TestABuildTheBuildServiceCannotRunFailsWithARemedy(t *testing.T) {
 	require.NoError(t, statErr)
 	require.True(t, info.IsDir(), "the per-app cache directory was prepared")
 
-	_, statErr = os.Stat(filepath.Join(root, ".nixpacks", "Dockerfile"))
+	_, statErr = os.Stat(filepath.Join(root, planDir, "Dockerfile"))
 	require.NoError(t, statErr, "the plan was written into the checkout it builds")
 }
 

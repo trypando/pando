@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Node servers are planned by Pando rather than by nixpacks.
+// Node servers are planned by Pando rather than by Railpack.
 //
 // nixpacks 1.41 installs Node from a pinned Nix package set whose newest 22 is
 // 22.11 — which cannot require() an ES module, so Express and NestJS apps built
@@ -33,8 +33,9 @@ var nodeEntryPoints = []string{"server.js", "index.js", "app.js", "main.js", "se
 // readNodeServer reports a Node app Pando knows how to build and start.
 //
 // A static site is not one (staticsite.go takes it first), and neither is a
-// Bun project, which needs its own runtime and is left to nixpacks. An app with
-// no way to start is left to nixpacks too, which asks for the start command.
+// Bun project, which needs its own runtime and is left to Railpack. An app with
+// no way to start is left to Railpack too, and detection asks for the start
+// command.
 func readNodeServer(contextDir, startCommand string) (nodeServer, bool) {
 	body, err := os.ReadFile(filepath.Join(contextDir, "package.json"))
 	if err != nil {
@@ -54,7 +55,7 @@ func readNodeServer(contextDir, startCommand string) (nodeServer, bool) {
 	if json.Unmarshal(body, &pkg) != nil {
 		return nodeServer{}, false
 	}
-	// A workspace root builds several packages, in an order nixpacks and the
+	// A workspace root builds several packages, in an order Railpack and the
 	// workspace tool know better than a generic plan does.
 	if w := strings.TrimSpace(string(pkg.Workspaces)); w != "" && w != "null" && w != "[]" {
 		return nodeServer{}, false

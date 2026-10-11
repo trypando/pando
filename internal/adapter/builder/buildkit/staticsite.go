@@ -28,7 +28,8 @@ import (
 // committed site gets.
 
 // staticSiteNodeDefault is the Node major the site is built with when it names
-// none. [P] 22, the active LTS, for the reason defaultNodeVersion gives.
+// none. [P] 22, an active LTS: current Vite, Next.js, Angular and NestJS
+// refuse 18 with EBADENGINE (issue #55).
 const staticSiteNodeDefault = "22"
 
 // staticSiteFrameworks build to a directory. The directory is each framework's
@@ -275,11 +276,11 @@ func installCommand(contextDir string) string {
 
 // writeStaticSitePlan writes a plan that builds the site and serves its output.
 //
-// Into .nixpacks/, beside where a nixpacks plan goes, so detection collects it,
-// the spec carries it and the build replays it exactly as it would a nixpacks
+// Into .pando-plan/, beside where a Railpack plan goes, so detection collects it,
+// the spec carries it and the build replays it exactly as it would a Railpack
 // plan (R-020). The server is the one a committed static site gets.
 func writeStaticSitePlan(contextDir string, site staticSite) (string, error) {
-	name := filepath.Join(".nixpacks", "Dockerfile")
+	name := filepath.Join(planDir, "Dockerfile")
 	content := fmt.Sprintf(`# A %s site that builds to static files, served by nginx.
 FROM node:%s-alpine AS build
 WORKDIR /app

@@ -360,12 +360,15 @@ app, and the security reviewer's role; a custom role may hold any one `install.a
 4. **Ecosystem manifests** — `package.json` + lockfile, `go.mod`, `Cargo.toml`, `pyproject.toml` plus framework markers, `pom.xml`, `Gemfile`.
 5. **Static** — `index.html` at root, or a known SSG config.
 
-**R-095 [P]** For tier 4, wrap an existing buildpack implementation (Paketo, nixpacks) rather than
-reimplementing convention-matching. **nixpacks is the default**, because it *generates a Dockerfile*
-and stops — so BuildKit builds it, no container runtime socket is involved anywhere (R-112), the
-install needs no extra service, and the plan is readable by the person whose app it is. Paketo is
-opt-in and needs a registry service in the install topology: the CNB lifecycle exports the image
-itself, to a registry or a daemon, and the daemon is forbidden.
+**R-095 [P]** For tier 4, wrap an existing buildpack implementation (Paketo, Railpack) rather than
+reimplementing convention-matching. **Railpack is the default**, because it *writes a build plan*
+and stops — a JSON file naming each step's commands, the images it runs on and the start command —
+and Pando's own BuildKit builds that plan through Railpack's frontend image, so no container
+runtime socket and no privileged container is involved anywhere (R-112), the install needs no extra
+service, and the plan is readable, and editable, by the person whose app it is. The plan is stored
+in the spec (R-020). Paketo is opt-in and needs a registry service in the install topology: the CNB
+lifecycle exports the image itself, to a registry or a daemon, and the daemon is forbidden.
+(nixpacks was the default until it entered maintenance mode; issue #172.)
 
 **R-096 [D]** A **compose file is a complete answer**, not a hint. Import it verbatim as a bundle: services, `depends_on` ordering, healthchecks, named volumes, internal network.
 

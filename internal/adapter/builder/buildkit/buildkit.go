@@ -362,6 +362,13 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 	if req.Target != "" {
 		frontendAttrs["target"] = req.Target
 	}
+	// A Railpack plan's cache mounts are keyed by this, and BuildKit shares a
+	// cache mount by key across every build it runs. The bundle keeps one
+	// app's package caches out of another's, as R-117 asks of the layer cache.
+	railpack := isRailpackPlan(dockerfile)
+	if railpack {
+		frontendAttrs["build-arg:cache-key"] = bundleOf(req.CacheNamespace)
+	}
 
 	solveOpt := bkclient.SolveOpt{
 		Frontend:      "dockerfile.v0",
@@ -407,7 +414,15 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 		solveOpt.Session = append(solveOpt.Session, pushAuth(req.Push))
 	}
 
-	resp, err := a.cli.Solve(ctx, nil, solveOpt, statusCh)
+	var resp *bkclient.SolveResponse
+	if railpack {
+		solveOpt.Frontend = ""
+		resp, err = a.cli.Build(ctx, solveOpt, "pando", railpackBuild(map[string]string{
+			api.ImageLabelBundle: bundleOf(req.CacheNamespace),
+		}), statusCh)
+	} else {
+		resp, err = a.cli.Solve(ctx, nil, solveOpt, statusCh)
+	}
 	<-logsDone
 
 	// Trim the build service's cache now that this build is done with it. In

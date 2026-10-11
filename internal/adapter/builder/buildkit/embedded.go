@@ -53,9 +53,9 @@ func readEmbeddedBuild(contextDir string) declaredBuild {
 
 		// A subshell, because the `cd` must not outlive the client build.
 		//
-		// npm has to run where the package.json is, and nixpacks runs the build
+		// npm has to run where the package.json is, and Railpack runs the build
 		// command from the repository root — but this command is a prefix, and
-		// whatever nixpacks chose runs after it in the same shell. Without the
+		// whatever Railpack chose runs after it in the same shell. Without the
 		// parentheses `go build ./cmd/server` runs from web/ and the image fails
 		// to build with "stat /app/web/cmd/server: directory not found", which
 		// is how this comment came to exist.
@@ -68,7 +68,7 @@ func readEmbeddedBuild(contextDir string) declaredBuild {
 			Rank:     rankEmbedded,
 			Source:   path.Join(client.Dir, client.ConfigFile),
 			Before:   build,
-			Packages: []string{"nodejs"},
+			Packages: []string{"node"},
 			Why: path.Join(client.Dir, client.ConfigFile) + " builds into " + client.OutDir +
 				", which this app embeds — so the client is built before the binary that carries it",
 		}

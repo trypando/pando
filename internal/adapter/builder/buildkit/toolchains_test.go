@@ -11,22 +11,23 @@ import (
 	"github.com/trypando/pando/internal/errs"
 )
 
-// The toolchain settings Pando supplies when the repository is silent, each of
-// which a deploy QA app failed without (issue #55).
-func TestR095_ToolchainsTheRepositoryDoesNotNameAreSupplied(t *testing.T) {
-	poetry := writeFiles(t, map[string]string{"pyproject.toml": "[tool.poetry]\nname = \"x\"\npackage-mode = false\n"})
-	require.Contains(t, toolchainDefaults(poetry), "NIXPACKS_POETRY_VERSION="+defaultPoetryVersion)
-
+// The Railpack settings Pando supplies when the repository is silent, each of
+// which a deploy QA app failed without (issue #55). Railpack serves public/
+// only for Laravel, and a Slim app's front controller is there too.
+func TestR095_APHPAppIsServedFromWhereItsFrontControllerIs(t *testing.T) {
 	slim := writeFiles(t, map[string]string{"composer.json": "{}"})
 	require.NoError(t, os.MkdirAll(filepath.Join(slim, "public"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(slim, "public", "index.php"), []byte("<?php"), 0o644))
-	require.Contains(t, toolchainDefaults(slim), "NIXPACKS_PHP_ROOT_DIR=/app/public")
+	require.Contains(t, railpackDefaults(slim), "RAILPACK_PHP_ROOT_DIR=/app/public")
 
 	root := writeFiles(t, map[string]string{"composer.json": "{}", "index.php": "<?php"})
-	require.NotContains(t, toolchainDefaults(root), "NIXPACKS_PHP_ROOT_DIR=/app/public",
+	require.NotContains(t, railpackDefaults(root), "RAILPACK_PHP_ROOT_DIR=/app/public",
 		"a front controller at the root is served from the root")
 }
 
+// A plan nixpacks made reads .ruby-version at build time, and a fresh checkout
+// has none unless it is written from the Gemfile (issue #55). Kept for specs
+// stored before Railpack, which reads the Gemfile itself.
 func TestR095_ARubyProjectsVersionComesFromItsGemfile(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"Gemfile": "source 'https://rubygems.org'\nruby '3.2.4'\ngem 'sinatra'\n"})
 	ensureRubyVersion(dir)
@@ -60,24 +61,21 @@ func TestR095_ADotnetProjectIsBuiltOnTheSDKItTargets(t *testing.T) {
 	require.False(t, ok, "two projects are a solution whose entry point is not guessed")
 }
 
-// A Mix project that is not Phoenix has no phx.server task (issue #55).
-func TestR104_AnElixirAppThatIsNotPhoenixIsStartedWithMixRun(t *testing.T) {
+// nixpacks started every Mix project with `mix phx.server` and every Rack app
+// with a rackup bound to 127.0.0.1, and Pando overrode both (issue #55).
+// Railpack starts a Mix project from its release and binds rackup to 0.0.0.0,
+// so nothing is passed: `mix run` would not even exist in its runtime image,
+// which carries the release and not the toolchain.
+func TestR104_ElixirAndRackAppsAreStartedByRailpack(t *testing.T) {
 	plug := writeFiles(t, map[string]string{"mix.exs": "defp deps, do: [{:bandit, \"~> 1.5\"}]"})
-	require.Equal(t, "mix run --no-halt", elixirAppStart(plug))
+	require.Empty(t, declaredFor(api.BuildRequest{}, plug).Start)
 
-	phoenix := writeFiles(t, map[string]string{"mix.exs": "defp deps, do: [{:phoenix, \"~> 1.7\"}]"})
-	require.Empty(t, elixirAppStart(phoenix), "nixpacks' phx.server is right for Phoenix")
+	rack := writeFiles(t, map[string]string{"config.ru": "run App", "Gemfile": ""})
+	require.Empty(t, declaredFor(api.BuildRequest{}, rack).Start)
 }
 
-// rackup binds 127.0.0.1 unless told otherwise (issue #55).
-func TestR104_ARackAppListensWhereItCanBeReached(t *testing.T) {
-	require.Equal(t, "bundle exec rackup -o 0.0.0.0 -p ${PORT:-3000}",
-		rackAppStart(writeFiles(t, map[string]string{"config.ru": "run App", "Gemfile": ""})))
-	require.Empty(t, rackAppStart(writeFiles(t, map[string]string{"Gemfile": ""})))
-}
-
-// A Procfile beside a committed program is run as it is; nixpacks had nothing
-// to recognize and refused it (issue #55).
+// A Procfile beside a committed program is run as it is; the planner had
+// nothing to recognize and refused it (issue #55).
 func TestR094_ACommittedProgramIsRunAsItIs(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"server": "\x7fELF", "Procfile": "web: ./server --port $PORT\n"})
 	require.Equal(t, "./server --port $PORT", committedProgram(dir, "./server --port $PORT"))
@@ -155,14 +153,6 @@ func TestARubyVersionIsReadFromTheLockfileWhenTheGemfileIsSilent(t *testing.T) {
 	require.True(t, os.IsNotExist(err), "only a Ruby project gets a Ruby version")
 }
 
-// A poetry.lock is a Poetry project even when pyproject.toml does not say so
-// in a [tool.poetry] table, which Poetry 2 projects often do not.
-func TestAPoetryLockfileMakesAPoetryProject(t *testing.T) {
-	require.True(t, poetryProject(writeFiles(t, map[string]string{"poetry.lock": ""})))
-	require.False(t, poetryProject(writeFiles(t, map[string]string{"pyproject.toml": "[project]\nname = \"x\"\n"})))
-	require.False(t, poetryProject(t.TempDir()))
-}
-
 // A Heroku launcher's options are skipped, whether or not they take a value,
 // and a launcher with no document root serves the repository root.
 func TestAHerokuPHPLaunchersOptionsAreNotTheDocumentRoot(t *testing.T) {
@@ -175,30 +165,17 @@ func TestAHerokuPHPLaunchersOptionsAreNotTheDocumentRoot(t *testing.T) {
 	require.Empty(t, root, "no argument means the repository root")
 }
 
-// A Node version is declared only by a non-empty engines.node string in a
-// package.json that parses.
-func TestANodeVersionIsDeclaredOnlyByEnginesNode(t *testing.T) {
-	require.True(t, declaresNodeVersion(writeFiles(t, map[string]string{"package.json": `{"engines":{"node":"20"}}`})))
-	require.False(t, declaresNodeVersion(writeFiles(t, map[string]string{"package.json": `{"engines":{"node":" "}}`})))
-	require.False(t, declaresNodeVersion(writeFiles(t, map[string]string{"package.json": `{"engines":`})))
-	require.False(t, declaresNodeVersion(t.TempDir()))
-}
-
-// A version file's contents reach nixpacks as a flag value, so anything that
-// is not a plain version is refused rather than passed on.
+// A version read out of the repository is written into a plan, so anything
+// that is not a plain version is refused rather than passed on.
 func TestAVersionFileHoldsOnlyAVersion(t *testing.T) {
 	require.True(t, safeVersion("20.11.1"))
 	require.True(t, safeVersion("20.x"))
 	require.False(t, safeVersion("20 --inspect"))
 	require.False(t, safeVersion("lts/iron"))
 	require.False(t, safeVersion("1.2.3.4.5.6.7.8.9"))
-
-	dir := writeFiles(t, map[string]string{"package.json": `{}`, ".node-version": "lts/iron\n"})
-	require.Equal(t, []string{"--env", "NIXPACKS_NODE_VERSION=" + defaultNodeVersion}, toolchainDefaults(dir),
-		"a version file that is not a version gets the default")
 }
 
-// Every planner writes its Dockerfile to .nixpacks/Dockerfile, and a checkout
+// Every planner writes its Dockerfile to .pando-plan/Dockerfile, and a checkout
 // where that cannot be written fails as a build failure that says so, rather
 // than leaving a plan that is not there.
 func TestAPlanThatCannotBeWrittenIsABuildFailure(t *testing.T) {
@@ -218,15 +195,15 @@ func TestAPlanThatCannotBeWrittenIsABuildFailure(t *testing.T) {
 	}
 	for name, write := range writers {
 		t.Run(name, func(t *testing.T) {
-			// .nixpacks is a file, so the directory cannot be made.
-			blocked := writeFiles(t, map[string]string{".nixpacks": ""})
+			// .pando-plan is a file, so the directory cannot be made.
+			blocked := writeFiles(t, map[string]string{planDir: ""})
 			_, err := write(blocked)
 			require.Equal(t, errs.BuildFailed, errs.CodeOf(err))
 			require.Equal(t, "Could not prepare the build.", errs.As(err).Message)
 
-			// .nixpacks/Dockerfile is a directory, so the file cannot be written.
+			// .pando-plan/Dockerfile is a directory, so the file cannot be written.
 			occupied := t.TempDir()
-			require.NoError(t, os.MkdirAll(filepath.Join(occupied, ".nixpacks", "Dockerfile"), 0o755))
+			require.NoError(t, os.MkdirAll(filepath.Join(occupied, planDir, "Dockerfile"), 0o755))
 			_, err = write(occupied)
 			require.Equal(t, errs.BuildFailed, errs.CodeOf(err))
 		})
@@ -235,7 +212,7 @@ func TestAPlanThatCannotBeWrittenIsABuildFailure(t *testing.T) {
 
 // A single project file is read for its target framework and assembly. One
 // that cannot be read, targets no framework, or names an assembly that could
-// not be written plainly into a Dockerfile is left to nixpacks.
+// not be written plainly into a Dockerfile is left to Railpack.
 func TestADotnetProjectIsReadOnlyWhenItSaysWhatItBuilds(t *testing.T) {
 	named, ok := readDotnetBuild(writeFiles(t, map[string]string{
 		"Api.fsproj": "<TargetFramework>net8.0</TargetFramework><AssemblyName>Shop.Web</AssemblyName>",
@@ -254,10 +231,10 @@ func TestADotnetProjectIsReadOnlyWhenItSaysWhatItBuilds(t *testing.T) {
 	_, ok = readDotnetBuild(unreadable)
 	require.False(t, ok, "a directory named like a project is not one")
 
-	planDir := t.TempDir()
-	name, err := writeDotnetPlan(planDir, named)
+	out := t.TempDir()
+	name, err := writeDotnetPlan(out, named)
 	require.NoError(t, err)
-	body, err := os.ReadFile(filepath.Join(planDir, name))
+	body, err := os.ReadFile(filepath.Join(out, name))
 	require.NoError(t, err)
 	require.Contains(t, string(body), "RUN dotnet publish Api.fsproj -c Release -o /out")
 	require.Contains(t, string(body), `CMD ["exec dotnet Shop.Web.dll"]`)

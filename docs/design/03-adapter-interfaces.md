@@ -1027,46 +1027,93 @@ join and nothing publishes a port (R-134), and its data is an ordinary app volum
 through the adapter's config. Alpine variants because a hobbyist's host is the target and a 400MB
 Postgres image on a two-core VPS is a cost with nothing to show for it.
 
-**[P] The builder synthesizes a Dockerfile for strategies that have none.** `static` and `buildpack`
-both end as a Dockerfile build, written outside the repository where possible and handed to BuildKit
-as a separate filesystem from the context — so nothing is copied and the app's source is untouched.
-The Dockerfile is Docker's vocabulary, so this belongs in the adapter and not in core (R-251): core
-says "a directory of files to serve" or "a repository with no instructions", and a different builder
-may answer either differently.
+**[P] The builder writes a plan for strategies that have none.** `static` and `buildpack` both end
+as a plan BuildKit builds — a Dockerfile, or for most `buildpack` apps a Railpack plan — written
+outside the repository where possible and handed to BuildKit as a separate filesystem from the
+context, so nothing is copied and the app's source is untouched. The plan is the builder's
+vocabulary, so this belongs in the adapter and not in core (R-251): core says "a directory of files
+to serve" or "a repository with no instructions", and a different builder may answer either
+differently.
 
-**[P] `buildpack` is nixpacks, invoked only to plan.** `nixpacks build --out` writes a Dockerfile and
-builds nothing, so R-112 is not in play and the install needs no extra service. The generated
-Dockerfile stays in the checkout because nixpacks' own output does `COPY . /app/.` alongside
-`COPY .nixpacks/…` — the build context must be the source with the generated directory inside it.
-Generation runs with no network and a minimal environment: it reads the repository and decides, and a
-planner that can reach the internet while reading untrusted source is a wider boundary than this
-needs. Paketo is the opt-in alternative and needs a registry in the install topology (R-095).
+**[P] Some stacks are planned by Pando, as Dockerfiles, before Railpack is asked.** Laravel, Jekyll,
+sites that build to static files, Node servers, Go programs, .NET and JVM projects each have a plan
+of Pando's own (`laravel.go`, `jekyll.go`, `staticsite.go`, `node.go`, `golang.go`, `dotnet.go`,
+`jvm.go`), written because the deploy QA run found the general-purpose planner getting each one
+wrong (issue #55). Everything else goes to Railpack. Generated files of either kind live under
+`.pando-plan/` in the checkout; a spec stored before Railpack carries `.nixpacks/` paths and is
+replayed from them unchanged.
 
-**[P] What nixpacks is *told* comes from the repository, when the repository says anything.** R-094's
+**[P] `buildpack` falls back to Railpack, invoked only to plan.** `railpack prepare` writes a JSON
+build plan and builds nothing (R-095). BuildKit builds the plan through Railpack's frontend image,
+which runs as a gateway frontend inside Pando's own rootless BuildKit — the same build service,
+with no socket and no privilege, that builds every Dockerfile (R-112). Railpack's own `railpack
+build`, and the `--privileged` BuildKit its README starts, are not used. The plan is the readable
+record the owner sees and can edit before it runs: each step's commands, the images it runs on, the
+start command.
+
+Pando post-processes the plan before storing it:
+
+- Railpack's builder and runtime images are rewritten from their tags to digests, in the plan, so the
+  stored plan says exactly what it runs on (issue #130). The frontend image is pinned by digest in
+  the adapter. All three move with the `railpack` binary in Pando's image; `railpack.go` and the
+  `Dockerfile` name the versions together.
+- The plan's `secrets` are cleared. Railpack lists every setting it is passed as a build secret and
+  mounts each one as required, so a plan that kept them failed on secrets nobody provides.
+- `.pando-plan` is added to the plan's `exclude`, so the plan's own directory is not copied into the
+  image.
+
+The build sets Railpack's `cache-key` to the app's bundle, so its cache mounts are namespaced per app
+the way the layer cache is (R-117). A gateway frontend takes no `label:` options, so the bundle label
+every image carries is added to the image config the frontend returns.
+
+An image an app's own toolchain chooses — PHP's `dunglas/frankenphp:php<version>`, `composer:latest`
+— is left in the plan as Railpack names it, as `php:8.3-apache` or `node:22` are in Pando's own
+Dockerfiles: the version is the app's, and the tag is in the plan for the owner to see and change.
+
+**[P] Planning reaches the network.** Railpack resolves language versions by running mise, which asks
+the package indexes; nixpacks planned offline from a pinned package set. The mise binary is in
+Pando's image at the release Railpack bundles, checksum-verified, so planning downloads no program —
+but an install that cannot reach the indexes cannot plan a Railpack app, and says so (exit 75 becomes
+"Pando could not look up the language versions this app needs"). Building already needed the
+network. The image also carries `git` and `bash` for it, and nothing else in Pando runs either: mise
+lists Python releases with pyenv's `python-build`, a bash script it fetches with git, and Railpack
+runs mise with every config file switched off, so no setting avoids it. A shell in the runtime image
+is a cost to its hardening, taken because the alternative was no Python apps. Planning runs with a scrubbed environment: nothing of Pando's — credentials, the database
+address — is visible to a planner reading untrusted source (issue #78).
+
+**[P] What Railpack is *told* comes from the repository, when the repository says anything.** R-094's
 ladder ranks evidence, and the rungs above convention-matching are the app's author having stated
 something: a CI workflow's build job, a `Makefile`/`Taskfile.yml`/`justfile` target, a `Procfile`'s
 web process, or a client config and a `go:embed` directive naming one directory. Each becomes
-nixpacks' own `--build-cmd`, `--start-cmd` and `--pkgs`; nothing here synthesizes a Dockerfile or
-picks a base image, which is what keeps R-095's "wrap rather than reimplement" true. Every reader
-takes a literal and declines anything computed — a config that has to be evaluated to find its
-answer is one this does not evaluate.
+Railpack's own `RAILPACK_BUILD_CMD`, `RAILPACK_START_CMD` and `RAILPACK_PACKAGES` (mise package
+names; `make` and a C compiler are already in Railpack's builder image); nothing here picks a base
+image, which is what keeps R-095's "wrap rather than reimplement" true. Every reader takes a literal
+and declines anything computed — a config that has to be evaluated to find its answer is one this
+does not evaluate. A handful of settings correct what Railpack gets wrong, each from a deploy QA
+failure (issue #55): a FastAPI or Flask module served by the uvicorn or gunicorn it depends on, Django's
+`collectstatic` as the build step, a PHP app served from `public/` (or a Heroku Procfile's document
+root) through `RAILPACK_PHP_ROOT_DIR`.
 
 **[P] The planner runs twice when a declaration is an ordering rather than a command.** `//go:embed
 dist` beside a client that builds into that directory says the client comes first, and says nothing
-about what it comes *before*. So: plan, read the chosen build command back out of the generated
-Dockerfile, plan again with the client build ahead of it. Two subprocesses is the cost of not knowing
-what nixpacks would have chosen without asking it. Only this one case needs the second pass; a
-declaration that names the build replaces nixpacks' choice in a single call.
+about what it comes *before*. So: plan, read the chosen build command back out of the plan's `build`
+step, plan again with the client build ahead of it. Two subprocesses is the cost of not knowing what
+Railpack would have chosen without asking it. Only this one case needs the second pass; a
+declaration that names the build replaces Railpack's choice in a single call.
 
-**[P] `BuildPlanner.Plan` returns a `*api.PlanDeclaration`** — which source dictated the plan, why,
-and the confidence a detector should bid. The builder knows this and detection cannot derive it
-without a second implementation of the same reading, which R-027's import rule exists to prevent from
-drifting apart. It is a definition in `internal/adapter/api`, filled by the builder and read by core,
-so neither learns the other's vocabulary (R-251). Nil means convention-matching chose the plan. See
+**[P] `BuildPlanner.Plan` returns an `api.BuildPlan`**: the files, the one the build starts from, the
+start command and ports when the plan says them, and a `*api.PlanDeclaration` — which source dictated
+the plan, why, and the confidence a detector should bid. The builder knows these and detection cannot
+derive them without a second implementation of the same reading, which R-027's import rule exists to
+prevent from drifting apart; nor does detection read a Railpack plan's JSON, which is the builder's
+vocabulary (R-251). A plan that is a Dockerfile leaves the start command for detection to read the way
+it reads any Dockerfile. These are definitions in `internal/adapter/api`, filled by the builder and
+read by core. A nil declaration means convention-matching chose the plan. See
 [the design note](notes-declared-builds-without-a-runner.md).
 
 **[P] Every image Pando supplies itself is pinned by tag, not digest** — these three and the runtime
-adapter's `busybox:stable` volume helper. This is a real weakness and worth naming rather than
+adapter's `busybox:stable` volume helper. (Railpack's three images, above, are the exception: they are
+pinned by digest, and move together with the `railpack` binary.) This is a real weakness and worth naming rather than
 leaving in a code comment: the bytes behind a tag can change, and the BusyBox one is pulled at
 *restore* time, which means it can change between the backup and the disaster. A digest belongs in all
 four places once there is a way to update them — a pinned digest with no update path is an image that

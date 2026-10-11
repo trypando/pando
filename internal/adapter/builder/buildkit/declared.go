@@ -10,7 +10,7 @@ import (
 // What a repository says about how it is built, and how much that is worth.
 //
 // R-094's ladder is a ladder of evidence, and everything here sits on it. The
-// bottom rung is convention-matching: nixpacks reads a repository and infers,
+// bottom rung is convention-matching: Railpack reads a repository and infers,
 // which is a guess that is usually right. Every source above it is the app's
 // author saying something, and the difference is not confidence in the abstract
 // — it is whether being wrong is a bug in Pando or a mistake in the repository.
@@ -30,7 +30,7 @@ import (
 // Reading that pair is not inference; it is joining two declarations. It ranks
 // below the sources that name commands because it says an *ordering* and not a
 // command — it knows the client must be built first, and has to be told by
-// nixpacks what "the build" it comes before actually is.
+// Railpack what "the build" it comes before actually is.
 
 // rank orders declaration sources. Higher wins.
 type rank int
@@ -65,14 +65,14 @@ type declaredBuild struct {
 	// Source is the file this was read from, for evidence.
 	Source string
 
-	// Build and Start replace what nixpacks would have chosen, when they are
-	// set. Empty means "nixpacks decides this one".
+	// Build and Start replace what Railpack would have chosen, when they are
+	// set. Empty means "Railpack decides this one".
 	Build string
 	Start string
 
-	// Before runs ahead of whatever nixpacks chose as the build command, rather
+	// Before runs ahead of whatever Railpack chose as the build command, rather
 	// than instead of it. This is what needs the second planning pass: the
-	// command it precedes is not known until nixpacks has been asked.
+	// command it precedes is not known until Railpack has been asked.
 	Before string
 
 	// Packages are toolchains the build needs that the chosen provider will not
@@ -86,7 +86,7 @@ type declaredBuild struct {
 func (d declaredBuild) found() bool { return d.Rank != rankNone }
 
 // needsSecondPass reports whether planning has to run twice: once to learn what
-// nixpacks would build, and again to put something in front of it.
+// Railpack would build, and again to put something in front of it.
 func (d declaredBuild) needsSecondPass() bool { return d.Before != "" && d.Build == "" }
 
 // readDeclaredBuild asks every source and returns the best-ranked answer.
@@ -112,17 +112,17 @@ func readDeclaredBuild(contextDir string) declaredBuild {
 	return best
 }
 
-// nixpacksArgs turns a reading into nixpacks flags.
+// railpackEnv turns a reading into Railpack settings, as KEY=value.
 //
-// `chosen` is the build command nixpacks picked on a first pass, and is only
+// `chosen` is the build command Railpack picked on a first pass, and is only
 // needed when the reading wraps rather than replaces. It is empty on the first
 // pass, which is exactly when Before is not yet expressible.
-func (d declaredBuild) nixpacksArgs(chosen string) []string {
-	var args []string
+func (d declaredBuild) railpackEnv(chosen string) []string {
+	var env []string
 
 	build := d.Build
 	if build == "" && d.Before != "" && chosen != "" {
-		// The client build, then whatever nixpacks was going to do. `&&` rather
+		// The client build, then whatever Railpack was going to do. `&&` rather
 		// than `;` so a failed client build fails the image instead of shipping
 		// one with a stale bundle in it — which is the failure this whole file
 		// exists to prevent.
@@ -130,15 +130,15 @@ func (d declaredBuild) nixpacksArgs(chosen string) []string {
 	}
 
 	if build != "" {
-		args = append(args, "--build-cmd", build)
+		env = append(env, "RAILPACK_BUILD_CMD="+build)
 	}
 	if d.Start != "" {
-		args = append(args, "--start-cmd", d.Start)
+		env = append(env, "RAILPACK_START_CMD="+d.Start)
 	}
-	for _, p := range dedupe(d.Packages) {
-		args = append(args, "--pkgs", p)
+	if pkgs := dedupe(d.Packages); len(pkgs) > 0 {
+		env = append(env, "RAILPACK_PACKAGES="+strings.Join(pkgs, " "))
 	}
-	return args
+	return env
 }
 
 func dedupe(in []string) []string {
@@ -156,7 +156,7 @@ func dedupe(in []string) []string {
 }
 
 // safeCommand reports whether a command read out of a repository can be handed
-// to nixpacks as-is.
+// to Railpack as-is.
 //
 // Shared by every source, because they all have the same problem: the string
 // ends up in a Dockerfile, and one that has to be escaped to survive the round

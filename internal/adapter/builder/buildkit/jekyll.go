@@ -20,8 +20,8 @@ import (
 // generator's config as the static tier's evidence; what that evidence means
 // is a build first.
 //
-// Planned here rather than by nixpacks, which reads the Gemfile as a Ruby app
-// and asks what starts it. The site is built on the official Ruby image and
+// Planned here rather than by the general-purpose planner, which reads the
+// Gemfile as a Ruby app and asks what starts it. The site is built on the official Ruby image and
 // served by the same nginx and config every other static site gets.
 
 // jekyllGemfile is the Gemfile a site that has none is built with.
@@ -34,7 +34,7 @@ const jekyllGemfile = `source "https://rubygems.org"
 gem "github-pages", group: :jekyll_plugins
 `
 
-// jekyllGemfilePath is where that Gemfile is written: under .nixpacks/ so the
+// jekyllGemfilePath is where that Gemfile is written: under .pando-plan/ so the
 // plan carries it, and in a dot-directory so Jekyll leaves it out of the site.
 //
 // The build copies it to ./Gemfile rather than pointing BUNDLE_GEMFILE at it.
@@ -43,7 +43,7 @@ gem "github-pages", group: :jekyll_plugins
 // the defaults Pages turns on. Pointed at from BUNDLE_GEMFILE, the gems were
 // installed and never loaded: jekyll-optional-front-matter was off, and every
 // Markdown page without front matter was copied out as Markdown (issue #67).
-const jekyllGemfilePath = ".nixpacks/jekyll/Gemfile"
+const jekyllGemfilePath = planDir + "/jekyll/Gemfile"
 
 // jekyllServedConfig is read after the site's own _config.yml, and says where
 // the site is served: at the root of the app's own address, which is where
@@ -62,7 +62,7 @@ baseurl: ""
 
 // jekyllServedConfigPath is where jekyllServedConfig is written, beside the
 // generated Gemfile.
-const jekyllServedConfigPath = ".nixpacks/jekyll/_config.pando.yml"
+const jekyllServedConfigPath = planDir + "/jekyll/_config.pando.yml"
 
 // jekyllMarkers are the directories only a Jekyll site has.
 var jekyllMarkers = []string{"_layouts", "_includes", "_posts", "_sass", "_data"}
@@ -218,7 +218,7 @@ func jekyllRuby(contextDir string) string {
 // writeJekyllPlan writes a plan that builds the site and serves what Jekyll
 // writes.
 //
-// Into .nixpacks/, beside where a nixpacks plan goes, so detection collects it
+// Into .pando-plan/, beside where a Railpack plan goes, so detection collects it
 // and the build replays it as it would any other plan (R-020).
 func writeJekyllPlan(contextDir string, site jekyllSite) (string, error) {
 	// PAGES_DISABLE_NETWORK keeps jekyll-github-metadata off the GitHub API.
@@ -243,7 +243,7 @@ func writeJekyllPlan(contextDir string, site jekyllSite) (string, error) {
 		// is what GitHub does; a site with neither loses nothing.
 		gemfile = "RUN cp " + jekyllGemfilePath + " Gemfile && rm -f Gemfile.lock\n"
 	}
-	name := filepath.Join(".nixpacks", "Dockerfile")
+	name := filepath.Join(planDir, "Dockerfile")
 	// The destination is outside the source, so nothing Jekyll writes can be
 	// read back as a page on the next build.
 	content := fmt.Sprintf(`# A Jekyll site, built with Jekyll and served by nginx.

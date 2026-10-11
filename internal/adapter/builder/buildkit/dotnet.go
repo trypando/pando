@@ -101,10 +101,10 @@ CMD [%s]
 	return writePlan(contextDir, content)
 }
 
-// writePlan writes a Dockerfile Pando made into .nixpacks/, where detection
+// writePlan writes a Dockerfile Pando made into .pando-plan/, where detection
 // collects a plan and the build replays it (R-020).
 func writePlan(contextDir, content string) (string, error) {
-	name := filepath.Join(".nixpacks", "Dockerfile")
+	name := filepath.Join(planDir, "Dockerfile")
 	full := filepath.Join(contextDir, name)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
@@ -117,7 +117,7 @@ func writePlan(contextDir, content string) (string, error) {
 	return name, nil
 }
 
-// writeDotnetPlan writes the plan into .nixpacks/, where detection collects a
+// writeDotnetPlan writes the plan into .pando-plan/, where detection collects a
 // plan and the build replays it (R-020). The ASP.NET image listens on 8080,
 // which the deploy's port check confirms against the built image (R-097).
 func writeDotnetPlan(contextDir string, b dotnetBuild) (string, error) {
@@ -134,7 +134,7 @@ ENTRYPOINT ["/bin/sh", "-c"]
 CMD ["exec dotnet %[3]s.dll"]
 `, b.Version, b.Project, b.Assembly)
 
-	name := filepath.Join(".nixpacks", "Dockerfile")
+	name := filepath.Join(planDir, "Dockerfile")
 	full := filepath.Join(contextDir, name)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)

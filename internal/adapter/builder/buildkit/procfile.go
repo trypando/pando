@@ -14,7 +14,7 @@ import (
 // It does not say how the app is *built*, which is why it ranks where it does:
 // above the embed pairing, which knows an ordering and no commands, and below
 // the runners, which know both. What it contributes is a start command, and
-// nixpacks still plans the build.
+// Railpack still plans the build.
 //
 //	web: ./macscout
 //	worker: ./macscout --worker

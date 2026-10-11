@@ -644,15 +644,38 @@ func TestR104_AStartCommandFromTheBuildPlanIsNotAsked(t *testing.T) {
 	require.NoError(t, asked[0].Validate())
 }
 
-// plannerWritingCMD stands in for nixpacks: it writes a multi-stage Dockerfile
+// A plan that is not a Dockerfile says how the app starts alongside its files,
+// and detection takes it from there: it never reads the planner's own format
+// (R-251). A Railpack plan is JSON, and scanning it for CMD finds nothing.
+func TestR104_AStartCommandThePlannerReportsIsNotAsked(t *testing.T) {
+	result, err := detect.NewAuction(detect.BuildpackDetector{Planner: plannerReportingStart{}}).
+		Run(context.Background(), memSource{"requirements.txt": "flask\ngunicorn\n"})
+	require.NoError(t, err)
+
+	require.Empty(t, detect.Asked(result.Questions))
+	require.Contains(t, strings.Join(result.Winner.Evidence, "\n"), "starts with gunicorn app:app")
+	require.Equal(t, ".pando-plan/railpack-plan.json", result.Winner.Draft.Build.Dockerfile)
+}
+
+type plannerReportingStart struct{}
+
+func (plannerReportingStart) Plan(context.Context, api.SourceView) (api.BuildPlan, error) {
+	return api.BuildPlan{
+		Files: map[string]string{".pando-plan/railpack-plan.json": `{"deploy":{"startCommand":"gunicorn app:app"}}`},
+		Entry: ".pando-plan/railpack-plan.json",
+		Start: "gunicorn app:app",
+	}, nil
+}
+
+// plannerWritingCMD stands in for a planner that writes a multi-stage Dockerfile
 // whose build stage carries its own ENTRYPOINT, which is the shape that made
 // reading the first start instruction rather than the last report
 // `/bin/bash -l -c` as the way to run the app.
 type plannerWritingCMD struct{}
 
-func (plannerWritingCMD) Plan(context.Context, api.SourceView) (map[string]string, string, *api.PlanDeclaration, error) {
-	return map[string]string{
-		".nixpacks/Dockerfile": "FROM ubuntu:noble\n" +
+func (plannerWritingCMD) Plan(context.Context, api.SourceView) (api.BuildPlan, error) {
+	return api.BuildPlan{Files: map[string]string{
+		".pando-plan/Dockerfile": "FROM ubuntu:noble\n" +
 			"ENTRYPOINT [\"/bin/bash\", \"-l\", \"-c\"]\n" +
 			"RUN nix-env -if .nixpacks/nixpkgs-e89cf1c9.nix && nix-collect-garbage -d\n" +
 			"RUN --mount=type=cache,id=x,target=/root/.cache/go-build go mod download\n" +
@@ -661,7 +684,7 @@ func (plannerWritingCMD) Plan(context.Context, api.SourceView) (map[string]strin
 			"ENTRYPOINT [\"/bin/bash\", \"-l\", \"-c\"]\n" +
 			"WORKDIR /app/\n" +
 			"CMD [\"./out\"]\n",
-	}, ".nixpacks/Dockerfile", nil, nil
+	}, Entry: ".pando-plan/Dockerfile"}, nil
 }
 
 // --- compose import (R-096, R-099) ------------------------------------------
@@ -1453,14 +1476,14 @@ func TestAnAnswerNamingNoCandidateIsIgnored(t *testing.T) {
 // to run: the plan's build step is `make build` rather than a guessed one.
 type plannerRunningMake struct{}
 
-func (plannerRunningMake) Plan(context.Context, api.SourceView) (map[string]string, string, *api.PlanDeclaration, error) {
-	// The shape nixpacks actually emits, taken from a real run rather than
+func (plannerRunningMake) Plan(context.Context, api.SourceView) (api.BuildPlan, error) {
+	// The shape nixpacks emitted, taken from a real run rather than
 	// invented: the environment is built first, then the install step, and the
 	// build command is the third RUN. A tidier fixture with one RUN passed
 	// while the real plan did not — buildsWithMake answered from the first RUN
 	// it saw, which is always nix-env.
-	return map[string]string{
-		".nixpacks/Dockerfile": "FROM ubuntu:noble\n" +
+	return api.BuildPlan{Files: map[string]string{
+		".pando-plan/Dockerfile": "FROM ubuntu:noble\n" +
 			"ENTRYPOINT [\"/bin/bash\", \"-l\", \"-c\"]\n" +
 			"RUN nix-env -if .nixpacks/nixpkgs-e89cf1c9.nix && nix-collect-garbage -d\n" +
 			"RUN --mount=type=cache,id=x,target=/root/.cache/go-build go mod download\n" +
@@ -1469,11 +1492,11 @@ func (plannerRunningMake) Plan(context.Context, api.SourceView) (map[string]stri
 			"FROM ubuntu:noble\n" +
 			"WORKDIR /app/\n" +
 			"CMD [\"./macscout\"]\n",
-	}, ".nixpacks/Dockerfile", &api.PlanDeclaration{
+	}, Entry: ".pando-plan/Dockerfile", Declared: &api.PlanDeclaration{
 		Source:     "Makefile",
 		Why:        "Makefile declares how this app is built, and the plan runs it rather than guessing",
 		Confidence: 0.72,
-	}, nil
+	}}, nil
 }
 
 // R-094 tier 3: the maintainer's own build commands rank above tier 4's

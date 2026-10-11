@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// flagsFor is what nixpacks is told for a repository, through whichever
+// flagsFor is what Railpack is told for a repository, through whichever
 // declaration ranks highest. The tests below assert the same observable thing
-// they always did: the flags that come out the far end.
+// they always did: the settings that come out the far end.
 func flagsFor(root string) []string {
-	return readDeclaredBuild(root).nixpacksArgs("")
+	return readDeclaredBuild(root).railpackEnv("")
 }
 
 func withFiles(t *testing.T, files map[string]string) string {
@@ -66,15 +66,14 @@ func TestR094_AMakefileBuildBecomesTheBuildCommand(t *testing.T) {
 	args := flagsFor(root)
 	joined := strings.Join(args, " ")
 
-	require.Contains(t, joined, "--build-cmd make build",
+	require.Contains(t, joined, "RAILPACK_BUILD_CMD=make build",
 		"the repository says how it is built, so the plan runs that")
-	require.Contains(t, joined, "--start-cmd ./macscout",
+	require.Contains(t, joined, "RAILPACK_START_CMD=./macscout",
 		"and the run target says what starts it")
 
-	// make is not in any nixpacks provider's environment, and the Go provider
-	// has no reason to install Node — but this Makefile's build runs npm.
-	require.Contains(t, joined, "--pkgs gnumake")
-	require.Contains(t, joined, "--pkgs nodejs",
+	// make is in Railpack's builder image, and the Go provider has no reason
+	// to install Node — but this Makefile's build runs npm.
+	require.Contains(t, joined, "RAILPACK_PACKAGES=node",
 		"a package.json under web/ is the client declaring itself")
 }
 
@@ -177,27 +176,21 @@ func TestGNUmakefileIsPreferredTheWayMakePrefersIt(t *testing.T) {
 
 func TestNodeIsAddedOnlyWhenAPackageJsonExists(t *testing.T) {
 	withMake := map[string]string{"Makefile": "build:\n\tgo build .\n"}
-	require.NotContains(t, strings.Join(flagsFor(withFiles(t, withMake)), " "), "nodejs")
+	require.NotContains(t, strings.Join(flagsFor(withFiles(t, withMake)), " "), "RAILPACK_PACKAGES=node")
 
 	withNode := map[string]string{
 		"Makefile":         "build:\n\tgo build .\n",
 		"web/package.json": "{}",
 	}
-	require.Contains(t, strings.Join(flagsFor(withFiles(t, withNode)), " "), "nodejs")
+	require.Contains(t, strings.Join(flagsFor(withFiles(t, withNode)), " "), "RAILPACK_PACKAGES=node")
 }
 
-// A Makefile over C sources needs a compiler, which no nixpacks provider brings
-// to a repository that is only a Makefile and sources (issue #55). Sources one
-// directory down count, which is where a small C program often keeps them.
-func TestACompilerIsAddedForCSources(t *testing.T) {
-	top := withFiles(t, map[string]string{"Makefile": "build:\n\tcc -o app main.c\n", "main.c": "int main(){}"})
-	require.Contains(t, strings.Join(flagsFor(top), " "), "gcc")
-
-	nested := withFiles(t, map[string]string{"Makefile": "build:\n\tmake -C src\n", "src/app.cpp": "int main(){}"})
-	require.Contains(t, strings.Join(flagsFor(nested), " "), "gcc")
-
-	none := withFiles(t, map[string]string{"Makefile": "build:\n\tgo build .\n", "main.go": "package main"})
-	require.NotContains(t, strings.Join(flagsFor(none), " "), "gcc")
+// A Makefile over C sources needs a compiler, which the nixpacks environment
+// lacked (issue #55). Railpack's builder image carries build-essential, so
+// nothing is asked for: an unknown mise package fails the plan outright.
+func TestNoPackageIsAskedForTheCompilerOrMake(t *testing.T) {
+	root := withFiles(t, map[string]string{"Makefile": "build:\n\tcc -o app main.c\n", "main.c": "int main(){}"})
+	require.NotContains(t, strings.Join(flagsFor(root), " "), "RAILPACK_PACKAGES")
 }
 
 // node_modules is somebody else's package.json, several thousand times over.
@@ -207,23 +200,21 @@ func TestAVendoredPackageJsonDoesNotCount(t *testing.T) {
 		"node_modules/left-pad/package.json": "{}",
 		"vendor/thing/package.json":          "{}",
 	})
-	require.NotContains(t, strings.Join(flagsFor(root), " "), "nodejs")
+	require.NotContains(t, strings.Join(flagsFor(root), " "), "RAILPACK_PACKAGES=node")
 }
 
 // TestNodeIsNotAddedWhenTheRepositoryItselfIsNode asserts the narrower rule.
 //
-// nixpacks reads a root package.json itself, so its node provider already
-// brings the toolchain. Naming it again made the plan unbuildable: nixpacks
-// drops the overlay that defines npm-<major>_x as soon as the caller names a
-// package, while still asking for npm-9_x, and the generated plan failed on
-// its first step with "undefined variable 'npm-9_x'" — for a repository whose
-// only sin was having a build workflow beside its package.json.
+// Railpack reads a root package.json itself, so its Node provider already
+// brings the toolchain, at the version the package names. Naming it again
+// would ask mise for the newest Node instead. (Under nixpacks it made the
+// plan unbuildable outright: "undefined variable 'npm-9_x'".)
 func TestNodeIsNotAddedWhenTheRepositoryItselfIsNode(t *testing.T) {
 	root := withFiles(t, map[string]string{
 		"package.json": `{"name":"site","scripts":{"build":"vite build"}}`,
 		".github/workflows/ci.yml": "name: build\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n" +
 			"    steps:\n      - run: npm ci\n      - run: npm run build\n",
 	})
-	require.NotContains(t, strings.Join(flagsFor(root), " "), "nodejs",
-		"nixpacks brings its own node; asking again costs the npm overlay")
+	require.NotContains(t, strings.Join(flagsFor(root), " "), "RAILPACK_PACKAGES=node",
+		"Railpack brings the Node the package asks for")
 }

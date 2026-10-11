@@ -117,11 +117,11 @@ func TestPackagesAreDeduplicatedAndOrdered(t *testing.T) {
 	d := declaredBuild{
 		Rank:     rankRunner,
 		Build:    "make build",
-		Packages: []string{"nodejs", "gnumake", "", "nodejs"},
+		Packages: []string{"node", "just", "", "node"},
 	}
 	require.Equal(t,
-		[]string{"--build-cmd", "make build", "--pkgs", "gnumake", "--pkgs", "nodejs"},
-		d.nixpacksArgs(""))
+		[]string{"RAILPACK_BUILD_CMD=make build", "RAILPACK_PACKAGES=just node"},
+		d.railpackEnv(""))
 }
 
 // A variable is not a target, however much `build := ./out` looks like one.

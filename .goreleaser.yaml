@@ -2,7 +2,7 @@
 # checksum archives for macOS and Linux, Linux packages, and a Homebrew cask.
 #
 # What this ships is the CLI. Pando the *server* is installed with the Compose
-# file (design 00 §1.1) — it needs Postgres, a container runtime and nixpacks,
+# file (design 00 §1.1) — it needs Postgres, a container runtime and Railpack,
 # none of which a package manager is going to supply. The binary is the same
 # binary either way (R-253), so `pando serve` works from a Homebrew install if
 # you bring your own Postgres; it is just not the path the docs point at.

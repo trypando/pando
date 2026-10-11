@@ -46,7 +46,7 @@ func TestR095_AGoProgramIsBuiltOnTheGoItNames(t *testing.T) {
 
 // A module without a go directive names no release to build on, and a main
 // package found only in a test file is not a program. Both are left to
-// nixpacks.
+// Railpack.
 func TestAGoModuleIsPlannedOnlyWithAReleaseAndARealMain(t *testing.T) {
 	_, ok := readGoBuild(writeFiles(t, map[string]string{"go.mod": "module x\n", "main.go": "package main\n"}))
 	require.False(t, ok, "no go directive")
@@ -72,8 +72,8 @@ func TestR094_AHerokuPHPProcfileServesItsDocumentRoot(t *testing.T) {
 	require.False(t, ok)
 
 	dir := writeFiles(t, map[string]string{"composer.json": "{}", "Procfile": "web: heroku-php-apache2 web/\n"})
-	require.Contains(t, toolchainDefaults(dir), "NIXPACKS_PHP_ROOT_DIR=/app/web")
-	require.Equal(t, nixpacksPHPStart, declaredFor(api.BuildRequest{}, dir).Start)
+	require.Contains(t, railpackDefaults(dir), "RAILPACK_PHP_ROOT_DIR=/app/web")
+	require.Equal(t, railpackPHPStart, declaredFor(api.BuildRequest{}, dir).Start)
 }
 
 // Django's static files are collected at build time, when there is somewhere

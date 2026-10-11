@@ -438,13 +438,13 @@ type BuildpackDetector struct {
 //
 // Planning reads the repository and decides; it runs nothing from it and builds
 // nothing, so it is not a build and R-024's "never on the host" does not bite.
-// What it returns is opaque to core.
+// The files it returns are opaque to core; what they mean for how the app runs
+// comes back alongside them, in api.BuildPlan.
 type BuildPlanner interface {
-	// declared is what in the repository dictated the plan, or nil when
+	// The plan's Declared is what in the repository dictated it, or nil when
 	// convention-matching chose it. The builder knows which it was; detection
 	// shows it, and cannot derive it without a second copy of the same reading.
-	Plan(ctx context.Context, src api.SourceView) (
-		files map[string]string, dockerfile string, declared *api.PlanDeclaration, err error)
+	Plan(ctx context.Context, src api.SourceView) (api.BuildPlan, error)
 }
 
 func (BuildpackDetector) Name() string { return "buildpack" }
@@ -470,7 +470,7 @@ var languages = []languageSignal{
 // plannedOnly stands in for a language signal when no manifest Pando knows was
 // found and the planner recognized the repository anyway.
 //
-// The manifest list is eight files, and nixpacks reads far more than that: a
+// The manifest list is eight files, and the planner reads far more than that: a
 // Deno module, a mix.exs, a .csproj, a Gradle build, a bare main.py or
 // index.php. Each of those fell through to the generic "Pando could not work
 // out how to build and run this app" question although the planner, asked,
@@ -655,14 +655,19 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 	// and the builder will try again at build time with a real error to show.
 	var planned string
 	if d.Planner != nil {
-		if files, dockerfile, declared, err := d.Planner.Plan(ctx, src); err == nil && len(files) > 0 {
-			c.Draft.Build.GeneratedFiles = files
-			c.Draft.Build.Dockerfile = dockerfile
+		if plan, err := d.Planner.Plan(ctx, src); err == nil && len(plan.Files) > 0 {
+			c.Draft.Build.GeneratedFiles = plan.Files
+			c.Draft.Build.Dockerfile = plan.Entry
 			c.Evidence = append(c.Evidence, "build plan generated, and editable before it runs")
+			declared := plan.Declared
 
-			body := files[dockerfile]
-			var exposed []int
-			exposed, planned = scanDockerfile(strings.NewReader(body))
+			// What the planner says about how the app runs. A plan that does
+			// not say is a Dockerfile, read the way any Dockerfile is.
+			exposed := plan.Ports
+			planned = plan.Start
+			if planned == "" && len(exposed) == 0 {
+				exposed, planned = scanDockerfile(strings.NewReader(plan.Files[plan.Entry]))
+			}
 
 			// A plan that says which port it serves on is better evidence than
 			// the language's usual port: a site built to static files and
@@ -676,7 +681,7 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 			}
 
 			// R-094 is a ladder of evidence, and this is where a bid climbs
-			// it. Convention-matching is the bottom rung: nixpacks reads a
+			// it. Convention-matching is the bottom rung: Railpack reads a
 			// repository and infers, which is usually right and is still a
 			// guess. Everything above it is the app's author having said
 			// something — a Makefile target, a CI workflow, a client config and
@@ -698,7 +703,7 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 	}
 
 	// Asked only when nothing worked it out. The plan is the thing that works it
-	// out: nixpacks reads the repository and writes a Dockerfile ending in the
+	// out: the planner reads the repository and writes a plan that says the
 	// command that starts the app, so on a plain Go module the answer is already
 	// in hand before the question would be put.
 	//
@@ -918,7 +923,7 @@ func readDockerfile(src api.SourceView, name string) ([]int, string) {
 //
 // The last start instruction wins, not the first. A multi-stage build declares
 // one per stage and only the final stage's survives into the image, so taking
-// the first reports a builder stage's command as the app's. nixpacks writes
+// the first reports a builder stage's command as the app's. nixpacks wrote
 // exactly that shape: `ENTRYPOINT ["/bin/bash", "-l", "-c"]` in the build stage
 // and the real `CMD` at the end.
 func scanDockerfile(r io.Reader) ([]int, string) {

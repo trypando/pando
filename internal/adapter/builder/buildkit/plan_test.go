@@ -11,73 +11,88 @@ import (
 	"github.com/trypando/pando/internal/adapter/api"
 )
 
-// recordingPlanner stands in for nixpacks: it writes the plan it is told to
+// recordingPlanner stands in for Railpack: it writes the plan it is told to
 // write and remembers what it was asked.
 type recordingPlanner struct {
-	dockerfile string
-	calls      [][]string
-	err        error
+	body  string
+	calls [][]string
+	err   error
 }
 
-func (p *recordingPlanner) plan(contextDir string, args []string) (string, error) {
-	p.calls = append(p.calls, args)
+func (p *recordingPlanner) plan(contextDir string, env []string) (string, error) {
+	p.calls = append(p.calls, env)
 	if p.err != nil {
 		return "", p.err
 	}
-	name := filepath.Join(".nixpacks", "Dockerfile")
+	name := filepath.Join(planDir, railpackPlanFile)
 	full := filepath.Join(contextDir, name)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(full, []byte(p.dockerfile), 0o600); err != nil {
+	if err := os.WriteFile(full, []byte(p.body), 0o600); err != nil {
 		return "", err
 	}
 	return name, nil
 }
 
-const planWithGoBuild = "FROM ubuntu:noble\n" +
-	"RUN nix-env -if .nixpacks/nixpkgs-abc.nix && nix-collect-garbage -d\n" +
-	"RUN --mount=type=cache,id=x,target=/root/.cache/go-build go mod download\n" +
-	"RUN --mount=type=cache,id=x,target=/root/.cache/go-build go build -o out ./cmd/server\n" +
-	"RUN true\n\nFROM ubuntu:noble\nCMD [\"./out\"]\n"
+const planWithGoBuild = `{
+  "steps": [
+    {"name": "packages:mise", "commands": [{"cmd": "mise install"}]},
+    {"name": "install", "commands": [{"cmd": "go mod download"}]},
+    {"name": "build", "commands": [{"src": ".", "dest": "."}, {"cmd": "go build -o out ./cmd/server"}]}
+  ],
+  "deploy": {"startCommand": "./out"}
+}`
 
 // An ordering needs both passes: the first to learn what the build is, the
 // second to put the client build in front of it.
 func TestAnOrderingIsPlannedTwice(t *testing.T) {
-	p := &recordingPlanner{dockerfile: planWithGoBuild}
+	p := &recordingPlanner{body: planWithGoBuild}
 	declared := declaredBuild{
 		Rank:     rankEmbedded,
 		Before:   "(cd web && npm ci && npm run build)",
-		Packages: []string{"nodejs"},
+		Packages: []string{"node"},
 	}
 
 	_, err := planTwice(t.TempDir(), declared, p.plan)
 	require.NoError(t, err)
 	require.Len(t, p.calls, 2)
 
-	require.NotContains(t, p.calls[0], "--build-cmd",
+	require.Equal(t, []string{"RAILPACK_PACKAGES=node"}, p.calls[0],
 		"the first pass has nothing to come before yet")
-	require.Contains(t, p.calls[1], "--build-cmd")
 	require.Contains(t, p.calls[1],
-		"(cd web && npm ci && npm run build) && go build -o out ./cmd/server",
-		"the client build, then whatever nixpacks chose")
+		"RAILPACK_BUILD_CMD=(cd web && npm ci && npm run build) && go build -o out ./cmd/server",
+		"the client build, then whatever Railpack chose")
 }
 
-// A declaration that names the build replaces nixpacks' choice, and one call
+// A declaration that names the build replaces Railpack's choice, and one call
 // settles it.
 func TestANamedBuildIsPlannedOnce(t *testing.T) {
-	p := &recordingPlanner{dockerfile: planWithGoBuild}
+	p := &recordingPlanner{body: planWithGoBuild}
 	declared := declaredBuild{Rank: rankRunner, Build: "make build"}
 
 	_, err := planTwice(t.TempDir(), declared, p.plan)
 	require.NoError(t, err)
 	require.Len(t, p.calls, 1)
-	require.Contains(t, p.calls[0], "make build")
+	require.Contains(t, p.calls[0], "RAILPACK_BUILD_CMD=make build")
+}
+
+// Railpack's settings for what it would get wrong reach both passes.
+func TestPandosRailpackSettingsReachEveryPass(t *testing.T) {
+	root := withFiles(t, map[string]string{"composer.json": "{}", "public/index.php": "<?php"})
+	p := &recordingPlanner{body: planWithGoBuild}
+
+	_, err := planTwice(root, declaredBuild{Rank: rankEmbedded, Before: "(cd web && npm ci)"}, p.plan)
+	require.NoError(t, err)
+	require.Len(t, p.calls, 2)
+	for _, call := range p.calls {
+		require.Contains(t, call, "RAILPACK_PHP_ROOT_DIR=/app/public")
+	}
 }
 
 // So does no declaration at all, which is the ordinary case.
 func TestConventionMatchingIsPlannedOnce(t *testing.T) {
-	p := &recordingPlanner{dockerfile: planWithGoBuild}
+	p := &recordingPlanner{body: planWithGoBuild}
 
 	_, err := planTwice(t.TempDir(), declaredBuild{}, p.plan)
 	require.NoError(t, err)
@@ -88,18 +103,18 @@ func TestConventionMatchingIsPlannedOnce(t *testing.T) {
 // A plan with no build step is one there is nothing to come before, so the
 // first answer stands rather than being replaced by a truncated second.
 func TestAPlanWithNoBuildStepIsNotWrapped(t *testing.T) {
-	p := &recordingPlanner{dockerfile: "FROM ubuntu:noble\nRUN true\nCMD [\"./out\"]\n"}
+	p := &recordingPlanner{body: `{"steps": [{"name": "install"}], "deploy": {"startCommand": "./out"}}`}
 	declared := declaredBuild{Rank: rankEmbedded, Before: "(cd web && npm ci)"}
 
 	name, err := planTwice(t.TempDir(), declared, p.plan)
 	require.NoError(t, err)
 	require.Len(t, p.calls, 1)
-	require.Equal(t, filepath.Join(".nixpacks", "Dockerfile"), name)
+	require.Equal(t, filepath.Join(planDir, railpackPlanFile), name)
 }
 
 // A planner that fails fails the build, on either pass.
 func TestAFailedPlanIsNotSwallowed(t *testing.T) {
-	boom := errors.New("nixpacks said no")
+	boom := errors.New("railpack said no")
 
 	p := &recordingPlanner{err: boom}
 	_, err := planTwice(t.TempDir(), declaredBuild{}, p.plan)
@@ -107,24 +122,24 @@ func TestAFailedPlanIsNotSwallowed(t *testing.T) {
 
 	// And on the second pass, where it would be easy to return the first
 	// pass's answer and call it success.
-	second := &failingSecondPlanner{dockerfile: planWithGoBuild, err: boom}
+	second := &failingSecondPlanner{body: planWithGoBuild, err: boom}
 	_, err = planTwice(t.TempDir(),
 		declaredBuild{Rank: rankEmbedded, Before: "(cd web && npm ci)"}, second.plan)
 	require.ErrorIs(t, err, boom)
 }
 
 type failingSecondPlanner struct {
-	dockerfile string
-	err        error
-	calls      int
+	body  string
+	err   error
+	calls int
 }
 
-func (p *failingSecondPlanner) plan(contextDir string, args []string) (string, error) {
+func (p *failingSecondPlanner) plan(contextDir string, env []string) (string, error) {
 	p.calls++
 	if p.calls > 1 {
 		return "", p.err
 	}
-	return (&recordingPlanner{dockerfile: p.dockerfile}).plan(contextDir, args)
+	return (&recordingPlanner{body: p.body}).plan(contextDir, env)
 }
 
 // A plan the planner claims to have written and did not is an error, not a
@@ -132,7 +147,7 @@ func (p *failingSecondPlanner) plan(contextDir string, args []string) (string, e
 func TestAMissingPlanFileIsAnError(t *testing.T) {
 	_, err := planTwice(t.TempDir(),
 		declaredBuild{Rank: rankEmbedded, Before: "(cd web && npm ci)"},
-		func(string, []string) (string, error) { return "nowhere/Dockerfile", nil })
+		func(string, []string) (string, error) { return "nowhere/" + railpackPlanFile, nil })
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Could not read the build plan")
 }

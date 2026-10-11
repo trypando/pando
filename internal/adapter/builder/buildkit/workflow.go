@@ -104,7 +104,7 @@ func readWorkflowBuild(contextDir string) declaredBuild {
 // no matrix, and its steps are commands rather than actions that would have to
 // be reproduced. `uses:` steps are skipped rather than disqualifying, because
 // actions/checkout and actions/setup-go are in every workflow and describe an
-// environment nixpacks is already providing.
+// environment Railpack is already providing.
 func buildJobSteps(r io.Reader) []string {
 	type job struct {
 		steps    []string
@@ -207,18 +207,18 @@ var installCommands = []string{
 }
 
 // dropProvidedInstalls removes the install a workflow runs before its build,
-// when nixpacks is going to run one anyway.
+// when Railpack is going to run one anyway.
 //
 // A workflow says `npm ci` then `npm run build` because CI starts with an
-// empty directory. A nixpacks plan has an install phase that already did it,
-// and its build phase mounts node_modules/.cache as a build cache — so the
+// empty directory. A Railpack plan has an install step that already did it,
+// and its build step mounts node_modules/.cache as a build cache — so the
 // second `npm ci`, which clears node_modules first, fails on a directory it
 // cannot remove: "EBUSY: resource busy or locked, rmdir
 // '/app/node_modules/.cache'". Mirroring a workflow is meant to reproduce
 // what the repository already does, and doing the install twice is not part
 // of that.
 //
-// Only when the package manager's provider is the one nixpacks picked, which
+// Only when the package manager's provider is the one Railpack picked, which
 // is what a package.json at the root means. A client below the root is built
 // by a provider that knows nothing about it and has to install for itself.
 func dropProvidedInstalls(steps []string, contextDir string) []string {

@@ -108,7 +108,7 @@ func TestALaravelPlanServesPublicAndMigratesBeforeItStarts(t *testing.T) {
 		"artisan": "", "composer.json": laravelComposer,
 		"package.json": `{"scripts": {"build": "vite build"}}`,
 	})
-	name, err := buildpackDockerfile(api.BuildRequest{}, root)
+	name, err := buildpackPlan(api.BuildRequest{}, root)
 	require.NoError(t, err, "a Laravel app is planned before its package.json is read as a site")
 	body, err := os.ReadFile(filepath.Join(root, name))
 	require.NoError(t, err)

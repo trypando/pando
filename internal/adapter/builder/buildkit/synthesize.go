@@ -2,12 +2,9 @@ package buildkit
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -18,16 +15,29 @@ import (
 	"github.com/trypando/pando/internal/errs"
 )
 
-// Strategies that have no Dockerfile in the repository get one written for
+// Strategies that have no Dockerfile in the repository get a plan written for
 // them.
 //
-// The Dockerfile is the builder's vocabulary, not Pando's (R-251). Core says
-// "this app is a directory of files to serve"; what image serves them and how
-// is decided here, and a different builder is free to decide differently.
+// The plan is the builder's vocabulary, not Pando's (R-251). Core says "this
+// app is a directory of files to serve"; what image serves them and how is
+// decided here, and a different builder is free to decide differently.
 //
-// BuildKit already takes the context and the Dockerfile as two separate
+// BuildKit already takes the context and the plan as two separate
 // filesystems, so this needs no copy of the source: the context stays the
-// checkout and only the generated Dockerfile lives in a temporary directory.
+// checkout and only the generated plan lives elsewhere.
+
+// planDir is where a generated plan is written in the checkout: a Dockerfile
+// Pando wrote and the files it copies, or a Railpack plan.
+//
+// Inside the checkout because a Dockerfile Pando writes copies files from
+// here, so they have to be in the build context. The checkout is a throwaway
+// clone, so nothing anybody keeps is touched.
+const planDir = ".pando-plan"
+
+// legacyPlanDir is where plans went before Railpack replaced nixpacks
+// (issue #172). A spec stored then carries its files under this name, and is
+// replayed from it exactly as stored.
+const legacyPlanDir = ".nixpacks"
 
 // staticServerImage serves a built static site.
 //
@@ -57,21 +67,21 @@ const staticConfig = `server {
 }
 `
 
-// generated is where a synthesized Dockerfile ended up.
+// generated is where a synthesized plan ended up.
 type generated struct {
-	// Dir holds the Dockerfile. Absolute.
+	// Dir holds the plan. Absolute.
 	Dir string
 
-	// Name is the Dockerfile's path relative to Dir.
+	// Name is the plan's path relative to Dir.
 	Name string
 
-	// Cleanup removes anything temporary. Never removes the checkout: nixpacks
-	// writes into it by necessity, and deleting it would take the source with
-	// it.
+	// Cleanup removes anything temporary. Never removes the checkout: plans
+	// are written into it by necessity, and deleting it would take the source
+	// with it.
 	Cleanup func()
 }
 
-// synthesize writes a Dockerfile for a strategy that has none.
+// synthesize writes a plan for a strategy that has none.
 func synthesize(req api.BuildRequest, contextDir string) (generated, error) {
 	switch req.Strategy {
 	case spec.BuildStatic:
@@ -89,12 +99,13 @@ func synthesize(req api.BuildRequest, contextDir string) (generated, error) {
 			if err := writeInto(contextDir, req.GeneratedFiles); err != nil {
 				return generated{}, err
 			}
-			// The same .ruby-version the plan was made with, since a fresh
-			// checkout does not have the one planning wrote.
+			// The same .ruby-version a nixpacks plan was made with, since a
+			// fresh checkout does not have the one planning wrote. Only a
+			// plan stored before Railpack reads it.
 			ensureRubyVersion(contextDir)
 			name := req.Dockerfile
 			if name == "" {
-				name = filepath.Join(".nixpacks", "Dockerfile")
+				name = filepath.Join(legacyPlanDir, "Dockerfile")
 			}
 			return generated{
 				Dir:     filepath.Dir(filepath.Join(contextDir, name)),
@@ -103,7 +114,7 @@ func synthesize(req api.BuildRequest, contextDir string) (generated, error) {
 			}, nil
 		}
 
-		name, err := buildpackDockerfile(req, contextDir)
+		name, err := buildpackPlan(req, contextDir)
 		if err != nil {
 			return generated{}, err
 		}
@@ -120,24 +131,13 @@ func synthesize(req api.BuildRequest, contextDir string) (generated, error) {
 	}
 }
 
-// nixpacksBinary is the generator. R-095: wrap an existing implementation
-// rather than reimplementing convention-matching.
+// buildpackPlan works out what this repository needs, and returns where the
+// plan was written, relative to the checkout.
 //
-// It is called only to *plan* — `nixpacks build --out` writes a Dockerfile and
-// does not build anything, so nothing here needs a container runtime and R-112
-// is not in play. The Dockerfile it writes is BuildKit's to build, and is
-// readable afterwards: an app owner can see exactly what was decided instead of
-// being told a buildpack happened.
-const nixpacksBinary = "nixpacks"
-
-// buildpackDockerfile asks nixpacks what this repository needs.
-//
-// The output goes into the checkout rather than a temporary directory, and that
-// is nixpacks' own contract rather than a shortcut: the Dockerfile it writes
-// does `COPY . /app/.` and `COPY .nixpacks/...`, so the build context has to be
-// the source *with* the generated directory inside it. The checkout is a
-// throwaway clone, so nothing anybody keeps is touched.
-func buildpackDockerfile(req api.BuildRequest, contextDir string) (string, error) {
+// The stacks below are planned by Pando, as Dockerfiles, because the deploy QA
+// run found the general-purpose planner getting each one wrong (issue #55).
+// Everything else goes to Railpack (R-095).
+func buildpackPlan(req api.BuildRequest, contextDir string) (string, error) {
 	// A Laravel app, on the PHP its composer.json asks for (laravel.go). Its
 	// package.json builds assets for the app, not a site or a server of its
 	// own. An answered start command is honored by the runtime, which runs it
@@ -146,7 +146,7 @@ func buildpackDockerfile(req api.BuildRequest, contextDir string) (string, error
 		return writeLaravelPlan(contextDir, app)
 	}
 	// A site that builds to static files is planned here rather than by
-	// nixpacks (staticsite.go), unless somebody said how it starts — then it
+	// Railpack (staticsite.go), unless somebody said how it starts — then it
 	// is not being served as files.
 	if req.StartCommand == "" {
 		// A Jekyll site is source for a site, not the site (jekyll.go).
@@ -158,7 +158,7 @@ func buildpackDockerfile(req api.BuildRequest, contextDir string) (string, error
 		}
 		// A site somebody chose to build rather than serve as committed
 		// (static_source: run-build). Its directory is already known: it is
-		// where the committed copy was found. It had reached nixpacks with
+		// where the committed copy was found. It had reached the planner with
 		// nothing to start, and been refused (issue #55).
 		if req.StaticDir != "" && safeRelative(req.StaticDir) {
 			if _, err := os.Stat(filepath.Join(contextDir, "package.json")); err == nil {
@@ -171,13 +171,13 @@ func buildpackDockerfile(req api.BuildRequest, contextDir string) (string, error
 			}
 		}
 	}
-	// A Node server, on the official Node image rather than Nix's (node.go).
+	// A Node server, on the official Node image (node.go).
 	if server, ok := readNodeServer(contextDir, req.StartCommand); ok {
 		return writeNodeServerPlan(contextDir, server)
 	}
 	// A Go program, on the Go release the module names (golang.go). Not when
-	// somebody said how it starts: that command runs in nixpacks' image, which
-	// has the Go toolchain on its PATH.
+	// somebody said how it starts: that command runs in Railpack's image,
+	// which has the Go toolchain on its PATH.
 	if req.StartCommand == "" {
 		if prog, ok := readGoBuild(contextDir); ok {
 			return writeGoPlan(contextDir, prog)
@@ -194,11 +194,11 @@ func buildpackDockerfile(req api.BuildRequest, contextDir string) (string, error
 		return writeJVMPlan(contextDir, jvm)
 	}
 	declared := declaredFor(req, contextDir)
-	name, err := planTwice(contextDir, declared, runNixpacks)
+	name, err := planTwice(contextDir, declared, runRailpack)
 	if err == nil {
 		return name, nil
 	}
-	// Nothing for nixpacks to recognize, and a start command that runs a
+	// Nothing for Railpack to recognize, and a start command that runs a
 	// program committed in the repository — a Procfile beside a binary. The
 	// program is the app; it needs somewhere to run and nothing to build
 	// (issue #55).
@@ -217,11 +217,15 @@ func declaredFor(req api.BuildRequest, contextDir string) declaredBuild {
 		declared.Start = req.StartCommand
 	}
 	// A Procfile naming Heroku's PHP launcher names a program that exists only
-	// on Heroku, and the app exited 127 (issue #55). Its argument is the
-	// document root, which nixpacks' own PHP server takes as a setting; the
-	// start command becomes that server's.
+	// on Heroku, and the app exited 127 (issue #55). Railpack reads a Procfile
+	// itself and lets it replace the start command, so the launcher would
+	// still be run; its argument is the document root, which Railpack's PHP
+	// server takes as a setting (railpackDefaults), and the start command
+	// becomes that server's.
 	if _, ok := herokuPHPRoot(declared.Start); ok && req.StartCommand == "" {
-		declared.Start = nixpacksPHPStart
+		declared.Start = railpackPHPStart
+	} else if _, ok := herokuPHPRoot(procfileWeb(contextDir)); ok && declared.Start == "" {
+		declared.Start = railpackPHPStart
 	}
 	if declared.Start == "" {
 		declared.Start = pythonAppStart(contextDir)
@@ -229,33 +233,17 @@ func declaredFor(req api.BuildRequest, contextDir string) declaredBuild {
 	if declared.Build == "" && declared.Before == "" && djangoCollectsStatic(contextDir) {
 		declared.Build = "python manage.py collectstatic --noinput"
 	}
-	if declared.Start == "" {
-		declared.Start = elixirAppStart(contextDir)
-	}
-	if declared.Start == "" {
-		declared.Start = rackAppStart(contextDir)
-	}
 	return declared
-}
-
-// rackAppStart is how a Rack app that is not Rails starts where it can be
-// reached. nixpacks runs `rackup`, which binds 127.0.0.1 — inside a container,
-// nothing else can reach it (issue #55).
-func rackAppStart(contextDir string) string {
-	if readFile(contextDir, "config.ru") == "" || fileExists(contextDir, "bin/rails") {
-		return ""
-	}
-	return "bundle exec rackup -o 0.0.0.0 -p ${PORT:-3000}"
 }
 
 // djangoCollectsStatic reports a Django project that gathers its static files
 // into a STATIC_ROOT.
 //
-// Collecting them is a build step every platform runs for Django, and nixpacks
-// does not: an app using a manifest storage then answered every page with
-// "Missing staticfiles manifest entry" (issue #55). Only when the settings name
-// a STATIC_ROOT, because without one the command fails, and failing a build
-// that would otherwise have run is worse than not collecting.
+// Collecting them is a build step every platform runs for Django, and neither
+// nixpacks nor Railpack does: an app using a manifest storage then answered
+// every page with "Missing staticfiles manifest entry" (issue #55). Only when
+// the settings name a STATIC_ROOT, because without one the command fails, and
+// failing a build that would otherwise have run is worse than not collecting.
 func djangoCollectsStatic(contextDir string) bool {
 	if readFile(contextDir, "manage.py") == "" {
 		return false
@@ -271,20 +259,6 @@ func djangoCollectsStatic(contextDir string) bool {
 	return false
 }
 
-// elixirAppStart is how a Mix project that is not a Phoenix app starts.
-//
-// nixpacks starts every Elixir project with `mix phx.server`, and a Plug or
-// Bandit app has no such task: "The task phx.server could not be found", on a
-// loop (issue #55). `mix run --no-halt` starts the application the project
-// file names and keeps it running, which is how such an app is run.
-func elixirAppStart(contextDir string) string {
-	mix := readFile(contextDir, "mix.exs")
-	if mix == "" || strings.Contains(mix, ":phoenix") {
-		return ""
-	}
-	return "mix run --no-halt"
-}
-
 var (
 	fastAPIApp = regexp.MustCompile(`(?m)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*FastAPI\(`)
 	flaskApp   = regexp.MustCompile(`(?m)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Flask\(`)
@@ -294,11 +268,13 @@ var (
 // pythonAppStart is the server a Python web app runs under, when its module
 // does not start one itself.
 //
-// nixpacks starts a repository with a main.py as `python main.py`. A FastAPI or
-// Flask module creates the app and leaves serving it to uvicorn or gunicorn, so
-// that command imported the app and exited 0, and the deploy reported success
-// with nothing listening (issue #55). The server has to be one the app depends
-// on: naming one it does not install would fail the same way, later.
+// A repository with a main.py is started as `python main.py`. A FastAPI or
+// Flask module creates the app and leaves serving it to uvicorn or gunicorn,
+// so that command imported the app and exited 0, and the deploy reported
+// success with nothing listening (issue #55). Railpack starts uvicorn itself
+// only for a module named main.py, and names it main:app whichever file it
+// found. The server has to be one the app depends on: naming one it does not
+// install would fail the same way, later.
 func pythonAppStart(contextDir string) string {
 	deps := strings.ToLower(readFile(contextDir, "requirements.txt") + readFile(contextDir, "pyproject.toml"))
 	for _, module := range []string{"main", "app", "server", "asgi", "wsgi"} {
@@ -326,27 +302,28 @@ func readFile(dir, name string) string {
 
 // planner generates a plan and returns where it was written, relative to the
 // context directory.
-type planner func(contextDir string, args []string) (string, error)
+type planner func(contextDir string, env []string) (string, error)
 
 // planTwice asks the planner once, and again when the first answer is what the
 // second question needs.
 //
-// A declaration that names the build replaces what nixpacks would have chosen,
+// A declaration that names the build replaces what Railpack would have chosen,
 // and one call settles it. A declaration that names an *ordering* does not:
 // `//go:embed dist` beside a client that builds into that directory says the
 // client comes first and says nothing about what it comes before. So: plan,
-// read the chosen build command back out of the generated Dockerfile, plan
-// again with the client build ahead of it.
+// read the chosen build command back out of the plan, plan again with the
+// client build ahead of it.
 //
 // Two subprocesses rather than one, which is the honest cost of not
 // reimplementing the thing R-095 says to wrap: the alternative to asking
-// nixpacks what it would have chosen is being nixpacks.
+// Railpack what it would have chosen is being Railpack.
 //
 // The planner is a parameter so this can be tested without one. The composition
 // is where the bug was last time — `cd web` outliving the client build — and
 // subprocess plumbing is a poor place to hide logic worth checking.
 func planTwice(contextDir string, declared declaredBuild, plan planner) (string, error) {
-	name, err := plan(contextDir, declared.nixpacksArgs(""))
+	env := append(declared.railpackEnv(""), railpackDefaults(contextDir)...)
+	name, err := plan(contextDir, env)
 	if err != nil {
 		return "", err
 	}
@@ -360,141 +337,32 @@ func planTwice(contextDir string, declared declaredBuild, plan planner) (string,
 	}
 
 	// No build step to come before means there is nothing to wrap, and the
-	// first plan stands. A repository whose build nixpacks could not work out
+	// first plan stands. A repository whose build Railpack could not work out
 	// is one this has nothing to add to.
-	chosen := planBuildCommand(string(body))
+	chosen := railpackBuildCommand(body)
 	if chosen == "" {
 		return name, nil
 	}
 
-	return plan(contextDir, declared.nixpacksArgs(chosen))
+	env = append(declared.railpackEnv(chosen), railpackDefaults(contextDir)...)
+	return plan(contextDir, env)
 }
 
-// runNixpacks generates a plan, and returns where it was written.
-func runNixpacks(contextDir string, extra []string) (string, error) {
-	ensureRubyVersion(contextDir)
-	args := append([]string{"build", contextDir, "--out", contextDir}, extra...)
-	args = append(args, toolchainDefaults(contextDir)...)
-
-	// G204: exec.Command takes an argv, so nothing here reaches a shell on this
-	// host. contextDir is a checkout this process made, and every command in
-	// `extra` was read out of the repository and passed safeCommand.
-	//
-	// Those commands do become the built image's build steps and CMD, which
-	// nixpacks runs under `bash -l -c` — so the repository chooses what its own
-	// build and container run. That is the same authority a Dockerfile already
-	// has, and the container is the boundary either way (R-112, R-114).
-	cmd := exec.Command(nixpacksBinary, args...) //nolint:gosec
-
-	// A scrubbed environment, so nothing of Pando's (credentials, the
-	// database address) is visible to a generator reading untrusted source.
-	// This is not a network sandbox: nixpacks reaches whatever this process
-	// can (issue #78). Generation reads the repository and does not need to
-	// fetch, but blocking it would take a network namespace the Pando
-	// container lacks the privilege to create. What the repository's own code
-	// can reach is decided by the BuildKit build, not here (R-112, R-114).
-	cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + contextDir}
-
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		// nixpacks' own message, which names the language it could not place.
-		// Replacing it with something generic would delete the only useful
-		// detail (R-105).
-		if errors.Is(err, exec.ErrNotFound) {
-			return "", errs.New(errs.PlanCapabilityUnsupported,
-				"This installation cannot work out how to build an app that carries no deployment instructions.").
-				WithRemedy("Add a Dockerfile to the repository, or ask an administrator to install a build planner.")
-		}
-		return "", errs.Newf(errs.BuildFailed,
-			"Pando could not work out how to build this app: %s", trim(out)).
-			WithRemedy("Add a Dockerfile to the repository saying how it should be built.")
-	}
-
-	if _, statErr := os.Stat(filepath.Join(contextDir, ".nixpacks", "Dockerfile")); statErr != nil {
-		return "", errs.Newf(errs.BuildFailed,
-			"Pando could not work out how to build this app: %s", trim(out)).
-			WithRemedy("Add a Dockerfile to the repository saying how it should be built.")
-	}
-
-	return filepath.Join(".nixpacks", "Dockerfile"), nil
-}
-
-// defaultNodeVersion is the Node a JavaScript app gets when it names none.
-//
-// [P]. nixpacks 1.41 defaults to 18, which is end-of-life, and current Vite,
-// Next.js, Angular and NestJS refuse it with EBADENGINE — ten apps in the deploy
-// QA run failed on nothing else (issue #55). 22 because it is the newest line
-// nixpacks' Nix package set has: asking for 24 failed every build with
-// "undefined variable 'nodejs_24'". A plain Node server is built on the
-// official Node image instead (node.go), so this only reaches builds nixpacks
-// still plans — a Node client inside a Go or Python repository, say.
-const defaultNodeVersion = "22"
-
-// toolchainDefaults are the nixpacks settings Pando supplies when the
-// repository is silent.
-//
-// Only when silent: NIXPACKS_NODE_VERSION outranks engines.node and .nvmrc in
-// nixpacks, so passing it unconditionally would override what the author
-// declared. A .node-version file is read here because nixpacks does not read
-// it, and it is the author declaring a version all the same.
-func toolchainDefaults(contextDir string) []string {
-	var args []string
-	if v := nodeDefault(contextDir); v != "" {
-		args = append(args, "--env", "NIXPACKS_NODE_VERSION="+v)
-	}
-	if poetryProject(contextDir) {
-		args = append(args, "--env", "NIXPACKS_POETRY_VERSION="+defaultPoetryVersion)
-	}
+// railpackDefaults are the Railpack settings Pando supplies for what Railpack
+// would otherwise get wrong.
+func railpackDefaults(contextDir string) []string {
 	if root, ok := herokuPHPRoot(procfileWeb(contextDir)); ok && root != "" && safeRelative(root) {
-		args = append(args, "--env", "NIXPACKS_PHP_ROOT_DIR=/app/"+root)
-	} else if phpServesFromPublic(contextDir) {
-		args = append(args, "--env", "NIXPACKS_PHP_ROOT_DIR=/app/public")
+		return []string{"RAILPACK_PHP_ROOT_DIR=/app/" + root}
 	}
-	return args
+	if phpServesFromPublic(contextDir) {
+		return []string{"RAILPACK_PHP_ROOT_DIR=/app/public"}
+	}
+	return nil
 }
 
-func nodeDefault(contextDir string) string {
-	if _, err := os.Stat(filepath.Join(contextDir, "package.json")); err != nil {
-		return ""
-	}
-	if declaresNodeVersion(contextDir) {
-		return ""
-	}
-	if _, err := os.Stat(filepath.Join(contextDir, ".nvmrc")); err == nil {
-		return ""
-	}
-	version := defaultNodeVersion
-	if body, err := os.ReadFile(filepath.Join(contextDir, ".node-version")); err == nil {
-		if v := strings.TrimPrefix(strings.TrimSpace(string(body)), "v"); v != "" && safeVersion(v) {
-			version = v
-		}
-	}
-	return version
-}
-
-// defaultPoetryVersion is the Poetry a Poetry project is installed with. [P]
-//
-// nixpacks installs 1.3.1, which refuses any pyproject.toml using settings
-// added since — `package-mode`, for one — with "The Poetry configuration is
-// invalid" (issue #55). 1.8.5 reads them, and still accepts the `--no-dev` flag
-// nixpacks' install step passes, which Poetry 2 removed.
-const defaultPoetryVersion = "1.8.5"
-
-func poetryProject(contextDir string) bool {
-	if _, err := os.Stat(filepath.Join(contextDir, "poetry.lock")); err == nil {
-		return true
-	}
-	body, err := os.ReadFile(filepath.Join(contextDir, "pyproject.toml"))
-	return err == nil && strings.Contains(string(body), "[tool.poetry]")
-}
-
-// phpServesFromPublic reports a PHP app whose front controller is in public/,
-// the layout Slim, Laravel and Symfony share. nixpacks' web server serves the
-// repository root unless told otherwise, which answered 403 (issue #55).
-// nixpacksPHPStart is nixpacks' own start command for a PHP app: nginx and
-// php-fpm, from the configuration its plan writes into /assets.
-const nixpacksPHPStart = "node /assets/scripts/prestart.mjs /assets/nginx.template.conf /nginx.conf && " +
-	"(php-fpm -y /assets/php-fpm.conf & nginx -c /nginx.conf)"
+// railpackPHPStart is Railpack's own start command for a PHP app: FrankenPHP,
+// from the script its plan writes into the image.
+const railpackPHPStart = "/start-container.sh"
 
 var herokuPHP = regexp.MustCompile(`^heroku-php-(apache2|nginx)(\s+.*)?$`)
 
@@ -531,6 +399,10 @@ func procfileWeb(contextDir string) string {
 	return ""
 }
 
+// phpServesFromPublic reports a PHP app whose front controller is in public/,
+// the layout Slim, Laravel and Symfony share. Railpack serves public/ only for
+// a Laravel app, and the repository root otherwise, which answered 403
+// (issue #55).
 func phpServesFromPublic(contextDir string) bool {
 	if _, err := os.Stat(filepath.Join(contextDir, "composer.json")); err != nil {
 		return false
@@ -554,11 +426,10 @@ var (
 // ensureRubyVersion writes .ruby-version into the checkout when a Ruby project
 // has none, from what the Gemfile or its lockfile says.
 //
-// nixpacks reads the Ruby version from .ruby-version and nowhere else, and
-// refuses a project without one: "Please specify ruby's version in
-// .ruby-version file" (issue #55). The Gemfile's `ruby` line is the same
-// declaration in the place Bundler reads it. The checkout is a throwaway clone,
-// and the plan nixpacks makes from it is what is stored.
+// nixpacks read the Ruby version from .ruby-version and nowhere else, and a
+// plan it made reads it again at build time (issue #55). Railpack reads the
+// Gemfile itself; this is kept for plans stored before it. The checkout is a
+// throwaway clone.
 func ensureRubyVersion(contextDir string) {
 	if _, err := os.Stat(filepath.Join(contextDir, "Gemfile")); err != nil {
 		return
@@ -588,22 +459,6 @@ func gemfileRubyVersion(contextDir string) string {
 	return version
 }
 
-// declaresNodeVersion reports whether package.json names a Node version.
-func declaresNodeVersion(contextDir string) bool {
-	body, err := os.ReadFile(filepath.Join(contextDir, "package.json"))
-	if err != nil {
-		return false
-	}
-	var pkg struct {
-		Engines map[string]any `json:"engines"`
-	}
-	if json.Unmarshal(body, &pkg) != nil {
-		return false
-	}
-	v, ok := pkg.Engines["node"].(string)
-	return ok && strings.TrimSpace(v) != ""
-}
-
 // safeVersion accepts what a version file holds and nothing a flag could be
 // made of.
 func safeVersion(v string) bool {
@@ -615,45 +470,10 @@ func safeVersion(v string) bool {
 	return len(v) <= 16
 }
 
-// planBuildCommand pulls the build step out of a generated plan.
-//
-// A nixpacks plan runs its phases as RUN lines in order: the environment first
-// (`nix-env -if ...`), then install, then build. The build is the last RUN in
-// the builder stage that is not one of nixpacks' own bookkeeping lines — the
-// `RUN true` it emits for an empty phase, and the nix-env line.
-func planBuildCommand(dockerfile string) string {
-	var last string
-	for _, line := range strings.Split(dockerfile, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "RUN ") {
-			// A second FROM starts the runtime stage, and nothing after it
-			// builds anything.
-			if strings.HasPrefix(trimmed, "FROM ") && last != "" {
-				break
-			}
-			continue
-		}
-		command := strings.TrimSpace(strings.TrimPrefix(trimmed, "RUN "))
-		for strings.HasPrefix(command, "--") {
-			_, rest, found := strings.Cut(command, " ")
-			if !found {
-				command = ""
-				break
-			}
-			command = strings.TrimSpace(rest)
-		}
-		if command == "" || command == "true" || strings.HasPrefix(command, "nix-env ") {
-			continue
-		}
-		last = command
-	}
-	return last
-}
-
 // writeInto materializes generated build inputs in the checkout.
 //
-// Into the checkout because they have to be in the build context: the plan's
-// Dockerfile references them with COPY. The checkout is a throwaway clone, so
+// Into the checkout because they have to be in the build context: a Dockerfile
+// Pando wrote references them with COPY. The checkout is a throwaway clone, so
 // nothing anybody keeps is written to.
 //
 // Every path is re-checked here even though spec validation already rejected
@@ -689,23 +509,33 @@ func writeInto(contextDir string, files map[string]string) error {
 // The same generator the build path uses, so what somebody reviews is what runs
 // (R-102). It writes into a copy of nothing: the source view's directory is the
 // detection checkout, which is discarded when detection finishes.
-func (a *Adapter) Plan(_ context.Context, src api.SourceView) (map[string]string, string, *api.PlanDeclaration, error) {
+func (a *Adapter) Plan(_ context.Context, src api.SourceView) (api.BuildPlan, error) {
 	dir, ok := src.(interface{ Root() string })
 	if !ok {
-		return nil, "", nil, errs.New(errs.BuildFailed, "Planning needs the source on disk.")
+		return api.BuildPlan{}, errs.New(errs.BuildFailed, "Planning needs the source on disk.")
 	}
 	root := dir.Root()
 
-	name, err := buildpackDockerfile(api.BuildRequest{}, root)
+	name, err := buildpackPlan(api.BuildRequest{}, root)
 	if err != nil {
-		return nil, "", nil, err
+		return api.BuildPlan{}, err
 	}
 
 	files, err := collectPlan(root)
 	if err != nil {
-		return nil, "", nil, err
+		return api.BuildPlan{}, err
 	}
-	return files, name, readDeclaredBuild(root).asPlanDeclaration(), nil
+	plan := api.BuildPlan{
+		Files:    files,
+		Entry:    filepath.ToSlash(name),
+		Declared: readDeclaredBuild(root).asPlanDeclaration(),
+	}
+	// A Railpack plan says how the app starts in its own terms; a Dockerfile
+	// is left for detection to read the way it reads any Dockerfile.
+	if isRailpackPlan(name) {
+		plan.Start = railpackStartCommand([]byte(files[plan.Entry]))
+	}
+	return plan, nil
 }
 
 // collectPlan reads back everything the generator wrote, as content.
@@ -713,10 +543,9 @@ func (a *Adapter) Plan(_ context.Context, src api.SourceView) (map[string]string
 // The spec carries the plan itself rather than a pointer to a directory that
 // will not exist next time — so what this misses, the build does not have.
 // Subdirectories included: a plan that serves static files puts its web
-// server's configuration in .nixpacks/assets, and the Dockerfile it writes
-// alongside says COPY .nixpacks/assets /assets/. Reading only the top level
-// dropped that directory, and the build failed on the COPY with
-// "/.nixpacks/assets: not found" — a plan Pando generated, refusing itself.
+// server's configuration in a subdirectory, and the Dockerfile it writes
+// alongside copies it. Reading only the top level dropped that directory, and
+// the build failed on the COPY — a plan Pando generated, refusing itself.
 func collectPlan(root string) (map[string]string, error) {
 	files := map[string]string{}
 
@@ -729,7 +558,7 @@ func collectPlan(root string) (map[string]string, error) {
 	}
 	defer func() { _ = dir.Close() }()
 
-	err = fs.WalkDir(dir.FS(), ".nixpacks", func(name string, e fs.DirEntry, err error) error {
+	err = fs.WalkDir(dir.FS(), planDir, func(name string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -750,20 +579,22 @@ func collectPlan(root string) (map[string]string, error) {
 	return files, nil
 }
 
-// planArgs are the build arguments a generated plan says its Dockerfile needs.
+// planArgs are the build arguments a stored nixpacks plan says its Dockerfile
+// needs.
 //
-// nixpacks writes its Dockerfile with ARG lines and records the values beside
+// nixpacks wrote its Dockerfile with ARG lines and recorded the values beside
 // it, in .nixpacks/build.sh, as the docker build command it would have run.
 // Pando stored that file and never read it, so every ARG defaulted to empty —
 // and a plan that serves a built single-page app resolved its web root to
 // `../app/` instead of `../app/dist`, served the repository's source
 // index.html, and the site came up blank with a 200 and nothing in the logs.
 //
-// Read from the plan the spec carries, not from the repository (R-020), and
-// overridden by anything the spec sets itself.
+// Plans are no longer made by nixpacks (issue #172), but a spec stored before
+// then is still built from the plan it carries. Read from that plan, not from
+// the repository (R-020), and overridden by anything the spec sets itself.
 func planArgs(files map[string]string) map[string]string {
 	args := map[string]string{}
-	body, ok := files[path.Join(".nixpacks", "build.sh")]
+	body, ok := files[path.Join(legacyPlanDir, "build.sh")]
 	if !ok {
 		return args
 	}

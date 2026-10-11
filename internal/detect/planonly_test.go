@@ -15,7 +15,7 @@ import (
 //
 // A Deno module, a mix.exs, a .csproj or a bare main.py has none of the eight
 // manifests the buildpack detector reads, and each got "Pando could not work
-// out how to build and run this app" although nixpacks, asked, had a plan
+// out how to build and run this app" although the planner, asked, had a plan
 // (issue #55).
 func TestR103_ARepositoryThePlannerRecognizesIsNotAskedHowToBuild(t *testing.T) {
 	result, err := detect.NewAuction(detect.BuildpackDetector{Planner: plannerWritingCMD{}}).
@@ -92,19 +92,18 @@ func TestR094_APublishedImageAppIsProposedAsTheImage(t *testing.T) {
 
 type failingPlanner struct{}
 
-func (failingPlanner) Plan(context.Context, api.SourceView) (map[string]string, string, *api.PlanDeclaration, error) {
-	return nil, "", nil, context.Canceled
+func (failingPlanner) Plan(context.Context, api.SourceView) (api.BuildPlan, error) {
+	return api.BuildPlan{}, context.Canceled
 }
 
 type plannerWithoutCMD struct{}
 
-func (plannerWithoutCMD) Plan(context.Context, api.SourceView) (map[string]string, string, *api.PlanDeclaration, error) {
-	return map[string]string{".nixpacks/Dockerfile": "FROM ubuntu:noble\nRUN true\n"}, ".nixpacks/Dockerfile", nil, nil
+func (plannerWithoutCMD) Plan(context.Context, api.SourceView) (api.BuildPlan, error) {
+	return api.BuildPlan{Files: map[string]string{".pando-plan/Dockerfile": "FROM ubuntu:noble\nRUN true\n"}, Entry: ".pando-plan/Dockerfile"}, nil
 }
 
 type plannerExposing80 struct{}
 
-func (plannerExposing80) Plan(context.Context, api.SourceView) (map[string]string, string, *api.PlanDeclaration, error) {
-	return map[string]string{".nixpacks/Dockerfile": "FROM nginx:1.27-alpine\nEXPOSE 80\nCMD [\"nginx\", \"-g\", \"daemon off;\"]\n"},
-		".nixpacks/Dockerfile", nil, nil
+func (plannerExposing80) Plan(context.Context, api.SourceView) (api.BuildPlan, error) {
+	return api.BuildPlan{Files: map[string]string{".pando-plan/Dockerfile": "FROM nginx:1.27-alpine\nEXPOSE 80\nCMD [\"nginx\", \"-g\", \"daemon off;\"]\n"}, Entry: ".pando-plan/Dockerfile"}, nil
 }

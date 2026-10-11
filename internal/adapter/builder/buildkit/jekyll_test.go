@@ -45,10 +45,10 @@ func pagesSite(t *testing.T) string {
 func TestR094_AJekyllSiteIsBuiltBeforeItIsServed(t *testing.T) {
 	root := pagesSite(t)
 
-	files, dockerfile, _, err := New().Plan(context.Background(), view{root})
+	plan, err := New().Plan(context.Background(), view{root})
 	require.NoError(t, err)
 
-	body := files[dockerfile]
+	body := plan.Files[plan.Entry]
 	require.Contains(t, body, "FROM ruby:"+defaultRubyVersion+" AS build")
 	require.Contains(t, body,
 		"RUN bundle exec jekyll build --config _config.yml,"+jekyllServedConfigPath+" --destination /tmp/_site")
@@ -63,12 +63,12 @@ func TestR094_AJekyllSiteIsBuiltBeforeItIsServed(t *testing.T) {
 	// with no front matter was copied out as Markdown.
 	require.Contains(t, body, "RUN cp "+jekyllGemfilePath+" Gemfile && rm -f Gemfile.lock\nRUN bundle install")
 	require.NotContains(t, body, "BUNDLE_GEMFILE")
-	require.Equal(t, jekyllGemfile, files[jekyllGemfilePath])
+	require.Equal(t, jekyllGemfile, plan.Files[jekyllGemfilePath])
 
 	// Served at the root of the app's address, not at a guess at where GitHub
 	// would serve it, and built the same way whether or not the GitHub API
 	// answered.
-	require.Equal(t, jekyllServedConfig, files[jekyllServedConfigPath])
+	require.Equal(t, jekyllServedConfig, plan.Files[jekyllServedConfigPath])
 	require.Contains(t, jekyllServedConfig, "baseurl: \"\"")
 	require.Contains(t, body, "PAGES_DISABLE_NETWORK=1")
 	require.Contains(t, body, "BUNDLE_WITHOUT=development:test", "a site's test gems are not installed (R-011)")
@@ -146,10 +146,10 @@ func TestAJekyllPlanThatCannotBeWrittenFailsTheBuild(t *testing.T) {
 		block string // made a file, where the plan needs a directory
 		dir   string // made a directory, where the plan writes a file
 	}{
-		"gemfile directory": {site: jekyllSite{Ruby: "3.3.6"}, block: ".nixpacks/jekyll"},
+		"gemfile directory": {site: jekyllSite{Ruby: "3.3.6"}, block: ".pando-plan/jekyll"},
 		"gemfile":           {site: jekyllSite{Ruby: "3.3.6"}, dir: jekyllGemfilePath},
-		"dockerfile folder": {site: jekyllSite{OwnGemfile: true, Ruby: "3.3.6"}, block: ".nixpacks"},
-		"dockerfile":        {site: jekyllSite{OwnGemfile: true, Ruby: "3.3.6"}, dir: ".nixpacks/Dockerfile"},
+		"dockerfile folder": {site: jekyllSite{OwnGemfile: true, Ruby: "3.3.6"}, block: ".pando-plan"},
+		"dockerfile":        {site: jekyllSite{OwnGemfile: true, Ruby: "3.3.6"}, dir: ".pando-plan/Dockerfile"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -177,9 +177,9 @@ func TestR094_AJekyllSiteIsBuiltAsTheRepositoryItCameFrom(t *testing.T) {
 		"[core]\n\tbare = false\n[remote \"origin\"]\n\turl = https://github.com/ben-meeker/servicenow-solutions\n"+
 			"\tfetch = +refs/heads/*:refs/remotes/origin/*\n"), 0o644))
 
-	files, dockerfile, _, err := New().Plan(context.Background(), view{root})
+	plan, err := New().Plan(context.Background(), view{root})
 	require.NoError(t, err)
-	require.Contains(t, files[dockerfile], " PAGES_REPO_NWO=ben-meeker/servicenow-solutions\n")
+	require.Contains(t, plan.Files[plan.Entry], " PAGES_REPO_NWO=ben-meeker/servicenow-solutions\n")
 }
 
 func TestAGitHubRepositoryIsReadFromTheOriginAndNothingElse(t *testing.T) {

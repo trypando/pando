@@ -14,7 +14,7 @@
 - [x] Source allowlist check **before clone** (R-092); a blocked source produces zero disk writes — checked again on re-detection, since the allowlist can change after an app is created
 - [x] Registry check tier (R-094) — ghcr.io only by default; Docker Hub namespaces do not correspond to source owners ([note](../design/notes-registry-tier-namespaces.md))
 - [x] Maintainer's-own-build-commands tier (R-094 tier 3) — a Makefile `build` target drives the plan
-      instead of convention-matching, via nixpacks' own `--build-cmd`/`--start-cmd`/`--pkgs`
+      instead of convention-matching, via Railpack's own `RAILPACK_BUILD_CMD`/`RAILPACK_START_CMD`/`RAILPACK_PACKAGES`
       ([note](../design/notes-the-maintainers-own-build-commands.md))
 - [x] The rest of the ladder: `.github/workflows`, `Taskfile.yml`, `justfile`, `Procfile`, and the
       embed/output pairing for a repository that names no commands at all

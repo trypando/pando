@@ -161,7 +161,8 @@ type Build struct {
 	//
 	// Opaque to core, which stores and replays them and interprets nothing:
 	// only the builder that produced them knows what they mean (R-251). Today
-	// that is a nixpacks plan — a Dockerfile and the files it references.
+	// that is a Railpack plan, or a Dockerfile Pando wrote and the files it
+	// references; a spec stored before issue #172 carries a nixpacks plan.
 	//
 	// They live in the spec because R-020 makes the state store the sole record
 	// of how an app runs, and a plan regenerated at each build is not a record:

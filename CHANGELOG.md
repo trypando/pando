@@ -223,6 +223,21 @@ Unreleased above it. -->
 
 ### Changed
 
+- **Apps with no deployment instructions are planned by Railpack instead of nixpacks** (#172).
+  nixpacks is in maintenance mode, and Railpack is its maintainers' replacement. The plan Pando
+  shows and stores for such an app is now Railpack's JSON build plan (each step's commands, the
+  images it runs on, the start command) rather than a Dockerfile, and it is still editable before
+  it runs. It is built through Railpack's frontend image inside Pando's own rootless BuildKit, with
+  no privileged container and no runtime socket. Railpack's images are pinned by digest. Railpack
+  defaults Node to the current LTS and Python to 3.13, reads `.node-version`, `.ruby-version` and the
+  Gemfile's `ruby` line itself, starts a Mix project from its release, and builds C sources with
+  the compiler in its builder image. Laravel, Jekyll, static sites, Node servers, Go, .NET and JVM
+  apps are still planned by Pando's own Dockerfiles, as before. Planning now looks language versions
+  up from the package indexes, so an installation that cannot reach the internet cannot plan these
+  apps; building already needed it. The image is about 110 MB larger, for the mise binary Railpack
+  resolves versions with, and now carries `git` and `bash`, which mise needs to list Python
+  releases. nixpacks is no longer in the image.
+
 - API tokens are stored as HMAC-SHA-256 under a key rather than argon2id (#93). A token is 256 random
   bits Pando made, so the slow hash cost 64 MiB and tens of milliseconds on every request a token made
   for no benefit. The key is a new file, `/var/lib/pando/token.key` (`PANDO_SERVER_TOKEN_KEY_PATH`),
@@ -300,6 +315,10 @@ Unreleased above it. -->
   backup" only when one was taken.
 
 ### Upgrade notes
+
+- **Existing apps keep the nixpacks plan they were deployed with** (#172). A plan is part of the
+  spec (R-020), so rebuilding an app replays its stored nixpacks Dockerfile unchanged, and it still
+  builds. To move an app to Railpack, re-run its detection (R-022) and accept the new proposal.
 
 - **On Ubuntu 23.10 and later, builds need the host to allow unprivileged user namespaces.** Rootless
   BuildKit cannot start otherwise, and this was as true of the compose file's `buildkit` service as

@@ -90,7 +90,7 @@ func TestATaskfileDeclaresTheBuildTheSameWayAMakefileDoes(t *testing.T) {
 	require.Equal(t, "Taskfile.yml", d.Source)
 	require.Equal(t, "task build", d.Build)
 	require.Equal(t, "./app", d.Start)
-	require.Contains(t, d.Packages, "go-task", "task is not in any provider's environment")
+	require.Contains(t, d.Packages, "task", "task is not in any provider's environment")
 }
 
 func TestAJustfileDeclaresTheBuildToo(t *testing.T) {
@@ -123,7 +123,7 @@ func TestARunnerWithoutABuildTargetIsNotADeclaration(t *testing.T) {
 // --- Procfile ---------------------------------------------------------------
 
 // A Procfile says how to run the app and nothing about building it, so it
-// contributes a start command and leaves the build to nixpacks.
+// contributes a start command and leaves the build to Railpack.
 func TestAProcfileDeclaresTheStartCommandOnly(t *testing.T) {
 	root := withFiles(t, map[string]string{
 		"go.mod":   "module example.com/app\n",
@@ -145,7 +145,7 @@ func TestAProcfileDeclaresTheStartCommandOnly(t *testing.T) {
 	d := readDeclaredBuild(root)
 	require.Equal(t, rankProcfile, d.Rank)
 	require.Equal(t, "./app", d.Start)
-	require.Empty(t, d.Build, "nixpacks still plans the build")
+	require.Empty(t, d.Build, "Railpack still plans the build")
 }
 
 // R-021: a declared worker is not a request to deploy one.
@@ -159,43 +159,48 @@ func TestAProcfilesOtherProcessesAreNotDeployed(t *testing.T) {
 
 // --- composition ------------------------------------------------------------
 
-// A reading that names the build replaces nixpacks' choice; one that names an
+// A reading that names the build replaces Railpack's choice; one that names an
 // ordering wraps it.
 func TestOnlyAnOrderingNeedsTheSecondPass(t *testing.T) {
 	named := declaredBuild{Rank: rankRunner, Build: "make build"}
 	require.False(t, named.needsSecondPass())
-	require.Contains(t, strings.Join(named.nixpacksArgs(""), " "), "--build-cmd make build")
+	require.Contains(t, named.railpackEnv(""), "RAILPACK_BUILD_CMD=make build")
 
 	ordered := declaredBuild{Rank: rankEmbedded, Before: "(cd web && npm ci)"}
 	require.True(t, ordered.needsSecondPass())
-	require.NotContains(t, strings.Join(ordered.nixpacksArgs(""), " "), "--build-cmd",
+	require.NotContains(t, strings.Join(ordered.railpackEnv(""), " "), "RAILPACK_BUILD_CMD",
 		"on the first pass there is nothing to come before yet")
-	require.Contains(t, strings.Join(ordered.nixpacksArgs("go build ."), " "),
-		"--build-cmd (cd web && npm ci) && go build .")
+	require.Contains(t, ordered.railpackEnv("go build ."),
+		"RAILPACK_BUILD_CMD=(cd web && npm ci) && go build .")
 }
 
 // The build command is read back out of the plan so the second pass knows what
-// it is wrapping.
+// it is wrapping. The shape is a real `railpack prepare` plan's: a mise step,
+// an install step, then the build step's commands, beside path and copy
+// commands that carry no `cmd`.
 func TestTheChosenBuildCommandIsReadBackOutOfThePlan(t *testing.T) {
-	plan := "FROM ubuntu:noble\n" +
-		"RUN nix-env -if .nixpacks/nixpkgs-abc.nix && nix-collect-garbage -d\n" +
-		"RUN --mount=type=cache,id=x,target=/root/.cache/go-build go mod download\n" +
-		"RUN --mount=type=cache,id=x,target=/root/.cache/go-build go build -o out ./cmd/server\n" +
-		"RUN true\n\n" +
-		"FROM ubuntu:noble\n" +
-		"RUN echo not-a-build\n" +
-		"CMD [\"./out\"]\n"
+	plan := `{
+  "steps": [
+    {"name": "packages:mise", "commands": [{"path": "/mise/shims"}, {"cmd": "mise install"}]},
+    {"name": "install", "commands": [{"cmd": "go mod download"}]},
+    {"name": "build", "commands": [{"src": ".", "dest": "."}, {"cmd": "go build -o out ./cmd/server"}, {"cmd": "sh -c 'strip out'"}]}
+  ],
+  "deploy": {"startCommand": "./out"}
+}`
 
-	require.Equal(t, "go build -o out ./cmd/server", planBuildCommand(plan),
-		"the last build-stage RUN that is not nixpacks' own bookkeeping")
+	require.Equal(t, "go build -o out ./cmd/server && strip out", railpackBuildCommand([]byte(plan)),
+		"the build step's commands in order, unwrapped from the shell Railpack puts a configured one in")
+	require.Equal(t, "./out", railpackStartCommand([]byte(plan)))
+	require.Empty(t, railpackBuildCommand([]byte(`{"steps": [{"name": "install"}]}`)),
+		"no build step means nothing to come before")
 }
 
 // TestAWorkflowsInstallIsNotMirrored asserts that mirroring a workflow copies
 // the build, not the setting up of a blank CI runner.
 //
-// A nixpacks plan installs in its own phase and mounts node_modules/.cache as
-// a build cache in the next one, so a second `npm ci` — which clears
-// node_modules first — failed on a directory it could not remove: "EBUSY:
+// A Railpack plan, like a nixpacks one, installs in its own step and mounts
+// node_modules/.cache as a build cache in the next, so a second `npm ci` —
+// which clears node_modules first — failed on a directory it could not remove: "EBUSY:
 // resource busy or locked, rmdir /app/node_modules/.cache".
 func TestAWorkflowsInstallIsNotMirrored(t *testing.T) {
 	root := withFiles(t, map[string]string{
@@ -206,7 +211,7 @@ func TestAWorkflowsInstallIsNotMirrored(t *testing.T) {
 
 	d := readDeclaredBuild(root)
 	require.Equal(t, "npm run build", d.Build,
-		"nixpacks installs in its own phase; repeating it there breaks on the build cache")
+		"Railpack installs in its own step; repeating it there breaks on the build cache")
 }
 
 // A client below the root is built by a provider that knows nothing about it,
