@@ -60,10 +60,6 @@ func readDotnetBuild(contextDir string) (dotnetBuild, bool) {
 	return dotnetBuild{Project: base, Assembly: assembly, Version: string(m[1])}, true
 }
 
-// committedProgramImage runs a program committed in the repository. [P] Debian
-// slim, because a binary built for Linux most often links against glibc.
-const committedProgramImage = "debian:bookworm-slim"
-
 // committedProgram returns the start command when its program is a file
 // committed in the repository, like `./server`, and "" otherwise.
 func committedProgram(contextDir, start string) string {
@@ -97,7 +93,7 @@ COPY . /app
 RUN chmod +x %s
 ENTRYPOINT ["/bin/sh", "-c"]
 CMD [%s]
-`, committedProgramImage, program, quoted)
+`, programRuntimeImage, program, quoted)
 	return writePlan(contextDir, content)
 }
 

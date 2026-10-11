@@ -99,13 +99,13 @@ COPY . .
 RUN go mod download
 RUN go build -o /out/app %[2]s
 
-FROM debian:bookworm-slim
+FROM %[3]s
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
 COPY --from=build /out/app /usr/local/bin/app
 ENTRYPOINT ["/bin/sh", "-c"]
 CMD ["exec app"]
-`, b.Version, b.Package)
+`, b.Version, b.Package, programRuntimeImage)
 	return writePlan(contextDir, content)
 }

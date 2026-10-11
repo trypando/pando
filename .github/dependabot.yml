@@ -127,11 +127,21 @@ updates:
       # BuildKit's manifest pins its image by digest. The BuildKit Pando runs
       # on Docker is a Go constant (managedImage), which this does not read.
       - /deploy/kubernetes
+      # The base images the builder supplies to the Dockerfiles it writes for
+      # apps: the nginx that serves every static site, and the Debian that runs
+      # compiled programs. Read by the builder through go:embed.
+      - /internal/adapter/builder/buildkit/bases
     registries:
       - dhi
     schedule:
       interval: weekly
     ignore:
+      # nginx's odd minors are mainline, replaced every few weeks and then no
+      # longer rebuilt. The static server stays on the stable line (an even
+      # minor); TestBaseImagesStayOnMaintainedLines fails a pull request that
+      # proposes a mainline one, and this keeps the next few from being opened.
+      - dependency-name: nginx
+        versions: [">= 1.31, < 1.32", ">= 1.33, < 1.34", ">= 1.35, < 1.36", ">= 1.37, < 1.38"]
       # A new Postgres major cannot read the old one's data directory: moving
       # to it is a dump and restore, not a version bump (issue #130).
       - dependency-name: postgres
