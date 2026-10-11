@@ -2,6 +2,7 @@ package reference
 
 import (
 	"encoding/json"
+	"regexp"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -12,6 +13,10 @@ import (
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/mcp"
 )
+
+// traceID matches a requirement (R-059) or open-decision (O-12) ID, which mean
+// nothing to the people the reference is written for.
+var traceID = regexp.MustCompile(`\b[RO]-\d+`)
 
 // TestR261_TheCLIReferenceWalksTheTreeAsCobraHasIt asserts R-261 for
 // docs/cli.json: every command a person can run is listed, root first, with
@@ -94,6 +99,7 @@ func TestR271_EveryPolicySettingIsInTheConfigReference(t *testing.T) {
 	byKey := map[string]bool{}
 	for _, s := range Config().Settings {
 		require.NotEmpty(t, s.Description, s.Key)
+		require.NotRegexp(t, traceID, s.Description, "%s's description is read by users: no requirement or decision IDs", s.Key)
 		byKey[s.Key] = true
 		switch s.Key {
 		case "policy.min_security_score":
@@ -137,6 +143,7 @@ func TestR105_EveryErrorCodeHasAMeaning(t *testing.T) {
 	require.Len(t, data.Errors, len(errs.Catalog()))
 	for i, e := range data.Errors {
 		require.NotEmpty(t, e.Meaning, "%s has no meaning in errs' catalog", e.Code)
+		require.NotRegexp(t, traceID, e.Meaning, "%s's meaning is read by users: no requirement or decision IDs", e.Code)
 		require.NotZero(t, e.Status, e.Code)
 		if i > 0 {
 			require.Less(t, data.Errors[i-1].Code, e.Code)

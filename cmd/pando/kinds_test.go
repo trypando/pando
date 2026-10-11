@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,9 @@ func TestR261_EveryKindCanBeSetUpFromItsBasicSettings(t *testing.T) {
 	}
 }
 
+// traceID matches a requirement (R-059) or open-decision (O-12) ID.
+var traceID = regexp.MustCompile(`\b[RO]-\d+`)
+
 // TestR261_EveryKindSaysHowItIsConfigured asserts R-261 for the adapter
 // reference (docs/adapters.json) and the forms built from the same data: every
 // kind this build registers, identity providers included, has a name and a
@@ -36,8 +40,17 @@ func TestR261_EveryKindSaysHowItIsConfigured(t *testing.T) {
 		where := string(k.Category) + "/" + k.Kind
 		require.NotEmpty(t, k.Name, "%s has no name", where)
 		require.NotEmpty(t, k.Description, "%s has no description", where)
+		// What a form shows is read by users: no requirement or decision IDs.
+		require.NotRegexp(t, traceID, k.Description, where)
+		for _, p := range k.Presets {
+			require.NotRegexp(t, traceID, p.Help, "%s preset %s", where, p.ID)
+		}
 		for _, f := range k.Fields {
 			require.NotEmpty(t, f.Label, "%s setting %s has no label", where, f.Key)
+			require.NotRegexp(t, traceID, f.Help, "%s setting %s", where, f.Key)
+			for _, o := range f.Options {
+				require.NotRegexp(t, traceID, o.Description, "%s setting %s option %q", where, f.Key, o.Value)
+			}
 			if f.Help != "" {
 				continue
 			}

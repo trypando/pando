@@ -33,7 +33,7 @@
     {
       "code": "AUTH_TOKEN_ORPHANED",
       "status": 401,
-      "meaning": "The token's owner was suspended or deleted, so the token no longer resolves to anyone (R-059)."
+      "meaning": "The token's owner was suspended or deleted, so the token no longer resolves to anyone."
     },
     {
       "code": "BACKUP_DECRYPT_FAILED",
@@ -43,7 +43,7 @@
     {
       "code": "BACKUP_INCOMPLETE",
       "status": 422,
-      "meaning": "The backup is missing part of what it claims to hold, so it was not applied (R-215)."
+      "meaning": "The backup is missing part of what it claims to hold, so it was not applied."
     },
     {
       "code": "BUILD_FAILED",
@@ -58,7 +58,7 @@
     {
       "code": "BUILD_TIMEOUT",
       "status": 422,
-      "meaning": "The build exceeded the time allowed for it (R-119)."
+      "meaning": "The build exceeded the time allowed for it."
     },
     {
       "code": "CAPACITY_NO_FREE_PORT",
@@ -68,7 +68,7 @@
     {
       "code": "CAPACITY_WOULD_OVERSUBSCRIBE",
       "status": 409,
-      "meaning": "Running this would commit more of the host than is left (R-242)."
+      "meaning": "Running this would commit more of the host than is left."
     },
     {
       "code": "INTERNAL",
@@ -108,17 +108,17 @@
     {
       "code": "PLAN_CAPABILITY_UNSUPPORTED",
       "status": 409,
-      "meaning": "The spec asks for something the chosen adapter does not do (R-254)."
+      "meaning": "The spec asks for something the chosen adapter does not do."
     },
     {
       "code": "PLAN_COMPOSE_CONSTRUCT_REJECTED",
       "status": 409,
-      "meaning": "The compose file uses a construct Pando will not translate (R-099)."
+      "meaning": "The compose file uses a construct Pando will not translate."
     },
     {
       "code": "PLAN_EGRESS_LOOSENING_FORBIDDEN",
       "status": 409,
-      "meaning": "The app loosens the installation's egress rules, and host policy says no app may (R-183)."
+      "meaning": "The app loosens the installation's egress rules, and host policy says no app may."
     },
     {
       "code": "PLAN_IMAGE_PLATFORM_UNSUPPORTED",
@@ -128,47 +128,47 @@
     {
       "code": "PLAN_NO_ADAPTER_MEETS_POLICY",
       "status": 409,
-      "meaning": "No configured adapter can satisfy this spec under host policy (R-024, R-114)."
+      "meaning": "No configured adapter can satisfy this spec under host policy."
     },
     {
       "code": "PLAN_SECURITY_BELOW_THRESHOLD",
       "status": 409,
-      "meaning": "This installation requires a security score, and this app is below it or has never been scanned (R-314)."
+      "meaning": "This installation requires a security score, and this app is below it or has never been scanned."
     },
     {
       "code": "PLAN_SLOT_UNFILLED",
       "status": 409,
-      "meaning": "A required dependency has nothing filling it, so the deploy would start an app that cannot connect (R-132)."
+      "meaning": "A required dependency has nothing filling it, so the deploy would start an app that cannot connect."
     },
     {
       "code": "POLICY_ANONYMOUS_GRANT_FORBIDDEN",
       "status": 403,
-      "meaning": "Host policy does not allow apps to be shared with everyone (R-076)."
+      "meaning": "Host policy does not allow apps to be shared with everyone."
     },
     {
       "code": "POLICY_APP_LIMIT_REACHED",
       "status": 403,
-      "meaning": "The person who would own the new app already owns as many apps as their limit allows. The message names the limit and where it is set (R-244)."
+      "meaning": "The person who would own the new app already owns as many apps as their limit allows. The message names the limit and where it is set."
     },
     {
       "code": "POLICY_BACKUP_REQUIRED",
       "status": 403,
-      "meaning": "Host policy requires a final backup before an app with storage is deleted, and the request said to delete without one (R-284)."
+      "meaning": "Host policy requires a final backup before an app with storage is deleted, and the request said to delete without one."
     },
     {
       "code": "POLICY_EXEC_DISABLED",
       "status": 403,
-      "meaning": "Host policy has turned off terminal access, including for an app's owner (R-085)."
+      "meaning": "Host policy has turned off terminal access, including for an app's owner."
     },
     {
       "code": "POLICY_SOURCE_NOT_ALLOWED",
       "status": 403,
-      "meaning": "Host policy does not allow apps from this source (R-092)."
+      "meaning": "Host policy does not allow apps from this source."
     },
     {
       "code": "POLICY_WEBHOOK_PRIVATE_ADDRESS",
       "status": 403,
-      "meaning": "A webhook points at a private, loopback or link-local address, and host policy does not allow that (R-372)."
+      "meaning": "A webhook points at a private, loopback or link-local address, and host policy does not allow that."
     },
     {
       "code": "RATE_LIMITED",
@@ -193,7 +193,7 @@
     {
       "code": "STATE_BACKUP_DECISION_REQUIRED",
       "status": 409,
-      "meaning": "The app has storage and the request did not say whether to keep a final backup of it (R-204, R-205)."
+      "meaning": "The app has storage and the request did not say whether to keep a final backup of it."
     },
     {
       "code": "STATE_INVALID",
@@ -238,12 +238,12 @@
     {
       "code": "VALID_SOURCE_UNREADABLE",
       "status": 400,
-      "meaning": "Pando could not read the repository: it is private or missing and no source connection covers it, or the connection's credential was refused (R-091)."
+      "meaning": "Pando could not read the repository: it is private or missing and no source connection covers it, or the connection's credential was refused."
     },
     {
       "code": "VALID_UNKNOWN_EVENT",
       "status": 400,
-      "meaning": "A subscription names an event, or a pattern, that matches no event in the catalog (R-364)."
+      "meaning": "A subscription names an event, or a pattern, that matches no event in the catalog."
     }
   ]
 }
