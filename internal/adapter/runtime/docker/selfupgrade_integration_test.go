@@ -52,7 +52,9 @@ func imageID(t *testing.T, ref string) string {
 	return strings.TrimSpace(out)
 }
 
-const serves = "RUN mkdir -p /www && echo ok > /www/readyz\nCMD [\"httpd\", \"-f\", \"-p\", \"8080\", \"-h\", \"/www\"]\n"
+// STOPSIGNAL because httpd as PID 1 ignores SIGTERM, and every Stop would
+// wait out Replacer's thirty seconds; Pando itself stops on SIGTERM.
+const serves = "RUN mkdir -p /www && echo ok > /www/readyz\nSTOPSIGNAL SIGKILL\nCMD [\"httpd\", \"-f\", \"-p\", \"8080\", \"-h\", \"/www\"]\n"
 
 // TestR359_TheSwapKeepsPandosConfigurationAndPutsTheOldOneBack asserts the
 // container half of R-359 against a real Docker daemon: the new container

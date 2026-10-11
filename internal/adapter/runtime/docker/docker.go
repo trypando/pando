@@ -1825,6 +1825,11 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 // it, so it held nothing anybody could reach. RemoveVolumes takes only those;
 // the named volumes Pando manages are kept (R-204).
 func (a *Adapter) removeContainer(ctx context.Context, id string) error {
+	// Killed first, which is what Docker's forced remove does. Podman's stops
+	// it gracefully instead, and waits out the stop timeout, ten seconds, for
+	// a process that ignores SIGTERM on every recreate and teardown (issue
+	// #179). Not running is not an error here.
+	_, _ = a.cli.ContainerKill(ctx, id, client.ContainerKillOptions{Signal: "SIGKILL"})
 	_, err := a.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 	if err != nil && !cerrdefs.IsNotFound(err) {
 		return errs.Wrap(errs.AdapterFailed, "Could not remove the old container.", err)
