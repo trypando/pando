@@ -14,7 +14,7 @@ import { Banner, Button, Card, Checkbox, CodeBlock, Dialog, Input, Select, Statu
 
 import { api, base } from '@api/client';
 import type { ProviderView, TestReport } from '@api/types.gen';
-import { Quiet, Screen } from './Accounts';
+import { Quiet, Screen, refusal } from './Accounts';
 import { FieldInput } from './AdapterDialog';
 import { isShown } from './adapters';
 import { LineSkeleton, Loading } from '../ui/Loading';
@@ -29,7 +29,6 @@ import {
   storedValues,
 } from './signInForm';
 import type { Outcome, ProviderKind, Values } from './signInForm';
-import { FailedBanner } from '../ui/ErrorCode';
 
 interface Listing {
   providers: ProviderView[] | null;
@@ -95,7 +94,7 @@ export function SignIn({
             <LineSkeleton width="32ch" />
           </Loading>
         ) : listing.isError ? (
-          <FailedBanner error={listing.error} remedy />
+          <Banner tone="failed">{refusal(listing.error)}</Banner>
         ) : (
           providers.map((p) => (
             <ProviderCard
@@ -247,7 +246,7 @@ function ProviderCard({
             {check.data.ok ? `${p.name} answers.` : `${check.data.message ?? ''} ${check.data.remedy ?? ''}`.trim()}
           </Banner>
         )}
-        {failure && <FailedBanner error={failure} remedy />}
+        {failure && <Banner tone="failed">{refusal(failure)}</Banner>}
 
         {canManagePolicy && !external && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
@@ -469,7 +468,7 @@ function ProviderDialog({
           checked={linkByEmail}
           onChange={(e) => setLinkByEmail(e.target.checked)}
         />
-        {save.isError && <FailedBanner error={save.error} remedy />}
+        {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}
       </div>
     </Dialog>
   );
@@ -512,7 +511,7 @@ function TestResult({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
         {report.isPending && <LineSkeleton width="40ch" />}
-        {report.isError && <FailedBanner error={report.error} remedy />}
+        {report.isError && <Banner tone="failed">{refusal(report.error)}</Banner>}
         {r?.error && (
           <Banner tone="failed">{r.error.remedy ? `${r.error.message} ${r.error.remedy}` : r.error.message}</Banner>
         )}

@@ -34,7 +34,6 @@ import { useSettled } from '../ui/paged';
 import { CredentialFields, credentialBody, credentialComplete, emptyCredential, type CredentialDraft } from './RegistryCredential';
 import { FilePicker, sendFiles } from './UploadSource';
 import type { PickedFile } from './pack';
-import { FailedBanner } from '../ui/ErrorCode';
 
 type Kind = 'git' | 'image' | 'upload';
 
@@ -159,7 +158,7 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
               onChange={(e) => setSearch(e.target.value)}
             />
             {repos.isError ? (
-              <FailedBanner error={repos.error} remedy />
+              <Banner tone="failed">{refusal(repos.error)}</Banner>
             ) : (
               <Select
                 label="Repository"

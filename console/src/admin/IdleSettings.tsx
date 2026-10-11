@@ -13,9 +13,9 @@ import { Banner, Button, Input, Select } from '@design';
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
 import { MEASURE } from '../ui/layout';
+import { refusal } from '../install/Accounts';
 import { invalidateApp } from './appList';
 import { AppVerb, useCan } from './verbs';
-import { FailedBanner } from '../ui/ErrorCode';
 
 /** GET /apps/{id}/idle. */
 export interface IdleReport {
@@ -152,7 +152,7 @@ function IdleSettings({ app, report }: Readonly<{ app: App; report: IdleReport }
             onChange={(e) => setDeleteDays(e.target.value)}
           />
         )}
-        {save.isError && <FailedBanner error={save.error} remedy />}
+        {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}
         {canEdit && (
           <div>
             <Button variant="secondary" disabled={save.isPending} onClick={() => save.mutate()}>

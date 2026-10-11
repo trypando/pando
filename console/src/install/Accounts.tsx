@@ -17,7 +17,7 @@
 
 import { useContext, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Dialog, Input, Select, StatusIndicator, Tabs, Tag } from '@design';
+import { Banner, Button, Dialog, Input, Select, StatusIndicator, Tabs, Tag } from '@design';
 
 import { api, RequestFailed } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
@@ -27,7 +27,6 @@ import { Sheet } from '../ui/Sheet';
 import { SearchField } from '../ui/SearchField';
 import { ShowMore, usePaged, useSettled, type PageOf } from '../ui/paged';
 import { Table } from '../ui/Table';
-import { FailedBanner } from '../ui/ErrorCode';
 
 export interface Account {
   id: string;
@@ -284,7 +283,7 @@ function AddAccount({ onClose }: { onClose: () => void }) {
           mustChange={mustChange}
           onMustChange={setMustChange}
         />
-        {create.isError && <FailedBanner error={create.error} />}
+        {create.isError && <Banner tone="failed">{messageOf(create.error)}</Banner>}
       </div>
     </Dialog>
   );

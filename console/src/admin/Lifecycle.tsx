@@ -17,7 +17,7 @@ import { Banner, Button, Dialog } from '@design';
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
-import { FailedBanner } from '../ui/ErrorCode';
+import { messageOf } from '../install/Accounts';
 
 export function Lifecycle({ app }: { app: App }) {
   const queries = useQueryClient();
@@ -86,7 +86,7 @@ export function Lifecycle({ app }: { app: App }) {
               Nothing is removed. Its storage, its configuration and its address are kept, and
               starting it again brings back the version that was running.
             </Banner>
-            {act.isError && <FailedBanner error={act.error} />}
+            {act.isError && <Banner tone="failed">{messageOf(act.error)}</Banner>}
           </div>
         </Dialog>
       )}

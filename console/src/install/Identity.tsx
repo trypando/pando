@@ -8,10 +8,10 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Checkbox, Dialog, Input, Select, Tag } from '@design';
+import { Badge, Banner, Button, Checkbox, Dialog, Input, Select, Tag } from '@design';
 
 import { api } from '@api/client';
-import { Quiet, RoleLabel, Screen, refusal, sentence } from './Accounts';
+import { Quiet, RoleLabel, Screen, messageOf, refusal, sentence } from './Accounts';
 import { VERB_NOTES } from './verbNotes';
 import { AccountApps } from './AccountApps';
 import { GroupAppLimit } from './AppLimit';
@@ -23,7 +23,6 @@ import { LineSkeleton, Loading } from '../ui/Loading';
 import { AIButton } from '../ui/AskAI';
 import { AccessAI } from './AccessAI';
 import { useAIFunctionOn } from './AIFunctions';
-import { FailedBanner } from '../ui/ErrorCode';
 
 interface Group {
   id: string;
@@ -149,7 +148,7 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
         role and its access to apps.
       </Quiet>
 
-      {groups.query.isError && <FailedBanner error={groups.query.error} />}
+      {groups.query.isError && <Banner tone="failed">{messageOf(groups.query.error)}</Banner>}
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table
@@ -408,7 +407,7 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
           ))}
         </div>
 
-        {save.isError && <FailedBanner error={save.error} />}
+        {save.isError && <Banner tone="failed">{messageOf(save.error)}</Banner>}
       </div>
     </Dialog>
   );
@@ -498,7 +497,7 @@ function Roles({ canEdit, query }: { canEdit: boolean; query: string }) {
         redefined what &ldquo;viewer&rdquo; means is an install where nobody can answer what a viewer can do.
       </Quiet>
 
-      {roles.isError && <FailedBanner error={roles.error} />}
+      {roles.isError && <Banner tone="failed">{messageOf(roles.error)}</Banner>}
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table
@@ -687,7 +686,7 @@ function AddRole({ onClose }: { onClose: () => void }) {
           ))}
         </div>
 
-        {save.isError && <FailedBanner error={save.error} />}
+        {save.isError && <Banner tone="failed">{messageOf(save.error)}</Banner>}
       </div>
     </Dialog>
   );
@@ -749,7 +748,7 @@ function DeleteGroup({ group, onClose }: { group: Group; onClose: () => void }) 
         >
           This can&rsquo;t be undone. Making a group with the same name later does not bring the access back.
         </p>
-        {remove.isError && <FailedBanner error={remove.error} remedy />}
+        {remove.isError && <Banner tone="failed">{refusal(remove.error)}</Banner>}
       </div>
     </Dialog>
   );
@@ -804,7 +803,7 @@ function DeleteRole({ role, onClose }: { role: Role; onClose: () => void }) {
         >
           This can&rsquo;t be undone. Making a role with the same name later does not give it back to anyone.
         </p>
-        {remove.isError && <FailedBanner error={remove.error} remedy />}
+        {remove.isError && <Banner tone="failed">{refusal(remove.error)}</Banner>}
       </div>
     </Dialog>
   );
@@ -846,7 +845,7 @@ function LinkGroups({ group, synced, onClose }: { group: Group; synced: Group[];
             onChange={(e) => toggle.mutate({ id: g.id, on: e.target.checked })}
           />
         ))}
-        {toggle.isError && <FailedBanner error={toggle.error} remedy />}
+        {toggle.isError && <Banner tone="failed">{refusal(toggle.error)}</Banner>}
       </div>
     </Dialog>
   );

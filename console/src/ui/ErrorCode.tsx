@@ -11,7 +11,7 @@ import { RequestFailed } from '@api/client';
 import { messageOf, refusal } from '../install/Accounts';
 import { errorDocsURL } from './docs';
 
-function ErrorCode({ code }: { code: string }) {
+function ErrorCode({ code }: Readonly<{ code: string }>) {
   return (
     <a
       href={errorDocsURL(code)}
@@ -34,7 +34,7 @@ export function codeOf(error: unknown): string | undefined {
  * The server's words followed by the code, linked. Nothing is added when the
  * request never reached the server and so has no code.
  */
-export function WithCode({ code, children }: { code?: string; children: ReactNode }) {
+export function WithCode({ code, children }: Readonly<{ code?: string; children: ReactNode }>) {
   return (
     <>
       {children}
@@ -52,7 +52,7 @@ export function WithCode({ code, children }: { code?: string; children: ReactNod
  * The failed-request banner: the message as the server wrote it, its remedy
  * when `remedy` is set and the server gave one, and the code.
  */
-export function FailedBanner({ error, remedy = false }: { error: unknown; remedy?: boolean }) {
+export function FailedBanner({ error, remedy = false }: Readonly<{ error: unknown; remedy?: boolean }>) {
   return (
     <Banner tone="failed">
       <WithCode code={codeOf(error)}>{remedy ? refusal(error) : messageOf(error)}</WithCode>

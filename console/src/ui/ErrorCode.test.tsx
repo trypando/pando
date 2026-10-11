@@ -10,6 +10,7 @@ import { renderToString } from 'react-dom/server';
 
 import { RequestFailed } from '@api/client';
 import { FailedBanner } from './ErrorCode';
+import { AIPrompt } from './AskAI';
 import { errorDocsURL } from './docs';
 
 const refused = new RequestFailed(
@@ -46,5 +47,16 @@ describe('a failed request', () => {
 
   it('escapes a code into its anchor', () => {
     expect(errorDocsURL('A B')).toBe('https://trypando.ai/docs/errors#A%20B');
+  });
+});
+
+// R-346 and the other AI functions: a refused request says why, and links its code.
+describe('a refused AI request', () => {
+  it('links its code under the prompt', () => {
+    const html = renderToString(
+      <AIPrompt label="What you want to do" pending={false} error={refused} onAsk={() => {}} />,
+    );
+    expect(html).toContain('href="https://trypando.ai/docs/errors#PLAN_SLOT_UNFILLED"');
+    expect(html).toContain('Configure a services adapter that provides postgres.');
   });
 });

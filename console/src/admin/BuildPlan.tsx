@@ -14,13 +14,12 @@
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Button, Input, Select } from '@design';
+import { Banner, Button, Input, Select } from '@design';
 
 import { api } from '@api/client';
-import { Quiet } from '../install/Accounts';
+import { Quiet, messageOf } from '../install/Accounts';
 import { useNewestSpec } from './newestSpec';
 import { AppVerb, useCan } from './verbs';
-import { FailedBanner } from '../ui/ErrorCode';
 
 export function BuildPlan({ appID }: { appID: string }) {
   const queries = useQueryClient();
@@ -104,7 +103,7 @@ export function BuildPlan({ appID }: { appID: string }) {
         </div>
       )}
 
-      {save.isError && <FailedBanner error={save.error} />}
+      {save.isError && <Banner tone="failed">{messageOf(save.error)}</Banner>}
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         {draft === null || !canEdit ? (

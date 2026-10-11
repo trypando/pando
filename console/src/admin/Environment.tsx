@@ -30,7 +30,6 @@ import { looksSensitive } from './sensitive';
 import { Table } from '../ui/Table';
 import { useNewestSpec } from './newestSpec';
 import { AppVerb, useCan } from './verbs';
-import { FailedBanner } from '../ui/ErrorCode';
 
 interface Row {
   key: string;
@@ -129,8 +128,8 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
         {canEdit && ' Pando works out what it can; add anything it missed.'}
       </Quiet>
 
-      {error && <FailedBanner error={error} />}
-      {remove.isError && <FailedBanner error={remove.error} />}
+      {error && <Banner tone="failed">{messageOf(error)}</Banner>}
+      {remove.isError && <Banner tone="failed">{messageOf(remove.error)}</Banner>}
 
       {/* Detection reads the names out of `.env.example` and cannot know the
           values — they are the app's own keys and passwords. Saying how many

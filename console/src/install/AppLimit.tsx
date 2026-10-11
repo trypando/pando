@@ -6,11 +6,11 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Dialog, Input } from '@design';
+import { Banner, Button, Dialog, Input } from '@design';
 
 import { api } from '@api/client';
 import { LineSkeleton } from '../ui/Loading';
-import { FailedBanner } from '../ui/ErrorCode';
+import { refusal } from './Accounts';
 
 /** GET /users/{id}/app-limit. */
 export interface Limit {
@@ -114,7 +114,7 @@ export function GroupAppLimit({ groupID, name, onClose }: Readonly<{ groupID: st
           </>
         }
       >
-        <FailedBanner error={current.error} remedy />
+        <Banner tone="failed">{refusal(current.error)}</Banner>
       </Dialog>
     );
   }
@@ -190,7 +190,7 @@ function MaxAppsDialog({
             setValue(e.target.value);
           }}
         />
-        {save.isError && <FailedBanner error={save.error} remedy />}
+        {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}
       </div>
     </Dialog>
   );

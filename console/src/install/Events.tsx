@@ -35,7 +35,6 @@ import { ShowMore, usePaged, type PageOf } from '../ui/paged';
 import { relative } from '../ui/time';
 import { Disclosure } from '../ui/Disclosure';
 import { deliveriesInterval } from '../ui/polling';
-import { FailedBanner } from '../ui/ErrorCode';
 import { EVENTS_DOCS_URL } from '../ui/docs';
 
 interface EventDef {
@@ -376,7 +375,7 @@ function CreateSubscription({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-        {create.isError && <FailedBanner error={create.error} />}
+        {create.isError && <Banner tone="failed">{messageOf(create.error)}</Banner>}
 
         {!fixedApp && (
           <Select
@@ -626,7 +625,7 @@ function SubscriptionDetail({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
         {sub.isError && <Quiet>{messageOf(sub.error)}</Quiet>}
-        {failure && <FailedBanner error={failure} />}
+        {failure && <Banner tone="failed">{messageOf(failure)}</Banner>}
         {s && !s.enabled && s.disabled_reason && <Banner tone="failed">{s.disabled_reason}</Banner>}
 
         {s && (
@@ -771,7 +770,7 @@ function DeliveryDetail({
           {redeliver.isPending ? 'Sending again' : 'Send again'}
         </Button>
       </div>
-      {redeliver.isError && <FailedBanner error={redeliver.error} />}
+      {redeliver.isError && <Banner tone="failed">{messageOf(redeliver.error)}</Banner>}
       {delivery.status === 'pending' && delivery.next_attempt_at && (
         <Quiet>Next attempt {relative(delivery.next_attempt_at).toLowerCase()}.</Quiet>
       )}
@@ -957,7 +956,7 @@ function EditRequest({ sub, onClose, onSaved }: { sub: Subscription; onClose: ()
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        {save.isError && <FailedBanner error={save.error} />}
+        {save.isError && <Banner tone="failed">{messageOf(save.error)}</Banner>}
         <RequestFields
           value={value}
           onChange={setValue}

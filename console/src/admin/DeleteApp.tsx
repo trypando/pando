@@ -22,13 +22,12 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Dialog, Radio } from '@design';
+import { Banner, Button, Dialog, Radio } from '@design';
 
 import { api } from '@api/client';
-import { Quiet } from '../install/Accounts';
+import { Quiet, messageOf } from '../install/Accounts';
 import { deletePath, type StorageDecision } from './delete-app';
 import { invalidateAppLists } from './appList';
-import { FailedBanner } from '../ui/ErrorCode';
 
 export function DeleteApp({
   appID,
@@ -130,7 +129,7 @@ export function DeleteApp({
                     sentence a person needs. Its remedy is not shown — it names
                     `force=true`, which is the CLI's way of answering the
                     question the radio above already asks. */}
-                <FailedBanner error={remove.error} />
+                <Banner tone="failed">{messageOf(remove.error)}</Banner>
                 {keepBackup && hasStorage && (
                   <p
                     style={{

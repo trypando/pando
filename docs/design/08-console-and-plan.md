@@ -131,9 +131,10 @@ address, which the published docs write as `https://pando.example.com`, and list
 draw the reference itself: the site's copy is generated from the same code at each release, and a
 second copy in the console was duplicated effort. The site describes the latest release, so an older
 installation may lack its newest entries. `GET /api/v1/reference` stays: it is the running binary's
-own reference, and AI's how-to answers (R-346) are written from it. In a failed-request banner and
-an AI dialog's refusal, the error's code follows the message as a link to its entry on the errors page
-(`ui/ErrorCode.tsx`).
+own reference, and AI's how-to answers (R-346) are written from it. An app's deploy refusal, an AI
+dialog's refusal and this screen's own failures follow the server's message with the error's code, as
+a link to its entry on the errors page (`ui/ErrorCode.tsx`: `WithCode`, `FailedBanner`). Other
+failure banners still show the message alone; moving them to `FailedBanner` is a one-line change each.
 
 **[D] Phone width.** At 48em and below (`ui/narrow.css`, `ui/narrow.ts`): the page padding token
 drops to `--space-4`; headings and their actions wrap; the admin sidebar becomes a menu behind a
