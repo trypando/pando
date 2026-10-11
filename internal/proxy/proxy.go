@@ -129,6 +129,10 @@ type Proxy struct {
 	visits     *visits
 	clock      func() time.Time
 
+	// anonymous limits the rate of anonymous requests (R-075).
+	anonymousOnce sync.Once
+	anonymous     *anonymousLimiter
+
 	// upstream is the one transport every forwarded request shares, so a
 	// connection to an app is reused rather than dialed per request. It was
 	// built per request, which reused nothing and left each request's idle
@@ -215,19 +219,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Install-wide and without the app (R-400): the kind of principal only.
 	telemetry.ProxyRequest(ctx, allowed, string(principal.Kind))
 
+	// Anonymous is a real subject, not a bypass, and is rate-limited like
+	// one (R-075): after the count above, so a refused request is still seen.
+	if !p.allowAnonymous(w, r, principal, app.ID) {
+		return
+	}
+
 	if !allowed {
-		if errs.CodeOf(denial) == errs.PermPasscodeRequired {
-			p.redirectToPasscode(w, r, app.ID)
-			return
-		}
-		if principal.Kind == authz.KindAnonymous {
-			// Send them to sign in, with somewhere to come back to.
-			p.redirectToLogin(w, r)
-			return
-		}
-		p.auditDenial(r, principal, app.ID)
-		p.fail(w, r, http.StatusForbidden,
-			"You don't have access to this app. Ask whoever set it up to share it with you.")
+		p.refuse(w, r, principal, denial, app.ID)
 		return
 	}
 
@@ -485,6 +484,24 @@ func (p *Proxy) resolve(r *http.Request) (state.App, *spec.AppSpec, string, bool
 	}
 	app, s, found, err := p.Resolver.BySlug(ctx, segment)
 	return app, s, "/" + segment, found, err
+}
+
+// refuse answers a request CheckData denied: the passcode page for an app
+// that asks for one, sign-in for an anonymous caller, and otherwise a 403,
+// audited.
+func (p *Proxy) refuse(w http.ResponseWriter, r *http.Request, principal authz.Principal, denial error, appID string) {
+	if errs.CodeOf(denial) == errs.PermPasscodeRequired {
+		p.redirectToPasscode(w, r, appID)
+		return
+	}
+	if principal.Kind == authz.KindAnonymous {
+		// Send them to sign in, with somewhere to come back to.
+		p.redirectToLogin(w, r)
+		return
+	}
+	p.auditDenial(r, principal, appID)
+	p.fail(w, r, http.StatusForbidden,
+		"You don't have access to this app. Ask whoever set it up to share it with you.")
 }
 
 // redirectToLogin sends an anonymous caller to sign in.

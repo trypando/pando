@@ -79,7 +79,7 @@ func TestR256_AReplicaThatCannotReachTheDatabaseIsToldSo(t *testing.T) {
 	_, err = state.NewDeployments(db).Runner(ctx, id.New(id.Deployment))
 	requireInternal(t, err, "an unreadable runner is an error, not 'nobody runs it'")
 
-	failures := state.NewPasscodeFailures(db)
+	failures := state.NewFailedAttempts(db)
 	_, err = failures.Recent(ctx, "k", time.Hour)
 	requireInternal(t, err, "recent passcode failures")
 	requireInternal(t, failures.Record(ctx, "k", time.Hour), "record a passcode failure")
