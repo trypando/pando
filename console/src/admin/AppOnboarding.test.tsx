@@ -68,13 +68,13 @@ const detection = {
   },
 };
 
-function render(response: Partial<DetectionResponse>, security?: unknown): string {
+function render(response: Partial<DetectionResponse>, security?: unknown, subject: AppWithVerbs = app): string {
   const client = new QueryClient();
   client.setQueryData(['apps', 'app_x', 'detection'], response);
   if (security) client.setQueryData(['apps', 'app_x', 'security'], security);
   return renderToString(
     <QueryClientProvider client={client}>
-      <AppOnboarding app={app} onBack={() => {}} onDeployRefused={() => {}} />
+      <AppOnboarding app={subject} onBack={() => {}} onDeployRefused={() => {}} />
     </QueryClientProvider>,
   );
 }
@@ -250,6 +250,34 @@ describe('AppOnboarding', () => {
     expect(html).toContain('Reading the code');
     expect(html).toContain('Read the repo');
     expect(html).not.toContain('Accept plan');
+  });
+
+  it('keeps the same ridge before and after detection learns the commit', () => {
+    const ridge = (html: string) => html.match(/<path d="([^"]+)" class="pando-terrain-index"/)?.[1];
+    const image = { ...app, source: { type: 'image', image: 'ghcr.io/acme/crewmate:1.4' } } as unknown as AppWithVerbs;
+    const sourceless = { ...app, source: undefined } as unknown as AppWithVerbs;
+    const ridges = [app, image, sourceless].map((subject) => {
+      const running = ridge(
+        render(
+          {
+            status: 'running',
+            answers: null,
+            commit: '',
+            detection: { stage: 'detecting' } as DetectionResponse['detection'],
+          },
+          undefined,
+          subject,
+        ),
+      );
+      const finished = ridge(
+        render({ status: 'needs_answers', answers: {}, commit: '3f9a2c1d0000', detection } as never, undefined, subject),
+      );
+      expect(running).toBeTruthy();
+      expect(finished).toBe(running);
+      return running;
+    });
+    // Each falls back to a different seed: the repository, the image, the app ID.
+    expect(new Set(ridges).size).toBe(3);
   });
 
   it('renders a failed detection with its reason', () => {

@@ -497,7 +497,9 @@ export function AppOnboarding({
   const marks = suggestions(outcome, spec);
   const done = phase === 'done';
   const aiSteps = steps.filter((s) => s.ai).length;
-  const seed = `${app.source?.url ?? app.source?.image ?? app.id}@${data.commit || proposal.commit || ''}`;
+  // Not the commit: it is unknown until detection finishes, and the ridge would
+  // change shape the moment it arrived.
+  const seed = app.source?.url ?? app.source?.image ?? app.id;
 
   const headline = failed
     ? 'Pando stopped'
