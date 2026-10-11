@@ -278,7 +278,7 @@
       "path": "pando admin reset-password",
       "use": "reset-password [username]",
       "short": "Set a local account's password when nobody can sign in",
-      "long": "Sets a new password for a local account and ends every session it has.\n\nThe account must change the password again at its next sign-in: this hands a way\nback in to somebody, which is not the same as choosing their credential.\n\nAccounts that sign in through an external identity provider are changed where they\nlive, not here.",
+      "long": "Sets a new password for a local account, ends every session it has, and lifts\nany limit its wrong passwords put on signing in.\n\nThe account must change the password again at its next sign-in: this hands a way\nback in to somebody, which is not the same as choosing their credential.\n\nAccounts that sign in through an external identity provider are changed where they\nlive, not here.",
       "example": "",
       "aliases": [],
       "hidden": false,

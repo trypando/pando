@@ -819,7 +819,7 @@ Migration 000045. Several `pando` processes may share one database; the verdict 
 |---|---|---|
 | `pando_replicas` | One row per Pando process start: hostname, advertise URL, the **public** half of its assertion signing key, heartbeat, stopped time | `id` is `rep_…`, fresh per start. `assertion_key` is exactly 32 bytes — an Ed25519 public key; there is no column a private key could go in. **Not a hosts table** (§3): it records Pando's own processes, and nothing that plans or places a workload reads it |
 | `deployments.replica_id`, `detections.replica_id` | Which replica is running the work; NULL while it is queued (migration 000050, O-32) | Claimed with `FOR UPDATE SKIP LOCKED`. Work whose replica is stopped or silent past `state.ReplicaStale` goes back in the queue, and is recorded as interrupted once `attempts` reaches `state.MaxAttempts`; a live replica's never is, and queued work is never failed |
-| `passcode_failures` | Wrong passcodes per app and client address (R-075a) | Pruned past the window by the leader |
+| `failed_attempts` | Wrong passcodes per app and client address (R-075a), and wrong passwords per username and per client address (R-404); `passcode_failures` until migration 000072 | Pruned past the window by the leader |
 | `secrets_canary` | A random value sealed with the install's secrets key, and its SHA-256 | Singleton. Every replica opens it at start and refuses to run with a key that cannot (R-190) |
 | `token_key_check` | HMAC-SHA-256 of a fixed label under the install's API token key (migration 000047) | Singleton. Every replica compares its own at start and refuses to run with a key that differs (R-063, §2.1) |
 | `cluster_signals` | `restart_requested_at`, which every replica started earlier obeys | Singleton (R-015) |

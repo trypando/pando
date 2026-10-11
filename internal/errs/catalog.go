@@ -26,7 +26,7 @@ var meanings = map[Code]string{
 
 	PermDenied:       "Authenticated, but not permitted to do this.",
 	PermVerbRequired: "The caller holds no grant carrying the verb this action needs.",
-	RateLimited:      "Too many attempts in a short time — at a passcode, for example. Wait a few minutes and try again.",
+	RateLimited:      "Too many wrong attempts in a short time, at a passcode or at sign-in. The message and the Retry-After header say how long to wait.",
 	PermCrossOrigin: "A change sent with a browser's Pando sign-in from a page on another origin, such as an app's. " +
 		"Send it from the console, or with an API token.",
 	PermPasscodeRequired: "The app is shared with everyone who knows its passcode, and this request has not shown it. " +

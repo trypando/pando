@@ -114,11 +114,17 @@ appended. An empty list — the default — is today's behavior.
 This is a trusted-proxy list, which O-19 decided against for the session cookie. The cases differ: the
 scheme browsers use is one value an operator can state once (`PANDO_SERVER_EXTERNAL_URL`), and a client
 address is different on every request and exists behind a proxy only in the header. O-19 carries a note
-saying so. The list is used for the audit address and nothing else: it does not decide `Secure`,
-rate limits, or anything an attacker would gain from a forged address beyond a wrong line in the log.
+saying so. The list decides the audit address and the address rate limits are kept per, and nothing
+else: it does not decide `Secure`, or anything else an attacker would gain from a forged address.
 
-Rate limiting (passcodes, sign-in) keeps keying on the TCP peer. Behind a proxy that peer is the proxy,
-which is the existing behavior; moving rate limits onto a forwarded address is a separate decision.
+**[D] Rate limits key on this address too (issue #189).** The limits on guessing a passcode (R-075a)
+and a password (R-404), and the anonymous request rate (R-075), are kept per the address resolved
+here. They were kept per TCP peer. Behind Traefik or a Cloudflare tunnel that peer is the same for every
+request, so a per-address limit became one count for the whole install, and anyone could use up the
+allowance and lock everyone else out of password sign-in or a public app. Using the resolved address
+adds no forgery: from the right of `X-Forwarded-For`, only what trusted hops appended is believed. With
+the list empty it is the TCP peer, exactly as before. A list that is too narrow puts everyone behind
+that proxy on one count again, which is the old behavior and not a hole.
 
 ## 4. Reading the stream
 

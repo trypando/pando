@@ -372,7 +372,7 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `BUILD_FAILED` | 422 | The build ran and did not succeed. Its log is the answer. |
 | `BUILD_LISTENS_ON_LOOPBACK` | 422 | The built app listens only on 127.0.0.1 inside its container, where nothing outside it can reach it. |
 | `BUILD_TIMEOUT` | 422 | The build exceeded the time allowed for it. |
-| `RATE_LIMITED` | 429 | Too many attempts in a short time — at a passcode, for example. Wait a few minutes and try again. |
+| `RATE_LIMITED` | 429 | Too many wrong attempts in a short time, at a passcode or at sign-in. The message and the Retry-After header say how long to wait. |
 | `INTERNAL` | 500 | Pando failed in a way it did not expect. The request ID finds the log line. |
 | `ADAPTER_FAILED` | 502 | The adapter was reached and failed. |
 | `ADAPTER_REGISTRY_RATE_LIMITED` | 502 | A registry refused an image because this server, or the app's registry account, has downloaded too many images recently. The message says when it accepts downloads again, where the registry said. |

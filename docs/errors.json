@@ -173,7 +173,7 @@
     {
       "code": "RATE_LIMITED",
       "status": 429,
-      "meaning": "Too many attempts in a short time — at a passcode, for example. Wait a few minutes and try again."
+      "meaning": "Too many wrong attempts in a short time, at a passcode or at sign-in. The message and the Retry-After header say how long to wait."
     },
     {
       "code": "STATE_ADDRESS_TAKEN",
