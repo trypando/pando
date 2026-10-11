@@ -37,14 +37,20 @@
 # source change recompiles what changed rather than every dependency. CI keeps
 # the Go build cache between runs too (the image job in ci.yml). The paths are
 # set rather than left to each image's defaults because CI names them.
-FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:9a9160e3c89a37572e35271c65a2b38a2d1671c8ab0d6abee19ce3d6cecb9be9 AS console
+#
+# One Go base for the console and server stages, so the image is pinned in one
+# place.
+FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:9a9160e3c89a37572e35271c65a2b38a2d1671c8ab0d6abee19ce3d6cecb9be9 AS go
 # GOTOOLCHAIN=auto because go.mod requires Go 1.27.2, the security release for
 # GO-2026-6599 – GO-2026-6617, and the hardened image is still 1.27.1. The go
 # command fetches 1.27.2 from the module proxy, checked against the checksum
 # database like any module, into the module cache. Remove it, and bump the
-# digests, once dhi.io/golang:1.27 ships 1.27.2.
-ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build npm_config_cache=/cache/npm GOTOOLCHAIN=auto
+# digest, once dhi.io/golang:1.27 ships 1.27.2.
+ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build GOTOOLCHAIN=auto
 WORKDIR /src
+
+FROM go AS console
+ENV npm_config_cache=/cache/npm
 RUN apk add --no-cache nodejs npm
 
 # Manifests first, so a change to console source does not re-run npm ci.
@@ -59,11 +65,9 @@ COPY . .
 RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-build \
     cd console && npm run build
 
-FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:9a9160e3c89a37572e35271c65a2b38a2d1671c8ab0d6abee19ce3d6cecb9be9 AS build
-ENV GOMODCACHE=/cache/go-mod GOCACHE=/cache/go-build GOTOOLCHAIN=auto
+FROM go AS build
 ARG TARGETOS
 ARG TARGETARCH
-WORKDIR /src
 
 # Dependencies first, so a source change does not re-download the module cache.
 COPY go.mod go.sum* ./
