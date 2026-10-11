@@ -544,10 +544,14 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 			return err
 		}
 		if matches {
-			if !strings.HasPrefix(existing.State, "running") {
-				if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
-					return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start %q.", w.Name), err)
-				}
+			// Started whatever the list says: after rootless Podman's
+			// containers were killed with the user's systemd instance (a
+			// reboot), its list still called one running that inspect did
+			// not, so the app was never started again (issue #179). The
+			// engine answers a start of a running container with 304, which
+			// is not an error.
+			if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
+				return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start %q.", w.Name), err)
 			}
 			return nil
 		}

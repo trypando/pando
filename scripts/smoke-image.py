@@ -213,6 +213,7 @@ def restart_user_services(name, reachable):
     subprocess.run(["sudo", "systemctl", "restart", unit], check=True)
     wait_ready("Pando did not come back after the restart", 300)
     step("Pando is back")
+    subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.State}}\t{{.Status}}"], check=False)
     wait(f"{name} was not reachable through Pando after the restart", reachable, 300)
     step(f"{name} is back")
 
@@ -295,7 +296,7 @@ def main():
         run(args)
     except BaseException:
         print("--- containers", flush=True)
-        subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"], check=False)
+        subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}"], check=False)
         for app_id in args.app_ids:
             print(f"--- {app_id}: {json.dumps(api('GET', f'/apps/{app_id}')[1])[:1500]}", flush=True)
         # What the engine says when asked to start a stopped app by hand.
