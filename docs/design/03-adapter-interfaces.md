@@ -1411,6 +1411,11 @@ app's network, NATed to the host as Docker's is. Netavark's per-network `metric`
 netavark 1.4, Ubuntu 24.04's, has none. `TestR023_JoiningAnAppsNetworkNeverMovesPandosDefaultRoute`
 is skipped on Podman with that reason; `docs/rootless.md` says it.
 
+Nor is one in aardvark-dns, Podman's DNS server: in about half the `podman` CI runs, once a
+restricted app's gateway was replaced for new rules, it stopped answering on the app's internal
+network, and the app could not resolve `pando-egress`. The R-187 subtest that changes rules is skipped
+on Podman with that reason, and `docs/rootless.md` tells the operator to check.
+
 Pando itself installs on rootless Podman with the release's compose file, run by Docker's Compose CLI
 against Podman's socket (`PANDO_DOCKER_SOCKET`), and a user service that runs `docker compose up -d`
 at boot, because Podman has no daemon to restart containers. CI runs only the adapter suite on Podman

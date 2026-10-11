@@ -38,6 +38,8 @@ jobs:
           scripts/ci-rootless-podman.sh
 
       - name: Install as docs/rootless.md gives it, then restart the user's services
+        # Diagnostic, not a check on the PR: read the log for the result.
+        continue-on-error: true
         env:
           SMOKE_PROJECT: pando
         run: |

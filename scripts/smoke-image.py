@@ -311,6 +311,10 @@ def main():
         # Why the reconciler's last correction failed, which only the database holds.
         compose(args, "exec", "-T", "postgres", "psql", "-U", "pando", "-d", "pando", "-c",
                 "SELECT id, state, consecutive_failures, last_reconcile_error FROM apps", check=False)
+        for name in [n for n in subprocess.run(["docker", "ps", "-a", "--format", NAMES], capture_output=True,
+                                                text=True).stdout.split() if n.endswith("-buildkit")]:
+            print(f"--- {name} logs", flush=True)
+            subprocess.run(["docker", "logs", "--tail", "40", name], check=False)
         # What the engine says when asked to start a stopped app, or a build
         # service that was never started, by hand.
         stopped = subprocess.run(["docker", "ps", "-a", "--filter", "status=exited", "--filter", "status=created",

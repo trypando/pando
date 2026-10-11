@@ -193,6 +193,9 @@ show `rootless`, `cpu_limits` and `memory_limits` as `true`. Pando reads them fr
   list it in `/etc/containers/registries.conf.d/` with `insecure = true`.
 - **`oci_runtime` is refused.** Podman's Docker-compatible API accepts a runtime such as gVisor and
   does not apply it, so the sandboxed isolation class is Docker only.
+- **Changing an app's egress rules.** Pando replaces the app's egress gateway, and Podman 4.9's DNS
+  server can stop answering on the app's network when it does, so the app cannot reach the gateway
+  by name. Check that a restricted app still connects out after changing its rules.
 
 ## What changes under rootless Docker
 

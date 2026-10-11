@@ -238,6 +238,13 @@ func TestR187_ARestrictedAppReachesOnlyWhatItsRulesAllowThroughTheGateway(t *tes
 	})
 
 	t.Run("blocking private ranges refuses even a listed private destination", func(t *testing.T) {
+		if onPodman {
+			// Seen in about half the podman CI runs: once the gateway is
+			// replaced, aardvark-dns stops answering on the app's internal
+			// network ("no servers could be reached"), though the new gateway
+			// is on it under the alias. docs/rootless.md says so.
+			t.Skip("Podman limitation: aardvark-dns can stop answering on an internal network when a container on it is replaced (issue #179)")
+		}
 		before, err := dockerCLI("inspect", "-f", "{{.Id}}", "pando-"+id+"-web")
 		require.NoError(t, err)
 
