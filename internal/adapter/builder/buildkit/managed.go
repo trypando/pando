@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -155,6 +156,10 @@ type managed struct {
 	// hostname, which is the container ID when Pando is in one.
 	self string
 
+	// dataDir is where the seccomp profile is written for an engine that
+	// takes it only as a file; empty is beside the build cache.
+	dataDir string
+
 	// files are written under the BuildKit user's home before it starts:
 	// registryFiles, when the installation runs a registry of its own.
 	files map[string][]byte
@@ -272,6 +277,79 @@ func (m *managed) useExisting(ctx context.Context) (bool, error) {
 	return true, m.start(ctx, got.Container.ID)
 }
 
+// profileFileName is the seccomp profile as a file, for an engine that takes
+// only a path.
+const profileFileName = "buildkit-seccomp.json"
+
+// profileOnHost writes the seccomp profile into Pando's data directory and
+// returns where that file is on the host, which is where the engine reads it.
+//
+// Podman's Docker-compatible API reads seccomp= as a path and opens it itself,
+// so the profile Docker takes inline has to be a file it can see. Pando's data
+// directory is a volume, and Pando's own container says where that volume is
+// on the host.
+func (m *managed) profileOnHost(ctx context.Context) (string, error) {
+	failed := func(err error) (string, error) {
+		return "", errs.Wrap(errs.AdapterFailed,
+			"Could not create Pando's build service: the container engine takes its seccomp profile only as a file, and Pando could not give it one.", err).
+			WithRemedy("Run Pando with its data directory, " + m.profileDir() + ", on a volume, as the shipped Compose file does.")
+	}
+	dir := m.profileDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return failed(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, profileFileName), []byte(compactProfile()), 0o644); err != nil { //nolint:gosec // read by the engine, as another user
+		return failed(err)
+	}
+	self := m.self
+	if self == "" {
+		host, err := os.Hostname()
+		if err != nil {
+			return failed(err)
+		}
+		self = host
+	}
+	got, err := m.cli.ContainerInspect(ctx, self, client.ContainerInspectOptions{})
+	if err != nil {
+		return failed(err)
+	}
+	if on, ok := hostPath(got.Container.Mounts, filepath.Join(dir, profileFileName)); ok {
+		return on, nil
+	}
+	return failed(fmt.Errorf("no mount of %s holds %s", self, dir))
+}
+
+// profileDir is where the profile file is written: beside the build cache, in
+// Pando's data directory.
+func (m *managed) profileDir() string {
+	if m.dataDir != "" {
+		return m.dataDir
+	}
+	return filepath.Dir(cacheRoot())
+}
+
+// hostPath is where a path inside a container is on the host, through the
+// mount that holds it, the deepest when mounts nest.
+func hostPath(mounts []container.MountPoint, inside string) (string, bool) {
+	best := -1
+	for i, mt := range mounts {
+		if mt.Source == "" {
+			continue
+		}
+		if inside != mt.Destination && !strings.HasPrefix(inside, strings.TrimSuffix(mt.Destination, "/")+"/") {
+			continue
+		}
+		if best < 0 || len(mt.Destination) > len(mounts[best].Destination) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return "", false
+	}
+	rel := strings.TrimPrefix(inside, mounts[best].Destination)
+	return filepath.Join(mounts[best].Source, rel), true
+}
+
 // remove removes a container this one is replacing; gone already is fine.
 func (m *managed) remove(ctx context.Context, id, failure string) error {
 	if _, err := m.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
@@ -306,7 +384,7 @@ func (m *managed) create(ctx context.Context, networkID string, inContainer bool
 			network.MustParsePort(managedPort + "/tcp"): {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: m.port}},
 		}
 	}
-	created, err := m.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	opts := client.ContainerCreateOptions{
 		Name: m.name,
 		Config: &container.Config{
 			Image:  managedImage,
@@ -320,7 +398,19 @@ func (m *managed) create(ctx context.Context, networkID string, inContainer bool
 		NetworkingConfig: &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{m.network: {NetworkID: networkID}},
 		},
-	})
+	}
+	created, err := m.cli.ContainerCreate(ctx, opts)
+	if err != nil && strings.Contains(err.Error(), "opening seccomp profile") {
+		// Podman reads seccomp= as a path where Docker takes the profile
+		// itself (issue #179): given a file on the host, it applies the same
+		// profile.
+		file, ferr := m.profileOnHost(ctx)
+		if ferr != nil {
+			return ferr
+		}
+		hostCfg.SecurityOpt[0] = "seccomp=" + file
+		created, err = m.cli.ContainerCreate(ctx, opts)
+	}
 	if cerrdefs.IsConflict(err) {
 		// Another replica made it between the inspect and the create, and is
 		// still giving it its files and networks. Starting it here could start

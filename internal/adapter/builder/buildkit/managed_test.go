@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +20,8 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/require"
+
+	"github.com/trypando/pando/internal/errs"
 )
 
 // fakeDocker is the part of a Docker daemon the managed BuildKit uses, in
@@ -33,6 +37,7 @@ type fakeDocker struct {
 	copied     [][]byte
 	self       string // the container Pando is in; "" is on the host
 	attached   string // what joining a network already joined says; Docker's when empty
+	pathOnly   bool   // takes seccomp= only as a path, as Podman does
 
 	// fail makes a method return an error, by its name.
 	fail map[string]error
@@ -66,6 +71,13 @@ func (f *fakeDocker) ContainerCreate(_ context.Context, o client.ContainerCreate
 	defer f.mu.Unlock()
 	if _, ok := f.containers[o.Name]; ok {
 		return client.ContainerCreateResult{}, fmt.Errorf("name in use: %w", cerrdefs.ErrConflict)
+	}
+	if f.pathOnly && o.HostConfig != nil {
+		for _, opt := range o.HostConfig.SecurityOpt {
+			if p, ok := strings.CutPrefix(opt, "seccomp="); ok && !strings.HasPrefix(p, "/") {
+				return client.ContainerCreateResult{}, fmt.Errorf("container create: opening seccomp profile failed: open %s: no such file or directory", p)
+			}
+		}
 	}
 	f.created = append(f.created, o)
 	f.containers[o.Name] = &container.InspectResponse{ID: "c-" + o.Name, Name: o.Name, Config: o.Config,
@@ -358,4 +370,60 @@ func TestR111_AfterARebootOnPodmanBuildKitIsStartedAgain(t *testing.T) {
 	f.attached = "boom"
 	_, err = m.ensure(ctx)
 	require.Error(t, err, "any other refusal to join is still one")
+}
+
+// TestR111_OnPodmanBuildKitGetsItsProfileAsAFile asserts that the BuildKit
+// Pando runs is made under the narrowed seccomp profile on an engine that
+// takes the profile only as a path. Podman's Docker-compatible API reads
+// seccomp= as a file to open, so Docker's inline profile failed every create
+// there, and no app could be built on Podman (issue #179).
+func TestR111_OnPodmanBuildKitGetsItsProfileAsAFile(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeDocker("pando-1")
+	f.pathOnly = true
+	dataDir := t.TempDir()
+	f.containers["pando-1"] = &container.InspectResponse{ID: "pando-1", Config: &container.Config{},
+		State: &container.State{Running: true},
+		Mounts: []container.MountPoint{
+			{Destination: "/etc/traefik/dynamic", Source: "/host/volumes/traefik/_data"},
+			{Destination: dataDir, Source: "/host/volumes/pando-data/_data"},
+		}}
+	m := newManaged(f)
+	m.self = "pando-1"
+	m.dataDir = dataDir
+
+	_, err := m.ensure(ctx)
+	require.NoError(t, err)
+	require.True(t, f.containers[managedName].State.Running)
+	opts := f.containers[managedName].HostConfig.SecurityOpt
+	require.Contains(t, opts, "seccomp=/host/volumes/pando-data/_data/"+profileFileName, "the profile, by its path on the host")
+
+	written, err := os.ReadFile(filepath.Join(dataDir, profileFileName))
+	require.NoError(t, err)
+	require.Equal(t, compactProfile(), string(written), "the same narrowed profile Docker is given inline")
+
+	// With no mount holding the data directory there is nowhere to put it the
+	// engine can see, and the refusal says what to change.
+	g := newFakeDocker("pando-1")
+	g.pathOnly = true
+	g.containers["pando-1"] = &container.InspectResponse{ID: "pando-1", Config: &container.Config{}, State: &container.State{Running: true}}
+	n := newManaged(g)
+	n.self = "pando-1"
+	n.dataDir = t.TempDir()
+	_, err = n.ensure(ctx)
+	require.Equal(t, errs.AdapterFailed, errs.CodeOf(err))
+	require.Contains(t, errs.As(err).Remedy, "on a volume")
+}
+
+func TestHostPathTakesTheDeepestMount(t *testing.T) {
+	mounts := []container.MountPoint{
+		{Destination: "/var/lib", Source: "/a"},
+		{Destination: "/var/lib/pando", Source: "/b"},
+		{Destination: "/var/lib/pandora", Source: "/c"},
+	}
+	got, ok := hostPath(mounts, "/var/lib/pando/x.json")
+	require.True(t, ok)
+	require.Equal(t, "/b/x.json", got)
+	_, ok = hostPath(mounts, "/etc/x")
+	require.False(t, ok)
 }

@@ -1393,6 +1393,13 @@ wrong result before it was handled; they live in `internal/adapter/runtime/docke
 - It reports a memory swappiness for a container that set none, and crun refuses to start a container
   given one on cgroup v2. The self-upgrade swap re-created Pando from the old container's inspected
   host configuration and could not start it; the swappiness is now left out (R-359).
+- It reads `seccomp=` as a path to open, where Docker takes the profile itself, so the BuildKit Pando
+  runs could not be created and nothing could be built (R-111). On that refusal the narrowed profile
+  is written to Pando's data directory and passed by its path on the host, read from Pando's own
+  container's mounts.
+- It answers a network join for a container already on the network "network is already connected",
+  where Docker says "already exists". Read as a failure, Pando — back from a reboot still on every
+  app's network and its build network — could start neither the apps nor BuildKit again (R-023).
 - It reads a short image name as `docker.io/library/…` and stores a local build as `localhost/…`, so
   a local build named short is never found. Pando never names one short — a build is run by its ID —
   and the tests name theirs `localhost/…`.
