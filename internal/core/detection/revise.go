@@ -90,6 +90,12 @@ func (r *Runner) Revise(ctx context.Context, appID, message string) (state.Detec
 	}
 	defer checkout.Close()
 
+	// The directory the plan reads, which is the project's own when
+	// detection read one inside the repository (Proposal.Subproject).
+	if sub := proposal.DraftSpec.Source.Subdir; sub != "" {
+		src.Subdir = sub
+	}
+
 	if err := r.revise(ctx, appID, &proposal, d.Answers, checkout.View(src.Subdir), message); err != nil {
 		return state.Detection{}, err
 	}

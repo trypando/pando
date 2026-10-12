@@ -9,6 +9,7 @@ package detection
 
 import (
 	"context"
+	"path"
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -273,6 +274,25 @@ func (r *Runner) run(ctx context.Context, prog *progress, app state.App, answers
 		appID, src, checkout.View(src.Subdir))
 	if err != nil {
 		return detect.Proposal{}, err
+	}
+
+	// A repository whose app is one of the projects inside it: the one a
+	// person chose, or the only one it holds. Read again there, so the
+	// proposal is that project's — its build, its workloads, its questions —
+	// rather than the parent's, which has none (issue #90). Once: the
+	// project's own reading does not ask which project it is.
+	if dir, why, ok := proposal.Subproject(answers); ok {
+		sub := src
+		sub.Subdir = path.Join(src.Subdir, dir)
+		if info, statErr := checkout.View(sub.Subdir).Stat("."); statErr == nil && info.IsDir {
+			src = sub
+			proposal, err = r.Job.Run(detect.WithBuild(ctx, r.buildHook(appID, slug, answers, checkout, scans)),
+				appID, src, checkout.View(src.Subdir))
+			if err != nil {
+				return detect.Proposal{}, err
+			}
+			proposal.Winner.Evidence = append([]string{why}, proposal.Winner.Evidence...)
+		}
 	}
 
 	// While the checkout exists, and after the proposal is in hand: a scan is

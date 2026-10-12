@@ -318,7 +318,21 @@ func (s *Server) handleDetectionAnswers(w http.ResponseWriter, r *http.Request) 
 	// waiting on — and the plan's score is the score of the image that will
 	// run (R-311), so the image is built and scanned again. The detection
 	// reads as running until it has been.
-	if s.Detector != nil {
+	//
+	// An answer naming the project to deploy changes what is read, not only
+	// what is built: detection runs again, in that project (issue #90,
+	// detect.Proposal.Subproject), queued as a re-run is and with the answers
+	// kept.
+	if s.Detector != nil && s.DetectionQueue != nil && proposal.RedetectsOn(req.Answers) {
+		if err := s.Detector.Check(r.Context(), app.ID); err != nil {
+			Error(w, r, err)
+			return
+		}
+		if _, err := s.DetectionQueue.Enqueue(r.Context(), app.ID); err != nil {
+			Error(w, r, err)
+			return
+		}
+	} else if s.Detector != nil {
 		if _, err := s.Detector.Rebuild(r.Context(), app.ID); err != nil {
 			Error(w, r, err)
 			return

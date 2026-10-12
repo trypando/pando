@@ -103,10 +103,20 @@ func TestAnsweringTheDockerfilePathAlsoSettlesTheStrategy(t *testing.T) {
 // is. Detection runs again against it: nothing about a proposal describing the
 // repository root applies to a project one level down.
 func TestNamingTheDeployableProjectSetsTheSubdirectory(t *testing.T) {
-	got := proposalFor(primary("web")).
-		WithAnswers(map[string]string{detect.KeyDeployableProject: "services/api"})
+	asked := proposalFor()
+	asked.Winner.Strategy = detect.StrategyUnknown
+	asked.Questions = []detect.Question{{Key: detect.KeyDeployableProject}}
+	asked.DraftSpec.Source.Subdir = "repo"
 
-	require.Equal(t, "services/api", got.Source.Subdir)
+	got := asked.WithAnswers(map[string]string{detect.KeyDeployableProject: "services/api"})
+	require.Equal(t, "repo/services/api", got.Source.Subdir, "inside the directory the proposal read")
+
+	// The proposal detection made in that project does not ask, and already
+	// reads it: the kept answer is not applied to it a second time.
+	project := proposalFor(primary("web"))
+	project.DraftSpec.Source.Subdir = "repo/services/api"
+	got = project.WithAnswers(map[string]string{detect.KeyDeployableProject: "services/api"})
+	require.Equal(t, "repo/services/api", got.Source.Subdir)
 }
 
 func TestAStaticSourceAnswerChoosesBetweenServingAndBuilding(t *testing.T) {

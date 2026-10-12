@@ -2,6 +2,7 @@ package detect
 
 import (
 	"fmt"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -142,10 +143,15 @@ func (p Proposal) withAnswers(answers map[string]string, portSource spec.PortSou
 			out.Build.Strategy = spec.BuildDockerfile
 		case KeyDeployableProject:
 			// The answer names a directory inside the repository, which is the
-			// same thing a subdir is. Detection has to run again against it —
-			// the proposal describes the repository root, and nothing about it
-			// applies to a project one level down.
-			out.Source.Subdir = value
+			// same thing a subdir is. Detection runs again against it
+			// (Subproject), and the proposal that run produces already reads
+			// that directory and asks nothing about it — so the answer applies
+			// only to the proposal that asked, the one that read the parent.
+			if p.asks(KeyDeployableProject) {
+				if dir, ok := cleanSubproject(value); ok {
+					out.Source.Subdir = path.Join(out.Source.Subdir, dir)
+				}
+			}
 		case KeyStaticSource:
 			out.Build.Strategy = spec.BuildStatic
 			if value == "run-build" {
@@ -230,6 +236,65 @@ func (p Proposal) chosen(answers map[string]string) spec.AppSpec {
 	return p.DraftSpec
 }
 
+// asks reports whether the proposal put the question with this key.
+func (p Proposal) asks(key string) bool {
+	for _, q := range p.Questions {
+		if q.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// Subproject is the directory, within the one this proposal read, that
+// detection reads instead: the project a person named in answer to
+// deployable_project, or the only project a repository with no app at its
+// root holds. why says which, for the evidence. ok is false when the proposal
+// describes what to deploy as it stands.
+//
+// Answering deployable_project used to set the subdirectory and nothing else:
+// the proposal still described the repository root, which had no workloads,
+// and accepting it pinned a spec that ran nothing (issue #90). The project's
+// own reading is what there is to accept, so detection runs again in it.
+func (p Proposal) Subproject(answers map[string]string) (dir, why string, ok bool) {
+	if !p.asks(KeyDeployableProject) {
+		return "", "", false
+	}
+	if dir, ok := cleanSubproject(answers[KeyDeployableProject]); ok {
+		return dir, fmt.Sprintf("deploying %s/, the project chosen in this repository", dir), true
+	}
+	for _, q := range p.Questions {
+		if q.Key == KeyDeployableProject && len(q.Options) == 1 && p.Winner.Strategy == StrategyUnknown {
+			if dir, ok := cleanSubproject(q.Options[0]); ok {
+				return dir, fmt.Sprintf("deploying %s/, the only project in this repository", dir), true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// RedetectsOn reports whether these answers change which directory this
+// proposal should have read, so detection runs again rather than the image
+// being rebuilt (Subproject).
+func (p Proposal) RedetectsOn(answers map[string]string) bool {
+	_, ok := cleanSubproject(answers[KeyDeployableProject])
+	return ok && p.asks(KeyDeployableProject)
+}
+
+// cleanSubproject is a deployable_project answer as a directory inside the
+// repository: relative, below the root, and not climbing out of it.
+func cleanSubproject(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	clean := path.Clean(strings.TrimPrefix(value, "./"))
+	if clean == "." || path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", false
+	}
+	return clean, true
+}
+
 // withArg sets a build argument, replacing one of the same name. A new slice,
 // because a proposal is applied more than once.
 func withArg(args []spec.KV, key, value string) []spec.KV {
@@ -251,6 +316,23 @@ func withArg(args []spec.KV, key, value string) []spec.KV {
 // prose answers ("serve the repository root with php -S …") were accepted the
 // same way.
 func (p Proposal) CheckAnswers(answers map[string]string) error {
+	if value, given := answers[KeyDeployableProject]; given {
+		if _, ok := cleanSubproject(value); !ok {
+			return errs.Newf(errs.ValidInvalid,
+				"%q is not a directory inside this repository, so Pando cannot read a project from it. "+
+					"Valid answer: the path of the project's directory from the top of the repository, such as apps/web.",
+				value)
+		}
+		// A choice names the directories that exist; another would be read
+		// as an empty one.
+		for _, q := range p.Questions {
+			if q.Key == KeyDeployableProject && len(q.Options) > 0 && !containsString(q.Options, strings.TrimSpace(value)) {
+				return errs.Newf(errs.ValidInvalid,
+					"%q is not one of the projects Pando found in this repository. Valid answer: one of %s.",
+					value, strings.Join(q.Options, ", "))
+			}
+		}
+	}
 	for _, key := range []string{KeyBuildStrategy, KeyBuildMethod} {
 		value := strings.TrimSpace(answers[key])
 		if value == "" {
