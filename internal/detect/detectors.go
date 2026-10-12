@@ -182,7 +182,13 @@ func (d DockerfileDetector) bidForRoot(src api.SourceView, name string) (Candida
 	if cmd != "" {
 		c.Evidence = append(c.Evidence, "CMD "+cmd)
 	}
-	for _, arg := range requiredBuildArgs(src, name) {
+	required, empty := buildArgNeeds(src, name)
+	for _, arg := range empty {
+		c.Draft.Build.Args = append(c.Draft.Build.Args, spec.KV{Key: arg})
+		c.Evidence = append(c.Evidence, fmt.Sprintf(
+			"build argument %s is passed as empty: the build reads it under `set -u`, which stops on a value that was never set", arg))
+	}
+	for _, arg := range required {
 		c.Questions = append(c.Questions, Question{
 			Key:  BuildArgKeyPrefix + arg,
 			Kind: api.QuestionText,
@@ -866,38 +872,98 @@ func asRailsProduction(d Draft) Draft {
 
 var argDeclaration = regexp.MustCompile(`(?i)^\s*ARG\s+([A-Za-z_][A-Za-z0-9_]*)\s*$`)
 
-// requiredBuildArgs are the ARGs a Dockerfile declares without a default and
-// refuses to build without — `${NAME:?…}`, or a `-z` test on it that exits.
+// buildArgNeeds sorts the ARGs a Dockerfile declares without a default into
+// the ones it refuses to build without and the ones it only needs to be set.
 //
-// Only those. An ARG with no default is usually optional (a version to stamp,
-// a platform BuildKit fills in), and asking about every one would put
-// questions in front of people that the build does not need answered (R-104).
-// A Dockerfile that stops itself when one is empty has said, in as many
-// words, that it is required; the build failed on exactly that and nobody had
-// been asked (issue #55).
-func requiredBuildArgs(src api.SourceView, name string) []string {
+// Required is an ARG the Dockerfile stops itself over when it is empty:
+// `${NAME:?…}`, `test -n "$NAME" || …`, or a `-z` test on it that exits. That
+// is the file saying, in as many words, that a value is needed; the build
+// failed on exactly that and nobody had been asked (issue #55).
+//
+// Only those. An ARG with no default is usually optional — a version to stamp,
+// a platform BuildKit fills in — and asking about every one puts questions in
+// front of people that the build does not need answered (R-104). So is an ARG
+// the file guards itself: `[ -z $ARCH ] || __ARCH=$ARCH` falls back to
+// something else when it is empty, and asking for it made a question nobody
+// could answer from the repository.
+//
+// Empty is the third kind: an ARG a RUN reads under `set -u`. The shell stops
+// on a variable that was never set, and an ARG with no default and no value is
+// exactly that — `EXTRA_ARGS: parameter not set` — while an empty value is all
+// the build wanted. That is a default, not a question (R-104), so it is passed
+// as empty and shown on the plan, where it can be changed.
+func buildArgNeeds(src api.SourceView, name string) (required, empty []string) {
 	f, err := src.Open(name)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer func() { _ = f.Close() }()
 	scanner := bufio.NewScanner(io.LimitReader(f, 256<<10))
 	lines := joinContinuations(scanner)
 	body := strings.Join(lines, "\n")
 
-	var required []string
 	for _, line := range lines {
 		m := argDeclaration.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
 		arg := m[1]
-		if strings.Contains(body, "${"+arg+":?") ||
-			regexp.MustCompile(`-z\s+"?\$\{?`+arg+`\}?"?`).MatchString(body) {
+		switch {
+		case argAsserted(body, arg):
 			required = append(required, arg)
+		case argReadUnderNounset(lines, arg):
+			empty = append(empty, arg)
 		}
 	}
-	return required
+	return required, empty
+}
+
+// argAsserted reports whether the Dockerfile stops the build when arg is empty.
+func argAsserted(body, arg string) bool {
+	q := regexp.QuoteMeta(arg)
+	ref := `"?\$\{?` + q + `\}?"?`
+	if strings.Contains(body, "${"+arg+":?") || strings.Contains(body, "${"+arg+"?") {
+		return true
+	}
+	// `test -n "$X" || exit 1`, `[ -n "$X" ] || (echo …; exit 1)`: anything
+	// after the `||` runs only when the value is missing, and it is there to
+	// say so.
+	if regexp.MustCompile(`-n\s+` + ref + `\s*\]{0,2}\s*\|\|`).MatchString(body) {
+		return true
+	}
+	// `[ -z "$X" ] && exit 1`, `if [ -z "$X" ]; then echo …; exit 1; fi`. A
+	// `-z` test followed by `||` is the opposite — a fallback when it is empty —
+	// and so is one whose branch assigns something rather than exiting.
+	for _, loc := range regexp.MustCompile(`-z\s+` + ref + `\s*\]{0,2}\s*(&&|;\s*then)`).FindAllStringIndex(body, -1) {
+		rest := body[loc[1]:]
+		if end := strings.IndexAny(rest, "\n"); end >= 0 {
+			rest = rest[:end]
+		}
+		if end := regexp.MustCompile(`\bfi\b`).FindStringIndex(rest); end != nil {
+			rest = rest[:end[0]]
+		}
+		if regexp.MustCompile(`\bexit\s+[1-9]|\bfalse\b`).MatchString(rest) {
+			return true
+		}
+	}
+	return false
+}
+
+var nounset = regexp.MustCompile(`\bset\s+(-[a-zA-Z]*u[a-zA-Z]*\b|-o\s+nounset\b)`)
+
+// argReadUnderNounset reports a RUN that turns on `set -u` and reads arg with
+// no default of its own.
+func argReadUnderNounset(lines []string, arg string) bool {
+	use := regexp.MustCompile(`\$(\{` + regexp.QuoteMeta(arg) + `\}|` + regexp.QuoteMeta(arg) + `\b)`)
+	for _, line := range lines {
+		if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "RUN") {
+			continue
+		}
+		if nounset.MatchString(line) && use.MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- shared helpers --------------------------------------------------------
