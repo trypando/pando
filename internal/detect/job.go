@@ -575,7 +575,12 @@ func (j *Job) assemble(appID string, src spec.Source, draft Draft) spec.AppSpec 
 // A plain function because answering the tie-break needs it too: adopting the
 // other candidate's reading means assembling that candidate's draft, and doing
 // it a second way is how the two would drift.
+//
+// A build that reaches above the app's directory moves the directory up to
+// where it reaches (liftBuildContexts): what the build reads is decided here,
+// once, for whichever reading is accepted.
 func Assemble(appID string, src spec.Source, draft Draft) spec.AppSpec {
+	src, draft = liftBuildContexts(src, draft)
 	return spec.AppSpec{
 		SchemaVersion: spec.SchemaVersion,
 		AppID:         appID,
