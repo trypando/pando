@@ -52,3 +52,16 @@ func TestR105_ATakenUsernameIsAConflictThatNamesIt(t *testing.T) {
 	require.Equal(t, errs.StateUsernameTaken, e.Code)
 	require.Equal(t, "A deleted account was named sam, and its username cannot be reused.", e.Message)
 }
+
+// TestR105_AnAccountTheDatabaseCannotTakeIsNotCalledATakenUsername asserts the
+// conflict is kept for the one cause it names: a database that cannot answer
+// is a server fault, not a reason to choose another username.
+func TestR105_AnAccountTheDatabaseCannotTakeIsNotCalledATakenUsername(t *testing.T) {
+	t.Parallel()
+	db := connected(t)
+	users := state.NewUsers(db)
+	db.Close()
+
+	_, err := users.Create(context.Background(), state.LocalAdapterID, "sam", "", "Sam", "digest", true)
+	require.Equal(t, errs.Internal, errs.CodeOf(err))
+}
