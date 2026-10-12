@@ -3,6 +3,7 @@ package detect
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
