@@ -19,7 +19,7 @@
 
 </div>
 
-<img src="docs/assets/demo.gif" alt="Adding 2048 to Pando from its GitHub repository: Pando works out how to build it, Accept and deploy runs it, the scan of the running image scores it 61 out of 100, and the game opens at its address." width="100%">
+https://github.com/user-attachments/assets/9c2cc4df-e2c5-4ff7-bc26-a8f08a4b6061
 
 ---
 
