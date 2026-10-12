@@ -65,6 +65,8 @@ func (namingRuntime) Category() api.Category { return api.CategoryRuntime }
 func (namingRuntime) Capabilities(context.Context) (api.RuntimeCapabilities, error) {
 	return importing, nil
 }
+func (namingRuntime) HasImage(context.Context, string) (bool, error) { return true, nil }
+
 func (namingRuntime) ImportImage(_ context.Context, in io.Reader) (string, error) {
 	_, err := io.Copy(io.Discard, in)
 	return "", err

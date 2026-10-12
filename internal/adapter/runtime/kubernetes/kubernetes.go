@@ -668,6 +668,10 @@ func errNoUsage() error {
 }
 
 // ImportImage is not offered: every node pulls from a registry.
+// HasImage is true: this runtime runs images from a registry, which is
+// where they stay, and imports none of its own.
+func (a *Adapter) HasImage(context.Context, string) (bool, error) { return true, nil }
+
 func (a *Adapter) ImportImage(context.Context, io.Reader) (string, error) {
 	return "", errs.New(errs.PlanCapabilityUnsupported,
 		"The Kubernetes runtime pulls every image from a registry and cannot take a built image directly.").

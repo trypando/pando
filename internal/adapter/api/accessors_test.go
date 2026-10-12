@@ -56,6 +56,7 @@ func (stubRuntime) SnapshotVolume(context.Context, api.VolumeHandle, io.Writer) 
 	return nil
 }
 func (stubRuntime) RestoreVolume(context.Context, api.VolumeHandle, io.Reader) error { return nil }
+func (stubRuntime) HasImage(context.Context, string) (bool, error)                   { return true, nil }
 func (stubRuntime) ImportImage(context.Context, io.Reader) (string, error)           { return "", nil }
 func (stubRuntime) Logs(context.Context, api.WorkloadRef, api.LogOptions) (io.ReadCloser, error) {
 	return nil, nil

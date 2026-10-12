@@ -307,6 +307,14 @@ type RuntimeAdapter interface {
 	// workload is recreated from (R-146).
 	ImportImage(ctx context.Context, r io.Reader) (string, error)
 
+	// HasImage reports whether an image ImportImage returned is still on the
+	// runtime. An imported image lives only in the runtime's own store, and
+	// something other than Pando can remove it — a prune — so a deploy that
+	// would run one detection built checks first and builds again when it is
+	// gone (R-311). A runtime that takes images only from a registry answers
+	// true: what it runs is in the registry, not on it.
+	HasImage(ctx context.Context, ref string) (bool, error)
+
 	Logs(ctx context.Context, ref WorkloadRef, opts LogOptions) (io.ReadCloser, error)
 	Exec(ctx context.Context, ref WorkloadRef, req ExecRequest) (ExecSession, error)
 

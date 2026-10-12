@@ -44,6 +44,8 @@ func (d *singleHostDocker) Capabilities(context.Context) (api.RuntimeCapabilitie
 	}, nil
 }
 
+func (d *singleHostDocker) HasImage(context.Context, string) (bool, error) { return true, nil }
+
 func (d *singleHostDocker) ImportImage(_ context.Context, r io.Reader) (string, error) {
 	_, _ = io.Copy(io.Discard, r)
 	d.mu.Lock()

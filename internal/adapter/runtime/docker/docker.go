@@ -1307,6 +1307,29 @@ func (a *Adapter) ImportImage(ctx context.Context, r io.Reader) (string, error) 
 	return inspect.ID, nil
 }
 
+// HasImage reports whether the daemon still has an image, by its ID or name.
+// Not found is false and no error; any other failure is the daemon's.
+func (a *Adapter) HasImage(ctx context.Context, ref string) (bool, error) {
+	_, err := a.cli.ImageInspect(ctx, ref)
+	switch {
+	case err == nil:
+		return true, nil
+	case cerrdefs.IsNotFound(err):
+		return false, nil
+	default:
+		return false, errs.Wrap(errs.AdapterFailed, "Could not ask the Docker daemon whether it has the image: "+daemonReason(err.Error()), err)
+	}
+}
+
+// shortImageID is an image ID as Docker prints it: twelve hex digits.
+func shortImageID(id string) string {
+	hex := strings.TrimPrefix(id, "sha256:")
+	if len(hex) > 12 {
+		hex = hex[:12]
+	}
+	return hex
+}
+
 // parseLoadError is the error the daemon reported in its load output, which
 // is a stream of JSON objects: one with an "error" field ends a load that
 // failed. Empty when there is none.
@@ -1684,6 +1707,16 @@ func (a *Adapter) ensureImageWith(ctx context.Context, ref string, auth *api.Reg
 	if _, err := a.cli.ImageInspect(ctx, ref); err == nil {
 		a.claimImage(ctx, ref, claim, false)
 		return nil
+	}
+
+	// A bare content ID names an image this daemon loaded (ImportImage), and
+	// no registry has it: pulled, it became docker.io/library/sha256:… and
+	// failed as an image nobody publishes (issue #90). Said as what it is.
+	if strings.HasPrefix(ref, "sha256:") {
+		return errs.Newf(errs.NotFound,
+			"The image this app was built into (%s) is no longer on this machine, and Pando cannot download it: it was built here, not published.",
+			shortImageID(ref)).
+			WithRemedy("Deploy the app again, which builds the image again. Something removed it from Docker — an image prune, most often.")
 	}
 
 	// Tried again when the daemon's own content store trips over a pull that

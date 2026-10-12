@@ -567,6 +567,10 @@ func (a *Adapter) RestoreVolume(ctx context.Context, vh api.VolumeHandle, src io
 }
 
 // ImportImage is not offered (ImageDelivery is registry only).
+// HasImage is true: this runtime runs images from a registry, which is
+// where they stay, and imports none of its own.
+func (a *Adapter) HasImage(context.Context, string) (bool, error) { return true, nil }
+
 func (a *Adapter) ImportImage(context.Context, io.Reader) (string, error) {
 	return "", errs.New(errs.PlanCapabilityUnsupported,
 		"The Docker hosts runtime takes images from a registry, not from Pando's host.").
