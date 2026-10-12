@@ -29,6 +29,7 @@ require (
 	github.com/moby/moby/client v0.6.2
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/openai/openai-go/v3 v3.74.0
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/pkg/sftp v1.13.11
 	github.com/russellhaering/goxmldsig v1.6.1
 	github.com/sigstore/sigstore-go v1.3.0
@@ -189,7 +190,6 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
-	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/pjbgf/sha1cd v0.7.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect

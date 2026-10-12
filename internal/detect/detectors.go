@@ -461,6 +461,9 @@ var languages = []languageSignal{
 	{"requirements.txt", "Python", "python app.py", 8000},
 	{"pyproject.toml", "Python", "python -m app", 8000},
 	{"go.mod", "Go", "the compiled binary", 8080},
+	// A Go workspace with no module at its root, built from the root when one
+	// of its modules is a program (MonorepoDetector stands down for it).
+	{"go.work", "Go", "the compiled binary", 8080},
 	{"Gemfile", "Ruby", "bundle exec rails server", 3000},
 	{"composer.json", "PHP", "php -S", 8000},
 	{"Cargo.toml", "Rust", "the compiled binary", 8080},
@@ -1232,40 +1235,20 @@ func (d MonorepoDetector) Bid(_ context.Context, src api.SourceView) (Candidate,
 		}
 	}
 
-	var markers []string
-	for _, name := range workspaceMarkers {
-		if info, err := src.Stat(name); err == nil && !info.IsDir {
-			markers = append(markers, name)
-		}
-	}
-	if hasWorkspacesField(src) {
-		markers = append(markers, "package.json workspaces")
-	}
-	if hasCargoWorkspace(src) {
-		markers = append(markers, "Cargo.toml [workspace]")
-	}
+	// What the manifests declare, not that they exist (workspace.go).
+	markers := declaredWorkspaceMarkers(src)
 	if len(markers) == 0 {
+		// No workspace, and perhaps no app at the root either: the projects
+		// one level down are what there is to deploy.
+		return nestedProjectsBid(src), nil
+	}
+	if workspaceResolved(src, markers) {
 		return Candidate{Confidence: 0}, nil
 	}
 
 	// Name what was found. R-105 requires the question stand on its own, and
 	// "which one do you want?" without a list is exactly the fragment it bans.
-	var found []string
-	for _, dir := range packageDirs {
-		entries, err := src.Glob(dir + "/*")
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if strings.HasPrefix(path.Base(entry), ".") {
-				continue
-			}
-			if info, err := src.Stat(entry); err == nil && info.IsDir {
-				found = append(found, entry)
-			}
-		}
-	}
-	sort.Strings(found)
+	found := workspaceMembers(src)
 
 	evidence := []string{"workspace declared by " + strings.Join(markers, ", ")}
 	if len(found) > 0 {
@@ -1358,21 +1341,6 @@ func isJekyllSource(src api.SourceView) bool {
 		}
 	}
 	return false
-}
-
-// hasWorkspacesField reports whether package.json declares workspaces.
-//
-// The field is either an array of globs or an object with a "packages" array,
-// so it is read as raw JSON and only tested for being present and non-empty.
-func hasWorkspacesField(src api.SourceView) bool {
-	var pkg struct {
-		Workspaces json.RawMessage `json:"workspaces"`
-	}
-	if !readJSON(src, "package.json", &pkg) {
-		return false
-	}
-	trimmed := strings.TrimSpace(string(pkg.Workspaces))
-	return trimmed != "" && trimmed != "null" && trimmed != "[]" && trimmed != "{}"
 }
 
 // hasCargoWorkspace reports whether Cargo.toml declares a [workspace] table.
