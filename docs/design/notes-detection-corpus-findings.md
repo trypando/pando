@@ -46,6 +46,17 @@ result, and it needed no new machinery in the auction: the ranking already
 handles it. It is a veto rather than a bid, so it stands down when a root
 Dockerfile or compose file answers the question it would otherwise ask.
 
+Issue #90 refined what counts as a declaration (`internal/detect/workspace.go`).
+A `pnpm-workspace.yaml` that lists no package beyond the root holds pnpm settings,
+not a workspace. The veto also stands down when the repository already says what
+to deploy: a JavaScript workspace whose root `package.json` has a `start` script, a
+`go.work` with one program, or a Cargo workspace with one binary. Each of these is
+built from the root. When the question is asked, it lists the members the
+manifests name. Answering it re-runs detection inside the chosen project
+(`Proposal.Subproject`). A repository with no app at its root and no workspace
+manifest offers the projects one level down. If there is only one, detection
+reads it without asking.
+
 ### 3. Where an `index.html` sits decides what a `package.json` beside it means
 
 `StaticDetector` dropped its bid from 0.7 to 0.35 whenever a `package.json`

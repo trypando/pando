@@ -1916,7 +1916,7 @@
       "post": {
         "operationId": "detectionAnswers",
         "summary": "Answer detection questions",
-        "description": "Answer detection's questions. Each answer is a fact detection could not find, not a preference. An answer that changes what is built — a build argument — has Pando build and scan the image again, so the plan shows the score of what will run; detection reads as `running` until it has.\n\nNeeds `app.spec.edit`.",
+        "description": "Answer detection's questions. Each answer is a fact detection could not find, not a preference. An answer that changes what is built — a build argument — has Pando build and scan the image again, so the plan shows the score of what will run; detection reads as `running` until it has. Answering `deployable_project` runs detection again in that project.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Detection"
         ],
