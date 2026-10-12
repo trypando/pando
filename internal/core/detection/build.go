@@ -46,7 +46,7 @@ const maxBuildLog = 64 << 10
 
 // Built is what detection built for an app, nil when it built nothing: what a
 // deploy of the same build inputs runs instead of building (deploy
-// DetectionBuilds).
+// DetectionBuildFinder).
 func (r *Runner) Built(ctx context.Context, appID string) (*detect.Built, error) {
 	d, err := r.Detections.Get(ctx, appID)
 	if err != nil {
@@ -147,7 +147,7 @@ func (r *Runner) buildTag() string {
 // scan starts when the image exists, beside the trial run.
 func (r *Runner) buildHook(appID, slug string, answers map[string]string, checkout *source.Checkout, scans *scanParts) detect.BuildFunc {
 	return func(ctx context.Context, partial *detect.Proposal) (detect.BuildOutcome, error) {
-		scans.startSource(checkout.Dir)
+		scans.startSource(ctx, checkout.Dir)
 		s, ok := r.buildSpec(ctx, appID, slug, partial, answers, checkout.Commit)
 		if !ok {
 			return detect.BuildOutcome{}, nil
@@ -161,7 +161,7 @@ func (r *Runner) buildHook(appID, slug string, answers map[string]string, checko
 		}
 		image := built.Scanned(&s)
 		auth := r.Builder.BuiltImageAuth(ctx, image)
-		scans.startImage(image, auth)
+		scans.startImage(ctx, image, auth)
 		return detect.BuildOutcome{Built: built, PullAuth: auth}, nil
 	}
 }
@@ -244,24 +244,34 @@ func (r *Runner) rebuild(ctx context.Context, app state.App, p detect.Proposal) 
 		if !ok || p.Built.Matches(&s, checkout.Identity()) {
 			break
 		}
-		scans := r.newScans(ctx, app.ID, checkout.Identity(), prog)
-		scans.startSource(checkout.Dir)
-		detect.Report(ctx, detect.StageBuilding, &p)
-		built, err := r.build(ctx, &s, checkout)
-		if err != nil {
-			scans.stop()
+		if err := r.buildThenScan(ctx, &s, checkout, r.newScans(app.ID, checkout.Identity(), prog), &p); err != nil {
 			r.fail(ctx, app.ID, err)
 			return
 		}
-		p.Built = built
-		image := built.Scanned(&s)
-		scans.startImage(image, r.Builder.BuiltImageAuth(ctx, image))
-		detect.Report(ctx, detect.StageScanning, &p)
-		scans.record(ctx)
 	}
 	if err := r.Detections.Save(ctx, app.ID, p.Status, p, p.Commit); err != nil {
 		_ = r.Detections.FailIfRunning(ctx, app.ID, err)
 	}
+}
+
+// buildThenScan builds s from checkout with the source scan beside it, then
+// scans the image it built, recording the two as one scan: the build of a plan
+// that changed after the auction, by screening or by an answer.
+func (r *Runner) buildThenScan(ctx context.Context, s *spec.AppSpec, checkout *source.Checkout, scans *scanParts, p *detect.Proposal) error {
+	scans.startSource(ctx, checkout.Dir)
+	detect.Report(ctx, detect.StageBuilding, p)
+	built, err := r.build(ctx, s, checkout)
+	if err != nil {
+		// The scan beside it is of a build that will not run.
+		scans.stop()
+		return err
+	}
+	p.Built = built
+	image := built.Scanned(s)
+	scans.startImage(ctx, image, r.Builder.BuiltImageAuth(ctx, image))
+	detect.Report(ctx, detect.StageScanning, p)
+	scans.record(ctx)
+	return nil
 }
 
 // fail records a detection that failed, as detect does.

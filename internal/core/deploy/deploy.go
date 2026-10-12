@@ -100,7 +100,7 @@ type Runner struct {
 
 	// detectionBuilds is what detection built for each app, which a deploy
 	// of the same build inputs runs instead of building again (R-311).
-	detectionBuilds DetectionBuilds
+	detectionBuilds DetectionBuildFinder
 
 	// buildConcurrency bounds how many of an app's images build at once.
 	buildConcurrency BuildConcurrency

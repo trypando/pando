@@ -43,6 +43,19 @@ func ExitCodeOf(err error) int {
 	return 1
 }
 
+// detectionError is why a detection failed, with the build's log when a build
+// failed while Pando read the app (R-107).
+type detectionError struct {
+	APIError
+	Details buildLogDetails `json:"details"`
+}
+
+// buildLogDetails is the part of a failed detection's details the CLI shows.
+type buildLogDetails struct {
+	// BuildLog is the end of the failed build's output.
+	BuildLog string `json:"build_log"`
+}
+
 // detectionStatus is GET /apps/{id}/detection as the CLI reads it.
 type detectionStatus struct {
 	Status  string `json:"status"`
@@ -62,15 +75,8 @@ type detectionStatus struct {
 			Detector string `json:"detector"`
 			Strategy string `json:"strategy"`
 		} `json:"winning_bid"`
-		Blocked *APIError `json:"blocked"`
-		Error   *struct {
-			APIError
-			Details struct {
-				// BuildLog is the end of a build that failed while Pando
-				// read the app (R-107).
-				BuildLog string `json:"build_log"`
-			} `json:"details"`
-		} `json:"error"`
+		Blocked *APIError       `json:"blocked"`
+		Error   *detectionError `json:"error"`
 	} `json:"detection"`
 	Answers map[string]string `json:"answers"`
 

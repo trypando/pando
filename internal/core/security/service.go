@@ -106,9 +106,7 @@ func (s *Service) Configured() (string, bool) {
 func (s *Service) Scan(ctx context.Context, req api.ScanRequest, principal audit.Event) (state.Scan, error) {
 	scanner, ref, ok := s.Registry.DefaultScanner()
 	if !ok {
-		return state.Scan{}, errs.New(errs.AdapterUnavailable,
-			"This installation has no security scanner configured, so there is nothing to scan with.").
-			WithRemedy("Configure a scanner adapter, or ask whoever administers this installation to.")
+		return state.Scan{}, noScanner()
 	}
 
 	done := s.begin(req.AppID)
@@ -116,6 +114,13 @@ func (s *Service) Scan(ctx context.Context, req api.ScanRequest, principal audit
 
 	result, err := scanner.Scan(ctx, req)
 	return s.record(ctx, ref, req, result, err, principal)
+}
+
+// noScanner is the refusal for an installation with no scanner to scan with.
+func noScanner() error {
+	return errs.New(errs.AdapterUnavailable,
+		"This installation has no security scanner configured, so there is nothing to scan with.").
+		WithRemedy("Configure a scanner adapter, or ask whoever administers this installation to.")
 }
 
 // ScanPart runs the scanner over one part of what an app runs — its source,
@@ -126,9 +131,7 @@ func (s *Service) Scan(ctx context.Context, req api.ScanRequest, principal audit
 func (s *Service) ScanPart(ctx context.Context, req api.ScanRequest) (api.ScanResult, error) {
 	scanner, _, ok := s.Registry.DefaultScanner()
 	if !ok {
-		return api.ScanResult{}, errs.New(errs.AdapterUnavailable,
-			"This installation has no security scanner configured, so there is nothing to scan with.").
-			WithRemedy("Configure a scanner adapter, or ask whoever administers this installation to.")
+		return api.ScanResult{}, noScanner()
 	}
 	done := s.begin(req.AppID)
 	defer done()
@@ -144,8 +147,7 @@ func (s *Service) ScanPart(ctx context.Context, req api.ScanRequest) (api.ScanRe
 func (s *Service) RecordParts(ctx context.Context, req api.ScanRequest, parts []api.ScanResult, failed error, principal audit.Event) (state.Scan, error) {
 	ref, ok := s.Configured()
 	if !ok {
-		return state.Scan{}, errs.New(errs.AdapterUnavailable,
-			"This installation has no security scanner configured, so there is nothing to scan with.")
+		return state.Scan{}, noScanner()
 	}
 	return s.record(ctx, ref, req, Union(parts...), failed, principal)
 }

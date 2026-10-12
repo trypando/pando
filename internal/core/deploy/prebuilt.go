@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/detect"
@@ -25,8 +26,8 @@ import (
 // changed what is built — a build argument, a Dockerfile, a target — or whose
 // source is another commit builds as before.
 
-// DetectionBuilds answers what detection built for an app.
-type DetectionBuilds interface {
+// DetectionBuildFinder finds what detection built for an app.
+type DetectionBuildFinder interface {
 	// Built is the app's detection build, nil when there is none.
 	Built(ctx context.Context, appID string) (*detect.Built, error)
 }
@@ -34,13 +35,27 @@ type DetectionBuilds interface {
 // WithDetectionBuilds lets a deploy run the image detection built when its
 // spec builds the same thing from the same source. Without it every deploy
 // builds.
-func (r *Runner) WithDetectionBuilds(b DetectionBuilds) *Runner {
+func (r *Runner) WithDetectionBuilds(b DetectionBuildFinder) *Runner {
 	r.detectionBuilds = b
 	return r
 }
 
 // BuildConcurrency bounds how many of an app's images are built at once.
 type BuildConcurrency func(ctx context.Context) (int, error)
+
+// PolicyReader is host policy, narrowed to the one call DeployConcurrency needs.
+type PolicyReader interface {
+	Document(ctx context.Context) (policy.Document, error)
+}
+
+// DeployConcurrency is host policy's max_concurrent_deploys, as a build
+// limit: one app's builds take no more of the machine than that many deploys.
+func DeployConcurrency(p PolicyReader) BuildConcurrency {
+	return func(ctx context.Context) (int, error) {
+		doc, err := p.Document(ctx)
+		return doc.MaxConcurrentDeploys, err
+	}
+}
 
 // WithBuildConcurrency sets how many of a compose app's services build at
 // once: the install's deploy concurrency, so one app's builds take no more of

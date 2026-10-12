@@ -363,28 +363,32 @@ function buildStep(proposal: Partial<Proposal>, under: Set<string>): DiscoverySt
   };
 }
 
+/** What a trial run that ran observed, as findings and a one-line result. */
+function trialOutcome(trial: NonNullable<Proposal['trial']>): { findings: Finding[]; result: string } {
+  const findings: Finding[] = [];
+  const ports = trial.observed_ports ?? [];
+  let result: string;
+  if (trial.crashed) {
+    findings.push({ key: 'Result', value: 'The app exited with an error', text: true });
+    result = 'Exited with an error';
+  } else if (trial.started) {
+    findings.push({ key: 'Result', value: 'The app started', text: true });
+    result = ports.length ? `Started on :${ports.join(', :')}` : 'Started';
+  } else {
+    findings.push({ key: 'Result', value: 'The app did not start', text: true });
+    result = 'Didn’t start';
+  }
+  if (ports.length) findings.push({ key: 'Opened', value: ports.map((p) => `:${p}`).join(' ') });
+  for (const path of trial.observed_writes ?? []) findings.push({ key: 'Wrote to', value: path });
+  return { findings, result };
+}
+
 function trialStep(proposal: Partial<Proposal>, under: Set<string>): DiscoveryStep | undefined {
   const trial = proposal.trial;
   const current = under.has('trying');
   if (!current && !trial?.ran) return undefined;
   const done = !current;
-  const findings: Finding[] = [];
-  let result: string | undefined;
-  if (done && trial?.ran) {
-    const ports = trial.observed_ports ?? [];
-    if (trial.crashed) {
-      findings.push({ key: 'Result', value: 'The app exited with an error', text: true });
-      result = 'Exited with an error';
-    } else if (!trial.started) {
-      findings.push({ key: 'Result', value: 'The app did not start', text: true });
-      result = 'Didn’t start';
-    } else {
-      findings.push({ key: 'Result', value: 'The app started', text: true });
-      result = ports.length ? `Started on :${ports.join(', :')}` : 'Started';
-    }
-    if (ports.length) findings.push({ key: 'Opened', value: ports.map((p) => `:${p}`).join(' ') });
-    for (const path of trial.observed_writes ?? []) findings.push({ key: 'Wrote to', value: path });
-  }
+  const { findings, result } = done && trial?.ran ? trialOutcome(trial) : { findings: [], result: undefined };
   return {
     id: 'trial',
     name: 'Try running it',
@@ -394,6 +398,19 @@ function trialStep(proposal: Partial<Proposal>, under: Set<string>): DiscoverySt
     failed: done && Boolean(trial?.crashed),
     findings,
   };
+}
+
+/**
+ * The score line of the scan step. A scan of the source alone, for an app
+ * Pando builds whose build had to wait: its number is the source's, not the
+ * app's, so the plan shows the findings and no score until the image is
+ * scanned (R-311).
+ */
+function scoreFinding(security: Report): Finding | undefined {
+  if (security.awaiting_image) return { key: 'Score', value: AWAITING_IMAGE, text: true };
+  const score = security.scan?.score;
+  if (score === undefined || score === null) return undefined;
+  return { key: 'Score', value: `${score} / 100` };
 }
 
 /**
@@ -421,11 +438,8 @@ function scanStep(security: Report | undefined, at: number, under: Set<string>):
   }
   const counts = security.counts;
   const total = counts.critical + counts.high + counts.medium + counts.low + counts.unknown;
-  // A scan of the source alone, for an app Pando builds: its number is the
-  // source's, not the app's, so the plan shows the findings and no score until
-  // the image is scanned (R-311).
-  if (security.awaiting_image) step.findings.push({ key: 'Score', value: AWAITING_IMAGE, text: true });
-  else if (scan.score !== undefined && scan.score !== null) step.findings.push({ key: 'Score', value: `${scan.score} / 100` });
+  const score = scoreFinding(security);
+  if (score) step.findings.push(score);
   const severities: Array<[string, number]> = [
     ['Critical', counts.critical],
     ['High', counts.high],

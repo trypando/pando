@@ -139,7 +139,7 @@ func (h *scanHarness) detector() *detection.Runner {
 		Sources:    source.Sources{WorkDir: h.t.TempDir()},
 		Install:    fixedInstall{},
 		Job:        &detect.Job{Auction: detect.NewAuction(detect.StaticDetector{}, detect.DockerfileDetector{})},
-		Scanner:    detectionScans{service: h.service},
+		Scanner:    security.DetectionScanner{Service: h.service},
 		Builder:    h.runner,
 		Background: func(fn func()) { fn() },
 	}

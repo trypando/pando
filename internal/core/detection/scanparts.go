@@ -25,11 +25,10 @@ type scanParts struct {
 	source  string
 	prog    *progress
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	wg sync.WaitGroup
 
 	mu        sync.Mutex
+	cancels   []context.CancelFunc
 	dir       string
 	image     string
 	auth      *api.RegistryAuth
@@ -46,20 +45,19 @@ const (
 	partSource = "source"
 )
 
-func (r *Runner) newScans(ctx context.Context, appID, source string, prog *progress) *scanParts {
+func (r *Runner) newScans(appID, source string, prog *progress) *scanParts {
 	if r.Scanner == nil || !r.Scanner.Scans() {
 		return nil
 	}
-	ctx, cancel := context.WithCancel(ctx)
 	return &scanParts{
 		scanner: r.Scanner, appID: appID, source: source, prog: prog,
-		ctx: ctx, cancel: cancel, results: map[string]api.ScanResult{},
+		results: map[string]api.ScanResult{},
 	}
 }
 
 // startSource scans the checkout at dir, once. Nothing for an app with no
 // checkout.
-func (s *scanParts) startSource(dir string) {
+func (s *scanParts) startSource(ctx context.Context, dir string) {
 	if s == nil || dir == "" {
 		return
 	}
@@ -70,12 +68,12 @@ func (s *scanParts) startSource(dir string) {
 	}
 	s.sourceRan, s.dir = true, dir
 	s.mu.Unlock()
-	s.run(partSource, api.ScanRequest{AppID: s.appID, SourceDir: dir, Commit: s.source})
+	s.run(ctx, partSource, api.ScanRequest{AppID: s.appID, SourceDir: dir, Commit: s.source})
 }
 
 // startImage scans the image detection built, replacing any earlier image's
 // part: a build after screening, or after an answer, is a new image.
-func (s *scanParts) startImage(image string, auth *api.RegistryAuth) {
+func (s *scanParts) startImage(ctx context.Context, image string, auth *api.RegistryAuth) {
 	if s == nil || image == "" {
 		return
 	}
@@ -83,11 +81,14 @@ func (s *scanParts) startImage(image string, auth *api.RegistryAuth) {
 	s.image, s.auth = image, auth
 	delete(s.results, partImage)
 	s.mu.Unlock()
-	s.run(partImage, api.ScanRequest{AppID: s.appID, Image: image, PullAuth: auth, Commit: s.source})
+	s.run(ctx, partImage, api.ScanRequest{AppID: s.appID, Image: image, PullAuth: auth, Commit: s.source})
 }
 
-func (s *scanParts) run(part string, req api.ScanRequest) {
+// run scans one part in the background, until it finishes or stop cancels it.
+func (s *scanParts) run(ctx context.Context, part string, req api.ScanRequest) {
+	ctx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
+	s.cancels = append(s.cancels, cancel)
 	s.started = true
 	s.inFlight++
 	if s.inFlight == 1 {
@@ -98,7 +99,8 @@ func (s *scanParts) run(part string, req api.ScanRequest) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		result, err := s.scanner.ScanPart(s.ctx, req)
+		defer cancel()
+		result, err := s.scanner.ScanPart(ctx, req)
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if err != nil && s.failed == nil {
@@ -127,7 +129,11 @@ func (s *scanParts) stop() {
 	if s == nil {
 		return
 	}
-	s.cancel()
+	s.mu.Lock()
+	for _, cancel := range s.cancels {
+		cancel()
+	}
+	s.mu.Unlock()
 	s.wg.Wait()
 }
 
@@ -207,7 +213,7 @@ func (p *progress) during(step string, on bool) {
 }
 
 func (p *progress) flush() {
-	body := make(map[string]any, len(p.partial)+2)
+	body := map[string]any{}
 	for k, v := range p.partial {
 		body[k] = v
 	}

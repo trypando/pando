@@ -253,7 +253,7 @@ func (r *Runner) run(ctx context.Context, prog *progress, app state.App, answers
 
 	// After the auction: the source scan and the build at once, then the
 	// image scan and the trial run at once (build.go).
-	scans := r.newScans(ctx, appID, checkout.Identity(), prog)
+	scans := r.newScans(appID, checkout.Identity(), prog)
 	defer scans.stop()
 	proposal, err := r.Job.Run(detect.WithBuild(ctx, r.buildHook(appID, slug, answers, checkout, scans)),
 		appID, src, checkout.View(src.Subdir))
@@ -331,17 +331,9 @@ func (r *Runner) run(ctx context.Context, prog *progress, app state.App, answers
 		// plan as it now stands, and scanned with the source already read.
 		if s, ok := r.buildSpec(ctx, appID, slug, &proposal, answers, checkout.Commit); ok &&
 			!proposal.Built.Matches(&s, checkout.Identity()) {
-			detect.Report(ctx, detect.StageBuilding, &proposal)
-			built, err := r.build(ctx, &s, checkout)
-			if err != nil {
+			if err := r.buildThenScan(ctx, &s, checkout, scans, &proposal); err != nil {
 				return detect.Proposal{}, err
 			}
-			proposal.Built = built
-			image := built.Scanned(&s)
-			scans.startSource(checkout.Dir)
-			scans.startImage(image, r.Builder.BuiltImageAuth(ctx, image))
-			detect.Report(ctx, detect.StageScanning, &proposal)
-			scans.record(ctx)
 		}
 	}
 	return proposal, nil

@@ -195,13 +195,13 @@ func (d *Detections) FailIfRunning(ctx context.Context, appID string, cause erro
 	}
 	body, err := json.Marshal(map[string]any{"error": recorded})
 	if err != nil {
-		return errs.Wrap(errs.Internal, "Could not record the detection.", err)
+		return errs.Wrap(errs.Internal, couldNotRecord, err)
 	}
 	_, err = d.db.Exec(ctx, `
 		UPDATE detections SET status = $2, body = $3, updated_at = now()
 		WHERE app_id = $1 AND status = $4`, appID, DetectionFailed, body, DetectionRunning)
 	if err != nil {
-		return errs.Wrap(errs.Internal, "Could not record the detection.", err)
+		return errs.Wrap(errs.Internal, couldNotRecord, err)
 	}
 	return nil
 }
@@ -227,6 +227,9 @@ func (d *Detections) Save(ctx context.Context, appID, status string, body any, c
 	return nil
 }
 
+// couldNotRecord is the message for a detection that could not be written.
+const couldNotRecord = "Could not record the detection."
+
 // Rebuild marks a finished detection running again on this replica, with body
 // as its progress, so the proposal's image can be built and scanned after an
 // answer changed what is built (R-311). False when the detection is not
@@ -240,7 +243,7 @@ func (d *Detections) Save(ctx context.Context, appID, status string, body any, c
 func (d *Detections) Rebuild(ctx context.Context, appID string, body any) (bool, error) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
-		return false, errs.Wrap(errs.Internal, "Could not record the detection.", err)
+		return false, errs.Wrap(errs.Internal, couldNotRecord, err)
 	}
 	tag, err := d.db.Exec(ctx, `
 		UPDATE detections
@@ -249,7 +252,7 @@ func (d *Detections) Rebuild(ctx context.Context, appID string, body any) (bool,
 		WHERE app_id = $1 AND status IN ($5, $6)`,
 		appID, DetectionRunning, withoutNUL(encoded), d.db.replica, DetectionReady, DetectionNeedsAnswers)
 	if err != nil {
-		return false, errs.Wrap(errs.Internal, "Could not record the detection.", err)
+		return false, errs.Wrap(errs.Internal, couldNotRecord, err)
 	}
 	return tag.RowsAffected() == 1, nil
 }

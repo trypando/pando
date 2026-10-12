@@ -11,8 +11,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/stretchr/testify/require"
 
-	"github.com/trypando/pando/internal/adapter/api"
-	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/security"
@@ -27,24 +25,6 @@ type publishedProbe struct{ ref string }
 
 func (p publishedProbe) Published(context.Context, spec.Source) ([]detect.PublishedImage, error) {
 	return []detect.PublishedImage{{Ref: p.ref, Registry: "test"}}, nil
-}
-
-// detectionScans is main's detection shim: the security service, as the
-// system, with no revision.
-type detectionScans struct{ service *security.Service }
-
-func (d detectionScans) Scans() bool { return true }
-
-func (d detectionScans) ScanSource(ctx context.Context, req api.ScanRequest) {
-	_, _ = d.service.Scan(ctx, req, audit.Event{PrincipalKind: audit.KindSystem, PrincipalID: "detection"})
-}
-
-func (d detectionScans) ScanPart(ctx context.Context, req api.ScanRequest) (api.ScanResult, error) {
-	return d.service.ScanPart(ctx, req)
-}
-
-func (d detectionScans) RecordParts(ctx context.Context, req api.ScanRequest, parts []api.ScanResult, failed error) {
-	_, _ = d.service.RecordParts(ctx, req, parts, failed, audit.Event{PrincipalKind: audit.KindSystem, PrincipalID: "detection"})
 }
 
 // runDetection runs real detection for the harness's app: the checkout, the
@@ -64,7 +44,7 @@ func (h *scanHarness) runDetection(probe detect.RegistryProbe, images *oci.Image
 		Detections: state.NewDetections(h.db),
 		Sources:    source.Sources{WorkDir: h.t.TempDir()},
 		Job:        job,
-		Scanner:    detectionScans{service: h.service},
+		Scanner:    security.DetectionScanner{Service: h.service},
 	}
 	_, err := runner.Detect(context.Background(), h.app.ID)
 	require.NoError(h.t, err)

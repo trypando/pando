@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/detect"
@@ -131,6 +132,22 @@ func TestABuildLimitComesFromTheInstall(t *testing.T) {
 	require.Equal(t, DefaultConcurrency(), (&Runner{}).WithBuildConcurrency(func(context.Context) (int, error) {
 		return 0, errors.New("policy unreadable")
 	}).buildLimit(ctx))
+}
+
+type policyDoc struct {
+	doc policy.Document
+	err error
+}
+
+func (p policyDoc) Document(context.Context) (policy.Document, error) { return p.doc, p.err }
+
+func TestABuildLimitIsTheInstallsDeployLimit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := (&Runner{}).WithBuildConcurrency(DeployConcurrency(policyDoc{doc: policy.Document{MaxConcurrentDeploys: 4}}))
+	require.Equal(t, 4, r.buildLimit(ctx))
+	r.WithBuildConcurrency(DeployConcurrency(policyDoc{err: errors.New("unreadable")}))
+	require.Equal(t, DefaultConcurrency(), r.buildLimit(ctx))
 }
 
 func TestADigestIsReadFromAnyImageName(t *testing.T) {

@@ -1,12 +1,15 @@
 package detection
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/detect"
 	"github.com/trypando/pando/internal/errs"
 )
@@ -38,6 +41,66 @@ func TestR311_ProgressReportsEveryStepUnderWay(t *testing.T) {
 
 	var none *progress
 	none.during(detect.StageScanning, true)
+}
+
+// partScanner scans the source until it is canceled, and fails the image.
+type partScanner struct {
+	recorded []api.ScanRequest
+	failed   error
+	started  chan struct{}
+}
+
+func (p *partScanner) Scans() bool                                 { return true }
+func (p *partScanner) ScanSource(context.Context, api.ScanRequest) {}
+func (p *partScanner) ScanPart(ctx context.Context, req api.ScanRequest) (api.ScanResult, error) {
+	if req.SourceDir != "" {
+		close(p.started)
+		<-ctx.Done()
+		return api.ScanResult{}, ctx.Err()
+	}
+	return api.ScanResult{}, errs.New(errs.AdapterFailed, "The scanner could not read the image.")
+}
+func (p *partScanner) RecordParts(_ context.Context, req api.ScanRequest, _ []api.ScanResult, failed error) {
+	p.recorded = append(p.recorded, req)
+	p.failed = failed
+}
+
+// TestR311_AScanBesideABuildThatFailedIsStopped asserts that a detection whose
+// build failed does not leave the scan beside it running: stop cancels it and
+// waits for it, and nothing is recorded for an app that will not be proposed.
+// A scan that failed is recorded as failed, with no score (R-318).
+func TestR311_AScanBesideABuildThatFailedIsStopped(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	scanner := &partScanner{started: make(chan struct{})}
+	r := &Runner{Scanner: scanner}
+
+	scans := r.newScans("app_1", "abc", nil)
+	scans.startSource(ctx, "/tmp/checkout")
+	scans.startSource(ctx, "/tmp/checkout") // once
+	<-scanner.started
+	stopped := make(chan struct{})
+	go func() { scans.stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("stop did not cancel the scan under way")
+	}
+
+	failing := r.newScans("app_1", "abc", nil)
+	failing.startImage(ctx, "sha256:1", nil)
+	require.True(t, failing.record(ctx))
+	require.Len(t, scanner.recorded, 1)
+	require.Equal(t, "sha256:1", scanner.recorded[0].Image)
+	require.Equal(t, errs.AdapterFailed, errs.CodeOf(scanner.failed))
+
+	var none *scanParts
+	none.startSource(ctx, "/tmp")
+	none.startImage(ctx, "sha256:1", nil)
+	none.stop()
+	require.False(t, none.began())
+	require.False(t, none.record(ctx))
+	require.Nil(t, (&Runner{}).newScans("app_1", "abc", nil))
 }
 
 func TestR107_ABuildLogKeepsItsEnd(t *testing.T) {
