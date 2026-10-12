@@ -168,6 +168,10 @@ type APIError struct {
 	Message string `json:"message"`
 	Remedy  string `json:"remedy,omitempty"`
 	ReqID   string `json:"request_id,omitempty"`
+
+	// Details is the envelope's structured part, for a command that turns a
+	// refusal into the flag that answers it.
+	Details map[string]any `json:"details,omitempty"`
 }
 
 func (e *APIError) Error() string {

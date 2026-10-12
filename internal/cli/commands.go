@@ -797,12 +797,7 @@ func (c *Client) prepareUploadedApp(cmd *cobra.Command, appID string, env []stri
 
 	if open := d.openQuestions(); len(open) > 0 {
 		fmt.Fprintln(cmd.ErrOrStderr())
-		fmt.Fprintln(cmd.ErrOrStderr(), "Pando needs to know a few things before it can deploy this:")
-		for _, q := range open {
-			fmt.Fprintf(cmd.ErrOrStderr(), "\n  %s\n", q)
-		}
-		fmt.Fprintln(cmd.ErrOrStderr(),
-			"\nAnswer them in the web console, or paste a question into whatever wrote this app.")
+		printQuestions(cmd.ErrOrStderr(), appID, open)
 		return fmt.Errorf("%d question(s) still to answer", len(open))
 	}
 
@@ -812,13 +807,9 @@ func (c *Client) prepareUploadedApp(cmd *cobra.Command, appID string, env []stri
 	// With the variables given on the command line written into the accepted
 	// setup, as the console's onboarding does — one step, not a setup and
 	// then an edit.
-	values := make([]map[string]any, 0, len(env))
-	for _, kv := range env {
-		key, value, ok := strings.Cut(kv, "=")
-		if !ok || key == "" {
-			return fmt.Errorf("--env takes KEY=VALUE, and %q has no =", kv)
-		}
-		values = append(values, map[string]any{"key": key, "value": value})
+	values, err := acceptValues("--env", env, false)
+	if err != nil {
+		return err
 	}
 	if err := c.Do("POST", "/apps/"+appID+"/detection/accept", map[string]any{"values": values}, nil); err != nil {
 		return err

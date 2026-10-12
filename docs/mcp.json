@@ -594,6 +594,22 @@
       }
     },
     {
+      "name": "pando_get_detection_diff",
+      "description": "What accepting the proposal would change about the app's pinned configuration: each change with its class (benign, restart, rebuild or destructive) and a summary. `is_first` is true when the app is not configured yet, so everything is new.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_get_last_upgrade",
       "description": "The most recent in-place upgrade of Pando: from and to which version, whether it succeeded or was rolled back and why, with the new version's last log lines when it was.",
       "input_schema": {
@@ -1235,6 +1251,27 @@
         },
         "required": [
           "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_revise_detection",
+      "description": "Tell the install's AI adapter what is wrong with the plan from pando_get_detection, in plain words, e.g. \"The app serves on port 8080.\" It checks the repository, changes what it can show, and replies; the reply, what it changed and what Pando refused are the last entry of `detection.conversation`. Needs an AI adapter.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "message": {
+            "description": "What is wrong with the plan.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "message"
         ],
         "type": "object"
       }

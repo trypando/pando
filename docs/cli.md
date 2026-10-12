@@ -341,6 +341,98 @@ questions to answer, and 1 when detection failed or was blocked.
 | `--timeout` | `10m0s` | with --wait, how long to wait before giving up |
 | `--wait` |  | wait for detection to finish, and exit non-zero unless it is ready |
 
+##### `app detection accept`
+
+Accept detection's proposal as the app's configuration
+
+```
+pando app detection accept <app>
+```
+
+Accepts what detection worked out and pins it as the app's configuration. This
+does not deploy: `pando deploy <app>` does that.
+
+--env and --secret set variables in the same step; a secret is stored by the
+install's secrets adapter. --optional names a dependency the app runs without.
+
+Accepting over an app that is already configured replaces how it is built and
+what it runs, and needs --confirm. Variables you set, how each dependency is
+filled, and storage you added are carried over. `pando app detection diff <app>`
+shows what would change.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--confirm` |  | replace the configuration of an app that is already configured |
+| `--env` | `[]` | set a variable, KEY=VALUE (repeatable) |
+| `--hostname` |  | the address to serve the app at, where its routing gives it a hostname of its own |
+| `--optional` | `[]` | a dependency the app runs without, by its key (repeatable) |
+| `--secret` | `[]` | set a secret variable, KEY=VALUE (repeatable) |
+
+##### `app detection answer`
+
+Answer one of detection's questions
+
+```
+pando app detection answer <app> <key> <answer>
+```
+
+Answers a question detection asked. The key is the one printed with the
+question by `pando app detection <app>`.
+
+An answer that changes what is built, such as a build argument, has Pando build
+and scan the image again, so the plan shows the score of what will run. This
+waits for that, printing each stage, then exits as `pando app detection --wait`
+does: 0 when the app is ready to accept, 2 when there are questions left, and 1
+when detection failed or was blocked.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--timeout` | `10m0s` | how long to wait for a rebuild before giving up |
+
+##### `app detection diff`
+
+Show what accepting the proposal would change
+
+```
+pando app detection diff <app>
+```
+
+Compares detection's proposal with the configuration the app is pinned to, and
+lists each change with what applying it takes: benign, restart, rebuild or
+destructive. A destructive change loses data, such as removing a volume.
+
+##### `app detection rerun`
+
+Run detection again, against the source as it is now
+
+```
+pando app detection rerun <app>
+```
+
+Works out again how to run an app, from its source as it is now: after the
+repository changed, after uploading new files, or after fixing what blocked it.
+Nothing about the app changes until the new proposal is accepted.
+
+With --wait, waits for it and exits as `pando app detection --wait` does.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--timeout` | `10m0s` | with --wait, how long to wait before giving up |
+| `--wait` |  | wait for detection to finish, and exit non-zero unless it is ready |
+
+##### `app detection revise`
+
+Tell the AI adapter what is wrong with the plan
+
+```
+pando app detection revise <app> <message>...
+```
+
+Tells the install's AI adapter what is wrong with the plan, in your own words,
+for example "The app serves on port 8080." It checks the repository, changes
+what it can show, and replies. Prints the reply, what it changed and what Pando
+refused, then where detection stands. Needs an AI adapter.
+
 #### `app favorite`
 
 Pin an app to the top of your launcher

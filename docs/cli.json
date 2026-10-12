@@ -1002,6 +1002,229 @@
           "required": false
         }
       ],
+      "subcommands": [
+        "pando app detection accept",
+        "pando app detection answer",
+        "pando app detection diff",
+        "pando app detection rerun",
+        "pando app detection revise"
+      ]
+    },
+    {
+      "path": "pando app detection accept",
+      "use": "accept <app>",
+      "short": "Accept detection's proposal as the app's configuration",
+      "long": "Accepts what detection worked out and pins it as the app's configuration. This\ndoes not deploy: `pando deploy <app>` does that.\n\n--env and --secret set variables in the same step; a secret is stored by the\ninstall's secrets adapter. --optional names a dependency the app runs without.\n\nAccepting over an app that is already configured replaces how it is built and\nwhat it runs, and needs --confirm. Variables you set, how each dependency is\nfilled, and storage you added are carried over. `pando app detection diff <app>`\nshows what would change.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "confirm",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "replace the configuration of an app that is already configured",
+          "required": false
+        },
+        {
+          "name": "env",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "set a variable, KEY=VALUE (repeatable)",
+          "required": false
+        },
+        {
+          "name": "hostname",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the address to serve the app at, where its routing gives it a hostname of its own",
+          "required": false
+        },
+        {
+          "name": "optional",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "a dependency the app runs without, by its key (repeatable)",
+          "required": false
+        },
+        {
+          "name": "secret",
+          "shorthand": "",
+          "type": "stringArray",
+          "default": "[]",
+          "usage": "set a secret variable, KEY=VALUE (repeatable)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app detection answer",
+      "use": "answer <app> <key> <answer>",
+      "short": "Answer one of detection's questions",
+      "long": "Answers a question detection asked. The key is the one printed with the\nquestion by `pando app detection <app>`.\n\nAn answer that changes what is built, such as a build argument, has Pando build\nand scan the image again, so the plan shows the score of what will run. This\nwaits for that, printing each stage, then exits as `pando app detection --wait`\ndoes: 0 when the app is ready to accept, 2 when there are questions left, and 1\nwhen detection failed or was blocked.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "type": "duration",
+          "default": "10m0s",
+          "usage": "how long to wait for a rebuild before giving up",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app detection diff",
+      "use": "diff <app>",
+      "short": "Show what accepting the proposal would change",
+      "long": "Compares detection's proposal with the configuration the app is pinned to, and\nlists each change with what applying it takes: benign, restart, rebuild or\ndestructive. A destructive change loses data, such as removing a volume.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app detection rerun",
+      "use": "rerun <app>",
+      "short": "Run detection again, against the source as it is now",
+      "long": "Works out again how to run an app, from its source as it is now: after the\nrepository changed, after uploading new files, or after fixing what blocked it.\nNothing about the app changes until the new proposal is accepted.\n\nWith --wait, waits for it and exits as `pando app detection --wait` does.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "timeout",
+          "shorthand": "",
+          "type": "duration",
+          "default": "10m0s",
+          "usage": "with --wait, how long to wait before giving up",
+          "required": false
+        },
+        {
+          "name": "wait",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "wait for detection to finish, and exit non-zero unless it is ready",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app detection revise",
+      "use": "revise <app> <message>...",
+      "short": "Tell the AI adapter what is wrong with the plan",
+      "long": "Tells the install's AI adapter what is wrong with the plan, in your own words,\nfor example \"The app serves on port 8080.\" It checks the repository, changes\nwhat it can show, and replies. Prints the reply, what it changed and what Pando\nrefused, then where detection stands. Needs an AI adapter.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
       "subcommands": []
     },
     {

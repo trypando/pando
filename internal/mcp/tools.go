@@ -650,6 +650,38 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_revise_detection",
+		Description: "Tell the install's AI adapter what is wrong with the plan from pando_get_detection, " +
+			"in plain words, e.g. \"The app serves on port 8080.\" It checks the repository, changes what " +
+			"it can show, and replies; the reply, what it changed and what Pando refused are the last " +
+			"entry of `detection.conversation`. Needs an AI adapter.",
+		Schema: schema(map[string]any{
+			"app_id":  str("The app's ID."),
+			"message": str("What is wrong with the plan."),
+		}, "app_id", "message"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, message, err := twoArgs(args, "app_id", "message")
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "POST", appPath(id, "/detection/revise"), map[string]any{"message": message}, nil
+		},
+	},
+	{
+		Name: "pando_get_detection_diff",
+		Description: "What accepting the proposal would change about the app's pinned configuration: " +
+			"each change with its class (benign, restart, rebuild or destructive) and a summary. " +
+			"`is_first` is true when the app is not configured yet, so everything is new.",
+		Schema: schema(map[string]any{"app_id": str("The app's ID.")}, "app_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", appPath(id, "/detection/diff"), nil, nil
+		},
+	},
+	{
 		Name: "pando_set_registry_credential",
 		Description: "Set the credential an image app's private image is pulled with, replacing " +
 			"any it had. It belongs to the app and is never given to it. Pando never shows it " +

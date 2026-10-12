@@ -77,6 +77,15 @@ type detectionStatus struct {
 		} `json:"winning_bid"`
 		Blocked *APIError       `json:"blocked"`
 		Error   *detectionError `json:"error"`
+
+		// Conversation is what a person asked the AI adapter to change and
+		// what it replied and did, oldest first.
+		Conversation []struct {
+			From    string   `json:"from"`
+			Text    string   `json:"text"`
+			Changes []string `json:"changes"`
+			Refused []string `json:"refused"`
+		} `json:"conversation"`
 	} `json:"detection"`
 	Answers map[string]string `json:"answers"`
 
@@ -93,20 +102,27 @@ func (d detectionStatus) running() bool {
 	return d.Status == "running" || d.Status == "pending" || d.Status == ""
 }
 
-// openQuestions returns the prompts of the questions a person still has to
-// answer, verbatim (R-105).
-func (d detectionStatus) openQuestions() []string {
+// question is one detection question: its key, which an answer is sent
+// under, and its prompt.
+type question struct {
+	Key    string
+	Prompt string
+}
+
+// openQuestions returns the questions a person still has to answer, their
+// prompts verbatim (R-105).
+func (d detectionStatus) openQuestions() []question {
 	open := map[string]bool{}
 	if d.Unanswered != nil {
 		for _, key := range *d.Unanswered {
 			open[key] = true
 		}
 	}
-	var out []string
+	var out []question
 	for _, q := range d.Detection.Questions {
 		if d.Unanswered != nil {
 			if open[q.Key] {
-				out = append(out, q.Prompt)
+				out = append(out, question{q.Key, q.Prompt})
 			}
 			continue
 		}
@@ -114,10 +130,23 @@ func (d detectionStatus) openQuestions() []string {
 			continue
 		}
 		if _, answered := d.Answers[q.Key]; !answered {
-			out = append(out, q.Prompt)
+			out = append(out, question{q.Key, q.Prompt})
 		}
 	}
 	return out
+}
+
+// printQuestions writes the open questions, each with the command that
+// answers it.
+//
+// Verbatim (R-105): written to be pasted into whatever wrote the app, and a
+// paraphrase would undo that.
+func printQuestions(w io.Writer, appID string, open []question) {
+	fmt.Fprintln(w, "Pando needs to know a few things before it can deploy this:")
+	for _, q := range open {
+		fmt.Fprintf(w, "\n  %s\n  Answer: pando app detection answer %s %s <answer>\n", q.Prompt, appID, q.Key)
+	}
+	fmt.Fprintln(w, "\nNext: answer them with the commands above, or paste a question into whatever wrote this app.")
 }
 
 // stagePhrase says what a detection stage is doing, in words.
@@ -221,29 +250,23 @@ func printDetection(w io.Writer, appID string, d detectionStatus) {
 	case d.Status == "ready":
 		fmt.Fprintf(w, "Ready: recognized it as %s, built with %s.\n",
 			d.Detection.Winner.Detector, d.Detection.Winner.Strategy)
-		fmt.Fprintln(w, "Next: review and accept it in the web console, then deploy it.")
+		printAcceptNext(w, appID)
 
 	case d.Status == "needs_answers" || d.Status == "unknown":
 		open := d.openQuestions()
 		if len(open) == 0 {
 			fmt.Fprintln(w, "Every question is answered.")
-			fmt.Fprintln(w, "Next: review and accept it in the web console, then deploy it.")
+			printAcceptNext(w, appID)
 			return
 		}
-		fmt.Fprintln(w, "Pando needs to know a few things before it can deploy this:")
-		for _, q := range open {
-			// Verbatim (R-105): written to be pasted into whatever wrote the
-			// app, and a paraphrase would undo that.
-			fmt.Fprintf(w, "\n  %s\n", q)
-		}
-		fmt.Fprintln(w, "\nNext: answer them in the web console, or paste a question into whatever wrote this app.")
+		printQuestions(w, appID, open)
 
 	case d.Status == "blocked":
 		fmt.Fprintln(w, "Blocked: Pando cannot run this app as it stands.")
 		if d.Detection.Blocked != nil {
 			fmt.Fprintf(w, "\n  %s\n", d.Detection.Blocked.Error())
 		}
-		fmt.Fprintln(w, "\nNext: fix what is described above, then re-run detection from the app's page in the web console.")
+		fmt.Fprintf(w, "\nNext: fix what is described above, then `pando app detection rerun %s --wait`.\n", appID)
 
 	case d.Status == "failed":
 		fmt.Fprintln(w, "Failed: Pando could not work out how to run this app.")
@@ -253,11 +276,17 @@ func printDetection(w io.Writer, appID string, d detectionStatus) {
 				fmt.Fprintf(w, "\nThe end of the build log:\n\n%s\n", strings.TrimRight(e.Details.BuildLog, "\n"))
 			}
 		}
-		fmt.Fprintln(w, "\nNext: re-run detection in the web console once the cause is fixed.")
+		fmt.Fprintf(w, "\nNext: once the cause is fixed, `pando app detection rerun %s --wait`.\n", appID)
 
 	default:
 		fmt.Fprintf(w, "Detection finished: %s.\n", d.Status)
 	}
+}
+
+// printAcceptNext says how to review and accept a finished proposal.
+func printAcceptNext(w io.Writer, appID string) {
+	fmt.Fprintf(w, "Next: `pando app detection diff %s` shows what accepting changes, and "+
+		"`pando app detection accept %s` accepts it. Then deploy it.\n", appID, appID)
 }
 
 // detectionOutcome is the error, if any, a finished detection ends a waiting
@@ -321,5 +350,13 @@ func appDetectionCmd(client func() (*Client, error)) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for detection to finish, and exit non-zero unless it is ready")
 	cmd.Flags().DurationVar(&timeout, "timeout", detectionTimeout, "with --wait, how long to wait before giving up")
+
+	cmd.AddCommand(
+		detectionAnswerCmd(client),
+		detectionReviseCmd(client),
+		detectionDiffCmd(client),
+		detectionRerunCmd(client),
+		detectionAcceptCmd(client),
+	)
 	return cmd
 }
