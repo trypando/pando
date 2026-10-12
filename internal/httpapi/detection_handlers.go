@@ -421,6 +421,16 @@ func (s *Server) handleAcceptDetection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A detection that failed has no plan to accept. Its body is the failure,
+	// which decodes as an empty proposal — and accepting that pinned a spec of
+	// schema version 0 with no workloads, refused as "This spec has 3
+	// problems" while the build error that explains it went unsaid (issue
+	// #90). The failure is the answer (R-107), in its own words (R-105).
+	if err := failedDetection(d); err != nil {
+		Error(w, r, err)
+		return
+	}
+
 	proposal, err := decodeProposal(d)
 	if err != nil {
 		Error(w, r, err)
@@ -616,6 +626,32 @@ func (s *Server) detectionResponse(d state.Detection) map[string]any {
 		out["unanswered"] = keys
 	}
 	return out
+}
+
+// failedDetection is why a failed detection failed, as the error it recorded;
+// nil for any other status.
+func failedDetection(d state.Detection) error {
+	if d.Status != state.DetectionFailed {
+		return nil
+	}
+	var body struct {
+		Error *errs.Error `json:"error"`
+	}
+	_ = json.Unmarshal(d.Body, &body)
+	reason := "Pando did not record why."
+	if body.Error != nil && body.Error.Code != "" && body.Error.Message != "" {
+		out := *body.Error
+		if out.Remedy == "" {
+			out.Remedy = "Fix what the message describes, then run detection again and accept the plan it produces."
+		}
+		return &out
+	}
+	if body.Error != nil && body.Error.Message != "" {
+		reason = body.Error.Message
+	}
+	return errs.Newf(errs.StateInvalid,
+		"Detection failed for this app, so there is no plan to accept. The reason it gave: %s", reason).
+		WithRemedy("Run detection again. If it fails the same way, fix what the reason describes in the repository first.")
 }
 
 func decodeProposal(d state.Detection) (detect.Proposal, error) {
