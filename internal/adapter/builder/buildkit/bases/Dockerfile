@@ -6,10 +6,12 @@
 # with two critical and forty-one high findings that every static site
 # inherited.
 #
-# Each is pinned to a line, not a digest. The registry rebuilds a line's tag
-# when its OS packages are patched, and a build resolves the tag when it runs,
-# so a site built by an older Pando still gets those fixes while the line is
-# maintained. Moving to the next line is the pull request Dependabot opens.
+# Each is pinned to a line and a digest. The tag says which line; the digest
+# is what a build pulls, so a tag repushed upstream, by a rebuild or by anyone
+# who can push to it, cannot change what every app is built on. A digest nobody
+# updates is a known vulnerability that stays, so Dependabot moves the digest
+# when the registry rebuilds the line, and the tag when there is a next line.
+# TestBaseImagesStayOnMaintainedLines refuses a base without a digest.
 #
 # The builder reads only the FROM lines. Each stage ends with USER nobody so
 # that this file, which no one builds, does not describe an image that runs as
@@ -25,7 +27,7 @@
 # replaced every few weeks and is no longer rebuilt once it is.
 # TestBaseImagesStayOnMaintainedLines refuses an odd minor, so a
 # Dependabot pull request proposing one cannot merge.
-FROM nginx:1.30-alpine AS static-server
+FROM nginx:1.30-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94 AS static-server
 USER 65534
 
 # program-runtime runs a Go program Pando compiled, or a program committed in
@@ -33,5 +35,5 @@ USER 65534
 # links against glibc. Debian's current stable release, because the golang
 # images build on it, and a binary linked against a newer glibc than the one it
 # runs on does not start.
-FROM debian:trixie-slim AS program-runtime
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS program-runtime
 USER 65534

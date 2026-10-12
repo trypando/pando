@@ -20,14 +20,22 @@ func TestBasesAreReadFromTheirDockerfile(t *testing.T) {
 	require.PanicsWithValue(t, "buildkit: bases/Dockerfile has no stage missing", func() { base("missing") })
 }
 
-var nginxLine = regexp.MustCompile(`^nginx:1\.(\d+)-alpine$`)
+var (
+	nginxLine = regexp.MustCompile(`^nginx:1\.(\d+)-alpine@sha256:[0-9a-f]{64}$`)
+	digest    = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
+)
 
 // TestBaseImagesStayOnMaintainedLines refuses a base that is not rebuilt for
-// security fixes. A Dependabot pull request proposing nginx's mainline (an odd
-// minor) fails here rather than merging; moving to the next stable line passes.
+// security fixes, or that is not pinned by digest. A Dependabot pull request
+// proposing nginx's mainline (an odd minor) fails here rather than merging;
+// moving to the next stable line passes.
 func TestBaseImagesStayOnMaintainedLines(t *testing.T) {
+	for _, image := range bases {
+		require.Regexp(t, digest, image, "pin %s by digest: tag@sha256:<index digest>", image)
+	}
+
 	m := nginxLine.FindStringSubmatch(staticServerImage)
-	require.NotNil(t, m, "the static server is nginx on alpine, pinned to a minor: %s", staticServerImage)
+	require.NotNil(t, m, "the static server is nginx on alpine, pinned to a minor and a digest: %s", staticServerImage)
 	minor, err := strconv.Atoi(m[1])
 	require.NoError(t, err)
 	require.Zero(t, minor%2, "nginx 1.%d is a mainline release; pin a stable (even) minor", minor)
