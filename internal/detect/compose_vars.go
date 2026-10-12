@@ -288,10 +288,10 @@ func (v *composeVars) substitute(body string) string {
 func matchingBrace(text string, open int) int {
 	depth := 0
 	for i := open; i < len(text); i++ {
-		switch {
-		case text[i] == '{':
+		switch text[i] {
+		case '{':
 			depth++
-		case text[i] == '}':
+		case '}':
 			depth--
 			if depth == 0 {
 				return i

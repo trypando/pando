@@ -16150,6 +16150,12 @@
           },
           "resolution": {
             "$ref": "#/components/schemas/Resolution"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -16871,6 +16877,12 @@
           },
           "healthcheck": {
             "$ref": "#/components/schemas/Healthcheck"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "exposed": {
             "type": "boolean"

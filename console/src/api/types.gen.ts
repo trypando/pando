@@ -536,6 +536,7 @@ export interface Workload {
   files?: (File[] | null);
   depends_on?: (string[] | null);
   healthcheck?: Healthcheck;
+  aliases?: (string[] | null);
   exposed: boolean;
   primary: boolean;
   resources?: ResourceLimits;
@@ -555,6 +556,7 @@ export interface Slot {
   required: boolean;
   evidence?: (string[] | null);
   resolution?: Resolution;
+  aliases?: (string[] | null);
 }
 
 export interface RuntimeRef {
