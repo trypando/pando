@@ -1268,29 +1268,79 @@ func (a *Adapter) DestroyVolume(ctx context.Context, h api.VolumeHandle) error {
 // pando/<app>:latest, and a workload recreated afterwards ran the refused image
 // (R-146).
 func (a *Adapter) ImportImage(ctx context.Context, r io.Reader) (string, error) {
+	// The daemon's own words are kept in every message below. "Could not load
+	// the built image." alone named no cause - a full disk, a layer the daemon
+	// refused, a daemon restarting - and the person reading it had nothing to
+	// act on (issue #90, R-105).
 	resp, err := a.cli.ImageLoad(ctx, r, client.ImageLoadWithQuiet(true))
 	if err != nil {
-		return "", errs.Wrap(errs.AdapterFailed, "Could not load the built image.", err)
+		return "", errs.Wrap(errs.AdapterFailed, "Could not load the built image: "+daemonReason(err.Error()), err).
+			WithRemedy("Check that the Docker daemon is running and has free disk space, then deploy again.")
 	}
 	defer func() { _ = resp.Close() }()
 
 	body, err := io.ReadAll(resp)
 	if err != nil {
-		return "", errs.Wrap(errs.AdapterFailed, "Could not load the built image.", err)
+		return "", errs.Wrap(errs.AdapterFailed, "Could not load the built image: "+daemonReason(err.Error()), err).
+			WithRemedy("Check that the Docker daemon is running and has free disk space, then deploy again.")
 	}
 
 	ref := parseLoadedRef(string(body))
 	if ref == "" {
-		return "", errs.New(errs.AdapterFailed, "The built image could not be loaded.").
-			WithRemedy("Check the build logs — the image may not have been produced correctly.")
+		msg := "The built image could not be loaded."
+		if reason := parseLoadError(string(body)); reason != "" {
+			msg = "The built image could not be loaded: " + reason
+		}
+		return "", errs.New(errs.AdapterFailed, msg).
+			WithRemedy("Check that the Docker daemon has free disk space and that the build log ends without an error, then deploy again.")
 	}
 	inspect, err := a.cli.ImageInspect(ctx, ref)
 	if err != nil || inspect.ID == "" {
-		return "", errs.Wrap(errs.AdapterFailed, "The built image was loaded, and Pando could not read its ID.", err).
+		msg := "The built image was loaded, and Pando could not read its ID."
+		if err != nil {
+			msg = "The built image was loaded, and Pando could not read its ID: " + daemonReason(err.Error())
+		}
+		return "", errs.Wrap(errs.AdapterFailed, msg, err).
 			WithRemedy("Check that the Docker daemon is responding, then deploy again.")
 	}
 	a.pruneBuildTags(ctx, ref)
 	return inspect.ID, nil
+}
+
+// parseLoadError is the error the daemon reported in its load output, which
+// is a stream of JSON objects: one with an "error" field ends a load that
+// failed. Empty when there is none.
+func parseLoadError(body string) string {
+	dec := json.NewDecoder(strings.NewReader(body))
+	for {
+		var msg struct {
+			Error       string `json:"error"`
+			ErrorDetail struct {
+				Message string `json:"message"`
+			} `json:"errorDetail"`
+		}
+		if err := dec.Decode(&msg); err != nil {
+			break
+		}
+		if msg.ErrorDetail.Message != "" {
+			return daemonReason(msg.ErrorDetail.Message)
+		}
+		if msg.Error != "" {
+			return daemonReason(msg.Error)
+		}
+	}
+	return ""
+}
+
+// daemonReason is a daemon's error on one line, held to a sentence's length
+// for quoting in a message.
+func daemonReason(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	const limit = 500
+	if len(text) > limit {
+		text = strings.ToValidUTF8(text[:limit], "") + "..."
+	}
+	return text
 }
 
 // parseLoadedRef pulls the image reference out of Docker's load output, which

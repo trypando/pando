@@ -533,8 +533,61 @@ func solveFailed(err error) error {
 		r.Build = true
 		return r.Error(time.Now(), err)
 	}
-	return errs.Wrap(errs.BuildFailed, "The build failed.", err).
-		WithRemedy("Check the build logs above for the failing step.")
+	// The solver's own reason, in the message. A frontend that fails before
+	// any step runs — Railpack's, reading a plan it cannot build — reports
+	// nothing in the log, and its error was the only thing that said why: the
+	// build ended with "The build failed." and no failing step (issue #90,
+	// R-105).
+	reason := solverReason(err)
+	if reason == "" {
+		return errs.Wrap(errs.BuildFailed, "The build failed.", err).
+			WithRemedy("Check the build logs above for the failing step.")
+	}
+	return errs.Wrap(errs.BuildFailed, "The build failed: "+reason, err).
+		WithRemedy("Check the build logs above for the failing step. If there is none, the reason above is the build service's own.")
+}
+
+// solverPrefixes are the layers BuildKit and gRPC wrap a build's error in, which
+// say where the error travelled rather than what it was.
+var solverPrefixes = []string{
+	"failed to solve:",
+	"failed to solve with frontend gateway.v0:",
+	"failed to solve with frontend dockerfile.v0:",
+	"rpc error:",
+	"code = Unknown desc =",
+	"code = Internal desc =",
+	"code = Unavailable desc =",
+	"code = Canceled desc =",
+	"code = InvalidArgument desc =",
+	"code = NotFound desc =",
+	"code = FailedPrecondition desc =",
+}
+
+// maxSolverReason bounds the reason quoted in a message; the log carries the
+// rest.
+const maxSolverReason = 600
+
+// solverReason is a build error's text without its transport wrapping: the
+// first line, the gRPC and "failed to solve" prefixes removed, held to a
+// length that reads as a sentence.
+func solverReason(err error) string {
+	text := strings.TrimSpace(err.Error())
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = strings.TrimSpace(text[:i])
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, prefix := range solverPrefixes {
+			if strings.HasPrefix(text, prefix) {
+				text = strings.TrimSpace(strings.TrimPrefix(text, prefix))
+				changed = true
+			}
+		}
+	}
+	if len(text) > maxSolverReason {
+		text = strings.ToValidUTF8(text[:maxSolverReason], "") + "…"
+	}
+	return text
 }
 
 // nopWriteCloser lets a plain writer satisfy BuildKit's exporter, which closes
