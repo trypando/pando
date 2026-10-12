@@ -94,6 +94,23 @@ func TestTheHTTPPortIsPreferredOverWhateverComesFirst(t *testing.T) {
 	require.Equal(t, []int{3000, 3000, 9000}, rt.ports)
 }
 
+// TestR097_SeveralPortsNoneOfThemHTTPAreNotGuessedBetween asserts that the
+// proxy routes to the spec's web port (R-097) and nowhere else. The first of
+// several ports, none of them HTTP, was epmd or MQTT as often as not (issue
+// #90); refusing says what is missing, where a guess answered every request
+// with a protocol error.
+func TestR097_SeveralPortsNoneOfThemHTTPAreNotGuessedBetween(t *testing.T) {
+	u, rt := upstreams(t)
+
+	_, err := u.PrimaryAddress(context.Background(), app(), specWith(spec.Workload{
+		Name: "web", Primary: true,
+		Ports: []spec.Port{{Number: 4369, Protocol: "tcp"}, {Number: 1883, Protocol: "tcp"}},
+	}))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "which of this app's ports")
+	require.Empty(t, rt.ports, "nothing was asked of the runtime")
+}
+
 func TestAnAppWithNothingToProxyToSaysWhichPartIsMissing(t *testing.T) {
 	u, rt := upstreams(t)
 	ctx := context.Background()

@@ -244,8 +244,8 @@ func setHealth(s *spec.AppSpec, a api.Amendment) (string, string) {
 	}
 	port := a.Port
 	if port == 0 {
-		if i, ok := workload(s, a.Workload); ok && len(s.Workloads[i].Ports) > 0 {
-			port = s.Workloads[i].Ports[0].Number
+		if i, ok := workload(s, a.Workload); ok {
+			port, _ = s.Workloads[i].HTTPPort()
 		}
 	}
 	if port <= 0 || port > 65535 {

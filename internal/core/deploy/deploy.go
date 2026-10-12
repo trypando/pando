@@ -1100,9 +1100,25 @@ func resolveEnv(s *spec.AppSpec, w spec.Workload, secrets map[string]secret.Valu
 // The value is the port Pando already sends traffic to, so this changes where
 // an app listens only toward where it is reached. A PORT the spec sets, even an
 // empty one somebody typed, is left alone.
+//
+// Nor is it set for a port the trial watched the app open. Detection's trial
+// starts the app without PORT, so a watched port is where the app listens when
+// left to itself, and PORT can only move it somewhere else. Wishlist's image
+// runs Caddy on 3280 in front of Node on 3000, and Node reads PORT: told 3280,
+// it collided with Caddy and the app answered every request with 502 (issue
+// #90).
 func defaultPort(w spec.Workload) (string, bool) {
 	if !w.Primary || len(w.Ports) == 0 {
 		return "", false
+	}
+	port, ok := w.HTTPPort()
+	if !ok {
+		return "", false
+	}
+	for _, p := range w.Ports {
+		if p.Number == port && p.Source == spec.PortObserved {
+			return "", false
+		}
 	}
 	for _, e := range w.Env {
 		if e.Key != "PORT" {
@@ -1114,7 +1130,7 @@ func defaultPort(w spec.Workload) (string, bool) {
 			return "", false
 		}
 	}
-	return strconv.Itoa(w.Ports[0].Number), true
+	return strconv.Itoa(port), true
 }
 
 // healthPlan applies the source precedence in R-221.

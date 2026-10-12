@@ -83,20 +83,16 @@ func (u *RuntimeUpstreams) Primary(ctx context.Context, app state.App, s *spec.A
 		return api.Upstream{}, errs.New(errs.ValidPrimaryWorkload, "This app has no primary workload.")
 	}
 
-	port := 0
-	for _, p := range primary.Ports {
-		if p.Protocol == "http" || p.Protocol == "" {
-			port = p.Number
-			break
-		}
-	}
-	if port == 0 && len(primary.Ports) > 0 {
-		port = primary.Ports[0].Number
-	}
-	if port == 0 {
+	// The spec's web port, never merely the first one listed: of several ports
+	// none of which carries HTTP, the first was epmd, MQTT or a database as
+	// often as not (issue #90).
+	port, ok := primary.HTTPPort()
+	if !ok {
 		return api.Upstream{}, errs.New(errs.StateInvalid,
-			"Pando doesn't know which port this app serves on.").
-			WithRemedy("Add the port to the app's spec.")
+			"Pando doesn't know which of this app's ports serves web pages, so it has nowhere to send "+
+				"a browser.").
+			WithRemedy("Set the app's web port in its settings, or answer the port question on its " +
+				"configuration and accept it again.")
 	}
 
 	// Which port is a question about the spec, and core answers it. Where that

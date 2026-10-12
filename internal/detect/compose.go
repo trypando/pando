@@ -718,6 +718,16 @@ var notHTTP = map[int]bool{
 	465: true, 587: true, 993: true, 995: true, 1433: true, 1521: true,
 	2222: true, 3306: true, 5432: true, 5672: true, 6379: true, 9042: true,
 	11211: true, 27017: true, 1025: true, 1143: true, 2525: true,
+
+	// Brokers, cluster links and binary protocols an image lists beside its
+	// web UI (issue #90): MySQL's X protocol, MQTT and MQTT over TLS, AMQP
+	// over TLS, STOMP, epmd and Erlang distribution (RabbitMQ, EMQX), Neo4j's
+	// Bolt, OTLP and Jaeger over gRPC, BitTorrent, ZooKeeper, Kafka, NATS, and
+	// Elasticsearch's transport.
+	33060: true, 1883: true, 8883: true, 5671: true, 61613: true,
+	4369: true, 25672: true, 4370: true, 5369: true, 7687: true,
+	4317: true, 14250: true, 6881: true, 2181: true, 9092: true,
+	4222: true, 6222: true, 9300: true,
 }
 
 // webPortsFirst orders a service's ports so the first is one a browser can use.

@@ -313,6 +313,26 @@ type Port struct {
 	Source   PortSource `json:"source"`
 }
 
+// HTTPPort is the port a workload's web traffic goes to: the first port that
+// carries HTTP, or the workload's only port.
+//
+// Detection orders ports so the first HTTP one is the one people open (R-097),
+// and marks the ones it knows carry something else as tcp. Of several ports
+// none of which is HTTP, none is the answer: sending a browser to the first
+// one listed — epmd, MQTT, a database — was how apps came to answer every
+// request with a protocol error (issue #90).
+func (w Workload) HTTPPort() (int, bool) {
+	for _, p := range w.Ports {
+		if p.Protocol == "http" || p.Protocol == "" {
+			return p.Number, true
+		}
+	}
+	if len(w.Ports) == 1 {
+		return w.Ports[0].Number, true
+	}
+	return 0, false
+}
+
 // VolumeSource records how a volume came to be declared.
 type VolumeSource string
 

@@ -240,3 +240,23 @@ func TestR097_APortNobodyFilledInIsReplacedByTheRoutedOne(t *testing.T) {
 	_, ok = defaultPort(spec.Workload{Name: "web", Primary: true})
 	require.False(t, ok, "no port, nothing to tell it")
 }
+
+// TestR097_AnAppIsStartedTheWayItsTrialWatchedIt asserts R-097's observation
+// holds at deploy: the trial started the app without PORT and watched where it
+// listened, so PORT is not set to move it. Wishlist's image runs Caddy on 3280
+// in front of Node, which reads PORT; told 3280, Node collided with Caddy
+// (issue #90). A port that was only assumed is still passed on.
+func TestR097_AnAppIsStartedTheWayItsTrialWatchedIt(t *testing.T) {
+	watched := spec.Workload{Name: "web", Primary: true,
+		Ports: []spec.Port{{Number: 3280, Protocol: "http", Source: spec.PortObserved}}}
+	_, ok := defaultPort(watched)
+	require.False(t, ok)
+
+	assumed := spec.Workload{Name: "web", Primary: true, Ports: []spec.Port{
+		{Number: 9229, Protocol: "tcp", Source: spec.PortExpose},
+		{Number: 3000, Protocol: "http", Source: spec.PortFramework},
+	}}
+	port, ok := defaultPort(assumed)
+	require.True(t, ok)
+	require.Equal(t, "3000", port, "the web port, not whichever is listed first")
+}

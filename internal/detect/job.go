@@ -3,8 +3,6 @@ package detect
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -273,6 +271,10 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 
 	// Step 10 — the trial run.
 	trial := j.trialWith(ctx, trialDraft, trialAuth)
+	draft, trial, movedHost := j.listenEverywhere(ctx, draft, trialDraft, trialAuth, trial)
+	if movedHost {
+		proposal.Winner.Evidence = append(append([]string(nil), proposal.Winner.Evidence...), listenedEverywhere)
+	}
 	draft, proposal.Questions = ApplyTrial(draft, proposal.Questions, trial)
 	proposal.TrialLog = trial.Log
 	proposal.Trial = trial.Observation()
@@ -299,6 +301,13 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 	proposal.Status = StatusFor(result.Winner, proposal.Questions)
 	proposal.Winner.Draft = draft
 	proposal.DraftSpec = j.assemble(appID, src, draft)
+
+	// A program that ran, finished and never listened is not a web app, and
+	// the trial is the evidence (R-107).
+	if refused := exitedRefusal(trial); refused != nil {
+		proposal.Status = StatusBlocked
+		proposal.Blocked = refused
+	}
 	return proposal, nil
 }
 
@@ -452,6 +461,10 @@ func (j *Job) prebuiltWith(ctx context.Context, appID string, src spec.Source, c
 	proposal := Proposal{Winner: candidate, Questions: candidate.Questions}
 
 	trial := j.trialWith(ctx, draft, auth)
+	draft, trial, movedHost := j.listenEverywhere(ctx, draft, draft, auth, trial)
+	if movedHost {
+		proposal.Winner.Evidence = append(append([]string(nil), proposal.Winner.Evidence...), listenedEverywhere)
+	}
 	draft, proposal.Questions = ApplyTrial(draft, proposal.Questions, trial)
 	proposal.TrialLog = trial.Log
 	proposal.Trial = trial.Observation()
@@ -460,21 +473,15 @@ func (j *Job) prebuiltWith(ctx context.Context, appID string, src spec.Source, c
 	proposal.DraftSpec = j.assemble(appID, src, draft)
 
 	// An image that serves only a database's or a mail server's protocol has
-	// nothing for Pando's proxy to send a browser to. Redis was deployed, and
-	// answered every request with a protocol error (issue #55). Said so, the
-	// way a library is.
-	if onlyNonHTTP(trial.ObservedPorts) {
-		listed := make([]string, 0, len(trial.ObservedPorts))
-		for _, p := range trial.ObservedPorts {
-			listed = append(listed, strconv.Itoa(p))
-		}
+	// nothing for Pando's proxy to send a browser to, and one that runs and
+	// exits has nothing at all. Said so, the way a library is.
+	refused := nonHTTPRefusal(trial, draft)
+	if refused == nil {
+		refused = exitedRefusal(trial)
+	}
+	if refused != nil {
 		proposal.Status = StatusBlocked
-		proposal.Blocked = errs.Newf(errs.PlanCapabilityUnsupported,
-			"This image listens only on port %s, which carries a protocol other than HTTP — a "+
-				"database's or a mail server's — so there is no web page for Pando to serve.",
-			strings.Join(listed, ", ")).
-			WithRemedy("To give an app a database, fill one of its slots instead: Pando runs the " +
-				"database inside that app, where nothing else can reach it.")
+		proposal.Blocked = refused
 	}
 	return proposal
 }

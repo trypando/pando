@@ -103,13 +103,22 @@ func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppS
 		return portCheck{}
 	}
 
-	for _, p := range result.ObservedPorts {
+	// The ports that answered HTTP, where the runtime asked: an app's debugger
+	// or metrics port listening beside its server is not where it serves.
+	listening := result.ObservedPorts
+	if caps.SupportsHTTPProbe && len(result.HTTPAnswers) > 0 {
+		listening = nil
+		for _, a := range result.HTTPAnswers {
+			listening = append(listening, a.Port)
+		}
+	}
+	for _, p := range listening {
 		if p == assumed {
 			return portCheck{}
 		}
 	}
-	if len(result.ObservedPorts) > 0 {
-		observed := result.ObservedPorts[0]
+	if len(listening) > 0 {
+		observed := listening[0]
 		fmt.Fprintf(sink, "   The app listens on port %d, not %d. Pando will send traffic to %d.\n",
 			observed, assumed, observed)
 		return portCheck{Port: observed}
