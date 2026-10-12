@@ -453,6 +453,13 @@ type Slot struct {
 	// Resolution nil means unfilled. A required unfilled slot blocks deploy
 	// (R-132) at plan time, not at deploy time.
 	Resolution *Resolution `json:"resolution,omitempty"`
+
+	// Aliases are names a provisioned service also answers to on the app's
+	// network: the compose service it replaced. The URL is rewired to the new
+	// instance, but an app may reach the old name another way — a
+	// `while ! </dev/tcp/db/5432` wait in its start command never finished
+	// once `db` resolved to nothing (issue #90).
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 // ResolutionMode is how a slot is filled (R-131).

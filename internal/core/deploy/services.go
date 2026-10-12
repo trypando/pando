@@ -120,7 +120,7 @@ func (r *Runner) provision(ctx context.Context, s *spec.AppSpec, sink io.Writer)
 			}
 		}
 
-		out.workloads = append(out.workloads, res.Workloads...)
+		out.workloads = append(out.workloads, answeringTo(res.Workloads, slot)...)
 		out.volumes = append(out.volumes, res.Volumes...)
 		out.connections[slot.Key] = res.ConnectionSecret
 		if len(res.Workloads) > 0 {
@@ -178,7 +178,7 @@ func (r *Runner) ServiceShapes(ctx context.Context, s *spec.AppSpec) (api.Bundle
 			return api.BundlePlan{}, err
 		}
 
-		for _, w := range res.Workloads {
+		for _, w := range answeringTo(res.Workloads, slot) {
 			w.Env = nil
 			shape.Workloads = append(shape.Workloads, w)
 		}
@@ -234,7 +234,7 @@ func (r *Runner) Environments(ctx context.Context, s *spec.AppSpec) (map[string]
 			if err != nil {
 				return nil, err
 			}
-			svcs.workloads = append(svcs.workloads, res.Workloads...)
+			svcs.workloads = append(svcs.workloads, answeringTo(res.Workloads, slot)...)
 			svcs.connections[slot.Key] = res.ConnectionSecret
 		}
 	}
@@ -251,6 +251,18 @@ func (r *Runner) Environments(ctx context.Context, s *spec.AppSpec) (map[string]
 		out[w.Name] = env
 	}
 	return out, nil
+}
+
+// answeringTo gives a provisioned service the names its slot says the app
+// reaches it by (spec.Slot.Aliases), on its first workload. The adapter's
+// result is not changed.
+func answeringTo(workloads []api.WorkloadPlan, slot spec.Slot) []api.WorkloadPlan {
+	if len(slot.Aliases) == 0 || len(workloads) == 0 {
+		return workloads
+	}
+	out := append([]api.WorkloadPlan(nil), workloads...)
+	out[0].Aliases = append(append([]string(nil), out[0].Aliases...), slot.Aliases...)
+	return out
 }
 
 // dependsOn is every provisioned workload an app workload should start after.

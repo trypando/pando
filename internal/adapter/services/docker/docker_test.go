@@ -109,6 +109,14 @@ func TestR131_RedeployingReusesTheCredentialsTheDataWasCreatedWith(t *testing.T)
 		"the same volume, or the redeploy connects the app to an empty database")
 }
 
+// TestR131_AProvisionedPostgresURLUsesTheSchemeEveryClientReads asserts R-131:
+// the connection string a provisioned Postgres fills its slot with is one the
+// app can use. SQLAlchemy 2 refuses postgres:// (issue #90).
+func TestR131_AProvisionedPostgresURLUsesTheSchemeEveryClientReads(t *testing.T) {
+	dsn := provision(t, configured(t), spec.SlotPostgres, secret.Value{}).ConnectionSecret.Reveal()
+	require.True(t, strings.HasPrefix(dsn, "postgresql://"), dsn)
+}
+
 // A stored connection string Pando cannot read is an error, not a new password.
 // Regenerating would overwrite the only copy of the credential that still
 // matches the data on disk.

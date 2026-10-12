@@ -718,6 +718,10 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 			Required: true,
 			Evidence: evidence,
 
+			// The provisioned instance answers to the service's names too, so
+			// a start command waiting on `db:5432` still finds it.
+			Aliases: c.hostnames(service),
+
 			// Filled, because the compose file already answered it: it runs a
 			// database in a container beside the app, and "Pando runs one
 			// inside this app" is that same sentence in Pando's vocabulary.

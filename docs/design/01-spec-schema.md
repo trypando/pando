@@ -274,6 +274,7 @@ type Slot struct {
     Required   bool        `json:"required"`    // O-4 — see below
     Evidence   []string    `json:"evidence"`    // why we think this is a slot
     Resolution *Resolution `json:"resolution"`  // nil = unfilled, blocks deploy (R-132)
+    Aliases    []string    `json:"aliases,omitempty"` // a provisioned instance also answers to these: the compose service it replaced
 }
 
 type Resolution struct {

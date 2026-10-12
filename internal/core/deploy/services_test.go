@@ -62,6 +62,17 @@ func TestR131_AProvisionedSlotReachesTheWorkloadAsAValue(t *testing.T) {
 // with a blank DATABASE_URL. An app that starts and cannot find its database is
 // the failure mode R-132 exists to prevent, and it should not come back in by
 // the side door.
+// TestR096_AProvisionedServiceAnswersToTheComposeServiceItReplaced asserts
+// R-096: the compose service Pando replaced with a provisioned one is still a
+// name on the app's network, for an app that reaches it other than by URL.
+func TestR096_AProvisionedServiceAnswersToTheComposeServiceItReplaced(t *testing.T) {
+	adapterResult := provisionedPostgres().workloads
+	got := answeringTo(adapterResult, spec.Slot{Key: "DATABASE_URL", Aliases: []string{"db", "app_db"}})
+	require.Equal(t, []string{"db", "app_db"}, got[0].Aliases)
+	require.Empty(t, adapterResult[0].Aliases, "the adapter's result is not changed")
+	require.Equal(t, adapterResult, answeringTo(adapterResult, spec.Slot{Key: "DATABASE_URL"}))
+}
+
 func TestAnUnprovisionedSlotStopsTheDeploy(t *testing.T) {
 	_, err := bundlePlanFor(specWithProvisionedSlot(), "app:latest", nil, nil, provisioned{}, true, api.EgressRules{})
 	require.Error(t, err)

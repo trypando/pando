@@ -161,8 +161,12 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 			"PGDATA": secret.New("/var/lib/postgresql/data/pgdata"),
 		}
 		path = "/var/lib/postgresql/data"
+		// postgresql://, the scheme libpq documents and every client reads.
+		// SQLAlchemy 2 refuses the short postgres:// outright ("Can't load
+		// plugin: sqlalchemy.dialects:postgres"), and an app whose compose
+		// file spelled the long one stopped at its first migration (issue #90).
 		dsn = (&url.URL{
-			Scheme: "postgres", User: url.UserPassword("app", password),
+			Scheme: "postgresql", User: url.UserPassword("app", password),
 			Host: name + ":5432", Path: "/app", RawQuery: "sslmode=disable",
 		}).String()
 
