@@ -11,6 +11,7 @@ import (
 
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // TestR105_ATakenUsernameIsAConflictThatNamesIt asserts issue #212: creating an
@@ -40,4 +41,14 @@ func TestR105_ATakenUsernameIsAConflictThatNamesIt(t *testing.T) {
 	require.Equal(t, errs.StateUsernameTaken, e.Code)
 	require.Equal(t, "A deleted account was named sam, and its username cannot be reused.", e.Message)
 	require.Equal(t, "Choose another username.", e.Remedy)
+
+	// With every account deleted the installation can be set up again, and
+	// the deleted account's username is just as unavailable there.
+	token, _, err := users.EnsureSetupToken(ctx)
+	require.NoError(t, err)
+	_, _, err = users.ClaimFirst(ctx, secret.New(token), "sam", "", "digest", "role_administrator")
+	e = errs.As(err)
+	require.NotNil(t, e, "%v", err)
+	require.Equal(t, errs.StateUsernameTaken, e.Code)
+	require.Equal(t, "A deleted account was named sam, and its username cannot be reused.", e.Message)
 }

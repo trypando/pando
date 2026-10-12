@@ -98,7 +98,7 @@ type NewExternal struct {
 func (s *Identities) CreateExternal(ctx context.Context, n NewExternal) (User, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return User{}, errs.Wrap(errs.Internal, "Could not create the account.", err)
+		return User{}, errs.Wrap(errs.Internal, msgCreateAccount, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -119,7 +119,7 @@ func (s *Identities) CreateExternal(ctx context.Context, n NewExternal) (User, e
 		if isUniqueViolation(err) {
 			return User{}, errs.New(errs.ValidInvalid, "There is already an account for this identity.")
 		}
-		return User{}, errs.Wrap(errs.Internal, "Could not create the account.", err)
+		return User{}, errs.Wrap(errs.Internal, msgCreateAccount, err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO user_identities (adapter_id, external_id, user_id, scim_user_name, scim_external_id, scim_resource, created_by)
@@ -129,10 +129,10 @@ func (s *Identities) CreateExternal(ctx context.Context, n NewExternal) (User, e
 		if isUniqueViolation(err) {
 			return User{}, errs.New(errs.ValidInvalid, "There is already an account for this identity.")
 		}
-		return User{}, errs.Wrap(errs.Internal, "Could not create the account.", err)
+		return User{}, errs.Wrap(errs.Internal, msgCreateAccount, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return User{}, errs.Wrap(errs.Internal, "Could not create the account.", err)
+		return User{}, errs.Wrap(errs.Internal, msgCreateAccount, err)
 	}
 	return user, nil
 }

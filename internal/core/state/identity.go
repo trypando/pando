@@ -95,22 +95,24 @@ func (u *Users) Create(ctx context.Context, adapterID, externalID, email, displa
 		return User{}, u.usernameTaken(ctx, adapterID, externalID)
 	}
 	if err != nil {
-		return User{}, errs.Wrap(errs.Internal, "Could not create the account.", err)
+		return User{}, errs.Wrap(errs.Internal, msgCreateAccount, err)
 	}
 	return user, nil
 }
 
+const msgCreateAccount = "Could not create the account."
+
 // usernameTaken is Create's refusal when another account already has the
 // username (issue #212). A deleted account keeps its row and so its username,
 // which is why the advice differs: there is no account left to edit.
+//
+// If the lookup fails, deleted stays false and the refusal still holds: the
+// insert has already shown an account has the username.
 func (u *Users) usernameTaken(ctx context.Context, adapterID, username string) error {
 	var deleted bool
-	err := u.db.QueryRow(ctx,
+	_ = u.db.QueryRow(ctx,
 		`SELECT deleted_at IS NOT NULL FROM users WHERE adapter_id = $1 AND external_id = $2`,
 		adapterID, username).Scan(&deleted)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return errs.Wrap(errs.Internal, "Could not create the account.", err)
-	}
 	return usernameTakenError(username, deleted)
 }
 
@@ -619,7 +621,7 @@ func (u *Users) ClaimFirst(ctx context.Context, setupToken secret.Value, usernam
 		if isUniqueViolation(err) {
 			return User{}, "", usernameTakenError(username, true)
 		}
-		return User{}, "", errs.Wrap(errs.Internal, "Could not create the account.", err)
+		return User{}, "", errs.Wrap(errs.Internal, msgCreateAccount, err)
 	}
 
 	grantID := id.New(id.Grant)
