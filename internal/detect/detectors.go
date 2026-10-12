@@ -45,6 +45,19 @@ func (d DockerfileDetector) Bid(_ context.Context, src api.SourceView) (Candidat
 		}
 	}
 
+	// A Dockerfile among helper tools counts only when there is no other.
+	var tools []string
+	nested, tools = splitAuxiliary(nested)
+	if len(nested) == 0 && len(tools) == 1 {
+		c, err := d.bidForRoot(src, tools[0])
+		c.Confidence = 0.5
+		c.Evidence[0] = tools[0] + " is the only Dockerfile in the repository, and it sits among helper tools rather than the app"
+		return c, err
+	}
+	if len(nested) == 0 {
+		nested = tools
+	}
+
 	switch {
 	case len(nested) == 1:
 		// One Dockerfile, in a subdirectory. There is nothing to choose between,
@@ -117,6 +130,47 @@ var notDeployable = []string{
 	"test", "tests", "testdata", "fixture", "fixtures", "__tests__",
 	"doc", "docs", "template", "templates", "demo", "demos",
 	".devcontainer", ".github", "vendor", "node_modules", "third_party",
+
+	// Editor and cloud-workspace environments: a Dockerfile here describes
+	// the machine somebody edits the code on. Astro's examples each carry a
+	// `.codesandbox/Dockerfile` that is one `FROM node` line, and Pando
+	// deployed it — a container that opened no port — instead of building
+	// the site (issue #90).
+	".codesandbox", ".gitpod", ".idx", ".vscode", ".circleci", ".gitlab",
+	"e2e", "benchmark", "benchmarks",
+}
+
+// auxiliary are directories of helper tools beside the app: a Dockerfile
+// there builds a tool, not usually the thing the repository deploys. Uptime
+// Kuma's `extra/uptime-kuma-push/Dockerfile` builds a push client, and was
+// offered on a near-even footing with the compose file that runs the app
+// (issue #90). Unlike notDeployable it is not excluded — `contrib/docker` is
+// some projects' real build — but it ranks below any other Dockerfile and
+// bids low on its own.
+var auxiliary = []string{"extra", "extras", "contrib", "tools", "tool", "hack", "scripts", "script", "utils", "util", "misc"}
+
+// splitAuxiliary separates the paths under an auxiliary directory.
+func splitAuxiliary(paths []string) (app, tools []string) {
+	for _, p := range paths {
+		if underAuxiliary(p) {
+			tools = append(tools, p)
+		} else {
+			app = append(app, p)
+		}
+	}
+	return app, tools
+}
+
+func underAuxiliary(p string) bool {
+	for _, segment := range strings.Split(path.Dir(path.Clean(p)), "/") {
+		lower := strings.ToLower(segment)
+		for _, aux := range auxiliary {
+			if lower == aux {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // deployable filters out paths that live under a directory in notDeployable.

@@ -127,3 +127,39 @@ func TestR110_ASiteInDocsIsServed(t *testing.T) {
 	require.Equal(t, spec.BuildStatic, result.Winner.Strategy)
 	require.Equal(t, "docs", result.Winner.Draft.Build.StaticDir)
 }
+
+// TestR094_AnEditorEnvironmentDockerfileIsNotADeploymentArtifact asserts
+// R-094 tier 2. A `.codesandbox/Dockerfile` describes the machine somebody
+// edits on; Astro's examples carry a one-line `FROM node` there, and Pando
+// deployed it instead of building the site (issue #90).
+func TestR094_AnEditorEnvironmentDockerfileIsNotADeploymentArtifact(t *testing.T) {
+	for _, dir := range []string{".codesandbox", ".devcontainer", ".gitpod", ".idx"} {
+		result, err := detect.NewAuction(detect.DockerfileDetector{}).
+			Run(context.Background(), memSource{dir + "/Dockerfile": "FROM node:24\n", "package.json": "{}"})
+		require.NoError(t, err)
+		require.Equal(t, detect.StatusUnknown, result.Status, dir)
+	}
+}
+
+// TestR094_AHelperToolsDockerfileRanksBelowTheApp asserts R-094 tier 2. A
+// Dockerfile among helper tools builds a tool: it loses to the compose file
+// that runs the app without a question, and to any other Dockerfile.
+func TestR094_AHelperToolsDockerfileRanksBelowTheApp(t *testing.T) {
+	result, err := auction().Run(context.Background(), memSource{
+		"compose.yaml":                     "services:\n  app:\n    image: example/app:2\n    ports: [\"3001:3001\"]\n",
+		"extra/uptime-push/Dockerfile":     "FROM node\nCOPY build.js build.js\n",
+		"extra/latest-warning/Dockerfile2": "FROM alpine\n",
+	})
+	require.NoError(t, err)
+	require.Equal(t, spec.BuildPrebuilt, result.Winner.Draft.Build.Strategy)
+	require.Equal(t, "compose", result.Winner.Detector)
+	require.Empty(t, detect.Asked(result.Questions), "a helper tool is not a close second")
+
+	result, err = detect.NewAuction(detect.DockerfileDetector{}).Run(context.Background(), memSource{
+		"tools/push/Dockerfile": "FROM alpine\n",
+		"docker/Dockerfile":     "FROM alpine\nEXPOSE 8080\n",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "docker/Dockerfile", result.Winner.Draft.Build.Dockerfile)
+	require.Empty(t, detect.Asked(result.Questions))
+}
