@@ -11,12 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/audit"
@@ -27,6 +29,7 @@ import (
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/detect"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/log"
 	"github.com/trypando/pando/internal/secret"
@@ -94,6 +97,13 @@ type Runner struct {
 	// the runtime pulls rather than imports (issue #72, PR 5). Nil when the
 	// install has none, which single-host Docker does not need (O-34).
 	buildRegistry imageregistry.Provider
+
+	// detectionBuilds is what detection built for each app, which a deploy
+	// of the same build inputs runs instead of building again (R-311).
+	detectionBuilds DetectionBuilds
+
+	// buildConcurrency bounds how many of an app's images build at once.
+	buildConcurrency BuildConcurrency
 
 	// ProxyUpstream is where routing adapters must send traffic (R-023). It is
 	// Pando's proxy, always, and it is passed to every Ensure so that no adapter
@@ -353,7 +363,23 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	// Step 9: build. A failure here leaves the running app alone (R-146).
 	image := appSpec.Source.Image
 	var perWorkload map[string]string
+	var (
+		fromDetection *detect.Built
+		reuse         bool
+	)
 	if needsBuild(appSpec) {
+		fromDetection, reuse = r.detectionBuild(ctx, appSpec, checkout)
+	}
+	switch {
+	case reuse:
+		// Built once (R-311): the image detection built from this source
+		// with these build inputs, whose scan the plan showed. Running it
+		// rather than building again is what makes the plan's score the
+		// score of what runs.
+		fmt.Fprintf(sink, "=> Using the image built when Pando read this app (%s); nothing it is built from has changed\n",
+			shortDigest(digestOf(fromDetection.Scanned(appSpec))))
+		image, perWorkload = fromDetection.Image, maps.Clone(fromDetection.Images)
+	case needsBuild(appSpec):
 		if err := r.deploys.SetStatus(ctx, dep.ID, state.DeployBuilding); err != nil {
 			return fail("build", err)
 		}
@@ -388,6 +414,13 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	// here to the digest its tag names now, so the image scanned is the image
 	// that runs (R-311).
 	scanned, scanAuth := image, pull
+	if scanned == "" && appSpec.Build.Strategy == spec.BuildCompose {
+		// A compose app has no one image; its primary service's build is
+		// what the app's address serves, and what detection scanned.
+		if primary, ok := appSpec.PrimaryWorkload(); ok && primary.Build != nil {
+			scanned = perWorkload[primary.Name]
+		}
+	}
 	published, publishedAuth := publishedImage(ctx, r.images, dep.AppID, appSpec, perWorkload, sink)
 	if published != "" {
 		primary, _ := appSpec.PrimaryWorkload()
@@ -646,24 +679,46 @@ func (r *Runner) buildAll(ctx context.Context, s *spec.AppSpec, checkout *source
 		return image, nil, err
 	}
 
-	images := map[string]string{}
+	// The services build at once, as many as the install's deploy
+	// concurrency allows: one build does not wait on another it does not
+	// depend on. The first that fails stops the rest, and its error is the
+	// deploy's.
+	var (
+		mu     sync.Mutex
+		images = map[string]string{}
+		shared = &lockedWriter{w: sink}
+	)
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(r.buildLimit(ctx))
 	for _, w := range s.Workloads {
 		if w.Build == nil {
 			// Names an image already. Nothing to build, and building something
 			// to replace it would ignore what the compose file said.
 			continue
 		}
-		fmt.Fprintf(sink, "=> Building %s\n", w.Name)
+		g.Go(func() error {
+			fmt.Fprintf(shared, "=> Building %s\n", w.Name)
+			// Each service's lines carry its name, since several write here
+			// at once.
+			out := &prefixedLines{prefix: w.Name + " | ", out: shared}
+			defer func() { _ = out.Close() }()
 
-		// The cache is namespaced per workload within the app. Per app is
-		// R-117's requirement — one app must not read another's layers — and
-		// two services in one app sharing a namespace would thrash each other's
-		// cache and collide on the built image's name.
-		image, err := r.build(ctx, s, checkout, sink, w.Build, s.AppID+"/"+w.Name, deploymentID)
-		if err != nil {
-			return "", nil, err
-		}
-		images[w.Name] = image
+			// The cache is namespaced per workload within the app. Per app is
+			// R-117's requirement — one app must not read another's layers —
+			// and two services in one app sharing a namespace would thrash
+			// each other's cache and collide on the built image's name.
+			image, err := r.build(gctx, s, checkout, out, w.Build, s.AppID+"/"+w.Name, deploymentID)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			images[w.Name] = image
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return "", nil, err
 	}
 	return "", images, nil
 }
@@ -1374,6 +1429,15 @@ func orDefault(v, fallback int) int {
 
 // shortDigest is a digest as a person reads one: the algorithm dropped and
 // the first twelve hex characters, the way docker images shows it.
+// digestOf is the digest an image reference names: the part after "@" in
+// repository@sha256:…, or the reference itself for an image ID.
+func digestOf(image string) string {
+	if _, digest, ok := strings.Cut(image, "@"); ok {
+		return digest
+	}
+	return image
+}
+
 func shortDigest(digest string) string {
 	_, hex, found := strings.Cut(digest, ":")
 	if !found {

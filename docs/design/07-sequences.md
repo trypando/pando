@@ -24,7 +24,12 @@ Detection job:
   7.  registry check: ghcr.io/acme/notes, docker.io/acme/notes  (R-094 tier 1)
   8.  every builder adapter Bid()  (R-093)
   9.  rank; winner emits draft spec + evidence + questions
-  10. trial run in throwaway isolation  (R-097)
+  9a. at once: build the image(s) the draft would deploy, as a deploy builds them,
+      when no open question changes what is built (R-311; R-112, R-118 as step 8 of B)
+        and scan the source beside the build
+        build fails → detection failed, with the build log (R-107). STOP.
+  10. trial run in throwaway isolation  (R-097), of the image 9a built,
+      beside the scan of that image; the two scans are recorded as one (R-311)
         - observe bound ports        → Port.Source = "observed"
         - observe writes outside volumes → ObservedWrites
         - crash → capture log; promote suspected slots to Required (§01 2.5 fallback)
@@ -55,6 +60,8 @@ User → POST /apps/{id}/detection:accept
 - Accepting does not deploy.
 - Exactly two grant rows exist afterward.
 - Ports discovered by observation carry `Source: "observed"`, not `"framework"`.
+- An app Pando builds is built once across detection and its first deploy, and the deploy runs the
+  image the plan's score describes.
 
 ---
 
@@ -100,6 +107,8 @@ User → POST /apps/{id}/deployments { spec_revision: 1 }
 
   7.  clone, resolve ref → commit SHA; write it into the spec  (R-120)
   8.  Build:
+        the image detection built, when the spec builds the same thing from the same
+        source: run it, and its scan, rather than building again (R-311)
         isolated, no runtime socket      (R-024, R-112)
         cache namespace = app id         (R-117)
         egress per policy                (R-118)

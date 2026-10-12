@@ -289,6 +289,7 @@ export function AppOnboarding({
         ? discoverySteps({
             status,
             stage: proposal.stage,
+            running: proposal.running,
             proposal,
             source: app.source,
             commit: data?.commit,
@@ -396,7 +397,11 @@ export function AppOnboarding({
     mutationFn: async (andDeploy: boolean) => {
       const pending = unsaved();
       if (Object.keys(pending).length > 0) {
-        await api.post(`/apps/${appID}/detection/answers`, { answers: pending });
+        const answered = await api.post<DetectionResponse>(`/apps/${appID}/detection/answers`, { answers: pending });
+        // An answer that changes what is built — a build argument — has Pando
+        // build and scan the image again, so the plan shows the score of what
+        // will run (R-311). Accepting waits for that; the page shows the build.
+        if (answered?.status === 'running') return;
       }
       await api.post(`/apps/${appID}/detection/accept`, {
         values: valuesPayload(rows),

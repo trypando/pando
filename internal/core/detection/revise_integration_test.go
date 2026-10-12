@@ -5,6 +5,7 @@ package detection_test
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -47,13 +48,26 @@ func (r *reviser) RevisePlan(_ context.Context, req adapterapi.ScreenRequest) (a
 
 // sourceScans records what detection asked the scanner to scan.
 type sourceScans struct {
+	mu       sync.Mutex
 	commits  []string
 	requests []adapterapi.ScanRequest
 }
 
+func (s *sourceScans) Scans() bool { return true }
+
 func (s *sourceScans) ScanSource(_ context.Context, req adapterapi.ScanRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.commits = append(s.commits, req.Commit)
 	s.requests = append(s.requests, req)
+}
+
+func (s *sourceScans) ScanPart(context.Context, adapterapi.ScanRequest) (adapterapi.ScanResult, error) {
+	return adapterapi.ScanResult{}, nil
+}
+
+func (s *sourceScans) RecordParts(ctx context.Context, req adapterapi.ScanRequest, _ []adapterapi.ScanResult, _ error) {
+	s.ScanSource(ctx, req)
 }
 
 // TestR336_ARevisionReadsTheReviewedCommitAndIsStored asserts R-336's third

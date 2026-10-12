@@ -115,6 +115,43 @@ func (s *Service) Scan(ctx context.Context, req api.ScanRequest, principal audit
 	defer done()
 
 	result, err := scanner.Scan(ctx, req)
+	return s.record(ctx, ref, req, result, err, principal)
+}
+
+// ScanPart runs the scanner over one part of what an app runs — its source,
+// or its image — and records nothing. Detection scans the source while the
+// image builds and the image once it is built (R-311), then records the two
+// as one scan with RecordParts. The app is shown as scanning while a part
+// runs.
+func (s *Service) ScanPart(ctx context.Context, req api.ScanRequest) (api.ScanResult, error) {
+	scanner, _, ok := s.Registry.DefaultScanner()
+	if !ok {
+		return api.ScanResult{}, errs.New(errs.AdapterUnavailable,
+			"This installation has no security scanner configured, so there is nothing to scan with.").
+			WithRemedy("Configure a scanner adapter, or ask whoever administers this installation to.")
+	}
+	done := s.begin(req.AppID)
+	defer done()
+	return scanner.Scan(ctx, req)
+}
+
+// RecordParts records one scan of what req names — its source and its image
+// together — from the results of scanning each part on its own: the union of
+// their findings, as one scan of both would report them (Union). A part that
+// failed fails the scan, which is recorded with no score (R-318), as Scan
+// records one. The scan is keyed by req's source and image, so a deploy of
+// the same source and image reuses it (R-312).
+func (s *Service) RecordParts(ctx context.Context, req api.ScanRequest, parts []api.ScanResult, failed error, principal audit.Event) (state.Scan, error) {
+	ref, ok := s.Configured()
+	if !ok {
+		return state.Scan{}, errs.New(errs.AdapterUnavailable,
+			"This installation has no security scanner configured, so there is nothing to scan with.")
+	}
+	return s.record(ctx, ref, req, Union(parts...), failed, principal)
+}
+
+// record stores a scan's outcome, and tells the audit log.
+func (s *Service) record(ctx context.Context, ref string, req api.ScanRequest, result api.ScanResult, err error, principal audit.Event) (state.Scan, error) {
 	if err != nil {
 		recorded, recordErr := s.Scans.Record(ctx, state.Scan{
 			AppID: req.AppID, SpecID: req.SpecID, Commit: req.Commit, Image: req.Image, ScannerRef: ref,

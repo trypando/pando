@@ -5,6 +5,7 @@ package state_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -173,4 +174,49 @@ func TestStartupRecoveryReportsAStoreItCannotReach(t *testing.T) {
 	internal(err)
 	_, err = apps.AwaitingTeardown(ctx, 10)
 	internal(err)
+}
+
+// TestR224_AnImageBuiltAtDetectionGoesWithAnAppNeverAccepted asserts R-224
+// for what detection builds (R-311). An app deleted before its proposal was
+// accepted has no revision to name a runtime, and its image would have stayed
+// on the host; the proposal that built it names the runtime and the builder,
+// so the teardown removes the image and the build cache. A proposal that
+// built nothing names nothing, as before.
+func TestR224_AnImageBuiltAtDetectionGoesWithAnAppNeverAccepted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	owner := seedUser(t, db, "teardown-detection")
+	apps := state.NewApps(db)
+	detections := state.NewDetections(db)
+
+	src := spec.Source{Type: spec.SourceGit, URL: "https://example.test/app"}
+	built, err := apps.Create(ctx, "rejected", id.New(id.App), owner.ID, owner.ID, src)
+	require.NoError(t, err)
+	require.NoError(t, detections.Save(ctx, built.ID, state.DetectionReady, map[string]any{
+		"draft_spec": map[string]any{
+			"build":   map[string]any{"adapter_ref": "bld_test"},
+			"runtime": map[string]any{"adapter_ref": "rt_test"},
+		},
+		"built": map[string]any{"image": "sha256:" + strings.Repeat("a", 64)},
+	}, "abc"))
+
+	unbuilt, err := apps.Create(ctx, "waiting", id.New(id.App), owner.ID, owner.ID, src)
+	require.NoError(t, err)
+	require.NoError(t, detections.Save(ctx, unbuilt.ID, state.DetectionNeedsAnswers, map[string]any{
+		"draft_spec": map[string]any{"runtime": map[string]any{"adapter_ref": "rt_test"}},
+	}, "abc"))
+
+	require.NoError(t, apps.Archive(ctx, built.ID))
+	require.NoError(t, apps.Archive(ctx, unbuilt.ID))
+
+	targets, err := apps.AwaitingTeardown(ctx, 100)
+	require.NoError(t, err)
+	byApp := map[string]state.TeardownTarget{}
+	for _, target := range targets {
+		byApp[target.AppID] = target
+	}
+	require.Equal(t, state.TeardownTarget{AppID: built.ID, RuntimeRef: "rt_test", BuilderRef: "bld_test"}, byApp[built.ID],
+		"the runtime holding the image detection built, and the builder holding its cache")
+	require.Equal(t, state.TeardownTarget{AppID: unbuilt.ID}, byApp[unbuilt.ID], "nothing was built, so nothing is named")
 }

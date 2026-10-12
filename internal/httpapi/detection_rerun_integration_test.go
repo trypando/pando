@@ -27,6 +27,15 @@ type fakeDetector struct {
 	// What Revise was asked, and what it answers with.
 	message string
 	revised state.Detection
+
+	// Rebuild's answer, and how many times it was asked.
+	rebuildErr error
+	rebuilds   atomic.Int32
+}
+
+func (f *fakeDetector) Rebuild(context.Context, string) (bool, error) {
+	f.rebuilds.Add(1)
+	return f.rebuildErr == nil, f.rebuildErr
 }
 
 func (f *fakeDetector) Check(context.Context, string) error { return f.checkErr }
@@ -170,4 +179,61 @@ func TestDeletingAnAppAsksForItsTeardownAtOnce(t *testing.T) {
 	got := i.do(admin, http.MethodDelete, "/apps/"+appID, nil)
 	require.Less(t, got.Code, 300, got.String())
 	require.Equal(t, int32(1), teardowns.Load())
+}
+
+// TestR311_AnswersBuildTheImageAndAcceptingWaitsForIt asserts R-311 at the
+// API: a plan whose build waits on a build argument cannot be accepted, and
+// neither can one whose image is being built and scanned after an answer — the
+// score a person accepts is the score of what the first deploy runs. Answering
+// asks for the build.
+func TestR311_AnswersBuildTheImageAndAcceptingWaitsForIt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	i := newInstall(t)
+	admin := i.admin()
+	appID := i.createApp(admin, "notes")
+	detector := &fakeDetector{}
+	i.Server.Detector = detector
+
+	workloads := []spec.Workload{{Name: "web", Primary: true, Exposed: true}}
+	proposal := detect.Proposal{
+		Status: detect.StatusNeedsAnswers,
+		Winner: detect.Candidate{Detector: "dockerfile", Strategy: spec.BuildDockerfile,
+			Draft: detect.Draft{Build: spec.Build{Strategy: spec.BuildDockerfile}, Workloads: workloads}},
+		DraftSpec: spec.AppSpec{SchemaVersion: spec.SchemaVersion, AppID: appID,
+			Build: spec.Build{Strategy: spec.BuildDockerfile}, Workloads: workloads},
+		Questions: []detect.Question{{Key: detect.BuildArgKeyPrefix + "TOKEN", Kind: "text",
+			Prompt: "This app's Dockerfile needs the build argument TOKEN, and gives it no default."}},
+	}
+	detections := state.NewDetections(i.db)
+	require.NoError(t, detections.Save(ctx, appID, detect.StatusNeedsAnswers, proposal, "abc"))
+
+	got := i.do(admin, http.MethodPost, "/apps/"+appID+"/detection/accept", map[string]any{})
+	require.Equal(t, string(errs.StateInvalid), got.ErrorCode(), "the build argument is unanswered")
+	require.Contains(t, got.String(), "unanswered")
+
+	got = i.do(admin, http.MethodPost, "/apps/"+appID+"/detection/answers", map[string]any{
+		"answers": map[string]string{"build_arg.TOKEN": "public-value"},
+	})
+	require.Equal(t, http.StatusOK, got.Code, got.String())
+	require.Equal(t, int32(1), detector.rebuilds.Load(), "the answer asks for the build")
+
+	// What the real Rebuild records while it builds.
+	started, err := detections.Rebuild(ctx, appID, map[string]any{"stage": detect.StageBuilding})
+	require.NoError(t, err)
+	require.True(t, started)
+	again, err := detections.Rebuild(ctx, appID, map[string]any{})
+	require.NoError(t, err)
+	require.False(t, again, "one build at a time")
+
+	got = i.do(admin, http.MethodPost, "/apps/"+appID+"/detection/accept", map[string]any{})
+	require.Equal(t, string(errs.StateInvalid), got.ErrorCode(), got.String())
+	require.Contains(t, got.String(), "building and scanning its image")
+
+	detector.rebuildErr = errs.New(errs.Internal, "Could not record the detection.")
+	require.NoError(t, detections.Save(ctx, appID, detect.StatusNeedsAnswers, proposal, "abc"))
+	got = i.do(admin, http.MethodPost, "/apps/"+appID+"/detection/answers", map[string]any{
+		"answers": map[string]string{"build_arg.TOKEN": "another"},
+	})
+	require.Equal(t, string(errs.Internal), got.ErrorCode(), "a build that could not start is said")
 }

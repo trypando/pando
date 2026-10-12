@@ -582,7 +582,13 @@ func serve(ctx context.Context, configPath string) error {
 		WithSecurity(securityService).
 		WithSources(sources).
 		WithImages(images).
-		WithBuildRegistry(buildRegistry)
+		WithBuildRegistry(buildRegistry).
+		// A compose app's services build at once, as many as deploys may
+		// run at once here (issue #93).
+		WithBuildConcurrency(func(ctx context.Context) (int, error) {
+			doc, err := hostPolicy.Document(ctx)
+			return doc.MaxConcurrentDeploys, err
+		})
 
 	// The deploy queue (issue #72, O-32): a deploy is queued in Postgres and
 	// run by whichever replica has room, at most host policy's
@@ -652,7 +658,14 @@ func serve(ctx context.Context, configPath string) error {
 			// (docs/design/notes-registry-tier-namespaces.md).
 			Registry: registryprobe.New(),
 		},
+
+		// Detection builds what the app would deploy, the way a deploy
+		// builds it, so the plan shows the score of the image that will run
+		// (R-311); the first deploy runs that image rather than building it
+		// again.
+		Builder: deployer,
 	}
+	deployer.WithDetectionBuilds(detector)
 
 	// The detection queue, as the deploy queue: queued in Postgres, run where
 	// there is room, at most work.detections at once here.
@@ -2401,6 +2414,32 @@ func (s sourceScanner) ScanSource(ctx context.Context, req adapterapi.ScanReques
 		// on the app already.
 		s.logger.Info("could not scan an app's source during detection",
 			zap.String("app_id", appID), zap.Error(err))
+	}
+}
+
+// Scans reports whether there is a scanner to scan with.
+func (s sourceScanner) Scans() bool {
+	if s.service == nil {
+		return false
+	}
+	_, configured := s.service.Configured()
+	return configured
+}
+
+// ScanPart scans the source or the image detection built, recording nothing:
+// the two run at once, beside the build and the trial (R-311).
+func (s sourceScanner) ScanPart(ctx context.Context, req adapterapi.ScanRequest) (adapterapi.ScanResult, error) {
+	return s.service.ScanPart(ctx, req)
+}
+
+// RecordParts records what ScanPart read as one scan of the source and the
+// image, with no spec ID, as ScanSource does.
+func (s sourceScanner) RecordParts(ctx context.Context, req adapterapi.ScanRequest, parts []adapterapi.ScanResult, failed error) {
+	req.SpecID = ""
+	if _, err := s.service.RecordParts(ctx, req, parts, failed,
+		audit.Event{PrincipalKind: audit.KindSystem, PrincipalID: "detection"}); err != nil {
+		s.logger.Info("could not scan an app during detection",
+			zap.String("app_id", req.AppID), zap.Error(err))
 	}
 }
 

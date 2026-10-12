@@ -158,6 +158,7 @@ func TestAppDetectionNamesEveryStage(t *testing.T) {
 	for stage, says := range map[string]string{
 		"fetching":  "Running: fetching the source.",
 		"detecting": "Running: working out what the app is.",
+		"building":  "Running: building the image.",
 		"trying":    "Running: trying a run of the app.",
 		"scanning":  "Running: scanning for security problems.",
 		"screening": "Running: having the AI adapter check the plan.",
@@ -169,6 +170,33 @@ func TestAppDetectionNamesEveryStage(t *testing.T) {
 		require.NoError(t, got.err)
 		require.Contains(t, got.out, says, stage)
 	}
+}
+
+// The build and the scan beside it are both said, in the order they happen
+// (R-311, R-261: the CLI shows what the API does).
+func TestR311_AppDetectionSaysEveryStepUnderWay(t *testing.T) {
+	api := newAPI(t).reply("GET /apps/app_01HQ8/detection", map[string]any{
+		"status": "running", "stage": "building", "running": []string{"building", "scanning"},
+	})
+	got := run(t, api, "", "app", "detection", "app_01HQ8")
+	require.NoError(t, got.err)
+	require.Contains(t, got.out, "Running: building the image, and scanning for security problems.")
+}
+
+// TestR107_AppDetectionShowsTheLogOfABuildThatFailed asserts R-107 in the
+// CLI: a build that failed while Pando read the app shows its log.
+func TestR107_AppDetectionShowsTheLogOfABuildThatFailed(t *testing.T) {
+	api := newAPI(t).reply("GET /apps/app_01HQ8/detection", map[string]any{
+		"status": "failed",
+		"detection": map[string]any{"error": map[string]any{
+			"code":    "BUILD_FAILED",
+			"message": "The build of this app failed.",
+			"details": map[string]any{"build_log": "#7 ERROR: npm ci exited 1\n"},
+		}},
+	})
+	got := run(t, api, "", "app", "detection", "app_01HQ8")
+	require.Contains(t, got.out, "The build of this app failed.")
+	require.Contains(t, got.out, "The end of the build log:\n\n#7 ERROR: npm ci exited 1\n")
 }
 
 // Every question answered is ready to accept, not a question to answer; and

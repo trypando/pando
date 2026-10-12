@@ -141,6 +141,7 @@ export interface Proposal {
   trial_log?: string;
   commit?: string;
   trial?: TrialObservation;
+  built?: Built;
   screening?: Outcome;
   conversation?: (Turn[] | null);
 }
@@ -458,6 +459,13 @@ export interface TrialObservation {
   crashed?: boolean;
   observed_ports?: (number[] | null);
   observed_writes?: (string[] | null);
+}
+
+export interface Built {
+  inputs: string;
+  source: string;
+  image?: string;
+  images?: (Record<string, string> | null);
 }
 
 export interface Outcome {

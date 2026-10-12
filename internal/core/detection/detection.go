@@ -9,7 +9,6 @@ package detection
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -108,13 +107,35 @@ type Runner struct {
 	// exactly as before, and a scanner that fails does not fail a detection —
 	// the proposal is the thing being produced here.
 	Scanner SourceScanner
+
+	// Builder builds what the app would deploy, so the plan can show the
+	// score of the image that will run (R-311). Nil builds nothing: the plan
+	// shows the source's findings and waits for the deploy to score the
+	// image.
+	Builder ImageBuilder
+
+	// NewBuildTag names a detection's build. Nil is a time-based name.
+	NewBuildTag func() string
+
+	// Background runs a rebuild after an answer (Rebuild). Nil is a
+	// goroutine.
+	Background func(func())
 }
 
-// SourceScanner scans what detection read: the checkout, and the published
-// image the proposal runs when there is one. One method, so detection cannot
-// reach into the rest of the security service.
+// SourceScanner scans what detection read: the checkout, and the image the
+// proposal runs — a published one, or the one detection built. Narrow, so
+// detection cannot reach into the rest of the security service.
 type SourceScanner interface {
+	// Scans reports whether there is a scanner to scan with.
+	Scans() bool
+
+	// ScanSource scans and records in one call.
 	ScanSource(ctx context.Context, req api.ScanRequest)
+
+	// ScanPart scans one part, the source or the image, recording nothing;
+	// RecordParts records the parts as one scan of both (R-311).
+	ScanPart(ctx context.Context, req api.ScanRequest) (api.ScanResult, error)
+	RecordParts(ctx context.Context, req api.ScanRequest, parts []api.ScanResult, failed error)
 }
 
 // PortAllocator hands out host ports for port-mode routing.
@@ -160,25 +181,21 @@ func (r *Runner) detect(ctx context.Context, app state.App) (state.Detection, er
 	// has got, so a person watching sees the app take shape rather than
 	// waiting on a spinner for the whole of it. Status stays running; a
 	// progress write that fails costs a stage of feedback, not the detection.
-	ctx = detect.WithProgress(ctx, func(stage string, partial *detect.Proposal) {
-		_ = r.Detections.Save(ctx, appID, state.DetectionRunning, progressBody(stage, partial), "")
-	})
+	ctx, prog := r.withProgress(ctx, appID)
 
-	proposal, err := r.run(ctx, appID, app.Slug, app.Source)
+	// Answers kept from an earlier run (Detections.Start keeps them): a build
+	// argument somebody gave is built with this time.
+	var answers map[string]string
+	if d, err := r.Detections.Get(ctx, appID); err == nil {
+		answers = d.Answers
+	}
+
+	proposal, err := r.run(ctx, prog, app, answers)
 	if err != nil {
 		// The failure is recorded rather than only returned: detection runs in
 		// the background after app creation, and a user who comes back to the
 		// console later needs to find out what happened.
-		// errs.As is nil for an error carrying no envelope, and storing that
-		// would leave the user looking at "error: null" where the reason should
-		// be. Everything on this path should be enveloped; the fallback is for
-		// the one that is not.
-		recorded := any(map[string]any{"message": err.Error()})
-		if e := errs.As(err); e != nil {
-			recorded = e
-		}
-		_ = r.Detections.Save(ctx, appID, state.DetectionFailed,
-			map[string]any{"error": recorded}, "")
+		r.fail(ctx, appID, err)
 		return state.Detection{}, err
 	}
 
@@ -225,7 +242,8 @@ func (r *Runner) check(ctx context.Context, appID string) (state.App, error) {
 	return app, nil
 }
 
-func (r *Runner) run(ctx context.Context, appID, slug string, src spec.Source) (detect.Proposal, error) {
+func (r *Runner) run(ctx context.Context, prog *progress, app state.App, answers map[string]string) (detect.Proposal, error) {
+	appID, slug, src := app.ID, app.Slug, app.Source
 	detect.Report(ctx, detect.StageFetching, nil)
 	checkout, err := r.Sources.Fetch(source.ForApp(ctx, appID), src)
 	if err != nil {
@@ -233,17 +251,27 @@ func (r *Runner) run(ctx context.Context, appID, slug string, src spec.Source) (
 	}
 	defer checkout.Close()
 
-	proposal, err := r.Job.Run(ctx, appID, src, checkout.View(src.Subdir))
+	// After the auction: the source scan and the build at once, then the
+	// image scan and the trial run at once (build.go).
+	scans := r.newScans(ctx, appID, checkout.Identity(), prog)
+	defer scans.stop()
+	proposal, err := r.Job.Run(detect.WithBuild(ctx, r.buildHook(appID, slug, answers, checkout, scans)),
+		appID, src, checkout.View(src.Subdir))
 	if err != nil {
 		return detect.Proposal{}, err
 	}
 
 	// While the checkout exists, and after the proposal is in hand: a scan is
-	// worth having and is not worth failing a detection for.
-	if r.Scanner != nil {
+	// worth having and is not worth failing a detection for. Reported as its
+	// own stage: a scan can take a while, and the onboarding page shows it as
+	// a step of the plan.
+	if scans.began() {
+		detect.Report(ctx, detect.StageScanning, &proposal)
+		scans.record(ctx)
+	} else if r.Scanner != nil {
+		// An app that runs a published image: the auction did not run, and
+		// the image and the checkout are scanned together.
 		if req, ok := r.scanRequest(ctx, appID, src, &proposal, checkout); ok {
-			// Reported as its own stage: a scan can take a while, and the
-			// onboarding page shows it as a step of the plan.
 			detect.Report(ctx, detect.StageScanning, &proposal)
 			r.Scanner.ScanSource(ctx, req)
 		}
@@ -297,6 +325,24 @@ func (r *Runner) run(ctx context.Context, appID, slug string, src spec.Source) (
 		// An amendment can answer the last outstanding question, which turns
 		// needs_answers into ready — the same recomputation the trial run gets.
 		proposal.Status = detect.StatusFor(proposal.Winner, proposal.Questions)
+
+		// And it can change what is built — a build argument it answered,
+		// a Dockerfile it pointed at — so the image is built again for the
+		// plan as it now stands, and scanned with the source already read.
+		if s, ok := r.buildSpec(ctx, appID, slug, &proposal, answers, checkout.Commit); ok &&
+			!proposal.Built.Matches(&s, checkout.Identity()) {
+			detect.Report(ctx, detect.StageBuilding, &proposal)
+			built, err := r.build(ctx, &s, checkout)
+			if err != nil {
+				return detect.Proposal{}, err
+			}
+			proposal.Built = built
+			image := built.Scanned(&s)
+			scans.startSource(checkout.Dir)
+			scans.startImage(image, r.Builder.BuiltImageAuth(ctx, image))
+			detect.Report(ctx, detect.StageScanning, &proposal)
+			scans.record(ctx)
+		}
 	}
 	return proposal, nil
 }
@@ -343,18 +389,4 @@ func (r *Runner) applyDefaults(ctx context.Context, s *spec.AppSpec, slug string
 		s.Routing.Port = port
 	}
 	return nil
-}
-
-// progressBody is what a running detection stores: the stage, and the
-// proposal's fields as far as it has got. The same shape as a finished
-// proposal plus "stage", so one reader serves both.
-func progressBody(stage string, partial *detect.Proposal) map[string]any {
-	body := map[string]any{}
-	if partial != nil {
-		if raw, err := json.Marshal(partial); err == nil {
-			_ = json.Unmarshal(raw, &body)
-		}
-	}
-	body["stage"] = stage
-	return body
 }

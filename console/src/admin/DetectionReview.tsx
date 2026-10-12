@@ -48,6 +48,14 @@ import { Table } from '../ui/Table';
 import { LineSkeleton } from '../ui/Loading';
 import { AppVerb, useCan } from './verbs';
 
+/** Why a detection failed: the server's envelope. */
+export interface DetectionError {
+  message?: string;
+  remedy?: string;
+  /** A build that failed while Pando read the app carries its log (R-107). */
+  details?: { build_log?: string };
+}
+
 export interface DetectionResponse {
   status: string;
   detection: Proposal & {
@@ -56,12 +64,15 @@ export interface DetectionResponse {
     // is a proposal that succeeded and found an app Pando cannot run: one is
     // "Pando never got to look", the other is "Pando looked and the answer is
     // no". They read differently and lead to different next steps.
-    error?: { message?: string; remedy?: string };
-    // Where a running detection has got to: fetching, detecting, trying,
-    // screening. Set only while status is 'running', and the proposal fields
-    // are present only once that stage has produced them — so while running,
-    // any of them may be absent (see AppOnboarding.tsx).
+    error?: DetectionError;
+    // Where a running detection has got to: fetching, detecting, building,
+    // trying, scanning, screening. Set only while status is 'running', and the
+    // proposal fields are present only once that stage has produced them — so
+    // while running, any of them may be absent (see AppOnboarding.tsx).
     stage?: string;
+    // Every step under way while it runs. The scan runs beside the build and
+    // beside the trial run, so there can be two.
+    running?: string[];
   };
   answers: Record<string, string> | null;
   commit: string;
@@ -677,7 +688,7 @@ export function DetectionFailed({
   onRetry,
   retrying,
 }: {
-  error?: { message?: string; remedy?: string };
+  error?: DetectionError;
   /** Absent for somebody who cannot ask Pando to look again. */
   onRetry?: () => void;
   retrying: boolean;
@@ -699,6 +710,8 @@ export function DetectionFailed({
           {error.remedy}
         </p>
       )}
+      {/* The build's own output is the answer when a build failed (R-107). */}
+      {error?.details?.build_log && <CodeBlock title="Build log" lines={error.details.build_log} />}
       {onRetry && (
         <div>
           <Button variant="secondary" disabled={retrying} onClick={onRetry}>

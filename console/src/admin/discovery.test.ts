@@ -238,8 +238,84 @@ describe('the scan step (R-310)', () => {
     expect(scan?.result).toBe('3 vulnerabilities');
   });
 
+  it('scores the image detection built, with the source (R-311)', () => {
+    const built = { ...found, built: { inputs: 'i', source: '3f9a2c1d', image: 'sha256:0123456789abcdef0123' } };
+    const both = {
+      ...report,
+      scan: { ...report.scan, score: 61, commit: '3f9a2c1d', image: 'sha256:0123456789abcdef0123' },
+      scope: 'image_and_source',
+    } as unknown as Report;
+    const steps = discoverySteps({ status: 'ready', proposal: built, source, security: both });
+    expect(steps.map((s) => s.id)).toEqual(['read', 'stack', 'runs', 'vars', 'build', 'scan']);
+    expect(steps.find((s) => s.id === 'build')).toMatchObject({
+      state: 'done',
+      result: 'Built',
+      findings: [{ key: 'Image', value: '0123456789ab' }],
+    });
+    const scan = steps.find((s) => s.id === 'scan');
+    expect(scan?.findings).toContainEqual({ key: 'Score', value: '61 / 100' });
+    expect(scan?.findings.some((f) => f.value === 'Scored once the image is built')).toBe(false);
+  });
+
   it('is absent on an install with no scanner', () => {
     expect(discoverySteps({ status: 'ready', proposal: found, source }).some((s) => s.id === 'scan')).toBe(false);
+  });
+});
+
+describe('the build step (R-311)', () => {
+  it('is under way beside the source scan', () => {
+    const steps = discoverySteps({
+      status: 'running',
+      stage: 'building',
+      running: ['building', 'scanning'],
+      proposal: found,
+      source,
+    });
+    expect(steps.filter((s) => s.state === 'current').map((s) => s.id)).toEqual(['build', 'scan']);
+    expect(steps.find((s) => s.id === 'build')?.active).toBe('Building the image');
+  });
+
+  it('shows the trial run and the image scan in flight together once the image is built', () => {
+    const built = { ...found, built: { inputs: 'i', source: 's', images: { web: 'reg/app@sha256:fedcba9876543210ff' } } };
+    const steps = discoverySteps({
+      status: 'running',
+      stage: 'trying',
+      running: ['trying', 'scanning'],
+      proposal: built,
+      source,
+    });
+    expect(steps.find((s) => s.id === 'build')).toMatchObject({
+      state: 'done',
+      findings: [{ key: 'web', value: 'fedcba987654' }],
+    });
+    expect(steps.filter((s) => s.state === 'current').map((s) => s.id)).toEqual(['trial', 'scan']);
+  });
+
+  it('reads the stage alone from a server that sends no list of steps', () => {
+    const steps = discoverySteps({ status: 'running', stage: 'building', proposal: found, source });
+    expect(steps.filter((s) => s.state === 'current').map((s) => s.id)).toEqual(['build']);
+  });
+
+  it('is absent for an app with nothing built', () => {
+    expect(discoverySteps({ status: 'ready', proposal: found, source }).some((s) => s.id === 'build')).toBe(false);
+  });
+
+  it('paces two steps in flight: in turn until caught up, then both under way', () => {
+    const steps = discoverySteps({
+      status: 'running',
+      stage: 'building',
+      running: ['building', 'scanning'],
+      proposal: found,
+      source,
+      commit: '3f9a2c1d',
+    });
+    const early = paced(steps, 1);
+    expect(early.filter((s) => s.state === 'current').map((s) => s.id)).toEqual(['stack']);
+    expect(early.find((s) => s.id === 'scan')?.state).toBe('pending');
+
+    const caughtUp = paced(steps, finishedCount(steps));
+    expect(caughtUp.filter((s) => s.state === 'current').map((s) => s.id)).toEqual(['build', 'scan']);
+    expect(caughtUp.find((s) => s.id === 'scan')?.findings).toEqual([]);
   });
 });
 

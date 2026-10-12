@@ -19,6 +19,20 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Changed
+
+- **Detection builds the app, so the plan shows its real security score** (R-311). For an app Pando
+  builds, detection now builds the image the app would deploy, the way a deploy builds it, and scans
+  that image with the source; the plan's score covers both, a finding both report counted once
+  (gabrielecirulli/2048: 61 / 100, where the plan used to say "Scored once the image is built"). The
+  first deploy runs that image and keeps that score rather than building again, unless something it
+  is built from changed after detection. The build runs beside the source scan, and the image scan
+  beside the trial run, which now starts the built image and watches it for its port (R-097). A
+  build that fails stops detection and shows the build log (R-107). A Dockerfile that needs a build
+  argument nobody has given waits for the answer, then builds; accepting waits for that. While
+  running, `GET /apps/{id}/detection` reports a `building` stage and `running`, every step under way.
+  A compose app's services build at once, at most `max_concurrent_deploys` at a time.
+
 ### Fixed
 
 - **The first deploy of an app never scanned the image it built** (R-311). Detection scans the

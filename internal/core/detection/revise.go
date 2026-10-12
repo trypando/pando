@@ -97,6 +97,11 @@ func (r *Runner) Revise(ctx context.Context, appID, message string) (state.Detec
 	if err := r.Detections.Save(ctx, appID, proposal.Status, proposal, proposal.Commit); err != nil {
 		return state.Detection{}, err
 	}
+	// A revision can change what is built; the image is built and scanned
+	// again for the plan as it now stands (R-311).
+	if _, err := r.Rebuild(ctx, appID); err != nil {
+		return state.Detection{}, err
+	}
 	return r.Detections.Get(ctx, appID)
 }
 

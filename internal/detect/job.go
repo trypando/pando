@@ -51,6 +51,12 @@ type Proposal struct {
 	// facts that an empty log reports identically.
 	Trial TrialObservation `json:"trial,omitzero"`
 
+	// Built is the image detection built for this proposal, when it built one
+	// (R-311): what the plan's score was read from, and what a deploy of the
+	// same build inputs runs instead of building again. Nil for an app that
+	// runs a published image, and for one whose build waits on an answer.
+	Built *Built `json:"built,omitempty"`
+
 	// Screening is what an AI adapter made of this proposal (R-331, design 10
 	// §5): which adapter, which model, what it read, what it changed and why,
 	// and what it asked for that Pando refused.
@@ -245,10 +251,28 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 	// approach, the workloads and the variables rather than a spinner.
 	partial := proposal
 	partial.DraftSpec = j.assemble(appID, src, draft)
+
+	// Step 9a — the build (R-311). What the app would deploy, built the way a
+	// deploy builds it, so the plan can show the score of the image that will
+	// run and the trial run has something to start. A build that fails stops
+	// here with its log, the way a trial run that crashes does (R-107).
+	trialDraft, trialAuth := draft, (*api.RegistryAuth)(nil)
+	if build := buildFrom(ctx); build != nil {
+		outcome, err := build(ctx, &partial)
+		if err != nil {
+			return Proposal{}, err
+		}
+		if outcome.Built != nil {
+			proposal.Built, partial.Built = outcome.Built, outcome.Built
+			if image := outcome.Built.Scanned(&partial.DraftSpec); image != "" {
+				trialDraft, trialAuth = withPrimaryImage(draft, image), outcome.PullAuth
+			}
+		}
+	}
 	Report(ctx, StageTrying, &partial)
 
 	// Step 10 — the trial run.
-	trial := j.trial(ctx, draft)
+	trial := j.trialWith(ctx, trialDraft, trialAuth)
 	draft, proposal.Questions = ApplyTrial(draft, proposal.Questions, trial)
 	proposal.TrialLog = trial.Log
 	proposal.Trial = trial.Observation()
@@ -455,17 +479,13 @@ func (j *Job) prebuiltWith(ctx context.Context, appID string, src spec.Source, c
 	return proposal
 }
 
-// trial runs the draft once in throwaway isolation, if that is possible.
+// trialWith runs the draft once in throwaway isolation, if that is possible,
+// pulling its image with auth when that is set.
 //
 // Everything here is a reason it might not be, and none of them is an error.
 // A missing runtime, a runtime that cannot do it, an image that has not been
 // built: each turns deferred questions back into real ones, which is worse for
 // the user and not a failure of detection.
-func (j *Job) trial(ctx context.Context, draft Draft) Trial {
-	return j.trialWith(ctx, draft, nil)
-}
-
-// trialWith is trial for an image pulled with credentials.
 func (j *Job) trialWith(ctx context.Context, draft Draft, auth *api.RegistryAuth) Trial {
 	if j.Runtime == nil {
 		return Trial{}
@@ -477,8 +497,10 @@ func (j *Job) trialWith(ctx context.Context, draft Draft, auth *api.RegistryAuth
 
 	primary, ok := primaryWorkload(draft)
 	if !ok || primary.Image == "" {
-		// Nothing to run. A source build would have to happen first, and
-		// building before a proposal is reviewed is work nobody asked for.
+		// Nothing to run: an app Pando builds whose build has not happened,
+		// because it waits on an answer or because no builder is configured.
+		// Detection builds the image when it can (WithBuild, R-311), and the
+		// trial runs that.
 		return Trial{}
 	}
 

@@ -37,6 +37,12 @@ import (
 type imageScanner struct {
 	mu    sync.Mutex
 	scans []api.ScanRequest
+
+	// source is what a source tree holds, when a test gives it something.
+	source []api.Finding
+
+	// onScan, when set, runs as each scan starts; an error fails the scan.
+	onScan func(api.ScanRequest) error
 }
 
 func (s *imageScanner) Kind() string                                     { return "image-scanner" }
@@ -51,14 +57,36 @@ func (s *imageScanner) Scan(_ context.Context, req api.ScanRequest) (api.ScanRes
 	s.mu.Lock()
 	s.scans = append(s.scans, req)
 	s.mu.Unlock()
-	if req.Image == "" {
-		return api.ScanResult{Scanner: "test"}, nil
+	if s.onScan != nil {
+		if err := s.onScan(req); err != nil {
+			return api.ScanResult{}, err
+		}
 	}
-	return api.ScanResult{Scanner: "test", Findings: []api.Finding{
-		{ID: "CVE-2025-9230", Severity: api.SeverityCritical, Title: "libssl3: out-of-bounds read", Target: "alpine 3.21.3"},
-		{ID: "CVE-2025-9231", Severity: api.SeverityCritical, Title: "libcrypto3: timing side channel", Target: "alpine 3.21.3"},
-		{ID: "CVE-2025-9232", Severity: api.SeverityHigh, Title: "libssl3: out-of-bounds read", Target: "alpine 3.21.3"},
-	}}, nil
+	var found []api.Finding
+	if req.Image != "" {
+		found = append(found, imageFindings...)
+	}
+	if req.SourceDir != "" {
+		found = append(found, s.source...)
+	}
+	// One finding reported by both parts is one finding, as a scanner given
+	// both reports it.
+	seen := map[string]bool{}
+	var out []api.Finding
+	for _, f := range found {
+		if !seen[f.ID+"\x00"+f.Target] {
+			seen[f.ID+"\x00"+f.Target] = true
+			out = append(out, f)
+		}
+	}
+	return api.ScanResult{Scanner: "test", Findings: out}, nil
+}
+
+// imageFindings is what the built image carries: an outdated base image.
+var imageFindings = []api.Finding{
+	{ID: "CVE-2025-9230", Severity: api.SeverityCritical, Title: "libssl3: out-of-bounds read", Target: "alpine 3.21.3"},
+	{ID: "CVE-2025-9231", Severity: api.SeverityCritical, Title: "libcrypto3: timing side channel", Target: "alpine 3.21.3"},
+	{ID: "CVE-2025-9232", Severity: api.SeverityHigh, Title: "libssl3: out-of-bounds read", Target: "alpine 3.21.3"},
 }
 
 func (s *imageScanner) requests() []api.ScanRequest {
@@ -93,6 +121,7 @@ type scanHarness struct {
 	spec    *spec.AppSpec
 	commit  string
 	runner  *Runner
+	builder *countingBuilder
 	docker  *sameImageDocker
 	scanner *imageScanner
 	service *security.Service
@@ -101,8 +130,14 @@ type scanHarness struct {
 
 func newScanHarness(t *testing.T) *scanHarness {
 	t.Helper()
-	ctx := context.Background()
 	repo, commit := gitRepo(t)
+	return newScanHarnessAt(t, repo, commit)
+}
+
+// newScanHarnessAt is newScanHarness over a repository of the test's own.
+func newScanHarnessAt(t *testing.T, repo, commit string) *scanHarness {
+	t.Helper()
+	ctx := context.Background()
 
 	db, _ := statetest.Connect(t)
 	first, err := bootstrap.Run(ctx, state.NewUsers(db), state.NewGrants(db), db, audit.New(db.Pool),
@@ -122,7 +157,8 @@ func newScanHarness(t *testing.T) *scanHarness {
 	scanner := &imageScanner{}
 	reg := api.NewRegistry()
 	require.NoError(t, reg.Register("rt", docker))
-	require.NoError(t, reg.Register("bld", &taggingBuilder{}))
+	builder := &countingBuilder{}
+	require.NoError(t, reg.Register("bld", builder))
 	require.NoError(t, reg.Register("rte", routeAnything{}))
 	require.NoError(t, reg.Register("scn", scanner))
 
@@ -134,7 +170,7 @@ func newScanHarness(t *testing.T) *scanHarness {
 
 	return &scanHarness{
 		t: t, db: db, apps: apps, deploys: deploys, app: app, owner: owner, commit: commit,
-		runner: r, docker: docker, scanner: scanner, service: svc, policy: pol,
+		runner: r, builder: builder, docker: docker, scanner: scanner, service: svc, policy: pol,
 		spec: &spec.AppSpec{
 			SchemaVersion: spec.SchemaVersion, AppID: app.ID, Source: src,
 			Build:     spec.Build{Strategy: spec.BuildDockerfile, AdapterRef: "bld"},

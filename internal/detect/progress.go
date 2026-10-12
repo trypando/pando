@@ -5,11 +5,18 @@ import "context"
 // Detection's stages, in the order they happen, as reported while it runs.
 // The console's onboarding page builds itself from them: it shows what Pando
 // has found so far rather than a spinner and then everything at once.
+//
+// Two run beside the others rather than in turn: the scan of the source starts
+// as soon as the auction has read the repository, alongside the build, and
+// the scan of the built image runs alongside the trial. A running detection
+// reports its stage — the step the rest wait on — and every step under way
+// (Running), so a client shows both while both run.
 const (
 	StageFetching  = "fetching"  // cloning the repository
 	StageDetecting = "detecting" // detectors bidding on what the app is
+	StageBuilding  = "building"  // building the image the app would deploy (R-311)
 	StageTrying    = "trying"    // a trial run of the winning draft (R-097)
-	StageScanning  = "scanning"  // a security scan of the source, when a scanner is configured
+	StageScanning  = "scanning"  // a security scan of the source and the image, when a scanner is configured
 	StageScreening = "screening" // an AI adapter repairing the plan or answering its questions (R-336)
 )
 

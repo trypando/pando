@@ -92,17 +92,41 @@ after scanning the very source that revision was written from. So the rule is: t
 this revision, and failing that the newest scan of no revision, and never another revision's. The
 console says which of the two it is showing.
 
+**[D] Detection builds what the app would deploy, and the plan shows that image's score (R-311).**
+The plan is where somebody decides whether to run an app, and the score is part of that decision.
+So for an app Pando builds, detection builds each image the app would deploy — the single app, or
+every compose service with a `build:` — through the builder adapter, exactly as a deploy builds it:
+the same Dockerfile or plan, build egress (R-118), no runtime socket in the build (R-112). It scans
+that image and the source, and the plan's score is the union of the two scans' findings, a finding
+both report counted once (by ID and target, as a scanner given both at once reports it), recorded as
+one scan of scope `image_and_source`, keyed by the commit and the image's digest. For gabrielecirulli/
+2048 that is 61 / 100, not the source's 100. The first deploy runs that image and reuses that scan
+(§4.1), so the deploy's score is the plan's. A build that fails fails the detection with the build
+log, which is the answer (R-107).
+
+Nothing waits on what it does not need. After the auction, the build and the source scan run at
+once; once the image exists, the image scan and the trial run (R-097, which now starts the built
+image) run at once; then the proposal is assembled. A running detection reports its `stage` and
+every step under way (`running`), so clients show both. A compose app's services build concurrently,
+at most host policy's `max_concurrent_deploys` at a time. A build failure cancels the scan beside
+it. A scan failure does not cancel the build: a scan never fails a detection (R-318), and the
+plan then shows the scan as failed.
+
 **[D] A scan of the source alone, taken before there was a revision, is not the app's score
-(R-311).** That is detection's scan of a repository Pando builds: nothing is built before the plan is
-accepted, so the scan read no image, and its number is the source's. Showing it as the app's score
-made a plan read 100 / 100 for an app whose first deploy, scanning the image it built, scored 61. So
-such a scan keeps its findings and its own number (`scan.score`), and the app has no score until a
-scan reads its image: the report's `standing.score` is empty and `awaiting_image` says why, an app's
-row in `GET /apps` carries `security_awaiting_image` and no `security_score`, and the plan, the
-overview during the first deploy and the apps list say "Scored once the image is built." beside the
-source's findings. The report's `scope` (`source`, `image`, `image_and_source`) says what any scan
+(R-311).** Detection scans the source alone when it cannot build yet: an open question changes what
+would be built (a required build argument with no default — build arguments are never secrets,
+design 01), or the installation has no builder. That scan read no image, and its number is the
+source's. Showing it as the app's score made a plan read 100 / 100 for an app whose first deploy,
+scanning the image it built, scored 61. So such a scan keeps its findings and its own number
+(`scan.score`), and the app has no score until a scan reads its image: the report's
+`standing.score` is empty and `awaiting_image` says why, an app's row in `GET /apps` carries
+`security_awaiting_image` and no `security_score`, and the plan, the overview during the first
+deploy and the apps list say "Scored once the image is built." beside the source's findings.
+Answering the question builds and scans the image (the detection reads as `running`, at the
+`building` stage, until it has), and the score appears; accepting is refused until then, so the
+score accepted is the score of what runs. The report's `scope` (`source`, `image`, `image_and_source`) says what any scan
 read. A threshold placed against such an app finds no score, as it would for an app never scanned. A
-scan of the source alone that belongs to a revision — a compose app's deploy, which builds no single
+scan of the source alone that belongs to a revision — a compose app whose primary service builds no
 image (§4.1), or a scan from before the image column existed — is still that revision's score, and
 says what it read.
 
@@ -145,7 +169,21 @@ image and is scanned. A registry that cannot be read leaves the image unscanned 
 deploy log, as a scanner that cannot run does (R-318). Detection scans the source it reads, and the
 published image the plan runs when there is one — a repository's (`prebuilt`) pinned the way a deploy
 pins it, or an image app's pinned digest — so a deploy that resolves the same digest reuses detection's
-scan and the plan's score is the deployed app's. A person can ask for a scan (`POST /security/scan`), and a deploy scans the source and the image
+scan and the plan's score is the deployed app's. For an app Pando builds, detection scans the image it
+built (§3).
+
+**[D] Built once.** The first deploy after detection runs the image detection built, and reuses its
+scan, rather than building again: "Using the image built when Pando read this app (…); nothing it is
+built from has changed" in the deploy log. It does so only when the revision builds the same thing
+from the same source — the same commit or upload, and the same build inputs (`spec.BuildInputs`: the
+strategy, Dockerfile, context, target, build arguments, generated plan, builder, runtime, isolation and
+egress, each service's build, and for a buildpack the start command). An answer, an edit or a
+re-accept that changed any of those builds once, at the deploy, and scans what it built. Ports,
+variables, routing and limits change how the image runs, not what it is, and cost no rebuild. A
+compose app is reused whole or not at all. So nothing runs that was not scanned, and the score
+accepted is the score of what runs. An image detection built for an app that is deleted, accepted or
+not, goes with the app's bundle at teardown (R-224): the proposal names the runtime and builder that
+hold it. A person can ask for a scan (`POST /security/scan`), and a deploy scans the source and the image
 together — unless a successful scan **by the scanner configured now** already read that same source and
 that same image, in which case it uses that one and says so in the deploy log ("Using the security scan
 of 3f9a2c1 from … (source and image unchanged)", or "of the uploaded source" for an upload). The
@@ -157,8 +195,10 @@ critical findings as 100 / 100), a scan of another image built from the same com
 produced a different image is scanned), an image named by a tag rather than a digest (the name says
 nothing about the content), a failed scan (R-318 — the next deploy tries again), another scanner's scan
 (its findings are not the ones this installation's scanner reports), and a scan of another source. A
-scan somebody asks for always runs. A compose app's top-level deploy builds no single image, so its
-deploy scan reads the source alone, and a scan of that source alone matches it.
+scan somebody asks for always runs. A compose app has no single image; its scan reads the image its
+primary service builds — what the app's address serves, and what detection scanned — with the
+source. One whose primary service builds nothing is scanned as its source alone, and a scan of that
+source alone matches it.
 
 **A reused scan is attached to the revision being deployed.** A revision's score is the newest scan of
 that revision (§3), and a new revision of an unchanged source and image — a variable edited, or every
@@ -239,7 +279,7 @@ It is not in settings: settings is where an app is configured, and a score is no
 **[D] The section says what the scan read** (R-311), from the scan's `spec_id`, `commit` and `image`:
 "from the source, before this configuration" for detection's scan of the source alone (with no score:
 §3), "of the image it will run and its source" or "of the image it will run" for detection's scan of a
-published image, "of the source only, not the image it runs" for a revision scored by a scan that read no image, "of the running image only, not its source"
+published image or of the image it built, "of the source only, not the image it runs" for a revision scored by a scan that read no image, "of the running image only, not its source"
 for **Scan now** on a deployed app, "of the image it runs" for an image app (its source is the image's
 own digest), and "of the image it runs and its source" for a deploy's scan of a built or published
 image with its repository. A number that covered less than both does not stand for both.
@@ -269,7 +309,8 @@ and a deploy, detection, the CLI, MCP or the console can start one. The report c
 `security_scanning`, so every client shows the same state rather than only the one that asked
 (R-261). The console shows it as the design system's *building* status, the hollow ring, in the
 Security section and the list's Security column, and polls while it lasts. Onboarding already has
-its own step for the scan (the `scanning` detection stage).
+its own steps for the build and the scan (the `building` and `scanning` detection stages), and shows
+both under way while both are in `running`.
 
 The state is held in memory by the security service, not in `app_scans`. That table is append-only
 and records what a scan found (R-319), and an unfinished scan has found nothing yet. A scan also
@@ -295,11 +336,14 @@ because an agent asking Pando to rescan until it passes is a loop nobody wants.
   Never fatal: the proposal is what that run is producing. An app that runs a
   published image has that image already, and detection scans it by digest
   with the checkout, so the plan carries the score of what will run. An app
-  Pando builds does not: detection does not build before the plan is
-  reviewed, so its source is scanned alone, and the plan shows that scan's
-  findings and "Scored once the image is built" rather than a number (§3).
+  Pando builds is built at detection, and its image is scanned with the
+  checkout, so its plan carries that score too (§3). Only when the build has
+  to wait — a required build argument nobody has given, or no builder — is
+  the source scanned alone, and the plan shows that scan's findings and
+  "Scored once the image is built" until the build can run.
 - **Deploy**, after the build: the image and the checkout together, against the
-  revision being deployed.
+  revision being deployed — or, for the first deploy of what detection built,
+  detection's scan of that same image and checkout, reused (§4.1).
 - **On demand**, against whatever the app has. A deployed app's newest
   successful image, and for one that has never been built, a fresh checkout —
   fetched for the scan and dropped after it, because a copy of somebody's code

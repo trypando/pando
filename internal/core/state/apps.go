@@ -964,14 +964,21 @@ func isForeignKeyViolation(err error) bool {
 //
 // Returns the routing adapter ref too, because the route outlives the app the
 // same way — a Traefik file per deleted app, accumulating.
+//
+// An app deleted before anything was accepted has no revision, and may still
+// have an image: detection builds what an app would deploy (R-311). Its
+// runtime and builder come from the proposal that built it, so the image and
+// the build cache go with the app rather than staying on the host (R-224).
 func (a *Apps) AwaitingTeardown(ctx context.Context, limit int) ([]TeardownTarget, error) {
 	rows, err := a.db.Query(ctx, `
-		SELECT a.id, coalesce(r.body->'runtime'->>'adapter_ref', ''),
+		SELECT a.id,
+		       coalesce(r.body->'runtime'->>'adapter_ref', b.body->'draft_spec'->'runtime'->>'adapter_ref', ''),
 		       coalesce(r.body->'routing'->>'adapter_ref', ''),
-		       coalesce(r.body->'build'->>'adapter_ref', ''),
+		       coalesce(r.body->'build'->>'adapter_ref', b.body->'draft_spec'->'build'->>'adapter_ref', ''),
 		       a.discard_storage
 		FROM apps a
 		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
+		LEFT JOIN detections b ON b.app_id = a.id AND b.body ? 'built'
 		WHERE a.deleted_at IS NOT NULL AND a.bundle_destroyed_at IS NULL
 		ORDER BY a.deleted_at
 		LIMIT $1`, limit)

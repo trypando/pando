@@ -335,10 +335,12 @@ var toolList = []tool{
 			"answered before it can deploy. The questions are written to be answerable by " +
 			"whatever wrote the app. `status` is `running` while Pando is still working: call " +
 			"again. While running, `stage` says what it is doing — fetching (cloning the " +
-			"repository), detecting (working out what the app is), trying (a trial run), " +
-			"scanning (a security scan) or screening (an AI adapter checking the plan) — and " +
-			"`elapsed_seconds` how long it has taken so far; a trial run can take several " +
-			"minutes. Pass wait_seconds (up to 60) to have the call return as soon as the stage " +
+			"repository), detecting (working out what the app is), building (building the image " +
+			"the app would run, so the plan can show its security score), trying (a trial run), " +
+			"scanning (a security scan) or screening (an AI adapter checking the plan); `running` " +
+			"lists every step under way, since the scan runs beside the build and the trial; and " +
+			"`elapsed_seconds` says how long it has taken so far; a build or a trial run can take " +
+			"several minutes. Pass wait_seconds (up to 60) to have the call return as soon as the stage " +
 			"changes or detection finishes, instead of calling repeatedly. When it has " +
 			"finished, `status` is ready (call pando_accept_proposal), needs_answers or unknown " +
 			"(answer the questions with pando_answer_detection), blocked or failed (the " +
@@ -372,8 +374,10 @@ var toolList = []tool{
 		},
 	},
 	{
-		Name:        "pando_answer_detection",
-		Description: "Answer one of the questions from pando_get_detection.",
+		Name: "pando_answer_detection",
+		Description: "Answer one of the questions from pando_get_detection. An answer that changes what is " +
+			"built (a build argument) has Pando build and scan the image again, so the plan shows the score " +
+			"of what will run: detection reads as `running` until it has, and accepting waits for it.",
 		Schema: schema(map[string]any{
 			"app_id": str("The app's ID."),
 			"key":    str("The question's key."),

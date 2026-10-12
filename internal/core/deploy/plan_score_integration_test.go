@@ -33,8 +33,18 @@ func (p publishedProbe) Published(context.Context, spec.Source) ([]detect.Publis
 // system, with no revision.
 type detectionScans struct{ service *security.Service }
 
+func (d detectionScans) Scans() bool { return true }
+
 func (d detectionScans) ScanSource(ctx context.Context, req api.ScanRequest) {
 	_, _ = d.service.Scan(ctx, req, audit.Event{PrincipalKind: audit.KindSystem, PrincipalID: "detection"})
+}
+
+func (d detectionScans) ScanPart(ctx context.Context, req api.ScanRequest) (api.ScanResult, error) {
+	return d.service.ScanPart(ctx, req)
+}
+
+func (d detectionScans) RecordParts(ctx context.Context, req api.ScanRequest, parts []api.ScanResult, failed error) {
+	_, _ = d.service.RecordParts(ctx, req, parts, failed, audit.Event{PrincipalKind: audit.KindSystem, PrincipalID: "detection"})
 }
 
 // runDetection runs real detection for the harness's app: the checkout, the
@@ -61,8 +71,9 @@ func (h *scanHarness) runDetection(probe detect.RegistryProbe, images *oci.Image
 }
 
 // TestR311_APlanDoesNotScoreAnImageNotYetBuilt asserts R-311 for the plan of an
-// app Pando builds from source, as it does for gabrielecirulli/2048. Detection
-// scans the repository before anything is built, and that number is the
+// app Pando builds from source on an install where detection builds nothing
+// (no builder to build with; TestR311_APlanScoresTheImageDetectionBuilt is the
+// ordinary case). Detection scans the repository alone, and that number is the
 // source's: the 2048 plan showed 100 / 100 and the deploy, scanning the image
 // it built, 61. The plan, the app's row and the app's report during the first
 // deploy carry the source's findings and no score for the app, saying it waits

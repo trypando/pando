@@ -1689,7 +1689,7 @@
       "get": {
         "operationId": "getDetection",
         "summary": "Get detection",
-        "description": "What Pando worked out about the repository: the winning bid, its evidence, the runners-up and any outstanding questions. While `status` is `running`, `stage` is one of fetching, detecting, trying, scanning or screening, and `elapsed_seconds` how long it has been going. `wait` (seconds, up to 60) holds the answer until detection reaches a new stage or finishes.\n\nNeeds `app.view`.",
+        "description": "What Pando worked out about the repository: the winning bid, its evidence, the runners-up and any outstanding questions. While `status` is `running`, `stage` is one of fetching, detecting, building, trying, scanning or screening, `running` lists every step under way (the scan runs beside the build and beside the trial), and `elapsed_seconds` says how long it has been going. A failed build carries its log in `detection.error.details.build_log`. `wait` (seconds, up to 60) holds the answer until detection reaches a new stage or finishes.\n\nNeeds `app.view`.",
         "tags": [
           "Detection"
         ],
@@ -1745,6 +1745,15 @@
                     "stage": {
                       "type": "string"
                     },
+                    "running": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "elapsed_seconds": {
                       "type": "integer",
                       "format": "int64"
@@ -1785,7 +1794,7 @@
       "post": {
         "operationId": "acceptDetection",
         "summary": "Accept the detection proposal",
-        "description": "Accept the proposal, writing a spec revision and pinning it. `values` sets variables in the same step — `{key, value, secret?, workload?}` each; a secret goes to the secrets adapter and needs app.secrets.write. Accepting over a configured app needs `confirm`.\n\nNeeds `app.spec.edit`.",
+        "description": "Accept the proposal, writing a spec revision and pinning it. `values` sets variables in the same step — `{key, value, secret?, workload?}` each; a secret goes to the secrets adapter and needs app.secrets.write. Accepting over a configured app needs `confirm`. Refused while detection is running, including while it builds and scans after an answer.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Detection"
         ],
@@ -1907,7 +1916,7 @@
       "post": {
         "operationId": "detectionAnswers",
         "summary": "Answer detection questions",
-        "description": "Answer detection's questions. Each answer is a fact detection could not find, not a preference.\n\nNeeds `app.spec.edit`.",
+        "description": "Answer detection's questions. Each answer is a fact detection could not find, not a preference. An answer that changes what is built — a build argument — has Pando build and scan the image again, so the plan shows the score of what will run; detection reads as `running` until it has.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Detection"
         ],
@@ -1964,6 +1973,15 @@
                     },
                     "stage": {
                       "type": "string"
+                    },
+                    "running": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "elapsed_seconds": {
                       "type": "integer",
@@ -2128,6 +2146,15 @@
                     "stage": {
                       "type": "string"
                     },
+                    "running": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "elapsed_seconds": {
                       "type": "integer",
                       "format": "int64"
@@ -2230,6 +2257,15 @@
                     },
                     "stage": {
                       "type": "string"
+                    },
+                    "running": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "elapsed_seconds": {
                       "type": "integer",

@@ -45,9 +45,13 @@ func ExitCodeOf(err error) int {
 
 // detectionStatus is GET /apps/{id}/detection as the CLI reads it.
 type detectionStatus struct {
-	Status    string `json:"status"`
-	Stage     string `json:"stage"`
-	Elapsed   *int   `json:"elapsed_seconds"`
+	Status  string `json:"status"`
+	Stage   string `json:"stage"`
+	Elapsed *int   `json:"elapsed_seconds"`
+
+	// Running is every step under way: the scan runs beside the build and
+	// beside the trial run, so there can be two.
+	Running   []string `json:"running"`
 	Detection struct {
 		Questions []struct {
 			Key      string `json:"key"`
@@ -59,7 +63,14 @@ type detectionStatus struct {
 			Strategy string `json:"strategy"`
 		} `json:"winning_bid"`
 		Blocked *APIError `json:"blocked"`
-		Error   *APIError `json:"error"`
+		Error   *struct {
+			APIError
+			Details struct {
+				// BuildLog is the end of a build that failed while Pando
+				// read the app (R-107).
+				BuildLog string `json:"build_log"`
+			} `json:"details"`
+		} `json:"error"`
 	} `json:"detection"`
 	Answers map[string]string `json:"answers"`
 
@@ -110,6 +121,8 @@ func stagePhrase(stage string) string {
 		return "Fetching the source"
 	case "detecting":
 		return "Working out what the app is"
+	case "building":
+		return "Building the image"
 	case "trying":
 		return "Trying a run of the app"
 	case "scanning":
@@ -121,6 +134,21 @@ func stagePhrase(stage string) string {
 	default:
 		return strings.ToUpper(stage[:1]) + stage[1:]
 	}
+}
+
+// runningPhrase says what a running detection is doing: each step under way,
+// in the order they happen.
+func (d detectionStatus) runningPhrase() string {
+	steps := d.Running
+	if len(steps) == 0 {
+		steps = []string{d.Stage}
+	}
+	phrases := make([]string, 0, len(steps))
+	for _, step := range steps {
+		phrase := stagePhrase(step)
+		phrases = append(phrases, strings.ToLower(phrase[:1])+phrase[1:])
+	}
+	return strings.Join(phrases, ", and ")
 }
 
 // getDetection reads an app's detection, holding out up to wait seconds for
@@ -175,10 +203,9 @@ func (c *Client) awaitDetection(appID string, timeout time.Duration, onStage fun
 
 // printDetection writes where an app's detection stands and what to do next.
 func printDetection(w io.Writer, appID string, d detectionStatus) {
-	phrase := stagePhrase(d.Stage)
 	switch {
 	case d.running():
-		line := "Running: " + strings.ToLower(phrase[:1]) + phrase[1:]
+		line := "Running: " + d.runningPhrase()
 		if d.Elapsed != nil {
 			line += fmt.Sprintf(" (%s so far)", (time.Duration(*d.Elapsed) * time.Second).String())
 		}
@@ -214,8 +241,11 @@ func printDetection(w io.Writer, appID string, d detectionStatus) {
 
 	case d.Status == "failed":
 		fmt.Fprintln(w, "Failed: Pando could not work out how to run this app.")
-		if d.Detection.Error != nil {
-			fmt.Fprintf(w, "\n  %s\n", d.Detection.Error.Error())
+		if e := d.Detection.Error; e != nil {
+			fmt.Fprintf(w, "\n  %s\n", e.Error())
+			if e.Details.BuildLog != "" {
+				fmt.Fprintf(w, "\nThe end of the build log:\n\n%s\n", strings.TrimRight(e.Details.BuildLog, "\n"))
+			}
 		}
 		fmt.Fprintln(w, "\nNext: re-run detection in the web console once the cause is fixed.")
 

@@ -291,6 +291,33 @@ describe('AppOnboarding', () => {
     expect(html).toContain('Reject plan');
   });
 
+  it('shows the build log of a build that failed while Pando read the app (R-107)', () => {
+    const html = render({
+      status: 'failed',
+      answers: null,
+      commit: '',
+      detection: {
+        error: {
+          message: 'Pando builds an app while reading it, to score the image it would run, and the build of this app failed: the RUN step exited 1.',
+          remedy: 'The build log shows the step that failed.',
+          details: { build_log: '#7 ERROR: process "/bin/sh -c npm ci" did not complete successfully' },
+        },
+      } as DetectionResponse['detection'],
+    });
+    expect(html).toContain('Build log');
+    expect(html).toContain('did not complete successfully');
+  });
+
+  it('shows the image being built while the source is scanned', () => {
+    const html = render({
+      status: 'running',
+      answers: null,
+      commit: '',
+      detection: { ...detection, stage: 'building', running: ['building', 'scanning'] } as never,
+    });
+    expect(html).toContain('Building the image');
+  });
+
   it('says a ready plan is ready, and nothing about what happens on accepting it', () => {
     const ready = {
       ...detection,

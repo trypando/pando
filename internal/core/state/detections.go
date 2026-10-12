@@ -227,6 +227,33 @@ func (d *Detections) Save(ctx context.Context, appID, status string, body any, c
 	return nil
 }
 
+// Rebuild marks a finished detection running again on this replica, with body
+// as its progress, so the proposal's image can be built and scanned after an
+// answer changed what is built (R-311). False when the detection is not
+// finished as ready or needs_answers: one already running, failed or blocked
+// has nothing to build.
+//
+// Claimed for this replica in the same statement, so no queue claims it as a
+// detection to run. A replica that stops part-way leaves it for
+// RecoverRunning, which returns it to the queue: detection runs again, with
+// the answers kept, and builds.
+func (d *Detections) Rebuild(ctx context.Context, appID string, body any) (bool, error) {
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return false, errs.Wrap(errs.Internal, "Could not record the detection.", err)
+	}
+	tag, err := d.db.Exec(ctx, `
+		UPDATE detections
+		SET status = $2, body = $3, started_at = now(), updated_at = now(),
+		    replica_id = $4, claimed_at = now(), attempts = 1
+		WHERE app_id = $1 AND status IN ($5, $6)`,
+		appID, DetectionRunning, withoutNUL(encoded), d.db.replica, DetectionReady, DetectionNeedsAnswers)
+	if err != nil {
+		return false, errs.Wrap(errs.Internal, "Could not record the detection.", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // Get returns an app's current detection.
 func (d *Detections) Get(ctx context.Context, appID string) (Detection, error) {
 	var out Detection

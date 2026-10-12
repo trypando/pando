@@ -314,6 +314,17 @@ func (s *Server) handleDetectionAnswers(w http.ResponseWriter, r *http.Request) 
 		Detail: map[string]any{"questions": answered},
 	})
 
+	// An answer can change what is built — a build argument the build was
+	// waiting on — and the plan's score is the score of the image that will
+	// run (R-311), so the image is built and scanned again. The detection
+	// reads as running until it has been.
+	if s.Detector != nil {
+		if _, err := s.Detector.Rebuild(r.Context(), app.ID); err != nil {
+			Error(w, r, err)
+			return
+		}
+	}
+
 	updated, err := s.Detections.Get(r.Context(), app.ID)
 	if err != nil {
 		Error(w, r, err)
@@ -399,6 +410,17 @@ func (s *Server) handleAcceptDetection(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
+	// Still reading the app, or building and scanning it again after an
+	// answer: the plan is not finished, and its score is not in yet. The
+	// score a person accepts is the score of what the first deploy runs
+	// (R-311).
+	if d.Status == state.DetectionRunning {
+		Error(w, r, errs.New(errs.StateInvalid,
+			"Pando is still working out how to run this app — reading it, or building and scanning its image — so the plan is not finished.").
+			WithRemedy("Wait for detection to finish, then accept again. GET /detection?wait=30 returns when it moves on."))
+		return
+	}
+
 	proposal, err := decodeProposal(d)
 	if err != nil {
 		Error(w, r, err)
@@ -564,11 +586,19 @@ func (s *Server) detectionResponse(d state.Detection) map[string]any {
 	// trial run (R-097) dominates and varies too widely for one to be honest.
 	if d.Status == state.DetectionRunning {
 		var body struct {
-			Stage string `json:"stage"`
+			Stage   string   `json:"stage"`
+			Running []string `json:"running"`
 		}
 		_ = json.Unmarshal(d.Body, &body)
 		if body.Stage != "" {
 			out["stage"] = body.Stage
+			// Every step under way, in order: the scan runs beside the build
+			// and beside the trial, so more than one can be.
+			running := body.Running
+			if len(running) == 0 {
+				running = []string{body.Stage}
+			}
+			out["running"] = running
 		}
 		out["elapsed_seconds"] = max(0, int(s.clock().Since(d.StartedAt).Seconds()))
 	}
@@ -646,6 +676,12 @@ type Detector interface {
 	// Revise changes a finished proposal as a person asked, through the AI
 	// adapter, and records the exchange on it (R-336).
 	Revise(ctx context.Context, appID, message string) (state.Detection, error)
+
+	// Rebuild builds the proposal's image again, in the background, when
+	// what it would build has changed — an answer the build waited on — so
+	// the plan shows the score of what will run (R-311). True when it
+	// started.
+	Rebuild(ctx context.Context, appID string) (bool, error)
 }
 
 // clock is the server's time source.
