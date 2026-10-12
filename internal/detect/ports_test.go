@@ -160,6 +160,29 @@ func TestR102_WebPortsTheTrialCannotChooseBetweenAreAsked(t *testing.T) {
 	require.Equal(t, 9090, port)
 }
 
+// Two ports serving the same page are not a question when the image declared
+// one of them, or when the other is in the ephemeral range: nginx on an
+// image's declared 80 in front of the app's own server, a framework's worker
+// on a port the kernel picked.
+func TestR103_WhatTheImageDeclaresSettlesTwoWebPorts(t *testing.T) {
+	declared := detect.Draft{Workloads: []spec.Workload{{Name: "web", Primary: true, Ports: []spec.Port{
+		{Number: 80, Protocol: "http", Source: spec.PortExpose},
+		{Number: 443, Protocol: "http", Source: spec.PortExpose},
+	}}}}
+	out, questions := detect.ApplyTrial(declared, nil, detect.FromTrialResult(probing(), api.TrialResult{
+		Started: true, ObservedPorts: []int{80, 443, 8000}, HTTPAnswers: answers(80, 200, 443, 400, 8000, 200),
+	}))
+	require.Empty(t, detect.Asked(questions))
+	require.Equal(t, 80, routedPort(t, out).Number)
+
+	bare := detect.Draft{Workloads: []spec.Workload{{Name: "web", Primary: true}}}
+	out, questions = detect.ApplyTrial(bare, nil, detect.FromTrialResult(probing(), api.TrialResult{
+		Started: true, ObservedPorts: []int{3000, 39003}, HTTPAnswers: answers(3000, 200, 39003, 200),
+	}))
+	require.Empty(t, detect.Asked(questions))
+	require.Equal(t, 3000, routedPort(t, out).Number)
+}
+
 // An app whose trial answered on one port alone is never asked about it, even
 // beside other ports that only listen.
 func TestR103_OneWebPortAmongSeveralIsNotAQuestion(t *testing.T) {

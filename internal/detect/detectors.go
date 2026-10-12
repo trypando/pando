@@ -549,6 +549,8 @@ func libraryReason(src api.SourceView, signal *languageSignal) error {
 				"src/, and there is no app.py, main.py, manage.py, Procfile or other file that starts it. "+
 				"Pando deploys apps, and a library is used by other programs rather than run on its own.").
 			WithRemedy("If this repository is an app, add a Procfile or a Dockerfile saying how it starts.")
+	case "package.json":
+		return nodeLibraryReason(src)
 	}
 	return nil
 }
@@ -593,9 +595,32 @@ func goPackageOf(src api.SourceView, name string) string {
 		return ""
 	}
 	defer func() { _ = f.Close() }()
+
+	// Comments are skipped. A package's doc comment often shows how to use it
+	// with an example program, and logrus's doc.go has `package main` in its
+	// comment above `package logrus` — read as the package clause, it made a
+	// library an app (issue #90).
+	inBlock := false
 	scanner := bufio.NewScanner(io.LimitReader(f, 64<<10))
 	for scanner.Scan() {
-		if m := goPackageClause.FindStringSubmatch(strings.TrimSpace(scanner.Text())); m != nil {
+		line := strings.TrimSpace(scanner.Text())
+		if inBlock {
+			end := strings.Index(line, "*/")
+			if end < 0 {
+				continue
+			}
+			inBlock = false
+			line = strings.TrimSpace(line[end+2:])
+		}
+		if strings.HasPrefix(line, "/*") {
+			if end := strings.Index(line[2:], "*/"); end >= 0 {
+				line = strings.TrimSpace(line[2+end+2:])
+			} else {
+				inBlock = true
+				continue
+			}
+		}
+		if m := goPackageClause.FindStringSubmatch(line); m != nil {
 			return m[1]
 		}
 	}
@@ -620,7 +645,7 @@ func isPythonSrcLayoutWithoutEntryPoint(src api.SourceView) bool {
 			return false
 		}
 	}
-	return true
+	return !isPythonWebAppPackage(src)
 }
 
 // bidFromPlanOnly bids when no manifest matched but the planner can build and

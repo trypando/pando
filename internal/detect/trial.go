@@ -130,17 +130,23 @@ func applyObservedPorts(draft Draft, t Trial) (Draft, []int) {
 	}
 
 	// Source is what the review UI shows, and it is the whole point of R-097:
-	// this was watched, not guessed.
-	ports, tied := observedPorts(t)
-
+	// this was watched, not guessed. What the image or compose file declared
+	// is evidence for which of them is the web port.
 	for i, w := range draft.Workloads {
 		if !w.Primary {
 			continue
 		}
-		draft.Workloads[i].Ports = ports
-		break
+		declared := map[int]bool{}
+		for _, p := range w.Ports {
+			if p.Source == spec.PortExpose || p.Source == spec.PortCompose {
+				declared[p.Number] = true
+			}
+		}
+		var tied []int
+		draft.Workloads[i].Ports, tied = observedPorts(t, declared)
+		return draft, tied
 	}
-	return draft, tied
+	return draft, nil
 }
 
 // applyImageVolumes gives the primary workload storage wherever its image

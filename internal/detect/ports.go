@@ -27,15 +27,21 @@ import (
 //   - among those, the ones that answered with a page — a success, a redirect
 //     or a sign-in — over the ones that answered "not found" or an error, which
 //     is what a metrics or API port says to GET /.
+//   - a port outside the ephemeral range over one inside it, which a runtime
+//     opens for its own bookkeeping more often than an app chooses.
+//   - a port the image or the compose file declares (declared) over one it
+//     does not: lsio images run nginx on their declared 80 in front of the
+//     app's own server on an undeclared one.
 //   - which of the remaining ports the app's own log names as the HTTP one
 //     ("http-nio-8080", "running at http://localhost:8080"), and failing that,
 //     which it says it is listening on.
 //
-// When the probe ran and several ports are still equally likely, that is a real
-// question (R-102: ask, never guess), and tied lists them. Without a probe the
-// order is the best the heuristics give, as it was before: a runtime that
-// cannot probe would otherwise turn every multi-port app into a question.
-func observedPorts(t Trial) (ports []spec.Port, tied []int) {
+// Each narrows only when something is left. When the probe ran and several
+// ports are still equally likely, that is a real question (R-102: ask, never
+// guess), and tied lists them. Without a probe the order is the best the
+// heuristics give, as it was before: a runtime that cannot probe would
+// otherwise turn every multi-port app into a question.
+func observedPorts(t Trial, declared map[int]bool) (ports []spec.Port, tied []int) {
 	if len(t.ObservedPorts) == 0 {
 		return nil, nil
 	}
@@ -45,26 +51,19 @@ func observedPorts(t Trial) (ports []spec.Port, tied []int) {
 		answered[a.Port] = a.Status
 	}
 
-	var pool []int
-	if t.HTTPProbed && len(answered) > 0 {
-		for _, p := range t.ObservedPorts {
-			if _, ok := answered[p]; ok {
-				pool = append(pool, p)
-			}
-		}
-		if serving := filterPorts(pool, func(p int) bool { return servesAPage(answered[p]) }); len(serving) > 0 {
-			pool = serving
-		}
-		pool = namedInLog(t.Log, pool)
-		if len(pool) > 1 {
-			tied = pool
-		}
+	probed := t.HTTPProbed && len(answered) > 0
+	pool := t.ObservedPorts
+	if probed {
+		pool = filterPorts(pool, func(p int) bool { _, ok := answered[p]; return ok })
+		pool = prefer(pool, func(p int) bool { return servesAPage(answered[p]) })
 	} else {
-		pool = filterPorts(t.ObservedPorts, func(p int) bool { return !notHTTP[p] })
-		if settled := filterPorts(pool, func(p int) bool { return p < ephemeralPorts }); len(settled) > 0 {
-			pool = settled
-		}
-		pool = namedInLog(t.Log, pool)
+		pool = prefer(pool, func(p int) bool { return !notHTTP[p] })
+	}
+	pool = prefer(pool, func(p int) bool { return p < ephemeralPorts })
+	pool = prefer(pool, func(p int) bool { return declared[p] })
+	pool = namedInLog(t.Log, pool)
+	if probed && len(pool) > 1 {
+		tied = pool
 	}
 
 	chosen := t.ObservedPorts[0]
@@ -83,12 +82,12 @@ func observedPorts(t Trial) (ports []spec.Port, tied []int) {
 		}
 		protocol := "http"
 		_, answeredHTTP := answered[p]
-		if notHTTP[p] || (t.HTTPProbed && len(answered) > 0 && !answeredHTTP) {
+		if (!probed && notHTTP[p]) || (probed && !answeredHTTP) {
 			protocol = "tcp"
 		}
 		ports = append(ports, spec.Port{Number: p, Protocol: protocol, Source: spec.PortObserved})
 	}
-	if t.HTTPProbed && len(answered) > 0 {
+	if probed {
 		// The chosen port answered HTTP, whatever its number usually carries.
 		return ports, tied
 	}
@@ -105,6 +104,14 @@ const ephemeralPorts = 32768
 // a page, a redirect to one, or a sign-in.
 func servesAPage(status int) bool {
 	return (status >= 200 && status < 400) || status == 401 || status == 403
+}
+
+// prefer narrows ports to the ones that pass, unless none do.
+func prefer(ports []int, keep func(int) bool) []int {
+	if narrowed := filterPorts(ports, keep); len(narrowed) > 0 {
+		return narrowed
+	}
+	return ports
 }
 
 func filterPorts(ports []int, keep func(int) bool) []int {
