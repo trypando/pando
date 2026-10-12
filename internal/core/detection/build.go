@@ -203,11 +203,7 @@ func (r *Runner) Rebuild(ctx context.Context, appID string) (bool, error) {
 	// The request that asked returns at once; the build is bounded as a
 	// detection is.
 	r.background(func() {
-		timeout := r.Timeout
-		if timeout <= 0 {
-			timeout = Timeout
-		}
-		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), Timeout)
 		defer cancel()
 		r.rebuild(bg, app, p)
 	})

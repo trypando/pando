@@ -478,15 +478,6 @@
       "secret": false
     },
     {
-      "env": "PANDO_WORK_DETECTION_TIMEOUT",
-      "key": "work.detection_timeout",
-      "type": "duration",
-      "default": "",
-      "description": "How long one detection may take, including building the app. 0 means 40 minutes: 10 to read the app and 30 for its build.",
-      "group": "work",
-      "secret": false
-    },
-    {
       "env": "PANDO_WORK_DETECTIONS",
       "key": "work.detections",
       "type": "int",

@@ -113,8 +113,8 @@ it. A scan failure does not cancel the build: a scan never fails a detection (R-
 plan then shows the scan as failed.
 
 **[P] A detection that builds gets the time a deploy's build gets** (issue #90): ten minutes to read
-the app — clone, auction and trial run — plus the default build timeout, 30 minutes, so 40 in all,
-set by `work.detection_timeout`. Before detection built, ten minutes was the whole of it; kept after,
+the app — clone, auction and trial run — plus the default build timeout, 30 minutes, so 40 in all.
+Before detection built, ten minutes was the whole of it; kept after,
 it failed builds a deploy would have finished, four in ten of them on a six-CPU host with a dozen
 apps added at once. The outcome is written under a context the deadline does not cancel, so a
 detection that reaches its result as its time runs out records it rather than "could not record".

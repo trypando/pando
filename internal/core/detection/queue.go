@@ -25,8 +25,7 @@ const ReadTimeout = 10 * time.Minute
 // would deploy, which detection has done since R-311. The build gets what a
 // deploy's build gets by default. Held to the reading's ten minutes, detection
 // failed builds a deploy would have finished — on a six-CPU host with a dozen
-// apps added at once, four in ten of them (issue #90). Configuration overrides
-// it (work.detection_timeout).
+// apps added at once, four in ten of them (issue #90).
 var Timeout = ReadTimeout + time.Duration(spec.StandardDefaults().BuildTimeoutSeconds)*time.Second
 
 // DefaultConcurrency is how many detections one replica runs at once when

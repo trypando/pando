@@ -91,10 +91,6 @@ type Runner struct {
 	ScreenMaxBytes int64
 	ScreenTimeout  time.Duration
 
-	// Timeout bounds a rebuild started after a detection finished, as Queue's
-	// Timeout bounds a detection. Zero means the package Timeout.
-	Timeout time.Duration
-
 	// Clock stamps conversation turns. Nil is the system clock.
 	Clock clock.Clock
 

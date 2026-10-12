@@ -619,7 +619,6 @@ func serve(ctx context.Context, configPath string) error {
 		// The score of what was proposed, before anybody decides whether to
 		// deploy it (R-312).
 		Scanner:    security.DetectionScanner{Service: securityService, Logger: logger},
-		Timeout:    cfg.Work.DetectionTimeout,
 		Apps:       apps,
 		Detections: detections,
 		Policy:     hostPolicy,
@@ -671,7 +670,6 @@ func serve(ctx context.Context, configPath string) error {
 		Detections: detections,
 		Detect:     detector.RunQueued,
 		Limit:      cfg.Work.Detections,
-		Timeout:    cfg.Work.DetectionTimeout,
 		Logger:     logger,
 	}
 
