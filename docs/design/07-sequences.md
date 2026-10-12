@@ -24,6 +24,10 @@ Detection job:
   7.  registry check: ghcr.io/acme/notes, docker.io/acme/notes  (R-094 tier 1)
   8.  every builder adapter Bid()  (R-093)
   9.  rank; winner emits draft spec + evidence + questions
+        a published image from 7 outranks every bid except a compose file that
+        imported (R-094 as amended by issue #90): the image alone → prebuilt,
+        STOP after the trial run; a compose file → it wins, each service that
+        builds the published image runs it instead, the image is a runner-up
   9a. at once: build the image(s) the draft would deploy, as a deploy builds them,
       when no open question changes what is built (R-311; R-112, R-118 as step 8 of B)
         and scan the source beside the build

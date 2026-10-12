@@ -49,3 +49,19 @@ source. A future GitLab registry check would pass for GitLab sources.
 
 That rule also answers the question for registries nobody has thought about yet,
 which a list of two names does not.
+
+## A compose file outranks it (issue #90)
+
+Tier 1 short-circuited the auction, so a repository whose compose file runs its
+published image beside a database ran the image alone: Planka, Listmonk,
+Linkwarden and a dozen more crashed connecting to a database that was not
+there, or on a variable the compose file set. R-094 is amended: a compose file
+that imports outranks the published image, and the image outranks everything
+else. A compose service that builds the published image (`build: .` beside
+`image: ghcr.io/acme/app`) runs the published image instead. A compose file
+Pando refuses (R-099) does not outrank it, because the image is an answer and
+the refusal is about a file the app does not need.
+
+`detect.Job.Run` asks the probe first, runs the auction, and decides: the image
+alone (`checkRegistry`), or the compose candidate with the image as a runner-up
+(`withComposeOverImage`). Nothing is asked between them; the ladder settles it.

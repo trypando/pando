@@ -343,6 +343,11 @@ app, and the security reviewer's role; a custom role may hold any one `install.a
 
 **R-094 [D]** Confidence ladder, highest first:
 1. **Already-published image** — check the repo's namespace on ghcr.io and Docker Hub before building anything.
+   A compose file in the repository (R-096) outranks it, and a compose service that builds the published
+   image runs the published image instead. A compose file Pando refuses (R-099) does not outrank it.
+   *(Amended by issue #90: the published image outranked everything, so an app whose compose file runs
+   its image beside a database, with the variables and volumes it needs, ran the image alone and crashed
+   on a database that was not there. The compose file is where the maintainer says how their image runs.)*
 2. **Explicit deployment artifacts** — Dockerfile, compose file, Procfile, `devcontainer.json`, Nix flake, release binaries.
 3. **The maintainer's own build commands** — `.github/workflows`, or a command runner's target that
    says how the app is built and run: `Makefile`, `Taskfile.yml`, `justfile`. Ranked among

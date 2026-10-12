@@ -147,6 +147,68 @@ func TestR094_APublishedImageShortCircuitsTheAuction(t *testing.T) {
 	require.Empty(t, detect.Asked(p.Questions))
 }
 
+// TestR094_AComposeFileOutranksAPublishedImage asserts R-094 as amended by
+// issue #90. A repository's compose file is where its maintainer says how the
+// image they publish runs — beside which database, with which variables — so
+// it is the answer, and a service that builds the published image runs it
+// instead. The image alone is a runner-up.
+func TestR094_AComposeFileOutranksAPublishedImage(t *testing.T) {
+	job := &detect.Job{
+		Auction:  detect.NewAuction(detect.DockerfileDetector{}, detect.ComposeDetector{}),
+		Registry: publishedProbe{images: []detect.PublishedImage{{Ref: "ghcr.io/acme/notes:latest", Registry: "ghcr.io"}}},
+	}
+	p, err := job.Run(context.Background(), "app_1",
+		spec.Source{Type: spec.SourceGit, URL: "https://github.com/acme/notes"},
+		memSource{
+			"Dockerfile": "FROM alpine\nEXPOSE 3000\n",
+			"compose.yaml": `
+services:
+  notes:
+    build: .
+    image: ghcr.io/acme/notes:${TAG:-latest}
+    environment:
+      DATABASE_URL: postgresql://postgres:secret@postgres/notes
+      SECRET_KEY: notsecret
+    ports: ["3000:3000"]
+  postgres:
+    image: postgres:16-alpine
+`,
+		})
+	require.NoError(t, err)
+
+	require.Equal(t, "compose", p.Winner.Detector)
+	require.Nil(t, p.Blocked)
+	notes := workloadsByName(p.Winner.Draft)["notes"]
+	require.Nil(t, notes.Build, "the service building the published image runs it")
+	require.Equal(t, "ghcr.io/acme/notes:latest", notes.Image)
+	require.Equal(t, spec.BuildPrebuilt, p.DraftSpec.Build.Strategy, "nothing is left to build")
+	require.True(t, hasSlot(p.DraftSpec.Slots, spec.SlotPostgres), "the database the compose file runs comes along")
+
+	var registry bool
+	for _, r := range p.RunnersUp {
+		registry = registry || r.Detector == "registry"
+	}
+	require.True(t, registry, "the image alone is shown as the reading not taken")
+	for _, q := range p.Questions {
+		require.NotEqual(t, detect.KeyBuildStrategy, q.Key, "the ladder decides; nothing is asked")
+	}
+}
+
+// A compose file Pando refuses does not outrank the published image: the image
+// is an answer, and the refusal is about a file the app does not need.
+func TestR094_ARefusedComposeFileDoesNotOutrankAPublishedImage(t *testing.T) {
+	job := &detect.Job{
+		Auction:  detect.NewAuction(detect.ComposeDetector{}),
+		Registry: publishedProbe{images: []detect.PublishedImage{{Ref: "ghcr.io/acme/notes:latest", Registry: "ghcr.io"}}},
+	}
+	p, err := job.Run(context.Background(), "app_1",
+		spec.Source{Type: spec.SourceGit, URL: "https://github.com/acme/notes"},
+		memSource{"compose.yaml": "services:\n  notes:\n    image: ghcr.io/acme/notes\n    privileged: true\n"})
+	require.NoError(t, err)
+	require.Equal(t, "registry", p.Winner.Detector)
+	require.Nil(t, p.Blocked)
+}
+
 // An answer adopting a runner-up keeps only the answers to that runner-up's own
 // questions. A port given for the winner's reading is not the adopted one's
 // port, and a start command it never asked for is not applied to it either.
