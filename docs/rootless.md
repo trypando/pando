@@ -17,6 +17,11 @@ for it, then continue from the `Delegate` step.
 # The account Docker and Pando will run as: an ordinary user, not in the docker group.
 sudo useradd --create-home --shell /bin/bash pando
 
+# More subordinate IDs than the 65,536 useradd gives: Pando's build container runs rootless
+# BuildKit, which maps 65,536 IDs of its own inside the container, and a container on rootless
+# Docker has only the IDs its user was given. Any free range of 200,000 will do.
+sudo usermod --add-subuids 1000000-1199999 --add-subgids 1000000-1199999 pando
+
 # Ubuntu 24.04 and later confine unprivileged user namespaces. Rootless Docker does not need this
 # line: Ubuntu's apparmor package allows them for /usr/bin/rootlesskit. Pando's build container
 # does: it runs rootless BuildKit, whose rootlesskit that profile does not cover.

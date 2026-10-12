@@ -203,7 +203,11 @@ func (r *Runner) Rebuild(ctx context.Context, appID string) (bool, error) {
 	// The request that asked returns at once; the build is bounded as a
 	// detection is.
 	r.background(func() {
-		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), Timeout)
+		timeout := r.Timeout
+		if timeout <= 0 {
+			timeout = Timeout
+		}
+		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 		defer cancel()
 		r.rebuild(bg, app, p)
 	})
@@ -249,8 +253,10 @@ func (r *Runner) rebuild(ctx context.Context, app state.App, p detect.Proposal) 
 			return
 		}
 	}
-	if err := r.Detections.Save(ctx, app.ID, p.Status, p, p.Commit); err != nil {
-		_ = r.Detections.FailIfRunning(ctx, app.ID, err)
+	rec, cancel := recording(ctx)
+	defer cancel()
+	if err := r.Detections.Save(rec, app.ID, p.Status, p, p.Commit); err != nil {
+		_ = r.Detections.FailIfRunning(rec, app.ID, err)
 	}
 }
 
@@ -276,7 +282,9 @@ func (r *Runner) buildThenScan(ctx context.Context, s *spec.AppSpec, checkout *s
 
 // fail records a detection that failed, as detect does.
 func (r *Runner) fail(ctx context.Context, appID string, err error) {
-	_ = r.Detections.Save(ctx, appID, state.DetectionFailed, failureBody(err), "")
+	rec, cancel := recording(ctx)
+	defer cancel()
+	_ = r.Detections.Save(rec, appID, state.DetectionFailed, failureBody(err), "")
 }
 
 // failureBody is what a failed detection stores.

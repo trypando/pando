@@ -91,6 +91,10 @@ type Runner struct {
 	ScreenMaxBytes int64
 	ScreenTimeout  time.Duration
 
+	// Timeout bounds a rebuild started after a detection finished, as Queue's
+	// Timeout bounds a detection. Zero means the package Timeout.
+	Timeout time.Duration
+
 	// Clock stamps conversation turns. Nil is the system clock.
 	Clock clock.Clock
 
@@ -199,14 +203,28 @@ func (r *Runner) detect(ctx context.Context, app state.App) (state.Detection, er
 		return state.Detection{}, err
 	}
 
-	if err := r.Detections.Save(ctx, appID, proposal.Status, proposal, proposal.Commit); err != nil {
+	rec, cancel := recording(ctx)
+	defer cancel()
+	if err := r.Detections.Save(rec, appID, proposal.Status, proposal, proposal.Commit); err != nil {
 		// Recorded as failed rather than left running: a detection whose
 		// result could not be stored is finished, and one marked running
 		// forever is a spinner nobody can clear.
-		_ = r.Detections.FailIfRunning(ctx, appID, err)
+		_ = r.Detections.FailIfRunning(rec, appID, err)
 		return state.Detection{}, err
 	}
-	return r.Detections.Get(ctx, appID)
+	return r.Detections.Get(rec, appID)
+}
+
+// recordTimeout bounds writing a detection's outcome.
+const recordTimeout = 30 * time.Second
+
+// recording is the context a detection's outcome is written under: the run's
+// values without its deadline. A detection that reached its result as its time
+// ran out used to lose it — the write failed on the expired deadline, and the
+// app showed "Could not record the detection result" instead of its plan
+// (issue #90).
+func recording(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
 }
 
 // Check reports whether detection may run for an app, without starting it: the

@@ -7,19 +7,27 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/work"
 	"github.com/trypando/pando/internal/log"
 	"github.com/trypando/pando/internal/telemetry"
 )
 
-// Timeout bounds one detection run.
+// ReadTimeout is what one detection gets to read an app: a clone, an auction
+// and a trial run that may pull a base image over a slow connection.
 //
-// Generous: it covers a clone, an auction and a trial run that may pull a base
-// image over a slow connection. The cost of being too short is a detection that
-// fails for a large repository on a home connection, which is exactly the user
-// R-005 describes.
-const Timeout = 10 * time.Minute
+// Generous: the cost of being too short is a detection that fails for a large
+// repository on a home connection, which is exactly the user R-005 describes.
+const ReadTimeout = 10 * time.Minute
+
+// Timeout bounds one detection run: reading the app, and building what it
+// would deploy, which detection has done since R-311. The build gets what a
+// deploy's build gets by default. Held to the reading's ten minutes, detection
+// failed builds a deploy would have finished — on a six-CPU host with a dozen
+// apps added at once, four in ten of them (issue #90). Configuration overrides
+// it (work.detection_timeout).
+var Timeout = ReadTimeout + time.Duration(spec.StandardDefaults().BuildTimeoutSeconds)*time.Second
 
 // DefaultConcurrency is how many detections one replica runs at once when
 // configuration does not say [P]: one per CPU, at least two. A detection is a

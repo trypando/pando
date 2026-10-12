@@ -535,12 +535,21 @@ func (m *managed) start(ctx context.Context, id string) error {
 // container restarts, logging "rootlesskit ... fork/exec /proc/self/exe:
 // permission denied"). Only root on the host can allow it; nothing Pando can
 // ask Docker for does.
+//
+// On rootless Docker there is a second cause (issue #90): rootless BuildKit
+// maps 65536 user IDs of its own inside the container, and a container on
+// rootless Docker has only the IDs its user was given in /etc/subuid, by
+// default 65536 as well, so the map does not fit ("newuidmap: write to
+// uid_map failed: Operation not permitted").
 func (m *managed) notAnswering() string {
 	return "Run docker logs " + m.name + " on the host for BuildKit's own account of why. " +
 		"If it says \"permission denied\" from rootlesskit, the host confines unprivileged user namespaces, " +
 		"as Ubuntu 23.10 and later do, and rootless BuildKit cannot start until it allows them: as root, run " +
 		"sysctl -w kernel.apparmor_restrict_unprivileged_userns=0, and put the same setting in /etc/sysctl.d/ " +
-		"so it outlasts a reboot. Pando starts BuildKit again at its next check."
+		"so it outlasts a reboot. If it says \"newuidmap: write to uid_map failed\", the user rootless Docker " +
+		"runs as has too few subordinate IDs for BuildKit's own: as root, give it more with " +
+		"usermod --add-subuids 1000000-1199999 --add-subgids 1000000-1199999 followed by that user's name, " +
+		"then restart that user's Docker. Pando starts BuildKit again at its next check."
 }
 
 func (m *managed) ensureImage(ctx context.Context) error {

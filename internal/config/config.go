@@ -83,6 +83,11 @@ type Work struct {
 	// one per CPU, at least two.
 	Detections int `mapstructure:"detections" desc:"How many detections this replica runs at once. 0 means one per CPU, and at least two."`
 
+	// DetectionTimeout bounds one detection, which reads the app and builds
+	// what it would deploy (R-311). Default: detection.Timeout, ten minutes
+	// for reading plus a deploy's default build timeout.
+	DetectionTimeout time.Duration `mapstructure:"detection_timeout" desc:"How long one detection may take, including building the app. 0 means 40 minutes: 10 to read the app and 30 for its build."`
+
 	// Backups is how many rolling backups the leader takes at once.
 	// Default: two.
 	Backups int `mapstructure:"backups" desc:"How many rolling backups the leader takes at once. 0 means two."`

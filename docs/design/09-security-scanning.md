@@ -112,6 +112,13 @@ at most host policy's `max_concurrent_deploys` at a time. A build failure cancel
 it. A scan failure does not cancel the build: a scan never fails a detection (R-318), and the
 plan then shows the scan as failed.
 
+**[P] A detection that builds gets the time a deploy's build gets** (issue #90): ten minutes to read
+the app — clone, auction and trial run — plus the default build timeout, 30 minutes, so 40 in all,
+set by `work.detection_timeout`. Before detection built, ten minutes was the whole of it; kept after,
+it failed builds a deploy would have finished, four in ten of them on a six-CPU host with a dozen
+apps added at once. The outcome is written under a context the deadline does not cancel, so a
+detection that reaches its result as its time runs out records it rather than "could not record".
+
 **[D] A scan of the source alone, taken before there was a revision, is not the app's score
 (R-311).** Detection scans the source alone when it cannot build yet: an open question changes what
 would be built (a required build argument with no default — build arguments are never secrets,

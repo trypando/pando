@@ -334,7 +334,8 @@ func (viewWithoutRoot) Glob(string) ([]string, error)      { return nil, nil }
 // TestR105_PandosBuildKitNotAnsweringSaysWhereToLook asserts the health check
 // on Pando's own BuildKit names what most often stops it — a host that
 // confines unprivileged user namespaces, as Ubuntu 23.10 and later do — and
-// how to see BuildKit's own account (issue #130).
+// how to see BuildKit's own account (issue #130) — and the second cause on
+// rootless Docker, too few subordinate IDs for BuildKit's own (issue #90).
 func TestR105_PandosBuildKitNotAnsweringSaysWhereToLook(t *testing.T) {
 	fake := newFakeDocker("")
 	orig := dockerClient
@@ -351,4 +352,6 @@ func TestR105_PandosBuildKitNotAnsweringSaysWhereToLook(t *testing.T) {
 	remedy := errs.As(err).Remedy
 	require.Contains(t, remedy, "docker logs pando-buildkit")
 	require.Contains(t, remedy, "kernel.apparmor_restrict_unprivileged_userns=0")
+	require.Contains(t, remedy, "newuidmap: write to uid_map failed")
+	require.Contains(t, remedy, "usermod --add-subuids")
 }
