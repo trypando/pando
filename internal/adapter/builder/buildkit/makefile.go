@@ -101,6 +101,7 @@ func readMakefileAt(dir string) (declaration, string) {
 // exactly where it was, planned by convention-matching.
 func parseMakefile(r io.Reader) declaration {
 	recipes := map[string][]string{}
+	prereqs := map[string][]string{}
 	var current string
 
 	scanner := bufio.NewScanner(io.LimitReader(r, 256<<10))
@@ -131,6 +132,10 @@ func parseMakefile(r io.Reader) declaration {
 			if _, seen := recipes[current]; !seen {
 				recipes[current] = nil
 			}
+			if _, rest, ok := strings.Cut(trimmed, ":"); ok {
+				rest, _, _ = strings.Cut(rest, ";")
+				prereqs[current] = append(prereqs[current], strings.Fields(rest)...)
+			}
 			continue
 		}
 		// A variable assignment, a directive, a conditional — none of which
@@ -138,7 +143,77 @@ func parseMakefile(r io.Reader) declaration {
 		current = ""
 	}
 
+	for _, name := range buildTargets {
+		if _, ok := recipes[name]; ok && buildsDocumentsOnly(name, recipes, prereqs) {
+			delete(recipes, name)
+		}
+	}
 	return declarationFrom(recipes, "make")
+}
+
+// documentTools are programs that typeset documents. A build target that runs
+// only these — demo-rust-axum's `all` makes an EPUB and a PDF of its README with
+// pandoc — builds the documentation, not the app, and running it as the image's
+// build failed on a tool no image has (`pandoc-from-markdown-to-epub: not
+// found`) while the Cargo build that was wanted never ran.
+var documentTools = []string{"pandoc", "latex", "pdflatex", "xelatex", "lualatex", "latexmk",
+	"asciidoctor", "sphinx-build", "a2x", "wkhtmltopdf", "groff", "texi2pdf"}
+
+// documentOutputs are file targets that are documents.
+var documentOutputs = []string{".pdf", ".epub", ".mobi", ".docx", ".tex", ".dvi", ".ps"}
+
+// buildsDocumentsOnly reports a target whose whole job, prerequisites
+// included, is making documents: some step runs a document tool or the target
+// produces a document file, and no step builds anything else.
+//
+// Conservative on purpose. A target that compiles the app and also renders a
+// manual still builds the app, and is left alone; only one with nothing but
+// documents in it is passed over, for the language's own build.
+func buildsDocumentsOnly(target string, recipes, prereqs map[string][]string) bool {
+	seen := map[string]bool{}
+	documents, other := false, false
+
+	var walk func(string, int)
+	walk = func(name string, depth int) {
+		if seen[name] || depth > 8 {
+			return
+		}
+		seen[name] = true
+		for _, ext := range documentOutputs {
+			if strings.HasSuffix(strings.ToLower(name), ext) {
+				documents = true
+			}
+		}
+		for _, step := range recipes[name] {
+			fields := strings.Fields(strings.TrimLeft(step, "@-+"))
+			if len(fields) == 0 {
+				continue
+			}
+			tool := strings.ToLower(filepath.Base(fields[0]))
+			switch {
+			case isDocumentTool(tool):
+				documents = true
+			case tool == "sed" || tool == "cat" || tool == "echo" || tool == "rm" || tool == "mkdir" || tool == "cp":
+				// Text plumbing around a document tool, not a build of its own.
+			default:
+				other = true
+			}
+		}
+		for _, p := range prereqs[name] {
+			walk(p, depth+1)
+		}
+	}
+	walk(target, 0)
+	return documents && !other
+}
+
+func isDocumentTool(tool string) bool {
+	for _, t := range documentTools {
+		if tool == t || strings.HasPrefix(tool, t+"-") {
+			return true
+		}
+	}
+	return false
 }
 
 // startCommandFrom picks the command a run target actually runs.

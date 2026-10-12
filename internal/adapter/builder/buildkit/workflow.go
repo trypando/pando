@@ -78,6 +78,10 @@ func readWorkflowBuild(contextDir string) declaredBuild {
 			continue
 		}
 
+		steps, ok := buildingOnly(steps)
+		if !ok {
+			continue
+		}
 		command := strings.Join(dropProvidedInstalls(steps, contextDir), " && ")
 		if command == "" {
 			continue
@@ -110,6 +114,7 @@ func buildJobSteps(r io.Reader) []string {
 		steps    []string
 		matrix   bool
 		usesCall bool
+		services bool
 	}
 	jobs := map[string]*job{}
 
@@ -160,6 +165,13 @@ func buildJobSteps(r io.Reader) []string {
 			continue
 		}
 
+		// A job that starts a database beside itself is checking the app
+		// against one: its steps migrate and test, and assume a server an
+		// image build does not have.
+		if strings.HasPrefix(trimmed, "services:") {
+			current.services = true
+			continue
+		}
 		if strings.HasPrefix(trimmed, "matrix:") || strings.HasPrefix(trimmed, "strategy:") {
 			current.matrix = true
 			continue
@@ -188,7 +200,7 @@ func buildJobSteps(r io.Reader) []string {
 
 	for _, name := range buildJobNames {
 		j, ok := jobs[name]
-		if !ok || j == nil || len(j.steps) == 0 || j.matrix || j.usesCall {
+		if !ok || j == nil || len(j.steps) == 0 || j.matrix || j.usesCall || j.services {
 			continue
 		}
 		return j.steps
@@ -252,6 +264,52 @@ func isInstall(command string) bool {
 		}
 	}
 	return false
+}
+
+// testCommand matches a step that checks the app rather than building it: a
+// test suite, a linter, a vet. R-011 — Pando does not test — and a test run as
+// an image's build step fails the build on whatever the suite needs and the
+// image does not have: a database, a browser, the CI runner's tools.
+var testCommand = regexp.MustCompile(`^(` +
+	`(go|cargo|mix|deno|dotnet|mvn|gradle|\./gradlew|\./mvnw|rake|bundle exec rake)\s+(test|vet|clippy|fmt|lint)\b` +
+	`|(npm|yarn|pnpm|bun)(\s+run)?\s+(test|lint|check|typecheck|e2e)\b` +
+	`|(python3?\s+(-m\s+)?)?(\./)?(\S*/)?manage\.py\s+(test|check)\b` +
+	`|(python3?\s+-m\s+|npx\s+|bundle\s+exec\s+|uv\s+run\s+|poetry\s+run\s+|vendor/bin/)?` +
+	`(pytest|tox|nox|jest|vitest|rspec|phpunit|golangci-lint|eslint|ruff|flake8|mypy|playwright|cypress)\b` +
+	`)`)
+
+// notBuilding are commands that cannot be part of an image's build: they need
+// the CI runner's privileges or its daemon, ship the app somewhere, or talk to
+// a server the job started. A job that runs one is CI's recipe — "build with
+// doctl, run the container, curl it" — and not a description of the build.
+var notBuilding = map[string]bool{
+	"sudo": true, "docker": true, "docker-compose": true, "podman": true, "buildah": true,
+	"doctl": true, "flyctl": true, "fly": true, "heroku": true, "kubectl": true, "helm": true,
+	"vercel": true, "netlify": true, "wrangler": true, "gcloud": true, "aws": true, "az": true,
+	"curl": true, "wget": true, "sleep": true, "ssh": true, "scp": true, "rsync": true,
+}
+
+// buildingOnly drops the steps that test, and declines the job (false) when
+// what is left still does something an image build cannot, or nothing at all.
+func buildingOnly(steps []string) ([]string, bool) {
+	var out []string
+	for _, step := range steps {
+		var kept []string
+		for _, part := range strings.Split(step, "&&") {
+			part = strings.TrimSpace(part)
+			if part == "" || testCommand.MatchString(strings.ToLower(part)) {
+				continue
+			}
+			if notBuilding[strings.ToLower(strings.Fields(part)[0])] {
+				return nil, false
+			}
+			kept = append(kept, part)
+		}
+		if len(kept) > 0 {
+			out = append(out, strings.Join(kept, " && "))
+		}
+	}
+	return out, len(out) > 0
 }
 
 func skippable(step string) bool {

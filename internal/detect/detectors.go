@@ -934,7 +934,7 @@ func argAsserted(body, arg string) bool {
 	// `[ -z "$X" ] && exit 1`, `if [ -z "$X" ]; then echo …; exit 1; fi`. A
 	// `-z` test followed by `||` is the opposite — a fallback when it is empty —
 	// and so is one whose branch assigns something rather than exiting.
-	for _, loc := range regexp.MustCompile(`-z\s+` + ref + `\s*\]{0,2}\s*(&&|;\s*then)`).FindAllStringIndex(body, -1) {
+	for _, loc := range regexp.MustCompile(`-z\s+`+ref+`\s*\]{0,2}\s*(&&|;\s*then)`).FindAllStringIndex(body, -1) {
 		rest := body[loc[1]:]
 		if end := strings.IndexAny(rest, "\n"); end >= 0 {
 			rest = rest[:end]
