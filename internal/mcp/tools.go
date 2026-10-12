@@ -73,9 +73,12 @@ func appPath(id, suffix string) string {
 	return "/apps/" + url.PathEscape(id) + suffix
 }
 
+// appIDDescription describes the app_id every app tool takes.
+const appIDDescription = "The app's ID."
+
 // appIDSchema is the schema of a tool that takes only an app.
 func appIDSchema() map[string]any {
-	return schema(map[string]any{"app_id": str("The app's ID.")}, "app_id")
+	return schema(map[string]any{"app_id": str(appIDDescription)}, "app_id")
 }
 
 // appRequest is the request of a tool that takes only an app and calls one
@@ -357,7 +360,7 @@ var toolList = []tool{
 			"(answer the questions with pando_answer_detection), blocked or failed (the " +
 			"`detection` field says why).",
 		Schema: schema(map[string]any{
-			"app_id": str("The app's ID."),
+			"app_id": str(appIDDescription),
 			"wait_seconds": map[string]any{
 				"type": "integer",
 				"description": "Optional. While detection is running, wait up to this many seconds " +
@@ -390,7 +393,7 @@ var toolList = []tool{
 			"built (a build argument) has Pando build and scan the image again, so the plan shows the score " +
 			"of what will run: detection reads as `running` until it has, and accepting waits for it.",
 		Schema: schema(map[string]any{
-			"app_id": str("The app's ID."),
+			"app_id": str(appIDDescription),
 			"key":    str("The question's key."),
 			"answer": str("The answer."),
 		}, "app_id", "key", "answer"),
@@ -412,7 +415,7 @@ var toolList = []tool{
 		Description: "Accept what Pando worked out and pin it as the app's setup, optionally setting " +
 			"environment variables in the same step. This does not deploy — call pando_deploy after.",
 		Schema: schema(map[string]any{
-			"app_id": str("The app's ID."),
+			"app_id": str(appIDDescription),
 			"values": map[string]any{
 				"type":                 "object",
 				"description":          "Environment variables to set, name to value, e.g. {\"API_URL\": \"https://api\"}. Stored as ordinary variables, not secrets.",
@@ -456,7 +459,7 @@ var toolList = []tool{
 			"When the deploy needs somebody's approval, it comes back with status `awaiting_approval` and " +
 			"`approval_reasons` saying why; it runs once a person approves it.",
 		Schema: schema(map[string]any{
-			"app_id":          str("The app's ID."),
+			"app_id":          str(appIDDescription),
 			"idempotency_key": str("A key you choose. Retrying with the same key will not deploy twice."),
 		}, "app_id"),
 		request: func(args map[string]any) (string, string, any, error) {
@@ -490,7 +493,7 @@ var toolList = []tool{
 			"needs, the deploy starts. Approval is a person's sign-off, so by default an installation does not " +
 			"let an agent's token approve; the refusal says so.",
 		Schema: schema(map[string]any{
-			"app_id":        str("The app's ID."),
+			"app_id":        str(appIDDescription),
 			"deployment_id": str("The deploy's ID, as pando_list_approvals or pando_deploy returned it."),
 			"comment":       str("Optional. A note recorded with the approval."),
 		}, "app_id", "deployment_id"),
@@ -502,7 +505,7 @@ var toolList = []tool{
 			"deploy does not run. Approval is a person's sign-off, so by default an installation does not let " +
 			"an agent's token reject either.",
 		Schema: schema(map[string]any{
-			"app_id":        str("The app's ID."),
+			"app_id":        str(appIDDescription),
 			"deployment_id": str("The deploy's ID, as pando_list_approvals or pando_deploy returned it."),
 			"comment":       str("Optional. Why, recorded with the rejection and shown to whoever asked."),
 		}, "app_id", "deployment_id"),
@@ -516,7 +519,7 @@ var toolList = []tool{
 			"to; pando_get_status lists the names. Returns the most recent lines: 200 unless " +
 			"`tail` says otherwise, and never more than 5000.",
 		Schema: schema(map[string]any{
-			"app_id":   str("The app's ID."),
+			"app_id":   str(appIDDescription),
 			"workload": str("Which part of the app to read. Defaults to the primary one."),
 			"tail": map[string]any{
 				"type":        "integer",
@@ -595,7 +598,7 @@ var toolList = []tool{
 		Description: "Set the image shown on an app's launcher tile. The image is a PNG, JPEG, " +
 			"WebP or GIF file of at most 256 KB, base64-encoded. SVG is not accepted.",
 		Schema: schema(map[string]any{
-			"app_id":       str("The app's ID."),
+			"app_id":       str(appIDDescription),
 			"image_base64": str("The image file's bytes, base64-encoded."),
 		}, "app_id", "image_base64"),
 		request: func(args map[string]any) (string, string, any, error) {
@@ -624,7 +627,7 @@ var toolList = []tool{
 			"enough for a static site. Replaces any files sent before. Then call " +
 			"pando_rerun_detection so Pando works out how to run them.",
 		Schema: schema(map[string]any{
-			"app_id":         str("The app's ID."),
+			"app_id":         str(appIDDescription),
 			"archive_base64": str("The gzipped tar's bytes, base64-encoded."),
 		}, "app_id", "archive_base64"),
 		request: func(args map[string]any) (string, string, any, error) {
@@ -655,7 +658,7 @@ var toolList = []tool{
 			"it can show, and replies; the reply, what it changed and what Pando refused are the last " +
 			"entry of `detection.conversation`. Needs an AI adapter.",
 		Schema: schema(map[string]any{
-			"app_id":  str("The app's ID."),
+			"app_id":  str(appIDDescription),
 			"message": str("What is wrong with the plan."),
 		}, "app_id", "message"),
 		request: func(args map[string]any) (string, string, any, error) {
@@ -680,7 +683,7 @@ var toolList = []tool{
 			"any it had. It belongs to the app and is never given to it. Pando never shows it " +
 			"again; pando_get_registry_credential says only which kind is set.",
 		Schema: schema(map[string]any{
-			"app_id":              str("The app's ID."),
+			"app_id":              str(appIDDescription),
 			"registry_credential": registryCredentialSchema("The credential."),
 		}, "app_id", "registry_credential"),
 		request: func(args map[string]any) (string, string, any, error) {
@@ -726,7 +729,7 @@ var toolList = []tool{
 			"configuration that takes effect at the app's next deploy. Refused while the app's deploys " +
 			"need approval.",
 		Schema: schema(map[string]any{
-			"app_id":      str("The app's ID."),
+			"app_id":      str(appIDDescription),
 			"enabled":     map[string]any{"type": "boolean", "description": "Whether the app deploys automatically."},
 			"trigger":     map[string]any{"type": "string", "enum": []string{"branch_updated", "release_tagged"}},
 			"branch":      str("With branch_updated: the branch to follow."),
@@ -783,7 +786,7 @@ var toolList = []tool{
 		Name:        "pando_rename_app",
 		Description: "Change an app's display name. Its ID and address do not change.",
 		Schema: schema(map[string]any{
-			"app_id": str("The app's ID."),
+			"app_id": str(appIDDescription),
 			"name":   str("The new name."),
 		}, "app_id", "name"),
 		request: func(args map[string]any) (string, string, any, error) {
@@ -810,7 +813,7 @@ var toolList = []tool{
 			"\"never\", or \"default\" for the installation's setting. Both count from the last use, so " +
 			"deleting has to come later than stopping. App settings, not spec: nothing is deployed.",
 		Schema: schema(map[string]any{
-			"app_id":      str("The app's ID."),
+			"app_id":      str(appIDDescription),
 			"stop_days":   numberOrWord("Days without use before Pando stops the app, \"never\", or \"default\".", "never", "default"),
 			"delete_days": numberOrWord("Days without use before Pando deletes the app, \"never\", or \"default\".", "never", "default"),
 		}, "app_id", "stop_days", "delete_days"),
@@ -946,7 +949,7 @@ var toolList = []tool{
 		Description: "Move an app you can open into one of your launcher sections, out of any other.",
 		Schema: schema(map[string]any{
 			"section_id": str("The section's ID."),
-			"app_id":     str("The app's ID."),
+			"app_id":     str(appIDDescription),
 		}, "section_id", "app_id"),
 		request: func(args map[string]any) (string, string, any, error) {
 			sid, aid, err := twoArgs(args, "section_id", "app_id")
@@ -961,7 +964,7 @@ var toolList = []tool{
 		Description: "Move an app out of one of your launcher sections, back to Your apps.",
 		Schema: schema(map[string]any{
 			"section_id": str("The section's ID."),
-			"app_id":     str("The app's ID."),
+			"app_id":     str(appIDDescription),
 		}, "section_id", "app_id"),
 		request: func(args map[string]any) (string, string, any, error) {
 			sid, aid, err := twoArgs(args, "section_id", "app_id")
