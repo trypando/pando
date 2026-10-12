@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/url"
 	"time"
@@ -78,7 +79,12 @@ func portOpen(ctx context.Context, runtime api.RuntimeAdapter, appID, workload s
 		conn, err = d.DialContext(dialCtx, "tcp", u.Host)
 	}
 	if err != nil {
-		return false
+		// A name that does not resolve is not a closed port: this process is
+		// not on the app's network (a Pando run outside a container, a test),
+		// so there is no TCP signal here to wait on. A refused or timed-out
+		// connection is the app not listening yet.
+		var dns *net.DNSError
+		return errors.As(err, &dns)
 	}
 	_ = conn.Close()
 	return true

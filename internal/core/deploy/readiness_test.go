@@ -108,6 +108,20 @@ func TestR221_AHealthCheckOutranksTheTCPConnect(t *testing.T) {
 	})
 }
 
+type dnsRuntime struct{ api.RuntimeAdapter }
+
+func (dnsRuntime) Upstream(context.Context, api.WorkloadRef, int) (api.Upstream, error) {
+	return api.Upstream{URL: "http://web:8080", Dial: func(context.Context) (net.Conn, error) {
+		return nil, &net.DNSError{Err: "no such host", Name: "web", IsNotFound: true}
+	}}, nil
+}
+
+// A Pando that is not on the app's network has no TCP signal to wait on, and
+// does not hold a deploy for the whole start wait over it.
+func TestR221_NoRouteToTheAppIsNoTCPSignal(t *testing.T) {
+	require.True(t, portOpen(t.Context(), dnsRuntime{}, "app_01HQ8", "web", 8080))
+}
+
 // A JVM start under load fits in the start wait (issue #90).
 func TestR221_TheStartWaitFitsASlowJVMStart(t *testing.T) {
 	require.GreaterOrEqual(t, startWait, 2*time.Minute+30*time.Second)
