@@ -191,7 +191,7 @@ func (c *composeImport) isFile(hostPath string) bool {
 func (c *composeImport) names() []string {
 	names := make([]string, 0, len(c.file.Services))
 	for name, s := range c.file.Services {
-		if len(s.Profiles) == 0 {
+		if len(s.Profiles) == 0 && !scaledToZero(s) {
 			names = append(names, name)
 		}
 	}
@@ -204,7 +204,16 @@ func (c *composeImport) names() []string {
 	return names
 }
 
-// profiled returns the services left out because they sit behind a profile.
+// scaledToZero reports a service with `deploy.replicas: 0`, which `docker
+// compose up` creates no container for. It is a tool the author runs by hand —
+// Vapor's templates declare `migrate` and `revert` this way, beside the app and
+// sharing its image — and Pando started both alongside the app (issue #90).
+func scaledToZero(s composeService) bool {
+	return s.Deploy != nil && s.Deploy.Replicas != nil && *s.Deploy.Replicas == 0
+}
+
+// profiled returns the services left out because they sit behind a profile
+// or are scaled to zero.
 func (c *composeImport) profiled() []string {
 	kept := map[string]bool{}
 	for _, name := range c.names() {
@@ -379,6 +388,31 @@ func (c *composeImport) build() spec.Build {
 	return spec.Build{Strategy: spec.BuildCompose, ComposeFile: c.source}
 }
 
+// workloadBuild is a service's `build:` as the spec records it.
+func workloadBuild(raw any) *spec.WorkloadBuild {
+	context, dockerfile, target := buildFields(raw)
+	return &spec.WorkloadBuild{Context: context, Dockerfile: dockerfile, Target: target, Args: buildArgs(raw)}
+}
+
+// builtBy returns the service that builds the image another names, if one
+// does: a service with both `build:` and an `image:` equal to this one.
+func (c *composeImport) builtBy(service, image string) string {
+	if strings.TrimSpace(image) == "" {
+		return ""
+	}
+	var names []string
+	for name, s := range c.file.Services {
+		if name != service && s.Build != nil && s.Image == image {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	return names[0]
+}
+
 // buildFields reads compose's two spellings of `build:`.
 //
 // A string is the context directory. A map carries context, dockerfile and
@@ -460,6 +494,12 @@ func (c *composeImport) draft() Draft {
 	}
 
 	for _, name := range c.profiled() {
+		if scaledToZero(c.file.Services[name]) {
+			c.rewrote(name, "deploy.replicas: 0",
+				"Pando runs what `docker compose up` runs, which starts no container for a service "+
+					"scaled to zero. The service was not imported.")
+			continue
+		}
 		c.rewrote(name, "profiles: "+strings.Join(c.file.Services[name].Profiles, ", "),
 			"Pando runs what `docker compose up` runs, which leaves out a service behind a "+
 				"profile. The service was not imported.")
@@ -658,8 +698,14 @@ func (c *composeImport) workload(name string, only bool) spec.Workload {
 	// compose file with two of them produces two images instead of one and a
 	// warning.
 	if s.Build != nil {
-		context, dockerfile, target := buildFields(s.Build)
-		w.Build = &spec.WorkloadBuild{Context: context, Dockerfile: dockerfile, Target: target, Args: buildArgs(s.Build)}
+		w.Build = workloadBuild(s.Build)
+	} else if builder := c.builtBy(name, s.Image); builder != "" {
+		// `image: app` naming the image another service builds is that image,
+		// as it is under compose: the build tags it locally and this service
+		// runs it. Pando pulled docker.io/library/app instead, which does not
+		// exist (issue #90). The same build is recorded, and the deploy builds
+		// it once for both (see deploy's buildAll).
+		w.Build = workloadBuild(c.file.Services[builder].Build)
 	}
 
 	// Pando names containers itself, because two apps importing compose files

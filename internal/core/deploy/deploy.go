@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -690,12 +691,8 @@ func (r *Runner) buildAll(ctx context.Context, s *spec.AppSpec, checkout *source
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(r.buildLimit(ctx))
-	for _, w := range s.Workloads {
-		if w.Build == nil {
-			// Names an image already. Nothing to build, and building something
-			// to replace it would ignore what the compose file said.
-			continue
-		}
+	for _, group := range sameBuilds(s.Workloads) {
+		w := group[0]
 		g.Go(func() error {
 			fmt.Fprintf(shared, "=> Building %s\n", w.Name)
 			// Each service's lines carry its name, since several write here
@@ -712,7 +709,9 @@ func (r *Runner) buildAll(ctx context.Context, s *spec.AppSpec, checkout *source
 				return err
 			}
 			mu.Lock()
-			images[w.Name] = image
+			for _, same := range group {
+				images[same.Name] = image
+			}
 			mu.Unlock()
 			return nil
 		})
@@ -721,6 +720,36 @@ func (r *Runner) buildAll(ctx context.Context, s *spec.AppSpec, checkout *source
 		return "", nil, err
 	}
 	return "", images, nil
+}
+
+// sameBuilds groups the workloads that build an image by what they build, in
+// spec order, so each image is built once.
+//
+// Compose builds a shared image once: an app, its migration and its revert
+// service all declaring one `build:` are one build. Pando ran all three at
+// once, and Swift's builds collided on their shared cache mount with
+// "database is locked" (issue #90). A workload with no build names an image
+// already and is not here: building something to replace it would ignore what
+// the compose file said.
+func sameBuilds(workloads []spec.Workload) [][]spec.Workload {
+	var groups [][]spec.Workload
+	for _, w := range workloads {
+		if w.Build == nil {
+			continue
+		}
+		placed := false
+		for i, group := range groups {
+			if reflect.DeepEqual(group[0].Build, w.Build) {
+				groups[i] = append(group, w)
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			groups = append(groups, []spec.Workload{w})
+		}
+	}
+	return groups
 }
 
 func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Checkout, sink io.Writer, wb *spec.WorkloadBuild, cacheNamespace, deploymentID string) (string, error) {

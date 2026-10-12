@@ -113,6 +113,29 @@ func TestR096_AComposeAppsServicesBuildAtOnce(t *testing.T) {
 	require.Contains(t, log.String(), "worker | partial\n", "a last line with no newline is kept")
 }
 
+// TestR096_ServicesSharingABuildBuildItOnce asserts R-096: services that
+// declare one build — an app and its migration service, from the same context
+// and Dockerfile — are one build, as under compose, and each runs its image.
+// Three at once collided on a shared cache mount (issue #90).
+func TestR096_ServicesSharingABuildBuildItOnce(t *testing.T) {
+	t.Parallel()
+	b := &barrierBuilder{want: 2, all: make(chan struct{})}
+	r := composeRunner(t, b, 4)
+
+	app := composeApp()
+	shared := spec.WorkloadBuild{Context: ".", Dockerfile: "web/Dockerfile"}
+	app.Workloads[0].Build = &shared
+	migrate := shared
+	app.Workloads = append(app.Workloads, spec.Workload{Name: "migrate", Build: &migrate})
+
+	_, images, err := r.buildAll(context.Background(), app, &source.Checkout{}, io.Discard, "dep_1")
+	require.NoError(t, err)
+	require.Equal(t, 2, b.started, "two distinct builds, not three")
+	require.Equal(t, "pando/web:dep_1", images["web"])
+	require.Equal(t, images["web"], images["migrate"], "the service sharing the build runs its image")
+	require.Equal(t, "pando/worker:dep_1", images["worker"])
+}
+
 // TestR096_OneServiceFailingStopsTheOthers asserts that the first build to
 // fail is the error, and the builds beside it are canceled rather than left
 // running for a deploy that has already failed.
