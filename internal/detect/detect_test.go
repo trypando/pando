@@ -1155,19 +1155,19 @@ func TestR096_AComposeSubstitutionIsResolvedToItsDefault(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	env := map[string]string{}
+	env := map[string]spec.EnvEntry{}
 	for _, e := range result.Winner.Draft.Workloads[0].Env {
-		require.NotNil(t, e.Value)
-		env[e.Key] = *e.Value
+		env[e.Key] = e
 	}
-	require.Equal(t, "localhost", env["APP_DOMAIN"])
+	require.NotNil(t, env["APP_DOMAIN"].Value)
+	require.Equal(t, "localhost", *env["APP_DOMAIN"].Value)
 
-	// One with no default has no value to resolve to. It keeps its spelling —
-	// an empty string would be an app misconfigured with nothing to show for
-	// it — and says so, so somebody sets it (R-102).
-	require.Equal(t, "${APP_BASE_URL}", env["APP_BASE_URL"])
-	require.True(t, hasWarning(result.Winner.Draft.Warnings,
-		spec.WarnComposeConstructRewritten, "APP_BASE_URL"))
+	// One with no default has no value to resolve to. It used to keep its
+	// spelling, and the app was handed the text "${APP_BASE_URL}". It is a
+	// required slot now, so somebody sets it before the deploy (R-132).
+	require.Nil(t, env["APP_BASE_URL"].Value)
+	require.NotNil(t, env["APP_BASE_URL"].SlotRef)
+	require.Equal(t, "APP_BASE_URL", *env["APP_BASE_URL"].SlotRef)
 }
 
 // Compose services live in a map, and Go randomizes map iteration.

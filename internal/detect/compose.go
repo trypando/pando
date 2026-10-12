@@ -1,7 +1,6 @@
 package detect
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"path"
@@ -50,11 +49,26 @@ func ImportCompose(src api.SourceView, name string) (Draft, error) {
 		return Draft{}, errs.Wrap(errs.ValidInvalid, "Could not read "+name+".", err)
 	}
 
-	var file composeFile
-	if err := yaml.Unmarshal(raw, &file); err != nil {
-		return Draft{}, errs.Wrap(errs.ValidInvalid,
+	invalid := func(err error) error {
+		return errs.Wrap(errs.ValidInvalid,
 			"Could not understand "+name+" — it is not valid compose YAML.", err).
 			WithRemedy("Check the file with `docker compose config` and fix what it reports.")
+	}
+
+	// Interpolated before anything reads it, as `docker compose` does: every
+	// value in the file, against the `.env` beside it (see composeVars).
+	var tree map[string]any
+	if err := yaml.Unmarshal(raw, &tree); err != nil {
+		return Draft{}, invalid(err)
+	}
+	vars := newComposeVars(src, name)
+	resolved, err := yaml.Marshal(vars.interpolate(tree))
+	if err != nil {
+		return Draft{}, invalid(err)
+	}
+	var file composeFile
+	if err := yaml.Unmarshal(resolved, &file); err != nil {
+		return Draft{}, invalid(err)
 	}
 	if len(file.Services) == 0 {
 		return Draft{}, errs.Newf(errs.ValidInvalid,
@@ -62,7 +76,7 @@ func ImportCompose(src api.SourceView, name string) (Draft, error) {
 			WithRemedy("Add a `services:` section naming at least one service.")
 	}
 
-	imp := &composeImport{file: file, source: name, src: src}
+	imp := &composeImport{file: file, source: name, src: src, vars: vars}
 	if err := imp.rejectIncompatible(); err != nil {
 		return Draft{}, err
 	}
@@ -134,8 +148,17 @@ type composeImport struct {
 
 	warnings []spec.Warning
 
-	// valueSlots are values env_file templates say the app needs.
+	// valueSlots are values the app needs that nothing in the repository
+	// holds: names an env_file template leaves empty, and variables an
+	// environment entry takes from a shell Pando does not have.
 	valueSlots []spec.Slot
+
+	// vars is what the file was interpolated against.
+	vars *composeVars
+
+	// passedThrough are environment entries with no value, which compose
+	// takes from its shell and Pando has nowhere to take from.
+	passedThrough []string
 }
 
 // isFile reports whether a relative compose path names a regular file in the
@@ -374,7 +397,7 @@ func buildFields(raw any) (context, dockerfile, target string) {
 }
 
 // buildArgs reads a service's `build: args:`, in either of compose's shapes —
-// a list of KEY=VALUE or a map — interpolated as the rest of the file is. They
+// a list of KEY=VALUE or a map, interpolated with the rest of the file. They
 // were not imported, so a Dockerfile told `NODE_ENV=development` built as
 // production (issue #55). An argument with no value in the file is left out:
 // compose would take it from the shell, and there is none here.
@@ -388,7 +411,7 @@ func buildArgs(raw any) []spec.KV {
 	case []any:
 		for _, entry := range a {
 			if k, v, found := strings.Cut(scalar(entry), "="); found && k != "" {
-				args = append(args, spec.KV{Key: k, Value: interpolate(v)})
+				args = append(args, spec.KV{Key: k, Value: v})
 			}
 		}
 	case map[string]any:
@@ -401,7 +424,7 @@ func buildArgs(raw any) []spec.KV {
 			if a[k] == nil {
 				continue
 			}
-			args = append(args, spec.KV{Key: k, Value: interpolate(scalar(a[k]))})
+			args = append(args, spec.KV{Key: k, Value: scalar(a[k])})
 		}
 	}
 	return args
@@ -495,6 +518,7 @@ func (c *composeImport) draft() Draft {
 		d.Workloads[i].DependsOn = kept
 	}
 
+	c.unsetWarnings()
 	d.Warnings = c.warnings
 	return d
 }
@@ -613,8 +637,8 @@ func (c *composeImport) workload(name string, only bool) spec.Workload {
 	w := spec.Workload{
 		Name:       name,
 		Image:      s.Image,
-		Command:    interpolateAll(stringList(s.Command)),
-		Entrypoint: interpolateAll(stringList(s.Entrypoint)),
+		Command:    stringList(s.Command),
+		Entrypoint: stringList(s.Entrypoint),
 		WorkingDir: s.WorkingDir,
 		Env:        c.env(name, s),
 		Ports:      c.ports(name, s),
@@ -1152,18 +1176,24 @@ func (c *composeImport) mounts(name string, s composeService) []spec.Mount {
 	return mounts
 }
 
-// env imports a service's environment, resolving compose substitutions the
-// same way mount sources already were.
+// env imports a service's environment, as interpolated (see composeVars).
 //
 // `APP_DOMAIN: ${APP_DOMAIN:-localhost}` used to arrive at the container
 // verbatim, as the fourteen characters "${APP_DOMAIN:-localhost}" — a value no
 // app can use and nothing explains, from a file whose own semantics say an
 // unset variable takes its default.
 //
-// A substitution with no default has no value to resolve to, so it keeps its
-// spelling and says so: somebody has to supply it on the app's settings, and a
-// variable that silently became empty would be an app misconfigured with no
-// sign of it (R-102).
+// A value that is one variable nothing sets — `ROOT_URL: ${ROOT_URL}` — is the
+// author saying the value comes from outside the file. It reached the app as
+// the literal text "${ROOT_URL}", which Rails read as a truthy FORCE_SSL and
+// Meteor as a URL (issue #90). It is a required slot now: the plan asks for it
+// and the deploy waits until it has one (R-130, R-132).
+//
+// An entry with no value at all — `- SECRET` — passes the variable through
+// from the shell running compose, and is left out when the shell does not set
+// it. With no shell here, the `.env` beside the file is the only place it can
+// come from; otherwise it lands on the app's variables with nothing in it,
+// which is what a hole is (R-130) and what an untyped .env.example key does.
 func (c *composeImport) env(name string, s composeService) []spec.EnvEntry {
 	// `env_file:` first, because `environment:` overrides it — compose's own
 	// precedence, and the reason DATABASE_URL keeps the value the compose file
@@ -1175,22 +1205,36 @@ func (c *composeImport) env(name string, s composeService) []spec.EnvEntry {
 		at[e.Key] = i
 	}
 
-	add := func(key, raw string) {
+	put := func(entry spec.EnvEntry) {
+		if i, seen := at[entry.Key]; seen {
+			entries[i] = entry
+			return
+		}
+		at[entry.Key] = len(entries)
+		entries = append(entries, entry)
+	}
+	add := func(key, value string, bare bool) {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			return
 		}
-		value := interpolate(raw)
-		if strings.Contains(value, "${") {
-			c.unresolved(name, key, value)
-		}
-		entry := spec.EnvEntry{Key: key, Value: &value, Source: spec.EnvFromCompose}
-		if i, seen := at[key]; seen {
-			entries[i] = entry
+		if variable, ok := c.vars.envSlots[name][key]; ok {
+			ref := variable
+			c.requireVariable(name, key, variable)
+			put(spec.EnvEntry{Key: key, SlotRef: &ref, Source: spec.EnvFromCompose})
 			return
 		}
-		at[key] = len(entries)
-		entries = append(entries, entry)
+		if bare {
+			v, ok := c.vars.values[key]
+			if !ok {
+				empty := ""
+				c.passedThrough = append(c.passedThrough, key)
+				put(spec.EnvEntry{Key: key, Value: &empty, Source: spec.EnvFromDetection})
+				return
+			}
+			value = v
+		}
+		put(spec.EnvEntry{Key: key, Value: &value, Source: spec.EnvFromCompose})
 	}
 
 	switch v := s.Environment.(type) {
@@ -1201,18 +1245,37 @@ func (c *composeImport) env(name string, s composeService) []spec.EnvEntry {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			add(k, scalar(v[k]))
+			add(k, scalar(v[k]), v[k] == nil)
 		}
 	case []any:
 		for _, raw := range v {
 			k, v, found := strings.Cut(scalar(raw), "=")
-			if !found {
-				continue
-			}
-			add(k, v)
+			add(k, v, !found)
 		}
 	}
 	return entries
+}
+
+// requireVariable records a variable an environment entry takes from a shell
+// Pando does not have, as a required slot named for the variable.
+func (c *composeImport) requireVariable(service, key, variable string) {
+	for _, s := range c.valueSlots {
+		if s.Key == variable {
+			return
+		}
+	}
+	evidence := fmt.Sprintf("the compose service %q sets %s to ${%s}, and nothing in the repository gives %s a value",
+		service, key, variable, variable)
+	if key == variable {
+		evidence = fmt.Sprintf("the compose service %q takes %s from the shell running `docker compose`, "+
+			"and nothing in the repository gives it a value", service, key)
+	}
+	c.valueSlots = append(c.valueSlots, spec.Slot{
+		Key:      variable,
+		Type:     slotTypeFor(variable, ""),
+		Required: true,
+		Evidence: []string{evidence},
+	})
 }
 
 // fromEnvFiles imports what a service's `env_file:` points at.
@@ -1344,14 +1407,9 @@ func (c *composeImport) readEnvAssignments(name string) ([]assignment, bool) {
 	}
 	defer func() { _ = f.Close() }()
 
-	var out []assignment
-	scanner := bufio.NewScanner(io.LimitReader(f, 64<<10))
-	for scanner.Scan() {
-		if m := envAssignment.FindStringSubmatch(scanner.Text()); m != nil {
-			out = append(out, assignment{Key: m[1], Value: strings.TrimSpace(m[2])})
-		}
-	}
-	return out, true
+	// Read as compose reads it: quotes removed, an inline comment dropped.
+	// The value is what reaches the container, and `PORT=8080 # web` is 8080.
+	return parseDotenv(f), true
 }
 
 // templateFor finds the committed template beside an env file that is not.
@@ -1371,15 +1429,40 @@ func (c *composeImport) templateFor(name string) (string, []assignment, bool) {
 	return "", nil, false
 }
 
-// unresolved warns about a variable whose value the compose file does not hold.
-func (c *composeImport) unresolved(service, key, value string) {
-	c.warnings = append(c.warnings, spec.Warning{
-		Code: spec.WarnComposeConstructRewritten,
-		Message: fmt.Sprintf("In the compose service %q, %s is set to %s, which takes its value "+
-			"from the shell running `docker compose`. Pando has no such shell. Set %s on this "+
-			"app's variables, or it reaches the app as written.",
-			service, key, value, key),
-	})
+// unsetWarnings says which variables the file reads that nothing sets.
+//
+// Compose substitutes an empty string for each and warns; so does Pando, once
+// for the file rather than once per place. A variable that is the whole of an
+// environment value is a slot instead, and asked for (see env), so it is not
+// repeated here.
+func (c *composeImport) unsetWarnings() {
+	asked := map[string]bool{}
+	for _, s := range c.valueSlots {
+		asked[s.Key] = true
+	}
+	var unset []string
+	for _, name := range c.vars.missingNames() {
+		if !asked[name] {
+			unset = append(unset, name)
+		}
+	}
+	if len(unset) > 0 {
+		c.warnings = append(c.warnings, spec.Warning{
+			Code: spec.WarnComposeConstructRewritten,
+			Message: fmt.Sprintf("%s reads %s from the shell running `docker compose`, and neither the "+
+				"repository nor a %s file beside it sets them. Pando left them empty, as compose does. "+
+				"If the app needs one, set it on this app's variables.",
+				c.source, strings.Join(truncate(unset, 8), ", "), envFileName),
+		})
+	}
+	if len(c.passedThrough) > 0 {
+		c.warnings = append(c.warnings, spec.Warning{
+			Code: spec.WarnComposeConstructRewritten,
+			Message: fmt.Sprintf("%s passes %s through from the shell running `docker compose`, which "+
+				"Pando does not have. They are on this app's variables with no value; set the ones "+
+				"the app needs.", c.source, strings.Join(truncate(c.passedThrough, 8), ", ")),
+		})
+	}
 }
 
 func (c *composeImport) rewrote(service, construct, why string) {
@@ -1432,7 +1515,7 @@ func parseMounts(entries []any) []mount {
 		if !ok {
 			continue
 		}
-		source, target := interpolate(scalar(m["source"])), scalar(m["target"])
+		source, target := scalar(m["source"]), scalar(m["target"])
 		out := mount{
 			raw:           source + ":" + target,
 			containerPath: target,
@@ -1453,12 +1536,21 @@ func parseMounts(entries []any) []mount {
 }
 
 func parseShortMount(text string) mount {
-	parts := splitMountSpec(interpolate(text))
+	parts := splitMountSpec(text)
 	switch len(parts) {
 	case 1:
 		// An anonymous volume: "/var/lib/data".
 		return mount{raw: text, containerPath: parts[0], volumeName: volumeNameFor("", parts[0]), anonymous: true}
 	default:
+		if strings.TrimSpace(parts[0]) == "" {
+			// `${DATA_DIR}:/var/data` with DATA_DIR set nowhere. Compose would
+			// mount an empty source, which is the directory it runs in — the
+			// repository root. A volume of the app's own at the same path is
+			// what the author was after: somewhere that data is kept.
+			m := mount{raw: text, containerPath: parts[1], volumeName: volumeNameFor("", parts[1]), anonymous: true}
+			m.readOnly = len(parts) > 2 && parts[2] == "ro"
+			return m
+		}
 		m := mount{raw: text, containerPath: parts[1]}
 		if len(parts) > 2 {
 			m.readOnly = parts[2] == "ro"
@@ -1503,76 +1595,6 @@ func splitMountSpec(text string) []string {
 	}
 	parts = append(parts, current.String())
 	return parts
-}
-
-// interpolate resolves compose variable substitutions to their defaults.
-//
-// Pando has no environment to interpolate from — the compose file is being read
-// out of a repository, not run from a shell — so the default is the only value
-// available, and compose's own semantics say that is what an unset variable
-// takes. "${CONFIG_DIR:-./config}" becomes "./config", which then travels the
-// ordinary relative-bind path and becomes a managed volume.
-//
-// A variable with no default is left as written. It is not a path, so it fails
-// the host-path checks and ends up named as-is rather than silently becoming an
-// empty string — which would mount the repository root.
-func interpolate(text string) string {
-	var out strings.Builder
-
-	for i := 0; i < len(text); {
-		// `$$` is compose's escape for a literal `$`: `--password="$$(cat
-		// /run/secrets/db-password)"` reaches the container's shell as
-		// `$(cat …)`. Passed on doubled, the shell read `$$` as its own
-		// process ID (issue #55).
-		if text[i] == '$' && i+1 < len(text) && text[i+1] == '$' {
-			out.WriteByte('$')
-			i += 2
-			continue
-		}
-		if text[i] != '$' || i+1 >= len(text) || text[i+1] != '{' {
-			out.WriteByte(text[i])
-			i++
-			continue
-		}
-
-		end := strings.IndexByte(text[i:], '}')
-		if end < 0 {
-			out.WriteString(text[i:])
-			break
-		}
-		inner := text[i+2 : i+end]
-		out.WriteString(defaultOf(inner))
-		i += end + 1
-	}
-	return out.String()
-}
-
-// interpolateAll interpolates each word of a command, as compose does.
-func interpolateAll(words []string) []string {
-	if words == nil {
-		return nil
-	}
-	out := make([]string, len(words))
-	for i, w := range words {
-		out[i] = interpolate(w)
-	}
-	return out
-}
-
-// defaultOf returns the default from a compose substitution body.
-//
-// The forms with a usable default are "VAR:-default" and "VAR-default". The
-// error forms — "VAR:?message" and "VAR?message" — have no default by
-// definition, and neither does a bare "VAR"; all three keep their original
-// spelling so that what Pando could not resolve stays visible.
-func defaultOf(inner string) string {
-	if name, fallback, found := strings.Cut(inner, ":-"); found && name != "" {
-		return fallback
-	}
-	if name, fallback, found := strings.Cut(inner, "-"); found && name != "" && !strings.Contains(name, ":") {
-		return fallback
-	}
-	return "${" + inner + "}"
 }
 
 // isAbsoluteHostPath reports whether a mount source names a path on the host.
@@ -1640,10 +1662,10 @@ func health(h *composeHealth) *spec.Healthcheck {
 	switch t := h.Test.(type) {
 	case string:
 		if strings.TrimSpace(t) != "" {
-			command = []string{"sh", "-c", interpolate(t)}
+			command = []string{"sh", "-c", t}
 		}
 	default:
-		list := interpolateAll(stringList(t))
+		list := stringList(t)
 		switch {
 		case len(list) == 0 || list[0] == "NONE":
 			return nil
