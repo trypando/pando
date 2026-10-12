@@ -363,6 +363,23 @@ func TestR200_StorageAnImageDeclaresIsGiven(t *testing.T) {
 	require.Contains(t, out.Workloads[0].Mounts, spec.Mount{VolumeID: out.Volumes[1].ID, Path: "/data"})
 }
 
+// TestR200_StorageAnAppAsksForInItsOutputIsGiven asserts R-200. Nginx Proxy
+// Manager declares /data with VOLUME and checks at start that /etc/letsencrypt
+// is mounted too, stopping on every start until it is (issue #90).
+func TestR200_StorageAnAppAsksForInItsOutputIsGiven(t *testing.T) {
+	draft := detect.Draft{Workloads: []spec.Workload{{Name: "web", Primary: true}}}
+	out, _ := detect.ApplyTrial(draft, nil, detect.Trial{Ran: true, ImageVolumes: []string{"/data"},
+		Log: "❯ Checking paths ...\n\x1b[1;31mERROR: /etc/letsencrypt is not mounted! Check your docker configuration.\x1b[0m\n" +
+			"ERROR: /etc/letsencrypt is not mounted!\nwarning: '/srv/media' must be mounted as a volume\n"})
+
+	var paths []string
+	for _, m := range out.Workloads[0].Mounts {
+		paths = append(paths, m.Path)
+	}
+	require.ElementsMatch(t, []string{"/data", "/etc/letsencrypt", "/srv/media"}, paths)
+	require.Len(t, out.Volumes, 3)
+}
+
 // Traffic goes to the web port an image listens on, not its SSH or SMTP port
 // (issue #55).
 func TestR097_AnImagesWebPortIsTheOneRoutedTo(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -102,6 +103,7 @@ func ApplyTrial(draft Draft, questions []Question, t Trial) (Draft, []Question) 
 	}
 
 	draft, tied := applyObservedPorts(draft, t)
+	t.ImageVolumes = append(append([]string(nil), t.ImageVolumes...), mountsAskedFor(t.Log)...)
 	draft = applyImageVolumes(draft, t)
 	questions = resolvePortQuestions(questions, t)
 	questions = choosePortQuestion(questions, tied)
@@ -186,6 +188,31 @@ func applyImageVolumes(draft Draft, t Trial) Draft {
 		break
 	}
 	return draft
+}
+
+// mountAsked is an app saying a path must be mounted: "ERROR: /etc/letsencrypt
+// is not mounted!", "/data must be mounted", "/config is not a mountpoint".
+var mountAsked = regexp.MustCompile(`(?i)(/[A-Za-z0-9._/-]*[A-Za-z0-9._-])['"]?\s+(?:is not mounted|isn't mounted|must be mounted|should be mounted|needs to be mounted|is not a mount ?point)`)
+
+// mountsAskedFor reads the paths an app's own output says must be mounted.
+//
+// The image's VOLUME is one way an image names where its data lives; its
+// startup check is another. Nginx Proxy Manager declares /data and checks for
+// /etc/letsencrypt as well, and stopped at "/etc/letsencrypt is not mounted!"
+// on every start (issue #90). The app named the path; Pando gives it a volume,
+// as it does for a VOLUME (R-200).
+func mountsAskedFor(log string) []string {
+	var paths []string
+	seen := map[string]bool{}
+	for _, m := range mountAsked.FindAllStringSubmatch(log, -1) {
+		p := path.Clean(m[1])
+		if p == "/" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	return paths
 }
 
 // onlyNonHTTP reports observed ports that are all ports of protocols other than
