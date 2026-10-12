@@ -653,7 +653,9 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 	// R-026). Publishing here would be a bypass.
 	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			networkName: {NetworkID: networkID, Aliases: []string{w.Name}},
+			// Its other names too, on this network only: a compose file's
+			// container_name, which the other services address it by.
+			networkName: {NetworkID: networkID, Aliases: append([]string{w.Name}, w.Aliases...)},
 		},
 	}
 

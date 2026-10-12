@@ -984,6 +984,7 @@ func bundlePlanFor(s *spec.AppSpec, image string, perWorkload map[string]string,
 			WorkingDir: w.WorkingDir,
 			Env:        env,
 			DependsOn:  append(append([]string(nil), w.DependsOn...), svcs.dependsOn(s, w)...),
+			Aliases:    w.Aliases,
 			Exposed:    w.Exposed,
 			Resources: api.ResourcePlan{
 				CPUMillis:   s.Resources.CPUMillis,

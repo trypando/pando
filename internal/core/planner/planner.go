@@ -715,6 +715,7 @@ func (p *Planner) bundlePlan(s *spec.AppSpec, rules api.EgressRules) api.BundleP
 			Entrypoint: w.Entrypoint,
 			WorkingDir: w.WorkingDir,
 			DependsOn:  w.DependsOn,
+			Aliases:    w.Aliases,
 			Exposed:    w.Exposed,
 			Resources: api.ResourcePlan{
 				CPUMillis:   s.Resources.CPUMillis,

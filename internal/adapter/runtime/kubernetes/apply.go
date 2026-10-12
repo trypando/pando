@@ -478,6 +478,25 @@ const envKeySize = 32
 // ClusterIP None, and never NodePort or LoadBalancer: nothing outside the
 // cluster gets an address for an app (R-026).
 func (a *Adapter) ensureService(ctx context.Context, ns, bundleID string, w api.WorkloadPlan) error {
+	if err := a.ensureServiceNamed(ctx, ns, bundleID, w.Name, w); err != nil {
+		return err
+	}
+	// Its other names, each a Service selecting the same pod. A name that
+	// cannot be a Service's (an underscore in a compose container_name) has
+	// no way to resolve in a cluster, and is left out.
+	for _, alias := range w.Aliases {
+		if alias == w.Name || checkWorkloadName(alias) != nil {
+			continue
+		}
+		if err := a.ensureServiceNamed(ctx, ns, bundleID, alias, w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureServiceNamed gives a workload a headless Service by one of its names.
+func (a *Adapter) ensureServiceNamed(ctx context.Context, ns, bundleID, name string, w api.WorkloadPlan) error {
 	var ports []corev1.ServicePort
 	for _, p := range w.Ports {
 		proto := corev1.ProtocolTCP
@@ -493,7 +512,7 @@ func (a *Adapter) ensureService(ctx context.Context, ns, bundleID string, w api.
 	}
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: w.Name, Namespace: ns,
+			Name: name, Namespace: ns,
 			Labels: map[string]string{labelManagedBy: managedBy, labelBundle: toLabel(bundleID), labelWorkload: w.Name},
 		},
 		Spec: corev1.ServiceSpec{
@@ -505,7 +524,7 @@ func (a *Adapter) ensureService(ctx context.Context, ns, bundleID string, w api.
 		},
 	}
 	client := a.cs.CoreV1().Services(ns)
-	existing, err := client.Get(ctx, w.Name, metav1.GetOptions{})
+	existing, err := client.Get(ctx, name, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
 		_, err = client.Create(ctx, svc, metav1.CreateOptions{})
@@ -514,7 +533,7 @@ func (a *Adapter) ensureService(ctx context.Context, ns, bundleID string, w api.
 			// A Service changed by hand into something reachable from
 			// outside is replaced, not adjusted: ClusterIP cannot be changed
 			// in place.
-			if err = client.Delete(ctx, w.Name, metav1.DeleteOptions{}); err == nil {
+			if err = client.Delete(ctx, name, metav1.DeleteOptions{}); err == nil {
 				_, err = client.Create(ctx, svc, metav1.CreateOptions{})
 			}
 			break
@@ -530,7 +549,7 @@ func (a *Adapter) ensureService(ctx context.Context, ns, bundleID string, w api.
 		_, err = client.Update(ctx, existing, metav1.UpdateOptions{})
 	}
 	if err != nil {
-		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not give %q its name in the cluster.", w.Name), err)
+		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not give %q the name %q in the cluster.", w.Name, name), err)
 	}
 	return nil
 }

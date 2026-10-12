@@ -619,6 +619,11 @@ type WorkloadPlan struct {
 	Files     []FilePlan
 	Ports     []PortPlan
 	DependsOn []string
+
+	// Aliases are other names the workload is reachable by on the bundle's
+	// private network, beside Name. Nothing outside the bundle resolves them.
+	Aliases []string
+
 	Health    *HealthPlan
 	Resources ResourcePlan
 

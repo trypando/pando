@@ -531,7 +531,7 @@ func (c *composeImport) draft() Draft {
 		if !candidate {
 			continue
 		}
-		if reachedByURL(d.Workloads, name, slotType) {
+		if reachedByURL(d.Workloads, c.hostnames(name), slotType) {
 			backing[name] = slotType
 			continue
 		}
@@ -594,7 +594,7 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 				e := &workloads[i].Env[j]
 				// A connection URL only. A bare `REDIS_HOST: redis` given the
 				// whole DSN is a hostname nothing can resolve.
-				if e.Value == nil || schemeType(*e.Value) != backing[service] || !pointsAt(*e.Value, service) {
+				if e.Value == nil || schemeType(*e.Value) != backing[service] || !pointsAtAny(*e.Value, c.hostnames(service)) {
 					continue
 				}
 				if len(filled) == 0 {
@@ -639,15 +639,34 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 
 // reachedByURL reports whether some workload holds a connection URL for the
 // service, in a scheme the provisioned replacement's own URL uses.
-func reachedByURL(workloads []spec.Workload, service string, t spec.SlotType) bool {
+func reachedByURL(workloads []spec.Workload, hosts []string, t spec.SlotType) bool {
 	for _, w := range workloads {
 		for _, e := range w.Env {
 			if e.Value == nil || !strings.Contains(*e.Value, "://") {
 				continue
 			}
-			if schemeType(*e.Value) == t && pointsAt(*e.Value, service) {
+			if schemeType(*e.Value) == t && pointsAtAny(*e.Value, hosts) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// hostnames are the names a service is reached by: its own, and its
+// container_name, which compose also resolves.
+func (c *composeImport) hostnames(service string) []string {
+	names := []string{service}
+	if cn := strings.TrimSpace(c.file.Services[service].ContainerName); cn != "" && cn != service {
+		names = append(names, cn)
+	}
+	return names
+}
+
+func pointsAtAny(value string, hosts []string) bool {
+	for _, h := range hosts {
+		if pointsAt(value, h) {
+			return true
 		}
 	}
 	return false
@@ -710,10 +729,19 @@ func (c *composeImport) workload(name string, only bool) spec.Workload {
 
 	// Pando names containers itself, because two apps importing compose files
 	// that both say `container_name: web` would otherwise collide install-wide.
+	//
+	// The name still resolves inside the app, as it does under compose, where
+	// it is how the other services reach this one: an nginx upstream of
+	// `appseed_app:5005`, a DATABASE_URL naming the database's container
+	// (issue #90). Only inside the app's own network, so nothing collides.
 	if s.ContainerName != "" {
+		if _, taken := c.file.Services[s.ContainerName]; !taken && s.ContainerName != name {
+			w.Aliases = []string{s.ContainerName}
+		}
 		c.rewrote(name, "container_name: "+s.ContainerName,
 			"Pando names containers itself so that two apps importing compose files "+
-				"cannot collide over the same name.")
+				"cannot collide over the same name. The other services in this app still reach it as "+
+				s.ContainerName+".")
 	}
 
 	// Restart policy is configuration, not a question (R-104). Pando applies

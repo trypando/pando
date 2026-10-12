@@ -56,3 +56,38 @@ services:
 	require.Equal(t, byName["app"].Build, byName["migration"].Build,
 		"one build, which the deploy builds once for both")
 }
+
+// TestR096_AContainerNameStillResolvesInsideTheApp asserts R-096. Pando names
+// containers itself, but the other services address one by its
+// container_name — an nginx upstream, a database host in a URL — so it is kept
+// as an alias on the app's network.
+func TestR096_AContainerNameStillResolvesInsideTheApp(t *testing.T) {
+	const file = `
+services:
+  appseed-app:
+    container_name: appseed_app
+    image: example/app
+  nginx:
+    image: nginx
+    container_name: nginx
+    depends_on: [appseed-app]
+  app:
+    image: example/api
+    environment:
+      DATABASE_URL: postgres://app:pw@clean_app_postgres:5432/app
+  postgres:
+    image: postgres:16
+    container_name: clean_app_postgres
+`
+	draft, err := detect.ImportCompose(memSource{"compose.yaml": file}, "compose.yaml")
+	require.NoError(t, err)
+	byName := workloadsByName(draft)
+	require.Equal(t, []string{"appseed_app"}, byName["appseed-app"].Aliases)
+	require.Empty(t, byName["nginx"].Aliases, "a container_name equal to the service's own name adds nothing")
+
+	// A URL naming the database by its container_name reaches the database,
+	// so it is the provisioned one Pando runs, wired the same way.
+	require.NotContains(t, byName, "postgres")
+	require.True(t, hasSlot(draft.Slots, spec.SlotPostgres))
+	require.NotNil(t, envOf(byName["app"])["DATABASE_URL"].SlotRef)
+}

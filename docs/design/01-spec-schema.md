@@ -190,6 +190,7 @@ type Workload struct {
     Mounts    []Mount    `json:"mounts"`
     Files     []File     `json:"files,omitempty"`   // configuration carried in the spec, R-099a
     DependsOn []string   `json:"depends_on,omitempty"`  // from compose, R-096
+    Aliases   []string   `json:"aliases,omitempty"`     // other names it answers to on the app's network: compose's container_name, R-096
     Healthcheck *Healthcheck `json:"healthcheck,omitempty"`
 
     Exposed   bool       `json:"exposed"`   // R-026. Exactly one primary, see below.

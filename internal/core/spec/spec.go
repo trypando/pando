@@ -204,6 +204,14 @@ type Workload struct {
 	DependsOn []string     `json:"depends_on,omitempty"`
 	Health    *Healthcheck `json:"healthcheck,omitempty"`
 
+	// Aliases are other names the workload answers to on the app's private
+	// network, beside its own. A compose file's `container_name` is one: the
+	// other services address it by that name — an nginx upstream, a database
+	// host in a URL — and Pando, which names containers itself, made the name
+	// resolve nowhere (issue #90). Reachable only inside the app, like the
+	// workload's own name (R-026).
+	Aliases []string `json:"aliases,omitempty"`
+
 	// Exposed means reachable through the proxy at a sub-route (R-026).
 	Exposed bool `json:"exposed"`
 
