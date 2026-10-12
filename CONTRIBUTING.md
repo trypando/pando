@@ -15,7 +15,7 @@ cd pando
 make check        # vet, lint, dead code, unit tests — what CI runs on a pull request
 ```
 
-Go 1.27 and Docker. Node 22 as well if you are touching the console.
+Go 1.27 and Docker. Node 22.22.2 or later in the Node 22 line as well if you are touching the console.
 
 To run the server you are changing, build it from this checkout rather than pulling the published
 image: `docker-compose.yml` in the repository builds the `pando` service from source, where the file a
