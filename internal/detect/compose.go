@@ -237,7 +237,53 @@ func (c *composeImport) names() []string {
 		}
 	}
 	sort.Strings(names)
+
+	// A proxy that routes by reading the runtime socket is left out when
+	// there is something else to run (see routesBySocket).
+	var apps []string
+	for _, name := range names {
+		if !routesBySocket(c.file.Services[name]) {
+			apps = append(apps, name)
+		}
+	}
+	if len(apps) > 0 {
+		return apps
+	}
 	return names
+}
+
+// socketProxies are reverse proxies that discover what to route to by
+// reading the container runtime's socket.
+var socketProxies = []string{"traefik", "nginx-proxy", "caddy-docker-proxy", "docker-gen"}
+
+// routesBySocket reports a service that is a reverse proxy finding the other
+// services through the container runtime's socket.
+//
+// Pando's own proxy is what gives an app its address and routes to it
+// (R-023), and no app is given the runtime socket (R-099), so a compose
+// file's Traefik in front of its services has nothing left to do. It was
+// refused for the socket, and the whole stack with it — the full-stack
+// FastAPI template, and every app whose compose file brings its own Traefik
+// (issue #90). It is left out, with a warning, when the file has something
+// else to run.
+func routesBySocket(s composeService) bool {
+	image := strings.ToLower(s.Image)
+	proxy := false
+	for _, p := range socketProxies {
+		if strings.Contains(image, p) {
+			proxy = true
+			break
+		}
+	}
+	if !proxy {
+		return false
+	}
+	for _, m := range parseMounts(s.Volumes) {
+		if strings.HasSuffix(path.Clean(m.hostPath), ".sock") {
+			return true
+		}
+	}
+	return false
 }
 
 // scaledToZero reports a service with `deploy.replicas: 0`, which `docker
@@ -327,6 +373,11 @@ func (c *composeImport) rejectIncompatible() error {
 				continue
 			}
 			if isAbsoluteHostPath(mount.hostPath) {
+				if hostMountKind(mount) != hostRefused {
+					// A directory of the app's data, or the host's clock:
+					// rewritten, not refused (see mounts).
+					continue
+				}
 				found = append(found, rejection{name, "volume " + mount.raw,
 					"This mounts a path from the host machine into the app. Pando has no way to " +
 						"honor it: the app may not run on the machine holding that path, and if it " +
@@ -530,6 +581,14 @@ func (c *composeImport) draft() Draft {
 	}
 
 	for _, name := range c.profiled() {
+		if routesBySocket(c.file.Services[name]) {
+			c.rewrote(name, "service "+name,
+				"This service is a reverse proxy that finds the others by reading the container "+
+					"runtime's socket. Pando gives the app its own address and routes to it, and no "+
+					"app is given the runtime socket, so the service was not imported. Routing labels "+
+					"on the other services are not used either.")
+			continue
+		}
 		if scaledToZero(c.file.Services[name]) {
 			c.rewrote(name, "deploy.replicas: 0",
 				"Pando runs what `docker compose up` runs, which starts no container for a service "+
@@ -583,11 +642,16 @@ func (c *composeImport) draft() Draft {
 	d.Volumes = c.volumes(running)
 
 	// A service that is no longer a workload is no longer something to wait
-	// for. Pando starts a provisioned service before the app either way.
+	// for. Pando starts a provisioned service before the app either way, and
+	// one left out — a proxy, a tool behind a profile — never starts.
+	imported := map[string]bool{}
+	for _, w := range d.Workloads {
+		imported[w.Name] = true
+	}
 	for i := range d.Workloads {
 		var kept []string
 		for _, on := range d.Workloads[i].DependsOn {
-			if _, provided := backing[on]; !provided {
+			if imported[on] {
 				kept = append(kept, on)
 			}
 		}
@@ -921,7 +985,8 @@ func (c *composeImport) volumes(running []string) []spec.Volume {
 	for _, service := range running {
 		for _, m := range serviceMounts(service, c.file.Services[service].Volumes) {
 			// A single file is carried in the spec, not stored in a volume.
-			if m.hostPath != "" && c.isFile(m.hostPath) {
+			// The host's clock is not mounted at all.
+			if m.hostPath != "" && c.isFile(m.hostPath) || isHostClock(m) {
 				continue
 			}
 			if k := c.dirMount(service, m); k == dirInImage || k == dirCarried {
@@ -1266,6 +1331,13 @@ func (c *composeImport) mounts(name string, s composeService) []spec.Mount {
 		if k := c.dirMount(name, m); k == dirInImage || k == dirCarried {
 			continue
 		}
+		if isHostClock(m) {
+			c.rewrote(name, "volume "+m.raw,
+				"This mounts the host's time zone into the app. Pando does not mount paths from the "+
+					"host machine, so the app keeps its image's time zone, usually UTC. Set TZ on the "+
+					"app's variables if it needs another.")
+			continue
+		}
 		mounts = append(mounts, spec.Mount{
 			VolumeID: m.volumeName, Path: m.containerPath, ReadOnly: m.readOnly,
 		})
@@ -1276,7 +1348,13 @@ func (c *composeImport) mounts(name string, s composeService) []spec.Mount {
 		// source mount that turns up empty fails loudly on the trial run, while
 		// discarded data looks like a healthy deploy until the second one
 		// (R-203).
-		if m.hostPath != "" {
+		if isAbsoluteHostPath(m.hostPath) {
+			c.rewrote(name, "volume "+m.raw,
+				"The host directory "+m.hostPath+" became a volume Pando manages, mounted at "+
+					m.containerPath+". It starts empty: Pando cannot mount a path from the host "+
+					"machine, so what is in that directory there is not copied. Restore it into the "+
+					"volume if the app needs it.")
+		} else if m.hostPath != "" {
 			c.rewrote(name, "volume "+m.raw,
 				"The host directory "+m.hostPath+" became a volume Pando manages, mounted at "+
 					m.containerPath+". Pando cannot mount a path from the host machine, and "+
@@ -1707,12 +1785,69 @@ func splitMountSpec(text string) []string {
 	return parts
 }
 
+// hostKind is what a bind mount of an absolute host path imports as.
+type hostKind int
+
+const (
+	// hostRefused reaches the host itself: a runtime socket, a system
+	// directory, a single file. There is nothing to rewrite it to (R-099).
+	hostRefused hostKind = iota
+
+	// hostClock is the host's time zone, mounted so the container's clock
+	// reads local time. Dropped: the app runs on UTC, as Pando does.
+	hostClock
+
+	// hostData is a directory the app keeps data in, which becomes a volume
+	// Pando manages — the same rewrite a relative directory gets.
+	hostData
+)
+
+// hostSystem are host paths whose contents are the machine's, not an app's.
+var hostSystem = []string{"/var/run", "/run", "/proc", "/sys", "/dev", "/etc", "/var/lib/docker", "/var/lib/containers", "/boot", "/usr", "/bin", "/sbin", "/lib"}
+
+// hostMountKind classifies a bind mount of an absolute host path.
+//
+// Every one was refused, which turned away an app over the directory it keeps
+// its data in: whitebophir's `/opt/app/server-data`, ihatemoney's
+// `/path/to/local/dir/for/sqlite/db:/database` placeholder (issue #90). The
+// host's copy of that directory was never going to reach the app — it may not
+// run on that machine — but a directory of its own at the same path is what
+// the line asks for, and R-099 says rewrite where the app still does what its
+// author meant. What reaches the host's own machinery is still refused.
+func hostMountKind(m mount) hostKind {
+	host := path.Clean(m.hostPath)
+	switch host {
+	case "/etc/localtime", "/etc/timezone", "/usr/share/zoneinfo":
+		return hostClock
+	case "/":
+		return hostRefused
+	}
+	if strings.HasSuffix(host, ".sock") || strings.HasPrefix(host, "~") && strings.Contains(host, "/.") {
+		return hostRefused
+	}
+	for _, system := range hostSystem {
+		if host == system || strings.HasPrefix(host, system+"/") {
+			return hostRefused
+		}
+	}
+	// A file over a file: a volume is a directory, and Docker refuses to
+	// mount one where the image has a file.
+	if ext := path.Ext(path.Base(m.containerPath)); ext != "" && path.Base(m.containerPath) != ext {
+		return hostRefused
+	}
+	return hostData
+}
+
+func isHostClock(m mount) bool {
+	return isAbsoluteHostPath(m.hostPath) && hostMountKind(m) == hostClock
+}
+
 // isAbsoluteHostPath reports whether a mount source names a path on the host.
 //
 // A leading "." is relative to the compose file and handled separately: it is
 // rewritten into a managed volume rather than refused, because it is usually
-// the app's own data directory. An absolute path is refused — there is nothing
-// to rewrite it to, and it reaches outside the app's storage entirely.
+// the app's own data directory. An absolute path is classified by
+// hostMountKind.
 func isAbsoluteHostPath(source string) bool {
 	return strings.HasPrefix(source, "/") || strings.HasPrefix(source, "~")
 }

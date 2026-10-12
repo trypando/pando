@@ -1138,9 +1138,19 @@ func joinContinuations(scanner *bufio.Scanner) []string {
 // which is exactly what a slot is for (R-131). Anything unrecognized stays a
 // workload — Pando does not guess at what an unfamiliar image is.
 func backingService(service, image string) (spec.SlotType, bool) {
+	// A database image with extensions built in is not the stock one Pando
+	// provisions: ziit's migration stopped at `extension "timescaledb" is not
+	// available`, and AdventureLog needs PostGIS (issue #90). It is run as the
+	// compose file wrote it.
+	for _, extended := range []string{"timescale", "postgis", "pgvector", "pgvecto", "paradedb", "citus", "supabase", "apache/age", "pgrouting"} {
+		if strings.Contains(strings.ToLower(image), extended) {
+			return "", false
+		}
+	}
+
 	known := map[string]spec.SlotType{
-		"postgres": spec.SlotPostgres, "postgis": spec.SlotPostgres,
-		"mysql": spec.SlotMySQL, "mariadb": spec.SlotMySQL,
+		"postgres": spec.SlotPostgres,
+		"mysql":    spec.SlotMySQL, "mariadb": spec.SlotMySQL,
 		"redis": spec.SlotRedis, "valkey": spec.SlotRedis,
 	}
 
