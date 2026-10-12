@@ -83,6 +83,42 @@ func ImportCompose(src api.SourceView, name string) (Draft, error) {
 	return imp.draft(), nil
 }
 
+// legacyCompose reports a compose file in the version 1 format: services at
+// the top level, with no `services:` key. Compose v2 refuses to run one, so
+// it says nothing about how the app runs today, and refusing the repository
+// over it left nbviewer undeployed beside a working Dockerfile (issue #90).
+// It bids nothing, and the rest of the repository is read instead.
+func legacyCompose(src api.SourceView, name string) bool {
+	f, err := src.Open(name)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	var top map[string]any
+	if err := yaml.NewDecoder(io.LimitReader(f, 4<<20)).Decode(&top); err != nil || len(top) == 0 {
+		return false
+	}
+	if _, ok := top["services"]; ok {
+		return false
+	}
+	for key, v := range top {
+		if key == "version" {
+			continue
+		}
+		service, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, ok := service["image"]; ok {
+			return true
+		}
+		if _, ok := service["build"]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // --- the compose file, as much of it as Pando reads -------------------------
 
 type composeFile struct {

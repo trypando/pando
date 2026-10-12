@@ -1,6 +1,7 @@
 package detect_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -90,4 +91,17 @@ services:
 	require.NotContains(t, byName, "postgres")
 	require.True(t, hasSlot(draft.Slots, spec.SlotPostgres))
 	require.NotNil(t, envOf(byName["app"])["DATABASE_URL"].SlotRef)
+}
+
+// TestR096_AVersionOneComposeFileIsNotTheAnswer asserts R-096's scope: a
+// compose file in the version 1 format, which compose v2 refuses to run, says
+// nothing about how the app runs, and the Dockerfile beside it is the answer.
+func TestR096_AVersionOneComposeFileIsNotTheAnswer(t *testing.T) {
+	result, err := auction().Run(context.Background(), memSource{
+		"docker-compose.yml": "nbviewer:\n  build: .\n  links:\n    - nbcache\nnbcache:\n  image: memcached\n",
+		"Dockerfile":         "FROM python:3\nEXPOSE 8080\nCMD [\"python\", \"-m\", \"nbviewer\"]\n",
+	})
+	require.NoError(t, err)
+	require.Nil(t, result.Blocked)
+	require.Equal(t, spec.BuildDockerfile, result.Winner.Strategy)
 }

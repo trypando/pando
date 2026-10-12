@@ -279,7 +279,7 @@ func (d ComposeDetector) Bid(_ context.Context, src api.SourceView) (Candidate, 
 			break
 		}
 	}
-	if found == "" {
+	if found == "" || legacyCompose(src, found) {
 		return Candidate{Confidence: 0}, nil
 	}
 
