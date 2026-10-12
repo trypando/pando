@@ -34,7 +34,6 @@ type Trial struct {
 	HTTPProbed  bool
 	HTTPAnswers []api.HTTPAnswer
 
-
 	ObservedWrites []string
 	ImageVolumes   []string
 	Log            string

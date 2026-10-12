@@ -107,6 +107,19 @@ An image with no build for the runtime's platform is blocked at detection and re
 (`PLAN_IMAGE_PLATFORM_UNSUPPORTED`), and a `VOLUME` the spec has lost its storage for is a plan note —
 never a blocker.
 
+**[P] The web port is the one that answers HTTP (R-097, R-102; issue #90).** Traffic goes to a workload's
+first `http` port (`Workload.HTTPPort`), so the order of `Ports` is the routing decision. The trial run
+sends every port it observes `GET /` (`SupportsHTTPProbe`) and keeps watching until the set has been
+unchanged for a few seconds after one answers, or for longer with none answering, rather than stopping
+at the first socket. Detection then narrows, each step only when something is left: ports that answered
+HTTP; of those, ones that answered with a page (2xx, 3xx, 401, 403) over 404 or an error; ports below the
+ephemeral range; ports the image or compose file declares; and ports the app's log names as its `http`
+address or where it listens. Two or more still standing after a probe is a `primary_port` question
+naming them. The others stay in `Ports` for the review, marked `tcp` when they did not answer. A port
+the trial watched is not overridden by `PORT` at deploy, since the trial started the app without it.
+An image whose observed ports — or, with none observed, its `EXPOSE`d ports — are all known non-HTTP
+protocols is refused at detection, as is any app that exits 0 during the trial without listening.
+
 **[D] The source allowlist reads every kind of source (R-092).** An entry is a host (`github.com`), a
 suffix (`.corp.example`), or a host and a path prefix matched on whole segments (`github.com/acme`,
 `ghcr.io/acme`, `123456789012.dkr.ecr.us-east-1.amazonaws.com/team`). A git URL and an image reference are
