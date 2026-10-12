@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -27,6 +28,12 @@ import (
 type goBuild struct {
 	Version string // "1.27"
 	Package string // "." or "./cmd/server"
+
+	// Workspace is a program in a Go workspace (go.work): one module of
+	// several, built from the workspace root so the modules it uses resolve
+	// to the ones beside it. `go mod download` has no single module to read
+	// there, and `go build` fetches what it needs.
+	Workspace bool
 }
 
 var (
@@ -42,8 +49,11 @@ func readGoBuild(contextDir string) (goBuild, bool) {
 	// how to start the program this plan compiles, and Heroku's Go sample, whose
 	// Procfile names the binary its buildpack makes, stayed on nixpacks and its
 	// toolchain failure because of it (issue #55).
-	if declared := readDeclaredBuild(contextDir); mod == "" || declared.Build != "" || declared.Before != "" {
+	if declared := readDeclaredBuild(contextDir); declared.Build != "" || declared.Before != "" {
 		return goBuild{}, false
+	}
+	if mod == "" {
+		return readGoWorkBuild(contextDir)
 	}
 	m := goDirective.FindStringSubmatch(mod)
 	if m == nil {
@@ -53,19 +63,97 @@ func readGoBuild(contextDir string) (goBuild, bool) {
 	if dirHasMain(contextDir) {
 		return goBuild{Version: m[1], Package: "."}, true
 	}
-	var mains []string
-	dirs, _ := filepath.Glob(filepath.Join(contextDir, "cmd", "*"))
-	for _, d := range dirs {
-		if info, err := os.Stat(d); err == nil && info.IsDir() && dirHasMain(d) {
-			mains = append(mains, "./cmd/"+filepath.Base(d))
-		}
-	}
-	sort.Strings(mains)
-	if len(mains) != 1 || !safeRelative(strings.TrimPrefix(mains[0], "./")) {
-		// None to build, or several and nothing saying which is the server.
+	pkg, ok := onlyMainPackage(contextDir)
+	if !ok {
 		return goBuild{}, false
 	}
-	return goBuild{Version: m[1], Package: mains[0]}, true
+	return goBuild{Version: m[1], Package: pkg}, true
+}
+
+// onlyMainPackage is the one main package below a module's root: in cmd/*, or
+// when cmd/ has none, in a directory of its own at the top (server/, api/).
+// None, or several and nothing saying which is the server, is not ok.
+func onlyMainPackage(moduleDir string) (string, bool) {
+	for _, pattern := range []string{filepath.Join("cmd", "*"), "*"} {
+		var mains []string
+		dirs, _ := filepath.Glob(filepath.Join(moduleDir, pattern))
+		for _, d := range dirs {
+			rel, err := filepath.Rel(moduleDir, d)
+			if err != nil || ignoredGoDir(filepath.Base(d)) {
+				continue
+			}
+			if info, err := os.Stat(d); err == nil && info.IsDir() && dirHasMain(d) {
+				mains = append(mains, "./"+filepath.ToSlash(rel))
+			}
+		}
+		if len(mains) == 0 {
+			continue
+		}
+		sort.Strings(mains)
+		if len(mains) != 1 || !safeRelative(strings.TrimPrefix(mains[0], "./")) {
+			return "", false
+		}
+		return mains[0], true
+	}
+	return "", false
+}
+
+// ignoredGoDir is a directory the go tool skips, or one that holds examples
+// and tests rather than the program.
+func ignoredGoDir(name string) bool {
+	switch strings.ToLower(name) {
+	case "testdata", "vendor", "example", "examples", "test", "tests":
+		return true
+	}
+	return strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
+}
+
+var (
+	goWorkUse      = regexp.MustCompile(`(?m)^\s*use\s+"?([^\s"(]+)"?\s*$`)
+	goWorkUseBlock = regexp.MustCompile(`(?ms)^\s*use\s*\((.*?)\)`)
+)
+
+// readGoWorkBuild reports a Go workspace with one program among its modules
+// (issue #90). Built from the workspace root, the program's imports of the
+// other modules resolve the way they do on its author's machine; built from
+// its own directory, they do not resolve at all.
+func readGoWorkBuild(contextDir string) (goBuild, bool) {
+	work := readFile(contextDir, "go.work")
+	m := goDirective.FindStringSubmatch(work)
+	if m == nil {
+		return goBuild{}, false
+	}
+	var uses []string
+	for _, u := range goWorkUse.FindAllStringSubmatch(work, -1) {
+		uses = append(uses, u[1])
+	}
+	for _, block := range goWorkUseBlock.FindAllStringSubmatch(work, -1) {
+		for _, line := range strings.Split(block[1], "\n") {
+			if i := strings.Index(line, "//"); i >= 0 {
+				line = line[:i]
+			}
+			if line = strings.Trim(strings.TrimSpace(line), `"`); line != "" {
+				uses = append(uses, line)
+			}
+		}
+	}
+	var programs []string
+	for _, use := range uses {
+		clean := path.Clean(use)
+		if !safeRelative(clean) {
+			continue
+		}
+		dir := filepath.Join(contextDir, filepath.FromSlash(clean))
+		if dirHasMain(dir) {
+			programs = append(programs, "./"+clean)
+		} else if pkg, ok := onlyMainPackage(dir); ok {
+			programs = append(programs, "./"+path.Join(clean, strings.TrimPrefix(pkg, "./")))
+		}
+	}
+	if len(programs) != 1 {
+		return goBuild{}, false
+	}
+	return goBuild{Version: m[1], Package: programs[0], Workspace: true}, true
 }
 
 func dirHasMain(dir string) bool {
@@ -92,12 +180,15 @@ func dirHasMain(dir string) bool {
 // runs it from the repository's files, as Railpack does, so an app that reads
 // its templates or static files from the working directory finds them.
 func writeGoPlan(contextDir string, b goBuild) (string, error) {
+	download := "RUN go mod download\n"
+	if b.Workspace {
+		download = ""
+	}
 	content := fmt.Sprintf(`# A Go program, built with Go %[1]s.
 FROM golang:%[1]s AS build
 WORKDIR /src
 COPY . .
-RUN go mod download
-RUN go build -o /out/app %[2]s
+%[4]sRUN go build -o /out/app %[2]s
 
 FROM %[3]s
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -106,6 +197,6 @@ COPY . .
 COPY --from=build /out/app /usr/local/bin/app
 ENTRYPOINT ["/bin/sh", "-c"]
 CMD ["exec app"]
-`, b.Version, b.Package, programRuntimeImage)
+`, b.Version, b.Package, programRuntimeImage, download)
 	return writePlan(contextDir, content)
 }

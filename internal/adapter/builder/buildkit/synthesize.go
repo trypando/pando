@@ -162,6 +162,11 @@ func buildpackPlan(req api.BuildRequest, contextDir string) (string, error) {
 			return writeGoPlan(contextDir, prog)
 		}
 	}
+	// A Cargo workspace with one program in it, built from its root (rust.go).
+	// An answered start command runs in place of the image's own.
+	if ws, ok := readRustWorkspace(contextDir); ok {
+		return writeRustWorkspacePlan(contextDir, ws)
+	}
 	// .NET, on the SDK the project targets (dotnet.go).
 	if app, ok := readDotnetBuild(contextDir); ok {
 		return writeDotnetPlan(contextDir, app)
