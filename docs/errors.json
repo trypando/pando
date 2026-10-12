@@ -206,6 +206,11 @@
       "meaning": "This is declared in Pando's startup configuration and cannot be changed through the API while it is."
     },
     {
+      "code": "STATE_USERNAME_TAKEN",
+      "status": 409,
+      "meaning": "Another account already has this username. A deleted account keeps its username, so it cannot be reused."
+    },
+    {
       "code": "VALID_DANGLING_MOUNT",
       "status": 400,
       "meaning": "A workload mounts a volume the spec does not declare."

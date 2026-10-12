@@ -91,10 +91,38 @@ func (u *Users) Create(ctx context.Context, adapterID, externalID, email, displa
 		RETURNING created_at`,
 		user.ID, adapterID, externalID, nullable(email), nullable(displayName), nullable(passwordHash), mustChange).
 		Scan(&user.CreatedAt)
+	if isUniqueViolation(err) {
+		return User{}, u.usernameTaken(ctx, adapterID, externalID)
+	}
 	if err != nil {
 		return User{}, errs.Wrap(errs.Internal, "Could not create the account.", err)
 	}
 	return user, nil
+}
+
+// usernameTaken is Create's refusal when another account already has the
+// username (issue #212). A deleted account keeps its row and so its username,
+// which is why the advice differs: there is no account left to edit.
+func (u *Users) usernameTaken(ctx context.Context, adapterID, username string) error {
+	var deleted bool
+	err := u.db.QueryRow(ctx,
+		`SELECT deleted_at IS NOT NULL FROM users WHERE adapter_id = $1 AND external_id = $2`,
+		adapterID, username).Scan(&deleted)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return errs.Wrap(errs.Internal, "Could not create the account.", err)
+	}
+	return usernameTakenError(username, deleted)
+}
+
+func usernameTakenError(username string, deleted bool) *errs.Error {
+	if deleted {
+		return errs.Newf(errs.StateUsernameTaken, "A deleted account was named %s, and its username cannot be reused.", username).
+			WithRemedy("Choose another username.").
+			WithDetail("username", username)
+	}
+	return errs.Newf(errs.StateUsernameTaken, "An account named %s already exists.", username).
+		WithRemedy("Choose another username, or edit that account.").
+		WithDetail("username", username)
 }
 
 // ByExternalID resolves an adapter's subject to a Pando user.
@@ -586,6 +614,11 @@ func (u *Users) ClaimFirst(ctx context.Context, setupToken secret.Value, usernam
 		VALUES ($1, $2, $3, $4, $5, false, 'active')
 		RETURNING created_at`,
 		user.ID, LocalAdapterID, username, nullable(displayName), passwordHash).Scan(&user.CreatedAt); err != nil {
+		// No current account exists, so the one holding the username was
+		// deleted.
+		if isUniqueViolation(err) {
+			return User{}, "", usernameTakenError(username, true)
+		}
 		return User{}, "", errs.Wrap(errs.Internal, "Could not create the account.", err)
 	}
 

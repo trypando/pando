@@ -13495,6 +13495,7 @@
               "STATE_BACKUP_DECISION_REQUIRED",
               "STATE_INVALID",
               "STATE_SET_AT_STARTUP",
+              "STATE_USERNAME_TAKEN",
               "BACKUP_DECRYPT_FAILED",
               "BACKUP_INCOMPLETE",
               "BUILD_FAILED",

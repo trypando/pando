@@ -97,6 +97,10 @@ const (
 	// path, or at one this path would sit inside or around.
 	StateAddressTaken Code = "STATE_ADDRESS_TAKEN"
 
+	// StateUsernameTaken: another account, current or deleted, already has
+	// this username (issue #212).
+	StateUsernameTaken Code = "STATE_USERNAME_TAKEN"
+
 	// ADAPTER_* — adapter failed or is unavailable. 502.
 	AdapterUnavailable Code = "ADAPTER_UNAVAILABLE"
 	AdapterFailed      Code = "ADAPTER_FAILED"
