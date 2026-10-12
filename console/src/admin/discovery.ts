@@ -481,6 +481,17 @@ function aiStep(proposal: Partial<Proposal>, under: Set<string>): DiscoveryStep 
     return step;
   }
 
+  screenedFindings(step, outcome, proposal, repair);
+  return step;
+}
+
+/** What a screening that ran found and did, onto its step. */
+function screenedFindings(
+  step: DiscoveryStep,
+  outcome: NonNullable<Proposal['screening']>,
+  proposal: Partial<Proposal>,
+  repair: boolean,
+): void {
   const answers = Object.entries(outcome.answers ?? {});
   const changes = (outcome.applied ?? []).filter((a) => a.amendment.kind !== 'answer_question');
   for (const change of changes) {
@@ -496,7 +507,6 @@ function aiStep(proposal: Partial<Proposal>, under: Set<string>): DiscoveryStep 
     const asked = (proposal.questions ?? []).filter((q) => !q.deferred).length;
     step.result = `Answered ${answers.length} of ${asked}`;
   }
-  return step;
 }
 
 /**
