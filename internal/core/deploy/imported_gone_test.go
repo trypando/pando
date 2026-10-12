@@ -20,10 +20,6 @@ type pruningRuntime struct {
 
 func (p pruningRuntime) HasImage(_ context.Context, ref string) (bool, error) { return p.has[ref], nil }
 
-type fixedBuild struct{ built *detect.Built }
-
-func (f fixedBuild) Built(context.Context, string) (*detect.Built, error) { return f.built, nil }
-
 // TestR311_ADetectionImageGoneFromTheRuntimeIsBuiltAgain asserts R-311's reuse
 // rule holds only while the image exists: one detection imported and something
 // since removed is built again, rather than run by an ID the runtime tried to
@@ -45,7 +41,7 @@ func TestR311_ADetectionImageGoneFromTheRuntimeIsBuiltAgain(t *testing.T) {
 	runner := func(has map[string]bool, b *detect.Built) *Runner {
 		reg := api.NewRegistry()
 		require.NoError(t, reg.Register("rt", pruningRuntime{has: has}))
-		return (&Runner{registry: reg}).WithDetectionBuilds(fixedBuild{b})
+		return (&Runner{registry: reg}).WithDetectionBuilds(storedBuild{built: b})
 	}
 
 	_, reuse := runner(map[string]bool{"sha256:aaa": true}, built("sha256:aaa")).detectionBuild(ctx, s, checkout)

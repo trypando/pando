@@ -1150,9 +1150,11 @@ func healthPlan(s *spec.AppSpec, w spec.Workload) *api.HealthPlan {
 // degraded, which is recoverable and still being worked, not failed.
 func (r *Runner) waitForHealth(ctx context.Context, runtime api.RuntimeAdapter, appID string, bundle api.BundlePlan, sink io.Writer) (bool, error) {
 	started := time.Now()
-	deadline := started.Add(2 * time.Minute)
+	deadline := started.Add(startWait)
 	settledSince := started
 	var restarted time.Time
+	portWorkload, port, waitsOnPort := waitPort(bundle)
+	saidWaiting := false
 
 	for {
 		observed, err := runtime.Observe(ctx, api.BundleRef{BundleID: appID})
@@ -1193,13 +1195,30 @@ func (r *Runner) waitForHealth(ctx context.Context, runtime api.RuntimeAdapter, 
 		// that exits a second after it starts is running when it is first
 		// observed, and was reported deployed on that one glimpse (issue #55).
 		if allRunning && healthy && time.Since(settledSince) >= exitSettle {
-			return true, nil
+			// And accepting connections, when no health check says more
+			// (R-221: TCP connect before process liveness). Running is not
+			// listening: a JVM app runs for a minute before it opens its port.
+			if !waitsOnPort || portOpen(ctx, runtime, appID, portWorkload, port) {
+				if saidWaiting {
+					fmt.Fprintf(sink, "=> The app is accepting connections on port %d\n", port)
+				}
+				return true, nil
+			}
+			if !saidWaiting {
+				fmt.Fprintf(sink, "=> The app is running; waiting for it to accept connections on port %d\n", port)
+				saidWaiting = true
+			}
 		}
 		if time.Now().After(deadline) {
 			// Still stopped after being started again for the whole window:
 			// the app does not run, and the deploy says so with its output.
 			if exited, ok := primaryExited(bundle, observed); ok {
 				return false, exitedFailure(ctx, runtime, appID, exited, sink)
+			}
+			if saidWaiting {
+				fmt.Fprintf(sink, "   After %s the app had not accepted a connection on port %d. "+
+					"If it listens on another port, change the app's port in its settings.\n",
+					startWait, port)
 			}
 			return false, nil
 		}

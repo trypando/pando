@@ -476,6 +476,15 @@ running it and its next deploy is refused at step 4b, naming the entries.
 
 **[D]** Health is observed by the runtime adapter and reported through `ObservedWorkload.Healthy`, a nullable bool. `nil` means no signal available, which is **not** unhealthy — an app with no health check is `running`, not perpetually `degraded`. This is also why auto-rollback defaults off (R-147).
 
+**[P]** A deploy's wait for a new app (step 15) applies the TCP-connect rung itself. When the primary
+workload has no compose healthcheck and no HTTP endpoint, the deploy is done only once its port
+accepts a TCP connection, reached through `RuntimeAdapter.Upstream` exactly as the proxy reaches it;
+a runtime that cannot say how is treated as having no TCP signal, and process liveness decides.
+Running is not listening: Spring Boot apps ran for 40 to 91 seconds before opening their port and were
+declared deployed after ten, so the first request got 502 (issue #90). The wait is **3 minutes**,
+raised from 2 for the same apps on a loaded host; an app not up by then is `degraded`, not `failed`,
+as before (`deploy.startWait`).
+
 **[D]** Restarting is not healthy, per §1.1's "health failing **or** restarting". A nil `Healthy` on a
 workload that is in a restart loop must not read as "no signal, therefore fine" — see the
 `RestartSettleWindow` note in §2.2 for why this is the difference between an app reaching `failed` and

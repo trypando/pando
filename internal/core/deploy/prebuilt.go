@@ -126,6 +126,9 @@ func (r *Runner) stillImported(ctx context.Context, s *spec.AppSpec, built *dete
 	for _, image := range built.Images {
 		images = append(images, image)
 	}
+	if r.registry == nil {
+		return true // no runtime to ask; the apply reports a missing image
+	}
 	var runtime api.RuntimeAdapter
 	for _, image := range images {
 		if !strings.HasPrefix(image, "sha256:") {

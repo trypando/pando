@@ -335,7 +335,7 @@ has a health check reports healthy, for up to two minutes each.
 **A deploy waits for the app to stay up, and restarts what stops.** A deploy
 counts the app as running only once every part has stayed up for ten seconds;
 an app that exited a second after starting had been reported deployed on the
-first look. While it waits (two minutes), a part that stops is started again
+first look. While it waits (two minutes; three since issue #90, see design 05 §4), a part that stops is started again
 every five seconds by re-applying the same plan — a compose backend that
 cannot yet reach its database, or a proxy whose upstream is that backend, is
 how compose apps start, and under `docker compose up` their restart policy
