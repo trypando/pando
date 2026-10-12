@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"path"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -155,7 +157,7 @@ func (a *Adapter) startTrialContainer(ctx context.Context, req api.TrialRequest,
 // watch runs the trial and reports what happened.
 //
 // It ends as soon as it knows the answer, in any of three ways: the container
-// exited, it bound a port, or the clock ran out with it still up. The last of
+// exited, its ports settled, or the clock ran out with it still up. The last of
 // those is a passing outcome too — what was being checked is whether the app
 // starts and stays running.
 //
@@ -164,6 +166,14 @@ func (a *Adapter) startTrialContainer(ctx context.Context, req api.TrialRequest,
 // timeout. Detection runs this for every app somebody adds, and waiting the
 // full budget on every success would make the trial the slowest thing Pando
 // does for no information at all.
+//
+// It does not end at the first port, though. Ending there routed apps to
+// whichever socket opened first: epmd before a Phoenix or RabbitMQ web UI, an
+// ephemeral port Open Liberty opens seconds before 9080, Tomcat's shutdown port
+// beside its connector (issue #90). Each port is sent an HTTP request, and the
+// watch ends once one has answered and the set has stopped changing — or, with
+// nothing answering, once it has stopped changing for long enough that nothing
+// more is coming (R-097).
 func (a *Adapter) watch(ctx context.Context, id string, timeout time.Duration) api.TrialResult {
 	deadline, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -176,6 +186,9 @@ func (a *Adapter) watch(ctx context.Context, id string, timeout time.Duration) a
 	// chance to fail.
 	poll := time.NewTicker(min(portPollInterval, timeout))
 	defer poll.Stop()
+
+	var lastChange time.Time
+	answered := map[int]int{}
 
 	for {
 		select {
@@ -215,12 +228,68 @@ func (a *Adapter) watch(ctx context.Context, id string, timeout time.Duration) a
 				continue
 			}
 			result.LoopbackPorts = loopback
-			if len(routable) > 0 {
+			if len(routable) == 0 {
+				continue
+			}
+
+			now := time.Now()
+			if !slices.Equal(routable, result.ObservedPorts) {
 				result.ObservedPorts = routable
+				lastChange = now
+			}
+
+			// Asked again each tick until it answers: a server can bind its
+			// port a moment before it is ready to serve on it.
+			var unanswered []int
+			for _, p := range routable {
+				if _, ok := answered[p]; !ok {
+					unanswered = append(unanswered, p)
+				}
+			}
+			for p, status := range a.probeHTTP(deadline, id, unanswered) {
+				answered[p] = status
+			}
+			result.HTTPAnswers = answersFor(routable, answered)
+
+			if portsSettled(len(result.HTTPAnswers) > 0, now.Sub(lastChange)) {
 				return result
 			}
 		}
 	}
+}
+
+const (
+	// httpSettle is how long the ports must stay as they are, once one has
+	// answered HTTP, before the watch ends. Livebook opens a second web server
+	// beside its main endpoint; ending at the first answer could miss the one
+	// people open.
+	httpSettle = 5 * time.Second
+
+	// quietSettle is the same with nothing answering HTTP yet. Longer, because
+	// what the watch is waiting for is a web server that has not opened: Open
+	// Liberty binds an ephemeral port seconds before 9080 (issue #90).
+	quietSettle = 20 * time.Second
+)
+
+// portsSettled reports whether the observed ports have been unchanged long
+// enough that the watch can end.
+func portsSettled(answeredHTTP bool, quiet time.Duration) bool {
+	if answeredHTTP {
+		return quiet >= httpSettle
+	}
+	return quiet >= quietSettle
+}
+
+// answersFor lists the HTTP answers for the ports still listening, in port
+// order.
+func answersFor(routable []int, answered map[int]int) []api.HTTPAnswer {
+	var out []api.HTTPAnswer
+	for _, p := range routable {
+		if status, ok := answered[p]; ok {
+			out = append(out, api.HTTPAnswer{Port: p, Status: status})
+		}
+	}
+	return out
 }
 
 func tmpfsFor(paths []string) map[string]string {
@@ -279,14 +348,88 @@ func (a *Adapter) everStarted(ctx context.Context, id string) bool {
 // Failure here is not an error. An unobserved port turns a deferred question
 // back into one a person answers, which is worse but not broken.
 func (a *Adapter) observePorts(ctx context.Context, targetID string) (routable, loopback []int, ok bool) {
-	if err := a.ensureImage(ctx, trialImage, imageClaim{}); err != nil {
+	out, ok := a.sidecar(ctx, targetID, "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null")
+	if !ok {
 		return nil, nil, false
+	}
+	routable, loopback = listeningPorts(out)
+	return routable, loopback, true
+}
+
+// probeHTTP sends each port a plain HTTP request from inside the trial
+// container's network namespace, and returns the status of each that answered
+// one (R-097).
+//
+// Listening is not serving. epmd, Erlang distribution, MQTT, Bolt, OTLP's gRPC
+// and Tomcat's shutdown port all listen, and a browser sent to any of them gets
+// nothing (issue #90). The request is the first thing a browser would send, and
+// what counts as an answer is a reply that starts the way HTTP's does — an echo
+// server repeating the request back does not.
+//
+// From the same busybox sidecar as observePorts, for the same reason: the app's
+// image may have no shell and no tools. The ports are probed in parallel, each
+// bounded by nc's own timeout, so a port that never replies costs seconds once
+// rather than once per port.
+func (a *Adapter) probeHTTP(ctx context.Context, targetID string, ports []int) map[int]int {
+	if len(ports) == 0 {
+		return nil
+	}
+	out, ok := a.sidecar(ctx, targetID, probeScript(ports))
+	if !ok {
+		return nil
+	}
+	return httpAnswers(out)
+}
+
+// probeScript is the shell probeHTTP runs: for each port, the first bytes of
+// the reply to GET /, printed after the port number. The ports are integers,
+// so nothing from the app reaches the script's text.
+func probeScript(ports []int) string {
+	listed := make([]string, 0, len(ports))
+	for _, p := range ports {
+		listed = append(listed, strconv.Itoa(p))
+	}
+	return "for p in " + strings.Join(listed, " ") + "; do " +
+		`( r=$(printf 'GET / HTTP/1.0\r\nHost: localhost\r\nUser-Agent: pando-trial\r\n\r\n' | ` +
+		`nc -w 3 127.0.0.1 "$p" 2>/dev/null | head -c 16); echo "$p $r" ) & ` +
+		"done; wait"
+}
+
+// httpStatusLine matches what probeScript prints for a port that answered:
+// the port, then the start of an HTTP status line.
+var httpStatusLine = regexp.MustCompile(`^(\d{1,5}) HTTP/\d(?:\.\d)? (\d{3})`)
+
+// httpAnswers reads probeScript's output. A port that answered with anything
+// other than an HTTP status line — nothing, a binary greeting, its own request
+// echoed back — is not in the result.
+func httpAnswers(out string) map[int]int {
+	answers := map[int]int{}
+	for _, line := range strings.Split(out, "\n") {
+		m := httpStatusLine.FindStringSubmatch(strings.TrimSpace(line))
+		if m == nil {
+			continue
+		}
+		port, _ := strconv.Atoi(m[1])
+		status, _ := strconv.Atoi(m[2])
+		if port > 0 && port <= 65535 {
+			answers[port] = status
+		}
+	}
+	return answers
+}
+
+// sidecar runs a shell command in a busybox container joined to the trial
+// container's network namespace, and returns what it printed. ok is false when
+// it could not run.
+func (a *Adapter) sidecar(ctx context.Context, targetID, script string) (string, bool) {
+	if err := a.ensureImage(ctx, trialImage, imageClaim{}); err != nil {
+		return "", false
 	}
 
 	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image: trialImage,
-			Cmd:   []string{"sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null"},
+			Cmd:   []string{"sh", "-c", script},
 			Labels: map[string]string{
 				labelManaged: "true", labelTrial: "observer",
 			},
@@ -301,21 +444,21 @@ func (a *Adapter) observePorts(ctx context.Context, targetID string) (routable, 
 		},
 	})
 	if err != nil {
-		return nil, nil, false
+		return "", false
 	}
 	defer func() { _ = a.removeContainer(context.WithoutCancel(ctx), created.ID) }()
 
 	if _, err := a.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		return nil, nil, false
+		return "", false
 	}
 
 	wait := a.cli.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	select {
 	case <-wait.Result:
 	case <-wait.Error:
-		return nil, nil, false
+		return "", false
 	case <-ctx.Done():
-		return nil, nil, false
+		return "", false
 	}
 
 	// Read the sidecar's output with a context of its own. By this point the
@@ -323,9 +466,7 @@ func (a *Adapter) observePorts(ctx context.Context, targetID string) (routable, 
 	// losing it to a canceled log read would throw away the answer.
 	read, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-
-	routable, loopback = listeningPorts(a.trialLogs(read, created.ID))
-	return routable, loopback, true
+	return a.trialLogs(read, created.ID), true
 }
 
 // listeningPorts parses /proc/net/tcp for sockets in the LISTEN state, split

@@ -196,3 +196,35 @@ func TestALoopbackOnlyBindIsReportedSeparately(t *testing.T) {
 	require.NotContains(t, result.ObservedPorts, 8124,
 		"routing to a loopback bind would time out with the app reporting itself healthy")
 }
+
+// TestR097_ATrialReportsWhichPortAnswersHTTP asserts R-097 for an app that
+// listens on more than one port. Listening is not serving: a port that speaks
+// another protocol — epmd, MQTT, Tomcat's shutdown port, or here an echo
+// server that repeats the request back — is observed, and only the one that
+// answers an HTTP request is reported as answering it (issue #90).
+func TestR097_ATrialReportsWhichPortAnswersHTTP(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	a := adapter(t)
+
+	caps, err := a.Capabilities(ctx)
+	require.NoError(t, err)
+	if !caps.SupportsHTTPProbe {
+		t.Skip("this daemon's trial cannot see into the container")
+	}
+
+	result, err := a.Trial(ctx, api.TrialRequest{
+		TrialID: trialID(t),
+		Image:   "busybox:1.37",
+		// An echo server on 8125, and a web server on 8126.
+		Command: []string{"sh", "-c", "nc -ll -p 8125 -e cat & httpd -f -p 8126 -h /etc"},
+		Timeout: 40 * time.Second,
+	})
+	require.NoError(t, err)
+
+	require.Nil(t, result.ExitCode, "the watch ended because the ports settled, not on the clock or a crash")
+	require.ElementsMatch(t, []int{8125, 8126}, result.ObservedPorts)
+	require.Len(t, result.HTTPAnswers, 1)
+	require.Equal(t, 8126, result.HTTPAnswers[0].Port)
+	require.NotZero(t, result.HTTPAnswers[0].Status)
+}

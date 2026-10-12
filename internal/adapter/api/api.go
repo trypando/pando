@@ -118,6 +118,14 @@ type RuntimeCapabilities struct {
 	// the user a question per app.
 	SupportsPortObservation bool
 
+	// SupportsHTTPProbe means Trial also sends each observed port an HTTP
+	// request and reports which answered (TrialResult.HTTPAnswers). An image
+	// that listens on several ports — epmd beside a web UI, MQTT beside a
+	// dashboard, Tomcat's shutdown port beside its connector — is routed to
+	// the one that speaks HTTP rather than to whichever was listed first
+	// (R-097, R-102). Without it, an empty HTTPAnswers says nothing.
+	SupportsHTTPProbe bool
+
 	// SupportsWriteObservation means Trial reports ObservedWrites, which is
 	// what lets the persistence warning name the directory (R-202) instead of
 	// being generic (R-201).
@@ -469,6 +477,13 @@ type TrialResult struct {
 	// nothing in the log to say why.
 	LoopbackPorts []int
 
+	// HTTPAnswers are the ObservedPorts that answered an HTTP request, with
+	// the status each returned, in port order. Only meaningful on a runtime
+	// with SupportsHTTPProbe: listening is not serving, and a port that
+	// carries a database's or a broker's protocol answers a browser with
+	// nothing at all.
+	HTTPAnswers []HTTPAnswer
+
 	// ObservedWrites are directories written outside DeclaredPaths (R-202).
 	ObservedWrites []string
 
@@ -481,6 +496,13 @@ type TrialResult struct {
 	// is the entire answer Pando has and R-107 says showing it and stopping is
 	// the correct outcome rather than a gap to close with inference.
 	Log string
+}
+
+// HTTPAnswer is one port's answer to a trial's HTTP request.
+type HTTPAnswer struct {
+	Port int
+	// Status is the HTTP status code of the answer to GET /.
+	Status int
 }
 
 // BundleRef identifies an app's bundle to an adapter.

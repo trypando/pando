@@ -343,6 +343,7 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		// Neither sees into a sandbox (above).
 		SupportsTrialRun:        true,
 		SupportsPortObservation: observes,
+		SupportsHTTPProbe:       observes,
 
 		// The daemon's event stream, filtered to Pando's containers (O-52,
 		// events.go).
