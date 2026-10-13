@@ -52,6 +52,16 @@ func TestR095_LanguagesRailpackDoesNotPlanArePlannedByPando(t *testing.T) {
 		{"a Leiningen uberjar", map[string]string{
 			"project.clj": "(defproject ring-hello \"0.1.0\"\n  :main ring-hello.core\n  :profiles {:uberjar {:aot :all :uberjar-name \"ring-hello-standalone.jar\"}})\n",
 		}, []string{"FROM " + leinImage, "lein uberjar", "target/ring-hello-standalone.jar", `CMD ["exec java -jar /app.jar"]`}},
+		// reitit's ring-integrant example: no :aot and no :gen-class, so the
+		// uberjar has no main class (issue #90).
+		{"a Leiningen :main with no class of its own", map[string]string{
+			"project.clj":            "(defproject ring-integrant-example \"0.1.0\"\n  :main example.server)\n",
+			"src/example/server.clj": "(ns example.server\n  (:require [integrant.core :as ig]))\n(defn -main [])\n",
+		}, []string{"lein uberjar", `CMD ["exec java -cp /app.jar clojure.main -m example.server"]`}},
+		{"a Leiningen :main with :gen-class", map[string]string{
+			"project.clj":         "(defproject my-app \"0.1.0\"\n  :main my-app.core)\n",
+			"src/my_app/core.clj": "(ns my-app.core\n  (:gen-class))\n(defn -main [])\n",
+		}, []string{`CMD ["exec java -jar /app.jar"]`}},
 		{"a Leiningen project with a Procfile", map[string]string{
 			"project.clj": "(defproject x \"0.1.0\"\n  :main x.web\n  :uberjar-name \"x.jar\")\n",
 			"Procfile":    "web: java -jar target/x.jar\n",

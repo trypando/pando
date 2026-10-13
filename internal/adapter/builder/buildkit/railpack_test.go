@@ -67,6 +67,32 @@ EOF`)
 	require.Equal(t, "python main.py", railpackStartCommand(body))
 }
 
+// TestR094_AProcfileProgramRailpackBuildsIntoBinIsRunFromThere asserts R-094:
+// the Procfile is followed even though it was written for Heroku, which puts
+// bin/ on PATH. DigitalOcean's Rust sample runs `sample-rust`, and exited 127
+// with "sample-rust: command not found" (issue #90).
+func TestR094_AProcfileProgramRailpackBuildsIntoBinIsRunFromThere(t *testing.T) {
+	plan := func(start string) map[string]any {
+		return map[string]any{
+			"deploy": map[string]any{"startCommand": start},
+			"steps": []any{map[string]any{"commands": []any{
+				map[string]any{"cmd": "cargo build --release"},
+				map[string]any{"cmd": "cp target/release/sample-rust bin"},
+			}}},
+		}
+	}
+	for start, want := range map[string]string{
+		"sample-rust":              "./bin/sample-rust",
+		"sample-rust --port $PORT": "./bin/sample-rust --port $PORT",
+		"./bin/sample-rust":        "./bin/sample-rust", // already a path
+		"other-program":            "other-program",     // not one the plan builds
+	} {
+		p := plan(start)
+		startFromBin(p)
+		require.Equal(t, want, p["deploy"].(map[string]any)["startCommand"], start)
+	}
+}
+
 // Detection is told the start command a Railpack plan names, and is handed the
 // plan whole (R-020, R-251).
 func TestR020_PlanReportsARailpackPlansStartCommand(t *testing.T) {

@@ -115,6 +115,33 @@ func TestR094_TheHighestRungWins(t *testing.T) {
 		"a bare Go module is convention-matching, which is the bottom rung")
 }
 
+// TestR094_AGoRunStartGivesWayToTheBuiltProgram asserts R-094. miniflux's CI
+// workflow builds it, its Makefile's `run` target is `go run main.go`, and its
+// Procfile runs the program. The image has no Go, and the Makefile's start
+// exited 127 (issue #90).
+func TestR094_AGoRunStartGivesWayToTheBuiltProgram(t *testing.T) {
+	files := map[string]string{
+		"go.mod":   "module miniflux.app/v2\n\ngo 1.24\n",
+		"main.go":  "package main\n",
+		"Makefile": "build:\n\tgo build -o miniflux\n\nrun:\n\tLOG_LEVEL=debug RUN_MIGRATIONS=1 go run main.go\n",
+		"Procfile": "web: miniflux.app\n",
+		".github/workflows/ci.yml": "name: CI\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n" +
+			"    steps:\n      - uses: actions/checkout@v4\n      - run: make build\n",
+	}
+	root := withFiles(t, files)
+	d := readDeclaredBuild(root)
+	require.Equal(t, "miniflux.app", d.Start)
+	d = withProcfileProgram(root, d)
+	require.Equal(t, "/app/bin/miniflux.app", d.Start)
+
+	// Without the Procfile, the program the Makefile builds is run.
+	delete(files, "Procfile")
+	require.Equal(t, "./miniflux", readDeclaredBuild(withFiles(t, files)).Start)
+
+	require.True(t, runsFromSource("A=1 B=2 go run ./cmd/server"))
+	require.False(t, runsFromSource("./server -addr :8080"))
+}
+
 func TestTheLadderIsOrderedAndScored(t *testing.T) {
 	require.Greater(t, rankWorkflow.confidence(), rankRunner.confidence())
 	require.Greater(t, rankRunner.confidence(), rankProcfile.confidence())

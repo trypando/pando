@@ -72,7 +72,22 @@ var staticSiteFrameworks = []staticFramework{
 	{dependency: "@angular/core", outDir: func(dir string, _ map[string]string) string { return angularOutputDir(dir) }},
 	{dependency: "gatsby", outDir: fixedOutDir("public")},
 	{dependency: "react-scripts", outDir: fixedOutDir("build")},
+	{dependency: "@vue/cli-service", outDir: vueCLIOutDir},
 	{dependency: "vite", outDir: configOutDir(readViteOutDir, "dist")},
+}
+
+var vueCLIOutputDir = regexp.MustCompile(`\boutputDir\s*:\s*["']([^"']+)["']`)
+
+// vueCLIOutDir is vue.config.js's outputDir, or dist. A Vue CLI project has no
+// start script, only `vue-cli-service serve`, its development server, and
+// detection asked how to start Render's Vue sample (issue #90).
+func vueCLIOutDir(contextDir string, _ map[string]string) string {
+	if _, config := readFileIn(contextDir, ".", "vue.config.js", "vue.config.cjs", "vue.config.mjs", "vue.config.ts"); config != nil {
+		if out := submatch(vueCLIOutputDir, config); safeRelative(out) {
+			return out
+		}
+	}
+	return "dist"
 }
 
 func fixedOutDir(dir string) func(string, map[string]string) string {

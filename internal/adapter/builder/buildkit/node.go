@@ -98,6 +98,9 @@ func nodeStart(contextDir, startCommand string, pkg packageJSON) string {
 	if start := strings.TrimSpace(startCommand); start != "" {
 		return start
 	}
+	if start := adonisStart(contextDir, pkg); start != "" {
+		return start
+	}
 	if strings.TrimSpace(pkg.Scripts["start"]) != "" {
 		return "npm start"
 	}
@@ -110,6 +113,25 @@ func nodeStart(contextDir, startCommand string, pkg packageJSON) string {
 		}
 	}
 	return frameworkServerStart(contextDir, pkg)
+}
+
+var nodeScriptStart = regexp.MustCompile(`^node\s+([A-Za-z0-9_./-]+\.m?js)$`)
+
+// adonisStart is an AdonisJS app's start script run from the directory its
+// build writes. `node ace build` compiles the app into build/, and the start
+// script, `node bin/server.js`, is written to run there: run from the
+// repository it exited with "Cannot find module '/app/bin/server.js'"
+// (issue #90). The build's own modules resolve from the repository's
+// node_modules, one directory up.
+func adonisStart(contextDir string, pkg packageJSON) string {
+	if !pkg.has("@adonisjs/core") || !strings.Contains(pkg.Scripts["build"], "ace build") {
+		return ""
+	}
+	m := nodeScriptStart.FindStringSubmatch(strings.TrimSpace(pkg.Scripts["start"]))
+	if m == nil || fileExists(contextDir, m[1]) || !safeRelative(m[1]) {
+		return ""
+	}
+	return "node build/" + strings.TrimPrefix(m[1], "./")
 }
 
 var pnpmCommand = regexp.MustCompile(`(^|[\s;&|(])(pnpm|pnpx)(\s|$)`)

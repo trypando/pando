@@ -293,11 +293,12 @@ func readRunnerBuild(contextDir string) declaredBuild {
 		}
 		if d.StartCommand != "" && safeCommand(d.StartCommand) {
 			out.Start = d.StartCommand
-		} else if d.BuildOutput != "" {
-			// The program the build made, when nothing says how it runs.
-			// Railpack's Go plan starts ./out, which a build of the
-			// repository's own does not write: "./out: No such file or
-			// directory" (issue #90).
+		}
+		if d.BuildOutput != "" {
+			// The program the build made, when nothing says how it runs, or
+			// only `go run` does. Railpack's Go plan starts ./out, which a
+			// build of the repository's own does not write: "./out: No such
+			// file or directory" (issue #90).
 			out.ImpliedStart = "./" + d.BuildOutput
 		}
 		out.Packages = append(out.Packages, runnerPackages[invoke])

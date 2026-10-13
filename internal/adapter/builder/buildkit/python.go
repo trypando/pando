@@ -58,6 +58,23 @@ func hasPythonDep(deps, pkg string) bool {
 	return regexp.MustCompile(`(^|[^a-z0-9_\-])` + regexp.QuoteMeta(pkg) + `($|[^a-z0-9_\-])`).MatchString(deps)
 }
 
+// pythonLockfiles are the lockfiles that name every package a project
+// installs, its dependencies' dependencies included.
+var pythonLockfiles = []string{"poetry.lock", "uv.lock", "pdm.lock", "Pipfile.lock"}
+
+// pythonLocked is the project's lockfiles, lowercased: the server a framework
+// brings is installed without the project naming it. FastAPI 0.111 brings
+// uvicorn, and fly-apps/hello-fastapi, which depends on FastAPI alone, was
+// started as `python app.py`, which exited without serving (issue #90).
+func pythonLocked(contextDir string) string {
+	var b strings.Builder
+	for _, name := range pythonLockfiles {
+		b.WriteString(strings.ToLower(readFile(contextDir, name)))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // asgiServer is the ASGI server command the project installs, or "".
 // FastAPI's [all] and [standard] extras bring uvicorn.
 func asgiServer(deps string) string {
@@ -100,6 +117,7 @@ func pythonModuleStart(contextDir, module, deps string) string {
 		return ""
 	}
 	name, kind := pythonAppVar(body, deps)
+	installed := deps + "\n" + pythonLocked(contextDir)
 
 	// A module that starts its own server is run as it is, unless the
 	// server it starts listens only on the loopback address and there is
@@ -111,7 +129,7 @@ func pythonModuleStart(contextDir, module, deps string) string {
 		if allInterfaces.MatchString(body) || name == "" {
 			return "python " + module + ".py"
 		}
-		if start := serveApp(module, name, kind, deps); start != "" {
+		if start := serveApp(module, name, kind, installed); start != "" {
 			return start
 		}
 		return "python " + module + ".py"
@@ -119,7 +137,7 @@ func pythonModuleStart(contextDir, module, deps string) string {
 	if runsItself.MatchString(body) || name == "" {
 		return ""
 	}
-	return serveApp(module, name, kind, deps)
+	return serveApp(module, name, kind, installed)
 }
 
 // serveApp is the command that serves module:name with a server the project

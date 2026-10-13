@@ -314,6 +314,20 @@ func dirHasMain(dir string) bool {
 	return false
 }
 
+// goAlias also installs the program under the name `go install` gives it. A
+// start command written for the program, as a README or the person asked
+// gives one, runs it by that name: golang/example's helloserver starts as
+// `helloserver -addr :8080`, and exited 127 with "helloserver: not found" when
+// only `app` was installed (issue #90). A command the base image already has by
+// that name is not shadowed.
+func goAlias(contextDir string, b goBuild) string {
+	name := goProgramName(readFile(contextDir, "go.mod"), b.Package)
+	if b.Program != "" || name == "app" || !goProgramSafe.MatchString(name) {
+		return ""
+	}
+	return fmt.Sprintf("RUN command -v %[1]s >/dev/null || ln -s app /usr/local/bin/%[1]s\n", name)
+}
+
 // writeGoPlan compiles the main package on the Go release the module names and
 // runs it from the repository's files, as Railpack does, so an app that reads
 // its templates or static files from the working directory finds them. A
@@ -324,7 +338,7 @@ func writeGoPlan(contextDir string, b goBuild) (string, error) {
 	if b.Workspace {
 		download = ""
 	}
-	install, start := "", `"exec app"`
+	install, start := goAlias(contextDir, b), `"exec app"`
 	if b.Start != "" {
 		// The Procfile was read with safeStart (procfile.go), which lets a
 		// command read $PORT as Heroku's do; the plan runs it under sh -c.

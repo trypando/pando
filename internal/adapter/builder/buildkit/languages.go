@@ -225,7 +225,7 @@ const (
 )
 
 var (
-	leinMain        = regexp.MustCompile(`(?m):main\s+\^?:?[A-Za-z]*\s*([A-Za-z][A-Za-z0-9.\-_*+!?]*)`)
+	leinMain        = regexp.MustCompile(`(?m):main\s+(?:\^:[A-Za-z\-]+\s+)?([A-Za-z][A-Za-z0-9.\-_*+!?]*)`)
 	leinUberjarName = regexp.MustCompile(`:uberjar-name\s+"([A-Za-z0-9._\-]+\.jar)"`)
 	cljMainOpts     = regexp.MustCompile(`(?s):([A-Za-z][A-Za-z0-9\-_]*)\s*\{[^{}]*:main-opts\s*\[\s*"-m"\s*"([A-Za-z][A-Za-z0-9.\-_]*)"`)
 	cljNamespace    = regexp.MustCompile(`\(ns\s+([A-Za-z][A-Za-z0-9.\-_]*)`)
@@ -264,6 +264,9 @@ func leinPlan(contextDir, project string) (string, bool) {
 		build = "RUN lein uberjar && cp \"$(ls -1 " + find + " 2>/dev/null | head -n 1)\" /app.jar\n"
 		if start == "" {
 			start = "exec java -jar /app.jar"
+			if !leinMainCompiled(contextDir, project, main[1]) {
+				start = "exec java -cp /app.jar clojure.main -m " + main[1]
+			}
 		}
 	}
 	return fmt.Sprintf(`# A Leiningen project.
@@ -271,6 +274,33 @@ FROM %s
 WORKDIR /app
 COPY . .
 %s%s`, leinImage, build, shellCMD(start)), true
+}
+
+var (
+	leinSkipAOT = regexp.MustCompile(`:main\s+\^:skip-aot\b`)
+	cljGenClass = regexp.MustCompile(`\(:gen-class\b`)
+)
+
+// leinMainCompiled reports a :main namespace the uberjar's manifest can start:
+// one compiled ahead of time with a class of its own. Leiningen compiles the
+// :main namespace, but only `(:gen-class)` makes a class named for it.
+// reitit's ring-integrant example has neither that nor :aot, and `java -jar`
+// stopped with "Could not find or load main class example.server" (issue
+// #90). Such a namespace is started by Clojure, from the jar's sources.
+func leinMainCompiled(contextDir, project, ns string) bool {
+	if strings.Contains(project, ":aot") {
+		return true
+	}
+	if leinSkipAOT.MatchString(project) {
+		return false
+	}
+	file := strings.ReplaceAll(strings.ReplaceAll(ns, "-", "_"), ".", "/")
+	for _, ext := range []string{".clj", ".cljc"} {
+		if cljGenClass.MatchString(readFile(contextDir, "src/"+file+ext)) {
+			return true
+		}
+	}
+	return false
 }
 
 // depsPlan: a deps.edn project started by the alias that names a main
