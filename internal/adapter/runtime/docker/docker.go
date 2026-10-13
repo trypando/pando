@@ -1893,7 +1893,8 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 	}
 
 	if inspect.Container.NetworkSettings != nil && inspect.Container.NetworkSettings.Networks != nil {
-		if _, ok := inspect.Container.NetworkSettings.Networks[networkName]; !ok {
+		ep, ok := inspect.Container.NetworkSettings.Networks[networkName]
+		if !ok || !hasAliases(ep, containerID, w) {
 			return false, nil
 		}
 	}
@@ -1910,6 +1911,25 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 		}
 	}
 	return true, nil
+}
+
+// hasAliases reports whether a container answers on its network to every name
+// the plan gives it: its workload name and the compose container_name aliases
+// (R-096). A redeploy that added an alias reused the old container without it,
+// and whatever addressed the service by that name stopped resolving it. Names
+// Docker adds itself — the one derived from the container ID — are not the
+// plan's, so extra aliases are not a mismatch.
+func hasAliases(ep *network.EndpointSettings, containerID string, w api.WorkloadPlan) bool {
+	if ep == nil {
+		return false
+	}
+	have := keptAliases(ep.Aliases, containerID)
+	for _, want := range append([]string{w.Name}, w.Aliases...) {
+		if !slices.Contains(have, want) {
+			return false
+		}
+	}
+	return true
 }
 
 // removeContainer removes a container and its anonymous volumes.

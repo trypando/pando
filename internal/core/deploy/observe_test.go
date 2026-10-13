@@ -117,3 +117,18 @@ func TestOnlyAGuessedBuildpackPortIsChecked(t *testing.T) {
 	dockerfile.Build.Strategy = spec.BuildDockerfile
 	require.False(t, needsPortCheck(dockerfile), "an image-backed app was watched at detection")
 }
+
+// TestR097_ThePortThatServesAPageIsRoutedToFirst asserts R-097 at deploy: of
+// the ports that answered HTTP, one that serves a page is chosen over a lower
+// one answering 404, as detection ranks them. A metrics port on 3001 was routed
+// to over the site on 9000 for being the lower number.
+func TestR097_ThePortThatServesAPageIsRoutedToFirst(t *testing.T) {
+	got := listeningPorts(api.TrialResult{
+		ObservedPorts: []int{3001, 9000},
+		HTTPAnswers:   []api.HTTPAnswer{{Port: 3001, Status: 404}, {Port: 9000, Status: 200}},
+	}, true)
+	require.Equal(t, []int{9000, 3001}, got)
+
+	got = listeningPorts(api.TrialResult{ObservedPorts: []int{3001, 9000}}, false)
+	require.Equal(t, []int{3001, 9000}, got, "without a probe, what was observed stands")
+}

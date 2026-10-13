@@ -326,7 +326,9 @@ func writeGoPlan(contextDir string, b goBuild) (string, error) {
 	}
 	install, start := "", `"exec app"`
 	if b.Start != "" {
-		if !goProgramSafe.MatchString(b.Program) || !safeCommand(b.Start) {
+		// The Procfile was read with safeStart (procfile.go), which lets a
+		// command read $PORT as Heroku's do; the plan runs it under sh -c.
+		if !goProgramSafe.MatchString(b.Program) || !safeStart(b.Start) {
 			return "", errs.Newf(errs.BuildFailed, "The Procfile's command %q is not one Pando can run as written.", b.Start)
 		}
 		install = fmt.Sprintf("COPY --from=build /out/app /usr/local/bin/%s\n", b.Program)

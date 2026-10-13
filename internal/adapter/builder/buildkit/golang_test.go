@@ -139,6 +139,21 @@ func TestR094_AGoProgramStartsTheWayItsProcfileSays(t *testing.T) {
 
 	_, err = writeGoPlan(t.TempDir(), goBuild{Version: "1.24", Package: ".", Program: "x", Start: "x $(rm -rf /)"})
 	require.Error(t, err, "a command that would need quoting is not written into a plan")
+
+	// A Heroku-style Procfile reads the port Pando sets, and the plan runs it
+	// under sh -c, which expands it.
+	port := writeFiles(t, map[string]string{
+		"go.mod": "module github.com/example/chi-flag\ngo 1.23\n", "main.go": "package main\n",
+		"Procfile": "web: chi-flag -addr 0.0.0.0:$PORT\n",
+	})
+	b, ok = readGoBuild(port)
+	require.True(t, ok)
+	require.Equal(t, "chi-flag -addr 0.0.0.0:$PORT", b.Start)
+	name, err = writeGoPlan(port, b)
+	require.NoError(t, err)
+	body, err = os.ReadFile(filepath.Join(port, name))
+	require.NoError(t, err)
+	require.Contains(t, string(body), `CMD ["exec chi-flag -addr 0.0.0.0:$PORT"]`)
 }
 
 // TestR094_ARailpackGoBuildMakesTheProgramItsProcfileRuns asserts R-094.

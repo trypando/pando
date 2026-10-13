@@ -181,6 +181,21 @@ func TestR132_AnAppThatServesIsNotAskedForWhatItsLogMentions(t *testing.T) {
 	require.Empty(t, draft.Slots)
 }
 
+// TestR105_AnEmptyENVLineIsNotADetectionFailure asserts R-105: a Dockerfile is
+// whatever the repository holds, and `ENV` with nothing after it — a trailing
+// continuation leaves one — is read past rather than panicking detection.
+func TestR105_AnEmptyENVLineIsNotADetectionFailure(t *testing.T) {
+	rails := memSource{
+		"Dockerfile":            "FROM ruby:3.4\nENV   \nENV RAILS_ENV=production\nEXPOSE 80\n",
+		"Gemfile":               "gem 'rails'\n",
+		"config/application.rb": "", "bin/rails": "",
+	}
+	result, err := auction().Run(context.Background(), rails)
+	require.NoError(t, err)
+	require.Contains(t, requiredSlots(t, result.Winner.Draft), "SECRET_KEY_BASE",
+		"the rest of the Dockerfile is still read")
+}
+
 // TestR132_AFrameworkThatRequiresAKeyIsAskedForItHoweverItIsBuilt asserts
 // R-132. The key a framework cannot start without is asked for whether the
 // app is built by Railpack, from its own Dockerfile, or run from the image its

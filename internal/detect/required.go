@@ -833,15 +833,20 @@ func dockerfileEnv(src api.SourceView, name string) map[string]bool {
 		if m == nil {
 			continue
 		}
-		body := strings.TrimSpace(m[1])
-		if !strings.Contains(strings.Fields(body)[0], "=") {
+		// `ENV` followed only by spaces matches too, and has no fields: a
+		// Dockerfile is untrusted input, and indexing it panicked detection.
+		fields := strings.Fields(m[1])
+		if len(fields) == 0 {
+			continue
+		}
+		if !strings.Contains(fields[0], "=") {
 			// The legacy `ENV KEY value` form: one variable, the rest its value.
-			if parts := strings.Fields(body); len(parts) > 1 {
-				out[parts[0]] = true
+			if len(fields) > 1 {
+				out[fields[0]] = true
 			}
 			continue
 		}
-		for _, field := range strings.Fields(body) {
+		for _, field := range fields {
 			if k, v, ok := strings.Cut(field, "="); ok && v != "" && v != `""` && v != "''" {
 				out[k] = true
 			}

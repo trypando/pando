@@ -11,6 +11,7 @@ import (
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/detect"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -134,11 +135,18 @@ func listeningPorts(result api.TrialResult, probed bool) []int {
 	if !probed || len(result.HTTPAnswers) == 0 {
 		return result.ObservedPorts
 	}
-	var listening []int
+	// Ports that serve a page come first, as detection ranks them: an app's
+	// metrics port answering 404 beside its site on another port was routed to
+	// for being the lower number.
+	var pages, other []int
 	for _, a := range result.HTTPAnswers {
-		listening = append(listening, a.Port)
+		if detect.ServesAPage(a.Status) {
+			pages = append(pages, a.Port)
+		} else {
+			other = append(other, a.Port)
+		}
 	}
-	return listening
+	return append(pages, other...)
 }
 
 // loopbackRefusal explains an app that listens where nothing else can reach it.

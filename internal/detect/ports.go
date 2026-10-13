@@ -85,7 +85,7 @@ func candidatePorts(t Trial, answered map[int]int, probed bool, declared map[int
 	pool := t.ObservedPorts
 	if probed {
 		pool = filterPorts(pool, func(p int) bool { _, ok := answered[p]; return ok })
-		pool = prefer(pool, func(p int) bool { return servesAPage(answered[p]) })
+		pool = prefer(pool, func(p int) bool { return ServesAPage(answered[p]) })
 	} else {
 		pool = prefer(pool, func(p int) bool { return !notHTTP[p] })
 	}
@@ -110,9 +110,9 @@ func observedProtocol(p int, answered map[int]int, probed bool) string {
 // distribution port there (issue #90).
 const ephemeralPorts = 32768
 
-// servesAPage reports an HTTP status that means a person would see something:
+// ServesAPage reports an HTTP status that means a person would see something:
 // a page, a redirect to one, or a sign-in.
-func servesAPage(status int) bool {
+func ServesAPage(status int) bool {
 	return (status >= 200 && status < 400) || status == 401 || status == 403
 }
 
