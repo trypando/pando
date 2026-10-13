@@ -319,18 +319,19 @@ func (t *logTail) Reset() {
 // --- reading a failure ------------------------------------------------------
 
 var (
-	rustcRequired   = regexp.MustCompile(`requires rustc (\d+\.\d+(?:\.\d+)?)`)
-	cargoEdition    = regexp.MustCompile("feature `edition20(\\d\\d)` is required")
-	pythonNoBuild   = regexp.MustCompile(`no precompiled python found for core:python@(\d+)\.(\d+)`)
-	miseRangeFailed = regexp.MustCompile(`semver range "[^"]*" is not supported for python|core:python@[<>=~^]`)
-	composerMissing = regexp.MustCompile(`requires? ext-([A-Za-z0-9_]+) \S+ -> it is missing from your system`)
-	pdmStaleLock    = regexp.MustCompile(`Lockfile doesn't satisfy the project requirements|pdm lock --check`)
-	gemFailed       = regexp.MustCompile(`An error occurred while installing ([A-Za-z0-9_.\-]+) \(`)
-	bundleBinstub   = regexp.MustCompile(`/usr/local/bundle/bin/[A-Za-z0-9_\-]+: \d+: exec: /usr/local/bundle/bin/ruby: not found`)
-	failedStep      = regexp.MustCompile(`(?m)^!! ([^\n]*?): process\b`)
-	installedPython = regexp.MustCompile(`/mise/installs/python/3\.(\d+)\.`)
-	pythonCompile   = regexp.MustCompile(`error: [Cc]ommand '\[?'?(?:cc|gcc|x86_64-linux-gnu-gcc|clang)|Failed building wheel for|error: too few arguments to function|fatal error: Python\.h|Py_UNICODE|longintrepr\.h`)
-	pythonModules   = regexp.MustCompile(`No module named '(?:pkg_resources|distutils|imp)'`)
+	rustcRequired    = regexp.MustCompile(`requires rustc (\d+\.\d+(?:\.\d+)?)`)
+	cargoEdition     = regexp.MustCompile("feature `edition20(\\d\\d)` is required")
+	pythonNoBuild    = regexp.MustCompile(`no precompiled python found for core:python@(\d+)\.(\d+)`)
+	miseRangeFailed  = regexp.MustCompile(`semver range "[^"]*" is not supported for python|core:python@[<>=~^]`)
+	composerMissing  = regexp.MustCompile(`requires? ext-([A-Za-z0-9_]+) \S+ -> it is missing from your system`)
+	pdmStaleLock     = regexp.MustCompile(`Lockfile doesn't satisfy the project requirements|pdm lock --check`)
+	pdmProjectFailed = regexp.MustCompile(`\[BuildError\]: Build backend raised error`)
+	gemFailed        = regexp.MustCompile(`An error occurred while installing ([A-Za-z0-9_.\-]+) \(`)
+	bundleBinstub    = regexp.MustCompile(`/usr/local/bundle/bin/[A-Za-z0-9_\-]+: \d+: exec: /usr/local/bundle/bin/ruby: not found`)
+	failedStep       = regexp.MustCompile(`(?m)^!! ([^\n]*?): process\b`)
+	installedPython  = regexp.MustCompile(`/mise/installs/python/3\.(\d+)\.`)
+	pythonCompile    = regexp.MustCompile(`error: [Cc]ommand '\[?'?(?:cc|gcc|x86_64-linux-gnu-gcc|clang)|Failed building wheel for|error: too few arguments to function|fatal error: Python\.h|Py_UNICODE|longintrepr\.h`)
+	pythonModules    = regexp.MustCompile(`No module named '(?:pkg_resources|distutils|imp)'`)
 )
 
 // reactiveSteers are the steers a failed build's log calls for. plan is the
@@ -360,6 +361,21 @@ func reactiveSteers(log, contextDir string, plan []byte) []steer {
 			Why: "pdm.lock does not match pyproject.toml, which `pdm install --check` refuses, so the plan runs `pdm install` and lets PDM update the lock as it installs",
 			Edit: func(plan map[string]any) {
 				replaceInCommands(plan, "pdm install --check", "pdm install")
+			},
+		})
+	}
+
+	// PDM: the project itself, which `pdm install` builds and installs beside
+	// its dependencies, does not build in Railpack's install step, which has
+	// only pyproject.toml and pdm.lock: hatchling refused it with "Readme
+	// file does not exist: README.md" (issue #90). The app runs from its
+	// files in /app, so the step installs the dependencies alone.
+	if strings.Contains(lastFailedStep(log), "pdm install") && pdmProjectFailed.MatchString(log) {
+		out = append(out, steer{
+			Key: "pdm-no-self",
+			Why: "the project did not build as a package in the install step, which has only pyproject.toml and pdm.lock, so the step installs its dependencies alone and the app runs from its files",
+			Edit: func(plan map[string]any) {
+				replaceInCommands(plan, "pdm install", "pdm install --no-self")
 			},
 		})
 	}
@@ -566,6 +582,9 @@ func proactiveSteers(contextDir string) []steer {
 			Env: []string{"RAILPACK_PHP_EXTENSIONS=" + strings.Join(exts, " ")},
 		})
 	}
+	if s, ok := composerPostInstall(contextDir); ok {
+		out = append(out, s)
+	}
 	if s, ok := rubyForLockedRack(contextDir); ok {
 		out = append(out, s)
 	}
@@ -644,6 +663,13 @@ func pythonForPinnedPackages(contextDir string) (steer, bool) {
 	if pythonPinned(contextDir) {
 		return steer{}, false
 	}
+	// A range the project gives, in .python-version or pyproject.toml, still
+	// has to admit 3.11.
+	for _, c := range []string{firstLine(strings.TrimSpace(readFile(contextDir, filePythonVersion))), pythonRequirement(contextDir)} {
+		if c != "" && !pythonAllows(c, 11) {
+			return steer{}, false
+		}
+	}
 	return steer{
 		Key: "python-version:3.11",
 		Why: "requirements.txt pins a gunicorn that imports pkg_resources, which a virtualenv made by Python 3.12 or newer does not have, so Python is set to 3.11",
@@ -699,9 +725,15 @@ func installPythonProject(contextDir string) (steer, bool) {
 	}, true
 }
 
-// pythonPinned reports a project that names its Python.
+// pythonPinned reports a project that names its Python. A .python-version
+// that holds a range names none: Google's Flask sample says `>= 3.10`, which
+// Railpack read as the newest Python there is, and its pinned gunicorn then
+// stopped at start without pkg_resources (issue #90).
 func pythonPinned(contextDir string) bool {
-	for _, name := range []string{filePythonVersion, "runtime.txt", ".tool-versions"} {
+	if v := strings.TrimSpace(readFile(contextDir, filePythonVersion)); v != "" && plainVersion(firstLine(v)) {
+		return true
+	}
+	for _, name := range []string{"runtime.txt", ".tool-versions"} {
 		if strings.TrimSpace(readFile(contextDir, name)) != "" {
 			return true
 		}
@@ -730,10 +762,14 @@ func pythonRequirement(contextDir string) string {
 // pythonAllows reports whether a Python version constraint, in PEP 440's or
 // Poetry's spelling, admits some release of Python 3.minor. Read with
 // Composer's constraint rules, which share the operators; `~=` is Composer's
-// `~`.
+// `~`. PEP 440 allows a space after the operator (`>= 3.10`), which
+// Composer's rules read as two parts.
 func pythonAllows(constraint string, minor int) bool {
-	return minorSatisfies(fmt.Sprintf("3.%d", minor), strings.ReplaceAll(constraint, "~=", "~"))
+	constraint = operatorSpace.ReplaceAllString(strings.ReplaceAll(constraint, "~=", "~"), "$1")
+	return minorSatisfies(fmt.Sprintf("3.%d", minor), constraint)
 }
+
+var operatorSpace = regexp.MustCompile(`([<>=!~^]+)\s+`)
 
 // pythonDependsOn reports a Python project that names pkg among its
 // dependencies.
@@ -778,6 +814,45 @@ func lockedPHPExtensions(contextDir string) []string {
 	}
 	sort.Strings(exts)
 	return exts
+}
+
+// composerPostInstall runs the scripts composer.json hooks to
+// post-install-cmd, once the app's files are in place.
+//
+// Railpack installs Composer packages with --no-scripts, in a step that has
+// only composer.json and the lockfile, and never runs the scripts after.
+// `composer install` runs them for everyone else, and apps depend on what
+// they do: CakePHP's installer writes config/app_local.php with the security
+// salt, and Symfony's demo renames its .env.local.demo into place and builds
+// its stylesheet with sass:build. Without them each answered every request
+// with a 500 (issue #90). A script that fails here is reported in the build
+// log and the build goes on, since the build did not run any before. They run
+// in the app's own environment: Railpack sets APP_ENV=production for Laravel
+// on every PHP build, and Symfony refused to clear its cache in an
+// environment it does not have.
+func composerPostInstall(contextDir string) (steer, bool) {
+	var manifest struct {
+		Scripts map[string]json.RawMessage `json:"scripts"`
+	}
+	if json.Unmarshal([]byte(readFile(contextDir, "composer.json")), &manifest) != nil {
+		return steer{}, false
+	}
+	raw, ok := manifest.Scripts["post-install-cmd"]
+	if !ok {
+		return steer{}, false
+	}
+	var one string
+	var many []string
+	if (json.Unmarshal(raw, &one) != nil || one == "") && (json.Unmarshal(raw, &many) != nil || len(many) == 0) {
+		return steer{}, false
+	}
+	return steer{
+		Key: "composer-post-install",
+		Why: "composer.json runs scripts after `composer install`, which Railpack's install skips, so the build runs them once the app's files are in place",
+		Edit: func(plan map[string]any) {
+			appendStepCommand(plan, "build", `sh -c 'env -u APP_ENV -u APP_DEBUG composer run-script post-install-cmd --no-interaction || echo "Pando: composer post-install-cmd scripts failed; the build goes on without them" >&2'`)
+		},
+	}, true
 }
 
 var packageNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.+\-]*$`)

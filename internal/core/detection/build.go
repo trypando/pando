@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -106,7 +110,11 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, buildFailure(err, sink.String())
+		log := sink.String()
+		if modules := missingSubmodules(checkout.Dir, s.Source.Subdir, log); len(modules) > 0 {
+			return nil, submoduleFailure(modules, log)
+		}
+		return nil, buildFailure(err, log)
 	}
 	return &detect.Built{
 		Inputs: spec.BuildInputs(s),
@@ -131,6 +139,69 @@ func buildFailure(err error, log string) error {
 		"Pando builds an app while reading it, to score the image it would run, and the build of this app failed: %s",
 		reason).
 		WithRemedy(remedy).
+		WithDetail("build_log", log)
+}
+
+// Git submodules are not fetched (design 03 §10, R-021; O-60, decided
+// 2026-10-13: refused by name rather than fetched). A build that fails
+// reading a path inside one fails with that said, rather than as the
+// builder's own error: Angular's RealWorld example keeps its theme in the
+// submodule realworld/, and its build stopped at `Could not resolve
+// "realworld/assets/theme/styles.css"` with nothing saying the directory was
+// empty because Pando left it so (issue #90). Only a submodule the log names:
+// many repositories carry one the build never reads.
+
+var gitmodulePath = regexp.MustCompile(`(?m)^\s*path\s*=\s*(\S+)\s*$`)
+
+// missingSubmodules are the submodules the checkout declares and does not
+// have, whose paths the build log names, as paths in the repository.
+func missingSubmodules(dir, subdir, log string) []string {
+	body, err := os.ReadFile(filepath.Join(dir, ".gitmodules")) //nolint:gosec // G304: the checkout's own file.
+	if err != nil {
+		return nil
+	}
+	sub := strings.Trim(path.Clean("/"+subdir), "/")
+	var out []string
+	for _, m := range gitmodulePath.FindAllStringSubmatch(string(body), -1) {
+		p := strings.Trim(path.Clean("/"+strings.Trim(m[1], `"`)), "/")
+		if p == "" {
+			continue
+		}
+		if entries, err := os.ReadDir(filepath.Join(dir, filepath.FromSlash(p))); err == nil && len(entries) > 0 {
+			continue
+		}
+		// The log names paths from the app's directory.
+		named := p
+		if sub != "" {
+			rel, ok := strings.CutPrefix(p, sub+"/")
+			if !ok {
+				continue
+			}
+			named = rel
+		}
+		if regexp.MustCompile(`(^|[\s"'(/:=])` + regexp.QuoteMeta(named) + `/`).MatchString(log) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// submoduleFailure is a build that failed for want of a submodule's files.
+func submoduleFailure(modules []string, log string) error {
+	dirs := make([]string, len(modules))
+	for i, m := range modules {
+		dirs[i] = m + "/"
+	}
+	what, are := "a git submodule", "it is"
+	if len(modules) > 1 {
+		what, are = "git submodules", "they are"
+	}
+	return errs.Newf(errs.BuildFailed,
+		"The build of this app failed reading %s, which is %s. Pando builds only the files in the repository "+
+			"itself and does not fetch submodules, so in the build %s empty.",
+		strings.Join(dirs, ", "), what, are).
+		WithRemedy("Commit the submodule's files into the repository in place of the submodule, or have the build "+
+			"install them as a package, then run detection again.").
 		WithDetail("build_log", log)
 }
 

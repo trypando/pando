@@ -159,7 +159,12 @@ func rPlan(contextDir string) (string, bool) {
 	default:
 		return "", false
 	}
-	if kind == "shiny" && !strings.Contains(rSources(contextDir), "shiny") {
+	// An app.R is any R script until it names Shiny. A ui.R beside a server.R
+	// is Shiny's own two-file layout, whose files need not name it: runApp
+	// loads Shiny before it reads them, and RStudio's own k-means example
+	// never calls library(shiny) (issue #90).
+	twoFile := fileExists(contextDir, "ui.R") && fileExists(contextDir, "server.R")
+	if kind == "shiny" && !twoFile && !strings.Contains(rSources(contextDir), "shiny") {
 		return "", false
 	}
 
@@ -445,7 +450,7 @@ func stackPlan(contextDir string) (string, bool) {
 	return fmt.Sprintf(`# A Haskell project, built with Stack.
 FROM %[1]s AS build
 RUN apt-get update && apt-get install -y --no-install-recommends libtinfo5 || true
-WORKDIR /src
+%[4]sWORKDIR /src
 COPY . .
 RUN stack build --install-ghc --copy-bins --local-bin-path /out
 
@@ -455,8 +460,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 COPY . .
 COPY --from=build /out/ /usr/local/bin/
-%[3]s`, haskellImage, programRuntimeImage, shellCMD(start)), true
+%[3]s`, haskellImage, programRuntimeImage, shellCMD(start), ghcLLVM), true
 }
+
+// ghcLLVM gives GHC the LLVM it compiles with on 64-bit Arm. GHC before 9.2
+// has no native code generator there and runs LLVM's opt and llc, which the
+// Haskell image does not carry: an LTS 18 project stopped at "ghc: could not
+// execute: opt" (issue #90). [P] LLVM 13, the newest Debian bookworm has that
+// those GHCs accept; GHC 9.2 and later do not use it. Other machines skip it.
+const ghcLLVM = `RUN if [ "$(uname -m)" = aarch64 ]; then \
+      (apt-get install -y --no-install-recommends llvm-13 || apt-get install -y --no-install-recommends llvm) && \
+      bin="$(ls -d /usr/lib/llvm-*/bin | sort -V | head -n 1)" && \
+      ln -sf "$bin/opt" /usr/local/bin/opt && ln -sf "$bin/llc" /usr/local/bin/llc; \
+    fi
+`
 
 // hpackExecutables are the names under package.yaml's executables:, two
 // spaces in.
@@ -514,8 +531,11 @@ func perlPlan(contextDir string) (string, bool) {
 		return "", false
 	}
 	install := ""
+	if pins := snapshotPins(contextDir); len(pins) > 0 {
+		install = "RUN cpanm --notest " + strings.Join(pins, " ") + "\n"
+	}
 	if hasDeps {
-		install = "RUN cpanm --notest --installdeps .\n"
+		install += "RUN cpanm --notest --installdeps .\n"
 	}
 	if extra != "" {
 		install += "RUN cpanm --notest" + extra + "\n"
@@ -525,6 +545,53 @@ FROM %s
 WORKDIR /app
 COPY . .
 %s%s%s`, perlImage, install, exposeLine(port), shellCMD(start)), true
+}
+
+var (
+	cpanRequires    = regexp.MustCompile(`(?m)^\s*requires\s+['"]([A-Za-z][A-Za-z0-9_]*(?:::[A-Za-z0-9_]+)*)['"]`)
+	snapshotDist    = regexp.MustCompile(`^  (\S+)-v?(\d[\w.]*)$`)
+	snapshotProvide = regexp.MustCompile(`^      (\S+) (\S+)$`)
+)
+
+// snapshotPins are the modules the cpanfile requires, at the versions
+// cpanfile.snapshot records, as cpanm installs one: Module@version.
+//
+// cpanm reads the cpanfile and installs the newest release of each module, so
+// an app written against an older one breaks: the perldancer.org site calls a
+// function Dancer2 has since removed ("Undefined subroutine
+// &Dancer2::FileUtils::read_file_content", issue #90). The snapshot is
+// Carton's record of what the app was written against. Carton itself installs
+// every module at its recorded version, and a ten-year-old snapshot's
+// modules no longer build on a current Perl; so only the modules the app
+// names, from a distribution named after the module, are held to theirs, and
+// what they depend on is the newest release that satisfies them.
+func snapshotPins(contextDir string) []string {
+	snapshot := readFile(contextDir, "cpanfile.snapshot")
+	if snapshot == "" {
+		return nil
+	}
+	versions := map[string]string{}
+	dist, distVersion := "", ""
+	for _, line := range strings.Split(snapshot, "\n") {
+		if m := snapshotDist.FindStringSubmatch(line); m != nil {
+			dist, distVersion = m[1], m[2]
+			continue
+		}
+		m := snapshotProvide.FindStringSubmatch(line)
+		if m == nil || dist != strings.ReplaceAll(m[1], "::", "-") || m[2] == "undef" {
+			continue
+		}
+		if m[2] == distVersion && safeVersion(m[2]) {
+			versions[m[1]] = m[2]
+		}
+	}
+	var pins []string
+	for _, m := range cpanRequires.FindAllStringSubmatch(readFile(contextDir, "cpanfile"), -1) {
+		if v, ok := versions[m[1]]; ok {
+			pins = append(pins, m[1]+"@"+v)
+		}
+	}
+	return dedupeKeepOrder(pins)
 }
 
 // mojoliciousScript is the Mojolicious::Lite script at the top of the app, or

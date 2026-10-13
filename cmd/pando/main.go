@@ -635,7 +635,7 @@ func serve(ctx context.Context, configPath string) error {
 		PortRangeEnd:   cfg.Server.PortRangeEnd,
 		Job: &detect.Job{
 			Auction: detect.NewAuction(
-				detect.DockerfileDetector{},
+				detect.DockerfileDetector{Planner: buildPlanner(registry)},
 				detect.ComposeDetector{},
 				detect.StaticDetector{},
 				// The planner comes from the builder: core asks "how would you

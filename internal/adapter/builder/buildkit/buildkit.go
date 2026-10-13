@@ -364,6 +364,15 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 		}
 		defer gen.Cleanup()
 		dockerfileDir, dockerfile = gen.Dir, gen.Name
+	} else if len(req.GeneratedFiles) > 0 {
+		// The repository's Dockerfile with its own build run first
+		// (prebuild.go), replayed from the spec as written (R-020).
+		if err := writeInto(contextDir, req.GeneratedFiles); err != nil {
+			return api.BuildResult{}, err
+		}
+		if err := writePlanIgnore(contextDir, dockerfile); err != nil {
+			return api.BuildResult{}, err
+		}
 	}
 
 	// R-119: a build that never finishes is a build that holds a slot forever.

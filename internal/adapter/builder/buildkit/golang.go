@@ -144,12 +144,32 @@ func onlyMainPackage(moduleDir string) (string, bool) {
 			continue
 		}
 		sort.Strings(mains)
+		if len(mains) > 1 {
+			mains = serverMains(mains)
+		}
 		if len(mains) != 1 || !safeRelative(strings.TrimPrefix(mains[0], "./")) {
 			return "", false
 		}
 		return mains[0], true
 	}
 	return "", false
+}
+
+// serverDirs are the names a module gives the directory of the program that
+// serves, beside others that do not. [P] Gin's websocket example keeps its
+// server in server/ and a command-line client in client/, and Railpack, built
+// at the root, found "no Go files in /app" (issue #90).
+var serverDirs = map[string]bool{"server": true, "api": true, "web": true, "backend": true}
+
+// serverMains are the ones of mains whose directory is named as a server's.
+func serverMains(mains []string) []string {
+	var out []string
+	for _, m := range mains {
+		if serverDirs[strings.ToLower(path.Base(m))] {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // mainPackagesIn are the main packages in the directories pattern matches
