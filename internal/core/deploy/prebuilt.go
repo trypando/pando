@@ -75,6 +75,12 @@ func (r *Runner) WithBuildConcurrency(limit BuildConcurrency) *Runner {
 //
 // Detection's build (R-311). Returns the app's image, or a compose app's
 // images by workload.
+//
+// One difference from a deploy, when detection asks for it (detect.WithSteer):
+// the builder may steer a plan it made from convention when a build of it
+// fails in a way it recognizes, and build again. The plan it built from in the
+// end replaces s.Build.GeneratedFiles, so what detection proposes is what was
+// built, and what a deploy replays (R-020).
 func (r *Runner) BuildImages(ctx context.Context, s *spec.AppSpec, checkout *source.Checkout, sink io.Writer, tag string) (string, map[string]string, error) {
 	return r.buildAll(ctx, s, checkout, sink, tag)
 }

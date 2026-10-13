@@ -348,9 +348,13 @@ app, and the security reviewer's role; a custom role may hold any one `install.a
    *(Amended by issue #90: the published image outranked everything, so an app whose compose file runs
    its image beside a database, with the variables and volumes it needs, ran the image alone and crashed
    on a database that was not there. The compose file is where the maintainer says how their image runs.)*
-2. **Explicit deployment artifacts** — Dockerfile, compose file, Procfile, `devcontainer.json`, Nix flake, release binaries.
+2. **Explicit deployment artifacts** — Dockerfile, compose file, Procfile, a hosting platform's
+   manifest (`railway.json`, `railway.toml`, `render.yaml`), `devcontainer.json`, Nix flake, release
+   binaries. Amended with issue #90: platform manifests were not named, and their start commands were
+   ignored for a guess; they are the same artifact as a Procfile, written for a platform that also
+   builds from source.
 3. **The maintainer's own build commands** — `.github/workflows`, or a command runner's target that
-   says how the app is built and run: `Makefile`, `Taskfile.yml`, `justfile`. Ranked among
+   says how the app is built and run: `Makefile`, `Taskfile.yml`, `justfile`, `deno.json` tasks. Ranked among
    themselves by how load-bearing they are: a workflow is what runs on every push, where a runner
    target is what somebody wrote down. Amended 2026-09-14: this tier said "CI workflows" and named
    only `.github/workflows`. The others are the same artifact — the build written down by the person

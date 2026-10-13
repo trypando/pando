@@ -130,22 +130,19 @@ func TestAProcfileDeclaresTheStartCommandOnly(t *testing.T) {
 		"Procfile": "web: ./app --port $PORT\nworker: ./app --worker\n",
 	})
 
-	// $PORT cannot survive the trip into a Dockerfile, so this Procfile says
-	// nothing usable and the repository falls through to convention-matching.
-	// Declining is the point: a start command with an unexpanded variable in it
-	// would produce a container that fails to start for a reason nobody can see
-	// from the proposal.
-	require.False(t, readDeclaredBuild(root).found())
-
-	// Without the variable it is taken.
-	root = withFiles(t, map[string]string{
-		"go.mod":   "module example.com/app\n",
-		"Procfile": "web: ./app\nworker: ./app --worker\n",
-	})
+	// $PORT is expanded by the shell the image starts its command with, at
+	// start, which is where it should be (issue #90).
 	d := readDeclaredBuild(root)
 	require.Equal(t, rankProcfile, d.Rank)
-	require.Equal(t, "./app", d.Start)
+	require.Equal(t, "./app --port $PORT", d.Start)
 	require.Empty(t, d.Build, "Railpack still plans the build")
+
+	// Command substitution is still not run unread.
+	root = withFiles(t, map[string]string{
+		"go.mod":   "module example.com/app\n",
+		"Procfile": "web: ./app --port $(cat port)\n",
+	})
+	require.False(t, readDeclaredBuild(root).found())
 }
 
 // R-021: a declared worker is not a request to deploy one.

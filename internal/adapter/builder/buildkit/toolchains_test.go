@@ -100,11 +100,20 @@ func TestR104_APythonWebAppIsStartedUnderItsServer(t *testing.T) {
 	require.Equal(t, "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}", pythonAppStart(fastapi))
 
 	selfStarting := writeFiles(t, map[string]string{
-		"app.py":           "from flask import Flask\napp = Flask(__name__)\nif __name__ == '__main__':\n    app.run()\n",
+		"app.py":           "from flask import Flask\napp = Flask(__name__)\nif __name__ == '__main__':\n    app.run(host='0.0.0.0')\n",
 		"requirements.txt": "flask\ngunicorn\n",
 	})
 	require.Equal(t, "python app.py", pythonAppStart(selfStarting),
 		"an app that starts itself is run as it is, not as Railpack's gunicorn main:app")
+
+	// One that serves itself on the loopback address — Flask's app.run()
+	// with no host — is served by its server instead, under its own module
+	// (issue #90).
+	loopback := writeFiles(t, map[string]string{
+		"app.py":           "from flask import Flask\napp = Flask(__name__)\nif __name__ == '__main__':\n    app.run()\n",
+		"requirements.txt": "flask\ngunicorn\n",
+	})
+	require.Equal(t, "gunicorn app:app --bind 0.0.0.0:${PORT:-8000}", pythonAppStart(loopback))
 
 	noServer := writeFiles(t, map[string]string{
 		"main.py": "from fastapi import FastAPI\napi = FastAPI()\n", "requirements.txt": "fastapi\n",

@@ -232,14 +232,24 @@ func (a *Auction) Run(ctx context.Context, src api.SourceView) (Result, error) {
 		return Result{
 			Status: StatusUnknown,
 			Winner: Candidate{Strategy: StrategyUnknown, Confidence: 0},
+			// The prompt used to invite "how this app is normally started",
+			// "npm start" for example, and CheckAnswers refuses every answer
+			// when nothing bid: there is no reading for one to choose. So an
+			// answer typed as asked was refused with VALID_INVALID (issue #90).
+			// It says what Pando looked for and what would let it build the
+			// app, and an answer is still refused with the same remedy. What
+			// should be asked here instead is O-61.
 			Questions: []Question{{
 				Key:  "build_method",
 				Kind: api.QuestionText,
-				Prompt: "Pando could not work out how to build and run this app. " +
-					"It found no Dockerfile, no compose file, and no recognizable project layout. " +
-					"Valid answer: how this app is normally started — for example " +
-					"\"docker build then docker run\", \"npm start\", or \"it's a static site in ./public\".",
-				Why: "Pando needs to know how to turn this repository into something it can run.",
+				Prompt: "Pando could not work out how to build and run this app. It found no Dockerfile, " +
+					"no compose file, no Procfile, and no project in a language Pando builds on its own " +
+					"(Node.js, Python, Go, Ruby, PHP, Rust, Java, Kotlin, Scala, Clojure, .NET, Elixir, " +
+					"Deno, Crystal, Haskell, Perl and R, or a static site with an index.html). A description " +
+					"of how the app starts is not something Pando can build from. Valid answer: none, because " +
+					"no answer is accepted; add a Dockerfile or a compose file that builds the app, or a Procfile " +
+					"naming its start command beside its language's manifest, and run detection again.",
+				Why: "Pando needs something in the repository that says how to turn it into something it can run.",
 			}},
 		}, nil
 	}

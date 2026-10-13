@@ -551,6 +551,7 @@ var languages = []languageSignal{
 	{"package.json", "Node.js", "npm start", 3000},
 	{"requirements.txt", "Python", "python app.py", 8000},
 	{"pyproject.toml", "Python", "python -m app", 8000},
+	{"setup.py", "Python", "python -m app", 8000},
 	{"go.mod", "Go", "the compiled binary", 8080},
 	// A Go workspace with no module at its root, built from the root when one
 	// of its modules is a program (MonorepoDetector stands down for it).
@@ -644,7 +645,7 @@ func libraryReason(src api.SourceView, signal *languageSignal) error {
 				"than run on its own.").
 			WithRemedy("If an app in this repository uses the library, set the app's subdirectory to that " +
 				"app's directory, or add a Dockerfile that builds it.")
-	case "pyproject.toml", "requirements.txt":
+	case "pyproject.toml", "requirements.txt", "setup.py":
 		if !isPythonSrcLayoutWithoutEntryPoint(src) {
 			return nil
 		}
@@ -911,6 +912,11 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 		c.Evidence = append(c.Evidence,
 			"a Meteor app: MONGO_URL, the MongoDB it keeps its data in, is needed before it can start")
 	}
+	if isPlayApp(src) {
+		c.Draft = withPlaySecret(c.Draft)
+		c.Evidence = append(c.Evidence,
+			"a Play app, run in production: APPLICATION_SECRET is needed before it can start")
+	}
 	return c
 }
 
@@ -953,6 +959,58 @@ func withMeteorMongo(d Draft) Draft {
 	d.Slots = append(d.Slots, spec.Slot{
 		Key: key, Type: spec.SlotUnknown, Required: true,
 		Evidence: []string{meteorMongoEvidence},
+	})
+	return d
+}
+
+// isPlayApp reports a Play Framework app: an sbt build with Play's plugin.
+func isPlayApp(src api.SourceView) bool {
+	if info, err := src.Stat("build.sbt"); err != nil || info.IsDir {
+		return false
+	}
+	f, err := src.Open("project/plugins.sbt")
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(f, 64<<10))
+	plugins := string(body)
+	return strings.Contains(plugins, `"sbt-plugin"`) &&
+		(strings.Contains(plugins, "org.playframework") || strings.Contains(plugins, "com.typesafe.play"))
+}
+
+// playSecretEvidence says what APPLICATION_SECRET is and how to make one, for
+// a person who has never run Play (R-105).
+const playSecretEvidence = "Play signs its session cookies with an application secret and refuses to start in " +
+	"production without one. Valid answer: a random string of at least 32 characters, such as the output of " +
+	"`openssl rand -base64 48`. Keep it: changing it signs everyone out."
+
+// withPlaySecret asks for APPLICATION_SECRET as a required value (R-132),
+// which the plan passes to Play as play.http.secret.key. The person deploying
+// owns it and Pando does not invent it, as with Rails' SECRET_KEY_BASE.
+func withPlaySecret(d Draft) Draft {
+	const key = "APPLICATION_SECRET"
+	for _, s := range d.Slots {
+		if s.Key == key {
+			return d
+		}
+	}
+	for _, e := range d.Workloads[0].Env {
+		if e.Key == key && (e.SlotRef != nil || (e.Value != nil && *e.Value != "")) {
+			return d
+		}
+	}
+	env := d.Workloads[0].Env[:0:0]
+	for _, e := range d.Workloads[0].Env {
+		if e.Key != key {
+			env = append(env, e)
+		}
+	}
+	ref := key
+	d.Workloads[0].Env = append(env, spec.EnvEntry{Key: key, SlotRef: &ref, Source: spec.EnvFromDetection})
+	d.Slots = append(d.Slots, spec.Slot{
+		Key: key, Type: spec.SlotUnknown, Required: true, Format: spec.FormatRandomLong,
+		Evidence: []string{playSecretEvidence},
 	})
 	return d
 }

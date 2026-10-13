@@ -153,7 +153,10 @@ func (r *Runner) buildHook(appID, slug string, answers map[string]string, checko
 			return detect.BuildOutcome{}, nil
 		}
 		detect.Report(ctx, detect.StageBuilding, partial)
-		built, err := r.build(ctx, &s, checkout)
+		// Steered, when it fails in a way the builder recognizes: the plan is
+		// the one Pando just made, and nobody has edited it yet. A rebuild
+		// after a person's revision is not, so their edits are what is built.
+		built, err := r.build(detect.WithSteer(ctx), &s, checkout)
 		if err != nil {
 			// The scan beside it is of an app that will not be proposed.
 			scans.stop()
@@ -162,7 +165,14 @@ func (r *Runner) buildHook(appID, slug string, answers map[string]string, checko
 		image := built.Scanned(&s)
 		auth := r.Builder.BuiltImageAuth(ctx, image)
 		scans.startImage(ctx, image, auth)
-		return detect.BuildOutcome{Built: built, PullAuth: auth}, nil
+		outcome := detect.BuildOutcome{Built: built, PullAuth: auth}
+		// The builder steered the plan to make it build: the proposal carries
+		// the plan that was built, so accepting it pins what ran (R-020).
+		if plan := s.Build.GeneratedFiles; s.Build.Strategy == partial.DraftSpec.Build.Strategy &&
+			!samePlan(plan, partial.DraftSpec.Build.GeneratedFiles) {
+			outcome.Plan = plan
+		}
+		return outcome, nil
 	}
 }
 
@@ -315,4 +325,17 @@ func (t *tail) String() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return strings.ToValidUTF8(string(t.buf), "")
+}
+
+// samePlan reports two build plans with the same files and contents.
+func samePlan(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if w, ok := b[k]; !ok || w != v {
+			return false
+		}
+	}
+	return true
 }

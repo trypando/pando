@@ -59,6 +59,10 @@ type declaration struct {
 	// the last thing that target does that is not another make invocation:
 	// `run: build` then `./macscout` means the app starts with ./macscout.
 	StartCommand string
+
+	// BuildOutput is the program the build target compiles, when its recipe
+	// says where — `go build -o realtime-advanced …` — or empty.
+	BuildOutput string
 }
 
 // declares reports whether this Makefile says enough to build from.
@@ -273,6 +277,12 @@ func readRunnerBuild(contextDir string) declaredBuild {
 		}
 		if d.StartCommand != "" && safeCommand(d.StartCommand) {
 			out.Start = d.StartCommand
+		} else if d.BuildOutput != "" {
+			// The program the build made, when nothing says how it runs.
+			// Railpack's Go plan starts ./out, which a build of the
+			// repository's own does not write: "./out: No such file or
+			// directory" (issue #90).
+			out.ImpliedStart = "./" + d.BuildOutput
 		}
 		out.Packages = append(out.Packages, runnerPackages[invoke])
 		out.Packages = append(out.Packages, toolchainPackages(contextDir)...)

@@ -388,6 +388,23 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 	// the build runs (cacheInUseFor), and ordered as most recently used after.
 	touchCache(bundleOf(req.CacheNamespace), time.Now())
 
+	// A build that may be steered keeps the end of its log, which is what
+	// the steering reads.
+	steerable := req.Steer && req.Strategy == spec.BuildBuildpack && isRailpackPlan(dockerfile)
+	var log *logTail
+	if steerable {
+		log = newLogTail(req.LogSink)
+		req.LogSink = log
+	}
+	result, err := a.solve(ctx, req, contextDir, dockerfileDir, dockerfile, cacheDir, timeout)
+	if err == nil || !steerable || ctx.Err() != nil {
+		return result, err
+	}
+	return a.steer(ctx, req, contextDir, cacheDir, timeout, err, log)
+}
+
+// solve runs one build of the plan or Dockerfile named, from contextDir.
+func (a *Adapter) solve(ctx context.Context, req api.BuildRequest, contextDir, dockerfileDir, dockerfile, cacheDir string, timeout time.Duration) (api.BuildResult, error) {
 	contextFS, err := fsutil.NewFS(contextDir)
 	if err != nil {
 		return api.BuildResult{}, errs.Wrap(errs.BuildFailed, "Could not read the app's source.", err)

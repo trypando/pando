@@ -141,6 +141,12 @@ func synthesize(req api.BuildRequest, contextDir string) (generated, error) {
 // run found the general-purpose planner getting each one wrong (issue #55).
 // Everything else goes to Railpack (R-095).
 func buildpackPlan(req api.BuildRequest, contextDir string) (string, error) {
+	return buildpackPlanSteered(req, contextDir, proactiveSteers(contextDir))
+}
+
+// buildpackPlanSteered is buildpackPlan with Railpack steered (steer.go): the
+// steers the repository calls for, and any a failed build's log added.
+func buildpackPlanSteered(req api.BuildRequest, contextDir string, steers []steer) (string, error) {
 	// A Laravel app, on the PHP its composer.json asks for (laravel.go). Its
 	// package.json builds assets for the app, not a site or a server of its
 	// own. An answered start command is honored by the runtime, which runs it
@@ -187,8 +193,18 @@ func buildpackPlan(req api.BuildRequest, contextDir string) (string, error) {
 	if jvm, ok := readJVMBuild(contextDir); ok {
 		return writeJVMPlan(contextDir, jvm)
 	}
+	// The languages Railpack has no provider for, or plans as something they
+	// are not — a Crystal app's public/ served as a static site (languages.go).
+	if name, ok, err := languagePlan(contextDir); ok {
+		return name, err
+	}
 	declared := declaredFor(req, contextDir)
-	name, err := planTwice(contextDir, declared, runRailpack)
+	// Railpack is handed a PHP version it can resolve, for the moment it plans
+	// (railpackPHPConstraint); the repository's own composer.json is what
+	// the build installs against.
+	restore := pinRailpackPHP(contextDir)
+	name, err := planTwice(contextDir, declared, steeredPlanner(runRailpack, steers))
+	restore()
 	if err == nil {
 		return name, nil
 	}
@@ -261,8 +277,14 @@ func declaredFor(req api.BuildRequest, contextDir string) declaredBuild {
 	if req.StartCommand == "" {
 		declared = withProcfileProgram(contextDir, declared)
 	}
-	if declared.Start == "" {
-		declared.Start = pythonAppStart(contextDir)
+	// What the framework implies, where nothing declared a start: a server for
+	// a Python app that does not serve itself (python.go), Puma for a Rack 3
+	// app without rackup, Composer's start script for PHP (starts.go, php.go).
+	for _, implied := range []func(string) string{pythonAppStart, rackStart, composerStart} {
+		if declared.Start != "" {
+			break
+		}
+		declared.Start = implied(contextDir)
 	}
 	if declared.Build == "" && declared.Before == "" && djangoCollectsStatic(contextDir) {
 		declared.Build = "python manage.py collectstatic --noinput"
@@ -291,49 +313,6 @@ func djangoCollectsStatic(contextDir string) bool {
 		}
 	}
 	return false
-}
-
-var (
-	fastAPIApp = regexp.MustCompile(`(?m)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*FastAPI\(`)
-	flaskApp   = regexp.MustCompile(`(?m)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Flask\(`)
-	runsItself = regexp.MustCompile(`__name__\s*==\s*['"]__main__['"]`)
-)
-
-// pythonAppStart is the server a Python web app runs under, when its module
-// does not start one itself.
-//
-// A repository with a main.py is started as `python main.py`. A FastAPI or
-// Flask module creates the app and leaves serving it to uvicorn or gunicorn,
-// so that command imported the app and exited 0, and the deploy reported
-// success with nothing listening (issue #55). Railpack starts uvicorn itself
-// only for a module named main.py, and names it main:app whichever file it
-// found. The server has to be one the app depends on: naming one it does not
-// install would fail the same way, later.
-func pythonAppStart(contextDir string) string {
-	deps := strings.ToLower(readFile(contextDir, "requirements.txt") + readFile(contextDir, "pyproject.toml"))
-	for _, module := range []string{"main", "app", "server", "asgi", "wsgi"} {
-		body := readFile(contextDir, module+".py")
-		if body == "" {
-			continue
-		}
-		// A module that starts its own server is run as it is. Said rather
-		// than left to Railpack, which serves any Flask app it finds with
-		// gunicorn as main:app, and an app.py has no module main
-		// ("ModuleNotFoundError: No module named 'main'", issue #172).
-		if runsItself.MatchString(body) {
-			if fastAPIApp.MatchString(body) || flaskApp.MatchString(body) {
-				return "python " + module + ".py"
-			}
-			continue
-		}
-		if m := fastAPIApp.FindStringSubmatch(body); m != nil && strings.Contains(deps, "uvicorn") {
-			return fmt.Sprintf("uvicorn %s:%s --host 0.0.0.0 --port ${PORT:-8000}", module, m[1])
-		}
-		if m := flaskApp.FindStringSubmatch(body); m != nil && strings.Contains(deps, "gunicorn") {
-			return fmt.Sprintf("gunicorn %s:%s --bind 0.0.0.0:${PORT:-8000}", module, m[1])
-		}
-	}
-	return ""
 }
 
 func readFile(dir, name string) string {
@@ -398,8 +377,8 @@ func railpackDefaults(contextDir string) []string {
 	if root, ok := herokuPHPRoot(procfileWeb(contextDir)); ok && root != "" && safeRelative(root) {
 		return []string{"RAILPACK_PHP_ROOT_DIR=/app/" + root}
 	}
-	if phpServesFromPublic(contextDir) {
-		return []string{"RAILPACK_PHP_ROOT_DIR=/app/public"}
+	if root := phpServedFrom(contextDir); root != "" {
+		return []string{"RAILPACK_PHP_ROOT_DIR=/app/" + root}
 	}
 	return railpackNodeDefaults(contextDir)
 }
@@ -443,19 +422,16 @@ func procfileWeb(contextDir string) string {
 	return ""
 }
 
-// phpServesFromPublic reports a PHP app whose front controller is in public/,
-// the layout Slim, Laravel and Symfony share. Railpack serves public/ only for
-// a Laravel app, and the repository root otherwise, which answered 403
-// (issue #55).
-func phpServesFromPublic(contextDir string) bool {
+// phpServedFrom is the directory a Composer PHP app's front controller is
+// in, when it is not the repository root: public/, the layout Slim, Laravel
+// and Symfony share, or another web root (phpWebRoot). Railpack serves public/
+// only for a Laravel app, and the repository root otherwise, which answered
+// 403 (issue #55), or 404 for Nette's www/ (issue #90).
+func phpServedFrom(contextDir string) string {
 	if _, err := os.Stat(filepath.Join(contextDir, "composer.json")); err != nil {
-		return false
+		return ""
 	}
-	if _, err := os.Stat(filepath.Join(contextDir, "index.php")); err == nil {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(contextDir, "public", "index.php"))
-	return err == nil
+	return phpWebRoot(contextDir)
 }
 
 // defaultRubyVersion is the Ruby a project that names none is built with. [P]
@@ -589,6 +565,11 @@ func (a *Adapter) Plan(_ context.Context, src api.SourceView) (api.BuildPlan, er
 		// app exited with "Cannot find module '/app/index.js'" (issue #172).
 		if runsMissingScript(root, plan.Start) {
 			plan.Start = ""
+		}
+		// A framework whose own port is not Python's usual 8000: Streamlit
+		// serves 8501, a Reflex frontend 3000 (issue #90).
+		if port := pythonAppPort(root); port != 0 {
+			plan.Ports = []int{port}
 		}
 	}
 	return plan, nil

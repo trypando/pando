@@ -70,6 +70,12 @@ type declaredBuild struct {
 	Build string
 	Start string
 
+	// ImpliedStart is a start no source states, inferred from what the build
+	// writes (a Makefile's `go build -o x` starts ./x). It is used only when no
+	// source declares a start: a Procfile beside the Makefile says how the
+	// program runs, and outranks the guess (R-094).
+	ImpliedStart string
+
 	// Before runs ahead of whatever Railpack chose as the build command, rather
 	// than instead of it. This is what needs the second planning pass: the
 	// command it precedes is not known until Railpack has been asked.
@@ -99,14 +105,35 @@ func readDeclaredBuild(contextDir string) declaredBuild {
 	sources := []func(string) declaredBuild{
 		readWorkflowBuild,
 		readRunnerBuild,
+		readDenoTasks,
 		readProcfileBuild,
+		readPlatformBuild,
 		readEmbeddedBuild,
 	}
 
 	var best declaredBuild
+	var readings []declaredBuild
 	for _, read := range sources {
-		if d := read(contextDir); d.Rank > best.Rank {
+		d := read(contextDir)
+		readings = append(readings, d)
+		if d.Rank > best.Rank {
 			best = d
+		}
+	}
+	// A source that says how the app is built and not how it starts — a CI
+	// workflow, a Makefile with no run target — leaves the start to the next
+	// source that says it: a Makefile builds, and the Procfile beside it runs
+	// what it built.
+	if best.found() && best.Start == "" {
+		var start declaredBuild
+		for _, d := range readings {
+			if d.Start != "" && d.Rank > start.Rank {
+				start = d
+			}
+		}
+		best.Start = start.Start
+		if best.Start == "" {
+			best.Start = best.ImpliedStart
 		}
 	}
 	return best

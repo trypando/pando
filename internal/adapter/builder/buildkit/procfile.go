@@ -40,9 +40,11 @@ func readProcfileBuild(contextDir string) declaredBuild {
 		processes := parseProcfile(f)
 		_ = f.Close()
 
+		// safeStart, not safeCommand: a Procfile's command reads $PORT, and
+		// the shell that starts the container expands it.
 		for _, kind := range procfileTypes {
 			command := processes[kind]
-			if command == "" || !safeCommand(command) {
+			if command == "" || !safeStart(command) {
 				continue
 			}
 			return declaredBuild{

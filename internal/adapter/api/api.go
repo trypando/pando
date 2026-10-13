@@ -1087,6 +1087,17 @@ type BuildRequest struct {
 	// after it was built is never mistaken for the one that runs (R-146).
 	// Empty lets the builder choose.
 	Tag string
+
+	// Steer lets a builder that planned this build from convention revise
+	// that plan when it fails in a way the builder recognizes, and build
+	// again (a bounded number of times). The plan it built from in the end
+	// comes back in BuildResult.GeneratedFiles, so the caller can record it:
+	// the spec stays the sole record of how the app is built (R-020).
+	//
+	// Only detection sets it, where the plan is still being made and the
+	// revision is recorded before anyone accepts it. A deploy builds exactly
+	// the plan the spec carries, and fails if that plan does.
+	Steer bool
 }
 
 // PushTarget is where a build pushes its image (issue #72, PR 5).
@@ -1129,6 +1140,11 @@ const ImageLabelBundle = "io.pando.built-for"
 type BuildResult struct {
 	ImageRef string
 	Digest   string
+
+	// GeneratedFiles is the plan the image was built from, when it is not the
+	// one the request carried: a builder asked to Steer revised it after a
+	// build of it failed. Nil when the build used the plan it was given.
+	GeneratedFiles map[string]string
 }
 
 // --- secrets ---------------------------------------------------------------

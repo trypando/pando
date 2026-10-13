@@ -269,6 +269,11 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 		if err != nil {
 			return Proposal{}, err
 		}
+		if len(outcome.Plan) > 0 {
+			draft = withPlan(draft, outcome.Plan)
+			partial.Winner.Draft = draft
+			partial.DraftSpec = j.assemble(appID, src, draft)
+		}
 		if outcome.Built != nil {
 			proposal.Built, partial.Built = outcome.Built, outcome.Built
 			if image := outcome.Built.Scanned(&partial.DraftSpec); image != "" {

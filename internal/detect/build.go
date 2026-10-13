@@ -59,6 +59,12 @@ func (b *Built) Matches(s *spec.AppSpec, source string) bool {
 type BuildOutcome struct {
 	Built    *Built
 	PullAuth *api.RegistryAuth
+
+	// Plan is the build plan the image was built from, when the builder
+	// steered the proposed one after a build of it failed: what the proposal
+	// carries from then on, so the spec says how its image was made (R-020).
+	// Nil when the proposed plan was built as it was.
+	Plan map[string]string
 }
 
 // BuildFunc builds what a proposal would deploy, once the auction has read
@@ -69,6 +75,23 @@ type BuildOutcome struct {
 type BuildFunc func(ctx context.Context, partial *Proposal) (BuildOutcome, error)
 
 type buildKey struct{}
+
+type steerKey struct{}
+
+// WithSteer returns a context whose build may be steered: the builder may
+// revise a plan it made from convention when a build of it fails in a way it
+// recognizes, and report the plan it built from (api.BuildRequest.Steer).
+// Detection's first build of a proposal asks for it, while the plan is still
+// Pando's own; a deploy never does, and builds what the spec says (R-020).
+func WithSteer(ctx context.Context) context.Context {
+	return context.WithValue(ctx, steerKey{}, true)
+}
+
+// Steers reports whether a build in ctx may be steered.
+func Steers(ctx context.Context) bool {
+	on, _ := ctx.Value(steerKey{}).(bool)
+	return on
+}
 
 // WithBuild returns a context whose detection builds through fn after the
 // auction and before the trial run. A context and not a field on Job for the
@@ -132,5 +155,13 @@ func withPrimaryImage(draft Draft, image string) Draft {
 			return out
 		}
 	}
+	return out
+}
+
+// withPlan is draft building from plan in place of the plan it had, as a
+// copy: the build steered the proposed plan, and this is the one it built.
+func withPlan(draft Draft, plan map[string]string) Draft {
+	out := draft
+	out.Build.GeneratedFiles = plan
 	return out
 }

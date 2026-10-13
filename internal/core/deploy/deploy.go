@@ -832,6 +832,10 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 
 		// Named by the deployment, never a tag the next build moves (R-146).
 		Tag: deploymentID,
+
+		// Detection's build only, and only the app-wide build: a compose
+		// service's Dockerfile is the repository's, not a plan to steer.
+		Steer: wb == nil && detect.Steers(ctx),
 	}
 
 	if delivery == api.ImageDeliveryRegistry {
@@ -848,6 +852,7 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 		if err != nil {
 			return "", err
 		}
+		keepSteeredPlan(s, req, result)
 		// What runs is repository@digest (R-120). A push the builder could not
 		// pin is not run by tag instead.
 		if result.Digest == "" || !strings.HasSuffix(result.ImageRef, "@"+result.Digest) {
@@ -886,10 +891,19 @@ func (r *Runner) build(ctx context.Context, s *spec.AppSpec, checkout *source.Ch
 	if importErr != nil {
 		return "", importErr
 	}
+	keepSteeredPlan(s, req, result)
 	if importedID != "" {
 		return importedID, nil
 	}
 	return result.ImageRef, nil
+}
+
+// keepSteeredPlan records the plan a steered build was built from in the spec
+// it built, so the spec says how the image it names was made (R-020).
+func keepSteeredPlan(s *spec.AppSpec, req api.BuildRequest, result api.BuildResult) {
+	if req.Steer && len(result.GeneratedFiles) > 0 {
+		s.Build.GeneratedFiles = result.GeneratedFiles
+	}
 }
 
 // startCommand is the primary workload's command as a shell command line, for a

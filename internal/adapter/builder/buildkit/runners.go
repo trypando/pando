@@ -173,6 +173,7 @@ func declarationFrom(recipes map[string][]string, invoke string) declaration {
 	for _, name := range buildTargets {
 		if _, ok := recipes[name]; ok {
 			d.BuildTarget = name
+			d.BuildOutput = goBuildOutput(recipes[name])
 			break
 		}
 	}
@@ -187,4 +188,22 @@ func declarationFrom(recipes map[string][]string, invoke string) declaration {
 		}
 	}
 	return d
+}
+
+var goBuildOutputFlag = regexp.MustCompile(`(?:^|\s)go build\b[^\n]*?\s-o\s+([A-Za-z0-9_.\-/]+)`)
+
+// goBuildOutput is where a recipe's `go build -o` writes the program, relative
+// to the repository, or "" when no line says, or says somewhere else.
+func goBuildOutput(steps []string) string {
+	for _, step := range steps {
+		m := goBuildOutputFlag.FindStringSubmatch(step)
+		if m == nil {
+			continue
+		}
+		out := strings.TrimPrefix(m[1], "./")
+		if safeRelative(out) && !strings.HasSuffix(out, "/") {
+			return out
+		}
+	}
+	return ""
 }
