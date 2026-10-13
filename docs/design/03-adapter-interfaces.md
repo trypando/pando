@@ -975,6 +975,7 @@ type ProvisionRequest struct {
     Type      SlotType
     ServiceID string        // minted by core, so Provision is idempotent
     ExistingSecret secret.Value // the DSN a previous Provision returned, if any
+    Scheme    string        // the URL scheme the app spells (spec.Slot.Scheme), empty for the default
 }
 
 type ProvisionResult struct {
@@ -1027,6 +1028,34 @@ join and nothing publishes a port (R-134), and its data is an ordinary app volum
 **[P]** Images default to `postgres:17-alpine`, `mysql:8.4`, `redis:7-alpine`, overridable per install
 through the adapter's config. Alpine variants because a hobbyist's host is the target and a 400MB
 Postgres image on a two-core VPS is a cost with nothing to show for it.
+
+**[D] A provisioned Postgres serves TLS, and its URL is spelled the way the app spells it** (owner
+decision, issue #90 round 2). Postgres drivers disagree on two things, and each refuses the other's
+answer:
+
+- *The scheme.* SQLAlchemy 2 will not load `postgres://` ("Can't load plugin:
+  sqlalchemy.dialects:postgres"); readflow will not accept `postgresql://` ("unsupported database:
+  postgresql"). No one spelling works for both, but the app's own configuration already says which it
+  reads. Detection records it as `Slot.Scheme` — from the compose value that pointed at the database,
+  or a sample in `.env.example` — and the URL is written with it. Empty is `postgresql://`, the
+  scheme libpq documents. Only `postgres` and `postgresql` are accepted, and only on a Postgres slot.
+- *TLS.* Go's lib/pq requires TLS unless the URL says `sslmode=disable`; asyncpg refuses a URL that
+  says it ("connect() got an unexpected keyword argument 'sslmode'"). A URL that says nothing works
+  for both only if the server offers TLS, so it does: `require` and `prefer` connect encrypted, and a
+  client that asks for `disable` is still let in, because the image's `pg_hba.conf` accepts either.
+  The URL carries no query string.
+
+**[P]** The certificate is self-signed ECDSA P-256, derived from the service's password (HKDF, then
+the deterministic RFC 6979 signature) with a fixed serial and a validity ending 9999-12-31, RFC
+5280's "no well-defined expiration". Derived and not generated because `Provision` runs on every
+deploy and reconcile and a changed environment recreates the container: a fresh certificate each call
+would restart the database every tick. Deriving it needs nothing stored that is not stored already —
+the password is the service's one persisted secret, and the key protects the same connection the
+password does. Nothing verifies it, which is what `sslmode=require` means; the network is private to
+the app either way (R-134). Certificate and key reach the container as `secret.Value` environment
+variables (R-194), are written outside the data volume on each start, and are unset before the
+image's own entrypoint runs. An image set in the adapter's config must keep the official image's
+`docker-entrypoint.sh`, as it already had to for `POSTGRES_*`.
 
 **[P] The builder writes a plan for strategies that have none.** `static` and `buildpack` both end
 as a plan BuildKit builds — a Dockerfile, or for most `buildpack` apps a Railpack plan — written

@@ -1239,6 +1239,11 @@ type ProvisionRequest struct {
 	// deployed successfully and cannot authenticate — points nowhere near the
 	// cause.
 	ExistingSecret secret.Value
+
+	// Scheme is the URL scheme the app spells for this service (spec.Slot's
+	// Scheme), empty for the adapter's default. An adapter that has only one
+	// spelling ignores it.
+	Scheme string
 }
 
 // ServiceHandle is the adapter's own identifier for a provisioned service.

@@ -8,6 +8,7 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1357,6 +1358,7 @@ func readEnvExample(src api.SourceView) ([]spec.Slot, []spec.EnvEntry) {
 				// is promoted by the trial run if its absence breaks the app.
 				Required: value == "",
 				Evidence: []string{"declared in " + name},
+				Scheme:   spelledScheme(value, slotType),
 			})
 		}
 		_ = f.Close()
@@ -1453,6 +1455,20 @@ func schemeType(value string) spec.SlotType {
 	default:
 		return spec.SlotUnknown
 	}
+}
+
+// spelledScheme is the scheme a sample value spells for a service whose URL
+// Pando writes in more than one way (spec.Slot.Scheme), or empty when Pando's
+// default will do. Only Postgres has two: postgres:// and postgresql://.
+func spelledScheme(value string, t spec.SlotType) string {
+	if t != spec.SlotPostgres {
+		return ""
+	}
+	scheme, _, _ := strings.Cut(value, "://")
+	if scheme = strings.ToLower(scheme); slices.Contains(spec.PostgresSchemes, scheme) {
+		return scheme
+	}
+	return ""
 }
 
 func truncate(items []string, n int) []string {

@@ -466,7 +466,20 @@ type Slot struct {
 	// `while ! </dev/tcp/db/5432` wait in its start command never finished
 	// once `db` resolved to nothing (issue #90).
 	Aliases []string `json:"aliases,omitempty"`
+
+	// Scheme is how the app spells a provisioned service's URL: postgres or
+	// postgresql for a Postgres slot, empty for the default. Drivers disagree
+	// and each refuses the other's spelling — readflow's "unsupported database:
+	// postgresql", SQLAlchemy 2's "Can't load plugin: sqlalchemy.dialects:
+	// postgres" (issue #90) — so the spelling the app's own configuration used
+	// is the one it is given, and recorded here because nothing is read from
+	// the repository at deploy time (R-020).
+	Scheme string `json:"scheme,omitempty"`
 }
+
+// PostgresSchemes are the spellings a Postgres slot's Scheme may take. The
+// first is the default: postgresql://, the one libpq documents.
+var PostgresSchemes = []string{"postgresql", "postgres"}
 
 // ResolutionMode is how a slot is filled (R-131).
 type ResolutionMode string

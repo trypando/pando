@@ -3,6 +3,7 @@ package spec
 import (
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/trypando/pando/internal/egress"
@@ -365,6 +366,11 @@ func validateSlots(s *AppSpec, add func(*errs.Error)) {
 			add(errs.Newf(errs.ValidInvalid,
 				"Slot %s has an unrecognized value format %q.", sl.Key, sl.Format).
 				WithRemedy("Use one of: random, random_long, django_key, laravel_key — or leave the format out."))
+		}
+		if sl.Scheme != "" && (sl.Type != SlotPostgres || !slices.Contains(PostgresSchemes, sl.Scheme)) {
+			add(errs.Newf(errs.ValidInvalid,
+				"Slot %s asks for its address to start %s://, which Pando cannot write for a %s.", sl.Key, sl.Scheme, sl.Type.DisplayName()).
+				WithRemedy("Only a PostgreSQL slot takes a scheme, and it is postgresql or postgres. Leave the scheme out to use the default."))
 		}
 
 		validateSlotResolution(sl, add)

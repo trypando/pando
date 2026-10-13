@@ -16159,6 +16159,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "scheme": {
+            "type": "string"
           }
         },
         "required": [

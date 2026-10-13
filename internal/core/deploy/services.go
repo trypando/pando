@@ -99,7 +99,7 @@ func (r *Runner) provision(ctx context.Context, s *spec.AppSpec, sink io.Writer)
 
 		res, err := adapter.Provision(ctx, api.ProvisionRequest{
 			AppID: s.AppID, BundleID: s.AppID, SlotKey: slot.Key,
-			Type: slot.Type, ServiceID: serviceID, ExistingSecret: prior,
+			Type: slot.Type, ServiceID: serviceID, ExistingSecret: prior, Scheme: slot.Scheme,
 		})
 		if err != nil {
 			return provisioned{}, err
@@ -172,7 +172,7 @@ func (r *Runner) ServiceShapes(ctx context.Context, s *spec.AppSpec) (api.Bundle
 
 		res, err := adapter.Provision(ctx, api.ProvisionRequest{
 			AppID: s.AppID, BundleID: s.AppID, SlotKey: slot.Key,
-			Type: slot.Type, ServiceID: existing.ID,
+			Type: slot.Type, ServiceID: existing.ID, Scheme: slot.Scheme,
 		})
 		if err != nil {
 			return api.BundlePlan{}, err
@@ -229,7 +229,7 @@ func (r *Runner) Environments(ctx context.Context, s *spec.AppSpec) (map[string]
 			}
 			res, err := adapter.Provision(ctx, api.ProvisionRequest{
 				AppID: s.AppID, BundleID: s.AppID, SlotKey: slot.Key,
-				Type: slot.Type, ServiceID: existing.ID, ExistingSecret: prior,
+				Type: slot.Type, ServiceID: existing.ID, ExistingSecret: prior, Scheme: slot.Scheme,
 			})
 			if err != nil {
 				return nil, err
