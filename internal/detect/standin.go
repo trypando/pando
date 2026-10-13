@@ -103,7 +103,14 @@ func givenInTrial(w spec.Workload, key string) bool {
 // the right scheme at a host that does not resolve, a key of the format the
 // app checks, a word for anything else.
 func standIn(v requiredVar) string {
-	switch t := slotTypeFor(v.Key, ""); t {
+	// The type the source said, where it said one: DATABASE_URL is a MySQL
+	// for a Rails app on mysql2, and a Postgres stand-in would stop it on the
+	// adapter rather than on the next missing variable.
+	t := v.Type
+	if t == "" {
+		t = slotTypeFor(v.Key, "")
+	}
+	switch t {
 	case spec.SlotPostgres:
 		return "postgresql://pando:pando@" + standInHost + ":5432/pando"
 	case spec.SlotMySQL:

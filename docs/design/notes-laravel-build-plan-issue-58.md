@@ -132,8 +132,6 @@ SQLite).
   without AI, the first *done when* of issue #58, is still to be confirmed. Its fixture also needs a
   valid key in `facts.slots.APP_KEY`: the harness fills an unanswered slot with 27 random characters,
   which Laravel refuses as a key, and a person would paste the output of `key:generate`.
-- A starter kit whose Vite build runs PHP (Wayfinder's `php artisan wayfinder:generate`) needs PHP in
-  the asset stage, which has only Node.
 - Laravel's trusted proxies are the app's configuration. Behind Pando's proxy on HTTPS, an app that
   does not trust it generates `http://` URLs.
 - Queue workers and the scheduler are separate processes Pando does not start.

@@ -144,6 +144,19 @@ func TestR104_APythonAppIsServedByTheServerItInstalls(t *testing.T) {
 			"pyproject.toml": "[tool.poetry.dependencies]\npython = \"^3.10\"\nfastapi = \"^0.111.0\"\n",
 			"poetry.lock":    "[[package]]\nname = \"fastapi\"\nversion = \"0.111.0\"\n\n[[package]]\nname = \"uvicorn\"\nversion = \"0.30.1\"\n",
 		}, "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"},
+		{"a server Pipfile.lock installs", map[string]string{
+			"app.py":       "from fastapi import FastAPI\n\napp = FastAPI()\n",
+			"Pipfile":      "[packages]\nfastapi = \"*\"\n",
+			"Pipfile.lock": `{"default": {"fastapi": {"version": "==0.111.0"}, "uvicorn": {"version": "==0.30.1"}}, "develop": {}}`,
+		}, "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"},
+		// An older FastAPI lists uvicorn among the extras it offers, which
+		// nothing installs: only a locked package name counts.
+		{"an extra the lockfile lists is not installed", map[string]string{
+			"app.py":         "from fastapi import FastAPI\n\napp = FastAPI()\n",
+			"pyproject.toml": "[tool.poetry.dependencies]\npython = \"^3.10\"\nfastapi = \"^0.100.0\"\n",
+			"poetry.lock": "[[package]]\nname = \"fastapi\"\nversion = \"0.100.0\"\n\n[package.extras]\n" +
+				"all = [\"uvicorn[standard] (>=0.12.0)\"]\n",
+		}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
