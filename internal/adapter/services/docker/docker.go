@@ -56,6 +56,8 @@ var defaultImages = map[spec.SlotType]string{
 	spec.SlotPostgres: "postgres:17-alpine",
 	spec.SlotMySQL:    "mysql:8.4",
 	spec.SlotRedis:    "redis:7-alpine",
+	// Not Alpine: MongoDB publishes no Alpine image.
+	spec.SlotMongoDB: "mongo:7",
 }
 
 func (a *Adapter) Kind() string           { return Kind }
@@ -78,7 +80,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		if _, ok := defaultImages[t]; !ok {
 			return errs.Newf(errs.ValidInvalid,
 				"Pando cannot provision a %q service, so there is no image to set for it.", name).
-				WithRemedy("Valid types are postgres, mysql and redis.")
+				WithRemedy("Valid types are postgres, mysql, redis and mongodb.")
 		}
 		if img == "" {
 			return errs.Newf(errs.ValidInvalid, "The image for %q is empty.", name)
@@ -102,12 +104,12 @@ func (a *Adapter) Capabilities() api.ServicesCapabilities {
 
 // Supports lists the slot types this adapter can fill.
 //
-// Deliberately three. S3 and SMTP are slot types Pando recognizes (R-130) and
+// Databases and a cache, deliberately nothing else. S3 and SMTP are slot types Pando recognizes (R-130) and
 // deliberately does not provision: standing up MinIO or an SMTP server is
 // running infrastructure, which is what R-010 says Pando is not. Those slots
 // are bound or literal, and the planner says so by name.
 func (a *Adapter) Supports() []spec.SlotType {
-	return []spec.SlotType{spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis}
+	return []spec.SlotType{spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis, spec.SlotMongoDB}
 }
 
 // Provision plans one service instance.
@@ -194,6 +196,23 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 			Scheme: "redis", User: url.UserPassword("default", password),
 			Host: name + ":6379", Path: "/0",
 		}).String()
+
+	case spec.SlotMongoDB:
+		// The root user, because it is the only one the image's
+		// MONGO_INITDB_* variables create — and with it an app that creates
+		// its own databases, as most do, can. authSource=admin is where a
+		// root user lives; without it the driver looks for the user in the
+		// "app" database and every connection is refused.
+		env = map[string]secret.Value{
+			"MONGO_INITDB_ROOT_USERNAME": secret.New("app"),
+			"MONGO_INITDB_ROOT_PASSWORD": secret.New(password),
+			"MONGO_INITDB_DATABASE":      secret.New("app"),
+		}
+		path = "/data/db"
+		dsn = (&url.URL{
+			Scheme: "mongodb", User: url.UserPassword("app", password),
+			Host: name + ":27017", Path: "/app", RawQuery: "authSource=admin",
+		}).String()
 	}
 
 	w := api.WorkloadPlan{
@@ -261,6 +280,12 @@ func healthFor(t spec.SlotType) *api.HealthPlan {
 		return &api.HealthPlan{
 			Port:            6379,
 			IntervalSeconds: 5, TimeoutSeconds: 3, Retries: 12,
+		}
+	case spec.SlotMongoDB:
+		// ping needs no credentials, so none go on argv.
+		return &api.HealthPlan{
+			Command:         []string{"mongosh", "--quiet", "--eval", "db.adminCommand('ping')"},
+			IntervalSeconds: 5, TimeoutSeconds: 5, Retries: 24,
 		}
 	}
 	return nil

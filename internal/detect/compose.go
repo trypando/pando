@@ -1517,6 +1517,18 @@ func (c *composeImport) fromEnvFiles(service string, s composeService) []spec.En
 		// setting with a default, and stays a variable.
 		var named []string
 		for _, kv := range declared {
+			// A connection URL at one of this file's own services is not the
+			// author's machine: it is the address `docker compose up` gives
+			// the app, and the one Pando rewires to what it provisions
+			// (wire). Claper's .env.sample says
+			// DATABASE_URL=postgres://claper:claper@db:5432/claper; left
+			// empty, the app had no database and the db service nothing
+			// pointing at it.
+			if c.atOwnService(kv.Value) {
+				value := kv.Value
+				entries = append(entries, spec.EnvEntry{Key: kv.Key, Value: &value, Source: spec.EnvFromCompose})
+				continue
+			}
 			empty := ""
 			entry := spec.EnvEntry{Key: kv.Key, Value: &empty, Source: spec.EnvFromDetection}
 			// A placeholder is no value either: `SESSION_SECRET=change-me`
@@ -1537,6 +1549,20 @@ func (c *composeImport) fromEnvFiles(service string, s composeService) []spec.En
 				". Set them on this app's variables.")
 	}
 	return entries
+}
+
+// atOwnService reports a connection URL whose host is a service in this
+// compose file.
+func (c *composeImport) atOwnService(value string) bool {
+	if schemeType(value) == spec.SlotUnknown {
+		return false
+	}
+	for _, name := range c.names() {
+		if pointsAtAny(value, c.hostnames(name)) {
+			return true
+		}
+	}
+	return false
 }
 
 // requireValue records a value an env_file template says the app needs.

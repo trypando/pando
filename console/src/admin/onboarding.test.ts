@@ -124,6 +124,7 @@ describe('generateFor', () => {
     expect(atob(laravel.slice('base64:'.length))).toHaveLength(32);
     expect(generateFor('random_long').length).toBeGreaterThanOrEqual(64);
     expect(generateFor('django_key').length).toBeGreaterThanOrEqual(50);
+    expect(generateFor('hex_64')).toMatch(/^[0-9a-f]{64}$/);
     expect(generateFor()).toHaveLength(43);
   });
 
@@ -155,6 +156,24 @@ describe('neededValues', () => {
     ];
     expect(neededValues(rows).map((r) => r.key)).toEqual(['CREW_TOKEN_ENC_KEY']);
     expect(neededValues(rows, new Set(['CREW_TOKEN_ENC_KEY']))).toEqual([]); // marked not required by the person
+  });
+
+  it('counts the parts of one database once (R-131)', () => {
+    const rows = variableRows({
+      workloads: [
+        {
+          name: 'web',
+          primary: true,
+          env: [
+            { key: 'PGHOST', slot_ref: 'PGHOST', slot_part: 'host' },
+            { key: 'PGPASSWORD', slot_ref: 'PGHOST', slot_part: 'password' },
+          ],
+        },
+      ],
+      slots: [{ key: 'PGHOST', type: 'postgres', required: true }],
+    } as AppSpec);
+    expect(rows[1]?.slot).toMatchObject({ key: 'PGHOST', part: 'password' });
+    expect(neededValues(rows).map((r) => r.key)).toEqual(['PGHOST']);
   });
 });
 

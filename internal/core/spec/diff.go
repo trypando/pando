@@ -385,6 +385,9 @@ func envMap(entries []EnvEntry) map[string]string {
 			m[e.Key] = "value:" + *e.Value
 		case e.SlotRef != nil:
 			m[e.Key] = "slot:" + *e.SlotRef
+			if e.SlotPart != "" {
+				m[e.Key] += "." + string(e.SlotPart)
+			}
 		case e.SecretRef != nil:
 			// The secret's identity, not its value. A rotated secret is
 			// detected by the reconciler's fingerprint, not by the differ.

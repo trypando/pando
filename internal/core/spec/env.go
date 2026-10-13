@@ -78,7 +78,9 @@ func EnvSlot(s *AppSpec, workload, key string) (string, bool) {
 			continue
 		}
 		for _, e := range w.Env {
-			if e.Key == key && e.SlotRef != nil {
+			// Not a part: a value typed for PGHOST is that host, not the
+			// whole connection the slot holds.
+			if e.Key == key && e.SlotRef != nil && e.SlotPart == "" {
 				return *e.SlotRef, true
 			}
 		}

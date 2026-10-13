@@ -1094,40 +1094,64 @@ func resolveEnv(s *spec.AppSpec, w spec.Workload, secrets map[string]secret.Valu
 					"%s comes from a slot that has not been filled.", e.Key).
 					WithDetail("slot_key", *e.SlotRef)
 			}
-			switch slot.Resolution.Mode {
-			case spec.ResolutionBound:
-				env[e.Key] = secret.New(slot.Resolution.Target)
-			case spec.ResolutionLiteral:
-				v, ok := secrets[slot.Resolution.SecretRef]
-				if !ok {
-					return nil, errs.Newf(errs.StateInvalid,
-						"%s comes from a stored value this app does not have.", e.Key).
-						WithDetail("slot_key", slot.Key)
-				}
-				env[e.Key] = v
-			case spec.ResolutionProvisioned:
-				v, ok := svcs.connections[slot.Key]
-				if !ok {
-					// Reachable only if provisioning was skipped, which means
-					// the workload is about to start with no database and no
-					// message saying why.
-					return nil, errs.Newf(errs.PlanSlotUnfilled,
-						"%s comes from a service Pando has not provisioned yet.", e.Key).
-						WithDetail("slot_key", slot.Key).
-						WithRemedy("Deploy again, or connect this slot to an instance you already run.")
-				}
-				env[e.Key] = v
-			default:
-				return nil, errs.Newf(errs.PlanSlotUnfilled,
-					"%s comes from a slot Pando cannot fill.", e.Key).
-					WithDetail("slot_key", slot.Key)
+			v, err := slotValue(e, slot, secrets, svcs)
+			if err != nil {
+				return nil, err
 			}
+			env[e.Key] = v
 		}
 	}
 	if port, ok := defaultPort(w); ok {
 		env["PORT"] = secret.New(port)
 	}
 	return env, nil
+}
+
+// slotValue is what a filled slot gives the variable e: its connection
+// string, or the part of it e takes (spec.EnvEntry.SlotPart).
+func slotValue(e spec.EnvEntry, slot spec.Slot, secrets map[string]secret.Value, svcs provisioned) (secret.Value, error) {
+	var v secret.Value
+	switch slot.Resolution.Mode {
+	case spec.ResolutionBound:
+		v = secret.New(slot.Resolution.Target)
+	case spec.ResolutionLiteral:
+		stored, ok := secrets[slot.Resolution.SecretRef]
+		if !ok {
+			return v, errs.Newf(errs.StateInvalid,
+				"%s comes from a stored value this app does not have.", e.Key).
+				WithDetail("slot_key", slot.Key)
+		}
+		v = stored
+	case spec.ResolutionProvisioned:
+		conn, ok := svcs.connections[slot.Key]
+		if !ok {
+			// Reachable only if provisioning was skipped, which means
+			// the workload is about to start with no database and no
+			// message saying why.
+			return v, errs.Newf(errs.PlanSlotUnfilled,
+				"%s comes from a service Pando has not provisioned yet.", e.Key).
+				WithDetail("slot_key", slot.Key).
+				WithRemedy("Deploy again, or connect this slot to an instance you already run.")
+		}
+		v = conn
+	default:
+		return v, errs.Newf(errs.PlanSlotUnfilled,
+			"%s comes from a slot Pando cannot fill.", e.Key).
+			WithDetail("slot_key", slot.Key)
+	}
+	if e.SlotPart == "" {
+		return v, nil
+	}
+	part, ok := spec.SlotPartOf(v.Reveal(), e.SlotPart)
+	if !ok {
+		return v, errs.Newf(errs.PlanSlotUnfilled,
+			"%s takes the %s of %s's connection string, and the value %s holds is not a URL Pando can read one out of.",
+			e.Key, e.SlotPart, slot.Key, slot.Key).
+			WithDetail("slot_key", slot.Key).
+			WithRemedy("Give " + slot.Key + " a connection string such as mysql://user:password@host:3306/name, " +
+				"or let Pando provision the database.")
+	}
+	return secret.New(part), nil
 }
 
 // defaultPort is the PORT the primary workload is started with, when the spec

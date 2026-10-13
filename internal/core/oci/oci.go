@@ -101,6 +101,13 @@ type Config struct {
 	WorkingDir   string   `json:"working_dir,omitempty"`
 	User         string   `json:"user,omitempty"`
 	Healthcheck  *Health  `json:"healthcheck,omitempty"`
+
+	// Env is the image's ENV, as KEY=VALUE. Read by detection for the
+	// connections an image is configured to expect (mongo-express ships
+	// ME_CONFIG_MONGODB_URL=mongodb://mongo:27017). Never serialized: a
+	// private image's ENV is the image author's, and nothing that stores or
+	// returns an inspection needs it.
+	Env []string `json:"-"`
 }
 
 // Health is a HEALTHCHECK, as the image declares it.
@@ -294,6 +301,7 @@ func configOf(cfg *v1.ConfigFile) Config {
 		Cmd:        cfg.Config.Cmd,
 		WorkingDir: cfg.Config.WorkingDir,
 		User:       cfg.Config.User,
+		Env:        cfg.Config.Env,
 	}
 	for port := range cfg.Config.ExposedPorts {
 		number, proto, _ := strings.Cut(port, "/")

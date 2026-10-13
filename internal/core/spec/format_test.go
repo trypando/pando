@@ -28,6 +28,8 @@ func TestR130_ATypedSecretRefusesAValueTheAppWouldRefuse(t *testing.T) {
 		{spec.FormatRandomLong, []string{strings.Repeat("ab", 32)}, []string{"secret", strings.Repeat("a", 63)}},
 		{spec.FormatDjangoKey, []string{"abcdefghij" + strings.Repeat("x", 40)},
 			[]string{strings.Repeat("a", 60), "django-insecure-" + strings.Repeat("abcdef", 10), "short"}},
+		{spec.FormatHex64, []string{strings.Repeat("0a", 32), strings.Repeat("F", 64)},
+			[]string{strings.Repeat("a", 63), strings.Repeat("g", 64), "qa-placeholder"}},
 		{spec.FormatRandom, []string{"anything"}, nil},
 		{"", []string{"anything"}, nil},
 	}

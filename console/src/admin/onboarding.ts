@@ -156,6 +156,12 @@ interface RowSlot {
   provisioned: boolean;
   /** The shape the value must take (spec.SecretFormat), for Generate. */
   format?: string;
+  /**
+   * The piece of the slot's connection string this variable takes — host,
+   * password — when it takes one (spec.EnvEntry.SlotPart). PGHOST and
+   * PGPASSWORD are two rows and one database.
+   */
+  part?: string;
 }
 
 /**
@@ -198,6 +204,7 @@ export function variableRows(spec: AppSpec | undefined, address?: string): Varia
             service,
             provisioned: slot?.resolution?.mode === 'provisioned',
             format: slot?.format,
+            part: e.slot_part,
           };
           // A default, not a lock: a service's address carries its password,
           // so it starts secret; anything else starts secret when its name
@@ -267,6 +274,13 @@ function randomSecret(bytes = 32): string {
   return btoa(randomBinary(bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
+/** `bytes` random bytes as lowercase hex: what `openssl rand -hex` prints. */
+function randomHex(bytes: number): string {
+  const raw = new Uint8Array(bytes);
+  crypto.getRandomValues(raw);
+  return Array.from(raw, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 function randomBinary(bytes: number): string {
   const raw = new Uint8Array(bytes);
   crypto.getRandomValues(raw);
@@ -288,6 +302,8 @@ export function generateFor(format?: string): string {
     case 'random_long':
     case 'django_key':
       return randomSecret(64);
+    case 'hex_64':
+      return randomHex(32);
     default:
       return randomSecret();
   }
@@ -295,12 +311,19 @@ export function generateFor(format?: string): string {
 
 /**
  * Slot-filled values a deploy would be refused without (R-132): required, not
- * created by Pando, not marked optional by the person, and empty.
+ * created by Pando, not marked optional by the person, and empty. One per
+ * slot: the parts of one database are one thing to give.
  */
 export function neededValues(rows: VariableRow[], optional: Set<string> = new Set()): VariableRow[] {
-  return rows.filter(
-    (r) => r.slot && r.slot.required && !optional.has(r.slot.key) && !r.slot.provisioned && !r.value.trim(),
-  );
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (!r.slot || !r.slot.required || optional.has(r.slot.key) || r.slot.provisioned || r.value.trim()) {
+      return false;
+    }
+    if (seen.has(r.slot.key)) return false;
+    seen.add(r.slot.key);
+    return true;
+  });
 }
 
 /** What the person changed on a detected row, kept apart from the rows. */

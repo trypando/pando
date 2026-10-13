@@ -203,6 +203,7 @@ type EnvEntry struct {
     Value     *string `json:"value,omitempty"`      // literal, non-sensitive
     SlotRef   *string `json:"slot_ref,omitempty"`   // resolved at deploy from a slot
     SecretRef *string `json:"secret_ref,omitempty"` // resolved at deploy from secrets
+    SlotPart  SlotPart `json:"slot_part,omitempty"` // with SlotRef: host|port|hostport|user|password|database
 }
 
 type Port struct {
@@ -270,10 +271,10 @@ type Mount struct {
 ```go
 type Slot struct {
     Key        string      `json:"key"`         // e.g. REDIS_URL
-    Type       SlotType    `json:"type"`        // postgres|mysql|redis|s3|smtp|unknown
+    Type       SlotType    `json:"type"`        // postgres|mysql|redis|mongodb|s3|smtp|unknown
     Required   bool        `json:"required"`    // O-4 — see below
     Evidence   []string    `json:"evidence"`    // why we think this is a slot
-    Format     SecretFormat `json:"format,omitempty"` // random|random_long|django_key|laravel_key
+    Format     SecretFormat `json:"format,omitempty"` // random|random_long|django_key|laravel_key|hex_64
     Resolution *Resolution `json:"resolution"`  // nil = unfilled, blocks deploy (R-132)
     Aliases    []string    `json:"aliases,omitempty"` // a provisioned instance also answers to these: the compose service it replaced
 }
@@ -301,11 +302,18 @@ type Resolution struct {
 - **Environment schemas validated at boot.** AdonisJS `start/env.ts` (`Env.schema.*` without `.optional`), envalid `cleanEnv` (no `default:`; `devDefault` does not count in production), t3-env / zod `createEnv` (no `.optional()`, `.default()` or `.catch()`).
 - **Reads with no fallback at import.** Python `os.environ["X"]` at module level of the entry module or the Django settings module `manage.py` names; reads under an `if`, a `try` or a `def` do not count.
 - **A placeholder in a compose `env_file` template** (`change-me`, `tobemodified`), which says what `KEY=` says.
-- **The trial run's log**, when the app exited or never opened a port: a line saying a named variable is missing, unset, required or must be set; a list under "Missing environment variables:"; a `docker run -e X=` instruction alongside a "must"; a zod issue; a `KeyError` from `os.environ`; the framework messages that name no variable (Rails' "Missing `secret_key_base`", Laravel's "No application encryption key has been specified", Django's `security.W009`). Of alternatives ("A or A_FILE", "either A or B"), only the first is asked for. A database or cache variable the log names beside a refused connection becomes a slot of that type — a log naming `DATABASE_URL` is a mention, so R-107 still holds for a log that names nothing.
+- **The trial run's log**, when the app exited or never opened a port — or opened one and reported "Invalid environment variables" (t3-env serves a 500 that way): a line saying a named variable is missing, unset, required or must be set; a list under "Missing environment variables:"; a `docker run -e X=` instruction alongside a "must"; a zod issue, bracketed or in zod 4's own words; a t3-env issue `path: [ 'X' ]`; a `KeyError` from `os.environ`; the framework messages that name no variable (Rails' "Missing `secret_key_base`", Laravel's "No application encryption key has been specified", Django's `security.W009`). Of alternatives ("A or A_FILE", "either A or B", "either A or all of [B, C]"), only the first is asked for. A database or cache variable the log names beside a refused connection becomes a slot of that type — a log naming `DATABASE_URL` is a mention, so R-107 still holds for a log that names nothing.
+- **The trial run again, with stand-ins.** An app stops at the first missing variable, so a failed trial that names one is run again with a stand-in for each it named — a value of the right shape that reaches nothing (`*.invalid` hosts, RFC 2606) — up to three more runs, until it serves or names nothing new. Each variable any run named is required; no stand-in reaches the draft. Flatnotes names its username, then its password, then its secret key; Zipline checks its database before it says `CORE_SECRET` (issue #90).
+- **A database a framework reads from `DATABASE_URL`.** Rails' `config/database.yml` naming `postgresql`/`postgis` or `mysql2`/`trilogy` for production with no `host:`; a Django settings module naming a PostgreSQL or MySQL engine with no `HOST` that reads `DATABASE_URL`. Either connects to a local socket no container has. The slot is typed by the adapter or engine, not the name.
+- **A Node entry file that connects at start** — `mongoose.connect(process.env.X)`, `new Pool(process.env.X)`, `createClient(process.env.X)` with nothing to fall back on — where X names a database or cache.
+- **A name only one framework reads**, declared and left empty: `SECRET_KEY_BASE` (Rails, Phoenix), `NEXTAUTH_SECRET` (NextAuth). A template value that is an instruction (`[generate with <openssl rand -base64 36>]`) is no value.
+- **The image's own `ENV`.** A variable the image sets to a database URL (`ME_CONFIG_MONGODB_URL=mongodb://mongo:27017`) is a slot of that type — optional, promoted by the trial like any other; unfilled, the image's own value stands.
+
+**[D] One database, several variables, one slot.** An app configured the way libpq, Laravel and most official images are — `PGHOST`, `PGUSER`, `PGPASSWORD`; `DB_HOST` and `DB_PASSWORD` — has one database, and it is one slot named for its host variable, typed, provisionable; each variable takes its part of the slot's connection string (`EnvEntry.SlotPart`: `host`, `port`, `hostport`, `user`, `password`, `database`), read at deploy, so a rotated password reaches every part. This replaces "no slot resolution fills four variables from one answer" (notes-console-findings). Variables are folded only when one of them is required and the kind of database is known: from the names (`PG`, `MYSQL_`, `MONGO_`), or, for a prefix that says only `DB`, from the one kind of database the trial log names (Joomla's `MYSQL_PORT_3306_TCP`). `SMTP_HOST` beside a MySQL error stays a mail server. A Laravel app whose log shows a `QueryException` with `(Connection: mysql` or `pgsql` is given `DB_CONNECTION` and Laravel's five `DB_*` variables from one slot of that type. A value that is not a URL cannot be split, and the deploy says which slot and why. **[P]** The slot takes the host variable's name rather than one Pando makes up, for the reason compose wiring takes the URL variable's.
 
 Where the requirement carries its own answer, nothing is asked: `PORT` is Pando's to set, `HOST` is `0.0.0.0` in a container, `NODE_ENV` is `production`, and a schema-required setting with a real sample in `.env.example` (not a placeholder, not a secret, not an address) takes it. A variable the Dockerfile already sets with `ENV` is not asked for.
 
-**[D] `Format`** is the shape a value must take when the app checks it, so the console's Generate produces one the app accepts and a literal that does not fit is refused with the reason (R-105) when it is set, by `PUT /slots/{key}` and by the review's accept. `laravel_key` is `base64:` and 32 bytes (or 32 raw characters); `random_long` at least 64 characters (Rails, Phoenix); `django_key` at least 50 characters, 5 distinct, no `django-insecure-` prefix; `random` any non-empty value, generated as 32 random bytes. Empty means Pando knows nothing about the shape. The slot's `Type` stays `unknown`: a key is a value, not a service to provision (R-131).
+**[D] `Format`** is the shape a value must take when the app checks it, so the console's Generate produces one the app accepts and a literal that does not fit is refused with the reason (R-105) when it is set, by `PUT /slots/{key}` and by the review's accept. `laravel_key` is `base64:` and 32 bytes (or 32 raw characters); `random_long` at least 64 characters (Rails, Phoenix); `django_key` at least 50 characters, 5 distinct, no `django-insecure-` prefix; `random` any non-empty value, generated as 32 random bytes; `hex_64` exactly 64 hexadecimal characters (32 bytes, `openssl rand -hex 32`), taken from a log that asks for "a 64 character secret in hex format". Empty means Pando knows nothing about the shape. The slot's `Type` stays `unknown`: a key is a value, not a service to provision (R-131).
 
 ### 2.6 Routing, runtime, deploy
 

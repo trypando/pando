@@ -42,8 +42,14 @@ func EnvFingerprint(s *spec.AppSpec, versions map[string]int) string {
 					"\x00v"+strconv.Itoa(versions[*e.SecretRef]))
 
 			case e.SlotRef != nil:
-				parts = append(parts, w.Name+"\x00"+e.Key+"\x00slot\x00"+*e.SlotRef+
-					"\x00"+slotResolution(s, *e.SlotRef))
+				part := w.Name + "\x00" + e.Key + "\x00slot\x00" + *e.SlotRef +
+					"\x00" + slotResolution(s, *e.SlotRef)
+				// Only when set, so a spec with no parts fingerprints as it
+				// always did and no running app reads as drifted.
+				if e.SlotPart != "" {
+					part += "\x00part\x00" + string(e.SlotPart)
+				}
+				parts = append(parts, part)
 			}
 		}
 	}

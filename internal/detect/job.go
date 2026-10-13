@@ -267,6 +267,7 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 
 	// Step 10 — the trial run.
 	trial := j.trialWith(ctx, trialDraft, trialAuth)
+	draft, trialDraft, trial = j.rerunWithStandIns(ctx, draft, trialDraft, trialAuth, trial)
 	draft, trial, movedHost := j.listenEverywhere(ctx, draft, trialDraft, trialAuth, trial)
 	if movedHost {
 		proposal.Winner.Evidence = append(append([]string(nil), proposal.Winner.Evidence...), listenedEverywhere)
@@ -603,7 +604,8 @@ func (j *Job) prebuiltWith(ctx context.Context, appID string, src spec.Source, c
 	proposal := Proposal{Winner: candidate, Questions: candidate.Questions}
 
 	trial := j.trialWith(ctx, draft, auth)
-	draft, trial, movedHost := j.listenEverywhere(ctx, draft, draft, auth, trial)
+	draft, trialDraft, trial := j.rerunWithStandIns(ctx, draft, draft, auth, trial)
+	draft, trial, movedHost := j.listenEverywhere(ctx, draft, trialDraft, auth, trial)
 	if movedHost {
 		proposal.Winner.Evidence = append(append([]string(nil), proposal.Winner.Evidence...), listenedEverywhere)
 	}

@@ -1428,6 +1428,8 @@ func wordType(key string) spec.SlotType {
 			return spec.SlotS3
 		case "SMTP", "MAIL", "MAILER":
 			return spec.SlotSMTP
+		case "MONGO", "MONGODB":
+			return spec.SlotMongoDB
 		}
 	}
 	return spec.SlotUnknown
@@ -1450,6 +1452,8 @@ func schemeType(value string) spec.SlotType {
 		return spec.SlotS3
 	case "smtp", "smtps":
 		return spec.SlotSMTP
+	case "mongodb", "mongodb+srv":
+		return spec.SlotMongoDB
 	default:
 		return spec.SlotUnknown
 	}

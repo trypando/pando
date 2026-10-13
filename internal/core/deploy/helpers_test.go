@@ -11,6 +11,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // In-package: these are the small decisions a deploy makes on the way past —
@@ -270,6 +271,40 @@ func TestR130_AVariableNobodyFilledInIsNotSetToNothing(t *testing.T) {
 	set, ok := env["EMPTY_ON_PURPOSE"]
 	require.True(t, ok, "somebody chose this")
 	require.Equal(t, "", set.Reveal())
+}
+
+// TestR131_EachPartOfADatabaseComesFromItsOneSlot asserts R-131. PGHOST,
+// PGUSER and PGPASSWORD are three variables and one database: each takes its
+// part of the slot's connection string, whichever way the slot was filled, and
+// a value that is not a URL is refused by name rather than set to nothing.
+func TestR131_EachPartOfADatabaseComesFromItsOneSlot(t *testing.T) {
+	ref := "PGHOST"
+	w := spec.Workload{Name: "web", Env: []spec.EnvEntry{
+		{Key: "PGHOST", SlotRef: &ref, SlotPart: spec.SlotPartHost},
+		{Key: "PGPORT", SlotRef: &ref, SlotPart: spec.SlotPartPort},
+		{Key: "PGUSER", SlotRef: &ref, SlotPart: spec.SlotPartUser},
+		{Key: "PGPASSWORD", SlotRef: &ref, SlotPart: spec.SlotPartPassword},
+		{Key: "PGDATABASE", SlotRef: &ref, SlotPart: spec.SlotPartDatabase},
+	}}
+	s := &spec.AppSpec{Workloads: []spec.Workload{w}, Slots: []spec.Slot{{Key: "PGHOST", Type: spec.SlotPostgres,
+		Required: true, Resolution: &spec.Resolution{Mode: spec.ResolutionProvisioned}}}}
+	svcs := provisioned{connections: map[string]secret.Value{
+		"PGHOST": secret.New("postgresql://app:s3cret@svc-01hq9/app"),
+	}}
+	env, err := resolveEnv(s, w, nil, svcs)
+	require.NoError(t, err)
+	got := map[string]string{}
+	for k, v := range env {
+		got[k] = v.Reveal()
+	}
+	require.Equal(t, map[string]string{
+		"PGHOST": "svc-01hq9", "PGPORT": "5432", "PGUSER": "app", "PGPASSWORD": "s3cret", "PGDATABASE": "app",
+	}, got)
+
+	s.Slots[0].Resolution = &spec.Resolution{Mode: spec.ResolutionBound, Target: "not a url"}
+	_, err = resolveEnv(s, w, nil, svcs)
+	require.Error(t, err)
+	require.Contains(t, errs.As(err).Message, "PGHOST")
 }
 
 // The primary workload is told which port Pando routes to, unless the spec says

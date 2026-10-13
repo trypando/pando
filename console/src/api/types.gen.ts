@@ -791,6 +791,7 @@ export interface EnvEntry {
   value?: string;
   slot_ref?: string;
   secret_ref?: string;
+  slot_part?: string;
   source?: string;
 }
 

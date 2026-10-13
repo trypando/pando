@@ -257,6 +257,14 @@ type EnvEntry struct {
 	SlotRef   *string `json:"slot_ref,omitempty"`
 	SecretRef *string `json:"secret_ref,omitempty"`
 
+	// SlotPart takes one piece of the slot's connection string rather than
+	// all of it, for an app that is configured the way libpq, Laravel and most
+	// official images are: PGHOST, PGUSER and PGPASSWORD, or DB_HOST and
+	// DB_PASSWORD, each its own variable. One slot fills them all, so a
+	// provisioned database is one answer however many variables it takes.
+	// Empty is the whole connection string. Set only with SlotRef.
+	SlotPart SlotPart `json:"slot_part,omitempty"`
+
 	// Source records where this entry came from, the way Port.Source and
 	// Volume.Declared already do.
 	//
@@ -420,6 +428,7 @@ const (
 	SlotRedis    SlotType = "redis"
 	SlotS3       SlotType = "s3"
 	SlotSMTP     SlotType = "smtp"
+	SlotMongoDB  SlotType = "mongodb"
 	SlotUnknown  SlotType = "unknown"
 )
 
@@ -438,6 +447,8 @@ func (t SlotType) DisplayName() string {
 		return "file storage"
 	case SlotSMTP:
 		return "mail server"
+	case SlotMongoDB:
+		return "MongoDB database"
 	default:
 		return "connection"
 	}

@@ -43,6 +43,11 @@ type requiredVar struct {
 	Format   spec.SecretFormat
 	Evidence string
 
+	// Type is the kind of service the variable connects to, where the source
+	// says which and the name alone does not: DATABASE_URL is a MySQL for a
+	// Rails app on mysql2. Empty reads it from the name.
+	Type spec.SlotType
+
 	// Value is set when the source itself says what the value should be, so
 	// nothing has to be asked: HOST is 0.0.0.0 in a container whatever the
 	// sample says.
@@ -116,9 +121,13 @@ func requiredEntry(d *Draft, v requiredVar) spec.EnvEntry {
 	if _, declared := slotIndex(d.Slots, v.Key); declared {
 		d.Slots = markRequired(d.Slots, v.Key, v)
 	} else {
+		t := v.Type
+		if t == "" {
+			t = slotTypeFor(v.Key, "")
+		}
 		d.Slots = append(d.Slots, spec.Slot{
 			Key:      v.Key,
-			Type:     slotTypeFor(v.Key, ""),
+			Type:     t,
 			Required: true,
 			Format:   v.Format,
 			Evidence: []string{v.Evidence},
@@ -160,7 +169,8 @@ func markRequired(slots []spec.Slot, key string, v requiredVar) []spec.Slot {
 // dockerfile, when set, is read for the ENV it bakes into the image — a
 // variable the image sets is one the app already has.
 func withSourceRequirements(src api.SourceView, d Draft, dir, dockerfile string) (Draft, []string) {
-	return requirementsFor(src, d, primaryIndex(d), dir, dockerfile)
+	d, evidence := requirementsFor(src, d, primaryIndex(d), dir, dockerfile)
+	return requireKnownNames(d), evidence
 }
 
 // primaryIndex is the primary workload's index, or -1.
@@ -199,7 +209,7 @@ func requirementsFor(src api.SourceView, d Draft, workload int, dir, dockerfile 
 		evidence = append(evidence, f.why)
 	}
 
-	return requireVars(d, workload, vars), evidence
+	return groupConnections(requireVars(d, workload, vars), workload, ""), evidence
 }
 
 // sourceFinding is what one source in the repository says is required, and
@@ -242,7 +252,197 @@ func sourceFindings(view api.SourceView) []sourceFinding {
 	if found, file := pythonRequired(view); len(found) > 0 {
 		add(found, file+" reads "+keysOf(found)+" with no fallback when it starts")
 	}
+	if found := railsDatabaseURL(view); len(found) > 0 {
+		add(found, "config/database.yml gives production a database with no host, so Rails takes it from DATABASE_URL")
+	}
+	if found, file := djangoDatabaseURL(view); len(found) > 0 {
+		add(found, file+" gives its database no host unless DATABASE_URL is set")
+	}
+	if found, file := nodeConnectRequired(view); len(found) > 0 {
+		add(found, file+" connects to "+keysOf(found)+" when it starts, with no fallback")
+	}
 	return out
+}
+
+// --- databases a framework reads from DATABASE_URL ------------------------------
+
+// railsDatabaseURL asks for DATABASE_URL where Rails would otherwise connect
+// to a database on a local socket that no container has.
+//
+// Rails merges DATABASE_URL into config/database.yml's production entry; an
+// entry that names a PostgreSQL or MySQL adapter and no host is one that
+// works on the author's machine and nowhere else. Speedrail's crashed on
+// "/var/run/postgresql/.s.PGSQL.5432" (issue #90).
+func railsDatabaseURL(src api.SourceView) []requiredVar {
+	if !isRailsApp(src) {
+		return nil
+	}
+	body, ok := readSmall(src, "config/database.yml")
+	if !ok {
+		return nil
+	}
+	production, shared := yamlBlock(body, "production"), anchoredBlock(body)
+	t := railsAdapterType(production)
+	if t == spec.SlotUnknown {
+		t = railsAdapterType(shared)
+	}
+	if t == spec.SlotUnknown {
+		return nil
+	}
+	if hostSet.MatchString(production) || (hostSet.MatchString(shared) && !strings.Contains(production, "url:")) {
+		return nil
+	}
+	return []requiredVar{{Key: "DATABASE_URL", Type: t, Evidence: "config/database.yml configures a " + t.DisplayName() +
+		" for production with no host, and Rails reads where it is from DATABASE_URL"}}
+}
+
+var (
+	hostSet         = regexp.MustCompile(`(?m)^\s+host:\s*\S`)
+	railsAdapterRe  = regexp.MustCompile(`(?m)^\s+adapter:\s*["']?(\w+)`)
+	yamlTopLevelKey = regexp.MustCompile(`(?m)^[A-Za-z_][\w-]*:`)
+)
+
+func railsAdapterType(block string) spec.SlotType {
+	m := railsAdapterRe.FindStringSubmatch(block)
+	if m == nil {
+		return spec.SlotUnknown
+	}
+	switch m[1] {
+	case "postgresql", "postgis":
+		return spec.SlotPostgres
+	case "mysql2", "trilogy":
+		return spec.SlotMySQL
+	}
+	return spec.SlotUnknown
+}
+
+// yamlBlock is a top-level key's block of a YAML file, read as text: from the
+// key to the next top-level key.
+func yamlBlock(body, key string) string {
+	start := strings.Index(body, "\n"+key+":")
+	if strings.HasPrefix(body, key+":") {
+		start = 0
+	} else if start < 0 {
+		return ""
+	} else {
+		start++
+	}
+	rest := body[start+len(key)+1:]
+	if loc := yamlTopLevelKey.FindStringIndex(rest); loc != nil {
+		return rest[:loc[0]]
+	}
+	return rest
+}
+
+// anchoredBlock is the block a database.yml shares with `&default`.
+func anchoredBlock(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if key, _, ok := strings.Cut(line, ":"); ok && strings.Contains(line, "&") && !strings.HasPrefix(line, " ") {
+			return yamlBlock(body, key)
+		}
+	}
+	return ""
+}
+
+var (
+	djangoEngine = regexp.MustCompile(`django\.db\.backends\.(postgresql|postgresql_psycopg2|mysql)\b`)
+	djangoHost   = regexp.MustCompile(`["']HOST["']\s*:`)
+)
+
+// djangoDatabaseURL asks for DATABASE_URL where Django's settings name a
+// PostgreSQL or MySQL database with no host and take DATABASE_URL instead
+// when it is set: with nothing set, the app connects to a local socket no
+// container has and answers every page with a 500.
+func djangoDatabaseURL(src api.SourceView) ([]requiredVar, string) {
+	django, _ := pythonFiles(src)
+	if django == "" {
+		return nil, ""
+	}
+	body, ok := readSmall(src, django)
+	if !ok || !strings.Contains(body, "DATABASE_URL") || djangoHost.MatchString(body) {
+		return nil, ""
+	}
+	m := djangoEngine.FindStringSubmatch(body)
+	if m == nil {
+		return nil, ""
+	}
+	t := spec.SlotPostgres
+	if m[1] == "mysql" {
+		t = spec.SlotMySQL
+	}
+	return []requiredVar{{Key: "DATABASE_URL", Type: t, Evidence: django + " configures a " + t.DisplayName() +
+		" with no host, and reads where it is from DATABASE_URL"}}, django
+}
+
+// nodeConnect is a database client connecting with an environment variable
+// and nothing to fall back on: `mongoose.connect(process.env.MONGODB_URI)`.
+var nodeConnect = regexp.MustCompile(`(?:\.connect|createConnection|createPool|createClient|new\s+(?:Pool|Client|Sequelize|MongoClient|Redis|IORedis))\(\s*process\.env\.([A-Z][A-Z0-9_]*)\s*[,)]`)
+
+// nodeEntryFiles are where a Node app conventionally starts.
+var nodeEntryFiles = []string{"app.js", "server.js", "index.js", "main.js", "src/app.js", "src/server.js", "src/index.js", "src/main.js"}
+
+// nodeConnectRequired finds a connection made at start from a variable with no
+// fallback, in the app's entry file. Only a variable that names a database or
+// a cache: the read is the app saying it cannot start without one, and the
+// name says which.
+func nodeConnectRequired(src api.SourceView) ([]requiredVar, string) {
+	files := nodeEntryFiles
+	var manifest struct {
+		Main string `json:"main"`
+	}
+	if readJSON(src, "package.json", &manifest) && manifest.Main != "" {
+		files = append([]string{path.Clean(manifest.Main)}, files...)
+	}
+	for _, file := range files {
+		body, ok := readSmall(src, file)
+		if !ok {
+			continue
+		}
+		var out []requiredVar
+		seen := map[string]bool{}
+		for _, m := range nodeConnect.FindAllStringSubmatch(body, -1) {
+			if seen[m[1]] || slotTypeFor(m[1], "") == spec.SlotUnknown {
+				continue
+			}
+			seen[m[1]] = true
+			out = append(out, requiredVar{Key: m[1],
+				Evidence: file + " connects to " + m[1] + " when it starts, with nothing to fall back on"})
+		}
+		if len(out) > 0 {
+			return out, file
+		}
+	}
+	return nil, ""
+}
+
+// --- names a framework requires ---------------------------------------------
+
+// knownRequired are names only one kind of framework uses, and that framework
+// will not start without: Rails and Phoenix sign with SECRET_KEY_BASE in
+// production, NextAuth refuses every request without NEXTAUTH_SECRET
+// ("[next-auth][error][NO_SECRET]"). Declared and left empty — by an
+// env_file template, a .env.example — is a value the app must be given.
+var knownRequired = map[string]spec.SecretFormat{
+	"SECRET_KEY_BASE": spec.FormatRandomLong,
+	"NEXTAUTH_SECRET": spec.FormatRandom,
+}
+
+// requireKnownNames asks for each knownRequired name a workload declares
+// with nothing in it.
+func requireKnownNames(d Draft) Draft {
+	for i, w := range d.Workloads {
+		var vars []requiredVar
+		for _, e := range w.Env {
+			format, known := knownRequired[e.Key]
+			if !known || e.SlotRef != nil || e.SecretRef != nil || (e.Value != nil && *e.Value != "") {
+				continue
+			}
+			vars = append(vars, requiredVar{Key: e.Key, Format: format,
+				Evidence: e.Key + " is declared with no value, and the framework that reads it refuses to start without one"})
+		}
+		d = requireVars(d, i, vars)
+	}
+	return d
 }
 
 // withoutBaked drops the variables a Dockerfile's ENV already sets: a
@@ -279,7 +479,7 @@ func composeRequirements(src api.SourceView, d Draft) Draft {
 			d, _ = requirementsFor(src, d, i, dir, dockerfile)
 		}
 	}
-	return d
+	return requireKnownNames(d)
 }
 
 func keysOf(vars []requiredVar) string {
@@ -788,8 +988,15 @@ var placeholderValue = regexp.MustCompile(`(?i)^(change[-_ .]?(me|it|this)\b.*|r
 // that says `SESSION_SECRET=change-me` has said the app needs one and left it
 // to the reader, exactly as `SESSION_SECRET=` would.
 func isPlaceholder(value string) bool {
-	return placeholderValue.MatchString(strings.TrimSpace(unquote(value)))
+	v := strings.TrimSpace(unquote(value))
+	return placeholderValue.MatchString(v) || instructionValue.MatchString(v)
 }
+
+// instructionValue is a sample that tells the reader how to make the value
+// rather than giving one: Karakeep's `NEXTAUTH_SECRET=[generate with <openssl
+// rand -base64 36>]`, taken as the secret itself, was a value anybody could
+// read in the repository.
+var instructionValue = regexp.MustCompile(`(?i)^\[[^\]]*\b(generate|change|replace|insert|enter|put|your)\b.*\]$|\bopenssl rand\b|\bgenerate (it |one )?with\b`)
 
 func unquote(value string) string {
 	if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
@@ -926,8 +1133,16 @@ var (
 	// `    JWT_SECRET: undefined`, AdonisJS's `- Missing environment variable "X"`.
 	listedName = regexp.MustCompile(`^\s*[-*•]?\s*["']?([A-Z][A-Z0-9_]*)["']?\s*:\s*(undefined|\[|required|invalid|missing)`)
 
-	// zod and t3-env: `SUPPORT_EMAIL: [ 'Required' ]`.
-	zodIssue = regexp.MustCompile(`["']?([A-Z][A-Z0-9_]*)["']?\s*:\s*\[\s*["'](Required|[^"']*received undefined)`)
+	// zod and t3-env: `SUPPORT_EMAIL: [ 'Required' ]`, and zod 4's own words
+	// unbracketed, as Zipline prints them: `CORE_SECRET: Invalid input:
+	// expected string, received undefined`.
+	zodIssue = regexp.MustCompile(`["']?([A-Z][A-Z0-9_]*)["']?\s*:\s*(?:\[\s*["'](?:Required|[^"']*received undefined)|Invalid input: expected \w+, received undefined)`)
+
+	// t3-env's report when the app serves anyway: `❌ Invalid environment
+	// variables:` over `path: [ 'SECRET_ENCRYPTION_KEY' ]`. Homarr opened its
+	// port and answered every page with a 500.
+	envValidationFailed = regexp.MustCompile(`(?i)invalid environment variables|error while validating the environment`)
+	issuePath           = regexp.MustCompile(`path:\s*\[\s*["']([A-Z][A-Z0-9_]*)["']\s*\]`)
 
 	// A connection that failed, which makes a database variable named nearby
 	// the reason rather than a line of configuration printed on the way.
@@ -1018,13 +1233,30 @@ func (r *logReader) note(key, framework, line string) {
 	if len(line) > 160 {
 		line = line[:157] + "…"
 	}
+	format := formatFor(key, framework)
+	if stated := formatStated(line); stated != "" {
+		format = stated
+	}
 	r.found[key] = requiredVar{
 		Key:      key,
-		Format:   formatFor(key, framework),
+		Format:   format,
 		Evidence: fmt.Sprintf("the app stopped when Pando tried it, and its log says: %q", line),
 		Value:    value,
 	}
 	r.order = append(r.order, key)
+}
+
+// hex64Stated is a message asking for 64 hexadecimal characters: Homarr's
+// "please generate a 64 character secret in hex format", or the `openssl rand
+// -hex 32` that prints one.
+var hex64Stated = regexp.MustCompile(`(?i)\b64[- ]char(acter)?s?\b[^.]*\bhex|\bhex\b[^.]*\b64[- ]char|openssl rand -hex 32\b`)
+
+// formatStated is the shape a log line says a value must take, when it says.
+func formatStated(line string) spec.SecretFormat {
+	if hex64Stated.MatchString(line) {
+		return spec.FormatHex64
+	}
+	return ""
 }
 
 // frameworkErrors notes the variable behind each framework error that does not
@@ -1054,11 +1286,26 @@ func (r *logReader) failureLine(i int) {
 	for _, m := range zodIssue.FindAllStringSubmatch(line, -1) {
 		r.note(m[1], r.framework, line)
 	}
+	if m := issuePath.FindStringSubmatch(line); m != nil && envValidationFailed.MatchString(r.log) {
+		// The message under the path says what the value looks like.
+		r.note(m[1], r.framework, r.issueMessage(i, line))
+	}
 	if !failurePhrase.MatchString(line) || benignPhrase.MatchString(line) {
 		return
 	}
 	r.listUnder(i)
 	r.namedNear(i)
+}
+
+// issueMessage is the `message:` line under an issue's path, when there is
+// one, else the path line itself.
+func (r *logReader) issueMessage(i int, line string) string {
+	for _, next := range r.lines[i+1 : min(len(r.lines), i+4)] {
+		if strings.Contains(next, "message:") {
+			return next
+		}
+	}
+	return line
 }
 
 // listUnder reads a heading over a list: "Missing environment variables:" and
@@ -1177,12 +1424,21 @@ func namesIn(text string) []string {
 	var names []string
 	seen := map[string]bool{}
 	end := -1
+	inAlternative := false
 	for _, f := range all {
 		if seen[f.name] {
 			continue
 		}
 		seen[f.name] = true
-		alternative := end >= 0 && f.start >= end && isAlternative(text[end:f.start])
+		between := ""
+		if end >= 0 && f.start >= end {
+			between = text[end:f.start]
+		}
+		// "either DATABASE_URL or all of [DATABASE_USERNAME, DATABASE_PASSWORD,
+		// DATABASE_HOST]": the whole list is the alternative, not its first
+		// name. Zipline was asked for four values it says it does without.
+		alternative := (end >= 0 && isAlternative(between)) || (inAlternative && listSeparator.MatchString(between))
+		inAlternative = alternative
 		end = f.end
 		if !alternative {
 			names = append(names, f.name)
@@ -1190,6 +1446,10 @@ func namesIn(text string) []string {
 	}
 	return names
 }
+
+// listSeparator is the text between two names in one list: a comma, a
+// bracket, quotes and spaces, nothing that is a word.
+var listSeparator = regexp.MustCompile(`^[\s,'"\x60\[\]()]*$`)
 
 // namesAtIn is the names a regexp's matches capture in group, kept where keep
 // (when set) says so.
@@ -1225,6 +1485,16 @@ func lineAt(text string, offset int) string {
 	return text[start : offset+end]
 }
 
+// trialFailed reports a trial run whose log is worth reading for what the app
+// is missing: it exited, it never opened a port, or it opened one and said its
+// environment failed validation — Homarr serves a 500 to every page that way.
+func trialFailed(t Trial) bool {
+	if !t.Ran || t.Log == "" {
+		return false
+	}
+	return t.Crashed || len(t.ObservedPorts) == 0 || envValidationFailed.MatchString(t.Log)
+}
+
 // requireFromTrial turns what a failed trial run's log names into required
 // slots on the primary workload, so the person deploying is asked for them
 // rather than shown a crash (R-132).
@@ -1232,7 +1502,7 @@ func lineAt(text string, offset int) string {
 // Only when the trial failed: the app exited, or it never opened a port.
 // An app that complains and serves anyway has not said it needs anything.
 func requireFromTrial(d Draft, t Trial) Draft {
-	if !t.Ran || t.Log == "" || (!t.Crashed && len(t.ObservedPorts) > 0) {
+	if !trialFailed(t) {
 		return d
 	}
 	vars := varsFromLog(t.Log)
