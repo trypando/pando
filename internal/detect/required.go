@@ -829,30 +829,32 @@ func dockerfileEnv(src api.SourceView, name string) map[string]bool {
 	}
 	defer func() { _ = f.Close() }()
 	for _, line := range joinContinuations(bufio.NewScanner(io.LimitReader(f, 256<<10))) {
-		m := dockerfileEnvLine.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		// `ENV` followed only by spaces matches too, and has no fields: a
-		// Dockerfile is untrusted input, and indexing it panicked detection.
-		fields := strings.Fields(m[1])
-		if len(fields) == 0 {
-			continue
-		}
-		if !strings.Contains(fields[0], "=") {
-			// The legacy `ENV KEY value` form: one variable, the rest its value.
-			if len(fields) > 1 {
-				out[fields[0]] = true
-			}
-			continue
-		}
-		for _, field := range fields {
-			if k, v, ok := strings.Cut(field, "="); ok && v != "" && v != `""` && v != "''" {
-				out[k] = true
-			}
+		if m := dockerfileEnvLine.FindStringSubmatch(line); m != nil {
+			envSets(strings.Fields(m[1]), out)
 		}
 	}
 	return out
+}
+
+// envSets records each variable one ENV instruction's fields set to something.
+func envSets(fields []string, out map[string]bool) {
+	// `ENV` followed only by spaces matches too, and has no fields: a
+	// Dockerfile is untrusted input, and indexing it panicked detection.
+	if len(fields) == 0 {
+		return
+	}
+	if !strings.Contains(fields[0], "=") {
+		// The legacy `ENV KEY value` form: one variable, the rest its value.
+		if len(fields) > 1 {
+			out[fields[0]] = true
+		}
+		return
+	}
+	for _, field := range fields {
+		if k, v, ok := strings.Cut(field, "="); ok && v != "" && v != `""` && v != "''" {
+			out[k] = true
+		}
+	}
 }
 
 // subView is a SourceView rooted at a directory of another.
