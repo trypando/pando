@@ -1044,6 +1044,31 @@ wrong (issue #55). Everything else goes to Railpack. Generated files of either k
 `.pando-plan/` in the checkout; a spec stored before Railpack carries `.nixpacks/` paths and is
 replayed from them unchanged.
 
+The benchmark in issue #90 added more of the same, each a category the planners got wrong:
+
+- **Static site generators** (`staticsite.go`, `ssg.go`). A site is served from where its generator
+  writes — SvelteKit's adapter-static `build/` (or its `pages`), VitePress `.vitepress/dist`,
+  Eleventy `_site` (or `dir.output`), Hexo `public_dir`, Docusaurus `build`, Nuxt's generated
+  `.output/public`, Vite's and Astro's `outDir` — read from a literal in the config or build script,
+  never by running it. SvelteKit on another adapter and Nuxt rendering on request are servers and go
+  to `node.go`, started as their docs say (`node build`, `node .output/server/index.mjs`, and `vite
+  preview` for adapter-auto, which writes no server). Hugo, Zola and MkDocs are built with their own
+  release and served by the same nginx. `[P]` Hugo 0.167.0 and Zola 0.23.6 unless `netlify.toml`,
+  `vercel.json` or a workflow pins one; Hugo on `golang:1.25` so Hugo Modules resolve; MkDocs on
+  Python 3.12. A Hugo theme that is an unfetched submodule refuses the plan with `VALID_INVALID`,
+  which detection shows as blocked, rather than building empty pages.
+- **Node toolchain.** `[P]` Node sites build on `node:<major>-slim`, not Alpine: Gatsby and other
+  native modules need glibc. pnpm is installed at the version `packageManager` names, else the major
+  the lockfile's format implies (5.3→6, 5.4→7, 6.0→8, 9.0→9), never corepack's newest; pnpm 10 and
+  later are told to run dependency build scripts, as npm and earlier pnpm do. A Bun lockfile is
+  installed with Bun. An `engines.node` range gets 22 when it allows it, else the newest line it
+  allows; the same choice is passed to Railpack as `RAILPACK_NODE_VERSION`, because mise installed
+  the oldest release of an open range.
+- **Not Node.** A `package.json` beside `pom.xml` or a Gradle build is the JVM app's front end, and
+  detection reads the repository as Java. One beside `deno.json` is left to Railpack's Deno support.
+  A Meteor app (`.meteor/release`) is built with its release's `meteor build` into the server bundle
+  and run on that release's Node; detection asks for `MONGO_URL` as a required value (R-132).
+
 **[P] `buildpack` falls back to Railpack, invoked only to plan.** `railpack prepare` writes a JSON
 build plan and builds nothing (R-095). BuildKit builds the plan through Railpack's frontend image,
 which runs as a gateway frontend inside Pando's own rootless BuildKit — the same build service,

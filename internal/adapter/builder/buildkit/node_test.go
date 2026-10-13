@@ -24,7 +24,7 @@ func TestR095_ANodeServerIsBuiltOnTheOfficialNodeImage(t *testing.T) {
 		},
 		"typescript with a build": {
 			files: map[string]string{"package.json": `{"scripts":{"build":"tsc","start":"node dist/main.js"},"engines":{"node":"20"}}`, "pnpm-lock.yaml": ""},
-			want:  nodeServer{Node: "20", Install: "corepack enable && pnpm install --frozen-lockfile", Build: true, Start: "npm start"},
+			want:  nodeServer{Node: "20", Install: "npm install -g pnpm@9 && pnpm install --frozen-lockfile", Build: true, Start: "npm start"},
 		},
 		"no start script, an index.js": {
 			files: map[string]string{"package.json": `{"name":"x"}`, "index.js": ""},

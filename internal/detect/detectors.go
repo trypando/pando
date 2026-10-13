@@ -375,11 +375,15 @@ func (d StaticDetector) Bid(_ context.Context, src api.SourceView) (Candidate, e
 	// An index.html at the root, or in one of the usual output directories.
 	// docs/ is where GitHub Pages serves a site from, and a repository that
 	// keeps its site there was asked how to build it (issue #55).
-	candidates := []string{"index.html", "public/index.html", "dist/index.html", "site/index.html", "docs/index.html"}
+	// build/ is where Create React App and most generators write, and www/ is
+	// Cordova's and Ionic's site; committed with no package.json, either was
+	// asked how to build (issue #90).
+	candidates := []string{"index.html", "public/index.html", "dist/index.html", "site/index.html",
+		"docs/index.html", "build/index.html", "www/index.html"}
 
 	var dir string
 	for _, candidate := range candidates {
-		if info, err := src.Stat(candidate); err == nil && !info.IsDir {
+		if info, err := src.Stat(candidate); err == nil && !info.IsDir && !isPageTemplate(src, candidate) {
 			dir = path.Dir(candidate)
 			break
 		}
@@ -471,6 +475,30 @@ func (d StaticDetector) Bid(_ context.Context, src api.SourceView) (Candidate, e
 	}, nil
 }
 
+// pageTemplateMarkers are what a build fills in an index.html it uses as a
+// template: Create React App's %PUBLIC_URL%, and the EJS tags Vue CLI and
+// html-webpack-plugin read.
+var pageTemplateMarkers = []string{"%PUBLIC_URL%", "<%=", "<%-"}
+
+// isPageTemplate reports an index.html that is the input to a build rather than
+// a page. Create React App keeps one in public/, and read as a committed copy
+// of the built site it put a serve-or-build question in front of a project
+// that only builds one way (issue #90).
+func isPageTemplate(src api.SourceView, name string) bool {
+	f, err := src.Open(name)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	head, _ := io.ReadAll(io.LimitReader(f, 64<<10))
+	for _, marker := range pageTemplateMarkers {
+		if strings.Contains(string(head), marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // --- Buildpack -------------------------------------------------------------
 
 // BuildpackDetector recognizes a project by its language, for repositories that
@@ -530,6 +558,17 @@ var languages = []languageSignal{
 	{"pom.xml", "Java", "java -jar", 8080},
 }
 
+// jvmBuildSignal is the signal for a Maven or Gradle build in the repository,
+// or nil.
+func jvmBuildSignal(src api.SourceView) *languageSignal {
+	for _, file := range []string{"pom.xml", "build.gradle", "build.gradle.kts"} {
+		if info, err := src.Stat(file); err == nil && !info.IsDir {
+			return &languageSignal{file, "Java", "java -jar", 8080}
+		}
+	}
+	return nil
+}
+
 // plannedOnly stands in for a language signal when no manifest Pando knows was
 // found and the planner recognized the repository anyway.
 //
@@ -556,6 +595,14 @@ func (d BuildpackDetector) Bid(ctx context.Context, src api.SourceView) (Candida
 			if languages[i].file == "composer.json" {
 				signal = &languages[i]
 			}
+		}
+	}
+	// So does a Maven or Gradle app whose build runs its front end's npm
+	// build through a plugin: JHipster was built as a Node app and crashed in
+	// `npm install` (issue #90). The JVM build is the app's build.
+	if signal != nil && signal.file == "package.json" {
+		if jvm := jvmBuildSignal(src); jvm != nil {
+			signal = jvm
 		}
 	}
 	if signal == nil {
@@ -711,6 +758,11 @@ func (d BuildpackDetector) bidFromPlanOnly(ctx context.Context, src api.SourceVi
 		return Candidate{Confidence: 0}, nil
 	}
 	c := d.bidFor(ctx, src, &plannedOnly)
+	if c.Blocked != nil {
+		//nolint:nilerr // The reason travels on the candidate, as a library's
+		// does (Bid), so the auction surfaces it rather than dropping the bid.
+		return c, nil
+	}
 	if len(c.Draft.Build.GeneratedFiles) == 0 || len(c.Questions) > 0 {
 		return Candidate{Confidence: 0}, nil
 	}
@@ -743,7 +795,16 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 	// and the builder will try again at build time with a real error to show.
 	var planned string
 	if d.Planner != nil {
-		if plan, err := d.Planner.Plan(ctx, src); err == nil && len(plan.Files) > 0 {
+		plan, err := d.Planner.Plan(ctx, src)
+		// A planner that recognized the repository and found it cannot be
+		// built from what it holds — a Hugo theme left behind as a submodule
+		// — says why, and that is the answer rather than a question nobody
+		// can usefully answer.
+		if errs.CodeOf(err) == errs.ValidInvalid {
+			c.Blocked = err
+			return c
+		}
+		if err == nil && len(plan.Files) > 0 {
 			c.Draft.Build.GeneratedFiles = plan.Files
 			c.Draft.Build.Dockerfile = plan.Entry
 			c.Evidence = append(c.Evidence, "build plan generated, and editable before it runs")
@@ -846,7 +907,55 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 		c.Evidence = append(c.Evidence,
 			"a Laravel app: APP_KEY is needed before it can serve a page")
 	}
+	if isMeteorApp(src) {
+		c.Draft = withMeteorMongo(c.Draft)
+		c.Evidence = append(c.Evidence,
+			"a Meteor app: MONGO_URL, the MongoDB it keeps its data in, is needed before it can start")
+	}
 	return c
+}
+
+// isMeteorApp reports a Meteor application: a .meteor/release file.
+func isMeteorApp(src api.SourceView) bool {
+	info, err := src.Stat(".meteor/release")
+	return err == nil && !info.IsDir
+}
+
+// meteorMongoEvidence says what MONGO_URL is, for a person who has never run
+// Meteor in production (R-105).
+const meteorMongoEvidence = "A Meteor app keeps its data in MongoDB, which `meteor run` starts for " +
+	"development and a production server is given as MONGO_URL. Pando does not provide MongoDB. Valid " +
+	"answer: a MongoDB connection string, such as \"mongodb://user:password@db.example.com:27017/app\", or " +
+	"the \"mongodb+srv://\" address a hosted MongoDB gives."
+
+// withMeteorMongo asks for MONGO_URL as a required value (R-132). A Meteor
+// server stops at start without one, and Pando has no MongoDB to supply, so
+// the person deploying names the one the app uses. A declared value stands.
+func withMeteorMongo(d Draft) Draft {
+	const key = "MONGO_URL"
+	for _, s := range d.Slots {
+		if s.Key == key {
+			return d
+		}
+	}
+	for _, e := range d.Workloads[0].Env {
+		if e.Key == key && (e.Source != spec.EnvFromDetection || e.Value == nil || *e.Value != "") {
+			return d
+		}
+	}
+	env := d.Workloads[0].Env[:0:0]
+	for _, e := range d.Workloads[0].Env {
+		if e.Key != key {
+			env = append(env, e)
+		}
+	}
+	ref := key
+	d.Workloads[0].Env = append(env, spec.EnvEntry{Key: key, SlotRef: &ref, Source: spec.EnvFromDetection})
+	d.Slots = append(d.Slots, spec.Slot{
+		Key: key, Type: spec.SlotUnknown, Required: true,
+		Evidence: []string{meteorMongoEvidence},
+	})
+	return d
 }
 
 // isLaravelApp reports a Laravel application: an artisan script beside a

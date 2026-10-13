@@ -142,6 +142,10 @@ func buildpackPlan(req api.BuildRequest, contextDir string) (string, error) {
 	if app, ok := readLaravelApp(contextDir); ok {
 		return writeLaravelPlan(contextDir, app)
 	}
+	// A Meteor app, built into a bundle by Meteor's own tool (meteor.go).
+	if app, ok := readMeteorApp(contextDir); ok {
+		return writeMeteorPlan(contextDir, app)
+	}
 	// A site that builds to static files is planned here rather than by
 	// Railpack (staticsite.go), unless somebody said how it starts — then it
 	// is not being served as files.
@@ -198,6 +202,15 @@ func siteBuildPlan(req api.BuildRequest, contextDir string) (name string, ok boo
 	// A Jekyll site is source for a site, not the site (jekyll.go).
 	if site, found := readJekyllSite(contextDir); found {
 		name, err = writeJekyllPlan(contextDir, site)
+		return name, true, err
+	}
+	// So are Hugo, Zola and MkDocs sites (ssg.go). Ahead of the Node site: a
+	// Hugo site's package.json, when it has one, holds its test tools.
+	if site, found, readErr := readSSGSite(contextDir); readErr != nil || found {
+		if readErr != nil {
+			return "", true, readErr
+		}
+		name, err = writeSSGPlan(contextDir, site)
 		return name, true, err
 	}
 	if site, found := readStaticSiteBuild(contextDir); found {
@@ -379,7 +392,7 @@ func railpackDefaults(contextDir string) []string {
 	if phpServesFromPublic(contextDir) {
 		return []string{"RAILPACK_PHP_ROOT_DIR=/app/public"}
 	}
-	return nil
+	return railpackNodeDefaults(contextDir)
 }
 
 // railpackPHPStart is Railpack's own start command for a PHP app: FrankenPHP,

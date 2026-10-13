@@ -109,6 +109,12 @@ func readJekyllSite(contextDir string) (jekyllSite, bool) {
 	if config == nil {
 		return jekyllSite{}, false
 	}
+	// Hexo keeps its configuration in a _config.yml too, naming a theme, and
+	// was built with `jekyll build` on a site with no Gemfile (issue #90). A
+	// package.json that brings in Hexo says which generator the file is for.
+	if pkg, ok := readPackageJSON(contextDir); ok && pkg.has("hexo") {
+		return jekyllSite{}, false
+	}
 
 	if gemfile, err := os.ReadFile(filepath.Join(contextDir, "Gemfile")); err == nil {
 		if !gemfileBuildsJekyll(contextDir, gemfile) {
