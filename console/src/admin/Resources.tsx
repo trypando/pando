@@ -66,6 +66,7 @@ const TYPE_NAMES: Record<string, string> = {
   mysql: 'MySQL',
   redis: 'Redis',
   mongodb: 'MongoDB',
+  memcached: 'Memcached',
   s3: 'object storage',
   smtp: 'email',
 
@@ -76,7 +77,7 @@ const TYPE_NAMES: Record<string, string> = {
 };
 
 /** Pando can stand these up itself. The rest are bound or given a value. */
-const PROVISIONABLE = new Set(['postgres', 'mysql', 'redis', 'mongodb']);
+const PROVISIONABLE = new Set(['postgres', 'mysql', 'redis', 'mongodb', 'memcached']);
 
 function Slots({ appID, focus }: { appID: string; focus?: boolean }) {
   const [editing, setEditing] = useState<Slot | null>(null);

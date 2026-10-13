@@ -1312,6 +1312,7 @@ func backingService(service, image string) (spec.SlotType, bool) {
 		"postgres": spec.SlotPostgres,
 		"mysql":    spec.SlotMySQL, "mariadb": spec.SlotMySQL,
 		"redis": spec.SlotRedis, "valkey": spec.SlotRedis,
+		"memcached": spec.SlotMemcached,
 	}
 
 	// Sorted, because two of these can match one service — a `postgres`
@@ -1440,7 +1441,7 @@ func namesAConnection(key string) bool {
 	// A cache named by itself — PAPERLESS_REDIS — is its address: a Redis has
 	// nothing else a variable would be named after it for. A database is not
 	// read this way, because MYSQL_DATABASE is the name of one, not the place.
-	for _, service := range []string{"REDIS", "VALKEY"} {
+	for _, service := range []string{"REDIS", "VALKEY", "MEMCACHED"} {
 		if strings.HasSuffix(upper, "_"+service) {
 			return true
 		}
@@ -1458,6 +1459,8 @@ func wordType(key string) spec.SlotType {
 			return spec.SlotMySQL
 		case "REDIS", "VALKEY":
 			return spec.SlotRedis
+		case "MEMCACHED", "MEMCACHE":
+			return spec.SlotMemcached
 		case "S3", "MINIO":
 			return spec.SlotS3
 		case "SMTP", "MAIL", "MAILER":

@@ -135,7 +135,7 @@ func amendmentSchema(kinds []string) map[string]any {
 			},
 			"slot_type": map[string]any{
 				"type":        "string",
-				"enum":        []string{"postgres", "mysql", "redis", "mongodb", "s3", "smtp", "unknown"},
+				"enum":        []string{"postgres", "mysql", "redis", "mongodb", "memcached", "s3", "smtp", "unknown"},
 				"description": "What kind of dependency, for add_slot.",
 			},
 			"required": map[string]any{

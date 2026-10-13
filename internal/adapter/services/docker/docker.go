@@ -58,7 +58,8 @@ var defaultImages = map[spec.SlotType]string{
 	spec.SlotMySQL:    "mysql:8.4",
 	spec.SlotRedis:    "redis:7-alpine",
 	// Not Alpine: MongoDB publishes no Alpine image.
-	spec.SlotMongoDB: "mongo:7",
+	spec.SlotMongoDB:   "mongo:7",
+	spec.SlotMemcached: "memcached:1.6-alpine",
 }
 
 func (a *Adapter) Kind() string           { return Kind }
@@ -81,7 +82,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		if _, ok := defaultImages[t]; !ok {
 			return errs.Newf(errs.ValidInvalid,
 				"Pando cannot provision a %q service, so there is no image to set for it.", name).
-				WithRemedy("Valid types are postgres, mysql, redis and mongodb.")
+				WithRemedy("Valid types are postgres, mysql, redis, mongodb and memcached.")
 		}
 		if img == "" {
 			return errs.Newf(errs.ValidInvalid, "The image for %q is empty.", name)
@@ -105,12 +106,12 @@ func (a *Adapter) Capabilities() api.ServicesCapabilities {
 
 // Supports lists the slot types this adapter can fill.
 //
-// Databases and a cache, deliberately nothing else. S3 and SMTP are slot types Pando recognizes (R-130) and
+// Databases and caches, deliberately nothing else. S3 and SMTP are slot types Pando recognizes (R-130) and
 // deliberately does not provision: standing up MinIO or an SMTP server is
 // running infrastructure, which is what R-010 says Pando is not. Those slots
 // are bound or literal, and the planner says so by name.
 func (a *Adapter) Supports() []spec.SlotType {
-	return []spec.SlotType{spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis, spec.SlotMongoDB}
+	return []spec.SlotType{spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis, spec.SlotMongoDB, spec.SlotMemcached}
 }
 
 // Provision plans one service instance.
@@ -139,9 +140,14 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 	// Reuse the credentials this service was created with. See
 	// ProvisionRequest.ExistingSecret: a database sets its password at initdb
 	// and never reads the variable again.
-	password, err := reuseOrGenerate(req.ExistingSecret)
-	if err != nil {
-		return api.ProvisionResult{}, err
+	// A memcached has no password, and its stored address has none to reuse:
+	// reading one out of it refused every redeploy after the first.
+	var password string
+	if req.Type != spec.SlotMemcached {
+		var err error
+		if password, err = reuseOrGenerate(req.ExistingSecret); err != nil {
+			return api.ProvisionResult{}, err
+		}
 	}
 
 	var (
@@ -220,6 +226,16 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 			Scheme: "mongodb", User: url.UserPassword("app", password),
 			Host: name + ":27017", Path: "/app", RawQuery: "authSource=admin",
 		}).String()
+
+	case spec.SlotMemcached:
+		// "host:port", with no scheme and no credentials: memcached has no
+		// URL form and no password unless it is built with SASL, and its
+		// clients take a list of server addresses. Yopass reads MEMCACHED
+		// this way. It holds nothing worth keeping, so it has no volume
+		// (below), and it is not addressable from outside the bundle (R-134),
+		// which is the only lock it needs.
+		env = map[string]secret.Value{}
+		dsn = name + ":11211"
 	}
 
 	w := api.WorkloadPlan{
@@ -229,8 +245,15 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 		// Not exposed and no ports (R-134). A provisioned service is reachable
 		// on the bundle's private network by name and nowhere else.
 		Exposed: false,
-		Mounts:  []api.MountPlan{{VolumeID: volumeID, Path: path}},
 		Health:  healthFor(req.Type),
+	}
+	// A cache with nothing on disk gets no volume. Volumes outlive the app
+	// (R-204), and one kept for a memcached would be a backup prompt for data
+	// that was never written anywhere.
+	var volumes []api.VolumePlan
+	if path != "" {
+		w.Mounts = []api.MountPlan{{VolumeID: volumeID, Path: path}}
+		volumes = []api.VolumePlan{{VolumeID: volumeID, Name: name + "-data"}}
 	}
 	if req.Type == spec.SlotPostgres {
 		// The certificate is written each start, like Redis's config below,
@@ -259,7 +282,7 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 		Handle:           api.ServiceHandle{ServiceID: req.ServiceID, Handle: name},
 		ConnectionSecret: secret.New(dsn),
 		Workloads:        []api.WorkloadPlan{w},
-		Volumes:          []api.VolumePlan{{VolumeID: volumeID, Name: name + "-data"}},
+		Volumes:          volumes,
 	}, nil
 }
 
@@ -317,6 +340,12 @@ func healthFor(t spec.SlotType) *api.HealthPlan {
 		// the port answering is a true readiness signal.
 		return &api.HealthPlan{
 			Port:            6379,
+			IntervalSeconds: 5, TimeoutSeconds: 3, Retries: 12,
+		}
+	case spec.SlotMemcached:
+		// memcached binds its port once it is ready to serve.
+		return &api.HealthPlan{
+			Port:            11211,
 			IntervalSeconds: 5, TimeoutSeconds: 3, Retries: 12,
 		}
 	case spec.SlotMongoDB:

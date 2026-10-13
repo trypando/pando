@@ -435,12 +435,13 @@ func isFlagRune(b byte) bool {
 }
 
 var serviceWords = map[spec.SlotType][]string{
-	spec.SlotPostgres: {"postgres", "postgresql", "pg_hba", "libpq"},
-	spec.SlotMySQL:    {"mysql", "mariadb"},
-	spec.SlotRedis:    {"redis", "valkey"},
-	spec.SlotS3:       {"s3", "bucket"},
-	spec.SlotSMTP:     {"smtp"},
-	spec.SlotMongoDB:  {"mongodb", "mongoserver", "mongonetwork", "mongoose"},
+	spec.SlotPostgres:  {"postgres", "postgresql", "pg_hba", "libpq"},
+	spec.SlotMySQL:     {"mysql", "mariadb"},
+	spec.SlotRedis:     {"redis", "valkey"},
+	spec.SlotS3:        {"s3", "bucket"},
+	spec.SlotSMTP:      {"smtp"},
+	spec.SlotMongoDB:   {"mongodb", "mongoserver", "mongonetwork", "mongoose"},
+	spec.SlotMemcached: {"memcache", "memcached"},
 }
 
 // persistenceWarnings produces WARN_NO_PERSISTENT_VOLUME (R-201, R-202).

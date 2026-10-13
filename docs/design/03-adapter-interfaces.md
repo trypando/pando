@@ -1027,16 +1027,19 @@ alarming. Data and not a type assertion, per R-254.
 
 ### 7.1 The in-bundle provisioner
 
-**[P]** `internal/adapter/services/docker` fills `postgres`, `mysql`, `redis` and `mongodb` and talks to no daemon.
+**[P]** `internal/adapter/services/docker` fills `postgres`, `mysql`, `redis`, `mongodb` and `memcached` and talks to no daemon.
 It *plans* a service; the runtime adapter runs it. Two properties follow, and both are the point: the
 service is reachable only on the app's private network because that is the only network its workloads
 join and nothing publishes a port (R-134), and its data is an ordinary app volume (R-135).
 
-**[P]** Images default to `postgres:17-alpine`, `mysql:8.4`, `redis:7-alpine`, `mongo:7`, overridable per install
+**[P]** Images default to `postgres:17-alpine`, `mysql:8.4`, `redis:7-alpine`, `mongo:7`, `memcached:1.6-alpine`, overridable per install
 through the adapter's config. Alpine variants because a hobbyist's host is the target and a 400MB
 Postgres image on a two-core VPS is a cost with nothing to show for it; MongoDB publishes none. A
 provisioned MongoDB's one user is the root user its image creates, so its URL carries
-`authSource=admin` (issue #90: hackathon-starter and mongo-express had nothing to connect to).
+`authSource=admin` (issue #90: hackathon-starter and mongo-express had nothing to connect to). A
+provisioned memcached is the address `host:11211` — no scheme, no credentials, which is how its
+clients and yopass's `MEMCACHED` take it — and has no volume: it holds nothing to back up, and a
+volume outlives the app (R-204). Its health is the port answering.
 
 **[D] A provisioned Postgres serves TLS, and its URL is spelled the way the app spells it** (owner
 decision, issue #90 round 2). Postgres drivers disagree on two things, and each refuses the other's

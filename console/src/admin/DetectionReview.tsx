@@ -472,6 +472,7 @@ const SLOT_NAMES: Record<string, string> = {
   mysql: 'MySQL',
   redis: 'Redis',
   mongodb: 'MongoDB',
+  memcached: 'Memcached',
   s3: 'object storage',
   smtp: 'email',
   unknown: 'a value',

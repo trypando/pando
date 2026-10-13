@@ -725,7 +725,7 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 				e := &workloads[i].Env[j]
 				// A connection URL only. A bare `REDIS_HOST: redis` given the
 				// whole DSN is a hostname nothing can resolve.
-				if e.Value == nil || schemeType(*e.Value) != backing[service] || !pointsAtAny(*e.Value, c.hostnames(service)) {
+				if e.Value == nil || !reaches(*e.Value, c.hostnames(service), backing[service]) {
 					continue
 				}
 				if len(filled) == 0 {
@@ -779,15 +779,31 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 func reachedByURL(workloads []spec.Workload, hosts []string, t spec.SlotType) bool {
 	for _, w := range workloads {
 		for _, e := range w.Env {
-			if e.Value == nil || !strings.Contains(*e.Value, "://") {
-				continue
-			}
-			if schemeType(*e.Value) == t && pointsAtAny(*e.Value, hosts) {
+			if e.Value != nil && reaches(*e.Value, hosts, t) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// reaches reports whether a value is the whole address of a service of type t:
+// a connection URL in the scheme the provisioned replacement's own URL uses,
+// or, for memcached, which has no URL form, "host:port" — the
+// `MEMCACHED: memcached:11211` yopass's compose file gives it. Either way the
+// value is one the provisioned instance's own value can stand in for. A bare
+// host is not: `MEMCACHED_HOST: memcached` beside a MEMCACHED_PORT would be
+// handed "host:port" and resolve nothing.
+func reaches(value string, hosts []string, t spec.SlotType) bool {
+	if t == spec.SlotMemcached {
+		for _, h := range hosts {
+			if port, ok := strings.CutPrefix(value, h+":"); ok && port != "" && strings.Trim(port, "0123456789") == "" {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.Contains(value, "://") && schemeType(value) == t && pointsAtAny(value, hosts)
 }
 
 // hostnames are the names a service is reached by: its own, and its
