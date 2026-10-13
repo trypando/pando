@@ -65,33 +65,41 @@ func WithExampleCompose(view api.SourceView, src spec.Source, d Draft) Draft {
 	}
 
 	for _, file := range exampleComposeFiles(view) {
-		example, err := ImportCompose(view, file)
-		if err != nil {
+		d = takeExampleSlots(view, src, file, d, primary, taken)
+	}
+	return d
+}
+
+// takeExampleSlots adds to d the provisioned slots one example compose file
+// wires to this app, and the variables that reach them, skipping a name taken
+// already.
+func takeExampleSlots(view api.SourceView, src spec.Source, file string, d Draft, primary int, taken map[string]bool) Draft {
+	example, err := ImportCompose(view, file)
+	if err != nil {
+		return d
+	}
+	app, ok := exampleApp(example, file, src)
+	if !ok {
+		return d
+	}
+	for _, e := range app.Env {
+		if e.SlotRef == nil || taken[e.Key] {
 			continue
 		}
-		app, ok := exampleApp(example, file, src)
+		slot, ok := provisionedSlot(example.Slots, *e.SlotRef)
 		if !ok {
 			continue
 		}
-		for _, e := range app.Env {
-			if e.SlotRef == nil || taken[e.Key] {
-				continue
-			}
-			slot, ok := provisionedSlot(example.Slots, *e.SlotRef)
-			if !ok {
-				continue
-			}
-			taken[e.Key] = true
-			slot.Key = e.Key
-			slot.Evidence = append([]string{
-				file + " runs a " + slot.Type.DisplayName() + " beside this app and points " + e.Key + " at it",
-			}, slot.Evidence...)
-			d.Slots = append(d.Slots, slot)
-			ref := e.Key
-			d.Workloads[primary].Env = append(d.Workloads[primary].Env, spec.EnvEntry{
-				Key: e.Key, SlotRef: &ref, Source: spec.EnvFromCompose,
-			})
-		}
+		taken[e.Key] = true
+		slot.Key = e.Key
+		slot.Evidence = append([]string{
+			file + " runs a " + slot.Type.DisplayName() + " beside this app and points " + e.Key + " at it",
+		}, slot.Evidence...)
+		d.Slots = append(d.Slots, slot)
+		ref := e.Key
+		d.Workloads[primary].Env = append(d.Workloads[primary].Env, spec.EnvEntry{
+			Key: e.Key, SlotRef: &ref, Source: spec.EnvFromCompose,
+		})
 	}
 	return d
 }
