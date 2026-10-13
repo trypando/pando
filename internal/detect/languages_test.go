@@ -4,6 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -101,6 +104,15 @@ func TestR132_APlayAppNeedsItsSecretBeforeItCanStart(t *testing.T) {
 	require.True(t, slot.Required)
 	require.Contains(t, slot.Evidence[0], "Valid answer")
 	require.Equal(t, 9000, draft.Workloads[0].Ports[0].Number, "Play's port, from the plan")
+
+	// The length the evidence names is one the slot's own check accepts: it
+	// said 32 while random_long refuses anything under 64.
+	m := regexp.MustCompile(`at least (\d+) characters`).FindStringSubmatch(slot.Evidence[0])
+	require.NotNil(t, m)
+	n, err := strconv.Atoi(m[1])
+	require.NoError(t, err)
+	require.NoError(t, slot.Format.Check(slot.Key, strings.Repeat("a", n)))
+	require.Error(t, slot.Format.Check(slot.Key, strings.Repeat("a", n-1)))
 }
 
 // TestR020_TheProposalCarriesThePlanItsBuildSteered asserts R-020: when

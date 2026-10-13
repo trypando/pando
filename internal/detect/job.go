@@ -299,8 +299,9 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 	proposal.DraftSpec = j.assemble(appID, src, draft)
 
 	// A program that ran, finished and never listened is not a web app, and
-	// the trial is the evidence (R-107).
-	if refused := exitedRefusal(trial); refused != nil {
+	// nor is one that listened and answered no web request: the trial is the
+	// evidence (R-097, R-107).
+	if refused := trialRefusal(trial); refused != nil {
 		proposal.Status = StatusBlocked
 		proposal.Blocked = refused
 	}
@@ -619,7 +620,7 @@ func (j *Job) prebuiltWith(ctx context.Context, appID string, src spec.Source, c
 	// exits has nothing at all. Said so, the way a library is.
 	refused := nonHTTPRefusal(trial, draft)
 	if refused == nil {
-		refused = exitedRefusal(trial)
+		refused = trialRefusal(trial)
 	}
 	if refused != nil {
 		proposal.Status = StatusBlocked

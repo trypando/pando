@@ -235,6 +235,66 @@ func TestR107_ACrashIsNotRefusedAsAProgramThatFinished(t *testing.T) {
 	require.Nil(t, p.Blocked)
 }
 
+// TestR107_AnAppThatAnswersNoWebRequestIsRefused asserts R-107 with R-097's
+// trial as the evidence: an app that kept running and listening, and was asked
+// over HTTP on every port it opened, answered none of them, so there is
+// nothing for Pando's proxy to serve. A Minecraft server listens on 25565 and
+// 25575, which no table of well-known ports names, and was deployed as a web
+// app that answered 502 (issue #90).
+func TestR107_AnAppThatAnswersNoWebRequestIsRefused(t *testing.T) {
+	run := func(t *testing.T, result api.TrialResult) detect.Proposal {
+		t.Helper()
+		job := &detect.Job{Auction: detect.NewAuction(), Runtime: trialResults{caps: probing(),
+			results: func(api.TrialRequest) api.TrialResult { return result }}}
+		p, err := job.Run(context.Background(), "app_1", spec.Source{Type: spec.SourceImage, Image: "itzg/minecraft-server:latest"}, nil)
+		require.NoError(t, err)
+		return p
+	}
+
+	t.Run("every port asked, none answered", func(t *testing.T) {
+		p := run(t, api.TrialResult{Started: true, ObservedPorts: []int{25565, 25575},
+			HTTPProbedPorts: []int{25565, 25575}, Log: "Done (12.3s)! For help, type \"help\"\n"})
+		require.Equal(t, detect.StatusBlocked, p.Status)
+		require.Contains(t, p.Blocked.Message, "ports 25565, 25575")
+		require.Contains(t, p.Blocked.Message, "none answered")
+		require.NotEmpty(t, p.Blocked.Remedy)
+		require.NotEmpty(t, p.TrialLog, "the log is shown with the refusal")
+	})
+
+	// The Minecraft case came from a compose file, which takes the repository
+	// path rather than the image one.
+	t.Run("from a compose file", func(t *testing.T) {
+		job := &detect.Job{Auction: detect.NewAuction(detect.ComposeDetector{}), Runtime: trialResults{caps: probing(),
+			results: func(api.TrialRequest) api.TrialResult {
+				return api.TrialResult{Started: true, ObservedPorts: []int{25565, 25575},
+					HTTPProbedPorts: []int{25565, 25575}}
+			}}}
+		p, err := job.Run(context.Background(), "app_1",
+			spec.Source{Type: spec.SourceGit, URL: "https://github.com/docker/awesome-compose", Subdir: "minecraft"},
+			memSource{"compose.yaml": "services:\n  minecraft:\n    image: itzg/minecraft-server\n" +
+				"    ports: [\"25565:25565\"]\n    environment:\n      EULA: \"TRUE\"\n"})
+		require.NoError(t, err)
+		require.Equal(t, detect.StatusBlocked, p.Status)
+		require.Contains(t, p.Blocked.Message, "none answered")
+	})
+
+	// What is not evidence: a probe that never ran, a port not yet asked
+	// enough to tell, and an app that crashed, whose log is the answer.
+	for name, result := range map[string]api.TrialResult{
+		"the probe never ran": {Started: true, ObservedPorts: []int{25565}},
+		"one port not yet asked": {Started: true, ObservedPorts: []int{8080, 25565},
+			HTTPProbedPorts: []int{25565}},
+		"the app crashed": {Started: true, ExitCode: exitCode(1), ObservedPorts: []int{8080},
+			HTTPProbedPorts: []int{8080}},
+		"a port answered": {Started: true, ObservedPorts: []int{8080, 25565},
+			HTTPProbedPorts: []int{8080, 25565}, HTTPAnswers: answers(8080, 404)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Nil(t, run(t, result).Blocked)
+		})
+	}
+}
+
 // TestR021_AnImageThatOnlyDeclaresADatabasePortIsRefused asserts R-021's
 // reading in issue #55: an image with nothing for a browser is refused. MySQL
 // and Postgres exit at once without a password, so the trial sees no port, and

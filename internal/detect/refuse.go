@@ -68,6 +68,53 @@ func nonHTTPRefusal(t Trial, draft Draft) *errs.Error {
 			"database inside that app, where nothing else can reach it.")
 }
 
+// noHTTPRefusal refuses an app that kept running and listening through the
+// trial, was asked over HTTP on every port it opened, and answered on none of
+// them (R-097, R-107). Pando's proxy speaks HTTP to an app, so there is nothing
+// it could send a browser to.
+//
+// A Minecraft server listens on 25565 and 25575 — game and RCON protocols no
+// table of well-known ports names — and was deployed as a web app that answered
+// every request with 502 (issue #90). nonHTTPRefusal catches the ports known by
+// number; this catches the rest by asking them. Only ports the runtime really
+// asked count (HTTPProbedPorts): a probe that never ran is no evidence, and a
+// port asked once may belong to a server not ready yet.
+func noHTTPRefusal(t Trial) *errs.Error {
+	if !t.Ran || !t.Started || t.Crashed || t.Exited || !t.HTTPProbed ||
+		len(t.HTTPAnswers) > 0 || len(t.ObservedPorts) == 0 {
+		return nil
+	}
+	asked := map[int]bool{}
+	for _, p := range t.HTTPProbedPorts {
+		asked[p] = true
+	}
+	listed := make([]string, 0, len(t.ObservedPorts))
+	for _, p := range t.ObservedPorts {
+		if !asked[p] {
+			return nil
+		}
+		listed = append(listed, strconv.Itoa(p))
+	}
+	return errs.Newf(errs.PlanCapabilityUnsupported,
+		"Pando started this app to see how it runs. It kept running and listened on %s %s, and Pando "+
+			"sent each a web request several times; none answered as a web server does. Pando serves apps "+
+			"to a browser over HTTP, so there is nothing here for it to serve: this looks like a game "+
+			"server, a database or another service with a protocol of its own.",
+		plural(len(listed), "port", "ports"), strings.Join(listed, ", ")).
+		WithRemedy("If this is a web app, check which port its web server uses and that the server starts " +
+			"without further setup, then detect the app again.")
+}
+
+// trialRefusal is the trial's reason there is no web app to deploy, or nil:
+// a process that ran and finished (exitedRefusal), or one that listened and
+// answered no web request (noHTTPRefusal).
+func trialRefusal(t Trial) *errs.Error {
+	if refused := exitedRefusal(t); refused != nil {
+		return refused
+	}
+	return noHTTPRefusal(t)
+}
+
 // withoutEphemeral drops ports in the ephemeral range when the trial probed
 // them and nothing answered HTTP: an Erlang node's distribution port beside
 // epmd is still not a web server.

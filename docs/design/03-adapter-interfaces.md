@@ -250,6 +250,13 @@ data rather than a probe (R-254). The planner compares it with the platforms an 
 published for and refuses a mismatch before anything is pulled. Empty means the runtime cannot say,
 and the check is left to the pull.
 
+**[P] `RuntimeCapabilities.RegistryMirrors`** are the mirrors the runtime pulls Docker Hub images
+through — the Docker daemon's `registry-mirrors` — as URLs. `core/oci` reads an anonymous Docker Hub
+reference through them first, in order, and from Docker Hub when each fails, as the daemon does. Docker
+Hub counts every manifest read against a download limit of 100 an hour per address, and Pando's reads
+of an image the daemon then fetched from its mirror spent that limit (issue #90). A read with a
+credential goes to Docker Hub: the credential is Docker Hub's, and a mirror cannot read a private image.
+
 **[D] Registry authentication is not an adapter category.** It fails §8.1's test on both halves: the
 planner asks it nothing — a credential either opens the registry or it does not — and "a username and a
 password for a host" is no vocabulary worth hiding. ECR's token minting is the one provider-specific

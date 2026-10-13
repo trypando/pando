@@ -155,6 +155,14 @@ type RuntimeCapabilities struct {
 	// when the runtime cannot say, and then an image's platforms are not
 	// checked at plan time (issue #41).
 	Platform string
+
+	// RegistryMirrors are the mirrors the runtime pulls Docker Hub images
+	// through, as URLs (https://mirror.gcr.io, http://10.0.0.5:5000), in the
+	// order it tries them. Pando's own registry reads go the same way, so an
+	// install with a mirror does not spend Docker Hub's download limit on
+	// reading an image the runtime will fetch from the mirror anyway. Empty
+	// when the runtime has none or cannot say.
+	RegistryMirrors []string
 }
 
 // ImageDelivery is one way a built image reaches a runtime.
@@ -483,6 +491,14 @@ type TrialResult struct {
 	// carries a database's or a broker's protocol answers a browser with
 	// nothing at all.
 	HTTPAnswers []HTTPAnswer
+
+	// HTTPProbedPorts are the ObservedPorts the runtime actually asked over
+	// HTTP: every one that answered, and each that was asked repeatedly and
+	// never did. A probe that could not run — its helper image not pulled,
+	// the deadline reached first — asks nothing, and an empty HTTPAnswers
+	// then says nothing either. A port in this list and not in HTTPAnswers
+	// does not serve HTTP.
+	HTTPProbedPorts []int
 
 	// ObservedWrites are directories written outside DeclaredPaths (R-202).
 	ObservedWrites []string

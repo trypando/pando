@@ -35,6 +35,10 @@ type Trial struct {
 	HTTPProbed  bool
 	HTTPAnswers []api.HTTPAnswer
 
+	// HTTPProbedPorts are the observed ports the runtime actually asked
+	// (api.TrialResult.HTTPProbedPorts); noHTTPRefusal reads them.
+	HTTPProbedPorts []int
+
 	ObservedWrites []string
 	ImageVolumes   []string
 	Log            string
@@ -65,6 +69,7 @@ func FromTrialResult(caps api.RuntimeCapabilities, r api.TrialResult) Trial {
 		if caps.SupportsHTTPProbe {
 			t.HTTPProbed = true
 			t.HTTPAnswers = r.HTTPAnswers
+			t.HTTPProbedPorts = r.HTTPProbedPorts
 		}
 	}
 	if caps.SupportsWriteObservation {

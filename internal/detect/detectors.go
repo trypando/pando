@@ -984,8 +984,13 @@ func isPlayApp(src api.SourceView) bool {
 
 // playSecretEvidence says what APPLICATION_SECRET is and how to make one, for
 // a person who has never run Play (R-105).
+//
+// Play itself needs 32 characters (256 bits). The slot's format is
+// random_long, which checks for 64 and generates 64 bytes, so the valid answer
+// says 64: an evidence line that promised 32 had a 40-character answer refused
+// by the check beside it. `openssl rand -base64 48` prints exactly 64.
 const playSecretEvidence = "Play signs its session cookies with an application secret and refuses to start in " +
-	"production without one. Valid answer: a random string of at least 32 characters, such as the output of " +
+	"production without one. Valid answer: a random string of at least 64 characters, such as the output of " +
 	"`openssl rand -base64 48`. Keep it: changing it signs everyone out."
 
 // withPlaySecret asks for APPLICATION_SECRET as a required value (R-132),

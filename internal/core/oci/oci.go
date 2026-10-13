@@ -170,6 +170,12 @@ type Inspector struct {
 	Transport http.RoundTripper
 	// Insecure allows plain HTTP, for a registry on localhost in tests.
 	Insecure bool
+
+	// Mirrors lists the mirrors to read Docker Hub images through, as URLs
+	// (https://mirror.gcr.io), in the order to try them: the runtime's own
+	// (api.RuntimeCapabilities.RegistryMirrors). Nil reads Docker Hub
+	// directly.
+	Mirrors func(context.Context) []string
 }
 
 // Inspect resolves a reference and reads the configuration for want.
@@ -182,6 +188,67 @@ func (in Inspector) Inspect(ctx context.Context, reference string, auth *Auth, w
 	if err != nil {
 		return Inspection{}, err
 	}
+
+	// Docker Hub through the runtime's mirrors first, as the runtime pulls.
+	// Docker Hub counts every manifest read against a download limit of 100
+	// an hour for an address, and a benchmark deploying one image after
+	// another ran out of it reading images its daemon fetched from a mirror
+	// (issue #90). A mirror that fails for any reason is passed over, as the
+	// daemon passes over one, and Docker Hub answers last.
+	for _, mirrored := range in.mirrored(ctx, ref, auth) {
+		if out, err := in.inspect(ctx, reference, mirrored, nil, want); err == nil {
+			return out, nil
+		}
+	}
+	return in.inspect(ctx, reference, ref, auth, want)
+}
+
+// mirrored is ref at each of the runtime's mirrors, for an anonymous read of
+// a Docker Hub image. A read with a credential goes to Docker Hub itself: a
+// mirror cannot read a private image, and the credential is Docker Hub's,
+// not the mirror's to be sent.
+func (in Inspector) mirrored(ctx context.Context, ref name.Reference, auth *Auth) []name.Reference {
+	if in.Mirrors == nil || auth != nil || ref.Context().RegistryStr() != name.DefaultRegistry {
+		return nil
+	}
+	var out []name.Reference
+	for _, mirror := range in.Mirrors(ctx) {
+		if r, ok := atMirror(ref, mirror); ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// atMirror is ref with its registry replaced by the mirror's host. A mirror
+// given as http:// is read over plain HTTP, as the daemon reads it.
+func atMirror(ref name.Reference, mirror string) (name.Reference, bool) {
+	mirror = strings.TrimSpace(mirror)
+	var opts []name.Option
+	switch {
+	case strings.HasPrefix(mirror, "http://"):
+		opts = append(opts, name.Insecure)
+		mirror = strings.TrimPrefix(mirror, "http://")
+	case strings.HasPrefix(mirror, "https://"):
+		mirror = strings.TrimPrefix(mirror, "https://")
+	}
+	host := strings.TrimSuffix(mirror, "/")
+	if host == "" || strings.Contains(host, "/") {
+		// A mirror under a path is not one a registry client can address.
+		return nil, false
+	}
+	at := host + "/" + ref.Context().RepositoryStr()
+	if digest, ok := ref.(name.Digest); ok {
+		at += "@" + digest.DigestStr()
+	} else {
+		at += ":" + ref.Identifier()
+	}
+	r, err := name.ParseReference(at, opts...)
+	return r, err == nil
+}
+
+// inspect is one read of ref, which reference names as the person gave it.
+func (in Inspector) inspect(ctx context.Context, reference string, ref name.Reference, auth *Auth, want Platform) (Inspection, error) {
 
 	base := in.Transport
 	if base == nil {

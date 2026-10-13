@@ -24,6 +24,7 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/registry"
 	"github.com/moby/moby/client"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -83,9 +84,10 @@ type Adapter struct {
 	selfKnown   bool
 	selfGateway gatewayImage
 
-	// The daemon's platform, read once (Capabilities).
+	// The daemon's platform and registry mirrors, read once (Capabilities).
 	platformMu   sync.Mutex
 	hostPlatform string
+	mirrors      []string
 
 	// What app containers are limited to, read briefly (hosts.go).
 	committed committedCache
@@ -362,6 +364,10 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 		// What the daemon runs images for, so the planner can refuse an image
 		// with no build for it before anything is pulled (issue #41).
 		Platform: a.platform(ctx),
+
+		// The daemon's registry-mirrors, so Pando reads Docker Hub images
+		// where the daemon will pull them from.
+		RegistryMirrors: a.registryMirrors(ctx),
 	}, nil
 }
 
@@ -369,17 +375,48 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 // daemon runs, and Capabilities is called on every plan. Empty when the daemon
 // cannot be asked, which leaves the check to the pull.
 func (a *Adapter) platform(ctx context.Context) string {
+	platform, _ := a.daemonFacts(ctx)
+	return platform
+}
+
+// registryMirrors are the mirrors the daemon pulls Docker Hub images through
+// (registry-mirrors in daemon.json), read with the platform. Changing them
+// means restarting the daemon.
+func (a *Adapter) registryMirrors(ctx context.Context) []string {
+	_, mirrors := a.daemonFacts(ctx)
+	return mirrors
+}
+
+// daemonFacts reads what Capabilities reports about the daemon itself, once.
+func (a *Adapter) daemonFacts(ctx context.Context) (string, []string) {
 	a.platformMu.Lock()
 	defer a.platformMu.Unlock()
 	if a.hostPlatform != "" {
-		return a.hostPlatform
+		return a.hostPlatform, a.mirrors
 	}
 	res, err := a.cli.Info(ctx, client.InfoOptions{})
 	if err != nil || res.Info.OSType == "" || res.Info.Architecture == "" {
-		return ""
+		return "", nil
 	}
 	a.hostPlatform = strings.ToLower(res.Info.OSType) + "/" + normalizeArch(res.Info.Architecture)
-	return a.hostPlatform
+	a.mirrors = daemonMirrors(res.Info.RegistryConfig)
+	return a.hostPlatform, a.mirrors
+}
+
+// daemonMirrors reads the Docker Hub mirrors from the daemon's registry
+// configuration: its registry-mirrors, or failing those the mirrors it lists
+// for the docker.io index.
+func daemonMirrors(cfg *registry.ServiceConfig) []string {
+	if cfg == nil {
+		return nil
+	}
+	if len(cfg.Mirrors) > 0 {
+		return append([]string(nil), cfg.Mirrors...)
+	}
+	if hub, ok := cfg.IndexConfigs["docker.io"]; ok && hub != nil {
+		return append([]string(nil), hub.Mirrors...)
+	}
+	return nil
 }
 
 // normalizeArch names an architecture the way registries do; the daemon

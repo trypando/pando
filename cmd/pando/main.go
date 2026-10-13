@@ -482,7 +482,8 @@ func serve(ctx context.Context, configPath string) error {
 	// credential (issue #41): detection pins and reads it, the planner checks
 	// its platform, the deployer pulls it. One value so all three agree.
 	registryCredentials := state.NewRegistryCredentials(db, secretsAdapter, secretsRef)
-	images := &oci.Images{Credentials: registryCredentials}
+	images := &oci.Images{Credentials: registryCredentials,
+		Inspector: oci.Inspector{Mirrors: runtimeMirrors(registry)}}
 	if cfg.Apps.DockerCredentials {
 		// The server's own `docker login`, for apps with no credential of
 		// their own. An operator's choice: it lends every app what that login
@@ -2125,6 +2126,28 @@ func runtimeForTrial(registry *adapterapi.Registry) detect.TrialRunner {
 		return nil
 	}
 	return rt
+}
+
+// runtimeMirrors reports the default runtime's Docker Hub mirrors, so Pando's
+// registry reads go where the runtime's pulls go (issue #90). Asked on each
+// read rather than at startup: the runtime may not be reachable yet, and the
+// Docker adapter keeps the answer once it has one.
+func runtimeMirrors(registry *adapterapi.Registry) func(context.Context) []string {
+	return func(ctx context.Context) []string {
+		ref, ok := registry.Default(adapterapi.CategoryRuntime)
+		if !ok {
+			return nil
+		}
+		rt, ok := registry.Runtime(ref)
+		if !ok {
+			return nil
+		}
+		caps, err := rt.Capabilities(ctx)
+		if err != nil {
+			return nil
+		}
+		return caps.RegistryMirrors
+	}
 }
 
 // registryAdapters adapts the adapter registry to what the reconciler needs.

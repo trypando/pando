@@ -14,7 +14,8 @@ import (
 // to say so. Issue #90 found four more that were deployed: Express (no start
 // script), axios (a start script that runs its sandbox), logrus (whose doc
 // comment shows an example `package main`), and an Expo app whose start script
-// serves a phone, not a browser.
+// serves a phone, not a browser. Round 2 found an Electron desktop app whose
+// start script opens a window.
 func TestR021_WhatIsNotAWebAppIsRefusedByWhatTheRepositorySays(t *testing.T) {
 	for name, tc := range map[string]struct {
 		src  memSource
@@ -52,6 +53,21 @@ func TestR021_WhatIsNotAWebAppIsRefusedByWhatTheRepositorySays(t *testing.T) {
 			},
 			says: "mobile app",
 		},
+		"an electron app whose start script opens its window": {
+			src: memSource{
+				"package.json": `{"name":"electron-react-boilerplate","main":"./release/app/dist/main/main.js",` +
+					`"scripts":{"build":"electron-vite build","start":"electron-vite dev --watch"},` +
+					`"devDependencies":{"electron":"35.0.0","electron-vite":"4.0.0","react":"19.0.0"}}`,
+			},
+			says: "desktop app",
+		},
+		"an electron app started with electron .": {
+			src: memSource{
+				"package.json": `{"name":"notes","main":"main.js","scripts":{"start":"electron ."},` +
+					`"devDependencies":{"electron":"35.0.0"}}`,
+			},
+			says: "Electron",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			result, err := detect.NewAuction(detect.BuildpackDetector{}).Run(context.Background(), tc.src)
@@ -81,6 +97,11 @@ func TestR021_AppsThatLookLikeLibrariesAreNotRefused(t *testing.T) {
 			"package.json": `{"name":"app","scripts":{"start":"expo start","web":"expo start --web"},` +
 				`"dependencies":{"expo":"~52.0.0","react-native":"0.76.0","react-native-web":"0.19.0","react-dom":"18.3.1"}}`,
 			"app.json": `{"expo":{"name":"App","platforms":["ios","android","web"]}}`,
+		},
+		"a web server that also packages an electron build": {
+			"package.json": `{"name":"web","scripts":{"start":"node server.js","desktop":"electron ."},` +
+				`"dependencies":{"express":"^4"},"devDependencies":{"electron":"35.0.0"}}`,
+			"server.js": "require('express')().listen(3000);\n",
 		},
 		"a go app beside a doc comment": {
 			"go.mod":  "module example.com/server\n",

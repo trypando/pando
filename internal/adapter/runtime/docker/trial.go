@@ -187,7 +187,7 @@ func (a *Adapter) watch(ctx context.Context, id string, timeout time.Duration) a
 	poll := time.NewTicker(min(portPollInterval, timeout))
 	defer poll.Stop()
 
-	ports := &portWatch{answered: map[int]int{}}
+	ports := &portWatch{answered: map[int]int{}, probes: map[int]int{}}
 
 	for {
 		select {
@@ -214,10 +214,12 @@ func (a *Adapter) watch(ctx context.Context, id string, timeout time.Duration) a
 }
 
 // portWatch is what the trial's watch carries from one poll to the next: when
-// the observed ports last changed, and the HTTP status each port has answered.
+// the observed ports last changed, the HTTP status each port has answered, and
+// how many times a probe has reached each port.
 type portWatch struct {
 	lastChange time.Time
 	answered   map[int]int
+	probes     map[int]int
 }
 
 // pollPorts is one tick of watch: it records whether the container has
@@ -257,10 +259,18 @@ func (a *Adapter) pollPorts(ctx, deadline context.Context, id string, result *ap
 
 	// Asked again each tick until it answers: a server can bind its
 	// port a moment before it is ready to serve on it.
-	for p, status := range a.probeHTTP(deadline, id, unansweredPorts(routable, ports.answered)) {
+	unanswered := unansweredPorts(routable, ports.answered)
+	answers, probed := a.probeHTTP(deadline, id, unanswered)
+	if probed {
+		for _, p := range unanswered {
+			ports.probes[p]++
+		}
+	}
+	for p, status := range answers {
 		ports.answered[p] = status
 	}
 	result.HTTPAnswers = answersFor(routable, ports.answered)
+	result.HTTPProbedPorts = probedPorts(routable, ports)
 
 	return portsSettled(len(result.HTTPAnswers) > 0, now.Sub(ports.lastChange))
 }
@@ -275,6 +285,10 @@ func unansweredPorts(routable []int, answered map[int]int) []int {
 	}
 	return unanswered
 }
+
+// minProbes is how many unanswered requests make a port one that does not
+// serve HTTP (TrialResult.HTTPProbedPorts).
+const minProbes = 3
 
 const (
 	// httpSettle is how long the ports must stay as they are, once one has
@@ -296,6 +310,20 @@ func portsSettled(answeredHTTP bool, quiet time.Duration) bool {
 		return quiet >= httpSettle
 	}
 	return quiet >= quietSettle
+}
+
+// probedPorts lists the ports still listening that a probe has reached, in
+// port order: one that answered, or one asked at least minProbes times. A
+// server can bind its port a moment before it serves on it, so a single
+// unanswered request is not yet evidence that it never will.
+func probedPorts(routable []int, ports *portWatch) []int {
+	var out []int
+	for _, p := range routable {
+		if _, answered := ports.answered[p]; answered || ports.probes[p] >= minProbes {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // answersFor lists the HTTP answers for the ports still listening, in port
@@ -388,15 +416,15 @@ func (a *Adapter) observePorts(ctx context.Context, targetID string) (routable, 
 // image may have no shell and no tools. The ports are probed in parallel, each
 // bounded by nc's own timeout, so a port that never replies costs seconds once
 // rather than once per port.
-func (a *Adapter) probeHTTP(ctx context.Context, targetID string, ports []int) map[int]int {
+func (a *Adapter) probeHTTP(ctx context.Context, targetID string, ports []int) (answers map[int]int, probed bool) {
 	if len(ports) == 0 {
-		return nil
+		return nil, false
 	}
 	out, ok := a.sidecar(ctx, targetID, probeScript(ports))
 	if !ok {
-		return nil
+		return nil, false
 	}
-	return httpAnswers(out)
+	return httpAnswers(out), true
 }
 
 // probeScript is the shell probeHTTP runs: for each port, the first bytes of

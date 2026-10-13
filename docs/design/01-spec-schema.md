@@ -119,6 +119,10 @@ naming them. The others stay in `Ports` for the review, marked `tcp` when they d
 the trial watched is not overridden by `PORT` at deploy, since the trial started the app without it.
 An image whose observed ports — or, with none observed, its `EXPOSE`d ports — are all known non-HTTP
 protocols is refused at detection, as is any app that exits 0 during the trial without listening.
+**[P]** So is any app that kept running and listening through the trial and answered no HTTP request
+on any port it opened, each port asked at least three times (`TrialResult.HTTPProbedPorts`): a game
+server or a database on a port no table names (a Minecraft server on 25565, issue #90 round 2). A probe
+that could not run, a port not yet asked enough, and an app that crashed are not evidence for it.
 
 **[D] The source allowlist reads every kind of source (R-092).** An entry is a host (`github.com`), a
 suffix (`.corp.example`), or a host and a path prefix matched on whole segments (`github.com/acme`,

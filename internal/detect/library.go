@@ -39,6 +39,15 @@ func nodeLibraryReason(src api.SourceView) error {
 				"or point Pando at the directory that holds the web app.")
 	}
 
+	if start := pkg.Scripts["start"]; pkg.depends("electron") && startsElectron.MatchString(start) {
+		return errs.Newf(errs.PlanCapabilityUnsupported,
+			"This repository is a desktop app built with Electron: it depends on electron, and its start "+
+				"script, %q, opens an Electron window on the computer it runs on rather than serving a web "+
+				"page to a browser. Pando deploys web apps.", strings.TrimSpace(start)).
+			WithRemedy("If the app has a web version, point Pando at the directory that holds it, or add a " +
+				"Dockerfile that builds and serves it.")
+	}
+
 	if !pkg.publishes() || pkg.depends(appFrameworks...) {
 		return nil
 	}
@@ -99,6 +108,13 @@ func hasWebTarget(src api.SourceView, pkg packageManifest) bool {
 // startsAnExample matches a start script that runs something kept beside a
 // library to exercise it rather than an app: axios's `node ./sandbox/server.js`.
 var startsAnExample = regexp.MustCompile(`(^|[\s"'=./])(examples?|sandbox|demos?|tests?|playground|benchmarks?)/`)
+
+// startsElectron matches a start script that launches Electron itself or one of
+// its dev runners: `electron .`, `electron-vite dev`, `electron-forge start`.
+// electron-react-boilerplate's starts `electron-vite dev --watch`, built and
+// deployed as a Node server that crashed for want of a display's libraries
+// (issue #90).
+var startsElectron = regexp.MustCompile(`(^|[\s;&|(])(npx\s+)?electron(-vite|-forge)?(\s|$)`)
 
 // appFrameworks are dependencies only an app has. A package that depends on
 // one and also says what it publishes is an app that happens to be published.
