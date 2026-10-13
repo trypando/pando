@@ -111,13 +111,31 @@ func readLaravelApp(contextDir string) (laravelApp, bool) {
 		return laravelApp{}, false
 	}
 
+	// The packages the lockfile installs, each with the PHP and extensions it
+	// requires.
+	var lock struct {
+		Packages []struct {
+			Require map[string]string `json:"require"`
+		} `json:"packages"`
+	}
+	_ = json.Unmarshal([]byte(readFile(contextDir, "composer.lock")), &lock)
+
 	app := laravelApp{Constraint: strings.TrimSpace(manifest.Require["php"])}
 	// A platform the author pinned is the PHP they resolve dependencies for,
 	// and so the one they run on.
 	if pinned := strings.TrimSpace(manifest.Config.Platform["php"]); pinned != "" {
 		app.PHP = phpForConstraint(pinned)
 	} else {
-		app.PHP = phpForConstraint(app.Constraint)
+		// The lockfile's packages bound it too: composer.json allowed PHP
+		// 8.5, nette/utils in the lockfile allowed up to 8.4, and `composer
+		// install` refused the PHP Pando chose (issue #90).
+		constraints := []string{app.Constraint}
+		for _, p := range lock.Packages {
+			if c := strings.TrimSpace(p.Require["php"]); c != "" {
+				constraints = append(constraints, c)
+			}
+		}
+		app.PHP = phpForConstraints(constraints)
 	}
 
 	want := map[string]bool{}
@@ -130,17 +148,10 @@ func readLaravelApp(contextDir string) (laravelApp, bool) {
 		}
 	}
 	// The packages the lockfile installs require extensions of their own.
-	var lock struct {
-		Packages []struct {
-			Require map[string]string `json:"require"`
-		} `json:"packages"`
-	}
-	if json.Unmarshal([]byte(readFile(contextDir, "composer.lock")), &lock) == nil {
-		for _, p := range lock.Packages {
-			for name := range p.Require {
-				if m := composerExt.FindStringSubmatch(name); m != nil {
-					want[strings.ToLower(m[1])] = true
-				}
+	for _, p := range lock.Packages {
+		for name := range p.Require {
+			if m := composerExt.FindStringSubmatch(name); m != nil {
+				want[strings.ToLower(m[1])] = true
 			}
 		}
 	}
@@ -206,6 +217,29 @@ func phpForConstraint(constraint string) string {
 		}
 	}
 	return newest
+}
+
+// phpForConstraints is the newest published PHP minor every constraint
+// allows: composer.json's own first, then each locked package's. When none
+// satisfies them all, composer.json's alone decides, and the build's platform
+// check names the package that does not fit.
+func phpForConstraints(constraints []string) string {
+	for i := len(phpReleases) - 1; i >= 0; i-- {
+		all := true
+		for _, c := range constraints {
+			if strings.TrimSpace(c) != "" && !minorSatisfies(phpReleases[i], c) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return phpReleases[i]
+		}
+	}
+	if len(constraints) == 0 {
+		return phpForConstraint("")
+	}
+	return phpForConstraint(constraints[0])
 }
 
 func phpAtLeast(have, want string) bool {
@@ -416,7 +450,7 @@ func writeLaravelPlan(contextDir string, app laravelApp) (string, error) {
 		constraint = "none"
 	}
 	fmt.Fprintf(&b, "# A Laravel app on PHP %s, served by Apache from public/.\n", app.PHP)
-	fmt.Fprintf(&b, "# composer.json requires PHP %s; %s is the newest release it allows.\n", constraint, app.PHP)
+	fmt.Fprintf(&b, "# composer.json requires PHP %s; %s is the newest release it and composer.lock allow.\n", constraint, app.PHP)
 	fmt.Fprintf(&b, "FROM php:%s-apache AS runtime\n", app.PHP)
 	b.WriteString("RUN php -r 'echo PHP_VERSION;' > /php-version\n\n")
 

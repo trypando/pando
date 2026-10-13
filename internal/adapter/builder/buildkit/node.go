@@ -90,7 +90,7 @@ func readNodeServer(contextDir, startCommand string) (nodeServer, bool) {
 	// A start script that runs pnpm or pnpx needs pnpm in the image whatever
 	// installed the dependencies. TanStack's examples start with `pnpx srvx`
 	// and exited 127 with "pnpx: not found" (issue #90).
-	if !strings.Contains(install, "pnpm") && runsPnpm(start, pkg.Scripts) {
+	if !strings.Contains(install, "pnpm") && (runsPnpm(start, pkg.Scripts) || pnpmCommand.MatchString(pkg.Scripts["build"])) {
 		install = "npm install -g pnpm@" + pnpmVersion(contextDir, pkg.PackageManager) + " && " + install
 	}
 	return nodeServer{

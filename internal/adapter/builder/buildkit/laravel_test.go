@@ -150,3 +150,28 @@ func TestAConstraintIsWrittenIntoThePlanAsOnlyAConstraint(t *testing.T) {
 		require.False(t, strings.HasPrefix(line, "RUN curl"), "a newline in require.php does not start a build step")
 	}
 }
+
+// TestR095_ALaravelAppRunsOnAPHPItsLockedPackagesAccept asserts R-095.
+//
+// composer.json allowed PHP 8.5; nette/utils in composer.lock allowed up to
+// 8.4, and `composer install` refused the php:8.5 image Pando chose (issue
+// #90). The newest PHP every locked package accepts is the one chosen.
+func TestR095_ALaravelAppRunsOnAPHPItsLockedPackagesAccept(t *testing.T) {
+	app, ok := readLaravelApp(writeFiles(t, map[string]string{
+		"artisan":       "",
+		"composer.json": `{"require": {"php": "^8.2", "laravel/framework": "^11.0"}}`,
+		"composer.lock": `{"packages": [
+			{"name": "nette/utils", "require": {"php": "8.0 - 8.4"}},
+			{"name": "nette/schema", "require": {"php": "8.1 - 8.4"}},
+			{"name": "laravel/framework", "require": {"php": "^8.2", "ext-mbstring": "*"}},
+			{"name": "psr/log", "require": {"php": ">=8.0.0"}}
+		]}`,
+	}))
+	require.True(t, ok)
+	require.Equal(t, "8.4", app.PHP)
+
+	require.Equal(t, "8.5", phpForConstraints([]string{"^8.2", ">=8.0"}))
+	require.Equal(t, "8.5", phpForConstraints([]string{"^8.2", "^7.4"}),
+		"nothing satisfies every constraint, so composer.json's decides and the platform check names the package")
+	require.Equal(t, "8.5", phpForConstraints(nil))
+}

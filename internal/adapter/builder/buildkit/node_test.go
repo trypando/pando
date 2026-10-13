@@ -72,3 +72,28 @@ func TestANodeServerPlanBuildsThenStartsThroughAShell(t *testing.T) {
 	require.Contains(t, string(body), "RUN npm run build")
 	require.Contains(t, string(body), `CMD ["npm start"]`)
 }
+
+// TestR095_ANodeServerWhoseScriptsCallPnpmGetsPnpm asserts R-095.
+//
+// The Node image has npm and not pnpm. A start script that ran `pnpx srvx`
+// in a project with no pnpm lockfile exited 127 with "pnpx: not found"
+// (issue #90).
+func TestR095_ANodeServerWhoseScriptsCallPnpmGetsPnpm(t *testing.T) {
+	got, ok := readNodeServer(writeFiles(t, map[string]string{
+		"package.json": `{"scripts":{"build":"vite build","start":"pnpx srvx --prod dist/server/server.js"}}`,
+	}), "")
+	require.True(t, ok)
+	require.Equal(t, "npm install -g pnpm@9 && npm install", got.Install)
+
+	got, ok = readNodeServer(writeFiles(t, map[string]string{
+		"package.json": `{"scripts":{"start":"node server.js"}}`, "pnpm-lock.yaml": "",
+	}), "")
+	require.True(t, ok)
+	require.Equal(t, "npm install -g pnpm@9 && pnpm install --frozen-lockfile", got.Install, "installed already")
+
+	got, ok = readNodeServer(writeFiles(t, map[string]string{
+		"package.json": `{"scripts":{"start":"node mypnpmx.js"}}`, "package-lock.json": "",
+	}), "")
+	require.True(t, ok)
+	require.Equal(t, "npm ci", got.Install, "a name that only contains pnpm is not pnpm")
+}
