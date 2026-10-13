@@ -52,10 +52,17 @@ func TestR095_AGoModuleWhoseOnlyProgramIsInADirectoryOfItsOwnIsBuilt(t *testing.
 	require.True(t, ok)
 	require.Equal(t, "./server", b.Package)
 
-	_, ok = readGoBuild(withFiles(t, map[string]string{
+	// A server and a client: the server is the app (serverDirs, issue #90).
+	b, ok = readGoBuild(withFiles(t, map[string]string{
 		"go.mod": "module x\ngo 1.24\n", "server/main.go": "package main\n", "client/main.go": "package main\n",
 	}))
-	require.False(t, ok, "a server and a client, and nothing saying which is the app")
+	require.True(t, ok)
+	require.Equal(t, "./server", b.Package)
+
+	_, ok = readGoBuild(withFiles(t, map[string]string{
+		"go.mod": "module x\ngo 1.24\n", "server/main.go": "package main\n", "api/main.go": "package main\n",
+	}))
+	require.False(t, ok, "two programs named as servers, and nothing saying which is the app")
 }
 
 // TestR095_ACargoWorkspaceWithOneProgramIsBuiltFromItsRoot asserts R-095: a
