@@ -19,7 +19,78 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-13
+
+Detection now builds the app and scores the image that will run, and the categories of deploy
+failure the deploy benchmark (#90) found are fixed. Apps can run in their own Incus virtual machine.
+Provisioned Postgres now serves TLS, and its containers are recreated once when you upgrade; see
+**Upgrade notes**.
+
+### Security
+
+No advisories were published for this release.
+
+- **Static sites and compiled programs are built on maintained base images** (#199, #219). Every
+  static site was served from `nginx:1.27-alpine`, a line nginx no longer rebuilds, on Alpine 3.21.
+  It is now `nginx:1.30-alpine` on Alpine 3.24, and Go programs and committed binaries run on
+  `debian:trixie-slim` rather than `debian:bookworm-slim`, which is past regular security support.
+  A site built from gabrielecirulli/2048 went from 2 critical and 41 high findings to none critical
+  and 3 high. Both bases are pinned by digest, so base image fixes reach apps through a Pando release.
+
+### Added
+
+- **The `incus` runtime runs each app in its own Incus virtual machine** (#201, R-115), so no two
+  apps share a kernel. Every workload of the app and every service provisioned for it runs inside that
+  VM; a network ACL admits only Pando's addresses, on the forwarding agent's port. Volumes are Incus
+  custom volumes and outlive the VM (R-204). Built images reach the VMs through the install's image
+  registry. Setup is in [`docs/reference.md`](docs/reference.md#running-apps-on-incus).
+- **The CLI can finish detection** (#218, R-261). `pando app detection answer`, `revise`, `diff`,
+  `rerun` and `accept` do what the console and MCP do, and each open question is printed with the
+  `answer` command for it. MCP gains `pando_revise_detection` and `pando_get_detection_diff`.
+- **MongoDB and Memcached can be provisioned** (#224), as Postgres and Redis already could, and a
+  variable can take one part of a provisioned connection string, such as its host or password.
+- **Required variables reach the plan** (#222, #224, R-132). Detection finds them from framework
+  conventions (`SECRET_KEY_BASE`, Laravel's `APP_KEY`, Symfony's `APP_SECRET`, Strapi's keys),
+  environment schemas (AdonisJS, envalid, t3-env and zod), compose `${VAR}` with no default, Python's
+  module-level `os.environ["X"]`, and what the trial's log says is missing. Each blocks the deploy
+  until it is filled. A secret slot has a format — `random`, `random_long`, `hex_64`, `django_key` or
+  `laravel_key` — that the console's **Generate** produces, and the API refuses a value that does not
+  fit it.
+- **Build plans for more languages and frameworks** (#222, #224): R (plumber and Shiny), Clojure
+  (lein and `deps.edn`), sbt and Play, Crystal, Haskell Stack, Perl, Meteor, Hugo, Zola and MkDocs,
+  `setup.py`-only Python and PHP without Composer. WAR files deploy on Tomcat 11, or Tomcat 9 for
+  `javax`. Quarkus, Helidon, Ktor, Gradle `application` builds, SvelteKit on adapter-node and Nuxt SSR
+  start as servers. A start command is read from `railway.json`, `railway.toml`, `render.yaml` and
+  `deno.json` tasks (R-094).
+
 ### Changed
+
+- **A repository's compose file outranks its published image** (#222, R-094). A compose service
+  whose `image:` names the project's published image runs that image instead of building it. Compose
+  files are interpolated in full (`${VAR:-default}`, `${VAR:?}`, the committed `.env` and
+  `env_file`), a build several services share runs once, services at `deploy.replicas: 0` are left
+  out, host data directories become managed volumes, and a provisioned service answers to the compose
+  service name it replaced.
+- **The web port is chosen by what answers HTTP** (#222, R-097). The trial probes every port the app
+  opens, then falls back to `EXPOSE` and then to the log. A tie is asked as `primary_port` (R-102).
+  An app that answers no HTTP request on any port is refused, as are images that expose only database
+  or broker ports, programs that exit without listening, libraries, Electron apps and phone-only Expo
+  apps. An app that listens only on 127.0.0.1 is retried with `HOST=0.0.0.0`, then asked how to start.
+- **When Railpack fails, Pando changes the plan and builds again** (#222, #224), up to three times,
+  for causes it can name: a Rust or Python version, a missing PHP extension, a C extension, a
+  Bundler binstub. What it changed is recorded in the spec (R-020), so the deploy builds the same plan.
+- **Provisioned Postgres serves TLS** (#224), with a certificate derived from the service's password,
+  so it is stable across reconciles. The URL carries no `sslmode`, and its scheme is `postgresql://`,
+  or `postgres://` when the app's own configuration spells it that way.
+- **Git submodules are not fetched** (#224). A build that reads an empty submodule fails, naming it.
+- **Detection may take 40 minutes** (#216), up from 10: the time it needs to read the repository plus
+  the 30 minutes a deploy's build gets, now that detection builds the app.
+- **A deploy waits 3 minutes for an app to start** (#222), up from 2. With no health check, a deploy
+  is done once the primary port accepts a connection (R-221).
+- Node builds use the `-slim` images rather than Alpine, and pnpm is pinned from `packageManager` or
+  the lockfile (#222). Dockerfiles Pando writes no longer read the repository's `.dockerignore`.
+- Docker Hub images are pulled through the Docker daemon's registry mirrors when it has any (#224).
+- The **Add app** dialog puts the source first and says less (#203).
 
 - **Detection builds the app, so the plan shows its real security score** (R-311). For an app Pando
   builds, detection now builds the image the app would deploy, the way a deploy builds it, and scans
@@ -48,9 +119,30 @@ Unreleased above it. -->
   deploy now pins the tag to the digest it names, scans that image with the repository, and runs that
   digest, so the image scanned is the image that runs. An image app's scan now pulls with the app's
   registry credential.
+- **Choosing a username another account has returned a 500** (#217). It now answers 409
+  `STATE_USERNAME_TAKEN`, naming the username, including one held by a deleted account, which cannot
+  be reused.
+- **A detection that finished at its deadline lost its result** (#216) with "Could not record the
+  detection result." The result is now recorded after the deadline.
+- **Accepting a failed detection pinned an empty spec** (#222). It now returns the build's error.
+- An image detection built and that has since been removed is built again rather than failing the
+  deploy (#222).
+- **The plan's Accept buttons sometimes never appeared** (#202) when the security scan arrived while
+  the console showed "Plan ready". A reload was the only way out.
+- The **In use** panel reads usage again when a deploy finishes (#203), and the onboarding page's
+  terrain keeps its shape when detection finishes (#208).
+- On rootless Docker, a BuildKit that restarts in a loop because its user has too few subordinate
+  IDs is now named as the cause, with the `usermod --add-subuids` fix (#216).
 
 ### Upgrade notes
 
+- **Provisioned Postgres containers are recreated once** when the new version reconciles them, to
+  serve TLS. Data is on the service's volume and is kept; the app restarts with its new URL.
+- **Rootless Docker installs:** if BuildKit restarts in a loop logging `newuidmap: write to uid_map
+  failed`, give Pando's user more subordinate IDs as [`docs/rootless.md`](docs/rootless.md) now says.
+- An app built on the old static or program base image keeps it until its next deploy.
+- `RuntimeAdapter` gained `HasImage` (#222). A runtime adapter built outside this repository must
+  implement it.
 - An app whose current score came from a scan of its source alone keeps that score, now labeled
   "of the source only, not the image it runs", until its next deploy scans the image as well.
 
@@ -842,7 +934,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.4.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.5.0...main
+[0.5.0]: https://github.com/trypando/pando/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/trypando/pando/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/trypando/pando/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/trypando/pando/compare/v0.1.1...v0.2.0
