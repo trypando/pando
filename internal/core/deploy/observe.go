@@ -99,6 +99,14 @@ func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppS
 	if slices.Contains(listening, assumed) {
 		return portCheck{}
 	}
+	// A random ephemeral port, or epmd's, is not where the app serves, and
+	// routing to it is worse than the assumption, which the app is told
+	// through PORT (detect.MayServeWeb).
+	answered := map[int]bool{}
+	for _, a := range result.HTTPAnswers {
+		answered[a.Port] = true
+	}
+	listening = slices.DeleteFunc(listening, func(p int) bool { return !detect.MayServeWeb(p, answered[p]) })
 	if len(listening) > 0 {
 		observed := listening[0]
 		fmt.Fprintf(sink, "   The app listens on port %d, not %d. Pando will send traffic to %d.\n",

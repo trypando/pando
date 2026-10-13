@@ -880,7 +880,7 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 			Why: "Pando runs this command to start the app.",
 		})
 	} else {
-		c.Evidence = append(c.Evidence, "starts with "+planned)
+		c.Evidence = append(c.Evidence, startsWith+planned)
 	}
 
 	// The port is not asked at all, and the draft's framework default stands.

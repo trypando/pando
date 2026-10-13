@@ -230,6 +230,9 @@ func sourceFindings(view api.SourceView) []sourceFinding {
 	if found := elixirRequired(view); len(found) > 0 {
 		add(found, "config/runtime.exs stops the app without "+keysOf(found))
 	}
+	if found := phoenixServer(view); len(found) > 0 {
+		add(found, "config/runtime.exs starts the web server only when PHX_SERVER is set, so it is set to true")
+	}
 	if found := symfonySecret(view); len(found) > 0 {
 		add(found, "a Symfony app: APP_SECRET is needed before it can serve a page")
 	}
@@ -336,6 +339,27 @@ func elixirRequired(src api.SourceView) []requiredVar {
 		}
 	}
 	return out
+}
+
+// phoenixServerFlag is the guard `mix phx.new` writes into config/runtime.exs:
+// the endpoint serves HTTP only when PHX_SERVER is set.
+var phoenixServerFlag = regexp.MustCompile(`System\.get_env\(\s*"PHX_SERVER"\s*\)`)
+
+// phoenixServer sets PHX_SERVER for a Phoenix app whose runtime.exs starts its
+// endpoint only when it is set.
+//
+// A release started with `bin/<app> start` runs everything but the web server
+// without it, and says only "Configuration :server was not enabled … http/https
+// services won't start". Phoenix's generated bin/server sets it; a release
+// started any other way was deployed listening on nothing but epmd (issue #90).
+func phoenixServer(src api.SourceView) []requiredVar {
+	body, ok := readSmall(src, "config/runtime.exs")
+	if !ok || !phoenixServerFlag.MatchString(body) {
+		return nil
+	}
+	on := "true"
+	return []requiredVar{{Key: "PHX_SERVER", Value: &on,
+		Evidence: "config/runtime.exs enables the endpoint's server only when PHX_SERVER is set"}}
 }
 
 // symfonySecret asks for APP_SECRET where Symfony would read an empty one.

@@ -109,14 +109,20 @@ never a blocker.
 
 **[P] The web port is the one that answers HTTP (R-097, R-102; issue #90).** Traffic goes to a workload's
 first `http` port (`Workload.HTTPPort`), so the order of `Ports` is the routing decision. The trial run
-sends every port it observes `GET /` (`SupportsHTTPProbe`) and keeps watching until the set has been
-unchanged for a few seconds after one answers, or for longer with none answering, rather than stopping
-at the first socket. Detection then narrows, each step only when something is left: ports that answered
-HTTP; of those, ones that answered with a page (2xx, 3xx, 401, 403) over 404 or an error; ports below the
-ephemeral range; ports the image or compose file declares; and ports the app's log names as its `http`
-address or where it listens. Two or more still standing after a probe is a `primary_port` question
-naming them. The others stay in `Ports` for the review, marked `tcp` when they did not answer. A port
-the trial watched is not overridden by `PORT` at deploy, since the trial started the app without it.
+sends every port it observes `GET /` (`SupportsHTTPProbe`) and keeps watching rather than stopping at
+the first socket: until the set has been unchanged for a few seconds after a port below the ephemeral
+range answers with a page; for longer (45 seconds) while a port below that range is listening without
+having answered; and to the trial's timeout while every port is in the ephemeral range and silent, which
+is a server still starting (Open Liberty binds one long before 9080). A `400` that says plain HTTP was
+sent to a TLS port is not an answer. Detection then narrows, each step only when something is left:
+ports that answered HTTP; of those, ones that answered with a page (2xx, 3xx, 401, 403) over 404 or an
+error; ports below the ephemeral range; ports the image or compose file declares; and ports the app's
+log names as its `http` address or where it listens. Two or more still standing after a probe is a
+`primary_port` question naming them. The others stay in `Ports` for the review, marked `tcp` when they
+did not answer. A trial that watched no port below the ephemeral range that could carry HTTP — only a
+random ephemeral port, or only epmd — leaves a guessed or declared port as it was (`MayServeWeb`), at
+detection and at the deploy's port check. A port the trial watched is not overridden by `PORT` at
+deploy, since the trial started the app without it.
 An image whose observed ports — or, with none observed, its `EXPOSE`d ports — are all known non-HTTP
 protocols is refused at detection, as is any app that exits 0 during the trial without listening.
 
@@ -297,7 +303,7 @@ type Resolution struct {
 **[P] Fallback that preserves R-103:** default `Required: false` for anything not typed to a known service, and let the trial run (R-097) settle it. A slot that isn't filled and whose absence crashes the trial run gets promoted to required with the crash log as evidence. This turns an unanswerable question into an observation, consistent with how port discovery works.
 
 **[D] What makes a variable required, besides the fallback** (owner decision, issue #90 benchmark). A variable becomes a required slot only when the app or its framework says, in as many words, that it cannot start without it. A `.env.example` on its own still does not (O-4). The sources, in `internal/detect/required.go`:
-- **Framework conventions.** Rails in production without `config/master.key`: `SECRET_KEY_BASE`. Laravel: `APP_KEY`. A Phoenix release whose `config/runtime.exs` raises without a variable, or reads it with `System.fetch_env!`. Symfony whose committed `.env` leaves `APP_SECRET` empty. Strapi's `APP_KEYS`, `API_TOKEN_SALT`, `ADMIN_JWT_SECRET`, `TRANSFER_TOKEN_SALT`, `JWT_SECRET`, when its config or template names them. These apply however the app is built: Railpack, its own Dockerfile, a compose service built from the repository, or the image its maintainer publishes (R-094 tier 1).
+- **Framework conventions.** Rails in production without `config/master.key`: `SECRET_KEY_BASE`. Laravel: `APP_KEY`. A Phoenix release whose `config/runtime.exs` raises without a variable, or reads it with `System.fetch_env!`; one whose `runtime.exs` starts the endpoint only when `PHX_SERVER` is set gets `PHX_SERVER=true` as a value, since nothing needs asking. Symfony whose committed `.env` leaves `APP_SECRET` empty. Strapi's `APP_KEYS`, `API_TOKEN_SALT`, `ADMIN_JWT_SECRET`, `TRANSFER_TOKEN_SALT`, `JWT_SECRET`, when its config or template names them. These apply however the app is built: Railpack, its own Dockerfile, a compose service built from the repository, or the image its maintainer publishes (R-094 tier 1).
 - **Environment schemas validated at boot.** AdonisJS `start/env.ts` (`Env.schema.*` without `.optional`), envalid `cleanEnv` (no `default:`; `devDefault` does not count in production), t3-env / zod `createEnv` (no `.optional()`, `.default()` or `.catch()`).
 - **Reads with no fallback at import.** Python `os.environ["X"]` at module level of the entry module or the Django settings module `manage.py` names; reads under an `if`, a `try` or a `def` do not count.
 - **A placeholder in a compose `env_file` template** (`change-me`, `tobemodified`), which says what `KEY=` says.

@@ -5,6 +5,7 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,6 +42,11 @@ type composeVars struct {
 	// author wrote that the value comes from outside the file, and nothing
 	// here supplies it (R-130, R-132).
 	envSlots map[string]map[string]string
+
+	// commandRefs are the variables nothing sets that a service's `command`
+	// names, by service. They are kept as references rather than substituted
+	// away (see expandCommand).
+	commandRefs map[string][]string
 }
 
 // envFileName is the file compose reads variables from, beside the compose file.
@@ -52,6 +58,8 @@ func newComposeVars(src api.SourceView, composeFile string) *composeVars {
 		values:   map[string]string{},
 		seen:     map[string]bool{},
 		envSlots: map[string]map[string]string{},
+
+		commandRefs: map[string][]string{},
 	}
 	if src != nil {
 		if f, err := src.Open(path.Join(path.Dir(composeFile), envFileName)); err == nil {
@@ -89,10 +97,78 @@ func (v *composeVars) walk(node any, at []string) any {
 	case []any:
 		return v.walkList(n, at)
 	case string:
+		if isCommand(at) {
+			return v.expandCommand(at[1], n)
+		}
 		return typed(n, v.expand(n))
 	default:
 		return node
 	}
+}
+
+// isCommand reports whether a path is a service's `command:`, or an item of it.
+func isCommand(at []string) bool {
+	return len(at) == 3 && at[0] == "services" && at[2] == "command"
+}
+
+// simpleRef matches `$NAME` and `${NAME}`: a variable with no default and no
+// error form.
+var simpleRef = regexp.MustCompile(`\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})`)
+
+// expandCommand is expand for a service's command, except that a variable
+// nothing sets is kept as `${NAME}` and recorded, rather than substituted with
+// an empty string.
+//
+// docuseal's caddy service runs `caddy reverse-proxy --from $HOST --to
+// app:3000`. Substituted away, the command became `--from --to app:3000`;
+// caddy refused it and exited, and the app went down with it (issue #90).
+// Compose would have put the shell's HOST there, which is the value the person
+// gives the HOST slot, so the command reads it from the workload's environment
+// when it starts (see shellCommand).
+func (v *composeVars) expandCommand(service, text string) string {
+	const mark = "\x00"
+	kept := map[string]bool{}
+	var b strings.Builder
+	last := 0
+	for _, m := range simpleRef.FindAllStringSubmatchIndex(text, -1) {
+		var name string
+		if m[2] >= 0 {
+			name = text[m[2]:m[3]]
+		} else {
+			name = text[m[4]:m[5]]
+		}
+		if _, set := v.values[name]; set || escapedDollar(text, m[0]) {
+			continue
+		}
+		kept[name] = true
+		b.WriteString(text[last:m[0]])
+		b.WriteString(mark + name + mark)
+		last = m[1]
+	}
+	b.WriteString(text[last:])
+	marked := b.String()
+	if len(kept) == 0 {
+		return v.expand(text)
+	}
+	out := v.expand(marked)
+	for name := range kept {
+		out = strings.ReplaceAll(out, mark+name+mark, "${"+name+"}")
+		if !slices.Contains(v.commandRefs[service], name) {
+			v.commandRefs[service] = append(v.commandRefs[service], name)
+		}
+	}
+	sort.Strings(v.commandRefs[service])
+	return out
+}
+
+// escapedDollar reports a `$` at i that the `$` before it escapes: `$$` is a
+// literal dollar sign, so an odd run of them before i makes i's literal too.
+func escapedDollar(text string, i int) bool {
+	run := 0
+	for j := i - 1; j >= 0 && text[j] == '$'; j-- {
+		run++
+	}
+	return run%2 == 1
 }
 
 // walkMap is walk for a mapping; at grows by each key.

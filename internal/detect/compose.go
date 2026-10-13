@@ -5,6 +5,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -816,6 +817,10 @@ func (c *composeImport) workload(name string, only bool) spec.Workload {
 		Primary: only,
 		Exposed: only,
 	}
+	if refs := c.vars.commandRefs[name]; len(refs) > 0 {
+		w.Command = shellCommand(w.Command, refs)
+		w.Env = c.commandEnv(name, w.Env, refs)
+	}
 
 	// A service that builds says so here rather than at the app level, so a
 	// compose file with two of them produces two images instead of one and a
@@ -1468,6 +1473,62 @@ func (c *composeImport) requireVariable(service, key, variable string) {
 		Required: true,
 		Evidence: []string{evidence},
 	})
+}
+
+// shellCommand runs a command that names variables nothing in the repository
+// sets through a shell, so each is read from the workload's environment when
+// it starts (see composeVars.expandCommand). Every other `$` stays literal.
+func shellCommand(args, refs []string) []string {
+	keep := map[string]bool{}
+	for _, name := range refs {
+		keep["${"+name+"}"] = true
+	}
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg, keep))
+	}
+	return []string{"sh", "-c", strings.Join(quoted, " ")}
+}
+
+// plainWord is an argument a shell reads as itself.
+var plainWord = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
+// shellQuote quotes one argument for sh, leaving the references in keep to
+// expand.
+func shellQuote(arg string, keep map[string]bool) string {
+	if plainWord.MatchString(arg) {
+		return arg
+	}
+	var out strings.Builder
+	out.WriteByte('"')
+	for i := 0; i < len(arg); i++ {
+		if ref := simpleRef.FindString(arg[i:]); ref != "" && strings.HasPrefix(arg[i:], ref) && keep[ref] {
+			out.WriteString(ref)
+			i += len(ref) - 1
+			continue
+		}
+		switch arg[i] {
+		case '\\', '"', '`', '$':
+			out.WriteByte('\\')
+		}
+		out.WriteByte(arg[i])
+	}
+	out.WriteByte('"')
+	return out.String()
+}
+
+// commandEnv gives a workload each variable its command reads that its
+// environment does not already set, as the required slot named for it.
+func (c *composeImport) commandEnv(service string, env []spec.EnvEntry, refs []string) []spec.EnvEntry {
+	for _, name := range refs {
+		if envIndex(env, name) >= 0 {
+			continue
+		}
+		ref := name
+		c.requireVariable(service, name, name)
+		env = append(env, spec.EnvEntry{Key: name, SlotRef: &ref, Source: spec.EnvFromCompose})
+	}
+	return env
 }
 
 // fromEnvFiles imports what a service's `env_file:` points at.
