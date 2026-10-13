@@ -66,6 +66,12 @@ regexes = [
   # are {"sub":"app-user"} and its signature is the word "signature"; nothing
   # verifies it (issue #93).
   '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJhcHAtdXNlciJ9\.c2lnbmF0dXJl''',
+
+  # internal/detect/connections_test.go, in commit history only (issue #90) —
+  # the SECRET_KEY_BASE Claper publishes in its own .env.sample, once copied
+  # verbatim into a fixture and since replaced with a fake value. Public sample
+  # text, not a key anything runs with.
+  '''0LZiQBLw4WvqPlz4cz8RsHJlxNiSqM9B48y4ChyJ5v1oA0L/TPIqRjQNdPZN3iEG''',
 ]
 
 [[allowlists]]
@@ -81,4 +87,5 @@ regexes = [
   '''token = "abcdefghijklmnopqrstuvwx_-12"''',
   '''-----BEGIN RSA PRIVATE KEY-----\\nnope\\n-----END RSA PRIVATE KEY-----''',
   '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJhcHAtdXNlciJ9\.c2lnbmF0dXJl''',
+  '''0LZiQBLw4WvqPlz4cz8RsHJlxNiSqM9B48y4ChyJ5v1oA0L/TPIqRjQNdPZN3iEG''',
 ]
