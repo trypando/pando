@@ -950,9 +950,9 @@ func TestR096_AnEnvFileIsPartOfTheComposeFile(t *testing.T) {
 	require.Empty(t, env["APP_BASE_URL"])
 	require.Equal(t, spec.EnvFromDetection, sources["APP_BASE_URL"])
 
-	// A name the template leaves blank is a value the app has to be given, and
-	// compose will not start without the file, so it is asked for before the
-	// deploy rather than discovered when the app refuses to start (issue #55).
+	// A name the template leaves blank is a hole the app may need filled: a
+	// slot, shown in review, asked for only when the trial run says the app
+	// cannot start without it (issue #90).
 	require.True(t, slotRefs["VAPID_PUBLIC_KEY"])
 	var vapid *spec.Slot
 	for i, s := range result.Winner.Draft.Slots {
@@ -961,7 +961,7 @@ func TestR096_AnEnvFileIsPartOfTheComposeFile(t *testing.T) {
 		}
 	}
 	require.NotNil(t, vapid)
-	require.True(t, vapid.Required)
+	require.False(t, vapid.Required)
 	require.Nil(t, vapid.Resolution)
 
 	// And it says where they came from and what is left to do (R-102).

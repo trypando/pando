@@ -163,6 +163,10 @@ service is a recognized backing service, the compose detector bids 0.2 and says
 why. Spring Petclinic's compose file runs a MySQL and a Postgres for
 development; taken as the app, it deployed two databases and nothing to open.
 
+*Superseded 2026-10-13 (issue #90): a blank name is now an optional slot the trial run promotes;
+placeholders and names typed as a service stay required. See design 01, "What makes a variable
+required".*
+
 **Blank names in an `env_file` template are required values (R-132).** A name
 in the template for a compose `env_file` that the template gives no value
 becomes a required slot of unknown type, filled by pasting a value (R-131), and

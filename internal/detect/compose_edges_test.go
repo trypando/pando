@@ -171,10 +171,10 @@ services:
 	require.Equal(t, "/etc/locked", web.Mounts[0].Path)
 }
 
-// TestR132_ANameTwoEnvFileTemplatesLeaveEmptyIsAskedForOnce asserts R-132. Two
+// TestR132_ANameTwoEnvFileTemplatesLeaveEmptyIsOneSlot asserts R-132. Two
 // services pointing at the same uncommitted env file share a template, and the
 // value it leaves blank is one value to supply, not two.
-func TestR132_ANameTwoEnvFileTemplatesLeaveEmptyIsAskedForOnce(t *testing.T) {
+func TestR132_ANameTwoEnvFileTemplatesLeaveEmptyIsOneSlot(t *testing.T) {
 	result, err := detect.ImportCompose(memSource{
 		"compose.yaml": "services:\n" +
 			"  api:\n    image: example/api\n    env_file: .env\n" +
@@ -187,7 +187,7 @@ func TestR132_ANameTwoEnvFileTemplatesLeaveEmptyIsAskedForOnce(t *testing.T) {
 	for _, s := range result.Slots {
 		if s.Key == "API_TOKEN" {
 			slots++
-			require.True(t, s.Required)
+			require.False(t, s.Required, "blank, and nothing yet says the app needs it")
 		}
 	}
 	require.Equal(t, 1, slots)
@@ -234,4 +234,34 @@ services:
 	draft, err := detect.ImportCompose(memSource{"compose.yml": file}, "compose.yml")
 	require.NoError(t, err)
 	require.Equal(t, []string{`sh -c "npm start`}, draft.Workloads[0].Command)
+}
+
+// TestR103_ABlankTemplateNameIsNotAQuestion asserts R-103 and R-130 for an
+// env_file template. Linkding's .env.sample leaves thirteen names blank and its
+// trial ran with none of them set; asking for all thirteen blocked the deploy,
+// and LD_DB_OPTIONS given a value broke the app's json.loads (issue #90). A
+// blank name is an optional slot the trial can promote. A placeholder is the
+// author saying the value must be replaced, and a name typed as a service is a
+// dependency Pando provisions: both stay required.
+func TestR103_ABlankTemplateNameIsNotAQuestion(t *testing.T) {
+	result, err := detect.ImportCompose(memSource{
+		"docker-compose.yml": "services:\n  linkding:\n    image: sissbruecker/linkding:latest\n" +
+			"    ports:\n      - 9090:9090\n    env_file: .env\n",
+		".env.sample": "LD_CONTAINER_NAME=linkding\nLD_SUPERUSER_NAME=\nLD_SUPERUSER_PASSWORD=\n" +
+			"LD_DB_OPTIONS=\nSESSION_SECRET=change-me\nDATABASE_URL=\n",
+	}, "docker-compose.yml")
+	require.NoError(t, err)
+
+	slots := map[string]spec.Slot{}
+	for _, s := range result.Slots {
+		slots[s.Key] = s
+	}
+	for _, key := range []string{"LD_SUPERUSER_NAME", "LD_SUPERUSER_PASSWORD", "LD_DB_OPTIONS"} {
+		require.Contains(t, slots, key, "a blank name is still a hole in review")
+		require.False(t, slots[key].Required, key)
+	}
+	require.True(t, slots["SESSION_SECRET"].Required, "a placeholder says the value must be replaced")
+	require.True(t, slots["DATABASE_URL"].Required, "a database is a dependency")
+	require.NotEqual(t, spec.SlotUnknown, slots["DATABASE_URL"].Type)
+	require.NotContains(t, slots, "LD_CONTAINER_NAME", "a sample value is a default")
 }

@@ -1698,14 +1698,11 @@ func (c *composeImport) fromEnvFiles(service string, s composeService) []spec.En
 			continue
 		}
 
-		// A name the template gives no value is a value the app has to be
-		// given. Compose treats an env_file as required — `docker compose up`
-		// stops without it — so these are required by the author's own file,
-		// and a required slot is how Pando asks for one before deploying rather
-		// than after the app has refused to start (R-132). They had been left
-		// as empty variables, and the app crash-looped on "Missing required
-		// environment variables" (issue #55). A name with a sample value is a
-		// setting with a default, and stays a variable.
+		// A name the template gives no value is a slot: a hole the app may
+		// need filled (R-130), shown in review. It is asked for only when
+		// something says the app cannot run without it (requireValue). A
+		// name with a sample value is a setting with a default, and stays a
+		// variable.
 		var named []string
 		for _, kv := range declared {
 			// A connection URL at one of this file's own services is not the
@@ -1727,7 +1724,7 @@ func (c *composeImport) fromEnvFiles(service string, s composeService) []spec.En
 			if strings.TrimSpace(kv.Value) == "" || isPlaceholder(kv.Value) {
 				ref := kv.Key
 				entry = spec.EnvEntry{Key: kv.Key, SlotRef: &ref, Source: spec.EnvFromDetection}
-				c.requireValue(kv.Key, template, name)
+				c.requireValue(kv.Key, template, name, isPlaceholder(kv.Value))
 			}
 			entries = append(entries, entry)
 			named = append(named, kv.Key)
@@ -1756,19 +1753,34 @@ func (c *composeImport) atOwnService(value string) bool {
 	return false
 }
 
-// requireValue records a value an env_file template says the app needs.
-func (c *composeImport) requireValue(key, template, envFile string) {
+// requireValue records a value an env_file template names and leaves for the
+// app's owner to give.
+//
+// A placeholder (`SESSION_SECRET=change-me`) is the author saying the value
+// must be replaced, and a name typed as a service (`DATABASE_URL=`) is a
+// dependency Pando can provision (R-131): both are required. A bare `KEY=` is
+// optional, and the trial run promotes it when the app stops naming it
+// (promoteSlots, design 01's O-4 fallback). Every blank name had been required
+// (issue #55); linkding's template leaves thirteen blank, its trial ran with
+// none of them set, and LD_DB_OPTIONS given a value broke its json.loads
+// (issue #90). Owner decision, 2026-10-13.
+func (c *composeImport) requireValue(key, template, envFile string, placeholder bool) {
 	for _, s := range c.valueSlots {
 		if s.Key == key {
 			return
 		}
 	}
+	typ := slotTypeFor(key, "")
+	evidence := fmt.Sprintf("named with no value in %s, the template for %s", template, envFile)
+	if placeholder {
+		evidence = fmt.Sprintf("given a placeholder in %s, the template for %s", template, envFile)
+	}
 	c.valueSlots = append(c.valueSlots, spec.Slot{
 		Key:      key,
-		Type:     spec.SlotUnknown,
-		Required: true,
+		Type:     typ,
+		Required: placeholder || typ != spec.SlotUnknown,
 		Format:   formatFor(key, ""),
-		Evidence: []string{fmt.Sprintf("named with no value in %s, the template for %s, which the compose file requires", template, envFile)},
+		Evidence: []string{evidence},
 	})
 }
 
