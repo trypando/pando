@@ -44,15 +44,15 @@
       "why": "The easy case. A Dockerfile at the root leaves nothing to ask."
     },
     {
-      "name": "node-no-deployment-artifacts",
+      "name": "node-library",
       "url": "https://github.com/expressjs/express",
       "ref": "master",
       "expect": {
         "strategy": "buildpack",
-        "min_confidence": 0.4,
-        "questions": 1
+        "blocked": true,
+        "questions": 0
       },
-      "why": "A Node package with no Dockerfile and no compose file. This is the case R-103 is really about: the app was written by someone who never thought about deployment."
+      "why": "The Express library, not an app: its package.json says which files it publishes and has no start script, so there is nothing to run. Detection refuses it with that reason rather than planning a Node app that starts nothing (R-021; issue #90's bm-neg-express)."
     },
     {
       "name": "static-site",

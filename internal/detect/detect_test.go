@@ -210,6 +210,30 @@ func TestR102_ACloseCallBecomesAQuestion(t *testing.T) {
 	require.True(t, asked, "an ambiguous repository produces a question rather than a pick")
 }
 
+// TestR102_ARefusedReadingIsNotOfferedAsATie asserts R-102 and R-021.
+//
+// A committed static site beside a package.json that publishes files reads two
+// ways: the site, and an npm library Pando refuses. The refusal is not a way to
+// build the repository, so the site is used without asking which (issue #90).
+func TestR102_ARefusedReadingIsNotOfferedAsATie(t *testing.T) {
+	result, err := auction().Run(context.Background(), memSource{
+		"dist/index.html": "<h1>hi</h1>",
+		"package.json":    `{"name":"boilerplate","files":["dist"],"scripts":{"build":"webpack"}}`,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, spec.BuildStatic, result.Winner.Strategy)
+	require.Nil(t, result.Blocked)
+	var refused bool
+	for _, r := range result.RunnersUp {
+		refused = refused || r.Blocked != nil
+	}
+	require.True(t, refused, "the library reading is there, close behind, and refused")
+	for _, q := range result.Questions {
+		require.NotEqual(t, "build_strategy", q.Key, "a library refusal is not one of two ways to build this")
+	}
+}
+
 func TestDockerfileAtRootWins(t *testing.T) {
 	result, err := auction().Run(context.Background(), memSource{
 		"Dockerfile":   "FROM node:20\nEXPOSE 3000\nCMD [\"npm\",\"start\"]\n",

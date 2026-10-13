@@ -282,7 +282,13 @@ func (a *Auction) Run(ctx context.Context, src api.SourceView) (Result, error) {
 	}
 	questions := append([]Question(nil), winner.Questions...)
 
-	if len(bids) > 1 && bids[0].Confidence-bids[1].Confidence < closeEnough {
+	// A reading that refuses the repository — a library, which has nothing to
+	// run (R-021) — is not one of two plausible ways to build it, so it is
+	// never offered as the other side of a tie. Offered, a committed static
+	// site beside a package.json that publishes files asked "static or
+	// buildpack (this looks like a node.js library)" (issue #90).
+	if len(bids) > 1 && bids[0].Blocked == nil && bids[1].Blocked == nil &&
+		bids[0].Confidence-bids[1].Confidence < closeEnough {
 		questions = append(questions, tieBreak(bids[0], bids[1]))
 	}
 
