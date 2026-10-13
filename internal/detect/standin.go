@@ -44,25 +44,13 @@ func (j *Job) rerunWithStandIns(ctx context.Context, draft, trialDraft Draft, au
 		if !ok {
 			break
 		}
-		var fresh []requiredVar
-		for _, v := range varsFromLog(t.Log) {
-			if !givenInTrial(primary, v.Key) {
-				fresh = append(fresh, v)
-			}
-		}
+		fresh := notGivenInTrial(primary, varsFromLog(t.Log))
 		if len(fresh) == 0 {
 			break
 		}
 		draft = requireVars(draft, primaryIndex(draft), fresh)
-		names := make([]string, 0, len(fresh))
-		for _, v := range fresh {
-			value := standIn(v)
-			if v.Value != nil {
-				value = *v.Value
-			}
-			trialDraft = withEnv(trialDraft, v.Key, value)
-			names = append(names, v.Key)
-		}
+		var names []string
+		trialDraft, names = withStandIns(trialDraft, fresh)
 		next := j.trialWith(ctx, trialDraft, auth)
 		if !next.Ran {
 			break
@@ -73,6 +61,32 @@ func (j *Job) rerunWithStandIns(ctx context.Context, draft, trialDraft Draft, au
 	}
 	t.Log = log
 	return draft, trialDraft, t
+}
+
+// notGivenInTrial are the variables of vars the trial run has not set.
+func notGivenInTrial(w spec.Workload, vars []requiredVar) []requiredVar {
+	var fresh []requiredVar
+	for _, v := range vars {
+		if !givenInTrial(w, v.Key) {
+			fresh = append(fresh, v)
+		}
+	}
+	return fresh
+}
+
+// withStandIns is the trial draft with a stand-in, or the value the log gave,
+// for each of vars, and their names.
+func withStandIns(trialDraft Draft, vars []requiredVar) (Draft, []string) {
+	names := make([]string, 0, len(vars))
+	for _, v := range vars {
+		value := standIn(v)
+		if v.Value != nil {
+			value = *v.Value
+		}
+		trialDraft = withEnv(trialDraft, v.Key, value)
+		names = append(names, v.Key)
+	}
+	return trialDraft, names
 }
 
 // givenInTrial reports a variable the trial run already set to something.

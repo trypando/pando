@@ -71,6 +71,9 @@ const (
 	filePythonVersion   = ".python-version"
 	fileRequirementsTxt = "requirements.txt"
 	filePyprojectTOML   = "pyproject.toml"
+	fileCargoTOML       = "Cargo.toml"
+	fileGoMod           = "go.mod"
+	cmdPDMInstall       = "pdm install"
 )
 
 // steer is one change to how Railpack is asked to plan.
@@ -360,7 +363,7 @@ func reactiveSteers(log, contextDir string, plan []byte) []steer {
 			Key: "pdm-install",
 			Why: "pdm.lock does not match pyproject.toml, which `pdm install --check` refuses, so the plan runs `pdm install` and lets PDM update the lock as it installs",
 			Edit: func(plan map[string]any) {
-				replaceInCommands(plan, "pdm install --check", "pdm install")
+				replaceInCommands(plan, "pdm install --check", cmdPDMInstall)
 			},
 		})
 	}
@@ -370,12 +373,12 @@ func reactiveSteers(log, contextDir string, plan []byte) []steer {
 	// only pyproject.toml and pdm.lock: hatchling refused it with "Readme
 	// file does not exist: README.md" (issue #90). The app runs from its
 	// files in /app, so the step installs the dependencies alone.
-	if strings.Contains(lastFailedStep(log), "pdm install") && pdmProjectFailed.MatchString(log) {
+	if strings.Contains(lastFailedStep(log), cmdPDMInstall) && pdmProjectFailed.MatchString(log) {
 		out = append(out, steer{
 			Key: "pdm-no-self",
 			Why: "the project did not build as a package in the install step, which has only pyproject.toml and pdm.lock, so the step installs its dependencies alone and the app runs from its files",
 			Edit: func(plan map[string]any) {
-				replaceInCommands(plan, "pdm install", "pdm install --no-self")
+				replaceInCommands(plan, cmdPDMInstall, cmdPDMInstall+" --no-self")
 			},
 		})
 	}
@@ -559,7 +562,7 @@ func olderPython(log, contextDir string, plan []byte) (steer, bool) {
 // build has failed.
 func proactiveSteers(contextDir string) []steer {
 	var out []steer
-	if fileExists(contextDir, "Cargo.toml") && !rustPinned(contextDir) {
+	if fileExists(contextDir, fileCargoTOML) && !rustPinned(contextDir) {
 		out = append(out, steer{
 			Key: steerKeyRustVersion + defaultRustVersion,
 			Why: "the project pins no Rust toolchain, so it is built with a current stable Rust, " + defaultRustVersion,
@@ -646,7 +649,7 @@ func rustPinned(contextDir string) bool {
 	if v := strings.TrimSpace(readFile(contextDir, "rust-toolchain")); v != "" && plainVersion(v) {
 		return true
 	}
-	return cargoRustVersion.MatchString(readFile(contextDir, "Cargo.toml"))
+	return cargoRustVersion.MatchString(readFile(contextDir, fileCargoTOML))
 }
 
 var pinnedGunicorn = regexp.MustCompile(`(?im)^\s*gunicorn\s*==\s*(\d+)\.`)

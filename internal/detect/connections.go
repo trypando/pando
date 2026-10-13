@@ -53,31 +53,43 @@ func groupConnections(d Draft, workload int, log string) Draft {
 		if !ok || !open(d, host) {
 			continue
 		}
-		env := d.Workloads[workload].Env
-		members := map[string]spec.SlotPart{host.Key: spec.SlotPartHost}
-		for _, s := range partSuffixes {
-			key := prefix + s.suffix
-			if i := envIndex(env, key); i >= 0 && open(d, env[i]) {
-				if _, taken := partTaken(members, s.part); !taken {
-					members[key] = s.part
-				}
-			}
-		}
+		members := connectionParts(d, d.Workloads[workload].Env, host.Key, prefix)
 		if !anyRequired(d, members) {
 			continue
 		}
-		t := prefixType(prefix)
-		// The log decides only for a prefix that says database: SMTP_HOST
-		// beside a MySQL error is still a mail server.
-		if t == spec.SlotUnknown && namesADatabase(prefix) {
-			t = logType(log)
+		if t := connectionType(prefix, log); t != spec.SlotUnknown {
+			d = foldInto(d, workload, host.Key, t, members)
 		}
-		if t == spec.SlotUnknown {
-			continue
-		}
-		d = foldInto(d, workload, host.Key, t, members)
 	}
 	return d
+}
+
+// connectionParts are the open variables beside a host variable that name a
+// part of the same connection, one variable to a part.
+func connectionParts(d Draft, env []spec.EnvEntry, hostKey, prefix string) map[string]spec.SlotPart {
+	members := map[string]spec.SlotPart{hostKey: spec.SlotPartHost}
+	for _, s := range partSuffixes {
+		key := prefix + s.suffix
+		i := envIndex(env, key)
+		if i < 0 || !open(d, env[i]) {
+			continue
+		}
+		if _, taken := partTaken(members, s.part); !taken {
+			members[key] = s.part
+		}
+	}
+	return members
+}
+
+// connectionType is the kind of database a prefix names. The log decides only
+// for a prefix that says database: SMTP_HOST beside a MySQL error is still a
+// mail server.
+func connectionType(prefix, log string) spec.SlotType {
+	t := prefixType(prefix)
+	if t == spec.SlotUnknown && namesADatabase(prefix) {
+		t = logType(log)
+	}
+	return t
 }
 
 // namesADatabase reports a prefix with DB or DATABASE as a word of it.
@@ -242,6 +254,32 @@ func dedupe(items []string) []string {
 // with the connection it used, "(Connection: mysql, …".
 var laravelRefused = regexp.MustCompile(`SQLSTATE\[HY000\] \[(?:2002|2003|2006|1045|7)\][^\n]*\(Connection: (mysql|mariadb|pgsql)`)
 
+// setLaravelEntry sets one of Laravel's database variables on w, leaving one
+// somebody already gave a value; DB_CONNECTION is Pando's to say.
+func setLaravelEntry(d Draft, w *spec.Workload, entry spec.EnvEntry) {
+	i := envIndex(w.Env, entry.Key)
+	if i < 0 {
+		w.Env = append(w.Env, entry)
+		return
+	}
+	if open(d, w.Env[i]) || entry.Key == "DB_CONNECTION" {
+		w.Env[i] = entry
+	}
+}
+
+// withoutUntypedParts is slots less the unresolved, untyped ones named for a
+// part of the connection, which the one typed slot now fills.
+func withoutUntypedParts(slots []spec.Slot, parts map[string]spec.SlotPart) []spec.Slot {
+	var kept []spec.Slot
+	for _, s := range slots {
+		if _, part := parts[s.Key]; part && s.Resolution == nil && s.Type == spec.SlotUnknown {
+			continue
+		}
+		kept = append(kept, s)
+	}
+	return kept
+}
+
 // laravelDatabase gives a Laravel app the database its log says it could not
 // reach, configured the way Laravel reads one: DB_CONNECTION, then DB_HOST,
 // DB_PORT, DB_DATABASE, DB_USERNAME and DB_PASSWORD from one slot.
@@ -268,39 +306,22 @@ func laravelDatabase(d Draft, workload int, log string) Draft {
 		t = spec.SlotPostgres
 	}
 	connection := m[1]
-	set := func(key string, entry spec.EnvEntry) {
-		if i := envIndex(w.Env, key); i >= 0 {
-			if !open(d, w.Env[i]) && key != "DB_CONNECTION" {
-				return
-			}
-			w.Env[i] = entry
-			return
-		}
-		w.Env = append(w.Env, entry)
-	}
 	w.Env = append([]spec.EnvEntry(nil), w.Env...)
-	set("DB_CONNECTION", spec.EnvEntry{Key: "DB_CONNECTION", Value: &connection, Source: spec.EnvFromDetection})
+	setLaravelEntry(d, w, spec.EnvEntry{Key: "DB_CONNECTION", Value: &connection, Source: spec.EnvFromDetection})
 	ref := "DB_HOST"
 	parts := map[string]spec.SlotPart{
 		"DB_HOST": spec.SlotPartHost, "DB_PORT": spec.SlotPartPort, "DB_DATABASE": spec.SlotPartDatabase,
 		"DB_USERNAME": spec.SlotPartUser, "DB_PASSWORD": spec.SlotPartPassword,
 	}
 	for _, key := range []string{"DB_HOST", "DB_PORT", "DB_DATABASE", "DB_USERNAME", "DB_PASSWORD"} {
-		set(key, spec.EnvEntry{Key: key, SlotRef: &ref, SlotPart: parts[key], Source: spec.EnvFromDetection})
+		setLaravelEntry(d, w, spec.EnvEntry{Key: key, SlotRef: &ref, SlotPart: parts[key], Source: spec.EnvFromDetection})
 	}
 
-	var kept []spec.Slot
-	for _, s := range d.Slots {
-		if _, part := parts[s.Key]; part && s.Resolution == nil && s.Type == spec.SlotUnknown {
-			continue
-		}
-		kept = append(kept, s)
-	}
 	line := strings.TrimSpace(lineAt(log, strings.Index(log, m[0])))
 	if len(line) > 160 {
 		line = line[:157] + "…"
 	}
-	d.Slots = append(kept, spec.Slot{
+	d.Slots = append(withoutUntypedParts(d.Slots, parts), spec.Slot{
 		Key: ref, Type: t, Required: true,
 		Evidence: []string{fmt.Sprintf("a Laravel app that could not reach its %s database when Pando tried it: %q",
 			t.DisplayName(), line)},

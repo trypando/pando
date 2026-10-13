@@ -1714,37 +1714,8 @@ func (c *composeImport) fromEnvFiles(service string, s composeService) []spec.En
 			continue
 		}
 
-		// A name the template gives no value is a slot: a hole the app may
-		// need filled (R-130), shown in review. It is asked for only when
-		// something says the app cannot run without it (requireValue). A
-		// name with a sample value is a setting with a default, and stays a
-		// variable.
-		var named []string
-		for _, kv := range declared {
-			// A connection URL at one of this file's own services is not the
-			// author's machine: it is the address `docker compose up` gives
-			// the app, and the one Pando rewires to what it provisions
-			// (wire). Claper's .env.sample says
-			// DATABASE_URL=postgres://claper:claper@db:5432/claper; left
-			// empty, the app had no database and the db service nothing
-			// pointing at it.
-			if c.atOwnService(kv.Value) {
-				value := kv.Value
-				entries = append(entries, spec.EnvEntry{Key: kv.Key, Value: &value, Source: spec.EnvFromCompose})
-				continue
-			}
-			empty := ""
-			entry := spec.EnvEntry{Key: kv.Key, Value: &empty, Source: spec.EnvFromDetection}
-			// A placeholder is no value either: `SESSION_SECRET=change-me`
-			// says the same thing `SESSION_SECRET=` does, louder.
-			if strings.TrimSpace(kv.Value) == "" || isPlaceholder(kv.Value) {
-				ref := kv.Key
-				entry = spec.EnvEntry{Key: kv.Key, SlotRef: &ref, Source: spec.EnvFromDetection}
-				c.requireValue(kv.Key, template, name, isPlaceholder(kv.Value))
-			}
-			entries = append(entries, entry)
-			named = append(named, kv.Key)
-		}
+		imported, named := c.fromTemplate(declared, template, name)
+		entries = append(entries, imported...)
 
 		c.rewrote(service, "env_file: "+name,
 			"This points at "+name+", which is not in the repository — it holds this app's own "+
@@ -1753,6 +1724,40 @@ func (c *composeImport) fromEnvFiles(service string, s composeService) []spec.En
 				". Set them on this app's variables.")
 	}
 	return entries
+}
+
+// fromTemplate imports the names an env_file's template declares.
+//
+// A name the template gives no value is a slot: a hole the app may need
+// filled (R-130), shown in review. It is asked for only when something says
+// the app cannot run without it (requireValue). A name with a sample value is
+// a setting with a default, and stays a variable.
+func (c *composeImport) fromTemplate(declared []assignment, template, envFile string) (entries []spec.EnvEntry, named []string) {
+	for _, kv := range declared {
+		// A connection URL at one of this file's own services is not the
+		// author's machine: it is the address `docker compose up` gives the
+		// app, and the one Pando rewires to what it provisions (wire).
+		// Claper's .env.sample points DATABASE_URL at the compose file's own
+		// `db` service; left empty, the app had no database and the db
+		// service nothing pointing at it.
+		if c.atOwnService(kv.Value) {
+			value := kv.Value
+			entries = append(entries, spec.EnvEntry{Key: kv.Key, Value: &value, Source: spec.EnvFromCompose})
+			continue
+		}
+		empty := ""
+		entry := spec.EnvEntry{Key: kv.Key, Value: &empty, Source: spec.EnvFromDetection}
+		// A placeholder is no value either: `SESSION_SECRET=change-me`
+		// says the same thing `SESSION_SECRET=` does, louder.
+		if strings.TrimSpace(kv.Value) == "" || isPlaceholder(kv.Value) {
+			ref := kv.Key
+			entry = spec.EnvEntry{Key: kv.Key, SlotRef: &ref, Source: spec.EnvFromDetection}
+			c.requireValue(kv.Key, template, envFile, isPlaceholder(kv.Value))
+		}
+		entries = append(entries, entry)
+		named = append(named, kv.Key)
+	}
+	return entries, named
 }
 
 // atOwnService reports a connection URL whose host is a service in this

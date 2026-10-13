@@ -126,26 +126,31 @@ func readDeclaredBuild(contextDir string) declaredBuild {
 	// what it built. A `go run` start gives way the same way, to a start or a
 	// program a build writes.
 	if best.found() && (best.Start == "" || runsFromSource(best.Start)) {
-		start := best
-		for _, d := range readings {
-			if d.Start != "" && startBeats(d, start) {
-				start = d
-			}
+		best.Start = startFrom(best, readings)
+	}
+	return best
+}
+
+// startFrom is the start for best, which says none or only `go run`: the
+// best start another reading says, else a program a build writes.
+func startFrom(best declaredBuild, readings []declaredBuild) string {
+	start := best
+	for _, d := range readings {
+		if d.Start != "" && startBeats(d, start) {
+			start = d
 		}
-		best.Start = start.Start
-		switch {
-		case best.Start == "":
-			best.Start = best.ImpliedStart
-		case runsFromSource(best.Start):
-			for _, d := range append([]declaredBuild{best}, readings...) {
-				if d.ImpliedStart != "" {
-					best.Start = d.ImpliedStart
-					break
-				}
+	}
+	switch {
+	case start.Start == "":
+		return best.ImpliedStart
+	case runsFromSource(start.Start):
+		for _, d := range append([]declaredBuild{best}, readings...) {
+			if d.ImpliedStart != "" {
+				return d.ImpliedStart
 			}
 		}
 	}
-	return best
+	return start.Start
 }
 
 // startBeats reports whether d's start is a better one to run than best's. A

@@ -206,27 +206,7 @@ func compareSlots(old, next *AppSpec, add func(Class, string, string, any, any))
 			add(Restart, "slots."+n.Key, fmt.Sprintf("This app now needs %s.", n.Key), nil, string(n.Type))
 			continue
 		}
-
-		om, nm := modeOf(o), modeOf(n)
-		if om == nm {
-			// The provisioned URL is rewritten with the new spelling, and the
-			// app reads it only when it starts.
-			if nm == ResolutionProvisioned && o.Scheme != n.Scheme {
-				add(Restart, "slots."+n.Key+".scheme",
-					fmt.Sprintf("The address in %s will be written another way.", n.Key), o.Scheme, n.Scheme)
-			}
-			continue
-		}
-
-		// Moving away from a provisioned service means the data in the service
-		// Pando was running for this app is no longer what the app reads.
-		if om == ResolutionProvisioned && nm != ResolutionProvisioned {
-			add(Destructive, "slots."+n.Key,
-				fmt.Sprintf("%s will point somewhere else. The %s Pando runs for this app will no longer be used, and its data will not move.", n.Key, n.Type),
-				string(om), string(nm))
-			continue
-		}
-		add(Restart, "slots."+n.Key, fmt.Sprintf("%s will be filled a different way.", n.Key), string(om), string(nm))
+		compareSlot(o, n, add)
 	}
 
 	nextByKey := map[string]Slot{}
@@ -238,6 +218,30 @@ func compareSlots(old, next *AppSpec, add func(Class, string, string, any, any))
 			add(Restart, "slots."+o.Key, fmt.Sprintf("This app no longer needs %s.", o.Key), string(o.Type), nil)
 		}
 	}
+}
+
+// compareSlot classifies how one slot both specs have changed.
+func compareSlot(o, n Slot, add func(Class, string, string, any, any)) {
+	om, nm := modeOf(o), modeOf(n)
+	if om == nm {
+		// The provisioned URL is rewritten with the new spelling, and the
+		// app reads it only when it starts.
+		if nm == ResolutionProvisioned && o.Scheme != n.Scheme {
+			add(Restart, "slots."+n.Key+".scheme",
+				fmt.Sprintf("The address in %s will be written another way.", n.Key), o.Scheme, n.Scheme)
+		}
+		return
+	}
+
+	// Moving away from a provisioned service means the data in the service
+	// Pando was running for this app is no longer what the app reads.
+	if om == ResolutionProvisioned && nm != ResolutionProvisioned {
+		add(Destructive, "slots."+n.Key,
+			fmt.Sprintf("%s will point somewhere else. The %s Pando runs for this app will no longer be used, and its data will not move.", n.Key, n.Type),
+			string(om), string(nm))
+		return
+	}
+	add(Restart, "slots."+n.Key, fmt.Sprintf("%s will be filled a different way.", n.Key), string(om), string(nm))
 }
 
 func compareWorkloads(old, next *AppSpec, add func(Class, string, string, any, any)) {

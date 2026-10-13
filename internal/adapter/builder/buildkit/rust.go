@@ -41,7 +41,7 @@ type cargoToml struct {
 
 func readCargoToml(dir string) (cargoToml, bool) {
 	var c cargoToml
-	raw := readFile(dir, "Cargo.toml")
+	raw := readFile(dir, fileCargoTOML)
 	if raw == "" || toml.Unmarshal([]byte(raw), &c) != nil {
 		return cargoToml{}, false
 	}
@@ -148,7 +148,7 @@ func readRustPathCrate(contextDir string) (rustPathCrate, bool) {
 		return rustPathCrate{}, false
 	}
 	up := 0
-	for _, m := range cargoPathDependency.FindAllStringSubmatch(readFile(contextDir, "Cargo.toml"), -1) {
+	for _, m := range cargoPathDependency.FindAllStringSubmatch(readFile(contextDir, fileCargoTOML), -1) {
 		n := 0
 		for _, part := range strings.Split(path.Clean(m[1]), "/") {
 			if part != ".." {
@@ -161,7 +161,7 @@ func readRustPathCrate(contextDir string) (rustPathCrate, bool) {
 		}
 		// Above the crate, which fileExists does not reach: the checkout
 		// holds the whole repository, and the dependency must be in it.
-		if info, err := os.Stat(filepath.Join(contextDir, filepath.FromSlash(path.Clean(m[1])), "Cargo.toml")); err == nil && !info.IsDir() {
+		if info, err := os.Stat(filepath.Join(contextDir, filepath.FromSlash(path.Clean(m[1])), fileCargoTOML)); err == nil && !info.IsDir() {
 			up = n
 		}
 	}

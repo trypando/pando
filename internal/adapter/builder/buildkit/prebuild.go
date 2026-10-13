@@ -80,11 +80,36 @@ func prebuildPlan(contextDir, dockerfile string) (content, tool string, missing 
 	if body == "" {
 		return "", "", nil, false
 	}
-	type instruction struct {
-		raw     string // as written, continuations and all
-		rewrite string // the replacement, or ""
+	instructions, missing := readInstructions(contextDir, body)
+	if len(missing) == 0 {
+		return "", "", nil, false
 	}
-	var instructions []instruction
+
+	t, ok := prebuildFor(contextDir, missing)
+	if !ok {
+		return "", "", nil, false
+	}
+
+	stage := fmt.Sprintf("# Written by Pando: %s copies %s, which only the repository's own %s build makes.\n"+
+		"# The build runs first, in the stage below, and each such COPY takes it from there.\n%s\n",
+		dockerfile, strings.Join(missing, ", "), t.Name, t.Stage)
+	content, ok = withStage(instructions, stage)
+	if !ok {
+		return "", "", nil, false
+	}
+	return content, t.Name, missing, true
+}
+
+// dockerfileInstruction is one instruction of a Dockerfile.
+type dockerfileInstruction struct {
+	raw     string // as written, continuations and all
+	rewrite string // the replacement, or ""
+}
+
+// readInstructions splits a Dockerfile into its instructions, each COPY whose
+// sources are missing rewritten to take them from the prebuild stage, and the
+// sources that were missing.
+func readInstructions(contextDir, body string) (instructions []dockerfileInstruction, missing []string) {
 	var pending strings.Builder
 	var joined string
 	for _, line := range strings.SplitAfter(body, "\n") {
@@ -95,33 +120,29 @@ func prebuildPlan(contextDir, dockerfile string) (content, tool string, missing 
 			continue
 		}
 		joined += trimmed
-		instructions = append(instructions, instruction{raw: pending.String()})
+		in := dockerfileInstruction{raw: pending.String()}
 		if rewrite, srcs := rewriteCopy(contextDir, joined); rewrite != "" {
-			instructions[len(instructions)-1].rewrite = rewrite
+			in.rewrite = rewrite
 			missing = append(missing, srcs...)
 		}
+		instructions = append(instructions, in)
 		pending.Reset()
 		joined = ""
 	}
 	if pending.Len() > 0 {
-		instructions = append(instructions, instruction{raw: pending.String()})
+		instructions = append(instructions, dockerfileInstruction{raw: pending.String()})
 	}
-	if len(missing) == 0 {
-		return "", "", nil, false
-	}
+	return instructions, missing
+}
 
-	t, ok := prebuildFor(contextDir, missing)
-	if !ok {
-		return "", "", nil, false
-	}
-
+// withStage is the Dockerfile with stage written before its first FROM. Not
+// ok when it has none.
+func withStage(instructions []dockerfileInstruction, stage string) (string, bool) {
 	var b strings.Builder
 	staged := false
 	for _, in := range instructions {
 		if !staged && isFrom(in.raw) {
-			fmt.Fprintf(&b, "# Written by Pando: %s copies %s, which only the repository's own %s build makes.\n"+
-				"# The build runs first, in the stage below, and each such COPY takes it from there.\n%s\n",
-				dockerfile, strings.Join(missing, ", "), t.Name, t.Stage)
+			b.WriteString(stage)
 			staged = true
 		}
 		if in.rewrite != "" {
@@ -130,10 +151,7 @@ func prebuildPlan(contextDir, dockerfile string) (content, tool string, missing 
 		}
 		b.WriteString(in.raw)
 	}
-	if !staged {
-		return "", "", nil, false
-	}
-	return b.String(), t.Name, missing, true
+	return b.String(), staged
 }
 
 func isFrom(raw string) bool {
@@ -145,39 +163,13 @@ func isFrom(raw string) bool {
 // the repository, taken from the prebuild stage instead, and the sources that
 // were missing. "" for any other instruction.
 func rewriteCopy(contextDir, line string) (string, []string) {
-	fields := strings.Fields(line)
-	if len(fields) < 3 || !strings.EqualFold(fields[0], "COPY") || strings.Contains(line, "<<") {
-		return "", nil
-	}
-	var flags []string
-	rest := fields[1:]
-	for len(rest) > 0 && strings.HasPrefix(rest[0], "--") {
-		if strings.HasPrefix(rest[0], "--from") {
-			return "", nil
-		}
-		flags = append(flags, rest[0])
-		rest = rest[1:]
-	}
-	args := rest
-	if strings.HasPrefix(strings.TrimSpace(strings.Join(rest, " ")), "[") {
-		if json.Unmarshal([]byte(strings.Join(rest, " ")), &args) != nil {
-			return "", nil
-		}
-	}
-	if len(args) < 2 {
+	flags, args, ok := contextCopy(line)
+	if !ok {
 		return "", nil
 	}
 	sources, dest := args[:len(args)-1], args[len(args)-1]
-	var missing []string
-	for _, s := range sources {
-		if strings.Contains(s, "$") {
-			return "", nil
-		}
-		if !inContext(contextDir, s) {
-			missing = append(missing, cleanSource(s))
-		}
-	}
-	if len(missing) == 0 {
+	missing, ok := missingSources(contextDir, sources)
+	if !ok || len(missing) == 0 {
 		return "", nil
 	}
 	from := make([]string, 0, len(sources)+1)
@@ -190,6 +182,46 @@ func rewriteCopy(contextDir, line string) (string, []string) {
 	}
 	parts := append([]string{"COPY", "--from=" + prebuildStage}, flags...)
 	return strings.Join(append(parts, string(quoted)), " "), missing
+}
+
+// contextCopy reads a COPY from the build context: its flags, and its sources
+// and destination in either form. Not ok for any other instruction, a COPY
+// from a stage or image, or a heredoc.
+func contextCopy(line string) (flags, args []string, ok bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 3 || !strings.EqualFold(fields[0], "COPY") || strings.Contains(line, "<<") {
+		return nil, nil, false
+	}
+	rest := fields[1:]
+	for len(rest) > 0 && strings.HasPrefix(rest[0], "--") {
+		if strings.HasPrefix(rest[0], "--from") {
+			return nil, nil, false
+		}
+		flags = append(flags, rest[0])
+		rest = rest[1:]
+	}
+	args = rest
+	if strings.HasPrefix(strings.TrimSpace(strings.Join(rest, " ")), "[") {
+		if json.Unmarshal([]byte(strings.Join(rest, " ")), &args) != nil {
+			return nil, nil, false
+		}
+	}
+	return flags, args, len(args) >= 2
+}
+
+// missingSources are the COPY sources the build context does not have. Not ok
+// when a source names a variable, which only the build can expand.
+func missingSources(contextDir string, sources []string) ([]string, bool) {
+	var missing []string
+	for _, s := range sources {
+		if strings.Contains(s, "$") {
+			return nil, false
+		}
+		if !inContext(contextDir, s) {
+			missing = append(missing, cleanSource(s))
+		}
+	}
+	return missing, true
 }
 
 // cleanSource is a COPY source as a path inside the build context.

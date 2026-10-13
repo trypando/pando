@@ -101,7 +101,7 @@ func procfileProgram(contextDir, name string) (command string, ok bool) {
 
 // readGoBuild reports a Go module with one main package Pando knows how to build.
 func readGoBuild(contextDir string) (goBuild, bool) {
-	mod := readFile(contextDir, "go.mod")
+	mod := readFile(contextDir, fileGoMod)
 	// A declared *build* — a Makefile target, a workflow step, a client that
 	// builds first — is run by the declared-build path. A Procfile only says
 	// how to start the program this plan compiles, and Heroku's Go sample, whose
@@ -255,7 +255,7 @@ func goWorkProgram(contextDir, use string) (string, bool) {
 // command runs it from there. A Procfile whose program is committed in the
 // repository, or is not one of the module's programs, is left as it is.
 func withProcfileProgram(contextDir string, declared declaredBuild) declaredBuild {
-	mod := readFile(contextDir, "go.mod")
+	mod := readFile(contextDir, fileGoMod)
 	procfile := readProcfileBuild(contextDir)
 	fields := strings.Fields(procfile.Start)
 	if mod == "" || len(fields) == 0 || (declared.Start != "" && declared.Start != procfile.Start) {
@@ -321,7 +321,7 @@ func dirHasMain(dir string) bool {
 // only `app` was installed (issue #90). A command the base image already has by
 // that name is not shadowed.
 func goAlias(contextDir string, b goBuild) string {
-	name := goProgramName(readFile(contextDir, "go.mod"), b.Package)
+	name := goProgramName(readFile(contextDir, fileGoMod), b.Package)
 	if b.Program != "" || name == "app" || !goProgramSafe.MatchString(name) {
 		return ""
 	}

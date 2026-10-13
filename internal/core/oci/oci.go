@@ -254,9 +254,9 @@ func atMirror(ref name.Reference, mirror string) (name.Reference, bool) {
 	return r, err == nil
 }
 
-// inspect is one read of ref, which reference names as the person gave it.
-func (in Inspector) inspect(ctx context.Context, reference string, ref name.Reference, auth *Auth, want Platform) (Inspection, error) {
-
+// readOptions are the registry client's options for one read, and the
+// transport that watches it for a download limit.
+func (in Inspector) readOptions(ctx context.Context, auth *Auth) (*limitWatch, []remote.Option) {
 	base := in.Transport
 	if base == nil {
 		base = remote.DefaultTransport
@@ -269,6 +269,12 @@ func (in Inspector) inspect(ctx context.Context, reference string, ref name.Refe
 		remote.WithRetryStatusCodes(http.StatusRequestTimeout, http.StatusInternalServerError,
 			http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout),
 	}
+	return watch, opts
+}
+
+// inspect is one read of ref, which reference names as the person gave it.
+func (in Inspector) inspect(ctx context.Context, reference string, ref name.Reference, auth *Auth, want Platform) (Inspection, error) {
+	watch, opts := in.readOptions(ctx, auth)
 	readable := func(err error) error { return readable(reference, ref, auth, watch.refused(), err) }
 
 	// Only the digest wanted: a HEAD answers it, and Docker Hub counts a
@@ -291,52 +297,67 @@ func (in Inspector) inspect(ctx context.Context, reference string, ref name.Refe
 	}
 
 	out := Inspection{Reference: reference, Digest: desc.Digest.String()}
-
 	if desc.MediaType.IsIndex() {
-		idx, err := desc.ImageIndex()
-		if err != nil {
-			return Inspection{}, readable(err)
-		}
-		manifest, err := idx.IndexManifest()
-		if err != nil {
-			return Inspection{}, readable(err)
-		}
-		var chosen *v1.Descriptor
-		for i, m := range manifest.Manifests {
-			// Attestations ride along in an index as platform unknown/unknown.
-			if m.Platform == nil || m.Platform.OS == "unknown" {
-				continue
-			}
-			p := Platform{OS: m.Platform.OS, Architecture: m.Platform.Architecture, Variant: m.Platform.Variant}
-			out.Platforms = append(out.Platforms, p)
-			if chosen == nil && want.OS != "" && p.Runs(want) {
-				chosen = &manifest.Manifests[i]
-			}
-		}
-		if chosen != nil {
-			img, err := idx.Image(chosen.Digest)
-			if err != nil {
-				return Inspection{}, readable(err)
-			}
-			cfg, err := img.ConfigFile()
-			if err != nil {
-				return Inspection{}, readable(err)
-			}
-			c := configOf(cfg)
-			out.Config = &c
-			p := Platform{OS: chosen.Platform.OS, Architecture: chosen.Platform.Architecture, Variant: chosen.Platform.Variant}
-			out.Matched = &p
-		}
-		return out, nil
+		err = readIndex(desc, want, &out)
+	} else {
+		err = readImage(desc, want, &out)
 	}
-
-	img, err := desc.Image()
 	if err != nil {
 		return Inspection{}, readable(err)
+	}
+	return out, nil
+}
+
+// readIndex fills out from a multi-platform index: every platform it lists,
+// and the configuration of the first that runs on want.
+func readIndex(desc *remote.Descriptor, want Platform, out *Inspection) error {
+	idx, err := desc.ImageIndex()
+	if err != nil {
+		return err
+	}
+	manifest, err := idx.IndexManifest()
+	if err != nil {
+		return err
+	}
+	var chosen *v1.Descriptor
+	for i, m := range manifest.Manifests {
+		// Attestations ride along in an index as platform unknown/unknown.
+		if m.Platform == nil || m.Platform.OS == "unknown" {
+			continue
+		}
+		p := Platform{OS: m.Platform.OS, Architecture: m.Platform.Architecture, Variant: m.Platform.Variant}
+		out.Platforms = append(out.Platforms, p)
+		if chosen == nil && want.OS != "" && p.Runs(want) {
+			chosen = &manifest.Manifests[i]
+		}
+	}
+	if chosen == nil {
+		return nil
+	}
+	img, err := idx.Image(chosen.Digest)
+	if err != nil {
+		return err
 	}
 	cfg, err := img.ConfigFile()
 	if err != nil {
-		return Inspection{}, readable(err)
+		return err
+	}
+	c := configOf(cfg)
+	out.Config = &c
+	p := Platform{OS: chosen.Platform.OS, Architecture: chosen.Platform.Architecture, Variant: chosen.Platform.Variant}
+	out.Matched = &p
+	return nil
+}
+
+// readImage fills out from a single-platform image.
+func readImage(desc *remote.Descriptor, want Platform, out *Inspection) error {
+	img, err := desc.Image()
+	if err != nil {
+		return err
+	}
+	cfg, err := img.ConfigFile()
+	if err != nil {
+		return err
 	}
 	p := Platform{OS: cfg.OS, Architecture: cfg.Architecture, Variant: cfg.Variant}
 	out.Platforms = []Platform{p}
@@ -345,7 +366,7 @@ func (in Inspector) inspect(ctx context.Context, reference string, ref name.Refe
 		out.Config = &c
 		out.Matched = &p
 	}
-	return out, nil
+	return nil
 }
 
 func (in Inspector) parse(reference string) (name.Reference, error) {

@@ -124,6 +124,27 @@ func phpWebRoot(contextDir string) string {
 	return phpPackageDir(contextDir, dirs)
 }
 
+// composerWebRootManifest is the part of composer.json that names a web root.
+type composerWebRootManifest struct {
+	Extra composerExtra `json:"extra"`
+}
+
+// composerExtra is composer.json's `extra`, as far as the web root goes.
+type composerExtra struct {
+	Scaffold  drupalScaffold `json:"drupal-scaffold"`
+	PublicDir string         `json:"public-dir"`
+}
+
+// drupalScaffold is the drupal/core-composer-scaffold plugin's settings.
+type drupalScaffold struct {
+	Locations drupalScaffoldLocations `json:"locations"`
+}
+
+// drupalScaffoldLocations is where the scaffold plugin writes its files.
+type drupalScaffoldLocations struct {
+	WebRoot string `json:"web-root"`
+}
+
 // composerWebRoot is the web root composer.json names for files Composer
 // writes there, or "": Drupal's scaffold plugin writes index.php into
 // extra.drupal-scaffold.locations.web-root, and Symfony Flex names
@@ -132,16 +153,7 @@ func phpWebRoot(contextDir string) string {
 // controller will be, and Railpack served the repository root, which 404s
 // (issue #90).
 func composerWebRoot(contextDir string) string {
-	var manifest struct {
-		Extra struct {
-			Scaffold struct {
-				Locations struct {
-					WebRoot string `json:"web-root"`
-				} `json:"locations"`
-			} `json:"drupal-scaffold"`
-			PublicDir string `json:"public-dir"`
-		} `json:"extra"`
-	}
+	var manifest composerWebRootManifest
 	if json.Unmarshal([]byte(readFile(contextDir, "composer.json")), &manifest) != nil {
 		return ""
 	}
