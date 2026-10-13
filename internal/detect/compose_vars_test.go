@@ -140,9 +140,14 @@ services:
 	_, asked := slotNamed(draft.Slots, "OPTIONAL")
 	require.False(t, asked)
 
-	require.NotNil(t, env["PASSED_THROUGH"].Value)
-	require.Equal(t, spec.EnvFromDetection, env["PASSED_THROUGH"].Source,
-		"a pass-through nothing sets is a hole on the app's variables")
+	// A pass-through nothing sets is a hole: an optional slot, which the
+	// trial run promotes if the app names it, and which leaves the variable
+	// out until it is filled, as compose does.
+	require.NotNil(t, env["PASSED_THROUGH"].SlotRef)
+	require.Equal(t, spec.EnvFromDetection, env["PASSED_THROUGH"].Source)
+	passed, ok := slotNamed(draft.Slots, "PASSED_THROUGH")
+	require.True(t, ok)
+	require.False(t, passed.Required)
 	require.True(t, hasWarning(draft.Warnings, spec.WarnComposeConstructRewritten, "PASSED_THROUGH"))
 
 	for _, e := range draft.Workloads[0].Env {
