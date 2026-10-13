@@ -111,8 +111,12 @@ func observedProtocol(p int, answered map[int]int, probed bool) string {
 const ephemeralPorts = 32768
 
 // ServesAPage reports an HTTP status that means a person would see something:
-// a page, a redirect to one, or a sign-in.
+// a page, a redirect to one, or a sign-in. 204 and 205 answer with no content,
+// which is what a health or metrics endpoint says, not a page.
 func ServesAPage(status int) bool {
+	if status == 204 || status == 205 {
+		return false
+	}
 	return (status >= 200 && status < 400) || status == 401 || status == 403
 }
 

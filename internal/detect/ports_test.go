@@ -70,6 +70,11 @@ func TestR097_TheWebPortIsChosenOverPortsThatOnlyListen(t *testing.T) {
 			result: api.TrialResult{ObservedPorts: []int{9080, 47373}, HTTPAnswers: answers(9080, 200)},
 			want:   9080,
 		},
+		"a site over a health port that answers with no content": {
+			caps:   probing(),
+			result: api.TrialResult{ObservedPorts: []int{8081, 9000}, HTTPAnswers: answers(8081, 204, 9000, 200)},
+			want:   9000,
+		},
 		"a dashboard over a websocket listener that answers not found": {
 			caps: probing(),
 			result: api.TrialResult{ObservedPorts: []int{1883, 8083, 8883, 18083},
