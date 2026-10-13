@@ -75,6 +75,7 @@ const SLOT_LABEL: Record<string, string> = {
   mysql: 'MySQL',
   redis: 'Redis',
   mongodb: 'MongoDB',
+  memcached: 'Memcached',
   s3: 'S3 storage',
   smtp: 'Mail server',
 };

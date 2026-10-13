@@ -274,3 +274,26 @@ func mustParse(t *testing.T, raw string) *url.URL {
 	require.NoError(t, err)
 	return u
 }
+
+// TestR131_AProvisionedMemcachedIsAnAddressWithNothingToKeep asserts R-131 for
+// a cache. Yopass reads MEMCACHED as "host:port", which is how memcached's
+// clients take it: no scheme and no credentials. It holds nothing to back up,
+// so it has no volume to outlive the app (R-204), and a redeploy hands back the
+// same address rather than refusing one with no password in it.
+func TestR131_AProvisionedMemcachedIsAnAddressWithNothingToKeep(t *testing.T) {
+	a := configured(t)
+	require.Contains(t, a.Supports(), spec.SlotMemcached)
+
+	res := provision(t, a, spec.SlotMemcached, secret.Value{})
+	require.Len(t, res.Workloads, 1)
+	w := res.Workloads[0]
+	require.Equal(t, w.Name+":11211", res.ConnectionSecret.Reveal())
+	require.Empty(t, res.Volumes)
+	require.Empty(t, w.Mounts)
+	require.NotNil(t, w.Health)
+	require.Equal(t, 11211, w.Health.Port)
+	require.False(t, w.Exposed, "R-134")
+
+	again := provision(t, a, spec.SlotMemcached, res.ConnectionSecret)
+	require.Equal(t, res.ConnectionSecret.Reveal(), again.ConnectionSecret.Reveal())
+}

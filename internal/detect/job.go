@@ -239,6 +239,15 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 		result = withComposeOverImage(result, compose, registryCandidate(published, view))
 	}
 
+	// The backing services an example compose file below the root runs beside
+	// this app, for a draft that builds the app itself. To every candidate:
+	// which build strategy is picked says nothing about whether the app needs
+	// its cache.
+	result.Winner.Draft = WithExampleCompose(view, src, result.Winner.Draft)
+	for i := range result.RunnersUp {
+		result.RunnersUp[i].Draft = WithExampleCompose(view, src, result.RunnersUp[i].Draft)
+	}
+
 	proposal := Proposal{
 		Status:    result.Status,
 		Winner:    result.Winner,

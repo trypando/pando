@@ -98,6 +98,8 @@ func standIn(v requiredVar) string {
 		return "redis://" + standInHost + ":6379/0"
 	case spec.SlotMongoDB:
 		return "mongodb://pando:pando@" + standInHost + ":27017/pando"
+	case spec.SlotMemcached:
+		return standInHost + ":11211"
 	case spec.SlotUnknown:
 	default:
 		return "https://" + standInHost

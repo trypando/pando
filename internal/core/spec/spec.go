@@ -429,7 +429,10 @@ const (
 	SlotS3       SlotType = "s3"
 	SlotSMTP     SlotType = "smtp"
 	SlotMongoDB  SlotType = "mongodb"
-	SlotUnknown  SlotType = "unknown"
+	// SlotMemcached is a memcached cache, reached at "host:port". It has no
+	// URL scheme and no credentials, which is how its clients take it.
+	SlotMemcached SlotType = "memcached"
+	SlotUnknown   SlotType = "unknown"
 )
 
 // DisplayName is how a slot type reads in a sentence written for someone who
@@ -449,6 +452,8 @@ func (t SlotType) DisplayName() string {
 		return "mail server"
 	case SlotMongoDB:
 		return "MongoDB database"
+	case SlotMemcached:
+		return "Memcached"
 	default:
 		return "connection"
 	}
