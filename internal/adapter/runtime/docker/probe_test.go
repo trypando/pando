@@ -43,6 +43,14 @@ func TestR097_TheProbeReadsTheReplyOnOneLine(t *testing.T) {
 	require.Contains(t, script, `head -c 1024 | tr '\r\n' '  '`)
 }
 
+// TestR097_TheProbeKeepsItsSideOpenForTheReply asserts R-097: the request is
+// not followed at once by the end of its input, which nc turns into a
+// half-close that hyper, uvicorn and Tornado answer by dropping the request
+// (issue #90).
+func TestR097_TheProbeKeepsItsSideOpenForTheReply(t *testing.T) {
+	require.Contains(t, probeScript([]int{8000}), `\r\n\r\n'; sleep 3) | nc -w 3`)
+}
+
 // TestR097_TheWatchWaitsForTheWebPort asserts R-097: the trial watches until
 // the port people open has answered, not until the first port that answers.
 func TestR097_TheWatchWaitsForTheWebPort(t *testing.T) {

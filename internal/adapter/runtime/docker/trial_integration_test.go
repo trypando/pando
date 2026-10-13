@@ -228,3 +228,38 @@ func TestR097_ATrialReportsWhichPortAnswersHTTP(t *testing.T) {
 	require.Equal(t, 8126, result.HTTPAnswers[0].Port)
 	require.NotZero(t, result.HTTPAnswers[0].Status)
 }
+
+// TestR097_ATrialHearsAServerThatDropsAHalfClosedRequest asserts R-097 for the
+// web servers that treat a client closing its sending side as having left —
+// hyper, uvicorn, Tornado, httpuv. Probed with a request whose input ended at
+// once, they answered nothing, and their apps were refused as serving no web
+// page (issue #90). This server reads the request, then answers only if the
+// client's side is still open: end of input arrives at once, a client still
+// connected leaves the read to time out.
+func TestR097_ATrialHearsAServerThatDropsAHalfClosedRequest(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	a := adapter(t)
+
+	caps, err := a.Capabilities(ctx)
+	require.NoError(t, err)
+	if !caps.SupportsHTTPProbe {
+		t.Skip("this daemon's trial cannot see into the container")
+	}
+
+	server := `while IFS= read -r l; do [ "$l" = "$(printf '\r')" ] && break; done; ` +
+		`s=$(date +%s); read -t 2 x; [ $(($(date +%s)-s)) -lt 1 ] && exit 0; ` +
+		`printf 'HTTP/1.0 200 OK\r\n\r\nok'`
+	result, err := a.Trial(ctx, api.TrialRequest{
+		TrialID: trialID(t),
+		Image:   "busybox:1.37",
+		Command: []string{"nc", "-ll", "-p", "8127", "-e", "sh", "-c", server},
+		Timeout: 60 * time.Second,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, []int{8127}, result.ObservedPorts)
+	require.Len(t, result.HTTPAnswers, 1, "the probe must wait for the reply with its side still open")
+	require.Equal(t, 8127, result.HTTPAnswers[0].Port)
+	require.Equal(t, 200, result.HTTPAnswers[0].Status)
+}
