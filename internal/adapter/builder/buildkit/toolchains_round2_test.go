@@ -53,7 +53,7 @@ func TestR095_PlansForWhatTheBenchmarkFoundMissing(t *testing.T) {
 	// A Go module whose main packages are a server and a client builds
 	// neither: nothing says which is the app, and R-102 does not pick one by
 	// its directory's name.
-	_, ok := readGoBuild(writeTree(t, map[string]string{
+	_, ok = readGoBuild(writeTree(t, map[string]string{
 		"go.mod":           "module github.com/gin-gonic/examples/websocket\ngo 1.21\n",
 		"server/server.go": "package main\n", "client/client.go": "package main\n",
 	}))
