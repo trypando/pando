@@ -1430,6 +1430,12 @@ type BuildPlan struct {
 	// Entry is the file the build starts from, one of Files.
 	Entry string
 
+	// Context is the directory the plan builds from, relative to the one it
+	// was planned in: "../.." for a crate whose path dependencies are two
+	// directories up. Empty is the directory itself. Files and Entry are
+	// relative to the context.
+	Context string
+
 	// Start is the command the built image runs, when the plan says. Empty
 	// means the plan does not know, and detection asks.
 	Start string

@@ -1108,7 +1108,20 @@ The benchmark in issue #90 added more of the same, each a category the planners 
   release and served by the same nginx. `[P]` Hugo 0.167.0 and Zola 0.23.6 unless `netlify.toml`,
   `vercel.json` or a workflow pins one; Hugo on `golang:1.25` so Hugo Modules resolve; MkDocs on
   Python 3.12. A Hugo theme that is an unfetched submodule refuses the plan with `VALID_INVALID`,
-  which detection shows as blocked, rather than building empty pages.
+  which detection shows as blocked, rather than building empty pages. Any other build that fails
+  reading a path inside an unfetched submodule fails naming it (O-60, decided 2026-10-13).
+- **Round-2 plans (issue #90).** A Dockerfile that copies what the repository's own build makes
+  (`target/` with a `pom.xml`, `build/` with a Gradle wrapper, `dist/`, `build/` or `out/` with a
+  package.json build script) is replayed with that build first in a `pando-prebuild` stage and those
+  COPYs taken from it; the rest is the author's. A crate whose `path` dependencies are above it is
+  built from there by `--manifest-path`, and the app's directory moves up (`BuildPlan.Context`).
+  `[P]` choices: GHC on aarch64 gets LLVM 13 (bookworm's newest that pre-9.2 GHCs accept); among
+  several Go main packages, none is picked by its directory's name (R-102: a `server/` beside a
+  `client/` is not guessed at); Perl
+  modules a cpanfile requires are installed at the cpanfile.snapshot version when the snapshot's
+  distribution is named after the module; Railpack PHP builds run composer's `post-install-cmd`
+  scripts after the app's files are in place, outside Railpack's `APP_ENV`; a web root named in
+  composer.json (`drupal-scaffold` `web-root`, `public-dir`) is served.
 - **Node toolchain.** `[P]` Node sites build on `node:<major>-slim`, not Alpine: Gatsby and other
   native modules need glibc. pnpm is installed at the version `packageManager` names, else the major
   the lockfile's format implies (5.3→6, 5.4→7, 6.0→8, 9.0→9), never corepack's newest. A 9.0
