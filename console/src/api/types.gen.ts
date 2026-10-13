@@ -141,6 +141,7 @@ export interface Proposal {
   trial_log?: string;
   commit?: string;
   trial?: TrialObservation;
+  loopback_command?: string;
   built?: Built;
   screening?: Outcome;
   conversation?: (Turn[] | null);

@@ -278,7 +278,7 @@ func TestR096_ATemplateURLAtTheFilesOwnServiceIsKept(t *testing.T) {
 		"docker-compose.yml": "services:\n  db:\n    image: postgres:15\n    environment:\n      POSTGRES_PASSWORD: claper\n" +
 			"  app:\n    image: ghcr.io/claperco/claper:latest\n    ports:\n      - 4000:4000\n    env_file: .env\n",
 		".env.sample": "BASE_URL=http://localhost:4000\nDATABASE_URL=postgres://claper:claper@db:5432/claper\n" +
-			"SECRET_KEY_BASE=0LZiQBLw4WvqPlz4cz8RsHJlxNiSqM9B48y4ChyJ5v1oA0L/TPIqRjQNdPZN3iEG # Generate with `mix phx.gen.secret`\n",
+			"SECRET_KEY_BASE=sample-value-from-the-template-not-a-real-key-replace-me-000000 # Generate with `mix phx.gen.secret`\n",
 	}
 	result, err := detect.NewAuction(detect.ComposeDetector{}).Run(context.Background(), src)
 	require.NoError(t, err)
