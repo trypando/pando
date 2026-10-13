@@ -28,7 +28,7 @@ Provisioned Postgres now serves TLS, and its containers are recreated once when 
 
 ### Security
 
-No advisories were published for this release.
+No new advisories.
 
 - **Static sites and compiled programs are built on maintained base images** (#199, #219). Every
   static site was served from `nginx:1.27-alpine`, a line nginx no longer rebuilds, on Alpine 3.21.
