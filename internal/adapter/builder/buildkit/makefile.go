@@ -183,32 +183,48 @@ func buildsDocumentsOnly(target string, recipes, prereqs map[string][]string) bo
 			return
 		}
 		seen[name] = true
-		for _, ext := range documentOutputs {
-			if strings.HasSuffix(strings.ToLower(name), ext) {
-				documents = true
-			}
+		if isDocumentOutput(name) {
+			documents = true
 		}
-		for _, step := range recipes[name] {
-			fields := strings.Fields(strings.TrimLeft(step, "@-+"))
-			if len(fields) == 0 {
-				continue
-			}
-			tool := strings.ToLower(filepath.Base(fields[0]))
-			switch {
-			case isDocumentTool(tool):
-				documents = true
-			case tool == "sed" || tool == "cat" || tool == "echo" || tool == "rm" || tool == "mkdir" || tool == "cp":
-				// Text plumbing around a document tool, not a build of its own.
-			default:
-				other = true
-			}
-		}
+		d, o := recipeMakes(recipes[name])
+		documents, other = documents || d, other || o
 		for _, p := range prereqs[name] {
 			walk(p, depth+1)
 		}
 	}
 	walk(target, 0)
 	return documents && !other
+}
+
+// isDocumentOutput reports a file target that is a document.
+func isDocumentOutput(name string) bool {
+	for _, ext := range documentOutputs {
+		if strings.HasSuffix(strings.ToLower(name), ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// recipeMakes reports whether a recipe's steps run a document tool, and
+// whether any builds something other than documents.
+func recipeMakes(steps []string) (documents, other bool) {
+	for _, step := range steps {
+		fields := strings.Fields(strings.TrimLeft(step, "@-+"))
+		if len(fields) == 0 {
+			continue
+		}
+		tool := strings.ToLower(filepath.Base(fields[0]))
+		switch {
+		case isDocumentTool(tool):
+			documents = true
+		case tool == "sed" || tool == "cat" || tool == "echo" || tool == "rm" || tool == "mkdir" || tool == "cp":
+			// Text plumbing around a document tool, not a build of its own.
+		default:
+			other = true
+		}
+	}
+	return documents, other
 }
 
 func isDocumentTool(tool string) bool {

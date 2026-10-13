@@ -139,17 +139,7 @@ func readGoBuild(contextDir string) (goBuild, bool) {
 // None, or several and nothing saying which is the server, is not ok.
 func onlyMainPackage(moduleDir string) (string, bool) {
 	for _, pattern := range []string{filepath.Join("cmd", "*"), "*"} {
-		var mains []string
-		dirs, _ := filepath.Glob(filepath.Join(moduleDir, pattern))
-		for _, d := range dirs {
-			rel, err := filepath.Rel(moduleDir, d)
-			if err != nil || ignoredGoDir(filepath.Base(d)) {
-				continue
-			}
-			if info, err := os.Stat(d); err == nil && info.IsDir() && dirHasMain(d) {
-				mains = append(mains, "./"+filepath.ToSlash(rel))
-			}
-		}
+		mains := mainPackagesIn(moduleDir, pattern)
 		if len(mains) == 0 {
 			continue
 		}
@@ -160,6 +150,23 @@ func onlyMainPackage(moduleDir string) (string, bool) {
 		return mains[0], true
 	}
 	return "", false
+}
+
+// mainPackagesIn are the main packages in the directories pattern matches
+// under moduleDir, as ./-relative paths.
+func mainPackagesIn(moduleDir, pattern string) []string {
+	var mains []string
+	dirs, _ := filepath.Glob(filepath.Join(moduleDir, pattern))
+	for _, d := range dirs {
+		rel, err := filepath.Rel(moduleDir, d)
+		if err != nil || ignoredGoDir(filepath.Base(d)) {
+			continue
+		}
+		if info, err := os.Stat(d); err == nil && info.IsDir() && dirHasMain(d) {
+			mains = append(mains, "./"+filepath.ToSlash(rel))
+		}
+	}
+	return mains
 }
 
 // ignoredGoDir is a directory the go tool skips, or one that holds examples
@@ -187,6 +194,21 @@ func readGoWorkBuild(contextDir string) (goBuild, bool) {
 	if m == nil {
 		return goBuild{}, false
 	}
+	var programs []string
+	for _, use := range goWorkUses(work) {
+		if program, ok := goWorkProgram(contextDir, use); ok {
+			programs = append(programs, program)
+		}
+	}
+	if len(programs) != 1 {
+		return goBuild{}, false
+	}
+	return goBuild{Version: m[1], Package: programs[0], Workspace: true}, true
+}
+
+// goWorkUses are the module directories a go.work's use directives name, in
+// both the one-line and the block form.
+func goWorkUses(work string) []string {
 	var uses []string
 	for _, u := range goWorkUse.FindAllStringSubmatch(work, -1) {
 		uses = append(uses, u[1])
@@ -201,23 +223,24 @@ func readGoWorkBuild(contextDir string) (goBuild, bool) {
 			}
 		}
 	}
-	var programs []string
-	for _, use := range uses {
-		clean := path.Clean(use)
-		if !safeRelative(clean) {
-			continue
-		}
-		dir := filepath.Join(contextDir, filepath.FromSlash(clean))
-		if dirHasMain(dir) {
-			programs = append(programs, "./"+clean)
-		} else if pkg, ok := onlyMainPackage(dir); ok {
-			programs = append(programs, "./"+path.Join(clean, strings.TrimPrefix(pkg, "./")))
-		}
+	return uses
+}
+
+// goWorkProgram is the main package of the workspace module at use, as a
+// path from the workspace root, and whether it has exactly one.
+func goWorkProgram(contextDir, use string) (string, bool) {
+	clean := path.Clean(use)
+	if !safeRelative(clean) {
+		return "", false
 	}
-	if len(programs) != 1 {
-		return goBuild{}, false
+	dir := filepath.Join(contextDir, filepath.FromSlash(clean))
+	if dirHasMain(dir) {
+		return "./" + clean, true
 	}
-	return goBuild{Version: m[1], Package: programs[0], Workspace: true}, true
+	if pkg, ok := onlyMainPackage(dir); ok {
+		return "./" + path.Join(clean, strings.TrimPrefix(pkg, "./")), true
+	}
+	return "", false
 }
 
 // withProcfileProgram makes a Railpack build of a Go module produce the program

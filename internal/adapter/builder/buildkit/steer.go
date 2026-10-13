@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,6 +62,16 @@ const steeringFile = "steering.txt"
 // rust-toolchain file, rust-version in Cargo.toml — still wins: Railpack
 // reads those after this setting.
 const defaultRustVersion = "1.90.0"
+
+// Literals steer.go uses more than once.
+const (
+	msgWritePlan        = "Could not write the build plan."
+	steerKeyRustVersion = "rust-version:"
+	envRustVersion      = "RAILPACK_RUST_VERSION="
+	filePythonVersion   = ".python-version"
+	fileRequirementsTxt = "requirements.txt"
+	filePyprojectTOML   = "pyproject.toml"
+)
 
 // steer is one change to how Railpack is asked to plan.
 type steer struct {
@@ -176,11 +187,11 @@ func editPlan(path string, steers []steer) error {
 	}
 	out, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
-		return errs.Wrap(errs.BuildFailed, "Could not write the build plan.", err)
+		return errs.Wrap(errs.BuildFailed, msgWritePlan, err)
 	}
 	// G306: a build input in the throwaway checkout; it holds no secret.
 	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil { //nolint:gosec
-		return errs.Wrap(errs.BuildFailed, "Could not write the build plan.", err)
+		return errs.Wrap(errs.BuildFailed, msgWritePlan, err)
 	}
 	return nil
 }
@@ -194,7 +205,7 @@ func recordSteers(contextDir string, steers []steer) error {
 	}
 	// G306: a build input in the throwaway checkout; it holds no secret.
 	if err := os.WriteFile(filepath.Join(contextDir, planDir, steeringFile), []byte(b.String()), 0o644); err != nil { //nolint:gosec
-		return errs.Wrap(errs.BuildFailed, "Could not write the build plan.", err)
+		return errs.Wrap(errs.BuildFailed, msgWritePlan, err)
 	}
 	return nil
 }
@@ -326,49 +337,8 @@ var (
 // plan that failed, to read the versions it chose.
 func reactiveSteers(log, contextDir string, plan []byte) []steer {
 	var out []steer
-
-	// Rust: a crate needs a newer compiler than the one installed.
-	if m := rustcRequired.FindAllStringSubmatch(log, -1); m != nil {
-		need := ""
-		for _, v := range m {
-			if versionLess(need, v[1]) {
-				need = v[1]
-			}
-		}
-		if versionLess(need, defaultRustVersion) {
-			need = defaultRustVersion
-		}
-		out = append(out, steer{
-			Key: "rust-version:" + need,
-			Why: "a crate in the build requires rustc " + need + " or newer, so Rust is set to " + need,
-			Env: []string{"RAILPACK_RUST_VERSION=" + need},
-		})
-	} else if cargoEdition.MatchString(log) {
-		out = append(out, steer{
-			Key: "rust-version:" + defaultRustVersion,
-			Why: "a crate in the build needs a newer Cargo than the one installed, so Rust is set to " + defaultRustVersion,
-			Env: []string{"RAILPACK_RUST_VERSION=" + defaultRustVersion},
-		})
-	}
-
-	// Python: a version file mise cannot install.
-	if m := pythonNoBuild.FindStringSubmatch(log); m != nil {
-		major, _ := strconv.Atoi(m[1])
-		minor, _ := strconv.Atoi(m[2])
-		if minor > 0 {
-			version := fmt.Sprintf("%d.%d", major, minor-1)
-			out = append(out, steer{
-				Key: "python-version:" + version,
-				Why: fmt.Sprintf("no build of Python %d.%d is available yet, so Python is set to %s, the release before it", major, minor, version),
-				Env: []string{"RAILPACK_PYTHON_VERSION=" + version},
-				Edit: func(plan map[string]any) {
-					excludeFromPlan(plan, pythonVersionFiles...)
-				},
-			})
-		}
-	} else if miseRangeFailed.MatchString(log) {
-		out = append(out, unreadablePythonVersionFile())
-	}
+	out = append(out, rustSteers(log)...)
+	out = append(out, pythonVersionSteers(log)...)
 
 	// Python: a C extension that does not build on the Python Railpack chose,
 	// or a module newer Pythons no longer ship. One minor release older, as
@@ -379,20 +349,7 @@ func reactiveSteers(log, contextDir string, plan []byte) []steer {
 		}
 	}
 
-	// PHP: an extension a package needs and the image does not have.
-	if m := composerMissing.FindAllStringSubmatch(log, -1); m != nil {
-		var exts []string
-		for _, v := range m {
-			exts = append(exts, strings.ToLower(v[1]))
-		}
-		exts = dedupeKeepOrder(exts)
-		sort.Strings(exts)
-		out = append(out, steer{
-			Key: "php-extensions:" + strings.Join(exts, ","),
-			Why: "Composer reported the PHP extension " + strings.Join(exts, ", ") + " missing, so it is installed",
-			Env: []string{"RAILPACK_PHP_EXTENSIONS=" + strings.Join(exts, " ")},
-		})
-	}
+	out = append(out, phpExtensionSteers(log)...)
 
 	// PDM: a lockfile older than the project, which `pdm install --check`
 	// refuses and a plain `pdm install` brings up to date, as the author's
@@ -407,6 +364,87 @@ func reactiveSteers(log, contextDir string, plan []byte) []steer {
 		})
 	}
 
+	out = append(out, rubySteers(log)...)
+	return out
+}
+
+// rustSteers answer a crate that needs a newer compiler than the one
+// installed.
+func rustSteers(log string) []steer {
+	if m := rustcRequired.FindAllStringSubmatch(log, -1); m != nil {
+		need := ""
+		for _, v := range m {
+			if versionLess(need, v[1]) {
+				need = v[1]
+			}
+		}
+		if versionLess(need, defaultRustVersion) {
+			need = defaultRustVersion
+		}
+		return []steer{{
+			Key: steerKeyRustVersion + need,
+			Why: "a crate in the build requires rustc " + need + " or newer, so Rust is set to " + need,
+			Env: []string{envRustVersion + need},
+		}}
+	}
+	if cargoEdition.MatchString(log) {
+		return []steer{{
+			Key: steerKeyRustVersion + defaultRustVersion,
+			Why: "a crate in the build needs a newer Cargo than the one installed, so Rust is set to " + defaultRustVersion,
+			Env: []string{envRustVersion + defaultRustVersion},
+		}}
+	}
+	return nil
+}
+
+// pythonVersionSteers answer a version file mise cannot install.
+func pythonVersionSteers(log string) []steer {
+	if m := pythonNoBuild.FindStringSubmatch(log); m != nil {
+		major, _ := strconv.Atoi(m[1])
+		minor, _ := strconv.Atoi(m[2])
+		if minor <= 0 {
+			return nil
+		}
+		version := fmt.Sprintf("%d.%d", major, minor-1)
+		return []steer{{
+			Key: "python-version:" + version,
+			Why: fmt.Sprintf("no build of Python %d.%d is available yet, so Python is set to %s, the release before it", major, minor, version),
+			Env: []string{"RAILPACK_PYTHON_VERSION=" + version},
+			Edit: func(plan map[string]any) {
+				excludeFromPlan(plan, pythonVersionFiles...)
+			},
+		}}
+	}
+	if miseRangeFailed.MatchString(log) {
+		return []steer{unreadablePythonVersionFile()}
+	}
+	return nil
+}
+
+// phpExtensionSteers answer an extension a package needs and the image does
+// not have.
+func phpExtensionSteers(log string) []steer {
+	m := composerMissing.FindAllStringSubmatch(log, -1)
+	if m == nil {
+		return nil
+	}
+	var exts []string
+	for _, v := range m {
+		exts = append(exts, strings.ToLower(v[1]))
+	}
+	exts = dedupeKeepOrder(exts)
+	sort.Strings(exts)
+	return []steer{{
+		Key: "php-extensions:" + strings.Join(exts, ","),
+		Why: "Composer reported the PHP extension " + strings.Join(exts, ", ") + " missing, so it is installed",
+		Env: []string{"RAILPACK_PHP_EXTENSIONS=" + strings.Join(exts, " ")},
+	}}
+}
+
+// rubySteers answer a native gem that does not compile with GCC 14's
+// defaults, and a Bundler binstub that cannot find Ruby.
+func rubySteers(log string) []steer {
+	var out []steer
 	// Ruby: a native gem older than GCC 14, which makes incompatible pointer
 	// types an error. The gem is built with that error a warning again.
 	if strings.Contains(log, "incompatible-pointer-types") || strings.Contains(log, "incompatible pointer type") {
@@ -482,7 +520,7 @@ func olderPython(log, contextDir string, plan []byte) (steer, bool) {
 		return steer{}, false
 	}
 	// A version the project names exactly is the author's, and not steered.
-	if v := strings.TrimSpace(firstLine(readFile(contextDir, ".python-version"))); v != "" && plainVersion(v) {
+	if v := strings.TrimSpace(firstLine(readFile(contextDir, filePythonVersion))); v != "" && plainVersion(v) {
 		return steer{}, false
 	}
 	if c := pythonRequirement(contextDir); c != "" && !pythonAllows(c, target) {
@@ -507,12 +545,12 @@ func proactiveSteers(contextDir string) []steer {
 	var out []steer
 	if fileExists(contextDir, "Cargo.toml") && !rustPinned(contextDir) {
 		out = append(out, steer{
-			Key: "rust-version:" + defaultRustVersion,
+			Key: steerKeyRustVersion + defaultRustVersion,
 			Why: "the project pins no Rust toolchain, so it is built with a current stable Rust, " + defaultRustVersion,
-			Env: []string{"RAILPACK_RUST_VERSION=" + defaultRustVersion},
+			Env: []string{envRustVersion + defaultRustVersion},
 		})
 	}
-	if v := strings.TrimSpace(readFile(contextDir, ".python-version")); v != "" && !plainVersion(firstLine(v)) {
+	if v := strings.TrimSpace(readFile(contextDir, filePythonVersion)); v != "" && !plainVersion(firstLine(v)) {
 		out = append(out, unreadablePythonVersionFile())
 	}
 	if s, ok := pythonForPinnedPackages(contextDir); ok {
@@ -544,7 +582,7 @@ func proactiveSteers(contextDir string) []steer {
 }
 
 // pythonVersionFiles are the files mise reads a Python version from.
-var pythonVersionFiles = []string{".python-version"}
+var pythonVersionFiles = []string{filePythonVersion}
 
 // unreadablePythonVersionFile leaves a .python-version mise cannot read out of
 // the build. Railpack resolves the range itself; mise, which also reads the
@@ -596,7 +634,7 @@ var pinnedGunicorn = regexp.MustCompile(`(?im)^\s*gunicorn\s*==\s*(\d+)\.`)
 // 3.12 or newer has no setuptools, so the app stopped at start with "No module
 // named 'pkg_resources'" (issue #90). Not when the project names its Python.
 func pythonForPinnedPackages(contextDir string) (steer, bool) {
-	m := pinnedGunicorn.FindStringSubmatch(readFile(contextDir, "requirements.txt"))
+	m := pinnedGunicorn.FindStringSubmatch(readFile(contextDir, fileRequirementsTxt))
 	if m == nil {
 		return steer{}, false
 	}
@@ -627,10 +665,10 @@ var buildSystem = regexp.MustCompile(`(?m)^\[build-system\]`)
 // #90). The project's own build backend installs it, into the virtualenv
 // Railpack's Python plans use, whose bin/ goes on the image's PATH.
 func installPythonProject(contextDir string) (steer, bool) {
-	if !buildSystem.MatchString(readFile(contextDir, "pyproject.toml")) {
+	if !buildSystem.MatchString(readFile(contextDir, filePyprojectTOML)) {
 		return steer{}, false
 	}
-	for _, lock := range []string{"requirements.txt", "uv.lock", "poetry.lock", "pdm.lock", "Pipfile"} {
+	for _, lock := range []string{fileRequirementsTxt, "uv.lock", "poetry.lock", "pdm.lock", "Pipfile"} {
 		if fileExists(contextDir, lock) {
 			return steer{}, false
 		}
@@ -663,7 +701,7 @@ func installPythonProject(contextDir string) (steer, bool) {
 
 // pythonPinned reports a project that names its Python.
 func pythonPinned(contextDir string) bool {
-	for _, name := range []string{".python-version", "runtime.txt", ".tool-versions"} {
+	for _, name := range []string{filePythonVersion, "runtime.txt", ".tool-versions"} {
 		if strings.TrimSpace(readFile(contextDir, name)) != "" {
 			return true
 		}
@@ -679,7 +717,7 @@ var (
 // pythonRequirement is the Python version constraint the project declares, or
 // "".
 func pythonRequirement(contextDir string) string {
-	body := readFile(contextDir, "pyproject.toml")
+	body := readFile(contextDir, filePyprojectTOML)
 	if m := requiresPython.FindStringSubmatch(body); m != nil {
 		return m[1]
 	}
@@ -701,7 +739,7 @@ func pythonAllows(constraint string, minor int) bool {
 // dependencies.
 func pythonDependsOn(contextDir, pkg string) bool {
 	pattern := regexp.MustCompile(`(?im)(^|["'\s])` + regexp.QuoteMeta(pkg) + `\s*([=<>~!\[;"',]|$)`)
-	for _, name := range []string{"requirements.txt", "pyproject.toml", "Pipfile"} {
+	for _, name := range []string{fileRequirementsTxt, filePyprojectTOML, "Pipfile"} {
 		if pattern.MatchString(readFile(contextDir, name)) {
 			return true
 		}
@@ -801,33 +839,35 @@ func excludeFromPlan(plan map[string]any, files ...string) {
 		}
 		kept := commands[:0]
 		for _, c := range commands {
-			cmd, ok := c.(map[string]any)
-			if src, isCopy := cmd["src"].(string); ok && isCopy && drop[strings.TrimPrefix(src, "./")] {
-				if _, fromImage := cmd["image"]; !fromImage {
-					continue
-				}
+			if !copiesDropped(c, drop) {
+				kept = append(kept, c)
 			}
-			kept = append(kept, c)
 		}
 		step["commands"] = kept
 	}
 	exclude, _ := plan["exclude"].([]any)
 	for _, f := range files {
-		present := false
-		for _, e := range exclude {
-			if e == f {
-				present = true
-			}
-		}
-		if !present {
+		if !slices.Contains(exclude, any(f)) {
 			exclude = append(exclude, f)
 		}
 	}
 	plan["exclude"] = exclude
 }
 
-// replaceInCommands rewrites old to new in every command the plan runs.
-func replaceInCommands(plan map[string]any, old, new string) {
+// copiesDropped reports a plan command that copies one of drop from the build
+// context rather than from an image.
+func copiesDropped(c any, drop map[string]bool) bool {
+	cmd, ok := c.(map[string]any)
+	src, isCopy := cmd["src"].(string)
+	if !ok || !isCopy || !drop[strings.TrimPrefix(src, "./")] {
+		return false
+	}
+	_, fromImage := cmd["image"]
+	return !fromImage
+}
+
+// replaceInCommands rewrites old to replacement in every command the plan runs.
+func replaceInCommands(plan map[string]any, old, replacement string) {
 	for _, step := range planSteps(plan) {
 		commands, _ := step["commands"].([]any)
 		for _, c := range commands {
@@ -837,7 +877,7 @@ func replaceInCommands(plan map[string]any, old, new string) {
 			}
 			for _, field := range []string{"cmd", "customName"} {
 				if s, ok := cmd[field].(string); ok {
-					cmd[field] = strings.ReplaceAll(s, old, new)
+					cmd[field] = strings.ReplaceAll(s, old, replacement)
 				}
 			}
 		}

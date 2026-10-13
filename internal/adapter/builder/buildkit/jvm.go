@@ -103,40 +103,53 @@ func readJVMBuild(contextDir string) (jvmBuild, bool) {
 
 	switch {
 	case exists("gradlew") && (exists("build.gradle") || exists("build.gradle.kts")):
-		script := readFile(contextDir, "build.gradle") + readFile(contextDir, "build.gradle.kts")
-		// A version catalog names the plugins a script applies by alias.
-		plugins := script + readFile(contextDir, filepath.Join("gradle", "libs.versions.toml"))
-		b := jvmBuild{Tool: "gradle", JDK: gradleJDK(script), Output: jvmJar, Task: "assemble"}
-		switch {
-		case strings.Contains(plugins, "org.springframework.boot"), strings.Contains(plugins, "io.quarkus"):
-			// Spring Boot's executable jar or WAR, and Quarkus's quarkus-app/,
-			// are what each documents running, even with the application or
-			// war plugin applied. assemble builds either; the plain jar Spring
-			// Boot leaves beside its own is passed over.
-		case gradleWarPlugin.MatchString(script):
-			b.Output, b.Javax = jvmWar, isJavax(plugins)
-		case gradleAppPlugin.MatchString(script) || containsAny(plugins, gradlePluginsApplying):
-			b.Output, b.Task = jvmDist, "installDist"
-		}
-		return b, true
-
+		return gradleBuild(contextDir), true
 	case exists("pom.xml"):
-		pom := readFile(contextDir, "pom.xml")
-		b := jvmBuild{Tool: "maven", JDK: jdkFrom(pom, mavenVersion), Output: jvmJar}
-		// A Spring Boot WAR is executable, and runs as its jar would.
-		if mavenWar.MatchString(pom) && !strings.Contains(pom, "spring-boot-maven-plugin") {
-			if strings.Contains(pom, "liberty-maven-plugin") {
-				b.Output = jvmLiberty
-			} else {
-				b.Output, b.Javax = jvmWar, isJavax(pom)
-			}
-		}
-		return b, true
+		return mavenBuild(contextDir), true
 	}
+	return javacBuild(contextDir)
+}
 
-	// Java sources and no build tool: compiled as they are, and the class with
-	// main is run. Only sources at the top level in the default package — a
-	// package tree with no build file is not something to guess at.
+// gradleBuild is how a project with a Gradle wrapper is built.
+func gradleBuild(contextDir string) jvmBuild {
+	script := readFile(contextDir, "build.gradle") + readFile(contextDir, "build.gradle.kts")
+	// A version catalog names the plugins a script applies by alias.
+	plugins := script + readFile(contextDir, filepath.Join("gradle", "libs.versions.toml"))
+	b := jvmBuild{Tool: "gradle", JDK: gradleJDK(script), Output: jvmJar, Task: "assemble"}
+	switch {
+	case strings.Contains(plugins, "org.springframework.boot"), strings.Contains(plugins, "io.quarkus"):
+		// Spring Boot's executable jar or WAR, and Quarkus's quarkus-app/,
+		// are what each documents running, even with the application or
+		// war plugin applied. assemble builds either; the plain jar Spring
+		// Boot leaves beside its own is passed over.
+	case gradleWarPlugin.MatchString(script):
+		b.Output, b.Javax = jvmWar, isJavax(plugins)
+	case gradleAppPlugin.MatchString(script) || containsAny(plugins, gradlePluginsApplying):
+		b.Output, b.Task = jvmDist, "installDist"
+	}
+	return b
+}
+
+// mavenBuild is how a project with a pom.xml is built.
+func mavenBuild(contextDir string) jvmBuild {
+	pom := readFile(contextDir, "pom.xml")
+	b := jvmBuild{Tool: "maven", JDK: jdkFrom(pom, mavenVersion), Output: jvmJar}
+	// A Spring Boot WAR is executable, and runs as its jar would.
+	if !mavenWar.MatchString(pom) || strings.Contains(pom, "spring-boot-maven-plugin") {
+		return b
+	}
+	if strings.Contains(pom, "liberty-maven-plugin") {
+		b.Output = jvmLiberty
+	} else {
+		b.Output, b.Javax = jvmWar, isJavax(pom)
+	}
+	return b
+}
+
+// javacBuild is Java sources and no build tool: compiled as they are, and the
+// class with main is run. Only sources at the top level in the default package
+// — a package tree with no build file is not something to guess at.
+func javacBuild(contextDir string) (jvmBuild, bool) {
 	sources, _ := filepath.Glob(filepath.Join(contextDir, "*.java"))
 	sort.Strings(sources)
 	var main string

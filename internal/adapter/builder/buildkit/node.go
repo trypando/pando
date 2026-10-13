@@ -39,6 +39,9 @@ var nodeEntryPoints = []string{"server.js", "index.js", "app.js", "main.js", "se
 // and crashed in `npm install`), a Deno app, and a Meteor app (issue #90).
 var notNodeServer = []string{"pom.xml", "build.gradle", "build.gradle.kts", "deno.json", "deno.jsonc", ".meteor/release"}
 
+// pnpmLockfile is pnpm's lockfile.
+const pnpmLockfile = "pnpm-lock.yaml"
+
 // readNodeServer reports a Node app Pando knows how to build and start.
 //
 // A static site is not one (staticsite.go takes it first), and neither is a
@@ -47,41 +50,11 @@ var notNodeServer = []string{"pom.xml", "build.gradle", "build.gradle.kts", "den
 // command.
 func readNodeServer(contextDir, startCommand string) (nodeServer, bool) {
 	pkg, ok := readPackageJSON(contextDir)
-	if !ok {
-		return nodeServer{}, false
-	}
-	for _, bun := range []string{"bun.lockb", "bun.lock", "bunfig.toml"} {
-		if _, err := os.Stat(filepath.Join(contextDir, bun)); err == nil {
-			return nodeServer{}, false
-		}
-	}
-	if belongsToAnotherToolchain(contextDir, notNodeServer...) {
-		return nodeServer{}, false
-	}
-	// A workspace root builds several packages, in an order Railpack and the
-	// workspace tool know better than a generic plan does.
-	if w := strings.TrimSpace(string(pkg.Workspaces)); w != "" && w != "null" && w != "[]" {
+	if !ok || !plainNodeProject(contextDir, pkg) {
 		return nodeServer{}, false
 	}
 
-	start := strings.TrimSpace(startCommand)
-	switch {
-	case start != "":
-	case strings.TrimSpace(pkg.Scripts["start"]) != "":
-		start = "npm start"
-	case pkg.Main != "" && fileExists(contextDir, pkg.Main):
-		start = "node " + pkg.Main
-	default:
-		for _, entry := range nodeEntryPoints {
-			if fileExists(contextDir, entry) {
-				start = "node " + entry
-				break
-			}
-		}
-	}
-	if start == "" {
-		start = frameworkServerStart(contextDir, pkg)
-	}
+	start := nodeStart(contextDir, startCommand, pkg)
 	if start == "" || strings.ContainsAny(start, "\n\r") {
 		return nodeServer{}, false
 	}
@@ -99,6 +72,44 @@ func readNodeServer(contextDir, startCommand string) (nodeServer, bool) {
 		Build:   strings.TrimSpace(pkg.Scripts["build"]) != "",
 		Start:   start,
 	}, true
+}
+
+// plainNodeProject reports a package.json project that Node alone builds: not
+// a Bun project, not part of another toolchain's build, not a workspace root.
+func plainNodeProject(contextDir string, pkg packageJSON) bool {
+	for _, bun := range []string{"bun.lockb", "bun.lock", "bunfig.toml"} {
+		if _, err := os.Stat(filepath.Join(contextDir, bun)); err == nil {
+			return false
+		}
+	}
+	if belongsToAnotherToolchain(contextDir, notNodeServer...) {
+		return false
+	}
+	// A workspace root builds several packages, in an order Railpack and the
+	// workspace tool know better than a generic plan does.
+	w := strings.TrimSpace(string(pkg.Workspaces))
+	return w == "" || w == "null" || w == "[]"
+}
+
+// nodeStart is the command a Node server starts with: the one given, the
+// start script, package.json's main, a conventional entry point, or the
+// framework's server; "" when there is none.
+func nodeStart(contextDir, startCommand string, pkg packageJSON) string {
+	if start := strings.TrimSpace(startCommand); start != "" {
+		return start
+	}
+	if strings.TrimSpace(pkg.Scripts["start"]) != "" {
+		return "npm start"
+	}
+	if pkg.Main != "" && fileExists(contextDir, pkg.Main) {
+		return "node " + pkg.Main
+	}
+	for _, entry := range nodeEntryPoints {
+		if fileExists(contextDir, entry) {
+			return "node " + entry
+		}
+	}
+	return frameworkServerStart(contextDir, pkg)
 }
 
 var pnpmCommand = regexp.MustCompile(`(^|[\s;&|(])(pnpm|pnpx)(\s|$)`)
@@ -165,7 +176,7 @@ func installCommand(contextDir string) string {
 		return err == nil
 	}
 	switch {
-	case has("pnpm-lock.yaml"):
+	case has(pnpmLockfile):
 		pkg, _ := readPackageJSON(contextDir)
 		version := pnpmVersion(contextDir, pkg.PackageManager)
 		install := "npm install -g pnpm@" + version + " && pnpm install --frozen-lockfile"
@@ -191,7 +202,7 @@ func installCommand(contextDir string) string {
 // usesBun reports a project whose lockfile is Bun's and that has no npm, pnpm
 // or Yarn lockfile beside it.
 func usesBun(contextDir string) bool {
-	for _, other := range []string{"pnpm-lock.yaml", "yarn.lock", "package-lock.json"} {
+	for _, other := range []string{pnpmLockfile, "yarn.lock", "package-lock.json"} {
 		if fileExists(contextDir, other) {
 			return false
 		}
@@ -214,7 +225,7 @@ func pnpmVersion(contextDir, packageManager string) string {
 	if m := packageManagerPnpm.FindStringSubmatch(strings.TrimSpace(packageManager)); m != nil {
 		return m[1]
 	}
-	f, err := os.Open(filepath.Join(contextDir, "pnpm-lock.yaml"))
+	f, err := os.Open(filepath.Join(contextDir, pnpmLockfile))
 	if err != nil {
 		return pnpmDefault
 	}

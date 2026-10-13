@@ -72,29 +72,9 @@ func readSSGSite(contextDir string) (ssgSite, bool, error) {
 // readHugoSite reports a Hugo site: a hugo.toml (or .yaml, .json), or a
 // config.toml naming a baseURL beside one of the directories Hugo reads.
 func readHugoSite(contextDir string) (ssgSite, bool, error) {
-	var config string
-	found := false
-	for _, name := range []string{"hugo.toml", "hugo.yaml", "hugo.yml", "hugo.json",
-		"config/_default/hugo.toml", "config/_default/hugo.yaml", "config/_default/config.toml"} {
-		if fileExists(contextDir, name) {
-			config, found = readFile(contextDir, name), true
-			break
-		}
-	}
+	config, found := hugoNamedConfig(contextDir)
 	if !found {
-		marked := false
-		for _, dir := range []string{"layouts", "content", "themes", "archetypes"} {
-			if info, err := os.Stat(filepath.Join(contextDir, dir)); err == nil && info.IsDir() {
-				marked = true
-			}
-		}
-		for _, name := range []string{"config.toml", "config.yaml", "config.yml", "config.json"} {
-			body := readFile(contextDir, name)
-			if marked && hugoBaseURL.MatchString(body) && !zolaBaseURL.MatchString(body) {
-				config, found = body, true
-				break
-			}
-		}
+		config, found = hugoGenericConfig(contextDir)
 	}
 	if !found {
 		return ssgSite{}, false, nil
@@ -103,6 +83,40 @@ func readHugoSite(contextDir string) (ssgSite, bool, error) {
 		return ssgSite{}, false, err
 	}
 	return ssgSite{Generator: "Hugo", Version: pinnedVersion(contextDir, "HUGO_VERSION|hugo-version", hugoDefault)}, true, nil
+}
+
+// hugoNamedConfig is the body of a configuration file only Hugo uses, and
+// whether there is one.
+func hugoNamedConfig(contextDir string) (string, bool) {
+	for _, name := range []string{"hugo.toml", "hugo.yaml", "hugo.yml", "hugo.json",
+		"config/_default/hugo.toml", "config/_default/hugo.yaml", "config/_default/config.toml"} {
+		if fileExists(contextDir, name) {
+			return readFile(contextDir, name), true
+		}
+	}
+	return "", false
+}
+
+// hugoGenericConfig is the body of a config.toml (or .yaml, .json) naming a
+// Hugo baseURL beside one of the directories Hugo reads, and whether there is
+// one.
+func hugoGenericConfig(contextDir string) (string, bool) {
+	marked := false
+	for _, dir := range []string{"layouts", "content", "themes", "archetypes"} {
+		if info, err := os.Stat(filepath.Join(contextDir, dir)); err == nil && info.IsDir() {
+			marked = true
+		}
+	}
+	if !marked {
+		return "", false
+	}
+	for _, name := range []string{"config.toml", "config.yaml", "config.yml", "config.json"} {
+		body := readFile(contextDir, name)
+		if hugoBaseURL.MatchString(body) && !zolaBaseURL.MatchString(body) {
+			return body, true
+		}
+	}
+	return "", false
 }
 
 // hugoThemeIsHere refuses a site whose theme is a git submodule.

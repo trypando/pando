@@ -277,16 +277,8 @@ COPY . .
 // namespace (`clojure -M:server`), or by the one namespace defining -main.
 func depsPlan(contextDir, deps string) (string, bool) {
 	var run, prepare string
-	aliases := cljMainOpts.FindAllStringSubmatch(deps, -1)
-	for _, preferred := range []string{"run", "server", "start", "serve", "main", "prod"} {
-		for _, a := range aliases {
-			if a[1] == preferred {
-				run, prepare = "clojure -M:"+a[1], "clojure -P -M:"+a[1]
-			}
-		}
-		if run != "" {
-			break
-		}
+	if alias := depsMainAlias(deps); alias != "" {
+		run, prepare = "clojure -M:"+alias, "clojure -P -M:"+alias
 	}
 	if run == "" {
 		if ns := cljMainNamespace(contextDir); ns != "" {
@@ -311,6 +303,20 @@ WORKDIR /app
 COPY . .
 RUN %s
 %s`, toolsDepsImage, prepare, shellCMD(run)), true
+}
+
+// depsMainAlias is the deps.edn alias naming a main namespace that a project
+// is most likely started by, in order of preference, or "".
+func depsMainAlias(deps string) string {
+	aliases := cljMainOpts.FindAllStringSubmatch(deps, -1)
+	for _, preferred := range []string{"run", "server", "start", "serve", "main", "prod"} {
+		for _, a := range aliases {
+			if a[1] == preferred {
+				return a[1]
+			}
+		}
+	}
+	return ""
 }
 
 // cljMainNamespace is the one namespace under src/ that defines -main, or ""

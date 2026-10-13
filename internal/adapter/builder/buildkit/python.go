@@ -85,38 +85,41 @@ func pythonAppStart(contextDir string) string {
 		return "streamlit run " + script + " --server.address 0.0.0.0 --server.port ${PORT:-8501}"
 	}
 	for _, module := range []string{"main", "app", "server", "asgi", "wsgi"} {
-		body := readFile(contextDir, module+".py")
-		if body == "" {
-			continue
-		}
-		name, kind := pythonAppVar(body, deps)
-
-		// A module that starts its own server is run as it is, unless the
-		// server it starts listens only on the loopback address and there is
-		// an app a server can be pointed at instead. Said rather than left
-		// to Railpack, which serves any Flask app it finds with gunicorn as
-		// main:app, and an app.py has no module main ("ModuleNotFoundError:
-		// No module named 'main'", issue #172).
-		if runsItself.MatchString(body) && servesItself.MatchString(body) {
-			if allInterfaces.MatchString(body) || name == "" {
-				return "python " + module + ".py"
-			}
-			if start := serveApp(module, name, kind, deps); start != "" {
-				return start
-			}
-			return "python " + module + ".py"
-		}
-		if runsItself.MatchString(body) {
-			continue
-		}
-		if name == "" {
-			continue
-		}
-		if start := serveApp(module, name, kind, deps); start != "" {
+		if start := pythonModuleStart(contextDir, module, deps); start != "" {
 			return start
 		}
 	}
 	return ""
+}
+
+// pythonModuleStart is the command that starts the app in module.py, or ""
+// when that module does not settle it and the next is looked at.
+func pythonModuleStart(contextDir, module, deps string) string {
+	body := readFile(contextDir, module+".py")
+	if body == "" {
+		return ""
+	}
+	name, kind := pythonAppVar(body, deps)
+
+	// A module that starts its own server is run as it is, unless the
+	// server it starts listens only on the loopback address and there is
+	// an app a server can be pointed at instead. Said rather than left
+	// to Railpack, which serves any Flask app it finds with gunicorn as
+	// main:app, and an app.py has no module main ("ModuleNotFoundError:
+	// No module named 'main'", issue #172).
+	if runsItself.MatchString(body) && servesItself.MatchString(body) {
+		if allInterfaces.MatchString(body) || name == "" {
+			return "python " + module + ".py"
+		}
+		if start := serveApp(module, name, kind, deps); start != "" {
+			return start
+		}
+		return "python " + module + ".py"
+	}
+	if runsItself.MatchString(body) || name == "" {
+		return ""
+	}
+	return serveApp(module, name, kind, deps)
 }
 
 // serveApp is the command that serves module:name with a server the project

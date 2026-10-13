@@ -56,27 +56,7 @@ func readRustWorkspace(contextDir string) (rustWorkspace, bool) {
 	}
 	var found []rustWorkspace
 	for _, member := range root.Workspace.Members {
-		clean := path.Clean(strings.TrimSpace(member))
-		if clean == "." || strings.HasPrefix(clean, "..") || path.IsAbs(clean) {
-			continue
-		}
-		dirs, _ := filepath.Glob(filepath.Join(contextDir, filepath.FromSlash(clean)))
-		for _, dir := range dirs {
-			c, ok := readCargoToml(dir)
-			if !ok || c.Package == nil || !safeCargoName(c.Package.Name) {
-				continue
-			}
-			binary := ""
-			switch {
-			case len(c.Bin) == 1 && safeCargoName(c.Bin[0].Name):
-				binary = c.Bin[0].Name
-			case len(c.Bin) == 0 && fileExists(dir, "src/main.rs"):
-				binary = c.Package.Name
-			default:
-				continue
-			}
-			found = append(found, rustWorkspace{Package: c.Package.Name, Binary: binary})
-		}
+		found = append(found, rustMemberPrograms(contextDir, member)...)
 	}
 	if len(found) != 1 {
 		return rustWorkspace{}, false
@@ -84,6 +64,39 @@ func readRustWorkspace(contextDir string) (rustWorkspace, bool) {
 	ws := found[0]
 	ws.Version = rustToolchain(contextDir)
 	return ws, true
+}
+
+// rustMemberPrograms are the programs built by the crates a workspace member
+// entry (a path or a glob) names inside the workspace.
+func rustMemberPrograms(contextDir, member string) []rustWorkspace {
+	clean := path.Clean(strings.TrimSpace(member))
+	if clean == "." || strings.HasPrefix(clean, "..") || path.IsAbs(clean) {
+		return nil
+	}
+	var found []rustWorkspace
+	dirs, _ := filepath.Glob(filepath.Join(contextDir, filepath.FromSlash(clean)))
+	for _, dir := range dirs {
+		if ws, ok := cargoProgram(dir); ok {
+			found = append(found, ws)
+		}
+	}
+	return found
+}
+
+// cargoProgram is the one program the crate in dir builds: its single [[bin]],
+// or with none, src/main.rs under the package's name.
+func cargoProgram(dir string) (rustWorkspace, bool) {
+	c, ok := readCargoToml(dir)
+	if !ok || c.Package == nil || !safeCargoName(c.Package.Name) {
+		return rustWorkspace{}, false
+	}
+	switch {
+	case len(c.Bin) == 1 && safeCargoName(c.Bin[0].Name):
+		return rustWorkspace{Package: c.Package.Name, Binary: c.Bin[0].Name}, true
+	case len(c.Bin) == 0 && fileExists(dir, "src/main.rs"):
+		return rustWorkspace{Package: c.Package.Name, Binary: c.Package.Name}, true
+	}
+	return rustWorkspace{}, false
 }
 
 var (

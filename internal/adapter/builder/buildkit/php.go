@@ -25,6 +25,13 @@ import (
 // newest, as phpForConstraint does for Laravel.
 var railpackPHPReleases = []string{"8.4", "8.3", "8.2"}
 
+// The files a PHP app is recognized by: Composer's manifest and the front
+// controller.
+const (
+	phpComposerJSON = "composer.json"
+	phpIndex        = "index.php"
+)
+
 // railpackReadsPHP matches the require.php Railpack resolves itself.
 var railpackReadsPHP = regexp.MustCompile(`^\^?(\d+)\.(\d+)(\.\d+)?$`)
 
@@ -57,8 +64,10 @@ func railpackPHPConstraint(constraint string) (string, bool) {
 // Composer installs against the constraint the author wrote, on a PHP that
 // meets it.
 func pinRailpackPHP(contextDir string) (restore func()) {
-	restore = func() {}
-	file := filepath.Join(contextDir, "composer.json")
+	restore = func() {
+		// Nothing was rewritten, so there is nothing to put back.
+	}
+	file := filepath.Join(contextDir, phpComposerJSON)
 	original, err := os.ReadFile(file) //nolint:gosec // G304: the checkout's own manifest.
 	if err != nil {
 		return restore
@@ -97,15 +106,25 @@ var phpWebRoots = []string{"public", "www", "web", "htdocs"}
 // index.php — Adminer keeps its entry point in adminer/ — or, of several, the
 // one named after the Composer package.
 func phpWebRoot(contextDir string) string {
-	if fileExists(contextDir, "index.php") {
+	if fileExists(contextDir, phpIndex) {
 		return ""
 	}
 	for _, dir := range phpWebRoots {
-		if fileExists(contextDir, dir+"/index.php") {
+		if fileExists(contextDir, dir+"/"+phpIndex) {
 			return dir
 		}
 	}
-	found, _ := filepath.Glob(filepath.Join(contextDir, "*", "index.php"))
+	dirs := phpIndexDirs(contextDir)
+	if len(dirs) == 1 {
+		return dirs[0]
+	}
+	return phpPackageDir(contextDir, dirs)
+}
+
+// phpIndexDirs are the top-level directories holding an index.php that are
+// not a PHP app's tests, tooling or dependencies.
+func phpIndexDirs(contextDir string) []string {
+	found, _ := filepath.Glob(filepath.Join(contextDir, "*", phpIndex))
 	var dirs []string
 	for _, f := range found {
 		dir := filepath.Base(filepath.Dir(f))
@@ -113,18 +132,21 @@ func phpWebRoot(contextDir string) string {
 			dirs = append(dirs, dir)
 		}
 	}
-	if len(dirs) == 1 {
-		return dirs[0]
-	}
+	return dirs
+}
+
+// phpPackageDir is the one of dirs named after the Composer package, or "".
+func phpPackageDir(contextDir string, dirs []string) string {
 	var manifest struct {
 		Name string `json:"name"`
 	}
-	if json.Unmarshal([]byte(readFile(contextDir, "composer.json")), &manifest) == nil && manifest.Name != "" {
-		want := path.Base(manifest.Name)
-		for _, d := range dirs {
-			if d == want {
-				return d
-			}
+	if json.Unmarshal([]byte(readFile(contextDir, phpComposerJSON)), &manifest) != nil || manifest.Name == "" {
+		return ""
+	}
+	want := path.Base(manifest.Name)
+	for _, d := range dirs {
+		if d == want {
+			return d
 		}
 	}
 	return ""
@@ -147,7 +169,7 @@ func composerStart(contextDir string) string {
 	var manifest struct {
 		Scripts map[string]json.RawMessage `json:"scripts"`
 	}
-	if json.Unmarshal([]byte(readFile(contextDir, "composer.json")), &manifest) != nil {
+	if json.Unmarshal([]byte(readFile(contextDir, phpComposerJSON)), &manifest) != nil {
 		return ""
 	}
 	for _, name := range []string{"start", "serve"} {
@@ -178,11 +200,11 @@ func composerStart(contextDir string) string {
 // composer.json and no index.php at the root, but one in a web root. Railpack
 // served such an app as static files (issue #90). "" when this is not one.
 func plainPHPRoot(contextDir string) string {
-	if fileExists(contextDir, "composer.json") || fileExists(contextDir, "index.php") {
+	if fileExists(contextDir, phpComposerJSON) || fileExists(contextDir, phpIndex) {
 		return ""
 	}
 	for _, dir := range phpWebRoots {
-		if fileExists(contextDir, dir+"/index.php") {
+		if fileExists(contextDir, dir+"/"+phpIndex) {
 			return dir
 		}
 	}

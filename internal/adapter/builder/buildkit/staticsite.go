@@ -99,6 +99,9 @@ var devServers = regexp.MustCompile(`^(npx\s+)?(` +
 	`hexo\s+(server|s)|(@11ty/)?eleventy\s+(.*\s)?--serve|nuxi?\s+(dev|preview)|vue-cli-service\s+serve` +
 	`)(\s|$)`)
 
+// flagPort is the long port option the static servers share.
+const flagPort = "--port"
+
 // staticServers are commands that serve a directory as it is. The directory is
 // the site; the server is replaced with nginx. sirv binds to localhost unless
 // told otherwise, and a site started that way was unreachable.
@@ -106,11 +109,11 @@ var devServers = regexp.MustCompile(`^(npx\s+)?(` +
 // Each takes options before or after the directory, and the ones listed take a
 // value: `serve -s _static -l tcp://0.0.0.0:$PORT` serves _static (issue #90).
 var staticServers = map[string]map[string]bool{
-	"serve": {"-l": true, "--listen": true, "-p": true, "--port": true, "-c": true, "--config": true,
+	"serve": {"-l": true, "--listen": true, "-p": true, flagPort: true, "-c": true, "--config": true,
 		"--ssl-cert": true, "--ssl-key": true, "--ssl-pass": true},
-	"http-server": {"-p": true, "--port": true, "-a": true, "-c": true, "-e": true, "--ext": true,
+	"http-server": {"-p": true, flagPort: true, "-a": true, "-c": true, "-e": true, "--ext": true,
 		"-P": true, "--proxy": true, "-C": true, "--cert": true, "-K": true, "--key": true, "-t": true, "--timeout": true},
-	"sirv": {"-p": true, "--port": true, "-H": true, "--host": true, "-m": true, "--maxage": true,
+	"sirv": {"-p": true, flagPort: true, "-H": true, "--host": true, "-m": true, "--maxage": true,
 		"-k": true, "--key": true, "-C": true, "--cert": true, "--cacert": true, "--pass": true},
 }
 
