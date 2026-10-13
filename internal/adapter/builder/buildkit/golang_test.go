@@ -44,6 +44,34 @@ func TestR095_AGoProgramIsBuiltOnTheGoItNames(t *testing.T) {
 	require.Contains(t, string(body), "go build -o /out/app ./cmd/server")
 }
 
+// TestR095_AGoProgramRunsByItsOwnName asserts R-095. golang/example's
+// helloserver is started as `helloserver -addr :8080`, and exited 127 with
+// "helloserver: not found" when the plan installed it only as `app` (issue #90).
+func TestR095_AGoProgramRunsByItsOwnName(t *testing.T) {
+	root := writeFiles(t, map[string]string{
+		"go.mod": "module golang.org/x/example/helloserver\n\ngo 1.19\n", "main.go": "package main\n",
+	})
+	b, ok := readGoBuild(root)
+	require.True(t, ok)
+	name, err := writeGoPlan(root, b)
+	require.NoError(t, err)
+	body, err := os.ReadFile(filepath.Join(root, name))
+	require.NoError(t, err)
+	require.Contains(t, string(body), "COPY --from=build /out/app /usr/local/bin/app\n"+
+		"RUN command -v helloserver >/dev/null || ln -s app /usr/local/bin/helloserver\n")
+	require.Contains(t, string(body), `CMD ["exec app"]`)
+
+	// A program named app, or one whose name is not a plain word, has no alias.
+	app := writeFiles(t, map[string]string{"go.mod": "module example.com/app\ngo 1.24\n", "main.go": "package main\n"})
+	b, ok = readGoBuild(app)
+	require.True(t, ok)
+	name, err = writeGoPlan(app, b)
+	require.NoError(t, err)
+	body, err = os.ReadFile(filepath.Join(app, name))
+	require.NoError(t, err)
+	require.NotContains(t, string(body), "ln -s")
+}
+
 // A module without a go directive names no release to build on, and a main
 // package found only in a test file is not a program. Both are left to
 // Railpack.

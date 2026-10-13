@@ -218,6 +218,35 @@ func TestR095_SteeringUpFrontFromWhatTheRepositorySays(t *testing.T) {
 		"RAILPACK_DEPLOY_APT_PACKAGES=unzip curl")
 }
 
+// TestR095_ASrcLayoutPackageIsInstalledAfterItsRequirements asserts R-095.
+// Flask's Celery example pins its dependencies in requirements.txt and keeps
+// task_app under src/, and stopped with "Could not import 'task_app'"
+// (issue #90).
+func TestR095_ASrcLayoutPackageIsInstalledAfterItsRequirements(t *testing.T) {
+	project := map[string]string{
+		"requirements.txt":         "flask==2.3.2\n",
+		"pyproject.toml":           "[project]\nname = \"x\"\n\n[build-system]\nrequires = [\"flit_core<4\"]\n",
+		"src/task_app/__init__.py": "",
+	}
+	steers := proactiveSteers(writeTree(t, project))
+	require.Len(t, steers, 1)
+	require.Equal(t, "python-install-src-package", steers[0].Key)
+
+	plan := map[string]any{"steps": []any{
+		map[string]any{"name": "install", "commands": []any{map[string]any{"cmd": "pip install -r requirements.txt"}}},
+		map[string]any{"name": "build", "commands": []any{map[string]any{"src": ".", "dest": "."}}},
+	}}
+	steers[0].Edit(plan)
+	build := planSteps(plan)[1]["commands"].([]any)
+	require.Equal(t, map[string]any{"cmd": "/app/.venv/bin/pip install --no-deps ."}, build[len(build)-1])
+	require.Len(t, planSteps(plan)[0]["commands"], 1)
+
+	// A package at the top is importable from the working directory as it is.
+	delete(project, "src/task_app/__init__.py")
+	project["task_app/__init__.py"] = ""
+	require.Empty(t, proactiveSteers(writeTree(t, project)))
+}
+
 // TestR020_ASteeredPlanRecordsHowItWasSteered asserts R-020: the plan the
 // spec carries says what changed it. The steers' settings reach the planner,
 // their edits are made to what it wrote, and the record is beside the plan.

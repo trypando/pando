@@ -559,6 +559,9 @@ func proactiveSteers(contextDir string) []steer {
 	if s, ok := installPythonProject(contextDir); ok {
 		out = append(out, s)
 	}
+	if s, ok := installSrcLayoutPackage(contextDir); ok {
+		out = append(out, s)
+	}
 	if exts := lockedPHPExtensions(contextDir); len(exts) > 0 {
 		out = append(out, steer{
 			Key: "php-extensions:" + strings.Join(exts, ","),
@@ -695,6 +698,35 @@ func installPythonProject(contextDir string) (steer, bool) {
 			}
 			vars["VIRTUAL_ENV"] = pythonVenv
 			deploy["variables"] = vars
+		},
+	}, true
+}
+
+// installSrcLayoutPackage installs a project that keeps its package under
+// src/ and its pinned dependencies in requirements.txt. Railpack installs the
+// requirements, which are the project's dependencies and not the project, and
+// src/ is not on Python's path: Flask's Celery example stopped with "Could not
+// import 'task_app'" (issue #90). Its README installs the project after the
+// requirements, and so does the plan, without its dependencies, which the
+// requirements already pinned.
+func installSrcLayoutPackage(contextDir string) (steer, bool) {
+	if !buildSystem.MatchString(readFile(contextDir, filePyprojectTOML)) || !fileExists(contextDir, fileRequirementsTxt) {
+		return steer{}, false
+	}
+	if pkgs, _ := filepath.Glob(filepath.Join(contextDir, "src", "*", "__init__.py")); len(pkgs) == 0 {
+		return steer{}, false
+	}
+	return steer{
+		Key: "python-install-src-package",
+		Why: "the package is under src/, which requirements.txt does not install, so the plan installs the project after its requirements",
+		Edit: func(plan map[string]any) {
+			for _, step := range planSteps(plan) {
+				if step["name"] != "build" {
+					continue
+				}
+				commands, _ := step["commands"].([]any)
+				step["commands"] = append(commands, map[string]any{"cmd": pythonVenv + "/bin/pip install --no-deps ."})
+			}
 		},
 	}, true
 }

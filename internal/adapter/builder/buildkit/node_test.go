@@ -62,6 +62,31 @@ func TestR095_ANodeServerIsBuiltOnTheOfficialNodeImage(t *testing.T) {
 	}
 }
 
+// TestR095_AnAdonisAppStartsFromItsBuild asserts R-095. AdonisJS's start
+// script runs bin/server.js from the directory `node ace build` writes, and
+// run from the repository it exited with "Cannot find module
+// '/app/bin/server.js'" (issue #90).
+func TestR095_AnAdonisAppStartsFromItsBuild(t *testing.T) {
+	pkg := `{"scripts": {"build": "node ace build", "start": "node bin/server.js"},
+		"dependencies": {"@adonisjs/core": "^7.0.0"}}`
+	root := writeFiles(t, map[string]string{"package.json": pkg, "package-lock.json": "{}", "ace.js": ""})
+	n, ok := readNodeServer(root, "")
+	require.True(t, ok)
+	require.Equal(t, "node build/bin/server.js", n.Start)
+	require.True(t, n.Build)
+
+	// A start script whose file the repository has runs as it is written.
+	root = withFiles(t, map[string]string{"package.json": pkg, "package-lock.json": "{}", "bin/server.js": ""})
+	n, ok = readNodeServer(root, "")
+	require.True(t, ok)
+	require.Equal(t, "npm start", n.Start)
+
+	// So does one the person gave.
+	n, ok = readNodeServer(root, "node build/bin/server.js --inspect")
+	require.True(t, ok)
+	require.Equal(t, "node build/bin/server.js --inspect", n.Start)
+}
+
 func TestANodeServerPlanBuildsThenStartsThroughAShell(t *testing.T) {
 	root := t.TempDir()
 	name, err := writeNodeServerPlan(root, nodeServer{Node: "22", Install: "npm ci", Build: true, Start: "npm start"})

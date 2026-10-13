@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	gateway "github.com/moby/buildkit/frontend/gateway/client"
@@ -167,6 +168,7 @@ func finishRailpackPlan(body []byte, contextDir string) ([]byte, error) {
 		}
 	}
 	pinImages(plan)
+	startFromBin(plan)
 
 	exclude, _ := plan["exclude"].([]any)
 	plan["exclude"] = append(exclude, planDir)
@@ -176,6 +178,37 @@ func finishRailpackPlan(body []byte, contextDir string) ([]byte, error) {
 		return nil, errs.Wrap(errs.BuildFailed, "Could not write the build plan.", err)
 	}
 	return append(out, '\n'), nil
+}
+
+// binCopy is a build command that copies a compiled program into bin/, as
+// Railpack's Rust plans do: `cp target/release/sample-rust bin`.
+var binCopy = regexp.MustCompile(`^cp\s+\S*/([A-Za-z0-9][A-Za-z0-9._-]*)\s+bin/?$`)
+
+// startFromBin runs a program the plan builds into bin/ from there when the
+// start command names it bare. A Procfile written for Heroku does that, since
+// Heroku puts bin/ on PATH and Railpack does not: DigitalOcean's Rust sample
+// runs `sample-rust`, and exited 127 with "sample-rust: command not found"
+// (issue #90).
+func startFromBin(plan map[string]any) {
+	deploy, _ := plan["deploy"].(map[string]any)
+	start, _ := deploy["startCommand"].(string)
+	fields := strings.Fields(start)
+	if len(fields) == 0 || strings.Contains(fields[0], "/") {
+		return
+	}
+	steps, _ := plan["steps"].([]any)
+	for _, s := range steps {
+		step, _ := s.(map[string]any)
+		commands, _ := step["commands"].([]any)
+		for _, c := range commands {
+			cmd, _ := c.(map[string]any)
+			line, _ := cmd["cmd"].(string)
+			if m := binCopy.FindStringSubmatch(strings.TrimSpace(line)); m != nil && m[1] == fields[0] {
+				deploy["startCommand"] = "./bin/" + strings.TrimSpace(start)
+				return
+			}
+		}
+	}
 }
 
 // dropCopiesFromMissingDirs removes a step's copies of an optional file from
