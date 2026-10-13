@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/big"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -161,13 +162,19 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 			"PGDATA": secret.New("/var/lib/postgresql/data/pgdata"),
 		}
 		path = "/var/lib/postgresql/data"
-		// postgresql://, the scheme libpq documents and every client reads.
-		// SQLAlchemy 2 refuses the short postgres:// outright ("Can't load
-		// plugin: sqlalchemy.dialects:postgres"), and an app whose compose
-		// file spelled the long one stopped at its first migration (issue #90).
+		cert, key, err := postgresTLS(name, password)
+		if err != nil {
+			return api.ProvisionResult{}, err
+		}
+		env["PANDO_TLS_CERT"] = cert
+		env["PANDO_TLS_KEY"] = key
+		// No query string. The server offers TLS (postgresTLS says why), so a
+		// client's own default connects, and a URL that names an sslmode is
+		// one some drivers refuse outright: asyncpg takes it as a keyword
+		// argument it does not have (issue #90).
 		dsn = (&url.URL{
-			Scheme: "postgresql", User: url.UserPassword("app", password),
-			Host: name + ":5432", Path: "/app", RawQuery: "sslmode=disable",
+			Scheme: postgresScheme(req.Scheme), User: url.UserPassword("app", password),
+			Host: name + ":5432", Path: "/app",
 		}).String()
 
 	case spec.SlotMySQL:
@@ -206,6 +213,21 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 		Mounts:  []api.MountPlan{{VolumeID: volumeID, Path: path}},
 		Health:  healthFor(req.Type),
 	}
+	if req.Type == spec.SlotPostgres {
+		// The certificate is written each start, like Redis's config below,
+		// and owned by postgres because the server refuses a key anyone else
+		// can read. The image's own entrypoint still runs — it is what creates
+		// the database on first start — with the TLS settings as arguments,
+		// and the key is out of its environment before it does.
+		w.Command = []string{"sh", "-c", `umask 077 && mkdir -p ` + postgresTLSDir +
+			` && printf '%s' "$PANDO_TLS_CERT" > ` + postgresTLSDir + `/server.crt` +
+			` && printf '%s' "$PANDO_TLS_KEY" > ` + postgresTLSDir + `/server.key` +
+			` && { [ "$(id -u)" != 0 ] || chown -R postgres:postgres ` + postgresTLSDir + `; }` +
+			` && unset PANDO_TLS_CERT PANDO_TLS_KEY` +
+			` && exec docker-entrypoint.sh postgres -c ssl=on` +
+			` -c ssl_cert_file=` + postgresTLSDir + `/server.crt` +
+			` -c ssl_key_file=` + postgresTLSDir + `/server.key`}
+	}
 	if req.Type == spec.SlotRedis {
 		w.Command = []string{"sh", "-c",
 			// Written each start rather than once, so rotating the password is
@@ -220,6 +242,22 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 		Workloads:        []api.WorkloadPlan{w},
 		Volumes:          []api.VolumePlan{{VolumeID: volumeID, Name: name + "-data"}},
 	}, nil
+}
+
+// postgresScheme is the scheme a provisioned Postgres URL is written with: the
+// app's own spelling when it is one Postgres answers to (spec.Slot.Scheme),
+// postgresql:// otherwise.
+//
+// Drivers disagree and refuse each other's spelling. SQLAlchemy 2 will not load
+// postgres:// ("Can't load plugin: sqlalchemy.dialects:postgres"); readflow
+// will not accept postgresql:// ("unsupported database: postgresql", issue
+// #90). No single spelling works for both, but the app's configuration already
+// says which one it reads.
+func postgresScheme(spelled string) string {
+	if slices.Contains(spec.PostgresSchemes, spelled) {
+		return spelled
+	}
+	return spec.PostgresSchemes[0]
 }
 
 // healthFor is how the runtime knows the service is ready.

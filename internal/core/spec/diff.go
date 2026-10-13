@@ -209,6 +209,12 @@ func compareSlots(old, next *AppSpec, add func(Class, string, string, any, any))
 
 		om, nm := modeOf(o), modeOf(n)
 		if om == nm {
+			// The provisioned URL is rewritten with the new spelling, and the
+			// app reads it only when it starts.
+			if nm == ResolutionProvisioned && o.Scheme != n.Scheme {
+				add(Restart, "slots."+n.Key+".scheme",
+					fmt.Sprintf("The address in %s will be written another way.", n.Key), o.Scheme, n.Scheme)
+			}
 			continue
 		}
 

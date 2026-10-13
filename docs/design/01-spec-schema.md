@@ -286,6 +286,7 @@ type Slot struct {
     Format     SecretFormat `json:"format,omitempty"` // random|random_long|django_key|laravel_key
     Resolution *Resolution `json:"resolution"`  // nil = unfilled, blocks deploy (R-132)
     Aliases    []string    `json:"aliases,omitempty"` // a provisioned instance also answers to these: the compose service it replaced
+    Scheme     string      `json:"scheme,omitempty"`  // postgres|postgresql: how the app spells a provisioned Postgres URL
 }
 
 type Resolution struct {
@@ -316,6 +317,13 @@ type Resolution struct {
 Where the requirement carries its own answer, nothing is asked: `PORT` is Pando's to set, `HOST` is `0.0.0.0` in a container, `NODE_ENV` is `production`, and a schema-required setting with a real sample in `.env.example` (not a placeholder, not a secret, not an address) takes it. A variable the Dockerfile already sets with `ENV` is not asked for.
 
 **[D] `Format`** is the shape a value must take when the app checks it, so the console's Generate produces one the app accepts and a literal that does not fit is refused with the reason (R-105) when it is set, by `PUT /slots/{key}` and by the review's accept. `laravel_key` is `base64:` and 32 bytes (or 32 raw characters); `random_long` at least 64 characters (Rails, Phoenix); `django_key` at least 50 characters, 5 distinct, no `django-insecure-` prefix; `random` any non-empty value, generated as 32 random bytes. Empty means Pando knows nothing about the shape. The slot's `Type` stays `unknown`: a key is a value, not a service to provision (R-131).
+
+**[D] `Scheme`** is the URL scheme the app's own configuration spells for a provisioned Postgres —
+`postgres` or `postgresql`, empty for `postgresql` — recorded by detection from the compose value or
+`.env.example` sample that pointed at the database. Drivers refuse each other's spelling (readflow
+only `postgres://`, SQLAlchemy 2 only `postgresql://`), and the spec is the only place it can live,
+because nothing is read from the repository at deploy time (R-020). Validation refuses any other value
+and any scheme on a slot of another type. Changing it is a restart. See design 03 §7.1.
 
 ### 2.6 Routing, runtime, deploy
 

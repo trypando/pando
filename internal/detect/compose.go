@@ -688,8 +688,10 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 		image := c.file.Services[service].Image
 		key := strings.ToUpper(service) + "_URL"
 
-		// The variables whose value points at this service.
+		// The variables whose value points at this service, and the scheme the
+		// first of them spells, which is the one the app is given.
 		var filled []string
+		var scheme string
 		for i := range workloads {
 			for j := range workloads[i].Env {
 				e := &workloads[i].Env[j]
@@ -700,6 +702,7 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 				}
 				if len(filled) == 0 {
 					key = e.Key
+					scheme = spelledScheme(*e.Value, backing[service])
 				}
 				filled = append(filled, e.Key)
 				ref := key
@@ -722,6 +725,7 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 			// The provisioned instance answers to the service's names too, so
 			// a start command waiting on `db:5432` still finds it.
 			Aliases: c.hostnames(service),
+			Scheme:  scheme,
 
 			// Filled, because the compose file already answered it: it runs a
 			// database in a container beside the app, and "Pando runs one

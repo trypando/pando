@@ -2,7 +2,10 @@ package docker_test
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -109,12 +112,69 @@ func TestR131_RedeployingReusesTheCredentialsTheDataWasCreatedWith(t *testing.T)
 		"the same volume, or the redeploy connects the app to an empty database")
 }
 
-// TestR131_AProvisionedPostgresURLUsesTheSchemeEveryClientReads asserts R-131:
-// the connection string a provisioned Postgres fills its slot with is one the
-// app can use. SQLAlchemy 2 refuses postgres:// (issue #90).
-func TestR131_AProvisionedPostgresURLUsesTheSchemeEveryClientReads(t *testing.T) {
-	dsn := provision(t, configured(t), spec.SlotPostgres, secret.Value{}).ConnectionSecret.Reveal()
-	require.True(t, strings.HasPrefix(dsn, "postgresql://"), dsn)
+// TestR131_AProvisionedPostgresURLUsesTheSchemeTheAppSpells asserts R-131: the
+// connection string a provisioned Postgres fills its slot with is one the app
+// can use. SQLAlchemy 2 refuses postgres://, readflow refuses postgresql://,
+// and asyncpg refuses an sslmode in the query (issue #90).
+func TestR131_AProvisionedPostgresURLUsesTheSchemeTheAppSpells(t *testing.T) {
+	for spelled, want := range map[string]string{
+		"":           "postgresql",
+		"postgresql": "postgresql",
+		"postgres":   "postgres",
+		"mysql":      "postgresql",
+	} {
+		res, err := configured(t).Provision(context.Background(), api.ProvisionRequest{
+			AppID: "app_01HQ8", SlotKey: "DATABASE_URL", Type: spec.SlotPostgres,
+			ServiceID: "svc_01HQ9", Scheme: spelled,
+		})
+		require.NoError(t, err)
+		u := mustParse(t, res.ConnectionSecret.Reveal())
+		require.Equal(t, want, u.Scheme, "spelled %q", spelled)
+		require.Empty(t, u.RawQuery, "no sslmode: the server offers TLS, and asyncpg refuses the parameter")
+	}
+}
+
+// TestR131_AProvisionedPostgresServesTheSameCertificateEveryDeploy asserts
+// R-131: the provisioned Postgres serves TLS, so a driver that requires it
+// (lib/pq) connects with a URL that does not say sslmode. The certificate is the
+// same bytes on every deploy of one service, because a changed environment
+// recreates the container and Provision runs on every deploy and reconciler
+// tick.
+func TestR131_AProvisionedPostgresServesTheSameCertificateEveryDeploy(t *testing.T) {
+	a := configured(t)
+	first := provision(t, a, spec.SlotPostgres, secret.Value{})
+	second := provision(t, a, spec.SlotPostgres, first.ConnectionSecret)
+	other := provision(t, a, spec.SlotPostgres, secret.Value{})
+
+	env := first.Workloads[0].Env
+	certPEM, keyPEM := env["PANDO_TLS_CERT"].Reveal(), env["PANDO_TLS_KEY"].Reveal()
+	pair, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	require.NoError(t, err, "a certificate and the key that matches it")
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	require.NoError(t, err)
+	require.Equal(t, []string{first.Workloads[0].Name}, leaf.DNSNames)
+	require.True(t, leaf.NotAfter.Year() == 9999, "nothing to expire for: nobody verifies it")
+
+	require.Equal(t, certPEM, second.Workloads[0].Env["PANDO_TLS_CERT"].Reveal())
+	require.Equal(t, keyPEM, second.Workloads[0].Env["PANDO_TLS_KEY"].Reveal())
+	require.Equal(t, first.Workloads[0].Command, second.Workloads[0].Command)
+	require.NotEqual(t, keyPEM, other.Workloads[0].Env["PANDO_TLS_KEY"].Reveal(),
+		"another service, another password, another key")
+
+	cmd := strings.Join(first.Workloads[0].Command, " ")
+	require.Contains(t, cmd, "ssl=on")
+	require.Contains(t, cmd, "exec docker-entrypoint.sh postgres", "the image still creates the database")
+	require.NotContains(t, cmd, "BEGIN", "the key reaches the container through its environment, not its command")
+}
+
+// TestR194_TheProvisionedPostgresKeyNeverRenders asserts R-194: the private key
+// is a secret.Value, so a plan that is logged or marshaled shows [redacted].
+func TestR194_TheProvisionedPostgresKeyNeverRenders(t *testing.T) {
+	res := provision(t, configured(t), spec.SlotPostgres, secret.Value{})
+	b, err := json.Marshal(res.Workloads[0])
+	require.NoError(t, err)
+	require.NotContains(t, string(b), "PRIVATE KEY")
+	require.NotContains(t, fmt.Sprintf("%v %+v", res.Workloads[0], res.Workloads[0].Env), "PRIVATE KEY")
 }
 
 // A stored connection string Pando cannot read is an error, not a new password.

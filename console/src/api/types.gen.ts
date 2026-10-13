@@ -558,6 +558,7 @@ export interface Slot {
   format?: string;
   resolution?: Resolution;
   aliases?: (string[] | null);
+  scheme?: string;
 }
 
 export interface RuntimeRef {
