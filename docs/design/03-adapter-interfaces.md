@@ -1044,7 +1044,8 @@ wrong (issue #55). So do the languages Railpack has no provider for, or plans as
 (`languages.go`, issue #90): Crystal (`shards build`, run on the Crystal image), R (a `plumber.R` API
 or a Shiny app, on `rocker/r-ver` with the packages its R files load), Clojure (`lein uberjar`, or a
 deps.edn alias or namespace with `-main`), Scala (`sbt stage` with sbt-native-packager, which Play
-always has; the assembly jar; or the classpath sbt exports), Haskell (`stack build`, its one
+always has; the assembly jar; or the classpath sbt exports — with Scaladoc turned off, and git and
+Node in the build image for sbt-git and sbt-web), Haskell (`stack build`, its one
 executable run on Debian slim), Perl (`cpanm --installdeps`, then the Procfile, a PSGI app under
 `plackup`, or a Mojolicious script), a Python package with only a `setup.py` (its one console
 script, given `--host` and `--port` when it takes them), and PHP with no `composer.json` whose
@@ -1072,8 +1073,14 @@ The benchmark in issue #90 added more of the same, each a category the planners 
   which detection shows as blocked, rather than building empty pages.
 - **Node toolchain.** `[P]` Node sites build on `node:<major>-slim`, not Alpine: Gatsby and other
   native modules need glibc. pnpm is installed at the version `packageManager` names, else the major
-  the lockfile's format implies (5.3→6, 5.4→7, 6.0→8, 9.0→9), never corepack's newest; pnpm 10 and
-  later are told to run dependency build scripts, as npm and earlier pnpm do. A Bun lockfile is
+  the lockfile's format implies (5.3→6, 5.4→7, 6.0→8, 9.0→9), never corepack's newest. A 9.0
+  lockfile beside a `pnpm-workspace.yaml` with no `packages` list gets pnpm 10: such a file holds
+  only settings, which pnpm 10 reads and pnpm 9 refuses. pnpm 10 and later are told to run
+  dependency build scripts, as npm and earlier pnpm do, unless the project already says which run
+  (`onlyBuiltDependencies`, `neverBuiltDependencies` or `allowBuilds`, in the workspace file,
+  `package.json` or `.npmrc`): pnpm refuses the flag beside a list of its own. A Node server that
+  depends on a native addon that compiles at install (`better-sqlite3`, `sqlite3`, `bcrypt`,
+  `argon2`) gets Python, make and g++ in its image. A Bun lockfile is
   installed with Bun. An `engines.node` range gets 22 when it allows it, else the newest line it
   allows; the same choice is passed to Railpack as `RAILPACK_NODE_VERSION`, because mise installed
   the oldest release of an open range.
@@ -1081,6 +1088,8 @@ The benchmark in issue #90 added more of the same, each a category the planners 
   detection reads the repository as Java. One beside `deno.json` is left to Railpack's Deno support.
   A Meteor app (`.meteor/release`) is built with its release's `meteor build` into the server bundle
   and run on that release's Node; detection asks for `MONGO_URL` as a required value (R-132).
+  `[P]` It builds and runs on `node:22-trixie-slim`: Meteor 3's uWebSockets.js binary needs glibc
+  2.38, which bookworm's `node:22-slim` does not have.
 
 **[P] A repository's `.dockerignore` does not apply to a Dockerfile Pando writes.** A repository's
 own ignore file is written for its own Dockerfile, which often copies an artifact built on the

@@ -165,6 +165,7 @@ type packageJSON struct {
 	Engines         map[string]any    `json:"engines"`
 	PackageManager  string            `json:"packageManager"`
 	Workspaces      json.RawMessage   `json:"workspaces"`
+	Pnpm            map[string]any    `json:"pnpm"`
 }
 
 func readPackageJSON(contextDir string) (packageJSON, bool) {

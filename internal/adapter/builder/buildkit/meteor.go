@@ -54,7 +54,11 @@ func readMeteorApp(contextDir string) (meteorApp, bool) {
 // meteorRuntimeImage is the image the bundle runs on. Its node is replaced
 // with the one the Meteor release builds with, so the bundle's native modules
 // and the runtime agree; the image supplies the libraries that node links.
-const meteorRuntimeImage = "node:22-slim"
+//
+// [P] Debian trixie, glibc 2.41: Meteor 3's uWebSockets.js binary needs glibc
+// 2.38, and on bookworm's 2.36 the server exited at start with "version
+// `GLIBC_2.38' not found" (issue #90). The bundle is built on the same Debian.
+const meteorRuntimeImage = "node:22-trixie-slim"
 
 // writeMeteorPlan builds the server bundle with the app's Meteor release and
 // runs it on that release's Node.
@@ -74,7 +78,7 @@ func writeMeteorPlan(contextDir string, app meteorApp) (string, error) {
 		return "", err
 	}
 	content := fmt.Sprintf(`# A Meteor %[1]s app, built into a Node bundle with Meteor.
-FROM node:22-slim AS build
+FROM %[3]s AS build
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates python3 g++ make git && \
     rm -rf /var/lib/apt/lists/*
 ENV METEOR_ALLOW_SUPERUSER=1 METEOR_DISABLE_OPTIMISTIC_CACHING=1

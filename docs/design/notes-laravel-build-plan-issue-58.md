@@ -42,6 +42,12 @@ in the runtime image, and the install stage sets `platform.php` to that exact ve
 fails the install with Composer's own message, which names the version required and the version
 installed.
 
+A locked install is the exception (issue #90). It resolves nothing, and Composer 2.10 checks the
+lock against the PHP it runs on itself whatever `platform.php` says, so a lock capping PHP at 8.4
+failed on the Composer image's 8.5 though the app runs on 8.4. With a `composer.lock` the install
+also passes `--ignore-platform-req=php`, and the PHP version is judged by the runtime stage's
+platform check below, against the PHP the app does run on.
+
 Extensions are the one thing ignored at install (`--ignore-platform-req='ext-*'`), because the
 Composer image's extensions are not the app's. They are checked where they are installed: the
 runtime stage runs `composer check-platform-reqs --no-dev`, and on failure prints what that means —
@@ -70,11 +76,13 @@ The autoloader is dumped in the runtime stage, with `--optimize`, so `post-autol
 
 ## Assets
 
-When `package.json` has a `build` script (Laravel 11 and later ship Vite), the assets are built on
-`node:<major>-slim` with the same Node version and install command as a Node app's plan, and
-`public/build` is copied into the image. The vendor directory is copied into that stage first:
-Tailwind scans the framework's views, and the starter kits import Livewire and Flux styles out of
-`vendor/`.
+When `package.json` has a `build` script (Laravel 11 and later ship Vite), the assets are built in
+a stage on top of the app itself, after its extensions, vendor directory and autoloader, with Node
+copied in from `node:<major>-slim` (the same Node version and install command as a Node app's
+plan), and `public/build` is copied into the image. Vite plugins run artisan: the starter kits'
+Wayfinder plugin runs `php artisan wayfinder:generate`, which failed with `php: not found` when the
+assets were built on the Node image (issue #90). Tailwind scans the framework's views, and the
+starter kits import Livewire and Flux styles out of `vendor/`.
 
 ## Serving `[P]`
 

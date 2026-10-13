@@ -289,6 +289,52 @@ func TestR095_PnpmIsTheVersionTheProjectUses(t *testing.T) {
 			files: map[string]string{"package.json": `{"packageManager":"pnpm@10.33.0"}`, "pnpm-lock.yaml": "lockfileVersion: '9.0'\n"},
 			want:  "npm install -g pnpm@10.33.0 && pnpm install --frozen-lockfile --config.dangerously-allow-all-builds=true",
 		},
+		// pnpm 9 refuses a workspace file with no packages list; pnpm 10
+		// reads its settings (issue #90: AdonisJS and Solid starters).
+		"a settings-only workspace file": {
+			files: map[string]string{
+				"package.json": `{}`, "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+				"pnpm-workspace.yaml": "minimumReleaseAgeExclude:\n  - solid-js\n",
+			},
+			want: "npm install -g pnpm@10 && pnpm install --frozen-lockfile --config.dangerously-allow-all-builds=true",
+		},
+		"a workspace file that lists packages": {
+			files: map[string]string{
+				"package.json": `{}`, "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+				"pnpm-workspace.yaml": "packages:\n  - apps/*\n",
+			},
+			want: "npm install -g pnpm@9 && pnpm install --frozen-lockfile",
+		},
+		"a settings-only workspace file beside an older lockfile": {
+			files: map[string]string{
+				"package.json": `{}`, "pnpm-lock.yaml": "lockfileVersion: '6.0'\n",
+				"pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - esbuild\n",
+			},
+			want: "npm install -g pnpm@8 && pnpm install --frozen-lockfile",
+		},
+		// pnpm refuses dangerously-allow-all-builds beside a project's own
+		// list of approved builds (issue #90).
+		"approved builds in the workspace file": {
+			files: map[string]string{
+				"package.json": `{"packageManager":"pnpm@10.20.0"}`, "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+				"pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - esbuild\n",
+			},
+			want: "npm install -g pnpm@10.20.0 && pnpm install --frozen-lockfile",
+		},
+		"approved builds in package.json": {
+			files: map[string]string{
+				"package.json":   `{"packageManager":"pnpm@10.33.0","pnpm":{"onlyBuiltDependencies":["esbuild"]}}`,
+				"pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+			},
+			want: "npm install -g pnpm@10.33.0 && pnpm install --frozen-lockfile",
+		},
+		"approved builds in .npmrc": {
+			files: map[string]string{
+				"package.json": `{"packageManager":"pnpm@10.33.0"}`, "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+				".npmrc": "only-built-dependencies[]=esbuild\n",
+			},
+			want: "npm install -g pnpm@10.33.0 && pnpm install --frozen-lockfile",
+		},
 		"a lockfile that says nothing": {
 			files: map[string]string{"package.json": `{}`, "pnpm-lock.yaml": ""},
 			want:  "npm install -g pnpm@9 && pnpm install --frozen-lockfile",
@@ -472,6 +518,10 @@ func TestR095_AMeteorAppIsBuiltIntoABundle(t *testing.T) {
 		"settings.json":     `{"public":{}}`,
 	})
 	for _, want := range []string{
+		// Meteor 3's uWebSockets.js needs glibc 2.38; bookworm has 2.36
+		// (issue #90).
+		"FROM node:22-trixie-slim AS build\n",
+		"\nFROM node:22-trixie-slim\n",
 		`curl -fsSL "https://install.meteor.com/?release=3.5.2" | sh`,
 		"RUN meteor npm ci",
 		"RUN meteor build --server-only --directory /out",

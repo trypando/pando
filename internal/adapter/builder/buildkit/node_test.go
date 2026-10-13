@@ -73,6 +73,31 @@ func TestANodeServerPlanBuildsThenStartsThroughAShell(t *testing.T) {
 	require.Contains(t, string(body), `CMD ["npm start"]`)
 }
 
+// TestR095_ANodeServerWithANativeAddonGetsACompiler asserts R-095.
+//
+// better-sqlite3 13 compiles at every install; the AdonisJS starter kits
+// stopped at "gyp ERR! find Python" on the slim image (issue #90).
+func TestR095_ANodeServerWithANativeAddonGetsACompiler(t *testing.T) {
+	server, ok := readNodeServer(writeTree(t, map[string]string{
+		"package.json":   `{"scripts":{"start":"node server.js"},"dependencies":{"better-sqlite3":"^13.0.3"}}`,
+		"pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+	}), "")
+	require.True(t, ok)
+	require.True(t, server.Native)
+	root := t.TempDir()
+	name, err := writeNodeServerPlan(root, server)
+	require.NoError(t, err)
+	body, err := os.ReadFile(filepath.Join(root, name))
+	require.NoError(t, err)
+	require.Contains(t, string(body), "FROM node:22-slim\nRUN apt-get update && apt-get install -y --no-install-recommends python3 make g++")
+
+	plain, ok := readNodeServer(writeTree(t, map[string]string{
+		"package.json": `{"scripts":{"start":"node server.js"},"dependencies":{"express":"^5"}}`,
+	}), "")
+	require.True(t, ok)
+	require.False(t, plain.Native, "no compiler unless a dependency needs one")
+}
+
 // TestR095_ANodeServerWhoseScriptsCallPnpmGetsPnpm asserts R-095.
 //
 // The Node image has npm and not pnpm. A start script that ran `pnpx srvx`
