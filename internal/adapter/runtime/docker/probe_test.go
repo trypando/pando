@@ -40,15 +40,17 @@ func TestR097_ATLSPortIsNotAnHTTPAnswer(t *testing.T) {
 func TestR097_TheProbeReadsTheReplyOnOneLine(t *testing.T) {
 	script := probeScript([]int{80, 443})
 	require.Contains(t, script, "for p in 80 443;")
-	require.Contains(t, script, `head -c 1024 | tr '\r\n' '  '`)
+	require.Contains(t, script, `head -c 1023; } | tr '\r\n' '  '`)
 }
 
 // TestR097_TheProbeKeepsItsSideOpenForTheReply asserts R-097: the request is
 // not followed at once by the end of its input, which nc turns into a
 // half-close that hyper, uvicorn and Tornado answer by dropping the request
-// (issue #90).
+// (issue #90). The hold lasts until the reply starts, and no longer.
 func TestR097_TheProbeKeepsItsSideOpenForTheReply(t *testing.T) {
-	require.Contains(t, probeScript([]int{8000}), `\r\n\r\n'; sleep 3) | nc -w 3`)
+	script := probeScript([]int{8000})
+	require.Contains(t, script, `while [ $i -lt 30 ] && [ ! -e /tmp/.answered$p ]; do sleep 0.1;`)
+	require.Contains(t, script, `{ dd bs=1 count=1 2>/dev/null && touch /tmp/.answered$p && head -c 1023; }`)
 }
 
 // TestR097_TheWatchWaitsForTheWebPort asserts R-097: the trial watches until

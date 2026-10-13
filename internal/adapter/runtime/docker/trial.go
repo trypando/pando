@@ -473,28 +473,35 @@ func (a *Adapter) probeHTTP(ctx context.Context, targetID string, ports []int) (
 // Enough of the reply to read past the headers into the body, where a TLS
 // port says it was spoken to in plain HTTP (see tlsComplaint).
 //
-// The request's side of the connection stays open for probeHold after it is
-// sent, as a browser's does. nc shuts its sending side the moment its input
-// ends, and a server that reads that as the client leaving — hyper, uvicorn,
-// Tornado, httpuv — drops the request unanswered: dufs, FastAPI, NiceGUI,
-// Reflex, Streamlit and Shiny apps were all refused as answering no web
-// request (issue #90). A server that answers sooner ends the wait, since an
-// HTTP/1.0 reply closes the connection.
+// The request's side of the connection stays open, as a browser's does, until
+// the reply's first byte arrives or probeHoldTicks have passed. nc shuts its
+// sending side the moment its input ends, and a server that reads that as the
+// client leaving — hyper, uvicorn, Tornado, httpuv — drops the request
+// unanswered: dufs, FastAPI, NiceGUI, Reflex, Streamlit and Shiny apps were all
+// refused as answering no web request (issue #90).
+//
+// The hold ends at the reply rather than at nc's exit, because a server that
+// waits for the client to close before closing itself — busybox httpd is one —
+// would otherwise keep every answered probe open for the whole hold. dd reads
+// exactly the first byte (head would read ahead and drop the rest), a marker
+// file per port tells the hold it came, and the rest of the reply follows.
 func probeScript(ports []int) string {
 	listed := make([]string, 0, len(ports))
 	for _, p := range ports {
 		listed = append(listed, strconv.Itoa(p))
 	}
 	return "for p in " + strings.Join(listed, " ") + "; do " +
-		`( r=$( (printf 'GET / HTTP/1.0\r\nHost: localhost\r\nUser-Agent: pando-trial\r\n\r\n'; sleep ` +
-		strconv.Itoa(probeHold) + `) | ` +
-		`nc -w 3 127.0.0.1 "$p" 2>/dev/null | head -c 1024 | tr '\r\n' '  '); echo "$p $r" ) & ` +
+		`( r=$( (printf 'GET / HTTP/1.0\r\nHost: localhost\r\nUser-Agent: pando-trial\r\n\r\n'; ` +
+		`i=0; while [ $i -lt ` + strconv.Itoa(probeHoldTicks) + ` ] && [ ! -e /tmp/.answered$p ]; do sleep 0.1; i=$((i+1)); done) | ` +
+		`nc -w 3 127.0.0.1 "$p" 2>/dev/null | ` +
+		`{ dd bs=1 count=1 2>/dev/null && touch /tmp/.answered$p && head -c 1023; } | tr '\r\n' '  '); echo "$p $r" ) & ` +
 		"done; wait"
 }
 
-// probeHold is how many seconds the probe keeps its side of the connection open
-// after the request, waiting for the reply (probeScript).
-const probeHold = 3
+// probeHoldTicks is how long, in tenths of a second, the probe keeps its side of
+// the connection open after the request while no reply has started
+// (probeScript).
+const probeHoldTicks = 30
 
 // httpStatusLine matches what probeScript prints for a port that answered:
 // the port, then the start of an HTTP status line.
