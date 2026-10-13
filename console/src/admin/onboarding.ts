@@ -154,6 +154,8 @@ interface RowSlot {
   service: boolean;
   /** Pando creates it at the first deploy, and fills the variable then. */
   provisioned: boolean;
+  /** The shape the value must take (spec.SecretFormat), for Generate. */
+  format?: string;
 }
 
 /**
@@ -195,6 +197,7 @@ export function variableRows(spec: AppSpec | undefined, address?: string): Varia
             required: Boolean(slot?.required),
             service,
             provisioned: slot?.resolution?.mode === 'provisioned',
+            format: slot?.format,
           };
           // A default, not a lock: a service's address carries its password,
           // so it starts secret; anything else starts secret when its name
@@ -259,12 +262,34 @@ function valueFromAddress(key: string, address: string | undefined): string | un
  * cryptographic generator, as URL-safe base64 with no padding — 43 characters
  * that survive a shell, a URL and a .env file unquoted.
  */
-export function randomSecret(bytes = 32): string {
+function randomSecret(bytes = 32): string {
+  return btoa(randomBinary(bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function randomBinary(bytes: number): string {
   const raw = new Uint8Array(bytes);
   crypto.getRandomValues(raw);
   let binary = '';
   for (const b of raw) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return binary;
+}
+
+/**
+ * A random value in the shape the app checks (spec.SecretFormat): a Laravel
+ * APP_KEY is "base64:" and 32 bytes, and anything else is refused with
+ * "Unsupported cipher or incorrect key length"; Rails' and Phoenix's
+ * SECRET_KEY_BASE and Django's SECRET_KEY want a longer one than the default.
+ */
+export function generateFor(format?: string): string {
+  switch (format) {
+    case 'laravel_key':
+      return `base64:${btoa(randomBinary(32))}`;
+    case 'random_long':
+    case 'django_key':
+      return randomSecret(64);
+    default:
+      return randomSecret();
+  }
 }
 
 /**

@@ -555,6 +555,7 @@ export interface Slot {
   type: string;
   required: boolean;
   evidence?: (string[] | null);
+  format?: string;
   resolution?: Resolution;
   aliases?: (string[] | null);
 }

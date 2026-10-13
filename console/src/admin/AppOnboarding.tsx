@@ -96,7 +96,7 @@ import {
   mergeRows,
   neededValues,
   absoluteAddress,
-  randomSecret,
+  generateFor,
   primaryWorkload,
   rowProblems,
   suggestions,
@@ -1780,7 +1780,7 @@ function Variables({
                       <GenerateValue
                         justDone={justGenerated === row.id}
                         onGenerate={() => {
-                          const value = randomSecret();
+                          const value = generateFor(slot?.format);
                           setGenerated((all) => ({ ...all, [row.id]: value }));
                           setFlash((all) => ({ ...all, [row.id]: (all[row.id] ?? 0) + 1 }));
                           setJustGenerated(row.id);

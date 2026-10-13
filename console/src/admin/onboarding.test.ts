@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Amendment, AppSpec, Outcome } from '@api/types.gen';
 import {
   envKey,
+  generateFor,
   mergeRows,
   neededValues,
   primaryWorkload,
@@ -113,6 +114,25 @@ describe('variableRows', () => {
       secret: true,
       slot: { key: 'DATABASE_URL', type: 'postgres', required: true, service: true, provisioned: true },
     });
+  });
+});
+
+describe('generateFor', () => {
+  it('makes a value in the shape the app checks (R-130)', () => {
+    const laravel = generateFor('laravel_key');
+    expect(laravel.startsWith('base64:')).toBe(true);
+    expect(atob(laravel.slice('base64:'.length))).toHaveLength(32);
+    expect(generateFor('random_long').length).toBeGreaterThanOrEqual(64);
+    expect(generateFor('django_key').length).toBeGreaterThanOrEqual(50);
+    expect(generateFor()).toHaveLength(43);
+  });
+
+  it('carries the slot format onto the row', () => {
+    const rows = variableRows({
+      workloads: [{ name: 'web', primary: true, env: [{ key: 'APP_KEY', slot_ref: 'APP_KEY' }] }],
+      slots: [{ key: 'APP_KEY', type: 'unknown', required: true, format: 'laravel_key' }],
+    } as AppSpec);
+    expect(rows[0]?.slot?.format).toBe('laravel_key');
   });
 });
 

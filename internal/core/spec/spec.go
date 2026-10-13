@@ -450,6 +450,12 @@ type Slot struct {
 	Required bool     `json:"required"`
 	Evidence []string `json:"evidence,omitempty"`
 
+	// Format is the shape the value must take, for a value the app checks:
+	// a Laravel APP_KEY, a Rails SECRET_KEY_BASE. What "generate a value"
+	// produces and what a literal is checked against (SecretFormat). Empty
+	// for a slot whose value Pando knows nothing about.
+	Format SecretFormat `json:"format,omitempty"`
+
 	// Resolution nil means unfilled. A required unfilled slot blocks deploy
 	// (R-132) at plan time, not at deploy time.
 	Resolution *Resolution `json:"resolution,omitempty"`

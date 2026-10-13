@@ -228,9 +228,9 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 	if len(published) > 0 {
 		compose, ok := composeAnswer(result)
 		if !ok {
-			return j.checkRegistry(ctx, appID, src, published), nil
+			return j.checkRegistry(ctx, appID, src, published, view), nil
 		}
-		result = withComposeOverImage(result, compose, registryCandidate(published))
+		result = withComposeOverImage(result, compose, registryCandidate(published, view))
 	}
 
 	proposal := Proposal{
@@ -463,7 +463,7 @@ func imageRepository(ref string) string {
 }
 
 // registryCandidate is R-094 tier 1's reading: run the image as published.
-func registryCandidate(images []PublishedImage) Candidate {
+func registryCandidate(images []PublishedImage, view api.SourceView) Candidate {
 	best := images[0]
 	draft := Draft{
 		Build: spec.Build{Strategy: spec.BuildPrebuilt},
@@ -482,8 +482,17 @@ func registryCandidate(images []PublishedImage) Candidate {
 				"image was built from the commit you are deploying — only that it is published under " +
 				"the same owner and name.",
 		},
-		Draft: draft,
 	}
+
+	// The image is the repository built, so what the repository says the app
+	// needs, the image needs: a Rails app published by its maintainer still
+	// signs with SECRET_KEY_BASE, and nobody had been asked for it (R-132).
+	if view != nil {
+		var evidence []string
+		draft, evidence = withSourceRequirements(view, draft, ".", "")
+		candidate.Evidence = append(candidate.Evidence, evidence...)
+	}
+	candidate.Draft = draft
 
 	// The port is still unknown, and still the trial run's to answer.
 	candidate.Questions = []Question{{
@@ -506,8 +515,8 @@ func registryCandidate(images []PublishedImage) Candidate {
 // It short-circuits everything the auction found below it, and the build: there
 // is nothing to build of something that is already built, and
 // spec.BuildPrebuilt is exactly that case. The trial run still answers the port.
-func (j *Job) checkRegistry(ctx context.Context, appID string, src spec.Source, images []PublishedImage) Proposal {
-	return j.prebuilt(ctx, appID, src, registryCandidate(images))
+func (j *Job) checkRegistry(ctx context.Context, appID string, src spec.Source, images []PublishedImage, view api.SourceView) Proposal {
+	return j.prebuilt(ctx, appID, src, registryCandidate(images, view))
 }
 
 // runImage proposes running an app's published image as it is.
@@ -632,9 +641,16 @@ func (j *Job) trialWith(ctx context.Context, draft Draft, auth *api.RegistryAuth
 
 	env := map[string]secret.Value{}
 	for _, e := range primary.Env {
-		if e.Value != nil {
-			env[e.Key] = secret.New(*e.Value)
+		// A name read out of .env.example and left empty is unset, as it is
+		// at deploy (deploy.resolveEnv). Set empty, it overrode the image's
+		// own ENV and the app's defaults: Strapi read HOST="" and PORT="" and
+		// stopped on "http://:NaN/admin", AdonisJS reported NODE_ENV missing
+		// though its Dockerfile sets it — and the trial's log, which is what
+		// finds what an app is missing, described a failure no deploy has.
+		if e.Value == nil || (*e.Value == "" && (e.Source == spec.EnvFromDetection || e.Source == "")) {
+			continue
 		}
+		env[e.Key] = secret.New(*e.Value)
 	}
 
 	result, err := j.Runtime.Trial(ctx, api.TrialRequest{

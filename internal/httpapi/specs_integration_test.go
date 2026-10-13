@@ -413,6 +413,38 @@ func TestR132_FillingTwoSlotsKeepsBoth(t *testing.T) {
 	}
 }
 
+// TestR130_ALaravelKeyThatIsNotOneIsRefused asserts R-130 and R-105. A slot
+// typed as a Laravel APP_KEY refuses a value Laravel would refuse, before it
+// is stored, and the refusal says what a valid one is — rather than a
+// placeholder that deploys and fails every page.
+func TestR130_ALaravelKeyThatIsNotOneIsRefused(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+	id := i.createApp(admin, "notes")
+
+	withSlot := minimalSpec()
+	withSlot["slots"] = []map[string]any{
+		{"key": "APP_KEY", "type": "unknown", "required": true, "format": "laravel_key"},
+	}
+	withSlot["workloads"].([]map[string]any)[0]["env"] = []map[string]any{
+		{"key": "APP_KEY", "slot_ref": "APP_KEY"},
+	}
+	i.pinSpec(admin, id, i.writeSpec(admin, id, withSlot))
+
+	got := i.do(admin, http.MethodPut, "/apps/"+id+"/slots/APP_KEY", map[string]any{
+		"mode": "literal", "value": "qa-placeholder",
+	})
+	require.Equal(t, http.StatusBadRequest, got.Code, got.String())
+	require.Equal(t, string(errs.ValidInvalid), got.ErrorCode())
+	require.Contains(t, got.String(), "base64:")
+
+	got = i.do(admin, http.MethodPut, "/apps/"+id+"/slots/APP_KEY", map[string]any{
+		"mode": "literal", "value": "base64:" + "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s=",
+	})
+	require.Less(t, got.Code, 300, got.String())
+}
+
 func TestSettingASlotThatTheSpecDoesNotDeclare(t *testing.T) {
 	t.Parallel()
 	i := newInstall(t)

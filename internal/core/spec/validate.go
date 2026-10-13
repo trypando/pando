@@ -361,6 +361,12 @@ func validateSlots(s *AppSpec, add func(*errs.Error)) {
 		}
 		seen[sl.Key] = struct{}{}
 
+		if !sl.Format.Known() {
+			add(errs.Newf(errs.ValidInvalid,
+				"Slot %s has an unrecognized value format %q.", sl.Key, sl.Format).
+				WithRemedy("Use one of: random, random_long, django_key, laravel_key — or leave the format out."))
+		}
+
 		if sl.Resolution == nil {
 			continue
 		}
@@ -372,6 +378,12 @@ func validateSlots(s *AppSpec, add func(*errs.Error)) {
 				add(errs.Newf(errs.ValidInvalid,
 					"Slot %s is set to connect to something existing, but no address was given.", sl.Key).
 					WithRemedy("Provide the address to connect to, or choose a different way to fill the slot."))
+			}
+			// A value kept readable in the spec is checked here; a literal
+			// is a secret the spec never holds, and is checked when it is
+			// set (CheckSlotValue).
+			if err := sl.Format.Check(sl.Key, sl.Resolution.Target); err != nil && sl.Resolution.Target != "" {
+				add(errs.As(err))
 			}
 		case ResolutionLiteral:
 			if sl.Resolution.SecretRef == "" {

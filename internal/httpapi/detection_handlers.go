@@ -504,6 +504,13 @@ func (s *Server) handleAcceptDetection(w http.ResponseWriter, r *http.Request) {
 		// secret, so the slot is filled and the deploy is not refused for it
 		// (R-132, spec.FillSlotLiteral).
 		if slot, ok := spec.EnvSlot(&draft, v.Workload, v.Key); ok {
+			// A key the app checks is checked here, before it is stored: a
+			// placeholder for a Laravel APP_KEY otherwise deploys, and every
+			// page fails (spec.SecretFormat).
+			if err := spec.CheckSlotValue(&draft, slot, v.Value); err != nil {
+				Error(w, r, err)
+				return
+			}
 			if !v.Secret {
 				spec.FillSlotValue(&draft, slot, v.Value)
 				continue

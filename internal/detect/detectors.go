@@ -257,6 +257,9 @@ func (d DockerfileDetector) bidForRoot(src api.SourceView, name string) (Candida
 
 	c.Draft.Workloads = []spec.Workload{workload}
 	c.Draft.Slots, c.Draft.Workloads[0].Env = readEnvExample(src)
+	var requiredVars []string
+	c.Draft, requiredVars = withSourceRequirements(src, c.Draft, ".", name)
+	c.Evidence = append(c.Evidence, requiredVars...)
 	return c, nil
 }
 
@@ -305,7 +308,7 @@ func (d ComposeDetector) Bid(_ context.Context, src api.SourceView) (Candidate, 
 		// candidate instead, and the auction surfaces it as StatusBlocked.
 		return c, nil
 	}
-	c.Draft = draft
+	c.Draft = composeRequirements(src, draft)
 
 	// A compose file of nothing but databases is not the app. It is what the
 	// app needs while somebody works on it — Spring Petclinic's runs a MySQL
@@ -899,14 +902,10 @@ func (d BuildpackDetector) bidFor(ctx context.Context, src api.SourceView, signa
 	c.Draft.Slots, c.Draft.Workloads[0].Env = readEnvExample(src)
 	if isRailsApp(src) {
 		c.Draft = asRailsProduction(c.Draft)
-		c.Evidence = append(c.Evidence,
-			"a Rails app, run in production: SECRET_KEY_BASE is needed before it can start")
 	}
-	if isLaravelApp(src) {
-		c.Draft = withLaravelKey(c.Draft)
-		c.Evidence = append(c.Evidence,
-			"a Laravel app: APP_KEY is needed before it can serve a page")
-	}
+	var required []string
+	c.Draft, required = withSourceRequirements(src, c.Draft, ".", "")
+	c.Evidence = append(c.Evidence, required...)
 	if isMeteorApp(src) {
 		c.Draft = withMeteorMongo(c.Draft)
 		c.Evidence = append(c.Evidence,
@@ -982,41 +981,6 @@ const laravelKeyEvidence = "Laravel encrypts sessions and cookies with APP_KEY a
 	"which `php artisan key:generate --show` prints, as does `echo \"base64:$(openssl rand -base64 32)\"`. " +
 	"Keep it: changing it signs everyone out."
 
-// withLaravelKey asks for APP_KEY as a required value (R-132).
-//
-// It is the secret a Laravel app encrypts with, the person deploying owns it,
-// and Pando does not invent it — as with SECRET_KEY_BASE for Rails. Every
-// Laravel .env.example names it with no value, which on its own would become an
-// empty variable, unset at deploy, and the app would fail on its first page
-// with "No application encryption key has been specified". So an empty
-// declaration is replaced by the slot; a declared value stands.
-func withLaravelKey(d Draft) Draft {
-	const key = "APP_KEY"
-	for _, s := range d.Slots {
-		if s.Key == key {
-			return d
-		}
-	}
-	env := d.Workloads[0].Env[:0:0]
-	for _, e := range d.Workloads[0].Env {
-		if e.Key == key {
-			if e.Source != spec.EnvFromDetection || e.Value == nil || *e.Value != "" {
-				return d
-			}
-			continue
-		}
-		env = append(env, e)
-	}
-	ref := key
-	env = append(env, spec.EnvEntry{Key: key, SlotRef: &ref, Source: spec.EnvFromDetection})
-	d.Workloads[0].Env = env
-	d.Slots = append(d.Slots, spec.Slot{
-		Key: key, Type: spec.SlotUnknown, Required: true,
-		Evidence: []string{laravelKeyEvidence},
-	})
-	return d
-}
-
 // isRailsApp reports a Rails application rather than a gem that uses Rails.
 func isRailsApp(src api.SourceView) bool {
 	if info, err := src.Stat("config/application.rb"); err != nil || info.IsDir {
@@ -1033,7 +997,8 @@ func isRailsApp(src api.SourceView) bool {
 // so run as it was, the app was reachable by nothing outside its container
 // (issue #55). Production also needs SECRET_KEY_BASE, and that is a secret the
 // person deploying supplies, so it is asked for as a required value (R-132)
-// rather than invented.
+// rather than invented — by withSourceRequirements, which asks it of a Rails
+// app however it is built.
 func asRailsProduction(d Draft) Draft {
 	production := "production"
 	env := d.Workloads[0].Env
@@ -1045,14 +1010,6 @@ func asRailsProduction(d Draft) Draft {
 		if !set[key] {
 			env = append(env, spec.EnvEntry{Key: key, Value: &production, Source: spec.EnvFromDetection})
 		}
-	}
-	if !set["SECRET_KEY_BASE"] {
-		ref := "SECRET_KEY_BASE"
-		env = append(env, spec.EnvEntry{Key: "SECRET_KEY_BASE", SlotRef: &ref, Source: spec.EnvFromDetection})
-		d.Slots = append(d.Slots, spec.Slot{
-			Key: "SECRET_KEY_BASE", Type: spec.SlotUnknown, Required: true,
-			Evidence: []string{"a Rails app running in production signs its sessions with SECRET_KEY_BASE"},
-		})
 	}
 	d.Workloads[0].Env = env
 	return d
@@ -1382,6 +1339,14 @@ func namesAConnection(key string) bool {
 	upper := strings.ToUpper(key)
 	for _, suffix := range connectionSuffixes {
 		if upper == suffix || strings.HasSuffix(upper, "_"+suffix) {
+			return true
+		}
+	}
+	// A cache named by itself — PAPERLESS_REDIS — is its address: a Redis has
+	// nothing else a variable would be named after it for. A database is not
+	// read this way, because MYSQL_DATABASE is the name of one, not the place.
+	for _, service := range []string{"REDIS", "VALKEY"} {
+		if strings.HasSuffix(upper, "_"+service) {
 			return true
 		}
 	}

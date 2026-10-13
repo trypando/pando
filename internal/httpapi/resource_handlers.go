@@ -102,10 +102,18 @@ func (s *Server) handleSetSlot(w http.ResponseWriter, r *http.Request) {
 				Error(w, r, errs.New(errs.ValidInvalid, "Binding a dependency needs something to bind to."))
 				return
 			}
+			if err := updated.Slots[i].Format.Check(key, req.Target); err != nil {
+				Error(w, r, err)
+				return
+			}
 			updated.Slots[i].Resolution = &spec.Resolution{Mode: spec.ResolutionBound, Target: req.Target}
 		case string(spec.ResolutionLiteral):
 			if req.Value == "" {
 				Error(w, r, errs.New(errs.ValidInvalid, "A literal needs a value."))
+				return
+			}
+			if err := updated.Slots[i].Format.Check(key, req.Value); err != nil {
+				Error(w, r, err)
 				return
 			}
 			// The value is stored as a secret, not inline. That is what keeps

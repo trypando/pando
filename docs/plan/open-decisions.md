@@ -47,6 +47,17 @@ offering to connect to something that already exists. Untyped keys are variables
 on the app, and O-4 applies to what is left: of the keys that really are dependencies, which are
 required.
 
+*Note (issue #90 benchmark, owner decision):* O-4 is still open, and nothing below decides it. The
+fallback stands for `.env.example`, which on its own still makes nothing required. What changed is the
+list of things that *do* say a variable is required, each one a statement by the app or its framework
+rather than an inference by Pando: a framework convention (Rails, Laravel, Phoenix, Symfony, Strapi),
+an environment schema the app validates at boot (AdonisJS, envalid, t3-env/zod), a read with no
+fallback at import (`os.environ["X"]`, `System.fetch_env!`), a placeholder in a compose `env_file`
+template, and a trial run that failed and named the variable in its
+log. Each becomes a required slot, typed where its name or framework says what it holds. Design 01
+§2.5 lists them. The false-block rate is still the measurement O-4 waits on; across the issue #90
+corpus's trial logs, no app that deployed successfully gained a required variable from its log.
+
 **O-27** is what issue #60 left open once retention shipped. Two of its questions were answered
 with a `[P]` default so retention could land, and can be overridden: **three months is a floor as well
 as a default** (R-348) — held by the database function that removes a month, which is what makes "the

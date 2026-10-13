@@ -1519,7 +1519,9 @@ func (c *composeImport) fromEnvFiles(service string, s composeService) []spec.En
 		for _, kv := range declared {
 			empty := ""
 			entry := spec.EnvEntry{Key: kv.Key, Value: &empty, Source: spec.EnvFromDetection}
-			if strings.TrimSpace(kv.Value) == "" {
+			// A placeholder is no value either: `SESSION_SECRET=change-me`
+			// says the same thing `SESSION_SECRET=` does, louder.
+			if strings.TrimSpace(kv.Value) == "" || isPlaceholder(kv.Value) {
 				ref := kv.Key
 				entry = spec.EnvEntry{Key: kv.Key, SlotRef: &ref, Source: spec.EnvFromDetection}
 				c.requireValue(kv.Key, template, name)
@@ -1548,6 +1550,7 @@ func (c *composeImport) requireValue(key, template, envFile string) {
 		Key:      key,
 		Type:     spec.SlotUnknown,
 		Required: true,
+		Format:   formatFor(key, ""),
 		Evidence: []string{fmt.Sprintf("named with no value in %s, the template for %s, which the compose file requires", template, envFile)},
 	})
 }

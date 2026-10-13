@@ -110,6 +110,7 @@ func ApplyTrial(draft Draft, questions []Question, t Trial) (Draft, []Question) 
 	questions = loopbackQuestion(questions, t)
 
 	draft.Slots = promoteSlots(draft.Slots, t)
+	draft = requireFromTrial(draft, t)
 	draft.Warnings = append(draft.Warnings, persistenceWarnings(draft, t)...)
 
 	return draft, questions

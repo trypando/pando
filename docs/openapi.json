@@ -16148,6 +16148,9 @@
               "type": "string"
             }
           },
+          "format": {
+            "type": "string"
+          },
           "resolution": {
             "$ref": "#/components/schemas/Resolution"
           },

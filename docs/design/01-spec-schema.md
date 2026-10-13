@@ -273,6 +273,7 @@ type Slot struct {
     Type       SlotType    `json:"type"`        // postgres|mysql|redis|s3|smtp|unknown
     Required   bool        `json:"required"`    // O-4 — see below
     Evidence   []string    `json:"evidence"`    // why we think this is a slot
+    Format     SecretFormat `json:"format,omitempty"` // random|random_long|django_key|laravel_key
     Resolution *Resolution `json:"resolution"`  // nil = unfilled, blocks deploy (R-132)
     Aliases    []string    `json:"aliases,omitempty"` // a provisioned instance also answers to these: the compose service it replaced
 }
@@ -294,6 +295,17 @@ type Resolution struct {
 - has a plausible default in the sample (`LOG_LEVEL=info`) → optional
 
 **[P] Fallback that preserves R-103:** default `Required: false` for anything not typed to a known service, and let the trial run (R-097) settle it. A slot that isn't filled and whose absence crashes the trial run gets promoted to required with the crash log as evidence. This turns an unanswerable question into an observation, consistent with how port discovery works.
+
+**[D] What makes a variable required, besides the fallback** (owner decision, issue #90 benchmark). A variable becomes a required slot only when the app or its framework says, in as many words, that it cannot start without it. A `.env.example` on its own still does not (O-4). The sources, in `internal/detect/required.go`:
+- **Framework conventions.** Rails in production without `config/master.key`: `SECRET_KEY_BASE`. Laravel: `APP_KEY`. A Phoenix release whose `config/runtime.exs` raises without a variable, or reads it with `System.fetch_env!`. Symfony whose committed `.env` leaves `APP_SECRET` empty. Strapi's `APP_KEYS`, `API_TOKEN_SALT`, `ADMIN_JWT_SECRET`, `TRANSFER_TOKEN_SALT`, `JWT_SECRET`, when its config or template names them. These apply however the app is built: Railpack, its own Dockerfile, a compose service built from the repository, or the image its maintainer publishes (R-094 tier 1).
+- **Environment schemas validated at boot.** AdonisJS `start/env.ts` (`Env.schema.*` without `.optional`), envalid `cleanEnv` (no `default:`; `devDefault` does not count in production), t3-env / zod `createEnv` (no `.optional()`, `.default()` or `.catch()`).
+- **Reads with no fallback at import.** Python `os.environ["X"]` at module level of the entry module or the Django settings module `manage.py` names; reads under an `if`, a `try` or a `def` do not count.
+- **A placeholder in a compose `env_file` template** (`change-me`, `tobemodified`), which says what `KEY=` says.
+- **The trial run's log**, when the app exited or never opened a port: a line saying a named variable is missing, unset, required or must be set; a list under "Missing environment variables:"; a `docker run -e X=` instruction alongside a "must"; a zod issue; a `KeyError` from `os.environ`; the framework messages that name no variable (Rails' "Missing `secret_key_base`", Laravel's "No application encryption key has been specified", Django's `security.W009`). Of alternatives ("A or A_FILE", "either A or B"), only the first is asked for. A database or cache variable the log names beside a refused connection becomes a slot of that type — a log naming `DATABASE_URL` is a mention, so R-107 still holds for a log that names nothing.
+
+Where the requirement carries its own answer, nothing is asked: `PORT` is Pando's to set, `HOST` is `0.0.0.0` in a container, `NODE_ENV` is `production`, and a schema-required setting with a real sample in `.env.example` (not a placeholder, not a secret, not an address) takes it. A variable the Dockerfile already sets with `ENV` is not asked for.
+
+**[D] `Format`** is the shape a value must take when the app checks it, so the console's Generate produces one the app accepts and a literal that does not fit is refused with the reason (R-105) when it is set, by `PUT /slots/{key}` and by the review's accept. `laravel_key` is `base64:` and 32 bytes (or 32 raw characters); `random_long` at least 64 characters (Rails, Phoenix); `django_key` at least 50 characters, 5 distinct, no `django-insecure-` prefix; `random` any non-empty value, generated as 32 random bytes. Empty means Pando knows nothing about the shape. The slot's `Type` stays `unknown`: a key is a value, not a service to provision (R-131).
 
 ### 2.6 Routing, runtime, deploy
 

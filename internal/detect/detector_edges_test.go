@@ -44,7 +44,8 @@ func TestR021_AGoFileThatNamesNoPackageIsNotAProgram(t *testing.T) {
 // TestR132_ARailsAppKeepsTheValuesItAlreadyDeclares asserts R-132. A Rails app
 // whose .env.example already names RAILS_ENV and SECRET_KEY_BASE is not given a
 // second of either: what the repository declares stands, and Pando adds only
-// what is missing.
+// what is missing. SECRET_KEY_BASE named with no value is still missing, so the
+// one entry it has becomes the required slot that asks for it.
 func TestR132_ARailsAppKeepsTheValuesItAlreadyDeclares(t *testing.T) {
 	result, err := detect.NewAuction(detect.BuildpackDetector{}).Run(context.Background(), memSource{
 		"Gemfile": "gem 'rails'\n", "config/application.rb": "", "bin/rails": "",
@@ -63,9 +64,15 @@ func TestR132_ARailsAppKeepsTheValuesItAlreadyDeclares(t *testing.T) {
 	require.Equal(t, 1, count["RAILS_ENV"])
 	require.Equal(t, 1, count["SECRET_KEY_BASE"])
 	require.Equal(t, "production", values["RACK_ENV"], "the one it did not declare is added")
+	var asked int
 	for _, s := range result.Winner.Draft.Slots {
-		require.NotEqual(t, "SECRET_KEY_BASE", s.Key, "a declared variable is not asked for again")
+		if s.Key == "SECRET_KEY_BASE" {
+			asked++
+			require.True(t, s.Required)
+			require.Equal(t, spec.FormatRandomLong, s.Format)
+		}
 	}
+	require.Equal(t, 1, asked, "asked for once")
 }
 
 // A Dockerfile the checkout lists but cannot open still bids — it is at the
