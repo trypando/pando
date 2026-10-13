@@ -18,8 +18,17 @@ import (
 // the deploy then waited for a port that was never coming (issue #90). An app
 // that crashes is a different case — it is missing something, and its log is
 // the answer — so only a clean exit is refused.
+//
+// Nor is an app that stopped because a path was not mounted. Nginx Proxy
+// Manager checks for /etc/letsencrypt, prints "/etc/letsencrypt is not
+// mounted!" and exits 0, and it was refused as a command-line program — while
+// the same trial gave it the volume it asked for (mountsAskedFor, issue #90).
+// It stopped for want of something Pando now provides, which is the crash case.
 func exitedRefusal(t Trial) *errs.Error {
 	if !t.Ran || !t.Exited || len(t.ObservedPorts) > 0 || len(t.LoopbackPorts) > 0 {
+		return nil
+	}
+	if len(mountsAskedFor(t.Log)) > 0 {
 		return nil
 	}
 	return errs.New(errs.PlanCapabilityUnsupported,

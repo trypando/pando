@@ -343,6 +343,9 @@ func mentionedIn(lowercaseLog string, slot spec.Slot) (string, bool) {
 	if key := strings.ToLower(slot.Key); key != "" && strings.Contains(lowercaseLog, key) {
 		return slot.Key, true
 	}
+	if flag, found := flagFor(lowercaseLog, slot.Key); found {
+		return flag, true
+	}
 
 	// A Postgres driver's connection error usually names the database rather
 	// than the environment variable that was supposed to configure it.
@@ -352,6 +355,37 @@ func mentionedIn(lowercaseLog string, slot spec.Slot) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// flagFor finds the command-line flag a variable sets, named in a crash log.
+//
+// Go's flag libraries, Python's click and others read a flag from a variable
+// named for it under the app's prefix, and complain about the flag: remark42,
+// given REMARK_URL and SECRET by neither, stops on "the required flags
+// `--secret' and `--url' were not specified" (issue #90). So REMARK_URL is
+// named by `--remark-url` or `--url`, and nothing shorter than the last word of
+// the name counts.
+func flagFor(lowercaseLog, key string) (string, bool) {
+	words := strings.Split(strings.ToLower(key), "_")
+	for i := range words {
+		flag := "--" + strings.Join(words[i:], "-")
+		for at := 0; ; {
+			j := strings.Index(lowercaseLog[at:], flag)
+			if j < 0 {
+				break
+			}
+			end := at + j + len(flag)
+			if end == len(lowercaseLog) || !isFlagRune(lowercaseLog[end]) {
+				return flag, true
+			}
+			at = end
+		}
+	}
+	return "", false
+}
+
+func isFlagRune(b byte) bool {
+	return b == '-' || b == '_' || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
 }
 
 var serviceWords = map[spec.SlotType][]string{
