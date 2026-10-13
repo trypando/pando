@@ -104,6 +104,9 @@ func synthesize(req api.BuildRequest, contextDir string) (generated, error) {
 			if !isRailpackPlan(name) {
 				ensureRubyVersion(contextDir)
 			}
+			if err := writePlanIgnore(contextDir, name); err != nil {
+				return generated{}, err
+			}
 			return generated{
 				Dir:     filepath.Dir(filepath.Join(contextDir, name)),
 				Name:    filepath.Base(name),
@@ -112,6 +115,9 @@ func synthesize(req api.BuildRequest, contextDir string) (generated, error) {
 		}
 
 		name, err := buildpackPlan(req, contextDir)
+		if err == nil {
+			err = writePlanIgnore(contextDir, name)
+		}
 		if err != nil {
 			return generated{}, err
 		}
@@ -251,6 +257,9 @@ func declaredFor(req api.BuildRequest, contextDir string) declaredBuild {
 		declared.Start = railpackPHPStart
 	} else if _, ok := herokuPHPRoot(procfileWeb(contextDir)); ok && declared.Start == "" {
 		declared.Start = railpackPHPStart
+	}
+	if req.StartCommand == "" {
+		declared = withProcfileProgram(contextDir, declared)
 	}
 	if declared.Start == "" {
 		declared.Start = pythonAppStart(contextDir)
@@ -552,6 +561,10 @@ func (a *Adapter) Plan(_ context.Context, src api.SourceView) (api.BuildPlan, er
 	root := dir.Root()
 
 	name, err := buildpackPlan(api.BuildRequest{}, root)
+	if err == nil {
+		// Collected with the plan, so the spec carries it and the owner sees it.
+		err = writePlanIgnore(root, name)
+	}
 	if err != nil {
 		return api.BuildPlan{}, err
 	}
@@ -746,6 +759,12 @@ RUN printf %s > /etc/nginx/conf.d/default.conf
 	// builder running as a different user. Not a secret — a secret reaches a
 	// build as a build secret, never as a file in the context.
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(content), 0o644); err != nil { //nolint:gosec
+		_ = os.RemoveAll(dir)
+		return "", "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+	}
+	// The directory served is the one the spec names, whatever the
+	// repository's .dockerignore says (dockerignore.go).
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile.dockerignore"), []byte(planIgnore), 0o644); err != nil { //nolint:gosec
 		_ = os.RemoveAll(dir)
 		return "", "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
 	}

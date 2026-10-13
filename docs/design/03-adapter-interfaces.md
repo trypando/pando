@@ -1069,6 +1069,39 @@ The benchmark in issue #90 added more of the same, each a category the planners 
   A Meteor app (`.meteor/release`) is built with its release's `meteor build` into the server bundle
   and run on that release's Node; detection asks for `MONGO_URL` as a required value (R-132).
 
+**[P] A repository's `.dockerignore` does not apply to a Dockerfile Pando writes.** A repository's
+own ignore file is written for its own Dockerfile, which often copies an artifact built on the
+developer's machine: every Quarkus quickstart ignores `*` and lets only `target/` back in, and
+Pando's from-source build of one found no `pom.xml` (issue #90). Every Dockerfile Pando writes gets
+a `Dockerfile.dockerignore` beside it, which BuildKit reads in place of the context's, and which
+ignores nothing: the checkout is already exactly the source to build, and any exclusion Pando chose
+would be a guess about what a build needs (a Maven plugin that stamps the commit reads `.git`). The
+file is part of the plan the spec carries. A Railpack plan has its own exclude list, and a plan
+stored under `.nixpacks/` is replayed as it was built.
+
+**[P] A JVM build runs what it produces.** The build file says what that is (`jvm.go`): a WAR is
+deployed as Tomcat's root application (Tomcat 11, or Tomcat 9 for a build naming `javax.servlet`);
+a WAR whose `pom.xml` has the Open Liberty plugin is packaged with its server as a runnable jar by
+that plugin; a Gradle build with the `application` plugin (or Ktor's or Play's, which apply it)
+runs `installDist` and starts the script it installs; anything else runs the largest jar the build
+writes — or Quarkus's `quarkus-app/` — with `java -jar`, beside the `libs/` its manifest names. The
+app's working directory is a copy of the repository, so an app that reads `views/` or `conf/` at
+run time finds them, as it does when its README starts it from the project. A Gradle toolchain is
+built on exactly the release it names, because Gradle refuses any other; a source or target level is
+a minimum and rounds up to an LTS release.
+
+**[P] A .NET solution builds its one web project.** With no project at the top of the repository,
+projects up to two directories down are read, and the one with the `Microsoft.NET.Sdk.Web` SDK is
+published — a Blazor WebAssembly client, a class library or a test project is not it. Several web
+projects is a choice that is not Pando's, and none is picked.
+
+**[P] A Procfile is followed when it runs the program Pando builds.** A Heroku-style Procfile names
+a Go program by its `go install` name (`miniflux.app` for module `miniflux.app/v2`). Pando's Go
+plan installs the program under that name and runs the Procfile's command, flags included; for a
+Railpack build of a Go module, the build also compiles that program into `bin/`, which the start
+command runs. A Procfile whose program is committed in the repository runs it as it is; one naming
+a program the module does not have is not followed by Pando's plan.
+
 **[P] `buildpack` falls back to Railpack, invoked only to plan.** `railpack prepare` writes a JSON
 build plan and builds nothing (R-095). BuildKit builds the plan through Railpack's frontend image,
 which runs as a gateway frontend inside Pando's own rootless BuildKit — the same build service,

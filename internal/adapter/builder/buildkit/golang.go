@@ -2,6 +2,7 @@ package buildkit
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -9,6 +10,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/trypando/pando/internal/errs"
 )
 
 // Go programs are planned by Pando rather than by Railpack, when nothing in the
@@ -34,12 +37,67 @@ type goBuild struct {
 	// to the ones beside it. `go mod download` has no single module to read
 	// there, and `go build` fetches what it needs.
 	Workspace bool
+
+	// Program and Start are the Procfile's: the name it runs the compiled
+	// program by, and the command, when it runs the program this plan builds
+	// or a file committed in the repository. Empty runs the program as it is.
+	Program string
+	Start   string
 }
 
 var (
 	goDirective   = regexp.MustCompile(`(?m)^go\s+(\d+\.\d+)`)
 	goMainPackage = regexp.MustCompile(`(?m)^package\s+main\b`)
+	goModule      = regexp.MustCompile(`(?m)^module\s+"?([^\s"]+)"?`)
+	goMajorSuffix = regexp.MustCompile(`^v[0-9]+$`)
+	goProgramSafe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 )
+
+// goProgramName is the name `go build` and `go install` give the program in
+// pkg: the module path's last element for the module's root, less a major
+// version suffix (miniflux.app/v2 makes miniflux.app), and the directory's
+// name for any other. It is the name a Heroku-style Procfile runs the program
+// by, since that is what the Go buildpack installs it as.
+func goProgramName(mod, pkg string) string {
+	if pkg != "." {
+		return path.Base(pkg)
+	}
+	m := goModule.FindStringSubmatch(mod)
+	if m == nil {
+		return ""
+	}
+	parts := strings.Split(m[1], "/")
+	if len(parts) > 1 && goMajorSuffix.MatchString(parts[len(parts)-1]) {
+		parts = parts[:len(parts)-1]
+	}
+	return parts[len(parts)-1]
+}
+
+// procfileProgram reads the Procfile's command for a Go program named name.
+//
+// The Procfile is the author saying how the app starts, flags and all (R-094
+// tier 2), and a plan that ignored it started a program that listens on
+// 127.0.0.1 by default when the Procfile says `-addr 0.0.0.0:9090`, and was
+// refused as listening only on loopback (issue #90). Its program is the one
+// built here when it names it, bare or under ./ or bin/ where the Go buildpack
+// puts it; command is then the Procfile's with that program by name. A file
+// committed in the repository runs as it is. A program that is neither is
+// something this plan does not build, and ok is false.
+func procfileProgram(contextDir, name string) (command string, ok bool) {
+	fields := strings.Fields(readProcfileBuild(contextDir).Start)
+	if len(fields) == 0 || name == "" {
+		return "", false
+	}
+	program := path.Clean(fields[0])
+	switch {
+	case fileExists(contextDir, program) && !strings.HasPrefix(program, ".."):
+		return strings.Join(fields, " "), true
+	case program == name, program == "bin/"+name:
+		fields[0] = name
+		return strings.Join(fields, " "), true
+	}
+	return "", false
+}
 
 // readGoBuild reports a Go module with one main package Pando knows how to build.
 func readGoBuild(contextDir string) (goBuild, bool) {
@@ -60,14 +118,20 @@ func readGoBuild(contextDir string) (goBuild, bool) {
 		return goBuild{}, false
 	}
 
-	if dirHasMain(contextDir) {
-		return goBuild{Version: m[1], Package: "."}, true
+	b := goBuild{Version: m[1], Package: "."}
+	if !dirHasMain(contextDir) {
+		pkg, ok := onlyMainPackage(contextDir)
+		if !ok {
+			return goBuild{}, false
+		}
+		b.Package = pkg
 	}
-	pkg, ok := onlyMainPackage(contextDir)
-	if !ok {
-		return goBuild{}, false
+	if name := goProgramName(mod, b.Package); goProgramSafe.MatchString(name) {
+		if command, ok := procfileProgram(contextDir, name); ok {
+			b.Program, b.Start = name, command
+		}
 	}
-	return goBuild{Version: m[1], Package: pkg}, true
+	return b, true
 }
 
 // onlyMainPackage is the one main package below a module's root: in cmd/*, or
@@ -156,6 +220,57 @@ func readGoWorkBuild(contextDir string) (goBuild, bool) {
 	return goBuild{Version: m[1], Package: programs[0], Workspace: true}, true
 }
 
+// withProcfileProgram makes a Railpack build of a Go module produce the program
+// its Procfile runs.
+//
+// A Procfile written for Heroku names the program as the Go buildpack installs
+// it, by its `go install` name. Railpack reads the Procfile and runs that name,
+// and builds its program as ./out, or whatever a declared build writes:
+// miniflux's Procfile runs `miniflux.app`, its Makefile builds `miniflux`, and
+// the app exited 127 with "miniflux.app: command not found" (issue #90). So the
+// build also compiles the package the Procfile names, into bin/, and the start
+// command runs it from there. A Procfile whose program is committed in the
+// repository, or is not one of the module's programs, is left as it is.
+func withProcfileProgram(contextDir string, declared declaredBuild) declaredBuild {
+	mod := readFile(contextDir, "go.mod")
+	procfile := readProcfileBuild(contextDir)
+	fields := strings.Fields(procfile.Start)
+	if mod == "" || len(fields) == 0 || (declared.Start != "" && declared.Start != procfile.Start) {
+		return declared
+	}
+	if fileExists(contextDir, fields[0]) {
+		return declared
+	}
+	program := strings.TrimPrefix(path.Clean(fields[0]), "bin/")
+	if !goProgramSafe.MatchString(program) {
+		return declared
+	}
+	pkg := ""
+	for _, candidate := range []string{".", "./cmd/" + program, "./" + program} {
+		dir := filepath.Join(contextDir, filepath.FromSlash(candidate))
+		if goProgramName(mod, candidate) == program && dirHasMain(dir) {
+			pkg = candidate
+			break
+		}
+	}
+	if pkg == "" {
+		return declared
+	}
+
+	step := "go build -o bin/" + program + " " + pkg
+	switch {
+	case declared.Build != "":
+		declared.Build += " && " + step
+	case declared.Before != "":
+		declared.Build, declared.Before = declared.Before+" && "+step, ""
+	default:
+		declared.Build = step
+	}
+	fields[0] = "/app/bin/" + program
+	declared.Start = strings.Join(fields, " ")
+	return declared
+}
+
 func dirHasMain(dir string) bool {
 	files, _ := filepath.Glob(filepath.Join(dir, "*.go"))
 	for _, f := range files {
@@ -178,11 +293,29 @@ func dirHasMain(dir string) bool {
 
 // writeGoPlan compiles the main package on the Go release the module names and
 // runs it from the repository's files, as Railpack does, so an app that reads
-// its templates or static files from the working directory finds them.
+// its templates or static files from the working directory finds them. A
+// Procfile that runs the program is followed, with the program installed under
+// the name it uses.
 func writeGoPlan(contextDir string, b goBuild) (string, error) {
 	download := "RUN go mod download\n"
 	if b.Workspace {
 		download = ""
+	}
+	install, start := "", `"exec app"`
+	if b.Start != "" {
+		if !goProgramSafe.MatchString(b.Program) || !safeCommand(b.Start) {
+			return "", errs.Newf(errs.BuildFailed, "The Procfile's command %q is not one Pando can run as written.", b.Start)
+		}
+		install = fmt.Sprintf("COPY --from=build /out/app /usr/local/bin/%s\n", b.Program)
+		command := b.Start
+		if !strings.ContainsAny(command, ";&|") {
+			command = "exec " + command
+		}
+		quoted, err := json.Marshal(command)
+		if err != nil {
+			return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+		}
+		start = string(quoted)
 	}
 	content := fmt.Sprintf(`# A Go program, built with Go %[1]s.
 FROM golang:%[1]s AS build
@@ -195,8 +328,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 COPY . .
 COPY --from=build /out/app /usr/local/bin/app
-ENTRYPOINT ["/bin/sh", "-c"]
-CMD ["exec app"]
-`, b.Version, b.Package, programRuntimeImage, download)
+%[5]sENTRYPOINT ["/bin/sh", "-c"]
+CMD [%[6]s]
+`, b.Version, b.Package, programRuntimeImage, download, install, start)
 	return writePlan(contextDir, content)
 }
