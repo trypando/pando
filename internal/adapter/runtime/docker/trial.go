@@ -272,7 +272,7 @@ func (a *Adapter) pollPorts(ctx, deadline context.Context, id string, result *ap
 	result.HTTPAnswers = answersFor(routable, ports.answered)
 	result.HTTPProbedPorts = probedPorts(routable, ports)
 
-	return portsSettled(len(result.HTTPAnswers) > 0, now.Sub(ports.lastChange))
+	return portsSettled(routable, ports.answered, now.Sub(ports.lastChange))
 }
 
 // unansweredPorts returns the ports in routable that have not yet answered HTTP.
@@ -297,19 +297,58 @@ const (
 	// people open.
 	httpSettle = 5 * time.Second
 
-	// quietSettle is the same with nothing answering HTTP yet. Longer, because
-	// what the watch is waiting for is a web server that has not opened: Open
-	// Liberty binds an ephemeral port seconds before 9080 (issue #90).
-	quietSettle = 20 * time.Second
+	// pendingSettle is the same while a port outside the ephemeral range has
+	// not answered yet. Longer, because something is listening there
+	// and may be about to serve; bounded, because a database's or a broker's
+	// port never will.
+	pendingSettle = 45 * time.Second
 )
 
+// ephemeralPorts is where Linux's ephemeral range starts. A server rarely
+// listens there on purpose; a runtime does, for its own bookkeeping.
+const ephemeralPorts = 32768
+
 // portsSettled reports whether the observed ports have been unchanged long
-// enough that the watch can end.
-func portsSettled(answeredHTTP bool, quiet time.Duration) bool {
-	if answeredHTTP {
+// enough that the watch can end, given which of them have answered HTTP.
+//
+// A page on a port outside the ephemeral range is what the watch is for, and
+// ends it soon after. Anything less ends it only after pendingSettle while a
+// port outside that range is listening without having answered, and not at all
+// while every port is in it with none answering. Each of those is usually a web
+// server that has not finished starting: Grist's supervisor binds 8484 seconds
+// before the server behind it is ready, and the plugin server's ephemeral port
+// answered first; Kanboard's nginx answered on 443 before 80; Open Liberty
+// binds an ephemeral port tens of seconds before 9080 (issue #90). Ending early
+// routed each to the wrong port. The trial's own timeout bounds every wait.
+func portsSettled(routable []int, answered map[int]int, quiet time.Duration) bool {
+	var page, other, pending bool
+	for _, p := range routable {
+		status, ok := answered[p]
+		switch {
+		case ok && p < ephemeralPorts && servesAPage(status):
+			page = true
+		case ok:
+			other = true
+		case p < ephemeralPorts:
+			pending = true
+		}
+	}
+	switch {
+	case page:
+		return quiet >= httpSettle
+	case pending:
+		return quiet >= pendingSettle
+	case other:
 		return quiet >= httpSettle
 	}
-	return quiet >= quietSettle
+	// Every port is in the ephemeral range, and none has answered.
+	return false
+}
+
+// servesAPage is detect.ServesAPage, which an adapter may not import (R-027):
+// a status that means a person would see something.
+func servesAPage(status int) bool {
+	return (status >= 200 && status < 400) || status == 401 || status == 403
 }
 
 // probedPorts lists the ports still listening that a probe has reached, in
@@ -428,8 +467,11 @@ func (a *Adapter) probeHTTP(ctx context.Context, targetID string, ports []int) (
 }
 
 // probeScript is the shell probeHTTP runs: for each port, the first bytes of
-// the reply to GET /, printed after the port number. The ports are integers,
-// so nothing from the app reaches the script's text.
+// the reply to GET /, on one line after the port number. The ports are
+// integers, so nothing from the app reaches the script's text.
+//
+// Enough of the reply to read past the headers into the body, where a TLS
+// port says it was spoken to in plain HTTP (see tlsComplaint).
 func probeScript(ports []int) string {
 	listed := make([]string, 0, len(ports))
 	for _, p := range ports {
@@ -437,7 +479,7 @@ func probeScript(ports []int) string {
 	}
 	return "for p in " + strings.Join(listed, " ") + "; do " +
 		`( r=$(printf 'GET / HTTP/1.0\r\nHost: localhost\r\nUser-Agent: pando-trial\r\n\r\n' | ` +
-		`nc -w 3 127.0.0.1 "$p" 2>/dev/null | head -c 16); echo "$p $r" ) & ` +
+		`nc -w 3 127.0.0.1 "$p" 2>/dev/null | head -c 1024 | tr '\r\n' '  '); echo "$p $r" ) & ` +
 		"done; wait"
 }
 
@@ -445,14 +487,23 @@ func probeScript(ports []int) string {
 // the port, then the start of an HTTP status line.
 var httpStatusLine = regexp.MustCompile(`^(\d{1,5}) HTTP/\d(?:\.\d)? (\d{3})`)
 
+// tlsComplaint is a TLS port's answer to plain HTTP: nginx's "The plain HTTP
+// request was sent to HTTPS port", Apache's "speaking plain HTTP to an
+// SSL-enabled server port", Go's "Client sent an HTTP request to an HTTPS
+// server". It is an HTTP status line, and it is not a port a browser can be
+// sent to over HTTP: Kanboard was routed to its 443 and answered every request
+// with a 400 (issue #90).
+var tlsComplaint = regexp.MustCompile(`(?i)plain HTTP request was sent to HTTPS port|speaking plain HTTP to an SSL-enabled|sent an HTTP request to an HTTPS server`)
+
 // httpAnswers reads probeScript's output. A port that answered with anything
 // other than an HTTP status line — nothing, a binary greeting, its own request
-// echoed back — is not in the result.
+// echoed back — is not in the result, and neither is a TLS port complaining
+// about plain HTTP.
 func httpAnswers(out string) map[int]int {
 	answers := map[int]int{}
 	for _, line := range strings.Split(out, "\n") {
 		m := httpStatusLine.FindStringSubmatch(strings.TrimSpace(line))
-		if m == nil {
+		if m == nil || tlsComplaint.MatchString(line) {
 			continue
 		}
 		port, _ := strconv.Atoi(m[1])

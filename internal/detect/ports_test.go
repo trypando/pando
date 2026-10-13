@@ -395,3 +395,38 @@ func TestR105_AnAppThatStaysOnLoopbackIsAskedHowToStartIt(t *testing.T) {
 	require.Contains(t, asked[0].Prompt, "127.0.0.1")
 	require.NoError(t, asked[0].Validate())
 }
+
+// TestR097_AWatchThatShowsNoWebPortLeavesTheGuess asserts R-097 for a trial
+// that saw nothing a browser could be sent to. A Node server listening on
+// process.env.PORT, given none by the trial, opened a random ephemeral port; a
+// Phoenix release that stopped before its endpoint started left only epmd.
+// Recorded as watched, each was routed there and answered 502 (issue #90). The
+// guess stands, so the deploy tells the app its port through PORT.
+func TestR097_AWatchThatShowsNoWebPortLeavesTheGuess(t *testing.T) {
+	guessed := []spec.Port{{Number: 3000, Protocol: "http", Source: spec.PortFramework}}
+	for name, result := range map[string]api.TrialResult{
+		"a random ephemeral port that answered": {ObservedPorts: []int{46559}, HTTPAnswers: answers(46559, 200)},
+		"epmd alone":                            {ObservedPorts: []int{4369}},
+		"an ephemeral port and epmd, silent":    {ObservedPorts: []int{4369, 59611}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result.Started = true
+			draft := detect.Draft{Workloads: []spec.Workload{{Name: "web", Primary: true, Ports: guessed}}}
+			out, _ := detect.ApplyTrial(draft, nil, detect.FromTrialResult(probing(), result))
+			require.Equal(t, guessed, out.Workloads[0].Ports)
+		})
+	}
+
+	// With nothing guessed, what was watched is still better than nothing.
+	draft := detect.Draft{Workloads: []spec.Workload{{Name: "web", Primary: true}}}
+	out, _ := detect.ApplyTrial(draft, nil, detect.FromTrialResult(probing(),
+		api.TrialResult{Started: true, ObservedPorts: []int{46559}, HTTPAnswers: answers(46559, 200)}))
+	require.Equal(t, 46559, routedPort(t, out).Number)
+
+	// And a port that could be the web port replaces the guess, as before.
+	draft = detect.Draft{Workloads: []spec.Workload{{Name: "web", Primary: true, Ports: guessed}}}
+	out, _ = detect.ApplyTrial(draft, nil, detect.FromTrialResult(probing(),
+		api.TrialResult{Started: true, ObservedPorts: []int{8080, 46559}}))
+	require.Equal(t, 8080, routedPort(t, out).Number)
+	require.Equal(t, spec.PortObserved, routedPort(t, out).Source)
+}

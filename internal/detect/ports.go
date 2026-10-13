@@ -1,7 +1,9 @@
 package detect
 
 import (
+	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -233,6 +235,46 @@ func choosePortQuestion(questions []Question, tied []int) []Question {
 		Options: listed,
 	}
 	return append(dropQuestion(questions, KeyPrimaryPort), q)
+}
+
+// startsWith begins the evidence line naming the command a build plan starts
+// the app with.
+const startsWith = "starts with "
+
+// loopbackCommand is the command a trial that saw the app listen only on
+// 127.0.0.1 started it with, as a command line: the workload's own, or the
+// one its build plan starts it with. Empty when the trial saw something else,
+// or the command is not known.
+func loopbackCommand(t Trial, draft Draft, evidence []string) string {
+	if !t.Ran || len(t.ObservedPorts) > 0 || len(t.LoopbackPorts) == 0 {
+		return ""
+	}
+	if primary, ok := primaryWorkload(draft); ok && len(primary.Command) > 0 {
+		return commandLine(primary.Command)
+	}
+	for _, e := range evidence {
+		planned, ok := strings.CutPrefix(e, startsWith)
+		if !ok {
+			continue
+		}
+		var argv []string
+		if json.Unmarshal([]byte(planned), &argv) == nil && len(argv) > 0 {
+			return commandLine(argv)
+		}
+		return strings.TrimSpace(planned)
+	}
+	return ""
+}
+
+// commandLine is an argv as the command line a person would type: the line a
+// shell is handed with -c, or the words joined.
+func commandLine(argv []string) string {
+	if len(argv) == 3 && argv[1] == "-c" {
+		if shell := path.Base(argv[0]); shell == "sh" || shell == "bash" {
+			return strings.TrimSpace(argv[2])
+		}
+	}
+	return strings.TrimSpace(strings.Join(argv, " "))
 }
 
 // loopbackQuestion explains an app that listened only on its own internal

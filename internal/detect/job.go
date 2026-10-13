@@ -50,6 +50,12 @@ type Proposal struct {
 	// facts that an empty log reports identically.
 	Trial TrialObservation `json:"trial,omitzero"`
 
+	// LoopbackCommand is the command the trial started the app with when it
+	// listened only on 127.0.0.1, where it can be told: the answer to the
+	// question that asks for a command that moves it cannot be this one
+	// (CheckAnswers).
+	LoopbackCommand string `json:"loopback_command,omitempty"`
+
 	// Built is the image detection built for this proposal, when it built one
 	// (R-311): what the plan's score was read from, and what a deploy of the
 	// same build inputs runs instead of building again. Nil for an app that
@@ -274,6 +280,7 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 	draft, proposal.Questions = ApplyTrial(draft, proposal.Questions, trial)
 	proposal.TrialLog = trial.Log
 	proposal.Trial = trial.Observation()
+	proposal.LoopbackCommand = loopbackCommand(trial, trialDraft, proposal.Winner.Evidence)
 
 	// Step 11 — warnings. Path routing is read from the source rather than the
 	// trial, so it is attached here regardless of whether a trial happened.
@@ -611,6 +618,7 @@ func (j *Job) prebuiltWith(ctx context.Context, appID string, src spec.Source, c
 	draft, proposal.Questions = ApplyTrial(draft, proposal.Questions, trial)
 	proposal.TrialLog = trial.Log
 	proposal.Trial = trial.Observation()
+	proposal.LoopbackCommand = loopbackCommand(trial, draft, proposal.Winner.Evidence)
 	proposal.Status = StatusFor(candidate, proposal.Questions)
 	proposal.Winner.Draft = draft
 	proposal.DraftSpec = j.assemble(appID, src, draft)

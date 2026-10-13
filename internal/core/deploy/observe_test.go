@@ -68,6 +68,22 @@ func TestAnAppListeningWhereItWasToldIsLeftAlone(t *testing.T) {
 	require.NoError(t, check.Refusal)
 }
 
+// TestR097_ARandomOrNonWebPortDoesNotReplaceTheAssumption asserts R-097: only
+// a port that could be where the app serves corrects the assumed one. Open
+// Liberty binds an ephemeral port long before 9080, and a crashed Erlang
+// release leaves epmd (issue #90); routing to either answered 502.
+func TestR097_ARandomOrNonWebPortDoesNotReplaceTheAssumption(t *testing.T) {
+	for _, observed := range [][]int{{47373}, {4369}, {4369, 47373}} {
+		rt := &trialRuntime{result: api.TrialResult{Started: true, ObservedPorts: observed}}
+		check := checkPort(context.Background(), rt, assumedPortApp(8080), "img", "t1", io.Discard)
+		require.Zero(t, check.Port, "observed %v", observed)
+		require.NoError(t, check.Refusal)
+	}
+
+	rt := &trialRuntime{result: api.TrialResult{Started: true, ObservedPorts: []int{4369, 4000, 47373}}}
+	require.Equal(t, 4000, checkPort(context.Background(), rt, assumedPortApp(8080), "img", "t1", io.Discard).Port)
+}
+
 // An app that listens only on 127.0.0.1 cannot be reached from outside its
 // container. It used to deploy, report success and answer 502 with nothing
 // saying why.

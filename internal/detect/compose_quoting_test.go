@@ -157,6 +157,60 @@ services:
 	require.Equal(t, []string{"sh", "-c", `mysqladmin ping --password="$(cat /run/secrets/db-password)"`}, w.Health.Command)
 }
 
+// TestR096_ACommandKeepsAVariableNothingSets asserts R-096: a command naming a
+// variable the repository does not set reads it when the workload starts, from
+// the slot the person fills. Substituted away, docuseal's caddy ran
+// `caddy reverse-proxy --from --to app:3000`, exited, and took the app with it
+// (issue #90).
+func TestR096_ACommandKeepsAVariableNothingSets(t *testing.T) {
+	const file = `
+services:
+  app:
+    image: docuseal/docuseal:latest
+    environment:
+      - FORCE_SSL=${HOST}
+  caddy:
+    image: caddy:latest
+    command: caddy reverse-proxy --from $HOST --to app:3000
+    environment:
+      - HOST=${HOST}
+  worker:
+    image: example/worker
+    command: ["run", "--name", "a b", "--region=${REGION}", "--cost=$$5"]
+  echo:
+    image: busybox
+    command: sh -c 'echo $$HOME'
+`
+	draft, err := detect.ImportCompose(memSource{"compose.yml": file}, "compose.yml")
+	require.NoError(t, err)
+	byName := map[string]spec.Workload{}
+	for _, w := range draft.Workloads {
+		byName[w.Name] = w
+	}
+
+	caddy := byName["caddy"]
+	require.Equal(t, []string{"sh", "-c", `caddy reverse-proxy --from "${HOST}" --to app:3000`}, caddy.Command)
+	require.Len(t, caddy.Env, 1)
+	require.Equal(t, "HOST", *caddy.Env[0].SlotRef)
+
+	// A variable the environment does not name is added to it, as a slot.
+	worker := byName["worker"]
+	require.Equal(t, []string{"sh", "-c", `run --name "a b" "--region=${REGION}" "--cost=\$5"`}, worker.Command)
+	require.Equal(t, "REGION", worker.Env[0].Key)
+	require.Equal(t, "REGION", *worker.Env[0].SlotRef)
+	var slots []string
+	for _, s := range draft.Slots {
+		if s.Required {
+			slots = append(slots, s.Key)
+		}
+	}
+	require.Contains(t, slots, "HOST")
+	require.Contains(t, slots, "REGION")
+
+	// A command with nothing unset is imported as before.
+	require.Equal(t, []string{"sh", "-c", "echo $HOME"}, byName["echo"].Command)
+}
+
 // A service's build stage and arguments reach its build. Neither did, and a
 // service meant to build `target: development` with NODE_ENV=development was
 // built as production, without the dev server its command ran (issue #55).

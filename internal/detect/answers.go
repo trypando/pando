@@ -330,7 +330,30 @@ func (p Proposal) CheckAnswers(answers map[string]string) error {
 			return err
 		}
 	}
-	return nil
+	return p.checkLoopbackAnswer(answers[KeyStartCommand])
+}
+
+// checkLoopbackAnswer refuses, as the answer to the question asked when an app
+// listened only on 127.0.0.1, the command the trial already started it with.
+//
+// The question asks for a command that makes the app listen on 0.0.0.0, and
+// that one did not. Accepted, it was deployed and refused there with the same
+// explanation the question gave (issue #90); the person answering is better
+// told now, while what to change is in front of them.
+func (p Proposal) checkLoopbackAnswer(answer string) error {
+	answer = strings.Join(strings.Fields(answer), " ")
+	tried := strings.Join(strings.Fields(p.LoopbackCommand), " ")
+	if answer == "" || answer != tried {
+		return nil
+	}
+	return errs.Newf(errs.ValidInvalid,
+		"Pando already started this app with %q, and it listened only on 127.0.0.1 inside its container, "+
+			"which nothing outside the container can reach, including Pando. Valid answer: a command that "+
+			"starts the app listening on 0.0.0.0, such as \"npm start -- --host 0.0.0.0\" or "+
+			"\"uvicorn main:app --host 0.0.0.0\".", answer).
+		WithRemedy("If the address is written into the app's code, change the code to listen on 0.0.0.0 " +
+			"instead of 127.0.0.1 or localhost — in Node, `app.listen(process.env.PORT, '0.0.0.0')` — " +
+			"then detect the app again.")
 }
 
 // checkDeployableProject refuses a deployable_project answer that is not a

@@ -283,6 +283,29 @@ func TestR132_AFrameworkThatRequiresAKeyIsAskedForItHoweverItIsBuilt(t *testing.
 	require.NotContains(t, slots, "HOST")
 }
 
+// TestR132_APhoenixReleaseIsStartedWithItsServerOn asserts R-132 for the value
+// a Phoenix app needs and nobody has to be asked for: runtime.exs enables the
+// endpoint only when PHX_SERVER is set, and a release started any way but
+// bin/server ran without a web server (issue #90).
+func TestR132_APhoenixReleaseIsStartedWithItsServerOn(t *testing.T) {
+	phoenix := memSource{
+		"mix.exs":    "defmodule Hello.MixProject do\nend\n",
+		"Dockerfile": "FROM elixir\nEXPOSE 4000\n",
+		"config/runtime.exs": "import Config\n\nif System.get_env(\"PHX_SERVER\") do\n" +
+			"  config :hello, HelloWeb.Endpoint, server: true\nend\n",
+	}
+	result, err := auction().Run(context.Background(), phoenix)
+	require.NoError(t, err)
+	require.Equal(t, "true", envValues(t, result.Winner.Draft)["PHX_SERVER"])
+	require.NotContains(t, requiredSlots(t, result.Winner.Draft), "PHX_SERVER", "nothing is asked")
+
+	// An image that sets it already keeps its own.
+	phoenix["Dockerfile"] = "FROM elixir\nENV PHX_SERVER=1\nEXPOSE 4000\n"
+	result, err = auction().Run(context.Background(), phoenix)
+	require.NoError(t, err)
+	require.NotContains(t, envValues(t, result.Winner.Draft), "PHX_SERVER")
+}
+
 // TestR132_AnEnvironmentSchemaSaysWhatIsRequired asserts R-132. An app that
 // validates its environment at start has written down what it cannot run
 // without: a key with no default and nothing making it optional. A setting

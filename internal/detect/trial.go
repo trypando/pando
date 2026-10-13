@@ -149,11 +149,47 @@ func applyObservedPorts(draft Draft, t Trial) (Draft, []int) {
 				declared[p.Number] = true
 			}
 		}
+		if len(w.Ports) > 0 && !showsWebPort(t) {
+			// Nothing watched says where the app serves; the guess stands.
+			return draft, nil
+		}
 		var tied []int
 		draft.Workloads[i].Ports, tied = observedPorts(t, declared)
 		return draft, tied
 	}
 	return draft, nil
+}
+
+// showsWebPort reports a trial that watched a port the app could be serving
+// on: one outside the ephemeral range that answered HTTP or, failing an
+// answer, carries no protocol known not to be HTTP.
+//
+// A trial that saw only the others says nothing about the web port, and
+// replacing the guess with what it saw made things worse (issue #90). A Node
+// server that calls listen(process.env.PORT) is given no PORT by the trial and
+// listens on a random ephemeral port; recorded as watched, it was started
+// without PORT at deploy as well, on another random port, and answered 502.
+// A Phoenix release that crashed before its endpoint started left only epmd's
+// 4369. Kept as a guess, the port is the one the deploy tells the app through
+// PORT and checks again once the app is built.
+func showsWebPort(t Trial) bool {
+	answered := map[int]bool{}
+	for _, a := range t.HTTPAnswers {
+		answered[a.Port] = true
+	}
+	for _, p := range t.ObservedPorts {
+		if MayServeWeb(p, answered[p]) {
+			return true
+		}
+	}
+	return false
+}
+
+// MayServeWeb reports a watched port that could be where an app serves: one
+// outside the ephemeral range that answered HTTP or, failing an answer,
+// carries no protocol known not to be HTTP (see showsWebPort).
+func MayServeWeb(port int, answeredHTTP bool) bool {
+	return port < ephemeralPorts && (answeredHTTP || !notHTTP[port])
 }
 
 // applyImageVolumes gives the primary workload storage wherever its image
