@@ -367,35 +367,41 @@ func validateSlots(s *AppSpec, add func(*errs.Error)) {
 				WithRemedy("Use one of: random, random_long, django_key, laravel_key — or leave the format out."))
 		}
 
-		if sl.Resolution == nil {
-			continue
-		}
-		switch sl.Resolution.Mode {
-		case ResolutionProvisioned:
-			// ServiceRef is filled in at deploy time, so it may be empty here.
-		case ResolutionBound:
-			if sl.Resolution.Target == "" {
-				add(errs.Newf(errs.ValidInvalid,
-					"Slot %s is set to connect to something existing, but no address was given.", sl.Key).
-					WithRemedy("Provide the address to connect to, or choose a different way to fill the slot."))
-			}
-			// A value kept readable in the spec is checked here; a literal
-			// is a secret the spec never holds, and is checked when it is
-			// set (CheckSlotValue).
-			if err := sl.Format.Check(sl.Key, sl.Resolution.Target); err != nil && sl.Resolution.Target != "" {
-				add(errs.As(err))
-			}
-		case ResolutionLiteral:
-			if sl.Resolution.SecretRef == "" {
-				add(errs.Newf(errs.ValidInvalid,
-					"Slot %s is set to a literal value, but no stored secret holds it.", sl.Key).
-					WithRemedy("Set the value through the secrets API — literal slot values are stored as secrets so that exporting a spec stays safe."))
-			}
-		default:
+		validateSlotResolution(sl, add)
+	}
+}
+
+// validateSlotResolution checks that a slot's resolution, if it has one, is
+// well formed for its mode.
+func validateSlotResolution(sl Slot, add func(*errs.Error)) {
+	if sl.Resolution == nil {
+		return
+	}
+	switch sl.Resolution.Mode {
+	case ResolutionProvisioned:
+		// ServiceRef is filled in at deploy time, so it may be empty here.
+	case ResolutionBound:
+		if sl.Resolution.Target == "" {
 			add(errs.Newf(errs.ValidInvalid,
-				"Slot %s has an unrecognized resolution mode %q.", sl.Key, sl.Resolution.Mode).
-				WithRemedy("Use one of: provisioned, bound, literal."))
+				"Slot %s is set to connect to something existing, but no address was given.", sl.Key).
+				WithRemedy("Provide the address to connect to, or choose a different way to fill the slot."))
 		}
+		// A value kept readable in the spec is checked here; a literal
+		// is a secret the spec never holds, and is checked when it is
+		// set (CheckSlotValue).
+		if err := sl.Format.Check(sl.Key, sl.Resolution.Target); err != nil && sl.Resolution.Target != "" {
+			add(errs.As(err))
+		}
+	case ResolutionLiteral:
+		if sl.Resolution.SecretRef == "" {
+			add(errs.Newf(errs.ValidInvalid,
+				"Slot %s is set to a literal value, but no stored secret holds it.", sl.Key).
+				WithRemedy("Set the value through the secrets API — literal slot values are stored as secrets so that exporting a spec stays safe."))
+		}
+	default:
+		add(errs.Newf(errs.ValidInvalid,
+			"Slot %s has an unrecognized resolution mode %q.", sl.Key, sl.Resolution.Mode).
+			WithRemedy("Use one of: provisioned, bound, literal."))
 	}
 }
 

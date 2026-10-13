@@ -187,8 +187,7 @@ func (a *Adapter) watch(ctx context.Context, id string, timeout time.Duration) a
 	poll := time.NewTicker(min(portPollInterval, timeout))
 	defer poll.Stop()
 
-	var lastChange time.Time
-	answered := map[int]int{}
+	ports := &portWatch{answered: map[int]int{}}
 
 	for {
 		select {
@@ -207,55 +206,74 @@ func (a *Adapter) watch(ctx context.Context, id string, timeout time.Duration) a
 			return result
 
 		case <-poll.C:
-			if !a.everStarted(ctx, id) {
-				continue
-			}
-			result.Started = true
-
-			// Nothing to look at through a sandbox (Capabilities). The trial
-			// then runs to its timeout, which is the price of the sandbox: it
-			// cannot end early on a port it cannot see.
-			if !a.observes() {
-				continue
-			}
-
-			// Only a successful observation is allowed to replace an earlier
-			// one. A check that could not run — the sidecar canceled as the
-			// deadline approached — returns nothing, and letting that overwrite
-			// what a previous tick saw would erase the answer at random.
-			routable, loopback, observed := a.observePorts(deadline, id)
-			if !observed {
-				continue
-			}
-			result.LoopbackPorts = loopback
-			if len(routable) == 0 {
-				continue
-			}
-
-			now := time.Now()
-			if !slices.Equal(routable, result.ObservedPorts) {
-				result.ObservedPorts = routable
-				lastChange = now
-			}
-
-			// Asked again each tick until it answers: a server can bind its
-			// port a moment before it is ready to serve on it.
-			var unanswered []int
-			for _, p := range routable {
-				if _, ok := answered[p]; !ok {
-					unanswered = append(unanswered, p)
-				}
-			}
-			for p, status := range a.probeHTTP(deadline, id, unanswered) {
-				answered[p] = status
-			}
-			result.HTTPAnswers = answersFor(routable, answered)
-
-			if portsSettled(len(result.HTTPAnswers) > 0, now.Sub(lastChange)) {
+			if a.pollPorts(ctx, deadline, id, &result, ports) {
 				return result
 			}
 		}
 	}
+}
+
+// portWatch is what the trial's watch carries from one poll to the next: when
+// the observed ports last changed, and the HTTP status each port has answered.
+type portWatch struct {
+	lastChange time.Time
+	answered   map[int]int
+}
+
+// pollPorts is one tick of watch: it records whether the container has
+// started, which ports it listens on and which of them answer HTTP, and
+// reports whether the ports have settled and the watch can end.
+func (a *Adapter) pollPorts(ctx, deadline context.Context, id string, result *api.TrialResult, ports *portWatch) bool {
+	if !a.everStarted(ctx, id) {
+		return false
+	}
+	result.Started = true
+
+	// Nothing to look at through a sandbox (Capabilities). The trial
+	// then runs to its timeout, which is the price of the sandbox: it
+	// cannot end early on a port it cannot see.
+	if !a.observes() {
+		return false
+	}
+
+	// Only a successful observation is allowed to replace an earlier
+	// one. A check that could not run — the sidecar canceled as the
+	// deadline approached — returns nothing, and letting that overwrite
+	// what a previous tick saw would erase the answer at random.
+	routable, loopback, observed := a.observePorts(deadline, id)
+	if !observed {
+		return false
+	}
+	result.LoopbackPorts = loopback
+	if len(routable) == 0 {
+		return false
+	}
+
+	now := time.Now()
+	if !slices.Equal(routable, result.ObservedPorts) {
+		result.ObservedPorts = routable
+		ports.lastChange = now
+	}
+
+	// Asked again each tick until it answers: a server can bind its
+	// port a moment before it is ready to serve on it.
+	for p, status := range a.probeHTTP(deadline, id, unansweredPorts(routable, ports.answered)) {
+		ports.answered[p] = status
+	}
+	result.HTTPAnswers = answersFor(routable, ports.answered)
+
+	return portsSettled(len(result.HTTPAnswers) > 0, now.Sub(ports.lastChange))
+}
+
+// unansweredPorts returns the ports in routable that have not yet answered HTTP.
+func unansweredPorts(routable []int, answered map[int]int) []int {
+	var unanswered []int
+	for _, p := range routable {
+		if _, ok := answered[p]; !ok {
+			unanswered = append(unanswered, p)
+		}
+	}
+	return unanswered
 }
 
 const (

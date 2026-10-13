@@ -270,46 +270,21 @@ func (r *Runner) run(ctx context.Context, prog *progress, app state.App, answers
 	// image scan and the trial run at once (build.go).
 	scans := r.newScans(appID, checkout.Identity(), prog)
 	defer scans.stop()
-	proposal, err := r.Job.Run(detect.WithBuild(ctx, r.buildHook(appID, slug, answers, checkout, scans)),
-		appID, src, checkout.View(src.Subdir))
+	read := func(src spec.Source) (detect.Proposal, error) {
+		return r.Job.Run(detect.WithBuild(ctx, r.buildHook(appID, slug, answers, checkout, scans)),
+			appID, src, checkout.View(src.Subdir))
+	}
+	proposal, err := read(src)
 	if err != nil {
 		return detect.Proposal{}, err
 	}
 
-	// A repository whose app is one of the projects inside it: the one a
-	// person chose, or the only one it holds. Read again there, so the
-	// proposal is that project's — its build, its workloads, its questions —
-	// rather than the parent's, which has none (issue #90). Once: the
-	// project's own reading does not ask which project it is.
-	if dir, why, ok := proposal.Subproject(answers); ok {
-		sub := src
-		sub.Subdir = path.Join(src.Subdir, dir)
-		if info, statErr := checkout.View(sub.Subdir).Stat("."); statErr == nil && info.IsDir {
-			src = sub
-			proposal, err = r.Job.Run(detect.WithBuild(ctx, r.buildHook(appID, slug, answers, checkout, scans)),
-				appID, src, checkout.View(src.Subdir))
-			if err != nil {
-				return detect.Proposal{}, err
-			}
-			proposal.Winner.Evidence = append([]string{why}, proposal.Winner.Evidence...)
-		}
+	src, proposal, err = readSubproject(checkout, src, proposal, answers, read)
+	if err != nil {
+		return detect.Proposal{}, err
 	}
 
-	// While the checkout exists, and after the proposal is in hand: a scan is
-	// worth having and is not worth failing a detection for. Reported as its
-	// own stage: a scan can take a while, and the onboarding page shows it as
-	// a step of the plan.
-	if scans.began() {
-		detect.Report(ctx, detect.StageScanning, &proposal)
-		scans.record(ctx)
-	} else if r.Scanner != nil {
-		// An app that runs a published image: the auction did not run, and
-		// the image and the checkout are scanned together.
-		if req, ok := r.scanRequest(ctx, appID, src, &proposal, checkout); ok {
-			detect.Report(ctx, detect.StageScanning, &proposal)
-			r.Scanner.ScanSource(ctx, req)
-		}
-	}
+	r.scanProposal(ctx, appID, src, &proposal, checkout, scans)
 
 	// Fill in the install's own answers before the proposal is shown, not when
 	// it is accepted. The review is where someone sees how their app will run,
@@ -325,18 +300,7 @@ func (r *Runner) run(ctx context.Context, prog *progress, app state.App, answers
 		proposal.Blocked = blocked
 	}
 
-	// And to every other reading of the repository, because answering the
-	// tie-break adopts one of them. A candidate completed only at accept time
-	// is one whose review showed blanks.
-	for i := range proposal.RunnersUp {
-		if len(proposal.RunnersUp[i].Draft.Workloads) == 0 {
-			continue
-		}
-		candidate := detect.Assemble(appID, src, proposal.RunnersUp[i].Draft)
-		candidate.Source.Commit = checkout.Commit
-		_ = r.applyDefaults(ctx, &candidate, slug)
-		proposal.RunnersUp[i].Spec = &candidate
-	}
+	r.completeRunnersUp(ctx, appID, slug, src, checkout.Commit, &proposal)
 
 	// R-120: Ref is what the user asked for, Commit is what runs. Recorded on
 	// the proposal so that accepting it pins a revision against a specific
@@ -371,6 +335,84 @@ func (r *Runner) run(ctx context.Context, prog *progress, app state.App, answers
 		}
 	}
 	return proposal, nil
+}
+
+// readSubproject reads a repository again in the project inside it that is
+// its app, when there is one; otherwise it returns src and proposal as they
+// are.
+//
+// A repository whose app is one of the projects inside it: the one a
+// person chose, or the only one it holds. Read again there, so the
+// proposal is that project's — its build, its workloads, its questions —
+// rather than the parent's, which has none (issue #90). Once: the
+// project's own reading does not ask which project it is.
+func readSubproject(checkout *source.Checkout, src spec.Source, proposal detect.Proposal, answers map[string]string,
+	read func(spec.Source) (detect.Proposal, error),
+) (spec.Source, detect.Proposal, error) {
+	dir, why, ok := proposal.Subproject(answers)
+	if !ok {
+		return src, proposal, nil
+	}
+	sub := src
+	sub.Subdir = path.Join(src.Subdir, dir)
+	if !isDir(checkout, sub.Subdir) {
+		return src, proposal, nil
+	}
+	proposal, err := read(sub)
+	if err != nil {
+		return sub, detect.Proposal{}, err
+	}
+	proposal.Winner.Evidence = append([]string{why}, proposal.Winner.Evidence...)
+	return sub, proposal, nil
+}
+
+// isDir reports whether dir is a directory in the checkout. One that cannot
+// be read is not.
+func isDir(checkout *source.Checkout, dir string) bool {
+	info, err := checkout.View(dir).Stat(".")
+	return err == nil && info.IsDir
+}
+
+// scanProposal scans what a detection read, reporting the scan as a stage.
+//
+// While the checkout exists, and after the proposal is in hand: a scan is
+// worth having and is not worth failing a detection for. Reported as its
+// own stage: a scan can take a while, and the onboarding page shows it as
+// a step of the plan.
+func (r *Runner) scanProposal(ctx context.Context, appID string, src spec.Source, proposal *detect.Proposal,
+	checkout *source.Checkout, scans *scanParts,
+) {
+	if scans.began() {
+		detect.Report(ctx, detect.StageScanning, proposal)
+		scans.record(ctx)
+		return
+	}
+	if r.Scanner == nil {
+		return
+	}
+	// An app that runs a published image: the auction did not run, and
+	// the image and the checkout are scanned together.
+	if req, ok := r.scanRequest(ctx, appID, src, proposal, checkout); ok {
+		detect.Report(ctx, detect.StageScanning, proposal)
+		r.Scanner.ScanSource(ctx, req)
+	}
+}
+
+// completeRunnersUp gives every other reading of the repository a full spec,
+// with the install's defaults applied.
+//
+// Because answering the tie-break adopts one of them. A candidate completed
+// only at accept time is one whose review showed blanks.
+func (r *Runner) completeRunnersUp(ctx context.Context, appID, slug string, src spec.Source, commit string, proposal *detect.Proposal) {
+	for i := range proposal.RunnersUp {
+		if len(proposal.RunnersUp[i].Draft.Workloads) == 0 {
+			continue
+		}
+		candidate := detect.Assemble(appID, src, proposal.RunnersUp[i].Draft)
+		candidate.Source.Commit = commit
+		_ = r.applyDefaults(ctx, &candidate, slug)
+		proposal.RunnersUp[i].Spec = &candidate
+	}
 }
 
 // applyDefaults folds the install's configuration into a draft spec.

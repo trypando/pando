@@ -263,7 +263,8 @@ function valueFromAddress(key: string, address: string | undefined): string | un
  * that survive a shell, a URL and a .env file unquoted.
  */
 function randomSecret(bytes = 32): string {
-  return btoa(randomBinary(bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  // "=" appears in base64 only as the trailing padding.
+  return btoa(randomBinary(bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
 function randomBinary(bytes: number): string {

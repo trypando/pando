@@ -94,45 +94,12 @@ func (s *Server) handleSetSlot(w http.ResponseWriter, r *http.Request) {
 		}
 		found = true
 
-		switch req.Mode {
-		case string(spec.ResolutionProvisioned):
-			updated.Slots[i].Resolution = &spec.Resolution{Mode: spec.ResolutionProvisioned}
-		case string(spec.ResolutionBound):
-			if req.Target == "" {
-				Error(w, r, errs.New(errs.ValidInvalid, "Binding a dependency needs something to bind to."))
-				return
-			}
-			if err := updated.Slots[i].Format.Check(key, req.Target); err != nil {
-				Error(w, r, err)
-				return
-			}
-			updated.Slots[i].Resolution = &spec.Resolution{Mode: spec.ResolutionBound, Target: req.Target}
-		case string(spec.ResolutionLiteral):
-			if req.Value == "" {
-				Error(w, r, errs.New(errs.ValidInvalid, "A literal needs a value."))
-				return
-			}
-			if err := updated.Slots[i].Format.Check(key, req.Value); err != nil {
-				Error(w, r, err)
-				return
-			}
-			// The value is stored as a secret, not inline. That is what keeps
-			// "an exported spec is safe to hand to someone" true without a
-			// special case for this one field.
-			secretKey := spec.SlotSecretKey(key)
-			if err := s.Secrets.Put(r.Context(), app.ID, secretKey, secret.New(req.Value)); err != nil {
-				Error(w, r, err)
-				return
-			}
-			updated.Slots[i].Resolution = &spec.Resolution{
-				Mode: spec.ResolutionLiteral, SecretRef: secretKey,
-			}
-		default:
-			Error(w, r, errs.New(errs.ValidInvalid,
-				"A dependency is either provisioned by Pando, bound to something existing, or given a value.").
-				WithRemedy(`Send mode as "provisioned", "bound" or "literal".`))
+		res, err := s.slotResolution(r, app.ID, updated.Slots[i], req.Mode, req.Target, req.Value)
+		if err != nil {
+			Error(w, r, err)
 			return
 		}
+		updated.Slots[i].Resolution = res
 	}
 
 	if !found {
@@ -156,6 +123,46 @@ func (s *Server) handleSetSlot(w http.ResponseWriter, r *http.Request) {
 		"key": key, "mode": req.Mode, "spec_revision": rev.Revision,
 		"note": "Saved as a new revision. Deploy to apply it.",
 	})
+}
+
+// slotResolution builds the resolution a set-slot request asks for, checking
+// the value against the slot's format. A literal is stored as a secret on the
+// way, so the resolution only refers to it.
+func (s *Server) slotResolution(r *http.Request, appID string, sl spec.Slot, mode, target, value string) (*spec.Resolution, error) {
+	key := sl.Key
+	switch mode {
+	case string(spec.ResolutionProvisioned):
+		return &spec.Resolution{Mode: spec.ResolutionProvisioned}, nil
+	case string(spec.ResolutionBound):
+		if target == "" {
+			return nil, errs.New(errs.ValidInvalid, "Binding a dependency needs something to bind to.")
+		}
+		if err := sl.Format.Check(key, target); err != nil {
+			return nil, err
+		}
+		return &spec.Resolution{Mode: spec.ResolutionBound, Target: target}, nil
+	case string(spec.ResolutionLiteral):
+		if value == "" {
+			return nil, errs.New(errs.ValidInvalid, "A literal needs a value.")
+		}
+		if err := sl.Format.Check(key, value); err != nil {
+			return nil, err
+		}
+		// The value is stored as a secret, not inline. That is what keeps
+		// "an exported spec is safe to hand to someone" true without a
+		// special case for this one field.
+		secretKey := spec.SlotSecretKey(key)
+		if err := s.Secrets.Put(r.Context(), appID, secretKey, secret.New(value)); err != nil {
+			return nil, err
+		}
+		return &spec.Resolution{
+			Mode: spec.ResolutionLiteral, SecretRef: secretKey,
+		}, nil
+	default:
+		return nil, errs.New(errs.ValidInvalid,
+			"A dependency is either provisioned by Pando, bound to something existing, or given a value.").
+			WithRemedy(`Send mode as "provisioned", "bound" or "literal".`)
+	}
 }
 
 // handleListVolumes returns an app's storage.
@@ -231,11 +238,9 @@ func (s *Server) handleCreateVolume(w http.ResponseWriter, r *http.Request) {
 
 	updated := *appSpec
 	updated.Volumes = append([]spec.Volume(nil), appSpec.Volumes...)
-	for _, v := range updated.Volumes {
-		if v.Name == req.Name {
-			Error(w, r, errs.Newf(errs.ValidInvalid, "This app already has storage called %q.", req.Name))
-			return
-		}
+	if hasVolumeNamed(updated.Volumes, req.Name) {
+		Error(w, r, errs.Newf(errs.ValidInvalid, "This app already has storage called %q.", req.Name))
+		return
 	}
 
 	volumeID := id.New(id.Volume)
@@ -247,21 +252,7 @@ func (s *Server) handleCreateVolume(w http.ResponseWriter, r *http.Request) {
 	// is storage nothing can write to, which is not what anyone asking for
 	// storage means.
 	updated.Workloads = append([]spec.Workload(nil), appSpec.Workloads...)
-	mounted := false
-	for i := range updated.Workloads {
-		isTarget := req.Workload == "" && updated.Workloads[i].Primary
-		if req.Workload != "" && updated.Workloads[i].Name == req.Workload {
-			isTarget = true
-		}
-		if !isTarget {
-			continue
-		}
-		updated.Workloads[i].Mounts = append(
-			append([]spec.Mount(nil), updated.Workloads[i].Mounts...),
-			spec.Mount{VolumeID: volumeID, Path: req.Path})
-		mounted = true
-	}
-	if !mounted {
+	if !mountVolume(updated.Workloads, req.Workload, spec.Mount{VolumeID: volumeID, Path: req.Path}) {
 		Error(w, r, errs.Newf(errs.ValidInvalid,
 			"This app has no workload called %q to attach storage to.", req.Workload))
 		return
@@ -283,6 +274,35 @@ func (s *Server) handleCreateVolume(w http.ResponseWriter, r *http.Request) {
 		"id": volumeID, "name": req.Name, "path": req.Path, "spec_revision": rev.Revision,
 		"note": "Saved as a new revision. Deploy to create it.",
 	})
+}
+
+// hasVolumeNamed reports whether volumes already includes one called name.
+func hasVolumeNamed(volumes []spec.Volume, name string) bool {
+	for _, v := range volumes {
+		if v.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// mountVolume adds m to the workload called target, or to the primary
+// workload when target is empty, copying each Mounts slice it changes. It
+// reports whether any workload received the mount.
+func mountVolume(workloads []spec.Workload, target string, m spec.Mount) bool {
+	mounted := false
+	for i := range workloads {
+		isTarget := target == "" && workloads[i].Primary
+		if target != "" && workloads[i].Name == target {
+			isTarget = true
+		}
+		if !isTarget {
+			continue
+		}
+		workloads[i].Mounts = append(append([]spec.Mount(nil), workloads[i].Mounts...), m)
+		mounted = true
+	}
+	return mounted
 }
 
 // handleReadSecretValue returns a secret's value (R-083).

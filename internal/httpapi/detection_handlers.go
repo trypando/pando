@@ -266,25 +266,8 @@ func (s *Server) handleDetectionAnswers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// An answer to a question nobody asked is a mistake worth reporting rather
-	// than storing: it usually means a typo in the key, and silently accepting
-	// it would leave the real question unanswered and the deploy blocked with
-	// no explanation.
-	known := map[string]bool{}
-	for _, q := range proposal.Questions {
-		known[q.Key] = true
-	}
-	var unknown []string
-	for key := range req.Answers {
-		if !known[key] {
-			unknown = append(unknown, key)
-		}
-	}
-	if len(unknown) > 0 {
-		Error(w, r, errs.Newf(errs.ValidInvalid,
-			"There are no outstanding questions with these keys: %v.", unknown).
-			WithDetail("outstanding", keysOf(known)).
-			WithRemedy("Use the `key` from one of the questions in GET /detection."))
+	if err := checkAnswerKeys(proposal, req.Answers); err != nil {
+		Error(w, r, err)
 		return
 	}
 
@@ -314,29 +297,9 @@ func (s *Server) handleDetectionAnswers(w http.ResponseWriter, r *http.Request) 
 		Detail: map[string]any{"questions": answered},
 	})
 
-	// An answer can change what is built — a build argument the build was
-	// waiting on — and the plan's score is the score of the image that will
-	// run (R-311), so the image is built and scanned again. The detection
-	// reads as running until it has been.
-	//
-	// An answer naming the project to deploy changes what is read, not only
-	// what is built: detection runs again, in that project (issue #90,
-	// detect.Proposal.Subproject), queued as a re-run is and with the answers
-	// kept.
-	if s.Detector != nil && s.DetectionQueue != nil && proposal.RedetectsOn(req.Answers) {
-		if err := s.Detector.Check(r.Context(), app.ID); err != nil {
-			Error(w, r, err)
-			return
-		}
-		if _, err := s.DetectionQueue.Enqueue(r.Context(), app.ID); err != nil {
-			Error(w, r, err)
-			return
-		}
-	} else if s.Detector != nil {
-		if _, err := s.Detector.Rebuild(r.Context(), app.ID); err != nil {
-			Error(w, r, err)
-			return
-		}
+	if err := s.redetectAfterAnswers(r, app.ID, proposal, req.Answers); err != nil {
+		Error(w, r, err)
+		return
 	}
 
 	updated, err := s.Detections.Get(r.Context(), app.ID)
@@ -345,6 +308,58 @@ func (s *Server) handleDetectionAnswers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	JSON(w, http.StatusOK, withPlannedAddress(r, app, s.detectionResponse(updated), updated))
+}
+
+// checkAnswerKeys refuses answers to questions the proposal does not ask.
+//
+// An answer to a question nobody asked is a mistake worth reporting rather
+// than storing: it usually means a typo in the key, and silently accepting
+// it would leave the real question unanswered and the deploy blocked with
+// no explanation.
+func checkAnswerKeys(proposal detect.Proposal, answers map[string]string) error {
+	known := map[string]bool{}
+	for _, q := range proposal.Questions {
+		known[q.Key] = true
+	}
+	var unknown []string
+	for key := range answers {
+		if !known[key] {
+			unknown = append(unknown, key)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	return errs.Newf(errs.ValidInvalid,
+		"There are no outstanding questions with these keys: %v.", unknown).
+		WithDetail("outstanding", keysOf(known)).
+		WithRemedy("Use the `key` from one of the questions in GET /detection.")
+}
+
+// redetectAfterAnswers sets off the work recorded answers call for.
+//
+// An answer can change what is built — a build argument the build was
+// waiting on — and the plan's score is the score of the image that will
+// run (R-311), so the image is built and scanned again. The detection
+// reads as running until it has been.
+//
+// An answer naming the project to deploy changes what is read, not only
+// what is built: detection runs again, in that project (issue #90,
+// detect.Proposal.Subproject), queued as a re-run is and with the answers
+// kept.
+func (s *Server) redetectAfterAnswers(r *http.Request, appID string, proposal detect.Proposal, answers map[string]string) error {
+	if s.Detector == nil {
+		return nil
+	}
+	if s.DetectionQueue == nil || !proposal.RedetectsOn(answers) {
+		_, err := s.Detector.Rebuild(r.Context(), appID)
+		return err
+	}
+	if err := s.Detector.Check(r.Context(), appID); err != nil {
+		return err
+	}
+	_, err := s.DetectionQueue.Enqueue(r.Context(), appID)
+	return err
 }
 
 // handleAcceptDetection pins the proposal as spec revision 1 (Sequence A 13–17).

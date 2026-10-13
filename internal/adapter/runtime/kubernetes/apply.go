@@ -38,65 +38,105 @@ const maxCarriedBytes = 1000 * 1024
 // satisfied plan writes nothing but the pull Secret, which is rewritten on
 // every call because a registry password can expire (O-41).
 func (a *Adapter) Apply(ctx context.Context, p api.BundlePlan) (api.BundleHandle, error) {
+	if err := a.checkApplicable(p); err != nil {
+		return api.BundleHandle{}, err
+	}
+
+	restricted := p.Network.Egress.Restricted()
+	rules, err := a.egressRules(p, restricted)
+	if err != nil {
+		return api.BundleHandle{}, err
+	}
+
+	ns := namespaceFor(p.BundleID)
+	if err := a.prepareNamespace(ctx, ns, p, restricted, rules); err != nil {
+		return api.BundleHandle{}, err
+	}
+	if err := a.applyWorkloads(ctx, ns, p, restricted); err != nil {
+		return api.BundleHandle{}, err
+	}
+
+	// A volume is bound once its first pod is placed, under a
+	// WaitForFirstConsumer class, so the reclaim policy is set after the pods.
+	if err := a.retainVolumes(ctx, ns); err != nil {
+		return api.BundleHandle{}, err
+	}
+	return api.BundleHandle{BundleID: p.BundleID, Handle: ns}, nil
+}
+
+// checkApplicable refuses a plan this runtime must not start: one on a shared
+// network, one with a workload it cannot name or carry, or any plan while the
+// network canary has not passed.
+func (a *Adapter) checkApplicable(p api.BundlePlan) error {
 	if !p.Network.Private {
 		// R-026, checked rather than assumed.
-		return api.BundleHandle{}, errs.New(errs.AdapterFailed, "Pando will not start an app on a shared network.")
+		return errs.New(errs.AdapterFailed, "Pando will not start an app on a shared network.")
 	}
 	for _, w := range p.Workloads {
 		if err := checkWorkloadName(w.Name); err != nil {
-			return api.BundleHandle{}, err
+			return err
 		}
 		if err := checkFilesFit(w); err != nil {
-			return api.BundleHandle{}, err
+			return err
 		}
 	}
 	if !a.canaryPassed() {
 		// The planner refuses this runtime first (SupportsPrivateNetwork);
 		// reaching here is a plan made against stale capabilities.
-		return api.BundleHandle{}, errNotEnforced()
+		return errNotEnforced()
 	}
+	return nil
+}
 
-	restricted := p.Network.Egress.Restricted()
-	var rules string
-	if restricted {
-		if a.config.EgressGatewayImage == "" {
-			return api.BundleHandle{}, errs.New(errs.PlanCapabilityUnsupported,
-				"This app's egress rules restrict where it may connect, and the Kubernetes runtime has no image to run Pando's egress gateway from, so it cannot enforce them.").
-				WithRemedy("Set the Kubernetes runtime's egress_gateway_image to an image of Pando.")
-		}
-		var err error
-		if rules, err = egressRulesJSON(p.Network.Egress); err != nil {
-			return api.BundleHandle{}, err
-		}
+// egressRules returns the egress gateway's rules for a plan whose egress is
+// restricted, and nothing for one whose egress is not.
+func (a *Adapter) egressRules(p api.BundlePlan, restricted bool) (string, error) {
+	if !restricted {
+		return "", nil
 	}
+	if a.config.EgressGatewayImage == "" {
+		return "", errs.New(errs.PlanCapabilityUnsupported,
+			"This app's egress rules restrict where it may connect, and the Kubernetes runtime has no image to run Pando's egress gateway from, so it cannot enforce them.").
+			WithRemedy("Set the Kubernetes runtime's egress_gateway_image to an image of Pando.")
+	}
+	return egressRulesJSON(p.Network.Egress)
+}
 
-	ns := namespaceFor(p.BundleID)
+// prepareNamespace converges what the app's workloads depend on in its
+// namespace: the namespace itself, its policies, quota and pull Secret, the
+// egress gateway, and the volumes.
+func (a *Adapter) prepareNamespace(ctx context.Context, ns string, p api.BundlePlan, restricted bool, rules string) error {
 	if err := a.ensureNamespace(ctx, p.BundleID); err != nil {
-		return api.BundleHandle{}, err
+		return err
 	}
 	if err := a.ensurePolicies(ctx, ns, restricted); err != nil {
-		return api.BundleHandle{}, err
+		return err
 	}
 	if err := a.ensureQuota(ctx, ns, p); err != nil {
-		return api.BundleHandle{}, err
+		return err
 	}
 	if err := a.ensurePullSecret(ctx, ns, p.Workloads); err != nil {
-		return api.BundleHandle{}, err
+		return err
 	}
 	if restricted {
 		if err := a.ensureGateway(ctx, ns, p.BundleID, rules); err != nil {
-			return api.BundleHandle{}, err
+			return err
 		}
 	} else if err := a.removeGateway(ctx, ns); err != nil {
-		return api.BundleHandle{}, err
+		return err
 	}
 
 	for _, v := range p.Volumes {
 		if _, err := a.CreateVolume(ctx, api.VolumeRequest{VolumeID: v.VolumeID, BundleID: p.BundleID, Name: v.Name}); err != nil {
-			return api.BundleHandle{}, err
+			return err
 		}
 	}
+	return nil
+}
 
+// applyWorkloads converges each workload's Service and pod, in dependency
+// order.
+func (a *Adapter) applyWorkloads(ctx context.Context, ns string, p api.BundlePlan, restricted bool) error {
 	var proxy map[string]string
 	if restricted {
 		proxy = proxyEnv(p)
@@ -107,20 +147,14 @@ func (a *Adapter) Apply(ctx context.Context, p api.BundlePlan) (api.BundleHandle
 	}
 	for _, w := range ordered(p.Workloads) {
 		if err := a.ensureService(ctx, ns, p.BundleID, w); err != nil {
-			return api.BundleHandle{}, err
+			return err
 		}
 		a.waitForDependencies(ctx, ns, w, planned)
 		if err := a.applyWorkload(ctx, ns, p, w, workloadEnv(w, proxy)); err != nil {
-			return api.BundleHandle{}, err
+			return err
 		}
 	}
-
-	// A volume is bound once its first pod is placed, under a
-	// WaitForFirstConsumer class, so the reclaim policy is set after the pods.
-	if err := a.retainVolumes(ctx, ns); err != nil {
-		return api.BundleHandle{}, err
-	}
-	return api.BundleHandle{BundleID: p.BundleID, Handle: ns}, nil
+	return nil
 }
 
 // ensureNamespace makes the app's namespace and gives Pando its role there.
@@ -667,16 +701,8 @@ func (a *Adapter) waitScheduled(ctx context.Context, ns, name string, w api.Work
 		// A pod that cannot be read now is looked at again; one placed on a
 		// node has room.
 		if p, err := a.cs.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{}); err == nil {
-			if limited := pullLimited(p, w.PullAuth != nil); limited != nil {
-				return limited
-			}
-			if p.Spec.NodeName != "" {
-				return nil
-			}
-			for _, c := range p.Status.Conditions {
-				if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable {
-					return unschedulable(w, c.Message)
-				}
+			if done, err := scheduleOutcome(p, w); done {
+				return err
 			}
 		}
 		select {
@@ -686,6 +712,24 @@ func (a *Adapter) waitScheduled(ctx context.Context, ns, name string, w api.Work
 		}
 	}
 	return nil
+}
+
+// scheduleOutcome reports whether waitScheduled can stop looking at a pod, and
+// with what: an error if its image pull is rate limited or the scheduler
+// cannot place it, nothing if it is on a node.
+func scheduleOutcome(p *corev1.Pod, w api.WorkloadPlan) (bool, error) {
+	if limited := pullLimited(p, w.PullAuth != nil); limited != nil {
+		return true, limited
+	}
+	if p.Spec.NodeName != "" {
+		return true, nil
+	}
+	for _, c := range p.Status.Conditions {
+		if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable {
+			return true, unschedulable(w, c.Message)
+		}
+	}
+	return false, nil
 }
 
 func unschedulable(w api.WorkloadPlan, why string) error {

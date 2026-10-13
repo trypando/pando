@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -75,16 +76,6 @@ func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppS
 	primary, _ := s.PrimaryWorkload()
 	assumed := primary.Ports[0].Number
 
-	env := map[string]secret.Value{}
-	for _, e := range primary.Env {
-		if e.Value != nil && *e.Value != "" {
-			env[e.Key] = secret.New(*e.Value)
-		}
-	}
-	if port, ok := defaultPort(primary); ok {
-		env["PORT"] = secret.New(port)
-	}
-
 	fmt.Fprintf(sink, "=> Checking which port the app listens on\n")
 	result, err := runtime.Trial(ctx, api.TrialRequest{
 		TrialID:        trialID,
@@ -93,7 +84,7 @@ func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppS
 		Command:        primary.Command,
 		Entrypoint:     primary.Entrypoint,
 		WorkingDir:     primary.WorkingDir,
-		Env:            env,
+		Env:            trialEnv(primary),
 		Timeout:        observeTimeout,
 		IsolationFloor: s.Runtime.IsolationFloor,
 	})
@@ -103,19 +94,9 @@ func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppS
 		return portCheck{}
 	}
 
-	// The ports that answered HTTP, where the runtime asked: an app's debugger
-	// or metrics port listening beside its server is not where it serves.
-	listening := result.ObservedPorts
-	if caps.SupportsHTTPProbe && len(result.HTTPAnswers) > 0 {
-		listening = nil
-		for _, a := range result.HTTPAnswers {
-			listening = append(listening, a.Port)
-		}
-	}
-	for _, p := range listening {
-		if p == assumed {
-			return portCheck{}
-		}
+	listening := listeningPorts(result, caps.SupportsHTTPProbe)
+	if slices.Contains(listening, assumed) {
+		return portCheck{}
 	}
 	if len(listening) > 0 {
 		observed := listening[0]
@@ -127,6 +108,37 @@ func checkPortWith(ctx context.Context, runtime api.RuntimeAdapter, s *spec.AppS
 		return portCheck{Refusal: loopbackRefusal(result.LoopbackPorts)}
 	}
 	return portCheck{}
+}
+
+// trialEnv is the environment the port check starts the image with: the
+// configuration the spec holds as plain values, and PORT set to the assumed
+// port.
+func trialEnv(primary spec.Workload) map[string]secret.Value {
+	env := map[string]secret.Value{}
+	for _, e := range primary.Env {
+		if e.Value != nil && *e.Value != "" {
+			env[e.Key] = secret.New(*e.Value)
+		}
+	}
+	if port, ok := defaultPort(primary); ok {
+		env["PORT"] = secret.New(port)
+	}
+	return env
+}
+
+// listeningPorts is where a trial saw the app serve.
+//
+// The ports that answered HTTP, where the runtime asked: an app's debugger
+// or metrics port listening beside its server is not where it serves.
+func listeningPorts(result api.TrialResult, probed bool) []int {
+	if !probed || len(result.HTTPAnswers) == 0 {
+		return result.ObservedPorts
+	}
+	var listening []int
+	for _, a := range result.HTTPAnswers {
+		listening = append(listening, a.Port)
+	}
+	return listening
 }
 
 // loopbackRefusal explains an app that listens where nothing else can reach it.
