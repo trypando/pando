@@ -547,18 +547,21 @@ type languageSignal struct {
 	port     int
 }
 
+// compiledBinary is the start command shown for a language that builds one.
+const compiledBinary = "the compiled binary"
+
 var languages = []languageSignal{
 	{"package.json", "Node.js", "npm start", 3000},
 	{"requirements.txt", "Python", "python app.py", 8000},
 	{"pyproject.toml", "Python", "python -m app", 8000},
 	{"setup.py", "Python", "python -m app", 8000},
-	{"go.mod", "Go", "the compiled binary", 8080},
+	{"go.mod", "Go", compiledBinary, 8080},
 	// A Go workspace with no module at its root, built from the root when one
 	// of its modules is a program (MonorepoDetector stands down for it).
-	{"go.work", "Go", "the compiled binary", 8080},
+	{"go.work", "Go", compiledBinary, 8080},
 	{"Gemfile", "Ruby", "bundle exec rails server", 3000},
 	{"composer.json", "PHP", "php -S", 8000},
-	{"Cargo.toml", "Rust", "the compiled binary", 8080},
+	{"Cargo.toml", "Rust", compiledBinary, 8080},
 	{"pom.xml", "Java", "java -jar", 8080},
 }
 

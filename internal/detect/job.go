@@ -259,27 +259,9 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 	partial := proposal
 	partial.DraftSpec = j.assemble(appID, src, draft)
 
-	// Step 9a — the build (R-311). What the app would deploy, built the way a
-	// deploy builds it, so the plan can show the score of the image that will
-	// run and the trial run has something to start. A build that fails stops
-	// here with its log, the way a trial run that crashes does (R-107).
-	trialDraft, trialAuth := draft, (*api.RegistryAuth)(nil)
-	if build := buildFrom(ctx); build != nil {
-		outcome, err := build(ctx, &partial)
-		if err != nil {
-			return Proposal{}, err
-		}
-		if len(outcome.Plan) > 0 {
-			draft = withPlan(draft, outcome.Plan)
-			partial.Winner.Draft = draft
-			partial.DraftSpec = j.assemble(appID, src, draft)
-		}
-		if outcome.Built != nil {
-			proposal.Built, partial.Built = outcome.Built, outcome.Built
-			if image := outcome.Built.Scanned(&partial.DraftSpec); image != "" {
-				trialDraft, trialAuth = withPrimaryImage(draft, image), outcome.PullAuth
-			}
-		}
+	draft, trialDraft, trialAuth, err := j.buildForTrial(ctx, appID, src, draft, &proposal, &partial)
+	if err != nil {
+		return Proposal{}, err
 	}
 	Report(ctx, StageTrying, &partial)
 
@@ -323,6 +305,38 @@ func (j *Job) Run(ctx context.Context, appID string, src spec.Source, view api.S
 		proposal.Blocked = refused
 	}
 	return proposal, nil
+}
+
+// buildForTrial is step 9a — the build (R-311). What the app would deploy,
+// built the way a deploy builds it, so the plan can show the score of the image
+// that will run and the trial run has something to start. A build that fails
+// stops here with its log, the way a trial run that crashes does (R-107).
+//
+// It returns the draft with the build's plan applied, and the draft and pull
+// credentials the trial run should start; proposal and partial record what
+// was built.
+func (j *Job) buildForTrial(ctx context.Context, appID string, src spec.Source, draft Draft, proposal, partial *Proposal) (Draft, Draft, *api.RegistryAuth, error) {
+	trialDraft, trialAuth := draft, (*api.RegistryAuth)(nil)
+	build := buildFrom(ctx)
+	if build == nil {
+		return draft, trialDraft, trialAuth, nil
+	}
+	outcome, err := build(ctx, partial)
+	if err != nil {
+		return draft, trialDraft, trialAuth, err
+	}
+	if len(outcome.Plan) > 0 {
+		draft = withPlan(draft, outcome.Plan)
+		partial.Winner.Draft = draft
+		partial.DraftSpec = j.assemble(appID, src, draft)
+	}
+	if outcome.Built != nil {
+		proposal.Built, partial.Built = outcome.Built, outcome.Built
+		if image := outcome.Built.Scanned(&partial.DraftSpec); image != "" {
+			trialDraft, trialAuth = withPrimaryImage(draft, image), outcome.PullAuth
+		}
+	}
+	return draft, trialDraft, trialAuth, nil
 }
 
 // StatusFor recomputes detection status after the trial run, and again

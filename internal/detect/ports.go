@@ -52,16 +52,7 @@ func observedPorts(t Trial, declared map[int]bool) (ports []spec.Port, tied []in
 	}
 
 	probed := t.HTTPProbed && len(answered) > 0
-	pool := t.ObservedPorts
-	if probed {
-		pool = filterPorts(pool, func(p int) bool { _, ok := answered[p]; return ok })
-		pool = prefer(pool, func(p int) bool { return servesAPage(answered[p]) })
-	} else {
-		pool = prefer(pool, func(p int) bool { return !notHTTP[p] })
-	}
-	pool = prefer(pool, func(p int) bool { return p < ephemeralPorts })
-	pool = prefer(pool, func(p int) bool { return declared[p] })
-	pool = namedInLog(t.Log, pool)
+	pool := candidatePorts(t, answered, probed, declared)
 	if probed && len(pool) > 1 {
 		tied = pool
 	}
@@ -77,21 +68,40 @@ func observedPorts(t Trial, declared map[int]bool) (ports []spec.Port, tied []in
 	// plain TCP so that nothing routes a browser to it.
 	ports = append(ports, spec.Port{Number: chosen, Protocol: "http", Source: spec.PortObserved})
 	for _, p := range t.ObservedPorts {
-		if p == chosen {
-			continue
+		if p != chosen {
+			ports = append(ports, spec.Port{Number: p, Protocol: observedProtocol(p, answered, probed), Source: spec.PortObserved})
 		}
-		protocol := "http"
-		_, answeredHTTP := answered[p]
-		if (!probed && notHTTP[p]) || (probed && !answeredHTTP) {
-			protocol = "tcp"
-		}
-		ports = append(ports, spec.Port{Number: p, Protocol: protocol, Source: spec.PortObserved})
 	}
 	if probed {
 		// The chosen port answered HTTP, whatever its number usually carries.
 		return ports, tied
 	}
 	return webPortsFirst(ports), tied
+}
+
+// candidatePorts narrows what the trial watched by the evidence observedPorts
+// lists, strongest first; the first left is the one to choose.
+func candidatePorts(t Trial, answered map[int]int, probed bool, declared map[int]bool) []int {
+	pool := t.ObservedPorts
+	if probed {
+		pool = filterPorts(pool, func(p int) bool { _, ok := answered[p]; return ok })
+		pool = prefer(pool, func(p int) bool { return servesAPage(answered[p]) })
+	} else {
+		pool = prefer(pool, func(p int) bool { return !notHTTP[p] })
+	}
+	pool = prefer(pool, func(p int) bool { return p < ephemeralPorts })
+	pool = prefer(pool, func(p int) bool { return declared[p] })
+	return namedInLog(t.Log, pool)
+}
+
+// observedProtocol is "tcp" for a port that was probed and did not answer
+// HTTP, or that carries a protocol known not to be HTTP, and "http" otherwise.
+func observedProtocol(p int, answered map[int]int, probed bool) string {
+	_, answeredHTTP := answered[p]
+	if (!probed && notHTTP[p]) || (probed && !answeredHTTP) {
+		return "tcp"
+	}
+	return "http"
 }
 
 // ephemeralPorts is where Linux's ephemeral range starts. A server rarely
@@ -141,18 +151,26 @@ func namedInLog(log string, pool []int) []int {
 		inPool[p] = true
 	}
 
-	web, listening := map[int]bool{}, map[int]bool{}
+	web, listening := portMentions(log, inPool)
+	for _, named := range []map[int]bool{web, listening} {
+		if narrowed := filterPorts(pool, func(p int) bool { return named[p] }); len(narrowed) > 0 {
+			return narrowed
+		}
+	}
+	return pool
+}
+
+// portMentions reads which ports in the pool the log names on a line about
+// HTTP (web), and which on a line about listening.
+func portMentions(log string, inPool map[int]bool) (web, listening map[int]bool) {
+	web, listening = map[int]bool{}, map[int]bool{}
 	for _, line := range strings.Split(strings.ToLower(log), "\n") {
 		mentionsHTTP := mentionsPlainHTTP(line)
 		mentionsListen := strings.Contains(line, "listen")
 		if !mentionsHTTP && !mentionsListen {
 			continue
 		}
-		for _, m := range portNumber.FindAllString(line, -1) {
-			n, err := strconv.Atoi(m)
-			if err != nil || !inPool[n] {
-				continue
-			}
+		for _, n := range portsIn(line, inPool) {
 			if mentionsHTTP {
 				web[n] = true
 			}
@@ -161,12 +179,18 @@ func namedInLog(log string, pool []int) []int {
 			}
 		}
 	}
-	for _, named := range []map[int]bool{web, listening} {
-		if narrowed := filterPorts(pool, func(p int) bool { return named[p] }); len(narrowed) > 0 {
-			return narrowed
+	return web, listening
+}
+
+// portsIn is the numbers in a line that are ports in the pool.
+func portsIn(line string, inPool map[int]bool) []int {
+	var out []int
+	for _, m := range portNumber.FindAllString(line, -1) {
+		if n, err := strconv.Atoi(m); err == nil && inPool[n] {
+			out = append(out, n)
 		}
 	}
-	return pool
+	return out
 }
 
 // mentionsPlainHTTP reports "http" in a lowercase line other than as the start

@@ -85,36 +85,59 @@ func (v *composeVars) interpolate(node any) any {
 func (v *composeVars) walk(node any, at []string) any {
 	switch n := node.(type) {
 	case map[string]any:
-		out := make(map[string]any, len(n))
-		for k, child := range n {
-			if env, ok := v.environmentEntry(at, k, child); ok {
-				out[k] = env
-				continue
-			}
-			out[k] = v.walk(child, append(at[:len(at):len(at)], k))
-		}
-		return out
+		return v.walkMap(n, at)
 	case []any:
-		out := make([]any, len(n))
-		for i, child := range n {
-			if s, ok := child.(string); ok && isEnvironment(at) {
-				key, raw, found := strings.Cut(s, "=")
-				if found {
-					if name, whole := v.wholeMissing(raw); whole {
-						v.slot(at[1], key, name)
-						out[i] = key + "="
-						continue
-					}
-				}
-			}
-			out[i] = v.walk(child, at)
-		}
-		return out
+		return v.walkList(n, at)
 	case string:
 		return typed(n, v.expand(n))
 	default:
 		return node
 	}
+}
+
+// walkMap is walk for a mapping; at grows by each key.
+func (v *composeVars) walkMap(n map[string]any, at []string) map[string]any {
+	out := make(map[string]any, len(n))
+	for k, child := range n {
+		if env, ok := v.environmentEntry(at, k, child); ok {
+			out[k] = env
+			continue
+		}
+		out[k] = v.walk(child, append(at[:len(at):len(at)], k))
+	}
+	return out
+}
+
+// walkList is walk for a sequence; its items share its path.
+func (v *composeVars) walkList(n []any, at []string) []any {
+	out := make([]any, len(n))
+	for i, child := range n {
+		if env, ok := v.environmentItem(at, child); ok {
+			out[i] = env
+			continue
+		}
+		out[i] = v.walk(child, at)
+	}
+	return out
+}
+
+// environmentItem handles one `KEY=value` entry of a service's list-shaped
+// environment.
+func (v *composeVars) environmentItem(at []string, item any) (any, bool) {
+	s, ok := item.(string)
+	if !ok || !isEnvironment(at) {
+		return nil, false
+	}
+	key, raw, found := strings.Cut(s, "=")
+	if !found {
+		return nil, false
+	}
+	name, whole := v.wholeMissing(raw)
+	if !whole {
+		return nil, false
+	}
+	v.slot(at[1], key, name)
+	return key + "=", true
 }
 
 // environmentEntry handles one entry of a service's map-shaped environment.
@@ -182,106 +205,105 @@ func (v *composeVars) expand(text string) string {
 	}
 	var out strings.Builder
 	for i := 0; i < len(text); {
-		c := text[i]
-		if c != '$' || i+1 >= len(text) {
-			out.WriteByte(c)
+		if text[i] != '$' || i+1 >= len(text) {
+			out.WriteByte(text[i])
 			i++
 			continue
 		}
-		next := text[i+1]
-		switch {
-		case next == '$':
-			out.WriteByte('$')
-			i += 2
-		case next == '{':
-			end := matchingBrace(text, i+1)
-			if end < 0 {
-				out.WriteString(text[i:])
-				return out.String()
-			}
-			out.WriteString(v.substitute(text[i+2 : end]))
-			i = end + 1
-		case isNameStart(next):
-			j := i + 1
-			for j < len(text) && isNameChar(text[j]) {
-				j++
-			}
-			name := text[i+1 : j]
-			if value, ok := v.values[name]; ok {
-				out.WriteString(value)
-			} else {
-				v.miss(name)
-			}
-			i = j
-		default:
-			out.WriteByte(c)
-			i++
-		}
+		i = v.expandAt(text, i, &out)
 	}
 	return out.String()
 }
 
-// substitute resolves the body of one `${...}`.
-func (v *composeVars) substitute(body string) string {
-	j := 0
-	for j < len(body) && isNameChar(body[j]) {
+// expandAt writes the substitution starting at the `$` at i, and returns
+// where the text after it starts. An unclosed `${` is written as it stands,
+// with the rest of the text.
+func (v *composeVars) expandAt(text string, i int, out *strings.Builder) int {
+	next := text[i+1]
+	switch {
+	case next == '$':
+		out.WriteByte('$')
+		return i + 2
+	case next == '{':
+		end := matchingBrace(text, i+1)
+		if end < 0 {
+			out.WriteString(text[i:])
+			return len(text)
+		}
+		out.WriteString(v.substitute(text[i+2 : end]))
+		return end + 1
+	case isNameStart(next):
+		j := nameEnd(text, i+1)
+		name := text[i+1 : j]
+		if value, ok := v.values[name]; ok {
+			out.WriteString(value)
+		} else {
+			v.miss(name)
+		}
+		return j
+	default:
+		out.WriteByte('$')
+		return i + 1
+	}
+}
+
+// nameEnd is where the run of name characters starting at from ends.
+func nameEnd(s string, from int) int {
+	j := from
+	for j < len(s) && isNameChar(s[j]) {
 		j++
 	}
+	return j
+}
+
+// substitute resolves the body of one `${...}`.
+func (v *composeVars) substitute(body string) string {
+	j := nameEnd(body, 0)
 	name, rest := body[:j], body[j:]
 	if name == "" || !isNameStart(name[0]) {
 		// Not a substitution compose understands. Kept as written, so what
 		// Pando could not read stays visible.
 		return "${" + body + "}"
 	}
-	value, set := v.values[name]
-
-	op, arg := rest, ""
-	for _, candidate := range []string{":-", ":?", ":+", "-", "?", "+"} {
-		if strings.HasPrefix(rest, candidate) {
-			op, arg = candidate, rest[len(candidate):]
-			break
-		}
-	}
-
-	switch op {
-	case "":
-		if !set {
-			v.miss(name)
-		}
-		return value
-	case ":-":
-		if !set || value == "" {
-			return v.expand(arg)
-		}
-		return value
-	case "-":
-		if !set {
-			return v.expand(arg)
-		}
-		return value
-	case ":?":
-		if !set || value == "" {
-			v.miss(name)
-		}
-		return value
-	case "?":
-		if !set {
-			v.miss(name)
-		}
-		return value
-	case ":+":
-		if set && value != "" {
-			return v.expand(arg)
-		}
-		return ""
-	case "+":
-		if set {
-			return v.expand(arg)
-		}
-		return ""
-	default:
+	op, arg, known := composeOp(rest)
+	if !known {
 		return "${" + body + "}"
 	}
+	value, set := v.values[name]
+
+	// The forms with a colon treat an empty value as unset.
+	present := set && (value != "" || !strings.HasPrefix(op, ":"))
+	switch strings.TrimPrefix(op, ":") {
+	case "-":
+		if !present {
+			return v.expand(arg)
+		}
+		return value
+	case "+":
+		if present {
+			return v.expand(arg)
+		}
+		return ""
+	default: // "" and "?"
+		if !present {
+			v.miss(name)
+		}
+		return value
+	}
+}
+
+// composeOp splits what follows a name in `${...}` into its operator and
+// argument, reporting false when it is not one compose understands.
+func composeOp(rest string) (op, arg string, known bool) {
+	if rest == "" {
+		return "", "", true
+	}
+	for _, candidate := range []string{":-", ":?", ":+", "-", "?", "+"} {
+		if strings.HasPrefix(rest, candidate) {
+			return candidate, rest[len(candidate):], true
+		}
+	}
+	return rest, "", false
 }
 
 // matchingBrace finds the `}` closing the `{` at open, counting nested `${`.
@@ -350,38 +372,51 @@ func parseDotenv(r io.Reader) []assignment {
 
 	scanner := bufio.NewScanner(io.LimitReader(r, 64<<10))
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+		key, raw, ok := dotenvLine(scanner.Text())
+		if !ok {
 			continue
 		}
-		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
-		key, value, found := strings.Cut(line, "=")
-		key = strings.TrimSpace(key)
-		if !found || !dotenvKey.MatchString(key) {
-			continue
-		}
-		value = strings.TrimLeft(value, " \t")
-
-		switch {
-		case strings.HasPrefix(value, "'"):
-			if end := strings.Index(value[1:], "'"); end >= 0 {
-				value = value[1 : end+1]
-			} else {
-				value = value[1:]
-			}
-		case strings.HasPrefix(value, `"`):
-			body, closed := closingQuote(value[1:])
-			if !closed {
-				body = value[1:]
-			}
-			value = vars.expand(unescape(body))
-		default:
-			value = vars.expand(strings.TrimSpace(stripInlineComment(value)))
-		}
+		value := dotenvValue(vars, raw)
 		local[key] = value
 		out = append(out, assignment{Key: key, Value: value})
 	}
 	return out
+}
+
+// dotenvLine splits one line of a dotenv file into its key and its raw value,
+// reporting false for a blank line, a comment, or a line that sets nothing.
+func dotenvLine(text string) (key, value string, ok bool) {
+	line := strings.TrimSpace(text)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", "", false
+	}
+	line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+	key, value, found := strings.Cut(line, "=")
+	key = strings.TrimSpace(key)
+	if !found || !dotenvKey.MatchString(key) {
+		return "", "", false
+	}
+	return key, strings.TrimLeft(value, " \t"), true
+}
+
+// dotenvValue reads a raw value by how it is quoted, interpolating it against
+// vars where compose would.
+func dotenvValue(vars *composeVars, value string) string {
+	switch {
+	case strings.HasPrefix(value, "'"):
+		if end := strings.Index(value[1:], "'"); end >= 0 {
+			return value[1 : end+1]
+		}
+		return value[1:]
+	case strings.HasPrefix(value, `"`):
+		body, closed := closingQuote(value[1:])
+		if !closed {
+			body = value[1:]
+		}
+		return vars.expand(unescape(body))
+	default:
+		return vars.expand(strings.TrimSpace(stripInlineComment(value)))
+	}
 }
 
 // closingQuote returns a double-quoted value's body, up to the first `"` not

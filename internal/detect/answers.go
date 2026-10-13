@@ -317,20 +317,8 @@ func withArg(args []spec.KV, key, value string) []spec.KV {
 // same way.
 func (p Proposal) CheckAnswers(answers map[string]string) error {
 	if value, given := answers[KeyDeployableProject]; given {
-		if _, ok := cleanSubproject(value); !ok {
-			return errs.Newf(errs.ValidInvalid,
-				"%q is not a directory inside this repository, so Pando cannot read a project from it. "+
-					"Valid answer: the path of the project's directory from the top of the repository, such as apps/web.",
-				value)
-		}
-		// A choice names the directories that exist; another would be read
-		// as an empty one.
-		for _, q := range p.Questions {
-			if q.Key == KeyDeployableProject && len(q.Options) > 0 && !containsString(q.Options, strings.TrimSpace(value)) {
-				return errs.Newf(errs.ValidInvalid,
-					"%q is not one of the projects Pando found in this repository. Valid answer: one of %s.",
-					value, strings.Join(q.Options, ", "))
-			}
+		if err := p.checkDeployableProject(value); err != nil {
+			return err
 		}
 	}
 	for _, key := range []string{KeyBuildStrategy, KeyBuildMethod} {
@@ -338,27 +326,63 @@ func (p Proposal) CheckAnswers(answers map[string]string) error {
 		if value == "" {
 			continue
 		}
-		var readings []string
-		for _, c := range append([]Candidate{p.Winner}, p.RunnersUp...) {
-			if c.Strategy != StrategyUnknown && c.Strategy != "" && len(c.Draft.Workloads) > 0 {
-				readings = append(readings, string(c.Strategy))
-			}
+		if err := p.checkBuildAnswer(value); err != nil {
+			return err
 		}
-		if containsString(readings, value) {
-			continue
-		}
-		if len(readings) == 0 {
-			return errs.New(errs.ValidInvalid,
-				"Pando found nothing in this repository it knows how to build, so no answer to how it is "+
-					"built can be turned into something Pando runs.").
-				WithRemedy("Add a Dockerfile to the repository, or a compose file, or a Procfile naming the " +
-					"command that starts the app, then run detection again.")
-		}
-		return errs.Newf(errs.ValidInvalid,
-			"%q is not one of the ways Pando found to build this app. Valid answer: one of %s.",
-			value, strings.Join(readings, ", "))
 	}
 	return nil
+}
+
+// checkDeployableProject refuses a deployable_project answer that is not a
+// directory inside the repository, or not one of the choices offered.
+func (p Proposal) checkDeployableProject(value string) error {
+	if _, ok := cleanSubproject(value); !ok {
+		return errs.Newf(errs.ValidInvalid,
+			"%q is not a directory inside this repository, so Pando cannot read a project from it. "+
+				"Valid answer: the path of the project's directory from the top of the repository, such as apps/web.",
+			value)
+	}
+	// A choice names the directories that exist; another would be read
+	// as an empty one.
+	for _, q := range p.Questions {
+		if q.Key == KeyDeployableProject && len(q.Options) > 0 && !containsString(q.Options, strings.TrimSpace(value)) {
+			return errs.Newf(errs.ValidInvalid,
+				"%q is not one of the projects Pando found in this repository. Valid answer: one of %s.",
+				value, strings.Join(q.Options, ", "))
+		}
+	}
+	return nil
+}
+
+// checkBuildAnswer refuses a build_strategy or build_method answer that names
+// no reading a detector made.
+func (p Proposal) checkBuildAnswer(value string) error {
+	readings := p.buildReadings()
+	if containsString(readings, value) {
+		return nil
+	}
+	if len(readings) == 0 {
+		return errs.New(errs.ValidInvalid,
+			"Pando found nothing in this repository it knows how to build, so no answer to how it is "+
+				"built can be turned into something Pando runs.").
+			WithRemedy("Add a Dockerfile to the repository, or a compose file, or a Procfile naming the " +
+				"command that starts the app, then run detection again.")
+	}
+	return errs.Newf(errs.ValidInvalid,
+		"%q is not one of the ways Pando found to build this app. Valid answer: one of %s.",
+		value, strings.Join(readings, ", "))
+}
+
+// buildReadings is the strategies of the candidates that have something to
+// run, the winner first.
+func (p Proposal) buildReadings() []string {
+	var readings []string
+	for _, c := range append([]Candidate{p.Winner}, p.RunnersUp...) {
+		if c.Strategy != StrategyUnknown && c.Strategy != "" && len(c.Draft.Workloads) > 0 {
+			readings = append(readings, string(c.Strategy))
+		}
+	}
+	return readings
 }
 
 // adoptedCandidate is the runner-up the tie-break answer selects, when chosen()

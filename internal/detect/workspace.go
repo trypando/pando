@@ -103,28 +103,8 @@ func workspaceMembers(src api.SourceView) []string {
 	seen := map[string]bool{}
 	var found []string
 	for _, pattern := range patterns {
-		pattern = strings.TrimPrefix(path.Clean(strings.TrimPrefix(pattern, "./")), "/")
-		if pattern == "." || strings.HasPrefix(pattern, "..") || strings.HasPrefix(pattern, "!") {
-			continue
-		}
-		// "packages/**" means the packages under packages/, for what is asked.
-		pattern = strings.ReplaceAll(pattern, "**", "*")
-		var matches []string
-		if strings.ContainsAny(pattern, "*?[") {
-			matches, _ = src.Glob(pattern)
-		} else {
-			matches = []string{pattern}
-		}
-		for _, m := range matches {
-			if seen[m] || strings.HasPrefix(path.Base(m), ".") {
-				continue
-			}
-			// The Glob matches basenames too; only what the pattern names
-			// as a path is a member.
-			if ok, _ := path.Match(pattern, m); !ok {
-				continue
-			}
-			if info, err := src.Stat(m); err == nil && info.IsDir {
+		for _, m := range memberDirs(src, pattern) {
+			if !seen[m] {
 				seen[m] = true
 				found = append(found, m)
 			}
@@ -134,12 +114,51 @@ func workspaceMembers(src api.SourceView) []string {
 	return found
 }
 
+// memberDirs are the directories one workspace pattern names, hidden ones
+// left out.
+func memberDirs(src api.SourceView, pattern string) []string {
+	pattern = strings.TrimPrefix(path.Clean(strings.TrimPrefix(pattern, "./")), "/")
+	if pattern == "." || strings.HasPrefix(pattern, "..") || strings.HasPrefix(pattern, "!") {
+		return nil
+	}
+	// "packages/**" means the packages under packages/, for what is asked.
+	pattern = strings.ReplaceAll(pattern, "**", "*")
+	matches := []string{pattern}
+	if strings.ContainsAny(pattern, "*?[") {
+		matches, _ = src.Glob(pattern)
+	}
+	var out []string
+	for _, m := range matches {
+		if strings.HasPrefix(path.Base(m), ".") {
+			continue
+		}
+		// The Glob matches basenames too; only what the pattern names
+		// as a path is a member.
+		if ok, _ := path.Match(pattern, m); ok && isDir(src, m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// isDir reports whether name is a directory in src.
+func isDir(src api.SourceView, name string) bool {
+	info, err := src.Stat(name)
+	return err == nil && info.IsDir
+}
+
+// packageJSON is the Node.js package manifest.
+const packageJSON = "package.json"
+
+// cargoToml is the Rust package manifest.
+const cargoToml = "Cargo.toml"
+
 // hasStartScript reports whether package.json has a start script.
 func hasStartScript(src api.SourceView) bool {
 	var pkg struct {
 		Scripts map[string]string `json:"scripts"`
 	}
-	return readJSON(src, "package.json", &pkg) && strings.TrimSpace(pkg.Scripts["start"]) != ""
+	return readJSON(src, packageJSON, &pkg) && strings.TrimSpace(pkg.Scripts["start"]) != ""
 }
 
 // pnpmWorkspacePackages are the package patterns a pnpm-workspace.yaml lists,
@@ -165,7 +184,7 @@ func packageJSONWorkspaces(src api.SourceView) []string {
 	var pkg struct {
 		Workspaces json.RawMessage `json:"workspaces"`
 	}
-	if !readJSON(src, "package.json", &pkg) || len(pkg.Workspaces) == 0 {
+	if !readJSON(src, packageJSON, &pkg) || len(pkg.Workspaces) == 0 {
 		return nil
 	}
 	var list []string
@@ -285,7 +304,7 @@ func readCargoManifest(src api.SourceView, name string) (cargoManifest, bool) {
 
 // cargoWorkspaceMembers are the member patterns of the root Cargo workspace.
 func cargoWorkspaceMembers(src api.SourceView) []string {
-	m, ok := readCargoManifest(src, "Cargo.toml")
+	m, ok := readCargoManifest(src, cargoToml)
 	if !ok || m.Workspace == nil {
 		return nil
 	}
@@ -296,8 +315,20 @@ func cargoWorkspaceMembers(src api.SourceView) []string {
 // build a program — a src/main.rs or a [[bin]] — counting the root package
 // too, when the workspace has one.
 func cargoWorkspaceBinaries(src api.SourceView) []string {
+	var bins []string
+	for _, dir := range cargoPackageDirs(src) {
+		if cargoBuildsProgram(src, dir) {
+			bins = append(bins, dir)
+		}
+	}
+	return bins
+}
+
+// cargoPackageDirs are the root package, when there is one, and the
+// directories the root workspace's member patterns name.
+func cargoPackageDirs(src api.SourceView) []string {
 	var dirs []string
-	if m, ok := readCargoManifest(src, "Cargo.toml"); ok && m.Package != nil {
+	if m, ok := readCargoManifest(src, cargoToml); ok && m.Package != nil {
 		dirs = append(dirs, ".")
 	}
 	for _, member := range cargoWorkspaceMembers(src) {
@@ -313,17 +344,17 @@ func cargoWorkspaceBinaries(src api.SourceView) []string {
 			}
 		}
 	}
-	var bins []string
-	for _, dir := range dirs {
-		m, ok := readCargoManifest(src, path.Join(dir, "Cargo.toml"))
-		if !ok || m.Package == nil {
-			continue
-		}
-		if info, err := src.Stat(path.Join(dir, "src/main.rs")); (err == nil && !info.IsDir) || len(m.Bin) > 0 {
-			bins = append(bins, dir)
-		}
+	return dirs
+}
+
+// cargoBuildsProgram reports a package in dir with a src/main.rs or a [[bin]].
+func cargoBuildsProgram(src api.SourceView, dir string) bool {
+	m, ok := readCargoManifest(src, path.Join(dir, cargoToml))
+	if !ok || m.Package == nil {
+		return false
 	}
-	return bins
+	info, err := src.Stat(path.Join(dir, "src/main.rs"))
+	return (err == nil && !info.IsDir) || len(m.Bin) > 0
 }
 
 func readAll(src api.SourceView, name string) ([]byte, bool) {
@@ -343,8 +374,8 @@ func readAll(src api.SourceView, name string) ([]byte, bool) {
 var projectManifests = []string{
 	"Dockerfile", "Containerfile",
 	"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml",
-	"package.json", "requirements.txt", "pyproject.toml", "Pipfile", "Procfile",
-	"go.mod", "Gemfile", "composer.json", "Cargo.toml", "pom.xml",
+	packageJSON, "requirements.txt", "pyproject.toml", "Pipfile", "Procfile",
+	"go.mod", "Gemfile", "composer.json", cargoToml, "pom.xml",
 	"build.gradle", "build.gradle.kts", "mix.exs", "deno.json", "deno.jsonc",
 }
 
@@ -359,16 +390,8 @@ var rootSourceExtensions = []string{
 // rest of packageDirs, that hold a project manifest. Nil when the root holds a
 // project itself, which every other detector reads.
 func nestedProjects(src api.SourceView) []string {
-	if holdsProject(src, ".") {
+	if rootHoldsApp(src) {
 		return nil
-	}
-	for _, ext := range rootSourceExtensions {
-		files, _ := src.Glob("*" + ext)
-		for _, f := range files {
-			if !strings.Contains(f, "/") {
-				return nil
-			}
-		}
 	}
 
 	conventional := map[string]bool{}
@@ -376,38 +399,61 @@ func nestedProjects(src api.SourceView) []string {
 		conventional[dir] = true
 	}
 	var found []string
-	consider := func(dir string) {
-		base := path.Base(dir)
-		if strings.HasPrefix(base, ".") || strings.HasPrefix(base, "_") || underNotDeployable(dir) {
-			return
-		}
-		if holdsProject(src, dir) {
-			found = append(found, dir)
-		}
-	}
 	entries, _ := src.Glob("*")
 	for _, entry := range entries {
-		if strings.Contains(entry, "/") {
-			continue
-		}
-		if info, err := src.Stat(entry); err != nil || !info.IsDir {
+		if strings.Contains(entry, "/") || !isDir(src, entry) {
 			continue
 		}
 		if !conventional[entry] {
-			consider(entry)
+			found = appendProject(src, found, entry)
 			continue
 		}
-		children, _ := src.Glob(entry + "/*")
-		for _, child := range children {
-			if ok, _ := path.Match(entry+"/*", child); !ok {
-				continue
-			}
-			if info, err := src.Stat(child); err == nil && info.IsDir {
-				consider(child)
+		found = appendProjectsUnder(src, found, entry)
+	}
+	sort.Strings(found)
+	return found
+}
+
+// appendProjectsUnder adds the projects one level under a conventional
+// directory such as apps/.
+func appendProjectsUnder(src api.SourceView, found []string, dir string) []string {
+	children, _ := src.Glob(dir + "/*")
+	for _, child := range children {
+		if ok, _ := path.Match(dir+"/*", child); ok && isDir(src, child) {
+			found = appendProject(src, found, child)
+		}
+	}
+	return found
+}
+
+// rootHoldsApp reports a root that holds a project manifest, or a source
+// file some detector or the build planner may read.
+func rootHoldsApp(src api.SourceView) bool {
+	if holdsProject(src, ".") {
+		return true
+	}
+	for _, ext := range rootSourceExtensions {
+		files, _ := src.Glob("*" + ext)
+		for _, f := range files {
+			if !strings.Contains(f, "/") {
+				return true
 			}
 		}
 	}
-	sort.Strings(found)
+	return false
+}
+
+// appendProject adds dir to found when it holds a project somebody could
+// deploy: not hidden, not underscored, not under a directory of things that
+// are not deployed.
+func appendProject(src api.SourceView, found []string, dir string) []string {
+	base := path.Base(dir)
+	if strings.HasPrefix(base, ".") || strings.HasPrefix(base, "_") || underNotDeployable(dir) {
+		return found
+	}
+	if holdsProject(src, dir) {
+		found = append(found, dir)
+	}
 	return found
 }
 

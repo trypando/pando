@@ -61,45 +61,11 @@ func requireVars(d Draft, workload int, vars []requiredVar) Draft {
 	}
 	w := &d.Workloads[workload]
 	for _, v := range vars {
-		at := -1
-		for i, e := range w.Env {
-			if e.Key == v.Key {
-				at = i
-				break
-			}
+		at := envIndex(w.Env, v.Key)
+		if at >= 0 && requirementMet(&d, w.Env[at], v) {
+			continue
 		}
-		if at >= 0 {
-			e := w.Env[at]
-			switch {
-			case e.SlotRef != nil:
-				d.Slots = markRequired(d.Slots, *e.SlotRef, v)
-				continue
-			case e.SecretRef != nil:
-				continue
-			case e.Value != nil && (*e.Value != "" || (e.Source != spec.EnvFromDetection && e.Source != "")):
-				continue
-			}
-		}
-
-		entry := spec.EnvEntry{Key: v.Key, Source: spec.EnvFromDetection}
-		if v.Value != nil {
-			value := *v.Value
-			entry.Value = &value
-		} else {
-			ref := v.Key
-			entry.SlotRef = &ref
-			if _, declared := slotIndex(d.Slots, v.Key); declared {
-				d.Slots = markRequired(d.Slots, v.Key, v)
-			} else {
-				d.Slots = append(d.Slots, spec.Slot{
-					Key:      v.Key,
-					Type:     slotTypeFor(v.Key, ""),
-					Required: true,
-					Format:   v.Format,
-					Evidence: []string{v.Evidence},
-				})
-			}
-		}
+		entry := requiredEntry(&d, v)
 		if at >= 0 {
 			w.Env[at] = entry
 		} else {
@@ -107,6 +73,58 @@ func requireVars(d Draft, workload int, vars []requiredVar) Draft {
 		}
 	}
 	return d
+}
+
+// envIndex is where key sits in a workload's environment, or -1.
+func envIndex(env []spec.EnvEntry, key string) int {
+	for i, e := range env {
+		if e.Key == key {
+			return i
+		}
+	}
+	return -1
+}
+
+// requirementMet reports an existing entry that already meets v: a value
+// somebody gave, or a secret. One that is already a slot meets it too, once
+// the slot is marked required on d, keeping how it was found.
+func requirementMet(d *Draft, e spec.EnvEntry, v requiredVar) bool {
+	switch {
+	case e.SlotRef != nil:
+		d.Slots = markRequired(d.Slots, *e.SlotRef, v)
+		return true
+	case e.SecretRef != nil:
+		return true
+	case e.Value != nil && (*e.Value != "" || (e.Source != spec.EnvFromDetection && e.Source != "")):
+		return true
+	}
+	return false
+}
+
+// requiredEntry is the environment entry for v: its value when the source
+// says what it is, otherwise a reference to the required slot that asks for
+// it, declared on d when it is not already.
+func requiredEntry(d *Draft, v requiredVar) spec.EnvEntry {
+	entry := spec.EnvEntry{Key: v.Key, Source: spec.EnvFromDetection}
+	if v.Value != nil {
+		value := *v.Value
+		entry.Value = &value
+		return entry
+	}
+	ref := v.Key
+	entry.SlotRef = &ref
+	if _, declared := slotIndex(d.Slots, v.Key); declared {
+		d.Slots = markRequired(d.Slots, v.Key, v)
+	} else {
+		d.Slots = append(d.Slots, spec.Slot{
+			Key:      v.Key,
+			Type:     slotTypeFor(v.Key, ""),
+			Required: true,
+			Format:   v.Format,
+			Evidence: []string{v.Evidence},
+		})
+	}
+	return entry
 }
 
 func slotIndex(slots []spec.Slot, key string) (int, bool) {
@@ -172,18 +190,31 @@ func requirementsFor(src api.SourceView, d Draft, workload int, dir, dockerfile 
 
 	var vars []requiredVar
 	var evidence []string
-	add := func(found []requiredVar, why string) {
-		var kept []requiredVar
-		for _, v := range found {
-			if !baked[v.Key] {
-				kept = append(kept, v)
-			}
-		}
+	for _, f := range sourceFindings(view) {
+		kept := withoutBaked(f.vars, baked)
 		if len(kept) == 0 {
-			return
+			continue
 		}
 		vars = append(vars, kept...)
-		evidence = append(evidence, why)
+		evidence = append(evidence, f.why)
+	}
+
+	return requireVars(d, workload, vars), evidence
+}
+
+// sourceFinding is what one source in the repository says is required, and
+// the evidence line that says why.
+type sourceFinding struct {
+	vars []requiredVar
+	why  string
+}
+
+// sourceFindings asks each source that can say a variable is required —
+// framework conventions, environment schemas, reads at import — what it says.
+func sourceFindings(view api.SourceView) []sourceFinding {
+	var out []sourceFinding
+	add := func(found []requiredVar, why string) {
+		out = append(out, sourceFinding{vars: found, why: why})
 	}
 
 	samples := envSamples(view)
@@ -211,8 +242,19 @@ func requirementsFor(src api.SourceView, d Draft, workload int, dir, dockerfile 
 	if found, file := pythonRequired(view); len(found) > 0 {
 		add(found, file+" reads "+keysOf(found)+" with no fallback when it starts")
 	}
+	return out
+}
 
-	return requireVars(d, workload, vars), evidence
+// withoutBaked drops the variables a Dockerfile's ENV already sets: a
+// variable the image sets is one the app already has.
+func withoutBaked(found []requiredVar, baked map[string]bool) []requiredVar {
+	var kept []requiredVar
+	for _, v := range found {
+		if !baked[v.Key] {
+			kept = append(kept, v)
+		}
+	}
+	return kept
 }
 
 // composeRequirements reads each service the compose file builds from this
@@ -411,25 +453,7 @@ func nodeSchemaRequired(src api.SourceView, samples map[string]string) ([]requir
 		if !ok {
 			continue
 		}
-		var keys []string
-		switch {
-		case strings.Contains(body, "Env.schema."):
-			for _, m := range adonisEntry.FindAllStringSubmatch(body, -1) {
-				if m[2] == "" {
-					keys = append(keys, m[1])
-				}
-			}
-		case strings.Contains(body, "cleanEnv("):
-			// devDefault does not count: the app runs in production, where
-			// envalid ignores it.
-			for _, m := range envalidEntry.FindAllStringSubmatch(body, -1) {
-				if !envalidHasDefault.MatchString(m[2]) {
-					keys = append(keys, m[1])
-				}
-			}
-		case strings.Contains(body, "createEnv(") && strings.Contains(body, "z."):
-			keys = zodRequired(body)
-		}
+		keys := schemaKeys(body)
 		if len(keys) == 0 {
 			continue
 		}
@@ -438,60 +462,126 @@ func nodeSchemaRequired(src api.SourceView, samples map[string]string) ([]requir
 	return nil, ""
 }
 
+// schemaKeys is the required keys of one environment schema, read the way the
+// library it is written for reads it.
+func schemaKeys(body string) []string {
+	switch {
+	case strings.Contains(body, "Env.schema."):
+		return adonisRequired(body)
+	case strings.Contains(body, "cleanEnv("):
+		return envalidRequired(body)
+	case strings.Contains(body, "createEnv(") && strings.Contains(body, "z."):
+		return zodRequired(body)
+	}
+	return nil
+}
+
+// adonisRequired reads the keys of an AdonisJS start/env.ts that are not
+// marked optional.
+func adonisRequired(body string) []string {
+	var keys []string
+	for _, m := range adonisEntry.FindAllStringSubmatch(body, -1) {
+		if m[2] == "" {
+			keys = append(keys, m[1])
+		}
+	}
+	return keys
+}
+
+// envalidRequired reads the keys of an envalid cleanEnv that have no default.
+//
+// devDefault does not count: the app runs in production, where envalid
+// ignores it.
+func envalidRequired(body string) []string {
+	var keys []string
+	for _, m := range envalidEntry.FindAllStringSubmatch(body, -1) {
+		if !envalidHasDefault.MatchString(m[2]) {
+			keys = append(keys, m[1])
+		}
+	}
+	return keys
+}
+
 // zodRequired reads the keys of a t3-env schema's server, shared and client
 // blocks. An
 // entry runs from its key to the next key at the same indentation, so a chain
 // split over lines is read whole.
 func zodRequired(body string) []string {
-	lines := strings.Split(body, "\n")
-	var keys []string
-	inBlock, depth := false, ""
-	var key, chain string
-	flush := func() {
-		if key != "" && strings.Contains(chain, "z.") &&
-			!strings.Contains(chain, ".optional(") && !strings.Contains(chain, ".default(") &&
-			!strings.Contains(chain, ".catch(") {
-			keys = append(keys, key)
-		}
-		key, chain = "", ""
+	var z zodReader
+	for _, line := range strings.Split(body, "\n") {
+		z.read(line)
 	}
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		// The client block too: t3-env validates it on the server at start,
-		// which is where NEXT_PUBLIC_BASE_URL stopped a self-hosted app.
-		if strings.HasPrefix(trimmed, "server:") || strings.HasPrefix(trimmed, "shared:") ||
-			strings.HasPrefix(trimmed, "client:") {
-			flush()
-			inBlock, depth = true, ""
-			continue
-		}
-		if strings.HasPrefix(trimmed, "runtimeEnv:") || strings.HasPrefix(trimmed, "experimental__runtimeEnv:") {
-			flush()
-			inBlock = false
-			continue
-		}
-		if !inBlock {
-			continue
-		}
-		if m := zodKey.FindStringSubmatch(line); m != nil && (depth == "" || m[1] == depth) {
-			flush()
-			depth, key, chain = m[1], m[2], m[3]
-			continue
-		}
-		if strings.HasPrefix(trimmed, "},") || trimmed == "}" {
-			if depth != "" && len(line)-len(strings.TrimLeft(line, " \t")) < len(depth) {
-				flush()
-				inBlock = false
-				continue
-			}
-		}
-		if key != "" && !strings.HasPrefix(trimmed, "//") && !strings.HasPrefix(trimmed, "*") &&
-			!strings.HasPrefix(trimmed, "/*") {
-			chain += " " + trimmed
+	z.flush()
+	return z.keys
+}
+
+// zodReader is zodRequired's state between lines: whether it is inside a
+// block, the indentation of that block's keys, and the entry being read.
+type zodReader struct {
+	keys       []string
+	inBlock    bool
+	depth      string
+	key, chain string
+}
+
+// flush ends the entry being read, keeping its key when the chain is a zod
+// schema nothing makes optional.
+func (z *zodReader) flush() {
+	if z.key != "" && strings.Contains(z.chain, "z.") &&
+		!strings.Contains(z.chain, ".optional(") && !strings.Contains(z.chain, ".default(") &&
+		!strings.Contains(z.chain, ".catch(") {
+		z.keys = append(z.keys, z.key)
+	}
+	z.key, z.chain = "", ""
+}
+
+// read takes one line of the schema.
+func (z *zodReader) read(line string) {
+	trimmed := strings.TrimSpace(line)
+	// The client block too: t3-env validates it on the server at start,
+	// which is where NEXT_PUBLIC_BASE_URL stopped a self-hosted app.
+	if hasAnyPrefix(trimmed, "server:", "shared:", "client:") {
+		z.flush()
+		z.inBlock, z.depth = true, ""
+		return
+	}
+	if hasAnyPrefix(trimmed, "runtimeEnv:", "experimental__runtimeEnv:") {
+		z.flush()
+		z.inBlock = false
+		return
+	}
+	if !z.inBlock {
+		return
+	}
+	if m := zodKey.FindStringSubmatch(line); m != nil && (z.depth == "" || m[1] == z.depth) {
+		z.flush()
+		z.depth, z.key, z.chain = m[1], m[2], m[3]
+		return
+	}
+	if z.closesBlock(line, trimmed) {
+		z.flush()
+		z.inBlock = false
+		return
+	}
+	if z.key != "" && !hasAnyPrefix(trimmed, "//", "*", "/*") {
+		z.chain += " " + trimmed
+	}
+}
+
+// closesBlock reports a closing brace indented less than the block's keys.
+func (z *zodReader) closesBlock(line, trimmed string) bool {
+	return (strings.HasPrefix(trimmed, "},") || trimmed == "}") &&
+		z.depth != "" && len(line)-len(strings.TrimLeft(line, " \t")) < len(z.depth)
+}
+
+// hasAnyPrefix reports whether s starts with any of prefixes.
+func hasAnyPrefix(s string, prefixes ...string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
 		}
 	}
-	flush()
-	return keys
+	return false
 }
 
 // schemaVars turns a schema's required keys into what to set or ask for.
@@ -559,15 +649,7 @@ var pythonEntryFiles = []string{
 // a missing X raises KeyError and the app does not start — in the entry
 // module, or in the Django settings module manage.py names.
 func pythonRequired(src api.SourceView) ([]requiredVar, string) {
-	files := append([]string(nil), pythonEntryFiles...)
-	django := ""
-	if body, ok := readSmall(src, "manage.py"); ok {
-		if m := djangoSettingsRe.FindStringSubmatch(body); m != nil {
-			base := strings.ReplaceAll(m[1], ".", "/")
-			django = base + ".py"
-			files = append([]string{django, base + "/__init__.py", base + "/base.py", base + "/production.py"}, files...)
-		}
-	}
+	django, files := pythonFiles(src)
 	for _, file := range files {
 		body, ok := readSmall(src, file)
 		if !ok {
@@ -577,23 +659,46 @@ func pythonRequired(src api.SourceView) ([]requiredVar, string) {
 		if file == django || strings.HasPrefix(file, strings.TrimSuffix(django, ".py")+"/") {
 			framework = "django"
 		}
-		var out []requiredVar
-		seen := map[string]bool{}
-		for _, line := range moduleLevel(body) {
-			for _, m := range pythonEnvRead.FindAllStringSubmatch(line, -1) {
-				if m[2] != "" || seen[m[1]] {
-					continue // an assignment, not a read
-				}
-				seen[m[1]] = true
-				out = append(out, requiredVar{Key: m[1], Format: formatFor(m[1], framework),
-					Evidence: file + " reads " + m[1] + " with no fallback, and the app stops without it"})
-			}
-		}
-		if len(out) > 0 {
+		if out := pythonEnvReads(file, body, framework); len(out) > 0 {
 			return out, file
 		}
 	}
 	return nil, ""
+}
+
+// pythonFiles is the modules to read, in order, and the Django settings module
+// manage.py names ("" when it names none). The settings come first.
+func pythonFiles(src api.SourceView) (django string, files []string) {
+	files = append([]string(nil), pythonEntryFiles...)
+	body, ok := readSmall(src, "manage.py")
+	if !ok {
+		return "", files
+	}
+	m := djangoSettingsRe.FindStringSubmatch(body)
+	if m == nil {
+		return "", files
+	}
+	base := strings.ReplaceAll(m[1], ".", "/")
+	django = base + ".py"
+	files = append([]string{django, base + "/__init__.py", base + "/base.py", base + "/production.py"}, files...)
+	return django, files
+}
+
+// pythonEnvReads is the `os.environ["X"]` reads at module level in one file.
+func pythonEnvReads(file, body, framework string) []requiredVar {
+	var out []requiredVar
+	seen := map[string]bool{}
+	for _, line := range moduleLevel(body) {
+		for _, m := range pythonEnvRead.FindAllStringSubmatch(line, -1) {
+			if m[2] != "" || seen[m[1]] {
+				continue // an assignment, not a read
+			}
+			seen[m[1]] = true
+			out = append(out, requiredVar{Key: m[1], Format: formatFor(m[1], framework),
+				Evidence: file + " reads " + m[1] + " with no fallback, and the app stops without it"})
+		}
+	}
+	return out
 }
 
 // moduleLevel is the lines that run unconditionally at import: top-level
@@ -610,30 +715,29 @@ func moduleLevel(body string) []string {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if indented := line[0] == ' ' || line[0] == '\t'; !indented {
-			skipping = false
-			for _, opener := range compoundOpeners {
-				if strings.HasPrefix(trimmed, opener) {
-					skipping = true
-					break
-				}
+		if line[0] != ' ' && line[0] != '\t' {
+			skipping = hasAnyPrefix(trimmed, compoundOpeners...)
+			if skipping {
+				out = appendCondition(out, trimmed)
+				continue
 			}
-			if skipping && !strings.HasPrefix(trimmed, "def ") && !strings.HasPrefix(trimmed, "async def ") &&
-				!strings.HasPrefix(trimmed, "@") && !strings.HasPrefix(trimmed, "else") &&
-				!strings.HasPrefix(trimmed, "except") && !strings.HasPrefix(trimmed, "finally") {
-				// The condition itself runs; its body is what may not.
-				if i := strings.LastIndex(trimmed, ":"); i >= 0 {
-					out = append(out, trimmed[:i])
-				}
-			}
-			if !skipping {
-				out = append(out, line)
-			}
-			continue
 		}
 		if !skipping {
 			out = append(out, line)
 		}
+	}
+	return out
+}
+
+// appendCondition adds the header of a top-level compound statement that
+// has a condition — an if, a loop, a with — without its body.
+func appendCondition(out []string, trimmed string) []string {
+	if hasAnyPrefix(trimmed, "def ", "async def ", "@", "else", "except", "finally") {
+		return out
+	}
+	// The condition itself runs; its body is what may not.
+	if i := strings.LastIndex(trimmed, ":"); i >= 0 {
+		out = append(out, trimmed[:i])
 	}
 	return out
 }
@@ -847,138 +951,206 @@ var dockerLinkName = regexp.MustCompile(`_PORT_\d+_(TCP|UDP)`)
 // cannot start without.
 func varsFromLog(log string) []requiredVar {
 	log = ansiEscape.ReplaceAllString(log, "")
-	lower := strings.ToLower(log)
-	lines := strings.Split(log, "\n")
-
-	found := map[string]requiredVar{}
-	var order []string
-	note := func(key, framework, line string) {
-		if key == "" || dockerLinkName.MatchString(key) || strings.HasPrefix(key, "ERR_") ||
-			strings.HasPrefix(key, "E_") {
-			return
-		}
-		if _, seen := found[key]; seen {
-			return
-		}
-		value, skip := conventionalValue(key)
-		if skip {
-			return
-		}
-		line = strings.TrimSpace(line)
-		if len(line) > 160 {
-			line = line[:157] + "…"
-		}
-		found[key] = requiredVar{
-			Key:      key,
-			Format:   formatFor(key, framework),
-			Evidence: fmt.Sprintf("the app stopped when Pando tried it, and its log says: %q", line),
-			Value:    value,
-		}
-		order = append(order, key)
+	r := logReader{
+		log:   log,
+		lower: strings.ToLower(log),
+		lines: strings.Split(log, "\n"),
+		found: map[string]requiredVar{},
 	}
+	r.framework = logFramework(r.lower)
 
-	framework := ""
+	r.frameworkErrors()
+	r.keyErrors()
+	for i := range r.lines {
+		r.failureLine(i)
+	}
+	r.dockerRunInstructions()
+	r.unreachableServices()
+	return r.result()
+}
+
+// logReader is varsFromLog's state: the log, read three ways, and the
+// variables noted from it so far, in the order they were found.
+type logReader struct {
+	log, lower string
+	lines      []string
+	framework  string
+
+	found map[string]requiredVar
+	order []string
+}
+
+// logFramework names the framework a log is from, where that decides what
+// shape a variable's value takes.
+func logFramework(lower string) string {
 	switch {
 	case strings.Contains(lower, "laravel") || strings.Contains(lower, "illuminate") ||
 		strings.Contains(lower, "artisan") || strings.Contains(lower, "application key"):
-		framework = "laravel"
+		return "laravel"
 	case strings.Contains(lower, "django"):
-		framework = "django"
+		return "django"
 	}
+	return ""
+}
 
+// note records key as required, with line as the evidence, unless it is not
+// a variable anybody sets or was already noted.
+func (r *logReader) note(key, framework, line string) {
+	if key == "" || dockerLinkName.MatchString(key) || strings.HasPrefix(key, "ERR_") ||
+		strings.HasPrefix(key, "E_") {
+		return
+	}
+	if _, seen := r.found[key]; seen {
+		return
+	}
+	value, skip := conventionalValue(key)
+	if skip {
+		return
+	}
+	line = strings.TrimSpace(line)
+	if len(line) > 160 {
+		line = line[:157] + "…"
+	}
+	r.found[key] = requiredVar{
+		Key:      key,
+		Format:   formatFor(key, framework),
+		Evidence: fmt.Sprintf("the app stopped when Pando tried it, and its log says: %q", line),
+		Value:    value,
+	}
+	r.order = append(r.order, key)
+}
+
+// frameworkErrors notes the variable behind each framework error that does not
+// name its own.
+func (r *logReader) frameworkErrors() {
 	for _, known := range knownMessages {
-		if i := strings.Index(lower, known.phrase); i >= 0 {
-			note(known.key, known.framework, lineAt(log, i))
+		if i := strings.Index(r.lower, known.phrase); i >= 0 {
+			r.note(known.key, known.framework, lineAt(r.log, i))
 		}
 	}
+}
 
-	if strings.Contains(log, "environ") {
-		for _, m := range keyError.FindAllStringSubmatch(log, -1) {
-			note(m[1], framework, "KeyError: '"+m[1]+"'")
-		}
+// keyErrors notes Python's KeyError from os.environ["X"].
+func (r *logReader) keyErrors() {
+	if !strings.Contains(r.log, "environ") {
+		return
 	}
+	for _, m := range keyError.FindAllStringSubmatch(r.log, -1) {
+		r.note(m[1], r.framework, "KeyError: '"+m[1]+"'")
+	}
+}
 
-	for i, line := range lines {
-		if zodIssue.MatchString(line) {
-			for _, m := range zodIssue.FindAllStringSubmatch(line, -1) {
-				note(m[1], framework, line)
-			}
-		}
-		if !failurePhrase.MatchString(line) || benignPhrase.MatchString(line) {
+// failureLine reads line i: a zod issue anywhere, and, on a line saying
+// something is missing, the variables it and the lines under it name.
+func (r *logReader) failureLine(i int) {
+	line := r.lines[i]
+	for _, m := range zodIssue.FindAllStringSubmatch(line, -1) {
+		r.note(m[1], r.framework, line)
+	}
+	if !failurePhrase.MatchString(line) || benignPhrase.MatchString(line) {
+		return
+	}
+	r.listUnder(i)
+	r.namedNear(i)
+}
+
+// listUnder reads a heading over a list: "Missing environment variables:" and
+// the names under it, one a line.
+func (r *logReader) listUnder(i int) {
+	line := r.lines[i]
+	heading := strings.TrimSpace(line)
+	if !strings.HasSuffix(heading, ":") && !strings.HasSuffix(heading, "variables") {
+		return
+	}
+	for _, next := range r.lines[i+1 : min(len(r.lines), i+30)] {
+		if strings.TrimSpace(next) == "" {
 			continue
 		}
-
-		// A heading over a list: "Missing environment variables:" and the
-		// names under it, one a line.
-		if strings.HasSuffix(strings.TrimSpace(line), ":") || strings.HasSuffix(strings.TrimSpace(line), "variables") {
-			for _, next := range lines[i+1 : min(len(lines), i+30)] {
-				if strings.TrimSpace(next) == "" {
-					continue
-				}
-				m := listedName.FindStringSubmatch(next)
-				if m == nil {
-					if am := afterVariable.FindStringSubmatch(next); am != nil {
-						note(am[1], framework, next)
-						continue
-					}
-					break
-				}
-				note(m[1], framework, line+" "+strings.TrimSpace(next))
-			}
+		if m := listedName.FindStringSubmatch(next); m != nil {
+			r.note(m[1], r.framework, line+" "+strings.TrimSpace(next))
+			continue
 		}
-
-		// This line, and the two after it when they name a variable as one:
-		// "The application key is missing, halting init!" is followed by
-		// "And apply it to the APP_KEY environment variable."
-		window := []string{line}
-		for _, next := range lines[i+1 : min(len(lines), i+3)] {
-			if variablePhrase.MatchString(next) || dockerRunEnv.MatchString(next) {
-				window = append(window, next)
-			}
+		am := afterVariable.FindStringSubmatch(next)
+		if am == nil {
+			break
 		}
-		for _, text := range window {
-			for _, name := range namesIn(text) {
-				note(name, framework, line)
+		r.note(am[1], r.framework, next)
+	}
+}
+
+// namedNear reads line i, and the two after it when they name a variable as
+// one: "The application key is missing, halting init!" is followed by "And
+// apply it to the APP_KEY environment variable."
+func (r *logReader) namedNear(i int) {
+	line := r.lines[i]
+	window := []string{line}
+	for _, next := range r.lines[i+1 : min(len(r.lines), i+3)] {
+		if variablePhrase.MatchString(next) || dockerRunEnv.MatchString(next) {
+			window = append(window, next)
+		}
+	}
+	for _, text := range window {
+		for _, name := range namesIn(text) {
+			r.note(name, r.framework, line)
+		}
+	}
+}
+
+// dockerRunInstructions reads `docker run -e A=… -e B=…` in a message that is
+// an instruction: the image is telling whoever runs it what to set. Counted
+// when the log also says something is required, as CouchDB's "You *MUST*
+// specify an admin user and password … with -e COUCHDB_USER=admin -e
+// COUCHDB_PASSWORD=…".
+func (r *logReader) dockerRunInstructions() {
+	if !strings.Contains(r.lower, "must") && !failurePhrase.MatchString(r.log) {
+		return
+	}
+	for _, line := range r.lines {
+		for _, m := range dockerRunEnv.FindAllStringSubmatch(line, -1) {
+			r.note(m[1], r.framework, line)
+		}
+	}
+}
+
+// unreachableServices reads a database or cache the app could not reach,
+// named by the variable that was supposed to say where it is. R-107 forbids
+// inventing a database a repository never mentions; a log naming DATABASE_URL
+// is a mention.
+func (r *logReader) unreachableServices() {
+	if !connectionFailure.MatchString(r.log) {
+		return
+	}
+	for _, line := range r.lines {
+		for _, name := range underscoreName.FindAllString(line, -1) {
+			if slotTypeFor(name, "") != spec.SlotUnknown {
+				r.note(name, r.framework, line)
 			}
 		}
 	}
+}
 
-	// `docker run -e A=… -e B=…` in a message that is an instruction: the
-	// image is telling whoever runs it what to set. Counted when the log also
-	// says something is required, as CouchDB's "You *MUST* specify an admin
-	// user and password … with -e COUCHDB_USER=admin -e COUCHDB_PASSWORD=…".
-	if strings.Contains(lower, "must") || failurePhrase.MatchString(log) {
-		for _, line := range lines {
-			for _, m := range dockerRunEnv.FindAllStringSubmatch(line, -1) {
-				note(m[1], framework, line)
-			}
-		}
-	}
-
-	// A database or cache the app could not reach, named by the variable that
-	// was supposed to say where it is. R-107 forbids inventing a database a
-	// repository never mentions; a log naming DATABASE_URL is a mention.
-	if connectionFailure.MatchString(log) {
-		for _, line := range lines {
-			for _, name := range underscoreName.FindAllString(line, -1) {
-				if slotTypeFor(name, "") != spec.SlotUnknown {
-					note(name, framework, line)
-				}
-			}
-		}
-	}
-
-	// "A or A_FILE must be set": the file form is the same answer.
+// result is the variables noted, in order.
+func (r *logReader) result() []requiredVar {
 	var out []requiredVar
-	for _, key := range order {
-		if base, ok := strings.CutSuffix(key, "_FILE"); ok {
-			if _, both := found[base]; both {
-				continue
-			}
+	for _, key := range r.order {
+		// "A or A_FILE must be set": the file form is the same answer.
+		if base, ok := strings.CutSuffix(key, "_FILE"); ok && r.noted(base) {
+			continue
 		}
-		out = append(out, found[key])
+		out = append(out, r.found[key])
 	}
 	return out
+}
+
+func (r *logReader) noted(key string) bool {
+	_, ok := r.found[key]
+	return ok
+}
+
+// nameAt is a variable name found in a line, and where.
+type nameAt struct {
+	name       string
+	start, end int
 }
 
 // namesIn is the variables a line names, in order, keeping only the first of
@@ -986,25 +1158,13 @@ func varsFromLog(log string) []requiredVar {
 // "define A and B or B_FILE" for A and B. Asking for every name would block
 // the deploy on values the app says it does without.
 func namesIn(text string) []string {
-	type found struct {
-		name       string
-		start, end int
-	}
-	var all []found
-	addAt := func(locs [][]int, group int, keep func(string) bool) {
-		for _, loc := range locs {
-			name := text[loc[2*group]:loc[2*group+1]]
-			if keep == nil || keep(name) {
-				all = append(all, found{name, loc[0], loc[1]})
-			}
-		}
-	}
-	addAt(afterVariable.FindAllStringSubmatchIndex(text, -1), 1, nil)
-	addAt(dockerRunEnv.FindAllStringSubmatchIndex(text, -1), 1, nil)
-	addAt(quotedName.FindAllStringSubmatchIndex(text, -1), 1, func(name string) bool {
+	var all []nameAt
+	all = append(all, namesAtIn(text, afterVariable.FindAllStringSubmatchIndex(text, -1), 1, nil)...)
+	all = append(all, namesAtIn(text, dockerRunEnv.FindAllStringSubmatchIndex(text, -1), 1, nil)...)
+	all = append(all, namesAtIn(text, quotedName.FindAllStringSubmatchIndex(text, -1), 1, func(name string) bool {
 		return strings.Contains(name, "_") || variablePhrase.MatchString(text)
-	})
-	addAt(underscoreName.FindAllStringSubmatchIndex(text, -1), 0, nil)
+	})...)
+	all = append(all, namesAtIn(text, underscoreName.FindAllStringSubmatchIndex(text, -1), 0, nil)...)
 	sort.SliceStable(all, func(i, j int) bool { return all[i].start < all[j].start })
 
 	var names []string
@@ -1014,19 +1174,34 @@ func namesIn(text string) []string {
 		if seen[f.name] {
 			continue
 		}
-		if end >= 0 && f.start >= end {
-			between := strings.ToLower(text[end:f.start])
-			if orWord.MatchString(between) && !andWord.MatchString(between) {
-				seen[f.name] = true
-				end = f.end
-				continue
-			}
-		}
 		seen[f.name] = true
-		names = append(names, f.name)
+		alternative := end >= 0 && f.start >= end && isAlternative(text[end:f.start])
 		end = f.end
+		if !alternative {
+			names = append(names, f.name)
+		}
 	}
 	return names
+}
+
+// namesAtIn is the names a regexp's matches capture in group, kept where keep
+// (when set) says so.
+func namesAtIn(text string, locs [][]int, group int, keep func(string) bool) []nameAt {
+	var out []nameAt
+	for _, loc := range locs {
+		name := text[loc[2*group]:loc[2*group+1]]
+		if keep == nil || keep(name) {
+			out = append(out, nameAt{name, loc[0], loc[1]})
+		}
+	}
+	return out
+}
+
+// isAlternative reports the text between two names offering the second
+// instead of the first: an "or" with no "and".
+func isAlternative(between string) bool {
+	between = strings.ToLower(between)
+	return orWord.MatchString(between) && !andWord.MatchString(between)
 }
 
 var (
