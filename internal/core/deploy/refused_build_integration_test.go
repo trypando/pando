@@ -4,6 +4,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -45,6 +46,12 @@ func (d *singleHostDocker) Capabilities(context.Context) (api.RuntimeCapabilitie
 }
 
 func (d *singleHostDocker) HasImage(context.Context, string) (bool, error) { return true, nil }
+
+// Upstream says there is no address to dial, so the readiness wait has no TCP
+// signal and falls back to the process running (R-221): nothing here listens.
+func (d *singleHostDocker) Upstream(context.Context, api.WorkloadRef, int) (api.Upstream, error) {
+	return api.Upstream{}, errors.New("this test runtime has no network")
+}
 
 func (d *singleHostDocker) ImportImage(_ context.Context, r io.Reader) (string, error) {
 	_, _ = io.Copy(io.Discard, r)
