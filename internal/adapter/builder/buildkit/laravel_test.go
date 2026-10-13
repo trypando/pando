@@ -96,11 +96,39 @@ func TestR105_APHPVersionMismatchIsNamedInTheBuild(t *testing.T) {
 	require.Contains(t, plan, "FROM php:8.5-apache AS runtime")
 	require.Contains(t, plan, `composer config --global platform.php "$(cat /php-version)"`)
 	require.NotContains(t, plan, "--ignore-platform-reqs", "the PHP version is checked, not ignored")
-	require.Contains(t, plan, "--ignore-platform-req='ext-*'", "extensions are checked where they are installed")
+	require.Contains(t, plan, "--ignore-platform-req='ext-*'\n", "extensions are checked where they are installed")
+	require.NotContains(t, plan, "--ignore-platform-req=php", "with no lock, Composer resolves for the runtime's PHP")
 	require.Contains(t, plan, "composer check-platform-reqs --no-dev ||")
 	require.Contains(t, plan, "Pando chose PHP 8.5 from composer.json's require.php (^8.2)")
 	require.Contains(t, plan, "$(php -r 'echo PHP_VERSION;')", "the message names the PHP that was installed")
 	require.NotContains(t, plan, "AS assets", "no package.json, no asset build")
+}
+
+// TestR095_ALaravelFrontEndIsBuiltWhereArtisanRuns asserts R-095.
+//
+// The Wayfinder vite plugin in Laravel's starter kits runs `php artisan
+// wayfinder:generate`; built on the Node image, the front end failed with
+// "php: not found" (issue #90).
+func TestR095_ALaravelFrontEndIsBuiltWhereArtisanRuns(t *testing.T) {
+	root := writeFiles(t, map[string]string{
+		"artisan": "", "composer.json": laravelComposer,
+		"package.json": `{"scripts": {"build": "vite build"}}`, "package-lock.json": "{}",
+	})
+	name, err := buildpackPlan(api.BuildRequest{}, root)
+	require.NoError(t, err)
+	body, err := os.ReadFile(filepath.Join(root, name))
+	require.NoError(t, err)
+	plan := string(body)
+
+	app := strings.Index(plan, "FROM runtime AS app\n")
+	autoload := strings.Index(plan, "composer dump-autoload")
+	assets := strings.Index(plan, "FROM app AS assets\n")
+	build := strings.Index(plan, "RUN npm run build")
+	require.True(t, app >= 0 && app < autoload && autoload < assets && assets < build,
+		"the front end is built on the app with its PHP, extensions and autoloader:\n%s", plan)
+	require.Contains(t, plan[assets:build], "ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm")
+	require.Contains(t, plan[assets:build], "RUN npm ci\n")
+	require.NotContains(t, plan, "FROM node:", "Node is copied in, not a base of its own")
 }
 
 func TestALaravelPlanServesPublicAndMigratesBeforeItStarts(t *testing.T) {
@@ -114,9 +142,10 @@ func TestALaravelPlanServesPublicAndMigratesBeforeItStarts(t *testing.T) {
 	require.NoError(t, err)
 	plan := string(body)
 
-	require.Contains(t, plan, "FROM node:22-slim AS assets")
+	require.Contains(t, plan, "FROM app AS assets\nCOPY --from=node:22-slim /usr/local/bin/node /usr/local/bin/node\n",
+		"the asset build runs where PHP and vendor/ are, so vite plugins can run artisan")
 	require.Contains(t, plan, "COPY --from=vendor /app/vendor vendor", "the asset build can import from vendor/")
-	require.Contains(t, plan, "COPY --from=assets /app/public/build public/build")
+	require.Contains(t, plan, "FROM app\nCOPY --from=assets /var/www/html/public/build public/build\n")
 	require.Contains(t, plan, "RUN docker-php-ext-install -j$(nproc) bcmath pdo_mysql")
 	require.NotContains(t, plan, "apt-get", "the default extensions need no system library")
 	require.Contains(t, plan, "DocumentRoot /var/www/html/public")
@@ -169,6 +198,20 @@ func TestR095_ALaravelAppRunsOnAPHPItsLockedPackagesAccept(t *testing.T) {
 	}))
 	require.True(t, ok)
 	require.Equal(t, "8.4", app.PHP)
+
+	// Composer, on its own image's newer PHP, refused that lock anyway; the
+	// runtime image's platform check is what judges the PHP version.
+	root := writeFiles(t, map[string]string{
+		"artisan": "", "composer.json": `{"require": {"php": "^8.2", "laravel/framework": "^11.0"}}`, "composer.lock": `{"packages": []}`,
+	})
+	locked, ok := readLaravelApp(root)
+	require.True(t, ok)
+	name, err := writeLaravelPlan(root, locked)
+	require.NoError(t, err)
+	body, err := os.ReadFile(filepath.Join(root, name))
+	require.NoError(t, err)
+	require.Contains(t, string(body), "--ignore-platform-req='ext-*' --ignore-platform-req=php\n")
+	require.Contains(t, string(body), "composer check-platform-reqs --no-dev ||")
 
 	require.Equal(t, "8.5", phpForConstraints([]string{"^8.2", ">=8.0"}))
 	require.Equal(t, "8.5", phpForConstraints([]string{"^8.2", "^7.4"}),

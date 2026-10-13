@@ -76,10 +76,10 @@ func TestR095_LanguagesRailpackDoesNotPlanArePlannedByPando(t *testing.T) {
 		}, []string{"RUN clojure -P", `CMD ["exec clojure -M -m usermanager.main"]`}},
 		{"an sbt project with native-packager", map[string]string{
 			"build.sbt": "enablePlugins(JavaAppPackaging)\n", "project/plugins.sbt": `addSbtPlugin("com.github.sbt" % "sbt-native-packager" % "1.11.1")` + "\n",
-		}, []string{"FROM " + sbtJDKImage, "sbt -batch stage", `exec \"$(cat /app/.pando-start)\"`}},
+		}, []string{"FROM " + sbtJDKImage, "sbt -batch " + sbtNoDocs + " stage", `exec \"$(cat /app/.pando-start)\"`}},
 		{"a Play app", map[string]string{
 			"build.sbt": "enablePlugins(PlayScala)\n", "project/plugins.sbt": `addSbtPlugin("org.playframework" % "sbt-plugin" % "3.0.12")` + "\n",
-		}, []string{"sbt -batch stage", "-Dplay.http.secret.key=\\\"$APPLICATION_SECRET\\\"", "-Dplay.filters.hosts.allowed.0=.", "EXPOSE 9000"}},
+		}, []string{"sbt -batch " + sbtNoDocs + " stage", "install -y --no-install-recommends curl git", "COPY --from=" + sbtNodeImage + " /usr/local/bin/node", "-Dplay.http.secret.key=\\\"$APPLICATION_SECRET\\\"", "-Dplay.filters.hosts.allowed.0=.", "EXPOSE 9000"}},
 		{"an sbt project with neither", map[string]string{"build.sbt": "scalaVersion := \"3.3.1\"\n"},
 			[]string{"export Runtime / fullClasspath", "discoveredMainClasses", `exec java -cp \"$(cat /app/.pando-classpath)\"`}},
 		{"a Stack project", map[string]string{

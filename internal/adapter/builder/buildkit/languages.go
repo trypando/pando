@@ -380,10 +380,20 @@ func cljMainNamespace(contextDir string) string {
 // The JDK and sbt launcher an sbt build runs with. [P] Temurin 17, which the
 // sbt and Scala releases of the last several years all run on; the launcher
 // boots whichever sbt project/build.properties names.
+//
+// The build also carries git and Node: sbt-git and sbt-dynver run git while
+// the build loads, and sbt-web compiles assets (CoffeeScript, LESS) with Node,
+// falling back otherwise to an embedded engine that cannot run them (issue #90).
 const (
 	sbtJDKImage   = "eclipse-temurin:17-jdk"
+	sbtNodeImage  = "node:22-slim"
 	sbtLauncher   = "1.10.7"
 	sbtLauncherAt = "https://github.com/sbt/sbt/releases/download/v" + sbtLauncher + "/sbt-" + sbtLauncher + ".tgz"
+
+	// sbtNoDocs keeps stage and assembly from running Scaladoc. A running app
+	// has no use for its API docs, and a doc comment Scaladoc cannot parse
+	// fails a build that compiles (issue #90).
+	sbtNoDocs = `"set every Compile / packageDoc / publishArtifact := false" "set every Compile / doc / sources := Seq.empty"`
 )
 
 // sbtPlan builds an sbt project into something that starts without sbt: the
@@ -401,7 +411,7 @@ func sbtPlan(contextDir string) (string, bool) {
 	var build, start string
 	switch {
 	case play || strings.Contains(plugins, "sbt-native-packager"):
-		build = `sbt -batch stage && ls -1 target/universal/stage/bin/* */target/universal/stage/bin/* 2>/dev/null | grep -v '\.bat$' | head -n 1 > /app/.pando-start && test -s /app/.pando-start`
+		build = `sbt -batch ` + sbtNoDocs + ` stage && ls -1 target/universal/stage/bin/* */target/universal/stage/bin/* 2>/dev/null | grep -v '\.bat$' | head -n 1 > /app/.pando-start && test -s /app/.pando-start`
 		start = `exec "$(cat /app/.pando-start)"`
 		if play {
 			// Play in production: its HTTP port, the secret it refuses to
@@ -410,7 +420,7 @@ func sbtPlan(contextDir string) (string, bool) {
 			start += ` -Dhttp.port=${PORT:-9000} -Dplay.http.secret.key="$APPLICATION_SECRET" -Dplay.filters.hosts.allowed.0=. -Dpidfile.path=/dev/null`
 		}
 	case strings.Contains(plugins, "sbt-assembly"):
-		build = `sbt -batch assembly && cp "$(ls -1 target/scala-*/*.jar */target/scala-*/*.jar 2>/dev/null | grep -i assembly | head -n 1)" /app.jar`
+		build = `sbt -batch ` + sbtNoDocs + ` assembly && cp "$(ls -1 target/scala-*/*.jar */target/scala-*/*.jar 2>/dev/null | grep -i assembly | head -n 1)" /app.jar`
 		start = "exec java -jar /app.jar"
 	default:
 		build = `sbt -batch -Dsbt.log.noformat=true compile "export Runtime / fullClasspath" "show Compile / discoveredMainClasses" > /tmp/sbt.out` +
@@ -428,13 +438,14 @@ func sbtPlan(contextDir string) (string, bool) {
 	}
 	return fmt.Sprintf(`# An sbt project.
 FROM %s
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y --no-install-recommends curl git && rm -rf /var/lib/apt/lists/* \
  && curl -fsSL %s | tar -xz -C /opt
+COPY --from=%s /usr/local/bin/node /usr/local/bin/node
 ENV PATH=/opt/sbt/bin:$PATH
 WORKDIR /app
 COPY . .
 RUN %s
-%s%s`, sbtJDKImage, sbtLauncherAt, build, exposeLine(port), shellCMD(start)), true
+%s%s`, sbtJDKImage, sbtLauncherAt, sbtNodeImage, build, exposeLine(port), shellCMD(start)), true
 }
 
 // --- Haskell (Stack) --------------------------------------------------------

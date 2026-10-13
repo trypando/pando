@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // Node servers are planned by Pando rather than by Railpack.
@@ -27,6 +29,9 @@ type nodeServer struct {
 	Install string
 	Build   bool
 	Start   string
+	// Native is a project with a native addon, built with Python, make and
+	// a C++ compiler, which the slim image does not carry.
+	Native bool
 }
 
 // nodeEntryPoints are the files a Node server with no start script is started
@@ -71,7 +76,24 @@ func readNodeServer(contextDir, startCommand string) (nodeServer, bool) {
 		Install: install,
 		Build:   strings.TrimSpace(pkg.Scripts["build"]) != "",
 		Start:   start,
+		Native:  compilesNative(pkg),
 	}, true
+}
+
+// nativeAddons are packages whose install compiles C or C++ with node-gyp
+// whenever no prebuilt binary fits, which is always for some of their
+// releases: better-sqlite3 13 builds from source at every install, and the
+// AdonisJS starter kits stopped there with "gyp ERR! find Python" (issue #90).
+var nativeAddons = []string{"better-sqlite3", "sqlite3", "bcrypt", "argon2"}
+
+// compilesNative reports a project that depends on a native addon.
+func compilesNative(pkg packageJSON) bool {
+	for _, name := range nativeAddons {
+		if pkg.Dependencies[name] != "" || pkg.DevDependencies[name] != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // plainNodeProject reports a package.json project that Node alone builds: not
@@ -205,8 +227,10 @@ func installCommand(contextDir string) string {
 		// pnpm 10 and later run no dependency's build scripts unless the
 		// project approves them, and newer releases fail the install over
 		// it. A build runs what the author's machine ran: npm, Yarn and
-		// earlier pnpm all run them.
-		if major, err := strconv.Atoi(strings.SplitN(version, ".", 2)[0]); err == nil && major >= 10 {
+		// earlier pnpm all run them. A project that says which builds it
+		// approves is left to say so: pnpm refuses the flag beside its own
+		// list (ERR_PNPM_CONFIG_CONFLICT_BUILT_DEPENDENCIES, issue #90).
+		if major, err := strconv.Atoi(strings.SplitN(version, ".", 2)[0]); err == nil && major >= 10 && !pnpmApprovesBuilds(contextDir, pkg) {
 			install += " --config.dangerously-allow-all-builds=true"
 		}
 		return install
@@ -243,10 +267,27 @@ var (
 
 // pnpmVersion is the pnpm a project uses: the version packageManager names, or
 // the major that writes the lockfile's format, or the default.
+//
+// A pnpm-workspace.yaml that holds only settings, with no packages list, was
+// written for pnpm 10, which reads settings there; pnpm 9 refuses the file
+// ("packages field missing or empty", issue #90). Both write lockfile 9.0, so
+// the workspace file is what tells them apart.
 func pnpmVersion(contextDir, packageManager string) string {
 	if m := packageManagerPnpm.FindStringSubmatch(strings.TrimSpace(packageManager)); m != nil {
 		return m[1]
 	}
+	version := pnpmLockfileVersion(contextDir)
+	if ws, ok := pnpmWorkspace(contextDir); ok && version == "9" {
+		if packages, _ := ws["packages"].([]any); len(packages) == 0 {
+			return "10"
+		}
+	}
+	return version
+}
+
+// pnpmLockfileVersion is the pnpm major that writes the lockfile's format, or
+// the default.
+func pnpmLockfileVersion(contextDir string) string {
 	f, err := os.Open(filepath.Join(contextDir, pnpmLockfile))
 	if err != nil {
 		return pnpmDefault
@@ -273,6 +314,55 @@ func pnpmVersion(contextDir, packageManager string) string {
 		return pnpmDefault
 	}
 	return pnpmDefault
+}
+
+// pnpmWorkspace reads pnpm-workspace.yaml, reporting whether there is one. A
+// file that does not parse reads as empty settings.
+func pnpmWorkspace(contextDir string) (map[string]any, bool) {
+	body, err := os.ReadFile(filepath.Join(contextDir, "pnpm-workspace.yaml")) //nolint:gosec // G304: a file in the checkout, read to plan its build.
+	if err != nil {
+		return nil, false
+	}
+	ws := map[string]any{}
+	_ = yaml.Unmarshal(body, &ws)
+	return ws, true
+}
+
+// pnpmBuildSettings are the pnpm settings by which a project says whose build
+// scripts run, as pnpm-workspace.yaml and package.json's "pnpm" field spell
+// them, and as .npmrc spells them.
+var (
+	pnpmBuildSettings  = []string{"onlyBuiltDependencies", "onlyBuiltDependenciesFile", "neverBuiltDependencies", "allowBuilds", "dangerouslyAllowAllBuilds"}
+	pnpmBuildSettingRC = regexp.MustCompile(`(?m)^\s*(only-built-dependencies|only-built-dependencies-file|never-built-dependencies|dangerously-allow-all-builds)\s*(\[\])?\s*=`)
+)
+
+// pnpmApprovesBuilds reports a project that says itself which dependency build
+// scripts run.
+func pnpmApprovesBuilds(contextDir string, pkg packageJSON) bool {
+	ws, _ := pnpmWorkspace(contextDir)
+	for _, key := range pnpmBuildSettings {
+		if _, ok := ws[key]; ok {
+			return true
+		}
+		if _, ok := pkg.Pnpm[key]; ok {
+			return true
+		}
+	}
+	return pnpmBuildSettingRC.MatchString(readFile(contextDir, ".npmrc"))
+}
+
+// nodeOnto adds Node, npm and corepack, from the official Node image of the
+// given version, to a stage built on another language's image. Only Node's own
+// files are copied, so the rest of /usr/local, where the PHP and Python images
+// keep their interpreters, is left as it was. The links are the ones the Node
+// image itself makes.
+func nodeOnto(version string) string {
+	return fmt.Sprintf(`COPY --from=node:%[1]s-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:%[1]s-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx && \
+    if [ -d /usr/local/lib/node_modules/corepack ]; then ln -sf ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack; fi
+`, version)
 }
 
 // --- choosing Node -----------------------------------------------------------
@@ -384,9 +474,12 @@ func railpackNodeDefaults(contextDir string) []string {
 // the build step usually needs them (TypeScript, a bundler), and NODE_ENV is set
 // to production only for the running app.
 func writeNodeServerPlan(contextDir string, n nodeServer) (string, error) {
-	build := ""
+	build, toolchain := "", ""
 	if n.Build {
 		build = "RUN npm run build\n"
+	}
+	if n.Native {
+		toolchain = "RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*\n"
 	}
 	start, err := json.Marshal(n.Start)
 	if err != nil {
@@ -394,12 +487,12 @@ func writeNodeServerPlan(contextDir string, n nodeServer) (string, error) {
 	}
 	content := fmt.Sprintf(`# A Node server, built and run on Node %s.
 FROM node:%s-slim
-WORKDIR /app
+%sWORKDIR /app
 COPY . .
 RUN %s
 %sENV NODE_ENV=production
 ENTRYPOINT ["/bin/sh", "-c"]
 CMD [%s]
-`, n.Node, n.Node, n.Install, build, start)
+`, n.Node, n.Node, toolchain, n.Install, build, start)
 	return writePlan(contextDir, content)
 }

@@ -441,6 +441,12 @@ const laravelStart = "php artisan migrate --force --no-interaction && " +
 // install with a message naming both versions (R-105). Extensions are checked
 // later, in the runtime image where they are installed: the Composer image's
 // extensions are not the app's.
+//
+// A locked install resolves nothing, and Composer 2.10 checks the lock against
+// the PHP it runs on itself, whatever platform.php says: a lock that caps PHP at
+// 8.4 failed on the Composer image's 8.5 though the app runs on 8.4 (issue #90).
+// So a locked install leaves the PHP version to the platform check in the
+// runtime image, which reads the PHP the app does run on and says so (R-105).
 func writeLaravelPlan(contextDir string, app laravelApp) (string, error) {
 	var b strings.Builder
 	// Read out of the repository and written into the plan's comments and
@@ -460,21 +466,13 @@ func writeLaravelPlan(contextDir string, app laravelApp) (string, error) {
 	b.WriteString("COPY --from=runtime /php-version /php-version\n")
 	b.WriteString(`RUN composer config --global platform.php "$(cat /php-version)" && \` + "\n")
 	b.WriteString("    composer install --no-dev --no-interaction --no-progress --prefer-dist " +
-		"--no-scripts --no-autoloader --ignore-platform-req='ext-*'\n\n")
-
-	if app.Assets {
-		// The vendor directory is there because Laravel's front ends import
-		// from it: Tailwind scans the framework's views, and starter kits
-		// import Livewire and Flux styles out of vendor/.
-		fmt.Fprintf(&b, "FROM node:%s-slim AS assets\n", app.Node)
-		b.WriteString("WORKDIR /app\n")
-		b.WriteString("COPY . .\n")
-		b.WriteString("COPY --from=vendor /app/vendor vendor\n")
-		fmt.Fprintf(&b, "RUN %s\n", app.Install)
-		b.WriteString("RUN npm run build\n\n")
+		"--no-scripts --no-autoloader --ignore-platform-req='ext-*'")
+	if fileExists(contextDir, "composer.lock") {
+		b.WriteString(" --ignore-platform-req=php")
 	}
+	b.WriteString("\n\n")
 
-	b.WriteString("FROM runtime\n")
+	b.WriteString("FROM runtime AS app\n")
 	b.WriteString("WORKDIR /var/www/html\n")
 	b.WriteString(extensionSteps(app.Extensions))
 	fmt.Fprintf(&b, "RUN a2enmod rewrite && printf %s > /etc/apache2/sites-available/000-default.conf\n",
@@ -482,9 +480,6 @@ func writeLaravelPlan(contextDir string, app laravelApp) (string, error) {
 	fmt.Fprintf(&b, "COPY --from=%s /usr/bin/composer /usr/bin/composer\n", composerImage)
 	b.WriteString("COPY . .\n")
 	b.WriteString("COPY --from=vendor /app/vendor vendor\n")
-	if app.Assets {
-		b.WriteString("COPY --from=assets /app/public/build public/build\n")
-	}
 	// The platform check, against the PHP and extensions the app runs on. Its
 	// own output lists each requirement and whether it was met; the line
 	// after says what that means for this build.
@@ -493,7 +488,21 @@ func writeLaravelPlan(contextDir string, app laravelApp) (string, error) {
 	b.WriteString("RUN COMPOSER_ALLOW_SUPERUSER=1 composer dump-autoload --no-dev --optimize --no-interaction\n")
 	b.WriteString("RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/sessions " +
 		"storage/framework/views storage/logs bootstrap/cache database && \\\n" +
-		"    chown -R www-data:www-data storage bootstrap/cache database\n")
+		"    chown -R www-data:www-data storage bootstrap/cache database\n\n")
+
+	if app.Assets {
+		// The front end is built on top of the app, with Node added: vite
+		// plugins run artisan (Wayfinder generates its route types with
+		// `php artisan wayfinder:generate`, issue #90), and Laravel's front
+		// ends import from vendor/, where Tailwind scans the framework's
+		// views and starter kits find Livewire and Flux styles.
+		b.WriteString("FROM app AS assets\n")
+		b.WriteString(nodeOnto(app.Node))
+		fmt.Fprintf(&b, "RUN %s\n", app.Install)
+		b.WriteString("RUN npm run build\n\n")
+		b.WriteString("FROM app\n")
+		b.WriteString("COPY --from=assets /var/www/html/public/build public/build\n")
+	}
 	// Laravel's default log is a file inside the container, where nobody
 	// reads it. [P] stderr, so the app's log is its output. The app's own
 	// LOG_CHANNEL, when it sets one, still wins.
