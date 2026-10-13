@@ -141,6 +141,24 @@ func TestR095_DjangosCollectstaticIsTheBuildWhenNoneIsDeclared(t *testing.T) {
 		"the repository's own build outranks the convention")
 }
 
+// TestR095_CollectstaticIsNotRunTwiceWhenTheStartRunsIt asserts R-095. Railway's
+// Django template collects its static files at start, where the database
+// variables its settings read at import exist; run again at build, the same
+// command stopped the build on a KeyError (issue #90).
+func TestR095_CollectstaticIsNotRunTwiceWhenTheStartRunsIt(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"manage.py": "#!/usr/bin/env python",
+		"railway.json": `{"deploy": {"startCommand": "python manage.py migrate && python manage.py collectstatic ` +
+			`--noinput && gunicorn mysite.wsgi"}}`,
+	})
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "mysite"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "mysite", "settings.py"),
+		[]byte("STATIC_ROOT = 'static'\nNAME = os.environ[\"PGDATABASE\"]\n"), 0o644))
+	declared := declaredFor(api.BuildRequest{}, dir)
+	require.Contains(t, declared.Start, "collectstatic")
+	require.Empty(t, declared.Build)
+}
+
 // The lockfile's Ruby is used when the Gemfile names none, and the Gemfile's
 // wins when both do: it is the declaration Bundler enforces.
 func TestARubyVersionIsReadFromTheLockfileWhenTheGemfileIsSilent(t *testing.T) {

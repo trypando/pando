@@ -286,7 +286,12 @@ func declaredFor(req api.BuildRequest, contextDir string) declaredBuild {
 		}
 		declared.Start = implied(contextDir)
 	}
-	if declared.Build == "" && declared.Before == "" && djangoCollectsStatic(contextDir) {
+	// Not when the start command collects them itself: Railway's Django
+	// template runs collectstatic at start, where its settings can read the
+	// database variables they need at import (os.environ["PGDATABASE"]), and
+	// the same command run at build stopped it on a KeyError (issue #90).
+	if declared.Build == "" && declared.Before == "" && !strings.Contains(declared.Start, "collectstatic") &&
+		djangoCollectsStatic(contextDir) {
 		declared.Build = "python manage.py collectstatic --noinput"
 	}
 	return declared

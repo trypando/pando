@@ -37,12 +37,17 @@ const (
 	// FormatLaravelKey is a Laravel application key: "base64:" and 32 bytes
 	// in base64, or 32 characters used as they are.
 	FormatLaravelKey SecretFormat = "laravel_key"
+
+	// FormatHex64 is 64 hexadecimal characters: 32 bytes written in hex, an
+	// AES-256 key as Homarr's SECRET_ENCRYPTION_KEY wants one, and what
+	// `openssl rand -hex 32` prints.
+	FormatHex64 SecretFormat = "hex_64"
 )
 
 // Known reports whether this is a format Pando can generate and check.
 func (f SecretFormat) Known() bool {
 	switch f {
-	case "", FormatRandom, FormatRandomLong, FormatDjangoKey, FormatLaravelKey:
+	case "", FormatRandom, FormatRandomLong, FormatDjangoKey, FormatLaravelKey, FormatHex64:
 		return true
 	}
 	return false
@@ -74,6 +79,14 @@ func (f SecretFormat) Check(key, value string) error {
 					"does not start.", key).
 				WithDetail("slot_key", key).
 				WithRemedy("Use Generate beside the value, or paste the output of `openssl rand -base64 64`.")
+		}
+	case FormatHex64:
+		if len(value) != 64 || strings.Trim(strings.ToLower(value), "0123456789abcdef") != "" {
+			return errs.Newf(errs.ValidInvalid,
+				"%s must be exactly 64 hexadecimal characters (0-9 and a-f), and the value given is not. "+
+					"The app encrypts with it and refuses to start with anything else.", key).
+				WithDetail("slot_key", key).
+				WithRemedy("Use Generate beside the value, or paste the output of `openssl rand -hex 32`.")
 		}
 	case FormatLaravelKey:
 		if !laravelKey(value) {

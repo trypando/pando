@@ -37,7 +37,7 @@ func provision(t *testing.T, a *servicesdocker.Adapter, typ spec.SlotType, prior
 
 // TestR131_ProvisionFillsASlotWithSomethingRunnable asserts R-131.
 func TestR131_ProvisionFillsASlotWithSomethingRunnable(t *testing.T) {
-	for _, typ := range []spec.SlotType{spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis} {
+	for _, typ := range []spec.SlotType{spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis, spec.SlotMongoDB} {
 		t.Run(string(typ), func(t *testing.T) {
 			res := provision(t, configured(t), typ, secret.Value{})
 
@@ -175,6 +175,24 @@ func TestR194_TheProvisionedPostgresKeyNeverRenders(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(b), "PRIVATE KEY")
 	require.NotContains(t, fmt.Sprintf("%v %+v", res.Workloads[0], res.Workloads[0].Env), "PRIVATE KEY")
+}
+
+// TestR131_AProvisionedMongoDBSignsInWhereItsUserLives asserts R-131. The
+// image creates one user, a root user, and a root user lives in the admin
+// database: without authSource=admin the driver looks for it in the app's
+// database and every connection is refused.
+func TestR131_AProvisionedMongoDBSignsInWhereItsUserLives(t *testing.T) {
+	res := provision(t, configured(t), spec.SlotMongoDB, secret.Value{})
+	u, err := url.Parse(res.ConnectionSecret.Reveal())
+	require.NoError(t, err)
+	require.Equal(t, "mongodb", u.Scheme)
+	require.Equal(t, "admin", u.Query().Get("authSource"))
+	password, _ := u.User.Password()
+	require.Equal(t, password, res.Workloads[0].Env["MONGO_INITDB_ROOT_PASSWORD"].Reveal())
+	require.Equal(t, "/data/db", res.Workloads[0].Mounts[0].Path)
+
+	again := provision(t, configured(t), spec.SlotMongoDB, res.ConnectionSecret)
+	require.Equal(t, res.ConnectionSecret.Reveal(), again.ConnectionSecret.Reveal(), "and keeps its password")
 }
 
 // A stored connection string Pando cannot read is an error, not a new password.

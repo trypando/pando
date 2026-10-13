@@ -116,6 +116,11 @@ func ApplyTrial(draft Draft, questions []Question, t Trial) (Draft, []Question) 
 
 	draft.Slots = promoteSlots(draft.Slots, t)
 	draft = requireFromTrial(draft, t)
+	if trialFailed(t) {
+		primary := primaryIndex(draft)
+		draft = laravelDatabase(draft, primary, t.Log)
+		draft = groupConnections(draft, primary, t.Log)
+	}
 	draft.Warnings = append(draft.Warnings, persistenceWarnings(draft, t)...)
 
 	return draft, questions
@@ -435,6 +440,7 @@ var serviceWords = map[spec.SlotType][]string{
 	spec.SlotRedis:    {"redis", "valkey"},
 	spec.SlotS3:       {"s3", "bucket"},
 	spec.SlotSMTP:     {"smtp"},
+	spec.SlotMongoDB:  {"mongodb", "mongoserver", "mongonetwork", "mongoose"},
 }
 
 // persistenceWarnings produces WARN_NO_PERSISTENT_VOLUME (R-201, R-202).

@@ -249,6 +249,14 @@ func validateEnv(s *AppSpec, add func(*errs.Error)) {
 					WithRemedy("Use exactly one of: a literal value, a slot reference, or a secret reference."))
 			}
 
+			if !e.SlotPart.Known() || (e.SlotPart != "" && e.SlotRef == nil) {
+				add(errs.Newf(errs.ValidInvalid,
+					"Environment variable %s on workload %q takes the %q part of a connection, which Pando "+
+						"can only read out of a slot's connection string.", e.Key, w.Name, e.SlotPart).
+					WithRemedy("Use one of host, port, hostport, user, password or database, with a slot reference — " +
+						"or leave the part out to take the whole connection string."))
+			}
+
 			if e.SlotRef != nil {
 				if _, ok := s.Slot(*e.SlotRef); !ok {
 					add(errs.Newf(errs.ValidDanglingSlotRef,
@@ -365,7 +373,7 @@ func validateSlots(s *AppSpec, add func(*errs.Error)) {
 		if !sl.Format.Known() {
 			add(errs.Newf(errs.ValidInvalid,
 				"Slot %s has an unrecognized value format %q.", sl.Key, sl.Format).
-				WithRemedy("Use one of: random, random_long, django_key, laravel_key — or leave the format out."))
+				WithRemedy("Use one of: random, random_long, django_key, laravel_key, hex_64 — or leave the format out."))
 		}
 		if sl.Scheme != "" && (sl.Type != SlotPostgres || !slices.Contains(PostgresSchemes, sl.Scheme)) {
 			add(errs.Newf(errs.ValidInvalid,

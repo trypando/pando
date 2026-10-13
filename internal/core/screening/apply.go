@@ -286,7 +286,7 @@ func addSlot(s *spec.AppSpec, env Env, a api.Amendment) (string, string) {
 		t = spec.SlotUnknown
 	}
 	switch t {
-	case spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis, spec.SlotS3, spec.SlotSMTP, spec.SlotUnknown:
+	case spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis, spec.SlotMongoDB, spec.SlotS3, spec.SlotSMTP, spec.SlotUnknown:
 	default:
 		return "", fmt.Sprintf("Pando does not recognize %q as a kind of dependency.", a.SlotType)
 	}

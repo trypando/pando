@@ -3,6 +3,7 @@ package detect
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -89,6 +90,9 @@ func applyImageConfig(draft Draft, questions []Question, cfg *oci.Config) (Draft
 			evidence = append(evidence, "the image declares port "+strings.Join(listed, ", ")+" with EXPOSE")
 			questions = dropQuestion(questions, KeyPrimaryPort)
 		}
+		if found := imageConnections(&draft, i, cfg.Env); len(found) > 0 {
+			evidence = append(evidence, "the image is configured to reach "+strings.Join(found, ", "))
+		}
 		if w.Health == nil && cfg.Healthcheck != nil {
 			draft.Workloads[i].Health = &spec.Healthcheck{
 				Command:         cfg.Healthcheck.Command,
@@ -109,6 +113,64 @@ func applyImageConfig(draft Draft, questions []Question, cfg *oci.Config) (Draft
 		}
 	}
 	return draft, questions, evidence
+}
+
+// imageConnections declares a slot for each database or cache the image's own
+// ENV says the app connects to, and returns what each is.
+//
+// mongo-express ships ME_CONFIG_MONGODB_URL=mongodb://mongo:27017: the image
+// author naming the variable and the kind of database, with a host that only
+// exists beside it in a compose file. That is a mention (R-107), so it is a
+// slot of that type, the way the same line in a .env.example would be (R-130).
+// Optional until the trial run says otherwise (promoteSlots): an image that
+// sets a URL it can run without is not refused for it. Left unfilled, the
+// variable keeps the image's own value.
+func imageConnections(draft *Draft, workload int, env []string) []string {
+	var found []string
+	for _, kv := range env {
+		key, value, ok := strings.Cut(kv, "=")
+		if !ok || key == "" {
+			continue
+		}
+		t := schemeType(value)
+		switch t {
+		case spec.SlotPostgres, spec.SlotMySQL, spec.SlotRedis, spec.SlotMongoDB:
+		default:
+			continue
+		}
+		w := &draft.Workloads[workload]
+		if envIndex(w.Env, key) >= 0 {
+			continue
+		}
+		if _, declared := slotIndex(draft.Slots, key); declared {
+			continue
+		}
+		ref := key
+		w.Env = append(w.Env, spec.EnvEntry{Key: key, SlotRef: &ref, Source: spec.EnvFromDetection})
+		draft.Slots = append(draft.Slots, spec.Slot{
+			Key:  key,
+			Type: t,
+			Evidence: []string{fmt.Sprintf("the image sets %s to a %s address (%s)",
+				key, t.DisplayName(), redactURL(value))},
+		})
+		found = append(found, key+" ("+t.DisplayName()+")")
+	}
+	return found
+}
+
+// redactURL is a URL with any password in it replaced, for evidence a person
+// reads.
+func redactURL(value string) string {
+	u, err := url.Parse(value)
+	if err != nil {
+		return value
+	}
+	if u.User != nil {
+		if _, has := u.User.Password(); has {
+			u.User = url.UserPassword(u.User.Username(), "xxxxx")
+		}
+	}
+	return u.String()
 }
 
 func dropQuestion(questions []Question, key string) []Question {
