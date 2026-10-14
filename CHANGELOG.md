@@ -21,7 +21,7 @@ Unreleased above it. -->
 
 ### Fixed
 
-- **An in-place upgrade blocked the next one** (R-355). The upgrade recreated Pando's container from
+- **An in-place upgrade blocked the next one** (#241, R-355). The upgrade recreated Pando's container from
   the image digest it had verified, and the next upgrade read that digest as the deployment's own pin
   and refused: "Pando's image is pinned to a digest". The recreated container now keeps the image
   reference the deployment named, and the next upgrade reads that.
