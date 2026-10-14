@@ -452,8 +452,9 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Saving over a stored audit sink under another category changes it
-	// too: it stops the log being sent there.
+	// Saving over a stored audit sink under another category is refused by
+	// the store (an ID is one adapter in one category), but only to whoever
+	// may change audit sinks: anyone else is told nothing about one.
 	if req.Category != string(api.CategoryAuditSink) {
 		if sink, err := s.isAuditSink(r.Context(), req.ID); err != nil {
 			Error(w, r, err)

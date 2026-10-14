@@ -96,14 +96,24 @@ func (a *Adapters) Save(ctx context.Context, c AdapterConfig) (Replaced, error) 
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	replaced, err := handOver(ctx, tx, c)
+	var saved pgconn.CommandTag
 	if err == nil {
-		_, err = tx.Exec(ctx, `
+		// An ID is one adapter in one category: saving it under another
+		// changes nothing, and the deferred rollback puts back a default
+		// handOver cleared for it.
+		saved, err = tx.Exec(ctx, `
 			INSERT INTO adapter_configs (id, category, kind, name, config, is_default, enabled)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (id) DO UPDATE SET
 				kind = EXCLUDED.kind, name = EXCLUDED.name, config = EXCLUDED.config,
-				is_default = EXCLUDED.is_default, enabled = EXCLUDED.enabled, updated_at = now()`,
+				is_default = EXCLUDED.is_default, enabled = EXCLUDED.enabled, updated_at = now()
+			WHERE adapter_configs.category = EXCLUDED.category`,
 			c.ID, c.Category, c.Kind, c.Name, cfg, c.IsDefault, c.Enabled)
+	}
+	if err == nil && saved.RowsAffected() == 0 {
+		return Replaced{}, errs.Newf(errs.ValidInvalid,
+			"The ID %s belongs to an adapter of another category, so it cannot be saved as a %s adapter.", c.ID, c.Category).
+			WithRemedy("Give the new adapter an ID of its own. GET /api/v1/adapters lists the IDs in use and each one's category.")
 	}
 	if err == nil {
 		err = tx.Commit(ctx)
@@ -114,9 +124,8 @@ func (a *Adapters) Save(ctx context.Context, c AdapterConfig) (Replaced, error) 
 	return replaced, nil
 }
 
-// handOver clears the default of the category c is saved into, when c is to
-// be the default, and returns the adapter that was. An existing row keeps its
-// category, which ON CONFLICT does not change, so that is the category read.
+// handOver clears the default of c's category, when c is to be the default,
+// and returns the adapter that was.
 //
 // The lock is its own statement: a statement's snapshot is taken when it
 // starts, so an UPDATE that waited for the lock inside itself would not see
@@ -126,18 +135,13 @@ func handOver(ctx context.Context, tx pgx.Tx, c AdapterConfig) (Replaced, error)
 	if !c.IsDefault {
 		return r, nil
 	}
-	var category string
-	if err := tx.QueryRow(ctx, `
-		SELECT k.category
-		FROM (SELECT coalesce((SELECT category FROM adapter_configs WHERE id = $1), $2) AS category) k,
-		     pg_advisory_xact_lock(hashtextextended($3 || k.category, 0))`,
-		c.ID, c.Category, defaultLockKey).Scan(&category); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, defaultLockKey+c.Category); err != nil {
 		return r, err
 	}
 	err := tx.QueryRow(ctx, `
 		UPDATE adapter_configs SET is_default = false, updated_at = now()
 		WHERE category = $1 AND is_default AND id <> $2
-		RETURNING id, name`, category, c.ID).Scan(&r.ID, &r.Name)
+		RETURNING id, name`, c.Category, c.ID).Scan(&r.ID, &r.Name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Replaced{}, nil
 	}

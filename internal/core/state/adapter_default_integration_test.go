@@ -75,6 +75,38 @@ func TestR252_SavingADefaultReplacesTheCategorysDefault(t *testing.T) {
 	require.Len(t, routingDefaults(t, adapters), 1)
 }
 
+// TestR252_AnIDIsOneAdapterInOneCategory asserts that saving an adapter as
+// the default under an ID another category holds is refused, and that the
+// refusal undoes the handover: both categories keep the default they had.
+func TestR252_AnIDIsOneAdapterInOneCategory(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	adapters := state.NewAdapters(connected(t))
+	require.NoError(t, adapters.Upsert(ctx, state.AdapterConfig{
+		ID: "rte_loopback", Category: "routing", Kind: "loopback", Name: "Localhost", IsDefault: true, Enabled: true}))
+	require.NoError(t, adapters.Upsert(ctx, state.AdapterConfig{
+		ID: "bkp_local", Category: "backup", Kind: "local", Name: "Local disk", IsDefault: true, Enabled: true}))
+
+	_, err := adapters.Save(ctx, state.AdapterConfig{
+		ID: "rte_loopback", Category: "backup", Kind: "s3", Name: "S3", IsDefault: true, Enabled: true})
+	var e *errs.Error
+	require.True(t, errors.As(err, &e), "%v", err)
+	require.Equal(t, errs.ValidInvalid, e.Code)
+	require.Contains(t, e.Message, "belongs to an adapter of another category")
+	require.NotEmpty(t, e.Remedy)
+
+	rows, err := adapters.List(ctx)
+	require.NoError(t, err)
+	got := map[string]state.AdapterConfig{}
+	for _, r := range rows {
+		got[r.ID] = r
+	}
+	require.True(t, got["bkp_local"].IsDefault, "the backup default was put back")
+	require.True(t, got["rte_loopback"].IsDefault)
+	require.Equal(t, "routing", got["rte_loopback"].Category)
+	require.Equal(t, "loopback", got["rte_loopback"].Kind, "nothing about it changed")
+}
+
 // TestR105_AnAdapterTheDatabaseRefusesSaysWhy asserts issue #220's third
 // point: a constraint an adapter breaks reaches the client as a validation
 // error naming the rule, never as an internal error.
