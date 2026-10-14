@@ -164,7 +164,7 @@ export function AdapterDialog({
   // Saving as the default of a category that has one hands the default over
   // (issue #220), so it is asked first, naming both.
   const replacing =
-    kind && form && form.isDefault && !isSource && kind.category !== 'ai'
+    kind && form?.isDefault && !isSource && kind.category !== 'ai'
       ? adapters.find((a) => a.category === kind.category && a.is_default && a.id !== form.id.trim())
       : undefined;
   const newName = form?.name.trim() || kind?.name || '';

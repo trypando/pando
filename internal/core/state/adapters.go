@@ -91,46 +91,61 @@ func (a *Adapters) Save(ctx context.Context, c AdapterConfig) (Replaced, error) 
 	}
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
-		return Replaced{}, errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
+		return Replaced{}, saveRefusal(c, err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
-	var replaced Replaced
-	if c.IsDefault {
-		// An existing row keeps its category, which ON CONFLICT does not
-		// change, so the default handed over is the one in that category.
-		category := c.Category
-		err := tx.QueryRow(ctx, `SELECT category FROM adapter_configs WHERE id = $1`, c.ID).Scan(&category)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return Replaced{}, errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
-		}
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, defaultLockKey+category); err != nil {
-			return Replaced{}, errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
-		}
-		err = tx.QueryRow(ctx, `
-			UPDATE adapter_configs SET is_default = false, updated_at = now()
-			WHERE category = $1 AND is_default AND id <> $2
-			RETURNING id, name`, category, c.ID).Scan(&replaced.ID, &replaced.Name)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return Replaced{}, errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
-		}
+	replaced, err := handOver(ctx, tx, c)
+	if err == nil {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO adapter_configs (id, category, kind, name, config, is_default, enabled)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (id) DO UPDATE SET
+				kind = EXCLUDED.kind, name = EXCLUDED.name, config = EXCLUDED.config,
+				is_default = EXCLUDED.is_default, enabled = EXCLUDED.enabled, updated_at = now()`,
+			c.ID, c.Category, c.Kind, c.Name, cfg, c.IsDefault, c.Enabled)
 	}
-
-	_, err = tx.Exec(ctx, `
-		INSERT INTO adapter_configs (id, category, kind, name, config, is_default, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (id) DO UPDATE SET
-			kind = EXCLUDED.kind, name = EXCLUDED.name, config = EXCLUDED.config,
-			is_default = EXCLUDED.is_default, enabled = EXCLUDED.enabled, updated_at = now()`,
-		c.ID, c.Category, c.Kind, c.Name, cfg, c.IsDefault, c.Enabled)
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
 	if err != nil {
-		return Replaced{}, saveRefusal(c, err)
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return Replaced{}, saveRefusal(c, err)
 	}
 	return replaced, nil
 }
+
+// handOver clears the default of the category c is saved into, when c is to
+// be the default, and returns the adapter that was. An existing row keeps its
+// category, which ON CONFLICT does not change, so that is the category read.
+//
+// The lock is its own statement: a statement's snapshot is taken when it
+// starts, so an UPDATE that waited for the lock inside itself would not see
+// the default the holder committed.
+func handOver(ctx context.Context, tx pgx.Tx, c AdapterConfig) (Replaced, error) {
+	var r Replaced
+	if !c.IsDefault {
+		return r, nil
+	}
+	var category string
+	if err := tx.QueryRow(ctx, `
+		SELECT k.category
+		FROM (SELECT coalesce((SELECT category FROM adapter_configs WHERE id = $1), $2) AS category) k,
+		     pg_advisory_xact_lock(hashtextextended($3 || k.category, 0))`,
+		c.ID, c.Category, defaultLockKey).Scan(&category); err != nil {
+		return r, err
+	}
+	err := tx.QueryRow(ctx, `
+		UPDATE adapter_configs SET is_default = false, updated_at = now()
+		WHERE category = $1 AND is_default AND id <> $2
+		RETURNING id, name`, category, c.ID).Scan(&r.ID, &r.Name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Replaced{}, nil
+	}
+	return r, err
+}
+
+// saveFailed is what a save the database failed for a reason of its own says.
+const saveFailed = "Could not save the adapter configuration."
 
 // saveRefusal says why the database refused an adapter configuration (R-105).
 // A constraint is a rule about what may be saved, so breaking one is the
@@ -139,7 +154,7 @@ func (a *Adapters) Save(ctx context.Context, c AdapterConfig) (Replaced, error) 
 func saveRefusal(c AdapterConfig, err error) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
-		return errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
+		return errs.Wrap(errs.Internal, saveFailed, err)
 	}
 	switch pgErr.ConstraintName {
 	case "adapter_configs_one_ai_adapter_per_kind":
@@ -174,7 +189,7 @@ func saveRefusal(c AdapterConfig, err error) error {
 			c.Category, c.ID, pgErr.ConstraintName).
 			WithRemedy("Change that adapter instead, or remove it first. GET /api/v1/adapters lists them.")
 	}
-	return errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
+	return errs.Wrap(errs.Internal, saveFailed, err)
 }
 
 // DeleteInCategory removes an adapter configuration of one category, with its

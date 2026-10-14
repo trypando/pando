@@ -63,7 +63,7 @@ func startedAt(c *Client) (string, error) {
 	var out struct {
 		StartedAt string `json:"started_at"`
 	}
-	if err := c.Do("GET", "/adapters", nil, &out); err != nil {
+	if err := c.Do("GET", adaptersPath, nil, &out); err != nil {
 		return "", err
 	}
 	return out.StartedAt, nil

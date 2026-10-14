@@ -70,6 +70,20 @@ func TestR252_TheCLIHandsTheDefaultOverOnlyWhenAsked(t *testing.T) {
 	require.NoError(t, got.err, got.errOut)
 	require.Contains(t, api.bodyFor("POST /adapters"), `"is_default":true`)
 	require.Contains(t, got.out, handover)
+
+	// Changing the default without --default keeps it the default.
+	api = newRouting()
+	got = run(t, api, "", "adapter", "add", "routing/cloudflare", "--id", "rte_loopback", "--set", "zone=bemeek.io")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, api.bodyFor("POST /adapters"), `"is_default":true`)
+
+	// Without the list, nothing is guessed.
+	api = newRouting().fail("GET /adapters", 500, map[string]any{"code": "INTERNAL", "message": "Pando could not read the adapters."})
+	got = run(t, api, "", "adapter", "add", "routing/cloudflare", "--set", "zone=bemeek.io")
+	require.Error(t, got.err)
+	for _, c := range api.calls {
+		require.NotEqual(t, "POST", c.method, "nothing is saved")
+	}
 }
 
 var trivyKind = map[string]any{"kinds": []map[string]any{{

@@ -10,6 +10,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// adaptersPath is the endpoint adapters are listed and configured at.
+const adaptersPath = "/adapters"
+
 // adapterCmd configures adapters from the command line, as the console's
 // Adapters screen does — the API could always do it, and a capability only the
 // API has is a gap in the other two surfaces (R-261).
@@ -26,7 +29,7 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			var out map[string]any
-			if err := c.Do("GET", "/adapters", nil, &out); err != nil {
+			if err := c.Do("GET", adaptersPath, nil, &out); err != nil {
 				return err
 			}
 			return printJSON(cmd.OutOrStdout(), out)
@@ -171,9 +174,24 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 			if name == "" {
 				name = info.Name
 			}
+			makeDefault := isDefault
+			switch {
+			case category == "source":
+				// Many source connections, none of them the default: the
+				// one covering a repository is chosen for it.
+				makeDefault = false
+			case !cmd.Flags().Changed("default"):
+				// Without --default, an adapter keeps whether it is the
+				// default, and a new one is the default only of a category
+				// that has none: making it the default in place of another
+				// is a handover, said with --default (issue #220).
+				if makeDefault, err = defaultUnlessTaken(c, id, category); err != nil {
+					return err
+				}
+			}
 			body := map[string]any{
 				"id": id, "category": category, "kind": kind, "name": name,
-				"config": config, "is_default": isDefault,
+				"config": config, "is_default": makeDefault,
 			}
 			if len(credentials) > 0 {
 				body["credentials"] = credentials
@@ -181,24 +199,10 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 			if disabled {
 				body["enabled"] = false
 			}
-			if !cmd.Flags().Changed("default") {
-				// Without --default, an adapter keeps whether it is the
-				// default, and a new one is the default only of a category
-				// that has none: making it the default in place of another
-				// is a handover, said with --default (issue #220).
-				if body["is_default"], err = defaultUnlessTaken(c, id, category); err != nil {
-					return err
-				}
-			}
-			if category == "source" {
-				// Many source connections, none of them the default: the
-				// one covering a repository is chosen for it.
-				body["is_default"] = false
-			}
 			var saved struct {
 				Handover string `json:"handover"`
 			}
-			if err := c.Do("POST", "/adapters", body, &saved); err != nil {
+			if err := c.Do("POST", adaptersPath, body, &saved); err != nil {
 				return err
 			}
 			if saved.Handover != "" {
@@ -327,7 +331,7 @@ func defaultUnlessTaken(c *Client, id, category string) (bool, error) {
 			IsDefault bool   `json:"is_default"`
 		} `json:"adapters"`
 	}
-	if err := c.Do("GET", "/adapters", nil, &out); err != nil {
+	if err := c.Do("GET", adaptersPath, nil, &out); err != nil {
 		return false, err
 	}
 	taken := false
