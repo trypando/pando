@@ -99,13 +99,17 @@ func (failingUpgrades) Last(context.Context) (*upgrade.Attempt, error) {
 	return nil, errs.New(errs.Internal, "The last upgrade's outcome does not parse.")
 }
 
+// fakeUpdates answers with a fixed status, counting checks asked for.
 type fakeUpdates struct {
 	st     update.Status
 	checks *int
 	err    error
 }
 
+// Status answers with the fixed status.
 func (f fakeUpdates) Status(context.Context) (update.Status, error) { return f.st, nil }
+
+// CheckNow counts the check and answers with the fixed status, or err.
 func (f fakeUpdates) CheckNow(context.Context) (update.Status, error) {
 	if f.checks != nil {
 		*f.checks++

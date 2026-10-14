@@ -53,6 +53,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** Renders the Updates screen and presses Check for updates. */
 async function pressCheck() {
   root = createRoot(container);
   act(() =>

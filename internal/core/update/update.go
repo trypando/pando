@@ -100,6 +100,9 @@ type Checker struct {
 	Logger   *zap.Logger
 	Interval time.Duration
 
+	// asking serializes CheckNow, so callers arriving while a check is under
+	// way wait for it and are answered from it rather than each sending one.
+	asking    sync.Mutex
 	mu        sync.Mutex
 	releases  []Release
 	checkedAt time.Time
@@ -128,6 +131,8 @@ func (c *Checker) Run(ctx context.Context) {
 // nothing and answers from that one; while policy has the check off it sends
 // nothing at all (R-349).
 func (c *Checker) CheckNow(ctx context.Context) (Status, error) {
+	c.asking.Lock()
+	defer c.asking.Unlock()
 	c.mu.Lock()
 	recent := !c.checkedAt.IsZero() && c.Clock.Since(c.checkedAt) < MinCheckGap
 	c.mu.Unlock()

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -110,6 +111,42 @@ func TestR349_ACheckCanBeAskedForNowAndIsThrottled(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 2, hits.Load())
 	require.Equal(t, fake.Now(), *st.CheckedAt)
+}
+
+// slowSource answers only once released, counting every request.
+type slowSource struct {
+	hits    atomic.Int32
+	release chan struct{}
+}
+
+// Releases waits for the test to let it answer.
+func (s *slowSource) Releases(context.Context) ([]update.Release, error) {
+	s.hits.Add(1)
+	<-s.release
+	return []update.Release{{Version: "0.5.0"}}, nil
+}
+
+// Several people pressing Check for updates while one check is still waiting
+// on GitHub send one request between them (R-349).
+func TestR349_ChecksAskedForTogetherSendOneRequest(t *testing.T) {
+	src := &slowSource{release: make(chan struct{})}
+	s := update.SettingsFrom(policy.Document{})
+	c := checker(src, "0.4.0", &s)
+
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			st, err := c.CheckNow(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, "0.5.0", st.Latest)
+		}()
+	}
+	require.Eventually(t, func() bool { return src.hits.Load() == 1 }, time.Second, time.Millisecond)
+	close(src.release)
+	wg.Wait()
+	require.EqualValues(t, 1, src.hits.Load())
 }
 
 // TestR350_TheChannelDecidesWhetherReleaseCandidatesAreOffered asserts R-350.

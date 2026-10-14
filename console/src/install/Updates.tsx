@@ -95,6 +95,7 @@ export function Updates({ onPolicy }: { onPolicy?: () => void }) {
   );
 }
 
+/** Asks the server to check GitHub now rather than at its next six-hourly check (R-349). */
 function CheckButton({ checking, onCheck }: { checking: boolean; onCheck: () => void }) {
   return (
     <Button variant="secondary" disabled={checking} onClick={onCheck}>
