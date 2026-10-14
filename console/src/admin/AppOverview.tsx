@@ -123,8 +123,19 @@ export function AppOverview({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
       {app.state === 'failed' && (
         // The one place red belongs on this screen. A banner, not stacked with
-        // anything else — Banner's own rule is never to stack them.
-        <Banner tone="failed">
+        // anything else — Banner's own rule is never to stack them. "Fix
+        // what's wrong" needs a way to find out what is wrong, and that is the
+        // deploy log and the app's own output, both on Logs.
+        <Banner
+          tone="failed"
+          action={
+            canReadLogs && (
+              <Button variant="secondary" onClick={() => onGo('logs')}>
+                Open logs
+              </Button>
+            )
+          }
+        >
           Pando has stopped trying to start this app. Fix what&rsquo;s wrong and deploy again.
         </Banner>
       )}
