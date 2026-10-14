@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { RecipientField } from '../admin/RecipientField';
@@ -100,6 +101,13 @@ describe('TagField, open', () => {
     act(() => area.click());
     expect(document.activeElement).toBe(input());
   });
+
+  it('lets a click on a tag fall through to the field, and keeps its remove button', () => {
+    render(<TagField label="Groups" value={['grp_a']} onChange={() => {}} nameOf={() => 'Operators'} text="" onText={() => {}} options={[]} />);
+    const remove = container.querySelector<HTMLButtonElement>('button[aria-label="Remove Operators"]')!;
+    expect(remove.parentElement!.style.pointerEvents).toBe('none');
+    expect(remove.style.pointerEvents).toBe('auto');
+  });
 });
 
 describe('ActorField, open', () => {
@@ -118,7 +126,7 @@ describe('ActorField, open', () => {
 });
 
 describe('RecipientField, open', () => {
-  it('lists the accounts the server found and chooses one', () => {
+  const seed = () =>
     queries.setQueryData(['apps', 'app_01NOTES', 'principals', ''], {
       users: [
         { id: 'usr_01ANA', username: 'ana', name: 'Ana Ruiz' },
@@ -126,6 +134,21 @@ describe('RecipientField, open', () => {
       ],
       groups: null,
     });
+
+  it('renders a chosen recipient by name, closed, on the server', () => {
+    seed();
+    const html = renderToString(
+      <QueryClientProvider client={queries}>
+        <RecipientField appID="app_01NOTES" kind="user" value={{ kind: 'user', id: 'usr_01ANA', label: 'ana' }} onChange={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain('value="ana"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('aria-activedescendant');
+  });
+
+  it('lists the accounts the server found and chooses one', () => {
+    seed();
     const onChange = vi.fn();
     render(<RecipientField appID="app_01NOTES" kind="user" value={null} onChange={onChange} />);
     focus(input());
@@ -185,5 +208,30 @@ describe('TipButton', () => {
     expect(container.querySelector('[role="tooltip"]')?.textContent).toBe('Set by PANDO_PORT.');
     act(() => button.blur());
     expect(container.querySelector('[role="tooltip"]')).toBeNull();
+  });
+
+  it('stays open while either the pointer is over it or its trigger has focus', () => {
+    render(
+      <TipButton tip="Set by PANDO_PORT." label="Environment: PANDO_PORT">
+        Environment
+      </TipButton>,
+    );
+    const button = container.querySelector<HTMLButtonElement>('button')!;
+    const tip = () => container.querySelector('[role="tooltip"]');
+    const pointer = (type: 'mouseover' | 'mouseout') =>
+      act(() => {
+        button.dispatchEvent(new MouseEvent(type, { bubbles: true, relatedTarget: type === 'mouseout' ? document.body : null }));
+      });
+
+    focus(button);
+    pointer('mouseover');
+    pointer('mouseout');
+    expect(tip()).not.toBeNull();
+
+    pointer('mouseover');
+    act(() => button.blur());
+    expect(tip()).not.toBeNull();
+    pointer('mouseout');
+    expect(tip()).toBeNull();
   });
 });

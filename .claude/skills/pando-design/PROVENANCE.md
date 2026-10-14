@@ -49,8 +49,8 @@ A re-sync will revert them, so push them first.
   taller than the viewport can reach its own footer, and Escape closes it.
 
 - `components/feedback/Tooltip.jsx` — it opened on hover only, so a keyboard
-  user who tabbed to its trigger never saw it. It now opens on focus and closes
-  on blur as well; React's focus events bubble, so the trigger inside it can be
+  user who tabbed to its trigger never saw it. It now opens on focus as well, and
+  stays open while either the pointer is over it or its trigger has focus; React's focus events bubble, so the trigger inside it can be
   any focusable element, such as a button.
 
 The `Dialog` and `Tooltip` changes are correctness bugs rather than changes to the

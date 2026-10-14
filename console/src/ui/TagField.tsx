@@ -108,6 +108,8 @@ export function TagField({
               key={which}
               style={{
                 position: 'relative',
+                // Clicks on the tag fall through to the hit area under it.
+                pointerEvents: 'none',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 'var(--space-1)',
@@ -130,6 +132,7 @@ export function TagField({
                     remove(which);
                   }}
                   style={{
+                    pointerEvents: 'auto',
                     display: 'inline-flex',
                     padding: 'var(--space-1)',
                     background: 'none',

@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 
 export function Tooltip({ content, side = 'top', style, children, ...rest }) {
-  const [show, setShow] = useState(false);
+  const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const show = hover || focus;
   const pos = {
     top: { bottom: '100%', left: '50%', transform: 'translate(-50%, -6px)' },
     bottom: { top: '100%', left: '50%', transform: 'translate(-50%, 6px)' },
@@ -11,8 +13,8 @@ export function Tooltip({ content, side = 'top', style, children, ...rest }) {
   return (
     <span
       style={{ position: 'relative', display: 'inline-flex', ...style }}
-      onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}
-      onFocus={() => setShow(true)} onBlur={() => setShow(false)}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
       {...rest}
     >
       {children}
