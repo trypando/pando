@@ -12,13 +12,13 @@ export function TipButton({
   side,
   style,
   children,
-}: {
+}: Readonly<{
   tip: ReactNode;
   label: string;
   side?: 'top' | 'bottom' | 'left' | 'right';
   style?: CSSProperties;
   children: ReactNode;
-}) {
+}>) {
   return (
     <Tooltip content={tip} side={side}>
       <button

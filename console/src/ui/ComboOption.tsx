@@ -15,7 +15,7 @@ export function ComboOption({
   label,
   detail,
   mono = false,
-}: {
+}: Readonly<{
   /** The id the input's aria-activedescendant names. */
   id: string;
   /** Whether this is the highlighted option. */
@@ -27,7 +27,7 @@ export function ComboOption({
   detail?: ReactNode;
   /** The label in the code face, for IDs and usernames. */
   mono?: boolean;
-}) {
+}>) {
   const clipped = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
   return (
     <div
