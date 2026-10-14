@@ -1047,7 +1047,7 @@ R-106 describes and is not an error.
 
 ### Updating Pando itself *(issue #53)*
 
-**R-349 [D]** **Pando checks whether a newer release of itself is published.** It reads the GitHub release list of `trypando/pando` at startup and every six hours **[P]**, sending only its version, in the User-Agent. On by default; host policy `disable_update_check` turns it off, and off sends no request at all, for an install with no internet access or one that may not call out. Like any policy setting it may be fixed at startup (R-271).
+**R-349 [D]** **Pando checks whether a newer release of itself is published.** It reads the GitHub release list of `trypando/pando` at startup and every six hours **[P]**, and when someone who may read it (R-351) asks for a check now (`POST /updates/check`), sending only its version, in the User-Agent. A request within a minute of the last check is answered from that check. On by default; host policy `disable_update_check` turns it off, and off sends no request at all, for an install with no internet access or one that may not call out. Like any policy setting it may be fixed at startup (R-271).
 
 **R-350 [D]** Host policy `update_channel` chooses which releases the check offers: `stable`, the default, or `prerelease`, which also offers release candidates (a tag with a suffix, docs/releasing.md).
 

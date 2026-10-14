@@ -99,9 +99,43 @@ func (failingUpgrades) Last(context.Context) (*upgrade.Attempt, error) {
 	return nil, errs.New(errs.Internal, "The last upgrade's outcome does not parse.")
 }
 
-type fakeUpdates struct{ st update.Status }
+type fakeUpdates struct {
+	st     update.Status
+	checks *int
+}
 
 func (f fakeUpdates) Status(context.Context) (update.Status, error) { return f.st, nil }
+func (f fakeUpdates) CheckNow(context.Context) (update.Status, error) {
+	if f.checks != nil {
+		*f.checks++
+	}
+	return f.st, nil
+}
+
+// POST /updates/check asks now and answers as GET /updates does (R-349),
+// behind the same verb.
+func TestR349_AnyoneWhoMayViewUpdatesMayAskForACheckNow(t *testing.T) {
+	i := newInstall(t)
+	checks := 0
+	i.Server.Updates = fakeUpdates{checks: &checks, st: update.Status{
+		Current: "0.4.0", Latest: "0.5.0", Available: true, Enabled: true, Channel: "stable",
+		Releases: []update.Release{{Version: "0.5.0"}},
+	}}
+
+	r := i.anon(http.MethodPost, "/updates/check", nil)
+	require.Equal(t, http.StatusUnauthorized, r.Code, r.String())
+	r = i.do(i.user("viewer"), http.MethodPost, "/updates/check", nil)
+	require.Equal(t, http.StatusForbidden, r.Code, r.String())
+	require.Zero(t, checks)
+
+	r = i.do(i.admin(), http.MethodPost, "/updates/check", nil)
+	require.Equal(t, http.StatusOK, r.Code, r.String())
+	var st update.Status
+	r.JSON(t, &st)
+	require.Equal(t, "0.5.0", st.Latest)
+	require.True(t, st.Available)
+	require.Equal(t, 1, checks)
+}
 
 // GET /updates is what the console, CLI and MCP all read (R-351), behind
 // install.view like the rest of the installation's state.

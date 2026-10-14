@@ -395,6 +395,8 @@ type Upgrades interface {
 // Updates reports what the update check knows.
 type Updates interface {
 	Status(ctx context.Context) (update.Status, error)
+	// CheckNow asks GitHub now rather than at the next tick (R-349).
+	CheckNow(ctx context.Context) (update.Status, error)
 }
 
 // SpecDefaults supplies the install's defaults for a spec.
@@ -726,6 +728,7 @@ func (s *Server) Routes() http.Handler {
 
 		// Whether a newer Pando is released, and how to upgrade (R-351).
 		r.Get("/updates", s.handleGetUpdates)
+		r.Post("/updates/check", s.handleCheckUpdates)
 
 		// Upgrading Pando in place (R-355 – R-360): what it would do, the
 		// last one's outcome, and starting one.

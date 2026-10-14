@@ -78,6 +78,40 @@ func TestR349_TheUpdateCheckIsOnByDefaultAndOffSendsNothing(t *testing.T) {
 	require.EqualValues(t, 1, hits.Load())
 }
 
+// TestR349_ACheckCanBeAskedForNowAndIsThrottled asserts R-349's check on
+// request: it sends at once, a second within MinCheckGap answers from the
+// first, and off still sends nothing.
+func TestR349_ACheckCanBeAskedForNowAndIsThrottled(t *testing.T) {
+	var hits atomic.Int32
+	s := update.SettingsFrom(policy.Document{DisableUpdateCheck: true})
+	c := checker(github(t, &hits), "0.3.1", &s)
+	fake := c.Clock.(*clock.Fake)
+
+	st, err := c.CheckNow(context.Background())
+	require.NoError(t, err)
+	require.False(t, st.Enabled)
+	require.Zero(t, hits.Load(), "asking does not override policy")
+
+	s.Enabled = true
+	st, err = c.CheckNow(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, hits.Load())
+	require.True(t, st.Available)
+	require.Equal(t, "0.4.1", st.Latest)
+	require.Equal(t, fake.Now(), *st.CheckedAt)
+
+	fake.Advance(update.MinCheckGap - time.Second)
+	_, err = c.CheckNow(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, hits.Load(), "inside the gap, the last check answers")
+
+	fake.Advance(time.Second)
+	st, err = c.CheckNow(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 2, hits.Load())
+	require.Equal(t, fake.Now(), *st.CheckedAt)
+}
+
 // TestR350_TheChannelDecidesWhetherReleaseCandidatesAreOffered asserts R-350.
 func TestR350_TheChannelDecidesWhetherReleaseCandidatesAreOffered(t *testing.T) {
 	var hits atomic.Int32

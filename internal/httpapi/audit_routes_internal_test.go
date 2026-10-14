@@ -165,6 +165,8 @@ var auditExempt = map[string]string{
 		"audited when it is set, by POST /users or POST /users/{userID}/password.",
 	"POST /api/v1/identity-providers/{providerID}/check": "A health probe: it asks the provider whether it " +
 		"answers and stores nothing.",
+	"POST /api/v1/updates/check": "A read expressed as POST: it asks GitHub for the release list now rather " +
+		"than at the next six-hourly check, and changes nothing but when that list was last read.",
 	"POST /api/v1/me/notifications/read": "Marks the caller's own notifications read. A per-person reading " +
 		"mark that grants, reveals and changes nothing anyone else sees.",
 	"POST /api/v1/me/notifications/{notificationID}/read": "Marks one of the caller's own notifications read. " +
@@ -175,7 +177,7 @@ var auditExempt = map[string]string{
 
 // maxAuditExempt bounds auditExempt, so an exemption is a decision somebody
 // makes in review rather than a line that slips in.
-const maxAuditExempt = 7
+const maxAuditExempt = 8
 
 func servedMutatingRoutes(t *testing.T) map[string]bool {
 	t.Helper()

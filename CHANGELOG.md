@@ -19,6 +19,13 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Added
+
+- **Check for updates now.** Pando checks for a newer release at startup and every six hours; the
+  console's Updates screen now has a **Check for updates** button beside when it last checked, and
+  `pando updates --check`, MCP `pando_check_updates` and `POST /api/v1/updates/check` do the same.
+  A second check within a minute is answered from the first.
+
 ## [0.5.0] - 2026-10-13
 
 Detection now builds the app and scores the image that will run, and the categories of deploy

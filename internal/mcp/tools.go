@@ -1103,6 +1103,16 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_check_updates",
+		Description: "Ask GitHub for Pando's releases now rather than waiting for the six-hourly check, " +
+			"and answer as pando_get_updates does. A second request within a minute answers from the " +
+			"first. Sends nothing while host policy's disable_update_check is set.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "POST", "/updates/check", nil, nil
+		},
+	},
+	{
 		Name: "pando_plan_upgrade",
 		Description: "Whether Pando can upgrade itself in place to a version, and if not, every reason " +
 			"with what to change; which versions in between may break something, with their upgrade " +

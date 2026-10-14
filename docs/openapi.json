@@ -10326,8 +10326,34 @@
     "/api/v1/updates": {
       "get": {
         "operationId": "getUpdates",
-        "summary": "Check for updates",
+        "summary": "Show updates",
         "description": "Whether a newer Pando is released: `current`, `latest`, `available`, and `releases`, each version after the running one, newest first, with its changelog section as `notes` and `security` and `breaking` marked. `upgrade` says how to move this installation to `latest`. `enabled` and `channel` are host policy's `disable_update_check` and `update_channel`; while the check is off Pando sends no request and reports nothing. `error` says why the last check failed. Every response to a signed-in caller carries the server's version as `Pando-Version`.\n\nNeeds `install.view`.",
+        "tags": [
+          "Installation"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.view"
+      }
+    },
+    "/api/v1/updates/check": {
+      "post": {
+        "operationId": "checkUpdates",
+        "summary": "Check for updates now",
+        "description": "Asks GitHub for the release list now rather than at the next six-hourly check, and answers as `GET /updates` does. A request within a minute of the last check sends nothing and answers from that one. While host policy's `disable_update_check` is set, nothing is sent and `enabled` is false.\n\nNeeds `install.view`.",
         "tags": [
           "Installation"
         ],

@@ -174,6 +174,7 @@ This must be stated in every routing adapter's contract, because an adapter auth
 - **What is kept, and where.** Only the last list fetched and when, in memory. A restart checks again, so there is nothing to migrate.
 - **How the channel applies.** The channel filters that list when it is read rather than when it is fetched, so changing it in policy needs no new request.
 - **When it is off.** The policy is read at every tick. While `disable_update_check` is set, nothing is sent.
+- **Checking now.** `POST /updates/check` (the console's **Check for updates**, `pando updates --check`, MCP `pando_check_updates`) runs the same check outside the tick and answers as `GET /updates` does. Within `MinCheckGap`, one minute **[P]**, of the last check it sends nothing and answers from that one, so a button pressed repeatedly stays inside GitHub's unauthenticated limit of sixty requests an hour per address. It is behind `install.view` like reading the answer, and is not audited: it changes nothing but when the list was last read.
 - **Security and breaking marks.** `Security` means the section's `### Security` subsection says something other than "No new advisories.". `Breaking` follows docs/releasing.md: a MAJOR bump, or before 1.0 a MINOR one.
 
 Both settings are ordinary host policy fields, so they can be fixed in the config file or as `PANDO_POLICY_DISABLE_UPDATE_CHECK` / `PANDO_POLICY_UPDATE_CHANNEL`, and are then read-only everywhere (R-271). There is no separate console toggle that could disagree with the deployment's own configuration.

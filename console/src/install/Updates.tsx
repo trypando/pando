@@ -31,6 +31,12 @@ export function useUpdates(enabled: boolean) {
 
 export function Updates({ onPolicy }: { onPolicy?: () => void }) {
   const updates = useUpdates(true);
+  const queries = useQueryClient();
+  // The server checks at startup and every six hours; this asks it now (R-349).
+  const check = useMutation({
+    mutationFn: () => api.post<Status>('/updates/check'),
+    onSuccess: (fresh) => queries.setQueryData(['updates'], fresh),
+  });
   const st = updates.data;
   const policyLink = onPolicy && (
     <Button variant="ghost" onClick={onPolicy}>
@@ -43,7 +49,8 @@ export function Updates({ onPolicy }: { onPolicy?: () => void }) {
       {updates.isError && <Quiet>{messageOf(updates.error)}</Quiet>}
       {st && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '72ch' }}>
-          <Summary st={st} />
+          <Summary st={st} checking={check.isPending} onCheck={() => check.mutate()} />
+          {check.isError && <Banner tone="failed">{messageOf(check.error)}</Banner>}
 
           {!st.enabled && (
             <Banner tone="info" action={policyLink}>
@@ -53,6 +60,11 @@ export function Updates({ onPolicy }: { onPolicy?: () => void }) {
           {st.error && <Banner tone="failed">{st.error}</Banner>}
           {st.enabled && !st.checked_at && !st.error && (
             <Quiet>Pando has not checked for releases yet. It checks at startup and every six hours.</Quiet>
+          )}
+          {st.enabled && !st.checked_at && (
+            <div>
+              <CheckButton checking={check.isPending} onCheck={() => check.mutate()} />
+            </div>
           )}
 
           <LastUpgrade />
@@ -83,7 +95,15 @@ export function Updates({ onPolicy }: { onPolicy?: () => void }) {
   );
 }
 
-function Summary({ st }: { st: Status }) {
+function CheckButton({ checking, onCheck }: { checking: boolean; onCheck: () => void }) {
+  return (
+    <Button variant="secondary" disabled={checking} onClick={onCheck}>
+      {checking ? 'Checking for updates' : 'Check for updates'}
+    </Button>
+  );
+}
+
+function Summary({ st, checking, onCheck }: { st: Status; checking: boolean; onCheck: () => void }) {
   const row = { display: 'flex', gap: 'var(--space-4)', alignItems: 'baseline' } as const;
   const key = { font: 'var(--type-label)', color: 'var(--ink-secondary)', minWidth: '12ch' } as const;
   return (
@@ -113,6 +133,7 @@ function Summary({ st }: { st: Status }) {
           <div style={row}>
             <span style={key}>Checked</span>
             <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)' }}>{relative(st.checked_at)}</span>
+            <CheckButton checking={checking} onCheck={onCheck} />
           </div>
         </>
       )}

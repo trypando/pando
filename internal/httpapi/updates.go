@@ -46,6 +46,25 @@ func (s *Server) handleGetUpdates(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, st)
 }
 
+// handleCheckUpdates is POST /api/v1/updates/check (R-349): the same answer
+// as GET /updates, from a check made now. Behind install.view like reading
+// it, since asking again tells the caller nothing more than waiting would.
+func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireInstall(w, r, authz.InstallView); !ok {
+		return
+	}
+	if s.Updates == nil {
+		s.handleGetUpdates(w, r)
+		return
+	}
+	st, err := s.Updates.CheckNow(r.Context())
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	JSON(w, http.StatusOK, st)
+}
+
 func (s *Server) upgradesReady(w http.ResponseWriter, r *http.Request) bool {
 	if s.Upgrades == nil {
 		Error(w, r, errs.New(errs.Internal, "In-place upgrades are not set up on this installation."))

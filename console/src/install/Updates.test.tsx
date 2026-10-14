@@ -27,10 +27,15 @@ const status: Status = {
   upgrade: { version: '0.4.0', image: 'trypando/pando:0.4.0', command: 'curl … && docker compose up -d', instructions: 'Download it.' },
 };
 
-function render(plan: Plan, last: Attempt | null = null, verbs: string[] = ['install.view', 'install.upgrade']) {
+function render(
+  plan: Plan,
+  last: Attempt | null = null,
+  verbs: string[] = ['install.view', 'install.upgrade'],
+  st: Status = status,
+) {
   const queries = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   queries.setQueryData(['me'], { verbs });
-  queries.setQueryData(['updates'], status);
+  queries.setQueryData(['updates'], st);
   queries.setQueryData(['upgrade-plan', '0.4.0'], plan);
   queries.setQueryData(['upgrade-last'], { upgrade: last });
   // React separates adjacent text with empty comments in server output.
@@ -50,6 +55,24 @@ const possible: Plan = {
   breaking: [],
   note: 'Every app is unreachable while Pando restarts.',
 };
+
+describe('checking now (R-349)', () => {
+  it('offers a check beside when Pando last checked', () => {
+    const html = render(possible);
+    expect(html).toMatch(/Checked<\/span><span[^>]*>[^<]+<\/span><button[^>]*>Check for updates<\/button>/);
+  });
+
+  it('offers a check before the first one', () => {
+    const html = render(possible, null, undefined, { ...status, checked_at: undefined, available: false, releases: [] });
+    expect(html).toContain('has not checked for releases yet');
+    expect(html).toContain('Check for updates');
+  });
+
+  it('offers none while the check is off', () => {
+    const html = render(possible, null, undefined, { ...status, enabled: false, available: false, releases: [] });
+    expect(html).not.toContain('Check for updates');
+  });
+});
 
 describe('upgrading in place from the Updates screen (R-355 – R-359)', () => {
   it('offers the upgrade when Pando can replace itself, beside the command', () => {

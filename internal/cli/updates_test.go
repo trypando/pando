@@ -95,3 +95,14 @@ func TestR351_PandoUpdatesShowsEachStateOfTheCheck(t *testing.T) {
 		require.ErrorContains(t, r.err, "install.view")
 	})
 }
+
+// `pando updates --check` asks the server to check now (R-349).
+func TestR349_PandoUpdatesCheckAsksNow(t *testing.T) {
+	api := newAPI(t).reply("POST /updates/check", map[string]any{
+		"current": "0.4.0", "enabled": true, "channel": "stable", "checked_at": "2026-10-13T23:40:00Z",
+		"latest": "0.5.0", "available": true, "releases": []map[string]any{{"version": "0.5.0", "notes": "- x\n"}},
+	})
+	r := run(t, api, "", "updates", "--check")
+	require.NoError(t, r.err)
+	require.Contains(t, r.out, "Latest:  0.5.0 (stable channel, checked 2026-10-13 23:40 UTC)")
+}

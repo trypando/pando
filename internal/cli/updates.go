@@ -12,13 +12,15 @@ import (
 // updatesCmd shows whether a newer Pando is released (R-351) — the same answer
 // GET /updates gives the console — and how to upgrade the server (R-352).
 func updatesCmd(client func() (*Client, error)) *cobra.Command {
-	return &cobra.Command{
+	var now bool
+	cmd := &cobra.Command{
 		Use:   "updates",
 		Short: "Show whether a newer Pando is released, what changed, and how to upgrade",
 		Long: "Shows the version the server runs, the latest release on the update channel, and the\n" +
 			"changelog of every version in between, with security fixes and breaking changes marked.\n" +
 			"Then the command that upgrades the server. The check is host policy: disable_update_check\n" +
-			"turns it off and update_channel chooses stable or prerelease (`pando policy set`).",
+			"turns it off and update_channel chooses stable or prerelease (`pando policy set`).\n" +
+			"Pando checks at startup and every six hours; --check asks GitHub now.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := client()
@@ -26,7 +28,11 @@ func updatesCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			var st update.Status
-			if err := c.Do("GET", "/updates", nil, &st); err != nil {
+			method, path := "GET", "/updates"
+			if now {
+				method, path = "POST", "/updates/check"
+			}
+			if err := c.Do(method, path, nil, &st); err != nil {
 				return err
 			}
 			w := cmd.OutOrStdout()
@@ -45,7 +51,7 @@ func updatesCmd(client func() (*Client, error)) *cobra.Command {
 			}
 			if st.CheckedAt == nil {
 				if st.Error == "" {
-					fmt.Fprintln(w, "Pando has not checked for releases yet. It checks at startup and every six hours.")
+					fmt.Fprintln(w, "Pando has not checked for releases yet. It checks at startup and every six hours, or now with --check.")
 				}
 				return nil
 			}
@@ -81,6 +87,8 @@ func updatesCmd(client func() (*Client, error)) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&now, "check", false, "Ask GitHub now rather than showing the last check")
+	return cmd
 }
 
 func orNone(s string) string {

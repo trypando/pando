@@ -5510,12 +5510,20 @@
       "path": "pando updates",
       "use": "updates",
       "short": "Show whether a newer Pando is released, what changed, and how to upgrade",
-      "long": "Shows the version the server runs, the latest release on the update channel, and the\nchangelog of every version in between, with security fixes and breaking changes marked.\nThen the command that upgrades the server. The check is host policy: disable_update_check\nturns it off and update_channel chooses stable or prerelease (`pando policy set`).",
+      "long": "Shows the version the server runs, the latest release on the update channel, and the\nchangelog of every version in between, with security fixes and breaking changes marked.\nThen the command that upgrades the server. The check is host policy: disable_update_check\nturns it off and update_channel chooses stable or prerelease (`pando policy set`).\nPando checks at startup and every six hours; --check asks GitHub now.",
       "example": "",
       "aliases": [],
       "hidden": false,
       "deprecated": "",
       "flags": [
+        {
+          "name": "check",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "Ask GitHub now rather than showing the last check",
+          "required": false
+        },
         {
           "name": "server",
           "shorthand": "",
