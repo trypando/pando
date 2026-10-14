@@ -1,0 +1,39 @@
+title: ""
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Worth reading first: [what Pando is built
+        for](https://trypando.ai/why#fit). Some of what is missing is missing
+        deliberately — Pando does not schedule, does not run your tests and is
+        not a marketplace. An idea that runs into one of those gets a straight
+        answer rather than a maybe. An idea that is taken up becomes an issue,
+        linked from here.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: >-
+        The situation, not the feature. "I have to give every internal tool its
+        own hostname and certificate" leads somewhere; "add wildcard DNS
+        support" has already decided the answer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What do you do today
+      description: >-
+        The workaround, if there is one, and what it costs. A request with no
+        workaround and a request with an annoying one are different requests.
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you have Pando do
+      description: >-
+        Optional. If it touches the HTTP API, say so — the API is the product
+        (R-261), and console, CLI and MCP are all clients of it, so a capability
+        lands there first or not at all.

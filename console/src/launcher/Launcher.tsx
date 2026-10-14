@@ -32,6 +32,7 @@ import type { App, Section } from '@api/types.gen';
 import { statusLabel } from '../ui/status';
 import { Sheet } from '../ui/Sheet';
 import { InboxButton } from '../ui/Inbox';
+import { FeedbackButton } from '../ui/Feedback';
 import { Menu, MenuDivider, MenuItem } from '../ui/Menu';
 import { NoMatches, SearchField } from '../ui/SearchField';
 import { matches } from '../ui/search';
@@ -197,6 +198,7 @@ export function Launcher({
               Admin
             </button>
           )}
+          <FeedbackButton />
           <InboxButton />
           <IconButton label="Settings" onClick={onSettings}>
             <Icon name="settings" size={16} />

@@ -7,6 +7,12 @@ contact_links:
       Privately, through GitHub's advisory form — not as an issue. A public
       issue describes the bug before anyone can upgrade. See SECURITY.md.
 
+  - name: Suggest an idea
+    url: https://github.com/trypando/pando/discussions/new?category=ideas
+    about: >-
+      Something Pando should do and does not. Ideas start as discussions; one
+      that is taken up becomes an issue.
+
   - name: Ask a question
     url: https://github.com/trypando/pando/discussions
     about: >-

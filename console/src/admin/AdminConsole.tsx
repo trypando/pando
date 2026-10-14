@@ -40,6 +40,7 @@ import { SignIn } from '../install/SignIn';
 import { Backups } from '../install/Backups';
 import { Events } from '../install/Events';
 import { InboxButton } from '../ui/Inbox';
+import { FeedbackButton } from '../ui/Feedback';
 import { Updates, useUpdates } from '../install/Updates';
 import { SystemTabs } from '../install/systemTabs';
 import { Audit, Installation, Policy } from '../install/Installation';
@@ -256,6 +257,7 @@ export function AdminConsole({
               the person, not to anything this sidebar administers, so they
               are not one of its items. The inbox is the person's too. */}
           <span style={{ display: 'inline-flex', gap: 'var(--space-1)' }}>
+            <FeedbackButton />
             <InboxButton />
             <IconButton label="Settings" onClick={onSettings}>
               <Icon name="settings" size={16} />
@@ -313,6 +315,7 @@ export function AdminConsole({
               </button>
             </span>
             <span style={{ display: 'inline-flex', gap: 'var(--space-1)' }}>
+              <FeedbackButton />
               <InboxButton />
               <IconButton label="Settings" onClick={onSettings}>
                 <Icon name="settings" size={16} />

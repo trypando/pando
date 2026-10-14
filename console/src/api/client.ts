@@ -55,6 +55,24 @@ export function reservedPrefix(): string {
 }
 
 /**
+ * The server's version, as the last signed-in response gave it.
+ *
+ * Every response to a signed-in caller carries `Pando-Version` (R-353). It is
+ * kept so a bug report can say which Pando it is about without asking.
+ * Undefined until a signed-in request has answered.
+ */
+let serverVersion: string | undefined;
+
+export function runningVersion(): string | undefined {
+  return serverVersion;
+}
+
+function noteVersion(response: Response) {
+  const version = response.headers?.get('Pando-Version');
+  if (version) serverVersion = version;
+}
+
+/**
  * A plain-text GET.
  *
  * `GET /apps/{id}/logs` answers `text/plain` — it is a runtime's output copied
@@ -63,6 +81,7 @@ export function reservedPrefix(): string {
  */
 async function requestText(path: string): Promise<string> {
   const response = await fetch(base + path, { credentials: 'same-origin' });
+  noteVersion(response);
 
   if (!response.ok) {
     let envelope: ApiError | null = null;
@@ -90,6 +109,7 @@ async function requestBytes<T>(path: string, file: Blob, method = 'PUT'): Promis
     body: file,
     credentials: 'same-origin',
   });
+  noteVersion(response);
 
   if (!response.ok) {
     let envelope: ApiError | null = null;
@@ -111,6 +131,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body === undefined ? null : JSON.stringify(body),
     credentials: 'same-origin',
   });
+  noteVersion(response);
 
   if (!response.ok) {
     let envelope: ApiError | null = null;

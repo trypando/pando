@@ -20,6 +20,7 @@ export function Menu({
   onOpenChange,
   align = 'end',
   view,
+  icon = 'ellipsis-vertical',
 }: {
   /** What the button says to a screen reader, e.g. "Options for Notes". */
   label: string;
@@ -31,6 +32,8 @@ export function Menu({
    *  them takes focus — otherwise the focused item vanishes with the page and
    *  a keyboard user is left nowhere. */
   view?: string;
+  /** The button's icon, for a menu that is not "more options". */
+  icon?: string;
   /** The items, given a way to close the menu. */
   children: (close: () => void) => ReactNode;
   onOpenChange?: (open: boolean) => void;
@@ -71,7 +74,7 @@ export function Menu({
   return (
     <div ref={root} style={{ position: 'relative' }}>
       <IconButton label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => set(!open)}>
-        <Icon name="ellipsis-vertical" size={16} />
+        <Icon name={icon} size={16} />
       </IconButton>
       {open && (
         <div

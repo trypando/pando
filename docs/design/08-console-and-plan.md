@@ -148,6 +148,15 @@ with a back arrow to wherever it was opened from. Not a section of the admin con
 is administration. Under `/admin` only because that prefix is already reserved against app slugs
 (R-023). The launcher does not link to *API and tools*; it is in the admin console.
 
+**[P] Bugs and ideas.** A bug button beside the inbox, in the launcher header and the admin
+sidebar header, opens a menu of two links to GitHub, each in a new tab: *Report a bug* opens the
+`bug.yml` issue form with its Version field filled in from the `Pando-Version` header of the last
+signed-in response, and *Suggest an idea* starts a discussion in the Ideas category from
+`.github/DISCUSSION_TEMPLATE/ideas.yml`. Ideas are discussions rather than `enhancement` issues so
+an open issue stays accepted work; one becomes an issue when it is taken up. Pando sends nothing
+itself. An installation holds no GitHub credential, and a relay would be a service that every
+installation calls home to. Being a link, it is no capability the API lacks (R-261).
+
 **[D] System.** Adapters, Policy, Backups and Updates are tabs of one *System* item in the admin
 sidebar rather than four items: they are how the installation itself is set up and kept, not its
 apps or its people (issue #154). The tabs sit under the heading *System*, spaced as an app's tabs
