@@ -166,28 +166,30 @@ function InboxDialog({
   });
 
   const open = async (n: Notification) => {
-    if (!n.read_at) {
-      // Before leaving the page: a navigation started first cancels the
-      // request, and the notification comes back unread on the next one.
-      try {
-        await readOne.mutateAsync(n.id);
-      } catch {
-        // Still go where it points; the refresh shows it unread again.
-      }
-    }
+    const read = n.read_at ? Promise.resolve() : readOne.mutateAsync(n.id).then(
+      () => undefined,
+      // Still go where it points; the refresh shows it unread again.
+      () => undefined,
+    );
     if (!n.link) return;
-    // A link to this console is followed in place; anything else is not ours
-    // to replace the page with.
+    let target: URL;
     try {
-      const target = new URL(n.link, window.location.origin);
-      if (target.origin === window.location.origin) {
-        window.location.assign(target.pathname + target.search);
-        return;
-      }
+      target = new URL(n.link, window.location.origin);
     } catch {
       return;
     }
-    window.open(n.link, '_blank', 'noopener');
+    // Anything but this console is not ours to replace the page with. It opens
+    // in a new tab now, during the click, while the browser still allows one;
+    // this page stays, and so does its request.
+    if (target.origin !== window.location.origin) {
+      window.open(n.link, '_blank', 'noopener');
+      return;
+    }
+    // A link to this console is followed in place, once the notification is
+    // marked read: a navigation started first cancels the request, and the
+    // notification comes back unread.
+    await read;
+    window.location.assign(target.pathname + target.search);
   };
 
   const list = page?.notifications ?? [];

@@ -52,7 +52,7 @@ beforeEach(() => {
       const unread = rows.filter((r) => !r.read_at);
       if (method === 'POST') {
         const id = url.pathname.match(/notifications\/([^/]+)\/read$/)?.[1];
-        if (id) await new Promise<void>((r) => (releaseRead = r));
+        await new Promise<void>((r) => (releaseRead = r));
         for (const r of rows) if (!id || r.id === id) r.read_at ??= '2026-10-14T12:00:00Z';
         return json({});
       }
@@ -120,7 +120,12 @@ describe('InboxDialog', () => {
     await settle();
     expect(calls).toContain('POST /api/v1/me/notifications/read');
     expect(dialog().textContent).toContain('Nothing unread');
+    // The bell's own count, read with the dialog closed, while the request is
+    // still in flight.
+    await act(async () => button('Close').click());
     expect(host.querySelector('button')!.getAttribute('aria-label')).toBe('Notifications');
+    await act(async () => releaseRead!());
+    await settle();
   });
 
   // Navigating first cancelled the request: the notification came back unread.
@@ -135,5 +140,20 @@ describe('InboxDialog', () => {
     await act(async () => releaseRead!());
     await settle();
     expect(assign).toHaveBeenCalledWith('/apps/app_1');
+  });
+
+  // Opened during the click, while the browser still allows a new tab, rather
+  // than after the request: this page stays, so the request is not cancelled.
+  it('opens a link elsewhere at once, without waiting for the request', async () => {
+    rows[0]!.link = 'https://status.example.com/incident';
+    const opened = vi.fn();
+    vi.stubGlobal('open', opened);
+    await openInbox();
+
+    await act(async () => button('notes failed to deploy').click());
+    expect(opened).toHaveBeenCalledWith('https://status.example.com/incident', '_blank', 'noopener');
+    await act(async () => releaseRead!());
+    await settle();
+    expect(calls).toContain('POST /api/v1/me/notifications/ntf_2/read');
   });
 });
