@@ -7,6 +7,7 @@
 // it points. Which notifications arrive here is chosen under Settings.
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Dialog, EmptyState, Icon, IconButton, Tag } from '@design';
 
@@ -78,7 +79,15 @@ export function InboxButton() {
           </span>
         )}
       </span>
-      {open && <InboxDialog page={inbox.data} loading={inbox.isPending} error={inbox.error} onClose={() => setOpen(false)} />}
+      {/* Portaled to the body. The bell sits in a header that is its own
+          stacking context (isolation, for the contour map), and a dialog
+          rendered there is layered only within the header: the app tiles
+          below it painted over the dialog. */}
+      {open &&
+        createPortal(
+          <InboxDialog page={inbox.data} loading={inbox.isPending} error={inbox.error} onClose={() => setOpen(false)} />,
+          document.body,
+        )}
     </>
   );
 }
