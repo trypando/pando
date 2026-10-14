@@ -72,6 +72,55 @@ func TestR212_RestoreReplacesRatherThanMerges(t *testing.T) {
 		"a file absent from the backup must be absent after the restore")
 }
 
+// TestR212_AVolumePandoDoesNotOwnRoundTrips asserts a Postgres-shaped volume:
+// the root is 0700 and owned by uid 999, so the helper's root can enter it only
+// with the capabilities the helper adds back. Without them, every app with a
+// database fails its hourly backup.
+func TestR212_AVolumePandoDoesNotOwnRoundTrips(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	a := adapter(t)
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "./", Mode: 0o700, Uid: 999, Gid: 999, Typeflag: tar.TypeDir,
+	}))
+	content := "16"
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "./PG_VERSION", Mode: 0o600, Uid: 999, Gid: 999, Size: int64(len(content)), Typeflag: tar.TypeReg,
+	}))
+	_, err := tw.Write([]byte(content))
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+
+	source := createVolume(t, a)
+	defer func() { _ = a.DestroyVolume(ctx, source) }()
+	require.NoError(t, a.RestoreVolume(ctx, source, bytes.NewReader(buf.Bytes())))
+
+	var archive bytes.Buffer
+	require.NoError(t, a.SnapshotVolume(ctx, source, &archive))
+
+	tr := tar.NewReader(bytes.NewReader(archive.Bytes()))
+	owners := map[string]int{}
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		owners[header.Name] = header.Uid
+	}
+	require.Equal(t, map[string]int{"./": 999, "./PG_VERSION": 999}, owners,
+		"the restore must put back ownership, and the snapshot must read past it")
+
+	// And back into a fresh volume, which is the disaster-recovery direction.
+	target := createVolume(t, a)
+	defer func() { _ = a.DestroyVolume(ctx, target) }()
+	require.NoError(t, a.RestoreVolume(ctx, target, bytes.NewReader(archive.Bytes())))
+	require.Equal(t, content, readFromVolume(t, a, target, "PG_VERSION"))
+}
+
 // TestR212_AnEmptyVolumeSnapshotsCleanly — an app that has not written anything
 // yet still has to back up, and a tar of nothing is still a valid tar.
 func TestR212_AnEmptyVolumeSnapshotsCleanly(t *testing.T) {

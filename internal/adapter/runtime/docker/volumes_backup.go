@@ -1,9 +1,11 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
@@ -25,6 +27,23 @@ import (
 // no other mounts, and drops every capability: it is handling data Pando has
 // not inspected, from an app Pando does not trust, and a helper with more reach
 // than tar needs is a way for that data to become code.
+//
+// tar does need some capabilities, though. Root without CAP_DAC_READ_SEARCH
+// cannot enter a directory it does not own, and Postgres requires its data
+// directory to be 0700 and owned by the postgres user. A helper with no
+// capabilities at all therefore cannot back up any app's database volume. Each
+// direction adds back only the capabilities it uses.
+
+// snapshotCaps lets the reader traverse and read files whatever their owner and
+// mode. It grants no write.
+var snapshotCaps = []string{"CAP_DAC_READ_SEARCH"}
+
+// restoreCaps lets the writer empty a volume it does not own and put back the
+// owners, modes and setgid bits the archive records. Without CHOWN every file
+// comes back owned by root, and an app that refuses to start on a data
+// directory it does not own (Postgres again) fails after a restore that
+// reported success.
+var restoreCaps = []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID"}
 
 // helperImage is the image the snapshot and restore containers run.
 //
@@ -64,6 +83,7 @@ func (a *Adapter) SnapshotVolume(ctx context.Context, h api.VolumeHandle, dst io
 			}},
 			AutoRemove:  false, // removed below, after the exit code is read
 			CapDrop:     []string{"ALL"},
+			CapAdd:      snapshotCaps,
 			SecurityOpt: []string{"no-new-privileges"},
 		},
 	})
@@ -111,6 +131,7 @@ func (a *Adapter) RestoreVolume(ctx context.Context, h api.VolumeHandle, src io.
 			}},
 			AutoRemove:  false,
 			CapDrop:     []string{"ALL"},
+			CapAdd:      restoreCaps,
 			SecurityOpt: []string{"no-new-privileges"},
 		},
 	})
@@ -141,6 +162,7 @@ func (a *Adapter) streamHelper(ctx context.Context, id string, stdout io.Writer,
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not %s this app's storage.", verb), err)
 	}
 
+	stderr := &tailBuffer{max: helperStderrMax}
 	copyDone := make(chan error, 1)
 	go func() {
 		if stdin != nil {
@@ -154,8 +176,9 @@ func (a *Adapter) streamHelper(ctx context.Context, id string, stdout io.Writer,
 		// The attach stream is multiplexed because the helper has no TTY, so it
 		// must be demultiplexed: stdout is the tar archive and stderr is
 		// diagnostic, and reading them as one stream corrupts the archive with
-		// tar's own warnings. Only the exit code decides success.
-		_, err := stdcopy.StdCopy(stdout, io.Discard, attached.Reader)
+		// tar's own warnings. Only the exit code decides success; stderr is
+		// kept only to explain a failure.
+		_, err := stdcopy.StdCopy(stdout, stderr, attached.Reader)
 		copyDone <- err
 	}()
 
@@ -170,14 +193,54 @@ func (a *Adapter) streamHelper(ctx context.Context, id string, stdout io.Writer,
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not %s this app's storage.", verb), err)
 	case status := <-wait.Result:
 		if status.StatusCode != 0 {
-			return errs.Newf(errs.AdapterFailed,
-				"Pando could not %s this app's storage: the helper exited with status %d.",
-				verb, status.StatusCode)
+			return helperFailed(verb, status.StatusCode, stderr.lastLine())
 		}
 		return nil
 	case <-ctx.Done():
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not %s this app's storage.", verb), ctx.Err())
 	}
+}
+
+// helperFailed reports a non-zero helper exit, with the helper's last line of
+// stderr when it printed one. Without that line, "status 1" is all an operator
+// sees and the cause takes a shell on the host to find.
+func helperFailed(verb string, code int64, said string) error {
+	if said == "" {
+		return errs.Newf(errs.AdapterFailed,
+			"Pando could not %s this app's storage: the helper exited with status %d.", verb, code)
+	}
+	return errs.Newf(errs.AdapterFailed,
+		"Pando could not %s this app's storage: the helper exited with status %d and said %q.",
+		verb, code, said)
+}
+
+// helperStderrMax bounds how much of the helper's stderr is kept. tar prints a
+// line per unreadable file, and a volume with a million of them must not turn
+// into a million-line error.
+const helperStderrMax = 4096
+
+// tailBuffer keeps the last max bytes written to it.
+type tailBuffer struct {
+	max int
+	buf []byte
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	b.buf = append(b.buf, p...)
+	if over := len(b.buf) - b.max; over > 0 {
+		b.buf = b.buf[over:]
+	}
+	return len(p), nil
+}
+
+// lastLine is the helper's final complaint. For tar, that is the one that made
+// it give up.
+func (b *tailBuffer) lastLine() string {
+	trimmed := bytes.TrimSpace(b.buf)
+	if i := bytes.LastIndexByte(trimmed, '\n'); i >= 0 {
+		trimmed = trimmed[i+1:]
+	}
+	return strings.TrimSpace(string(trimmed))
 }
 
 // removeQuietly deletes the helper container.
