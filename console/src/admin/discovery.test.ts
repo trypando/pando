@@ -20,7 +20,9 @@ import {
   progress,
   questionName,
   serviceImage,
+  servicePlaceholder,
   serviceProvision,
+  serviceValueLabel,
   startCommand,
   stillNeeded,
   stops,
@@ -153,6 +155,16 @@ describe('services and commands', () => {
     const [postgres] = compose.slots!;
     expect(serviceImage(postgres!)).toBe('postgres:16-alpine');
     expect(serviceProvision(postgres!)).toEqual({ status: 'info', label: 'Pando creates it' });
+  });
+
+  it('says a service’s variable holds its address, not the service itself (R-131)', () => {
+    expect(serviceValueLabel('memcached', undefined, true)).toBe('Address of the Memcached Pando creates');
+    expect(serviceValueLabel('memcached', undefined, false)).toBe('Address of your Memcached');
+    expect(serviceValueLabel('postgres', 'password', false)).toBe('Password of your PostgreSQL');
+    // Memcached takes host:port, not a URL: the example shows that shape.
+    expect(servicePlaceholder('memcached', undefined)).toBe('Such as host:11211');
+    expect(servicePlaceholder('redis', undefined)).toBe('Such as redis://host:6379');
+    expect(servicePlaceholder('postgres', 'host')).toBe('Your PostgreSQL’s host');
   });
 
   it('shows the Dockerfile’s CMD for a workload that builds from it', () => {

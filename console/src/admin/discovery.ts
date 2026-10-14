@@ -110,6 +110,43 @@ export function serviceImage(slot: SpecSlot): string | undefined {
   return undefined;
 }
 
+const ADDRESS_EXAMPLE: Record<string, string> = {
+  postgres: 'postgres://user:password@host:5432/name',
+  mysql: 'mysql://user:password@host:3306/name',
+  redis: 'redis://host:6379',
+  mongodb: 'mongodb://user:password@host:27017/name',
+  // host:port, no scheme: the shape memcached clients take, and the one Pando
+  // writes for a memcached it creates (services/docker).
+  memcached: 'host:11211',
+};
+
+const PART_LABEL: Record<string, string> = {
+  host: 'Host',
+  port: 'Port',
+  user: 'User name',
+  password: 'Password',
+  database: 'Database name',
+};
+
+/**
+ * What a variable filled from a service holds, said in terms of that service:
+ * "Address of the Memcached Pando creates", "Password of your PostgreSQL". A
+ * variable named after a service read as the service itself, as though
+ * MEMCACHED were a setting to choose rather than where to find one.
+ */
+export function serviceValueLabel(type: string, part: string | undefined, pandoCreates: boolean): string {
+  const what = (part && PART_LABEL[part]) || 'Address';
+  const whose = pandoCreates ? `the ${slotLabel(type)} Pando creates` : `your ${slotLabel(type)}`;
+  return `${what} of ${whose}`;
+}
+
+/** A placeholder for a service's value that shows the shape it takes. */
+export function servicePlaceholder(type: string, part: string | undefined): string {
+  if (part) return `Your ${slotLabel(type)}’s ${(PART_LABEL[part] ?? part).toLowerCase()}`;
+  const example = ADDRESS_EXAMPLE[type];
+  return example ? `Such as ${example}` : `Your ${slotLabel(type)}’s address`;
+}
+
 /** How a service will be provided, in the words the settings screen uses. */
 export function serviceProvision(slot: SpecSlot): { status: 'info' | 'building' | 'stopped'; label: string } {
   switch (slot.resolution?.mode) {

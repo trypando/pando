@@ -172,14 +172,30 @@ describe('AppOnboarding', () => {
     expect(plan).toContain('Pando creates it');
     expect(plan).not.toContain('CREW_TOKEN_ENC_KEY');
 
+    // The database is a service the app needs, listed as one ahead of the
+    // variables, with the choice of who provides it (R-131).
+    const servicesAt = html.indexOf('This app needs these to run');
+    const variablesAt = html.indexOf('Change any value');
+    expect(servicesAt).toBeGreaterThan(-1);
+    expect(variablesAt).toBeGreaterThan(servicesAt);
+    const services = html.slice(servicesAt, variablesAt);
+    expect(services).toContain('PostgreSQL');
+    expect(services).toContain('The app reads its address from DATABASE_URL');
+    expect(services).toContain('Pando creates it');
+    expect(services).toContain('Use your own PostgreSQL');
+    expect(services).not.toContain('CREW_TOKEN_ENC_KEY');
+
     // Every slot-filled variable is a value somebody can set here.
-    const variables = html.slice(html.indexOf('>Variables<'), html.indexOf('The plan'));
+    const variables = html.slice(variablesAt, html.indexOf('The plan'));
     expect(variables).toContain('CREW_TOKEN_ENC_KEY');
     expect(variables).toContain('Needs a value');
     expect(variables).toContain('Required');
-    // What Pando fills is said plainly, with no field to overwrite by accident.
-    expect(variables).toContain('Filled in by Pando');
-    expect(variables).toContain('Use your own PostgreSQL');
+    // What Pando fills is said plainly, as what it holds, with no field to
+    // overwrite by accident. Who provides the database is chosen above.
+    expect(variables).toContain('Address of the PostgreSQL Pando creates');
+    expect(variables).toContain('Filled in by Pando at deploy');
+    expect(variables).not.toContain('Use your own');
+    expect(variables).not.toContain('which Pando creates');
     expect(variables).not.toContain('runs one inside this app');
     // Secret is a default on every value, never a lock.
     expect(variables).toContain('>Secret<');

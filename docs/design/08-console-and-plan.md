@@ -279,8 +279,18 @@ answered, because an answered question is still one Pando could not settle alone
 stored as the slot's secret at accept (`spec.FillSlotLiteral`), the same place `PUT /slots/{key}`
 writes, so the slot is filled rather than the variable overwritten and the slot left empty. A
 database's URL cannot be prefilled — its host and password are generated at the first deploy — so its
-row says Pando fills it then, and a value typed there points the app at a database the person already
-runs instead. *Accept and deploy* waits for required values; *Accept plan* does not.
+row says Pando fills it then. *Accept and deploy* waits for required values; *Accept plan* does not.
+
+**[D] A service is shown as a service, and its variable as what it holds.** Ahead of the variables, a
+*Services* section lists every typed slot — a database, a cache — with the variables the app reads it
+from and who provides it: *Pando creates it*, with *Use your own* beside it, or *Connects to one you
+have*. That choice is made there and nowhere else. The variable it fills says what it holds, in terms
+of the service: *Address of the Memcached Pando creates*, and *Filled in by Pando at deploy* with no
+field; once the person uses their own, *Address of your Memcached* and a field whose placeholder shows
+the shape the value takes (`host:11211` for Memcached, a URL for a database). Listed only as its
+variable, Yopass's `MEMCACHED` read as a setting to choose rather than a Memcached the app needs, with
+*Use your own Memcached* offered on a variable. A variable of a service Pando creates carries no
+*Required* tag: left empty, Pando creates the service, so nothing blocks the deploy.
 
 **[D] Ask AI about this plan.** When an AI adapter is available for the app, the review ends with a
 conversation: the person says what is wrong, AI checks the repository and changes what it can
@@ -292,8 +302,7 @@ conversation and no box to type in.
 one line each — service, construct, the first sentence of why — with the importer's full paragraph on
 hover. Eight paragraphs of it was a wall nobody read.
 
-A value Pando fills (a created database's URL) shows *Filled in by Pando* and no field until the person
-chooses *Use your own*. A required value carries a *Required* tag, in marker red while it is empty,
+A required value carries a *Required* tag, in marker red while it is empty,
 with *Not required?* beside it: detection marks slots required from a template or a crash and can be
 wrong, so the person may say the app runs without one, after a confirmation that a wrong call breaks
 the deploy (`optional` on accept, `spec.MarkSlotOptional`; an optional slot left empty leaves its

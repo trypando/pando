@@ -81,7 +81,9 @@ import {
   progress,
   questionName,
   serviceImage,
+  servicePlaceholder,
   serviceProvision,
+  serviceValueLabel,
   slotLabel,
   startCommand,
   stillNeeded,
@@ -171,6 +173,11 @@ export function AppOnboarding({
   // wrong the deploy breaks.
   const [optional, setOptional] = useState<Set<string>>(() => new Set());
   const [confirmingOptional, setConfirmingOptional] = useState<VariableRow | null>(null);
+
+  // Services Pando would create that the person has chosen to provide
+  // themselves, by slot key. Chosen under Services; the variables they fill
+  // then take a value.
+  const [ownServices, setOwnServices] = useState<Set<string>>(() => new Set());
   const setOptionalKey = (key: string, on: boolean) =>
     setOptional((all) => {
       const next = new Set(all);
@@ -381,6 +388,20 @@ export function AppOnboarding({
   const detected = variableRows(plan, address).map((row) => (canSecrets ? row : { ...row, secret: false }));
   const rows = mergeRows(detected, edits, added);
   const problems = rowProblems(rows);
+  // A service is the person's own once they say so, or once they type an
+  // address for it.
+  const ownService = (slot: string) =>
+    ownServices.has(slot) ||
+    rows.some((r) => r.slot?.key === slot && r.original !== undefined && r.value !== r.original);
+  const chooseOwnService = (slot: string, own: boolean) => {
+    if (!own) for (const r of rows) if (r.slot?.key === slot) edit(r, { value: r.original ?? '' });
+    setOwnServices((all) => {
+      const next = new Set(all);
+      if (own) next.add(slot);
+      else next.delete(slot);
+      return next;
+    });
+  };
 
   // Answers typed and not yet saved go with the accept, so nobody has to know
   // that a text answer saves when the field loses focus.
@@ -633,8 +654,19 @@ export function AppOnboarding({
             })}
 
             {plan && (
+              <Services
+                spec={plan}
+                rows={rows}
+                marks={marks}
+                own={ownService}
+                onOwn={canEdit ? chooseOwnService : undefined}
+              />
+            )}
+
+            {plan && (
               <Variables
                 rows={rows}
+                own={ownService}
                 spec={plan}
                 problems={problems}
                 marks={marks}
@@ -669,6 +701,7 @@ export function AppOnboarding({
                 spec={plan}
                 marks={marks}
                 answers={effective}
+                own={ownService}
                 source={app.source}
                 commit={data.commit}
                 address={address}
@@ -1558,6 +1591,7 @@ function QuestionCard({
 
 function Variables({
   rows,
+  own,
   spec,
   problems,
   marks,
@@ -1571,6 +1605,8 @@ function Variables({
   onAskOptional,
 }: {
   rows: VariableRow[];
+  /** Whether the person provides a service Pando would create, by slot key. */
+  own: (slot: string) => boolean;
   spec: AppSpec;
   problems: Record<string, string>;
   marks: Suggestions;
@@ -1587,9 +1623,6 @@ function Variables({
 }) {
   const workloads = spec.workloads ?? [];
   const many = workloads.length > 1;
-  // Rows Pando would fill that the person has chosen to point elsewhere, by
-  // row id: their field is shown even before anything is typed in it.
-  const [overriding, setOverriding] = useState<Set<string>>(() => new Set());
   // Values Pando generated, by row id, so the row can say so — until the
   // person changes the value, when it is simply theirs.
   const [generated, setGenerated] = useState<Record<string, string>>({});
@@ -1623,39 +1656,17 @@ function Variables({
             const changed = !isNew && row.value !== row.original;
             const slot = row.slot;
             const service = slot?.service ? slotLabel(slot.type) : undefined;
-            // Pando fills it, and nobody has chosen to point it elsewhere: no
-            // field at all, so it cannot be overwritten by accident.
-            const pandoFills = Boolean(slot && service && slot.provisioned && !changed && !overriding.has(row.id));
+            // Pando fills it, and nobody has chosen to provide their own: no
+            // field at all, so it cannot be overwritten by accident. Whether
+            // Pando creates the service is chosen under Services, not here.
+            const pandoFills = Boolean(slot && service && slot.provisioned && !own(slot.key));
             let source: React.ReactNode;
             let placeholder = row.secret ? 'Kept secret' : 'No value yet';
-            if (slot && service && slot.provisioned) {
-              // Pando creates the service at the first deploy and writes its
-              // address here then. A value typed now points the app at one the
-              // person already runs instead.
-              placeholder = `Your ${service} URL`;
-              source = pandoFills ? (
-                <span>{`From ${service}, which Pando creates`}</span>
-              ) : (
-                <>
-                  <span>{`Your own ${service}. Pando won’t create one.`}</span>
-                  {canEdit && (
-                    <button
-                      type="button"
-                      className="pando-link"
-                      onClick={() => {
-                        onEdit(row, { value: '' });
-                        setOverriding((all) => {
-                          const next = new Set(all);
-                          next.delete(row.id);
-                          return next;
-                        });
-                      }}
-                    >
-                      {`Use Pando’s ${service}`}
-                    </button>
-                  )}
-                </>
-              );
+            if (slot && service) {
+              // Said as what it holds: MEMCACHED is the address of a
+              // Memcached, not a Memcached to choose.
+              placeholder = servicePlaceholder(slot.type, slot.part);
+              source = <span>{serviceValueLabel(slot.type, slot.part, pandoFills)}</span>;
             } else if (slot) {
               const markedOptional = slot.required && optional.has(slot.key);
               placeholder = slot.required && !markedOptional ? 'Needed to deploy' : 'Optional';
@@ -1728,7 +1739,9 @@ function Variables({
                 }
                 workload={many && !isNew ? row.workload : undefined}
                 required={
-                  slot?.required && !pandoFills
+                  // Not for a service Pando would create: left empty, Pando
+                  // creates it after all, so nothing blocks the deploy.
+                  slot?.required && !slot.provisioned
                     ? {
                         optional: optional.has(slot.key),
                         filled: row.value.trim() !== '',
@@ -1743,18 +1756,7 @@ function Variables({
                 source={source}
               >
                 {pandoFills ? (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2) var(--space-4)' }}>
-                    <StatusIndicator status="info" label="Filled in by Pando" />
-                    {canEdit && (
-                      <button
-                        type="button"
-                        className="pando-link"
-                        onClick={() => setOverriding((all) => new Set(all).add(row.id))}
-                      >
-                        {`Use your own ${service}`}
-                      </button>
-                    )}
-                  </div>
+                  <StatusIndicator status="info" label="Filled in by Pando at deploy" />
                 ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                     <div
@@ -1824,6 +1826,84 @@ function Variables({
           </p>
         </div>
       )}
+    </section>
+  );
+}
+
+/**
+ * The services the app depends on — a database, a cache — and who provides
+ * each, ahead of the variables that carry their addresses. A service listed
+ * only as the variable it fills read as a setting: MEMCACHED looked like a
+ * value to choose rather than a Memcached the app needs and Pando creates.
+ * Whether Pando creates one is chosen here; the variable says what it holds.
+ */
+function Services({
+  spec,
+  rows,
+  marks,
+  own,
+  onOwn,
+}: {
+  spec: AppSpec;
+  rows: VariableRow[];
+  marks: Suggestions;
+  own: (slot: string) => boolean;
+  /** Absent for who can't change the plan. */
+  onOwn?: (slot: string, own: boolean) => void;
+}) {
+  const services = (spec.slots ?? []).filter(isService);
+  if (services.length === 0) return null;
+  const creates = services.some((s) => s.resolution?.mode === 'provisioned');
+
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+        <h3 style={{ font: 'var(--type-h3)', margin: 0 }}>Services</h3>
+        <span style={{ color: 'var(--ink-secondary)' }}>
+          {creates
+            ? 'This app needs these to run. Pando creates each one at the first deploy and gives the app its address, unless you use your own.'
+            : 'This app needs these to run. Give each one’s address under Variables.'}
+        </span>
+      </div>
+      <Card tone="paper" padding="none">
+        {services.map((s, i) => {
+          const filled = rows.filter((r) => r.slot?.key === s.key);
+          const keys = [...new Set(filled.map((r) => r.key))];
+          const parts = filled.some((r) => r.slot?.part);
+          const provisioned = s.resolution?.mode === 'provisioned';
+          const mine = provisioned && own(s.key);
+          const state = mine ? { status: 'info' as const, label: 'Connects to one you have' } : serviceProvision(s);
+          const name = slotLabel(s.type);
+          return (
+            <VariableLine
+              key={s.key}
+              first={i === 0}
+              name={
+                <span style={{ font: 'var(--type-label)', display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
+                  {name}
+                  {marks.slots[s.key] && <AiStar size={12} />}
+                </span>
+              }
+              source={
+                keys.length > 0 && (
+                  <span>
+                    {`The app reads its ${parts || keys.length > 1 ? 'connection details' : 'address'} from ${listNames(keys)}`}
+                  </span>
+                )
+              }
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2) var(--space-4)' }}>
+                <StatusIndicator status={state.status} label={state.label} />
+                {provisioned && onOwn && (
+                  <button type="button" className="pando-link" onClick={() => onOwn(s.key, !mine)}>
+                    {mine ? `Let Pando create the ${name}` : `Use your own ${name}`}
+                  </button>
+                )}
+              </div>
+            </VariableLine>
+          );
+        })}
+      </Card>
     </section>
   );
 }
@@ -2160,6 +2240,7 @@ function ThePlan({
   spec,
   marks,
   answers,
+  own,
   source,
   commit,
   address,
@@ -2170,6 +2251,8 @@ function ThePlan({
   spec: AppSpec;
   marks: Suggestions;
   answers: Record<string, string>;
+  /** Whether the person provides a service Pando would create, by slot key. */
+  own: (slot: string) => boolean;
   source: Source | undefined;
   commit?: string;
   /** Where the app will be reachable once deployed, as a full URL. */
@@ -2269,7 +2352,10 @@ function ThePlan({
             );
           })}
           {services.map((s) => {
-            const provision = serviceProvision(s);
+            const provision =
+              s.resolution?.mode === 'provisioned' && own(s.key)
+                ? { status: 'info' as const, label: 'Connects to one you have' }
+                : serviceProvision(s);
             return (
               <ProcessRow
                 key={s.key}
