@@ -94,6 +94,14 @@ describe('discoverySteps', () => {
     expect(steps.at(-1)?.name).toBe('Review the failed plan');
     expect(steps.at(-1)?.state).toBe('current');
   });
+
+  it('labels the first line of evidence, and lists a bid with none as its strategy alone', () => {
+    const stack = (evidence?: string[]) =>
+      discoverySteps({ status: 'ready', proposal: { ...found, winning_bid: { ...found.winning_bid!, evidence } }, source }).find((s) => s.id === 'stack')!
+        .findings.map((f) => f.key);
+    expect(stack(['Dockerfile at the root', 'EXPOSE 3000'])).toEqual(['Strategy', 'Evidence', '']);
+    expect(stack(undefined)).toEqual(['Strategy']);
+  });
 });
 
 // Crewmate's shape: a Dockerfile winner whose CMD is only in its evidence, and

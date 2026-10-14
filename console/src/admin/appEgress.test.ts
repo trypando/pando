@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { draftOf, dryRunWords, gateWords, listEdits, modeWords, sameDraft, specOf } from './appEgress';
+import { appModeWords, draftOf, dryRunWords, gateWords, listEdits, modeWords, sameDraft, specOf } from './appEgress';
 import type { DryRunResult } from './appEgress';
 
 describe("an app's egress editor reads and writes the spec (R-182)", () => {
@@ -44,6 +44,12 @@ describe('the merged rules in words (R-188)', () => {
     expect(modeWords('')).toBe('Anywhere');
     expect(modeWords('denylist')).toBe('Anywhere except the list');
     expect(modeWords('allowlist')).toBe('Only the list');
+  });
+
+  it('names the app’s own list, or nothing when it follows the installation', () => {
+    expect(appModeWords('allowlist')).toBe('App allowlist');
+    expect(appModeWords('denylist')).toBe('App denylist');
+    expect(appModeWords(undefined)).toBeNull();
   });
 
   it('says what a loosening needs, with forbidden as the one blocker', () => {

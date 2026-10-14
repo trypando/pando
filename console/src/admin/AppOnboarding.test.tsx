@@ -365,6 +365,28 @@ describe('AppOnboarding', () => {
     expect(html).not.toContain('Nothing runs until you accept');
   });
 
+  it('tags an upload, lists a static directory, and marks the primary of several parts', () => {
+    const uploaded = { ...app, source: { type: 'upload' } } as unknown as AppWithVerbs;
+    const plan = {
+      ...detection,
+      questions: [],
+      screening: { ran: false },
+      draft_spec: {
+        build: { strategy: 'static', static_dir: 'dist' },
+        workloads: [
+          { name: 'web', primary: true, exposed: true, command: ['npm', 'start'], env: [] },
+          { name: 'worker', command: ['npm', 'run', 'work'], env: [] },
+        ],
+        slots: [],
+      },
+    };
+    const html = render({ status: 'ready', answers: {}, detection: plan } as never, undefined, uploaded).replaceAll('<!-- -->', '');
+    expect(html).toContain('>Upload<');
+    expect(html).toContain('Static directory');
+    expect(html).toContain('>Primary<');
+    expect(html).toContain('>Runs<');
+  });
+
   describe('the plan’s security score (R-311)', () => {
     const ready = {
       ...detection,

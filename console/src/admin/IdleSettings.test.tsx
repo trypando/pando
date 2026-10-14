@@ -91,6 +91,10 @@ describe('the idle section', () => {
     expect(html).not.toContain('>Save<');
   });
 
+  it('says when the installation never acts', () => {
+    expect(render({ ...report, install_delete_days: 0 })).toContain('Installation default (never)');
+  });
+
   it('offers Save to somebody who may edit the app', () => {
     expect(render({ ...report, stop_days: 14 }, ['app.spec.edit'])).toContain('>Save<');
   });
