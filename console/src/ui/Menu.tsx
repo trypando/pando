@@ -8,8 +8,12 @@
 // Keyboard: the button opens it and focuses the first item, the arrow keys
 // move, Escape closes it and puts focus back on the button, and so does
 // choosing anything. A click outside closes it.
+//
+// It opens on the edge `align` asks for, then slides sideways as far as it
+// must to stay a gutter inside the window — a tile near the left of a narrow
+// window would otherwise push a leftward menu off the screen.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Icon, IconButton } from '@design';
 import { useCloseOnOutside } from './combobox';
@@ -52,6 +56,20 @@ export function Menu({
     if (open) list.current?.querySelector<HTMLElement>('[role="menuitem"], input')?.focus();
   }, [open, view]);
 
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const fit = () => {
+      const el = list.current;
+      if (!el) return;
+      el.style.transform = '';
+      const shift = fitShift(el);
+      el.style.transform = shift ? `translateX(${shift}px)` : '';
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [open, view]);
+
   useCloseOnOutside(root, open, () => set(false));
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -85,7 +103,8 @@ export function Menu({
             top: 'calc(100% + var(--space-1))',
             ...(align === 'end' ? { right: 0 } : { left: 0 }),
             zIndex: 10,
-            minWidth: '22ch',
+            minWidth: 'min(22ch, calc(100vw - 2 * var(--space-4)))',
+            maxWidth: 'calc(100vw - 2 * var(--space-4))',
             padding: 'var(--space-1)',
             background: 'var(--paper-raised)',
             border: 'var(--border-width) solid var(--rule-strong)',
@@ -100,6 +119,17 @@ export function Menu({
       )}
     </div>
   );
+}
+
+/** How far to move the menu sideways so it sits at least one --space-4
+ *  gutter inside the window. Zero when it fits where `align` put it. */
+function fitShift(el: HTMLElement): number {
+  const gutter = Number.parseFloat(getComputedStyle(el).getPropertyValue('--space-4')) || 16;
+  const { left, right } = el.getBoundingClientRect();
+  const width = document.documentElement.clientWidth || window.innerWidth;
+  if (left < gutter) return gutter - left;
+  if (right > width - gutter) return Math.max(gutter - left, width - gutter - right);
+  return 0;
 }
 
 const itemStyle: React.CSSProperties = {

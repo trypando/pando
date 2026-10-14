@@ -190,6 +190,40 @@ describe('Menu, open', () => {
     expect(container.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(button);
   });
+  // jsdom lays nothing out, so the menu's position is stubbed: drawn at `left`
+  // with its transform undone, as fitting measures it.
+  const openAt = (left: number) => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute('role') === 'menu' ? new DOMRect(left, 0, 200, 100) : new DOMRect();
+    });
+    try {
+      render(
+        <Menu label="Options for Notes">
+          {(close) => <MenuItem onSelect={close}>Rename</MenuItem>}
+        </Menu>,
+      );
+      act(() => container.querySelector<HTMLButtonElement>('button')!.click());
+      // The sideways shift in pixels, 0 when there is no transform.
+      const transform = container.querySelector<HTMLElement>('[role="menu"]')!.style.transform;
+      return Number(/-?\d+(\.\d+)?/.exec(transform)?.[0] ?? 0);
+    } finally {
+      rect.mockRestore();
+    }
+  };
+
+  it('slides back inside the window when its edge would open off-screen', () => {
+    // A leftward menu on a tile at the left of a narrow window.
+    expect(openAt(-40)).toBe(56);
+  });
+
+  it('slides left when it would run past the right of the window', () => {
+    // jsdom's window is 1024 wide; the menu ends at 1100.
+    expect(openAt(900)).toBe(-92);
+  });
+
+  it('stays where it opened when it fits', () => {
+    expect(openAt(100)).toBe(0);
+  });
 });
 
 describe('TipButton', () => {
