@@ -419,6 +419,13 @@ func TestAMissingOrWrongTypedArgumentIsReportedToTheAgent(t *testing.T) {
 	}
 }
 
+func TestGetUserNeedsTheAccountsID(t *testing.T) {
+	srv, s := newSession()
+	replies := s.run(t, srv, call(1, "pando_get_user", `{}`))
+	require.Contains(t, text(t, replies[0]), "user_id")
+	require.Empty(t, s.calls, "a malformed call does not reach the API")
+}
+
 func TestCreateAppReportsEachMissingArgumentByName(t *testing.T) {
 	srv, s := newSession()
 	replies := s.run(t, srv, call(1, "pando_create_app", `{"source_url":"https://example/x"}`))

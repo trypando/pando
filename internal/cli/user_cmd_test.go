@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/trypando/pando/internal/cli"
 )
 
 // R-046: an account created or reset from the CLI gets the server's generated
@@ -74,6 +76,35 @@ func TestR078_UserListShowsRolesHeldThroughGroups(t *testing.T) {
 	got = run(t, api, "", "user", "get", "usr_01")
 	require.NoError(t, got.err, got.errOut)
 	require.Contains(t, got.out, `"pando-administrator"`)
+
+	got = run(t, api, "", "user", "list", "--q", "dana")
+	require.NoError(t, got.err, got.errOut)
+	require.True(t, api.sawPath("/users?q=dana&limit=500"), "the search reaches the server")
+
+	// The server's refusal, as it wrote it.
+	denied := map[string]any{"code": "PERM_DENIED", "message": "You do not have permission to view accounts."}
+	refused := newAPI(t).fail("GET /users", 403, denied).fail("GET /users/usr_01", 403, denied)
+	for _, args := range [][]string{{"list"}, {"get", "usr_01"}} {
+		got = run(t, refused, "", "user", args...)
+		require.ErrorContains(t, got.err, "You do not have permission to view accounts.", args)
+	}
+}
+
+// R-078: every group, each with its installation role, from every page.
+func TestGroupListReadsEveryPage(t *testing.T) {
+	api := newAPI(t).reply("GET /groups", map[string]any{
+		"groups": []map[string]any{{"id": "grp_01", "name": "pando-administrator", "install_role_id": "role_administrator"}}})
+	got := run(t, api, "", "group", "list")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, got.out, `"role_administrator"`)
+}
+
+func TestListingAccountsAndGroupsNeedsASignedInServer(t *testing.T) {
+	nowhere := &fakeAPI{t: t, url: "", responses: map[string]any{}, status: map[string]int{}}
+	for _, args := range [][]string{{"user", "list"}, {"user", "get", "usr_01"}, {"group", "list"}} {
+		got := run(t, nowhere, "", args[0], args[1:]...)
+		require.ErrorIs(t, got.err, cli.ErrNotLoggedIn, args)
+	}
 }
 
 // R-245: a part's use beside its limits, and a part with no limit said so.

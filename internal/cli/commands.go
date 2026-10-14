@@ -1337,22 +1337,7 @@ func userCmd(client func() (*Client, error)) *cobra.Command {
 			if query != "" {
 				path += "?q=" + url.QueryEscape(query)
 			}
-			users := []any{}
-			err = allPages(c, path, func(get func(any) error) (string, error) {
-				var page struct {
-					Users      []any  `json:"users"`
-					NextCursor string `json:"next_cursor"`
-				}
-				if err := get(&page); err != nil {
-					return "", err
-				}
-				users = append(users, page.Users...)
-				return page.NextCursor, nil
-			})
-			if err != nil {
-				return err
-			}
-			return printJSON(cmd.OutOrStdout(), map[string]any{"users": users})
+			return printAllPages(cmd, c, path, "users")
 		},
 	}
 	list.Flags().StringVar(&query, "q", "", "only accounts whose username, name or email contains this")
@@ -1421,22 +1406,7 @@ func groupCmd(client func() (*Client, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			groups := []any{}
-			err = allPages(c, "/groups", func(get func(any) error) (string, error) {
-				var page struct {
-					Groups     []any  `json:"groups"`
-					NextCursor string `json:"next_cursor"`
-				}
-				if err := get(&page); err != nil {
-					return "", err
-				}
-				groups = append(groups, page.Groups...)
-				return page.NextCursor, nil
-			})
-			if err != nil {
-				return err
-			}
-			return printJSON(cmd.OutOrStdout(), map[string]any{"groups": groups})
+			return printAllPages(cmd, c, "/groups", "groups")
 		},
 	})
 	cmd.AddCommand(&cobra.Command{

@@ -128,6 +128,15 @@ func pagedGet(path string, args map[string]any, keys ...string) (string, string,
 	return "GET", path, nil, nil
 }
 
+// getByID reads one object, at prefix followed by the ID the key names.
+func getByID(args map[string]any, key, prefix string) (string, string, any, error) {
+	id, err := stringArg(args, key, true)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return "GET", prefix + url.PathEscape(id), nil, nil
+}
+
 func schema(props map[string]any, required ...string) map[string]any {
 	if required == nil {
 		required = []string{}
@@ -882,11 +891,7 @@ var toolList = []tool{
 			"install.view.",
 		Schema: schema(map[string]any{"user_id": str("The account's ID.")}, "user_id"),
 		request: func(args map[string]any) (string, string, any, error) {
-			id, err := stringArg(args, "user_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			return "GET", "/users/" + url.PathEscape(id), nil, nil
+			return getByID(args, "user_id", "/users/")
 		},
 	},
 	{

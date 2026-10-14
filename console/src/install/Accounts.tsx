@@ -147,15 +147,7 @@ export function Accounts({ onOpen }: { onOpen: (account: Account) => void }) {
             header: 'Role',
             width: 'minmax(0,20ch)',
             filter: 'values',
-            filterValue: (row: Account) => {
-              const names = new Set(
-                (row.install_roles ?? []).map((h) => {
-                  const r = roles.data?.roles.find((x) => x.id === h.role_id);
-                  return r ? sentence(r.name) : h.role_id;
-                }),
-              );
-              return names.size > 0 ? [...names].sort().join(', ') : 'None';
-            },
+            filterValue: (row: Account) => heldRoleNames(row.install_roles ?? [], roles.data?.roles ?? []),
             // Read-only here; it changes on the account's page, or on the
             // group a role comes through.
             render: (row: Account) => <HeldRoles held={row.install_roles ?? []} roles={roles.data?.roles ?? []} />,
@@ -177,11 +169,32 @@ export function RoleLabel({ roleID, roles }: { roleID: string; roles: Role[] }) 
   return <Tag>{role ? sentence(role.name) : roleID}</Tag>;
 }
 
+/** An installation role's name as the console shows it, or its ID before the roles arrive. */
+function roleName(roleID: string, roles: Role[]): string {
+  const role = roles.find((r) => r.id === roleID);
+  return role ? sentence(role.name) : roleID;
+}
+
+/** The distinct names of the roles an account holds, for the Role column's filter; "None" for none. */
+export function heldRoleNames(held: HeldRole[], roles: Role[]): string {
+  const names = [...new Set(held.map((h) => roleName(h.role_id, roles)))];
+  return names.length > 0 ? names.sort((x, y) => x.localeCompare(y)).join(', ') : 'None';
+}
+
+/** "through pando-administrator (Okta)" — where a group-held role comes from. */
+export function heldThrough(h: HeldRole): string {
+  const group = h.via.name ?? h.via.group_id ?? '';
+  const provider = h.via.source_name || h.via.source;
+  return provider ? `through ${group} (${provider})` : `through ${group}`;
+}
+
+const caption = { font: 'var(--type-caption)', color: 'var(--ink-secondary)' };
+
 /**
  * The installation roles an account holds, each with where it comes from:
  * a role through a group names the group, and its provider for a synced one.
  */
-function HeldRoles({ held, roles }: { held: HeldRole[]; roles: Role[] }) {
+export function HeldRoles({ held, roles }: Readonly<{ held: HeldRole[]; roles: Role[] }>) {
   if (held.length === 0) return <RoleLabel roleID="" roles={roles} />;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', padding: 'var(--space-2) 0' }}>
@@ -191,19 +204,25 @@ function HeldRoles({ held, roles }: { held: HeldRole[]; roles: Role[] }) {
           style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)', minWidth: 0 }}
         >
           <RoleLabel roleID={h.role_id} roles={roles} />
-          {h.via.kind === 'group' && (
-            <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>{heldThrough(h)}</span>
-          )}
+          {h.via.kind === 'group' && <span style={caption}>{heldThrough(h)}</span>}
         </span>
       ))}
     </div>
   );
 }
 
-/** "through pando-administrator (Okta)" — where a group-held role comes from. */
-export function heldThrough(h: HeldRole): string {
-  const provider = h.via.source_name || h.via.source;
-  return `through ${h.via.name ?? h.via.group_id}${provider ? ` (${provider})` : ''}`;
+/**
+ * The roles an account holds through its groups, said rather than offered:
+ * each is changed on the group, not on the account.
+ */
+export function GroupHeldRoles({ held, roles }: Readonly<{ held: HeldRole[]; roles: Role[] }>) {
+  return held
+    .filter((h) => h.via.kind === 'group')
+    .map((h) => (
+      <span key={h.role_id + h.via.group_id} style={caption}>
+        {roleName(h.role_id, roles)} {heldThrough(h)}
+      </span>
+    ));
 }
 
 export function RolePicker({

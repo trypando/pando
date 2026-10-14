@@ -96,14 +96,10 @@ func (s *Server) handleListGroupMembers(w http.ResponseWriter, r *http.Request) 
 		Error(w, r, err)
 		return
 	}
-	held, err := s.Grants.InstallRolesForUsers(r.Context(), accountIDs(users))
+	out, err := s.accountViews(r.Context(), users)
 	if err != nil {
 		Error(w, r, err)
 		return
-	}
-	out := make([]map[string]any, 0, len(users))
-	for _, u := range users {
-		out = append(out, accountView(u, held[u.ID]))
 	}
 	JSON(w, http.StatusOK, withTotal(map[string]any{"members": out, "next_cursor": next}, total))
 }

@@ -564,6 +564,10 @@ func (g *Grants) RevokeInstall(ctx context.Context, kind, principalID string) er
 	return nil
 }
 
+// errReadInstallAccess is the message for a failed read of who holds what
+// installation-wide.
+const errReadInstallAccess = "Could not read installation-wide access."
+
 // InstallRolesByPrincipal maps each principal holding an install grant to its
 // role ID — the grant made to that principal itself, for the groups list. An
 // account's roles, through its groups too, are InstallRolesForUsers.
@@ -577,7 +581,7 @@ func (g *Grants) InstallRolesByPrincipal(ctx context.Context) (map[string]string
 		FROM grants
 		WHERE app_id IS NULL AND plane = 'control' AND principal_id IS NOT NULL`)
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read installation-wide access.", err)
+		return nil, errs.Wrap(errs.Internal, errReadInstallAccess, err)
 	}
 	defer rows.Close()
 
@@ -585,7 +589,7 @@ func (g *Grants) InstallRolesByPrincipal(ctx context.Context) (map[string]string
 	for rows.Next() {
 		var principal, role string
 		if err := rows.Scan(&principal, &role); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read installation-wide access.", err)
+			return nil, errs.Wrap(errs.Internal, errReadInstallAccess, err)
 		}
 		out[principal] = role
 	}
@@ -620,10 +624,6 @@ type InstallRoleVia struct {
 // account's roles come direct first, then by group name; an account holding
 // nothing is absent from the map.
 func (g *Grants) InstallRolesForUsers(ctx context.Context, userIDs []string) (map[string][]HeldInstallRole, error) {
-	out := map[string][]HeldInstallRole{}
-	if len(userIDs) == 0 {
-		return out, nil
-	}
 	rows, err := g.db.Query(ctx, `
 		SELECT user_id, role_id, group_id, name, source, source_name FROM (
 		    SELECT g.principal_id AS user_id, g.role_id, '' AS group_id, '' AS name,
@@ -643,16 +643,17 @@ func (g *Grants) InstallRolesForUsers(ctx context.Context, userIDs []string) (ma
 		) held
 		ORDER BY user_id, group_id <> '', lower(name), group_id`, userIDs)
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Could not read installation-wide access.", err)
+		return nil, errs.Wrap(errs.Internal, errReadInstallAccess, err)
 	}
 	defer rows.Close()
 
+	out := map[string][]HeldInstallRole{}
 	for rows.Next() {
 		var user string
 		var held HeldInstallRole
 		if err := rows.Scan(&user, &held.RoleID, &held.Via.GroupID, &held.Via.Name,
 			&held.Via.Source, &held.Via.SourceName); err != nil {
-			return nil, errs.Wrap(errs.Internal, "Could not read installation-wide access.", err)
+			return nil, errs.Wrap(errs.Internal, errReadInstallAccess, err)
 		}
 		held.Via.Kind = "group"
 		if held.Via.GroupID == "" {

@@ -3,6 +3,8 @@ package cli
 import (
 	"net/url"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
 
 // allPages reads every page of a cursor-paged list (design 04 §1): GET path,
@@ -32,4 +34,24 @@ func allPages(c *Client, path string, page func(get func(out any) error) (string
 		}
 		cursor = next
 	}
+}
+
+// printAllPages reads every page of a list and prints its items together,
+// under the key each page carries them in.
+func printAllPages(cmd *cobra.Command, c *Client, path, key string) error {
+	items := []any{}
+	err := allPages(c, path, func(get func(any) error) (string, error) {
+		var page map[string]any
+		if err := get(&page); err != nil {
+			return "", err
+		}
+		more, _ := page[key].([]any)
+		items = append(items, more...)
+		next, _ := page["next_cursor"].(string)
+		return next, nil
+	})
+	if err != nil {
+		return err
+	}
+	return printJSON(cmd.OutOrStdout(), map[string]any{key: items})
 }

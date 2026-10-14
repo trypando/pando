@@ -6844,61 +6844,7 @@
                         "null"
                       ],
                       "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string"
-                          },
-                          "adapter_id": {
-                            "type": "string"
-                          },
-                          "external_id": {
-                            "type": "string"
-                          },
-                          "email": {
-                            "type": "string"
-                          },
-                          "display_name": {
-                            "type": "string"
-                          },
-                          "status": {
-                            "type": "string"
-                          },
-                          "must_change_password": {
-                            "type": "boolean"
-                          },
-                          "created_at": {
-                            "type": "string",
-                            "format": "date-time"
-                          },
-                          "install_role_id": {
-                            "type": "string"
-                          },
-                          "install_roles": {
-                            "type": [
-                              "array",
-                              "null"
-                            ],
-                            "items": {
-                              "$ref": "#/components/schemas/HeldInstallRole"
-                            }
-                          },
-                          "alias_of": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "adapter_id",
-                          "external_id",
-                          "email",
-                          "display_name",
-                          "status",
-                          "must_change_password",
-                          "created_at",
-                          "install_role_id",
-                          "install_roles"
-                        ]
+                        "$ref": "#/components/schemas/AccountJSON"
                       }
                     },
                     "next_cursor": {
@@ -10549,61 +10495,7 @@
                         "null"
                       ],
                       "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string"
-                          },
-                          "adapter_id": {
-                            "type": "string"
-                          },
-                          "external_id": {
-                            "type": "string"
-                          },
-                          "email": {
-                            "type": "string"
-                          },
-                          "display_name": {
-                            "type": "string"
-                          },
-                          "status": {
-                            "type": "string"
-                          },
-                          "must_change_password": {
-                            "type": "boolean"
-                          },
-                          "created_at": {
-                            "type": "string",
-                            "format": "date-time"
-                          },
-                          "install_role_id": {
-                            "type": "string"
-                          },
-                          "install_roles": {
-                            "type": [
-                              "array",
-                              "null"
-                            ],
-                            "items": {
-                              "$ref": "#/components/schemas/HeldInstallRole"
-                            }
-                          },
-                          "alias_of": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "adapter_id",
-                          "external_id",
-                          "email",
-                          "display_name",
-                          "status",
-                          "must_change_password",
-                          "created_at",
-                          "install_role_id",
-                          "install_roles"
-                        ]
+                        "$ref": "#/components/schemas/AccountJSON"
                       }
                     },
                     "next_cursor": {
@@ -10718,61 +10610,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "adapter_id": {
-                      "type": "string"
-                    },
-                    "external_id": {
-                      "type": "string"
-                    },
-                    "email": {
-                      "type": "string"
-                    },
-                    "display_name": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "type": "string"
-                    },
-                    "must_change_password": {
-                      "type": "boolean"
-                    },
-                    "created_at": {
-                      "type": "string",
-                      "format": "date-time"
-                    },
-                    "install_role_id": {
-                      "type": "string"
-                    },
-                    "install_roles": {
-                      "type": [
-                        "array",
-                        "null"
-                      ],
-                      "items": {
-                        "$ref": "#/components/schemas/HeldInstallRole"
-                      }
-                    },
-                    "alias_of": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "adapter_id",
-                    "external_id",
-                    "email",
-                    "display_name",
-                    "status",
-                    "must_change_password",
-                    "created_at",
-                    "install_role_id",
-                    "install_roles"
-                  ]
+                  "$ref": "#/components/schemas/AccountJSON"
                 }
               }
             }
@@ -11479,6 +11317,63 @@
           "reply",
           "adapter_id",
           "model"
+        ]
+      },
+      "AccountJSON": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "adapter_id": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "must_change_password": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "install_role_id": {
+            "type": "string"
+          },
+          "install_roles": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/HeldInstallRole"
+            }
+          },
+          "alias_of": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "adapter_id",
+          "external_id",
+          "email",
+          "display_name",
+          "status",
+          "must_change_password",
+          "created_at",
+          "install_role_id",
+          "install_roles"
         ]
       },
       "Actor": {

@@ -503,12 +503,12 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.NotFound, "There is no account with that ID."))
 		return
 	}
-	held, err := s.Grants.InstallRolesForUsers(r.Context(), []string{user.ID})
+	out, err := s.accountViews(r.Context(), []state.User{user})
 	if err != nil {
 		Error(w, r, err)
 		return
 	}
-	JSON(w, http.StatusOK, accountView(user, held[user.ID]))
+	JSON(w, http.StatusOK, out[0])
 }
 
 // handlePatchUser changes a user's status.
