@@ -144,6 +144,9 @@ const itemStyle: React.CSSProperties = {
   font: 'var(--type-body-ui)',
   color: 'var(--ink)',
   textAlign: 'left',
+  // The menu is capped at the window's width, so a long section name wraps
+  // inside it rather than running past the edge.
+  overflowWrap: 'anywhere',
   textDecoration: 'none',
   cursor: 'pointer',
 };
