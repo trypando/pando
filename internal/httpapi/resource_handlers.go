@@ -475,10 +475,11 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.Adapters.Upsert(r.Context(), state.AdapterConfig{
+	replaced, err := s.Adapters.Save(r.Context(), state.AdapterConfig{
 		ID: req.ID, Category: req.Category, Kind: req.Kind, Name: req.Name,
 		Config: req.Config, IsDefault: req.IsDefault, Enabled: enabled,
-	}); err != nil {
+	})
+	if err != nil {
 		Error(w, r, err)
 		return
 	}
@@ -494,12 +495,16 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(fields)
 
-	// Which credentials changed, never their values.
+	// Which credentials changed, never their values. A handover of the
+	// default is one event naming both adapters (issue #220).
+	detail := map[string]any{"category": req.Category, "kind": req.Kind, "default": req.IsDefault,
+		"credentials_changed": fields}
+	if replaced.ID != "" {
+		detail["replaced_default"] = replaced.ID
+	}
 	s.audit(r, audit.Event{
 		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
-		Action: "adapter.configure", TargetKind: "adapter", TargetID: req.ID,
-		Detail: map[string]any{"category": req.Category, "kind": req.Kind, "default": req.IsDefault,
-			"credentials_changed": fields},
+		Action: "adapter.configure", TargetKind: "adapter", TargetID: req.ID, Detail: detail,
 	})
 
 	// Adapters are registered at startup from compiled-in packages (R-253), so
@@ -510,7 +515,48 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 	if liveCategory(req.Category) {
 		note = "Saved, and in use from now on."
 	}
-	JSON(w, http.StatusCreated, map[string]any{"id": req.ID, "note": note})
+	resp := map[string]any{"id": req.ID, "note": note}
+	if replaced.ID != "" {
+		handover := defaultHandover(orID(req.Name, req.ID), orID(replaced.Name, replaced.ID), req.Category)
+		resp["replaced_default"] = replaced.ID
+		resp["handover"] = handover
+		resp["note"] = handover + " " + note
+	}
+	JSON(w, http.StatusCreated, resp)
+}
+
+// defaultHandover says what making an adapter its category's default changes
+// (issue #220). An app's spec names the routing, runtime and builder adapters
+// it was added with (R-020, spec.Defaults), so a new default of those reaches
+// only apps added after it.
+func defaultHandover(name, previous, category string) string {
+	s := fmt.Sprintf("This makes %s the default %s adapter in place of %s.", name, categoryWord(category), previous)
+	switch category {
+	case string(api.CategoryRouting), string(api.CategoryRuntime), string(api.CategoryBuilder):
+		s += fmt.Sprintf(" Apps already added keep the %s adapter they were added with; apps added from now on use %s.",
+			categoryWord(category), name)
+	}
+	return s
+}
+
+// categoryWord is a category as a sentence spells it.
+func categoryWord(category string) string {
+	switch category {
+	case string(api.CategoryAI):
+		return "AI"
+	case string(api.CategoryImageRegistry):
+		return "image registry"
+	case string(api.CategoryAuditSink):
+		return "audit sink"
+	}
+	return category
+}
+
+func orID(name, id string) string {
+	if name != "" {
+		return name
+	}
+	return id
 }
 
 // inlineCredential refuses a credential in an adapter's plain configuration.

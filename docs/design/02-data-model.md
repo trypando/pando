@@ -480,6 +480,11 @@ CREATE TABLE adapter_configs (
     created_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX ON adapter_configs (category) WHERE is_default;
+-- Saving one as the default hands the default over (issue #220): the previous
+-- default is cleared and the new one set in one transaction, under an advisory
+-- lock on the category, and the API returns the replaced one as
+-- replaced_default. A constraint a save breaks is a VALID_INVALID naming the
+-- rule, never INTERNAL.
 -- config is never a credential store (O-20).
 ALTER TABLE adapter_configs ADD CHECK (NOT (config ? 'credentials'));
 -- Nor is an image registry's address (R-190, migration 000066).

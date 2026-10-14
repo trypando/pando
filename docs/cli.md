@@ -105,7 +105,7 @@ their own heading. Advanced settings take --set like any other.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
-| `--default` | `true` | make it the default adapter of its category |
+| `--default` |  | make it the default adapter of its category, in place of the current one (default: only when the category has none) |
 | `--disabled` |  | save it turned off: Pando keeps its settings and does not use it. A secret left empty keeps the stored one |
 | `--id` |  | the adapter's ID (default: the kind's usual prefix and name, e.g. ai_anthropic) |
 | `--name` |  | what the console calls it (default: the kind's name) |

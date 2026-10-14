@@ -251,7 +251,7 @@
             "type": "string"
           },
           "is_default": {
-            "description": "Make it the default in its category.",
+            "description": "Make it the default in its category, in place of the current default. The result's replaced_default names that adapter and handover says what changes; tell the person both.",
             "type": "boolean"
           },
           "kind": {

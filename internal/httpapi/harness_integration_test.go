@@ -27,6 +27,8 @@ import (
 	identitysaml "github.com/trypando/pando/internal/adapter/identity/saml"
 	registryoci "github.com/trypando/pando/internal/adapter/imageregistry/oci"
 	notifyconsole "github.com/trypando/pando/internal/adapter/notify/console"
+	routingcloudflare "github.com/trypando/pando/internal/adapter/routing/cloudflare"
+	routingloopback "github.com/trypando/pando/internal/adapter/routing/loopback"
 	secretslocal "github.com/trypando/pando/internal/adapter/secrets/local"
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/applimit"
@@ -218,9 +220,10 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 			Policy: overlay.Wrap(policyStore), Overlay: overlay, Audit: audit.NewReader(db.Pool),
 			Reference: func() string { return reference.Markdown(httpapi.Reference()) },
 		},
-		AdapterKinds: []adapterapi.KindInfo{aianthropic.Info(), secretslocal.Info(), registryoci.Info(), sinkhttps.Info(), sinksyslog.Info()},
-		Allocations:  allocations,
-		Capacity:     &capacity.Snapshots{Registry: registry, Allocations: allocations},
+		AdapterKinds: []adapterapi.KindInfo{aianthropic.Info(), secretslocal.Info(), registryoci.Info(), sinkhttps.Info(), sinksyslog.Info(),
+			routingloopback.Info(), routingcloudflare.Info()},
+		Allocations: allocations,
+		Capacity:    &capacity.Snapshots{Registry: registry, Allocations: allocations},
 
 		AdapterCredentials: state.NewAdapterCredentials(db, secretsAdapter, "sec_local"),
 		Planner:            appPlanner,

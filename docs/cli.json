@@ -109,8 +109,8 @@
           "name": "default",
           "shorthand": "",
           "type": "bool",
-          "default": "true",
-          "usage": "make it the default adapter of its category",
+          "default": "false",
+          "usage": "make it the default adapter of its category, in place of the current one (default: only when the category has none)",
           "required": false
         },
         {

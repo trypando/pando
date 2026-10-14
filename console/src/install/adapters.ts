@@ -111,6 +111,19 @@ export interface AdapterRequest {
   enabled?: boolean;
 }
 
+/** What making an adapter its category's default in place of another changes
+ *  (issue #220), worded as the API's `handover`. An app's spec names the
+ *  routing, runtime and builder adapters it was added with, so a new default
+ *  of those reaches only apps added after it. */
+export function defaultHandover(name: string, previous: string, category: string): string {
+  const word = category === 'ai' ? 'AI' : category.replace(/_/g, ' ');
+  let s = `This makes ${name} the default ${word} adapter in place of ${previous}.`;
+  if (category === 'routing' || category === 'runtime' || category === 'builder') {
+    s += ` Apps already added keep the ${word} adapter they were added with; apps added from now on use ${name}.`;
+  }
+  return s;
+}
+
 /** The key a kind is chosen by in the form's select. */
 export function kindKey(k: { category: string; kind: string }): string {
   return `${k.category}/${k.kind}`;

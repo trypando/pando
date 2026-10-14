@@ -181,13 +181,28 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 			if disabled {
 				body["enabled"] = false
 			}
+			if !cmd.Flags().Changed("default") {
+				// Without --default, an adapter keeps whether it is the
+				// default, and a new one is the default only of a category
+				// that has none: making it the default in place of another
+				// is a handover, said with --default (issue #220).
+				if body["is_default"], err = defaultUnlessTaken(c, id, category); err != nil {
+					return err
+				}
+			}
 			if category == "source" {
 				// Many source connections, none of them the default: the
 				// one covering a repository is chosen for it.
 				body["is_default"] = false
 			}
-			if err := c.Do("POST", "/adapters", body, nil); err != nil {
+			var saved struct {
+				Handover string `json:"handover"`
+			}
+			if err := c.Do("POST", "/adapters", body, &saved); err != nil {
 				return err
+			}
+			if saved.Handover != "" {
+				fmt.Fprintln(cmd.OutOrStdout(), saved.Handover)
 			}
 			if category == "source" {
 				fmt.Fprintf(cmd.OutOrStdout(), "Saved %s. It is used from now on; `pando source list` shows whether it is ready.\n", id)
@@ -204,7 +219,8 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 	add.Flags().StringVar(&id, "id", "", "the adapter's ID (default: the kind's usual prefix and name, e.g. ai_anthropic)")
 	add.Flags().StringVar(&name, "name", "", "what the console calls it (default: the kind's name)")
 	add.Flags().StringArrayVar(&set, "set", nil, "a setting, KEY=VALUE; repeat for more")
-	add.Flags().BoolVar(&isDefault, "default", true, "make it the default adapter of its category")
+	add.Flags().BoolVar(&isDefault, "default", false,
+		"make it the default adapter of its category, in place of the current one (default: only when the category has none)")
 	add.Flags().BoolVar(&disabled, "disabled", false, "save it turned off: Pando keeps its settings and does not use it. A secret left empty keeps the stored one")
 
 	// Help for a named kind lists its settings after the flags, the basic ones
@@ -298,6 +314,32 @@ type kindInfo struct {
 		Advanced   bool   `json:"advanced"`
 		Default    string `json:"default"`
 	} `json:"fields"`
+}
+
+// defaultUnlessTaken is whether an adapter saved without --default is its
+// category's default: what it already is when it exists, and otherwise
+// whether the category has no default yet.
+func defaultUnlessTaken(c *Client, id, category string) (bool, error) {
+	var out struct {
+		Adapters []struct {
+			ID        string `json:"id"`
+			Category  string `json:"category"`
+			IsDefault bool   `json:"is_default"`
+		} `json:"adapters"`
+	}
+	if err := c.Do("GET", "/adapters", nil, &out); err != nil {
+		return false, err
+	}
+	taken := false
+	for _, a := range out.Adapters {
+		if a.ID == id {
+			return a.IsDefault, nil
+		}
+		if a.Category == category && a.IsDefault {
+			taken = true
+		}
+	}
+	return !taken, nil
 }
 
 func adapterKinds(c *Client) ([]kindInfo, error) {

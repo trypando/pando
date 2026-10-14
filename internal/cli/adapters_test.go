@@ -41,6 +41,37 @@ func TestAnAdapterCanBeAddedFromTheCLI(t *testing.T) {
 	require.ErrorContains(t, run(t, api, "\n", "adapter", "add", "ai/anthropic", "--set", "timeout_seconds=soon").err, "whole number")
 }
 
+var cloudflareKind = map[string]any{"kinds": []map[string]any{{
+	"category": "routing", "kind": "cloudflare", "name": "Cloudflare", "id_prefix": "rte_",
+	"fields": []map[string]any{{"key": "zone", "label": "Zone", "type": "string"}},
+}}}
+
+// TestR252_TheCLIHandsTheDefaultOverOnlyWhenAsked asserts issue #220 from the
+// CLI: without --default, a new adapter is not made the default of a category
+// that has one, and with it the handover is said.
+func TestR252_TheCLIHandsTheDefaultOverOnlyWhenAsked(t *testing.T) {
+	handover := "This makes Cloudflare the default routing adapter in place of Localhost."
+	newRouting := func() *fakeAPI {
+		return newAPI(t).
+			reply("GET /adapters/kinds", cloudflareKind).
+			reply("GET /adapters", map[string]any{"adapters": []map[string]any{
+				{"id": "rte_loopback", "category": "routing", "name": "Localhost", "is_default": true},
+			}}).
+			reply("POST /adapters", map[string]any{"id": "rte_cloudflare", "replaced_default": "rte_loopback", "handover": handover})
+	}
+
+	api := newRouting()
+	got := run(t, api, "", "adapter", "add", "routing/cloudflare", "--set", "zone=bemeek.io")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, api.bodyFor("POST /adapters"), `"is_default":false`)
+
+	api = newRouting()
+	got = run(t, api, "", "adapter", "add", "routing/cloudflare", "--set", "zone=bemeek.io", "--default")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, api.bodyFor("POST /adapters"), `"is_default":true`)
+	require.Contains(t, got.out, handover)
+}
+
 var trivyKind = map[string]any{"kinds": []map[string]any{{
 	"category": "scanner", "kind": "trivy", "name": "Trivy", "id_prefix": "scan_",
 	"fields": []map[string]any{

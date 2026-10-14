@@ -60,13 +60,63 @@ func (a *Adapters) List(ctx context.Context) ([]AdapterConfig, error) {
 	return out, rows.Err()
 }
 
-// Upsert stores an adapter configuration.
+// Replaced is the adapter that stopped being its category's default when
+// another was saved as the default. Zero when none did.
+type Replaced struct {
+	ID   string
+	Name string
+}
+
+// defaultLockKey namespaces Save's advisory locks from any other.
+const defaultLockKey = "pando.adapter_default:"
+
+// Upsert stores an adapter configuration. See Save.
 func (a *Adapters) Upsert(ctx context.Context, c AdapterConfig) error {
+	_, err := a.Save(ctx, c)
+	return err
+}
+
+// Save stores an adapter configuration, and returns the adapter it replaced as
+// its category's default, if any.
+//
+// Saving one as the default is a handover (issue #220): the previous default
+// is cleared and the new one set in one transaction, so there is never a
+// moment with two defaults or none. The category's default is locked for the
+// transaction, so two saves racing to be the default hand over one after the
+// other rather than both clearing the same row.
+func (a *Adapters) Save(ctx context.Context, c AdapterConfig) (Replaced, error) {
 	cfg := c.Config
 	if len(cfg) == 0 {
 		cfg = json.RawMessage(`{}`)
 	}
-	_, err := a.db.Exec(ctx, `
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		return Replaced{}, errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+
+	var replaced Replaced
+	if c.IsDefault {
+		// An existing row keeps its category, which ON CONFLICT does not
+		// change, so the default handed over is the one in that category.
+		category := c.Category
+		err := tx.QueryRow(ctx, `SELECT category FROM adapter_configs WHERE id = $1`, c.ID).Scan(&category)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return Replaced{}, errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, defaultLockKey+category); err != nil {
+			return Replaced{}, errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
+		}
+		err = tx.QueryRow(ctx, `
+			UPDATE adapter_configs SET is_default = false, updated_at = now()
+			WHERE category = $1 AND is_default AND id <> $2
+			RETURNING id, name`, category, c.ID).Scan(&replaced.ID, &replaced.Name)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return Replaced{}, errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
+		}
+	}
+
+	_, err = tx.Exec(ctx, `
 		INSERT INTO adapter_configs (id, category, kind, name, config, is_default, enabled)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (id) DO UPDATE SET
@@ -74,18 +124,57 @@ func (a *Adapters) Upsert(ctx context.Context, c AdapterConfig) error {
 			is_default = EXCLUDED.is_default, enabled = EXCLUDED.enabled, updated_at = now()`,
 		c.ID, c.Category, c.Kind, c.Name, cfg, c.IsDefault, c.Enabled)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "adapter_configs_one_ai_adapter_per_kind" {
-			// One AI adapter per provider (R-259). An assignment's model is how
-			// one provider serves two models.
-			return errs.Newf(errs.ValidInvalid,
-				"This installation already has a %s AI adapter, and Pando allows one AI adapter per provider.", c.Kind).
-				WithRemedy("Change the existing adapter instead of adding a second one. To run some AI functions on " +
-					"a different model, set the model on those functions' assignments.")
-		}
+		return Replaced{}, saveRefusal(c, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Replaced{}, saveRefusal(c, err)
+	}
+	return replaced, nil
+}
+
+// saveRefusal says why the database refused an adapter configuration (R-105).
+// A constraint is a rule about what may be saved, so breaking one is the
+// request's to fix, and the refusal names the rule rather than saying only
+// that saving failed (issue #220).
+func saveRefusal(c AdapterConfig, err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
 		return errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
 	}
-	return nil
+	switch pgErr.ConstraintName {
+	case "adapter_configs_one_ai_adapter_per_kind":
+		// One AI adapter per provider (R-259). An assignment's model is how
+		// one provider serves two models.
+		return errs.Newf(errs.ValidInvalid,
+			"This installation already has a %s AI adapter, and Pando allows one AI adapter per provider.", c.Kind).
+			WithRemedy("Change the existing adapter instead of adding a second one. To run some AI functions on " +
+				"a different model, set the model on those functions' assignments.")
+	case "adapter_configs_one_default_per_category":
+		// Save hands the default over under a lock, so only a default set
+		// some other way in between gets here.
+		return errs.Newf(errs.ValidInvalid,
+			"Another %s adapter became the default while %s was being saved, and each category has one default.",
+			c.Category, c.ID).
+			WithRemedy("Save it again to make it the default in place of that one.")
+	case "adapter_configs_registry_url_no_credential", "adapter_configs_audit_sink_url_no_credential":
+		return errs.Newf(errs.ValidInvalid,
+			"The address of the %s adapter %s contains a username or password, and Pando stores addresses unencrypted.",
+			c.Category, c.ID).
+			WithRemedy(`Remove them from the address and send them in the request's "credentials" object instead. Pando stores that encrypted.`)
+	}
+	switch pgErr.Code {
+	case "23514": // check_violation
+		return errs.Newf(errs.ValidInvalid,
+			"Pando could not save the %s adapter %s, because its settings break the rule %s.",
+			c.Category, c.ID, pgErr.ConstraintName).
+			WithRemedy(`A credential goes in the request's "credentials" object, never in "config". Otherwise, correct the setting that rule names and save again.`)
+	case "23505": // unique_violation
+		return errs.Newf(errs.ValidInvalid,
+			"Pando could not save the %s adapter %s, because the rule %s allows only one, and another adapter already has it.",
+			c.Category, c.ID, pgErr.ConstraintName).
+			WithRemedy("Change that adapter instead, or remove it first. GET /api/v1/adapters lists them.")
+	}
+	return errs.Wrap(errs.Internal, "Could not save the adapter configuration.", err)
 }
 
 // DeleteInCategory removes an adapter configuration of one category, with its

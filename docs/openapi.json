@@ -206,7 +206,7 @@
       "post": {
         "operationId": "createAdapter",
         "summary": "Configure an adapter",
-        "description": "Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. A source connection (category `source`) and an image registry (category `image_registry`) are used from the moment they are saved, with no restart; an image registry Pando could not push to is refused before it is saved. An audit sink (category `audit_sink`) is used from the next delivery pass too, is refused when its settings are, and needs `install.audit.export` as well, because it sends the audit log off the installation.\n\nNeeds `install.adapters.manage`.",
+        "description": "Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. A source connection (category `source`) and an image registry (category `image_registry`) are used from the moment they are saved, with no restart; an image registry Pando could not push to is refused before it is saved. An audit sink (category `audit_sink`) is used from the next delivery pass too, is refused when its settings are, and needs `install.audit.export` as well, because it sends the audit log off the installation. `is_default` makes it the default of its category in place of the current one, in one step: `replaced_default` names the adapter that stopped being the default, and `handover` says what that changes.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Installation"
         ],
@@ -274,6 +274,12 @@
                       "type": "string"
                     },
                     "note": {
+                      "type": "string"
+                    },
+                    "replaced_default": {
+                      "type": "string"
+                    },
+                    "handover": {
                       "type": "string"
                     }
                   },

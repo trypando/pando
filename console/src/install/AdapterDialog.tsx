@@ -22,6 +22,7 @@ import {
   boolValue,
   categoryLabel,
   categoryNote,
+  defaultHandover,
   fieldPlaceholder,
   formProblems,
   isShown,
@@ -160,13 +161,49 @@ export function AdapterDialog({
     onSettled: () => void queries.invalidateQueries({ queryKey: ['ai-functions'] }),
   });
 
+  // Saving as the default of a category that has one hands the default over
+  // (issue #220), so it is asked first, naming both.
+  const replacing =
+    kind && form && form.isDefault && !isSource && kind.category !== 'ai'
+      ? adapters.find((a) => a.category === kind.category && a.is_default && a.id !== form.id.trim())
+      : undefined;
+  const newName = form?.name.trim() || kind?.name || '';
+  const [confirming, setConfirming] = useState(false);
+
   const submit = () => {
     setTried(true);
     if (!kind || !form) return;
     // Settings left as they were are not re-checked: only functions changed.
     if ((draft !== null || !existing) && Object.keys(problems).length > 0) return;
+    if (replacing && !confirming) {
+      setConfirming(true);
+      return;
+    }
     save.mutate();
   };
+
+  if (confirming && replacing && kind) {
+    return (
+      <Dialog
+        open
+        title={`Make ${newName} the default?`}
+        description={defaultHandover(newName, replacing.name || replacing.id, kind.category)}
+        onClose={onClose}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={save.isPending} onClick={() => save.mutate()}>
+              {save.isPending ? 'Saving' : 'Make default'}
+            </Button>
+          </>
+        }
+      >
+        {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}
+      </Dialog>
+    );
+  }
 
   // Saving replaces the stored settings whole. GET /adapters returns them to
   // whoever may change adapters, and the form starts from them; if they did

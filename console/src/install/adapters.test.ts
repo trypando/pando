@@ -6,6 +6,7 @@ import {
   blankForm,
   boolValue,
   categoryLabel,
+  defaultHandover,
   effectiveText,
   fieldPlaceholder,
   formProblems,
@@ -213,5 +214,22 @@ describe('advanced settings', () => {
     const form = blankForm(scanner, true);
     expect(formProblems(scanner, form)).toEqual({});
     expect(adapterRequest(scanner, form).config).toEqual({});
+  });
+});
+
+describe('defaultHandover', () => {
+  // Issue #220: the console asks before handing the default over, in the
+  // API's words.
+  it('names both adapters, and says apps keep what they were added with', () => {
+    expect(defaultHandover('Cloudflare', 'Localhost', 'routing')).toBe(
+      'This makes Cloudflare the default routing adapter in place of Localhost. Apps already added keep the routing adapter they were added with; apps added from now on use Cloudflare.',
+    );
+  });
+
+  it('says nothing about apps for a category no spec names', () => {
+    expect(defaultHandover('S3', 'Local disk', 'backup')).toBe('This makes S3 the default backup adapter in place of Local disk.');
+    expect(defaultHandover('Main', 'Old', 'image_registry')).toBe(
+      'This makes Main the default image registry adapter in place of Old.',
+    );
   });
 });

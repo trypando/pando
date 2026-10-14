@@ -1169,7 +1169,7 @@ var toolList = []tool{
 			"name":        str("A name for people to read."),
 			"config":      map[string]any{"type": "object", "description": "The kind's settings, by key."},
 			"credentials": map[string]any{"type": "object", "description": "The kind's secret settings, by key. A key sent empty removes that credential."},
-			"is_default":  map[string]any{"type": "boolean", "description": "Make it the default in its category."},
+			"is_default":  map[string]any{"type": "boolean", "description": "Make it the default in its category, in place of the current default. The result's replaced_default names that adapter and handover says what changes; tell the person both."},
 			"enabled":     map[string]any{"type": "boolean", "description": "false turns it off. Left out, it is on."},
 		}, "id", "category", "kind"),
 		request: func(args map[string]any) (string, string, any, error) {
