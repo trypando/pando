@@ -667,6 +667,13 @@ func TestR221_DeployRecoversToHealthyWhenAppComesUpLate(t *testing.T) {
 	require.Equal(t, state.StateDegraded, resultState(older),
 		"an older deploy is history and keeps what it recorded")
 
+	// A recovery that did not land — the app already reads running and its
+	// deploy still reads degraded — is retried on the next healthy visit.
+	require.NoError(t, deploys.SetResultState(ctx, current, state.StateDegraded))
+	h.rec.Tick(ctx)
+	require.Equal(t, state.StateRunning, resultState(current),
+		"a running app whose deploy still reads degraded is recovered on a later visit")
+
 	gone, cancel := context.WithCancel(ctx)
 	cancel()
 	require.Error(t, state.NewReconciles(h.db).RecoverCurrentDeploy(gone, h.appID),
