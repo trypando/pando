@@ -19,13 +19,6 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
-### Security
-
-- **CVE-2026-109425** (medium, CVSS 5.3) in `github.com/tink-crypto/tink-go/v2` v2.7.0, which Pando
-  0.4.0 and 0.5.0 include through `sigstore-go`, the library that verifies an update's signature. It
-  is now v2.8.0, which rejects keysets with duplicate key IDs or a primary key that is not enabled,
-  and no longer truncates silently in `noncebased.Reader`. No action is needed beyond upgrading.
-
 ## [0.5.0] - 2026-10-13
 
 Detection now builds the app and scores the image that will run, and the categories of deploy
