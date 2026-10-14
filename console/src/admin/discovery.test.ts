@@ -157,6 +157,16 @@ describe('services and commands', () => {
     expect(serviceProvision(postgres!)).toEqual({ status: 'info', label: 'Provisioned' });
   });
 
+  it('labels a bound service External and a literal one Value', () => {
+    expect(serviceProvision({ key: 'REDIS_URL', type: 'redis', required: false, resolution: { mode: 'bound' } })).toEqual({ status: 'info', label: 'External' });
+    expect(serviceProvision({ key: 'REDIS_URL', type: 'redis', required: false, resolution: { mode: 'literal' } })).toEqual({ status: 'info', label: 'Value' });
+  });
+
+  it('names an uploaded source plainly', () => {
+    const read = discoverySteps({ status: 'ready', proposal: found, source: { type: 'upload' } })[0]!;
+    expect(read.findings).toContainEqual({ key: 'Source', value: 'Upload', text: true });
+  });
+
   it('says a service’s variable holds its address, not the service itself (R-131)', () => {
     expect(serviceValueLabel('memcached', undefined, true)).toBe('Address of the Memcached Pando creates');
     expect(serviceValueLabel('memcached', undefined, false)).toBe('Address of your Memcached');

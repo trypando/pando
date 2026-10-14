@@ -243,6 +243,20 @@ describe('AppOnboarding', () => {
     expect(html).toContain('Ask AI');
   });
 
+  it('says what AI changed after the plan failed (R-334)', () => {
+    const repaired = {
+      ...detection,
+      screening: {
+        ran: true,
+        function: 'repair_plan',
+        applied: [{ summary: 'set port', amendment: { kind: 'set_port', port: 8080, workload: 'web' } }],
+      },
+    };
+    const html = render({ status: 'ready', answers: {}, commit: '3f9a2c1d0000', detection: repaired } as never);
+    expect(html).toContain('AI changed the plan after it failed.');
+    expect(html).toContain('Serve for web on port 8080.');
+  });
+
   it('has no conversation at all when no AI adapter is configured', () => {
     const plain = { ...detection, screening: { ran: false, skip_code: 'not_configured' } };
     const html = render({ status: 'ready', answers: {}, commit: '3f9a2c1d0000', detection: plain } as never);

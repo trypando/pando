@@ -991,11 +991,8 @@ function subline(
       parts.push(`AI answered ${answered === 1 ? 'one question' : `${answered} questions`}.`);
     }
   }
-  parts.push(
-    missing > 0
-      ? `${missing === 1 ? 'One answer' : `${missing} answers`} needed to deploy.`
-      : 'Everything’s answered.',
-  );
+  const needed = missing === 1 ? 'One answer' : `${missing} answers`;
+  parts.push(missing > 0 ? `${needed} needed to deploy.` : 'Everything’s answered.');
   return parts.join(' ');
 }
 
@@ -2426,7 +2423,8 @@ function AvailableAt({
       </span>
       {how && (
         <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
-          {`Served ${how}${routing?.adapter_ref ? `, by the ${routing.adapter_ref} routing adapter` : ''}.`}
+          Served {how}
+          {routing?.adapter_ref && <>, by the {routing.adapter_ref} routing adapter</>}.
         </span>
       )}
       {editable && (

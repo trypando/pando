@@ -89,4 +89,12 @@ describe('the access dropdown', () => {
     );
     expect(describeChoice({ id: 'role_03', name: 'empty' })).toBe('Open the app, with the Empty role.');
   });
+
+  it('describes each built-in role in a sentence', () => {
+    expect(describeChoice({ id: 'role_viewer', name: 'viewer' })).toBe('Open the app and view its settings and logs.');
+    expect(describeChoice({ id: 'role_operator', name: 'operator' })).toBe(
+      'Open, deploy and restart the app, and change its settings.',
+    );
+    expect(describeChoice({ id: 'role_owner', name: 'owner' })).toBe('Everything, including sharing and deleting the app.');
+  });
 });

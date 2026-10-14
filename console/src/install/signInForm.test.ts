@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   duration,
+  groupsText,
   outcomeText,
   placeholderIn,
   presetValues,
@@ -83,5 +84,16 @@ describe('outcomeText', () => {
   it('says what a real sign-in would do', () => {
     expect(outcomeText({ kind: 'created', display_name: 'Dana', groups_from: 'sign_in' })).toContain('create a new account for Dana');
     expect(outcomeText({ kind: 'refused', message: 'No account.', remedy: 'Ask.', groups_from: 'sign_in' })).toBe('No account. Ask.');
+  });
+});
+
+describe('groupsText', () => {
+  it('says where groups come from', () => {
+    expect(groupsText(undefined, [])).toBe('');
+    expect(groupsText({ kind: 'existing', groups_from: 'scim' }, ['ops'])).toBe('Set by SCIM. Groups in the sign-in are ignored.');
+    expect(groupsText({ kind: 'existing', groups_from: 'sign_in' }, [])).toBe(
+      'No groups sent. Check the groups claim or attribute if you expected some.',
+    );
+    expect(groupsText({ kind: 'existing', groups_from: 'sign_in' }, ['ops', 'dev'])).toBe('Set at each sign-in: ops, dev.');
   });
 });
