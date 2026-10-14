@@ -215,7 +215,13 @@ func (r *Reconciler) Tick(ctx context.Context) {
 
 	lease := r.Reconciles.Lease()
 	keeper := newLeaseKeeper(lease, r.leaseDuration(), r.Logger)
-	defer keeper.begin(ctx)()
+	keeperCtx, stopKeeper := context.WithCancel(ctx)
+	defer stopKeeper()
+	keeperDone := make(chan struct{})
+	go func() { defer close(keeperDone); keeper.run(keeperCtx) }()
+	// Runs before the deferred stopKeeper above, so it stops the keeper itself
+	// and then waits for it to return.
+	defer func() { stopKeeper(); <-keeperDone }()
 
 	sem := make(chan struct{}, Concurrency)
 	var wg sync.WaitGroup
@@ -342,15 +348,6 @@ func (k *leaseKeeper) finish(appID string) {
 		cancel()
 		delete(k.running, appID)
 	}
-}
-
-// begin runs the keeper until ctx ends or the returned stop is called; stop
-// returns once the keeper has.
-func (k *leaseKeeper) begin(ctx context.Context) (stop func()) {
-	ctx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	go func() { defer close(done); k.run(ctx) }()
-	return func() { cancel(); <-done }
 }
 
 // run extends every lease the pass holds at a third of their length, so two

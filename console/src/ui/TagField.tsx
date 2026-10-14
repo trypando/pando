@@ -16,6 +16,7 @@ import { useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Icon } from '@design';
 import { stepIndex, useCloseOnOutside } from './combobox';
+import { ComboOption } from './ComboOption';
 
 export interface TagOption {
   id: string;
@@ -78,12 +79,10 @@ export function TagField({
         {label}
       </label>
       {/* Looks like an Input, and is one field to the person using it: a click
-          anywhere in it goes to the text. Presentation only — the keyboard
-          reaches the input and the remove buttons directly. */}
+          anywhere in it goes to the text. */}
       <div
-        role="presentation"
-        onClick={() => input.current?.focus()}
         style={{
+          position: 'relative',
           display: 'flex',
           flexWrap: 'wrap',
           alignItems: 'center',
@@ -98,12 +97,17 @@ export function TagField({
           cursor: disabled ? 'not-allowed' : 'text',
         }}
       >
+        {/* The click target for the empty part of the field, under the tags and
+            the input. Hidden from assistive technology: the keyboard reaches
+            the input and the remove buttons directly. */}
+        <div aria-hidden="true" onClick={() => input.current?.focus()} style={{ position: 'absolute', inset: 0 }} />
         {value.map((which) => {
           const name = nameOf(which);
           return (
             <span
               key={which}
               style={{
+                position: 'relative',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 'var(--space-1)',
@@ -178,6 +182,7 @@ export function TagField({
             }
           }}
           style={{
+            position: 'relative',
             flex: '1 1 8rem',
             minWidth: '8rem',
             height: 'calc(var(--control-input) - 2 * var(--space-1) - 2 * var(--border-width))',
@@ -213,37 +218,15 @@ export function TagField({
           }}
         >
           {found.map((o, i) => (
-            <div
+            <ComboOption
               key={o.id}
-              role="option"
               id={`${listID}-${i}`}
-              tabIndex={-1}
-              aria-selected={i === at}
-              onMouseDown={(e) => {
-                // Before the input blurs, so the choice lands.
-                e.preventDefault();
-                add(o);
-              }}
-              onMouseEnter={() => setAt(i)}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                gap: 'var(--space-3)',
-                padding: 'var(--space-2) var(--space-3)',
-                borderRadius: 'var(--radius-sm)',
-                cursor: 'pointer',
-                background: i === at ? 'var(--paper-sunken)' : 'transparent',
-                font: 'var(--type-body-ui)',
-                color: 'var(--ink)',
-              }}
-            >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
-              {o.detail && (
-                <span style={{ color: 'var(--ink-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {o.detail}
-                </span>
-              )}
-            </div>
+              active={i === at}
+              onChoose={() => add(o)}
+              onHover={() => setAt(i)}
+              label={o.name}
+              detail={o.detail}
+            />
           ))}
         </div>
       )}

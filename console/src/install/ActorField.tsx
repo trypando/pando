@@ -21,6 +21,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Input } from '@design';
 
 import { matches } from '../ui/search';
+import { ComboOption } from '../ui/ComboOption';
 import { unionPeople, usePeopleSearch, type Person } from '../ui/people';
 import { stepIndex, useCloseOnOutside } from '../ui/combobox';
 
@@ -162,37 +163,16 @@ export function ActorField({
           }}
         >
           {found.map((o, i) => (
-            <div
+            <ComboOption
               key={o.value}
-              role="option"
               id={`${listID}-${i}`}
-              tabIndex={-1}
-              aria-selected={i === at}
-              onMouseDown={(e) => {
-                // Before the input blurs, so the choice lands.
-                e.preventDefault();
-                choose(o);
-              }}
-              onMouseEnter={() => setAt(i)}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                gap: 'var(--space-3)',
-                padding: 'var(--space-2) var(--space-3)',
-                borderRadius: 'var(--radius-sm)',
-                cursor: 'pointer',
-                background: i === at ? 'var(--paper-sunken)' : 'transparent',
-                font: 'var(--type-body-ui)',
-                color: 'var(--ink)',
-              }}
-            >
-              <span style={{ font: 'var(--type-code-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {o.label}
-              </span>
-              <span style={{ color: 'var(--ink-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {o.note}
-              </span>
-            </div>
+              active={i === at}
+              onChoose={() => choose(o)}
+              onHover={() => setAt(i)}
+              label={o.label}
+              detail={o.note}
+              mono
+            />
           ))}
         </div>
       )}

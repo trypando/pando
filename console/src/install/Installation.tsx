@@ -38,6 +38,7 @@ import { Quiet, Screen, messageOf } from './Accounts';
 import { NoMatches, SearchField } from '../ui/SearchField';
 import { matches } from '../ui/search';
 import { Table } from '../ui/Table';
+import { TipButton } from '../ui/TipButton';
 import { BesideField } from '../ui/BesideField';
 import { FieldSkeleton, LineSkeleton } from '../ui/Loading';
 import { ActorField } from './ActorField';
@@ -1439,30 +1440,16 @@ function StartupSettings({ config }: { config?: StartupConfig }) {
 /** Where a setting came from, as a tag; the exact variable or file on hover
  *  or focus. A default is plain words, quieter than a tag, since it is what
  *  most rows are. */
-/** A tooltip's trigger: a plain button, so the keyboard reaches it and the
- *  tooltip opens on focus as it does on hover. */
-const tipTrigger = {
-  display: 'inline-flex',
-  padding: 0,
-  background: 'none',
-  border: 'none',
-  font: 'inherit',
-  color: 'inherit',
-  cursor: 'help',
-} as const;
-
 function SetBy({ source, env }: { source: Source; env: string }) {
   if (source.kind === 'default') {
     return (
-      <Tooltip content={`Not set. Set ${env} to change it.`}>
-        <button
-          type="button"
-          aria-label={`Default: not set. Set ${env} to change it.`}
-          style={{ ...tipTrigger, font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}
-        >
-          Default
-        </button>
-      </Tooltip>
+      <TipButton
+        tip={`Not set. Set ${env} to change it.`}
+        label={`Default: not set. Set ${env} to change it.`}
+        style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}
+      >
+        Default
+      </TipButton>
     );
   }
   const exact =
@@ -1470,11 +1457,9 @@ function SetBy({ source, env }: { source: Source; env: string }) {
       ? (source.name ?? env)
       : `${source.name ?? 'the config file'}${source.key ? `, at ${source.key}` : ''}`;
   return (
-    <Tooltip content={exact}>
-      <button type="button" aria-label={`${source.kind === 'env' ? 'Environment' : 'File'}: ${exact}`} style={tipTrigger}>
-        <Tag tone="contour">{source.kind === 'env' ? 'Environment' : 'File'}</Tag>
-      </button>
-    </Tooltip>
+    <TipButton tip={exact} label={`${source.kind === 'env' ? 'Environment' : 'File'}: ${exact}`}>
+      <Tag tone="contour">{source.kind === 'env' ? 'Environment' : 'File'}</Tag>
+    </TipButton>
   );
 }
 
@@ -2292,15 +2277,13 @@ function GroupedAdapters({
                 {/* What this kind of adapter is for, on hover or focus, so the
                     category names explain themselves without a paragraph each. */}
                 {categoryNote(row.category) && (
-                  <Tooltip content={categoryNote(row.category)} side="right">
-                    <button
-                      type="button"
-                      aria-label={`About ${categoryLabel(row.category)} adapters: ${categoryNote(row.category)}`}
-                      style={tipTrigger}
-                    >
-                      <Icon name="info" size={14} />
-                    </button>
-                  </Tooltip>
+                  <TipButton
+                    tip={categoryNote(row.category)}
+                    label={`About ${categoryLabel(row.category)} adapters: ${categoryNote(row.category)}`}
+                    side="right"
+                  >
+                    <Icon name="info" size={14} />
+                  </TipButton>
                 )}
               </span>
             </div>

@@ -78,6 +78,7 @@ export function Menu({
           ref={list}
           role="menu"
           aria-label={label}
+          tabIndex={-1}
           onKeyDown={onKeyDown}
           style={{
             position: 'absolute',
