@@ -150,7 +150,7 @@ export function AccessAI({ onClose }: { onClose: () => void }) {
                       setRole({
                         ...draft.role!,
                         verbs: e.target.checked
-                          ? [...draft.role!.verbs, v.verb].sort()
+                          ? [...draft.role!.verbs, v.verb].sort((a, b) => a.localeCompare(b))
                           : draft.role!.verbs.filter((x) => x !== v.verb),
                       })
                     }

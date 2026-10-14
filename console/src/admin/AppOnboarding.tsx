@@ -50,6 +50,7 @@ import { api, RequestFailed } from '@api/client';
 import type { Amendment, AppSpec, Question, Report, Source, Turn } from '@api/types.gen';
 import { Loading } from '../ui/Loading';
 import { ScoreBadge } from '../ui/ScoreBadge';
+import { trimTrailingSlashes } from '../ui/text';
 import { Security } from './Security';
 import { AWAITING_IMAGE } from './scanScope';
 import { deletePath } from './delete-app';
@@ -893,7 +894,7 @@ function SourceTags({ source, commit }: { source: Source | undefined; commit?: s
  * Anything else — a local path, a scheme a browser won't open — has no link.
  */
 export function repoPage(url: string): string | undefined {
-  const trimmed = url.trim().replace(/\.git$/, '').replace(/\/+$/, '');
+  const trimmed = trimTrailingSlashes(url.trim().replace(/\.git$/, ''));
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   const ssh = /^(?:ssh:\/\/)?git@([^:/]+)[:/](.+)$/.exec(trimmed);
   if (ssh) return `https://${ssh[1]}/${ssh[2]}`;
@@ -902,7 +903,7 @@ export function repoPage(url: string): string | undefined {
 
 /** `owner/repo` from a clone URL, which is how people name a repository. */
 function repoName(url: string): string {
-  const cleaned = url.replace(/\.git$/, '').replace(/\/+$/, '');
+  const cleaned = trimTrailingSlashes(url.replace(/\.git$/, ''));
   const parts = cleaned.split(/[/:]/).filter(Boolean);
   return parts.length >= 2 ? `${parts[parts.length - 2]}/${parts[parts.length - 1]}` : cleaned;
 }
@@ -939,7 +940,7 @@ function WorkingLine({
   // Each step starts from its first, literal phrase.
   useEffect(() => setTick(0), [id]);
 
-  const began = startedAt ? Date.parse(startedAt) : NaN;
+  const began = startedAt ? Date.parse(startedAt) : Number.NaN;
   const seconds = Number.isNaN(began) ? undefined : Math.max(0, Math.floor((now - began) / 1_000));
   const phrase = phrases[(reduced ? 0 : tick) % phrases.length];
   const color = step?.ai ? 'var(--water)' : 'var(--ink-secondary)';

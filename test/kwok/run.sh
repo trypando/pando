@@ -19,13 +19,13 @@ KUBECONFIG_FILE=$WORK/kubeconfig
 OUT=${KWOK_OUT:-$WORK/results.md}
 KWOKCTL=${KWOKCTL:-$(command -v kwokctl || echo "$(go env GOPATH)/bin/kwokctl")}
 
-if [ ! -x "$KWOKCTL" ]; then
+if [[ ! -x "$KWOKCTL" ]]; then
   echo "kwokctl is not installed. Install it with: go install sigs.k8s.io/kwok/cmd/kwokctl@v0.7.0" >&2
   exit 1
 fi
 
 cleanup() {
-  if [ -z "${KWOK_KEEP:-}" ]; then
+  if [[ -z "${KWOK_KEEP:-}" ]]; then
     "$KWOKCTL" delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
     # kwokctl has been seen to forget a cluster whose containers it had not
     # finished removing; remove what is left of this one by name.

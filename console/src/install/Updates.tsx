@@ -199,12 +199,12 @@ function Changelog({ notes }: { notes: string }) {
 
   for (const raw of notes.split('\n')) {
     const line = raw.trimEnd();
-    const heading = /^#{1,6}\s+(.*)$/.exec(line.trim());
+    const heading = /^#{1,6}\s(.*)$/.exec(line.trim());
     if (heading) {
       flush();
       blocks.push(
         <h3 key={blocks.length} style={{ font: 'var(--type-label)', color: 'var(--ink-secondary)', margin: 'var(--space-2) 0 0' }}>
-          {heading[1]}
+          {heading[1]?.trim()}
         </h3>,
       );
     } else if (/^\s*[-*]\s+/.test(line)) {

@@ -50,7 +50,7 @@ export function Terrain({
   /** Whether the leading edge is still moving: the tip is shown only then. */
   moving: boolean;
 }) {
-  const id = useId().replace(/:/g, '');
+  const id = useId().replaceAll(':', '');
   const grow = useRef<SVGRectElement>(null);
   const tip = useRef<SVGSVGElement>(null);
   // Where the ridge is drawn to. Unset until the first frame: opened on a

@@ -1439,13 +1439,29 @@ function StartupSettings({ config }: { config?: StartupConfig }) {
 /** Where a setting came from, as a tag; the exact variable or file on hover
  *  or focus. A default is plain words, quieter than a tag, since it is what
  *  most rows are. */
+/** A tooltip's trigger: a plain button, so the keyboard reaches it and the
+ *  tooltip opens on focus as it does on hover. */
+const tipTrigger = {
+  display: 'inline-flex',
+  padding: 0,
+  background: 'none',
+  border: 'none',
+  font: 'inherit',
+  color: 'inherit',
+  cursor: 'help',
+} as const;
+
 function SetBy({ source, env }: { source: Source; env: string }) {
   if (source.kind === 'default') {
     return (
       <Tooltip content={`Not set. Set ${env} to change it.`}>
-        <span tabIndex={0} style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', cursor: 'help' }}>
+        <button
+          type="button"
+          aria-label={`Default: not set. Set ${env} to change it.`}
+          style={{ ...tipTrigger, font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}
+        >
           Default
-        </span>
+        </button>
       </Tooltip>
     );
   }
@@ -1455,9 +1471,9 @@ function SetBy({ source, env }: { source: Source; env: string }) {
       : `${source.name ?? 'the config file'}${source.key ? `, at ${source.key}` : ''}`;
   return (
     <Tooltip content={exact}>
-      <span tabIndex={0} aria-label={`${source.kind === 'env' ? 'Environment' : 'File'}: ${exact}`} style={{ cursor: 'help' }}>
+      <button type="button" aria-label={`${source.kind === 'env' ? 'Environment' : 'File'}: ${exact}`} style={tipTrigger}>
         <Tag tone="contour">{source.kind === 'env' ? 'Environment' : 'File'}</Tag>
-      </span>
+      </button>
     </Tooltip>
   );
 }
@@ -2277,14 +2293,13 @@ function GroupedAdapters({
                     category names explain themselves without a paragraph each. */}
                 {categoryNote(row.category) && (
                   <Tooltip content={categoryNote(row.category)} side="right">
-                    <span
-                      tabIndex={0}
-                      role="img"
+                    <button
+                      type="button"
                       aria-label={`About ${categoryLabel(row.category)} adapters: ${categoryNote(row.category)}`}
-                      style={{ display: 'inline-flex', cursor: 'help' }}
+                      style={tipTrigger}
                     >
                       <Icon name="info" size={14} />
-                    </span>
+                    </button>
                   </Tooltip>
                 )}
               </span>

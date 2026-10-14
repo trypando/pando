@@ -31,6 +31,7 @@ import type { App } from '@api/types.gen';
 import { refusal } from '../install/Accounts';
 import { covers, ready as sourceReady, useSources } from '../install/Sources';
 import { useSettled } from '../ui/paged';
+import { trimTrailingSlashes } from '../ui/text';
 import { CredentialFields, credentialBody, credentialComplete, emptyCredential, type CredentialDraft } from './RegistryCredential';
 import { FilePicker, sendFiles } from './UploadSource';
 import type { PickedFile } from './pack';
@@ -256,7 +257,7 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
 
 /** A name from a repository URL or an image reference. */
 function nameFrom(source: string): string {
-  const trimmed = source.trim().replace(/\/+$/, '');
+  const trimmed = trimTrailingSlashes(source.trim());
   if (trimmed === '') return '';
 
   // An image reference: drop the registry and the tag or digest.

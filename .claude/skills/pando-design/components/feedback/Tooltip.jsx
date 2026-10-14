@@ -12,6 +12,7 @@ export function Tooltip({ content, side = 'top', style, children, ...rest }) {
     <span
       style={{ position: 'relative', display: 'inline-flex', ...style }}
       onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}
+      onFocus={() => setShow(true)} onBlur={() => setShow(false)}
       {...rest}
     >
       {children}

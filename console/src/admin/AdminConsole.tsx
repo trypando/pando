@@ -321,7 +321,12 @@ export function AdminConsole({
           </header>
           {menuOpen && (
             <div role="dialog" aria-modal="true" aria-label="Admin menu" style={{ position: 'fixed', inset: 0, zIndex: 20 }}>
-              <div onClick={() => setMenuOpen(false)} style={{ position: 'absolute', inset: 0, background: 'var(--scrim)' }} />
+              {/* The scrim: a click closes the menu, and Escape does for the keyboard. */}
+              <div
+                aria-hidden="true"
+                onClick={() => setMenuOpen(false)}
+                style={{ position: 'absolute', inset: 0, background: 'var(--scrim)' }}
+              />
               <div
                 style={{
                   position: 'absolute',

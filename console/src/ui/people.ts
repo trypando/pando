@@ -33,7 +33,9 @@ const FOUND = 8;
  * accounts and are left out.
  */
 export function accountIDs(ids: Array<string | undefined | null>): string[] {
-  return [...new Set(ids.filter((id): id is string => typeof id === 'string' && id.startsWith('usr_')))].sort();
+  return [...new Set(ids.filter((id): id is string => typeof id === 'string' && id.startsWith('usr_')))].sort((a, b) =>
+    a.localeCompare(b),
+  );
 }
 
 /** `ids` in requests of at most `size`. */

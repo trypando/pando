@@ -61,7 +61,7 @@ export function folderOf(picked: readonly PickedFile[]): string {
 
 /** A path with separators normalized, or null for one that leaves the root. */
 function clean(raw: string): string | null {
-  const parts = raw.replace(/\\/g, '/').split('/').filter((s) => s !== '' && s !== '.');
+  const parts = raw.replaceAll('\\', '/').split('/').filter((s) => s !== '' && s !== '.');
   if (parts.length === 0 || parts.includes('..')) return null;
   return parts.join('/');
 }

@@ -26,8 +26,8 @@ OUT = ROOT / "docs" / "traceability" / "requirements-index.md"
 # requirements: R-070/071, R-204/205. Without the suffix group the second half of
 # every compound reference reads as an undesigned requirement.
 RID = re.compile(r"R-\d{3}(?:/\d{3})*")
-DEFINITION = re.compile(r"^\*\*(R-\d{3})\s*((?:\[[^\]]+\]\s*)*)\*\*\s*(.*)$")
-HEADING = re.compile(r"^##+\s+(.*)$")
+DEFINITION = re.compile(r"^\*\*(R-\d{3})\s*((?:\[[^\]]+\]\s*)*)\*\*(.*)$")
+HEADING = re.compile(r"^##+[ \t](.*)$")
 TEST_NAME = re.compile(r"func\s+(TestR(\d{3})\w*)\s*\(")
 
 

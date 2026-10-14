@@ -17,7 +17,7 @@
 // "Actor or target" filter: those are accounts, and a kind is not an ID that
 // can be on either side.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Input } from '@design';
 
 import { matches } from '../ui/search';
@@ -78,6 +78,7 @@ export function ActorField({
   }, [value, known, text]);
   const [open, setOpen] = useState(false);
   const [at, setAt] = useState(0);
+  const listID = useId();
   const root = useRef<HTMLDivElement>(null);
 
   // Cleared from outside — "Clear filters" — clears the text too.
@@ -109,6 +110,8 @@ export function ActorField({
         role="combobox"
         aria-expanded={open && found.length > 0}
         aria-autocomplete="list"
+        aria-controls={listID}
+        aria-activedescendant={open && found[at] !== undefined ? `${listID}-${at}` : undefined}
         placeholder="Username, email or ID"
         value={text}
         onChange={(e) => {
@@ -142,6 +145,7 @@ export function ActorField({
       {open && found.length > 0 && (
         <div
           role="listbox"
+          id={listID}
           aria-label={`Matching ${label.toLowerCase()}`}
           style={{
             position: 'absolute',
@@ -161,6 +165,8 @@ export function ActorField({
             <div
               key={o.value}
               role="option"
+              id={`${listID}-${i}`}
+              tabIndex={-1}
               aria-selected={i === at}
               onMouseDown={(e) => {
                 // Before the input blurs, so the choice lands.

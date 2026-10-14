@@ -30,7 +30,7 @@ const EXEMPT_LOGINS = new Set(['ben-meeker']);
 // signature different.
 function normalize(text) {
   return (text || '')
-    .replace(/`/g, '')
+    .replaceAll('`', '')
     .trim()
     .replace(/\s+/g, ' ')
     .replace(/\.$/, '')
@@ -46,12 +46,12 @@ function isSignature(body) {
 // account, such as Copilot, are exempt by account type instead.
 const AI_COAUTHOR_EMAILS = new Set(['noreply@anthropic.com', 'cursoragent@cursor.com']);
 
-const COAUTHOR_TRAILER = /^co-authored-by:\s*(.*?)\s*<([^>]+)>\s*$/gim;
+const COAUTHOR_TRAILER = /^co-authored-by:([^<\n]*)<([^>\n]+)>[ \t]*$/gim;
 const NOREPLY = /^(?:\d+\+)?([^@+]+)@users\.noreply\.github\.com$/i;
 
 function coAuthorsOf(message) {
   return [...(message || '').matchAll(COAUTHOR_TRAILER)].map(([, name, email]) => ({
-    name: name || email,
+    name: name.trim() || email,
     email: email.toLowerCase(),
   }));
 }

@@ -782,11 +782,11 @@ export interface ComposeNote {
  * A message not in the importer's shape is kept whole.
  */
 export function composeNote(message: string): ComposeNote {
-  const match = /^In the compose service "([^"]+)", `([^`]+)` was not carried over as written\.\s*(.*)$/s.exec(
+  const match = /^In the compose service "([^"]+)", `([^`]+)` was not carried over as written\.(.*)$/s.exec(
     message.trim(),
   );
   if (!match) return { gist: message, full: message };
-  const rest = match[3] ?? '';
+  const rest = (match[3] ?? '').trimStart();
   const sentence = /^(.+?[.!?])(\s|$)/s.exec(rest);
   return { service: match[1], construct: match[2], gist: (sentence?.[1] ?? rest).trim(), full: message };
 }
@@ -797,7 +797,7 @@ export function composeNote(message: string): ComposeNote {
 function hashString(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
+    h ^= s.codePointAt(i) ?? 0;
     h = Math.imul(h, 16777619);
   }
   return h >>> 0;
@@ -807,7 +807,7 @@ function hashString(s: string): number {
 function random(seed: number): () => number {
   let a = seed || 1;
   return () => {
-    a = (a + 0x6d2b79f5) | 0;
+    a = (a + 0x6d2b79f5) >>> 0; // kept to 32 bits, not truncated
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;

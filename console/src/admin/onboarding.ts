@@ -10,6 +10,7 @@
 
 import type { Amendment, AppSpec, Outcome } from '@api/types.gen';
 import { looksSensitive } from './sensitive';
+import { trimTrailingSlashes } from '../ui/text';
 
 /** The warning code an AI screener's notes carry (design 01 §2.8). */
 export const SCREENING_ADVISORY = 'WARN_SCREENING_ADVISORY';
@@ -121,7 +122,7 @@ export function suggestions(outcome: Outcome | undefined, spec: AppSpec | undefi
 /** A mount path as the server compares them: no trailing slash. */
 function cleanPath(p: string): string {
   const trimmed = p.trim();
-  return trimmed.length > 1 ? trimmed.replace(/\/+$/, '') : trimmed;
+  return trimmed.length > 1 ? trimTrailingSlashes(trimmed) : trimmed;
 }
 
 /** One row of the variables form. */
@@ -235,7 +236,7 @@ export function absoluteAddress(address: string | undefined, protocol = 'http:')
   if (!address) return undefined;
   const full = address.startsWith('//') ? `${protocol}${address}` : address;
   if (!/^https?:\/\//.test(full)) return undefined;
-  return full.replace(/\/+$/, '');
+  return trimTrailingSlashes(full);
 }
 
 // Names that mean "this app's own public URL" or "its own domain". Matched on
@@ -285,7 +286,7 @@ function randomBinary(bytes: number): string {
   const raw = new Uint8Array(bytes);
   crypto.getRandomValues(raw);
   let binary = '';
-  for (const b of raw) binary += String.fromCharCode(b);
+  for (const b of raw) binary += String.fromCodePoint(b);
   return binary;
 }
 

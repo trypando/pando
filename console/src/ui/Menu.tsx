@@ -69,7 +69,7 @@ export function Menu({
   };
 
   return (
-    <div ref={root} style={{ position: 'relative' }} onKeyDown={onKeyDown}>
+    <div ref={root} style={{ position: 'relative' }}>
       <IconButton label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => set(!open)}>
         <Icon name="ellipsis-vertical" size={16} />
       </IconButton>
@@ -78,6 +78,7 @@ export function Menu({
           ref={list}
           role="menu"
           aria-label={label}
+          onKeyDown={onKeyDown}
           style={{
             position: 'absolute',
             top: 'calc(100% + var(--space-1))',

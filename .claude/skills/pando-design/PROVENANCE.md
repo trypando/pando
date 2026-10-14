@@ -20,7 +20,7 @@ before a re-sync, which must not overwrite them.
 
 ### Local divergence, pending upstream
 
-Two changes have been made here and have **not** gone back to the design project.
+Three changes have been made here and have **not** gone back to the design project.
 A re-sync will revert them, so push them first.
 
 - `components/brand/MapCollar.jsx` (new, with its `.d.ts` and `.prompt.md`),
@@ -48,9 +48,14 @@ A re-sync will revert them, so push them first.
   `aria-modal="true"`. Now `position: fixed`, with `overflowY: auto` so a dialog
   taller than the viewport can reach its own footer, and Escape closes it.
 
-The `Dialog` change is a correctness bug rather than a change to the visual
-language, which is why it was fixed here rather than waiting — but both are still
-divergences, and the rule above is the rule.
+- `components/feedback/Tooltip.jsx` — it opened on hover only, so a keyboard
+  user who tabbed to its trigger never saw it. It now opens on focus and closes
+  on blur as well; React's focus events bubble, so the trigger inside it can be
+  any focusable element, such as a button.
+
+The `Dialog` and `Tooltip` changes are correctness bugs rather than changes to the
+visual language, which is why they were fixed here rather than waiting — but all
+of these are still divergences, and the rule above is the rule.
 
 **Still missing, and not fixed here:** `Dialog` traps no focus. `aria-modal` says
 it does. Tab still walks the page behind it, which for somebody using a keyboard

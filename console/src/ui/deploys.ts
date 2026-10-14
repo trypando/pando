@@ -45,7 +45,7 @@ export function deployLabel(status: string, result?: string): string {
     case 'pending':
       return 'Queued';
     default:
-      return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, ' ');
+      return status.charAt(0).toUpperCase() + status.slice(1).replaceAll('_', ' ');
   }
 }
 

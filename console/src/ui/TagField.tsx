@@ -12,7 +12,7 @@
 // the empty field takes out the last tag, as it does in the address field of
 // most mail clients.
 
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Icon } from '@design';
 import { stepIndex, useCloseOnOutside } from './combobox';
@@ -55,6 +55,7 @@ export function TagField({
   const [open, setOpen] = useState(false);
   const [focus, setFocus] = useState(false);
   const [at, setAt] = useState(0);
+  const listID = useId();
   const root = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const id = 'f-' + label.replace(/\W+/g, '-').toLowerCase();
@@ -77,8 +78,10 @@ export function TagField({
         {label}
       </label>
       {/* Looks like an Input, and is one field to the person using it: a click
-          anywhere in it goes to the text. */}
+          anywhere in it goes to the text. Presentation only — the keyboard
+          reaches the input and the remove buttons directly. */}
       <div
+        role="presentation"
         onClick={() => input.current?.focus()}
         style={{
           display: 'flex',
@@ -143,6 +146,8 @@ export function TagField({
           role="combobox"
           aria-expanded={open && found.length > 0}
           aria-autocomplete="list"
+          aria-controls={listID}
+          aria-activedescendant={open && found[at] !== undefined ? `${listID}-${at}` : undefined}
           disabled={disabled}
           value={text}
           placeholder={value.length === 0 ? placeholder : ''}
@@ -191,6 +196,7 @@ export function TagField({
       {open && !disabled && found.length > 0 && (
         <div
           role="listbox"
+          id={listID}
           aria-label={`Matching ${label.toLowerCase()}`}
           style={{
             position: 'absolute',
@@ -210,6 +216,8 @@ export function TagField({
             <div
               key={o.id}
               role="option"
+              id={`${listID}-${i}`}
+              tabIndex={-1}
               aria-selected={i === at}
               onMouseDown={(e) => {
                 // Before the input blurs, so the choice lands.

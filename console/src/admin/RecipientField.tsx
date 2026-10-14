@@ -14,7 +14,7 @@
 // The same shape as the audit log's ActorField — an Input with a listbox under
 // it, arrow keys and Enter — so the two pickers in the console behave alike.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Input } from '@design';
 
@@ -50,6 +50,7 @@ export function RecipientField({
   const [text, setText] = useState(value?.label ?? '');
   const [open, setOpen] = useState(false);
   const [at, setAt] = useState(0);
+  const listID = useId();
   const root = useRef<HTMLDivElement>(null);
   const q = useSettled(text.trim(), 200);
 
@@ -93,6 +94,8 @@ export function RecipientField({
         role="combobox"
         aria-expanded={open && options.length > 0}
         aria-autocomplete="list"
+        aria-controls={listID}
+        aria-activedescendant={open && options[at] !== undefined ? `${listID}-${at}` : undefined}
         placeholder={kind === 'user' ? 'Username, name or email' : 'Group name'}
         value={text}
         autoComplete="off"
@@ -122,6 +125,7 @@ export function RecipientField({
       {open && (options.length > 0 || none) && (
         <div
           role="listbox"
+          id={listID}
           aria-label={kind === 'user' ? 'Matching accounts' : 'Matching groups'}
           style={{
             position: 'absolute',
@@ -153,6 +157,8 @@ export function RecipientField({
             <div
               key={o.id}
               role="option"
+              id={`${listID}-${i}`}
+              tabIndex={-1}
               aria-selected={i === at}
               onMouseDown={(e) => {
                 // Before the input blurs, so the choice lands.

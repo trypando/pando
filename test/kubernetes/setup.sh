@@ -43,7 +43,7 @@ if ! grep -q pando.test <<<"$corefile"; then
   k -n kube-system rollout status deployment/coredns --timeout=3m
 fi
 
-if [ -z "${SKIP_BUILD:-}" ]; then
+if [[ -z "${SKIP_BUILD:-}" ]]; then
   docker build -t "$IMAGE" "$ROOT"
 fi
 kind load docker-image --name "$CLUSTER" "$IMAGE"

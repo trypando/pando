@@ -252,7 +252,7 @@ export function adapterRequest(kind: AdapterKind, form: AdapterForm, enabled?: b
     const text = typeof v === 'string' ? v.trim() : '';
     if (text === '') continue;
     if (f.credential) credentials[f.key] = text;
-    else if (f.type === 'int') config[f.key] = parseInt(text, 10);
+    else if (f.type === 'int') config[f.key] = Number.parseInt(text, 10);
     else config[f.key] = text;
   }
 
