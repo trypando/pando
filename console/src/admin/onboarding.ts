@@ -312,12 +312,19 @@ export function generateFor(format?: string): string {
 /**
  * Slot-filled values a deploy would be refused without (R-132): required, not
  * created by Pando, not marked optional by the person, and empty. One per
- * slot: the parts of one database are one thing to give.
+ * slot: the parts of one database are one thing to give. A service Pando
+ * would create that the person said they provide (`own`) needs its value:
+ * accepted empty, Pando would create one after all, against what they chose.
  */
-export function neededValues(rows: VariableRow[], optional: Set<string> = new Set()): VariableRow[] {
+export function neededValues(
+  rows: VariableRow[],
+  optional: Set<string> = new Set(),
+  own: (slot: string) => boolean = () => false,
+): VariableRow[] {
   const seen = new Set<string>();
   return rows.filter((r) => {
-    if (!r.slot || !r.slot.required || optional.has(r.slot.key) || r.slot.provisioned || r.value.trim()) {
+    if (!r.slot || !r.slot.required || optional.has(r.slot.key) || r.value.trim()) return false;
+    if (r.slot.provisioned && !own(r.slot.key)) {
       return false;
     }
     if (seen.has(r.slot.key)) return false;

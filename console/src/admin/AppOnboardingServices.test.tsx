@@ -86,6 +86,11 @@ function between(from: string, to: string): string {
   return text.slice(start, text.indexOf(to, start));
 }
 
+/** How many values carry a Required tag. */
+function required(): number {
+  return container.querySelectorAll('button[aria-label="Required. Mark not required."]').length;
+}
+
 function button(label: string): HTMLButtonElement {
   const found = [...container.querySelectorAll('button')].find((b) => b.textContent === label);
   if (!found) throw new Error(`no button "${label}"`);
@@ -123,6 +128,8 @@ describe('AppOnboarding, the services an app needs', () => {
     expect(variables).toContain('Password of your PostgreSQL');
     expect(container.querySelector('input[placeholder="Such as host:11211"]')).toBeNull();
     expect(container.querySelector('input[placeholder="Your PostgreSQL’s host"]')).not.toBeNull();
+    // Required is asked of the PostgreSQL's parts, not of what Pando creates.
+    expect(required()).toBe(2);
 
     // Use your own: the service, its variable and the plan all say so.
     await act(async () => button('Use your own Memcached').click());
@@ -132,6 +139,8 @@ describe('AppOnboarding, the services an app needs', () => {
     expect(variables).toContain('Address of your Memcached');
     expect(container.querySelector('input[placeholder="Such as host:11211"]')).not.toBeNull();
     expect(between('Processes and services', 'Ask AI')).not.toContain('Pando creates it');
+    // Your own Memcached's address is now yours to give.
+    expect(required()).toBe(3);
 
     // And back: Pando creates it again, and the field is gone.
     await act(async () => button('Let Pando create the Memcached').click());

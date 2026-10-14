@@ -290,7 +290,9 @@ field; once the person uses their own, *Address of your Memcached* and a field w
 the shape the value takes (`host:11211` for Memcached, a URL for a database). Listed only as its
 variable, Yopass's `MEMCACHED` read as a setting to choose rather than a Memcached the app needs, with
 *Use your own Memcached* offered on a variable. A variable of a service Pando creates carries no
-*Required* tag: left empty, Pando creates the service, so nothing blocks the deploy.
+*Required* tag, since nothing is asked of the person; once they use their own, it does, and *Accept
+and deploy* waits for it — accepted empty, Pando would create the service after all, against what they
+chose.
 
 **[D] Ask AI about this plan.** When an AI adapter is available for the app, the review ends with a
 conversation: the person says what is wrong, AI checks the repository and changes what it can

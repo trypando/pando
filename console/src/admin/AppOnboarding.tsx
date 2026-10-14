@@ -719,7 +719,7 @@ export function AppOnboarding({
 
       {done && !failed && !blocked && (canEdit || canDelete) && (
         <ActionBar
-          {...barStatus(missing, Object.keys(problems).length, neededValues(rows, optional), canDeploy, canEdit)}
+          {...barStatus(missing, Object.keys(problems).length, neededValues(rows, optional, ownService), canDeploy, canEdit)}
           error={accept.isError ? accept.error : undefined}
         >
           {canDelete && rejectButton}
@@ -740,7 +740,7 @@ export function AppOnboarding({
               disabled={
                 missing.length > 0 ||
                 Object.keys(problems).length > 0 ||
-                neededValues(rows, optional).length > 0 ||
+                neededValues(rows, optional, ownService).length > 0 ||
                 accept.isPending
               }
               onClick={() => accept.mutate(true)}
@@ -1739,9 +1739,10 @@ function Variables({
                 }
                 workload={many && !isNew ? row.workload : undefined}
                 required={
-                  // Not for a service Pando would create: left empty, Pando
-                  // creates it after all, so nothing blocks the deploy.
-                  slot?.required && !slot.provisioned
+                  // Not for a service Pando creates: nothing is asked of the
+                  // person. Once they provide their own, its value is
+                  // (neededValues).
+                  slot?.required && (!slot.provisioned || own(slot.key))
                     ? {
                         optional: optional.has(slot.key),
                         filled: row.value.trim() !== '',

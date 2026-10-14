@@ -158,6 +158,19 @@ describe('neededValues', () => {
     expect(neededValues(rows, new Set(['CREW_TOKEN_ENC_KEY']))).toEqual([]); // marked not required by the person
   });
 
+  it('asks for a service’s address once the person provides their own (R-131)', () => {
+    const rows = variableRows({
+      workloads: [{ name: 'web', primary: true, env: [{ key: 'MEMCACHED', slot_ref: 'MEMCACHED' }] }],
+      slots: [{ key: 'MEMCACHED', type: 'memcached', required: true, resolution: { mode: 'provisioned' } }],
+    } as AppSpec);
+    // Pando creates it: nothing to give.
+    expect(neededValues(rows)).toEqual([]);
+    // Your own: its address, or the deploy would create one after all.
+    const own = (slot: string) => slot === 'MEMCACHED';
+    expect(neededValues(rows, new Set(), own).map((r) => r.key)).toEqual(['MEMCACHED']);
+    expect(neededValues([{ ...rows[0]!, value: 'cache:11211' }], new Set(), own)).toEqual([]);
+  });
+
   it('counts the parts of one database once (R-131)', () => {
     const rows = variableRows({
       workloads: [
