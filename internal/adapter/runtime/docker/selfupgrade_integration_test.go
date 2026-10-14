@@ -131,6 +131,30 @@ func TestR359_TheSwapKeepsPandosConfigurationAndPutsTheOldOneBack(t *testing.T) 
 		require.Error(t, err, "the old container is gone")
 	})
 
+	// The swap creates the new container from what it verified, a digest
+	// (R-357); an image ID stands in for one here. The tag the deployment
+	// named must survive it, or the next upgrade refuses a pin (R-355).
+	t.Run("a second upgrade still knows the tag Pando was deployed by", func(t *testing.T) {
+		name := "pando-upg-twice-" + stamp
+		start(name)
+		for _, image := range []string{imageID(t, goodImage), imageID(t, oldImage)} {
+			old, err := r.Inspect(ctx, name)
+			require.NoError(t, err)
+			require.NoError(t, r.Stop(ctx, old))
+			_, err = r.Recreate(ctx, old, image)
+			require.NoError(t, err)
+			require.NoError(t, r.Finish(ctx, old, image, ""))
+			require.Equal(t, image, inspectContainer(t, name).Image)
+		}
+
+		a := docker.New()
+		cfg, _ := json.Marshal(map[string]string{"proxy_container": name})
+		require.NoError(t, a.Configure(ctx, cfg))
+		self, err := a.Self(ctx)
+		require.NoError(t, err)
+		require.Equal(t, strings.TrimPrefix(oldImage, "localhost/"), self.Image, "the deployment's reference, not the digest the swap used")
+	})
+
 	t.Run("a version that exits is discarded and the old one started again", func(t *testing.T) {
 		name := "pando-upg-bad-" + stamp
 		start(name)

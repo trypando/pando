@@ -38,6 +38,21 @@ const labelUpgradeHelper = "io.pando.upgrade-helper"
 // preUpgradeSuffix names the old container while the new one is checked.
 const preUpgradeSuffix = "-pre-upgrade"
 
+// labelDeployedImage keeps the image reference Pando's deployment named —
+// trypando/pando:latest, say — on a container an upgrade recreated. The swap
+// creates it from the digest it verified (R-357), so its own image reference
+// is that digest, and read as the deployment's it would refuse the next
+// upgrade as a pin (R-355).
+const labelDeployedImage = "io.pando.deployed-image"
+
+// deployedImage is the image reference Pando's deployment named for c.
+func deployedImage(c *container.InspectResponse) string {
+	if ref := c.Config.Labels[labelDeployedImage]; ref != "" {
+		return ref
+	}
+	return c.Config.Image
+}
+
 var _ api.SelfUpgrader = (*Adapter)(nil)
 
 // Self implements api.SelfUpgrader.
@@ -50,7 +65,7 @@ func (a *Adapter) Self(ctx context.Context) (api.SelfWorkload, error) {
 	}
 	// Familiar, as the deployment named it: Podman reports
 	// "docker.io/library/…" for what Compose called by its short name.
-	return api.SelfWorkload{ID: self.ID, Image: familiarRef(self.Config.Image)}, nil
+	return api.SelfWorkload{ID: self.ID, Image: familiarRef(deployedImage(self))}, nil
 }
 
 // PullImage implements api.SelfUpgrader.
@@ -225,6 +240,7 @@ func (r *Replacer) Recreate(ctx context.Context, old Old, image string) (string,
 	cfg.Hostname = ""
 	cfg.Env = without(cfg.Env, oldImage.Config.Env)
 	cfg.Labels = withoutLabels(cfg.Labels, oldImage.Config.Labels)
+	cfg.Labels[labelDeployedImage] = deployedImage(&old.inspect)
 	if slices.Equal(cfg.Entrypoint, oldImage.Config.Entrypoint) {
 		cfg.Entrypoint = nil
 	}

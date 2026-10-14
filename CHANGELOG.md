@@ -19,6 +19,19 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Fixed
+
+- **An in-place upgrade blocked the next one** (R-355). The upgrade recreated Pando's container from
+  the image digest it had verified, and the next upgrade read that digest as the deployment's own pin
+  and refused: "Pando's image is pinned to a digest". The recreated container now keeps the image
+  reference the deployment named, and the next upgrade reads that.
+
+### Upgrade notes
+
+- If Pando was upgraded in place before this release, its container is still pinned to a digest, and
+  the version running it cannot upgrade itself. Recreate the container once from your deployment
+  (with Compose, `docker compose up -d --force-recreate pando`), then upgrade from the console.
+
 ## [0.6.0] - 2026-10-14
 
 ### Security
