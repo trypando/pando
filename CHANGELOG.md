@@ -23,10 +23,8 @@ Unreleased above it. -->
 
 ### Security
 
-No advisories were published for this release.
+No new advisories.
 
-- **CVE-2026-32285** (denial of service) in `github.com/buger/jsonparser` v1.1.2, which reaches
-  Pando through the Anthropic SDK used by the AI adapter. It is now v1.6.1 (#237).
 - `npm ci` runs with `--ignore-scripts` in the image build and CI, so a compromised console
   dependency cannot run code at install time (#235).
 - The Kubernetes manifests' `pando-edge-traefik` Role names the ten `traefik.io` kinds Traefik
