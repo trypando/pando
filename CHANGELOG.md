@@ -19,8 +19,25 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-14
+
+### Security
+
+No new advisories.
+
+### Changed
+
+- Console copy is shorter throughout (#240). Section descriptions keep one sentence, column
+  headers use one term each (**Source**, **Scope**, **Destination**, **Type**, **Members**), and
+  settings read as noun phrases, such as **Allow CPU oversubscription** and **Stop idle apps after
+  (days)**. Requirement IDs no longer appear in the Policy screen's text.
+
 ### Fixed
 
+- **The notifications inbox opened behind the app tiles** (#239, R-377). It now opens above
+  everything on the page, from the launcher and from the admin console.
+- The Adapters screen's button read "Add a image_registry adapter"; it now reads "Add an image
+  registry adapter" (#240).
 - **An in-place upgrade blocked the next one** (#241, R-355). The upgrade recreated Pando's container from
   the image digest it had verified, and the next upgrade read that digest as the deployment's own pin
   and refused: "Pando's image is pinned to a digest". The recreated container now keeps the image
@@ -996,7 +1013,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.6.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.6.1...main
+[0.6.1]: https://github.com/trypando/pando/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/trypando/pando/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/trypando/pando/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/trypando/pando/compare/v0.3.0...v0.4.0
