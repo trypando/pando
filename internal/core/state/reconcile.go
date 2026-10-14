@@ -466,6 +466,30 @@ func (r *Reconciles) ClearFailures(ctx context.Context, appID string) error {
 	return nil
 }
 
+// RecoverCurrentDeploy records that an app's current deploy came up after all.
+//
+// A deploy waits a bounded time for health and finishes with result_state
+// `degraded` when the app has not passed by then. An app that is only slow to
+// start — a migration on boot, a long warm-up — passes later, and the history
+// must not go on saying "Deployed, not healthy" about an app that is serving
+// traffic (R-221, issue #233). Only the current deploy, the latest one that
+// succeeded: an older row describes what happened then, and stays as it was.
+func (r *Reconciles) RecoverCurrentDeploy(ctx context.Context, appID string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE deployments SET result_state = $2
+		WHERE id = (
+			SELECT id FROM deployments
+			WHERE app_id = $1 AND status = $3
+			ORDER BY finished_at DESC NULLS LAST, id DESC
+			LIMIT 1
+		) AND result_state = $4
+	`, appID, StateRunning, DeploySucceeded, StateDegraded)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not record that the app's deploy came up.", err)
+	}
+	return nil
+}
+
 // SetAppliedEnvFingerprint records the environment an app was last applied with.
 //
 // R-193's only mechanism. Observe returns no environment and deliberately

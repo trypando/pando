@@ -665,6 +665,12 @@ func (r *Reconciler) recordObservedVolumes(ctx context.Context, app state.Reconc
 func (r *Reconciler) settle(ctx context.Context, app state.Reconcilable, to string) {
 	if app.State != to {
 		_ = r.Apps.SetState(ctx, app.ID, to)
+		// Coming up after the deploy stopped waiting is still coming up: the
+		// current deploy reads as healthy from here on (R-221, issue #233).
+		// On the transition only, so a settled app costs no write.
+		if to == state.StateRunning {
+			_ = r.Reconciles.RecoverCurrentDeploy(ctx, app.ID)
+		}
 	}
 	// Only here. A flapping app that recovers between failures still
 	// accumulates toward the threshold, because flapping is a failure mode.

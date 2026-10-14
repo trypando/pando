@@ -57,7 +57,7 @@ any state ──delete──> archived
 | `deploying` | apply failed | `failed` | Nothing partial is left behind |
 | `running` | health fails | `degraded` | |
 | `running` | workload missing | `degraded` | Drift; reconciler restores |
-| `degraded` | health passes | `running` | Restart counter resets |
+| `degraded` | health passes | `running` | Restart counter resets; the current deploy's `result_state` moves `degraded` → `running`, older deploys keep theirs (R-221, issue #233) |
 | `degraded` | give-up threshold | `failed` | Notification fires |
 | `degraded` \| `running` | stop requested | `stopped` | |
 | `stopped` | start requested | `deploying` | |

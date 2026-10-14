@@ -628,6 +628,51 @@ func TestACorrectionThatHoldsClearsTheCounter(t *testing.T) {
 	require.Equal(t, state.StateRunning, h.state(t))
 }
 
+// R-221: a deploy that stopped waiting before the app passed its health check
+// reads "Deployed, not healthy". Once the app does pass, the current deploy
+// reads as healthy — a slow start is not an unhealthy deploy (issue #233). An
+// older deploy describes what happened then and is left alone.
+func TestR221_DeployRecoversToHealthyWhenAppComesUpLate(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	h := newHarness(t, state.StateDegraded)
+	deploys := state.NewDeployments(h.db)
+
+	app, _, err := h.apps.ByID(ctx, h.appID)
+	require.NoError(t, err)
+	finish := func() string {
+		t.Helper()
+		dep, err := deploys.Create(ctx, h.appID, app.PinnedSpecID, state.TriggerManual, app.OwnerUserID)
+		require.NoError(t, err)
+		require.NoError(t, deploys.SetResultState(ctx, dep.ID, state.StateDegraded))
+		require.NoError(t, deploys.Finish(ctx, dep.ID, state.DeploySucceeded, "", ""))
+		return dep.ID
+	}
+	older := finish()
+	current := finish()
+
+	h.runtime.setObserved(healthy())
+	h.rec.Tick(ctx)
+	require.Equal(t, state.StateRunning, h.state(t))
+
+	resultState := func(id string) string {
+		t.Helper()
+		dep, found, err := deploys.ByID(ctx, id)
+		require.NoError(t, err)
+		require.True(t, found)
+		return dep.ResultState
+	}
+	require.Equal(t, state.StateRunning, resultState(current),
+		"the app came up, so its current deploy is no longer 'not healthy'")
+	require.Equal(t, state.StateDegraded, resultState(older),
+		"an older deploy is history and keeps what it recorded")
+
+	gone, cancel := context.WithCancel(ctx)
+	cancel()
+	require.Error(t, state.NewReconciles(h.db).RecoverCurrentDeploy(gone, h.appID),
+		"a write that did not happen is reported, not swallowed")
+}
+
 // An app that is unhealthy but matches its spec has nothing to converge, and
 // must still not sit in degraded forever.
 func TestAPermanentlyUnhealthyAppReachesFailed(t *testing.T) {
