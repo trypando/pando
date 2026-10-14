@@ -720,6 +720,22 @@
       }
     },
     {
+      "name": "pando_get_user",
+      "description": "One account, with every installation role it holds and where each comes from (install_roles), as pando_list_users shows it. Your own needs no permission; anyone else's needs install.view.",
+      "input_schema": {
+        "properties": {
+          "user_id": {
+            "description": "The account's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_list_adapter_kinds",
       "description": "The kinds of adapter this build of Pando can run, and the settings each takes: which are credentials, which are required, and the default each takes when left out.",
       "input_schema": {
@@ -1004,6 +1020,24 @@
         "required": [
           "user_id"
         ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_users",
+      "description": "The accounts on this installation, newest first, a page at a time: pass `next_cursor` back as `cursor` for the next page. Each carries install_roles — every installation role it holds, and whether it holds it directly or through a group (with the group's name, and the identity provider for a synced group) — and install_role_id, the role granted to the account itself. Needs install.view.",
+      "input_schema": {
+        "properties": {
+          "cursor": {
+            "description": "The next_cursor from a previous page.",
+            "type": "string"
+          },
+          "q": {
+            "description": "Only accounts whose username, display name or email contains this.",
+            "type": "string"
+          }
+        },
+        "required": [],
         "type": "object"
       }
     },

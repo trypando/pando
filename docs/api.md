@@ -197,9 +197,9 @@ one verb says nothing about another (R-082).
 
 | Endpoint | Verb | What it does |
 | --- | --- | --- |
-| `GET /api/v1/users` | `install.view` | The accounts on this installation, newest first, each with its `install_role_id`. `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, reads only those accounts; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true (O-53). |
+| `GET /api/v1/users` | `install.view` | The accounts on this installation, newest first. Each carries `install_roles`, every installation role it holds as `{role_id, via}` — `via.kind` is `direct`, or `group` with the group's `group_id`, `name` and, for a group synced from a provider, `source` and `source_name` — read as authorization reads them, through linked provider groups too; and `install_role_id`, the role granted to the account itself (empty for none). `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues; `q` matches the username, display name or email; `id`, repeatable, reads only those accounts; `total` counts the matches exactly up to 10,000; past that it is 10,000 and `total_is_lower_bound` is true (O-53). |
 | `POST /api/v1/users` | `install.users.manage` | Create an account. |
-| `GET /api/v1/users/{userID}` | `install.view` | One account. Your own needs no verb. |
+| `GET /api/v1/users/{userID}` | `install.view` | One account, as GET /users shows it, with every installation role it holds and where each comes from (`install_roles`). Your own needs no verb. |
 | `PATCH /api/v1/users/{userID}` | `install.users.manage` | Change an account: any of `username`, `display_name`, `email` and `status`. Username and email only on a local account; a username only with this verb, even your own. Suspension is not deletion (R-049). Your own name and email need no verb. |
 | `DELETE /api/v1/users/{userID}` | `install.users.manage` | Delete an account, with the destruction rules that follow from it (R-282). |
 | `PUT /api/v1/users/{userID}/role` | `install.users.manage` | Give an account an installation role. Deliberately not a field on PATCH: changing someone's status and changing their power are different acts. |

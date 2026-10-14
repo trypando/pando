@@ -1323,6 +1323,58 @@ func userCmd(client func() (*Client, error)) *cobra.Command {
 
 	cmd.AddCommand(userUpdateCmd(client))
 
+	var query string
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "Show every account, and each installation role it holds, directly or through a group",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			path := "/users"
+			if query != "" {
+				path += "?q=" + url.QueryEscape(query)
+			}
+			users := []any{}
+			err = allPages(c, path, func(get func(any) error) (string, error) {
+				var page struct {
+					Users      []any  `json:"users"`
+					NextCursor string `json:"next_cursor"`
+				}
+				if err := get(&page); err != nil {
+					return "", err
+				}
+				users = append(users, page.Users...)
+				return page.NextCursor, nil
+			})
+			if err != nil {
+				return err
+			}
+			return printJSON(cmd.OutOrStdout(), map[string]any{"users": users})
+		},
+	}
+	list.Flags().StringVar(&query, "q", "", "only accounts whose username, name or email contains this")
+	cmd.AddCommand(list)
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "get <user-id>",
+		Short: "Show one account, and each installation role it holds, directly or through a group",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			var out map[string]any
+			if err := c.Do("GET", usersPath+url.PathEscape(args[0]), nil, &out); err != nil {
+				return err
+			}
+			return printJSON(cmd.OutOrStdout(), out)
+		},
+	})
+
 	cmd.AddCommand(&cobra.Command{
 		Use:   "apps <user-id>",
 		Short: "Show the apps an account has access to, and its role on each",

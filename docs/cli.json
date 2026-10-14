@@ -5649,6 +5649,8 @@
         "pando user app-limit",
         "pando user apps",
         "pando user create",
+        "pando user get",
+        "pando user list",
         "pando user reset-password",
         "pando user update"
       ]
@@ -5754,6 +5756,75 @@
           "type": "bool",
           "default": "false",
           "usage": "do not require a new password at first sign-in",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando user get",
+      "use": "get <user-id>",
+      "short": "Show one account, and each installation role it holds, directly or through a group",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando user list",
+      "use": "list",
+      "short": "Show every account, and each installation role it holds, directly or through a group",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "q",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "only accounts whose username, name or email contains this",
           "required": false
         }
       ],

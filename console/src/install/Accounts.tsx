@@ -37,10 +37,28 @@ export interface Account {
   display_name?: string;
   status: string;
   must_change_password: boolean;
+  /** The role granted to the account itself; '' for none. What RolePicker sets. */
   install_role_id: string;
+  /**
+   * Every installation role the account holds, directly and through its
+   * groups (issue #221) — what authorization evaluates. Empty for none.
+   */
+  install_roles?: HeldRole[];
   created_at?: string;
   /** Set on an account whose sign-in identities were moved to another (O-1). */
   alias_of?: string;
+}
+
+export interface HeldRole {
+  role_id: string;
+  via: {
+    kind: 'direct' | 'group';
+    group_id?: string;
+    name?: string;
+    /** The identity provider a synced group comes from, and its name. */
+    source?: string;
+    source_name?: string;
+  };
 }
 
 export interface Role {
@@ -130,11 +148,17 @@ export function Accounts({ onOpen }: { onOpen: (account: Account) => void }) {
             width: 'minmax(0,20ch)',
             filter: 'values',
             filterValue: (row: Account) => {
-              const r = roles.data?.roles.find((x) => x.id === row.install_role_id);
-              return r ? sentence(r.name) : 'None';
+              const names = new Set(
+                (row.install_roles ?? []).map((h) => {
+                  const r = roles.data?.roles.find((x) => x.id === h.role_id);
+                  return r ? sentence(r.name) : h.role_id;
+                }),
+              );
+              return names.size > 0 ? [...names].sort().join(', ') : 'None';
             },
-            // Read-only here; it changes on the account's page.
-            render: (row: Account) => <RoleLabel roleID={row.install_role_id} roles={roles.data?.roles ?? []} />,
+            // Read-only here; it changes on the account's page, or on the
+            // group a role comes through.
+            render: (row: Account) => <HeldRoles held={row.install_roles ?? []} roles={roles.data?.roles ?? []} />,
           },
         ]}
         rows={rows}
@@ -151,6 +175,35 @@ export function RoleLabel({ roleID, roles }: { roleID: string; roles: Role[] }) 
   if (!roleID) return <span style={{ color: 'var(--ink-tertiary)' }}>None</span>;
   const role = roles.find((r) => r.id === roleID);
   return <Tag>{role ? sentence(role.name) : roleID}</Tag>;
+}
+
+/**
+ * The installation roles an account holds, each with where it comes from:
+ * a role through a group names the group, and its provider for a synced one.
+ */
+function HeldRoles({ held, roles }: { held: HeldRole[]; roles: Role[] }) {
+  if (held.length === 0) return <RoleLabel roleID="" roles={roles} />;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', padding: 'var(--space-2) 0' }}>
+      {held.map((h) => (
+        <span
+          key={h.role_id + (h.via.group_id ?? '')}
+          style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)', minWidth: 0 }}
+        >
+          <RoleLabel roleID={h.role_id} roles={roles} />
+          {h.via.kind === 'group' && (
+            <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>{heldThrough(h)}</span>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** "through pando-administrator (Okta)" — where a group-held role comes from. */
+export function heldThrough(h: HeldRole): string {
+  const provider = h.via.source_name || h.via.source;
+  return `through ${h.via.name ?? h.via.group_id}${provider ? ` (${provider})` : ''}`;
 }
 
 export function RolePicker({

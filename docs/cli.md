@@ -1743,6 +1743,26 @@ Give it to the account holder yourself; by default they choose their own at firs
 | `--name` |  | the name shown in the console and the audit log |
 | `--no-change-required` |  | do not require a new password at first sign-in |
 
+#### `user get`
+
+Show one account, and each installation role it holds, directly or through a group
+
+```
+pando user get <user-id>
+```
+
+#### `user list`
+
+Show every account, and each installation role it holds, directly or through a group
+
+```
+pando user list
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--q` |  | only accounts whose username, name or email contains this |
+
 #### `user reset-password`
 
 Give an account a new generated password

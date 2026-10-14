@@ -55,6 +55,27 @@ func TestGroupAndProfileCommandsCallTheAPI(t *testing.T) {
 	require.Error(t, got.err, "nothing to change")
 }
 
+// TestR078_UserListShowsRolesHeldThroughGroups asserts the CLI prints the
+// installation roles an account holds through a group as the API gives them
+// (issue #221), rather than only the one granted to the account.
+func TestR078_UserListShowsRolesHeldThroughGroups(t *testing.T) {
+	held := []map[string]any{{"role_id": "role_administrator",
+		"via": map[string]any{"kind": "group", "group_id": "grp_01", "name": "pando-administrator", "source_name": "Okta"}}}
+	api := newAPI(t).
+		reply("GET /users", map[string]any{"users": []map[string]any{
+			{"id": "usr_01", "install_role_id": "", "install_roles": held}}}).
+		reply("GET /users/usr_01", map[string]any{"id": "usr_01", "install_role_id": "", "install_roles": held})
+
+	got := run(t, api, "", "user", "list")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, got.out, `"pando-administrator"`)
+	require.Contains(t, got.out, `"Okta"`)
+
+	got = run(t, api, "", "user", "get", "usr_01")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, got.out, `"pando-administrator"`)
+}
+
 // R-245: a part's use beside its limits, and a part with no limit said so.
 func TestR245_AppUsageShowsEachPartBesideItsLimits(t *testing.T) {
 	api := newAPI(t).reply("GET /apps/notes/usage", map[string]any{

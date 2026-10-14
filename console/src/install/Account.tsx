@@ -22,7 +22,7 @@ import { AccountApps } from './AccountApps';
 import { AccountAppLimit } from './AppLimit';
 import { GeneratedPassword, PasswordToCopy } from './GeneratedPassword';
 import type { Account, Role } from './Accounts';
-import { Quiet, RoleLabel, RolePicker, StatusToggle, messageOf, refusal, sentence } from './Accounts';
+import { Quiet, RoleLabel, RolePicker, StatusToggle, heldThrough, messageOf, refusal, sentence } from './Accounts';
 import { NO_FILTERS, WHEN, linkQuery } from './audit';
 import type { AuditFilters } from './audit';
 import { AuditTable, LoadOlder, useAuditLog, usePeople } from './Installation';
@@ -217,19 +217,25 @@ export function AccountPage({
                   <div style={{ maxWidth: '32ch' }}>
                     <RolePicker account={a} roles={roles.data?.roles ?? []} isSelf={isSelf} />
                   </div>
-                ) : (
+                ) : a.install_role_id || (a.install_roles ?? []).length === 0 ? (
+                  // "None" only when the account holds no role by any route.
                   <span>
                     <RoleLabel roleID={a.install_role_id} roles={roles.data?.roles ?? []} />
                   </span>
-                )}
-                {/* A group's installation role is held by everyone in it. It is
+                ) : null}
+                {/* A group's installation role is held by everyone in it, and by
+                    everyone in a provider group linked to it — as the server
+                    reports, since authorization reads it that way. It is
                     changed on the group, not here, so it is said rather than
                     offered. */}
-                {memberOf
-                  .filter((g) => g.install_role_id)
-                  .map((g) => (
-                    <span key={g.id} style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
-                      {roleName(g.install_role_id!)} through {g.name}
+                {(a.install_roles ?? [])
+                  .filter((h) => h.via.kind === 'group')
+                  .map((h) => (
+                    <span
+                      key={h.role_id + h.via.group_id}
+                      style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}
+                    >
+                      {roleName(h.role_id)} {heldThrough(h)}
                     </span>
                   ))}
               </div>

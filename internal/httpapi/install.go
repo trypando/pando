@@ -109,23 +109,44 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	roles, err := s.Grants.InstallRolesByPrincipal(r.Context())
+	held, err := s.Grants.InstallRolesForUsers(r.Context(), accountIDs(users))
 	if err != nil {
 		Error(w, r, err)
 		return
 	}
-
 	out := make([]map[string]any, 0, len(users))
 	for _, u := range users {
-		out = append(out, accountView(u, roles[u.ID]))
+		out = append(out, accountView(u, held[u.ID]))
 	}
 	JSON(w, http.StatusOK, withTotal(map[string]any{"users": out, "next_cursor": next}, total))
+}
+
+// accountIDs are the IDs of a page of accounts, for reading the
+// installation roles of the whole page in one query.
+func accountIDs(users []state.User) []string {
+	ids := make([]string, 0, len(users))
+	for _, u := range users {
+		ids = append(ids, u.ID)
+	}
+	return ids
 }
 
 // accountView is an account as the API shows it, in the list and on its own:
 // one shape, so that a client reading one account does not need the list to
 // learn what role it holds.
-func accountView(u state.User, installRoleID string) map[string]any {
+func accountView(u state.User, held []state.HeldInstallRole) map[string]any {
+	// The role granted to the account itself, which PUT /users/{id}/role
+	// sets. Empty when it has none — not null: absent and empty are the same
+	// thing to a client, and only one of them is an answer.
+	direct := ""
+	for _, h := range held {
+		if h.Via.Kind == "direct" {
+			direct = h.RoleID
+		}
+	}
+	if held == nil {
+		held = []state.HeldInstallRole{}
+	}
 	v := map[string]any{
 		"id":                   u.ID,
 		"adapter_id":           u.AdapterID,
@@ -135,11 +156,13 @@ func accountView(u state.User, installRoleID string) map[string]any {
 		"status":               u.Status,
 		"must_change_password": u.MustChangePassword,
 		"created_at":           u.CreatedAt,
+		"install_role_id":      direct,
 
-		// Empty when the account holds nothing install-wide, which is most
-		// of them. Not null: absent and empty are the same thing to a
-		// client, and only one of them is an answer.
-		"install_role_id": installRoleID,
+		// Every installation role the account holds, directly and through
+		// its groups, and where each comes from (R-078, issue #221): what
+		// authorization evaluates, not only the grant made to the account.
+		// Empty when it holds none by any route.
+		"install_roles": held,
 	}
 	// An account whose identities were moved to another (O-1). Present only
 	// on those, so the console can say which account replaced it.

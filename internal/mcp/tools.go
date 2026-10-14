@@ -861,6 +861,35 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_list_users",
+		Description: "The accounts on this installation, newest first, a page at a time: pass `next_cursor` " +
+			"back as `cursor` for the next page. Each carries install_roles — every installation role it holds, " +
+			"and whether it holds it directly or through a group (with the group's name, and the identity " +
+			"provider for a synced group) — and install_role_id, the role granted to the account itself. " +
+			"Needs install.view.",
+		Schema: schema(map[string]any{
+			"q":      str("Only accounts whose username, display name or email contains this."),
+			"cursor": str("The next_cursor from a previous page."),
+		}),
+		request: func(args map[string]any) (string, string, any, error) {
+			return pagedGet("/users", args, "q", "cursor")
+		},
+	},
+	{
+		Name: "pando_get_user",
+		Description: "One account, with every installation role it holds and where each comes from " +
+			"(install_roles), as pando_list_users shows it. Your own needs no permission; anyone else's needs " +
+			"install.view.",
+		Schema: schema(map[string]any{"user_id": str("The account's ID.")}, "user_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "user_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", "/users/" + url.PathEscape(id), nil, nil
+		},
+	},
+	{
 		Name:        "pando_list_user_apps",
 		Description: "The apps an account has access to: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (can_manage). By app name, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
 		Schema: schema(map[string]any{

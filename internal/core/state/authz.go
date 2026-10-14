@@ -565,7 +565,8 @@ func (g *Grants) RevokeInstall(ctx context.Context, kind, principalID string) er
 }
 
 // InstallRolesByPrincipal maps each principal holding an install grant to its
-// role ID, for the accounts screen.
+// role ID — the grant made to that principal itself, for the groups list. An
+// account's roles, through its groups too, are InstallRolesForUsers.
 //
 // One query rather than one per account: the list is small (R-015 — one
 // install, one organization) but a per-row lookup is the shape that stops being
@@ -587,6 +588,77 @@ func (g *Grants) InstallRolesByPrincipal(ctx context.Context) (map[string]string
 			return nil, errs.Wrap(errs.Internal, "Could not read installation-wide access.", err)
 		}
 		out[principal] = role
+	}
+	return out, rows.Err()
+}
+
+// HeldInstallRole is one installation role an account holds, and how.
+type HeldInstallRole struct {
+	RoleID string         `json:"role_id"`
+	Via    InstallRoleVia `json:"via"`
+}
+
+// InstallRoleVia says where a held installation role comes from: a grant to
+// the account itself ("direct"), or one to a group it is in ("group"), with
+// that group's name and, for a group synced from an identity provider, the
+// provider (as on a Group).
+type InstallRoleVia struct {
+	Kind       string `json:"kind"`
+	GroupID    string `json:"group_id,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Source     string `json:"source,omitempty"`
+	SourceName string `json:"source_name,omitempty"`
+}
+
+// InstallRolesForUsers returns every installation role each of these accounts
+// holds, directly and through groups — the same grants InstallGrantsFor reads
+// for authorization, so the accounts screen and the authorizer give one answer
+// (R-078, issue #221). Group membership is read through
+// effective_group_members, so a provider group linked to a Pando group counts.
+//
+// One query for a page of accounts rather than one per account. Each
+// account's roles come direct first, then by group name; an account holding
+// nothing is absent from the map.
+func (g *Grants) InstallRolesForUsers(ctx context.Context, userIDs []string) (map[string][]HeldInstallRole, error) {
+	out := map[string][]HeldInstallRole{}
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	rows, err := g.db.Query(ctx, `
+		SELECT user_id, role_id, group_id, name, source, source_name FROM (
+		    SELECT g.principal_id AS user_id, g.role_id, '' AS group_id, '' AS name,
+		           '' AS source, '' AS source_name
+		    FROM grants g
+		    WHERE g.app_id IS NULL AND g.plane = 'control'
+		      AND g.principal_kind = 'user' AND g.principal_id = ANY ($1)
+		    UNION ALL
+		    SELECT m.user_id, g.role_id, gr.id, gr.name,
+		           coalesce(gr.adapter_id, ''), coalesce(a.name, '')
+		    FROM grants g
+		    JOIN effective_group_members m ON m.group_id = g.principal_id
+		    JOIN groups gr ON gr.id = g.principal_id
+		    LEFT JOIN identity_adapters a ON a.id = gr.adapter_id
+		    WHERE g.app_id IS NULL AND g.plane = 'control'
+		      AND g.principal_kind = 'group' AND m.user_id = ANY ($1)
+		) held
+		ORDER BY user_id, group_id <> '', lower(name), group_id`, userIDs)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not read installation-wide access.", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var user string
+		var held HeldInstallRole
+		if err := rows.Scan(&user, &held.RoleID, &held.Via.GroupID, &held.Via.Name,
+			&held.Via.Source, &held.Via.SourceName); err != nil {
+			return nil, errs.Wrap(errs.Internal, "Could not read installation-wide access.", err)
+		}
+		held.Via.Kind = "group"
+		if held.Via.GroupID == "" {
+			held.Via.Kind = "direct"
+		}
+		out[user] = append(out[user], held)
 	}
 	return out, rows.Err()
 }
