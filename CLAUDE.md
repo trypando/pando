@@ -189,8 +189,14 @@ A change is done when:
    `codecov/patch` fails when new lines are covered less than the base branch is, so new code needs
    tests, not only a passing `make check`. A failure the change did not cause is shown to also fail on
    `main`, by its run, and said so in the report.
-4. Your phase file's *Done when* condition is met, or you state exactly which part is not.
-5. Any `[P]` default you overrode is noted, with the reason, in the design doc — not only in the code.
+4. **SonarQube passes locally, with the `sonarqube` plugin, when it is installed.** Before saying
+   a PR is ready, run the plugin's `sonar-analyze` skill on every file the change adds or modifies
+   (`git diff --name-only origin/main...HEAD`) and fix every issue it reports — `sonar-fix-issue`
+   takes one by rule key and location. Re-run until the changed files are clean. A false positive
+   is suppressed in `sonar-project.properties` with a comment saying why, not left in place. This
+   is a local check and does not wait on CI; the SonarCloud job still runs on the PR under item 3.
+5. Your phase file's *Done when* condition is met, or you state exactly which part is not.
+6. Any `[P]` default you overrode is noted, with the reason, in the design doc — not only in the code.
 
 Integration tests use `testcontainers-go` against real Postgres and real Docker. The four sequences
 in design 07 are the integration-level acceptance criteria: **if those four pass end to end, v1
