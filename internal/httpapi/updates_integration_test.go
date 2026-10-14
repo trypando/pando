@@ -102,6 +102,7 @@ func (failingUpgrades) Last(context.Context) (*upgrade.Attempt, error) {
 type fakeUpdates struct {
 	st     update.Status
 	checks *int
+	err    error
 }
 
 func (f fakeUpdates) Status(context.Context) (update.Status, error) { return f.st, nil }
@@ -109,7 +110,7 @@ func (f fakeUpdates) CheckNow(context.Context) (update.Status, error) {
 	if f.checks != nil {
 		*f.checks++
 	}
-	return f.st, nil
+	return f.st, f.err
 }
 
 // POST /updates/check asks now and answers as GET /updates does (R-349),
@@ -135,6 +136,20 @@ func TestR349_AnyoneWhoMayViewUpdatesMayAskForACheckNow(t *testing.T) {
 	require.Equal(t, "0.5.0", st.Latest)
 	require.True(t, st.Available)
 	require.Equal(t, 1, checks)
+
+	i.Server.Updates = fakeUpdates{err: errs.New(errs.Internal, "Pando could not read host policy.")}
+	r = i.do(i.admin(), http.MethodPost, "/updates/check", nil)
+	require.Equal(t, http.StatusInternalServerError, r.Code, r.String())
+	require.Contains(t, r.String(), "could not read host policy")
+
+	// With no checker, as GET /updates: the version running and nothing more.
+	i.Server.Updates = nil
+	i.Server.Version = "0.4.0"
+	r = i.do(i.admin(), http.MethodPost, "/updates/check", nil)
+	require.Equal(t, http.StatusOK, r.Code, r.String())
+	r.JSON(t, &st)
+	require.Equal(t, "0.4.0", st.Current)
+	require.False(t, st.Available)
 }
 
 // GET /updates is what the console, CLI and MCP all read (R-351), behind

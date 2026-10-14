@@ -306,6 +306,7 @@ func TestEachToolMapsToItsEndpoint(t *testing.T) {
 
 		// Issue #53: updates and the in-place upgrade's plan and outcome.
 		{"pando_get_updates", `{}`, "GET", "/updates"},
+		{"pando_check_updates", `{}`, "POST", "/updates/check"},
 		{"pando_plan_upgrade", `{"version":"0.4.0"}`, "GET", "/upgrade?version=0.4.0"},
 		{"pando_get_last_upgrade", `{}`, "GET", "/upgrade/last"},
 		{"pando_list_audit", `{"principal_id":"usr_1","target_kind":"app","since":"2026-09-21T00:00:00Z"}`, "GET",

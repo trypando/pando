@@ -134,9 +134,6 @@ func (c *Checker) CheckNow(ctx context.Context) (Status, error) {
 	if !recent {
 		c.Check(ctx)
 	}
-	if err := ctx.Err(); err != nil {
-		return Status{}, err
-	}
 	return c.Status(ctx)
 }
 
