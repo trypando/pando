@@ -3,13 +3,14 @@
 // A bell beside Settings, with the number unread, on the launcher and in the
 // admin console alike — a notification is about the person, like Settings,
 // and reaches people who only open apps as much as people who run them.
-// Opening it lists the newest first; opening one marks it read and goes where
-// it points. Which notifications arrive here is chosen under Settings.
+// Opening it lists what is unread, newest first; opening one marks it read,
+// which takes it off that list, and goes where it points. Read ones are kept
+// under All. Which notifications arrive here is chosen under Settings.
 
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, Dialog, EmptyState, Icon, IconButton, Tag } from '@design';
+import { Badge, Button, Dialog, EmptyState, Icon, IconButton, Tabs, Tag } from '@design';
 
 import { api } from '@api/client';
 import { messageOf } from '../install/Accounts';
@@ -32,15 +33,24 @@ interface Page {
   unread: number;
 }
 
+/** Which notifications the dialog lists: those still unread, or all of them. */
+type InboxView = 'unread' | 'all';
+
 const KEY = ['inbox'];
 const COUNT_KEY = ['inbox', 'unread'];
 const LIST_KEY = ['inbox', 'list'];
+
+const listKey = (view: InboxView) => [...LIST_KEY, view];
+const listPath = (view: InboxView) => (view === 'unread' ? '/me/notifications?unread=true' : '/me/notifications');
 
 /** How often the bell asks for its count. */
 const INBOX_COUNT_MS = 60_000;
 
 export function InboxButton() {
   const [open, setOpen] = useState(false);
+  // Unread first: a notification marked read leaves the list it was read
+  // from, and the read ones are a tab away rather than in the way.
+  const [view, setView] = useState<InboxView>('unread');
   // The count alone, asked every minute so it moves without a reload. The bell
   // is on every screen of every signed-in console, so it asks for a number
   // rather than a page of the inbox (issue #72); the list is read when the
@@ -56,8 +66,8 @@ export function InboxButton() {
     retry: false,
   });
   const inbox = useQuery({
-    queryKey: LIST_KEY,
-    queryFn: () => api.get<Page>('/me/notifications'),
+    queryKey: listKey(view),
+    queryFn: () => api.get<Page>(listPath(view)),
     enabled: open,
     // Read fresh each time the bell opens, rather than whatever an earlier
     // opening left in the cache.
@@ -70,7 +80,13 @@ export function InboxButton() {
   return (
     <>
       <span style={{ position: 'relative', display: 'inline-flex' }}>
-        <IconButton label={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'} onClick={() => setOpen(true)}>
+        <IconButton
+          label={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
+          onClick={() => {
+            setView('unread');
+            setOpen(true);
+          }}
+        >
           <Icon name="bell" size={16} />
         </IconButton>
         {unread > 0 && (
@@ -85,7 +101,15 @@ export function InboxButton() {
           below it painted over the dialog. */}
       {open &&
         createPortal(
-          <InboxDialog page={inbox.data} loading={inbox.isPending} error={inbox.error} onClose={() => setOpen(false)} />,
+          <InboxDialog
+            view={view}
+            onView={setView}
+            unread={unread}
+            page={inbox.data}
+            loading={inbox.isPending}
+            error={inbox.error}
+            onClose={() => setOpen(false)}
+          />,
           document.body,
         )}
     </>
@@ -93,11 +117,17 @@ export function InboxButton() {
 }
 
 function InboxDialog({
+  view,
+  onView,
+  unread,
   page,
   loading,
   error,
   onClose,
 }: {
+  view: InboxView;
+  onView: (view: InboxView) => void;
+  unread: number;
   page?: Page;
   loading: boolean;
   error: unknown;
@@ -106,17 +136,45 @@ function InboxDialog({
   const queries = useQueryClient();
   const refresh = () => void queries.invalidateQueries({ queryKey: KEY });
 
+  // Marked read in the cache at once, so a notification leaves the unread
+  // list as it is clicked rather than when the next read comes back.
+  const markRead = (id?: string) => {
+    const now = new Date().toISOString();
+    const isMarked = (n: Notification) => id === undefined || n.id === id;
+    const remaining = (left: number) => (id === undefined ? 0 : Math.max(0, left - 1));
+    queries.setQueryData<Page>(listKey('unread'), (old) =>
+      old && { notifications: old.notifications.filter((n) => !isMarked(n)), unread: remaining(old.unread) },
+    );
+    queries.setQueryData<Page>(listKey('all'), (old) =>
+      old && {
+        notifications: old.notifications.map((n) => (isMarked(n) && !n.read_at ? { ...n, read_at: now } : n)),
+        unread: remaining(old.unread),
+      },
+    );
+    queries.setQueryData<{ unread: number }>(COUNT_KEY, (old) => old && { unread: remaining(old.unread) });
+  };
+
   const readOne = useMutation({
     mutationFn: (id: string) => api.post<unknown>(`/me/notifications/${id}/read`, {}),
-    onSuccess: refresh,
+    onMutate: (id) => markRead(id),
+    onSettled: refresh,
   });
   const readAll = useMutation({
     mutationFn: () => api.post<unknown>('/me/notifications/read', {}),
-    onSuccess: refresh,
+    onMutate: () => markRead(),
+    onSettled: refresh,
   });
 
-  const open = (n: Notification) => {
-    if (!n.read_at) readOne.mutate(n.id);
+  const open = async (n: Notification) => {
+    if (!n.read_at) {
+      // Before leaving the page: a navigation started first cancels the
+      // request, and the notification comes back unread on the next one.
+      try {
+        await readOne.mutateAsync(n.id);
+      } catch {
+        // Still go where it points; the refresh shows it unread again.
+      }
+    }
     if (!n.link) return;
     // A link to this console is followed in place; anything else is not ours
     // to replace the page with.
@@ -133,6 +191,7 @@ function InboxDialog({
   };
 
   const list = page?.notifications ?? [];
+  const empty = !loading && !error && list.length === 0;
 
   return (
     <Dialog
@@ -145,30 +204,37 @@ function InboxDialog({
           <Button variant="ghost" onClick={onClose}>
             Close
           </Button>
-          <Button
-            variant="secondary"
-            disabled={(page?.unread ?? 0) === 0 || readAll.isPending}
-            onClick={() => readAll.mutate()}
-          >
+          <Button variant="secondary" disabled={unread === 0 || readAll.isPending} onClick={() => readAll.mutate()}>
             Mark all read
           </Button>
         </>
       }
     >
+      <div style={{ marginBottom: 'var(--space-3)' }}>
+        <Tabs
+          value={view}
+          onChange={(v) => onView(v as InboxView)}
+          items={[
+            { value: 'unread', label: 'Unread', trailing: unread > 0 ? <Badge count={unread} /> : undefined },
+            { value: 'all', label: 'All' },
+          ]}
+        />
+      </div>
       {loading && <LineSkeleton width="28ch" />}
       {!loading && error !== null && error !== undefined && (
         <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)' }}>{messageOf(error)}</p>
       )}
-      {!loading && !error && list.length === 0 && (
-        <EmptyState heading="No notifications">
-          Choose what arrives under Settings.
-        </EmptyState>
+      {empty && view === 'unread' && (
+        <EmptyState heading="Nothing unread">Notifications you have read are under All.</EmptyState>
+      )}
+      {empty && view === 'all' && (
+        <EmptyState heading="No notifications">Choose what arrives under Settings.</EmptyState>
       )}
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column' }}>
         {list.map((n) => (
           <li key={n.id} style={{ borderTop: 'var(--border-width) solid var(--rule)' }}>
             <button
-              onClick={() => open(n)}
+              onClick={() => void open(n)}
               style={{
                 width: '100%',
                 textAlign: 'left',
