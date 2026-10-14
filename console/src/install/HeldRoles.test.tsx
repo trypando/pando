@@ -10,7 +10,7 @@ import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { InstallRole } from './Account';
-import { GroupHeldRoles, HeldRoles, heldRoleNames, heldThrough } from './Accounts';
+import { GroupHeldRoles, HeldRoles, heldRoleNames, heldThrough, refreshMembership } from './Accounts';
 import type { Account, HeldRole, Role } from './Accounts';
 
 const roles: Role[] = [
@@ -40,17 +40,18 @@ describe('heldThrough', () => {
 });
 
 describe('heldRoleNames', () => {
-  it('is each role once, alphabetically, for the column filter', () => {
-    expect(heldRoleNames([okta, direct, ops], roles)).toBe('Administrator, Audit readers');
+  it('is each role once, alphabetically, each a value of its own for the column filter', () => {
+    expect(heldRoleNames([okta, direct, ops], roles)).toEqual(['Administrator', 'Audit readers']);
   });
 
   it('is None only for an account holding nothing by any route', () => {
-    expect(heldRoleNames([], roles)).toBe('None');
-    expect(heldRoleNames([ops], roles)).toBe('Audit readers');
+    expect(heldRoleNames([], roles)).toEqual(['None']);
+    expect(heldRoleNames([ops], roles)).toEqual(['Audit readers']);
   });
 
-  it('shows the ID of a role not yet read', () => {
-    expect(heldRoleNames([direct], [])).toBe('role_auditor');
+  it('names a role from the account when the roles list cannot be read, else shows its ID', () => {
+    expect(heldRoleNames([{ ...direct, role_name: 'audit readers' }], [])).toEqual(['Audit readers']);
+    expect(heldRoleNames([direct], [])).toEqual(['role_auditor']);
   });
 });
 
@@ -86,6 +87,19 @@ function installRole(a: Account, manage: boolean, known?: Role[]) {
   );
 }
 
+describe('refreshMembership', () => {
+  it('refreshes the groups and every account view, which show what a group carries', () => {
+    const client = new QueryClient();
+    const refreshed: unknown[] = [];
+    client.invalidateQueries = ((filters?: { queryKey?: unknown }) => {
+      refreshed.push(filters?.queryKey);
+      return Promise.resolve();
+    }) as QueryClient['invalidateQueries'];
+    refreshMembership(client);
+    expect(refreshed).toEqual([['groups'], ['users']]);
+  });
+});
+
 describe('the account page role', () => {
   it('does not say None above a role held through a group', () => {
     expect(installRole(account, false, roles)).toBe('');
@@ -102,8 +116,13 @@ describe('the account page role', () => {
     expect(installRole(account, true, roles)).toContain('<select');
   });
 
-  it('holds its place until the roles arrive', () => {
-    expect(installRole(account, false, undefined)).not.toContain('None');
+  it('names your own direct role without the roles list, which needs install.view', () => {
+    const own = { ...account, install_role_id: 'role_auditor', install_roles: [{ ...direct, role_name: 'audit readers' }] };
+    expect(installRole(own, false, undefined)).toContain('Audit readers');
+    expect(installRole({ ...account, install_roles: [] }, false, undefined)).toContain('None');
+  });
+
+  it('holds the place of the picker until the roles arrive', () => {
     expect(installRole(account, true, undefined)).not.toContain('<select');
   });
 });
@@ -114,5 +133,11 @@ describe('the account page', () => {
     expect(html).toContain('Administrator<!-- --> <!-- -->through pando-administrator (Okta)');
     expect(html).toContain('through Ops');
     expect(html.match(/through/g)).toHaveLength(2);
+  });
+
+  it('names a group-held role from the account when the roles list cannot be read', () => {
+    const html = renderToString(<GroupHeldRoles held={[{ ...okta, role_name: 'administrator' }]} roles={[]} />);
+    expect(html).toContain('Administrator');
+    expect(html).not.toContain('role_administrator');
   });
 });

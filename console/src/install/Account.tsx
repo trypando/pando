@@ -24,6 +24,8 @@ import { GeneratedPassword, PasswordToCopy } from './GeneratedPassword';
 import type { Account, Role } from './Accounts';
 import {
   GroupHeldRoles,
+  HeldRoleTag,
+  refreshMembership,
   Quiet,
   RoleLabel,
   RolePicker,
@@ -247,19 +249,30 @@ export function InstallRole({
   manage,
   isSelf,
 }: Readonly<{ account: Account; roles?: Role[]; manage: boolean; isSelf: boolean }>) {
-  // A picker with no roles in it yet would show the role's id.
-  if (!roles) return manage ? <FieldSkeleton width="32ch" /> : <LineSkeleton width="12ch" />;
   if (manage) {
+    // A picker with no roles in it yet would show the role's id.
+    if (!roles) return <FieldSkeleton width="32ch" />;
     return (
       <div style={{ maxWidth: '32ch' }}>
         <RolePicker account={account} roles={roles} isSelf={isSelf} />
       </div>
     );
   }
-  if (!account.install_role_id && (account.install_roles ?? []).length > 0) return null;
+  // Named from the account itself, so this does not wait on GET /roles,
+  // which somebody reading their own account may not be allowed.
+  const held = account.install_roles ?? [];
+  const direct = held.find((h) => h.via.kind === 'direct');
+  if (direct) {
+    return (
+      <span>
+        <HeldRoleTag held={direct} roles={roles ?? []} />
+      </span>
+    );
+  }
+  if (held.length > 0) return null;
   return (
     <span>
-      <RoleLabel roleID={account.install_role_id} roles={roles} />
+      <RoleLabel roleID="" roles={[]} />
     </span>
   );
 }
@@ -459,9 +472,7 @@ function GroupMembership({
     // refused (R-088), and the remedy says what to do instead.
     onError: (e) => setError(refusal(e)),
     onSettled: () => {
-      void queries.invalidateQueries({ queryKey: ['groups'] });
-      // A group carries app access and possibly an installation role.
-      void queries.invalidateQueries({ queryKey: ['users', account.id, 'apps'] });
+      refreshMembership(queries);
       if (isSelf) void queries.invalidateQueries({ queryKey: ['me'] });
     },
   });

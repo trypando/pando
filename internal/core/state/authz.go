@@ -598,8 +598,12 @@ func (g *Grants) InstallRolesByPrincipal(ctx context.Context) (map[string]string
 
 // HeldInstallRole is one installation role an account holds, and how.
 type HeldInstallRole struct {
-	RoleID string         `json:"role_id"`
-	Via    InstallRoleVia `json:"via"`
+	RoleID string `json:"role_id"`
+	// RoleName travels with the role so that whoever may read the account
+	// can read what it holds — your own account needs no install.view, and
+	// the roles list does (issue #221).
+	RoleName string         `json:"role_name"`
+	Via      InstallRoleVia `json:"via"`
 }
 
 // InstallRoleVia says where a held installation role comes from: a grant to
@@ -625,7 +629,9 @@ type InstallRoleVia struct {
 // nothing is absent from the map.
 func (g *Grants) InstallRolesForUsers(ctx context.Context, userIDs []string) (map[string][]HeldInstallRole, error) {
 	rows, err := g.db.Query(ctx, `
-		SELECT user_id, role_id, group_id, name, source, source_name FROM (
+		SELECT held.user_id, held.role_id, coalesce(r.name, ''), held.group_id, held.name,
+		       held.source, held.source_name
+		FROM (
 		    SELECT g.principal_id AS user_id, g.role_id, '' AS group_id, '' AS name,
 		           '' AS source, '' AS source_name
 		    FROM grants g
@@ -641,7 +647,8 @@ func (g *Grants) InstallRolesForUsers(ctx context.Context, userIDs []string) (ma
 		    WHERE g.app_id IS NULL AND g.plane = 'control'
 		      AND g.principal_kind = 'group' AND m.user_id = ANY ($1)
 		) held
-		ORDER BY user_id, group_id <> '', lower(name), group_id`, userIDs)
+		LEFT JOIN roles r ON r.id = held.role_id
+		ORDER BY held.user_id, held.group_id <> '', lower(held.name), held.group_id`, userIDs)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, errReadInstallAccess, err)
 	}
@@ -651,7 +658,7 @@ func (g *Grants) InstallRolesForUsers(ctx context.Context, userIDs []string) (ma
 	for rows.Next() {
 		var user string
 		var held HeldInstallRole
-		if err := rows.Scan(&user, &held.RoleID, &held.Via.GroupID, &held.Via.Name,
+		if err := rows.Scan(&user, &held.RoleID, &held.RoleName, &held.Via.GroupID, &held.Via.Name,
 			&held.Via.Source, &held.Via.SourceName); err != nil {
 			return nil, errs.Wrap(errs.Internal, errReadInstallAccess, err)
 		}

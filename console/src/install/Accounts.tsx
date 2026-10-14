@@ -16,7 +16,7 @@
 // generated (GeneratedPassword.tsx), for the administrator to pass on.
 
 import { useContext, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Button, Dialog, Input, Select, StatusIndicator, Tabs, Tag } from '@design';
 
 import { api, RequestFailed } from '@api/client';
@@ -51,6 +51,8 @@ export interface Account {
 
 export interface HeldRole {
   role_id: string;
+  /** The role's name, from the account itself: readable without GET /roles. */
+  role_name?: string;
   via: {
     kind: 'direct' | 'group';
     group_id?: string;
@@ -147,6 +149,8 @@ export function Accounts({ onOpen }: { onOpen: (account: Account) => void }) {
             header: 'Role',
             width: 'minmax(0,20ch)',
             filter: 'values',
+            // Each role on its own, so the filter offers roles rather than
+            // combinations of them.
             filterValue: (row: Account) => heldRoleNames(row.install_roles ?? [], roles.data?.roles ?? []),
             // Read-only here; it changes on the account's page, or on the
             // group a role comes through.
@@ -169,17 +173,36 @@ export function RoleLabel({ roleID, roles }: { roleID: string; roles: Role[] }) 
   return <Tag>{role ? sentence(role.name) : roleID}</Tag>;
 }
 
-/** An installation role's name as the console shows it, or its ID before the roles arrive. */
-function roleName(roleID: string, roles: Role[]): string {
-  const role = roles.find((r) => r.id === roleID);
-  return role ? sentence(role.name) : roleID;
+/**
+ * A held role's name as the console shows it: from the roles list, else the
+ * name the account carries — somebody reading their own account cannot read
+ * GET /roles — else its ID.
+ */
+function roleName(h: HeldRole, roles: Role[]): string {
+  const name = roles.find((r) => r.id === h.role_id)?.name ?? h.role_name;
+  return name ? sentence(name) : h.role_id;
 }
 
-/** The distinct names of the roles an account holds, for the Role column's filter; "None" for none. */
-export function heldRoleNames(held: HeldRole[], roles: Role[]): string {
-  const names = [...new Set(held.map((h) => roleName(h.role_id, roles)))];
+/** The distinct names of the roles an account holds, each once, for the Role column's filter; "None" for none. */
+export function heldRoleNames(held: HeldRole[], roles: Role[]): string[] {
+  const names = [...new Set(held.map((h) => roleName(h, roles)))];
   names.sort((x, y) => x.localeCompare(y));
-  return names.length > 0 ? names.join(', ') : 'None';
+  return names.length > 0 ? names : ['None'];
+}
+
+/**
+ * After a group's membership or links change: the groups, and every account
+ * view — an account, the list, its apps — since a group carries an
+ * installation role and app access to everyone in it (issue #221).
+ */
+export function refreshMembership(queries: QueryClient) {
+  void queries.invalidateQueries({ queryKey: ['groups'] });
+  void queries.invalidateQueries({ queryKey: ['users'] });
+}
+
+/** One held role, named. */
+export function HeldRoleTag({ held, roles }: Readonly<{ held: HeldRole; roles: Role[] }>) {
+  return <Tag>{roleName(held, roles)}</Tag>;
 }
 
 /** "through pando-administrator (Okta)" — where a group-held role comes from. */
@@ -204,7 +227,7 @@ export function HeldRoles({ held, roles }: Readonly<{ held: HeldRole[]; roles: R
           key={h.role_id + (h.via.group_id ?? '')}
           style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)', minWidth: 0 }}
         >
-          <RoleLabel roleID={h.role_id} roles={roles} />
+          <HeldRoleTag held={h} roles={roles} />
           {h.via.kind === 'group' && <span style={caption}>{heldThrough(h)}</span>}
         </span>
       ))}
@@ -221,7 +244,7 @@ export function GroupHeldRoles({ held, roles }: Readonly<{ held: HeldRole[]; rol
     .filter((h) => h.via.kind === 'group')
     .map((h) => (
       <span key={h.role_id + h.via.group_id} style={caption}>
-        {roleName(h.role_id, roles)} {heldThrough(h)}
+        {roleName(h, roles)} {heldThrough(h)}
       </span>
     ));
 }

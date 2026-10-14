@@ -11,7 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Banner, Button, Checkbox, Dialog, Input, Select, Tag } from '@design';
 
 import { api } from '@api/client';
-import { Quiet, RoleLabel, Screen, messageOf, refusal, sentence } from './Accounts';
+import { Quiet, RoleLabel, Screen, messageOf, refusal, refreshMembership, sentence } from './Accounts';
 import { VERB_NOTES } from './verbNotes';
 import { AccountApps } from './AccountApps';
 import { GroupAppLimit } from './AppLimit';
@@ -332,7 +332,7 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
       for (const id of removed) await api.del(`/groups/${group.id}/members/${id}`);
     },
     onSuccess: () => onClose(),
-    onSettled: () => void queries.invalidateQueries({ queryKey: ['groups'] }),
+    onSettled: () => refreshMembership(queries),
   });
 
   const toggle = (id: string) => {
@@ -820,7 +820,7 @@ function LinkGroups({ group, synced, onClose }: { group: Group; synced: Group[];
   const toggle = useMutation({
     mutationFn: ({ id, on }: { id: string; on: boolean }) =>
       on ? api.put(`/groups/${group.id}/links/${id}`) : api.del(`/groups/${group.id}/links/${id}`),
-    onSettled: () => void queries.invalidateQueries({ queryKey: ['groups'] }),
+    onSettled: () => refreshMembership(queries),
   });
   return (
     <Dialog

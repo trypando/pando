@@ -10,8 +10,9 @@ import (
 )
 
 type heldRole struct {
-	RoleID string `json:"role_id"`
-	Via    struct {
+	RoleID   string `json:"role_id"`
+	RoleName string `json:"role_name"`
+	Via      struct {
 		Kind       string `json:"kind"`
 		GroupID    string `json:"group_id"`
 		Name       string `json:"name"`
@@ -113,6 +114,8 @@ func TestR078_AnAccountListsEveryInstallationRoleItHolds(t *testing.T) {
 
 	check(byID[gwenID], auditor+" group Auditors ")
 	require.Equal(t, auditors, byID[gwenID].InstallRoles[0].Via.GroupID)
+	require.Equal(t, "audit readers", byID[gwenID].InstallRoles[0].RoleName,
+		"the role's name travels with it: your own account needs no install.view, and GET /roles does")
 	require.Empty(t, byID[gwenID].InstallRoleID, "install_role_id is the direct grant, and Gwen has none")
 
 	check(byID[danaID], auditor+" direct  ", auditor+" group Auditors ")

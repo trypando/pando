@@ -17,8 +17,12 @@ import type { TableColumn, TableProps as DesignTableProps } from '@design';
 export interface Column extends TableColumn {
   /** `text` filters by "contains"; `values` offers the values present. */
   filter?: 'text' | 'values';
-  /** What the filter reads from a row. Defaults to the column's own field. */
-  filterValue?: (row: any) => string;
+  /**
+   * What the filter reads from a row. Defaults to the column's own field.
+   * Several values for a row that has several — an account's roles — each
+   * offered on its own, and the row shown when any of them is chosen.
+   */
+  filterValue?: (row: any) => string | string[];
 }
 
 export interface TableProps extends Omit<DesignTableProps, 'columns'> {
@@ -30,28 +34,39 @@ export interface TableProps extends Omit<DesignTableProps, 'columns'> {
   skeletonRows?: number;
 }
 
-interface ColumnFilter {
+export interface ColumnFilter {
   text?: string;
   values?: string[];
+}
+
+/** What a column's filter reads from a row: one value, or each of several. */
+export function valuesOf(c: Column, row: any): string[] {
+  const v = c.filterValue ? c.filterValue(row) : String(row?.[c.key] ?? '');
+  return Array.isArray(v) ? v : [v];
+}
+
+const active = (f?: ColumnFilter) => Boolean(f && ((f.text ?? '').trim() || (f.values?.length ?? 0) > 0));
+
+/** The rows every active column filter keeps; a row with several values is kept when any matches. */
+export function filterRows(columns: Column[], rows: any[], filters: Record<string, ColumnFilter>): any[] {
+  return rows.filter((row) =>
+    columns.every((c) => {
+      const f = filters[c.key];
+      if (!c.filter || !f || !active(f)) return true;
+      const vs = valuesOf(c, row);
+      if (c.filter === 'text') {
+        const text = (f.text ?? '').trim().toLowerCase();
+        return vs.some((v) => v.toLowerCase().includes(text));
+      }
+      return vs.some((v) => (f.values ?? []).includes(v));
+    }),
+  );
 }
 
 export function Table({ className, columns = [], rows = [], empty, loading = false, skeletonRows = 4, ...props }: TableProps) {
   const [filters, setFilters] = useState<Record<string, ColumnFilter>>({});
 
-  const valueOf = (c: Column, row: any): string =>
-    c.filterValue ? c.filterValue(row) : String(row?.[c.key] ?? '');
-
-  const active = (f?: ColumnFilter) => Boolean(f && ((f.text ?? '').trim() || (f.values?.length ?? 0) > 0));
-
-  const shown = rows.filter((row) =>
-    columns.every((c) => {
-      const f = filters[c.key];
-      if (!c.filter || !active(f)) return true;
-      const v = valueOf(c, row);
-      if (c.filter === 'text') return v.toLowerCase().includes((f!.text ?? '').trim().toLowerCase());
-      return f!.values!.includes(v);
-    }),
-  );
+  const shown = filterRows(columns, rows, filters);
 
   const anyActive = columns.some((c) => c.filter && active(filters[c.key]));
 
@@ -67,7 +82,7 @@ export function Table({ className, columns = [], rows = [], empty, loading = fal
               kind={c.filter}
               active={active(filters[c.key])}
               filter={filters[c.key] ?? {}}
-              values={c.filter === 'values' ? tally(rows.map((r) => valueOf(c, r))) : []}
+              values={c.filter === 'values' ? tally(rows.flatMap((r) => valuesOf(c, r))) : []}
               onChange={(next) => setFilters((all) => ({ ...all, [c.key]: next }))}
             />
           ) as unknown as string,

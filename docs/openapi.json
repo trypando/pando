@@ -13888,12 +13888,16 @@
           "role_id": {
             "type": "string"
           },
+          "role_name": {
+            "type": "string"
+          },
           "via": {
             "$ref": "#/components/schemas/InstallRoleVia"
           }
         },
         "required": [
           "role_id",
+          "role_name",
           "via"
         ]
       },
