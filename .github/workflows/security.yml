@@ -55,7 +55,7 @@ jobs:
           node-version: '22.22.2'
           cache: npm
           cache-dependency-path: console/package-lock.json
-      - run: npm ci
+      - run: npm ci --ignore-scripts
         working-directory: console
       # High and above fails. The console's dependencies are build-time and
       # front-end; a low-severity advisory in a build tool is not worth blocking

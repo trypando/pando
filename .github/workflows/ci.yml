@@ -129,7 +129,7 @@ jobs:
           cache: npm
           cache-dependency-path: console/package-lock.json
 
-      - run: npm ci
+      - run: npm ci --ignore-scripts
         working-directory: console
 
       # Brand adherence: a raw hex value, a raw px value or a font that is not

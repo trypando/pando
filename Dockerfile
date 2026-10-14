@@ -55,7 +55,7 @@ RUN apk add --no-cache nodejs npm
 
 # Manifests first, so a change to console source does not re-run npm ci.
 COPY console/package.json console/package-lock.json ./console/
-RUN --mount=type=cache,target=/cache/npm cd console && npm ci
+RUN --mount=type=cache,target=/cache/npm cd console && npm ci --ignore-scripts
 
 # The whole tree: the build reads cmd/gen-api-types for the types and
 # .claude/skills/pando-design for the design system.

@@ -139,8 +139,12 @@ metadata:
   name: pando-edge-traefik
   namespace: pando-edge
 rules:
+  # Every kind Traefik v3's CRD provider watches, named rather than "*", from
+  # Traefik's own RBAC reference. It lists each at startup, so one left out
+  # stops it syncing; a new Traefik kind is added here when the image moves.
   - apiGroups: [traefik.io]
-    resources: ["*"]
+    resources: [ingressroutes, ingressroutetcps, ingressrouteudps, middlewares, middlewaretcps,
+      traefikservices, tlsoptions, tlsstores, serverstransports, serverstransporttcps]
     verbs: [get, list, watch]
   - apiGroups: [""]
     resources: [services, secrets]

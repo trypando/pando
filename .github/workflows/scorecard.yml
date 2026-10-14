@@ -15,7 +15,8 @@ on:
   schedule:
     - cron: '43 6 * * 2' # weekly
 
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   analysis:
