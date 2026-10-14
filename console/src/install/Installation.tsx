@@ -546,7 +546,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
         <div style={{ marginTop: 'var(--space-4)' }}>
           {preview.length === 0 ? (
             <Banner tone="running">
-              No apps affected.
+              No apps break these rules.
             </Banner>
           ) : (
             <>

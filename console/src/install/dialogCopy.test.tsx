@@ -2,15 +2,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChangePassword, Login } from '../auth/Login';
-import { answering, mount, reply, type Mounted, type Seed } from '../ui/testing';
+import { answering, mount, reply, serverRender, type Mounted, type Seed } from '../ui/testing';
 import { AccessAI } from './AccessAI';
 import { AccountPage } from './Account';
 import { Events } from './Events';
 import { Identity } from './Identity';
 import { PolicyAI } from './PolicyAI';
 
-// What a screen says once somebody opens a dialog in it, types in it, or gets
-// an answer to what they asked.
+// What a screen says as it opens over the data it reads, and once somebody
+// opens a dialog in it, types in it, or gets an answer to what they asked.
 
 let screen: Mounted | undefined;
 const open = (...args: Parameters<typeof mount>) => (screen = mount(...args));
@@ -24,14 +24,35 @@ afterEach(() => {
 /** One page of a paged list, as the cache holds it. */
 const page = (rows: object) => ({ pages: [rows], pageParams: [''] });
 
+/** The groups and roles screen's data, with these groups and AI drafting on
+ *  or off. */
+const identity = (list: object[], drafting = false): Seed => [
+  [['groups', 'list', '', {}], page({ groups: list })],
+  [['roles'], { roles: [] }],
+  [['roles', 'all'], { roles: [] }],
+  [['ai-functions'], { functions: [{ function: 'draft_access', on: drafting }] }],
+];
+
+describe('groups and roles as they open', () => {
+  const synced = { id: 'grp_a', name: 'eng', source: 'idp_okta', source_name: 'Okta', member_count: 4 };
+  const own = { id: 'grp_1', name: 'ops', member_count: 1 };
+  const cases: Array<[string, object[], boolean, string, string]> = [
+    ['a synced group by its provider, with nothing to link', [synced], false, '>Okta<', 'Provider groups'],
+    ['a Pando group, with provider groups to link and no AI', [own, synced], false, 'Provider groups', 'Ask AI'],
+    ['a Pando group, with no provider groups to link', [own], false, '>Pando<', 'Provider groups'],
+    ['drafting with AI where it is on', [own], true, 'Ask AI', 'Okta'],
+  ];
+  it.each(cases)('shows %s', (_, list, drafting, said, unsaid) => {
+    const html = serverRender(<Identity canEdit />, identity(list, drafting));
+    expect(html).toContain(said);
+    expect(html).not.toContain(unsaid);
+  });
+});
+
 describe('a group’s dialogs', () => {
   const groups = (list: object[]) => {
     vi.stubGlobal('fetch', answering({}));
-    return open(<Identity canEdit />, [
-      [['groups', 'list', '', {}], page({ groups: list })],
-      [['roles'], { roles: [] }],
-      [['roles', 'all'], { roles: [] }],
-    ]);
+    return open(<Identity canEdit />, identity(list));
   };
 
   it('titles adding a group, and editing one’s members by its name', async () => {
@@ -45,8 +66,8 @@ describe('a group’s dialogs', () => {
   });
 
   it.each([
-    [1, 'The one member keep'],
-    [3, 'The 3 members keep'],
+    [1, 'The one member keeps their account and'],
+    [3, 'The 3 members keep their accounts and'],
   ])('counts %i member(s) kept on deleting a group', async (count, said) => {
     const s = groups([{ id: 'grp_1', name: 'ops', member_count: count }]);
     await s.press('Delete');
@@ -62,7 +83,7 @@ describe('a group’s dialogs', () => {
     ]);
     await s.press('Provider groups');
     expect(s.text()).toContain('Okta, 4 members');
-    expect(s.text()).toContain('idp_okta, 1 members');
+    expect(s.text()).toContain('idp_okta, 1 member');
     expect(s.text()).toContain('idp_okta, 0 members');
   });
 });

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
+import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { App } from '@api/types.gen';
-import { mount, reply, unanswered, type Mounted, type Seed } from '../ui/testing';
+import { mount, reply, serverRender, unanswered, type Mounted, type Seed } from '../ui/testing';
 import { AppAddress } from './AppAddress';
 import { Egress } from './Egress';
 import { Environment } from './Environment';
@@ -12,8 +13,8 @@ import { Resources } from './Resources';
 import { Security } from './Security';
 import { AppVerb } from './verbs';
 
-// What a screen says once somebody opens a dialog in it, or waits on what
-// they asked for.
+// What a screen says as it opens over the data it reads, and once somebody
+// opens a dialog in it or waits on what they asked for.
 
 const app = { id: 'app_1', name: 'inventory', slug: 'inventory', pinned_spec_id: 'spec_1' } as App;
 
@@ -23,6 +24,13 @@ const newest = (body: unknown): Seed => [
   [['apps', 'app_1', 'spec', 1], { id: 'spec_1', revision: 1, body }],
 ];
 
+/** Seven findings on the app's newest scan, more than the top five. */
+const findings = Array.from({ length: 7 }, (_, i) => ({ id: `CVE-2026-${i}`, severity: 'low', package: 'zlib' }));
+const scanned: Seed = [
+  [['apps', 'app_1', 'security'], { standing: { verdict: 'ok' }, scan: { score: 90, findings }, counts: {}, ignoring_unfixable: false }],
+];
+const answers = (on: boolean): Seed => [[['ai-functions'], { functions: [{ function: 'answer_reference', on }] }]];
+
 let screen: Mounted | undefined;
 const open = (...args: Parameters<typeof mount>) => (screen = mount(...args));
 
@@ -30,6 +38,21 @@ afterEach(() => {
   screen?.unmount();
   screen = undefined;
   vi.unstubAllGlobals();
+});
+
+describe('a screen as it opens', () => {
+  const screens: Array<[string, ReactNode, Seed, string, string]> = [
+    ['the top five findings', <Security appID="app_1" />, scanned, 'Show all 7 findings', 'CVE-2026-5'],
+    ['what deleting the app does to storage', <Resources app={app} />, [[['slots', 'app_1'], { slots: [] }]], 'Deleting the app offers to keep a final backup.', 'Add storage'],
+    ['an app with no variables', <Environment appID="app_1" />, newest({ workloads: [{ name: 'web' }] }), 'No variables.', 'Add variable'],
+    ['asking AI, where it answers', <Reference />, answers(true), 'Ask AI', 'Ask another question'],
+    ['no asking AI, where it doesn’t', <Reference />, answers(false), 'API and tools', 'Ask AI'],
+  ];
+  it.each(screens)('shows %s', (_, view, data, said, unsaid) => {
+    const html = serverRender(view, data);
+    expect(html).toContain(said);
+    expect(html).not.toContain(unsaid);
+  });
 });
 
 describe('changing an app’s address', () => {
@@ -117,10 +140,7 @@ describe('a fill for a dependency Pando can’t provision', () => {
 
 describe('the security findings', () => {
   it('shows the top five, then all of them', async () => {
-    const findings = Array.from({ length: 7 }, (_, i) => ({ id: `CVE-2026-${i}`, severity: 'low', package: 'zlib' }));
-    const s = open(<Security appID="app_1" />, [
-      [['apps', 'app_1', 'security'], { standing: { verdict: 'ok' }, scan: { score: 90, findings }, counts: {}, ignoring_unfixable: false }],
-    ]);
+    const s = open(<Security appID="app_1" />, scanned);
     await s.press('Show all 7 findings');
     expect(s.text()).toContain('Show top five');
   });
@@ -139,7 +159,7 @@ describe('stopping an app', () => {
 describe('asking how to do something', () => {
   it('asks for another question once one is answered', async () => {
     vi.stubGlobal('fetch', async () => reply({ answer: 'Grant the group the viewer role.', cites: [] }));
-    const s = open(<Reference />, [[['ai-functions'], { functions: [{ function: 'answer_reference', on: true }] }]]);
+    const s = open(<Reference />, answers(true));
     await s.press('Ask AI');
     expect(s.text()).toContain('Question');
     await s.fill('Question', 'How do I share an app?');

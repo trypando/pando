@@ -79,6 +79,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** The services' subtitle while Pando creates some of them and not others. */
+const MIXED = 'Pando creates the provisioned ones at the first deploy.';
+
 /** The text of the page between two pieces of text on it. */
 function between(from: string, to: string): string {
   const text = container.textContent ?? '';
@@ -108,12 +111,13 @@ describe('AppOnboarding, the services an app needs', () => {
         </QueryClientProvider>,
       );
     });
-    for (let i = 0; i < 600 && !container.textContent?.includes('Pando creates each one at the first deploy'); i++) {
+    for (let i = 0; i < 600 && !container.textContent?.includes(MIXED); i++) {
       await act(() => vi.advanceTimersByTimeAsync(100));
     }
 
-    // Each service by what it is, with where the app reads it from.
-    let services = between('Pando creates each one at the first deploy', 'Used on every deploy');
+    // Each service by what it is, with where the app reads it from. Pando
+    // creates the Memcached; the PostgreSQL is the app's own.
+    let services = between(MIXED, 'Used on every deploy');
     expect(services).toContain('Memcached');
     expect(services).toContain('Via MEMCACHED');
     expect(services).toContain('Provisioned');
@@ -133,7 +137,7 @@ describe('AppOnboarding, the services an app needs', () => {
 
     // Use your own: the service, its variable and the plan all say so.
     await act(async () => button('Use your own Memcached').click());
-    services = between('Pando creates each one at the first deploy', 'Used on every deploy');
+    services = between('Set each one’s address under Variables.', 'Used on every deploy');
     expect(services).toContain('External');
     variables = between('Used on every deploy', 'The plan');
     expect(variables).toContain('Address of your Memcached');
@@ -144,7 +148,7 @@ describe('AppOnboarding, the services an app needs', () => {
 
     // And back: Pando creates it again, and the field is gone.
     await act(async () => button('Let Pando create the Memcached').click());
-    expect(between('Pando creates each one at the first deploy', 'Used on every deploy')).toContain('Provisioned');
+    expect(between(MIXED, 'Used on every deploy')).toContain('Provisioned');
     expect(between('Used on every deploy', 'The plan')).toContain('Filled in by Pando at deploy');
     expect(container.querySelector('input[placeholder="Such as host:11211"]')).toBeNull();
   });

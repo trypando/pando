@@ -272,6 +272,9 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
   );
 }
 
+/** A count of members, as said: 1 member, 3 members. */
+const members = (n: number) => `${n} ${n === 1 ? 'member' : 'members'}`;
+
 /** Members listed by name in the group editor; a search finds the rest. */
 const MEMBERS_NAMED = 100;
 /** Accounts a search in the group editor offers. */
@@ -731,8 +734,8 @@ function DeleteGroup({ group, onClose }: { group: Group; onClose: () => void }) 
         }}
       >
         <p style={{ font: 'var(--type-body-ui)', margin: 0 }}>
-          {people === 1 ? 'The one member' : `The ${people} members`} keep their accounts and any access given to them
-          directly or through another group.
+          {people === 1 ? 'The one member keeps their account' : `The ${people} members keep their accounts`} and any
+          access given to them directly or through another group.
         </p>
         <p
           style={{
@@ -831,7 +834,7 @@ function LinkGroups({ group, synced, onClose }: { group: Group; synced: Group[];
           <Checkbox
             key={g.id}
             label={g.name}
-            description={`${g.source_name ?? g.source}, ${g.member_count ?? g.members?.length ?? 0} members`}
+            description={`${g.source_name ?? g.source}, ${members(g.member_count ?? g.members?.length ?? 0)}`}
             checked={linked.has(g.id)}
             disabled={toggle.isPending}
             onChange={(e) => toggle.mutate({ id: g.id, on: e.target.checked })}

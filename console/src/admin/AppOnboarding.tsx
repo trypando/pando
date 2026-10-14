@@ -1846,16 +1846,17 @@ function Services({
 }) {
   const services = (spec.slots ?? []).filter(isService);
   if (services.length === 0) return null;
-  const creates = services.some((s) => s.resolution?.mode === 'provisioned');
+  const created = services.filter((s) => s.resolution?.mode === 'provisioned' && !own(s.key)).length;
+  let subtitle = 'Set each one’s address under Variables.';
+  if (created === services.length) subtitle = 'Pando creates each one at the first deploy unless you use your own.';
+  else if (created > 0) subtitle = 'Pando creates the provisioned ones at the first deploy.';
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
         <h3 style={{ font: 'var(--type-h3)', margin: 0 }}>Services</h3>
         <span style={{ color: 'var(--ink-secondary)' }}>
-          {creates
-            ? 'Pando creates each one at the first deploy unless you use your own.'
-            : 'Set each one’s address under Variables.'}
+          {subtitle}
         </span>
       </div>
       <Card tone="paper" padding="none">

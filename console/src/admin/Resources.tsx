@@ -331,7 +331,7 @@ function Volumes({ appID, focus }: { appID: string; focus?: boolean }) {
       </div>
 
       {/* R-204, where the consequence lands rather than in documentation. */}
-      <Quiet>Data this app keeps. Deleting the app doesn&rsquo;t delete it.</Quiet>
+      <Quiet>Data this app keeps. Deleting the app offers to keep a final backup.</Quiet>
 
       {volumes.isError && <Banner tone="failed">{messageOf(volumes.error)}</Banner>}
 

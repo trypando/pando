@@ -44,7 +44,7 @@ export function unanswered(): Promise<Response> {
  *  the first that matches, with its value, and leaves any other unanswered. */
 export function answering(routes: Record<string, unknown>) {
   return async (url: string | URL | Request) => {
-    const path = String(url);
+    const path = url instanceof Request ? url.url : String(url);
     const match = Object.keys(routes).find((part) => path.includes(part));
     return match === undefined ? unanswered() : reply(routes[match]);
   };

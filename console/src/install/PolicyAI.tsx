@@ -162,7 +162,7 @@ export function PolicyAI({ onClose }: { onClose: () => void }) {
             ) : impact.isError ? (
               <Quiet>{refusal(impact.error)}</Quiet>
             ) : violations.length === 0 ? (
-              <Banner tone="running">No apps affected.</Banner>
+              <Banner tone="running">No apps break these rules.</Banner>
             ) : (
               <Banner tone="building">
                 {violations.length === 1 && violations[0]
