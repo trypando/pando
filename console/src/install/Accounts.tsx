@@ -178,7 +178,8 @@ function roleName(roleID: string, roles: Role[]): string {
 /** The distinct names of the roles an account holds, for the Role column's filter; "None" for none. */
 export function heldRoleNames(held: HeldRole[], roles: Role[]): string {
   const names = [...new Set(held.map((h) => roleName(h.role_id, roles)))];
-  return names.length > 0 ? names.sort((x, y) => x.localeCompare(y)).join(', ') : 'None';
+  names.sort((x, y) => x.localeCompare(y));
+  return names.length > 0 ? names.join(', ') : 'None';
 }
 
 /** "through pando-administrator (Okta)" — where a group-held role comes from. */
