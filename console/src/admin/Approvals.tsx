@@ -57,10 +57,7 @@ export function Approvals({ onOpenApp }: { onOpenApp: (appID: string) => void })
   return (
     <Screen heading="Approvals">
       <div style={{ maxWidth: MEASURE, display: 'flex', flexDirection: 'column' }}>
-        <Quiet>
-          Deploys waiting for somebody to approve them. A deploy runs once it has enough approvals,
-          and any one rejection ends it. Until then the app keeps running what it runs now.
-        </Quiet>
+        <Quiet>Deploys waiting for approval.</Quiet>
 
         {approvals.isPending && (
           <Loading gap="var(--space-3)">
@@ -72,9 +69,7 @@ export function Approvals({ onOpenApp }: { onOpenApp: (appID: string) => void })
         {approvals.isError && <Quiet>{messageOf(approvals.error)}</Quiet>}
 
         {approvals.isSuccess && rows.length === 0 && !approvals.hasNextPage && (
-          <EmptyState heading="Nothing is waiting for approval">
-            When a deploy needs approval, it is listed here until somebody answers it.
-          </EmptyState>
+          <EmptyState heading="Nothing is waiting for approval" />
         )}
 
         {rows.map((row) => (

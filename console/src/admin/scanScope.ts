@@ -17,8 +17,8 @@ export function scanScope(scan: Pick<Scan, 'spec_id' | 'commit' | 'image'> | und
     if (!scan.image) return 'from the source, before this configuration';
     return imageOnly(scan) ? 'of the image it will run' : 'of the image it will run and its source';
   }
-  if (!scan.image) return 'of the source only, not the image it runs';
-  if (!scan.commit) return 'of the running image only, not its source';
+  if (!scan.image) return 'of the source only';
+  if (!scan.commit) return 'of the running image only';
   if (imageOnly(scan)) return 'of the image it runs';
   return 'of the image it runs and its source';
 }

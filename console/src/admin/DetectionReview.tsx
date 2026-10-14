@@ -219,8 +219,7 @@ export function DetectionReview({ appID, reviewed }: { appID: string; reviewed: 
                 margin: 'var(--space-1) 0 0',
               }}
             >
-              Pando asks only when it genuinely can&rsquo;t work something out. Copy a question into
-              the tool that wrote this app and paste its answer back.
+              Copy a question into the tool that wrote this app and paste its answer back.
             </p>
           </div>
 
@@ -258,8 +257,8 @@ export function DetectionReview({ appID, reviewed }: { appID: string; reviewed: 
         >
           <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
             {reviewed
-              ? 'This app is already configured. Using this takes the build and the workloads from the repository and keeps what you set yourself.'
-              : 'Accepting saves this as the app’s configuration. It doesn’t deploy anything.'}
+              ? 'This app is already configured.'
+              : 'Accepting doesn’t deploy the app.'}
           </p>
           <Button
             variant="primary"
@@ -292,7 +291,7 @@ export function DetectionReview({ appID, reviewed }: { appID: string; reviewed: 
         // started merging them, and a dialog describing the old behavior is
         // worse than no dialog: somebody reads it and does not press the
         // button they needed.
-        description="Pando will use what it just found for the build and the workloads. Environment variables you set, how each dependency is filled, and storage you added are kept."
+        description="Replaces the build and workloads. Variables, dependencies and storage you set are kept."
         onClose={() => setReplacing(false)}
         footer={
           <>
@@ -320,7 +319,7 @@ function WinningBid({ candidate }: { candidate: Candidate }) {
     <Card padding="md">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>How Pando will build this</h4>
+          <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Build</h4>
           <Tag mono>{candidate.strategy}</Tag>
         </div>
 
@@ -437,11 +436,8 @@ function Dependencies({ proposal }: { proposal: Proposal }) {
 
   return (
     <section>
-      <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>What this app needs</h4>
-      <Quiet>
-        Things the app expects to find beside it. Anything required and unfilled is refused at
-        deploy rather than started and left to fail on a connection nobody made.
-      </Quiet>
+      <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Dependencies</h4>
+      <Quiet>A required dependency left unfilled blocks the deploy.</Quiet>
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table
@@ -449,13 +445,13 @@ function Dependencies({ proposal }: { proposal: Proposal }) {
             { key: 'key', header: 'Variable', width: 'minmax(0,26ch)', mono: true },
             {
               key: 'type',
-              header: 'Kind',
+              header: 'Type',
               width: '18ch',
               render: (row: Slot) => SLOT_NAMES[row.type] ?? row.type,
             },
             {
               key: 'resolution',
-              header: 'Filled by',
+              header: 'Source',
               width: 'minmax(0,30ch)',
               render: (row: Slot) => fills(row),
             },
@@ -473,27 +469,27 @@ const SLOT_NAMES: Record<string, string> = {
   redis: 'Redis',
   mongodb: 'MongoDB',
   memcached: 'Memcached',
-  s3: 'object storage',
-  smtp: 'email',
-  unknown: 'a value',
+  s3: 'Object storage',
+  smtp: 'Email',
+  unknown: 'Value',
 };
 
-/** The same sentences the settings screen uses, so one app reads one way. */
+/** The same words the settings screen uses, so one app reads one way. */
 function fills(slot: Slot) {
   if (!slot.resolution) {
     return slot.required ? (
-      <StatusIndicator status="failed" label="You choose after accepting" />
+      <StatusIndicator status="failed" label="Unfilled" />
     ) : (
-      <StatusIndicator status="stopped" label="Nothing, and optional" />
+      <StatusIndicator status="stopped" label="Optional" />
     );
   }
   switch (slot.resolution.mode) {
     case 'provisioned':
-      return 'Pando runs one inside this app';
+      return 'Provisioned';
     case 'bound':
-      return slot.resolution.target ?? 'Something already running';
+      return slot.resolution.target ?? 'External';
     case 'literal':
-      return 'A value you set';
+      return 'Value';
     default:
       return slot.resolution.mode;
   }
@@ -528,17 +524,13 @@ function Variables({ proposal }: { proposal: Proposal }) {
       <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>
         Variables with no value
       </h4>
-      <Quiet>
-        Declared by the app and not filled in. Pando reads the names from the repository and cannot
-        know the values. Set them under Settings, on the app&rsquo;s environment, after accepting —
-        a key or a password is stored as a secret and never appears in an exported configuration.
-      </Quiet>
+      <Quiet>Set them under Settings after accepting.</Quiet>
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table
           columns={[
             { key: 'key', header: 'Name', width: 'minmax(0,30ch)', mono: true },
-            { key: 'workload', header: 'Part of the app', width: '18ch', muted: true },
+            { key: 'workload', header: 'Part', width: '18ch', muted: true },
           ]}
           rows={rows}
         />
@@ -570,6 +562,7 @@ function RunnersUp({ candidates }: { candidates: Candidate[] }) {
     <section>
       <button
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
         style={{
           border: 'none',
           background: 'transparent',
@@ -579,7 +572,7 @@ function RunnersUp({ candidates }: { candidates: Candidate[] }) {
           color: 'var(--ink-secondary)',
         }}
       >
-        {open ? 'Hide' : 'Show'} what else Pando considered ({candidates.length})
+        Other candidates ({candidates.length})
       </button>
 
       {open && (
@@ -679,7 +672,7 @@ export function Blocked({ proposal }: { proposal: Proposal }) {
           {blocked.remedy}
         </p>
       )}
-      {proposal.trial_log && <CodeBlock title="What Pando saw" lines={proposal.trial_log} />}
+      {proposal.trial_log && <CodeBlock title="Trial run output" lines={proposal.trial_log} />}
     </div>
   );
 }
@@ -717,7 +710,7 @@ export function DetectionFailed({
       {onRetry && (
         <div>
           <Button variant="secondary" disabled={retrying} onClick={onRetry}>
-            {retrying ? 'Looking again' : 'Try again'}
+            {retrying ? 'Trying again' : 'Try again'}
           </Button>
         </div>
       )}

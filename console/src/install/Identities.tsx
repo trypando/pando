@@ -44,7 +44,7 @@ export function Identities({ userID, manage }: { userID: string; manage: boolean
       ) : ids.isError ? (
         <Banner tone="failed">{refusal(ids.error)}</Banner>
       ) : list.length === 0 ? (
-        <Quiet>No identity provider signs in to this account.</Quiet>
+        <Quiet>No linked identities.</Quiet>
       ) : (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           {list.map((i) => (
@@ -54,7 +54,7 @@ export function Identities({ userID, manage }: { userID: string; manage: boolean
             >
               <span>{i.adapter_name}</span>
               <Tag mono>{i.external_id}</Tag>
-              {i.origin && <Tag>Where the account came from</Tag>}
+              {i.origin && <Tag>Origin</Tag>}
               {i.scim && <Tag>SCIM</Tag>}
               <span style={{ color: 'var(--ink-secondary)', font: 'var(--type-caption)' }}>
                 {i.last_sign_in_at ? `Last signed in ${new Date(i.last_sign_in_at).toLocaleString()}` : 'Not signed in yet'}
@@ -99,7 +99,7 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
     <Dialog
       open
       title="Link an identity"
-      description="Whoever signs in with this identity will sign in to this account. Nothing is merged."
+      description="Whoever signs in with this identity signs in to this account."
       onClose={onClose}
       footer={
         <>
@@ -114,7 +114,7 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
         {external.length === 0 && providers.isSuccess ? (
-          <Quiet>This installation has no identity provider yet. Add one on the Sign-in screen.</Quiet>
+          <Quiet>No identity providers yet. Add one on the Sign-in screen.</Quiet>
         ) : (
           <>
             <Select
@@ -124,15 +124,15 @@ function LinkDialog({ userID, onClose }: { userID: string; onClose: () => void }
               onChange={(e) => setAdapterID(e.target.value)}
             />
             <Input
-              label="The provider's ID for this person"
+              label="External ID"
               mono
               value={externalID}
-              helper="A test sign-in shows it as the identity. When someone without an account is refused, the message tells them theirs."
+              helper="Shown in a test sign-in and in the refusal message."
               onChange={(e) => setExternalID(e.target.value)}
             />
             <Checkbox
-              label="If it already signs in to another account, move it here"
-              description="The other account is kept, suspended, as an alias of this one. It is never deleted, because apps may hold data under its ID."
+              label="Move from another account"
+              description="The other account is kept, suspended."
               checked={replace}
               onChange={(e) => setReplace(e.target.checked)}
             />

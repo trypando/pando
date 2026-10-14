@@ -902,8 +902,7 @@ function AppScreen({
                 )
               }
             >
-              This deploy is waiting for approval. Nothing changes until enough people approve it, and
-              the app keeps running what it runs now.
+              This deploy is waiting for approval.
             </Banner>
           </div>
         )}

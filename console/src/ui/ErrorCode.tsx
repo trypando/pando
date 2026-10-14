@@ -17,7 +17,7 @@ function ErrorCode({ code }: Readonly<{ code: string }>) {
       href={errorDocsURL(code)}
       target="_blank"
       rel="noopener noreferrer"
-      title="What this error means, in Pando's documentation"
+      title="View in docs"
       style={{ font: 'var(--type-code-sm)', color: 'inherit', overflowWrap: 'anywhere' }}
     >
       {code}

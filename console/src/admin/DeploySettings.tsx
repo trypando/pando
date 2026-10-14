@@ -102,13 +102,13 @@ function DeploySettings({
           happens, and nobody is told why. */}
       {autoDeployPaused && (
         <Banner tone="info">
-          Auto-deploy is paused. This app’s deploys now need approval, and a deploy that waits for
-          somebody can’t start on its own. Deploy by hand to ask for approval.
+          Auto-deploy is paused while this app’s deploys need approval. Deploy by hand to request
+          approval.
         </Banner>
       )}
 
       <Setting
-        title="Deploy when the repository changes"
+        title="Auto-deploy"
         control={
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
             <Checkbox
@@ -133,14 +133,14 @@ function DeploySettings({
         }
       >
         {fromGit
-          ? 'Pando checks the repository every few minutes and deploys what it finds. Off by default, so nothing ships without someone asking for it. Not available while this app’s deploys need approval.'
-          : 'Automatic deploys watch a git repository, and this app is deployed from an image or uploaded files. Deploy a new version by hand.'}
+          ? 'Pando checks the repository every few minutes and deploys what it finds. Not available while deploys need approval.'
+          : 'Available only for apps deployed from a git repository.'}
       </Setting>
 
       {fromGit && <AutoDeployActivity appID={appID} canEdit={canEdit} />}
 
       <Setting
-        title="Require approval for this app’s deploys"
+        title="Deploy approval"
         control={
           <Switch
             checked={requireApproval}
@@ -151,26 +151,24 @@ function DeploySettings({
               if (e.target.checked) setAutoDeploy(false);
             }}
             disabled={!canEdit}
-            label="Wait for approval before each deploy"
+            label="Require approval"
           />
         }
       >
         {/* R-154: turning it off is read from the running configuration too,
             so switching it off is itself a deploy somebody approves. */}
-        Each deploy waits until somebody allowed to approve it says yes. Turning this on turns
-        auto-deploy off, because a request for every push is a backlog nobody reads. Turning it off
-        again needs one last approval. An administrator can also require approval for an app, and
-        then it applies whatever this says.
+        Turning this on turns auto-deploy off. Turning it off needs one last approval. Installation
+        policy can require approval regardless.
       </Setting>
 
       <Setting
-        title="Keep the app up during a deploy"
+        title="Zero-downtime deploys"
         control={
           <Switch
             checked={startThenSwap}
             onChange={(e) => setStartThenSwap(e.target.checked)}
             disabled={!canEdit}
-            label="Start the new version before stopping the old one"
+            label="Start new version first"
           />
         }
       >
@@ -181,18 +179,17 @@ function DeploySettings({
       </Setting>
 
       <Setting
-        title="Undo a deploy that doesn't come up"
+        title="Automatic rollback"
         control={
           <Switch
             checked={autoRollback}
             onChange={(e) => setAutoRollback(e.target.checked)}
             disabled={!canEdit}
-            label="Roll back automatically"
+            label="Roll back failed deploys"
           />
         }
       >
-        Off by default, because Pando can only roll back on a signal it trusts. An app without a
-        health check reports nothing, and Pando would undo deploys that were fine.
+        Turn on only for an app with a health check.
       </Setting>
 
       {canEdit && (
@@ -210,7 +207,7 @@ function DeploySettings({
           {save.isError && <Failure error={save.error} />}
           {save.isSuccess && (
             <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>
-              Saved as a new configuration revision. It takes effect on the next deploy.
+              Saved. Takes effect at the next deploy.
             </p>
           )}
         </div>
@@ -271,13 +268,12 @@ function AutoDeployTrigger({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
       <fieldset style={{ border: 0, padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
         <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
-          What deploys
+          Trigger
         </legend>
         <Radio
           name="auto_deploy_trigger"
           value="branch_updated"
-          label="Each new commit on a branch"
-          description="For a project that does not tag its releases. Every push to the branch ships."
+          label="New commits on a branch"
           checked={trigger === 'branch_updated'}
           disabled={disabled}
           onChange={() => onTrigger('branch_updated')}
@@ -285,8 +281,8 @@ function AutoDeployTrigger({
         <Radio
           name="auto_deploy_trigger"
           value="release_tagged"
-          label="Each new release"
-          description="Pando deploys the newest release tag, and ignores commits in between."
+          label="New releases"
+          description="Deploys the newest release tag."
           checked={trigger === 'release_tagged'}
           disabled={disabled}
           onChange={() => onTrigger('release_tagged')}
@@ -300,11 +296,7 @@ function AutoDeployTrigger({
           spellCheck={false}
           value={branch}
           placeholder={deployedFrom || 'main'}
-          helper={
-            deployedFrom
-              ? `Leave empty to follow ${deployedFrom}, the branch this app was deployed from.`
-              : 'The branch whose commits deploy.'
-          }
+          helper={deployedFrom ? `Defaults to ${deployedFrom}.` : undefined}
           disabled={disabled}
           onChange={(e) => onBranch(e.target.value)}
         />
@@ -316,7 +308,7 @@ function AutoDeployTrigger({
           spellCheck={false}
           value={tagPattern}
           placeholder="v1.2.3"
-          helper="Leave empty to count tags such as v1.2.3 as releases, without pre-releases. Or give a pattern such as release-*, where * matches any characters. The highest version wins."
+          helper="Defaults to version tags such as v1.2.3, without pre-releases. Accepts a pattern such as release-*. The highest version deploys."
           disabled={disabled}
           onChange={(e) => onTagPattern(e.target.value)}
         />
@@ -355,7 +347,7 @@ function AutoDeployActivity({ appID, canEdit }: { appID: string; canEdit: boolea
 
   return (
     <Setting
-      title="Checks"
+      title="Webhook"
       control={
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           <Input label="Webhook URL" mono readOnly value={v.webhook_url} />
@@ -371,7 +363,7 @@ function AutoDeployActivity({ appID, canEdit }: { appID: string; canEdit: boolea
           {canEdit && (
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
               <Button variant="secondary" onClick={() => rotate.mutate()} disabled={rotate.isPending}>
-                {v.webhook_secret_set ? 'Replace webhook secret' : 'Make webhook secret'}
+                {v.webhook_secret_set ? 'Replace webhook secret' : 'Generate webhook secret'}
               </Button>
               {v.webhook_secret_set && (
                 <Button variant="ghost" onClick={() => remove.mutate()} disabled={remove.isPending}>
@@ -384,10 +376,8 @@ function AutoDeployActivity({ appID, canEdit }: { appID: string; canEdit: boolea
         </div>
       }
     >
-      {check ? lastCheck(check) : 'Pando has not checked this app yet.'}{' '}
-      A webhook from the repository makes Pando check as soon as something is pushed, if the
-      repository’s host can reach this installation. Without one, Pando still checks every few
-      minutes.
+      {check ? lastCheck(check) : 'Not checked yet.'} Pando checks every few minutes, or on each push
+      with a webhook.
     </Setting>
   );
 }

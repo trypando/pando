@@ -621,15 +621,13 @@ export function AppOnboarding({
               return (
                 <section key={group} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
                   <GroupHeading
-                    title={group === 'ai' ? 'Check what AI filled in' : 'Needs your answer'}
+                    title={group === 'ai' ? 'AI answers' : 'Needs your answer'}
                     count={items.length}
                     ai={group === 'ai'}
                   >
                     {group === 'ai'
-                      ? 'AI answered these from the code. Change anything that looks wrong.'
-                      : outcome?.ran
-                        ? 'Pando and AI couldn’t work these out from the code. Copy a question into the tool that wrote this app and paste its answer back.'
-                        : 'Pando couldn’t work these out from the code. Copy a question into the tool that wrote this app and paste its answer back.'}
+                      ? 'Change anything that looks wrong.'
+                      : 'Copy a question into the tool that wrote this app and paste its answer back.'}
                   </GroupHeading>
                   {items.map((q) => (
                     <QuestionCard
@@ -769,7 +767,7 @@ export function AppOnboarding({
       <Dialog
         open={confirmingOptional !== null}
         title={`Mark ${confirmingOptional?.key ?? 'this'} as not required?`}
-        description={`Pando found ${confirmingOptional?.key ?? 'this variable'} as something the app needs. If the app does need it, deploying without a value will fail, or the app will start and not work. Mark it not required only if you know the app runs without it.`}
+        description="If the app needs it, it fails to deploy or start without a value."
         onClose={() => setConfirmingOptional(null)}
         footer={
           <>
@@ -866,7 +864,7 @@ function SourceTags({ source, commit }: { source: Source | undefined; commit?: s
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)' }}>
       {source.type === 'image' && source.image && <Tag mono>{source.image}</Tag>}
-      {source.type === 'upload' && <Tag>An uploaded archive</Tag>}
+      {source.type === 'upload' && <Tag>Upload</Tag>}
       {repoTag &&
         (href ? (
           <a
@@ -987,7 +985,7 @@ function subline(
       parts.push(
         changed > 0
           ? `AI changed ${changed === 1 ? 'one thing' : `${changed} things`} after the plan failed.`
-          : 'AI looked at the failed plan and found nothing it could change.',
+          : 'AI found nothing to change in the failed plan.',
       );
     } else if (answered > 0) {
       parts.push(`AI answered ${answered === 1 ? 'one question' : `${answered} questions`}.`);
@@ -995,7 +993,7 @@ function subline(
   }
   parts.push(
     missing > 0
-      ? `Pando needs ${missing === 1 ? 'one answer' : `${missing} answers`} from you before it can deploy.`
+      ? `${missing === 1 ? 'One answer' : `${missing} answers`} needed to deploy.`
       : 'Everything’s answered.',
   );
   return parts.join(' ');
@@ -1141,7 +1139,7 @@ function StepLog({ steps, aiSteps }: { steps: DiscoveryStep[]; aiSteps: number }
           color: 'var(--ink)',
         }}
       >
-        <span style={{ font: 'var(--type-label)' }}>How Pando got here</span>
+        <span style={{ font: 'var(--type-label)' }}>Steps</span>
         <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>{summary}</span>
         <span
           style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)', color: 'var(--ink-secondary)' }}
@@ -1246,7 +1244,7 @@ function Notices({
   if (outcome?.ran && outcome.function === 'repair_plan' && changed.length > 0) {
     rows.push(
       <NoticeRow key="repair" ai title="AI changed the plan after it failed.">
-        {`${changed.map((c) => describeAmendment(c.amendment)).join('. ')}. Each change is marked below.`}
+        {`${changed.map((c) => describeAmendment(c.amendment)).join('. ')}.`}
       </NoticeRow>,
     );
   }
@@ -1262,7 +1260,7 @@ function Notices({
         detailLabel="output"
       >
         {trial.crashed
-          ? 'Pando started the app and it exited with an error. Its output shows why.'
+          ? 'It exited with an error.'
           : ports.length
             ? `It opened ${ports.length === 1 ? 'port' : 'ports'} ${ports.join(', ')}.`
             : 'It opened no ports.'}
@@ -1309,9 +1307,7 @@ function Notices({
           </ul>
         }
         detailLabel="what changed"
-      >
-        Each is listed with what Pando does instead.
-      </NoticeRow>,
+      />,
     );
   }
 
@@ -1345,9 +1341,7 @@ function Notices({
           </ul>
         }
         detailLabel="them"
-      >
-        None of them are in the plan.
-      </NoticeRow>,
+      />,
     );
   }
 
@@ -1368,7 +1362,7 @@ function NoticeRow({
   title: string;
   detail?: React.ReactNode;
   detailLabel?: string;
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -1644,8 +1638,8 @@ function Variables({
         <h3 style={{ font: 'var(--type-h3)', margin: 0 }}>Variables</h3>
         <span style={{ color: 'var(--ink-secondary)' }}>
           {rows.length === 0
-            ? 'Pando found no variables this app reads. Add any it needs.'
-            : 'Change any value. Pando uses these on every deploy.'}
+            ? 'No variables found.'
+            : 'Used on every deploy.'}
         </span>
       </div>
 
@@ -1674,7 +1668,7 @@ function Variables({
               source = changed ? (
                 <span>Your value</span>
               ) : markedOptional ? (
-                <span>You marked it optional. It stays unset if empty.</span>
+                <span>Marked optional</span>
               ) : (
                 <span style={{ color: slot.required ? 'var(--ink)' : undefined }}>
                   {slot.required ? 'Needs a value' : 'Optional, no value yet'}
@@ -1823,8 +1817,8 @@ function Variables({
           </Button>
           <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>
             {canSecrets
-              ? 'A secret is stored apart from the configuration and never appears in an export. Use it for keys and passwords.'
-              : 'You can’t store secrets on this app, so every value here is saved in the configuration. Leave keys and passwords empty for somebody who can.'}
+              ? 'Mark keys and passwords as secrets.'
+              : 'You can’t store secrets on this app. Leave keys and passwords empty for someone who can.'}
           </p>
         </div>
       )}
@@ -1863,18 +1857,17 @@ function Services({
         <h3 style={{ font: 'var(--type-h3)', margin: 0 }}>Services</h3>
         <span style={{ color: 'var(--ink-secondary)' }}>
           {creates
-            ? 'This app needs these to run. Pando creates each one at the first deploy and gives the app its address, unless you use your own.'
-            : 'This app needs these to run. Give each one’s address under Variables.'}
+            ? 'Pando creates each one at the first deploy unless you use your own.'
+            : 'Set each one’s address under Variables.'}
         </span>
       </div>
       <Card tone="paper" padding="none">
         {services.map((s, i) => {
           const filled = rows.filter((r) => r.slot?.key === s.key);
           const keys = [...new Set(filled.map((r) => r.key))];
-          const parts = filled.some((r) => r.slot?.part);
           const provisioned = s.resolution?.mode === 'provisioned';
           const mine = provisioned && own(s.key);
-          const state = mine ? { status: 'info' as const, label: 'Connects to one you have' } : serviceProvision(s);
+          const state = mine ? { status: 'info' as const, label: 'External' } : serviceProvision(s);
           const name = slotLabel(s.type);
           return (
             <VariableLine
@@ -1888,9 +1881,7 @@ function Services({
               }
               source={
                 keys.length > 0 && (
-                  <span>
-                    {`The app reads its ${parts || keys.length > 1 ? 'connection details' : 'address'} from ${listNames(keys)}`}
-                  </span>
+                  <span>{`Via ${listNames(keys)}`}</span>
                 )
               }
             >
@@ -1936,8 +1927,7 @@ function GenerateValue({ onGenerate, justDone }: { onGenerate: () => void; justD
       side="top"
       content={
         <span style={{ display: 'block', width: '16rem', whiteSpace: 'normal', lineHeight: 1.4 }}>
-          Fills in a random, secure string — essentially a password. Use it when the app just needs a
-          secret value and you don’t have one of your own.
+          Fills in a random, secure string.
         </span>
       }
     >
@@ -2002,7 +1992,7 @@ function RequirementBadge({
     <button
       type="button"
       onClick={onToggle}
-      title={optional ? 'Mark this required again' : 'The app needs this. Click if it doesn’t.'}
+      title={optional ? 'Mark required' : 'Mark not required'}
       aria-label={optional ? `Optional. Mark required again.` : `Required. Mark not required.`}
       style={{ display: 'inline-flex', border: 'none', background: 'transparent', padding: 0, cursor: 'pointer' }}
     >
@@ -2140,10 +2130,6 @@ function AskAI({ appID, conversation, canAsk }: { appID: string; conversation: T
           <AiStar size={20} />
           <h3 style={{ font: 'var(--type-h3)', margin: 0 }}>Ask AI about this plan</h3>
         </div>
-        <span style={{ color: 'var(--ink-secondary)', textWrap: 'pretty' } as React.CSSProperties}>
-          Say what’s wrong — a missing variable, the right port, a database it missed. AI checks the
-          repository and changes what it can.
-        </span>
       </div>
 
       {(conversation.length > 0 || ask.isPending) && (
@@ -2184,9 +2170,6 @@ function AskAI({ appID, conversation, canAsk }: { appID: string; conversation: T
             <Button variant="secondary" disabled={!message.trim() || ask.isPending} onClick={send}>
               {ask.isPending ? 'Asking' : 'Ask AI'}
             </Button>
-            <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
-              AI reads files from the repository to check what you say.
-            </span>
           </div>
           {ask.isError && <Failure error={ask.error} />}
         </div>
@@ -2277,11 +2260,11 @@ function ThePlan({
   const short = commit ? commit.slice(0, 7) : undefined;
 
   const buildRows: Array<{ k: string; v: string; text?: boolean; ai?: Amendment }> = [
-    { k: 'Approach', v: strategyLabel(build?.strategy), text: true },
+    { k: 'Strategy', v: strategyLabel(build?.strategy), text: true },
   ];
-  if (build?.dockerfile) buildRows.push({ k: 'Built from', v: build.dockerfile, ai: marks.build.dockerfile });
+  if (build?.dockerfile) buildRows.push({ k: 'Dockerfile', v: build.dockerfile, ai: marks.build.dockerfile });
   if (build?.context && build.context !== '.') buildRows.push({ k: 'Build context', v: build.context, ai: marks.build.context });
-  if (build?.static_dir) buildRows.push({ k: 'Serves', v: build.static_dir, ai: marks.build.static_dir });
+  if (build?.static_dir) buildRows.push({ k: 'Static directory', v: build.static_dir, ai: marks.build.static_dir });
   if (start) {
     buildRows.push({
       k: workloads.length > 1 ? `Start ${primary!.name}` : 'Start',
@@ -2296,7 +2279,7 @@ function ThePlan({
   }
   if (source?.type === 'git') {
     buildRows.push({
-      k: 'Deploys',
+      k: 'Ref',
       v: short ? `${short}${source.ref ? ` on ${source.ref}` : ''}` : (source.ref ?? 'The default branch'),
       text: !short,
     });
@@ -2349,20 +2332,20 @@ function ThePlan({
                 detail={w.image && !(w.command ?? []).length ? w.image : runs.value}
                 text={Boolean(runs.text) && !w.image}
                 status="running"
-                state={workloads.length > 1 && w.name === primaryName ? 'Runs, serves the app' : 'Runs'}
+                state={workloads.length > 1 && w.name === primaryName ? 'Primary' : 'Runs'}
               />
             );
           })}
           {services.map((s) => {
             const provision =
               s.resolution?.mode === 'provisioned' && own(s.key)
-                ? { status: 'info' as const, label: 'Connects to one you have' }
+                ? { status: 'info' as const, label: 'External' }
                 : serviceProvision(s);
             return (
               <ProcessRow
                 key={s.key}
                 name={slotLabel(s.type)}
-                detail={serviceImage(s) ?? `Reached at ${s.key}`}
+                detail={serviceImage(s) ?? `Via ${s.key}`}
                 status={provision.status}
                 state={provision.label}
                 ai={Boolean(marks.slots[s.key])}
@@ -2375,7 +2358,7 @@ function ThePlan({
               name="Storage"
               detail={m.path}
               status="info"
-              state="Kept across deploys"
+              state="Persistent"
               ai={Boolean(marks.volumes[m.path])}
             />
           ))}
@@ -2408,7 +2391,7 @@ function AvailableAt({
     mode === 'subdomain'
       ? 'at its own hostname'
       : mode === 'port'
-        ? 'on a port of its own on this host, which Pando assigns'
+        ? 'on its own port on this host'
         : mode === 'path'
           ? 'under a path on Pando’s address'
           : undefined;
@@ -2427,7 +2410,7 @@ function AvailableAt({
       }}
     >
       <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 'var(--space-2)' }}>
-        <span style={{ color: 'var(--ink-secondary)' }}>Once deployed, available at</span>
+        <span style={{ color: 'var(--ink-secondary)' }}>Address</span>
         {address ? (
           <a
             href={address}
@@ -2438,12 +2421,12 @@ function AvailableAt({
             {address}
           </a>
         ) : (
-          <span style={{ color: 'var(--ink)' }}>an address Pando assigns on the first deploy</span>
+          <span style={{ color: 'var(--ink)' }}>Assigned on the first deploy</span>
         )}
       </span>
       {how && (
         <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
-          {`Served ${how}${routing?.adapter_ref ? `, by the ${routing.adapter_ref} routing adapter` : ''}. Variables naming the app’s own URL or domain are filled from this address.`}
+          {`Served ${how}${routing?.adapter_ref ? `, by the ${routing.adapter_ref} routing adapter` : ''}.`}
         </span>
       )}
       {editable && (

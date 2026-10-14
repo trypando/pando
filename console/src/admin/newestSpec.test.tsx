@@ -71,7 +71,7 @@ describe('screens built on the newest spec revision', () => {
       </AppVerbs.Provider>,
     );
     expect(html).toContain('Add variable');
-    expect(html).toContain('add anything it missed');
+    expect(html).toContain('>Remove<');
   });
 
   it('Environment offers nothing to edit without app.spec.edit', () => {

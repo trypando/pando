@@ -342,7 +342,7 @@ function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) 
   return (
     <Frame
       heading="Set up Pando"
-      lede="This installation has no accounts yet. Create the administrator account with the setup token Pando printed to its log."
+      lede="Create the administrator account with the setup token from Pando’s log."
     >
       <form
         onSubmit={(e) => {
@@ -357,7 +357,7 @@ function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) 
           autoComplete="off"
           spellCheck={false}
           autoFocus
-          helper="Pando printed it to its log when it started, as setup_token. With Docker Compose, run docker compose logs pando."
+          helper="Printed to Pando’s log at startup as setup_token. With Docker Compose, run docker compose logs pando."
           error={tokenRefused ? withRemedy(create.error) : undefined}
           onChange={(e) => edit(setToken)(e.target.value.trim())}
         />
@@ -371,7 +371,7 @@ function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) 
           label="Name"
           value={displayName}
           autoComplete="name"
-          helper="Optional. Shown in the console and in the audit log."
+          helper="Optional."
           onChange={(e) => edit(setDisplayName)(e.target.value)}
         />
         <Input
@@ -391,7 +391,7 @@ function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) 
           value={confirm}
           autoComplete="new-password"
           onChange={(e) => edit(setConfirm)(e.target.value)}
-          error={mismatch ? 'These two passwords are different.' : undefined}
+          error={mismatch ? 'Passwords don’t match.' : undefined}
         />
         <Button
           type="submit"
@@ -473,7 +473,7 @@ export function ChangePassword({ username }: { username?: string }) {
           type="password"
           value={next}
           autoComplete="new-password"
-          helper="At least 10 characters. A short phrase you'll remember works well."
+          helper="At least 10 characters."
           // The server's refusal belongs here, on the field it is about. It
           // used to render under "New password again", so a message about the
           // new password's length appeared beneath a field whose only job is
@@ -487,7 +487,7 @@ export function ChangePassword({ username }: { username?: string }) {
           value={confirm}
           autoComplete="new-password"
           onChange={(e) => edit(setConfirm)(e.target.value)}
-          error={mismatch ? 'These two passwords are different.' : undefined}
+          error={mismatch ? 'Passwords don’t match.' : undefined}
         />
         <Button
           type="submit"

@@ -85,7 +85,7 @@ export function AccessAI({ onClose }: { onClose: () => void }) {
   return (
     <AIDialog
       title="Ask AI to draft access"
-      intro="Describe who should be able to do what. AI drafts a role and a group from Pando's permissions. Change the draft by hand or by asking, then accept it to create it. Nothing is created until you accept."
+      intro="Describe the access you want. AI drafts a role and a group for you to review."
       onClose={onClose}
       footer={
         <>
@@ -103,7 +103,7 @@ export function AccessAI({ onClose }: { onClose: () => void }) {
       }
     >
       <AIPrompt
-        label={draft ? 'Change the draft' : 'Who should be able to do what'}
+        label={draft ? 'Change the draft' : 'Access'}
         placeholder={draft ? 'They should read logs too' : 'Release managers can deploy and restart any app'}
         pending={ask.isPending}
         error={ask.error}
@@ -129,11 +129,11 @@ export function AccessAI({ onClose }: { onClose: () => void }) {
                   style={{ flex: '1 1 16rem' }}
                 />
                 <Select
-                  label="Applies to"
+                  label="Scope"
                   value={draft.role.scope}
                   options={[
-                    { value: 'app', label: 'One app at a time' },
-                    { value: 'install', label: 'The whole installation' },
+                    { value: 'app', label: 'App' },
+                    { value: 'install', label: 'Installation' },
                   ]}
                   // A role holds permissions of one scope (R-080), so the
                   // other scope's are cleared rather than carried over.
@@ -159,14 +159,14 @@ export function AccessAI({ onClose }: { onClose: () => void }) {
               </div>
               <div>
                 <Button variant="ghost" onClick={() => setRole(undefined)}>
-                  Leave out the role
+                  Remove role
                 </Button>
               </div>
             </section>
           ) : (
             <div>
               <Button variant="ghost" onClick={() => setRole({ name: '', scope: 'app', verbs: [] })}>
-                Add a role
+                Add role
               </Button>
             </div>
           )}
@@ -176,28 +176,28 @@ export function AccessAI({ onClose }: { onClose: () => void }) {
               <AIHeading>Group</AIHeading>
               <Input label="Name" value={draft.group.name} onChange={(e) => setGroup({ ...draft.group!, name: e.target.value })} />
               <PeopleField
-                label="People"
+                label="Members"
                 people={people}
                 value={members}
                 onChange={(ids) => setGroup({ ...draft.group!, members: ids })}
               />
               <div>
                 <Button variant="ghost" onClick={() => setGroup(undefined)}>
-                  Leave out the group
+                  Remove group
                 </Button>
               </div>
             </section>
           ) : (
             <div>
               <Button variant="ghost" onClick={() => setGroup({ name: '', members: [] })}>
-                Add a group
+                Add group
               </Button>
             </div>
           )}
 
           <AnsweredBy adapter={draft.adapter_id} model={draft.model} />
           {draft.role?.scope === 'app' && draft.group && (
-            <Quiet>An app role is granted to the group on each app, from that app&rsquo;s sharing settings.</Quiet>
+            <Quiet>Grant this role to the group on each app from its sharing settings.</Quiet>
           )}
           {accept.isError && <Quiet>{refusal(accept.error)}</Quiet>}
         </>

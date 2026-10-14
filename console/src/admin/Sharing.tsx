@@ -237,8 +237,7 @@ export function Sharing({ appID, appName }: { appID: string; appName: string }) 
         <Section>
           <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Share with someone</h4>
           <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
-            They&rsquo;ll see {appName} the next time they sign in. Pando doesn&rsquo;t send them a
-            message.
+            They&rsquo;ll see {appName} the next time they sign in.
           </p>
           {/* An account or a group, then which one. Two kinds, so a pair of
               radios rather than a select: both choices stay in view. */}
@@ -246,7 +245,7 @@ export function Sharing({ appID, appName }: { appID: string; appName: string }) 
             <Radio
               name="share-kind"
               value="user"
-              label="A person"
+              label="Person"
               checked={kind === 'user'}
               onChange={() => {
                 setKind('user');
@@ -257,7 +256,7 @@ export function Sharing({ appID, appName }: { appID: string; appName: string }) 
             <Radio
               name="share-kind"
               value="group"
-              label="A group"
+              label="Group"
               checked={kind === 'group'}
               onChange={() => {
                 setKind('group');
@@ -295,7 +294,7 @@ export function Sharing({ appID, appName }: { appID: string; appName: string }) 
               <Skeleton width="28ch" height="var(--control-input)" />
             ) : (
               <Select
-                label="What they can do"
+                label="Role"
                 options={[
                   { value: '', label: USE_ONLY },
                   ...appRoles.map((r) => ({ value: r.id, label: roleChoice(r) })),
@@ -355,7 +354,7 @@ export function Sharing({ appID, appName }: { appID: string; appName: string }) 
                 name="everyone"
                 value="passcode"
                 label="With a passcode"
-                description={`${sayPasscode} You choose the passcode and give it to them.`}
+                description={sayPasscode}
                 checked={withPasscode}
                 disabled={!allowed}
                 onChange={() => setWithPasscode(true)}
@@ -400,7 +399,7 @@ export function Sharing({ appID, appName }: { appID: string; appName: string }) 
               onClick={() => ask('public')}
               style={{ alignSelf: 'flex-start' }}
             >
-              {passcodeChosen ? 'Make it public with a passcode' : 'Make it public'}
+              Make public
             </Button>
           ) : (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
@@ -427,7 +426,7 @@ export function Sharing({ appID, appName }: { appID: string; appName: string }) 
                 disabled={revoke.isPending}
                 onClick={() => anonymous && revoke.mutate(anonymous.id)}
               >
-                Make it private again
+                Make private
               </Button>
             </div>
           )}
@@ -494,13 +493,13 @@ function EveryoneDialog({
     public: withPasscode
       ? {
           title: 'Make this app public with a passcode?',
-          description: `Anyone who has the link and the passcode will be able to open ${appName} without signing in. You can undo this at any time.`,
-          action: 'Make it public',
+          description: `Anyone who has the link and the passcode will be able to open ${appName} without signing in.`,
+          action: 'Make public',
         }
       : {
           title: 'Make this app public?',
-          description: `Anyone who has the link will be able to open ${appName} without signing in. You can undo this at any time.`,
-          action: 'Make it public',
+          description: `Anyone who has the link will be able to open ${appName} without signing in.`,
+          action: 'Make public',
         },
     'add-passcode': {
       title: 'Add a passcode',
@@ -556,7 +555,7 @@ function EveryoneDialog({
             spellCheck={false}
             value={passcode}
             onChange={(e) => onPasscode(e.target.value)}
-            helper={`At least ${PASSCODE_MIN} characters. Give it to the people you want to let in; Pando doesn’t show it again.`}
+            helper={`At least ${PASSCODE_MIN} characters. Not shown again.`}
             error={error ? messageOf(error) : undefined}
           />
         </form>
@@ -657,19 +656,19 @@ function access(row: Access): React.ReactNode {
   // Everyone opens it without signing in, which is the whole of what that
   // row means; said as the consequence rather than as a role (R-077).
   if (row.principalKind === 'anonymous') {
-    return <span>{row.passcode ? 'Can open it with the passcode' : 'Can open it, without signing in'}</span>;
+    return <span>{row.passcode ? 'Use, with the passcode' : 'Use, without signing in'}</span>;
   }
   // Everything this person can do, in one cell. "Can open it" is the data
   // plane; the roles are control (R-070, R-071). Someone who owns the app has
   // both, and that now reads as one person with two capabilities rather than
   // as two people who happen to share a name.
-  const parts = [...row.roles, ...(row.canOpen ? ['Can open it'] : [])];
+  const parts = [...row.roles, ...(row.canOpen ? ['Use'] : [])];
   return (
     <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
       {row.roles.map((r) => (
         <Tag key={r}>{r}</Tag>
       ))}
-      {row.canOpen && <span>Can open it</span>}
+      {row.canOpen && <span>Use</span>}
       {parts.length === 0 && <span>No access</span>}
     </div>
   );

@@ -66,7 +66,7 @@ export function AppAddress({ app }: { app: App }) {
             {shown(app.address)}
           </a>
         ) : (
-          <span style={{ color: 'var(--ink-secondary)' }}>This app gets an address when it is first deployed.</span>
+          <span style={{ color: 'var(--ink-secondary)' }}>Not deployed yet.</span>
         )}
         {canEdit && app.pinned_spec_id && routing.data && (
           <Button variant="secondary" onClick={() => setChanging(true)}>
@@ -76,7 +76,7 @@ export function AppAddress({ app }: { app: App }) {
       </span>
       {next && (
         <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
-          Moves to {shown(next)} when this app is next deployed.
+          Moves to {shown(next)} at the next deploy.
         </span>
       )}
       {changing && routing.data && (
@@ -87,9 +87,9 @@ export function AppAddress({ app }: { app: App }) {
 }
 
 const MODE_LABEL: Record<string, string> = {
-  subdomain: 'Its own hostname',
-  path: 'A path on Pando’s address',
-  port: 'Its own port',
+  subdomain: 'Subdomain',
+  path: 'Path',
+  port: 'Port',
 };
 
 function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; onClose: () => void }) {
@@ -147,7 +147,7 @@ function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; on
       open
       onClose={onClose}
       title="Change address"
-      description="Saved now, and used from the next deploy."
+      description="Takes effect at the next deploy."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -181,7 +181,7 @@ function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; on
                   key={o.adapter_ref}
                   name="adapter"
                   value={o.adapter_ref}
-                  label={o.is_default ? `${o.name} (the installation's default)` : o.name}
+                  label={o.is_default ? `${o.name} (default)` : o.name}
                   checked={adapterRef === o.adapter_ref}
                   onChange={() => pickAdapter(o.adapter_ref)}
                 />
@@ -193,7 +193,7 @@ function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; on
               value={adapterRef}
               options={options.map((o) => ({
                 value: o.adapter_ref,
-                label: o.is_default ? `${o.name} (the installation's default)` : o.name,
+                label: o.is_default ? `${o.name} (default)` : o.name,
               }))}
               onChange={(e) => pickAdapter(e.target.value)}
             />
@@ -202,7 +202,7 @@ function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; on
         {modes.length > 1 && (
           <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
-              Reached at
+              Mode
             </legend>
             {modes.map((m) => {
               const isDefault = m === option?.default_mode;
@@ -216,12 +216,10 @@ function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; on
                   label={MODE_LABEL[m] ?? m}
                   description={
                     locked
-                      ? 'Choosing something other than this adapter’s default needs permission to override routing.'
-                      : m === 'path'
-                        ? 'A path on the address Pando is served at, such as /notes.'
-                        : m === 'port'
-                          ? 'Pando assigns a port from the installation’s range.'
-                          : undefined
+                      ? 'Needs permission to override routing.'
+                      : m === 'port'
+                        ? 'Assigned from the installation’s range.'
+                        : undefined
                   }
                   checked={mode === m}
                   disabled={locked}
@@ -253,7 +251,7 @@ function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; on
             spellCheck={false}
             value={path}
             placeholder={`/${app.slug}`}
-            helper="Lowercase letters, digits and hyphens, up to four parts, such as /team/notes. The app receives requests with this part removed, and is told it in X-Forwarded-Prefix."
+            helper="Lowercase letters, digits and hyphens, up to four parts, such as /team/notes. Removed before requests reach the app, and sent as X-Forwarded-Prefix."
             onChange={(e) => setPath(e.target.value)}
           />
         )}
@@ -263,14 +261,14 @@ function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; on
             routing, and said wherever it is chosen. */}
         {mode === 'path' && (
           <Banner tone="info">
-            At a path, this app shares Pando’s address, so any script it serves can act in Pando as whoever opens it. Use
-            a hostname for an app whose code you don’t fully trust.
+            At a path, this app shares Pando’s address, and any script it serves can act in Pando as whoever opens it.
+            Use a hostname for code you don’t fully trust.
           </Banner>
         )}
 
         {view.address && (
           <Banner tone="info">
-            Once this is deployed, {shown(view.address)} stops working, and links and bookmarks to it break.
+            {shown(view.address)} stops working at the next deploy.
           </Banner>
         )}
         {change.isError && <Banner tone="failed">{messageOf(change.error)}</Banner>}

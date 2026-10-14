@@ -67,9 +67,7 @@ export function AppEvents({ app }: { app: App }) {
         <Table
           loading={feed.isPending}
           empty={
-            <EmptyState heading="Nothing yet">
-              Deploys, state changes, scans, shares and backups of {app.name} appear here as they happen.
-            </EmptyState>
+            <EmptyState heading="No events yet" />
           }
           columns={[
             {
@@ -82,7 +80,7 @@ export function AppEvents({ app }: { app: App }) {
             { key: 'type', header: 'Event', width: 'minmax(0,22ch)', mono: true },
             {
               key: 'subject',
-              header: 'What happened',
+              header: 'Summary',
               width: 'minmax(0,1fr)',
               render: (row: FeedItem) => (
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>

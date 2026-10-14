@@ -51,9 +51,9 @@ export function revocationText(kind: string, r: Revocation | undefined): string 
     return `${session} Suspending an account here ends its access within ${duration(r.window_seconds)}.`;
   }
   if (r.mode === 'push') {
-    return `${session} The provider pushes changes through SCIM, so removing someone there ends their access here within ${duration(r.window_seconds)}.`;
+    return `${session} SCIM removals apply within ${duration(r.window_seconds)}.`;
   }
-  return `${session} Removing someone at the provider ends their access here when their session ends: up to ${duration(r.window_seconds)}. Turn on SCIM to make it immediate.`;
+  return `${session} Removals at the provider apply when the session ends, up to ${duration(r.window_seconds)}. Turn on SCIM to apply them sooner.`;
 }
 
 /** The form: text for each field, a boolean for a bool. */
@@ -195,7 +195,7 @@ export function outcomeText(o: Outcome | undefined): string {
     case 'linked_by_email':
       return `A real sign-in would link this identity to ${who}'s account by its verified email, and sign in there.`;
     case 'created':
-      return `A real sign-in would create a new account for ${who}. It would have no access until it is given some, or is in a group that has some.`;
+      return `A real sign-in would create a new account for ${who}, with no access until granted.`;
     default:
       return o.remedy ? `${o.message ?? ''} ${o.remedy}`.trim() : (o.message ?? 'A real sign-in would be refused.');
   }
@@ -205,10 +205,10 @@ export function outcomeText(o: Outcome | undefined): string {
 export function groupsText(o: Outcome | undefined, groups: string[]): string {
   if (!o) return '';
   if (o.groups_from === 'scim') {
-    return 'SCIM sets this provider’s group memberships, so the groups in the sign-in are not used.';
+    return 'Set by SCIM. Groups in the sign-in are ignored.';
   }
   if (groups.length === 0) {
-    return 'The sign-in carried no groups. Check the groups claim or attribute if you expected some.';
+    return 'No groups sent. Check the groups claim or attribute if you expected some.';
   }
-  return `Each sign-in sets the person’s groups from this provider to: ${groups.join(', ')}.`;
+  return `Set at each sign-in: ${groups.join(', ')}.`;
 }

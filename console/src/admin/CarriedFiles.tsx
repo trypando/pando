@@ -34,16 +34,13 @@ export function CarriedFiles({ appID }: { appID: string }) {
   return (
     <section>
       <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Configuration files</h4>
-      <Quiet>
-        Files Pando copies into the app when it starts, taken from the repository when this app was
-        read. Editing them in the repository changes nothing here until the app is read again.
-      </Quiet>
+      <Quiet>Files Pando copies into the app when it starts.</Quiet>
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table
           columns={[
-            { key: 'path', header: 'Where it goes', width: 'minmax(0,38ch)', mono: true },
-            { key: 'workload', header: 'Part of the app', width: '18ch', muted: true },
+            { key: 'path', header: 'Path', width: 'minmax(0,38ch)', mono: true },
+            { key: 'workload', header: 'Part', width: '18ch', muted: true },
             { key: 'size', header: 'Size', width: '10ch', muted: true },
             {
               key: 'actions',

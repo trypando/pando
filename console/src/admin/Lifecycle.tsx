@@ -67,25 +67,19 @@ export function Lifecycle({ app }: { app: App }) {
           open
           onClose={() => setConfirming(false)}
           title={`Stop ${app.name}?`}
-          description="It stops serving until you start it again."
+          description="Its storage, configuration and address are kept."
           footer={
             <>
               <Button variant="ghost" onClick={() => setConfirming(false)}>
                 Cancel
               </Button>
               <Button variant="primary" disabled={act.isPending} onClick={() => act.mutate('stop')}>
-                {act.isPending ? 'Stopping' : 'Stop the app'}
+                {act.isPending ? 'Stopping' : 'Stop app'}
               </Button>
             </>
           }
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-            {/* The difference from Delete, said plainly: this is the reason
-                somebody reaches for one rather than the other. */}
-            <Banner tone="info">
-              Nothing is removed. Its storage, its configuration and its address are kept, and
-              starting it again brings back the version that was running.
-            </Banner>
             {act.isError && <Banner tone="failed">{messageOf(act.error)}</Banner>}
           </div>
         </Dialog>

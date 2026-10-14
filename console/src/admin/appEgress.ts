@@ -61,9 +61,9 @@ export function installMode(mode: string | undefined): InstallMode {
 export function modeWords(mode: string | undefined): string {
   switch (installMode(mode)) {
     case 'denylist':
-      return 'Anywhere except the destinations listed';
+      return 'Anywhere except the list';
     case 'allowlist':
-      return 'Only the destinations listed';
+      return 'Only the list';
     default:
       return 'Anywhere';
   }
@@ -71,8 +71,8 @@ export function modeWords(mode: string | undefined): string {
 
 /** The app's own list, in words. */
 export function appModeWords(mode: string | undefined): string | null {
-  if (mode === 'allowlist') return 'On top of that, only these';
-  if (mode === 'denylist') return 'On top of that, never these';
+  if (mode === 'allowlist') return 'App allowlist';
+  if (mode === 'denylist') return 'App denylist';
   return null;
 }
 
@@ -83,13 +83,13 @@ export function gateWords(gate: string | undefined): { status: 'failed' | 'info'
       return {
         status: 'failed',
         label: 'Not allowed',
-        detail: 'The installation’s policy doesn’t allow loosening its rules. The next deploy is refused until this is taken out.',
+        detail: 'Installation policy doesn’t allow loosening its rules. The next deploy is refused until this is removed.',
       };
     case 'approval':
       return {
         status: 'info',
-        label: 'Needs a deploy approval',
-        detail: 'The deploy that carries it waits until it is approved.',
+        label: 'Needs approval',
+        detail: 'The deploy that carries it waits for approval.',
       };
     default:
       return {
@@ -163,14 +163,14 @@ export function listEdits(mode: InstallMode): {
 } | null {
   if (mode === 'allowlist') {
     return {
-      add: { label: 'Also allow', loosens: true },
-      remove: { label: 'Don’t allow, though the installation does', loosens: false },
+      add: { label: 'Add to allowlist', loosens: true },
+      remove: { label: 'Remove from allowlist', loosens: false },
     };
   }
   if (mode === 'denylist') {
     return {
-      add: { label: 'Also block', loosens: false },
-      remove: { label: 'Allow, though the installation blocks it', loosens: true },
+      add: { label: 'Add to denylist', loosens: false },
+      remove: { label: 'Remove from denylist', loosens: true },
     };
   }
   return null;

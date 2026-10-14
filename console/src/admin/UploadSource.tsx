@@ -137,16 +137,12 @@ function UploadedFiles({ appID }: { appID: string }) {
   return (
     <section>
       <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Files</h4>
-      <Quiet>
-        This app runs files sent from a computer rather than a repository. Sending new ones replaces
-        them, and Pando works out again how to run the app. Nothing changes until you accept what it
-        finds.
-      </Quiet>
+      <Quiet>Sending new files replaces these and runs detection again.</Quiet>
       {canEdit && (
         <div style={{ marginTop: 'var(--space-4)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           <FilePicker files={files} onPick={setFiles} disabled={send.isPending} />
           {send.isError && <Quiet>{messageOf(send.error)}</Quiet>}
-          {send.isSuccess && <Quiet>Sent. Pando is working out how to run them.</Quiet>}
+          {send.isSuccess && <Quiet>Sent.</Quiet>}
           <div>
             <Button variant="primary" disabled={files.length === 0 || send.isPending} onClick={() => send.mutate()}>
               {send.isPending ? 'Sending' : 'Send files'}

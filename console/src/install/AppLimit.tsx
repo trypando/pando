@@ -47,7 +47,7 @@ function from(l: Limit): string {
     case 'group':
       return `through ${l.group_name ?? 'a group'}`;
     default:
-      return "the installation's default";
+      return 'the installation default';
   }
 }
 
@@ -75,8 +75,8 @@ export function AccountAppLimit({ userID, manage }: Readonly<{ userID: string; m
       )}
       {open && (
         <MaxAppsDialog
-          title="Apps this account may own"
-          description="A number here applies whatever this person's groups say. Leave it empty to use the most generous of their groups, or the installation's default."
+          title="App limit"
+          description="Overrides group limits. Leave empty to inherit."
           current={l.max_apps}
           path={`/users/${userID}/app-limit`}
           invalidate={[['users', userID, 'app-limit']]}
@@ -93,7 +93,7 @@ export function GroupAppLimit({ groupID, name, onClose }: Readonly<{ groupID: st
     queryKey: ['groups', groupID, 'app-limit'],
     queryFn: () => api.get<{ max_apps: number | null }>(`/groups/${groupID}/app-limit`),
   });
-  const title = `Apps each person in ${name} may own`;
+  const title = `App limit for ${name}`;
   if (current.isPending) return null;
   // Not an empty editor: Save from one would clear the limit the group has,
   // which nobody could see because it was never read.
@@ -121,7 +121,7 @@ export function GroupAppLimit({ groupID, name, onClose }: Readonly<{ groupID: st
   return (
     <MaxAppsDialog
       title={title}
-      description="Somebody in several groups gets the most generous of them. A number set on their own account replaces every group's."
+      description="Members of several groups get the highest limit."
       current={current.data.max_apps}
       path={`/groups/${groupID}/app-limit`}
       // Every member's limit may have changed.
@@ -183,7 +183,7 @@ function MaxAppsDialog({
           inputMode="numeric"
           value={value}
           placeholder="Not set"
-          helper="Zero means unlimited. Leave it empty to remove it. Lowering it deletes nothing; it stops new apps past the limit."
+          helper="Zero means unlimited. Leave empty to remove it. Lowering it doesn’t delete apps."
           error={parsed.ok ? undefined : 'Use a whole number of apps, 0 for unlimited, or leave it empty.'}
           onChange={(e) => {
             if (save.isError) save.reset();

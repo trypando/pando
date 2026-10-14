@@ -65,27 +65,15 @@ export function lines(text: string): string[] {
 }
 
 export const EGRESS_MODES: ReadonlyArray<readonly [InstallEgressMode, string, string]> = [
-  ['allow_all', 'Anywhere', 'Apps may connect to any destination. The shipped default.'],
-  ['denylist', 'Anywhere except the list', 'Apps may connect anywhere but the destinations listed below.'],
-  ['allowlist', 'Only the list', 'Apps may connect only to the destinations listed below.'],
+  ['allow_all', 'Anywhere', 'Any destination. The default.'],
+  ['denylist', 'Anywhere except the list', 'Every destination except those listed below.'],
+  ['allowlist', 'Only the list', 'Only the destinations listed below.'],
 ];
 
 export const LOOSENING: ReadonlyArray<readonly [Loosening, string, string]> = [
-  [
-    'verb',
-    'Allowed for people with permission',
-    'Somebody holding app.egress.loosen on the app may loosen these rules for it. The owner role holds it.',
-  ],
-  [
-    'approval',
-    'Need a deploy approval',
-    'Anybody who may change an app’s egress may propose a loosening, and the deploy that carries it waits for approval.',
-  ],
-  [
-    'forbidden',
-    'Not allowed',
-    'These rules hold for every app. A deploy that would loosen them is refused, and the refusal names the entries.',
-  ],
+  ['verb', 'Allowed for people with permission', 'Anyone holding app.egress.loosen on the app. The owner role holds it.'],
+  ['approval', 'Need a deploy approval', 'Anyone who can change an app’s egress can propose a loosening. The deploy waits for approval.'],
+  ['forbidden', 'Not allowed', 'A deploy that would loosen these rules is refused.'],
 ];
 
 /** The helper under the install's list: every form an entry can take (R-185). */

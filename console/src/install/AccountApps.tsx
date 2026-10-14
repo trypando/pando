@@ -66,7 +66,7 @@ export function AccountApps({
 }: {
   principal: Principal;
   heading?: string;
-  /** Beside "Give access to an app", for the surface the list sits in. */
+  /** Beside "Add app", for the surface the list sits in. */
   action?: React.ReactNode;
 }) {
   const noun = principal.kind === 'user' ? 'account' : 'group';
@@ -111,14 +111,14 @@ export function AccountApps({
           <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>{heading}</h4>
           <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
             {principal.kind === 'user'
-              ? 'The role this account manages each app with, and whether it can open it.'
-              : 'The role everyone in this group manages each app with, and whether they can open it.'}
+              ? 'This account’s role and access on each app.'
+              : 'This group’s role and access on each app.'}
           </p>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
           {everyApp && (
             <Button variant="secondary" onClick={() => setAdding(true)}>
-              Give access to an app
+              Add app
             </Button>
           )}
           {action}
@@ -139,7 +139,7 @@ export function AccountApps({
             render: (row: AppAccess) => (
               <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)' }}>
                 {row.app_name}
-                {row.owner && <Tag>Owner of record</Tag>}
+                {row.owner && <Tag>Owner</Tag>}
               </span>
             ),
           },
@@ -155,7 +155,7 @@ export function AccountApps({
           },
           {
             key: 'use',
-            header: 'Can open',
+            header: 'Access',
             width: '16ch',
             render: (row: AppAccess) => <UseCell principal={principal} row={row} />,
           },
@@ -164,7 +164,7 @@ export function AccountApps({
         empty={
           <EmptyState heading="No apps">
             {everyApp
-              ? `This ${noun} has no access to any app. Give it access to one above.`
+              ? `This ${noun} has no access to any app.`
               : `This ${noun} has no access to any app you can see.`}
           </EmptyState>
         }
@@ -236,7 +236,7 @@ function UseCell({ principal, row }: { principal: Principal; row: AppAccess }) {
   }
   return (
     <Checkbox
-      aria-label={`Can open ${row.app_name}`}
+      aria-label={`Access to ${row.app_name}`}
       label={viaGroup && !own ? 'Through a group' : undefined}
       checked={Boolean(own || viaGroup)}
       disabled={change.isPending || Boolean(viaGroup && !own)}
@@ -331,12 +331,7 @@ function GiveAccess({
   return (
     <Dialog
       open
-      title="Give access to an app"
-      description={
-        principal.kind === 'user'
-          ? `What ${principal.name} can do on one more app.`
-          : `What everyone in ${principal.name} can do on one more app.`
-      }
+      title="Add app"
       onClose={onClose}
       footer={
         <>
@@ -348,7 +343,7 @@ function GiveAccess({
             disabled={give.isPending || !appID || (!role && !opens)}
             onClick={() => give.mutate()}
           >
-            {give.isPending ? 'Giving access' : 'Give access'}
+            {give.isPending ? 'Adding' : 'Add app'}
           </Button>
         </>
       }
@@ -367,7 +362,7 @@ function GiveAccess({
           <>
             <SearchField value={search} onChange={setSearch} placeholder="Search apps" width="100%" />
             {offered.length === 0 ? (
-              <Quiet>No apps match &ldquo;{settled}&rdquo; that this {noun} doesn&rsquo;t already have.</Quiet>
+              <Quiet>No apps match &ldquo;{settled}&rdquo;.</Quiet>
             ) : (
               <Select
                 label="App"
@@ -383,10 +378,10 @@ function GiveAccess({
           label="Role"
           value={role}
           onChange={(e) => setRole(e.target.value)}
-          helper={`What the ${noun} can change on the app. None to only let it open the app.`}
+          helper="Choose None for access only."
           options={[{ value: '', label: 'None' }, ...roles.map((r) => ({ value: r.id, label: sentence(r.name) }))]}
         />
-        <Checkbox label="Can open the app" checked={opens} onChange={(e) => setOpens(e.target.checked)} />
+        <Checkbox label="Access" checked={opens} onChange={(e) => setOpens(e.target.checked)} />
         {give.isError && <Banner tone="failed">{messageOf(give.error)}</Banner>}
       </div>
     </Dialog>

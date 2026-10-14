@@ -55,7 +55,7 @@ function AskHow({ onClose }: { onClose: () => void }) {
   return (
     <AIDialog
       title="Ask AI how to do something"
-      intro="Answered from the reference built into this installation: the API, the CLI and the MCP tools. AI explains how and cites what it used; it doesn't do anything."
+      intro="Answered from the API, CLI and MCP reference built into this installation."
       onClose={onClose}
       footer={
         <Button variant="ghost" onClick={onClose}>
@@ -64,7 +64,7 @@ function AskHow({ onClose }: { onClose: () => void }) {
       }
     >
       <AIPrompt
-        label={a ? 'Ask another question' : 'What you want to do'}
+        label={a ? 'Ask another question' : 'Question'}
         placeholder="How can I give a group access to one app?"
         pending={ask.isPending}
         error={ask.error}
@@ -172,7 +172,7 @@ function Tokens() {
       <TokenList
         heading="Your tokens"
         // R-058, R-059, said where somebody is about to make one.
-        note="A token acts as you and holds exactly what you hold. If you lose access to an app, so does the token. If your account goes, the token goes with it."
+        note="A token holds exactly your access, and goes when your account does."
         path="/tokens"
         queryKey={['tokens']}
       />
@@ -182,7 +182,7 @@ function Tokens() {
           heading="Service tokens"
           // R-060: the difference that matters, in the place where the choice
           // between the two is made.
-          note="A service token is its own principal. It holds nothing until somebody shares an app with it, it appears in the audit log under its own name, and it outlives whoever created it."
+          note="A service token is its own principal. It holds nothing until an app is shared with it, and outlives whoever created it."
           path="/tokens/service"
           queryKey={['tokens', 'service']}
         />
@@ -356,7 +356,7 @@ function NewToken({
         <Input
           label="Name"
           value={name}
-          helper="Where it will be used. This is what appears in the audit log."
+          helper="Shown in the audit log."
           onChange={(e) => setName(e.target.value)}
         />
 

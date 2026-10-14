@@ -231,11 +231,7 @@ export function AdapterDialog({
       open
       title={existing ? `Edit ${existing.name || existing.id}` : 'Add adapter'}
       description={
-        isSource
-          ? 'Pando reads the private repositories this connection covers with it, from the moment it is saved.'
-          : isRegistry
-            ? 'Pando pushes built images here when a runtime pulls them, from the moment it is saved.'
-            : 'Pando reads adapters when it starts, so a saved change takes effect after a restart.'
+        isSource || isRegistry ? 'Takes effect when saved.' : 'Takes effect after Pando restarts.'
       }
       onClose={onClose}
       footer={
@@ -259,8 +255,8 @@ export function AdapterDialog({
           <Banner tone="failed">{refusal(kinds.error)}</Banner>
         ) : missingKind ? (
           <Quiet>
-            This build of Pando has no {existing.category} adapter of kind {existing.kind}, so it can&rsquo;t be
-            changed here.
+            This build of Pando has no {existing.category} adapter of kind {existing.kind}. It can&rsquo;t be edited
+            here.
           </Quiet>
         ) : (
           <>
@@ -329,8 +325,8 @@ export function AdapterDialog({
               <>
                 {existing && !existing.config && settings.length > 0 && (
                   <Banner tone="info">
-                    Pando doesn&rsquo;t show an adapter&rsquo;s current settings. Enter each one you want to keep:
-                    saving clears a setting left empty. A stored credential is kept unless you enter a new one.
+                    Pando doesn&rsquo;t show current settings. Saving clears any setting left empty. Stored credentials
+                    are kept unless you enter new ones.
                   </Banner>
                 )}
 
@@ -339,7 +335,7 @@ export function AdapterDialog({
                     label="ID"
                     mono
                     value={form.id}
-                    helper="How specs and the CLI refer to this adapter. It can't be changed later."
+                    helper="Used by specs and the CLI. Can’t be changed later."
                     error={shown('id')}
                     onChange={(e) => edit({ id: e.target.value })}
                   />
@@ -354,8 +350,8 @@ export function AdapterDialog({
                     configured is hidden. */}
                 <Disclosure
                   key={chosen}
-                  show="Show advanced settings"
-                  hide="Hide advanced settings"
+                  show="Advanced settings"
+                  hide="Advanced settings"
                   hidden={advanced.length === 0}
                   initiallyOpen={advancedChanged(kind, form.values)}
                   forceOpen={advanced.some((f) => shown(f.key))}
@@ -378,13 +374,13 @@ export function AdapterDialog({
                     )
                   ) : (
                     <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>
-                      After Pando restarts, open this adapter again to choose what it handles.
+                      After Pando restarts, open this adapter again to choose its functions.
                     </p>
                   )
                 ) : isSource ? null : (
                   <Checkbox
-                    label={`Use as the default ${kind.category} adapter`}
-                    description="Used by anything that needs this kind of adapter and doesn't name one."
+                    label="Default adapter"
+                    description="Used wherever no adapter is named."
                     checked={form.isDefault}
                     onChange={(e) => edit({ isDefault: e.target.checked })}
                   />
@@ -393,7 +389,7 @@ export function AdapterDialog({
                 {isRegistry && existing && (
                   <Checkbox
                     label="Push builds to this registry"
-                    description="Turned off, Pando does not use it and keeps its settings."
+                    description="When off, Pando keeps its settings."
                     checked={enabled}
                     onChange={(e) => {
                       setEnabled(e.target.checked);

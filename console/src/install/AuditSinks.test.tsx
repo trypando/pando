@@ -90,7 +90,7 @@ describe('Audit sinks on the Audit log screen (R-385)', () => {
     expect(html).toContain('Turned off by Pando');
     expect(html).toContain('It failed for 24 hours.');
     expect(html).toContain('removed from the live log while it was off');
-    expect(html).toContain('The archive for those months is the backfill');
+    expect(html).toContain('Download them from');
     expect(html).toContain('href="#archived-months"');
     // It is not sending, so it is not described as sending.
     expect(html).not.toContain('Every audit event is sent to');

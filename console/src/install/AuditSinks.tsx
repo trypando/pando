@@ -188,8 +188,7 @@ function gapNotice(from: string, to: string) {
   return (
     <>
       Missed events from {new Date(from).toLocaleString()} to {new Date(to).toLocaleString()}, removed from the live
-      log while it was off. The archive for those months is the backfill: download it from{' '}
-      <a href={`#${ARCHIVES_ANCHOR}`}>Archived months</a> below.
+      log while it was off. Download them from <a href={`#${ARCHIVES_ANCHOR}`}>Archived months</a> below.
     </>
   );
 }

@@ -161,8 +161,7 @@ function InboxDialog({
       )}
       {!loading && !error && list.length === 0 && (
         <EmptyState heading="No notifications">
-          Pando tells you here when an app of yours fails, a deploy needs your approval, and the like. Choose what
-          arrives under Settings.
+          Choose what arrives under Settings.
         </EmptyState>
       )}
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column' }}>

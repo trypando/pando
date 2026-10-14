@@ -108,20 +108,20 @@ describe('AppOnboarding, the services an app needs', () => {
         </QueryClientProvider>,
       );
     });
-    for (let i = 0; i < 600 && !container.textContent?.includes('This app needs these to run'); i++) {
+    for (let i = 0; i < 600 && !container.textContent?.includes('Pando creates each one at the first deploy'); i++) {
       await act(() => vi.advanceTimersByTimeAsync(100));
     }
 
     // Each service by what it is, with where the app reads it from.
-    let services = between('This app needs these to run', 'Change any value');
+    let services = between('Pando creates each one at the first deploy', 'Used on every deploy');
     expect(services).toContain('Memcached');
-    expect(services).toContain('The app reads its address from MEMCACHED');
-    expect(services).toContain('Pando creates it');
+    expect(services).toContain('Via MEMCACHED');
+    expect(services).toContain('Provisioned');
     expect(services).toContain('PostgreSQL');
-    expect(services).toContain('The app reads its connection details from DB_HOST and DB_PASSWORD');
+    expect(services).toContain('Via DB_HOST and DB_PASSWORD');
 
     // The variable says what it holds, with no field and no choice of its own.
-    let variables = between('Change any value', 'The plan');
+    let variables = between('Used on every deploy', 'The plan');
     expect(variables).toContain('Address of the Memcached Pando creates');
     expect(variables).toContain('Filled in by Pando at deploy');
     expect(variables).toContain('Host of your PostgreSQL');
@@ -133,19 +133,19 @@ describe('AppOnboarding, the services an app needs', () => {
 
     // Use your own: the service, its variable and the plan all say so.
     await act(async () => button('Use your own Memcached').click());
-    services = between('This app needs these to run', 'Change any value');
-    expect(services).toContain('Connects to one you have');
-    variables = between('Change any value', 'The plan');
+    services = between('Pando creates each one at the first deploy', 'Used on every deploy');
+    expect(services).toContain('External');
+    variables = between('Used on every deploy', 'The plan');
     expect(variables).toContain('Address of your Memcached');
     expect(container.querySelector('input[placeholder="Such as host:11211"]')).not.toBeNull();
-    expect(between('Processes and services', 'Ask AI')).not.toContain('Pando creates it');
+    expect(between('Processes and services', 'Ask AI')).not.toContain('Provisioned');
     // Your own Memcached's address is now yours to give.
     expect(required()).toBe(3);
 
     // And back: Pando creates it again, and the field is gone.
     await act(async () => button('Let Pando create the Memcached').click());
-    expect(between('This app needs these to run', 'Change any value')).toContain('Pando creates it');
-    expect(between('Change any value', 'The plan')).toContain('Filled in by Pando at deploy');
+    expect(between('Pando creates each one at the first deploy', 'Used on every deploy')).toContain('Provisioned');
+    expect(between('Used on every deploy', 'The plan')).toContain('Filled in by Pando at deploy');
     expect(container.querySelector('input[placeholder="Such as host:11211"]')).toBeNull();
   });
 });

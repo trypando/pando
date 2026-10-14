@@ -83,10 +83,10 @@ describe('the access dropdown', () => {
   });
 
   it('describes a custom role by what it holds', () => {
-    expect(describeChoice(undefined)).toContain('Nothing in its settings');
+    expect(describeChoice(undefined)).toContain('No access to its settings');
     expect(describeChoice({ id: 'role_02', name: 'support', verbs: ['app.view', 'app.logs.read'] })).toBe(
-      'They can open the app, and: view, logs.read.',
+      'Open the app, plus: view, logs.read.',
     );
-    expect(describeChoice({ id: 'role_03', name: 'empty' })).toBe('They can open the app, with the Empty role.');
+    expect(describeChoice({ id: 'role_03', name: 'empty' })).toBe('Open the app, with the Empty role.');
   });
 });

@@ -64,7 +64,7 @@ describe('checking now (R-349)', () => {
 
   it('offers a check before the first one', () => {
     const html = render(possible, null, undefined, { ...status, checked_at: undefined, available: false, releases: [] });
-    expect(html).toContain('has not checked for releases yet');
+    expect(html).toContain('hasn’t checked for releases yet');
     expect(html).toContain('Check for updates');
   });
 

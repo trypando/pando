@@ -122,7 +122,7 @@ function WorkloadPicker({
   if (names.length === 0) return null;
   return (
     <Select
-      label="Which part of the app"
+      label="Part"
       value={chosen}
       options={names.map((n) => ({ value: n, label: n }))}
       onChange={(e) => onChoose(e.target.value)}
@@ -153,17 +153,15 @@ function Warning({
   return (
     <Card padding="md" style={{ maxWidth: MEASURE }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Open a terminal in this app</h4>
+        <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Terminal</h4>
 
         <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink)', margin: 0 }}>
-          A terminal gives you everything the app itself has. You can read its database directly,
-          read the values Pando passed it — including its secrets — and change the running app in
-          ways that won&rsquo;t show up in its configuration.
+          A terminal has everything the app has, including its database and its secrets. Changes made
+          here don&rsquo;t appear in its configuration.
         </p>
 
         <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
-          Pando records that you opened a terminal and the command you started, but not what you
-          type or what comes back.
+          Pando records the session and the command it starts. Input and output aren&rsquo;t recorded.
         </p>
 
         <WorkloadPicker names={names} chosen={chosen} onChoose={onChoose} loading={loading} />

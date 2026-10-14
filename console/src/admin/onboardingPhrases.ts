@@ -12,19 +12,19 @@
 
 const PHRASES: Record<string, string[]> = {
   read: ['Fetching the repository', 'Checking out the commit', 'Listing the files'],
-  stack: ['Reading the code', 'Looking for a Dockerfile or a compose file', 'Weighing how it could be built'],
+  stack: ['Reading the code', 'Looking for a Dockerfile or a compose file', 'Planning the build'],
   runs: ['Finding what it runs', 'Tracing its services'],
   vars: ['Collecting variables', 'Matching variables to services'],
-  trial: ['Starting it to watch', 'Watching which ports it opens', 'Checking what it writes'],
+  trial: ['Starting a trial run', 'Watching which ports it opens', 'Checking what it writes'],
   scan: ['Scanning for known vulnerabilities', 'Reading the lockfiles', 'Matching packages against known CVEs'],
   repair: ['Reading the trial run’s output', 'Looking for what went wrong', 'Checking the start command'],
-  answer: ['Reading the questions', 'Looking for the answers in the repo', 'Leaving what it can’t settle for you'],
+  answer: ['Reading the questions', 'Looking for the answers in the repo', 'Writing the answers'],
   // A person asked AI to change the plan.
   ask: [
     'Reading what you said',
     'Opening the files it needs',
     'Checking that against the repo',
-    'Weighing the change',
+    'Planning the change',
     'Writing a reply',
   ],
 };

@@ -72,17 +72,14 @@ export function Egress({ appID, focus }: { appID: string; focus?: boolean }) {
   return (
     <section ref={heading} style={{ maxWidth: MEASURE }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Where this app can connect out to</h4>
+        <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Egress</h4>
         {canEdit && newest.spec && egress.data && (
           <Button variant="secondary" onClick={() => setEditing(true)}>
             Change
           </Button>
         )}
       </div>
-      <Quiet>
-        The installation’s rules, with this app’s changes to them. Changes take effect at the next
-        deploy.
-      </Quiet>
+      <Quiet>The installation’s rules, with this app’s changes to them.</Quiet>
 
       {egress.isPending && (
         <Loading>
@@ -93,7 +90,7 @@ export function Egress({ appID, focus }: { appID: string; focus?: boolean }) {
       {egress.isError && <Banner tone="failed">{messageOf(egress.error)}</Banner>}
 
       {egress.isSuccess && !eff && (
-        <Quiet>This app has no configuration yet, so it has no rules to show.</Quiet>
+        <Quiet>No configuration yet.</Quiet>
       )}
 
       {eff && (
@@ -116,15 +113,13 @@ export function Egress({ appID, focus }: { appID: string; focus?: boolean }) {
             <Table
               dense
               columns={[
-                { key: 'entry', header: eff.mode === 'allowlist' ? 'May reach' : 'May not reach', width: 'minmax(0,40ch)', mono: true },
-                { key: 'from', header: 'From', width: '16ch', muted: true, render: (row: { from: string }) => fromWords(row.from) },
+                { key: 'entry', header: eff.mode === 'allowlist' ? 'Allowed' : 'Blocked', width: 'minmax(0,40ch)', mono: true },
+                { key: 'from', header: 'Source', width: '16ch', muted: true, render: (row: { from: string }) => fromWords(row.from) },
               ]}
               rows={(eff.list ?? []).map((e) => ({ id: `${e.from}:${e.entry}`, ...e }))}
               empty={
                 <Quiet>
-                  {eff.mode === 'allowlist'
-                    ? 'The list is empty, so this app can’t connect anywhere.'
-                    : 'The list is empty, so nothing is refused by it.'}
+                  {eff.mode === 'allowlist' ? 'No destinations allowed.' : 'No destinations blocked.'}
                 </Quiet>
               }
             />
@@ -133,17 +128,15 @@ export function Egress({ appID, focus }: { appID: string; focus?: boolean }) {
           {appModeWords(eff.app_mode) && (
             <div>
               <p style={{ font: 'var(--type-body-ui)', margin: '0 0 var(--space-2)' }}>
-                {appModeWords(eff.app_mode)}, from this app’s own list. A destination has to pass both.
+                {appModeWords(eff.app_mode)}, applied on top of the installation’s rules.
               </p>
               <Table
                 dense
-                columns={[{ key: 'entry', header: 'This app’s own list', width: 'minmax(0,40ch)', mono: true }]}
+                columns={[{ key: 'entry', header: 'Destination', width: 'minmax(0,40ch)', mono: true }]}
                 rows={(eff.app_list ?? []).map((entry) => ({ id: entry, entry }))}
                 empty={
                   <Quiet>
-                    {eff.app_mode === 'allowlist'
-                      ? 'The list is empty, so this app can’t connect anywhere.'
-                      : 'The list is empty, so it refuses nothing.'}
+                    {eff.app_mode === 'allowlist' ? 'No destinations allowed.' : 'No destinations blocked.'}
                   </Quiet>
                 }
               />
@@ -175,13 +168,12 @@ export function Egress({ appID, focus }: { appID: string; focus?: boolean }) {
               keep working. */}
           {eff.restricted ? (
             <Banner tone="info">
-              Only HTTP and HTTPS sent through Pando’s egress gateway leave this app. Pando gives it
-              HTTP_PROXY and HTTPS_PROXY naming the gateway. Anything else — a database protocol, raw
-              TCP, or a client that ignores those variables — can’t connect out, even to a destination
-              these rules allow.
+              Only HTTP and HTTPS sent through Pando’s egress gateway, set in HTTP_PROXY and HTTPS_PROXY,
+              leave this app. A database protocol, raw TCP, or a client that ignores those variables can’t
+              connect out, even to an allowed destination.
             </Banner>
           ) : (
-            <Quiet>Nothing is restricted, so Pando puts nothing in this app’s path.</Quiet>
+            <Quiet>No restrictions.</Quiet>
           )}
         </div>
       )}
@@ -247,8 +239,8 @@ function EditEgress({
     <Dialog
       open
       onClose={onClose}
-      title="Change where this app can connect"
-      description="Saved as a new revision. It takes effect at the next deploy."
+      title="Edit egress"
+      description="Takes effect at the next deploy."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -300,19 +292,19 @@ function EditEgress({
             // Kept visible so they can be cleared: the installation has no
             // list, so additions and removals change nothing.
             <>
-              <ListField label="Added to the installation’s list" rows={2} value={draft.add} helper="The installation has no list, so these change nothing." onChange={(add) => set({ add })} />
-              <ListField label="Removed from the installation’s list" rows={2} value={draft.remove} helper="The installation has no list, so these change nothing." onChange={(remove) => set({ remove })} />
+              <ListField label="Added to the installation’s list" rows={2} value={draft.add} helper="No effect without an installation list." onChange={(add) => set({ add })} />
+              <ListField label="Removed from the installation’s list" rows={2} value={draft.remove} helper="No effect without an installation list." onChange={(remove) => set({ remove })} />
             </>
           )
         )}
 
         <fieldset style={FIELDSET}>
-          <legend style={LEGEND}>A list of this app’s own</legend>
+          <legend style={LEGEND}>App list</legend>
           {(
             [
-              ['inherit', 'None', 'Only the installation’s rules apply.'],
-              ['allowlist', 'Only these', 'This app may reach only the destinations below, and only where the installation allows them too.'],
-              ['denylist', 'Never these', 'This app may not reach the destinations below, whatever the installation allows.'],
+              ['inherit', 'None', 'Installation rules only.'],
+              ['allowlist', 'Allowlist', 'Only the destinations below, within the installation’s rules.'],
+              ['denylist', 'Denylist', 'Never the destinations below.'],
             ] as const
           ).map(([value, label, description]) => (
             <Radio
@@ -328,9 +320,9 @@ function EditEgress({
         </fieldset>
         {draft.ownMode !== 'inherit' && (
           <ListField
-            label={draft.ownMode === 'allowlist' ? 'Destinations this app may reach' : 'Destinations this app may not reach'}
+            label={draft.ownMode === 'allowlist' ? 'Allowed destinations' : 'Blocked destinations'}
             value={draft.ownList}
-            helper={`Narrows the rules, so it never needs the installation’s permission. ${ENTRY_FORMS}`}
+            helper={ENTRY_FORMS}
             onChange={(ownList) => set({ ownList })}
           />
         )}
@@ -340,7 +332,7 @@ function EditEgress({
           {(
             [
               ['inherit', `As the installation: ${data.install.block_private ? 'blocked' : 'not blocked'}`, ''],
-              ['on', 'Block', 'This app can’t reach the local network, loopback, or a cloud metadata address.'],
+              ['on', 'Block', 'Local network, loopback and cloud metadata addresses.'],
               [
                 'off',
                 'Don’t block',

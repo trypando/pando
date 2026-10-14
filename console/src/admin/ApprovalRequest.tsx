@@ -65,7 +65,7 @@ export function ApprovalRequest({
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-3)' }}>
         <StatusIndicator status="info" label="Waiting for approval" />
         <span style={CAPTION}>
-          Asked {relative(d.started_at).toLowerCase()} by{' '}
+          Requested {relative(d.started_at).toLowerCase()} by{' '}
           {d.requested_by_name ? (
             d.requested_by_name
           ) : (
@@ -115,7 +115,7 @@ export function ApprovalRequest({
           <Input
             label="Comment, optional"
             value={comment}
-            helper="Recorded with your answer in the audit log, and shown to whoever asked."
+            helper="Recorded in the audit log."
             onChange={(e) => setComment(e.target.value)}
           />
           <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
@@ -130,8 +130,7 @@ export function ApprovalRequest({
       ) : (
         !d.can_decide && (
           <p style={{ ...CAPTION, margin: 0 }}>
-            You can’t answer this request. Somebody holding app.deploy.approve on this app, or
-            install.deploys.approve, can.
+            Answering needs app.deploy.approve on this app, or install.deploys.approve.
           </p>
         )
       )}

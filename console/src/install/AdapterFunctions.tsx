@@ -49,10 +49,9 @@ export function AdapterFunctions({
   const [overriding, setOverriding] = useState<Set<string>>(new Set());
   return (
     <fieldset style={{ border: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-      <legend style={{ font: 'var(--type-label)', marginBottom: 'var(--space-2)' }}>What this adapter handles</legend>
+      <legend style={{ font: 'var(--type-label)', marginBottom: 'var(--space-2)' }}>Functions</legend>
       <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>
-        Each function is handled by one AI adapter. A function no adapter handles is off, and Pando works without
-        it. These take effect when you save, without a restart.
+        Each function is handled by one AI adapter. Changes take effect when you save.
       </p>
       {functions.map((f) => {
         const mine = f.function in choice;
@@ -101,7 +100,7 @@ export function AdapterFunctions({
                       onChange({ ...choice, [f.function]: '' });
                     }}
                   >
-                    Use the adapter&rsquo;s model
+                    Use default
                   </Button>
                 </BesideField>
               </div>

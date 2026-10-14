@@ -69,7 +69,7 @@ export function GeneratedPassword({
         label="Must change password at next sign-in"
         // R-046's flag, set by default. A password that has passed through an
         // administrator's hands is known to two people.
-        description="Recommended: you're handing this password over, so they choose their own."
+        description="Recommended."
         checked={mustChange}
         onChange={(e) => onMustChange(e.target.checked)}
       />
@@ -157,7 +157,7 @@ export function PasswordToCopy({
           error={error}
           helper={
             copied === 'select'
-              ? 'Your browser would not let Pando copy it. The password is selected; copy it from here.'
+              ? 'Your browser blocked copying. The password is selected; copy it from here.'
               : undefined
           }
         />

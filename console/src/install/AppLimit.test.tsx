@@ -33,7 +33,7 @@ describe('describeLimit', () => {
     expect(describeLimit(finance)).toBe('3 of 5, through Finance');
     expect(describeLimit({ ...finance, source: 'user', max_apps: 5 })).toBe('3 of 5, set on this account');
     expect(describeLimit({ limit: 0, source: 'policy', owned: 9, max_apps: null })).toBe(
-      "Unlimited, the installation's default",
+      'Unlimited, the installation default',
     );
   });
 });
@@ -73,8 +73,8 @@ function renderGroup(maxApps: number | null | undefined) {
 describe("a group's limit", () => {
   it('opens on the value the group has, and says what a group limit means', () => {
     const html = renderGroup(5);
-    expect(html).toContain('Apps each person in Finance may own');
-    expect(html).toContain('the most generous');
+    expect(html).toContain('App limit for Finance');
+    expect(html).toContain('the highest limit');
     expect(html).toContain('value="5"');
     expect(html).toContain('Zero means unlimited');
   });

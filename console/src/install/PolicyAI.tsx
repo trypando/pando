@@ -99,7 +99,7 @@ export function PolicyAI({ onClose }: { onClose: () => void }) {
   return (
     <AIDialog
       title="Ask AI to draft a policy change"
-      intro="Describe the rule you want. AI proposes changes to host policy. Leave out any you don't want, or ask for something different, then accept to save the policy. Nothing is saved until you accept."
+      intro="Describe the rule you want. AI proposes policy changes for you to review."
       onClose={onClose}
       footer={
         <>
@@ -113,7 +113,7 @@ export function PolicyAI({ onClose }: { onClose: () => void }) {
       }
     >
       <AIPrompt
-        label={proposal ? 'Change the proposal' : 'The rule you want'}
+        label={proposal ? 'Change the proposal' : 'Rule'}
         placeholder={proposal ? 'Allow it for administrators' : 'Nobody may open a shell in an app'}
         pending={ask.isPending}
         error={ask.error}
@@ -128,7 +128,7 @@ export function PolicyAI({ onClose }: { onClose: () => void }) {
           <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
             <AIHeading>Changes</AIHeading>
             {proposal.changes.length === 0 ? (
-              <Quiet>Nothing to change. The policy is as it was.</Quiet>
+              <Quiet>No changes.</Quiet>
             ) : (
               proposal.changes.map((c) => (
                 <Checkbox
@@ -162,7 +162,7 @@ export function PolicyAI({ onClose }: { onClose: () => void }) {
             ) : impact.isError ? (
               <Quiet>{refusal(impact.error)}</Quiet>
             ) : violations.length === 0 ? (
-              <Banner tone="running">Nothing on this installation breaks under these rules.</Banner>
+              <Banner tone="running">No apps affected.</Banner>
             ) : (
               <Banner tone="building">
                 {violations.length === 1 && violations[0]

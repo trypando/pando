@@ -62,7 +62,7 @@ describe('Capacity (R-242, R-243)', () => {
 
   it('says a reading is not reported rather than drawing an empty meter', () => {
     const html = render([docker]);
-    expect(html).toContain('Not reported, so Pando does not check disk before a deploy.');
+    expect(html).toContain('Not reported. Set total_disk_bytes on this adapter');
     expect(html.split('role="meter"').length - 1).toBe(2);
   });
 
@@ -78,9 +78,9 @@ describe('Capacity (R-242, R-243)', () => {
 
   it('says plainly when a runtime reports nothing, or cannot be reached', () => {
     const silent: RuntimeCapacity = { adapter_ref: 'rt_other', status: 'ok', running_workloads: -1 };
-    expect(render([silent])).toContain('This runtime does not report its capacity');
+    expect(render([silent])).toContain('This runtime doesn’t report its capacity');
     expect(render([silent])).not.toContain('workloads running');
-    expect(render([{ adapter_ref: 'rt_down', status: 'unreachable' }])).toContain('Pando could not reach this runtime');
+    expect(render([{ adapter_ref: 'rt_down', status: 'unreachable' }])).toContain('Pando couldn’t reach this runtime');
   });
 
   it('has an empty state when no runtime is set up', () => {

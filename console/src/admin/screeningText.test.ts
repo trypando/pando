@@ -46,8 +46,8 @@ describe('screeningVisible', () => {
 
 describe('filesRead', () => {
   it('counts plainly', () => {
-    expect(filesRead(0)).toBe('It read no files.');
-    expect(filesRead(1)).toBe('It read one file.');
-    expect(filesRead(7)).toBe('It read 7 files.');
+    expect(filesRead(0)).toBe('Files read (0)');
+    expect(filesRead(1)).toBe('Files read (1)');
+    expect(filesRead(7)).toBe('Files read (7)');
   });
 });

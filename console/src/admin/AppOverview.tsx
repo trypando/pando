@@ -131,7 +131,7 @@ export function AppOverview({
 
       {app.state === 'deploying' && (
         <Banner tone="building">
-          Deploying. The app keeps serving its last good version until this finishes.
+          Deploying.
         </Banner>
       )}
 
@@ -141,10 +141,7 @@ export function AppOverview({
       {waiting && (
         <div style={{ maxWidth: MEASURE }}>
           <Card padding="md">
-            <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>A deploy is waiting for approval</h4>
-            <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: '0 0 var(--space-3)' }}>
-              Nothing changes until it is approved. The app keeps running what it runs now.
-            </p>
+            <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>A deploy is waiting for approval</h4>
             <ApprovalRequest deployment={waiting} />
           </Card>
         </div>
@@ -206,7 +203,7 @@ export function AppOverview({
                     status={deployStatus(latest.status, latest.result_state)}
                     label={
                       isAwaiting(latest)
-                        ? `${deployLabel(latest.status)}, asked ${relative(latest.started_at).toLowerCase()}`
+                        ? `${deployLabel(latest.status)}, requested ${relative(latest.started_at).toLowerCase()}`
                         : `${deployLabel(latest.status, latest.result_state)} ${relative(latest.finished_at ?? latest.started_at)}`
                     }
                   />
@@ -312,13 +309,12 @@ export function AppOverview({
  * matter. Four of them, then a count — a list of thirty is a wall.
  */
 function unsetMessage(keys: string[]): string {
-  const known = 'Pando read the names from this app’s own configuration and cannot know what they should be.';
   if (keys.length === 1) {
-    return `${keys[0]} is declared with no value. ${known}`;
+    return `${keys[0]} is declared with no value.`;
   }
   const shown = keys.slice(0, 4).join(', ');
   const rest = keys.length > 4 ? `, and ${keys.length - 4} more` : '';
-  return `${keys.length} variables are declared with no value: ${shown}${rest}. ${known}`;
+  return `${keys.length} variables are declared with no value: ${shown}${rest}.`;
 }
 
 /**

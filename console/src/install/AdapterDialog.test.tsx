@@ -73,7 +73,7 @@ async function press(text: string) {
 
 function checkDefault() {
   const box = [...container.querySelectorAll('label')]
-    .find((l) => l.textContent?.includes('Use as the default routing adapter'))
+    .find((l) => l.textContent?.includes('Default adapter'))
     ?.querySelector('input');
   expect(box).toBeTruthy();
   act(() => box!.click());

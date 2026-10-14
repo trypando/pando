@@ -118,7 +118,6 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
       open
       onClose={onClose}
       title="Add an app"
-      description="Choose a source and name the app."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -151,10 +150,10 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
 
         {kind === 'git' && listable.length > 0 && (
           <Select
-            label="Repository from"
+            label="Source connection"
             value={from}
             options={[
-              { value: '', label: 'An address I enter' },
+              { value: '', label: 'URL' },
               ...listable.map((s) => ({ value: s.id, label: `${s.name} (${covers(s)})` })),
             ]}
             onChange={(e) => {
@@ -170,7 +169,7 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
               label="Find a repository"
               value={search}
               placeholder="api"
-              helper="Part of its name. Pando lists the repositories this connection can read."
+              helper="Part of its name."
               onChange={(e) => setSearch(e.target.value)}
             />
             {repos.isError ? (
@@ -245,7 +244,7 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
             <Checkbox
               checked={isPrivate}
               onChange={(e) => setPrivate(e.target.checked)}
-              label="The image is private"
+              label="Private image"
             />
             {isPrivate && <CredentialFields value={credential} onChange={setCredential} />}
           </>

@@ -71,9 +71,9 @@ describe('the outlook', () => {
 
   it('still says when a stopped app will be deleted', () => {
     const said = outlook({ ...report, stopped_for_idle: true, stops_at: undefined, deletes_at: '2026-12-30T12:00:00Z' });
-    expect(said).toMatch(/^Pando stopped this app because nobody had used it\. Start it to use it again\. Pando deletes it on /);
+    expect(said).toMatch(/^Pando stopped this app for being idle\. Start it to use it again\. Pando deletes it on /);
     expect(outlook({ ...report, stopped_for_idle: true })).toBe(
-      'Pando stopped this app because nobody had used it. Start it to use it again.',
+      'Pando stopped this app for being idle. Start it to use it again.',
     );
   });
 });
@@ -85,8 +85,8 @@ describe('the idle section', () => {
 
   it("shows the installation's settings and no Save for somebody who cannot edit", () => {
     const html = render(report);
-    expect(html).toContain('When nobody uses it');
-    expect(html).toContain('The installation&#x27;s, 30 days');
+    expect(html).toContain('>Idle<');
+    expect(html).toContain('Installation default (30 days)');
     expect(html).toContain('If nobody uses it, Pando stops it on');
     expect(html).not.toContain('>Save<');
   });

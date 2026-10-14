@@ -89,7 +89,7 @@ function LogBox({
       {lines.length === 0 && empty}
       {!follow && (
         <Button variant="ghost" onClick={() => setFollow(true)} style={{ alignSelf: 'flex-start' }}>
-          Follow the end
+          Follow
         </Button>
       )}
     </div>
@@ -162,8 +162,7 @@ function DeploymentLog({
     return (
       fallback ?? (
         <Quiet>
-          Pando has no output for this deploy. Deploy logs are held in memory and go when Pando
-          restarts.
+          No output for this deploy. Deploy logs are cleared when Pando restarts.
         </Quiet>
       )
     );
@@ -221,14 +220,14 @@ export function Logs({ app, workload }: { app: App; workload?: string }) {
               { key: 'trigger', header: 'Started by', width: '18ch', muted: true },
               {
                 key: 'id',
-                header: 'Reference',
+                header: 'ID',
                 width: 'minmax(0,22ch)',
                 mono: true,
                 muted: true,
               },
             ]}
             rows={rows}
-            empty={<Quiet>This app hasn’t been deployed yet.</Quiet>}
+            empty={<Quiet>No deploys yet.</Quiet>}
           />
         </div>
 
@@ -252,8 +251,8 @@ export function Logs({ app, workload }: { app: App; workload?: string }) {
 
 /** What a deploy that never started says in place of its log. */
 const NEVER_RAN: Record<string, string> = {
-  rejected: 'This deploy was rejected, so it never ran. The reasons and who rejected it are in the audit log.',
-  expired: 'Nobody approved this deploy in time, so it never ran. Deploy again to ask again.',
+  rejected: 'Rejected. Who rejected it, and why, is in the audit log.',
+  expired: 'Expired without enough approvals. Deploy again to request approval.',
   // Not superseded: that status is older than approval, and a deploy replaced
   // part-way through a build has a log worth reading.
 };
@@ -359,7 +358,7 @@ function AppOutput({ app, workload }: { app: App; workload?: string }) {
 
       <div style={{ marginTop: 'var(--space-4)' }}>
         {!enabled ? (
-          <Quiet>This app hasn’t been deployed yet, so it hasn’t printed anything.</Quiet>
+          <Quiet>No output yet.</Quiet>
         ) : output.kind === 'error' ? (
           <Quiet>{output.message}</Quiet>
         ) : output.kind === 'connecting' ? (
@@ -373,7 +372,7 @@ function AppOutput({ app, workload }: { app: App; workload?: string }) {
             <LogBox
               title={showing || app.name}
               lines={lines}
-              empty={<Quiet>This part of the app hasn’t printed anything.</Quiet>}
+              empty={<Quiet>No output yet.</Quiet>}
             />
             {output.kind === 'revoked' && (
               <div style={{ marginTop: 'var(--space-3)' }}>

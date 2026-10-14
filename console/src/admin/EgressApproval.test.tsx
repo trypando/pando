@@ -54,7 +54,7 @@ describe('a deploy waiting for approval (R-154 – R-156)', () => {
   it('offers no answer to somebody who may not give one', () => {
     const html = render(<ApprovalRequest deployment={{ ...waiting, can_decide: false }} />);
     expect(html).not.toContain('>Approve<');
-    expect(html).toContain('You can’t answer this request.');
+    expect(html).toContain('Answering needs app.deploy.approve');
   });
 });
 
@@ -80,13 +80,13 @@ describe("an app's egress, merged (R-187, R-188)", () => {
 
   it('shows each entry with where it came from, the loosening with what it needs, and the gateway note', () => {
     const html = render(<Egress appID="app_01" />, seed);
-    expect(html).toContain('Only the destinations listed');
+    expect(html).toContain('Only the list');
     expect(html).toContain('api.example.com');
     expect(html).toContain('Installation');
     expect(html).toContain('This app');
-    expect(html).toContain('Needs a deploy approval');
+    expect(html).toContain('Needs approval');
     expect(html).toContain('changes nothing');
-    expect(html).toContain('Only HTTP and HTTPS sent through Pando’s egress gateway leave this app.');
+    expect(html).toContain('Only HTTP and HTTPS sent through Pando’s egress gateway');
   });
 
   it('says nothing is in the way when nothing is restricted', () => {
@@ -98,7 +98,7 @@ describe("an app's egress, merged (R-187, R-188)", () => {
       }),
     );
     expect(html).toContain('Anywhere');
-    expect(html).toContain('Nothing is restricted');
+    expect(html).toContain('No restrictions.');
     expect(html).not.toContain('egress gateway');
   });
 });

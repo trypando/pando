@@ -179,7 +179,7 @@ export function AccountPage({
           <Details>
             {/* An external account's external_id is the provider's ID for the
                 person, not a name anyone signs in with. */}
-            <Detail term={a.adapter_id === LOCAL ? 'Username' : 'Identity at provider'} mono>
+            <Detail term={a.adapter_id === LOCAL ? 'Username' : 'External ID'} mono>
               {a.external_id}
             </Detail>
             <Detail term="Name">{a.display_name || '—'}</Detail>
@@ -220,7 +220,7 @@ export function AccountPage({
               </div>
             </Detail>
             {/* R-244: what it may own, and where that comes from. */}
-            <Detail term="Apps they may own">
+            <Detail term="App limit">
               <AccountAppLimit userID={a.id} manage={manage} />
             </Detail>
           </Details>
@@ -300,7 +300,7 @@ function Activity({ userID, onAudit }: { userID: string; onAudit: (query: string
         <div>
           <Heading>Activity</Heading>
           <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
-            Audit events where this account is the actor or the target.
+            Audit events involving this account.
           </p>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 'var(--space-3)' }}>
@@ -328,7 +328,7 @@ function Activity({ userID, onAudit }: { userID: string; onAudit: (query: string
         loading={log.isPending}
         empty={
           <EmptyState heading="No events in this range">
-            Choose a longer time range, or open the audit log for more filters.
+            Try a longer time range.
           </EmptyState>
         }
       />
@@ -380,7 +380,7 @@ function EditDetails({ account, manage, isSelf }: { account: Account; manage: bo
     if (save.isError) save.reset();
     set(e.target.value);
   };
-  const atProvider = `Set by ${account.adapter_id}, the identity provider this account signs in with.`;
+  const atProvider = `Set by ${account.adapter_id}.`;
 
   return (
     <>
@@ -418,7 +418,7 @@ function EditDetails({ account, manage, isSelf }: { account: Account; manage: bo
                   ? atProvider
                   : !manage
                     ? 'Changing a username takes permission to manage accounts.'
-                    : 'What the account signs in with.'
+                    : undefined
               }
               onChange={edit(setUsername)}
             />
@@ -514,7 +514,7 @@ function GroupMembership({
         <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2) var(--space-3)' }}>
           <span style={{ color: 'var(--ink-secondary)' }}>
             {groups.some((g) => !g.source)
-              ? 'In every group there is.'
+              ? 'Already in every group.'
               : memberOf.length > 0
                 ? 'No Pando groups to add to yet.'
                 : 'No groups yet.'}
@@ -572,7 +572,7 @@ function ResetPassword({ account }: { account: Account }) {
             open
             title={`Password reset for ${account.external_id}`}
             // Last sight of it: Pando cannot show it again once this closes.
-            description="Copy the password and give it to them separately. It is not shown again after you close this."
+            description="Copy the password now. Pando doesn’t show it again."
             onClose={close}
             footer={
               <Button variant="primary" onClick={close}>
@@ -583,8 +583,8 @@ function ResetPassword({ account }: { account: Account }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
               <PasswordToCopy value={password} />
               <Quiet>
-                Every session {account.external_id} had has ended.
-                {mustChange ? ' They choose a new password the next time they sign in.' : ''}
+                {account.external_id} is signed out everywhere.
+                {mustChange ? ' They choose a new password at their next sign-in.' : ''}
               </Quiet>
             </div>
           </Dialog>
@@ -593,7 +593,7 @@ function ResetPassword({ account }: { account: Account }) {
             open
             title={`Reset password for ${account.external_id}`}
             // What happens to the sessions is said before, not after (R-282).
-            description="Pando replaces the password with the one below and signs the account out everywhere. Copy it and give it to them separately."
+            description="Pando replaces the password with the one below and signs the account out everywhere."
             onClose={close}
             footer={
               <>
@@ -651,7 +651,7 @@ function DeleteAccount({ account, onDeleted }: { account: Account; onDeleted: ()
           title={`Delete ${account.external_id}`}
           // What goes with it, before it goes (R-282). Suspending is the
           // reversible one, and the dialog says so.
-          description="The account signs out everywhere, loses its installation role, group memberships and access to every app, and its tokens stop working. This cannot be undone. To stop someone signing in but keep the account, suspend it instead."
+          description="The account is signed out everywhere and loses its installation role, groups, app access and tokens. This can’t be undone. To keep the account, suspend it instead."
           onClose={() => setOpen(false)}
           footer={
             <>

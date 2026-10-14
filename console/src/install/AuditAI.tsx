@@ -36,7 +36,7 @@ export function AuditAI({ onClose, onShow }: { onClose: () => void; onShow: (f: 
   return (
     <AIDialog
       title="Ask AI about the audit log"
-      intro="Ask a question about what happened on this installation. AI turns it into audit log filters and summarizes what they find. Show these events to see the events themselves."
+      intro="Ask a question about this installation. AI turns it into audit log filters and summarizes the results."
       onClose={onClose}
       footer={
         <>

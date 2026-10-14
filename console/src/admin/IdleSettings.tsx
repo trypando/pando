@@ -58,7 +58,7 @@ const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { dateS
 export function outlook(report: IdleReport): string | null {
   const deletes = report.deletes_at ? `Pando deletes it on ${day(report.deletes_at)} if nobody uses it by then.` : '';
   if (report.stopped_for_idle) {
-    return ['Pando stopped this app because nobody had used it. Start it to use it again.', deletes]
+    return ['Pando stopped this app for being idle. Start it to use it again.', deletes]
       .filter(Boolean)
       .join(' ');
   }
@@ -96,15 +96,14 @@ function IdleSettings({ app, report }: Readonly<{ app: App; report: IdleReport }
     },
   });
 
-  const installPhrase = (days: number) => (days > 0 ? `The installation's, ${days} days` : "The installation's, never");
+  const installPhrase = (days: number) => (days > 0 ? `Installation default (${days} days)` : 'Installation default (never)');
   const ahead = outlook(report);
 
   return (
     <section style={{ maxWidth: MEASURE }}>
-      <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>When nobody uses it</h4>
+      <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Idle</h4>
       <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: '0 0 var(--space-4)' }}>
-        Counted from the last time somebody used, deployed or started this app: {day(report.last_activity_at)}. Its
-        owner is told 7 days before Pando acts. Changing these settings doesn't deploy anything.
+        Last used {day(report.last_activity_at)}. The owner is notified 7 days before Pando acts.
       </p>
 
       {/* What will happen, in dates, before any control. */}
@@ -112,19 +111,19 @@ function IdleSettings({ app, report }: Readonly<{ app: App; report: IdleReport }
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
         <Select
-          label="Stop it"
+          label="Stop"
           value={stop}
           disabled={!canEdit}
           onChange={(e) => setStop(e.target.value as Choice)}
           options={[
             { value: 'install', label: installPhrase(report.install_stop_days) },
             { value: 'off', label: 'Never' },
-            { value: 'days', label: 'After a number of days' },
+            { value: 'days', label: 'Custom' },
           ]}
         />
         {stop === 'days' && (
           <Input
-            label="Days without use before Pando stops it"
+            label="Days idle"
             type="number"
             value={stopDays}
             disabled={!canEdit}
@@ -132,23 +131,23 @@ function IdleSettings({ app, report }: Readonly<{ app: App; report: IdleReport }
           />
         )}
         <Select
-          label="Delete it"
+          label="Delete"
           value={del}
           disabled={!canEdit}
           onChange={(e) => setDel(e.target.value as Choice)}
           options={[
             { value: 'install', label: installPhrase(report.install_delete_days) },
             { value: 'off', label: 'Never' },
-            { value: 'days', label: 'After a number of days' },
+            { value: 'days', label: 'Custom' },
           ]}
         />
         {del === 'days' && (
           <Input
-            label="Days without use before Pando deletes it"
+            label="Days idle"
             type="number"
             value={deleteDays}
             disabled={!canEdit}
-            helper="Counted from the same last use as stopping, so it has to be longer."
+            helper="Must be longer than the stop setting."
             onChange={(e) => setDeleteDays(e.target.value)}
           />
         )}

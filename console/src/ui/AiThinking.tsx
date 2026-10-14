@@ -33,8 +33,8 @@ export function useReducedMotion(): boolean {
 /** What AI is doing, per function, in the voice of the plan page's phrases:
  *  present tense, plain, no trailing dots (the line animates its own). */
 export const AI_PHRASES = {
-  access: ['Reading what you asked for', 'Looking through Pando’s permissions', 'Matching people to accounts', 'Drafting the role and group'],
-  policy: ['Reading what you asked for', 'Reading the current policy', 'Checking what the startup config fixes', 'Drafting the changes'],
+  access: ['Reading your request', 'Looking through Pando’s permissions', 'Matching people to accounts', 'Drafting the role and group'],
+  policy: ['Reading your request', 'Reading the current policy', 'Checking the startup config', 'Drafting the changes'],
   audit: ['Reading your question', 'Choosing the filters', 'Searching the audit log', 'Summarizing what it found'],
   reference: ['Reading your question', 'Looking through the reference', 'Finding the endpoints and commands', 'Writing the answer'],
 } as const;

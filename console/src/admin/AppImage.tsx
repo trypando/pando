@@ -112,10 +112,11 @@ export function AppImage({ app }: { app: App }) {
         // hit and what to do about it.
         <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)' }}>{failure.message}</span>
       ) : (
-        <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
-          Shown on this app&rsquo;s tile in the launcher. Without one, the tile shows a map generated for this
-          app.{canEdit && ' PNG, JPEG, WebP, GIF or SVG, up to 256 KB.'}
-        </span>
+        canEdit && (
+          <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>
+            PNG, JPEG, WebP, GIF or SVG, up to 256 KB.
+          </span>
+        )
       )}
     </div>
   );

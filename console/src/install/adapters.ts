@@ -144,21 +144,19 @@ export function categoryLabel(category: string): string {
 const CATEGORY_ORDER = ['runtime', 'routing', 'builder', 'image_registry', 'services', 'secrets', 'backup', 'scanner', 'ai', 'notify', 'audit_sink', 'identity'];
 
 const CATEGORY_NOTES: Record<string, string> = {
-  runtime: 'Where apps run: it starts, stops and watches the containers each app is made of.',
-  routing: 'How apps are reached: their addresses, and the edge that sends requests through Pando to them.',
-  builder: 'What turns an app\u2019s source into an image Pando can run.',
-  image_registry:
-    'Where Pando pushes built images when a runtime pulls them rather than taking them directly. A single Docker host needs none. Used from the moment it is saved.',
-  services: 'The databases and caches apps declare, such as PostgreSQL or Redis, provisioned beside each app.',
-  secrets: 'Where secret values are kept, encrypted. Pando stores what this hands back, never the plain value.',
-  backup: 'Where backups of Pando and of each app\u2019s storage are written.',
-  scanner: 'What checks apps for known vulnerabilities, for the security score.',
-  ai: 'An AI provider, such as Anthropic. It performs the AI functions chosen on it: repairing plans, drafting access and policy, searching the audit log, answering from the reference.',
+  runtime: 'Where apps run. Starts, stops and watches their containers.',
+  routing: 'How apps are reached: their addresses, and the edge that sends requests through Pando.',
+  builder: 'Turns an app\u2019s source into an image.',
+  image_registry: 'Where Pando pushes built images for a runtime to pull. A single Docker host needs none.',
+  services: 'Databases and caches apps declare, such as PostgreSQL or Redis.',
+  secrets: 'Where secret values are kept, encrypted.',
+  backup: 'Where backups of Pando and app storage are written.',
+  scanner: 'Checks apps for known vulnerabilities, for the security score.',
+  ai: 'An AI provider, such as Anthropic. Handles the AI functions chosen on it.',
   notify: 'Where notifications go, such as the console itself.',
-  audit_sink:
-    'Where a copy of the audit log goes: every audit event is sent off the installation as it is written, to a syslog collector or a SIEM\u2019s HTTPS endpoint. Adding one needs the install.audit.export permission, and the Audit log screen shows each one.',
+  audit_sink: 'Sends each audit event to a syslog collector or a SIEM\u2019s HTTPS endpoint. Needs install.audit.export.',
   identity: 'Where accounts come from and how people sign in.',
-  source: 'How Pando reads private repositories: a connection to GitHub, GitLab, Azure DevOps, Bitbucket, Gitea or any git host.',
+  source: 'How Pando reads private repositories on GitHub, GitLab, Azure DevOps, Bitbucket, Gitea or any git host.',
 };
 
 /** One line on what a category of adapter is for. */

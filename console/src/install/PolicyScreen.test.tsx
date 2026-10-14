@@ -90,10 +90,10 @@ describe('the Policy screen’s egress and approval settings (R-181, R-183, R-15
 describe('the Policy screen’s idle apps and app limit (R-393, R-398, R-244)', () => {
   it('shows the days and the limit, off and unlimited by default', () => {
     const html = render({});
-    expect(html).toContain('Apps nobody uses');
-    expect(html).toContain('Stop an app nobody has used for this many days');
-    expect(html).toContain('Delete an app nobody has used for this many days');
-    expect(html).toContain('Apps each person may own');
+    expect(html).toContain('Idle apps');
+    expect(html).toContain('Stop idle apps after (days)');
+    expect(html).toContain('Delete idle apps after (days)');
+    expect(html).toContain('App limit');
     expect(html).toContain('Zero means unlimited');
   });
 

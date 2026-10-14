@@ -123,10 +123,7 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
         )}
       </div>
 
-      <Quiet>
-        What the app reads from its environment.
-        {canEdit && ' Pando works out what it can; add anything it missed.'}
-      </Quiet>
+      <Quiet>What the app reads from its environment.</Quiet>
 
       {error && <Banner tone="failed">{messageOf(error)}</Banner>}
       {remove.isError && <Banner tone="failed">{messageOf(remove.error)}</Banner>}
@@ -150,7 +147,7 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
           columns={[
             { key: 'key', header: 'Name', width: 'minmax(0,26ch)', mono: true },
             { key: 'shown', header: 'Value', width: 'minmax(0,28ch)', mono: true, muted: true },
-            { key: 'workload', header: 'Part of the app', width: '18ch', muted: true },
+            { key: 'workload', header: 'Part', width: '18ch', muted: true },
             ...(canEdit
               ? [
                   {
@@ -182,7 +179,7 @@ export function Environment({ appID, focus }: { appID: string; focus?: boolean }
               : []),
           ]}
           rows={rows}
-          empty={<Quiet>This app reads nothing from its environment.</Quiet>}
+          empty={<Quiet>No variables.</Quiet>}
         />
       </div>
 
@@ -229,7 +226,7 @@ function envRows(body?: AppSpec): Row[] {
         // all — it reads as a value Pando lost rather than one nobody has
         // given yet.
         shown: e.secret_ref
-          ? 'Set, and not shown'
+          ? 'Hidden'
           : e.slot_ref
             ? `From the ${e.slot_ref} dependency`
             : unset
@@ -279,7 +276,7 @@ function VariableDialog({
       open
       onClose={onClose}
       title={existing ? `Set ${existing.key}` : 'Add an environment variable'}
-      description="This takes effect at the next deploy."
+      description="Takes effect at the next deploy."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -303,23 +300,22 @@ function VariableDialog({
             autoFocus
             value={key}
             placeholder="STRIPE_API_KEY"
-            helper="Exactly as the app reads it."
             onChange={(e) => setKey(e.target.value)}
           />
         )}
 
         <Select
-          label="Kind"
+          label="Type"
           value={secret ? 'secret' : 'value'}
           options={[
-            { value: 'value', label: 'An ordinary setting' },
-            { value: 'secret', label: 'A secret — a key, token or password' },
+            { value: 'value', label: 'Setting' },
+            { value: 'secret', label: 'Secret' },
           ]}
           onChange={(e) => setSecret(e.target.value === 'secret')}
           // Shown and fixed rather than hidden: the choice exists, and the
           // helper says why it is not this person's to make.
           disabled={!canWriteSecrets}
-          helper={canWriteSecrets ? undefined : 'You can’t store secrets for this app, so this is kept as an ordinary setting.'}
+          helper={canWriteSecrets ? undefined : 'You can’t store secrets on this app.'}
         />
 
         {/* Warned, not prevented. Which variables are credentials is the
@@ -328,8 +324,8 @@ function VariableDialog({
             sentence at the moment it would happen (R-190, R-191). */}
         {!secret && looksSensitive(key) && (
           <Banner tone="info">
-            {key} reads like a credential. An ordinary setting is kept in the app&rsquo;s
-            configuration, which is exportable; a secret is stored separately and never shown.
+            {key} looks like a credential. A setting appears in the app&rsquo;s exported configuration;
+            store it as a secret.
           </Banner>
         )}
 
@@ -338,17 +334,13 @@ function VariableDialog({
           mono
           type={secret ? 'password' : 'text'}
           value={value}
-          helper={
-            secret
-              ? 'Stored separately and never shown again. It will not appear in this app’s exported configuration.'
-              : 'Kept in the app’s configuration, which is exportable — don’t put a key or password here.'
-          }
+          helper={secret ? 'Never shown again.' : undefined}
           onChange={(e) => setValue(e.target.value)}
         />
 
         {workloads.length > 1 && (
           <Select
-            label="Part of the app"
+            label="Part"
             value={workload}
             options={workloads.map((w) => ({ value: w, label: w }))}
             onChange={(e) => setWorkload(e.target.value)}

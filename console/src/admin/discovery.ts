@@ -151,14 +151,14 @@ export function servicePlaceholder(type: string, part: string | undefined): stri
 export function serviceProvision(slot: SpecSlot): { status: 'info' | 'building' | 'stopped'; label: string } {
   switch (slot.resolution?.mode) {
     case 'provisioned':
-      return { status: 'info', label: 'Pando creates it' };
+      return { status: 'info', label: 'Provisioned' };
     case 'bound':
-      return { status: 'info', label: 'Connects to one you have' };
+      return { status: 'info', label: 'External' };
     case 'literal':
-      return { status: 'info', label: 'You set it' };
+      return { status: 'info', label: 'Value' };
     default:
       return slot.required
-        ? { status: 'building', label: 'Choose after accepting' }
+        ? { status: 'building', label: 'Unfilled' }
         : { status: 'stopped', label: 'Optional' };
   }
 }
@@ -277,7 +277,7 @@ function readStep(input: DiscoveryInput, at: number): DiscoveryStep {
     active = 'Reading the image';
     if (source.image) findings.push({ key: 'Image', value: source.image });
   } else if (source?.type === 'upload') {
-    findings.push({ key: 'Source', value: 'An uploaded archive', text: true });
+    findings.push({ key: 'Source', value: 'Upload', text: true });
   } else if (source) {
     if (source.url) findings.push({ key: 'Repository', value: source.url });
     if (source.ref) findings.push({ key: 'Branch', value: source.ref });
@@ -299,12 +299,12 @@ function stackStep(bid: Candidate | undefined, at: number): DiscoveryStep {
   const unknown = !bid?.strategy || bid.strategy === 'unknown';
   const findings: Finding[] = [];
   if (done && bid) {
-    findings.push({ key: 'Approach', value: strategyLabel(bid.strategy), text: true });
-    (bid.evidence ?? []).forEach((line, i) => findings.push({ key: i === 0 ? 'Because' : '', value: line, text: true }));
+    findings.push({ key: 'Strategy', value: strategyLabel(bid.strategy), text: true });
+    (bid.evidence ?? []).forEach((line, i) => findings.push({ key: i === 0 ? 'Evidence' : '', value: line, text: true }));
   }
   return {
     id: 'stack',
-    name: 'Work out how it’s built',
+    name: 'Detect the build',
     active: 'Reading the code',
     state: done ? 'done' : at === 1 ? 'current' : 'pending',
     result: done ? (unknown ? 'No detector could read it' : strategyLabel(bid?.strategy)) : undefined,
@@ -329,16 +329,16 @@ function runsStep(proposal: Partial<Proposal>, spec: AppSpec | undefined, at: nu
   }
   for (const s of slots) {
     const image = serviceImage(s);
-    findings.push({ key: slotLabel(s.type), value: image ?? `Reached at ${s.key}`, text: !image });
+    findings.push({ key: slotLabel(s.type), value: image ?? `Via ${s.key}`, text: !image });
   }
   for (const w of workloads) {
-    for (const m of w.mounts ?? []) findings.push({ key: 'Keeps data in', value: m.path });
+    for (const m of w.mounts ?? []) findings.push({ key: 'Storage', value: m.path });
   }
   const names = [...workloads.map((w) => w.name), ...slots.map((s) => slotLabel(s.type))];
   return {
     id: 'runs',
     name: 'Find processes and services',
-    active: 'Looking for what it runs on',
+    active: 'Finding processes and services',
     state: done ? 'done' : 'pending',
     result: done ? (names.length ? list(names) : 'Nothing found') : undefined,
     findings: done ? findings : [],
@@ -431,7 +431,7 @@ function trialStep(proposal: Partial<Proposal>, under: Set<string>): DiscoverySt
   return {
     id: 'trial',
     name: 'Try running it',
-    active: 'Starting it to watch',
+    active: 'Starting a trial run',
     state: done ? 'done' : 'current',
     result,
     failed: done && Boolean(trial?.crashed),
@@ -507,8 +507,8 @@ function aiStep(proposal: Partial<Proposal>, under: Set<string>): DiscoveryStep 
   const step: DiscoveryStep = {
     id: 'ai',
     ai: true,
-    name: repair ? 'Review the failed plan' : 'Answer what it can',
-    active: repair ? 'AI is looking at the failed plan' : 'AI is answering what it can',
+    name: repair ? 'Review the failed plan' : 'Answer questions',
+    active: repair ? 'Reviewing the failed plan' : 'Answering questions',
     state: running ? 'current' : 'done',
     findings: [],
   };

@@ -22,7 +22,7 @@ export function Screening({ outcome }: { outcome: Outcome | undefined }) {
   if (!outcome.ran) {
     return (
       <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>
-        This plan was not checked by an AI adapter. {outcome.skipped}
+        Not checked by an AI adapter. {outcome.skipped}
       </p>
     );
   }
@@ -42,10 +42,10 @@ export function Screening({ outcome }: { outcome: Outcome | undefined }) {
           </div>
           <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
             {applied.length === 0
-              ? 'It read the repository and found nothing in this plan to change.'
+              ? 'No changes.'
               : applied.length === 1
-                ? 'It read the repository and changed one thing in this plan. Review it before accepting.'
-                : `It read the repository and changed ${applied.length} things in this plan. Review them before accepting.`}
+                ? 'Changed one thing in this plan.'
+                : `Changed ${applied.length} things in this plan.`}
           </p>
         </div>
 
@@ -73,8 +73,8 @@ export function Screening({ outcome }: { outcome: Outcome | undefined }) {
         )}
 
         <Disclosure
-          show={`${filesRead(files.length)} Show which`}
-          hide={`${filesRead(files.length)} Hide the list`}
+          show={filesRead(files.length)}
+          hide={filesRead(files.length)}
           hidden={files.length === 0}
         >
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
@@ -85,8 +85,8 @@ export function Screening({ outcome }: { outcome: Outcome | undefined }) {
         </Disclosure>
 
         <Disclosure
-          show={`Show what Pando refused (${refused.length})`}
-          hide={`Hide what Pando refused (${refused.length})`}
+          show={`Refused (${refused.length})`}
+          hide={`Refused (${refused.length})`}
           hidden={refused.length === 0}
         >
           <ul style={listStyle}>

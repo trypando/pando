@@ -5,40 +5,40 @@ const show = (v: unknown) => (v === null || v === undefined ? 'unset' : JSON.str
 // Each setting by the name the Policy screen gives it, so a proposal reads as
 // the switch it would flip rather than as a field name.
 const LABELS: Record<string, string> = {
-  source_allowlist: 'Where apps may be created from',
-  disabled_verbs: 'Permissions nobody may use',
-  agent_disabled_verbs: "Verbs an agent's token may not use",
-  allow_anonymous_grants: 'Sharing apps with everyone',
-  public_sharing: 'Sharing apps with everyone',
+  source_allowlist: 'Allowed sources',
+  disabled_verbs: 'Disabled verbs',
+  agent_disabled_verbs: 'Disabled verbs for tokens',
+  allow_anonymous_grants: 'Public sharing',
+  public_sharing: 'Public sharing',
   min_build_isolation: 'Minimum isolation for builds',
   min_runtime_isolation: 'Minimum isolation for running apps',
-  egress_mode: 'Where apps may connect out to',
-  egress_list: "The installation's egress list",
-  egress_allowlist: "The installation's egress list",
+  egress_mode: 'Egress',
+  egress_list: 'Egress list',
+  egress_allowlist: 'Egress list',
   egress_block_private: 'Block private addresses',
-  egress_loosening: 'App changes that loosen these rules',
-  deploy_approval_required: "Require approval for every app's deploys",
+  egress_loosening: 'Egress loosening',
+  deploy_approval_required: 'Require approval for every app',
   deploy_approval_apps: 'Apps that always need approval',
   deploy_approval_count: 'Approvals needed',
-  deploy_approval_expiry_hours: 'Requests expire after, in hours',
-  require_backup_before_destroy: 'Require a backup before anything is destroyed',
-  max_token_lifetime_days: 'Longest a token may live, in days',
+  deploy_approval_expiry_hours: 'Request expiry (hours)',
+  require_backup_before_destroy: 'Require backup before delete',
+  max_token_lifetime_days: 'Max token lifetime (days)',
   max_log_disk_bytes: 'Total disk for app logs',
-  max_concurrent_deploys: 'Deploys each replica runs at once',
-  idle_stop_days: 'Stop an app nobody has used for this many days',
-  idle_delete_days: 'Delete an app nobody has used for this many days',
-  max_apps_per_user: 'Apps each person may own',
-  allow_cpu_oversubscription: 'Allow more CPU to be promised than the runtime has',
-  allow_memory_oversubscription: 'Allow more memory to be promised than the runtime has',
-  disable_ai_screening: 'Turn off AI screening of deployment plans',
-  disable_anonymous_use_audit: "Don't record visits from people who aren't signed in",
-  disable_anonymous_denial_audit: "Don't record refusals of people who aren't signed in",
+  max_concurrent_deploys: 'Concurrent deploys per replica',
+  idle_stop_days: 'Stop idle apps after (days)',
+  idle_delete_days: 'Delete idle apps after (days)',
+  max_apps_per_user: 'App limit',
+  allow_cpu_oversubscription: 'Allow CPU oversubscription',
+  allow_memory_oversubscription: 'Allow memory oversubscription',
+  disable_ai_screening: 'Disable AI screening',
+  disable_anonymous_use_audit: "Don't log anonymous visits",
+  disable_anonymous_denial_audit: "Don't log anonymous refusals",
   min_security_score: 'Minimum security score',
-  insecure_action: 'Stop apps that fall below it while running',
-  insecure_grace_hours: 'Grace period, in hours',
+  insecure_action: 'Stop running apps below the minimum',
+  insecure_grace_hours: 'Grace period (hours)',
   ignore_unfixable_findings: 'Ignore findings with no fix available',
-  disable_password_sign_in: 'Turn off password sign-in',
-  disable_jit_provisioning: "Don't create accounts at first sign-in",
+  disable_password_sign_in: 'Disable password sign-in',
+  disable_jit_provisioning: 'Disable just-in-time provisioning',
 };
 
 const SHARING: Record<string, string> = { allowed: 'Allowed', passcode_only: 'Only with a passcode', none: 'Not allowed' };
@@ -75,14 +75,14 @@ export function describeChange(c: { key: string; from: unknown; to: unknown }): 
     for (const v of after.filter((x) => !before.includes(x))) {
       out.push(
         !agent && v === 'app.exec'
-          ? { title: 'Turn off terminal access for the whole installation', detail: 'Off to on. Nobody gets a terminal, including the person who owns the app.' }
+          ? { title: 'Disable terminal access', detail: 'Off to on.' }
           : { title: LABELS[c.key]!, detail: `Adds ${v}.` },
       );
     }
     for (const v of before.filter((x) => !after.includes(x))) {
       out.push(
         !agent && v === 'app.exec'
-          ? { title: 'Turn off terminal access for the whole installation', detail: 'On to off. Terminals are allowed again, to whoever holds app.exec.' }
+          ? { title: 'Disable terminal access', detail: 'On to off.' }
           : { title: LABELS[c.key]!, detail: `Removes ${v}.` },
       );
     }

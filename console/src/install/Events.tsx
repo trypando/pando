@@ -127,9 +127,7 @@ export function Events({ canManageAll, apps }: { canManageAll: boolean; apps: Ap
       }
     >
       <Quiet>
-        Send what happens in Pando — deploys, failures, sign-ins, backups — to a webhook, or to Slack,
-        Teams, Discord, email or ntfy. Which of Pando&rsquo;s own notifications reach you is under
-        Settings. Each app&rsquo;s own events are on its Events tab.
+        Send Pando events to a webhook, Slack, Teams, Discord, email or ntfy.
       </Quiet>
       <Subscriptions
         apps={apps}
@@ -200,7 +198,7 @@ export function Subscriptions({
               </Button>
             }
           >
-            A subscription sends the events you choose, as they happen, to somewhere you will see them.
+            Send events to a webhook or a notification channel.
           </EmptyState>
         }
         columns={[
@@ -209,9 +207,9 @@ export function Subscriptions({
             : [
                 {
                   key: 'about',
-                  header: 'About',
+                  header: 'Scope',
                   width: 'minmax(0,20ch)',
-                  render: (row: Subscription) => (row.app_id ? row.app_name || row.app_id : 'Whole installation'),
+                  render: (row: Subscription) => (row.app_id ? row.app_name || row.app_id : 'Installation'),
                 },
               ]),
           {
@@ -223,7 +221,7 @@ export function Subscriptions({
           },
           {
             key: 'to',
-            header: 'Sent to',
+            header: 'Destination',
             width: 'minmax(0,28ch)',
             muted: true,
             render: (row: Subscription) =>
@@ -347,7 +345,7 @@ function CreateSubscription({
   });
 
   const aboutOptions = [
-    ...(canManageAll ? [{ value: '', label: 'Whole installation' }] : []),
+    ...(canManageAll ? [{ value: '', label: 'Installation' }] : []),
     ...apps.map((a) => ({ value: a.id, label: a.name })),
   ];
 
@@ -361,7 +359,6 @@ function CreateSubscription({
       open
       width={720}
       title="New subscription"
-      description="Choose what to hear about and where Pando sends it."
       onClose={onClose}
       footer={
         <>
@@ -379,13 +376,13 @@ function CreateSubscription({
 
         {!fixedApp && (
           <Select
-            label="About"
+            label="Scope"
             value={appID}
             options={aboutOptions}
             helper={
               appID
-                ? 'Events about this app. You hear about them while you can see the app.'
-                : 'Every app, and the installation itself: sign-ins, policy, adapters, upgrades.'
+                ? 'Delivered while you can see the app.'
+                : 'Every app, plus sign-ins, policy, adapters and upgrades.'
             }
             onChange={(e) => {
               setAppID(e.target.value);
@@ -400,7 +397,7 @@ function CreateSubscription({
           </legend>
           <Checkbox
             label="Everything"
-            description="Every event, including ones a later Pando adds."
+            description="Includes events added in later versions."
             checked={everything}
             onChange={(e) => setChosen(e.target.checked ? ['*'] : [])}
           />
@@ -438,22 +435,22 @@ function CreateSubscription({
 
         <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
-            Send to
+            Destination
           </legend>
           <Radio
             name="destination"
-            label="A webhook"
-            description="Pando posts each event as JSON to a URL, signed so the receiver can tell it came from Pando."
+            label="Webhook"
+            description="Signed JSON posted to a URL."
             checked={kind === 'webhook'}
             onChange={() => setKind('webhook')}
           />
           <Radio
             name="destination"
-            label="A notification channel"
+            label="Notification channel"
             description={
               destinations.length > 0
-                ? 'Slack, Teams, Discord, email or ntfy, as set up under Adapters. Email goes to you.'
-                : 'None is set up yet. An administrator adds one under Adapters.'
+                ? 'Slack, Teams, Discord, email or ntfy, set up under Adapters. Email goes to you.'
+                : 'None set up yet. An administrator adds one under Adapters.'
             }
             disabled={destinations.length === 0}
             checked={kind === 'notify'}
@@ -464,12 +461,12 @@ function CreateSubscription({
               label="Webhook URL"
               value={url}
               placeholder="https://example.com/hooks/pando"
-              helper="Pando retries for about a day if it does not answer with a 2xx status."
+              helper="Pando retries for about a day until it gets a 2xx response."
               onChange={(e) => setURL(e.target.value)}
             />
           ) : null}
           {kind === 'webhook' ? (
-            <Disclosure show="Change the request" hide="Hide the request">
+            <Disclosure show="Request options" hide="Request options">
               <RequestFields value={request} onChange={setRequest} />
             </Disclosure>
           ) : (
@@ -485,7 +482,7 @@ function CreateSubscription({
         <Input
           label="Description"
           value={description}
-          helper="Optional. What this subscription is for, for whoever finds it later."
+          helper="Optional."
           onChange={(e) => setDescription(e.target.value)}
         />
       </div>
@@ -510,8 +507,7 @@ function SigningKey({ sub, onClose }: { sub: Subscription; onClose: () => void }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
         <Banner tone="info">
-          This is the only time Pando shows this key. If you lose it, rotate it from the subscription to
-          get a new one.
+          Pando shows this key only once. If you lose it, rotate it from the subscription.
         </Banner>
         <CodeBlock copyable lines={sub.signing_key ?? ''} />
         <Quiet>
@@ -606,7 +602,7 @@ function SubscriptionDetail({
             {s.destination === 'webhook' && (
               <>
                 <Button variant="secondary" onClick={() => setEditing(true)}>
-                  Change the request
+                  Request options
                 </Button>
                 <Button variant="secondary" disabled={rotate.isPending} onClick={() => rotate.mutate()}>
                   Rotate signing key
@@ -650,7 +646,7 @@ function SubscriptionDetail({
                 </Tag>
               ))}
             </dd>
-            <dt style={{ color: 'var(--ink-secondary)' }}>Sent to</dt>
+            <dt style={{ color: 'var(--ink-secondary)' }}>Destination</dt>
             <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>
               {s.destination === 'webhook'
                 ? s.url
@@ -670,7 +666,7 @@ function SubscriptionDetail({
                       {h}
                     </Tag>
                   ))}
-                  {s.payload_template ? <Tag>Own body</Tag> : <Tag>Pando&rsquo;s event</Tag>}
+                  {s.payload_template ? <Tag>Custom body</Tag> : <Tag>Default body</Tag>}
                 </dd>
               </>
             )}
@@ -685,7 +681,7 @@ function SubscriptionDetail({
         <Table
           loading={deliveries.isPending}
           onRowClick={(row: Delivery) => setOpenDelivery(openDelivery === row.id ? null : row.id)}
-          empty={<Quiet>Nothing has been sent yet. Send a test to check the endpoint.</Quiet>}
+          empty={<Quiet>No deliveries yet. Send a test to check the endpoint.</Quiet>}
           columns={[
             { key: 'event', header: 'Event', width: 'minmax(0,22ch)', mono: true },
             {
@@ -703,7 +699,7 @@ function SubscriptionDetail({
             },
             {
               key: 'last_error',
-              header: 'Last answer',
+              header: 'Last response',
               width: 'minmax(0,1fr)',
               muted: true,
               render: (row: Delivery) =>
@@ -711,7 +707,7 @@ function SubscriptionDetail({
             },
             {
               key: 'created_at',
-              header: 'Happened',
+              header: 'Time',
               width: '16ch',
               muted: true,
               render: (row: Delivery) => relative(row.created_at),
@@ -789,14 +785,14 @@ function DeliveryDetail({
           },
           {
             key: 'status_code',
-            header: 'Answer',
+            header: 'Response',
             width: '8ch',
             mono: true,
             render: (row: NonNullable<Delivery['attempt_log']>[number]) => row.status_code ?? '—',
           },
           {
             key: 'duration_ms',
-            header: 'Took',
+            header: 'Duration',
             width: '10ch',
             align: 'right',
             muted: true,
@@ -889,7 +885,7 @@ function RequestFields({
         placeholder="Authorization: Bearer …"
         helper={
           headerNote ??
-          'One per line, as Name: value — for a receiver that needs a key. Stored encrypted and never shown again.'
+          'One per line, as Name: value. Stored encrypted and never shown again.'
         }
         error={problem}
         onChange={(e) => onChange({ ...value, headers: e.target.value })}
@@ -902,7 +898,7 @@ function RequestFields({
         label="Body"
         value={value.template}
         placeholder={'{"text": {{json .Subject}}, "link": {{json .Link}}}'}
-        helper="Leave empty to send Pando's event as JSON. Otherwise a Go template, given .Type, .Subject, .Body, .Link, .App.Name, .Data and .Envelope; use json to put a value in JSON. Checked when you save."
+        helper="Leave empty to send Pando’s event as JSON. Otherwise a Go template with .Type, .Subject, .Body, .Link, .App.Name, .Data and .Envelope; use json to encode a value."
         onChange={(e) => onChange({ ...value, template: e.target.value })}
       />
     </div>
@@ -937,8 +933,7 @@ function EditRequest({ sub, onClose, onSaved }: { sub: Subscription; onClose: ()
     <Dialog
       open
       width={720}
-      title="Change the request"
-      description={`How Pando sends each event to ${sub.url}.`}
+      title="Request options"
       onClose={onClose}
       footer={
         <>
@@ -962,7 +957,7 @@ function EditRequest({ sub, onClose, onSaved }: { sub: Subscription; onClose: ()
           onChange={setValue}
           headerNote={
             names.length > 0
-              ? `Sent now: ${names.join(', ')}. Their values are not shown. Type here to replace every header; leave it empty to keep them.`
+              ? `Sent now: ${names.join(', ')}. Enter headers to replace them all, or leave empty to keep them.`
               : undefined
           }
         />

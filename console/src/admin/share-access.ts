@@ -106,17 +106,17 @@ export function orderRoles<T extends RoleLike>(roles: T[]): T[] {
 /** What the chosen access means, under the dropdown. For a custom role Pando
  *  has no sentence, so it says what the role holds. */
 export function describeChoice(role: RoleLike | undefined): string {
-  if (!role) return 'They can open the app from their launcher. Nothing in its settings.';
+  if (!role) return 'Open the app. No access to its settings.';
   switch (role.id) {
     case 'role_viewer':
-      return 'They can open the app, and see its settings and logs.';
+      return 'Open the app and view its settings and logs.';
     case 'role_operator':
-      return 'They can open the app, deploy it, restart it and change its settings.';
+      return 'Open, deploy and restart the app, and change its settings.';
     case 'role_owner':
-      return 'Everything, including sharing it and deleting it.';
+      return 'Everything, including sharing and deleting the app.';
   }
   const verbs = (role.verbs ?? []).map((v) => v.replace(/^app\./, ''));
   return verbs.length > 0
-    ? `They can open the app, and: ${verbs.join(', ')}.`
-    : `They can open the app, with the ${roleChoice(role)} role.`;
+    ? `Open the app, plus: ${verbs.join(', ')}.`
+    : `Open the app, with the ${roleChoice(role)} role.`;
 }

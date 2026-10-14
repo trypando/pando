@@ -25,7 +25,7 @@ import { SignOut } from '../ui/SignOut';
 import { TopoBackground } from '../ui/TopoBackground';
 
 const THEMES: { value: Preference; label: string; description?: string }[] = [
-  { value: 'system', label: 'Match this device', description: 'Follows your device’s light or dark setting.' },
+  { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
 ];

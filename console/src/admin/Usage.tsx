@@ -82,15 +82,14 @@ export function Usage({ app, layout = 'table' }: { app: App; layout?: 'table' | 
 
   const asOf = data?.reported_at && (
     <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 'var(--space-2) 0 0' }}>
-      As of {new Date(data.reported_at).toLocaleTimeString()}. Refreshes every thirty seconds. Disk is what a part wrote
-      outside its storage.
+      As of {new Date(data.reported_at).toLocaleTimeString()}. Disk excludes storage.
     </p>
   );
 
   return (
     <section ref={section} style={{ maxWidth: MEASURE }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
-        <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>In use</h4>
+        <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Usage</h4>
         {/* Now, rather than at the next thirty-second tick: after a deploy, or
             while watching a part climb. */}
         {data?.supported && (
@@ -131,7 +130,7 @@ export function Usage({ app, layout = 'table' }: { app: App; layout?: 'table' | 
       )}
 
       {data && !data.supported && (
-        <Quiet>This app&rsquo;s runtime does not report what its parts are using.</Quiet>
+        <Quiet>This app&rsquo;s runtime doesn&rsquo;t report usage.</Quiet>
       )}
 
       {data?.supported && layout === 'stack' && (

@@ -73,7 +73,7 @@ const TYPE_NAMES: Record<string, string> = {
   // Apps pinned before detection stopped calling every variable a dependency
   // still carry these. Nothing about such a slot says what it connects to,
   // because there was never anything to connect it to — it is a value.
-  unknown: 'a value',
+  unknown: 'value',
 };
 
 /** Pando can stand these up itself. The rest are bound or given a value. */
@@ -101,10 +101,7 @@ function Slots({ appID, focus }: { appID: string; focus?: boolean }) {
       {/* R-132, said once here rather than repeated per row: an unfilled
           required dependency refuses the deploy instead of starting something
           that crashes on connection refused. */}
-      <Quiet>
-        Things this app needs. A required one that isn&rsquo;t filled in refuses the next deploy
-        rather than starting an app that can&rsquo;t connect.
-      </Quiet>
+      <Quiet>Things this app needs. An unfilled required dependency blocks the next deploy.</Quiet>
 
       {slots.isError && <Banner tone="failed">{messageOf(slots.error)}</Banner>}
 
@@ -116,13 +113,13 @@ function Slots({ appID, focus }: { appID: string; focus?: boolean }) {
             { key: 'key', header: 'Variable', width: 'minmax(0,26ch)', mono: true },
             {
               key: 'type',
-              header: 'Kind',
+              header: 'Type',
               width: '18ch',
               render: (row: Slot) => TYPE_NAMES[row.type] ?? row.type,
             },
             {
               key: 'resolution',
-              header: 'Filled by',
+              header: 'Source',
               width: 'minmax(0,28ch)',
               render: (row: Slot) => describe(row),
             },
@@ -143,7 +140,7 @@ function Slots({ appID, focus }: { appID: string; focus?: boolean }) {
               : []),
           ]}
           rows={rows}
-          empty={<Quiet>This app declares nothing it depends on.</Quiet>}
+          empty={<Quiet>No dependencies.</Quiet>}
         />
       </div>
 
@@ -159,21 +156,21 @@ function describe(slot: Slot) {
   if (!slot.resolution) {
     // A status is always a symbol plus a word, never a colored chip.
     return slot.required ? (
-      <StatusIndicator status="failed" label="Not filled in" />
+      <StatusIndicator status="failed" label="Unfilled" />
     ) : (
-      <StatusIndicator status="stopped" label="Not filled in, and optional" />
+      <StatusIndicator status="stopped" label="Optional" />
     );
   }
   switch (slot.resolution.mode) {
     case 'provisioned':
-      return `Pando runs one inside this app`;
+      return 'Provisioned';
     case 'bound':
-      return slot.resolution.target ?? 'Something already running';
+      return slot.resolution.target ?? 'External';
     case 'literal':
       // The value itself is a stored secret and is not shown. Rendering it
       // here would put a database password in a table that anyone holding
       // app.view can read, which app.secrets.read exists to prevent (R-083).
-      return 'A value you set';
+      return 'Value';
     default:
       return slot.resolution.mode;
   }
@@ -208,10 +205,10 @@ function FillSlot({
 
   const options = [
     ...(canProvision
-      ? [{ value: 'provisioned', label: `Pando runs a ${TYPE_NAMES[slot.type] ?? slot.type} inside this app` }]
+      ? [{ value: 'provisioned', label: 'Provisioned' }]
       : []),
-    { value: 'bound', label: 'Connect to one that already exists' },
-    { value: 'literal', label: 'Paste a value' },
+    { value: 'bound', label: 'External' },
+    { value: 'literal', label: 'Value' },
   ];
 
   return (
@@ -221,7 +218,7 @@ function FillSlot({
       title={`Fill ${slot.key}`}
       // Filling a dependency and deploying are separate acts: this changes how
       // the app will run next time and does not deploy it now.
-      description="This takes effect at the next deploy."
+      description="Takes effect at the next deploy."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -239,20 +236,19 @@ function FillSlot({
             option and failing at deploy. */}
         {isValue ? (
           <Banner tone="info">
-            Nothing about {slot.key} says what it connects to, so there is nothing for Pando to run
-            or to point it at. Paste the value it should have.
+            Nothing says what {slot.key} connects to. Paste its value.
           </Banner>
         ) : (
           !canProvision && (
             <Banner tone="info">
-              Pando doesn&rsquo;t stand up {TYPE_NAMES[slot.type] ?? slot.type} itself. Connect this
-              to something you already run, or paste a value.
+              Pando doesn&rsquo;t provision {TYPE_NAMES[slot.type] ?? slot.type}. Connect it to one you
+              already run, or paste a value.
             </Banner>
           )
         )}
 
         <Select
-          label="How this is filled"
+          label="Source"
           value={mode}
           options={options}
           onChange={(e) => setMode(e.target.value)}
@@ -260,10 +256,9 @@ function FillSlot({
 
         {mode === 'bound' && (
           <Input
-            label="Where it is"
+            label="Connection string"
             mono
             value={target}
-            helper="A connection string for something already running, on this host or elsewhere."
             onChange={(e) => setTarget(e.target.value)}
           />
         )}
@@ -274,16 +269,13 @@ function FillSlot({
             mono
             type="password"
             value={value}
-            helper="Stored as a secret. It is never shown again and never appears in an exported configuration."
+            helper="Stored as a secret and never shown again."
             onChange={(e) => setValue(e.target.value)}
           />
         )}
 
         {mode === 'provisioned' && (
-          <Quiet>
-            Pando runs it beside this app, reachable only by this app, and backs its data up with the
-            app&rsquo;s.
-          </Quiet>
+          <Quiet>Runs beside this app, reachable only by it, and backed up with it.</Quiet>
         )}
 
         {save.isError && <Banner tone="failed">{messageOf(save.error)}</Banner>}
@@ -339,10 +331,7 @@ function Volumes({ appID, focus }: { appID: string; focus?: boolean }) {
       </div>
 
       {/* R-204, where the consequence lands rather than in documentation. */}
-      <Quiet>
-        Data this app keeps. Deleting the app doesn&rsquo;t delete this — Pando offers to back it up
-        first and keeps it until you say otherwise.
-      </Quiet>
+      <Quiet>Data this app keeps. Deleting the app doesn&rsquo;t delete it.</Quiet>
 
       {volumes.isError && <Banner tone="failed">{messageOf(volumes.error)}</Banner>}
 
@@ -351,12 +340,12 @@ function Volumes({ appID, focus }: { appID: string; focus?: boolean }) {
           loading={volumes.isPending}
           skeletonRows={1}
           columns={[
-            { key: 'id', header: 'Reference', width: 'minmax(0,28ch)', mono: true },
-            { key: 'handle', header: 'Where it is', width: 'minmax(0,38ch)', mono: true, muted: true },
+            { key: 'id', header: 'ID', width: 'minmax(0,28ch)', mono: true },
+            { key: 'handle', header: 'Location', width: 'minmax(0,38ch)', mono: true, muted: true },
             { key: 'adapter_ref', header: 'Runtime', width: '18ch', mono: true, muted: true },
           ]}
           rows={rows}
-          empty={<Quiet>This app keeps nothing between deploys.</Quiet>}
+          empty={<Quiet>No storage.</Quiet>}
         />
       </div>
 
@@ -365,7 +354,7 @@ function Volumes({ appID, focus }: { appID: string; focus?: boolean }) {
           open
           onClose={() => setAdding(false)}
           title="Add storage"
-          description="This takes effect at the next deploy."
+          description="Takes effect at the next deploy."
           footer={
             <>
               <Button variant="ghost" onClick={() => setAdding(false)}>
@@ -393,14 +382,14 @@ function Volumes({ appID, focus }: { appID: string; focus?: boolean }) {
             <Input
               label="Name"
               value={name}
-              helper="How you will refer to it. Unique within this app."
+              helper="Unique within this app."
               onChange={(e) => setName(e.target.value)}
             />
             <Input
-              label="Path inside the app"
+              label="Path"
               mono
               value={path}
-              helper="For example /var/lib/data. The app writes here and Pando keeps it."
+              helper="For example /var/lib/data."
               onChange={(e) => setPath(e.target.value)}
             />
 

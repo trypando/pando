@@ -144,8 +144,7 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
           that group can do. Saying so here is what stops someone looking for
           permissions on this screen. */}
       <Quiet>
-        Named sets of people, so access is given to a team once instead of to each person. Everyone in a group holds its
-        role and its access to apps.
+        Named sets of people. Members hold the group&rsquo;s role and its access to apps.
       </Quiet>
 
       {groups.query.isError && <Banner tone="failed">{messageOf(groups.query.error)}</Banner>}
@@ -158,13 +157,13 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
             { key: 'name', header: 'Name', width: 'minmax(0,36ch)' },
             {
               key: 'members',
-              header: 'People',
+              header: 'Members',
               width: '14ch',
               render: (row: Group) => <Badge count={row.member_count ?? row.members?.length ?? 0} />,
             },
             {
               key: 'source',
-              header: 'Comes from',
+              header: 'Source',
               width: '20ch',
               muted: true,
               // A group synced from an identity provider is not Pando's to
@@ -215,7 +214,7 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
                   {canEdit && !row.source && (
                     <>
                       <Button variant="secondary" onClick={() => setEditing(row)}>
-                        Change people
+                        Edit members
                       </Button>
                       {all.some((g) => g.source) && (
                         <Button variant="secondary" onClick={() => setLinking(row)}>
@@ -236,7 +235,7 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
             query.trim() ? (
               <NoMatches what="groups" query={query} />
             ) : (
-              <Quiet>No groups yet. Apps can still be shared with one person at a time.</Quiet>
+              <Quiet>No groups yet.</Quiet>
             )
           }
         />
@@ -347,8 +346,8 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
     <Dialog
       open
       onClose={onClose}
-      title={creating ? 'Add group' : `People in ${name}`}
-      description="Changing who is in a group changes what they can reach, immediately."
+      title={creating ? 'Add group' : `Members of ${name}`}
+      description="Changes take effect immediately."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -371,7 +370,7 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
           <Input
             label="Name"
             value={name}
-            helper="What this set of people is called, for example platform."
+            helper="For example, platform."
             onChange={(e) => setName(e.target.value)}
           />
         )}
@@ -386,7 +385,7 @@ function EditGroup({ group, onClose }: { group: Group | 'new'; onClose: () => vo
           <SearchField value={search} onChange={setSearch} placeholder="Search accounts to add" width="100%" />
           {count > MEMBERS_NAMED && (
             <Quiet>
-              The first {MEMBERS_NAMED} of {count.toLocaleString('en-US')} people are listed. Search to find the others.
+              Showing {MEMBERS_NAMED} of {count.toLocaleString('en-US')} members. Search to find the others.
             </Quiet>
           )}
           {/* A checkbox's line each, until the accounts arrive. */}
@@ -468,7 +467,7 @@ function Roles({ canEdit, query }: { canEdit: boolean; query: string }) {
     matches(
       query,
       r.name,
-      r.scope === 'install' ? 'whole installation' : 'one app',
+      r.scope === 'install' ? 'Installation' : 'App',
       r.builtin ? 'Pando' : 'This installation',
       ...r.verbs,
     ),
@@ -493,8 +492,7 @@ function Roles({ canEdit, query }: { canEdit: boolean; query: string }) {
 
       {/* R-081, said where someone would otherwise look for an edit button. */}
       <Quiet>
-        Named sets of permissions. The five Pando ships can&rsquo;t be edited or deleted — an install that quietly
-        redefined what &ldquo;viewer&rdquo; means is an install where nobody can answer what a viewer can do.
+        Named sets of permissions. Built-in roles can&rsquo;t be edited or deleted.
       </Quiet>
 
       {roles.isError && <Banner tone="failed">{messageOf(roles.error)}</Banner>}
@@ -507,12 +505,12 @@ function Roles({ canEdit, query }: { canEdit: boolean; query: string }) {
             { key: 'name', header: 'Name', width: 'minmax(0,24ch)' },
             {
               key: 'scope',
-              header: 'Applies to',
+              header: 'Scope',
               width: '18ch',
               // R-080: the two scopes are never conflated. An install role and
               // an app role are different things and this column is where a
               // reader learns that.
-              render: (row: Role) => (row.scope === 'install' ? 'The whole installation' : 'One app'),
+              render: (row: Role) => (row.scope === 'install' ? 'Installation' : 'App'),
             },
             {
               key: 'builtin',
@@ -616,7 +614,6 @@ function AddRole({ onClose }: { onClose: () => void }) {
       open
       onClose={onClose}
       title="Add role"
-      description="A role you add can be changed later. The ones Pando ships cannot."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -642,19 +639,18 @@ function AddRole({ onClose }: { onClose: () => void }) {
         <Input
           label="Name"
           value={name}
-          helper="What this set of permissions is called, for example support or release manager."
+          helper="For example, support or release manager."
           error={taken}
           onChange={(e) => setName(e.target.value)}
         />
 
         <Select
-          label="Applies to"
+          label="Scope"
           value={scope}
           options={[
-            { value: 'app', label: 'One app it is granted on' },
-            { value: 'install', label: 'The whole installation' },
+            { value: 'app', label: 'App' },
+            { value: 'install', label: 'Installation' },
           ]}
-          helper="A role is one or the other. Holding permissions over the installation is not the same as holding them over an app."
           onChange={(e) => {
             setScope(e.target.value);
             setVerbs([]);
@@ -715,7 +711,7 @@ function DeleteGroup({ group, onClose }: { group: Group; onClose: () => void }) 
       open
       onClose={onClose}
       title={`Delete the ${group.name} group`}
-      description="Everyone in it loses what was shared with the group."
+      description="Everyone in it loses the access the group gave them."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -735,9 +731,8 @@ function DeleteGroup({ group, onClose }: { group: Group; onClose: () => void }) 
         }}
       >
         <p style={{ font: 'var(--type-body-ui)', margin: 0 }}>
-          {people === 1 ? 'The one person' : `The ${people} people`} in {group.name} lose every app that was shared with
-          the group — both opening it and any role the group had for managing it. Their accounts are kept, and so is
-          anything shared with them directly or through another group.
+          {people === 1 ? 'The one member' : `The ${people} members`} keep their accounts and any access given to them
+          directly or through another group.
         </p>
         <p
           style={{
@@ -746,7 +741,7 @@ function DeleteGroup({ group, onClose }: { group: Group; onClose: () => void }) 
             margin: 0,
           }}
         >
-          This can&rsquo;t be undone. Making a group with the same name later does not bring the access back.
+          This can&rsquo;t be undone.
         </p>
         {remove.isError && <Banner tone="failed">{refusal(remove.error)}</Banner>}
       </div>
@@ -789,10 +784,7 @@ function DeleteRole({ role, onClose }: { role: Role; onClose: () => void }) {
         }}
       >
         <p style={{ font: 'var(--type-body-ui)', margin: 0 }}>
-          {role.scope === 'install'
-            ? `Everyone given ${role.name} across the installation loses the permissions it gave them.`
-            : `Everyone given ${role.name} on an app — directly or through a group — loses the access it gave them on that app.`}{' '}
-          They keep anything they hold another way.
+          They keep any access they hold another way.
         </p>
         <p
           style={{
@@ -801,7 +793,7 @@ function DeleteRole({ role, onClose }: { role: Role; onClose: () => void }) {
             margin: 0,
           }}
         >
-          This can&rsquo;t be undone. Making a role with the same name later does not give it back to anyone.
+          This can&rsquo;t be undone.
         </p>
         {remove.isError && <Banner tone="failed">{refusal(remove.error)}</Banner>}
       </div>
@@ -826,7 +818,7 @@ function LinkGroups({ group, synced, onClose }: { group: Group; synced: Group[];
     <Dialog
       open
       title={`Provider groups in ${group.name}`}
-      description="Everyone in a chosen group counts as a member of this one. The provider says who is in it; removing someone there removes them here within two minutes."
+      description="Members of a chosen group count as members of this one. Removals at the provider apply within two minutes."
       onClose={onClose}
       footer={
         <Button variant="primary" onClick={onClose}>
@@ -839,7 +831,7 @@ function LinkGroups({ group, synced, onClose }: { group: Group; synced: Group[];
           <Checkbox
             key={g.id}
             label={g.name}
-            description={`From ${g.source_name ?? g.source}, ${g.member_count ?? g.members?.length ?? 0} people`}
+            description={`${g.source_name ?? g.source}, ${g.member_count ?? g.members?.length ?? 0} members`}
             checked={linked.has(g.id)}
             disabled={toggle.isPending}
             onChange={(e) => toggle.mutate({ id: g.id, on: e.target.checked })}

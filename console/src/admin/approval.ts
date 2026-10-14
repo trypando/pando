@@ -34,7 +34,7 @@ export function progress(d: ApprovalDeployment): string {
  * waits until somebody answers (policy expiry zero, R-156).
  */
 export function expiry(iso: string | undefined, now: number = Date.now()): string {
-  if (!iso) return 'Waits until somebody answers.';
+  if (!iso) return 'No expiry.';
   const at = new Date(iso).getTime();
   if (Number.isNaN(at)) return `Expires at ${iso}.`;
   const minutes = Math.round((at - now) / 60_000);

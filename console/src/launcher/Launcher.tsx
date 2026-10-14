@@ -240,7 +240,7 @@ export function Launcher({
               {filed.length > 0 ? (
                 <Grid>{filed.map(tile)}</Grid>
               ) : (
-                <Quiet>Nothing here yet. Drag an app here, or use its menu to move it.</Quiet>
+                <Quiet>Drag an app here, or use its menu to move it.</Quiet>
               )}
             </Group>
           );
@@ -276,7 +276,7 @@ export function Launcher({
                 an account. */}
             {apps.data && all.length === 0 && (
               <EmptyState heading="Nothing shared with you yet">
-                When someone shares an app with you, it shows up here.
+                Apps shared with you appear here.
               </EmptyState>
             )}
 

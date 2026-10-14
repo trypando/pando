@@ -142,10 +142,7 @@ export function Security({
         <div style={{ marginTop: 'var(--space-2)' }}>
           {/* Said, not implied. A list somebody cannot explain the length of is
               a list they stop trusting. */}
-          <Quiet>
-            This installation leaves out findings with no fix available, from the score and from
-            this list.
-          </Quiet>
+          <Quiet>Findings with no available fix are excluded.</Quiet>
         </div>
       )}
 
@@ -178,7 +175,7 @@ export function Security({
               },
               {
                 key: 'title',
-                header: 'What it is',
+                header: 'Title',
                 // The one column that takes what is left, because it is the
                 // one carrying a sentence.
                 width: 'minmax(0,1fr)',
@@ -230,7 +227,7 @@ export function Security({
           {hidden > 0 && (
             <div style={{ marginTop: 'var(--space-3)' }}>
               <Button variant="ghost" onClick={() => setAll(!all)}>
-                {all ? 'Show the five worst' : `Show all ${findings.length} findings`}
+                {all ? 'Show top five' : `Show all ${findings.length} findings`}
               </Button>
             </div>
           )}
@@ -247,8 +244,8 @@ function Verdict({ report, scanning }: { report: Report; scanning: boolean }) {
   if (standing.verdict === 'inert') {
     return (
       <Quiet>
-        This installation requires a security score of {standing.threshold}, and has no scanner
-        configured — so nothing is scored and nothing is enforced.
+        This installation requires a security score of {standing.threshold}, but has no scanner
+        configured.
       </Quiet>
     );
   }
@@ -272,8 +269,8 @@ function Verdict({ report, scanning }: { report: Report; scanning: boolean }) {
     return (
       <Quiet>
         {scanner
-          ? 'This app has not been scanned yet.'
-          : 'This installation does not scan apps, so there is no score.'}
+          ? 'Not scanned yet.'
+          : 'No scanner configured.'}
       </Quiet>
     );
   }
@@ -289,7 +286,7 @@ function Verdict({ report, scanning }: { report: Report; scanning: boolean }) {
               ? `Below this installation's requirement of ${standing.threshold}`
               : standing.threshold > 0
                 ? `Meets this installation's requirement of ${standing.threshold}`
-                : 'No requirement is set'
+                : 'No requirement'
           }
         />
       </div>

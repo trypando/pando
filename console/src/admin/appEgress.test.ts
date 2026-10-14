@@ -42,19 +42,19 @@ describe('the merged rules in words (R-188)', () => {
   it('names each mode', () => {
     expect(modeWords('allow_all')).toBe('Anywhere');
     expect(modeWords('')).toBe('Anywhere');
-    expect(modeWords('denylist')).toBe('Anywhere except the destinations listed');
-    expect(modeWords('allowlist')).toBe('Only the destinations listed');
+    expect(modeWords('denylist')).toBe('Anywhere except the list');
+    expect(modeWords('allowlist')).toBe('Only the list');
   });
 
   it('says what a loosening needs, with forbidden as the one blocker', () => {
     expect(gateWords('forbidden').status).toBe('failed');
-    expect(gateWords('approval').label).toBe('Needs a deploy approval');
+    expect(gateWords('approval').label).toBe('Needs approval');
     expect(gateWords('verb').label).toBe('Needs app.egress.loosen');
     expect(gateWords(undefined).status).toBe('info');
   });
 
   it('names the edits to the installation by what they do under its mode', () => {
-    expect(listEdits('allowlist')?.add).toEqual({ label: 'Also allow', loosens: true });
+    expect(listEdits('allowlist')?.add).toEqual({ label: 'Add to allowlist', loosens: true });
     expect(listEdits('denylist')?.remove.loosens).toBe(true);
     expect(listEdits('denylist')?.add.loosens).toBe(false);
     expect(listEdits('allow_all')).toBeNull();

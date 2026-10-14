@@ -37,7 +37,7 @@ describe('when a request stops waiting', () => {
   const now = new Date('2026-10-01T00:00:00Z').getTime();
 
   it('says a request with no expiry waits for an answer', () => {
-    expect(expiry(undefined, now)).toBe('Waits until somebody answers.');
+    expect(expiry(undefined, now)).toBe('No expiry.');
   });
 
   it('says how long is left in the shortest honest unit', () => {

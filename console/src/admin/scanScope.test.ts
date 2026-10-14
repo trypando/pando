@@ -10,11 +10,11 @@ describe('a score says what was scanned (R-311)', () => {
   });
 
   it('does not let a scan of the source alone stand for the image', () => {
-    expect(scanScope({ spec_id: 'spec_1', commit: 'abc123' })).toBe('of the source only, not the image it runs');
+    expect(scanScope({ spec_id: 'spec_1', commit: 'abc123' })).toBe('of the source only');
   });
 
   it('names a scan of the running image alone', () => {
-    expect(scanScope({ spec_id: 'spec_1', image: digest })).toBe('of the running image only, not its source');
+    expect(scanScope({ spec_id: 'spec_1', image: digest })).toBe('of the running image only');
   });
 
   it('names a deploy’s scan of a built image and its source', () => {

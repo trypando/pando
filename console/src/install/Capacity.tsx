@@ -90,13 +90,13 @@ export function Capacity({ names }: { names: Record<string, string> }) {
       ) : capacity.isError ? (
         <Quiet>{messageOf(capacity.error)}</Quiet>
       ) : runtimes.length === 0 ? (
-        <Quiet>No runtime is set up, so there is no room to report. Add a runtime adapter above.</Quiet>
+        <Quiet>No runtime is set up. Add a runtime adapter above.</Quiet>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           {asOf && (
             <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>
               Runtimes read at {new Date(asOf).toLocaleTimeString()}
-              {every ? `, and again every ${every} seconds while this screen is open` : ''}. Committed is as of now.
+              {every ? `, refreshed every ${every} seconds` : ''}.
             </p>
           )}
           {runtimes.map((rt) => (
@@ -139,10 +139,10 @@ function Runtime({ rt, name }: { rt: RuntimeCapacity; name?: string }) {
 
       {rt.status === 'unreachable' ? (
         <Quiet>
-          Pando could not reach this runtime to ask how much room it has. Its status is in the adapters table above.
+          Pando couldn&rsquo;t reach this runtime. Its status is in the adapters table above.
         </Quiet>
       ) : reportsNothing ? (
-        <Quiet>This runtime does not report its capacity, so Pando does not check room before a deploy to it.</Quiet>
+        <Quiet>This runtime doesn&rsquo;t report its capacity. Pando doesn&rsquo;t check room before deploying to it.</Quiet>
       ) : (
         <>
           <Reading
@@ -164,12 +164,11 @@ function Runtime({ rt, name }: { rt: RuntimeCapacity; name?: string }) {
             total={rt.total_disk_bytes ?? 0}
             committed={rt.allocated_disk_bytes ?? 0}
             format={bytes}
-            unreported="Not reported, so Pando does not check disk before a deploy. Set total_disk_bytes on this adapter to have it checked."
+            unreported="Not reported. Set total_disk_bytes on this adapter to have Pando check disk before a deploy."
           />
           {rt.reported && (
             <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>
-              As of {new Date(rt.reported).toLocaleTimeString()}. Committed is what apps on this runtime reserve;
-              a deploy that would commit more than the total is refused.
+              As of {new Date(rt.reported).toLocaleTimeString()}.
             </p>
           )}
         </>
@@ -209,7 +208,7 @@ function Reading({
   committed,
   inUse,
   format,
-  unreported = 'Not reported, so Pando does not check it before a deploy.',
+  unreported = 'Not reported. Pando doesn’t check it before a deploy.',
 }: {
   label: string;
   total: number;

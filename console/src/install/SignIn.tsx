@@ -82,9 +82,7 @@ export function SignIn({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)', maxWidth: '72ch' }}>
         <Quiet>
-          People sign in with a Pando username and password, or through your organization&rsquo;s identity provider.
-          A provider says who someone is and which of its groups they are in; what they can do here is always
-          decided in Pando.
+          People sign in with a Pando password or through an identity provider. Permissions are always set in Pando.
         </Quiet>
 
 
@@ -201,28 +199,28 @@ function ProviderCard({
         {p.problem && <Banner tone="failed">{p.problem}</Banner>}
         <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
           {!external && !p.enabled
-            ? 'Password sign-in is off: the sign-in page shows only identity providers, and a username and password are refused. If no provider works, whoever runs this installation can turn it back on with pando admin enable-password-sign-in.'
+            ? 'Password sign-in is off. If no identity provider works, turn it back on with pando admin enable-password-sign-in on the host.'
             : revocationText(p.kind, p.revocation)}
         </p>
 
         {external && (
           <>
             <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: 'var(--space-2) var(--space-4)', margin: 0 }}>
-              <Term label="New people">
+              <Term label="Provisioning">
                 {p.jit_provisioning && !jitOff
-                  ? 'Get an account at their first sign-in, with no access until it is given.'
+                  ? 'Just-in-time. New accounts start with no access.'
                   : p.jit_provisioning
-                    ? 'Would get an account at first sign-in, but Policy turns that off.'
-                    : 'Need an account first: from SCIM, or linked by an administrator.'}
+                    ? 'Just-in-time, turned off in Policy.'
+                    : 'SCIM or an administrator only.'}
               </Term>
-              <Term label="Existing accounts">
+              <Term label="Account linking">
                 {p.link_by_email
-                  ? 'Linked at first sign-in by an email address the provider has verified.'
-                  : 'Linked only by an administrator, on the account’s page.'}
+                  ? 'By verified email, at first sign-in.'
+                  : 'By an administrator, on the account’s page.'}
               </Term>
               <Term label="SCIM">
                 {p.scim_enabled
-                  ? `On. The provider matches people by ${p.scim_identity_attribute}.`
+                  ? `On. Matches people by ${p.scim_identity_attribute}.`
                   : 'Off. Group memberships come from each sign-in.'}
               </Term>
             </dl>
@@ -289,7 +287,7 @@ function ProviderCard({
         <Dialog
           open
           title="SCIM token"
-          description="Give the provider this token and base URL. Pando shows the token once; replacing it retires this one."
+          description="Give the provider this token and base URL. Pando shows the token once."
           onClose={() => setToken(null)}
           footer={
             <Button variant="primary" onClick={() => setToken(null)}>
@@ -304,7 +302,7 @@ function ProviderCard({
         <Dialog
           open
           title={`Remove ${p.name}`}
-          description="Only a provider nobody has signed in through can be removed. One that has is turned off instead, so its identities are never reused."
+          description="Only a provider nobody has signed in through can be removed. Otherwise it is turned off."
           onClose={() => setRemoving(false)}
           footer={
             <>
@@ -379,7 +377,7 @@ function ProviderDialog({
       title={existing ? `Edit ${existing.name}` : 'Add identity provider'}
       description={
         existing
-          ? 'Changes apply at the next sign-in. Saving replaces the settings with these.'
+          ? 'Changes apply at the next sign-in.'
           : 'A new provider starts off. Test it with a real sign-in, then turn it on.'
       }
       onClose={onClose}
@@ -418,7 +416,7 @@ function ProviderDialog({
           <Select
             label="Provider"
             value={presetID}
-            helper="Fills in the settings a known provider needs. You can change any of them."
+            helper="Fills in its known settings."
             options={[
               { value: '', label: 'Another provider' },
               ...(kind?.presets ?? []).map((p) => ({ value: p.id, label: p.label })),
@@ -439,7 +437,7 @@ function ProviderDialog({
         <Input
           label="Name (required)"
           value={name}
-          helper="What the sign-in page calls it, such as Okta."
+          helper="Shown on the sign-in page, such as Okta."
           error={shown('name')}
           onChange={(e) => setName(e.target.value)}
         />
@@ -457,14 +455,14 @@ function ProviderDialog({
               />
             ))}
         <Checkbox
-          label="Create an account at someone's first sign-in"
-          description="Off by default. The account has no access until it is given some, or is in a group that has some. Policy can turn this off everywhere."
+          label="Just-in-time provisioning"
+          description="New accounts start with no access. Policy can turn this off everywhere."
           checked={jit}
           onChange={(e) => setJIT(e.target.checked)}
         />
         <Checkbox
-          label="Link to an existing account by verified email"
-          description="Only when the provider vouches for the address. Microsoft Entra ID does not, so its accounts are linked by hand."
+          label="Link accounts by verified email"
+          description="Only when the provider verifies the address. Microsoft Entra ID doesn’t."
           checked={linkByEmail}
           onChange={(e) => setLinkByEmail(e.target.checked)}
         />
@@ -501,7 +499,7 @@ function TestResult({
       open
       width={720}
       title={`Test sign-in with ${name}`}
-      description="Nobody was signed in. This is what the provider sent, and what a real sign-in would do."
+      description="Nobody was signed in. This is what the provider sent and what a real sign-in would do."
       onClose={onClose}
       footer={
         <Button variant="primary" onClick={onClose}>
@@ -531,7 +529,7 @@ function TestResult({
               <Term label="Groups">{groupsText(outcome, groups)}</Term>
             </dl>
             <CodeBlock
-              title="Everything the provider sent"
+              title="Claims"
               copyable
               lines={Object.entries(r.attributes ?? {}).map(([k, v]) => `${k}: ${(v ?? []).join(', ')}`)}
             />

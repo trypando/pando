@@ -99,14 +99,9 @@ export function Parts({ app, onLogs }: { app: App; onLogs?: (workload: string) =
   return (
     <section style={{ maxWidth: MEASURE }}>
       <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Parts</h4>
-      <Quiet>
-        This app runs as more than one thing. Each has its own state and its own log.
-      </Quiet>
 
       {status.data?.observability === 'unreachable' && (
-        <Quiet>
-          Pando couldn’t reach the runtime, so this is unknown rather than false.
-        </Quiet>
+        <Quiet>Pando couldn’t reach the runtime. State unknown.</Quiet>
       )}
       {status.isError && <Quiet>{messageOf(status.error)}</Quiet>}
 

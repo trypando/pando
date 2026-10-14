@@ -283,7 +283,7 @@ export function RolePicker({
       disabled={change.isPending}
       onChange={(e) => change.mutate(e.target.value)}
       options={[
-        { value: '', label: isSelf ? 'None — give up admin' : 'None' },
+        { value: '', label: isSelf ? 'None (gives up your role)' : 'None' },
         ...roles.map((r) => ({ value: r.id, label: sentence(r.name) })),
       ]}
       helper={error}
@@ -340,7 +340,7 @@ function AddAccount({ onClose }: { onClose: () => void }) {
       title="Add account"
       // The password is only ever on this screen: Pando cannot show it again
       // and sends it nowhere, so handing it over is the administrator's job.
-      description="A local account with a password Pando generates. Copy the password and give it to the person separately; Pando does not send it to them."
+      description="A local account with a password Pando generates. Pando doesn’t send it to them."
       onClose={onClose}
       footer={
         <>
@@ -371,7 +371,6 @@ function AddAccount({ onClose }: { onClose: () => void }) {
         <Input
           label="Name"
           value={displayName}
-          helper="Shown in the console and in the audit log."
           onChange={(e) => setDisplayName(e.target.value)}
         />
         <GeneratedPassword

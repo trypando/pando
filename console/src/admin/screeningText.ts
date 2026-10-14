@@ -56,6 +56,5 @@ export function screeningVisible(outcome: Outcome | undefined): outcome is Outco
 const QUIET = new Set(['not_configured', 'not_needed', 'blocked']);
 
 export function filesRead(count: number): string {
-  if (count === 0) return 'It read no files.';
-  return count === 1 ? 'It read one file.' : `It read ${count} files.`;
+  return `Files read (${count})`;
 }

@@ -83,7 +83,7 @@ describe('discoverySteps', () => {
       screening: { ran: true, function: 'answer_questions', answers: { primary_port: '3000' }, files_read: ['server.js'] },
     };
     const ai = discoverySteps({ status: 'ready', proposal: answered, source }).find((s) => s.ai);
-    expect(ai?.name).toBe('Answer what it can');
+    expect(ai?.name).toBe('Answer questions');
     expect(ai?.result).toBe('Answered 1 of 1');
     expect(ai?.findings).toContainEqual({ key: 'port', value: '3000' });
   });
@@ -154,7 +154,7 @@ describe('services and commands', () => {
   it('names the image a service runs, and how Pando provides it', () => {
     const [postgres] = compose.slots!;
     expect(serviceImage(postgres!)).toBe('postgres:16-alpine');
-    expect(serviceProvision(postgres!)).toEqual({ status: 'info', label: 'Pando creates it' });
+    expect(serviceProvision(postgres!)).toEqual({ status: 'info', label: 'Provisioned' });
   });
 
   it('says a service’s variable holds its address, not the service itself (R-131)', () => {

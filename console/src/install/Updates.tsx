@@ -54,12 +54,12 @@ export function Updates({ onPolicy }: { onPolicy?: () => void }) {
 
           {!st.enabled && (
             <Banner tone="info" action={policyLink}>
-              The update check is off in host policy, so Pando has not looked for newer releases.
+              The update check is off in host policy.
             </Banner>
           )}
           {st.error && <Banner tone="failed">{st.error}</Banner>}
           {st.enabled && !st.checked_at && !st.error && (
-            <Quiet>Pando has not checked for releases yet. It checks at startup and every six hours.</Quiet>
+            <Quiet>Pando hasn&rsquo;t checked for releases yet.</Quiet>
           )}
           {st.enabled && !st.checked_at && (
             <div>
@@ -75,8 +75,8 @@ export function Updates({ onPolicy }: { onPolicy?: () => void }) {
               <InPlace version={st.upgrade.version} onPolicy={onPolicy} />
               {st.breaking && (
                 <Banner tone="info">
-                  A version between this one and {st.upgrade.version} may break something that works now. Read
-                  its Upgrade notes below before you upgrade.
+                  A version between this one and {st.upgrade.version} has breaking changes. Read its upgrade
+                  notes below before you upgrade.
                 </Banner>
               )}
               <CodeBlock prompt copyable lines={st.upgrade.command} />
@@ -155,7 +155,7 @@ function ReleaseNotes({ release }: { release: Release }) {
           </span>
         )}
         {release.security && <StatusIndicator status="failed" label="Security fix" />}
-        {release.breaking && <Tag tone="contour">May break what worked before</Tag>}
+        {release.breaking && <Tag tone="contour">Breaking</Tag>}
         {release.prerelease && <Tag>Release candidate</Tag>}
       </header>
       <Changelog notes={release.notes} />
@@ -332,7 +332,7 @@ function UpgradeDialog({ plan, onClose }: { plan: Plan; onClose: () => void }) {
         {breaking.map((r) => (
           <div key={r.version} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
             <p style={{ font: 'var(--type-label)', color: 'var(--ink)', margin: 0 }}>
-              {r.version} may break something that works now
+              {r.version} has breaking changes
             </p>
             <Changelog notes={r.notes} />
           </div>
@@ -348,8 +348,8 @@ function UpgradeDialog({ plan, onClose }: { plan: Plan; onClose: () => void }) {
 
         {/* R-214: said before the passphrase is chosen, not after. */}
         <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink)', margin: 0 }}>
-          Pando takes a full backup first. It doesn't keep this passphrase: if you lose it, nothing in the backup can be
-          read again.
+          Pando takes a full backup first. It doesn't keep this passphrase. Without it, the backup can't be
+          restored.
         </p>
         <Input
           label="Backup passphrase"
@@ -362,7 +362,7 @@ function UpgradeDialog({ plan, onClose }: { plan: Plan; onClose: () => void }) {
         />
         <Checkbox
           label="Upgrade without a backup"
-          description="Pando still keeps a copy of its database to roll back to if the new version doesn't start. Skipping is recorded in the audit log."
+          description="Pando still keeps a database copy to roll back to if the new version doesn't start."
           checked={skip}
           onChange={(e) => setSkip(e.target.checked)}
         />
@@ -400,8 +400,7 @@ function LastUpgrade() {
   if (a.state === 'running') {
     return (
       <Banner tone="running">
-        Upgrading from {a.from} to {a.to}. Every app is unreachable while Pando restarts; this page updates when it is
-        back.
+        Upgrading from {a.from} to {a.to}. Apps are unreachable while Pando restarts.
       </Banner>
     );
   }
@@ -418,7 +417,7 @@ function LastUpgrade() {
       <Banner tone="failed">
         {STATES[a.state]}: {a.reason}
       </Banner>
-      {a.logs && <CodeBlock title={`The last lines ${a.to} wrote`} lines={a.logs.trimEnd()} dense />}
+      {a.logs && <CodeBlock title={`Logs from ${a.to}`} lines={a.logs.trimEnd()} dense />}
     </div>
   );
 }

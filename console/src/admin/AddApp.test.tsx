@@ -60,9 +60,9 @@ describe('Add an app', () => {
 
   it('says only what is in the dialog', () => {
     const html = render();
-    expect(html).toContain('Choose a source and name the app.');
     expect(html).toContain('Private repositories use a source connection.');
     for (const gone of [
+      'Choose a source and name the app.',
       'Nothing deploys until you accept',
       'Where it comes from',
       'Nothing is read from it at deploy time',

@@ -49,8 +49,7 @@ export function NotificationPreferences() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
       <p style={muted}>
-        What Pando tells you without being asked. To hear about anything else, such as every deploy of an
-        app, make a subscription under Events.
+        For other events, such as every deploy of an app, add a subscription under Events.
       </p>
       {set.isError && <p style={{ ...muted, color: 'var(--status-failed)' }}>{messageOf(set.error)}</p>}
       {kinds.map((k) => (

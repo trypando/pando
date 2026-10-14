@@ -188,9 +188,9 @@ export function Installation({ query }: { query?: string } = {}) {
       {(restartNeeded || saved) && (
         <div style={{ marginBottom: 'var(--space-4)' }}>
           <Banner tone="info">
-            {saved ? `${saved} is saved.` : 'Adapter changes are saved.'} Pando loads adapters when it starts, so{' '}
-            {saved ? 'it takes' : 'they take'} effect after a restart.
-            {canManage ? <> Use Restart Pando above.</> : <> Someone who can manage adapters can restart it.</>}
+            {saved ? `${saved} is saved.` : 'Adapter changes are saved.'} Restart Pando to apply{' '}
+            {saved ? 'it' : 'them'}.
+            {canManage ? null : <> Someone who can manage adapters can restart it.</>}
           </Banner>
         </div>
       )}
@@ -225,7 +225,7 @@ export function Installation({ query }: { query?: string } = {}) {
           {canManage &&
             missing.map((category) => (
               <Button key={category} variant="secondary" onClick={() => setEditing({ category })}>
-                Add {categoryLabel(category) === 'AI' ? 'an AI' : `a ${category}`} adapter
+                {addAdapterLabel(category)}
               </Button>
             ))}
         </div>
@@ -266,7 +266,7 @@ export function Installation({ query }: { query?: string } = {}) {
         <Dialog
           open
           title={`Disconnect ${disconnecting.name}`}
-          description="Its stored credential is deleted. Apps read with it keep running; their next deploy fails, saying the connection is gone, until another connection covers their repository."
+          description="Its stored credential is deleted. Apps that use it keep running. Their next deploy fails until another connection covers their repository."
           onClose={() => setDisconnecting(null)}
           footer={
             <>
@@ -291,6 +291,13 @@ export function Installation({ query }: { query?: string } = {}) {
       <Capacity names={Object.fromEntries(grouped.map((r) => [r.id, r.kindName]))} />
     </Screen>
   );
+}
+
+/** "Add an image registry adapter", from the category's own label. */
+function addAdapterLabel(category: string): string {
+  const label = categoryLabel(category);
+  const word = label === 'AI' ? label : label.toLowerCase();
+  return `Add ${/^[aeiou]/i.test(word) ? 'an' : 'a'} ${word} adapter`;
 }
 
 interface PolicyDoc {
@@ -496,7 +503,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               disabled={check.isPending || preview !== null}
               onClick={() => check.mutate(current)}
             >
-              {check.isPending ? 'Checking' : 'Check what this affects'}
+              {check.isPending ? 'Checking' : 'Check impact'}
             </Button>
             <Button variant="primary" disabled={save.isPending} onClick={() => save.mutate(current)}>
               {save.isPending ? 'Saving' : 'Save policy'}
@@ -514,8 +521,8 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
       {drafting && <PolicyAI onClose={() => setDrafting(false)} />}
 
       <Banner tone="info">
-        Saving policy doesn&rsquo;t change apps that are already running. A running app that
-        breaks a new rule keeps running, and its next deploy is refused with the reason.
+        Saving policy doesn&rsquo;t affect running apps. An app that breaks a new rule is refused at
+        its next deploy.
       </Banner>
 
       {save.isError && (
@@ -539,7 +546,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
         <div style={{ marginTop: 'var(--space-4)' }}>
           {preview.length === 0 ? (
             <Banner tone="running">
-              Nothing on this installation breaks under these rules.
+              No apps affected.
             </Banner>
           ) : (
             <>
@@ -553,7 +560,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
                   dense
                   columns={[
                     { key: 'app_name', header: 'App', width: 'minmax(0,24ch)' },
-                    { key: 'message', header: 'What its next deploy will say', width: 'minmax(0,32ch)' },
+                    { key: 'message', header: 'Message', width: 'minmax(0,32ch)' },
                     { key: 'code', header: 'Code', width: '28ch', mono: true, muted: true },
                   ]}
                   rows={preview}
@@ -586,12 +593,12 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             a flat column of fourteen switches is a column nobody scans. Each
             heading says which question the controls under it answer. */}
         <PolicySection
-          heading="Where apps come from"
-          note="Evaluated before anything is cloned, so a source nobody allowed never reaches the disk."
+          heading="Sources"
+          note="Checked before anything is cloned."
         >
           <Fixed field="source_allowlist">
             <Input
-              label="Where apps may be created from"
+              label="Allowed sources"
               as="textarea"
               rows={3}
               mono
@@ -606,8 +613,8 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
         </PolicySection>
 
         <PolicySection
-          heading="Who can reach apps"
-          note="A floor, never an override: an app owner can be stricter than this and never looser (R-272)."
+          heading="Access"
+          note="A minimum. App owners can only make their apps stricter."
         >
           {/* Three answers, not a switch (R-076, R-075a): anyone, anyone with the
               app's passcode, or nobody. public_sharing is the setting; the
@@ -619,7 +626,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
           <Fixed field={fixed.has('public_sharing') || !fixed.has('allow_anonymous_grants') ? 'public_sharing' : 'allow_anonymous_grants'}>
             <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
               <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
-                Sharing apps with everyone
+                Public sharing
               </legend>
               {(
                 [
@@ -646,9 +653,9 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             <Switch
               checked={current.disabled_verbs?.includes('app.exec') ?? false}
               disabled={locked('disabled_verbs')}
-              label="Turn off terminal access for the whole installation"
+              label="Disable terminal access"
               // R-085 and R-272: policy is a floor, not an override.
-              description="Nobody gets a terminal, including the person who owns the app."
+              description="Applies to app owners too."
               onChange={(e) => {
                 const rest = (current.disabled_verbs ?? []).filter((v) => v !== 'app.exec');
                 edit({ disabled_verbs: e.target.checked ? [...rest, 'app.exec'] : rest });
@@ -662,8 +669,8 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             <Switch
               checked={current.disable_anonymous_use_audit ?? false}
               disabled={locked('disable_anonymous_use_audit')}
-              label="Don't record visits from people who aren't signed in"
-              description="Each visit to an app is recorded in the audit log. With this on, only visits by signed-in people and tokens are."
+              label="Don't log anonymous visits"
+              description="Visits by signed-in people and tokens are still logged."
               onChange={(e) => edit({ disable_anonymous_use_audit: e.target.checked })}
             />
           </Fixed>
@@ -674,8 +681,8 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             <Switch
               checked={current.disable_anonymous_denial_audit ?? false}
               disabled={locked('disable_anonymous_denial_audit')}
-              label="Don't record refusals of people who aren't signed in"
-              description="Each refused visit to a private app is recorded in the audit log. With this on, only refusals of signed-in people and tokens are."
+              label="Don't log anonymous refusals"
+              description="Refusals of signed-in people and tokens are still logged."
               onChange={(e) => edit({ disable_anonymous_denial_audit: e.target.checked })}
             />
           </Fixed>
@@ -686,8 +693,8 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             <Switch
               checked={current.disable_password_sign_in ?? false}
               disabled={locked('disable_password_sign_in')}
-              label="Turn off password sign-in"
-              description="People sign in through an identity provider only. Needs a provider turned on on the Sign-in screen. If none works, pando admin enable-password-sign-in on the host turns this back off."
+              label="Disable password sign-in"
+              description="Needs an identity provider turned on under Sign-in. If none works, run pando admin enable-password-sign-in on the host."
               onChange={(e) => edit({ disable_password_sign_in: e.target.checked })}
             />
           </Fixed>
@@ -695,8 +702,8 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             <Switch
               checked={current.disable_jit_provisioning ?? false}
               disabled={locked('disable_jit_provisioning')}
-              label="Don't create accounts at first sign-in"
-              description="Whatever each identity provider is set to. People then need an account from SCIM, or linked by an administrator, before they can sign in."
+              label="Disable just-in-time provisioning"
+              description="Overrides each identity provider's setting. People need an account from SCIM, or linked by an administrator."
               onChange={(e) => edit({ disable_jit_provisioning: e.target.checked })}
             />
           </Fixed>
@@ -714,7 +721,6 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
 
         <PolicySection
           heading="Isolation"
-          note="The floor every app runs at, for what builds and for what runs."
         >
           <Fixed field="min_build_isolation">
             <Select
@@ -722,7 +728,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               disabled={locked('min_build_isolation')}
               value={String(current.min_build_isolation ?? '')}
               options={ISOLATION}
-              helper="An adapter that cannot meet this is refused at plan time rather than used anyway (R-024)."
+              helper="Adapters that can't meet this are refused at plan time."
               onChange={(e) => edit({ min_build_isolation: Number(e.target.value) || undefined })}
             />
           </Fixed>
@@ -733,7 +739,6 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               disabled={locked('min_runtime_isolation')}
               value={String(current.min_runtime_isolation ?? '')}
               options={ISOLATION}
-              helper="The same floor, for what runs rather than what builds."
               onChange={(e) => edit({ min_runtime_isolation: Number(e.target.value) || undefined })}
             />
           </Fixed>
@@ -747,15 +752,14 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
 
         <PolicySection
           heading="Tokens and agents"
-          note="A token is a second credential for power somebody already holds; an agent is an ordinary principal holding one."
         >
           <Fixed field="max_token_lifetime_days">
             <Input
-              label="Longest a token may live, in days"
+              label="Max token lifetime (days)"
               type="number"
               disabled={locked('max_token_lifetime_days')}
               value={String(current.max_token_lifetime_days ?? 0)}
-              helper="Zero means no cap, and a token may be created that never expires (R-061). Any other number caps every token, including ones asked to last forever."
+              helper="Zero means no limit."
               onChange={(e) =>
                 edit({ max_token_lifetime_days: Math.max(0, Math.round(Number(e.target.value) || 0)) })
               }
@@ -764,13 +768,13 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
 
           <Fixed field="agent_disabled_verbs">
             <Input
-              label="Verbs an agent's token may not use"
+              label="Disabled verbs for tokens"
               as="textarea"
               rows={3}
               mono
               disabled={locked('agent_disabled_verbs')}
               value={(current.agent_disabled_verbs ?? []).join('\n')}
-              helper="One verb per line. These are refused for tokens and allowed for people, which is what makes an agent's reach smaller than its owner's."
+              helper="One verb per line. Refused for tokens, allowed for people."
               onChange={(e) =>
                 edit({
                   agent_disabled_verbs: e.target.value.split('\n').map((l) => l.trim()).filter(Boolean),
@@ -782,7 +786,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
 
         <PolicySection
           heading="Security scanning"
-          note="Every app is scored out of 100 from what it deploys. Nothing here is enforced until a minimum is set."
+          note="Each app is scored out of 100. Nothing is enforced until a minimum is set."
         >
           {/* The consequence is written at the point of setting it, not in a
               tooltip: this is the setting that can stop somebody's working
@@ -802,7 +806,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             <Switch
               checked={current.disable_ai_screening ?? false}
               disabled={locked('disable_ai_screening')}
-              label="Turn off AI screening of deployment plans"
+              label="Disable AI screening"
               // R-336, R-337: screening sends repository contents to a provider,
               // and saying no to that should not mean deleting somebody's adapter.
               description="No deployment plan is sent to an AI provider for review, even when one is configured."
@@ -816,7 +820,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               disabled={locked('ignore_unfixable_findings')}
               label="Ignore findings with no fix available"
               // R-313a: what is counted is what is shown, both ways round.
-              description="A vulnerability nobody has published a fix for is left out of the score and out of the findings list. Off by default, so the score says what is wrong rather than what is fixable today."
+              description="Vulnerabilities with no published fix are left out of the score and the findings list."
               onChange={(e) => edit({ ignore_unfixable_findings: e.target.checked })}
             />
           </Fixed>
@@ -827,11 +831,11 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
                 <Switch
                   checked={current.insecure_action === 'stop'}
                   disabled={locked('insecure_action')}
-                  label="Stop apps that fall below it while running"
+                  label="Stop running apps below the minimum"
                   // R-315: a policy change or a newly published CVE is not a
                   // reason to take a working service away without notice, so
                   // this is opt-in and grace comes with it.
-                  description="An app that is already running is never stopped on the spot. Its owner is told, and the grace period below starts."
+                  description="The owner is told first, and the app stops when the grace period below ends."
                   onChange={(e) => edit({ insecure_action: e.target.checked ? 'stop' : 'warn' })}
                 />
               </Fixed>
@@ -839,11 +843,11 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               {current.insecure_action === 'stop' && (
                 <Fixed field="insecure_grace_hours">
                   <Input
-                    label="Grace period, in hours"
+                    label="Grace period (hours)"
                     type="number"
                     disabled={locked('insecure_grace_hours')}
                     value={String(current.insecure_grace_hours ?? 24)}
-                    helper="How long an app has after it is first found below the score. The deadline is in the message its owner gets."
+                    helper="Counted from when the app first falls below the score."
                     onChange={(e) =>
                       edit({ insecure_grace_hours: Math.max(1, Number(e.target.value) || 24) })
                     }
@@ -856,16 +860,15 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
 
         <PolicySection
           heading="Data and destruction"
-          note="What happens to an app's storage when somebody, or something, removes it."
         >
           <Fixed field="require_backup_before_destroy">
             <Switch
               checked={current.require_backup_before_destroy ?? false}
               disabled={locked('require_backup_before_destroy')}
-              label="Require a backup before anything is destroyed"
+              label="Require backup before delete"
               // R-284: set once, and app owners cannot override downward.
               // It also answers for Pando's own deletion of an idle app (R-398).
-              description="App owners can't turn this off for their own app. It also applies when Pando deletes an app nobody uses."
+              description="App owners can't turn this off. Also applies to idle apps Pando deletes."
               onChange={(e) => edit({ require_backup_before_destroy: e.target.checked })}
             />
           </Fixed>
@@ -880,7 +883,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               // not against measured usage — bounding what is committed is the
               // stronger guarantee, and the alternative acts after the disk is
               // already filling.
-              helper="Across every app, not per app. Zero means no limit. A deploy that would commit more than this is refused."
+              helper="Across all apps. Zero means no limit."
               onChange={(e) =>
                 edit({ max_log_disk_bytes: Math.max(0, Math.round(Number(e.target.value) || 0)) * 1_000_000 })
               }
@@ -892,40 +895,40 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             turn either off (R-397), and a person's account or group can
             carry its own limit (R-244). */}
         <PolicySection
-          heading="Apps nobody uses"
-          note="Counted from the last time somebody used, deployed or started an app. The owner is told 7 days before Pando acts. An app can set its own number of days or turn this off."
+          heading="Idle apps"
+          note="Counted from an app's last use, deploy or start. The owner is told 7 days before Pando acts. Apps can set their own."
         >
           <Fixed field="idle_stop_days">
             <Input
-              label="Stop an app nobody has used for this many days"
+              label="Stop idle apps after (days)"
               type="number"
               disabled={locked('idle_stop_days')}
               value={String(current.idle_stop_days ?? 0)}
-              helper="Zero means never. A stopped app keeps its data and stays stopped until somebody starts it."
+              helper="Zero means never. A stopped app keeps its data."
               onChange={(e) => edit({ idle_stop_days: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
             />
           </Fixed>
           <Fixed field="idle_delete_days">
             <Input
-              label="Delete an app nobody has used for this many days"
+              label="Delete idle apps after (days)"
               type="number"
               disabled={locked('idle_delete_days')}
               value={String(current.idle_delete_days ?? 0)}
               helper={
                 current.require_backup_before_destroy
-                  ? "Zero means never. Longer than stopping. Pando backs up the app's storage first, as Data and destruction requires."
-                  : "Zero means never. Longer than stopping. The app's storage is deleted with it unless Data and destruction requires a backup."
+                  ? "Zero means never. Must be longer than stopping. Pando backs up the app's storage first."
+                  : "Zero means never. Must be longer than stopping. The app's storage is deleted with it unless Data and destruction requires a backup."
               }
               onChange={(e) => edit({ idle_delete_days: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
             />
           </Fixed>
           <Fixed field="max_apps_per_user">
             <Input
-              label="Apps each person may own"
+              label="App limit"
               type="number"
               disabled={locked('max_apps_per_user')}
               value={String(current.max_apps_per_user ?? 0)}
-              helper="Zero means unlimited. A limit set on a person's account or one of their groups replaces this one."
+              helper="Apps each person may own. Zero means unlimited. A limit on a person's account or group overrides this."
               onChange={(e) => edit({ max_apps_per_user: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
             />
           </Fixed>
@@ -933,13 +936,13 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
 
         <PolicySection
           heading="Capacity"
-          note="By default Pando refuses a deploy that would ask for more CPU or memory than the runtime has. Disk is never oversubscribed."
+          note="By default, a deploy can't reserve more CPU or memory than the runtime has. Disk is never oversubscribed."
         >
           <Fixed field="allow_cpu_oversubscription">
             <Switch
               checked={current.allow_cpu_oversubscription ?? false}
               disabled={locked('allow_cpu_oversubscription')}
-              label="Allow more CPU to be promised than the runtime has"
+              label="Allow CPU oversubscription"
               description="Busy apps share the CPU and run slower."
               onChange={(e) => edit({ allow_cpu_oversubscription: e.target.checked })}
             />
@@ -948,7 +951,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
             <Switch
               checked={current.allow_memory_oversubscription ?? false}
               disabled={locked('allow_memory_oversubscription')}
-              label="Allow more memory to be promised than the runtime has"
+              label="Allow memory oversubscription"
               description="If the host runs out, it stops an app to free memory."
               onChange={(e) => edit({ allow_memory_oversubscription: e.target.checked })}
             />
@@ -957,11 +960,11 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               change applies without a restart. */}
           <Fixed field="max_concurrent_deploys">
             <Input
-              label="Deploys each replica runs at once"
+              label="Concurrent deploys per replica"
               type="number"
               disabled={locked('max_concurrent_deploys')}
               value={String(current.max_concurrent_deploys ?? 0)}
-              helper="Zero means one per CPU, and at least two. A deploy past the limit waits, and its log says how many are ahead of it."
+              helper="Zero means one per CPU, at least two. Extra deploys wait in a queue."
               onChange={(e) =>
                 edit({ max_concurrent_deploys: Math.max(0, Math.round(Number(e.target.value) || 0)) })
               }
@@ -971,7 +974,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
 
         <PolicySection
           heading="Audit log"
-          note="How long the audit log keeps events before a month is archived and removed from the live log. Nothing leaves until its archive is written and checked."
+          note="How long events stay in the live log before they're archived."
         >
           {/* R-348: three months is the floor, held by the database as well
               as here, so a shorter number is refused rather than saved. */}
@@ -989,13 +992,13 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
           <Fixed field="audit_archive">
             <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
               <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
-                Where archived months go
+                Archive destination
               </legend>
               {(
                 [
                   ['keep', 'Kept by Pando', "Compressed and stored in Pando's own data directory."],
-                  ['export', 'Exported to a backup destination', 'Compressed and written to a backup destination, like a backup.'],
-                  ['off', 'Not archived', 'Nothing is archived, so nothing leaves the audit log and it keeps growing.'],
+                  ['export', 'Exported to a backup destination', 'Compressed and written to a backup destination.'],
+                  ['off', 'Not archived', 'The audit log keeps growing.'],
                 ] as const
               ).map(([value, label, description]) => (
                 <Radio
@@ -1034,14 +1037,14 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
 
         <PolicySection
           heading="Event webhooks"
-          note="Where a subscription's webhook may send. Anybody who can see an app can subscribe to it, so this decides whether that reaches into this installation's own network."
+          note="Where subscription webhooks may send."
         >
           {/* R-372: off by default. */}
           <Fixed field="allow_private_webhooks">
             <Switch
               checked={current.allow_private_webhooks ?? false}
               disabled={locked('allow_private_webhooks')}
-              label="Let webhooks reach private addresses"
+              label="Allow private webhook addresses"
               description="The local network, this host, and link-local addresses such as a cloud metadata service. Leave this off unless your webhook receivers run inside your network."
               onChange={(e) => edit({ allow_private_webhooks: e.target.checked })}
             />
@@ -1050,27 +1053,27 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
 
         <PolicySection
           heading="Updates"
-          note="Whether Pando checks GitHub for newer releases. The Updates screen shows what it finds and how to upgrade."
+          note="Checking for and installing new Pando releases."
         >
           {/* R-349: on by default; off sends no request at all. */}
           <Fixed field="disable_update_check">
             <Switch
               checked={current.disable_update_check ?? false}
               disabled={locked('disable_update_check')}
-              label="Don't check for newer Pando releases"
-              description="Pando asks GitHub at startup and every six hours, sending only its version. Turn this on for an installation with no internet access, or one that may not call out."
+              label="Disable update check"
+              description="Pando checks GitHub at startup and every six hours, sending only its version."
               onChange={(e) => edit({ disable_update_check: e.target.checked })}
             />
           </Fixed>
           <Fixed field="update_channel">
             <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
               <legend style={{ font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' }}>
-                Releases to offer
+                Release channel
               </legend>
               {(
                 [
                   ['stable', 'Stable', 'Releases only.'],
-                  ['prerelease', 'Include release candidates', 'Release candidates too, such as 1.0.0-rc.1, for trying a version before it is released.'],
+                  ['prerelease', 'Include release candidates', 'Also offers versions such as 1.0.0-rc.1.'],
                 ] as const
               ).map(([value, label, description]) => (
                 <Radio
@@ -1095,7 +1098,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               checked={current.upgrade_in_place ?? false}
               disabled={locked('upgrade_in_place')}
               label="Let Pando upgrade itself"
-              description="Adds an Upgrade button to the Updates screen. Pando verifies the new release's signature, takes a backup, and puts the previous version back if the new one doesn't start."
+              description="Adds an Upgrade button to the Updates screen. Pando verifies the release, takes a backup, and rolls back if the new version doesn't start."
               onChange={(e) => edit({ upgrade_in_place: e.target.checked })}
             />
           </Fixed>
@@ -1107,7 +1110,7 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               checked={current.auto_upgrade_patches ?? false}
               disabled={locked('auto_upgrade_patches') || !(current.upgrade_in_place ?? false)}
               label="Install patch releases automatically"
-              description="Inside the maintenance window below, a new patch of the running version (0.3.1 to 0.3.2, never 0.4.0). Pando keeps a copy of its database to roll back to, but takes no full backup: nobody is there to give its passphrase. Keep taking your own."
+              description="Patch releases of the running version only (0.3.1 to 0.3.2), inside the maintenance window. Pando keeps a database copy to roll back to, but takes no full backup."
               onChange={(e) =>
                 edit(
                   e.target.checked && !current.maintenance_window
@@ -1252,10 +1255,10 @@ function InPlaceSetup() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
       <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
-        Pando's image has to be a moving tag that covers the new version: latest, a minor line such as 0.3 for its
-        patches, or a major such as 1. If Pando's docker-compose.yml or infrastructure-as-code names an exact version,
-        its next apply puts the old version back, and Pando refuses to start against the upgraded database. To decide
-        this in the deployment, set it there, where it also locks this switch:
+        Pando's image must use a moving tag that covers the new version, such as latest, 0.3 or 1. If
+        docker-compose.yml or your infrastructure code pins an exact version, the next apply puts the old version
+        back and Pando won't start against the upgraded database. To set this in the deployment, which also locks
+        this switch:
       </p>
       <CodeBlock title="docker-compose.yml" lines={lines} copyable dense />
     </div>
@@ -1356,7 +1359,7 @@ function StartupSettings({ config }: { config?: StartupConfig }) {
             borderBottom: 'var(--border-width) solid var(--rule)',
           }}
         >
-          {['Setting', 'Value', 'Set by'].map((h) => (
+          {['Setting', 'Value', 'Source'].map((h) => (
             <span key={h} role="columnheader" style={{ font: 'var(--type-label)', color: 'var(--ink-secondary)' }}>
               {h}
             </span>
@@ -1411,14 +1414,13 @@ function StartupSettings({ config }: { config?: StartupConfig }) {
           is the mistake people make. */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', marginTop: 'var(--space-4)' }}>
         <p style={{ margin: 0, font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', maxWidth: '72ch' }}>
-          To change a setting, set it where <strong style={{ color: 'var(--ink)' }}>Set by</strong> says, then
-          restart Pando. Hover a source for the exact variable or file. With Docker Compose, set{' '}
+          To change a setting, set it at its source and restart Pando. With Docker Compose, set{' '}
           <code style={code}>PANDO_…</code> variables under <code style={code}>environment:</code> on the{' '}
-          <code style={code}>pando</code> service and run <code style={code}>docker compose up -d pando</code>;{' '}
+          <code style={code}>pando</code> service and run <code style={code}>docker compose up -d pando</code>.{' '}
           <code style={code}>docker compose restart</code> keeps the old environment.{' '}
           {config.file ? (
             <>
-              Settings from a file are in <code style={code}>{config.file}</code>; the environment wins over it.
+              Config file: <code style={code}>{config.file}</code>. Environment variables override it.
             </>
           ) : (
             <>
@@ -1476,7 +1478,7 @@ function PolicySection({
   children,
 }: {
   heading: string;
-  note: string;
+  note?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -1491,7 +1493,7 @@ function PolicySection({
     >
       <div>
         <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-1)' }}>{heading}</h4>
-        <Quiet>{note}</Quiet>
+        {note && <Quiet>{note}</Quiet>}
       </div>
       {children}
     </section>
@@ -1527,12 +1529,12 @@ function EgressPolicy({ current, edit, locked, fixed }: PolicyControls & { fixed
 
   return (
     <PolicySection
-      heading="Where apps may connect out to"
-      note="The installation’s rules for traffic leaving an app. They are a floor: an app can narrow them, and loosens them only as the last setting here allows (R-183). Rules take effect at each app’s next deploy."
+      heading="Egress"
+      note="Rules for traffic leaving apps. Apps can narrow them, and loosen them only as allowed below. Changes apply at each app’s next deploy."
     >
       <Fixed field={modeField}>
         <fieldset style={FIELDSET}>
-          <legend style={LEGEND}>Where apps may connect</legend>
+          <legend style={LEGEND}>Mode</legend>
           {EGRESS_MODES.map(([value, label, description]) => (
             <Radio
               key={value}
@@ -1551,7 +1553,7 @@ function EgressPolicy({ current, edit, locked, fixed }: PolicyControls & { fixed
       {mode !== 'allow_all' && (
         <Fixed field={listField}>
           <ListField
-            label={mode === 'allowlist' ? 'Destinations apps may reach' : 'Destinations apps may not reach'}
+            label={mode === 'allowlist' ? 'Allowlist' : 'Denylist'}
             disabled={listLocked}
             value={list}
             helper={ENTRY_FORMS}
@@ -1565,18 +1567,17 @@ function EgressPolicy({ current, edit, locked, fixed }: PolicyControls & { fixed
           checked={current.egress_block_private ?? false}
           disabled={locked('egress_block_private')}
           label="Block private addresses"
-          description="Apps can’t reach the local network, this host’s loopback, or a cloud provider’s metadata address. Checked against where a name resolves, so a public name pointing at a private address is blocked too."
+          description="Apps can’t reach the local network, this host’s loopback, or a cloud metadata address. Checked against the resolved address."
           onChange={(e) => edit({ egress_block_private: e.target.checked })}
         />
       </Fixed>
 
       <Fixed field="egress_loosening">
         <fieldset style={FIELDSET}>
-          <legend style={LEGEND}>App changes that loosen these rules</legend>
+          <legend style={LEGEND}>Loosening</legend>
           <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: '0 0 var(--space-1)' }}>
-            Loosening is adding to the allowlist, removing from the denylist, or turning private-address
-            blocking off for one app. Narrowing the rules is always allowed to whoever may change the
-            app’s egress.
+            Adding to the allowlist, removing from the denylist, or turning off private-address blocking for
+            one app. Narrowing is always allowed.
           </p>
           {LOOSENING.map(([value, label, description]) => (
             <Radio
@@ -1638,7 +1639,7 @@ function DeployApprovalPolicy({ current, edit, locked }: PolicyControls) {
   return (
     <PolicySection
       heading="Deploy approval"
-      note="A deploy that needs approval waits until enough people with permission to approve it say yes. Rolling back to a version that already ran, restarting, and rotating a secret never wait. An app that needs approval can’t deploy automatically."
+      note="Deploys wait for approval before they run. Rollbacks to a version that already ran, restarts and secret rotations never wait."
     >
       <Fixed field="deploy_approval_required">
         <Switch
@@ -1664,8 +1665,8 @@ function DeployApprovalPolicy({ current, edit, locked }: PolicyControls) {
             disabled={locked('deploy_approval_apps') || everyApp}
             helper={
               everyApp
-                ? 'Every app needs approval while the setting above is on, so this list has no effect.'
-                : 'These apps’ deploys wait for approval whatever their owners set, and their owners can’t turn it off.'
+                ? 'Has no effect while every app requires approval.'
+                : 'Owners can’t turn this off.'
             }
           />
           {found.isSuccess && settled !== '' && found.data.length === 0 && (
@@ -1689,19 +1690,19 @@ function DeployApprovalPolicy({ current, edit, locked }: PolicyControls) {
           min={1}
           disabled={locked('deploy_approval_count')}
           value={String(approvalsNeeded(current.deploy_approval_count))}
-          helper="How many different people must approve a deploy. Any one rejection ends the request."
+          helper="Number of different people. One rejection ends the request."
           onChange={(e) => edit({ deploy_approval_count: Math.max(1, Math.round(Number(e.target.value) || 1)) })}
         />
       </Fixed>
 
       <Fixed field="deploy_approval_expiry_hours">
         <Input
-          label="Requests expire after, in hours"
+          label="Request expiry (hours)"
           type="number"
           min={0}
           disabled={locked('deploy_approval_expiry_hours')}
           value={String(current.deploy_approval_expiry_hours ?? 0)}
-          helper="A request nobody answers in this time expires and has to be made again. Zero means requests wait until somebody answers. The shipped default is 168, a week."
+          helper="Zero means never. The default is 168, one week."
           onChange={(e) =>
             edit({ deploy_approval_expiry_hours: Math.max(0, Math.round(Number(e.target.value) || 0)) })
           }
@@ -1957,9 +1958,7 @@ export function Audit({
         // and "your filter is wrong" are very different answers.
         empty={
           <EmptyState heading={filtered ? 'No matching events' : 'No events recorded'}>
-            {filtered
-              ? 'Action is a prefix match: app. matches every app event.'
-              : 'The audit log is append-only; recorded events cannot be modified or deleted.'}
+            {filtered ? 'Action is a prefix match: app. matches every app event.' : null}
           </EmptyState>
         }
       />
@@ -2106,18 +2105,18 @@ function ArchivedMonths() {
       style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-6)', borderTop: 'var(--border-width) solid var(--rule)' }}
     >
       <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-1)' }}>Archived months</h4>
-      <Quiet>Events older than the retention set in Policy. Each download is the month's events, one per line.</Quiet>
+      <Quiet>Months past the retention set in Policy.</Quiet>
       {archives.isError && <Quiet>{messageOf(archives.error)}</Quiet>}
       <div style={{ marginTop: 'var(--space-4)' }}>
         <Table
           dense
           loading={archives.isPending}
           skeletonRows={2}
-          empty={<EmptyState heading="No months archived">Months are archived once they are older than the retention set in Policy.</EmptyState>}
+          empty={<EmptyState heading="No months archived" />}
           columns={[
             { key: 'month', header: 'Month', width: '10ch', mono: true },
             { key: 'row_count', header: 'Events', width: '12ch', render: (row: AuditArchive) => row.row_count.toLocaleString() },
-            { key: 'adapter_ref', header: 'Kept by', width: 'minmax(0,20ch)', mono: true, render: (row: AuditArchive) => row.adapter_ref || 'Pando' },
+            { key: 'adapter_ref', header: 'Destination', width: 'minmax(0,20ch)', mono: true, render: (row: AuditArchive) => row.adapter_ref || 'Pando' },
             {
               key: 'sha256',
               header: 'SHA-256',

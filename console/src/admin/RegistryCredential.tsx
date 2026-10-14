@@ -67,11 +67,11 @@ export function CredentialFields({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
       <Select
-        label="How Pando signs in to the registry"
+        label="Type"
         value={value.kind}
         options={[
-          { value: 'basic', label: 'A username and access token' },
-          { value: 'ecr', label: 'AWS access keys, for Amazon ECR' },
+          { value: 'basic', label: 'Username and token' },
+          { value: 'ecr', label: 'AWS access keys (Amazon ECR)' },
         ]}
         onChange={(e) => set({ kind: e.target.value as CredentialDraft['kind'] })}
       />
@@ -156,18 +156,15 @@ export function RegistryCredential({ appID }: { appID: string }) {
 
   const c = summary.data?.credential;
   const described = !summary.data?.set
-    ? 'None. Pando pulls the image without signing in.'
+    ? 'None.'
     : c?.kind === 'ecr'
-      ? `AWS access key ${c.access_key_id ?? ''}${c.region ? ` in ${c.region}` : ''}. Pando asks ECR for a fresh password before every pull.`
+      ? `AWS access key ${c.access_key_id ?? ''}${c.region ? ` in ${c.region}` : ''}.`
       : `Signed in as ${c?.username ?? ''}.`;
 
   return (
     <section>
       <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Registry credential</h4>
-      <Quiet>
-        How Pando signs in to pull this app&rsquo;s image when it is private. It belongs to the app, and
-        the app is never given it.
-      </Quiet>
+      <Quiet>How Pando signs in to pull this app&rsquo;s image when it is private.</Quiet>
       {summary.isError ? (
         <Quiet>{messageOf(summary.error)}</Quiet>
       ) : (
@@ -178,7 +175,7 @@ export function RegistryCredential({ appID }: { appID: string }) {
       {canWrite && (
         <div style={{ display: 'flex', gap: 'var(--space-3)', marginTop: 'var(--space-4)' }}>
           <Button variant="secondary" onClick={() => setEditing(true)}>
-            {summary.data?.set ? 'Replace' : 'Add a credential'}
+            {summary.data?.set ? 'Replace' : 'Add credential'}
           </Button>
           {summary.data?.set && (
             <Button variant="ghost" disabled={remove.isPending} onClick={() => remove.mutate()}>
@@ -193,7 +190,7 @@ export function RegistryCredential({ appID }: { appID: string }) {
           open
           onClose={() => setEditing(false)}
           title="Registry credential"
-          description="Replaces any credential the app had. The next deploy pulls the image with it."
+          description="Takes effect at the next deploy."
           footer={
             <>
               <Button variant="ghost" onClick={() => setEditing(false)}>

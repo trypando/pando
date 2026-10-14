@@ -146,8 +146,7 @@ export function Backups() {
         >
           <h4 style={{ font: 'var(--type-h4)', margin: 0 }}>Daily app backups</h4>
           <Quiet>
-            Pando copies the data of every running app that keeps any, once a day. This is the last
-            attempt for each app.
+            The last attempt for each app that keeps data.
           </Quiet>
           <Table
             columns={[
@@ -211,7 +210,7 @@ function TakeBackup({ onClose }: { onClose: () => void }) {
     <Dialog
       open
       title="Take a backup"
-      description="A copy of this whole installation: every app's configuration, its data, and the key that reads its secrets."
+      description="Every app's configuration and data, and the key to its secrets."
       onClose={onClose}
       footer={
         <>
@@ -233,8 +232,7 @@ function TakeBackup({ onClose }: { onClose: () => void }) {
             fact about backups that costs an installation if it is missed, and
             a person reads it here or not at all. */}
         <Banner tone="info">
-          Pando doesn&rsquo;t keep this passphrase. If you lose it, nothing in this backup can be
-          read again — not by you, and not by anyone who takes the file.
+          Pando doesn&rsquo;t keep this passphrase. Without it, this backup can&rsquo;t be restored.
         </Banner>
 
         <Input
@@ -242,7 +240,7 @@ function TakeBackup({ onClose }: { onClose: () => void }) {
           type="password"
           value={passphrase}
           autoComplete="new-password"
-          helper="At least 16 characters. Write it down somewhere that will still exist if this machine doesn't."
+          helper="At least 16 characters. Store it somewhere off this machine."
           onChange={(e) => setPassphrase(e.target.value)}
         />
         <Input
@@ -253,7 +251,7 @@ function TakeBackup({ onClose }: { onClose: () => void }) {
           onChange={(e) => setAgain(e.target.value)}
           error={
             mismatch
-              ? 'These two are different.'
+              ? 'Passphrases don’t match.'
               : take.isError
                 ? messageOf(take.error)
                 : undefined
@@ -263,7 +261,7 @@ function TakeBackup({ onClose }: { onClose: () => void }) {
           label="Keep for"
           type="number"
           value={retainDays}
-          helper="Days. Leave it at 0 to keep this backup until you discard it."
+          helper="Days. 0 keeps it until you discard it."
           onChange={(e) => setRetainDays(e.target.value)}
         />
       </div>

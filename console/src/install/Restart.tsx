@@ -66,7 +66,7 @@ export function RestartButton({ onRestarted }: { onRestarted?: () => void }) {
       <Dialog
         open={stage !== 'idle'}
         title="Restart Pando?"
-        description="Pando finishes the requests in flight, then starts again and loads its adapters and configuration file. Apps behind it are unreachable for the seconds that takes, and a build or deploy under way is interrupted."
+        description="Apps are unreachable for a few seconds, and any build or deploy in progress is interrupted."
         onClose={restarting ? undefined : () => setStage('idle')}
         footer={
           <>

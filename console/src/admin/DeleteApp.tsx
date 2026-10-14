@@ -106,20 +106,20 @@ export function DeleteApp({
                   value="backup"
                   checked={keepBackup}
                   onChange={() => setKeepBackup(true)}
-                  label="Keep a final backup of its storage"
-                  description="Kept until you discard it. It doesn’t age out."
+                  label="Keep a final backup"
+                  description="Kept until you discard it."
                 />
                 <Radio
                   name="app-storage"
                   value="discard"
                   checked={!keepBackup}
                   onChange={() => setKeepBackup(false)}
-                  label="Delete its storage too"
-                  description="The data goes with the app and can’t be recovered."
+                  label="Delete storage"
+                  description="Can’t be recovered."
                 />
               </>
             ) : (
-              <Quiet>This app keeps no storage, so there is nothing to back up.</Quiet>
+              <Quiet>No storage.</Quiet>
             )}
 
             {remove.isError && (
@@ -138,7 +138,7 @@ export function DeleteApp({
                       margin: 0,
                     }}
                   >
-                    To delete it without a backup, choose &ldquo;Delete its storage too&rdquo;.
+                    To delete it without a backup, choose &ldquo;Delete storage&rdquo;.
                   </p>
                 )}
               </div>
