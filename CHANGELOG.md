@@ -19,12 +19,56 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-14
+
+### Security
+
+No advisories were published for this release.
+
+- **CVE-2026-32285** (denial of service) in `github.com/buger/jsonparser` v1.1.2, which reaches
+  Pando through the Anthropic SDK used by the AI adapter. It is now v1.6.1 (#237).
+- `npm ci` runs with `--ignore-scripts` in the image build and CI, so a compromised console
+  dependency cannot run code at install time (#235).
+- The Kubernetes manifests' `pando-edge-traefik` Role names the ten `traefik.io` kinds Traefik
+  watches instead of `"*"` (#235).
+
 ### Added
 
 - **Check for updates now.** Pando checks for a newer release at startup and every six hours; the
   console's Updates screen now has a **Check for updates** button beside when it last checked, and
   `pando updates --check`, MCP `pando_check_updates` and `POST /api/v1/updates/check` do the same.
   A second check within a minute is answered from the first.
+- **Accounts show installation roles held through groups** (#230, R-078). An account that held a
+  role only through a group, such as one synced from Okta, showed **None**. The account list and
+  page now show every role, with the group it comes through. `GET /users`, `GET /users/{id}` and
+  `GET /groups/{id}/members` carry `install_roles`, each with `via` naming the account itself or the
+  group. `pando user list`, `pando user get`, MCP `pando_list_users` and `pando_get_user` are new.
+
+### Changed
+
+- **Making an adapter the default hands the default over** (#231). Saving an adapter as the default
+  when its category already has one used to fail with a 500; it now replaces the old default in one
+  step. The console asks first, naming both adapters. `POST /adapters` returns `replaced_default`
+  and `handover`, and the audit event records `replaced_default`.
+- **`pando adapter add` no longer makes the adapter the default unless asked** (#231). `--default`
+  used to default to `true`. Without it, an existing adapter keeps its default status, and a new one
+  becomes the default only when its category has none.
+- **The plan lists the services Pando creates under Services** (#228, R-131), ahead of Variables,
+  with the variables the app reads each one from and the choice between Pando creating it and using
+  your own. A variable a created service fills is no longer marked **Required**.
+- Comboboxes announce the active option to screen readers, and tooltips open on keyboard focus
+  (#236).
+
+### Fixed
+
+- **A deploy that became healthy late stayed "Deployed, not healthy"** (#234, R-221). The app was
+  marked running, but its deploy kept `degraded`. The current deploy is now promoted to `running`
+  when the app comes up.
+
+### Upgrade notes
+
+- Scripts that run `pando adapter add` and relied on it making the adapter the default must now pass
+  `--default`.
 
 ## [0.5.0] - 2026-10-13
 
@@ -941,7 +985,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.5.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.6.0...main
+[0.6.0]: https://github.com/trypando/pando/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/trypando/pando/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/trypando/pando/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/trypando/pando/compare/v0.2.0...v0.3.0
