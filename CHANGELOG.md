@@ -19,6 +19,39 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-15
+
+### Security
+
+No new advisories.
+
+- `github.com/docker/distribution` is excluded from the module graph (#244), clearing
+  CVE-2026-85747 (GHSA-685w-q87j-wqw3) from dependency scans. Pando never compiled it: it came in
+  only through a development tool's requirements, so no released binary or image contained it.
+
+### Added
+
+- **Report a bug or suggest an idea from the console** (#249). A bug button beside the
+  notifications inbox, in the launcher and the admin console, opens GitHub's bug form with the
+  running version filled in, or starts a discussion in the Ideas category. Both open in a new tab
+  under your own GitHub account; Pando sends nothing itself.
+- **A failed app's banner links to its logs** (#247). "Pando has stopped trying to start this app"
+  now carries an **Open logs** button, for anyone who holds `app.logs.read`.
+
+### Fixed
+
+- **Hourly backups failed for every app with a database volume** (#243, R-212). The backup helper
+  could not read a directory owned by another user with mode 0700, which is what Postgres requires
+  for its data directory, so the backup failed with "the helper exited with status 1". It can now
+  read such volumes, still mounted read-only, and a restore puts back the owners and modes the
+  backup recorded, so a restored database starts. A failed helper's error now quotes its last line
+  of output.
+- **Read notifications stayed in the inbox** (#245, R-377). The inbox now opens on **Unread**, and a
+  notification leaves it once opened or after **Mark all read**; read ones are under **All**.
+  Opening a notification that links into the console no longer comes back unread.
+- The three-dot menu on a launcher tile ran off the left edge of a narrow window and cut off its
+  items. It now stays inside the window (#246).
+
 ## [0.6.1] - 2026-10-14
 
 ### Security
