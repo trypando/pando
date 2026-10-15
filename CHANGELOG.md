@@ -26,8 +26,8 @@ Unreleased above it. -->
 No new advisories.
 
 - `github.com/docker/distribution` is excluded from the module graph (#244), clearing
-  CVE-2026-85747 (GHSA-685w-q87j-wqw3) from dependency scans. Pando never compiled it: it came in
-  only through a development tool's requirements, so no released binary or image contained it.
+  CVE-2026-85747 (GHSA-685w-q87j-wqw3) from dependency scans. Pando's own binary never compiled
+  it: it was required only by a development tool's dependencies.
 
 ### Added
 
