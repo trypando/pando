@@ -176,9 +176,11 @@ describe('Menu, open', () => {
     );
     const button = container.querySelector<HTMLButtonElement>('button')!;
     act(() => button.click());
-    const menu = container.querySelector<HTMLElement>('[role="menu"]')!;
+    // Portaled to the body, so no header that hides its overflow can cut it off.
+    const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
+    expect(menu.parentElement).toBe(document.body);
     expect(menu.tabIndex).toBe(-1);
-    const items = () => Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    const items = () => Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'));
     expect(document.activeElement).toBe(items()[0]);
 
     key(document.activeElement!, 'ArrowDown');
@@ -187,7 +189,7 @@ describe('Menu, open', () => {
     expect(document.activeElement).toBe(items()[0]);
 
     key(document.activeElement!, 'Escape');
-    expect(container.querySelector('[role="menu"]')).toBeNull();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(button);
   });
 });

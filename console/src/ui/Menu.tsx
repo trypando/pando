@@ -8,11 +8,51 @@
 // Keyboard: the button opens it and focuses the first item, the arrow keys
 // move, Escape closes it and puts focus back on the button, and so does
 // choosing anything. A click outside closes it.
+//
+// The list is portaled to the body and placed against the window, not inside
+// the button's parent. The launcher's header hides its overflow to crop its
+// contour map, and a list placed inside it was cut off at the header's edge;
+// a button near the left of the admin sidebar opened its list off the screen.
+// So it is kept within the window, and opens above the button when there is
+// no room below.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon, IconButton } from '@design';
 import { useCloseOnOutside } from './combobox';
+
+interface Box {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/**
+ * Where the list goes: under the button, lined up with the edge align names,
+ * moved in to keep a margin from the window's sides, and above the button
+ * when it does not fit below but does above.
+ */
+export function placeMenu(
+  button: Box,
+  list: { width: number; height: number },
+  viewport: { width: number; height: number },
+  align: 'start' | 'end',
+  margin: number,
+): { top: number; left: number } {
+  const wanted = align === 'end' ? button.right - list.width : button.left;
+  const left = Math.max(margin, Math.min(wanted, viewport.width - list.width - margin));
+  const below = button.bottom + margin;
+  const above = button.top - margin - list.height;
+  const fitsBelow = below + list.height <= viewport.height - margin;
+  return { top: !fitsBelow && above >= margin ? above : below, left };
+}
+
+/** A spacing token in pixels, for arithmetic CSS cannot do. */
+function spacePx(token: string): number {
+  return Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(token)) || 0;
+}
 
 export function Menu({
   label,
@@ -55,7 +95,36 @@ export function Menu({
     if (open) list.current?.querySelector<HTMLElement>('[role="menuitem"], input')?.focus();
   }, [open, view]);
 
-  useCloseOnOutside(root, open, () => set(false));
+  // The list is not inside root once portaled, so a press on it is not outside.
+  const inside = useMemo(() => [root, list], []);
+  useCloseOnOutside(inside, open, () => set(false));
+
+  // Placed before paint, again whenever its page changes size, and kept beside
+  // the button while anything scrolls or the window resizes.
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const place = () => {
+      const button = root.current?.getBoundingClientRect();
+      const el = list.current;
+      if (!button || !el) return;
+      const at = placeMenu(
+        button,
+        { width: el.offsetWidth, height: el.offsetHeight },
+        { width: document.documentElement.clientWidth, height: window.innerHeight },
+        align,
+        spacePx('--space-1'),
+      );
+      el.style.top = `${at.top}px`;
+      el.style.left = `${at.left}px`;
+    };
+    place();
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [open, view, align]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -76,31 +145,34 @@ export function Menu({
       <IconButton label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => set(!open)}>
         <Icon name={icon} size={16} />
       </IconButton>
-      {open && (
-        <div
-          ref={list}
-          role="menu"
-          aria-label={label}
-          tabIndex={-1}
-          onKeyDown={onKeyDown}
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + var(--space-1))',
-            ...(align === 'end' ? { right: 0 } : { left: 0 }),
-            zIndex: 10,
-            minWidth: '22ch',
-            padding: 'var(--space-1)',
-            background: 'var(--paper-raised)',
-            border: 'var(--border-width) solid var(--rule-strong)',
-            borderRadius: 'var(--radius-md)',
-            boxShadow: 'var(--shadow-popover)',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          {children(close)}
-        </div>
-      )}
+      {open &&
+        createPortal(
+          <div
+            ref={list}
+            role="menu"
+            aria-label={label}
+            tabIndex={-1}
+            onKeyDown={onKeyDown}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              // Above the phone-width admin menu's scrim, which is 20.
+              zIndex: 30,
+              minWidth: '22ch',
+              padding: 'var(--space-1)',
+              background: 'var(--paper-raised)',
+              border: 'var(--border-width) solid var(--rule-strong)',
+              borderRadius: 'var(--radius-md)',
+              boxShadow: 'var(--shadow-popover)',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            {children(close)}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

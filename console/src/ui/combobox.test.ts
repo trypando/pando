@@ -36,6 +36,19 @@ describe('listenOutside', () => {
     expect(doc.removeEventListener).toHaveBeenCalledWith('mousedown', expect.any(Function));
   });
 
+  it('treats a press on any of several roots as inside', () => {
+    const doc = fakeDocument();
+    const close = vi.fn();
+    const other = { contains: (n: unknown) => n === other } as unknown as Node;
+    listenOutside(doc as unknown as Document, [{ current: inside }, { current: other }], close);
+
+    doc.press(other);
+    doc.press(inside);
+    expect(close).not.toHaveBeenCalled();
+    doc.press({});
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it('closes on any press while the root is not mounted', () => {
     const doc = fakeDocument();
     const close = vi.fn();

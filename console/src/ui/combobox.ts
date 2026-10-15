@@ -9,20 +9,25 @@ import type { RefObject } from 'react';
 /** The part of a document listenOutside uses. */
 type Listened = Pick<Document, 'addEventListener' | 'removeEventListener'>;
 
+/** What counts as inside: one element, or several, such as a button and the
+ *  list it opens when the list is portaled elsewhere in the document. */
+type Roots = RefObject<Node | null> | readonly RefObject<Node | null>[];
+
 /**
  * Calls close on a mousedown outside root, until the returned function is
  * called. Apart from the hook so it can be tested without a DOM.
  */
-export function listenOutside(doc: Listened, root: RefObject<Node | null>, close: () => void): () => void {
+export function listenOutside(doc: Listened, root: Roots, close: () => void): () => void {
+  const roots = Array.isArray(root) ? root : [root as RefObject<Node | null>];
   const outside = (e: MouseEvent) => {
-    if (!root.current?.contains(e.target as Node)) close();
+    if (!roots.some((r) => r.current?.contains(e.target as Node))) close();
   };
   doc.addEventListener('mousedown', outside);
   return () => doc.removeEventListener('mousedown', outside);
 }
 
 /** Calls close on a mousedown outside root, while open. */
-export function useCloseOnOutside(root: RefObject<HTMLElement | null>, open: boolean, close: () => void) {
+export function useCloseOnOutside(root: Roots, open: boolean, close: () => void) {
   // close is a fresh closure on every render; the listener only needs the one
   // from the render that opened the list.
   useEffect(() => (open ? listenOutside(document, root, close) : undefined), [open, root]);
