@@ -30,8 +30,19 @@ describe('placeMenu', () => {
     expect(placeMenu(button(500, 740), list, viewport, 'end', gap, gutter).top).toBe(740 - gap - 90);
   });
 
-  it('stays below when there is no room above either', () => {
+  it('fits by scrolling on the roomier side when it fits on neither', () => {
     const short = { width: 1200, height: 120 };
-    expect(placeMenu(button(500, 40), list, short, 'end', gap, gutter).top).toBe(76);
+    // 40 below the button and 32 above: below, capped at 40.
+    const at = placeMenu(button(500, 40), list, short, 'end', gap, gutter);
+    expect(at).toEqual({ top: 76, left: 332, maxHeight: 40 });
+    expect(at.top + at.maxHeight!).toBeLessThanOrEqual(short.height - gap);
+  });
+
+  it('caps it above when above is the roomier side', () => {
+    const short = { width: 1200, height: 120 };
+    // None below the button and 72 above: above, from the top of the window.
+    const at = placeMenu(button(500, 80), list, short, 'end', gap, gutter);
+    expect(at).toEqual({ top: gap, left: 332, maxHeight: 72 });
+    expect(at.top + at.maxHeight!).toBeLessThanOrEqual(80 - gap);
   });
 });

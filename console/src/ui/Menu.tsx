@@ -32,7 +32,9 @@ interface Box {
 /**
  * Where the list goes: gap under the button, lined up with the edge align
  * names, moved in to stay gutter inside the window's sides, and above the
- * button when it does not fit below but does above.
+ * button when it does not fit below but does above. When it fits on neither
+ * side it goes on the roomier one with maxHeight set to that room, and
+ * scrolls, so no item is out of reach below the window.
  */
 export function placeMenu(
   button: Box,
@@ -41,13 +43,16 @@ export function placeMenu(
   align: 'start' | 'end',
   gap: number,
   gutter: number,
-): { top: number; left: number } {
+): { top: number; left: number; maxHeight?: number } {
   const wanted = align === 'end' ? button.right - list.width : button.left;
   const left = Math.max(gutter, Math.min(wanted, viewport.width - list.width - gutter));
   const below = button.bottom + gap;
-  const above = button.top - gap - list.height;
-  const fitsBelow = below + list.height <= viewport.height - gap;
-  return { top: !fitsBelow && above >= gap ? above : below, left };
+  const roomBelow = viewport.height - gap - below;
+  const roomAbove = button.top - 2 * gap;
+  if (list.height <= roomBelow) return { top: below, left };
+  if (list.height <= roomAbove) return { top: button.top - gap - list.height, left };
+  if (roomBelow >= roomAbove) return { top: below, left, maxHeight: Math.max(roomBelow, 0) };
+  return { top: gap, left, maxHeight: roomAbove };
 }
 
 /** A spacing token in pixels, for arithmetic CSS cannot do; fallback when the
@@ -109,6 +114,8 @@ export function Menu({
       const button = root.current?.getBoundingClientRect();
       const el = list.current;
       if (!button || !el) return;
+      // Measured at its full height, not the height an earlier placing capped.
+      el.style.maxHeight = '';
       const at = placeMenu(
         button,
         { width: el.offsetWidth, height: el.offsetHeight },
@@ -122,6 +129,7 @@ export function Menu({
       );
       el.style.top = `${at.top}px`;
       el.style.left = `${at.left}px`;
+      el.style.maxHeight = at.maxHeight === undefined ? '' : `${at.maxHeight}px`;
     };
     place();
     window.addEventListener('scroll', place, true);
@@ -167,6 +175,8 @@ export function Menu({
               zIndex: 30,
               minWidth: 'min(22ch, calc(100vw - 2 * var(--space-4)))',
               maxWidth: 'calc(100vw - 2 * var(--space-4))',
+              // Scrolls when placing caps its height to a short window.
+              overflowY: 'auto',
               padding: 'var(--space-1)',
               background: 'var(--paper-raised)',
               border: 'var(--border-width) solid var(--rule-strong)',
