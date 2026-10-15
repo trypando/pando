@@ -13,8 +13,8 @@
 // the button's parent. The launcher's header hides its overflow to crop its
 // contour map, and a list placed inside it was cut off at the header's edge;
 // a button near the left of the admin sidebar opened its list off the screen.
-// So it is kept within the window, and opens above the button when there is
-// no room below.
+// So it is kept a --space-4 gutter inside the window, its width capped to the
+// window, and opens above the button when there is no room below.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -30,28 +30,30 @@ interface Box {
 }
 
 /**
- * Where the list goes: under the button, lined up with the edge align names,
- * moved in to keep a margin from the window's sides, and above the button
- * when it does not fit below but does above.
+ * Where the list goes: gap under the button, lined up with the edge align
+ * names, moved in to stay gutter inside the window's sides, and above the
+ * button when it does not fit below but does above.
  */
 export function placeMenu(
   button: Box,
   list: { width: number; height: number },
   viewport: { width: number; height: number },
   align: 'start' | 'end',
-  margin: number,
+  gap: number,
+  gutter: number,
 ): { top: number; left: number } {
   const wanted = align === 'end' ? button.right - list.width : button.left;
-  const left = Math.max(margin, Math.min(wanted, viewport.width - list.width - margin));
-  const below = button.bottom + margin;
-  const above = button.top - margin - list.height;
-  const fitsBelow = below + list.height <= viewport.height - margin;
-  return { top: !fitsBelow && above >= margin ? above : below, left };
+  const left = Math.max(gutter, Math.min(wanted, viewport.width - list.width - gutter));
+  const below = button.bottom + gap;
+  const above = button.top - gap - list.height;
+  const fitsBelow = below + list.height <= viewport.height - gap;
+  return { top: !fitsBelow && above >= gap ? above : below, left };
 }
 
-/** A spacing token in pixels, for arithmetic CSS cannot do. */
-function spacePx(token: string): number {
-  return Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(token)) || 0;
+/** A spacing token in pixels, for arithmetic CSS cannot do; fallback when the
+ *  token cannot be read. */
+function spacePx(token: string, fallback: number): number {
+  return Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(token)) || fallback;
 }
 
 export function Menu({
@@ -110,9 +112,13 @@ export function Menu({
       const at = placeMenu(
         button,
         { width: el.offsetWidth, height: el.offsetHeight },
-        { width: document.documentElement.clientWidth, height: window.innerHeight },
+        {
+          width: document.documentElement.clientWidth || window.innerWidth,
+          height: document.documentElement.clientHeight || window.innerHeight,
+        },
         align,
-        spacePx('--space-1'),
+        spacePx('--space-1', 4),
+        spacePx('--space-4', 16),
       );
       el.style.top = `${at.top}px`;
       el.style.left = `${at.left}px`;
@@ -159,7 +165,8 @@ export function Menu({
               left: 0,
               // Above the phone-width admin menu's scrim, which is 20.
               zIndex: 30,
-              minWidth: '22ch',
+              minWidth: 'min(22ch, calc(100vw - 2 * var(--space-4)))',
+              maxWidth: 'calc(100vw - 2 * var(--space-4))',
               padding: 'var(--space-1)',
               background: 'var(--paper-raised)',
               border: 'var(--border-width) solid var(--rule-strong)',
@@ -189,6 +196,9 @@ const itemStyle: React.CSSProperties = {
   font: 'var(--type-body-ui)',
   color: 'var(--ink)',
   textAlign: 'left',
+  // The menu is capped at the window's width, so a long section name wraps
+  // inside it rather than running past the edge.
+  overflowWrap: 'anywhere',
   textDecoration: 'none',
   cursor: 'pointer',
 };

@@ -15,14 +15,19 @@ import (
 )
 
 // queue is an in-memory stand-in for a table of queued work: Claim takes from
-// the front, as the SKIP LOCKED query takes the oldest.
+// the front, as the SKIP LOCKED query takes the oldest, and fails once its
+// context has ended, as the query does. Without that, a pool whose runs return
+// the moment it is stopped could claim more in the gap and hand them back.
 type queue struct {
 	mu       sync.Mutex
 	waiting  []int
 	released []int
 }
 
-func (q *queue) claim(_ context.Context, n int) ([]int, error) {
+func (q *queue) claim(ctx context.Context, n int) ([]int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if n > len(q.waiting) {

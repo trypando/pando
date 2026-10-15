@@ -250,3 +250,11 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 )
+
+// CVE-2026-85747 (GHSA-685w-q87j-wqw3) is fixed only under the module's new
+// path, github.com/distribution/distribution/v3 v3.1.2; the old path ends at
+// v2.8.3. cilium/ebpf v0.22.0, pinned in tools/pins.go, requires it for its
+// crane dev tool, and Pando compiles none of it. An excluded version a
+// requirement names is ignored, which takes the module out of the graph.
+// Remove this once ebpf no longer requires it (go mod graph shows who does).
+exclude github.com/docker/distribution v2.8.3+incompatible

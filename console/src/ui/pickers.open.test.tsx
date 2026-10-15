@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act } from 'react';
+import { act, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { renderToString } from 'react-dom/server';
@@ -191,6 +191,105 @@ describe('Menu, open', () => {
     key(document.activeElement!, 'Escape');
     expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(button);
+  });
+  // jsdom lays nothing out, so the button is stubbed at `at` (32 wide, 20
+  // down) and the menu at 200 by 100. jsdom's window is 1024 wide. Tests move
+  // `at` to stand for a page that moved under an open menu.
+  let at = 0;
+  const stubLayout = () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => new DOMRect(at, 20, 32, 32));
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(200);
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(100);
+    return () => [rect, width, height].forEach((m) => m.mockRestore());
+  };
+  const left = () => Number.parseFloat(document.querySelector<HTMLElement>('[role="menu"]')!.style.left);
+  const openMenu = () => act(() => container.querySelector<HTMLButtonElement>('button')!.click());
+
+  const openAt = (x: number, align?: 'start' | 'end') => {
+    at = x;
+    const restore = stubLayout();
+    try {
+      render(
+        <Menu label="Options for Notes" align={align}>
+          {(close) => <MenuItem onSelect={close}>Rename</MenuItem>}
+        </Menu>,
+      );
+      openMenu();
+      return left();
+    } finally {
+      restore();
+    }
+  };
+
+  it('lines up with the right of its button when it fits', () => {
+    expect(openAt(500)).toBe(500 + 32 - 200);
+  });
+
+  it('moves back inside the window when it would open off the left', () => {
+    // A leftward menu on a button near the left of the window: the admin
+    // sidebar's, or a tile's on a narrow window.
+    expect(openAt(20)).toBe(16);
+  });
+
+  it('moves left when it would run past the right of the window', () => {
+    expect(openAt(900, 'start')).toBe(1024 - 200 - 16);
+  });
+
+  it('follows its button when the window is resized or the page scrolls', () => {
+    at = 500;
+    const restore = stubLayout();
+    try {
+      render(
+        <Menu label="Options for Notes">
+          {(close) => <MenuItem onSelect={close}>Rename</MenuItem>}
+        </Menu>,
+      );
+      openMenu();
+      expect(left()).toBe(332);
+      at = 20;
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+      expect(left()).toBe(16);
+      at = 400;
+      act(() => {
+        document.dispatchEvent(new Event('scroll'));
+      });
+      expect(left()).toBe(232);
+    } finally {
+      restore();
+    }
+  });
+
+  it('is placed again when it shows another page of items', () => {
+    function Paged() {
+      const [page, setPage] = useState('main');
+      return (
+        <Menu label="Options for Notes" view={page}>
+          {() => (
+            <MenuItem
+              onSelect={() => {
+                at = 20;
+                setPage('sections');
+              }}
+            >
+              Move to section…
+            </MenuItem>
+          )}
+        </Menu>
+      );
+    }
+    at = 500;
+    const restore = stubLayout();
+    try {
+      render(<Paged />);
+      openMenu();
+      expect(left()).toBe(332);
+      act(() => document.querySelector<HTMLElement>('[role="menuitem"]')!.click());
+      expect(left()).toBe(16);
+    } finally {
+      restore();
+    }
   });
 });
 
