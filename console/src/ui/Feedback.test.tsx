@@ -55,4 +55,11 @@ describe('FeedbackButton', () => {
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain('role="menu"');
   });
+
+  // Icon renders nothing for a name the vendored set lacks, which left this
+  // button an empty square nobody could find.
+  it('draws its icon', () => {
+    const html = renderToString(<FeedbackButton />);
+    expect(html).toMatch(/data-icon="bug"[^>]*><svg/);
+  });
 });
