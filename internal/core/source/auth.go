@@ -146,6 +146,21 @@ func (s Sources) Probe(ctx context.Context, src spec.Source) error {
 // access rather than the network (R-105). Nil for any other failure.
 func accessError(err error, url, connection string) error {
 	msg := strings.ToLower(err.Error())
+
+	// Refused before a byte was sent (guard.go), whatever go-git wrapped
+	// the dialer's error in.
+	if errors.Is(err, errRefusedAddress) || strings.Contains(msg, errRefusedAddress.Error()) {
+		return errs.Newf(errs.ValidInvalid,
+			"Pando did not connect to %s. Its address is one no repository is at: a link-local address, which is where a cloud's metadata service answers, or Pando's own port or database.", url).
+			WithDetail("url", url).
+			WithRemedy("Use the address your Git host gives for cloning, such as https://git.example.com/team/app.git.")
+	}
+	if errors.Is(err, errLocalRepository) || strings.Contains(msg, errLocalRepository.Error()) {
+		return errs.Newf(errs.ValidInvalid,
+			"%s is a path on the machine Pando runs on. Pando fetches repositories over https, http or ssh only.", url).
+			WithDetail("url", url).
+			WithRemedy("Use the address your Git host gives for cloning, such as https://git.example.com/team/app.git, or send the files as an upload.")
+	}
 	hostKey := strings.Contains(msg, "knownhosts") || strings.Contains(msg, "host key")
 	authFailed := errors.Is(err, transport.ErrAuthenticationRequired) ||
 		errors.Is(err, transport.ErrAuthorizationFailed) ||

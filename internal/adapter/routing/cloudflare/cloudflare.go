@@ -184,16 +184,25 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 // below, which is exactly where apps are named.
 func (a *Adapter) Capabilities(context.Context) (api.RoutingCapabilities, error) {
 	return api.RoutingCapabilities{
-		Modes:               []api.RoutingMode{spec.RoutingSubdomain, spec.RoutingPath},
-		DefaultMode:         spec.RoutingSubdomain,
-		BaseDomain:          a.config.Zone,
-		Domains:             slices.Clone(a.zones),
+		Modes:       []api.RoutingMode{spec.RoutingSubdomain, spec.RoutingPath},
+		DefaultMode: spec.RoutingSubdomain,
+		BaseDomain:  a.config.Zone,
+		Domains:     slices.Clone(a.zones),
+		// Where the tunnel routes the console: the zone itself unless set.
+		ReservedHostnames:   reservedHostnames(a.config.ConsoleHostname),
 		SupportsTLS:         true,
 		SupportsWildcardTLS: true,
 
 		// The tunnel dials out. Nothing here needs to be reachable.
 		RequiresPublicReachability: false,
 	}, nil
+}
+
+func reservedHostnames(console string) []string {
+	if console == "" {
+		return nil
+	}
+	return []string{console}
 }
 
 // Ensure writes an app's ingress rule and, for its own hostname, a DNS record.

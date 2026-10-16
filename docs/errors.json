@@ -178,7 +178,7 @@
     {
       "code": "STATE_ADDRESS_TAKEN",
       "status": 409,
-      "meaning": "Another app is already reached at this address, or at a path this one would sit inside or around."
+      "meaning": "Another app is already reached at this address, or at a path this one would sit inside or around, or the address is Pando's own."
     },
     {
       "code": "STATE_AI_FUNCTION_ASSIGNED",

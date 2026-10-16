@@ -144,6 +144,31 @@ func TestR092_ASourceOutsideTheAllowlistIsRefusedAtCreation(t *testing.T) {
 	require.Equal(t, http.StatusAccepted, allowed.Code, allowed.String())
 }
 
+// TestR092_AnAddressPandoWillNotFetchIsRefusedAtCreation asserts R-092's
+// schemes and R-190's rule on credentials where a person gives the address:
+// a path on Pando's disk, git://, and an address with a token in it are
+// refused before an app exists, rather than created and left to fail at
+// detection (2026-10-16 assessment, finding 3). Where an address resolves to
+// is the fetch's to refuse (source.TestR092_AFetchOfAMetadataAddressIsRefusedInWords).
+func TestR092_AnAddressPandoWillNotFetchIsRefusedAtCreation(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+
+	for _, addr := range []string{
+		"file:///etc/hostname",
+		"/etc/hostname",
+		"git://github.com/acme/notes.git",
+		"https://ghp_abc123@github.com/acme/notes",
+	} {
+		got := i.do(admin, http.MethodPost, "/apps", map[string]any{
+			"name":   "refused",
+			"source": map[string]string{"type": "git", "url": addr},
+		})
+		require.Equal(t, string(errs.ValidInvalid), got.ErrorCode(), "%s: %s", addr, got.String())
+	}
+}
+
 // Replaces rather than merges: a merge would make it impossible to remove a rule.
 func TestSavingPolicyReplacesTheDocument(t *testing.T) {
 	t.Parallel()

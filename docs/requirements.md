@@ -337,6 +337,8 @@ app, and the security reviewer's role; a custom role may hold any one `install.a
 
 **R-092 [D]** **Source allowlist.** Host policy may restrict deployable sources — to named orgs, named repos, a specific forge, or registry namespaces. Evaluated as admission control **before anything is cloned**, so a blocked source never touches disk. Default is empty, meaning anything.
 
+Whatever the allowlist says, a repository is fetched over **https, http or ssh** only — git's `git@host:path` shorthand included — and never from a path on the machine Pando runs on (`file://`, a bare path) or over `git://`. **A repository may be on the private network or on the same machine**: an install's own Gitea is a normal place to deploy from. What a fetch may never connect to is checked on every address it dials, after DNS, so a name re-pointed between the check and the use gets nowhere: link-local addresses, which is where a cloud's metadata service answers (`169.254.169.254`), unspecified and multicast addresses, Pando's own listening port on any address of its machine, and its database. A repository address carrying a username, password or token is refused where it is given: the spec is append-only and exported (R-152), so a credential in it could never be removed, and credentials belong in a source connection (R-190).
+
 ### 7.2 Detection
 
 **R-093 [D]** Detection is a **detector auction**. Every builder adapter inspects the source and bids with a confidence score and a draft spec. Highest bid wins and produces a **proposal**, not a deployment.
@@ -651,7 +653,7 @@ Added by issue #131, so that an install does not fill up with apps nobody uses.
 
 **R-164 [D]** **Proxy mode** is a supported topology: one hostname, one certificate, one thing to open on the firewall, all apps reached by logging into Pando first. This is the recommended enterprise topology because it is far easier to get approved than N public hostnames.
 
-**R-165 [D]** In the non-proxy topology, apps have their own hostnames; users bookmark URLs and carry a session. Pando is invisible except at login.
+**R-165 [D]** In the non-proxy topology, apps have their own hostnames; users bookmark URLs and carry a session. Pando is invisible except at login. **No app may be reached at a hostname Pando serves itself on**: the host of `server.external_url`, or a routing adapter's console hostname — on Cloudflare, the zone unless another is set. An app given one would receive the console's traffic, on the console's origin. A base domain is not reserved for its own sake: an app may have the apex when the console is elsewhere.
 
 **R-166 [D]** **Subdomain is preferred where a wildcard is available. Path prefix is the fallback.** Under path routing an app is served from Pando's own origin, so script the app serves runs with its visitor's Pando authority, and nothing in a request tells it apart from the console. That is accepted as the cost of path routing (amended with issue #78), and the console says so wherever path routing is chosen: an app whose code is not trusted is given a hostname.
 

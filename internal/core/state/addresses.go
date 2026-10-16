@@ -51,13 +51,27 @@ func portOf(r spec.Routing) int {
 // rest — a path inside or around another app's, or one that takes another
 // app's slug.
 func (a *Apps) CheckAddress(ctx context.Context, appID string, r spec.Routing) error {
-	return checkAddress(ctx, a.db, appID, r)
+	return checkAddress(ctx, a.db, a.reserved(ctx), appID, r)
 }
 
-func checkAddress(ctx context.Context, q querier, appID string, r spec.Routing) error {
+func (a *Apps) reserved(ctx context.Context) []string {
+	if a.ReservedHostnames == nil {
+		return nil
+	}
+	return a.ReservedHostnames(ctx)
+}
+
+func checkAddress(ctx context.Context, q querier, reserved []string, appID string, r spec.Routing) error {
 	hostname, path := addressOf(r)
 
 	if hostname != "" {
+		for _, h := range reserved {
+			if h != "" && strings.EqualFold(strings.TrimSuffix(h, "."), hostname) {
+				return errs.Newf(errs.StateAddressTaken,
+					"%s can't be this app's address: it is Pando's own address, where the console and its sign-in page are served.", hostname).
+					WithRemedy("Choose another hostname for this app, such as one under " + hostname + ".")
+			}
+		}
 		var other string
 		err := q.QueryRow(ctx, `
 			SELECT name FROM apps

@@ -137,6 +137,21 @@ reduced to the same host and path, with Docker Hub's three hostnames read as `do
 been handed `URL`, which an image does not have, and admitted it. **[P]** An upload has no host, so a
 non-empty allowlist admits one only when it contains the entry `upload` (O-29).
 
+**[D] What a git source may be, and reach (R-092).** `spec.CheckSourceURL` refuses, when an app is created
+and when a spec changes its address, any scheme but https, http and ssh (the `git@host:path` shorthand
+included), a local path, and an address with userinfo — any for http(s), a password for ssh, whose
+`git@` names an account. It is not part of `Validate`, which re-runs on every stored spec at plan
+time; the fetch refuses the same addresses itself, so an older revision fails there, in words.
+go-git's `git` protocol is removed and its `file` protocol refuses unless a test calls
+`source.AllowLocalRepositories`. Every connection an HTTP fetch dials, redirects included, passes a
+dialer `Control` hook (`source/guard.go`) that refuses link-local, unspecified and multicast
+addresses, Pando's listening port on loopback or any local interface, and each host and port of the
+database connection string. SSH is checked on its resolved addresses just before go-git dials, since
+go-git's SSH dialer cannot be replaced; the pinned host key it requires is what keeps a name
+re-pointed in between from being talked to. Private and loopback addresses are otherwise allowed, and
+a probe still tells "not found" from "not reachable", which is what a person adding a repository on
+their own network needs.
+
 **[D] Registry credentials are the app's (O-30).** `CredentialRef` records that an image pull is
 authenticated, never with what. The credential is a username and token, or AWS access keys from which an
 ECR registry password is minted before every read and pull (ECR's own expire after twelve hours). It is

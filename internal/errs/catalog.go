@@ -60,7 +60,7 @@ var meanings = map[Code]string{
 	StateInvalid:                "The object is in a state this action does not apply to.",
 	StateAIFunctionAssigned:     "Another AI adapter already handles this AI function. Remove it from that adapter first.",
 	StateSetAtStartup:           "This is declared in Pando's startup configuration and cannot be changed through the API while it is.",
-	StateAddressTaken:           "Another app is already reached at this address, or at a path this one would sit inside or around.",
+	StateAddressTaken:           "Another app is already reached at this address, or at a path this one would sit inside or around, or the address is Pando's own.",
 	StateUsernameTaken:          "Another account already has this username. A deleted account keeps its username, so it cannot be reused.",
 	StateAppExited:              "The app started and then stopped, so the deploy has nothing to send traffic to.",
 	StateBackupDecisionRequired: "The app has storage and the request did not say whether to keep a final backup of it.",

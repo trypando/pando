@@ -96,3 +96,25 @@ func TestR167_APinClaimsTheAddress(t *testing.T) {
 	require.NoError(t, apps.Archive(ctx, a))
 	require.NoError(t, pinRouting(t, apps, b, alice.ID, host))
 }
+
+// TestR165_APinRefusesPandosOwnHostname asserts R-165's reserved hostnames
+// where the address is decided: a spec written whole, through POST /specs,
+// never passes through address.Resolve, and its pin is what refuses it.
+func TestR165_APinRefusesPandosOwnHostname(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	alice := seedUser(t, db, "alice")
+	apps := state.NewApps(db)
+	apps.ReservedHostnames = func(context.Context) []string { return []string{"pando.example.com"} }
+
+	a, err := apps.Create(ctx, "squatter", "squatter-s1", alice.ID, alice.ID, spec.Source{Type: spec.SourceGit, URL: "https://example.test/s"})
+	require.NoError(t, err)
+
+	console := spec.Routing{AdapterRef: "rte_traefik", Mode: spec.RoutingSubdomain, Hostname: "pando.example.com"}
+	require.Equal(t, errs.StateAddressTaken, errs.CodeOf(pinRouting(t, apps, a.ID, alice.ID, console)))
+	require.Equal(t, errs.StateAddressTaken, errs.CodeOf(apps.CheckAddress(ctx, a.ID, console)))
+
+	beside := spec.Routing{AdapterRef: "rte_traefik", Mode: spec.RoutingSubdomain, Hostname: "notes.pando.example.com"}
+	require.NoError(t, pinRouting(t, apps, a.ID, alice.ID, beside), "a name under it is an app's to have")
+}

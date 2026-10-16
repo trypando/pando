@@ -132,7 +132,16 @@ type App struct {
 // msgCreateApp is what a create that failed inside Pando says.
 const msgCreateApp = "Could not create the app."
 
-type Apps struct{ db *DB }
+type Apps struct {
+	db *DB
+
+	// ReservedHostnames lists the hostnames no app may be reached at, because
+	// Pando answers on them itself: its external URL's host and a routing
+	// adapter's console hostname.
+	// An app given one would receive the console's traffic on the console's
+	// origin (2026-10-16 assessment, finding 2). Nil reserves none.
+	ReservedHostnames func(ctx context.Context) []string
+}
 
 func NewApps(db *DB) *Apps { return &Apps{db: db} }
 
@@ -909,7 +918,7 @@ func (a *Apps) Pin(ctx context.Context, appID, specID, newState, pinnedBy string
 	if err := json.Unmarshal(body, &pinned); err != nil {
 		return errs.Wrap(errs.Internal, "Could not read the spec being pinned.", err)
 	}
-	if err := checkAddress(ctx, tx, appID, pinned.Routing); err != nil {
+	if err := checkAddress(ctx, tx, a.reserved(ctx), appID, pinned.Routing); err != nil {
 		return err
 	}
 	hostname, path := addressOf(pinned.Routing)

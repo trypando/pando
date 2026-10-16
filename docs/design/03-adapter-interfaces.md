@@ -75,6 +75,7 @@ type RoutingCapabilities struct {
     SupportsWildcardTLS bool
     SupportsTLS       bool
     RequiresPublicReachability bool  // false for loopback
+    ReservedHostnames []string       // the console hostname an edge serves Pando on (R-165)
 }
 
 type BuilderCapabilities struct {

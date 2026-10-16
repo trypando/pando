@@ -223,6 +223,11 @@ type RoutingCapabilities struct {
 	// refused when it is chosen rather than when the route is written.
 	Domains []string
 
+	// ReservedHostnames are hostnames this adapter serves Pando itself on,
+	// such as a Traefik's console hostname. No app may be reached at one:
+	// it would receive the console's traffic, on the console's origin.
+	ReservedHostnames []string
+
 	SupportsTLS         bool
 	SupportsWildcardTLS bool
 

@@ -239,12 +239,22 @@ func (a *Adapter) Capabilities(context.Context) (api.RoutingCapabilities, error)
 		// in step with it).
 		BaseDomain: a.config.BaseDomain,
 
+		// The console's hostname is Pando's, never an app's.
+		ReservedHostnames: reservedHostnames(a.config.ConsoleHostname),
+
 		SupportsTLS:         tls,
 		SupportsWildcardTLS: wildcard,
 
 		// Traefik is an inbound edge: something has to reach it.
 		RequiresPublicReachability: true,
 	}, nil
+}
+
+func reservedHostnames(console string) []string {
+	if console == "" {
+		return nil
+	}
+	return []string{console}
 }
 
 // Ensure writes the router for an app.
