@@ -144,26 +144,19 @@ func (s *Server) appHostnamesAreTheApps(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if reserved, _ := r.Context().Value(reservedKey{}).(bool); reserved ||
-			r.URL.Path == ReservedPrefix || strings.HasPrefix(r.URL.Path, ReservedPrefix+"/") {
-			next.ServeHTTP(w, r)
-			return
-		}
 		host := r.Host
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h
 		}
-		if s.ExternalURL != nil && s.ExternalURL.Hostname() != "" && strings.EqualFold(host, s.ExternalURL.Hostname()) {
+		if s.pandosOnEveryHostname(r, host) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		isApp, err := s.AppHosts.IsAppHostname(r.Context(), host)
 		switch {
+		case err != nil && !underPath(r.URL.Path, "/api/v1"):
+			next.ServeHTTP(w, r)
 		case err != nil:
-			if r.URL.Path != "/api/v1" && !strings.HasPrefix(r.URL.Path, "/api/v1/") {
-				next.ServeHTTP(w, r)
-				return
-			}
 			Error(w, r, errs.Wrap(errs.Internal,
 				"Pando could not tell whether this address belongs to an app, so it did not answer. "+
 					"Pando looks this up in its database, which did not respond.", err).
@@ -178,6 +171,21 @@ func (s *Server) appHostnamesAreTheApps(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		}
 	})
+}
+
+// pandosOnEveryHostname reports whether a request is Pando's whatever its
+// Host: the reserved prefix, a request re-entering from it, or Pando's own
+// external hostname.
+func (s *Server) pandosOnEveryHostname(r *http.Request, host string) bool {
+	if reserved, _ := r.Context().Value(reservedKey{}).(bool); reserved || underPath(r.URL.Path, ReservedPrefix) {
+		return true
+	}
+	return s.ExternalURL != nil && s.ExternalURL.Hostname() != "" && strings.EqualFold(host, s.ExternalURL.Hostname())
+}
+
+// underPath reports whether path is prefix or below it, segment-wise.
+func underPath(path, prefix string) bool {
+	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
 
 // sameOriginWrites refuses a state-changing request carried by the session
