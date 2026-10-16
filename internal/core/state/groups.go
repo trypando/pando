@@ -444,8 +444,9 @@ func (g *Groups) native(ctx context.Context, groupID string) error {
 
 // peopleWhoManage counts the active accounts that can manage accounts, directly
 // or through a group — the R-088 quantity when membership changes. Counting
-// grants, as accountManagers does, would count a group holding the
-// administrator role as a manager even with nobody left in it.
+// grants would count a group holding the administrator role as a manager even
+// with nobody left in it, and a suspended account's grant as a way back in
+// (R-088 counts people). Every R-088 check counts this.
 //
 // Read from the grants side: the few install grants carrying
 // install.users.manage, then the people they name or whose groups they name.
@@ -564,7 +565,7 @@ func (g *Groups) Delete(ctx context.Context, groupID string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	before, err := accountManagers(ctx, tx)
+	before, err := peopleWhoManage(ctx, tx)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not delete the group.", err)
 	}
@@ -579,7 +580,7 @@ func (g *Groups) Delete(ctx context.Context, groupID string) error {
 	if tag.RowsAffected() == 0 {
 		return errs.New(errs.NotFound, "There is no group with that ID.")
 	}
-	after, err := accountManagers(ctx, tx)
+	after, err := peopleWhoManage(ctx, tx)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not delete the group.", err)
 	}
@@ -743,7 +744,7 @@ func (r *Roles) DeleteCustom(ctx context.Context, roleID string) error {
 			WithRemedy("Make a custom role instead, and grant that.")
 	}
 
-	before, err := accountManagers(ctx, tx)
+	before, err := peopleWhoManage(ctx, tx)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not delete the role.", err)
 	}
@@ -753,7 +754,7 @@ func (r *Roles) DeleteCustom(ctx context.Context, roleID string) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM roles WHERE id = $1`, roleID); err != nil {
 		return errs.Wrap(errs.Internal, "Could not delete the role.", err)
 	}
-	after, err := accountManagers(ctx, tx)
+	after, err := peopleWhoManage(ctx, tx)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not delete the role.", err)
 	}
@@ -766,19 +767,4 @@ func (r *Roles) DeleteCustom(ctx context.Context, roleID string) error {
 		return errs.Wrap(errs.Internal, "Could not delete the role.", err)
 	}
 	return nil
-}
-
-// accountManagers counts the installation-wide grants that can manage
-// accounts — the R-088 quantity. Counted inside the caller's transaction so a
-// check and the delete it guards cannot be interleaved with another.
-func accountManagers(ctx context.Context, tx pgx.Tx) (int, error) {
-	var n int
-	err := tx.QueryRow(ctx, `
-		SELECT count(*)
-		FROM grants g
-		JOIN roles r ON r.id = g.role_id
-		WHERE g.app_id IS NULL
-		  AND g.plane = 'control'
-		  AND $1 = ANY (r.verbs)`, string(authz.InstallUsersManage)).Scan(&n)
-	return n, err
 }

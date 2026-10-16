@@ -535,24 +535,24 @@ func (g *Grants) RevokeInstall(ctx context.Context, kind, principalID string) er
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	before, err := peopleWhoManage(ctx, tx)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not remove installation-wide access.", err)
+	}
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM grants
 		WHERE app_id IS NULL AND plane = 'control'
 		  AND principal_kind = $1 AND principal_id = $2`, kind, principalID); err != nil {
 		return errs.Wrap(errs.Internal, "Could not remove installation-wide access.", err)
 	}
-
-	var remaining int
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*)
-		FROM grants g
-		JOIN roles r ON r.id = g.role_id
-		WHERE g.app_id IS NULL
-		  AND g.plane = 'control'
-		  AND $1 = ANY (r.verbs)`, string(authz.InstallUsersManage)).Scan(&remaining); err != nil {
+	// People, not grant rows (R-088): a grant to an empty group or to a
+	// suspended account administers nothing, so it does not keep the install
+	// administrable.
+	after, err := peopleWhoManage(ctx, tx)
+	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not remove installation-wide access.", err)
 	}
-	if remaining == 0 {
+	if before > 0 && after == 0 {
 		return errs.New(errs.ValidInvalid,
 			"This is the only account that can manage accounts, so Pando cannot remove its access.").
 			WithRemedy("Make someone else an administrator first, then remove this one.")

@@ -451,7 +451,9 @@ func (s *Server) Routes() http.Handler {
 	r.Use(RequestID)
 	r.Use(s.ClientAddr.Middleware)
 	r.Use(Logger(s.Logger))
-	// Inside Logger, which is what notes a request handed to an app.
+	r.Use(s.appHostnamesAreTheApps)
+	// After the guard, so a request it hands to an app never reaches it; inside
+	// Logger, which is what notes a request handed to an app either way.
 	r.Use(s.securityHeaders)
 
 	// The assertion verification keys (R-057). Unauthenticated by design: they

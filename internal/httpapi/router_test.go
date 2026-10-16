@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -255,4 +256,96 @@ func TestR172_SigningInWorksOnAPortModeAppsOwnListener(t *testing.T) {
 		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, tc.path, nil))
 		require.Equal(t, tc.want, reached, "%s", tc.path)
 	}
+}
+
+// TestR172_EveryPathOnAnAppsHostnameIsTheApps asserts R-172 for the routes
+// mounted at the root.
+//
+// /.pando was narrowed to signing in on an app's hostname (issue #78), but
+// /api/v1 is mounted at the root and answered there too. An app's script could
+// POST /api/v1/tokens same-origin with its visitor's session cookie and read
+// back a token carrying every verb the visitor held — an administrator's, if
+// one ever opened the app.
+func TestR172_EveryPathOnAnAppsHostnameIsTheApps(t *testing.T) {
+	var reached string
+	console := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = "console" })
+	appProxy := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = "proxy"
+		w.WriteHeader(http.StatusTeapot)
+	})
+	handler := (&httpapi.Server{
+		Logger: zap.NewNop(), DB: fakeDB{},
+		Console: console, AppProxy: appProxy, AppHosts: appHosts{host: "notes.example.com"},
+	}).Routes()
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/tokens"},
+		{http.MethodGet, "/api/v1/me"},
+		{http.MethodGet, "/api/v1/config"},
+		{http.MethodGet, "/healthz"},
+		{http.MethodGet, "/readyz"},
+		{http.MethodGet, "/.well-known/jwks.json"},
+	} {
+		reached = ""
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Host = "notes.example.com:443"
+		req.AddCookie(&http.Cookie{Name: httpapi.SessionCookie, Value: "a-visitors-session"})
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		require.Equal(t, "proxy", reached, "%s %s on an app's hostname is the app's", tc.method, tc.path)
+		require.Equal(t, http.StatusTeapot, rec.Code)
+	}
+
+	// The same paths on Pando's own hostname are Pando's.
+	reached = ""
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	require.Empty(t, reached)
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+// failingAppHosts cannot answer, as when the database is unreachable.
+type failingAppHosts struct{}
+
+func (failingAppHosts) IsAppHostname(context.Context, string) (bool, error) {
+	return false, errors.New("database is down")
+}
+
+// TestR172_AnUnknownHostnameIsNotServedTheAPI asserts that when Pando cannot
+// tell whether a hostname is an app's, it refuses rather than answering the API
+// on what may be an app's origin. Liveness still answers, as does Pando's own
+// external hostname, which needs no lookup.
+func TestR172_AnUnknownHostnameIsNotServedTheAPI(t *testing.T) {
+	var reached string
+	appProxy := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = "proxy" })
+	external, err := url.Parse("https://pando.example.com")
+	require.NoError(t, err)
+	handler := (&httpapi.Server{
+		Logger: zap.NewNop(), DB: fakeDB{},
+		Console: http.NotFoundHandler(), AppProxy: appProxy, AppHosts: failingAppHosts{},
+		ExternalURL: external,
+	}).Routes()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.Host = "notes.example.com"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Empty(t, reached, "a failed lookup does not reach the app either")
+	require.Contains(t, rec.Body.String(), "could not tell whether this address belongs to an app")
+
+	req = httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Host = "notes.example.com"
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "liveness never depends on the database")
+
+	// Pando's own hostname is answered without asking.
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.Host = "pando.example.com"
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.NotContains(t, rec.Body.String(), "could not tell whether this address belongs to an app")
+	require.Empty(t, reached)
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/trypando/pando/internal/adapter/identity/local"
-	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/id"
 	"github.com/trypando/pando/internal/secret"
@@ -365,16 +364,11 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 	// Only this account's own suspension can cause the lockout. An install that
 	// had no administrator before is not made worse by suspending someone who
 	// was never one — and refusing that would break every install whose access
-	// is granted through groups alone.
-	var administers bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM grants g
-			JOIN roles r ON r.id = g.role_id
-			WHERE g.app_id IS NULL AND g.plane = 'control'
-			  AND g.principal_kind = 'user' AND g.principal_id = $1
-			  AND $2 = ANY (r.verbs))`,
-		userID, string(authz.InstallUsersManage)).Scan(&administers); err != nil {
+	// is granted through groups alone. lockoutForUsers asks whether this
+	// account manages accounts, directly or through a group, and counts people
+	// only if so.
+	lock, err := lockoutForUsers(ctx, tx, userID)
+	if err != nil {
 		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
 	}
 
@@ -384,30 +378,17 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
 	}
 
-	if administers {
-		// Counted after the update, so the account being suspended is already
-		// excluded. A grant held by a group still counts — Pando cannot tell
-		// whether that group has reachable members — but a grant held by an
-		// account that cannot sign in does not, which is the whole point.
-		var remaining int
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*)
-			FROM grants g
-			JOIN roles r ON r.id = g.role_id
-			LEFT JOIN users u ON g.principal_kind = 'user' AND u.id = g.principal_id
-			WHERE g.app_id IS NULL
-			  AND g.plane = 'control'
-			  AND $1 = ANY (r.verbs)
-			  AND (g.principal_kind <> 'user'
-			       OR (u.deleted_at IS NULL AND u.status = 'active'))`,
-			string(authz.InstallUsersManage)).Scan(&remaining); err != nil {
-			return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
-		}
-		if remaining == 0 {
-			return errs.New(errs.ValidInvalid,
-				"This is the only account that can manage accounts, so Pando cannot suspend it.").
-				WithRemedy("Make someone else an administrator first, then suspend this one.")
-		}
+	// Counted after the update, so the account being suspended is already
+	// excluded. People, not grant rows (R-088): a grant to a group nobody in
+	// which can sign in administers nothing.
+	lost, err := lock.managersLost(ctx, tx)
+	if err != nil {
+		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
+	}
+	if lost {
+		return errs.New(errs.ValidInvalid,
+			"This is the only account that can manage accounts, so Pando cannot suspend it.").
+			WithRemedy("Make someone else an administrator first, then suspend this one.")
 	}
 
 	if err := tx.Commit(ctx); err != nil {

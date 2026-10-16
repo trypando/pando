@@ -64,6 +64,15 @@
       "secret": true
     },
     {
+      "env": "PANDO_ADMIN_PASSWORD_FILE",
+      "key": "bootstrap.admin_password_file",
+      "type": "string",
+      "default": "",
+      "description": "A file holding the first administrator's password, in place of admin_password. An empty file is no password. The bundled Compose file writes PANDO_ADMIN_PASSWORD here.",
+      "group": "bootstrap",
+      "secret": false
+    },
+    {
       "env": "PANDO_DATABASE_CONNECT_TIMEOUT",
       "key": "database.connect_timeout",
       "type": "duration",

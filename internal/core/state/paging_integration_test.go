@@ -29,12 +29,13 @@ func userPrincipal(u state.User) authz.Principal {
 	return authz.Principal{Kind: authz.KindUser, ID: u.ID, UserID: u.ID, Status: "active"}
 }
 
-// TestR264_TheLauncherListsEveryAppItsUserCanOpenOnce asserts R-264 over the
-// launcher's union query: owned, a direct data grant, a group's data grant and
-// an anonymous grant each put an app on the launcher, exactly once however
-// many of them apply; a control grant, a deleted app and somebody else's
-// grant do not.
-func TestR264_TheLauncherListsEveryAppItsUserCanOpenOnce(t *testing.T) {
+// TestR264_TheLauncherListsEveryAppSharedWithItsUserOnce asserts R-264 over
+// the launcher's union query: owned, a direct data grant and a group's data
+// grant each put an app on the launcher, exactly once however many of them
+// apply; a control grant, a deleted app, somebody else's grant and a grant to
+// anonymous do not. A public app is open to everyone but appears on the
+// launchers of the people it is shared with, not on everyone's.
+func TestR264_TheLauncherListsEveryAppSharedWithItsUserOnce(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := connected(t)
@@ -51,8 +52,11 @@ func TestR264_TheLauncherListsEveryAppItsUserCanOpenOnce(t *testing.T) {
 	require.NoError(t, state.NewGroups(db).AddMember(ctx, team.ID, bob.ID))
 	grant(t, db, viaGroup, "data", "group", team.ID, nil)
 	grant(t, db, viaGroup, "data", "user", bob.ID, nil) // and directly: still once
-	open := seedApp(t, db, alice.ID)
-	grant(t, db, open, "data", "anonymous", nil, nil)
+	public := seedApp(t, db, alice.ID)
+	grant(t, db, public, "data", "anonymous", nil, nil)
+	publicAndShared := seedApp(t, db, alice.ID)
+	grant(t, db, publicAndShared, "data", "anonymous", nil, nil)
+	grant(t, db, publicAndShared, "data", "user", bob.ID, nil)
 
 	controlOnly := seedApp(t, db, alice.ID)
 	grant(t, db, controlOnly, "control", "user", bob.ID, authz.RoleOperator)
@@ -68,7 +72,7 @@ func TestR264_TheLauncherListsEveryAppItsUserCanOpenOnce(t *testing.T) {
 	for _, a := range usable {
 		got = append(got, a.ID)
 	}
-	require.ElementsMatch(t, []string{owned, direct, viaGroup, open}, got)
+	require.ElementsMatch(t, []string{owned, direct, viaGroup, publicAndShared}, got)
 }
 
 // TestTheAccountsListPagesWithoutGapsOrRepeats walks GET /users's pages.
