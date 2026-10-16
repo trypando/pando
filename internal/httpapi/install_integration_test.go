@@ -215,6 +215,36 @@ func TestR092_ASpecCannotMoveAnAppToAnAddressPandoWillNotFetch(t *testing.T) {
 	require.Contains(t, got.String(), "https, http or ssh")
 }
 
+// TestR092_ASpecCannotTurnAnAddressIntoARepositorysByChangingItsType asserts
+// that the check follows the source's type as well as its address: an app
+// whose stored address is a local path, kept as it is while the source
+// becomes a repository, is refused.
+func TestR092_ASpecCannotTurnAnAddressIntoARepositorysByChangingItsType(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+
+	created := i.do(admin, http.MethodPost, "/apps", map[string]any{
+		"name":   "retyped",
+		"source": map[string]string{"type": "image", "image": "nginx:alpine", "url": "file:///etc"},
+	})
+	require.Contains(t, []int{http.StatusCreated, http.StatusAccepted}, created.Code, created.String())
+	var app struct {
+		ID     string `json:"id"`
+		Source struct {
+			URL string `json:"url"`
+		} `json:"source"`
+	}
+	created.JSON(t, &app)
+	require.Equal(t, "file:///etc", app.Source.URL, "the stored address the spec keeps")
+
+	body := minimalSpec()
+	body["source"] = map[string]any{"type": "git", "url": "file:///etc"}
+	got := i.do(admin, http.MethodPost, "/apps/"+app.ID+"/specs", body)
+	require.Equal(t, string(errs.ValidInvalid), got.ErrorCode(), got.String())
+	require.Contains(t, got.String(), "https, http or ssh")
+}
+
 // Replaces rather than merges: a merge would make it impossible to remove a rule.
 func TestSavingPolicyReplacesTheDocument(t *testing.T) {
 	t.Parallel()

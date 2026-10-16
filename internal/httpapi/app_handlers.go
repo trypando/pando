@@ -681,9 +681,11 @@ func (s *Server) handleCreateSpec(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	// A new repository address is held to what creating an app with it is.
-	// One the app already has is left to the fetch, which refuses it too.
-	if body.Source.URL != app.Source.URL {
+	// A new repository address is held to what creating an app with it is —
+	// including one the app already has that becomes a repository's only now,
+	// with the source's type. An address it already fetches from is left to
+	// the fetch, which refuses it too.
+	if body.Source.URL != app.Source.URL || body.Source.Type != app.Source.Type {
 		if err := spec.CheckSourceURL(body.Source); err != nil {
 			Error(w, r, err)
 			return
