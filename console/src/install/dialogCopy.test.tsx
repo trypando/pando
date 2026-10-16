@@ -102,9 +102,11 @@ describe('a role’s permissions', () => {
       [['roles', 'all'], { roles }],
       [['ai-functions'], { functions: [] }],
     ]);
-    expect(s.text()).toContain('2 permissions');
-    expect(s.text()).toContain('1 permission');
     expect(s.text()).not.toContain('install.audit.read');
+    // press matches a button's whole text, so this is the viewer row's.
+    await s.press('1 permission');
+    expect(s.text()).toContain('The viewer role');
+    await s.press('Close');
     await s.press('2 permissions');
     expect(s.text()).toContain('The ops role');
     expect(s.text()).toContain('Installation role, made on this installation. 2 permissions.');

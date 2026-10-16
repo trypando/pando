@@ -531,7 +531,13 @@ function Roles({ canEdit, query }: { canEdit: boolean; query: string }) {
               // one of them on the row made the table mostly tags. The list
               // opens from here, each verb with what it lets somebody do.
               render: (row: Role) => (
-                <Button variant="ghost" onClick={() => setViewing(row)}>
+                <Button
+                  variant="ghost"
+                  // Two roles with the same count would otherwise be announced
+                  // alike; the visible text leads so voice control still finds it.
+                  aria-label={`${permissionCount(row.verbs.length)} in the ${row.name} role`}
+                  onClick={() => setViewing(row)}
+                >
                   {permissionCount(row.verbs.length)}
                 </Button>
               ),
@@ -567,7 +573,7 @@ function permissionCount(n: number): string {
 }
 
 /** One role's verbs, each with the sentence the role editor shows under it. */
-function RolePermissions({ role, onClose }: { role: Role; onClose: () => void }) {
+function RolePermissions({ role, onClose }: Readonly<{ role: Role; onClose: () => void }>) {
   const scope = role.scope === 'install' ? 'Installation' : 'App';
   const source = role.builtin ? 'built into Pando' : 'made on this installation';
   return (
