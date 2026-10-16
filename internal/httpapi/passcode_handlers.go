@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -164,7 +165,8 @@ type passcodeGrant struct{ ID, PasscodeHash string }
 // passcodeDigest checks and hashes a passcode an administrator set.
 func passcodeDigest(passcode string) (string, error) {
 	passcode = strings.TrimSpace(passcode)
-	if len(passcode) < MinPasscodeLength {
+	// Characters, not bytes: "ééé" is three, as the console counts it.
+	if utf8.RuneCountInString(passcode) < MinPasscodeLength {
 		return "", errs.Newf(errs.ValidInvalid, "A passcode needs at least %d characters.", MinPasscodeLength)
 	}
 	digest, err := hash.New(secret.New(passcode))

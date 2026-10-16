@@ -17,6 +17,9 @@ import (
 	"github.com/trypando/pando/internal/secret"
 )
 
+// couldNotUpdateAccount is what a failed write to an account says.
+const couldNotUpdateAccount = "Could not update the account."
+
 // LocalAdapterID is the identity adapter seeded on a fresh install (R-041).
 const LocalAdapterID = "idp_local"
 
@@ -331,7 +334,7 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 			`UPDATE users SET status = $2, suspended_by = NULL, updated_at = now()
 			 WHERE id = $1 AND alias_of IS NULL`, userID, status)
 		if err != nil {
-			return errs.Wrap(errs.Internal, "Could not update the account.", err)
+			return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
 		}
 		if tag.RowsAffected() == 0 {
 			return errs.New(errs.ValidInvalid,
@@ -355,7 +358,7 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 	// API all inherit it, which is where the sibling rule already lives.
 	tx, err := u.db.Begin(ctx)
 	if err != nil {
-		return errs.Wrap(errs.Internal, "Could not update the account.", err)
+		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -372,13 +375,13 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 			  AND g.principal_kind = 'user' AND g.principal_id = $1
 			  AND $2 = ANY (r.verbs))`,
 		userID, string(authz.InstallUsersManage)).Scan(&administers); err != nil {
-		return errs.Wrap(errs.Internal, "Could not update the account.", err)
+		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
 	}
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE users SET status = $2, suspended_by = $3, updated_at = now() WHERE id = $1`,
 		userID, status, by); err != nil {
-		return errs.Wrap(errs.Internal, "Could not update the account.", err)
+		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
 	}
 
 	if administers {
@@ -398,7 +401,7 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 			  AND (g.principal_kind <> 'user'
 			       OR (u.deleted_at IS NULL AND u.status = 'active'))`,
 			string(authz.InstallUsersManage)).Scan(&remaining); err != nil {
-			return errs.Wrap(errs.Internal, "Could not update the account.", err)
+			return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
 		}
 		if remaining == 0 {
 			return errs.New(errs.ValidInvalid,
@@ -408,7 +411,7 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return errs.Wrap(errs.Internal, "Could not update the account.", err)
+		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
 	}
 	return nil
 }
@@ -519,15 +522,21 @@ func (u *Users) UpdateProfile(ctx context.Context, userID string, p Profile) err
 	if p.Username != nil && *p.Username == "" {
 		return errs.New(errs.ValidInvalid, "An account needs a username.")
 	}
+	tx, err := u.db.Begin(ctx)
+	if err != nil {
+		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	if p.Email != nil {
 		trimmed := strings.TrimSpace(*p.Email)
 		p.Email = &trimmed
-		if err := u.emailIsFree(ctx, userID, trimmed); err != nil {
+		if err := emailIsFree(ctx, tx, userID, trimmed); err != nil {
 			return err
 		}
 	}
 
-	_, err = u.db.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		UPDATE users SET
 		  external_id  = coalesce($2, external_id),
 		  display_name = CASE WHEN $3::text IS NULL THEN display_name ELSE nullif($3, '') END,
@@ -536,24 +545,34 @@ func (u *Users) UpdateProfile(ctx context.Context, userID string, p Profile) err
 		  updated_at   = now()
 		WHERE id = $1 AND deleted_at IS NULL`, userID, p.Username, p.DisplayName, p.Email, p.EmailBySelf)
 	if err != nil {
-		if isUniqueViolation(err) {
+		// The one unique column a profile change writes is the username.
+		if isUniqueViolation(err) && p.Username != nil {
 			return errs.Newf(errs.ValidInvalid, "There is already an account called %q.", *p.Username)
 		}
-		return errs.Wrap(errs.Internal, "Could not update the account.", err)
+		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
 	}
-	return nil
+	return commit(ctx, tx, couldNotUpdateAccount)
 }
 
 // emailIsFree refuses an email another account in use already has, compared
 // without regard to case. Two accounts with one address make linking by email
 // refuse both (R-045), so setting a colleague's would block their sign-in even
 // where it could not capture it.
-func (u *Users) emailIsFree(ctx context.Context, userID, email string) error {
+//
+// Checked under a lock on the address, held until tx ends, so two changes to
+// the same address cannot both find it free. A lock rather than a unique
+// index: an install upgraded from before this may already hold two accounts
+// with one address, and an index would refuse to build there.
+func emailIsFree(ctx context.Context, tx pgx.Tx, userID, email string) error {
 	if email == "" {
 		return nil
 	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		"users.email|"+strings.ToLower(email)); err != nil {
+		return errs.Wrap(errs.Internal, "Could not check the email address.", err)
+	}
 	var taken bool
-	if err := u.db.QueryRow(ctx, `
+	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 		  SELECT 1 FROM users
 		  WHERE lower(email) = lower($2) AND id <> $1
