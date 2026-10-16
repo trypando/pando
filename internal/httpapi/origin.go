@@ -21,7 +21,9 @@ import (
 //     hostname. Were the whole API behind /.pando, an app's script could call
 //     it same-origin with its visitor's cookie and read the answer: mint a
 //     token, read a secret, open exec. So on an app's hostname or port,
-//     /.pando answers signing in and nothing else (signInRoutes). R-173 strips
+//     /.pando answers signing in and nothing else (signInRoutes), and every
+//     other path is the app's, including the API's own root
+//     (appHostnamesAreTheApps). R-173 strips
 //     the cookie so an app cannot replay it; this is the same rule for the
 //     app's page.
 //
@@ -116,6 +118,74 @@ func (s *Server) onAppAddress(r *http.Request) bool {
 	}
 	isApp, err := s.AppHosts.IsAppHostname(r.Context(), host)
 	return err != nil || isApp
+}
+
+// appHostnamesAreTheApps hands every request on an app's hostname to the
+// proxy, except /.pando and a pending ACME answer, before any of Pando's own
+// routes can match it.
+//
+// On an app's hostname every path belongs to the app (R-172). /.pando was
+// narrowed to signing in for issue #78, but /api/v1, /healthz and
+// /.well-known are mounted at the root, and they answered on the app's
+// hostname too: the app's script could call POST /api/v1/tokens with its
+// visitor's session cookie, same-origin, and read back a token carrying every
+// verb that visitor holds. This is the same rule as the /.pando guard, applied
+// to the root, and it also stops Pando shadowing an app's own /api/v1 or
+// /healthz.
+//
+// Pando's own external hostname is never an app's, so it is answered without a
+// lookup. A lookup that fails refuses the API rather than guessing: serving it
+// to what may be an app's origin is the direction that is not safe. Everything
+// else falls back to Pando as before (consoleOrApp) — the console's pages and
+// the health checks carry no authority of their own, and a health check that
+// fails when Postgres blips gets the process killed.
+func (s *Server) appHostnamesAreTheApps(next http.Handler) http.Handler {
+	if s.AppHosts == nil || s.AppProxy == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if s.pandosOnEveryHostname(r, host) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		isApp, err := s.AppHosts.IsAppHostname(r.Context(), host)
+		switch {
+		case err != nil && !underPath(r.URL.Path, "/api/v1"):
+			next.ServeHTTP(w, r)
+		case err != nil:
+			Error(w, r, errs.Wrap(errs.Internal,
+				"Pando could not tell whether this address belongs to an app, so it did not answer. "+
+					"Pando looks this up in its database, which did not respond.", err).
+				WithRemedy("Try again in a moment. If this continues, check that Pando's database is running."))
+		case isApp:
+			if s.answerACMEChallenge(w, r) {
+				return
+			}
+			toApp(r)
+			s.AppProxy.ServeHTTP(w, r)
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
+// pandosOnEveryHostname reports whether a request is Pando's whatever its
+// Host: the reserved prefix, a request re-entering from it, or Pando's own
+// external hostname.
+func (s *Server) pandosOnEveryHostname(r *http.Request, host string) bool {
+	if reserved, _ := r.Context().Value(reservedKey{}).(bool); reserved || underPath(r.URL.Path, ReservedPrefix) {
+		return true
+	}
+	return s.ExternalURL != nil && s.ExternalURL.Hostname() != "" && strings.EqualFold(host, s.ExternalURL.Hostname())
+}
+
+// underPath reports whether path is prefix or below it, segment-wise.
+func underPath(path, prefix string) bool {
+	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
 
 // sameOriginWrites refuses a state-changing request carried by the session

@@ -445,6 +445,43 @@ func TestR130_ALaravelKeyThatIsNotOneIsRefused(t *testing.T) {
 	require.Less(t, got.Code, 300, got.String())
 }
 
+// TestR083_FillingASlotWithAValueNeedsSecretsWrite asserts R-083 for slots: a
+// literal is stored as a secret, so a custom role holding app.spec.edit but
+// not app.secrets.write may bind a dependency and may not give it a value.
+func TestR083_FillingASlotWithAValueNeedsSecretsWrite(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+	id := i.createApp(admin, "notes")
+
+	withSlot := minimalSpec()
+	withSlot["slots"] = []map[string]any{
+		{"key": "DATABASE_URL", "type": "postgres", "required": true},
+	}
+	withSlot["workloads"].([]map[string]any)[0]["env"] = []map[string]any{
+		{"key": "DATABASE_URL", "slot_ref": "DATABASE_URL"},
+	}
+	i.pinSpec(admin, id, i.writeSpec(admin, id, withSlot))
+
+	editor := i.user("editor")
+	role := i.customRole(admin, "spec editor", "app", "app.view", "app.spec.edit")
+	granted := i.do(admin, http.MethodPost, "/apps/"+id+"/grants", map[string]any{
+		"plane": "control", "principal_kind": "user", "principal_id": i.userID(editor), "role_id": role,
+	})
+	require.Equal(t, http.StatusCreated, granted.Code, granted.String())
+
+	got := i.do(editor, http.MethodPut, "/apps/"+id+"/slots/DATABASE_URL", map[string]any{
+		"mode": "literal", "value": "postgres://user:pw@db/app",
+	})
+	require.Equal(t, http.StatusForbidden, got.Code, got.String())
+	require.Equal(t, string(errs.PermVerbRequired), got.ErrorCode())
+
+	got = i.do(editor, http.MethodPut, "/apps/"+id+"/slots/DATABASE_URL", map[string]any{
+		"mode": "bound", "target": "postgres://db.internal:5432/app",
+	})
+	require.Less(t, got.Code, 300, "binding stores no secret, so app.spec.edit is enough: %s", got.String())
+}
+
 func TestSettingASlotThatTheSpecDoesNotDeclare(t *testing.T) {
 	t.Parallel()
 	i := newInstall(t)

@@ -37,12 +37,13 @@ services:
 
       # The initial admin password, read on first run only.
       #
-      # Listed here because Compose passes through nothing it is not told to:
-      # the documented `PANDO_ADMIN_PASSWORD=... docker compose up -d` set a
-      # variable in the operator's shell that never reached the container, and
-      # the first run generated a password and printed it to the log as though
-      # nothing had been asked for.
-      PANDO_ADMIN_PASSWORD: ${PANDO_ADMIN_PASSWORD:-}
+      # `PANDO_ADMIN_PASSWORD=... docker compose up -d` still works, but the
+      # password reaches Pando as a file (the admin-password config below)
+      # rather than as an environment variable, so it is not in
+      # `docker inspect` for the life of the container. Compose passes through
+      # nothing it is not told to; that config is how it is told. Unset, the
+      # file is empty and the administrator is set up in the console.
+      PANDO_ADMIN_PASSWORD_FILE: /run/pando-input/admin-password
       # No build service here: Pando starts its own rootless BuildKit on the
       # Docker it runs apps on, as pando-buildkit (R-111). It has no runtime
       # socket (R-112), and runs under a seccomp profile compiled into Pando
@@ -104,6 +105,9 @@ services:
       PANDO_SERVER_PORT_RANGE_START: ${PANDO_APP_PORT_START:-9000}
       PANDO_SERVER_PORT_RANGE_END: ${PANDO_APP_PORT_END:-9019}
     command: ["serve"]
+    configs:
+      - source: admin-password
+        target: /run/pando-input/admin-password
     ports:
       - "${PANDO_PORT:-8080}:8080"
       - "${PANDO_APP_PORT_START:-9000}-${PANDO_APP_PORT_END:-9019}:${PANDO_APP_PORT_START:-9000}-${PANDO_APP_PORT_END:-9019}"
@@ -208,6 +212,11 @@ configs:
   # is where it came from.
   postgres-password:
     content: ${POSTGRES_PASSWORD:-}
+  # The first administrator's password, if the operator chose one, read by
+  # Pando through PANDO_ADMIN_PASSWORD_FILE. Shown by `docker compose config`
+  # for the same reason as the one above.
+  admin-password:
+    content: ${PANDO_ADMIN_PASSWORD:-}
 
 volumes:
   pando-data:

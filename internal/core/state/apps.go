@@ -484,21 +484,26 @@ func (a *Apps) listControl(ctx context.Context, page Page, where string, args ..
 	return out, next, total, nil
 }
 
-// ListForUse returns one page of the apps the principal holds a DATA-plane
-// grant on (R-264), or owns, with the cursor for the next page (empty after
-// the last).
+// ListForUse returns one page of the apps the principal owns, or holds a
+// DATA-plane grant on directly or through a group (R-264), with the cursor for
+// the next page (empty after the last).
+//
+// A grant to anonymous is not one of them. A public app can be opened by
+// everyone, but being public alone never puts it on anyone's launcher: an app
+// appears there because it was shared with you, not because it was shared
+// with the world (R-264).
 //
 // Deliberately a different query from ListForPrincipal. Two planes, two
 // endpoints: the launcher shows what you can open, not what you can manage.
 //
-// A UNION of indexed lookups — owned (apps_owner_user_idx), a direct user or
-// token grant and a group grant (grants_principal_idx), and anonymous grants
-// (grants_data_anonymous_idx) — rather than a join of every app's data grants
+// A UNION of indexed lookups — owned (apps_owner_user_idx), and a direct user
+// or token grant and a group grant (grants_principal_idx) — rather than a join
+// of every app's data grants
 // under OR'd predicates, which read every grant in the install for each
 // launcher load (issue #72).
 //
-// Paged, because an app shared with everyone is on every person's launcher,
-// and an install can hold 20,000 of them. Favorites come first, then apps
+// Paged, because an app shared with a large group is on every member's
+// launcher, and an install can hold 20,000 of them. Favorites come first, then apps
 // filed in one of the person's sections, then the rest, each by name, so the
 // first page holds what the person arranged. The page is chosen before
 // anything else is read: routing, icons and CanManage are read for one page.
@@ -548,9 +553,6 @@ func (a *Apps) ListForUse(ctx context.Context, p authz.Principal, page Page, eve
 		    SELECT g.app_id FROM grants g
 		    JOIN effective_group_members m ON m.group_id = g.principal_id
 		    WHERE g.plane = 'data' AND g.principal_kind = 'group' AND m.user_id = $1
-		    UNION
-		    SELECT app_id FROM grants
-		    WHERE plane = 'data' AND principal_kind = 'anonymous'
 		), ranked AS (
 		    SELECT a.id, a.name,
 		           CASE WHEN f.app_id IS NOT NULL THEN 0

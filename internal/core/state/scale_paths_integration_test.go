@@ -388,7 +388,7 @@ func TestR264_TheLauncherPagesFavoritesFirstAndSaysWhatYouCanManage(t *testing.T
 		_, err := db.Exec(ctx, `INSERT INTO apps (id, name, slug, owner_user_id, state) VALUES ($1, $2, $1, $3, 'draft')`,
 			appID, name, alice.ID)
 		require.NoError(t, err)
-		grant(t, db, appID, "data", "anonymous", nil, nil)
+		grant(t, db, appID, "data", "user", bob.ID, nil)
 		return appID
 	}
 	zebra, apple, mango, kiwi, fig := named("zebra"), named("apple"), named("mango"), named("kiwi"), named("fig")
