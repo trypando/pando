@@ -754,6 +754,9 @@ func serve(ctx context.Context, configPath string) error {
 		Tokens:   tokens,
 		Users:    users,
 		Groups:   authzStore,
+		// The same scheme the API's Server sets the cookie by, so the name
+		// it is read back by cannot disagree (httpapi/cookie.go).
+		Cookies: httpapi.CookieScheme{ExternalURL: externalURL},
 	}
 	authorizer := authz.New(authzStore, hostPolicy, auditDenials{auditor})
 

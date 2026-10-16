@@ -144,13 +144,12 @@ func store[K comparable, T any](c *Cache, m map[K]cached[T], key K, value T, gen
 
 // SessionResolver is an Authenticator that can resolve a session cookie on its
 // own and say when the session ends, which is what lets the cache keep it.
+// SessionID reads the cookie the same way the Authenticator does, so the cache
+// cannot key on a cookie the Authenticator would have refused or ignored.
 type SessionResolver interface {
+	SessionID(r *http.Request) (string, error)
 	SessionPrincipal(ctx context.Context, sessionID string) (authz.Principal, time.Time, error)
 }
-
-// sessionCookie is the cookie the cache looks for; httpapi.SessionCookie,
-// spelled out because the proxy does not import the API's package.
-const sessionCookie = "pando_session"
 
 // principal resolves a request carried by a session cookie alone, from the
 // cache when it can. ok is false for any other request, which the caller
@@ -168,12 +167,9 @@ func (c *Cache) principal(r *http.Request, auth Authenticator) (p authz.Principa
 			return authz.Principal{}, false, nil
 		}
 	}
-	session := ""
-	for _, ck := range r.Cookies() {
-		if ck.Name == sessionCookie {
-			session = ck.Value
-			break
-		}
+	session, err := resolver.SessionID(r)
+	if err != nil {
+		return authz.Anonymous(), true, err
 	}
 	if session == "" {
 		return authz.Principal{}, false, nil // no session: the ordinary path decides

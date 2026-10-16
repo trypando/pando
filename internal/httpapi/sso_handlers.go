@@ -170,11 +170,10 @@ func (s *Server) handleSSOComplete(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, idp.LoginPath+"?sso_error="+reason, http.StatusFound)
 		return
 	}
-	//nolint:gosec // G124: Secure is decided by secureCookie, not left unset.
-	http.SetCookie(w, &http.Cookie{
-		Name: SessionCookie, Value: done.Session.ID, Path: "/", HttpOnly: true,
-		Secure: s.secureCookie(r), SameSite: http.SameSiteLaxMode, Expires: done.Session.ExpiresAt,
-	})
+	//nolint:gosec // G124: CookieScheme.sessionCookie sets Secure, HttpOnly and SameSite.
+	cookie := s.cookies().sessionCookie(r, done.Session.ID)
+	cookie.Expires = done.Session.ExpiresAt
+	http.SetCookie(w, cookie)
 	http.Redirect(w, r, done.Next, http.StatusFound)
 }
 

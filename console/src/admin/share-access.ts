@@ -66,7 +66,7 @@ export function everyone(grants: Grant[]): Everyone {
 
 /** The server's floor for a passcode, checked here only to keep the button
  *  disabled until it could succeed. The server enforces it. */
-export const PASSCODE_MIN = 4;
+export const PASSCODE_MIN = 6;
 
 /** The app roles to offer when GET /roles is refused — it is an install-level
  *  read some people who manage an app's sharing do not have. The built-ins

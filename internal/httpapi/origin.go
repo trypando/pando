@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -118,6 +119,41 @@ func (s *Server) onAppAddress(r *http.Request) bool {
 	return err != nil || isApp
 }
 
+// signsIn reports whether a request starts a session from a password: sign-in
+// and first-run setup. The SSO flow has its own bind cookie (design 06 §3.2).
+func signsIn(r *http.Request) bool {
+	return r.Method == http.MethodPost && (r.URL.Path == "/api/v1/sessions" || r.URL.Path == "/api/v1/setup")
+}
+
+// formContentType reports whether a request body is one an HTML form on
+// another site can send without the browser asking Pando first: the three
+// CORS-safelisted types. Sign-in refuses them, so a cross-site form cannot post
+// one even from a browser that sends neither Origin nor Sec-Fetch-Site.
+func formContentType(r *http.Request) bool {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		return false
+	}
+	switch mediaType {
+	case "application/x-www-form-urlencoded", "multipart/form-data", "text/plain":
+		return true
+	}
+	return false
+}
+
+// refuseFormBody answers a sign-in sent as a form body, and reports whether it
+// did (formContentType).
+func refuseFormBody(w http.ResponseWriter, r *http.Request) bool {
+	if !formContentType(r) {
+		return false
+	}
+	Error(w, r, errs.New(errs.ValidInvalid,
+		"Pando signs in only from a JSON request body, and this one was sent as a form. "+
+			"A form is what a page on another site can send on a visitor's behalf.").
+		WithRemedy("Send the request with the header Content-Type: application/json."))
+	return true
+}
+
 // sameOriginWrites refuses a state-changing request carried by the session
 // cookie when the browser says it came from another origin.
 //
@@ -147,7 +183,10 @@ func (s *Server) crossOriginWrite(r *http.Request) bool {
 	if r.Header.Get("Authorization") != "" {
 		return false
 	}
-	if c, err := r.Cookie(SessionCookie); err != nil || c.Value == "" {
+	// Signing in is checked with or without a cookie: a page on another site
+	// that posts its own username and password signs the visitor in as that
+	// account (login CSRF), and nothing ambient is needed for it to work.
+	if !hasSessionCookie(r) && !signsIn(r) {
 		return false
 	}
 	// A SAML provider posts the response to the callback from its own site

@@ -493,6 +493,9 @@ type Profile struct {
 	Username    *string
 	DisplayName *string
 	Email       *string
+	// EmailBySelf says the account's holder set Email, rather than an
+	// administrator. Linking by email ignores such an address (R-045).
+	EmailBySelf bool
 }
 
 // UpdateProfile changes an account's username, name or email.
@@ -516,19 +519,52 @@ func (u *Users) UpdateProfile(ctx context.Context, userID string, p Profile) err
 	if p.Username != nil && *p.Username == "" {
 		return errs.New(errs.ValidInvalid, "An account needs a username.")
 	}
+	if p.Email != nil {
+		trimmed := strings.TrimSpace(*p.Email)
+		p.Email = &trimmed
+		if err := u.emailIsFree(ctx, userID, trimmed); err != nil {
+			return err
+		}
+	}
 
 	_, err = u.db.Exec(ctx, `
 		UPDATE users SET
 		  external_id  = coalesce($2, external_id),
 		  display_name = CASE WHEN $3::text IS NULL THEN display_name ELSE nullif($3, '') END,
 		  email        = CASE WHEN $4::text IS NULL THEN email ELSE nullif($4, '') END,
+		  email_set_by_self = CASE WHEN $4::text IS NULL THEN email_set_by_self ELSE $5 END,
 		  updated_at   = now()
-		WHERE id = $1 AND deleted_at IS NULL`, userID, p.Username, p.DisplayName, p.Email)
+		WHERE id = $1 AND deleted_at IS NULL`, userID, p.Username, p.DisplayName, p.Email, p.EmailBySelf)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return errs.Newf(errs.ValidInvalid, "There is already an account called %q.", *p.Username)
 		}
 		return errs.Wrap(errs.Internal, "Could not update the account.", err)
+	}
+	return nil
+}
+
+// emailIsFree refuses an email another account in use already has, compared
+// without regard to case. Two accounts with one address make linking by email
+// refuse both (R-045), so setting a colleague's would block their sign-in even
+// where it could not capture it.
+func (u *Users) emailIsFree(ctx context.Context, userID, email string) error {
+	if email == "" {
+		return nil
+	}
+	var taken bool
+	if err := u.db.QueryRow(ctx, `
+		SELECT EXISTS (
+		  SELECT 1 FROM users
+		  WHERE lower(email) = lower($2) AND id <> $1
+		    AND deleted_at IS NULL AND alias_of IS NULL AND status IN ('active', 'suspended'))`,
+		userID, email).Scan(&taken); err != nil {
+		return errs.Wrap(errs.Internal, "Could not check the email address.", err)
+	}
+	if taken {
+		return errs.New(errs.ValidInvalid,
+			"Another Pando account already has this email address, and two accounts cannot share one.").
+			WithRemedy("Use a different email address, or ask an administrator to change the other account's.")
 	}
 	return nil
 }

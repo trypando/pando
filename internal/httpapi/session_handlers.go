@@ -27,6 +27,9 @@ type loginRequest struct {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if refuseFormBody(w, r) {
+		return
+	}
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
@@ -128,6 +131,23 @@ func (s *Server) denySignIn(r *http.Request, username, reason string) {
 // (R-404), audited, and reports whether it did. An unreadable count answers
 // too: it is an error, never a free attempt.
 func (s *Server) signInLimited(w http.ResponseWriter, r *http.Request, username string, failures FailedAttempts, account, addr attemptLimit) bool {
+	wait, what, err := overLimit(r.Context(), failures, account, addr)
+	if err != nil {
+		Error(w, r, err)
+		return true
+	}
+	if wait > 0 {
+		s.denySignIn(r, username, "rate_limited")
+		tooManyAttempts(w, r, wait, what)
+		return true
+	}
+	return false
+}
+
+// overLimit says how long until a password may be tried again against the
+// username's and the address's limits (R-404), and which one is holding it —
+// zero when neither is.
+func overLimit(ctx context.Context, failures FailedAttempts, account, addr attemptLimit) (time.Duration, string, error) {
 	for _, limit := range []struct {
 		attemptLimit
 		what string
@@ -135,18 +155,12 @@ func (s *Server) signInLimited(w http.ResponseWriter, r *http.Request, username 
 		{account, "Too many wrong passwords for this username."},
 		{addr, "Too many wrong passwords from your network address."},
 	} {
-		wait, err := limit.exceeded(r.Context(), failures)
-		if err != nil {
-			Error(w, r, err)
-			return true
-		}
-		if wait > 0 {
-			s.denySignIn(r, username, "rate_limited")
-			tooManyAttempts(w, r, wait, limit.what)
-			return true
+		wait, err := limit.exceeded(ctx, failures)
+		if err != nil || wait > 0 {
+			return wait, limit.what, err
 		}
 	}
-	return false
+	return 0, "", nil
 }
 
 // recordFailures counts one wrong guess against each limit.
@@ -171,16 +185,10 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user state
 		return
 	}
 
-	//nolint:gosec // G124: Secure is decided by secureCookie, not left unset.
-	http.SetCookie(w, &http.Cookie{
-		Name:     SessionCookie,
-		Value:    sess.ID,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   s.secureCookie(r),
-		SameSite: http.SameSiteLaxMode,
-		Expires:  sess.ExpiresAt,
-	})
+	//nolint:gosec // G124: CookieScheme.sessionCookie sets Secure, HttpOnly and SameSite.
+	cookie := s.cookies().sessionCookie(r, sess.ID)
+	cookie.Expires = sess.ExpiresAt
+	http.SetCookie(w, cookie)
 
 	s.audit(r, audit.Event{
 		PrincipalKind: audit.KindUser,
@@ -220,6 +228,9 @@ func (s *Server) handleGetSetup(w http.ResponseWriter, r *http.Request) {
 // used once. It opens only for the setup token Pando printed to its log
 // (issue #130), so being first to the URL is not enough.
 func (s *Server) handlePostSetup(w http.ResponseWriter, r *http.Request) {
+	if refuseFormBody(w, r) {
+		return
+	}
 	var req struct {
 		SetupToken  string `json:"setup_token"`
 		Username    string `json:"username"`
@@ -239,33 +250,20 @@ func (s *Server) handlePostSetup(w http.ResponseWriter, r *http.Request) {
 	s.startSession(w, r, user, http.StatusCreated)
 }
 
-// secureCookie decides whether the session cookie is marked Secure (O-19).
-//
-// The request alone cannot answer this. Behind a TLS-terminating reverse proxy
-// — the topology SECURITY.md describes — r.TLS is nil on every request even
-// though the browser's connection is encrypted, so trusting it alone ships the
-// session cookie without Secure and one plaintext request to the hostname puts
-// it on the wire.
-//
-// So the operator states the scheme, in PANDO_SERVER_EXTERNAL_URL, and Pando
-// believes the operator rather than the request. Not X-Forwarded-Proto: any
-// client that can reach Pando directly can set it, which is the same reason
-// R-053 strips inbound X-Pando-* headers unconditionally.
-//
-// Unset falls back to the request, which is correct in both topologies where
-// the request does tell the truth — Pando terminating its own TLS, and the
-// plain-HTTP localhost install the README documents, where an unconditional
-// Secure would stop sign-in working.
+// cookies is how this install sets and reads its session cookie (cookie.go).
+func (s *Server) cookies() CookieScheme {
+	return CookieScheme{ExternalURL: s.ExternalURL}
+}
+
+// secureCookie decides whether Pando's cookies are marked Secure (O-19,
+// CookieScheme.Secure).
 func (s *Server) secureCookie(r *http.Request) bool {
-	if s.ExternalURL != nil {
-		return s.ExternalURL.Scheme == "https"
-	}
-	return r.TLS != nil
+	return s.cookies().Secure(r)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie(SessionCookie); err == nil && cookie.Value != "" {
-		if err := s.Sessions.Revoke(r.Context(), cookie.Value); err != nil {
+	if sessionID, _ := s.cookies().SessionID(r); sessionID != "" {
+		if err := s.Sessions.Revoke(r.Context(), sessionID); err != nil {
 			Error(w, r, err)
 			return
 		}
@@ -274,24 +272,17 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 			PrincipalID:   PrincipalFrom(r.Context()).UserID,
 			Action:        "session.revoke",
 			TargetKind:    "session",
-			TargetID:      cookie.Value,
+			TargetID:      sessionID,
 		})
 	}
 
 	// The attributes have to match the cookie being cleared, or a browser may
-	// treat this as a different cookie and leave the original one in place.
-	// Same set as handleLogin, with MaxAge: -1 and an empty value — which is
-	// why Secure comes from the same place rather than being repeated.
-	//nolint:gosec // G124: Secure is decided by secureCookie, not left unset.
-	http.SetCookie(w, &http.Cookie{
-		Name:     SessionCookie,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   s.secureCookie(r),
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
+	// treat this as a different cookie and leave the original one in place —
+	// which is why it comes from the same place as the one set at sign-in.
+	//nolint:gosec // G124: CookieScheme.sessionCookie sets Secure, HttpOnly and SameSite.
+	cleared := s.cookies().sessionCookie(r, "")
+	cleared.MaxAge = -1
+	http.SetCookie(w, cleared)
 	JSON(w, http.StatusNoContent, nil)
 }
 
@@ -436,10 +427,16 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := s.Identity.Authenticate(r.Context(), api.Credential{
-		Username: user.ExternalID,
-		Password: secret.New(req.CurrentPassword),
-	}); err != nil {
+	// The current password is a guess like any sign-in's, and is held to the
+	// same counts (R-404): the username's is shared with sign-in, so neither
+	// door gives a second allowance. Without it a stolen session or token could
+	// try passwords here as fast as it liked, then set a new one and end the
+	// owner's sessions.
+	denied := func(reason string) {
+		detail := map[string]any{}
+		if reason != "" {
+			detail["reason"] = reason
+		}
 		s.audit(r, audit.Event{
 			PrincipalKind: audit.PrincipalKind(p.Kind),
 			PrincipalID:   p.ID,
@@ -447,10 +444,36 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 			Action:        "user.password.denied",
 			TargetKind:    "user",
 			TargetID:      p.UserID,
+			Detail:        detail,
 		})
+	}
+	account, addr := signInLimits(user.ExternalID, limitAddr(r))
+	failures := s.failedAttempts()
+	if wait, what, err := overLimit(r.Context(), failures, account, addr); err != nil || wait > 0 {
+		if err != nil {
+			Error(w, r, err)
+			return
+		}
+		denied("rate_limited")
+		tooManyAttempts(w, r, wait, what)
+		return
+	}
+
+	if _, err := s.Identity.Authenticate(r.Context(), api.Credential{
+		Username: user.ExternalID,
+		Password: secret.New(req.CurrentPassword),
+	}); err != nil {
+		if errs.CodeOf(err) == errs.AuthInvalid {
+			if err := recordFailures(r.Context(), failures, account, addr); err != nil {
+				Error(w, r, err)
+				return
+			}
+		}
+		denied("")
 		Error(w, r, errs.New(errs.AuthInvalid, "That current password is not right."))
 		return
 	}
+	_ = failures.Clear(r.Context(), account.key)
 
 	digest, err := hash.New(secret.New(req.NewPassword))
 	if err != nil {
@@ -466,8 +489,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// they think a credential has leaked, and leaving the leaked session alive
 	// would make the act cosmetic. The current one survives so that changing a
 	// password does not sign you out of the page you changed it on.
-	if cookie, err := r.Cookie(SessionCookie); err == nil && cookie.Value != "" {
-		if err := s.Sessions.RevokeOthersForUser(r.Context(), p.UserID, cookie.Value); err != nil {
+	if sessionID, _ := s.cookies().SessionID(r); sessionID != "" {
+		if err := s.Sessions.RevokeOthersForUser(r.Context(), p.UserID, sessionID); err != nil {
 			Error(w, r, err)
 			return
 		}

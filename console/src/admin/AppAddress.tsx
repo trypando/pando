@@ -258,6 +258,17 @@ function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; on
           </Banner>
         )}
 
+        {/* R-166: browsers do not keep cookies apart by port, so an app on a
+            port of Pando's host shares Pando's cookies. Accepted for port
+            routing like path routing, and said wherever it is chosen. */}
+        {mode === 'port' && (
+          <Banner tone="info">
+            On a port, this app shares Pando’s host, and browsers keep cookies apart by host, not by port. Any script it
+            serves can set cookies that Pando reads, and sign a visitor in to Pando as someone else. Use a hostname for
+            code you don’t fully trust.
+          </Banner>
+        )}
+
         {view.address && (
           <Banner tone="info">
             {shown(view.address)} stops working at the next deploy.

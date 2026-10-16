@@ -24,16 +24,29 @@ import (
 // is right, sets the cookie the proxy checks. Everything about *setting* a
 // passcode is on the grants endpoints, behind app.grants.manage.
 
-// MinPasscodeLength is the shortest passcode accepted. Short on purpose — a
-// passcode is typed by people it was read out to — and made safe by the
-// attempt limit below rather than by length.
-const MinPasscodeLength = 4
+// MinPasscodeLength is the shortest passcode accepted [P]. Short on purpose —
+// a passcode is typed by people it was read out to — but not so short that
+// the per-app limit below is all that stands in the way: four characters was
+// within reach of anyone with enough addresses to spread the guesses over.
+const MinPasscodeLength = 6
 
-// Wrong passcodes a visitor may try per app before waiting, and how long.
+// Wrong passcodes allowed before waiting (R-075a) [P]: per visitor's address
+// for each app, and per app from every address together, so guesses spread
+// over many addresses still run out. The app's count is never cleared by a
+// right passcode — whoever knows it is not the one guessing — so the most a
+// guesser can do is make new visitors wait out the window; a browser already
+// let in keeps its day.
 const (
-	passcodeAttempts = 10
-	passcodeWindow   = 15 * time.Minute
+	passcodeAttempts    = 10
+	passcodeAppAttempts = 100
+	passcodeWindow      = 15 * time.Minute
 )
+
+// passcodeLimits are the two counts a passcode attempt is held to.
+func passcodeLimits(appID, addr string) (visitor, app attemptLimit) {
+	return attemptLimit{key: appID + "|" + addr, max: passcodeAttempts, window: passcodeWindow},
+		attemptLimit{key: "passcode|app|" + appID, max: passcodeAppAttempts, window: passcodeWindow}
+}
 
 // handleGetPasscodeApp names an app for its passcode page. Answers only for an
 // app that asks for a passcode — any other app is not-found here, so this is no
@@ -57,17 +70,24 @@ func (s *Server) handleEnterPasscode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := attemptLimit{key: app.ID + "|" + limitAddr(r), max: passcodeAttempts, window: passcodeWindow}
-	key := limit.key
+	visitor, everyone := passcodeLimits(app.ID, limitAddr(r))
 	failures := s.failedAttempts()
-	wait, err := limit.exceeded(r.Context(), failures)
-	if err != nil {
-		Error(w, r, err)
-		return
-	}
-	if wait > 0 {
-		tooManyAttempts(w, r, wait, "Too many wrong passcodes for this app from your network address.")
-		return
+	for _, limit := range []struct {
+		attemptLimit
+		what string
+	}{
+		{visitor, "Too many wrong passcodes for this app from your network address."},
+		{everyone, "Too many wrong passcodes for this app have been tried recently, from anywhere."},
+	} {
+		wait, err := limit.exceeded(r.Context(), failures)
+		if err != nil {
+			Error(w, r, err)
+			return
+		}
+		if wait > 0 {
+			tooManyAttempts(w, r, wait, limit.what)
+			return
+		}
 	}
 
 	var req struct {
@@ -79,7 +99,7 @@ func (s *Server) handleEnterPasscode(w http.ResponseWriter, r *http.Request) {
 	}
 	right, err := hash.Verify(secret.New(req.Passcode), grant.PasscodeHash)
 	if err != nil || !right {
-		if err := failures.Record(r.Context(), key, passcodeWindow); err != nil {
+		if err := recordFailures(r.Context(), failures, visitor, everyone); err != nil {
 			Error(w, r, err)
 			return
 		}
@@ -89,7 +109,7 @@ func (s *Server) handleEnterPasscode(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.AuthInvalid, "That passcode isn't right. Check it with whoever gave it to you."))
 		return
 	}
-	_ = failures.Clear(r.Context(), key)
+	_ = failures.Clear(r.Context(), visitor.key)
 
 	token, expires, err := s.Grants.Unlock(r.Context(), app.ID, grant.ID)
 	if err != nil {

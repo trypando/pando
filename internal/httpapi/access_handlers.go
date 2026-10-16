@@ -565,6 +565,9 @@ func (s *Server) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.Users.UpdateProfile(r.Context(), userID, state.Profile{
 			Username: req.Username, DisplayName: req.DisplayName, Email: req.Email,
+			// Anyone else's needed install.users.manage to reach here; your
+			// own is your own word, administrator or not (R-045).
+			EmailBySelf: req.Email != nil && p.UserID != "" && p.UserID == userID,
 		}); err != nil {
 			Error(w, r, err)
 			return

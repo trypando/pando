@@ -1,0 +1,12 @@
+-- Whether an account's email was last set by the account's own holder (R-045).
+--
+-- Linking by email trusts that exactly one active account has the address a
+-- provider vouches for. An email the holder typed in themselves vouches for
+-- nothing: anyone could set theirs to a colleague's and receive that
+-- colleague's first sign-in through a provider that links by email. So linking
+-- reads only an email an administrator, the installer or a provider set.
+--
+-- False on every existing row: before this an email reached an account only
+-- by an administrator, setup or a provider — or through the self-service
+-- change this closes, which cannot be told apart after the fact.
+ALTER TABLE users ADD COLUMN email_set_by_self boolean NOT NULL DEFAULT false;
