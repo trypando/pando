@@ -365,7 +365,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target *url.URL,
 		ModifyResponse: func(resp *http.Response) error {
 			stripSetCookies(resp.Header)
 			if visit != nil {
-				resp.Header.Add("Set-Cookie", visit.String())
+				resp.Header.Add(setCookie, visit.String())
 			}
 			return nil
 		},
@@ -440,18 +440,21 @@ func stripCookies(r *http.Request) {
 	}
 }
 
+// setCookie is the response header a cookie is set by.
+const setCookie = "Set-Cookie"
+
 // stripSetCookies removes every Set-Cookie in Pando's namespace from an app's
 // response, and keeps the rest in order.
 func stripSetCookies(h http.Header) {
-	values := h.Values("Set-Cookie")
+	values := h.Values(setCookie)
 	if len(values) == 0 {
 		return
 	}
-	h.Del("Set-Cookie")
+	h.Del(setCookie)
 	for _, v := range values {
 		name, _, _ := strings.Cut(v, "=")
 		if !isPandoCookie(strings.TrimSpace(name)) {
-			h.Add("Set-Cookie", v)
+			h.Add(setCookie, v)
 		}
 	}
 }

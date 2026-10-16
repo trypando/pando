@@ -55,8 +55,8 @@ var signInRoutes = []struct{ method, pattern string }{
 	{http.MethodGet, "/api/v1/auth/providers/{}/start"},
 	{http.MethodGet, "/api/v1/auth/complete"},
 	{http.MethodGet, "/api/v1/auth/failures/{}"},
-	{http.MethodPost, "/api/v1/sessions"},
-	{http.MethodDelete, "/api/v1/sessions"},
+	{http.MethodPost, sessionsPath},
+	{http.MethodDelete, sessionsPath},
 	{http.MethodGet, "/api/v1/me"},
 	// R-046: a first-run password must be changed before anything else, on
 	// whichever hostname the person signed in at. It needs the current one.
@@ -119,10 +119,13 @@ func (s *Server) onAppAddress(r *http.Request) bool {
 	return err != nil || isApp
 }
 
+// sessionsPath is where a password sign-in is posted, and a session ended.
+const sessionsPath = "/api/v1/sessions"
+
 // signsIn reports whether a request starts a session from a password: sign-in
 // and first-run setup. The SSO flow has its own bind cookie (design 06 §3.2).
 func signsIn(r *http.Request) bool {
-	return r.Method == http.MethodPost && (r.URL.Path == "/api/v1/sessions" || r.URL.Path == "/api/v1/setup")
+	return r.Method == http.MethodPost && (r.URL.Path == sessionsPath || r.URL.Path == "/api/v1/setup")
 }
 
 // formContentType reports whether a request body is one an HTML form on
