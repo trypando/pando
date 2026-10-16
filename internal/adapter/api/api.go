@@ -217,6 +217,12 @@ type RoutingCapabilities struct {
 	// Cloudflare names it in the zone without a second setting to keep in step.
 	BaseDomain string
 
+	// Domains are every domain this adapter can serve a hostname in, the
+	// BaseDomain first: a Cloudflare adapter's zones. Empty means the adapter
+	// does not limit where a hostname may be. A hostname outside them is
+	// refused when it is chosen rather than when the route is written.
+	Domains []string
+
 	SupportsTLS         bool
 	SupportsWildcardTLS bool
 

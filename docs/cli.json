@@ -616,6 +616,7 @@
       ],
       "subcommands": [
         "pando app add",
+        "pando app address",
         "pando app auto-deploy",
         "pando app delete",
         "pando app detection",
@@ -706,6 +707,85 @@
           "type": "bool",
           "default": "false",
           "usage": "wait for detection to finish, as `pando app detection --wait` does",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app address",
+      "use": "address <app>",
+      "short": "Show or change where an app is reached",
+      "long": "With no flags, shows the app's routing and address, where it moves at the next deploy\nif a change is saved, and the routing adapters it could use with the domains each serves.\n\nWith flags, changes it. A flag left out keeps what the app has, or takes the adapter's\ndefault when moving to another adapter. --domain puts the app in another of the\nadapter's domains, such as a second Cloudflare zone: alone it makes <app>.<domain>, and\nwith --hostname docs it makes docs.<domain>.\n\nA change is saved as a spec revision and takes effect at the next deploy, when the old\naddress stops working. Without --confirm nothing is changed and Pando says what would move.",
+      "example": "  pando app address notes\n  pando app address notes --domain trypando.ai --confirm\n  pando app address notes --hostname docs.example.com --confirm",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "adapter",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the routing adapter, such as rte_cloudflare",
+          "required": false
+        },
+        {
+          "name": "confirm",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "make the change; without it Pando only says what would move",
+          "required": false
+        },
+        {
+          "name": "domain",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "with subdomain mode: which of the adapter's domains, such as trypando.ai",
+          "required": false
+        },
+        {
+          "name": "hostname",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "with subdomain mode: the hostname, or with --domain a single name such as docs",
+          "required": false
+        },
+        {
+          "name": "mode",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "subdomain, path or port",
+          "required": false
+        },
+        {
+          "name": "path",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "with path mode: the path, such as /team/notes",
           "required": false
         }
       ],

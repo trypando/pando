@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	account  = "0123456789abcdef0123456789abcdef"
-	zoneID   = "zone-1"
-	upstream = "http://pando:8080"
+	account     = "0123456789abcdef0123456789abcdef"
+	zoneID      = "zone-1"
+	otherZoneID = "zone-2"
+	upstream    = "http://pando:8080"
 )
 
 // fakeCloudflare is the part of Cloudflare's API the adapter uses, in memory.
@@ -30,13 +31,14 @@ type fakeCloudflare struct {
 	tunnels map[string]string // id -> name
 	config  map[string]json.RawMessage
 	records map[string]dnsRecord
+	inZone  map[string]string // record id -> zone id
 	nextID  int
 	refuse  bool
 	puts    int
 }
 
 func newFake(t *testing.T) (*fakeCloudflare, *httptest.Server) {
-	f := &fakeCloudflare{t: t, tunnels: map[string]string{}, config: map[string]json.RawMessage{}, records: map[string]dnsRecord{}}
+	f := &fakeCloudflare{t: t, tunnels: map[string]string{}, config: map[string]json.RawMessage{}, records: map[string]dnsRecord{}, inZone: map[string]string{}}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
 	return f, srv
@@ -68,11 +70,14 @@ func (f *fakeCloudflare) serve(w http.ResponseWriter, r *http.Request) {
 	tunnels := "/accounts/" + account + "/cfd_tunnel"
 	switch {
 	case r.Method == http.MethodGet && p == "/zones":
-		if r.URL.Query().Get("name") == "example.com" {
-			reply(w, 200, []zone{{ID: zoneID, Name: "example.com"}})
-			return
+		switch name := r.URL.Query().Get("name"); name {
+		case "example.com":
+			reply(w, 200, []zone{{ID: zoneID, Name: name}})
+		case "example.org":
+			reply(w, 200, []zone{{ID: otherZoneID, Name: name}})
+		default:
+			reply(w, 200, []zone{})
 		}
-		reply(w, 200, []zone{})
 
 	case r.Method == http.MethodGet && p == tunnels:
 		var out []tunnel
@@ -117,13 +122,20 @@ func (f *fakeCloudflare) serve(w http.ResponseWriter, r *http.Request) {
 			reply(w, 404, nil)
 		}
 
-	case strings.HasPrefix(p, "/zones/"+zoneID+"/dns_records"):
-		recID := strings.TrimPrefix(strings.TrimPrefix(p, "/zones/"+zoneID+"/dns_records"), "/")
+	case strings.HasPrefix(p, "/zones/") && strings.Contains(p, "/dns_records"):
+		inZone, rest, _ := strings.Cut(strings.TrimPrefix(p, "/zones/"), "/dns_records")
+		require.Contains(f.t, []string{zoneID, otherZoneID}, inZone)
+		recID := strings.TrimPrefix(rest, "/")
 		switch r.Method {
 		case http.MethodGet:
 			var out []dnsRecord
-			for _, rec := range f.records {
-				if rec.Name == r.URL.Query().Get("name") {
+			for id, rec := range f.records {
+				// A record a test put in directly is in the default zone.
+				where := f.inZone[id]
+				if where == "" {
+					where = zoneID
+				}
+				if rec.Name == r.URL.Query().Get("name") && where == inZone {
 					out = append(out, rec)
 				}
 			}
@@ -136,6 +148,7 @@ func (f *fakeCloudflare) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			rec.ID = recID
 			f.records[recID] = rec
+			f.inZone[recID] = inZone
 			reply(w, 200, rec)
 		case http.MethodDelete:
 			delete(f.records, recID)
@@ -170,6 +183,18 @@ func (f *fakeCloudflare) record(name string) (dnsRecord, bool) {
 		}
 	}
 	return dnsRecord{}, false
+}
+
+// zoneOfRecord is the zone a record was written in.
+func (f *fakeCloudflare) zoneOfRecord(name string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, r := range f.records {
+		if r.Name == name {
+			return f.inZone[id]
+		}
+	}
+	return ""
 }
 
 func (f *fakeCloudflare) onlyTunnel(t *testing.T) string {
@@ -417,4 +442,67 @@ func TestR105_ARefusedTokenSaysWhichPermissionsItNeeds(t *testing.T) {
 	require.Contains(t, e.Message, "Authentication error")
 	require.Contains(t, e.Remedy, "Account / Cloudflare Tunnel / Edit; Zone / DNS / Edit; Zone / Zone / Read")
 	require.NotContains(t, e.Message+e.Remedy, "tok-cf")
+}
+
+// TestR162_AppsCanBeNamedInOtherZones: the zone stays the default a new app is
+// named in, and a hostname in another configured zone is served by the same
+// tunnel, with its DNS record written in that zone.
+func TestR162_AppsCanBeNamedInOtherZones(t *testing.T) {
+	f, srv := newFake(t)
+	a := configured(t, srv, `,"other_zones":" Example.org. , example.com"`)
+	ctx := context.Background()
+
+	caps, err := a.Capabilities(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "example.com", caps.BaseDomain, "the default zone is still where new apps go")
+	require.Equal(t, []string{"example.com", "example.org"}, caps.Domains, "normalized, the default first, no repeats")
+	require.NoError(t, a.HealthCheck(ctx))
+
+	_, err = a.Ensure(ctx, subdomain("app_01", "notes.example.com"))
+	require.NoError(t, err)
+	h, err := a.Ensure(ctx, subdomain("app_02", "docs.example.org"))
+	require.NoError(t, err)
+
+	require.Equal(t, zoneID, f.zoneOfRecord("notes.example.com"))
+	require.Equal(t, otherZoneID, f.zoneOfRecord("docs.example.org"))
+	rules := f.ingress(t, f.onlyTunnel(t))
+	require.Equal(t, "docs.example.org", rules[1].Hostname)
+	require.Equal(t, upstream, rules[1].Service, "R-023: every zone's apps go to Pando's proxy")
+
+	require.NoError(t, a.Remove(ctx, h))
+	_, ok := f.record("docs.example.org")
+	require.False(t, ok, "removed from the zone it was written in")
+
+	_, err = a.Ensure(ctx, subdomain("app_03", "notes.other.net"))
+	var e *errs.Error
+	require.ErrorAs(t, err, &e)
+	require.Contains(t, e.Message, "example.com or example.org")
+	require.Contains(t, e.Remedy, "other zones")
+}
+
+func TestTheConsoleCanBeInAnotherZone(t *testing.T) {
+	_, srv := newFake(t)
+	a := configured(t, srv, `,"other_zones":"example.org","console_hostname":"pando.example.org"`)
+	_, ok, err := a.Edge(context.Background(), api.EdgeRequest{Ref: "rte_cf", ProxyUpstream: upstream})
+	require.NoError(t, err)
+	require.True(t, ok)
+}
+
+func TestAnOtherZoneThatIsNotADomainIsNamed(t *testing.T) {
+	err := New().Configure(context.Background(), json.RawMessage(
+		`{"account_id":"`+account+`","zone":"example.com","other_zones":"example.org, localhost","credentials":{"api_token":"t"}}`))
+	require.ErrorContains(t, err, `"localhost" in other zones`)
+}
+
+func TestAnOtherZoneTheTokenCannotSeeFailsTheHealthCheck(t *testing.T) {
+	_, srv := newFake(t)
+	err := configured(t, srv, `,"other_zones":"example.net"`).HealthCheck(context.Background())
+	require.ErrorContains(t, err, "example.net")
+}
+
+func TestARecordOutsideEveryZoneIsRefused(t *testing.T) {
+	_, srv := newFake(t)
+	a := configured(t, srv, "")
+	err := a.ensureRecord(context.Background(), "x.other.net", "t")
+	require.ErrorContains(t, err, "is not in the Cloudflare zone example.com")
 }

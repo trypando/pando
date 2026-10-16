@@ -323,7 +323,7 @@
             {
               "key": "api_token",
               "label": "API token",
-              "help": "In Cloudflare, go to My Profile, API Tokens, Create Token, Create Custom Token. Permissions: Account / Cloudflare Tunnel / Edit; Zone / DNS / Edit; Zone / Zone / Read. Account Resources: your account. Zone Resources: the zone below. Pando uses it to create the tunnel and to point each app's hostname at it.",
+              "help": "In Cloudflare, go to My Profile, API Tokens, Create Token, Create Custom Token. Permissions: Account / Cloudflare Tunnel / Edit; Zone / DNS / Edit; Zone / Zone / Read. Account Resources: your account. Zone Resources: the zone below, and each of the other zones. Pando uses it to create the tunnel and to point each app's hostname at it.",
               "type": "string",
               "required": true,
               "credential": true
@@ -339,10 +339,17 @@
             {
               "key": "zone",
               "label": "Zone",
-              "help": "Your domain in Cloudflare. Apps are served at <app>.<zone>.",
+              "help": "Your domain in Cloudflare. New apps are served at <app>.<zone>.",
               "type": "string",
               "required": true,
               "placeholder": "example.com"
+            },
+            {
+              "key": "other_zones",
+              "label": "Other zones",
+              "help": "More of your domains in Cloudflare that apps can be named in, separated by commas. An app moves to one by changing its address; new apps still use the zone above.",
+              "type": "string",
+              "placeholder": "example.org, example.net"
             },
             {
               "key": "console_hostname",

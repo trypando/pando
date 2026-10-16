@@ -833,6 +833,14 @@ change beyond §4.4, which Traefik needed first.
   is the adapter's `RoutingCapabilities.BaseDomain`, which a new app's hostname is taken from ahead of
   the install's `server.base_domain` — the same way `DefaultMode` is, and for the same reason: an app
   named outside the zone is one the tunnel can only refuse.
+- **One default zone, any number of others.** `other_zones` lists further zones the same token and
+  tunnel serve (`bemeek.io` as the zone, `trypando.ai` beside it). The zone stays the default — a new
+  app is `<app>.<zone>` and the tunnel is still `pando-<zone>` — and an app moves into another zone by
+  changing its address, naming the zone as `domain`. Every zone is reported in
+  `RoutingCapabilities.Domains`, so a hostname in none of them is refused when it is chosen
+  (`core/address`) rather than when `Ensure` writes the route. Each DNS record is written in the
+  zone that holds its hostname, the longest when one zone sits inside another; the console hostname
+  may be in any of them. The one-level rule holds in each zone.
 - **There is no setting for a deeper base domain.** Cloudflare's included certificate covers `*.zone`
   and nothing below it, so `<app>.apps.bemeek.io` would have no HTTPS. An option whose only effect is
   that is a mistake the form would invite; it can come back with a setting that says the zone has

@@ -416,6 +416,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 
 	cmd.AddCommand(appIconCmd(client))
 	cmd.AddCommand(appIdleCmd(client))
+	cmd.AddCommand(appAddressCmd(client))
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "rename <app> <new-name>",

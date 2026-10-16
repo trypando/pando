@@ -13,6 +13,7 @@ package address
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -53,6 +54,12 @@ type Request struct {
 	Mode       spec.RoutingMode `json:"mode,omitempty"`
 	Hostname   string           `json:"hostname,omitempty"`
 	PathPrefix string           `json:"path_prefix,omitempty"`
+
+	// Domain is the domain a subdomain address is made in, when the adapter
+	// serves more than one: one of its Domains, such as a second Cloudflare
+	// zone. With no hostname the app is <slug>.<domain>; with a single label
+	// such as "docs" it is docs.<domain>. Empty is the adapter's base domain.
+	Domain string `json:"domain,omitempty"`
 }
 
 // Decision is a resolved routing change.
@@ -116,26 +123,21 @@ func (s *Service) Resolve(ctx context.Context, appID, slug string, current spec.
 	same := ref == current.AdapterRef && mode == current.Mode
 	switch mode {
 	case spec.RoutingSubdomain:
-		host := req.Hostname
-		if host == "" && same {
-			host = current.Hostname
-		}
-		if host == "" {
-			base := caps.BaseDomain
-			if base == "" {
-				base = s.BaseDomain
-			}
-			if base == "" {
-				return Decision{}, errs.New(errs.ValidInvalid, "This app needs a hostname, and there is no base domain to make one from.").
-					WithRemedy("Enter the hostname, such as notes.example.com.")
-			}
-			host = slug + "." + base
+		host, err := s.hostname(ref, slug, caps, req, current, same)
+		if err != nil {
+			return Decision{}, err
 		}
 		probe := spec.AppSpec{Routing: next}
 		if err := spec.SetHostname(&probe, host); err != nil {
 			return Decision{}, err
 		}
 		next.Hostname = probe.Routing.Hostname
+		if len(caps.Domains) > 0 && inDomain(next.Hostname, caps.Domains) == "" {
+			return Decision{}, errs.Newf(errs.ValidInvalid,
+				"%s isn't in a domain the %s routing adapter serves. It serves %s.",
+				next.Hostname, ref, strings.Join(caps.Domains, ", ")).
+				WithRemedy("Choose a hostname ending in one of those domains, or add the domain to the routing adapter's settings.")
+		}
 
 	case spec.RoutingPath:
 		// What was asked for, or the path the app already has, or its slug.
@@ -226,6 +228,7 @@ type Option struct {
 	Modes       []spec.RoutingMode `json:"modes"`
 	DefaultMode spec.RoutingMode   `json:"default_mode"`
 	BaseDomain  string             `json:"base_domain,omitempty"`
+	Domains     []string           `json:"domains,omitempty"`
 	IsDefault   bool               `json:"is_default"`
 }
 
@@ -251,9 +254,67 @@ func (s *Service) Options(ctx context.Context) []Option {
 			base = s.BaseDomain
 		}
 		out = append(out, Option{AdapterRef: ref, Modes: caps.Modes, DefaultMode: caps.DefaultMode,
-			BaseDomain: base, IsDefault: ref == def})
+			BaseDomain: base, Domains: caps.Domains, IsDefault: ref == def})
 	}
 	return out
+}
+
+// hostname is the hostname a subdomain address asks for: the one named, made
+// in the domain named, or the app's current one, or <slug>.<base domain>.
+func (s *Service) hostname(ref, slug string, caps api.RoutingCapabilities, req Request, current spec.Routing, same bool) (string, error) {
+	host := strings.TrimSpace(req.Hostname)
+	domain := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(req.Domain), "."))
+	if domain == "" {
+		if host == "" && same {
+			return current.Hostname, nil
+		}
+		if host != "" {
+			return host, nil
+		}
+		domain = caps.BaseDomain
+		if domain == "" {
+			domain = s.BaseDomain
+		}
+		if domain == "" {
+			return "", errs.New(errs.ValidInvalid, "This app needs a hostname, and there is no base domain to make one from.").
+				WithRemedy("Enter the hostname, such as notes.example.com.")
+		}
+		return slug + "." + domain, nil
+	}
+
+	served := caps.Domains
+	if len(served) == 0 && caps.BaseDomain != "" {
+		served = []string{caps.BaseDomain}
+	}
+	if len(served) > 0 && !slices.Contains(served, domain) {
+		return "", errs.Newf(errs.ValidInvalid, "The %s routing adapter doesn't serve the domain %s. It serves %s.",
+			ref, domain, strings.Join(served, ", ")).
+			WithRemedy("Choose one of those domains, or add " + domain + " to the routing adapter's settings.")
+	}
+	name := strings.ToLower(strings.TrimSuffix(host, "."))
+	switch {
+	case name == "":
+		return slug + "." + domain, nil
+	case !strings.Contains(name, "."):
+		// A single label, named in the domain.
+		return name + "." + domain, nil
+	case inDomain(name, []string{domain}) == "":
+		return "", errs.Newf(errs.ValidInvalid, "%s isn't in the domain %s.", host, domain).
+			WithRemedy("Give a hostname ending in " + domain + ", or only the name before it, such as " + slug + ".")
+	}
+	return host, nil
+}
+
+// inDomain is the longest of domains that host is, or is a name under; empty
+// when it is in none.
+func inDomain(host string, domains []string) string {
+	best := ""
+	for _, d := range domains {
+		if (host == d || strings.HasSuffix(host, "."+d)) && len(d) > len(best) {
+			best = d
+		}
+	}
+	return best
 }
 
 func (s *Service) routing(ref string) (api.RoutingAdapter, bool) {

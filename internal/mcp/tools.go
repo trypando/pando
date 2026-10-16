@@ -807,6 +807,53 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_get_address",
+		Description: "Where an app is reached: its routing (adapter, mode, hostname, path or port) and " +
+			"address, next_address when a change is saved and not yet deployed, and the routing adapters it " +
+			"could move to — each with the modes it serves, its default mode, base_domain, and domains: every " +
+			"domain a hostname can be in, such as each of a Cloudflare adapter's zones.",
+		Schema:  appIDSchema(),
+		request: appRequest("GET", "/routing"),
+	},
+	{
+		Name: "pando_set_address",
+		Description: "Change where a configured app is reached. Everything left out keeps what the app has, " +
+			"or takes the adapter's default when moving to another adapter. To put the app in another of the " +
+			"adapter's domains (from pando_get_address), give domain: alone it makes <slug>.<domain>, and with " +
+			"a hostname that is a single name such as docs it makes docs.<domain>. This writes a spec revision " +
+			"and does not deploy; the next deploy moves the app, and the old address stops working then. " +
+			"Without confirm: true it changes nothing and the error says what would move where — tell the " +
+			"person before confirming. A mode the adapter does not default to needs app.routing.override.",
+		Schema: schema(map[string]any{
+			"app_id":      str(appIDDescription),
+			"adapter_ref": str("The routing adapter, such as rte_cloudflare. Optional; the app's current one."),
+			"mode":        map[string]any{"type": "string", "enum": []string{"subdomain", "path", "port"}, "description": "How the app is addressed. Optional."},
+			"hostname":    str("With subdomain mode: the hostname, such as notes.example.com, or with domain a single name such as notes. Optional."),
+			"domain":      str("With subdomain mode: which of the adapter's domains the hostname is in, such as example.org. Optional; the adapter's base domain."),
+			"path_prefix": str("With path mode: the path, such as /team/notes. Optional."),
+			"confirm":     map[string]any{"type": "boolean", "description": "true to make the change. Left out, nothing changes and the reply says what would."},
+		}, "app_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			body := map[string]any{}
+			for _, key := range []string{"adapter_ref", "mode", "hostname", "domain", "path_prefix"} {
+				v, err := stringArg(args, key, false)
+				if err != nil {
+					return "", "", nil, err
+				}
+				if v != "" {
+					body[key] = v
+				}
+			}
+			confirm, _ := args["confirm"].(bool)
+			body["confirm"] = confirm
+			return "PUT", appPath(id, "/routing"), body, nil
+		},
+	},
+	{
 		Name: "pando_get_app_idle",
 		Description: "When Pando stops or deletes an app nobody uses: the app's own " +
 			"stop_days and delete_days (null is the installation's, 0 is never), the installation's, the ones " +

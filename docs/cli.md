@@ -234,6 +234,34 @@ pando app add <source-url> | --image <reference>
 | `--timeout` | `10m0s` | with --wait, how long to wait before giving up |
 | `--wait` |  | wait for detection to finish, as `pando app detection --wait` does |
 
+#### `app address`
+
+Show or change where an app is reached
+
+```
+pando app address <app>
+```
+
+With no flags, shows the app's routing and address, where it moves at the next deploy
+if a change is saved, and the routing adapters it could use with the domains each serves.
+
+With flags, changes it. A flag left out keeps what the app has, or takes the adapter's
+default when moving to another adapter. --domain puts the app in another of the
+adapter's domains, such as a second Cloudflare zone: alone it makes <app>.<domain>, and
+with --hostname docs it makes docs.<domain>.
+
+A change is saved as a spec revision and takes effect at the next deploy, when the old
+address stops working. Without --confirm nothing is changed and Pando says what would move.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--adapter` |  | the routing adapter, such as rte_cloudflare |
+| `--confirm` |  | make the change; without it Pando only says what would move |
+| `--domain` |  | with subdomain mode: which of the adapter's domains, such as trypando.ai |
+| `--hostname` |  | with subdomain mode: the hostname, or with --domain a single name such as docs |
+| `--mode` |  | subdomain, path or port |
+| `--path` |  | with path mode: the path, such as /team/notes |
+
 #### `app auto-deploy`
 
 Deploy an app automatically when its branch or releases change

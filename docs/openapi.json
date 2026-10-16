@@ -3566,7 +3566,7 @@
       "get": {
         "operationId": "getRouting",
         "summary": "Get routing",
-        "description": "Where the app is reached, where it will be after the next deploy when a change is saved (`next_address`), and the routing adapters it could move to, with the modes each serves and defaults to.\n\nNeeds `app.view`.",
+        "description": "Where the app is reached, where it will be after the next deploy when a change is saved (`next_address`), and the routing adapters it could move to, with the modes each serves and defaults to, and the `domains` a hostname can be in under each, such as every zone of a Cloudflare adapter.\n\nNeeds `app.view`.",
         "tags": [
           "Configuration"
         ],
@@ -3626,6 +3626,12 @@
                           "base_domain": {
                             "type": "string"
                           },
+                          "domains": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
                           "is_default": {
                             "type": "boolean"
                           },
@@ -3661,7 +3667,7 @@
       "put": {
         "operationId": "setRouting",
         "summary": "Change routing",
-        "description": "Change where a configured app is reached: `adapter_ref`, `mode`, and `hostname` or `path_prefix` (such as `/team/notes`), each defaulting to the adapter's own. Writes a revision the next deploy ships. A change needs `confirm: true`, since the old address stops working; a mode the adapter does not default to also needs app.routing.override. An address another app holds, or a path inside or around another app's, is refused with STATE_ADDRESS_TAKEN.\n\nNeeds `app.spec.edit`.",
+        "description": "Change where a configured app is reached: `adapter_ref`, `mode`, and `hostname` or `path_prefix` (such as `/team/notes`), each defaulting to the adapter's own. `domain` picks one of the adapter's `domains`: alone it makes `<slug>.<domain>`, and with a single-label `hostname` such as `docs` it makes `docs.<domain>`; a hostname outside every domain is refused. Writes a revision the next deploy ships. A change needs `confirm: true`, since the old address stops working; a mode the adapter does not default to also needs app.routing.override. An address another app holds, or a path inside or around another app's, is refused with STATE_ADDRESS_TAKEN.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Configuration"
         ],
@@ -3691,6 +3697,9 @@
                     "type": "string"
                   },
                   "path_prefix": {
+                    "type": "string"
+                  },
+                  "domain": {
                     "type": "string"
                   },
                   "confirm": {

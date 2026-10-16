@@ -19,16 +19,8 @@ import { Banner, Button, Dialog, Input, Radio, Select } from '@design';
 import { api } from '@api/client';
 import type { App, Routing } from '@api/types.gen';
 import { messageOf } from '../install/Accounts';
+import { endingIn, type RoutingOption } from './routingOption';
 import { AppVerb, useCan } from './verbs';
-
-interface RoutingOption {
-  adapter_ref: string;
-  name: string;
-  modes: string[];
-  default_mode: string;
-  base_domain?: string;
-  is_default: boolean;
-}
 
 interface RoutingView {
   routing: Routing;
@@ -238,7 +230,7 @@ function ChangeAddress({ app, view, onClose }: { app: App; view: RoutingView; on
             spellCheck={false}
             value={hostname}
             placeholder={option?.base_domain ? `${app.slug}.${option.base_domain}` : 'notes.example.com'}
-            helper={option?.base_domain ? `A name ending in ${option.base_domain}.` : undefined}
+            helper={endingIn(option)}
             onChange={(e) => setHostname(e.target.value)}
           />
         )}

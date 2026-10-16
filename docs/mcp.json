@@ -485,6 +485,22 @@
       }
     },
     {
+      "name": "pando_get_address",
+      "description": "Where an app is reached: its routing (adapter, mode, hostname, path or port) and address, next_address when a change is saved and not yet deployed, and the routing adapters it could move to — each with the modes it serves, its default mode, base_domain, and domains: every domain a hostname can be in, such as each of a Cloudflare adapter's zones.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_get_app",
       "description": "Get one app: its name, source, state and pinned spec. Once the app has been through detection, `detection` says where that has got to — `status`, and `stage` while it is running — which is why an app in draft is still in draft.",
       "input_schema": {
@@ -1315,6 +1331,51 @@
         "required": [
           "app_id",
           "message"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_set_address",
+      "description": "Change where a configured app is reached. Everything left out keeps what the app has, or takes the adapter's default when moving to another adapter. To put the app in another of the adapter's domains (from pando_get_address), give domain: alone it makes <slug>.<domain>, and with a hostname that is a single name such as docs it makes docs.<domain>. This writes a spec revision and does not deploy; the next deploy moves the app, and the old address stops working then. Without confirm: true it changes nothing and the error says what would move where — tell the person before confirming. A mode the adapter does not default to needs app.routing.override.",
+      "input_schema": {
+        "properties": {
+          "adapter_ref": {
+            "description": "The routing adapter, such as rte_cloudflare. Optional; the app's current one.",
+            "type": "string"
+          },
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "confirm": {
+            "description": "true to make the change. Left out, nothing changes and the reply says what would.",
+            "type": "boolean"
+          },
+          "domain": {
+            "description": "With subdomain mode: which of the adapter's domains the hostname is in, such as example.org. Optional; the adapter's base domain.",
+            "type": "string"
+          },
+          "hostname": {
+            "description": "With subdomain mode: the hostname, such as notes.example.com, or with domain a single name such as notes. Optional.",
+            "type": "string"
+          },
+          "mode": {
+            "description": "How the app is addressed. Optional.",
+            "enum": [
+              "subdomain",
+              "path",
+              "port"
+            ],
+            "type": "string"
+          },
+          "path_prefix": {
+            "description": "With path mode: the path, such as /team/notes. Optional.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
         ],
         "type": "object"
       }

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -47,6 +48,12 @@ type Config struct {
 	// covers *.zone and nothing below it, so a deeper name would have no
 	// HTTPS. There is deliberately no setting for one.
 	Zone string `json:"zone"`
+
+	// OtherZones are further Cloudflare zones apps can be named in, separated
+	// by commas, such as "trypando.ai, example.org". Zone stays the default: a
+	// new app is <app>.<zone>, and is moved into another zone by changing its
+	// address. The same one-level rule holds in each.
+	OtherZones string `json:"other_zones,omitempty"`
 
 	// ConsoleHostname is where the console is served, and the host path-mode
 	// apps are served under. Empty is the zone itself.
@@ -78,9 +85,14 @@ type Adapter struct {
 	// two deploys writing it at once would each drop the other's rule.
 	mu sync.Mutex
 
-	// Found once and kept: the zone, the tunnel. Guarded by mu.
-	zoneID   string
+	// zones are every zone apps can be named in, the default first.
+	zones []string
+
+	// Found once and kept: the tunnel, guarded by mu, and each zone's ID,
+	// guarded by zmu — HealthCheck looks zones up without holding mu.
 	tunnelID string
+	zmu      sync.Mutex
+	zoneIDs  map[string]string
 }
 
 func New() *Adapter { return &Adapter{} }
@@ -112,7 +124,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		}
 	}
 
-	cfg.Zone = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(cfg.Zone), "."))
+	cfg.Zone = normalizeZone(cfg.Zone)
 	cfg.ConsoleHostname = strings.ToLower(strings.TrimSpace(cfg.ConsoleHostname))
 
 	switch {
@@ -126,11 +138,21 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	case cfg.TunnelID != "" && !uuidPattern.MatchString(cfg.TunnelID):
 		return errs.Newf(errs.ValidInvalid, "%q is not a Cloudflare tunnel ID. A tunnel ID looks like 6ff42ae2-765d-4adf-8112-31c55c1551ef.", cfg.TunnelID)
 	}
+	zones := []string{cfg.Zone}
+	for _, z := range strings.FieldsFunc(cfg.OtherZones, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' }) {
+		z = normalizeZone(z)
+		if !strings.Contains(z, ".") {
+			return errs.Newf(errs.ValidInvalid, "%q in other zones is not a Cloudflare zone. A zone is a domain such as example.org.", z)
+		}
+		if !slices.Contains(zones, z) {
+			zones = append(zones, z)
+		}
+	}
 	if cfg.ConsoleHostname == "" {
 		cfg.ConsoleHostname = cfg.Zone
 	}
-	if !within(cfg.ConsoleHostname, cfg.Zone) {
-		return errs.Newf(errs.ValidInvalid, "The console hostname %s is not in the Cloudflare zone %s.", cfg.ConsoleHostname, cfg.Zone)
+	if zoneOf(cfg.ConsoleHostname, zones) == "" {
+		return errs.Newf(errs.ValidInvalid, "The console hostname %s is not in the Cloudflare zone %s.", cfg.ConsoleHostname, strings.Join(zones, " or "))
 	}
 	if cfg.Image == "" {
 		cfg.Image = DefaultImage
@@ -138,14 +160,22 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 
 	a.config = cfg
 	a.api = newClient(cfg.APIBase, cfg.Credentials.APIToken)
-	a.zoneID, a.tunnelID = "", cfg.TunnelID
+	a.zones = zones
+	a.tunnelID = cfg.TunnelID
+	a.zmu.Lock()
+	a.zoneIDs = map[string]string{}
+	a.zmu.Unlock()
 	return nil
 }
 
-// HealthCheck asks Cloudflare whether the token can see the zone.
+// HealthCheck asks Cloudflare whether the token can see every zone.
 func (a *Adapter) HealthCheck(ctx context.Context) error {
-	_, err := a.zone(ctx)
-	return err
+	for _, z := range a.zones {
+		if _, err := a.zoneID(ctx, z); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Capabilities: subdomain by default, path under the console hostname (R-164).
@@ -157,6 +187,7 @@ func (a *Adapter) Capabilities(context.Context) (api.RoutingCapabilities, error)
 		Modes:               []api.RoutingMode{spec.RoutingSubdomain, spec.RoutingPath},
 		DefaultMode:         spec.RoutingSubdomain,
 		BaseDomain:          a.config.Zone,
+		Domains:             slices.Clone(a.zones),
 		SupportsTLS:         true,
 		SupportsWildcardTLS: true,
 
@@ -401,10 +432,10 @@ func (a *Adapter) rule(r api.RouteRequest) (ingressRule, error) {
 		if host == "" {
 			return ingressRule{}, errs.New(errs.AdapterFailed, "This app has no hostname to route.")
 		}
-		if !within(host, a.config.Zone) {
+		if zoneOf(host, a.zones) == "" {
 			return ingressRule{}, errs.Newf(errs.AdapterFailed,
-				"This app's hostname, %s, is not in the Cloudflare zone %s, so the tunnel cannot serve it.", host, a.config.Zone).
-				WithRemedy("Set the app's hostname to one ending in " + a.config.Zone + ".")
+				"This app's hostname, %s, is not in the Cloudflare zone %s, so the tunnel cannot serve it.", host, strings.Join(a.zones, " or ")).
+				WithRemedy("Set the app's hostname to one ending in " + strings.Join(a.zones, " or ") + ", or add its zone to this adapter's other zones.")
 		}
 		return ingressRule{Hostname: host, Service: r.ProxyUpstream}, nil
 
@@ -435,22 +466,39 @@ func (a *Adapter) rule(r api.RouteRequest) (ingressRule, error) {
 
 // --- DNS ---------------------------------------------------------------------
 
-func (a *Adapter) zone(ctx context.Context) (string, error) {
-	if a.zoneID != "" {
-		return a.zoneID, nil
+// zoneID is a zone's ID, looked up by name once.
+func (a *Adapter) zoneID(ctx context.Context, name string) (string, error) {
+	a.zmu.Lock()
+	id := a.zoneIDs[name]
+	a.zmu.Unlock()
+	if id != "" {
+		return id, nil
 	}
-	z, err := a.api.zoneByName(ctx, a.config.Zone)
+	z, err := a.api.zoneByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
-	a.zoneID = z.ID
+	a.zmu.Lock()
+	a.zoneIDs[name] = z.ID
+	a.zmu.Unlock()
 	return z.ID, nil
+}
+
+// zoneFor is the ID of the zone a hostname's DNS record lives in.
+func (a *Adapter) zoneFor(ctx context.Context, host string) (string, error) {
+	z := zoneOf(host, a.zones)
+	if z == "" {
+		return "", errs.Newf(errs.AdapterFailed, "%s is not in the Cloudflare zone %s, so Pando cannot point it at the tunnel.",
+			host, strings.Join(a.zones, " or ")).
+			WithRemedy("Use a hostname in one of those zones, or add its zone to this adapter's other zones.")
+	}
+	return a.zoneID(ctx, z)
 }
 
 // ensureRecord points a hostname at the tunnel. A record Pando did not make is
 // never changed: the name is somebody else's, and the error says so.
 func (a *Adapter) ensureRecord(ctx context.Context, host, tunnelID string) error {
-	zoneID, err := a.zone(ctx)
+	zoneID, err := a.zoneFor(ctx, host)
 	if err != nil {
 		return err
 	}
@@ -482,7 +530,7 @@ func (a *Adapter) ensureRecord(ctx context.Context, host, tunnelID string) error
 }
 
 func (a *Adapter) removeRecord(ctx context.Context, host string) error {
-	zoneID, err := a.zone(ctx)
+	zoneID, err := a.zoneFor(ctx, host)
 	if err != nil {
 		return err
 	}
@@ -506,6 +554,23 @@ func (a *Adapter) removeRecord(ctx context.Context, host string) error {
 // within reports whether host is zone or a name under it.
 func within(host, zone string) bool {
 	return host == zone || strings.HasSuffix(host, "."+zone)
+}
+
+// zoneOf is the zone host is named in: the longest that holds it, since one
+// zone can sit inside another (dev.example.com beside example.com). Empty
+// when none does.
+func zoneOf(host string, zones []string) string {
+	best := ""
+	for _, z := range zones {
+		if within(host, z) && len(z) > len(best) {
+			best = z
+		}
+	}
+	return best
+}
+
+func normalizeZone(z string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(z), "."))
 }
 
 // handleOf and parseHandle carry a rule's identity in the route handle.
@@ -537,12 +602,12 @@ const tokenPermissions = "Account / Cloudflare Tunnel / Edit; Zone / DNS / Edit;
 
 const tokenHelp = "In Cloudflare, go to My Profile, API Tokens, Create Token, Create Custom Token. " +
 	"Permissions: " + tokenPermissions + ". " +
-	"Account Resources: your account. Zone Resources: the zone below. " +
+	"Account Resources: your account. Zone Resources: the zone below, and each of the other zones. " +
 	"Pando uses it to create the tunnel and to point each app's hostname at it."
 
 // tokenRemedy is what a refused or missing token's error says to do.
 const tokenRemedy = "Create a custom API token in Cloudflare with these permissions: " + tokenPermissions +
-	", for your account and the zone. Set it as this adapter's API token."
+	", for your account and each zone apps are named in. Set it as this adapter's API token."
 
 // Info describes this kind of adapter for the forms that configure one
 // (api.KindInfo, R-261).
@@ -559,7 +624,10 @@ func Info() api.KindInfo {
 			{Key: "account_id", Label: "Account ID", Type: "string", Required: true,
 				Help: "Shown on the account's overview page in Cloudflare's dashboard.", Placeholder: "0123456789abcdef0123456789abcdef"},
 			{Key: "zone", Label: "Zone", Type: "string", Required: true,
-				Help: "Your domain in Cloudflare. Apps are served at <app>.<zone>.", Placeholder: "example.com"},
+				Help: "Your domain in Cloudflare. New apps are served at <app>.<zone>.", Placeholder: "example.com"},
+			{Key: "other_zones", Label: "Other zones", Type: "string",
+				Help:        "More of your domains in Cloudflare that apps can be named in, separated by commas. An app moves to one by changing its address; new apps still use the zone above.",
+				Placeholder: "example.org, example.net"},
 			{Key: "console_hostname", Label: "Console hostname", Type: "string",
 				Help: "Where the console is served, and the hostname apps on a path are served under. Empty is the zone itself.", Placeholder: "pando.example.com"},
 			{Key: "tunnel_id", Label: "Existing tunnel", Type: "string",
