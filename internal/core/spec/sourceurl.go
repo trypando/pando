@@ -12,7 +12,12 @@ import (
 // an optional user, a host, a colon, and a path that does not start with a
 // slash-slash. The host has no slash in it, which is what tells it from a
 // local path with a colon later on.
-var scpLike = regexp.MustCompile(`^(?:[^@/\s]+@)?[^@/:\s]+:[^/\s].*$`)
+var scpLike = regexp.MustCompile(`^(?:[^@/:\s]+@)?[^@/:\s]+:[^/\s].*$`)
+
+// scpUser is the user go-git reads from the shorthand: everything before the
+// first @, when a host and a colon follow it. A colon in it is user:token@host,
+// a credential, which go-git would send.
+var scpUser = regexp.MustCompile(`^([^@]+)@[^:\s]+:`)
 
 // CheckSourceURL refuses a repository address Pando will not fetch, said when
 // a person gives it rather than when detection fails (R-092; 2026-10-16
@@ -34,6 +39,9 @@ func CheckSourceURL(src Source) error {
 	raw := strings.TrimSpace(src.URL)
 
 	if !strings.Contains(raw, "://") {
+		if m := scpUser.FindStringSubmatch(raw); m != nil && strings.Contains(m[1], ":") {
+			return credentialInURL()
+		}
 		if scpLike.MatchString(raw) && !windowsPath(raw) {
 			return nil
 		}

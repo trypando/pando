@@ -12,7 +12,9 @@ import (
 	"testing"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
+	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
@@ -198,7 +200,7 @@ func TestR092_EverySessionIsGuarded(t *testing.T) {
 	forge, err := transport.NewEndpoint("https://203.0.113.7/team/app.git")
 	require.NoError(t, err)
 
-	g := guarded{stubTransport{}, 443}
+	g := guarded{Transport: stubTransport{}, defaultPort: 443}
 	_, err = g.NewReceivePackSession(metadata, nil)
 	require.ErrorIs(t, err, errRefusedAddress)
 	_, err = g.NewReceivePackSession(forge, nil)
@@ -217,6 +219,50 @@ func TestR092_EverySessionIsGuarded(t *testing.T) {
 	localRepositories.Store(true)
 	_, err = l.NewReceivePackSession(forge, nil)
 	require.NoError(t, err)
+}
+
+// recording keeps the endpoint it was asked to open a session to.
+type recording struct {
+	stubTransport
+	got *transport.Endpoint
+}
+
+func (r *recording) NewUploadPackSession(ep *transport.Endpoint, _ transport.AuthMethod) (transport.UploadPackSession, error) {
+	r.got = ep
+	return nil, nil
+}
+
+// TestR092_AnSSHFetchIsCheckedOnTheSocket asserts that SSH is held to the
+// same check as HTTP on the connection itself, not only on a lookup made
+// before it: go-git's SSH transport dials through the guarded dialer, so a
+// name that resolves somewhere refused by the time it is dialed gets nowhere.
+func TestR092_AnSSHFetchIsCheckedOnTheSocket(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	port := uint16(ln.Addr().(*net.TCPAddr).Port) //nolint:gosec // G115: a listener's port
+	withGuard(t, Guard{OwnPorts: []uint16{port}})
+
+	// The SSH endpoint reaches go-git pointed at the guarded dialer, and the
+	// caller's endpoint is left as it was.
+	ep, err := transport.NewEndpoint("ssh://git@203.0.113.7/team/app.git")
+	require.NoError(t, err)
+	rec := &recording{}
+	_, err = guarded{Transport: rec, defaultPort: 22, viaGuardedDialer: true}.NewUploadPackSession(ep, nil)
+	require.NoError(t, err)
+	require.Equal(t, guardedDialScheme+"://dial", rec.got.Proxy.URL)
+	require.Empty(t, ep.Proxy.URL)
+
+	// go-git's own SSH client, given that endpoint and no check before it,
+	// is refused at the dial: the socket is where the guard holds.
+	target, err := transport.NewEndpoint("ssh://git@127.0.0.1:" + strconv.Itoa(int(port)) + "/team/app.git")
+	require.NoError(t, err)
+	target.Proxy = transport.ProxyOptions{URL: guardedDialScheme + "://dial"}
+	auth := &gitssh.Password{User: "git", Password: "x"}
+	auth.HostKeyCallback = ssh.InsecureIgnoreHostKey() //nolint:gosec // G106: never reaches a handshake
+	_, err = gitssh.DefaultClient.NewUploadPackSession(target, auth)
+	require.Error(t, err)
+	require.ErrorContains(t, accessError(err, target.String(), ""), "did not connect")
 }
 
 func TestCheckHostLetsAnUnresolvableNameThroughToGoGit(t *testing.T) {

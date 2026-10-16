@@ -21,6 +21,7 @@ func TestR092_OnlyHTTPSHTTPAndSSHAddressesAreFetched(t *testing.T) {
 		"ssh://git@git.example.com:2222/team/app.git",
 		"git@github.com:team/app.git",
 		"github.com:team/app.git",
+		"github.com:team/app@v2.git",
 		"  https://github.com/team/app.git  ",
 	} {
 		require.NoError(t, spec.CheckSourceURL(spec.Source{Type: spec.SourceGit, URL: ok}), ok)
@@ -55,6 +56,7 @@ func TestR190_ARepositoryAddressCarryingACredentialIsRefused(t *testing.T) {
 		"https://user:hunter2@github.com/team/app.git":       "hunter2",
 		"http://oauth2:tok_9z8y@gitea.internal/team/app.git": "tok_9z8y",
 		"ssh://git:s3cr3t@git.example.com/team/app.git":      "s3cr3t",
+		"git:tok_scp1@github.com:team/app.git":               "tok_scp1",
 	} {
 		err := spec.CheckSourceURL(spec.Source{Type: spec.SourceGit, URL: bad})
 		require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), bad)

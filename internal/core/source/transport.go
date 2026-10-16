@@ -4,8 +4,11 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/url"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/net/proxy"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
@@ -33,12 +36,8 @@ import (
 // guard on the address dialed (guard.go).
 var gitHTTPClient = &http.Client{
 	Transport: &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:        30 * time.Second,
-			KeepAlive:      30 * time.Second,
-			ControlContext: guardedControl,
-		}).DialContext,
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           guardedDialer.DialContext,
 		ForceAttemptHTTP2:     true,
 		TLSHandshakeTimeout:   30 * time.Second,
 		ResponseHeaderTimeout: 2 * time.Minute,
@@ -59,9 +58,18 @@ var gitHTTPClient = &http.Client{
 // no address that slipped past it can use them.
 func init() {
 	c := githttp.NewClient(gitHTTPClient)
-	client.InstallProtocol("https", guarded{c, 443})
-	client.InstallProtocol("http", guarded{c, 80})
-	client.InstallProtocol("ssh", guarded{gitssh.DefaultClient, 22})
+	client.InstallProtocol("https", guarded{Transport: c, defaultPort: 443})
+	client.InstallProtocol("http", guarded{Transport: c, defaultPort: 80})
+	client.InstallProtocol("ssh", guarded{Transport: gitssh.DefaultClient, defaultPort: 22, viaGuardedDialer: true})
+
+	// go-git's SSH transport takes no dialer, but it does dial through an
+	// endpoint's proxy URL with golang.org/x/net/proxy, whose schemes a
+	// program may add to. This one is the guarded dialer itself, so an SSH
+	// connection is checked on the socket exactly as an HTTP one is —
+	// including an address an ssh_config Hostname alias points it at.
+	proxy.RegisterDialerType(guardedDialScheme, func(*url.URL, proxy.Dialer) (proxy.Dialer, error) {
+		return guardedDialer, nil
+	})
 	for scheme := range client.Protocols {
 		switch scheme {
 		case "https", "http", "ssh":
@@ -97,13 +105,37 @@ func (l localOnly) NewReceivePackSession(ep *transport.Endpoint, auth transport.
 	return l.Transport.NewReceivePackSession(ep, auth)
 }
 
+// guardedDialScheme names the guarded dialer as a proxy URL go-git's SSH
+// transport dials through. Not a proxy anyone runs: the "proxy" is the dial.
+const guardedDialScheme = "pando-guarded"
+
+// guardedDialer is the dialer every repository connection is made with, HTTP
+// and SSH alike: the guard is checked on the address dialed (guard.go).
+var guardedDialer = &net.Dialer{
+	Timeout:        30 * time.Second,
+	KeepAlive:      30 * time.Second,
+	ControlContext: guardedControl,
+}
+
 // guarded checks the endpoint's host against the guard before a session is
-// opened: the readable refusal, and for SSH the only check there is before the
-// dial (guard.go's checkHost says why that is enough). HTTP is checked again
-// on every connection it dials.
+// opened, which is the readable refusal; the dial is checked again on the
+// socket. For SSH, viaGuardedDialer points the endpoint at the guarded
+// dialer, since that is the only way into go-git's SSH dial.
 type guarded struct {
 	transport.Transport
-	defaultPort int
+	defaultPort      int
+	viaGuardedDialer bool
+}
+
+// endpoint is ep as the inner transport is given it. Pando sets no SSH proxy
+// of its own, so the guarded dialer always takes the proxy's place.
+func (g guarded) endpoint(ep *transport.Endpoint) *transport.Endpoint {
+	if !g.viaGuardedDialer {
+		return ep
+	}
+	e := *ep
+	e.Proxy = transport.ProxyOptions{URL: guardedDialScheme + "://dial"}
+	return &e
 }
 
 // sessionCheckTimeout bounds the lookup made before a session opens: go-git
@@ -120,12 +152,12 @@ func (g guarded) NewUploadPackSession(ep *transport.Endpoint, auth transport.Aut
 	if err := g.check(ep); err != nil {
 		return nil, err
 	}
-	return g.Transport.NewUploadPackSession(ep, auth)
+	return g.Transport.NewUploadPackSession(g.endpoint(ep), auth)
 }
 
 func (g guarded) NewReceivePackSession(ep *transport.Endpoint, auth transport.AuthMethod) (transport.ReceivePackSession, error) {
 	if err := g.check(ep); err != nil {
 		return nil, err
 	}
-	return g.Transport.NewReceivePackSession(ep, auth)
+	return g.Transport.NewReceivePackSession(g.endpoint(ep), auth)
 }

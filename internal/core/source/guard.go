@@ -156,10 +156,10 @@ func guardedControl(ctx context.Context, _, address string, _ syscall.RawConn) e
 	return guard.Load().check(ctx, ap)
 }
 
-// checkHost resolves host and refuses it when any address it has is refused.
-// For SSH, whose dialer go-git does not let Pando replace: the address is
-// checked here just before go-git dials, and the pinned host key go-git then
-// requires is what keeps a name re-pointed in between from being talked to.
+// checkHost resolves host and refuses it when any address it has is refused,
+// before a session opens, so the refusal is said in words. It is not what
+// enforces the guard: every dial, HTTP and SSH, is checked again on the
+// socket by guardedDialer, which is what a name re-pointed in between meets.
 func checkHost(ctx context.Context, host string, port int) error {
 	// A name that does not resolve leaves nothing to check: not reachable is
 	// go-git's to report, in its own words.
