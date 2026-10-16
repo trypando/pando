@@ -426,6 +426,7 @@ func serve(ctx context.Context, configPath string) error {
 		Flows:       state.NewSSOFlows(db),
 		SCIMUsers:   state.NewSCIMUsers(db),
 		SCIMGroups:  state.NewSCIMGroups(db),
+		Grants:      grants,
 		Policy:      policyStore,
 		Local:       identity,
 		Kinds:       identityKinds(),

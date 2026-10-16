@@ -330,6 +330,18 @@ func (s *Server) handleVerifyBackup(w http.ResponseWriter, r *http.Request) {
 // half-succeeds must still be recorded as attempted — the same ordering exec
 // uses for the same reason.
 func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
+	// A restore replaces every grant in the installation with the backup's,
+	// so it would let anyone who may restore become whoever they were when it
+	// was taken (R-080a). Taking and verifying a backup stay
+	// install.backup.manage. Asked before the backup is looked up, so someone
+	// who may not restore learns nothing about which backups exist.
+	if caller := PrincipalFrom(r.Context()); caller.Kind != authz.KindAnonymous {
+		if err := s.Authz.CheckHoldsEveryInstallVerb(r.Context(), caller, "restore this installation from a backup",
+			"a restore replaces every permission in the installation with the ones the backup holds"); err != nil {
+			Error(w, r, err)
+			return
+		}
+	}
 	p, rec, ok := s.requireBackup(w, r)
 	if !ok {
 		return

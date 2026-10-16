@@ -568,6 +568,25 @@ func (g *Grants) RevokeInstall(ctx context.Context, kind, principalID string) er
 // installation-wide.
 const errReadInstallAccess = "Could not read installation-wide access."
 
+// InstallRoleOf returns the role of the installation-wide grant made to this
+// principal itself, if there is one — for a group, what everyone in it holds
+// through it (R-078), which is what changing its membership hands on (R-080a).
+func (g *Grants) InstallRoleOf(ctx context.Context, kind, principalID string) (string, bool, error) {
+	var roleID string
+	err := g.db.QueryRow(ctx, `
+		SELECT coalesce(role_id, '')
+		FROM grants
+		WHERE app_id IS NULL AND plane = 'control'
+		  AND principal_kind = $1 AND principal_id = $2`, kind, principalID).Scan(&roleID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, errs.Wrap(errs.Internal, errReadInstallAccess, err)
+	}
+	return roleID, roleID != "", nil
+}
+
 // InstallRolesByPrincipal maps each principal holding an install grant to its
 // role ID — the grant made to that principal itself, for the groups list. An
 // account's roles, through its groups too, are InstallRolesForUsers.

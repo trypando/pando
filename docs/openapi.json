@@ -206,7 +206,7 @@
       "post": {
         "operationId": "createAdapter",
         "summary": "Configure an adapter",
-        "description": "Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. A source connection (category `source`) and an image registry (category `image_registry`) are used from the moment they are saved, with no restart; an image registry Pando could not push to is refused before it is saved. An audit sink (category `audit_sink`) is used from the next delivery pass too, is refused when its settings are, and needs `install.audit.export` as well, because it sends the audit log off the installation. `is_default` makes it the default of its category in place of the current one, in one step: `replaced_default` names the adapter that stopped being the default, and `handover` says what that changes.\n\nNeeds `install.adapters.manage`.",
+        "description": "Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. A source connection (category `source`) and an image registry (category `image_registry`) are used from the moment they are saved, with no restart; an image registry Pando could not push to is refused before it is saved. An audit sink (category `audit_sink`) is used from the next delivery pass too, is refused when its settings are, and needs `install.audit.export` as well, because it sends the audit log off the installation. `is_default` makes it the default of its category in place of the current one, in one step: `replaced_default` names the adapter that stopped being the default, and `handover` says what that changes. Through the API, an adapter's `*_env` setting may name only its kind's default variable, and an adapter that would read its key from Pando's environment may not be pointed at another `base_url` without a stored key.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Installation"
         ],
@@ -5889,7 +5889,7 @@
       "post": {
         "operationId": "restoreBackup",
         "summary": "Restore from a backup",
-        "description": "Restore from a backup. Verified first: an incomplete one is refused rather than half-applied.\n\nNeeds `install.backup.manage`.",
+        "description": "Restore from a backup. Verified first: an incomplete one is refused rather than half-applied. Needs every installation permission, because a restore replaces every grant with the backup's.\n\nNeeds `install.backup.manage`.",
         "tags": [
           "Installation"
         ],
@@ -6494,7 +6494,7 @@
       "delete": {
         "operationId": "deleteGroup",
         "summary": "Delete a group",
-        "description": "Delete a group. Everything shared with it goes with it: its members lose that access and keep anything given to them another way. Refused if it would leave nobody who can manage accounts.\n\nNeeds `install.users.manage`.",
+        "description": "Delete a group. Everything shared with it goes with it: its members lose that access and keep anything given to them another way. Refused if it would leave nobody who can manage accounts. Refused unless the caller holds every installation permission the group's role carries.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6728,7 +6728,7 @@
       "delete": {
         "operationId": "unlinkGroup",
         "summary": "Unlink a synced group",
-        "description": "Remove such a link. Refused when it would leave nobody who can manage accounts.\n\nNeeds `install.users.manage`.",
+        "description": "Remove such a link. Refused when it would leave nobody who can manage accounts. Refused unless the caller holds every installation permission the group's role carries.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6763,7 +6763,7 @@
       "put": {
         "operationId": "linkGroup",
         "summary": "Link a synced group",
-        "description": "Make everyone in a group an identity provider syncs count as a member of a group made in Pando, live.\n\nNeeds `install.users.manage`.",
+        "description": "Make everyone in a group an identity provider syncs count as a member of a group made in Pando, live. Refused unless the caller holds every installation permission the group's role carries.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6892,7 +6892,7 @@
       "put": {
         "operationId": "setGroupMembers",
         "summary": "Set group members",
-        "description": "Set a group's members.\n\nNeeds `install.users.manage`.",
+        "description": "Set a group's members. Refused unless the caller holds every installation permission the group's role carries.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6944,7 +6944,7 @@
       "delete": {
         "operationId": "removeGroupMember",
         "summary": "Remove a group member",
-        "description": "Remove one account from a group. Refused when it would leave nobody who can manage accounts.\n\nNeeds `install.users.manage`.",
+        "description": "Remove one account from a group. Refused when it would leave nobody who can manage accounts. Refused unless the caller holds every installation permission the group's role carries.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -6979,7 +6979,7 @@
       "put": {
         "operationId": "addGroupMember",
         "summary": "Add a group member",
-        "description": "Add one account to a group. It then holds everything the group holds.\n\nNeeds `install.users.manage`.",
+        "description": "Add one account to a group. It then holds everything the group holds. Refused unless the caller holds every installation permission the group's role carries.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -7016,7 +7016,7 @@
       "delete": {
         "operationId": "deleteGroupRole",
         "summary": "Remove a group's role",
-        "description": "Take a group's installation role away. Refused when it would leave nobody who can manage accounts.\n\nNeeds `install.users.manage`.",
+        "description": "Take a group's installation role away. Refused when it would leave nobody who can manage accounts. Refused unless the caller holds every installation permission the group's role carries.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -7043,7 +7043,7 @@
       "put": {
         "operationId": "putGroupRole",
         "summary": "Set a group's role",
-        "description": "Give a group an installation role (`role_id`), which everyone in it holds.\n\nNeeds `install.users.manage`.",
+        "description": "Give a group an installation role (`role_id`), which everyone in it holds. Refused unless the caller holds every installation permission the role carries. So does replacing the group's current role.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -7144,7 +7144,7 @@
       "post": {
         "operationId": "createIdentityProvider",
         "summary": "Add an identity provider",
-        "description": "Add an identity provider: `kind` (oidc or saml), `name`, `config`, write-only `credentials`, `jit_provisioning`, `link_by_email`. Off until `enabled` is set, so it can be tested first.\n\nNeeds `install.adapters.manage`.",
+        "description": "Add an identity provider: `kind` (oidc or saml), `name`, `config`, write-only `credentials`, `jit_provisioning`, `link_by_email`. Off until `enabled` is set, so it can be tested first. Needs every installation permission, because a provider decides who signs in as which account.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
         ],
@@ -7240,7 +7240,7 @@
       "patch": {
         "operationId": "patchIdentityProvider",
         "summary": "Update an identity provider",
-        "description": "Change an identity provider. `config` replaces the settings whole; each `credentials` field replaces that one, and an empty value removes it. Takes effect on the next sign-in, without a restart.\n\nNeeds `install.adapters.manage`.",
+        "description": "Change an identity provider. `config` replaces the settings whole; each `credentials` field replaces that one, and an empty value removes it. Takes effect on the next sign-in, without a restart. Needs every installation permission, because a provider decides who signs in as which account.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
         ],
@@ -7362,7 +7362,7 @@
       "post": {
         "operationId": "rotateSCIMToken",
         "summary": "Turn on SCIM",
-        "description": "Turn SCIM on for a provider, or replace its token. The token is in this response and never again. With SCIM on, the provider's pushes create and suspend accounts and set its groups' members at once.\n\nNeeds `install.adapters.manage`.",
+        "description": "Turn SCIM on for a provider, or replace its token. The token is in this response and never again. With SCIM on, the provider's pushes create and suspend accounts and set its groups' members at once. Needs every installation permission, because a provider decides who signs in as which account.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
         ],
@@ -8415,7 +8415,7 @@
       "post": {
         "operationId": "createRole",
         "summary": "Create a role",
-        "description": "Compose a custom role from verbs.\n\nNeeds `install.users.manage`.",
+        "description": "Compose a custom role from verbs. An installation role may carry only installation permissions the caller holds.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -8472,7 +8472,7 @@
       "delete": {
         "operationId": "deleteRole",
         "summary": "Delete a role",
-        "description": "Delete a custom role, and every grant of it: whoever held it loses what it allowed. Built-in roles cannot be deleted. Refused if it would leave nobody who can manage accounts.\n\nNeeds `install.users.manage`.",
+        "description": "Delete a custom role, and every grant of it: whoever held it loses what it allowed. Built-in roles cannot be deleted. Refused if it would leave nobody who can manage accounts. Refused unless the caller holds every installation permission the role carries.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -10578,7 +10578,7 @@
       "delete": {
         "operationId": "deleteUser",
         "summary": "Delete an account",
-        "description": "Delete an account, with the destruction rules that follow from it.\n\nNeeds `install.users.manage`.",
+        "description": "Delete an account, with the destruction rules that follow from it. On someone else's account, refused unless the caller holds every installation permission that account holds.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -10639,7 +10639,7 @@
       "patch": {
         "operationId": "patchUser",
         "summary": "Update an account",
-        "description": "Change an account: any of `username`, `display_name`, `email` and `status`. Username and email only on a local account; a username only with this verb, even your own. Suspension is not deletion. Your own name and email need no verb.\n\nNeeds `install.users.manage`.",
+        "description": "Change an account: any of `username`, `display_name`, `email` and `status`. Username and email only on a local account; a username only with this verb, even your own. Suspension is not deletion. Your own name and email need no verb. On someone else's account, refused unless the caller holds every installation permission that account holds.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -10874,7 +10874,7 @@
       "delete": {
         "operationId": "unlinkIdentity",
         "summary": "Unlink an identity",
-        "description": "Unlink an identity (`adapter_id`, `external_id` in the query) from an account.\n\nNeeds `install.users.manage`.",
+        "description": "Unlink an identity (`adapter_id`, `external_id` in the query) from an account. On someone else's account, refused unless the caller holds every installation permission that account holds.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -10962,7 +10962,7 @@
       "post": {
         "operationId": "linkIdentity",
         "summary": "Link an identity",
-        "description": "Link a provider's identity (`adapter_id`, `external_id`) to an account, so it signs in there. Adds an alias and never merges accounts. If it already signs in to another account, `replace_account: true` moves it, and that account is kept, suspended, as an alias.\n\nNeeds `install.users.manage`.",
+        "description": "Link a provider's identity (`adapter_id`, `external_id`) to an account, so it signs in there. Adds an alias and never merges accounts. If it already signs in to another account, `replace_account: true` moves it, and that account is kept, suspended, as an alias. On someone else's account, refused unless the caller holds every installation permission that account holds.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -11042,7 +11042,7 @@
       "post": {
         "operationId": "resetPassword",
         "summary": "Reset a password",
-        "description": "Reset another local account's password (`password`), ending every session it holds. `must_change_password` defaults to true: whoever set it hands it over, and its holder chooses their own at the next sign-in. Your own is `POST /me/password`.\n\nNeeds `install.users.manage`.",
+        "description": "Reset another local account's password (`password`), ending every session it holds. `must_change_password` defaults to true: whoever set it hands it over, and its holder chooses their own at the next sign-in. Your own is `POST /me/password`. On someone else's account, refused unless the caller holds every installation permission that account holds.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -11094,7 +11094,7 @@
       "delete": {
         "operationId": "deleteUserRole",
         "summary": "Remove an account's role",
-        "description": "Take an installation role away. The last administrator cannot be demoted.\n\nNeeds `install.users.manage`.",
+        "description": "Take an installation role away. The last administrator cannot be demoted. On someone else's account, refused unless the caller holds every installation permission that account holds.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],
@@ -11121,7 +11121,7 @@
       "put": {
         "operationId": "putUserRole",
         "summary": "Set an account's role",
-        "description": "Give an account an installation role. Deliberately not a field on PATCH: changing someone's status and changing their power are different acts.\n\nNeeds `install.users.manage`.",
+        "description": "Give an account an installation role. Deliberately not a field on PATCH: changing someone's status and changing their power are different acts. Refused unless the caller holds every installation permission the role carries. And on someone else's account, refused unless the caller holds every installation permission that account holds.\n\nNeeds `install.users.manage`.",
         "tags": [
           "Identity"
         ],

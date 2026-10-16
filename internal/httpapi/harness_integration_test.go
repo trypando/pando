@@ -369,6 +369,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Flows:       state.NewSSOFlows(db),
 		SCIMUsers:   state.NewSCIMUsers(db),
 		SCIMGroups:  state.NewSCIMGroups(db),
+		Grants:      grants,
 		Policy:      effectivePolicy,
 		Local:       identity,
 		Kinds: map[string]idp.Kind{

@@ -270,6 +270,17 @@ func (s *Server) handlePutUserRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The role handed on, and the one it replaces: one installation role per
+	// account, so granting is also taking away (R-080a).
+	if err := s.Authz.CheckConfersRole(r.Context(), p, req.RoleID, "grant the role %s"); err != nil {
+		Error(w, r, err)
+		return
+	}
+	if err := s.Authz.CheckMayChangeAccount(r.Context(), p, user.ID, "change this account's role"); err != nil {
+		Error(w, r, err)
+		return
+	}
+
 	grant, err := s.Grants.GrantInstall(r.Context(), "user", user.ID, req.RoleID, p.ID)
 	if err != nil {
 		Error(w, r, err)
@@ -297,6 +308,9 @@ func (s *Server) handlePutUserRole(w http.ResponseWriter, r *http.Request) {
 // that cannot be administered has no recovery path inside the product.
 func (s *Server) handleDeleteUserRole(w http.ResponseWriter, r *http.Request) {
 	s.deleteManaged(w, r, "userID", "grant.delete", "user", map[string]any{"scope": "install"},
+		func(ctx context.Context, p authz.Principal, userID string) error {
+			return s.Authz.CheckMayChangeAccount(ctx, p, userID, "remove this account's role")
+		},
 		func(ctx context.Context, userID string) error { return s.Grants.RevokeInstall(ctx, "user", userID) })
 }
 

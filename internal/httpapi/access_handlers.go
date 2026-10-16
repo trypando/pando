@@ -440,6 +440,11 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 			WithRemedy("Use POST /api/v1/me/password, or Settings in the console."))
 		return
 	}
+	// A reset is a way into the account, and with it whatever it holds (R-080a).
+	if err := s.Authz.CheckMayChangeAccount(r.Context(), p, userID, "reset this account's password"); err != nil {
+		Error(w, r, err)
+		return
+	}
 
 	var req struct {
 		Password           string `json:"password"`
@@ -538,6 +543,16 @@ func (s *Server) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.ValidInvalid, "Nothing to change.").
 			WithRemedy("Send one or more of status, username, display_name and email."))
 		return
+	}
+
+	// Someone else's account: its status, name and email are ways into it or
+	// ways to lock its holder out, so the caller must hold whatever it holds
+	// (R-080a). Your own is yours.
+	if userID != p.UserID && s.Authz != nil {
+		if err := s.Authz.CheckMayChangeAccount(r.Context(), p, userID, "change this account"); err != nil {
+			Error(w, r, err)
+			return
+		}
 	}
 
 	// A username is how an account signs in, so changing one is an

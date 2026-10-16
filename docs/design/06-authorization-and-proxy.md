@@ -140,6 +140,38 @@ app, searched and capped at twenty of each: enough to find Dana, not a way to ta
 
 **[D]** Being a Pando admin does not appear in `CheckData` at all. R-087: an admin has root and can reach a container outside Pando, but the supported path requires a grant.
 
+### 2.2 Install verbs are a boundary (R-080a)
+
+**[D]** `CheckInstall` answers "may this principal use this verb". It does not answer "may this
+principal hand this verb on", and before R-080a nothing did: `install.users.manage` could grant itself
+Administrator, `install.adapters.manage` could register an identity provider and sign in through it as
+an administrator, and `install.backup.manage` could restore a backup taken when it was one. Three
+functions in `core/authz/confer.go` answer the second question, all from grants alone — host policy
+and status decide whether a verb may be used now, not whether it is held:
+
+| Function | Refuses unless the caller holds | Used by |
+|---|---|---|
+| `CheckConfers` / `CheckConfersRole` | every install verb of the role being granted, removed or replaced | `PUT`/`DELETE /users/{id}/role`, `PUT`/`DELETE /groups/{id}/role`, group membership, group links, `DELETE /groups/{id}`, `POST`/`DELETE /roles` |
+| `CheckMayChangeAccount` | every install verb the target account holds, directly or through groups | password reset, `PATCH /users/{id}`, `DELETE /users/{id}`, identity link and unlink (both the account and the identity's current holder), revoking someone's token, role changes |
+| `CheckHoldsEveryInstallVerb` | every install verb | creating or changing an identity provider, issuing its SCIM token, restoring the installation |
+
+A refusal is `PERM_VERB_REQUIRED`, audited as a denial, naming the verbs the caller lacks in
+`details.missing_verbs`. Your own account is always yours to change; granting yourself a role is still
+handing it on.
+
+**[D]** Changing a group's membership is checked against the group's install role only. Its app grants
+are app verbs, and an account manager can reach those anyway by resetting an app owner's password;
+R-080a says so rather than drawing a line that is not there.
+
+**[D]** Sign-in linking by email (`idp.Service.decide`) refuses an account holding any installation
+role, with a message naming the provider ID an administrator needs to link it explicitly. Without the
+grants store wired in, it links nobody by email.
+
+**[D]** Adapter configuration through `POST /adapters` refuses a `*_env` setting naming any variable
+but the kind's declared default, and refuses a non-default `base_url` on a kind that falls back to an
+environment key unless a key is stored (`httpapi/adapter_env.go`). The configuration file is not
+checked: R-271's declarations come from someone who already holds the environment.
+
 ---
 
 ## 3. Group resolution

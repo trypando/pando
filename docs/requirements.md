@@ -127,7 +127,7 @@ exactly this.
 
 **R-044 [D]** Identity adapters perform **authentication only**. Authorization is always core.
 
-**R-045 [P]** Multiple identity adapters may be configured simultaneously. Each user record records its originating adapter. Two identities from different adapters are two users unless an admin explicitly links them — or, where an administrator turns it on for a provider, unless the provider vouches for an email address that exactly one active account has. Linking aliases and never merges (O-1). A first sign-in with no account is refused unless the provider is set to create accounts just in time (off by default); host policy can refuse just-in-time accounts install-wide.
+**R-045 [P]** Multiple identity adapters may be configured simultaneously. Each user record records its originating adapter. Two identities from different adapters are two users unless an admin explicitly links them — or, where an administrator turns it on for a provider, unless the provider vouches for an email address that exactly one active account has, and that account holds no installation role (R-080a). Linking aliases and never merges (O-1). A first sign-in with no account is refused unless the provider is set to create accounts just in time (off by default); host policy can refuse just-in-time accounts install-wide.
 
 ### 5.2 Bootstrap
 
@@ -287,6 +287,35 @@ App-scoped:
 | `app.deploy.approve` | Approve or reject a deploy of this app that needs approval (R-155). In no built-in role |
 | `app.delete` | Delete the app |
 
+**R-080a [D]** **Install verbs are a boundary between the people who hold them.** A custom role (R-082)
+may hold one install verb and not another, and no install verb is a way to obtain one its holder does
+not hold:
+
+- **Handing one on, or taking it away.** Granting or removing an installation role, replacing one,
+  changing the members of a group that holds one, linking a provider's group to such a group, and
+  creating or deleting an installation-scoped custom role each need every install verb the role
+  carries.
+- **Becoming someone who holds it.** On someone else's account, resetting the password, changing the
+  status, username or email, linking or unlinking an identity, revoking a token, changing the role and
+  deleting the account each need every install verb that account holds, directly or through a group.
+- **Reaching all of them at once.** Adding or changing an identity provider, or issuing its SCIM token,
+  needs every install verb, because a provider decides who signs in as which account, administrators
+  included. So does restoring the installation from a backup, which replaces every grant with the
+  backup's. Taking and verifying a backup stay `install.backup.manage`.
+- **Reading Pando's environment.** An adapter configured through the API may not name an environment
+  variable for Pando to read and send other than the one its kind defaults to, and may not send a key
+  it would read from the environment to an address other than its provider's. The configuration file
+  (R-271) may name any variable: whoever edits it already holds the environment.
+
+A provider's word is not enough to link an account holding an installation role by email (R-045): an
+administrator links it explicitly.
+
+App verbs are not part of this boundary. `install.users.manage` can reset the password of an app's
+owner, and so reach what that owner holds on their apps — that is what managing accounts is, and the
+documentation says so rather than implying otherwise, as R-086 does for exec. Likewise
+`install.adapters.manage` decides where Pando sends the work its adapters do, and is trusted with what
+goes there.
+
 **R-081 [D]** Eight **immutable** built-in roles ship out of the box. They cannot be edited; Pando may add newly-introduced verbs to them across versions.
 
 | Role | Scope | Verbs |
@@ -323,7 +352,7 @@ app, and the security reviewer's role; a custom role may hold any one `install.a
 
 **R-087 [D]** Pando does not claim to defend against its own host operator. A host admin has root and can reach any container outside Pando entirely. What Pando guarantees is that the **supported path** requires a grant — so unauthorized access requires deliberately leaving the tool, which is a materially different thing to detect and audit.
 
-**R-088 [D]** **An installation cannot be left with nobody who can administer it.** Removing the last install-wide grant holding `install.users.manage` is refused, and so is removing the last person who holds it through a group — a group with the role and nobody in it administers nothing, and the message names the way out: make someone else an administrator first. The rule is stated in terms of the verb rather than the built-in role, because a custom role (R-082) holding it is just as much an administrator. Recovery from the state this prevents requires shell access to the host and `pando admin`, which is a different and much higher bar than the one click that would otherwise reach it.
+**R-088 [D]** **An installation cannot be left with nobody who can administer it.** Removing the last install-wide grant holding `install.users.manage` is refused, and so is removing the last person who holds it through a group — a group with the role and nobody in it administers nothing, and the message names the way out: make someone else an administrator first. The rule is stated in terms of the verb rather than the built-in role, because a custom role (R-082) holding it can manage accounts just as the built-in one can, though not accounts holding verbs it lacks (R-080a). Recovery from the state this prevents requires shell access to the host and `pando admin`, which is a different and much higher bar than the one click that would otherwise reach it.
 
 ---
 

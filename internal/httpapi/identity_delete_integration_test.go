@@ -71,9 +71,12 @@ func TestR088_DeletingTheRoleThatIsTheOnlyWayToManageAccountsIsRefused(t *testin
 	promoted := i.do(admin, http.MethodPut, "/users/"+i.userID(keeper)+"/role", map[string]any{"role_id": keeperRole})
 	require.Contains(t, []int{http.StatusOK, http.StatusCreated, http.StatusNoContent}, promoted.Code, promoted.String())
 
-	// The keeper takes the first administrator's role away, leaving the
-	// custom role as the only way anyone manages accounts.
-	demoted := i.do(keeper, http.MethodDelete, "/users/"+i.AdminID+"/role", nil)
+	// The first administrator steps down, leaving the custom role as the only
+	// way anyone manages accounts. The keeper could not do it for them: the
+	// administrator holds verbs the keeper does not (R-080a).
+	usurped := i.do(keeper, http.MethodDelete, "/users/"+i.AdminID+"/role", nil)
+	require.Equal(t, http.StatusForbidden, usurped.Code, usurped.String())
+	demoted := i.do(admin, http.MethodDelete, "/users/"+i.AdminID+"/role", nil)
 	require.Contains(t, []int{http.StatusOK, http.StatusNoContent}, demoted.Code, demoted.String())
 
 	refused := i.do(keeper, http.MethodDelete, "/roles/"+keeperRole, nil)

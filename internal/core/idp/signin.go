@@ -533,6 +533,13 @@ func (s *Service) decide(ctx context.Context, p state.IdentityProvider, subject 
 			return refused(errs.As(err))
 		}
 		if ok && !s.hasIdentityAt(ctx, candidate.ID, p.ID) {
+			// An account holding an installation role is not linked on the
+			// provider's word: whoever could get that provider to vouch for its
+			// email would sign in as an administrator (R-080a). An
+			// administrator links it explicitly instead.
+			if refusal := s.installRoleRefusal(ctx, p, subject, candidate); refusal != nil {
+				return refused(refusal)
+			}
 			if !dryRun {
 				if _, err := s.Identities.Link(ctx, candidate.ID, p.ID, subject.ExternalID, "system", false); err != nil {
 					return refused(errs.As(err))
@@ -576,6 +583,31 @@ func (s *Service) decide(ctx context.Context, p state.IdentityProvider, subject 
 	})
 	s.afterSignIn(ctx, p, subject, created)
 	return out(OutcomeCreated, created)
+}
+
+// installRoleRefusal is why an account may not be linked by email, or nil when
+// it may: it holds no installation role, directly or through a group.
+func (s *Service) installRoleRefusal(ctx context.Context, p state.IdentityProvider, subject api.Subject, u state.User) *errs.Error {
+	if s.Grants == nil {
+		return errs.New(errs.AuthInvalid,
+			"Pando could not check this account's permissions, so it did not link it to your sign-in by email.").
+			WithRemedy("Ask an administrator to link your identity to your Pando account.")
+	}
+	held, err := s.Grants.InstallRolesForUsers(ctx, []string{u.ID})
+	if err != nil {
+		if e := errs.As(err); e != nil {
+			return e
+		}
+		return errs.Wrap(errs.Internal, "Pando could not check this account's permissions.", err)
+	}
+	if len(held[u.ID]) == 0 {
+		return nil
+	}
+	return errs.Newf(errs.AuthInvalid,
+		"%s signed you in with an email that belongs to a Pando account holding installation permissions. "+
+			"Pando does not link such an account to a provider by email alone.", p.Name).
+		WithRemedy(fmt.Sprintf("Ask an administrator to link your identity at %s to your account in Accounts. "+
+			"They will need your ID at %s: %s.", p.Name, p.Name, subject.ExternalID))
 }
 
 func displayName(s api.Subject) string {

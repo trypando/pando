@@ -250,9 +250,19 @@ func (s *Server) handleGetIdentityProvider(w http.ResponseWriter, r *http.Reques
 	JSON(w, http.StatusOK, p)
 }
 
+// vouches is why configuring an identity provider needs every installation
+// permission (R-080a).
+const vouches = "an identity provider decides who can sign in as which account, administrators included"
+
 func (s *Server) handleCreateIdentityProvider(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requireInstall(w, r, authz.InstallAdaptersManage)
 	if !ok || !s.requireIDP(w, r) {
+		return
+	}
+	// Whoever configures a provider decides who it vouches for, and so who can
+	// sign in as which account (R-080a).
+	if err := s.Authz.CheckHoldsEveryInstallVerb(r.Context(), p, "add an identity provider", vouches); err != nil {
+		Error(w, r, err)
 		return
 	}
 	var in idp.ProviderInput
@@ -271,6 +281,12 @@ func (s *Server) handleCreateIdentityProvider(w http.ResponseWriter, r *http.Req
 func (s *Server) handlePatchIdentityProvider(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requireInstall(w, r, authz.InstallAdaptersManage)
 	if !ok || !s.requireIDP(w, r) {
+		return
+	}
+	// Whoever configures a provider decides who it vouches for, and so who can
+	// sign in as which account (R-080a).
+	if err := s.Authz.CheckHoldsEveryInstallVerb(r.Context(), p, "change an identity provider", vouches); err != nil {
+		Error(w, r, err)
 		return
 	}
 	var in idp.ProviderInput
@@ -320,6 +336,13 @@ func (s *Server) handleCheckIdentityProvider(w http.ResponseWriter, r *http.Requ
 func (s *Server) handleRotateSCIMToken(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requireInstall(w, r, authz.InstallAdaptersManage)
 	if !ok || !s.requireIDP(w, r) {
+		return
+	}
+	// A SCIM token creates accounts and puts them in groups, including ones
+	// linked to groups holding installation roles (R-080a).
+	if err := s.Authz.CheckHoldsEveryInstallVerb(r.Context(), p, "issue a SCIM token for an identity provider",
+		"a SCIM token creates accounts and puts them in groups, including groups that hold installation roles"); err != nil {
+		Error(w, r, err)
 		return
 	}
 	token, err := s.IDP.RotateSCIMToken(r.Context(), p, chi.URLParam(r, "providerID"))
@@ -408,6 +431,22 @@ func (s *Server) handleLinkIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := chi.URLParam(r, "userID")
+	// An identity that signs in to the account is a way into it, and moving
+	// one from another account changes that one too (R-080a).
+	if err := s.Authz.CheckMayChangeAccount(r.Context(), p, userID, "link an identity to this account"); err != nil {
+		Error(w, r, err)
+		return
+	}
+	if holder, found, err := s.IDP.Identities.Resolve(r.Context(), req.AdapterID, req.ExternalID); err != nil {
+		Error(w, r, err)
+		return
+	} else if found && holder.ID != userID {
+		if err := s.Authz.CheckMayChangeAccount(r.Context(), p, holder.ID,
+			"move an identity from the account that has it"); err != nil {
+			Error(w, r, err)
+			return
+		}
+	}
 	aliased, err := s.IDP.LinkIdentity(r.Context(), p, userID, req.AdapterID, req.ExternalID, req.ReplaceAccount)
 	if err != nil {
 		Error(w, r, err)
@@ -426,6 +465,11 @@ func (s *Server) handleUnlinkIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	if err := s.Authz.CheckMayChangeAccount(r.Context(), p, chi.URLParam(r, "userID"),
+		"unlink an identity from this account"); err != nil {
+		Error(w, r, err)
+		return
+	}
 	if err := s.IDP.UnlinkIdentity(r.Context(), p, chi.URLParam(r, "userID"), q.Get("adapter_id"), q.Get("external_id")); err != nil {
 		Error(w, r, err)
 		return
@@ -438,6 +482,12 @@ func (s *Server) handleLinkGroup(w http.ResponseWriter, r *http.Request) {
 	if !ok || !s.requireIDP(w, r) {
 		return
 	}
+	// Everyone in the provider's group would hold what the Pando group does.
+	if err := s.confersGroup(r.Context(), p, chi.URLParam(r, "groupID"),
+		"link a provider's group to a group holding the role %s"); err != nil {
+		Error(w, r, err)
+		return
+	}
 	if err := s.IDP.LinkGroup(r.Context(), p, chi.URLParam(r, "groupID"), chi.URLParam(r, "syncedGroupID")); err != nil {
 		Error(w, r, err)
 		return
@@ -448,6 +498,11 @@ func (s *Server) handleLinkGroup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUnlinkGroup(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requireInstall(w, r, authz.InstallUsersManage)
 	if !ok || !s.requireIDP(w, r) {
+		return
+	}
+	if err := s.confersGroup(r.Context(), p, chi.URLParam(r, "groupID"),
+		"unlink a provider's group from a group holding the role %s"); err != nil {
+		Error(w, r, err)
 		return
 	}
 	if err := s.IDP.UnlinkGroup(r.Context(), p, chi.URLParam(r, "groupID"), chi.URLParam(r, "syncedGroupID")); err != nil {

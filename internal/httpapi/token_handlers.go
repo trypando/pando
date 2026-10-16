@@ -257,6 +257,11 @@ func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 			Error(w, r, err)
 			return
 		}
+		// Somebody's credential, and with it whatever they hold (R-080a).
+		if err := s.Authz.CheckMayChangeAccount(r.Context(), p, owner, "revoke this account's token"); err != nil {
+			Error(w, r, err)
+			return
+		}
 	}
 
 	if err := s.Tokens.Revoke(r.Context(), tokenID); err != nil {

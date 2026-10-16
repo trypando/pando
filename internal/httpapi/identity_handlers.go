@@ -169,6 +169,10 @@ func (s *Server) handleSetGroupMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.confersGroup(r.Context(), p, groupID, "change the members of a group holding the role %s"); err != nil {
+		Error(w, r, err)
+		return
+	}
 	if err := s.Groups.SetMembers(r.Context(), groupID, req.Members); err != nil {
 		Error(w, r, err)
 		return
@@ -201,6 +205,10 @@ func (s *Server) changeMember(w http.ResponseWriter, r *http.Request, add bool) 
 		return
 	}
 	groupID, userID := chi.URLParam(r, "groupID"), chi.URLParam(r, "userID")
+	if err := s.confersGroup(r.Context(), p, groupID, "change the members of a group holding the role %s"); err != nil {
+		Error(w, r, err)
+		return
+	}
 	action, err := "group.member.add", error(nil)
 	if add {
 		err = s.Groups.AddMember(r.Context(), groupID, userID)
@@ -247,6 +255,15 @@ func (s *Server) handlePutGroupRole(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.NotFound, "There is no group with that ID."))
 		return
 	}
+	// The role handed on, and the one it replaces (R-080a).
+	if err := s.Authz.CheckConfersRole(r.Context(), p, req.RoleID, "give a group the role %s"); err != nil {
+		Error(w, r, err)
+		return
+	}
+	if err := s.confersGroup(r.Context(), p, groupID, "replace this group's role %s"); err != nil {
+		Error(w, r, err)
+		return
+	}
 	grant, err := s.Grants.GrantInstall(r.Context(), "group", groupID, req.RoleID, p.ID)
 	if err != nil {
 		Error(w, r, err)
@@ -264,6 +281,9 @@ func (s *Server) handlePutGroupRole(w http.ResponseWriter, r *http.Request) {
 // an account's, when it would leave nobody who can manage accounts (R-088).
 func (s *Server) handleDeleteGroupRole(w http.ResponseWriter, r *http.Request) {
 	s.deleteManaged(w, r, "groupID", "grant.delete", "group", map[string]any{"scope": "install"},
+		func(ctx context.Context, p authz.Principal, groupID string) error {
+			return s.confersGroup(ctx, p, groupID, "remove the role %s from this group")
+		},
 		func(ctx context.Context, groupID string) error { return s.Grants.RevokeInstall(ctx, "group", groupID) })
 }
 
@@ -271,13 +291,20 @@ func (s *Server) handleDeleteGroupRole(w http.ResponseWriter, r *http.Request) {
 // the object named by the URL parameter param and audits action against it,
 // as targetKind.
 func (s *Server) deleteManaged(w http.ResponseWriter, r *http.Request, param, action, targetKind string,
-	detail map[string]any, remove func(ctx context.Context, id string) error,
+	detail map[string]any, guard func(ctx context.Context, p authz.Principal, id string) error,
+	remove func(ctx context.Context, id string) error,
 ) {
 	p, ok := s.requireInstall(w, r, authz.InstallUsersManage)
 	if !ok {
 		return
 	}
 	target := chi.URLParam(r, param)
+	// What removing it takes from whoever held it, which the caller must hold
+	// too (R-080a).
+	if err := guard(r.Context(), p, target); err != nil {
+		Error(w, r, err)
+		return
+	}
 	if err := remove(r.Context(), target); err != nil {
 		Error(w, r, err)
 		return
@@ -324,7 +351,10 @@ func (s *Server) handleGroupApps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
-	s.deleteManaged(w, r, "groupID", "group.delete", "group", nil, s.Groups.Delete)
+	s.deleteManaged(w, r, "groupID", "group.delete", "group", nil,
+		func(ctx context.Context, p authz.Principal, groupID string) error {
+			return s.confersGroup(ctx, p, groupID, "delete a group holding the role %s")
+		}, s.Groups.Delete)
 }
 
 // handleListVerbs returns the catalog, for building custom roles (R-082).
@@ -373,6 +403,22 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		verbs = append(verbs, authz.Verb(v))
 	}
 
+	// A custom role can carry only installation permissions its maker holds,
+	// or composing one would be a way to obtain them (R-080a). An app role
+	// confers nothing until granted on an app, which app.grants.manage decides.
+	if req.Scope == "install" {
+		var install []authz.Verb
+		for _, v := range verbs {
+			if authz.InstallScoped(v) {
+				install = append(install, v)
+			}
+		}
+		if err := s.Authz.CheckConfers(r.Context(), p, install, "create a role carrying them"); err != nil {
+			Error(w, r, err)
+			return
+		}
+	}
+
 	role, err := s.Roles.CreateCustom(r.Context(), req.Name, req.Scope, verbs)
 	if err != nil {
 		Error(w, r, err)
@@ -388,7 +434,11 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
-	s.deleteManaged(w, r, "roleID", "role.delete", "role", nil, s.Roles.DeleteCustom)
+	s.deleteManaged(w, r, "roleID", "role.delete", "role", nil,
+		func(ctx context.Context, p authz.Principal, roleID string) error {
+			// Deleting a role takes it from everyone granted it.
+			return s.Authz.CheckConfersRole(ctx, p, roleID, "delete the role %s")
+		}, s.Roles.DeleteCustom)
 }
 
 // handleDeleteUser deletes an account, which fires R-282's destruction rules.
@@ -419,6 +469,10 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if !found {
 		Error(w, r, errs.New(errs.NotFound, "There is no account with that ID."))
+		return
+	}
+	if err := s.Authz.CheckMayChangeAccount(r.Context(), p, userID, "delete this account"); err != nil {
+		Error(w, r, err)
 		return
 	}
 

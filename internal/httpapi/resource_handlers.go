@@ -413,6 +413,10 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 			WithRemedy(`Send it in the request's "credentials" object instead, for example {"credentials": {"api_key": "…"}}. Pando stores that encrypted.`))
 		return
 	}
+	if err := s.envReferences(r.Context(), req.ID, req.Category, req.Kind, req.Config, req.Credentials); err != nil {
+		Error(w, r, err)
+		return
+	}
 	if len(req.Credentials) > 0 && req.Category == string(api.CategorySecrets) {
 		Error(w, r, errs.New(errs.ValidInvalid,
 			"A secrets adapter cannot be given credentials, because it is the thing Pando would encrypt them with."))

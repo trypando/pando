@@ -48,6 +48,13 @@ type Service struct {
 	SCIMUsers   *state.SCIMUsers
 	SCIMGroups  *state.SCIMGroups
 
+	// Grants says whether an account holds an installation role, which an
+	// email alone may not link a provider's identity to (R-080a). Nil links
+	// no account by email.
+	Grants interface {
+		InstallRolesForUsers(ctx context.Context, userIDs []string) (map[string][]state.HeldInstallRole, error)
+	}
+
 	// Policy is host policy as in force, startup overlay included.
 	Policy interface {
 		Load(ctx context.Context) (policy.Document, error)
