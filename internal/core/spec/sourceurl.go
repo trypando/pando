@@ -37,17 +37,27 @@ func CheckSourceURL(src Source) error {
 		return nil
 	}
 	raw := strings.TrimSpace(src.URL)
-
 	if !strings.Contains(raw, "://") {
-		if m := scpUser.FindStringSubmatch(raw); m != nil && strings.Contains(m[1], ":") {
-			return credentialInURL()
-		}
-		if scpLike.MatchString(raw) && !windowsPath(raw) {
-			return nil
-		}
-		return unfetchable(raw)
+		return checkShorthand(raw)
 	}
+	return checkURL(raw)
+}
 
+// checkShorthand checks git's host:path shorthand, the one address form with
+// no scheme; anything else without one is a local path.
+func checkShorthand(raw string) error {
+	if m := scpUser.FindStringSubmatch(raw); m != nil && strings.Contains(m[1], ":") {
+		return credentialInURL()
+	}
+	if scpLike.MatchString(raw) && !windowsPath(raw) {
+		return nil
+	}
+	return unfetchable(raw)
+}
+
+// checkURL checks an address written as a URL: its scheme, and whether it
+// carries a credential.
+func checkURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
 		return unfetchable(raw)
