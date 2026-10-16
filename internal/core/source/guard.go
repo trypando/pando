@@ -3,9 +3,11 @@ package source
 import (
 	"context"
 	"errors"
+	"math"
 	"net"
 	"net/netip"
 	"slices"
+	"strconv"
 	"sync/atomic"
 	"syscall"
 )
@@ -160,7 +162,7 @@ func guardedControl(ctx context.Context, _, address string, _ syscall.RawConn) e
 // before a session opens, so the refusal is said in words. It is not what
 // enforces the guard: every dial, HTTP and SSH, is checked again on the
 // socket by guardedDialer, which is what a name re-pointed in between meets.
-func checkHost(ctx context.Context, host string, port int) error {
+func checkHost(ctx context.Context, host string, port uint16) error {
 	// A name that does not resolve leaves nothing to check: not reachable is
 	// go-git's to report, in its own words.
 	var addrs []netip.Addr
@@ -171,17 +173,27 @@ func checkHost(ctx context.Context, host string, port int) error {
 	}
 	g := guard.Load()
 	for _, a := range addrs {
-		if err := g.check(ctx, netip.AddrPortFrom(a, uint16(port))); err != nil { //nolint:gosec // G115: a port from a parsed URL
+		if err := g.check(ctx, netip.AddrPortFrom(a, port)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// portOr is the endpoint's port, or def when it names none.
-func portOr(port, def int) int {
-	if port == 0 {
+// portOr is the endpoint's port, or def when it names none or one no port
+// can be: a port past 65535 is no port, read as an unparseable one is.
+func portOr(port int, def uint16) uint16 {
+	if port <= 0 || port > math.MaxUint16 {
 		return def
 	}
-	return port
+	return uint16(port)
+}
+
+// urlPort is a URL's port, or def when it names none or an invalid one.
+func urlPort(port string, def uint16) uint16 {
+	n, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || n == 0 {
+		return def
+	}
+	return uint16(n)
 }

@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -72,14 +71,11 @@ func guardedProxy(req *http.Request) (*url.URL, error) {
 	if err != nil || p == nil {
 		return p, err
 	}
-	port := 443
+	def := uint16(443)
 	if req.URL.Scheme == "http" {
-		port = 80
+		def = 80
 	}
-	if n, err := strconv.Atoi(req.URL.Port()); err == nil {
-		port = n
-	}
-	if err := checkHost(req.Context(), req.URL.Hostname(), port); err != nil {
+	if err := checkHost(req.Context(), req.URL.Hostname(), urlPort(req.URL.Port(), def)); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -158,7 +154,7 @@ var guardedDialer = &net.Dialer{
 // dialer, since that is the only way into go-git's SSH dial.
 type guarded struct {
 	transport.Transport
-	defaultPort      int
+	defaultPort      uint16
 	viaGuardedDialer bool
 }
 

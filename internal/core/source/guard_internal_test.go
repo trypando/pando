@@ -314,6 +314,27 @@ func TestR092_BehindAProxyTheRepositorysHostIsChecked(t *testing.T) {
 func TestCheckHostLetsAnUnresolvableNameThroughToGoGit(t *testing.T) {
 	require.NoError(t, checkHost(context.Background(), "no-such-host.invalid", 443))
 	require.ErrorIs(t, checkHost(context.Background(), "169.254.169.254", 80), errRefusedAddress)
-	require.Equal(t, 22, portOr(0, 22))
-	require.Equal(t, 2222, portOr(2222, 22))
+	require.Equal(t, uint16(22), portOr(0, 22))
+	require.Equal(t, uint16(2222), portOr(2222, 22))
+}
+
+// TestR092_APortNoPortCanBeIsReadAsNone asserts that a port past 65535 is
+// not narrowed into some other port that might pass the guard: it is read as
+// an invalid one, which leaves the scheme's own.
+func TestR092_APortNoPortCanBeIsReadAsNone(t *testing.T) {
+	require.Equal(t, uint16(22), portOr(70000, 22))
+	require.Equal(t, uint16(22), portOr(-1, 22))
+	require.Equal(t, uint16(443), urlPort("70000", 443))
+	require.Equal(t, uint16(443), urlPort("", 443))
+	require.Equal(t, uint16(443), urlPort("0", 443))
+	require.Equal(t, uint16(8443), urlPort("8443", 443))
+
+	// 70000 narrowed would be 4464; read as invalid it is the scheme's 443,
+	// which the guard refuses here.
+	prev := proxyFor
+	t.Cleanup(func() { proxyFor = prev })
+	withGuard(t, Guard{OwnPorts: []uint16{443}})
+	proxyFor = func(*http.Request) (*url.URL, error) { return url.Parse("http://proxy.internal:3128") }
+	_, err := guardedProxy(httptest.NewRequest(http.MethodGet, "https://localhost:70000/x.git/info/refs", nil))
+	require.ErrorIs(t, err, errRefusedAddress)
 }
