@@ -19,6 +19,75 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-16
+
+This release fixes five vulnerabilities found in a security assessment of Pando. All affect 0.7.0
+and earlier. Upgrade now; see **Upgrade notes** for what changes on the first start.
+
+### Security
+
+- **[GHSA-w85m-2rf9-m3vj](https://github.com/trypando/pando/security/advisories/GHSA-w85m-2rf9-m3vj)**
+  (critical, CVSS 9.0; 0.7.0 and earlier). Under subdomain routing, an app's own hostname answered
+  Pando's `/api/v1`, so an app's script could mint an API token carrying the permissions of whoever
+  was signed in to it, an administrator included. Every path on an app's hostname except `/.pando`
+  now goes to the app (#253). After upgrading, revoke any API token you did not create.
+- **[GHSA-w854-ppwh-rhh5](https://github.com/trypando/pando/security/advisories/GHSA-w854-ppwh-rhh5)**
+  (high, CVSS 8.7; 0.7.0 and earlier). An app could be given the console's hostname and receive its
+  traffic. Pando's own hostnames are now refused as app addresses (#255, R-165). After upgrading,
+  check that no app's address is the console's.
+- **[GHSA-2w23-jjrw-wjhx](https://github.com/trypando/pando/security/advisories/GHSA-2w23-jjrw-wjhx)**
+  (high, CVSS 7.7; 0.7.0 and earlier). A repository address could be a `file://` URL or local path,
+  or reach the cloud metadata service, Pando's own port or its database. Only `https`, `http` and
+  `ssh` are accepted now, and every connection a fetch makes is checked where it lands, redirects and
+  SSH included. Repositories on private networks are still allowed (#255, R-092).
+- **[GHSA-2v7f-8w8v-24ww](https://github.com/trypando/pando/security/advisories/GHSA-2v7f-8w8v-24ww)**
+  (high, CVSS 7.2; 0.7.0 and earlier). A custom role holding one installation permission, such as
+  `install.users.manage`, `install.adapters.manage` or `install.backup.manage`, could become
+  Administrator. Granting or changing a role, changing another account, configuring an identity
+  provider and restoring the installation now need every installation permission involved (#257,
+  R-080a). Installations that grant only the built-in Administrator role were not affected.
+- **[GHSA-f425-x6jh-6cfm](https://github.com/trypando/pando/security/advisories/GHSA-f425-x6jh-6cfm)**
+  (medium, CVSS 4.6; 0.7.0 and earlier). Another site could sign a visitor in to Pando as an account
+  it controlled, and an app could plant or set Pando's session cookie. On HTTPS the session cookie is
+  now `__Host-pando_session`; sign-in refuses cross-site form posts; Pando's pages send a Content
+  Security Policy, `X-Frame-Options: DENY` and, on HTTPS, HSTS; an email address an account's holder
+  set for themselves is never linked to a provider; and wrong app passcodes are also limited per app
+  (#256).
+- App containers are held to a process limit (`pids_limit`, 1024 by default), run with
+  `no-new-privileges`, and keep only Podman's default capabilities, without `NET_RAW`, `MKNOD` and
+  `AUDIT_WRITE`. Where the storage driver can size a container's own layer, it is capped at the app's
+  disk limit (#258).
+
+### Added
+
+- **Change an app's address from the CLI and MCP** (#251, R-261). `pando app address <app>` shows
+  the address and, with `--adapter`, `--mode`, `--hostname`, `--domain` or `--path`, changes it.
+  MCP gains `pando_get_address` and `pando_set_address`.
+- **The Cloudflare adapter serves several zones** (#251). `other_zones` lists zones beside `zone`,
+  and an address can take a `domain` to be named in any of them.
+
+### Changed
+
+- **An app on its own hostname gets every path** (#253), including `/api/v1`, `/healthz` and
+  `/.well-known`, which Pando used to answer there.
+- **A repository address may not carry a credential** (#255, R-190). Use a source connection.
+- **An account that holds an installation role is not linked to a provider by email** (#257,
+  R-045). The refusal names the provider ID an administrator needs to link it explicitly.
+- **Roles show a count of their permissions** (#252). Pressing it lists each one with what it
+  allows.
+
+### Upgrade notes
+
+- **On HTTPS installs everyone signs in again once.** The session cookie is renamed to
+  `__Host-pando_session`, and the old one is no longer read.
+- **Every app restarts once.** Each app's containers are recreated on the first reconcile to take
+  the process limit and reduced capabilities.
+- **An app whose repository address is a local path, a `file://` or `git://` URL, or carries a
+  credential stops fetching.** Change its source to an `https` or `ssh` address, with a source
+  connection for a private repository.
+- People who hold some installation permissions but not all can no longer change roles, accounts or
+  providers beyond what they hold. Give Administrator to anyone who needs to.
+
 ## [0.7.0] - 2026-10-15
 
 ### Security
@@ -1046,7 +1115,9 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.6.1...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.8.0...main
+[0.8.0]: https://github.com/trypando/pando/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/trypando/pando/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/trypando/pando/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/trypando/pando/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/trypando/pando/compare/v0.4.0...v0.5.0
