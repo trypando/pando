@@ -88,6 +88,31 @@ describe('a group’s dialogs', () => {
   });
 });
 
+describe('a role’s permissions', () => {
+  const roles = [
+    { id: 'role_ops', name: 'ops', scope: 'install', builtin: false, verbs: ['install.view', 'install.audit.read'] },
+    { id: 'role_viewer', name: 'viewer', scope: 'app', builtin: true, verbs: ['app.view'] },
+  ];
+
+  it('counts them on the row and lists them once the role is opened', async () => {
+    vi.stubGlobal('fetch', answering({}));
+    const s = open(<Identity canEdit />, [
+      [['groups', 'list', '', {}], page({ groups: [] })],
+      [['roles'], { roles: [] }],
+      [['roles', 'all'], { roles }],
+      [['ai-functions'], { functions: [] }],
+    ]);
+    expect(s.text()).toContain('2 permissions');
+    expect(s.text()).toContain('1 permission');
+    expect(s.text()).not.toContain('install.audit.read');
+    await s.press('2 permissions');
+    expect(s.text()).toContain('The ops role');
+    expect(s.text()).toContain('Installation role, made on this installation. 2 permissions.');
+    expect(s.text()).toContain('install.audit.read');
+    expect(s.text()).toContain('Read the audit log.');
+  });
+});
+
 describe('a new subscription', () => {
   it.each([
     [true, 1],

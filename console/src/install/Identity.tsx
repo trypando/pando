@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Banner, Button, Checkbox, Dialog, Input, Select, Tag } from '@design';
+import { Badge, Banner, Button, Checkbox, Dialog, Input, Select } from '@design';
 
 import { api } from '@api/client';
 import { Quiet, RoleLabel, Screen, messageOf, refusal, refreshMembership, sentence } from './Accounts';
@@ -455,6 +455,7 @@ function GroupRole({ group, roles }: { group: Group; roles: Role[] }) {
 function Roles({ canEdit, query }: { canEdit: boolean; query: string }) {
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<Role | null>(null);
+  const [viewing, setViewing] = useState<Role | null>(null);
 
   const roles = useQuery({
     // Both scopes. Without it this listed only the installation roles, and the
@@ -526,21 +527,13 @@ function Roles({ canEdit, query }: { canEdit: boolean; query: string }) {
               key: 'verbs',
               header: 'Permissions',
               width: 'minmax(0,28ch)',
+              // A count, not the list: a role can hold twenty verbs, and every
+              // one of them on the row made the table mostly tags. The list
+              // opens from here, each verb with what it lets somebody do.
               render: (row: Role) => (
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 'var(--space-2)',
-                    flexWrap: 'wrap',
-                    padding: 'var(--space-2) 0',
-                  }}
-                >
-                  {row.verbs.map((v) => (
-                    <Tag key={v} mono>
-                      {v}
-                    </Tag>
-                  ))}
-                </div>
+                <Button variant="ghost" onClick={() => setViewing(row)}>
+                  {permissionCount(row.verbs.length)}
+                </Button>
               ),
             },
             {
@@ -564,7 +557,51 @@ function Roles({ canEdit, query }: { canEdit: boolean; query: string }) {
 
       {adding && <AddRole onClose={() => setAdding(false)} />}
       {deleting && <DeleteRole role={deleting} onClose={() => setDeleting(null)} />}
+      {viewing && <RolePermissions role={viewing} onClose={() => setViewing(null)} />}
     </section>
+  );
+}
+
+function permissionCount(n: number): string {
+  return n === 1 ? '1 permission' : `${n} permissions`;
+}
+
+/** One role's verbs, each with the sentence the role editor shows under it. */
+function RolePermissions({ role, onClose }: { role: Role; onClose: () => void }) {
+  const scope = role.scope === 'install' ? 'Installation' : 'App';
+  const source = role.builtin ? 'built into Pando' : 'made on this installation';
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`The ${role.name} role`}
+      description={`${scope} role, ${source}. ${permissionCount(role.verbs.length)}.`}
+      footer={
+        <Button variant="secondary" onClick={onClose}>
+          Close
+        </Button>
+      }
+    >
+      <ul
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--space-3)',
+        }}
+      >
+        {role.verbs.map((v) => (
+          <li key={v} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+            <span style={{ font: 'var(--type-code-sm)' }}>{v}</span>
+            {VERB_NOTES[v] && (
+              <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)' }}>{VERB_NOTES[v]}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Dialog>
   );
 }
 
