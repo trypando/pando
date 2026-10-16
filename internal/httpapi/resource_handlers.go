@@ -145,6 +145,13 @@ func (s *Server) slotResolution(r *http.Request, appID string, sl spec.Slot, mod
 		if value == "" {
 			return nil, errs.New(errs.ValidInvalid, "A literal needs a value.")
 		}
+		// Writing a secret is its own verb (R-083). app.spec.edit chooses how a
+		// dependency is filled; it does not let a custom role without
+		// app.secrets.write store a secret by way of a slot, as detection's
+		// accept already refuses.
+		if err := s.Authz.CheckControl(r.Context(), PrincipalFrom(r.Context()), appID, authz.AppSecretsWrite); err != nil {
+			return nil, err
+		}
 		if err := sl.Format.Check(key, value); err != nil {
 			return nil, err
 		}

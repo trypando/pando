@@ -230,6 +230,10 @@ type Bootstrap struct {
 	// because an environment variable is in the Compose file, in
 	// `docker inspect`, and inherited by every child process.
 	AdminPassword string `mapstructure:"admin_password" desc:"The first administrator's password, for an unattended install. Read only on first run, and the account must change it at first sign-in. Empty: the administrator is set up in the console with the setup token Pando prints to its log."`
+
+	// AdminPasswordFile names a file holding AdminPassword, so the password
+	// need not be in the environment at all. The bundled Compose file uses it.
+	AdminPasswordFile string `mapstructure:"admin_password_file" desc:"A file holding the first administrator's password, in place of admin_password. An empty file is no password. The bundled Compose file writes PANDO_ADMIN_PASSWORD here."`
 }
 
 type Server struct {
@@ -395,6 +399,9 @@ func Load(path string) (*Config, error) {
 	if err := cfg.Database.withPasswordFile(); err != nil {
 		return nil, err
 	}
+	if err := cfg.Bootstrap.read(); err != nil {
+		return nil, err
+	}
 	cfg.Settings = settingsOf(v, path)
 	cfg.Policy = policyOf(v, path)
 	adapters, err := adaptersOf(v, path)
@@ -458,6 +465,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("retention.events", time.Duration(0))
 	v.SetDefault("retention.deleted_apps", time.Duration(0))
 	v.SetDefault("bootstrap.admin_password", "")
+	v.SetDefault("bootstrap.admin_password_file", "")
 	v.SetDefault("registry.url", "")
 	v.SetDefault("registry.username", "")
 	v.SetDefault("registry.password", "")
@@ -527,7 +535,8 @@ var boundEnv = map[string]string{
 	// worst possible moment. That makes this bind load-bearing rather than
 	// belt-and-braces: AutomaticEnv only finds the derived name, so without the
 	// line below the variable is read by nothing at all.
-	"bootstrap.admin_password": "PANDO_ADMIN_PASSWORD",
+	"bootstrap.admin_password":      "PANDO_ADMIN_PASSWORD",
+	"bootstrap.admin_password_file": "PANDO_ADMIN_PASSWORD_FILE",
 }
 
 func (c *Config) validate() error {

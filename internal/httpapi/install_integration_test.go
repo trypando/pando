@@ -12,6 +12,7 @@ import (
 
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/id"
 )
 
 // Paging is by cursor rather than offset: the log is append-only with
@@ -118,6 +119,35 @@ func TestR085_DisablingExecInstallWideDeniesTheAppsOwner(t *testing.T) {
 	if got.ErrorCode() != "" {
 		require.Equal(t, string(errs.PolicyExecDisabled), got.ErrorCode(), got.String())
 	}
+}
+
+// TestR272_APolicyRefusalDoesNotRevealAnAppTheCallerCannotSee asserts that
+// host policy, evaluated before grants (R-272), does not turn into an
+// existence oracle: somebody with no grant on an app is told it does not
+// exist whether or not policy also forbids the action, exactly as for an app
+// that really does not exist. Someone who can see it is still told why.
+func TestR272_APolicyRefusalDoesNotRevealAnAppTheCallerCannotSee(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+	appID := i.createApp(admin, "notes")
+	bob := i.user("bob")
+
+	saved := i.do(admin, http.MethodPut, "/policy", map[string]any{
+		"disabled_verbs": []string{string(authz.AppRestart)},
+	})
+	require.Equal(t, http.StatusOK, saved.Code, saved.String())
+
+	existing := i.do(bob, http.MethodPost, "/apps/"+appID+"/restart", nil)
+	missing := i.do(bob, http.MethodPost, "/apps/"+id.New(id.App)+"/restart", nil)
+	require.Equal(t, http.StatusNotFound, existing.Code, existing.String())
+	require.Equal(t, string(errs.NotFound), existing.ErrorCode())
+	require.Equal(t, missing.Code, existing.Code, "an app bob cannot see answers as one that does not exist")
+	require.Equal(t, missing.ErrorCode(), existing.ErrorCode())
+
+	// The owner can see it, so the owner is told it is policy.
+	own := i.do(admin, http.MethodPost, "/apps/"+appID+"/restart", nil)
+	require.Equal(t, string(errs.PolicyExecDisabled), own.ErrorCode(), own.String())
 }
 
 // R-092: the source allowlist is evaluated before anything touches disk.
