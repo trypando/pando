@@ -530,7 +530,10 @@ could sign in with it.
 **[P] The first password can still be supplied, as `PANDO_ADMIN_PASSWORD`**, for an unattended
 install. It must be changed at first sign-in, because an environment variable is not a safe place for
 one — it is in the Compose file, in `docker inspect`, and inherited by every child process. Set on an
-install that already has accounts it is ignored, and says so.
+install that already has accounts it is ignored, and says so. It may also be given as a file,
+`PANDO_ADMIN_PASSWORD_FILE`, which the bundled Compose file uses so the password is in neither
+`docker inspect` nor the environment; and Pando unsets `PANDO_ADMIN_PASSWORD` once it has read it, so
+no child process inherits it either way (R-194).
 
 **[D] Passwords an administrator sets are generated.** `POST /passwords/generate` returns one, 18 to
 22 characters of upper and lower case, digits and symbols with at least one of each, from the same

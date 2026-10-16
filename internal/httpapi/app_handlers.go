@@ -58,9 +58,12 @@ func (s *Server) requireControlOn(w http.ResponseWriter, r *http.Request, appID 
 		return state.App{}, false
 	}
 	if err := s.Authz.CheckControl(r.Context(), p, appID, verb); err != nil {
-		if errs.CodeOf(err) == errs.PermDenied || errs.CodeOf(err) == errs.PermVerbRequired {
-			// Not found rather than forbidden when the caller cannot even view
-			// the app: confirming existence is itself a disclosure.
+		// Not found rather than forbidden when the caller cannot even view the
+		// app: confirming existence is itself a disclosure. Any denial, not
+		// only a missing grant — host policy is evaluated before grants
+		// (R-272), so a POLICY_* refusal to someone with no grant at all would
+		// otherwise tell them the app exists where a missing one says 404.
+		if errs.CodeOf(err) != errs.Internal {
 			if viewErr := s.Authz.CheckControl(r.Context(), p, appID, authz.AppView); viewErr != nil {
 				Error(w, r, errs.New(errs.NotFound, "There is no app with that ID."))
 				return state.App{}, false

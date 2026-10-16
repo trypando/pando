@@ -8,7 +8,7 @@ React + TypeScript + Vite. Built to static assets, embedded in the Go binary via
 
 ### 1.1 Two audiences, one app
 
-**[D]** R-264/265. Root is the launcher — tiles for every app the user holds a **data-plane** grant on, from `GET /me/apps`. Users holding any administrative verb see an **Admin** entry that reveals the management console scoped to what they hold.
+**[D]** R-264/265. Root is the launcher — tiles for every app the user owns or holds a **data-plane** grant on, directly or through a group, from `GET /me/apps`. A grant to anonymous is not one: a public app is on the launchers of the people it is shared with, not on everyone's. Users holding any administrative verb see an **Admin** entry that reveals the management console scoped to what they hold.
 
 **[D]** The launcher is not a separate build. A user with no admin verbs simply never sees the admin routes. This matters because it means a non-technical user's first experience is a page of tiles, not a dashboard.
 
