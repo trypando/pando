@@ -149,7 +149,12 @@ addresses, Pando's listening port on loopback or any local interface, and each h
 database connection string. go-git's SSH transport takes no dialer, but dials through an endpoint's
 proxy URL with `golang.org/x/net/proxy`; Pando registers a `pando-guarded` scheme there whose dialer is
 the same guarded one and points every SSH endpoint at it, so SSH is checked on the socket too — an
-ssh_config `Hostname` alias included. Private and loopback addresses are otherwise allowed, and
+ssh_config `Hostname` alias included. Behind an HTTP(S) proxy from `HTTPS_PROXY`/`HTTP_PROXY`, the
+dial is to the proxy, which is the host operator's choice and inside what Pando trusts its operator
+with (R-087), so proxies are kept: the transport's `Proxy` func resolves the repository's host itself
+before every request it hands to one, a redirect's included, and refuses it the same way, an IP
+literal too. That is best effort — the proxy resolves the name again for itself and may get another
+answer. Private and loopback addresses are otherwise allowed, and
 a probe still tells "not found" from "not reachable", which is what a person adding a repository on
 their own network needs.
 

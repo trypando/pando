@@ -265,6 +265,52 @@ func TestR092_AnSSHFetchIsCheckedOnTheSocket(t *testing.T) {
 	require.ErrorContains(t, accessError(err, target.String(), ""), "did not connect")
 }
 
+// TestR092_BehindAProxyTheRepositorysHostIsChecked asserts the guard for an
+// install behind an HTTP proxy: the dial the guard sees is to the proxy, so
+// the repository's host is checked before the request is handed to it — on
+// the first request and on a redirect — and a request with no proxy is left
+// to the dialer.
+func TestR092_BehindAProxyTheRepositorysHostIsChecked(t *testing.T) {
+	var asked []string
+	fakeProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.String())
+		// A repository host, reached through the proxy, that redirects to
+		// the metadata service.
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/info/refs", http.StatusFound)
+	}))
+	t.Cleanup(fakeProxy.Close)
+	proxyURL, err := url.Parse(fakeProxy.URL)
+	require.NoError(t, err)
+
+	prev := proxyFor
+	t.Cleanup(func() { proxyFor = prev })
+	withGuard(t, Guard{OwnPorts: []uint16{8080}})
+
+	proxyFor = func(*http.Request) (*url.URL, error) { return nil, nil }
+	req := httptest.NewRequest(http.MethodGet, "http://169.254.169.254/x.git/info/refs", nil)
+	got, err := guardedProxy(req)
+	require.NoError(t, err, "no proxy: the dialer checks the address itself")
+	require.Nil(t, got)
+
+	proxyFor = func(*http.Request) (*url.URL, error) { return proxyURL, nil }
+	for _, refused := range []string{
+		"http://169.254.169.254/x.git/info/refs",
+		"https://[fe80::1]/x.git/info/refs",
+		"http://localhost:8080/x.git/info/refs",
+	} {
+		_, err := guardedProxy(httptest.NewRequest(http.MethodGet, refused, nil))
+		require.ErrorIs(t, err, errRefusedAddress, refused)
+	}
+	got, err = guardedProxy(httptest.NewRequest(http.MethodGet, "https://203.0.113.7/x.git/info/refs", nil))
+	require.NoError(t, err)
+	require.Equal(t, proxyURL, got)
+
+	_, err = listRefs(context.Background(), &gitAccess{url: "http://203.0.113.7/team/app.git"})
+	require.Error(t, err)
+	require.ErrorContains(t, accessError(err, "http://203.0.113.7/team/app.git", ""), "did not connect")
+	require.Len(t, asked, 1, "the redirect to the metadata service never reached the proxy")
+}
+
 func TestCheckHostLetsAnUnresolvableNameThroughToGoGit(t *testing.T) {
 	require.NoError(t, checkHost(context.Background(), "no-such-host.invalid", 443))
 	require.ErrorIs(t, checkHost(context.Background(), "169.254.169.254", 80), errRefusedAddress)

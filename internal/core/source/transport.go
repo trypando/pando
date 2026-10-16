@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -33,10 +34,11 @@ import (
 // still streams for as long as it takes, under the caller's context.
 //
 // Every connection it opens, a redirect's included, is checked against the
-// guard on the address dialed (guard.go).
+// guard on the address dialed (guard.go) — and through a proxy, on the
+// repository's host as well (guardedProxy).
 var gitHTTPClient = &http.Client{
 	Transport: &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
+		Proxy:                 guardedProxy,
 		DialContext:           guardedDialer.DialContext,
 		ForceAttemptHTTP2:     true,
 		TLSHandshakeTimeout:   30 * time.Second,
@@ -48,6 +50,39 @@ var gitHTTPClient = &http.Client{
 			PingTimeout:     15 * time.Second,
 		},
 	},
+}
+
+// proxyFor is the proxy a request goes through, from HTTPS_PROXY, HTTP_PROXY
+// and NO_PROXY. A variable so a test can give one without the environment,
+// which net/http reads once per process.
+var proxyFor = http.ProxyFromEnvironment
+
+// guardedProxy is the proxy a fetch's request goes through, if any, after the
+// repository's host has been checked against the guard.
+//
+// Behind a proxy the dial the guard sees is to the proxy, which the host's
+// operator chose and which is inside what Pando trusts its operator with
+// (R-087); refusing proxies would break every install behind one. So the
+// repository's host is resolved here and refused if any address it has is
+// refused, an IP literal included. Best effort, and said so: the proxy
+// resolves the name again for itself, and may get another answer. The
+// transport asks this for every request, a redirect's included.
+func guardedProxy(req *http.Request) (*url.URL, error) {
+	p, err := proxyFor(req)
+	if err != nil || p == nil {
+		return p, err
+	}
+	port := 443
+	if req.URL.Scheme == "http" {
+		port = 80
+	}
+	if n, err := strconv.Atoi(req.URL.Port()); err == nil {
+		port = n
+	}
+	if err := checkHost(req.Context(), req.URL.Hostname(), port); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // The protocols a repository is fetched over: https, http and ssh, and nothing
