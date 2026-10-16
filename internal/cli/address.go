@@ -47,31 +47,15 @@ func appAddressCmd(client func() (*Client, error)) *cobra.Command {
 					body[field] = v
 				}
 			}
-			var out map[string]any
 			if len(body) == 0 {
+				var out map[string]any
 				if err := c.Do("GET", path, nil, &out); err != nil {
 					return err
 				}
 				return printJSON(cmd.OutOrStdout(), out)
 			}
-
 			confirm, _ := cmd.Flags().GetBool("confirm")
-			body["confirm"] = confirm
-			if err := c.Do("PUT", path, body, &out); err != nil {
-				// The API asks for confirm: true; here that is --confirm.
-				var apiErr *APIError
-				if !confirm && errors.As(err, &apiErr) && apiErr.Details["to"] != nil {
-					return fmt.Errorf("%s\nAdd --confirm to go ahead", apiErr.Message)
-				}
-				return err
-			}
-			if changed, _ := out["changed"].(bool); !changed {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s is already at %v. Nothing changed.\n", args[0], out["address"])
-				return nil
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Saved as revision %v. %s moves to %v at the next deploy: `pando deploy %s`.\n",
-				out["revision"], args[0], out["address"], args[0])
-			return nil
+			return setAddress(cmd, c, args[0], path, body, confirm)
 		},
 	}
 	cmd.Flags().String("adapter", "", "the routing adapter, such as rte_cloudflare")
@@ -81,4 +65,25 @@ func appAddressCmd(client func() (*Client, error)) *cobra.Command {
 	cmd.Flags().String("path", "", "with path mode: the path, such as /team/notes")
 	cmd.Flags().Bool("confirm", false, "make the change; without it Pando only says what would move")
 	return cmd
+}
+
+// setAddress sends the change and says where the app will be.
+func setAddress(cmd *cobra.Command, c *Client, app, path string, body map[string]any, confirm bool) error {
+	body["confirm"] = confirm
+	var out map[string]any
+	if err := c.Do("PUT", path, body, &out); err != nil {
+		// The API asks for confirm: true; here that is --confirm.
+		var apiErr *APIError
+		if !confirm && errors.As(err, &apiErr) && apiErr.Details["to"] != nil {
+			return fmt.Errorf("%s\nAdd --confirm to go ahead", apiErr.Message)
+		}
+		return err
+	}
+	if changed, _ := out["changed"].(bool); !changed {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s is already at %v. Nothing changed.\n", app, out["address"])
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Saved as revision %v. %s moves to %v at the next deploy: `pando deploy %s`.\n",
+		out["revision"], app, out["address"], app)
+	return nil
 }
