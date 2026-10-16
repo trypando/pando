@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -280,7 +281,7 @@ func (s *Server) handlePutGroupRole(w http.ResponseWriter, r *http.Request) {
 // handleDeleteGroupRole takes a group's installation role away. Refused, like
 // an account's, when it would leave nobody who can manage accounts (R-088).
 func (s *Server) handleDeleteGroupRole(w http.ResponseWriter, r *http.Request) {
-	s.deleteManaged(w, r, "groupID", "grant.delete", "group", map[string]any{"scope": "install"},
+	s.deleteManaged(w, r, "groupID", "grant.delete", map[string]any{"scope": "install"},
 		func(ctx context.Context, p authz.Principal, groupID string) error {
 			return s.confersGroup(ctx, p, groupID, "remove the role %s from this group")
 		},
@@ -288,9 +289,10 @@ func (s *Server) handleDeleteGroupRole(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteManaged serves a DELETE that needs install.users.manage: it removes
-// the object named by the URL parameter param and audits action against it,
-// as targetKind.
-func (s *Server) deleteManaged(w http.ResponseWriter, r *http.Request, param, action, targetKind string,
+// the object named by the URL parameter param and audits action against it.
+// The audit's target kind is the parameter's name without its ID: "userID"
+// names a user.
+func (s *Server) deleteManaged(w http.ResponseWriter, r *http.Request, param, action string,
 	detail map[string]any, guard func(ctx context.Context, p authz.Principal, id string) error,
 	remove func(ctx context.Context, id string) error,
 ) {
@@ -298,6 +300,7 @@ func (s *Server) deleteManaged(w http.ResponseWriter, r *http.Request, param, ac
 	if !ok {
 		return
 	}
+	targetKind := strings.TrimSuffix(param, "ID")
 	target := chi.URLParam(r, param)
 	// What removing it takes from whoever held it, which the caller must hold
 	// too (R-080a).
@@ -351,7 +354,7 @@ func (s *Server) handleGroupApps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
-	s.deleteManaged(w, r, "groupID", "group.delete", "group", nil,
+	s.deleteManaged(w, r, "groupID", "group.delete", nil,
 		func(ctx context.Context, p authz.Principal, groupID string) error {
 			return s.confersGroup(ctx, p, groupID, "delete a group holding the role %s")
 		}, s.Groups.Delete)
@@ -434,7 +437,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
-	s.deleteManaged(w, r, "roleID", "role.delete", "role", nil,
+	s.deleteManaged(w, r, "roleID", "role.delete", nil,
 		func(ctx context.Context, p authz.Principal, roleID string) error {
 			// Deleting a role takes it from everyone granted it.
 			return s.Authz.CheckConfersRole(ctx, p, roleID, "delete the role %s")

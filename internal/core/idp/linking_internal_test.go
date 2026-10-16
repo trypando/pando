@@ -53,6 +53,9 @@ func TestR080a_AnAccountHoldingAnInstallRoleIsNotLinkedByEmail(t *testing.T) {
 	// Not knowing is not linking.
 	s.Grants = heldRoles{err: errors.New("connection refused")}
 	require.Equal(t, errs.Internal, s.installRoleRefusal(ctx, provider, subject, admin).Code)
+	s.Grants = heldRoles{err: errs.New(errs.Internal, "Could not read installation-wide access.")}
+	require.Contains(t, s.installRoleRefusal(ctx, provider, subject, admin).Message, "installation-wide access",
+		"an error that already says what happened is passed on as itself")
 	s.Grants = nil
 	require.NotNil(t, s.installRoleRefusal(ctx, provider, subject, admin))
 }

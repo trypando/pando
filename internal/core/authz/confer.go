@@ -37,15 +37,11 @@ import (
 // what passing it on is about.
 func (a *Authorizer) InstallVerbsHeld(ctx context.Context, p Principal) (map[Verb]bool, error) {
 	held := map[Verb]bool{}
-	if p.Kind == KindSystem {
-		for _, v := range Verbs {
-			if InstallScoped(v) {
-				held[v] = true
-			}
-		}
+	switch p.Kind {
+	case KindSystem:
+		addInstallVerbs(held, Verbs)
 		return held, nil
-	}
-	if p.Kind == KindAnonymous {
+	case KindAnonymous:
 		return held, nil
 	}
 	grants, err := a.store.InstallGrantsFor(ctx, p)
@@ -57,13 +53,18 @@ func (a *Authorizer) InstallVerbsHeld(ctx context.Context, p Principal) (map[Ver
 		if err != nil {
 			return nil, err
 		}
-		for _, v := range role.Verbs {
-			if InstallScoped(v) {
-				held[v] = true
-			}
-		}
+		addInstallVerbs(held, role.Verbs)
 	}
 	return held, nil
+}
+
+// addInstallVerbs adds the install-scoped verbs of vs to held.
+func addInstallVerbs(held map[Verb]bool, vs []Verb) {
+	for _, v := range vs {
+		if InstallScoped(v) {
+			held[v] = true
+		}
+	}
 }
 
 // lacking returns which install verbs of want p does not hold, in catalog

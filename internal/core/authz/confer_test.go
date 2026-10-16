@@ -87,6 +87,45 @@ func TestR080a_ConfiguringAnIdentityProviderNeedsEveryInstallVerb(t *testing.T) 
 	require.NoError(t, a.CheckHoldsEveryInstallVerb(ctx, authz.System(), "add an identity provider", "it decides who signs in"))
 }
 
+// A failure to read grants or roles is a failure, never an answer: nothing is
+// handed on, and nothing is audited as a denial (as TestAStoreFailureIsNeverAnAnswer).
+func TestR080a_AStoreFailureConfersNothing(t *testing.T) {
+	ctx := context.Background()
+	for name, f := range map[string]failing{
+		"install grants": {store: conferStore(), install: true},
+		"a held role":    {store: conferStore(), role: roleUsersOnly},
+	} {
+		rec := &recorder{}
+		a := authz.New(f, nil, rec)
+		require.ErrorIs(t, a.CheckConfers(ctx, activeUser(alice), []authz.Verb{authz.InstallView}, "grant it"), errStore, name)
+		require.ErrorIs(t, a.CheckMayChangeAccount(ctx, activeUser(bob), alice, "change it"), errStore, name)
+		require.ErrorIs(t, a.CheckHoldsEveryInstallVerb(ctx, activeUser(alice), "do it", "it reaches everything"), errStore, name)
+		require.Zero(t, rec.denials, name)
+	}
+
+	a := authz.New(failing{store: conferStore(), role: authz.RoleAdministrator}, nil, &recorder{})
+	require.ErrorIs(t, a.CheckConfersRole(ctx, activeUser(alice), authz.RoleAdministrator, "grant the role %s"), errStore)
+}
+
+// The system holds every install verb, and anonymous none.
+func TestInstallVerbsHeldBySystemAndAnonymous(t *testing.T) {
+	ctx := context.Background()
+	a := authz.New(conferStore(), nil, &recorder{})
+
+	held, err := a.InstallVerbsHeld(ctx, authz.System())
+	require.NoError(t, err)
+	for _, v := range installVerbs() {
+		require.True(t, held[v], v)
+	}
+	held, err = a.InstallVerbsHeld(ctx, authz.Anonymous())
+	require.NoError(t, err)
+	require.Empty(t, held)
+
+	require.NoError(t, a.CheckConfersRole(ctx, activeUser(alice), "", "grant the role %s"), "no role carries nothing")
+	require.NoError(t, a.CheckConfersRole(ctx, activeUser(alice), "role_missing", "grant the role %s"),
+		"nor does one that does not exist")
+}
+
 // An app verb in an install check is a caller mistake, refused rather than
 // evaluated (R-080): install roles cannot carry one.
 func TestConferringAnAppVerbInstallWideIsAnInternalError(t *testing.T) {

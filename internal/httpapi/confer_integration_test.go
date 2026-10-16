@@ -75,6 +75,13 @@ func TestR080a_AnAccountManagerCannotBecomeAnAdministrator(t *testing.T) {
 	group.JSON(t, &g)
 	require.Equal(t, http.StatusOK,
 		i.do(admin, http.MethodPut, "/groups/"+g.ID+"/role", map[string]any{"role_id": authz.RoleAdministrator}).Code)
+	other := i.do(admin, http.MethodPost, "/groups", map[string]any{"name": "desk's friends"})
+	require.Equal(t, http.StatusCreated, other.Code, other.String())
+	var o struct {
+		ID string `json:"id"`
+	}
+	other.JSON(t, &o)
+	requireMissingVerbs(t, i.do(desk, http.MethodPut, "/groups/"+o.ID+"/role", map[string]any{"role_id": authz.RoleAdministrator}))
 	requireMissingVerbs(t, i.do(desk, http.MethodPut, "/groups/"+g.ID+"/members/"+deskID, nil))
 	requireMissingVerbs(t, i.do(desk, http.MethodPut, "/groups/"+g.ID+"/members", map[string]any{"members": []string{deskID}}))
 	requireMissingVerbs(t, i.do(desk, http.MethodDelete, "/groups/"+g.ID+"/role", nil))
@@ -88,6 +95,48 @@ func TestR080a_AnAccountManagerCannotBecomeAnAdministrator(t *testing.T) {
 	requireMissingVerbs(t, i.do(desk, http.MethodPatch, "/users/"+i.AdminID, map[string]any{"email": "desk@example.com"}))
 	requireMissingVerbs(t, i.do(desk, http.MethodDelete, "/users/"+i.AdminID+"/role", nil))
 	requireMissingVerbs(t, i.do(desk, http.MethodDelete, "/users/"+i.AdminID, nil))
+
+	// Replacing the administrator's role with one it does hold, or the
+	// group's: what is replaced is taken away.
+	var deskHeld struct {
+		Roles []struct {
+			RoleID string `json:"role_id"`
+		} `json:"install_roles"`
+	}
+	i.do(admin, http.MethodGet, "/users/"+deskID, nil).JSON(t, &deskHeld)
+	require.NotEmpty(t, deskHeld.Roles)
+	deskRoleID := deskHeld.Roles[0].RoleID
+	requireMissingVerbs(t, i.do(desk, http.MethodPut, "/users/"+i.AdminID+"/role", map[string]any{"role_id": deskRoleID}))
+	requireMissingVerbs(t, i.do(desk, http.MethodPut, "/groups/"+g.ID+"/role", map[string]any{"role_id": deskRoleID}))
+
+	// Linking a provider's group to the administrators' group, or unlinking it.
+	requireMissingVerbs(t, i.do(desk, http.MethodPut, "/groups/"+g.ID+"/links/grp_synced", nil))
+	requireMissingVerbs(t, i.do(desk, http.MethodDelete, "/groups/"+g.ID+"/links/grp_synced", nil))
+
+	// An identity that signs in to the administrator: linking one, unlinking
+	// theirs, or moving theirs to an account the desk can sign in to.
+	okta := oidcProvider(t, i, admin, "Okta", nil)
+	linked := i.do(admin, http.MethodPost, "/users/"+i.AdminID+"/identities",
+		map[string]any{"adapter_id": okta, "external_id": "00uadmin"})
+	require.Equal(t, http.StatusCreated, linked.Code, linked.String())
+	theirs := struct{ AdapterID, ExternalID string }{okta, "00uadmin"}
+	requireMissingVerbs(t, i.do(desk, http.MethodPost, "/users/"+i.AdminID+"/identities",
+		map[string]any{"adapter_id": theirs.AdapterID, "external_id": "someone-else"}))
+	requireMissingVerbs(t, i.do(desk, http.MethodDelete, "/users/"+i.AdminID+"/identities?adapter_id="+
+		theirs.AdapterID+"&external_id="+theirs.ExternalID, nil))
+	requireMissingVerbs(t, i.do(desk, http.MethodPost, "/users/"+deskID+"/identities",
+		map[string]any{"adapter_id": theirs.AdapterID, "external_id": theirs.ExternalID, "replace_account": true}))
+
+	// Revoking the administrator's token.
+	minted := i.do(admin, http.MethodPost, "/tokens", map[string]any{"name": "admin's"})
+	require.Equal(t, http.StatusCreated, minted.Code, minted.String())
+	var tok struct {
+		Token struct {
+			ID string `json:"id"`
+		} `json:"token"`
+	}
+	minted.JSON(t, &tok)
+	requireMissingVerbs(t, i.do(desk, http.MethodDelete, "/tokens/"+tok.Token.ID, nil))
 
 	// The administrator is untouched and still signs in.
 	_, back := i.signIn(bootstrap.AdminUsername, i.adminPassword)

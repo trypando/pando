@@ -307,7 +307,7 @@ func (s *Server) handlePutUserRole(w http.ResponseWriter, r *http.Request) {
 // that refusal is transactional — see state.Grants.RevokeInstall. An install
 // that cannot be administered has no recovery path inside the product.
 func (s *Server) handleDeleteUserRole(w http.ResponseWriter, r *http.Request) {
-	s.deleteManaged(w, r, "userID", "grant.delete", "user", map[string]any{"scope": "install"},
+	s.deleteManaged(w, r, "userID", "grant.delete", map[string]any{"scope": "install"},
 		func(ctx context.Context, p authz.Principal, userID string) error {
 			return s.Authz.CheckMayChangeAccount(ctx, p, userID, "remove this account's role")
 		},

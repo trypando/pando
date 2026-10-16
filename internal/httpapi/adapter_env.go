@@ -41,20 +41,29 @@ func (s *Server) envReferences(ctx context.Context, id, category, kind string, r
 	for _, f := range info.Fields {
 		defaults[f.Key] = f.Default
 	}
+	if err := envVariables(cfg, defaults); err != nil {
+		return err
+	}
+	return s.envKeyDestination(ctx, id, cfg, defaults, creds)
+}
 
+// envVariables refuses a *_env setting naming any variable but the one the
+// kind defaults to.
+func envVariables(cfg map[string]json.RawMessage, defaults map[string]string) error {
 	for key, value := range cfg {
 		if !strings.HasSuffix(strings.ToLower(key), "_env") {
 			continue
 		}
 		var name string
-		if err := json.Unmarshal(value, &name); err != nil || name == "" {
+		if json.Unmarshal(value, &name) != nil || name == "" {
 			continue
 		}
-		if want := defaults[key]; want != "" && name == want {
+		want := defaults[key]
+		if want != "" && name == want {
 			continue
 		}
 		allowed := "no variable"
-		if want := defaults[key]; want != "" {
+		if want != "" {
 			allowed = "only " + want
 		}
 		return errs.Newf(errs.ValidInvalid,
@@ -64,9 +73,16 @@ func (s *Server) envReferences(ctx context.Context, id, category, kind string, r
 			WithRemedy(`Store the key as this adapter's credential instead, in the request's "credentials" object, ` +
 				"or declare the adapter in Pando's configuration file, where any variable may be named.")
 	}
+	return nil
+}
 
-	// An adapter reads its key from the environment when one is stored for
-	// neither it nor this request, if its kind declares a variable to read.
+// envKeyDestination refuses sending a key read from the environment to an
+// address other than the provider's. An adapter reads its key from the
+// environment when none is stored for it or sent in this request, if its kind
+// declares a variable to read.
+func (s *Server) envKeyDestination(ctx context.Context, id string, cfg map[string]json.RawMessage,
+	defaults map[string]string, creds map[string]secret.Value,
+) error {
 	if defaults["api_key_env"] == "" {
 		return nil
 	}
