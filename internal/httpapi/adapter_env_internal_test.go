@@ -48,6 +48,11 @@ func TestR080a_AnAdapterSetThroughTheAPIReadsOnlyItsOwnVariable(t *testing.T) {
 	require.Error(t, check(map[string]any{"base_url": "https://attacker.example"},
 		map[string]secret.Value{"api_key": secret.New("")}), "removing the key in the same request leaves none")
 	require.NoError(t, check(map[string]any{"base_url": "https://api.anthropic.com/"}, nil), "the provider's own address")
+	// encoding/json matches field names without regard to case, so every
+	// spelling is the adapter's BaseURL, and an empty one does not hide another.
+	require.Error(t, check(map[string]any{"BASE_URL": "https://attacker.example"}, nil))
+	require.Error(t, check(map[string]any{"base_url": "", "Base_Url": "https://attacker.example"}, nil))
+	require.Error(t, check(map[string]any{"API_KEY_ENV": "PANDO_ADMIN_PASSWORD"}, nil))
 
 	// Not an object, or nothing at all: inlineCredential's to refuse.
 	require.NoError(t, s.envReferences(context.Background(), "ai_x", "ai", "anthropic", json.RawMessage(`[1]`), nil))

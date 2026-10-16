@@ -86,11 +86,8 @@ func (s *Server) envKeyDestination(ctx context.Context, id string, cfg map[strin
 	if defaults["api_key_env"] == "" {
 		return nil
 	}
-	var baseURL string
-	if v, ok := cfg["base_url"]; ok {
-		_ = json.Unmarshal(v, &baseURL)
-	}
-	if baseURL == "" || sameURL(baseURL, defaults["base_url"]) {
+	baseURL := otherBaseURL(cfg, defaults["base_url"])
+	if baseURL == "" {
 		return nil
 	}
 	if stored, err := s.hasStoredKey(ctx, id, creds); err != nil || stored {
@@ -127,6 +124,23 @@ func (s *Server) kindInfo(category, kind string) (api.KindInfo, bool) {
 		}
 	}
 	return api.KindInfo{}, false
+}
+
+// otherBaseURL returns a base_url in cfg that is not the provider's, or "".
+// Every spelling of the key is read: encoding/json matches field names
+// without regard to case, so {"BASE_URL": …} sets the adapter's BaseURL too.
+func otherBaseURL(cfg map[string]json.RawMessage, provider string) string {
+	for key, value := range cfg {
+		if !strings.EqualFold(key, "base_url") {
+			continue
+		}
+		var u string
+		_ = json.Unmarshal(value, &u)
+		if u != "" && !sameURL(u, provider) {
+			return u
+		}
+	}
+	return ""
 }
 
 // configObject is an adapter's configuration as an object, or nil.
