@@ -276,7 +276,9 @@ func (s *Identities) Unlink(ctx context.Context, userID, adapterID, externalID s
 
 // ByVerifiedEmail finds the one active account with this email, for linking
 // by an email a provider vouches for. More than one match is no match: a
-// guess between two people is how one signs in as the other.
+// guess between two people is how one signs in as the other. An email the
+// account's holder set themselves is not matched at all: they could have typed
+// anyone's (R-045).
 func (s *Identities) ByVerifiedEmail(ctx context.Context, email string) (User, bool, error) {
 	email = strings.TrimSpace(email)
 	if email == "" {
@@ -285,6 +287,7 @@ func (s *Identities) ByVerifiedEmail(ctx context.Context, email string) (User, b
 	rows, err := s.db.Query(ctx, `
 		SELECT id FROM users
 		WHERE lower(email) = lower($1) AND deleted_at IS NULL AND alias_of IS NULL AND status = 'active'
+		  AND NOT email_set_by_self
 		LIMIT 2`, email)
 	if err != nil {
 		return User{}, false, errs.Wrap(errs.Internal, "Could not look up the account.", err)

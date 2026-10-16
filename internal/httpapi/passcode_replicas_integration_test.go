@@ -45,7 +45,7 @@ func TestR075a_ThePasscodeLimitIsKeptInTheSharedStore(t *testing.T) {
 
 	// The request's client address, as the handler keys it.
 	var key string
-	require.NoError(t, i.db.QueryRow(ctx, `SELECT key FROM failed_attempts LIMIT 1`).Scan(&key))
+	require.NoError(t, i.db.QueryRow(ctx, `SELECT key FROM failed_attempts WHERE key LIKE $1`, appID+"|%").Scan(&key))
 	require.Contains(t, key, appID+"|", "counted in the shared store, per app and client")
 
 	// A right passcode clears the count.

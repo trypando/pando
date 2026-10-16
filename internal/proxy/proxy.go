@@ -36,10 +36,24 @@ const HeaderPrefix = "X-Pando-"
 // CookiePrefix is Pando's cookie namespace.
 //
 // Every cookie starting with this is removed from the request before it is
-// forwarded to an app (see stripCookies). A prefix rather than one name, for
+// forwarded to an app (see stripCookies), and so is one starting with it after
+// a browser's __Host- or __Secure- prefix: the session cookie is
+// __Host-pando_session on an HTTPS install. A prefix rather than one name, for
 // the same reason HeaderPrefix is: the rule has to cover the cookie nobody has
 // added yet.
 const CookiePrefix = "pando_"
+
+// isPandoCookie reports whether a cookie is in Pando's namespace (R-173). The
+// browser prefixes are matched without regard to case, as browsers do.
+func isPandoCookie(name string) bool {
+	for _, prefix := range []string{"__host-", "__secure-"} {
+		if len(name) >= len(prefix) && strings.EqualFold(name[:len(prefix)], prefix) {
+			name = name[len(prefix):]
+			break
+		}
+	}
+	return strings.HasPrefix(name, CookiePrefix)
+}
 
 // PasscodeCookiePrefix names the cookie that proves a visitor entered an app's
 // passcode (R-075a): PasscodeCookiePrefix + the app's ID. In Pando's namespace,
@@ -343,10 +357,15 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target *url.URL,
 
 		// The visit cookie rides on the app's response, in Pando's namespace:
 		// the browser returns it, and stripCookies takes it off again before
-		// the app sees a request.
+		// the app sees a request. Any cookie the app tries to set in that
+		// namespace is dropped first: on Pando's origin (path routing) or
+		// host (port routing) it would be one Pando reads, and setting
+		// pando_session is how an app signs its visitor in as someone else
+		// (R-173).
 		ModifyResponse: func(resp *http.Response) error {
+			stripSetCookies(resp.Header)
 			if visit != nil {
-				resp.Header.Add("Set-Cookie", visit.String())
+				resp.Header.Add(setCookie, visit.String())
 			}
 			return nil
 		},
@@ -410,7 +429,7 @@ func stripInbound(h http.Header) {
 func stripCookies(r *http.Request) {
 	var kept []*http.Cookie
 	for _, c := range r.Cookies() {
-		if !strings.HasPrefix(c.Name, CookiePrefix) {
+		if !isPandoCookie(c.Name) {
 			kept = append(kept, c)
 		}
 	}
@@ -418,6 +437,25 @@ func stripCookies(r *http.Request) {
 	r.Header.Del("Cookie")
 	for _, c := range kept {
 		r.AddCookie(c)
+	}
+}
+
+// setCookie is the response header a cookie is set by.
+const setCookie = "Set-Cookie"
+
+// stripSetCookies removes every Set-Cookie in Pando's namespace from an app's
+// response, and keeps the rest in order.
+func stripSetCookies(h http.Header) {
+	values := h.Values(setCookie)
+	if len(values) == 0 {
+		return
+	}
+	h.Del(setCookie)
+	for _, v := range values {
+		name, _, _ := strings.Cut(v, "=")
+		if !isPandoCookie(strings.TrimSpace(name)) {
+			h.Add(setCookie, v)
+		}
 	}
 }
 

@@ -106,6 +106,28 @@ func (a *Adapter) startTrialContainer(ctx context.Context, req api.TrialRequest,
 	}
 	sort.Strings(env)
 
+	hostCfg := &container.HostConfig{
+		// Never restart. A trial that crashes has produced its result, and
+		// restarting would turn "this app needs a database" into a loop.
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
+		AutoRemove:    false, // the container is inspected after it exits
+
+		// The same runtime the app will be deployed on. A trial runs code
+		// nobody has reviewed yet, so it gets the boundary the deploy gets:
+		// running it under runc on a sandboxed install would put the least
+		// trusted moment of an app's life outside the sandbox.
+		Runtime: a.config.OCIRuntime,
+
+		// Throwaway storage wherever the image declares it, so an app that
+		// checks for its volume starts the way it will when deployed with
+		// one — Vaultwarden refuses to start without /data mounted (issue
+		// #55) — and a trial leaves no anonymous volume behind.
+		Tmpfs: tmpfsFor(a.imageVolumes(ctx, req.Image)),
+	}
+	// And the limits the deploy gets, for the same reason: a repository's
+	// trial is the least trusted code Pando runs (hardening.go).
+	a.harden(hostCfg)
+
 	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:      req.Image,
@@ -115,24 +137,7 @@ func (a *Adapter) startTrialContainer(ctx context.Context, req api.TrialRequest,
 			Env:        env,
 			Labels:     map[string]string{labelManaged: "true", labelTrial: req.TrialID},
 		},
-		HostConfig: &container.HostConfig{
-			// Never restart. A trial that crashes has produced its result, and
-			// restarting would turn "this app needs a database" into a loop.
-			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
-			AutoRemove:    false, // the container is inspected after it exits
-
-			// The same runtime the app will be deployed on. A trial runs code
-			// nobody has reviewed yet, so it gets the boundary the deploy gets:
-			// running it under runc on a sandboxed install would put the least
-			// trusted moment of an app's life outside the sandbox.
-			Runtime: a.config.OCIRuntime,
-
-			// Throwaway storage wherever the image declares it, so an app that
-			// checks for its volume starts the way it will when deployed with
-			// one — Vaultwarden refuses to start without /data mounted (issue
-			// #55) — and a trial leaves no anonymous volume behind.
-			Tmpfs: tmpfsFor(a.imageVolumes(ctx, req.Image)),
-		},
+		HostConfig: hostCfg,
 		NetworkingConfig: &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				networkID: {NetworkID: networkID},

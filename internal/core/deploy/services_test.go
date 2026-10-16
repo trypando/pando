@@ -113,6 +113,21 @@ func TestR222_AProvisionedServiceIsCappedLikeAnyOtherWorkload(t *testing.T) {
 	require.Equal(t, s.Resources.CPUMillis, service.Resources.CPUMillis)
 }
 
+// TestR403_EveryWorkloadCarriesTheAppsDiskLimit asserts that the app's disk
+// limit reaches each of its workloads, the service a slot provisioned among
+// them, so a runtime that can cap a container's own layer caps it there.
+func TestR403_EveryWorkloadCarriesTheAppsDiskLimit(t *testing.T) {
+	s := specWithProvisionedSlot()
+	s.Resources.DiskBytes = 5 << 30
+	plan, err := bundlePlanFor(s, "app:latest", nil, nil, provisionedPostgres(), true, api.EgressRules{})
+	require.NoError(t, err)
+
+	require.Len(t, plan.Workloads, 2)
+	for _, w := range plan.Workloads {
+		require.Equal(t, s.Resources.DiskBytes, w.Resources.DiskBytes, w.Name)
+	}
+}
+
 // The app workload starts after the service it reads a slot from.
 //
 // Start order, not readiness — Docker's depends_on does not wait for a health

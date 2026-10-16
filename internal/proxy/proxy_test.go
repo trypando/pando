@@ -879,6 +879,12 @@ func pandosCookiesAreStripped(t *testing.T, front *httptest.Server, got *receive
 	require.NoError(t, err)
 	req.AddCookie(&http.Cookie{Name: "pando_session", Value: "ses_01HQ8REALCREDENTIAL"})
 	req.AddCookie(&http.Cookie{Name: "pando_anything_later", Value: "also-a-credential"})
+	// The session cookie's name on an HTTPS install, and the other browser
+	// prefix: the namespace is pando_ after either.
+	req.AddCookie(&http.Cookie{Name: "__Host-pando_session", Value: "ses_01HQ8HOSTCREDENTIAL"})
+	req.AddCookie(&http.Cookie{Name: "__Secure-pando_later", Value: "secure-credential"})
+	req.AddCookie(&http.Cookie{Name: "__host-pando_session", Value: "lowercase-credential"})
+	req.AddCookie(&http.Cookie{Name: "__Host-theme", Value: "an-apps-own"})
 	req.AddCookie(&http.Cookie{Name: "theme", Value: "dark"})
 	req.AddCookie(&http.Cookie{Name: "cart", Value: "two-items"})
 
@@ -894,8 +900,11 @@ func pandosCookiesAreStripped(t *testing.T, front *httptest.Server, got *receive
 		"nor any other cookie in Pando's namespace, including ones not invented yet")
 
 	// The app's own cookies are untouched: this is a filter, not a purge.
+	require.NotContains(t, forwarded, "CREDENTIAL")
+	require.NotContains(t, forwarded, "credential")
 	require.Contains(t, forwarded, "theme=dark")
 	require.Contains(t, forwarded, "cart=two-items")
+	require.Contains(t, forwarded, "__Host-theme=an-apps-own", "an app's own __Host- cookie is its own")
 }
 
 // TestR075a_APasscodeAppAsksForItsPasscode asserts the proxy's half of public

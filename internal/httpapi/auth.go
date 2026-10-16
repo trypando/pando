@@ -17,9 +17,6 @@ import (
 
 type ctxKeyPrincipal struct{}
 
-// SessionCookie carries only the session ID (design 02 §2.7).
-const SessionCookie = "pando_session"
-
 // Authenticator resolves credentials to a principal. Steps 1–3 of the
 // evaluation order; steps 4–7 belong to the authorizer.
 type Authenticator struct {
@@ -29,6 +26,9 @@ type Authenticator struct {
 	Groups   interface {
 		GroupsForUser(ctx context.Context, userID string) ([]string, error)
 	}
+	// Cookies names the session cookie this install sets, which is the only
+	// one read back (cookie.go).
+	Cookies CookieScheme
 }
 
 // Authenticate resolves a request to a principal, or to anonymous.
@@ -45,11 +45,25 @@ func (a *Authenticator) Authenticate(r *http.Request) (authz.Principal, error) {
 		return a.fromToken(r.Context(), secret.New(raw))
 	}
 
-	if cookie, err := r.Cookie(SessionCookie); err == nil && cookie.Value != "" {
-		return a.fromSession(r.Context(), cookie.Value)
+	sessionID, err := a.SessionID(r)
+	if err != nil {
+		return authz.Anonymous(), err
+	}
+	if sessionID != "" {
+		return a.fromSession(r.Context(), sessionID)
 	}
 
 	return authz.Anonymous(), nil
+}
+
+// SessionID is the session the request's cookie names, or "" for none. The
+// proxy's cache reads it too, so both resolve the same cookie (cookie.go).
+func (a *Authenticator) SessionID(r *http.Request) (string, error) {
+	if a == nil {
+		// A server built without one (tests) reads by the request alone.
+		return CookieScheme{}.SessionID(r)
+	}
+	return a.Cookies.SessionID(r)
 }
 
 func (a *Authenticator) fromToken(ctx context.Context, presented secret.Value) (authz.Principal, error) {

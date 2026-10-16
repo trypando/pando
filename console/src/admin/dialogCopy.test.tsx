@@ -79,6 +79,22 @@ describe('changing an app’s address', () => {
     expect(text).not.toContain('Needs permission');
   });
 
+  it('says what a port shares with Pando, as it says what a path does', async () => {
+    const view = { routing: { adapter_ref: 'rte_alpha', mode: 'port' }, options: [option('Alpha', { is_default: true })] };
+    const s = open(<AppAddress app={app} />, [[['apps', 'app_1', 'routing'], view]], [AppVerb.SpecEdit, AppVerb.RoutingOverride]);
+    await s.press('Change');
+    expect(s.text()).toContain('browsers keep cookies apart by host, not by port');
+    expect(s.text()).not.toContain('At a path, this app shares Pando’s address');
+  });
+
+  it('says what a path shares with Pando', async () => {
+    const view = { routing: { adapter_ref: 'rte_alpha', mode: 'path', path_prefix: '/inventory' }, options: [option('Alpha', { is_default: true })] };
+    const s = open(<AppAddress app={app} />, [[['apps', 'app_1', 'routing'], view]], [AppVerb.SpecEdit, AppVerb.RoutingOverride]);
+    await s.press('Change');
+    expect(s.text()).toContain('At a path, this app shares Pando’s address');
+    expect(s.text()).not.toContain('not by port');
+  });
+
   it('names the default adapter among many, and which modes need permission', async () => {
     const text = await change([option('Alpha'), option('Beta', { is_default: true }), option('Gamma'), option('Delta')], []);
     expect(text).toContain('Beta (default)');

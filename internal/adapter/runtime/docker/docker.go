@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -91,6 +92,10 @@ type Adapter struct {
 
 	// What app containers are limited to, read briefly (hosts.go).
 	committed committedCache
+
+	// Whether the daemon can size a container's own layer: unknown until the
+	// first workload is created with a size (hardening.go).
+	layerQuota atomic.Int32
 }
 
 // Config is the adapter's configuration.
@@ -109,6 +114,12 @@ type Config struct {
 	TotalCPUMillis   int   `json:"total_cpu_millis,omitempty"`
 	TotalMemoryBytes int64 `json:"total_memory_bytes,omitempty"`
 	TotalDiskBytes   int64 `json:"total_disk_bytes,omitempty"`
+
+	// PidsLimit is how many processes and threads each app container may
+	// hold at once (hardening.go). Zero is DefaultPidsLimit; negative is no
+	// limit, for a host that needs it and accepts that one app can then
+	// exhaust the process table every app shares.
+	PidsLimit int64 `json:"pids_limit,omitempty"`
 
 	// ProxyContainer is the container Pando's proxy runs in, which this adapter
 	// attaches to every bundle network it creates.
@@ -477,6 +488,10 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	capacity.Details["rootless"] = slices.Contains(info.SecurityOptions, "name=rootless")
 	capacity.Details["cgroup_version"] = info.CgroupVersion
 	capacity.Details["cgroup_driver"] = info.CgroupDriver
+	// Whether an app's disk limit also caps each container's own layer, or is
+	// only measured (R-240, R-403, hardening.go).
+	capacity.Details["disk_quota"] = a.layerQuotaDetail()
+	capacity.Details["pids_limit"] = a.pidsLimit()
 	if limits, err := a.support(ctx, info); err == nil {
 		capacity.Details["rootless"] = limits.rootless
 		capacity.Details["cgroup_version"] = limits.cgroupVersion
@@ -684,6 +699,8 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		},
 		LogConfig: logConfig(w.LogBytes),
 	}
+	a.harden(hostCfg)
+	cfg.Labels[labelHardening] = hardeningLevel
 
 	// No ports are published to the host. Workloads are reachable only inside
 	// the bundle network, and traffic arrives through Pando's proxy (R-023,
@@ -696,9 +713,9 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		},
 	}
 
-	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	created, err := a.createSized(ctx, client.ContainerCreateOptions{
 		Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: name,
-	})
+	}, w.Resources.DiskBytes)
 	if err != nil {
 		return createFailure(w, err)
 	}
@@ -1928,6 +1945,21 @@ func (a *Adapter) matchesPlan(ctx context.Context, containerID string, w api.Wor
 	if inspect.Container.HostConfig != nil && !a.runsUnder(inspect.Container.HostConfig.Runtime) {
 		return false, nil
 	}
+	// Created before harden, or under an older version of it: recreated once,
+	// so an upgrade applies the limits to apps already running (hardening.go).
+	if !hardened(inspect.Container.Config.Labels) {
+		return false, nil
+	}
+	// And under the disk limit the plan now has, where the driver sizes layers:
+	// a change to the limit alone would otherwise keep the old cap.
+	if !a.matchesLayerSize(ctx, inspect.Container.HostConfig, w.Resources.DiskBytes) {
+		return false, nil
+	}
+	// The process limit is the operator's to change (pids_limit); the rest of
+	// harden is fixed by the label above.
+	if !a.matchesPidsLimit(inspect.Container.HostConfig) {
+		return false, nil
+	}
 
 	if inspect.Container.NetworkSettings != nil && inspect.Container.NetworkSettings.Networks != nil {
 		ep, ok := inspect.Container.NetworkSettings.Networks[networkName]
@@ -2151,6 +2183,7 @@ func Info() api.KindInfo {
 			{Key: "total_cpu_millis", Label: "CPU available", Type: "int", Help: "Thousandths of a core Pando may allocate.", Default: "The whole machine", Advanced: true},
 			{Key: "total_memory_bytes", Label: "Memory available", Type: "int", Help: "Bytes Pando may allocate.", Default: "The whole machine", Advanced: true},
 			{Key: "total_disk_bytes", Label: "Disk available", Type: "int", Help: "Bytes of disk Pando may allocate.", Default: "No limit", Advanced: true},
+			{Key: "pids_limit", Label: "Processes per container", Type: "int", Help: "How many processes and threads each app container may run at once, so one app cannot exhaust the host's process table. A negative number removes the limit.", Default: "1024", Advanced: true},
 			{Key: "network_pool", Label: "App network range", Type: "string", Help: "The IPv4 range each app's private network takes its addresses from. A /16 holds about 4,000 apps; a wider range such as 10.208.0.0/12 holds more. \"off\" uses Docker's own pool, which holds about 30 networks.", Default: defaultNetworkPool, Advanced: true},
 			{Key: "network_block_bits", Label: "App network size", Type: "int", Help: "The size of each app's private network, as a prefix length from 24 to 29. 28 holds 13 containers; an app with more workloads than fit gets a larger network.", Default: "28", Advanced: true},
 			{Key: "egress_gateway_image", Label: "Egress gateway image", Type: "string", Help: "The image an app's egress gateway runs from when its egress rules restrict anything: any image with Pando's binary at /usr/local/bin/pando. Without one, and with Pando not running in a container, apps whose egress is restricted cannot be deployed.", Default: "The image Pando's own container runs", Advanced: true},

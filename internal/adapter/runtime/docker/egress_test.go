@@ -296,15 +296,16 @@ func (w *world) inspectContainer(rw http.ResponseWriter, r *http.Request) {
 	if c.Req.Config != nil {
 		cfg = map[string]any{"Image": c.Req.Image, "Env": c.Req.Env, "Labels": c.Req.Labels}
 	}
-	runtime := ""
+	// The host configuration it was created with, as a daemon reports it.
+	var hostCfg any = map[string]any{}
 	if c.Req.HostConfig != nil {
-		runtime = c.Req.HostConfig.Runtime
+		hostCfg = c.Req.HostConfig
 	}
 	writeJSON(rw, http.StatusOK, map[string]any{
 		"Id": c.ID, "Name": "/" + c.Name, "Path": c.Path, "Args": c.Args, "Image": c.Image,
 		"State":           map[string]any{"Running": c.Running, "Status": map[bool]string{true: "running", false: "exited"}[c.Running]},
 		"Config":          cfg,
-		"HostConfig":      map[string]any{"Runtime": runtime},
+		"HostConfig":      hostCfg,
 		"NetworkSettings": map[string]any{"Networks": nets},
 	})
 }

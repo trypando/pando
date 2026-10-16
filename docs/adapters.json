@@ -729,6 +729,14 @@
               "default": "No limit"
             },
             {
+              "key": "pids_limit",
+              "label": "Processes per container",
+              "help": "How many processes and threads each app container may run at once, so one app cannot exhaust the host's process table. A negative number removes the limit.",
+              "type": "int",
+              "advanced": true,
+              "default": "1024"
+            },
+            {
               "key": "network_pool",
               "label": "App network range",
               "help": "The IPv4 range each app's private network takes its addresses from. A /16 holds about 4,000 apps; a wider range such as 10.208.0.0/12 holds more. \"off\" uses Docker's own pool, which holds about 30 networks.",

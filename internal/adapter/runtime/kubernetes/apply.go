@@ -647,13 +647,8 @@ func (a *Adapter) applyWorkload(ctx context.Context, ns string, p api.BundlePlan
 	if current != nil && current.Annotations[annoDigest] == digest && finished(current) {
 		keep = current.Name
 	}
-	for _, old := range pods {
-		if old.Name == keep || old.DeletionTimestamp != nil {
-			continue
-		}
-		if err := a.deletePod(ctx, ns, old.Name); err != nil {
-			return err
-		}
+	if err := a.deletePodsExcept(ctx, ns, pods, keep); err != nil {
+		return err
 	}
 
 	pod := a.podFor(ns, p, w, digest)
@@ -662,6 +657,20 @@ func (a *Adapter) applyWorkload(ctx context.Context, ns string, p api.BundlePlan
 		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not create %q.", w.Name), err)
 	}
 	return a.waitScheduled(ctx, ns, created.Name, w)
+}
+
+// deletePodsExcept deletes every pod of a workload but keep, skipping those
+// already on their way out.
+func (a *Adapter) deletePodsExcept(ctx context.Context, ns string, pods []corev1.Pod, keep string) error {
+	for _, old := range pods {
+		if old.Name == keep || old.DeletionTimestamp != nil {
+			continue
+		}
+		if err := a.deletePod(ctx, ns, old.Name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // live reports a pod that is running or will be.
@@ -769,6 +778,7 @@ func (a *Adapter) podFor(ns string, p api.BundlePlan, w api.WorkloadPlan, digest
 		ReadinessProbe:  readinessProbe(w.Health),
 		Resources:       resourcesFor(w.Resources),
 		ImagePullPolicy: corev1.PullIfNotPresent,
+		SecurityContext: workloadSecurity(),
 	}
 	for _, port := range w.Ports {
 		proto := corev1.ProtocolTCP
@@ -873,6 +883,29 @@ func intOrPort(port int) intstr.IntOrString { return intstr.FromInt32(int32(port
 
 // resourcesFor sets requests equal to limits, so the scheduler's arithmetic
 // and R-242's agree and the pod is in the Guaranteed class.
+// workloadSecurity is what an app's container is held to beyond the namespace's
+// Pod Security baseline: no gaining privileges through a setuid binary, and
+// the capability set the Docker adapter gives an app (docker/hardening.go) —
+// containerd's default without NET_RAW, MKNOD and AUDIT_WRITE. A process limit
+// is the kubelet's podPidsLimit, set per node, not per pod.
+//
+// workloadSecurityLevel is part of a pod's digest (planDigest), so a pod
+// created before this policy, or under an older one, is replaced rather than
+// left running without it. Bump it whenever workloadSecurity changes. A
+// variable only so a test can stand in for an older policy.
+var workloadSecurityLevel = "1"
+
+func workloadSecurity() *corev1.SecurityContext {
+	caps := []corev1.Capability{
+		"CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE",
+		"SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT",
+	}
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: ptr.To(false),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: caps},
+	}
+}
+
 func resourcesFor(r api.ResourcePlan) corev1.ResourceRequirements {
 	list := corev1.ResourceList{}
 	if r.CPUMillis > 0 {
@@ -974,6 +1007,7 @@ func planDigest(w api.WorkloadPlan, env map[string]string, envKey []byte, runtim
 		write("health", strings.Join(w.Health.Command, "\x01"), w.Health.Path, w.Health.Port, w.Health.IntervalSeconds, w.Health.TimeoutSeconds, w.Health.Retries)
 	}
 	write("res", w.Resources.CPUMillis, w.Resources.MemoryBytes, "rc", runtimeClass, "sel", nodeSelector, "pull", w.PullAuth != nil)
+	write("sec", workloadSecurityLevel)
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 

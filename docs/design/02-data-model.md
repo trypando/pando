@@ -50,6 +50,7 @@ CREATE TABLE users (
     adapter_id    text NOT NULL REFERENCES identity_adapters(id),   -- the originating adapter (R-045)
     external_id   text NOT NULL,             -- subject as the adapter knows them
     email         text,
+    email_set_by_self boolean NOT NULL DEFAULT false, -- the holder set it; never linked by (R-045)
     display_name  text,
     status        text NOT NULL,             -- active | suspended | deleted  (R-049)
     suspended_by  text,                      -- admin | scim:<idp> | alias

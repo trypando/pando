@@ -702,6 +702,14 @@ type HealthPlan struct {
 type ResourcePlan struct {
 	CPUMillis   int
 	MemoryBytes int64
+
+	// DiskBytes is the app's disk limit (R-240), the same for each of its
+	// workloads. A runtime that can size a container's own layer caps it
+	// there, so no one workload writes past the whole app's limit between
+	// readings; what the app holds in aggregate is held to the limit by
+	// measurement (R-403), which is the enforcement that applies everywhere.
+	// Zero is no cap.
+	DiskBytes int64
 }
 
 // NetworkPlan describes the bundle's network.

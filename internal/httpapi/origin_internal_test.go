@@ -73,7 +73,7 @@ func TestR173_ACookieWriteFromAnotherOriginIsRefused(t *testing.T) {
 			map[string]string{"Sec-Fetch-Site": "same-site"}},
 		"a bearer token, which is not ambient": {http.MethodPost, "/api/v1/tokens", true,
 			map[string]string{"Sec-Fetch-Site": "cross-site", "Authorization": "Bearer tok_x"}},
-		"no session cookie": {http.MethodPost, "/api/v1/sessions", false,
+		"no session cookie": {http.MethodPost, "/api/v1/apps/app_01/passcode", false,
 			map[string]string{"Sec-Fetch-Site": "cross-site"}},
 		"not a browser": {http.MethodPost, "/api/v1/tokens", true, nil},
 		"a SAML provider posting to the callback": {http.MethodPost, "/api/v1/auth/providers/idp_01/callback", true,

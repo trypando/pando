@@ -474,6 +474,47 @@ multi-host Docker reports `[registry]` and refuses `ImportImage`.
 
 **[P]** The common fields are the readings every runtime reports in the same shape, so the console can say how much room is left without knowing which runtime answered (issue #88). Anything else goes in `Details`, which the console shows as it came. Live use is its own call, `InUse`, rather than `Used*` fields on `Capacity`. Sampling CPU takes about a second, and the planner reads `Capacity` on every plan without needing it. The `Used*` fields, which no adapter ever filled, are gone. `GET /capacity` reports each runtime's totals beside what Pando has committed on it, which is the planner's own R-242 arithmetic, and live use where the runtime reports usage.
 
+### 2.5 What a container running an app's code is held to
+
+R-240, from findings 8 and 13 of the 2026-10-16 security assessment. CPU and memory caps did not stop a fork
+bomb, and an app kept every capability the engine grants by default.
+
+- **[P] A process limit, 1024 by default.** The Docker adapter's `pids_limit` sets it, and a negative
+  value removes it. That is well above what a web app, a JVM or a database runs, and far below what
+  exhausts a host. On Kubernetes the limit is the kubelet's `podPidsLimit`, set per node rather than
+  per pod, so the adapter does not set one.
+- **[D] `no-new-privileges`**, so that a setuid binary or file capabilities cannot raise a process
+  above what it started with. On Kubernetes this is `allowPrivilegeEscalation: false`.
+- **[P] Capabilities: drop ALL, then add Podman's default set**: `CHOWN DAC_OVERRIDE FOWNER FSETID KILL
+  NET_BIND_SERVICE SETFCAP SETGID SETPCAP SETUID SYS_CHROOT`. This is Docker's (and containerd's)
+  default without `NET_RAW`, `MKNOD` and `AUDIT_WRITE`. Every image run on Podman already starts with
+  this set, so ordinary images are known to work under it. An image that starts as root and drops to
+  its own user still can: nginx and postgres chown their directories and setuid. Dropping everything,
+  as the egress gateway does, suits a binary Pando wrote and breaks most images Pando did not.
+  Without `NET_RAW` an app cannot forge packets on its network. `ping` still works through the
+  unprivileged ICMP sockets that Docker and Podman enable. The set is named in full rather than left
+  to the engine, so a daemon configured with a wider default does not widen it.
+- **[P] The container's own layer capped at the app's disk limit, where the storage driver can size
+  one.** Docker can with overlay2 on XFS mounted with `pquota`, and with btrfs and zfs. No driver can
+  size a volume. The driver is read from `docker info`, and a size is sent only to one of those.
+  Docker with the containerd image store, which Docker Desktop uses, accepts `--storage-opt size`
+  and then writes past it (checked: a 10 MB cap let a 50 MB file through), so acceptance proves
+  nothing. Podman is not claimed either. XFS without `pquota` cannot be told apart from XFS with it,
+  so a refusal at create is remembered for the life of the process and the create is made again
+  without a size. `Capacity.Details.disk_quota` says which happened. The cap applies to each
+  workload separately, at the whole app's limit. It is a ceiling per container, not a quota for the
+  app: an app with several workloads can write past its limit in total, as can one that writes to
+  its volumes, until R-403's next reading. It bounds how far any single container can go, which is
+  never stricter than R-403's measurement of the app's total. Kubernetes could use an `ephemeral-storage` limit, but setting it also sets a request of the
+  same size, which would keep pods unscheduled on nodes with little ephemeral storage. So it is not
+  set, and R-403's measurement is the limit there.
+
+The same limits apply to a trial run, which runs code nobody has reviewed yet (R-097). The Docker adapter
+labels a container it created this way (`pando.hardening`). A container without the label, or with an
+older value, does not match its plan, so an upgrade recreates every app once and applies the limits to
+apps already running, rather than waiting for each app's next deploy. Incus runs each app in its own VM
+(R-115), so none of these options apply there.
+
 ---
 
 ## 3. Builder

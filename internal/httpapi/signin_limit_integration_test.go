@@ -142,3 +142,32 @@ func TestR404_AnUncountableSignInIsRefused(t *testing.T) {
 	// only ever errs toward stricter.
 	i.admin()
 }
+
+// TestR404_ThePasswordChangeIsHeldToTheSignInLimits asserts that the current
+// password asked for by POST /me/password is counted like a sign-in. A stolen
+// session or token could otherwise guess the owner's password there without
+// limit, then set a new one and end every other session.
+func TestR404_ThePasswordChangeIsHeldToTheSignInLimits(t *testing.T) {
+	t.Parallel()
+	i, _ := signInLimited(t)
+	admin := i.admin()
+
+	for range 10 {
+		got := i.do(admin, http.MethodPost, "/me/password", map[string]any{
+			"current_password": "not-the-password",
+			"new_password":     "an-entirely-different-password",
+		})
+		require.Equal(t, http.StatusUnauthorized, got.Code, got.String())
+	}
+
+	limited := i.do(admin, http.MethodPost, "/me/password", map[string]any{
+		"current_password": i.adminPassword,
+		"new_password":     "an-entirely-different-password",
+	})
+	require.Equal(t, http.StatusTooManyRequests, limited.Code, limited.String())
+	require.Contains(t, limited.String(), "Too many wrong passwords for this username.")
+
+	_, signIn := i.signIn(bootstrap.AdminUsername, i.adminPassword)
+	require.Equal(t, http.StatusTooManyRequests, signIn.Code,
+		"the count is the username's, shared with sign-in, so neither door gives a second allowance")
+}

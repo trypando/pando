@@ -30,7 +30,7 @@ Base path `/api/v1`. JSON in and out. Every response carries an `X-Request-Id`.
 Authentication, in precedence order:
 
 1. `Authorization: Bearer tok_…` — a token principal, from `pando token`.
-2. `Cookie: pando_session=ses_…` — a browser session, from `POST /api/v1/sessions`.
+2. `Cookie: __Host-pando_session=ses_…` (`pando_session` on a plain-HTTP install) — a browser session, from `POST /api/v1/sessions`, which takes a JSON body.
 
 Resources, in full, are in [`design/04-api.md`](design/04-api.md) §2: apps, deploys, specs, slots,
 secrets, environment, volumes, grants, users, groups, roles, host policy, backups, tokens and the

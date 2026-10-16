@@ -720,10 +720,11 @@ func (p *Planner) bundlePlan(s *spec.AppSpec, rules api.EgressRules) api.BundleP
 			Resources: api.ResourcePlan{
 				CPUMillis:   s.Resources.CPUMillis,
 				MemoryBytes: s.Resources.MemoryBytes,
+				DiskBytes:   s.Resources.DiskBytes,
 			},
 		}
 		if w.Resources != nil {
-			wp.Resources = api.ResourcePlan{CPUMillis: w.Resources.CPUMillis, MemoryBytes: w.Resources.MemoryBytes}
+			wp.Resources = api.ResourcePlan{CPUMillis: w.Resources.CPUMillis, MemoryBytes: w.Resources.MemoryBytes, DiskBytes: s.Resources.DiskBytes}
 		}
 		for _, m := range w.Mounts {
 			wp.Mounts = append(wp.Mounts, api.MountPlan{VolumeID: m.VolumeID, Path: m.Path, ReadOnly: m.ReadOnly})

@@ -20,8 +20,25 @@ import (
 // countingSessions resolves every cookie to alice and counts how often it is
 // asked: each call stands for a query the cache exists to save.
 type countingSessions struct {
+	plainSessionCookie
 	calls   atomic.Int32
 	expires time.Time
+}
+
+// sessionCookie is the plain-HTTP session cookie these fakes read, as
+// httpapi.CookieScheme does on an install without TLS.
+const sessionCookie = "pando_session"
+
+// plainSessionCookie reads the session cookie by its plain-HTTP name.
+type plainSessionCookie struct{}
+
+func (plainSessionCookie) SessionID(r *http.Request) (string, error) {
+	for _, ck := range r.Cookies() {
+		if ck.Name == sessionCookie {
+			return ck.Value, nil
+		}
+	}
+	return "", nil
 }
 
 func (s *countingSessions) Authenticate(*http.Request) (authz.Principal, error) {
@@ -206,7 +223,10 @@ func TestTheCacheIsBounded(t *testing.T) {
 	}
 }
 
-type failingSessions struct{ calls atomic.Int32 }
+type failingSessions struct {
+	plainSessionCookie
+	calls atomic.Int32
+}
 
 func (*failingSessions) Authenticate(*http.Request) (authz.Principal, error) {
 	return authz.Anonymous(), nil
@@ -297,7 +317,10 @@ func (staticAuthenticator) Authenticate(*http.Request) (authz.Principal, error) 
 	return authz.Anonymous(), nil
 }
 
-type anonymousSessions struct{ calls atomic.Int32 }
+type anonymousSessions struct {
+	plainSessionCookie
+	calls atomic.Int32
+}
 
 func (*anonymousSessions) Authenticate(*http.Request) (authz.Principal, error) {
 	return authz.Anonymous(), nil

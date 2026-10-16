@@ -452,6 +452,9 @@ func (s *Server) Routes() http.Handler {
 	r.Use(s.ClientAddr.Middleware)
 	r.Use(Logger(s.Logger))
 	r.Use(s.appHostnamesAreTheApps)
+	// After the guard, so a request it hands to an app never reaches it; inside
+	// Logger, which is what notes a request handed to an app either way.
+	r.Use(s.securityHeaders)
 
 	// The assertion verification keys (R-057). Unauthenticated by design: they
 	// are public keys, and an app must be able to fetch them before it has any
