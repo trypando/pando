@@ -169,6 +169,22 @@ func TestR092_AnAddressPandoWillNotFetchIsRefusedAtCreation(t *testing.T) {
 	}
 }
 
+// TestR092_ASpecCannotMoveAnAppToAnAddressPandoWillNotFetch asserts the same
+// rule for a spec written whole: POST /specs that changes the repository to a
+// path on Pando's disk is refused, as creating an app with it would be.
+func TestR092_ASpecCannotMoveAnAppToAnAddressPandoWillNotFetch(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+	appID := i.createApp(admin, "moved")
+
+	body := minimalSpec()
+	body["source"] = map[string]any{"type": "git", "url": "file:///etc"}
+	got := i.do(admin, http.MethodPost, "/apps/"+appID+"/specs", body)
+	require.Equal(t, string(errs.ValidInvalid), got.ErrorCode(), got.String())
+	require.Contains(t, got.String(), "https, http or ssh")
+}
+
 // Replaces rather than merges: a merge would make it impossible to remove a rule.
 func TestSavingPolicyReplacesTheDocument(t *testing.T) {
 	t.Parallel()

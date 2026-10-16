@@ -79,43 +79,57 @@ func (g *Guard) check(ctx context.Context, ap netip.AddrPort) error {
 	if g == nil {
 		return nil
 	}
-	if slices.Contains(g.OwnPorts, ap.Port()) {
-		if a.IsLoopback() {
-			return errRefusedAddress
-		}
-		local := g.LocalAddrs
-		if local == nil {
-			local = interfaceAddrs
-		}
-		if addrs, err := local(); err == nil && slices.ContainsFunc(addrs, func(l netip.Addr) bool { return l.Unmap() == a }) {
-			return errRefusedAddress
-		}
-	}
-	for _, db := range g.Database {
-		if db.Port != ap.Port() {
-			continue
-		}
-		if ip, err := netip.ParseAddr(db.Host); err == nil {
-			if ip.Unmap() == a {
-				return errRefusedAddress
-			}
-			continue
-		}
-		resolve := g.Resolve
-		if resolve == nil {
-			resolve = func(ctx context.Context, host string) ([]netip.Addr, error) {
-				return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-			}
-		}
-		addrs, err := resolve(ctx, db.Host)
-		if err != nil {
-			continue
-		}
-		if slices.ContainsFunc(addrs, func(r netip.Addr) bool { return r.Unmap() == a }) {
-			return errRefusedAddress
-		}
+	if g.isOwnPort(a, ap.Port()) || g.isDatabase(ctx, a, ap.Port()) {
+		return errRefusedAddress
 	}
 	return nil
+}
+
+// isOwnPort is Pando's listening port on loopback or on an address of this
+// machine.
+func (g *Guard) isOwnPort(a netip.Addr, port uint16) bool {
+	if !slices.Contains(g.OwnPorts, port) {
+		return false
+	}
+	if a.IsLoopback() {
+		return true
+	}
+	local := g.LocalAddrs
+	if local == nil {
+		local = interfaceAddrs
+	}
+	addrs, err := local()
+	return err == nil && containsAddr(addrs, a)
+}
+
+// isDatabase is one of the database's hosts at its port. A host that does not
+// resolve is no address at all.
+func (g *Guard) isDatabase(ctx context.Context, a netip.Addr, port uint16) bool {
+	for _, db := range g.Database {
+		if db.Port == port && containsAddr(g.resolve(ctx, db.Host), a) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolve is host's addresses: itself when it is one, or what DNS says.
+func (g *Guard) resolve(ctx context.Context, host string) []netip.Addr {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return []netip.Addr{ip}
+	}
+	lookup := g.Resolve
+	if lookup == nil {
+		lookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
+			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+		}
+	}
+	addrs, _ := lookup(ctx, host)
+	return addrs
+}
+
+func containsAddr(addrs []netip.Addr, a netip.Addr) bool {
+	return slices.ContainsFunc(addrs, func(x netip.Addr) bool { return x.Unmap() == a })
 }
 
 func interfaceAddrs() ([]netip.Addr, error) {

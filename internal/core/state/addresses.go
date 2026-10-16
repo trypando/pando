@@ -63,69 +63,83 @@ func (a *Apps) reserved(ctx context.Context) []string {
 
 func checkAddress(ctx context.Context, q querier, reserved []string, appID string, r spec.Routing) error {
 	hostname, path := addressOf(r)
-
 	if hostname != "" {
-		for _, h := range reserved {
-			if h != "" && strings.EqualFold(strings.TrimSuffix(h, "."), hostname) {
-				return errs.Newf(errs.StateAddressTaken,
-					"%s can't be this app's address: it is Pando's own address, where the console and its sign-in page are served.", hostname).
-					WithRemedy("Choose another hostname for this app, such as one under " + hostname + ".")
-			}
-		}
-		var other string
-		err := q.QueryRow(ctx, `
-			SELECT name FROM apps
-			WHERE deleted_at IS NULL AND id <> $1 AND address_hostname = $2
-			LIMIT 1`, appID, hostname).Scan(&other)
-		if err == nil {
-			return taken(hostname, other, "is already reached at it")
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return errs.Wrap(errs.Internal, "Could not check whether the address is free.", err)
+		if err := checkHostname(ctx, q, reserved, appID, hostname); err != nil {
+			return err
 		}
 	}
-
 	if path != "" {
-		// The same path, or one inside or around it on a whole-segment
-		// boundary: /team and /team/notes cannot both be apps, since one
-		// would receive the other's requests, and an app claiming a path
-		// under another's is a page in that app's name it does not control.
-		var other, otherPath string
-		err := q.QueryRow(ctx, `
-			SELECT name, address_path FROM apps
-			WHERE deleted_at IS NULL AND id <> $1 AND address_path IS NOT NULL
-			  AND (address_path = $2
-			       OR starts_with($2, address_path || '/')
-			       OR starts_with(address_path, $2 || '/'))
-			LIMIT 1`, appID, path).Scan(&other, &otherPath)
-		if err == nil {
-			switch {
-			case otherPath == path:
-				return taken(path, other, "is already reached at it")
-			case strings.HasPrefix(path, otherPath+"/"):
-				return taken(path, other, "is reached at "+otherPath+", which this path is inside")
-			default:
-				return taken(path, other, "is reached at "+otherPath+", which is inside this path")
-			}
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return errs.Wrap(errs.Internal, "Could not check whether the address is free.", err)
-		}
+		return checkPath(ctx, q, appID, path)
+	}
+	return nil
+}
 
-		// Another app's slug as the first segment. Every app answers at
-		// /<slug> as well as its own path (proxy.resolve), and a path that
-		// took one would take that app's requests.
-		first := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
-		err = q.QueryRow(ctx, `
-			SELECT name FROM apps
-			WHERE deleted_at IS NULL AND id <> $1 AND slug = $2
-			LIMIT 1`, appID, first).Scan(&other)
-		if err == nil {
-			return taken(path, other, "is reached at /"+first)
+// checkHostname refuses a hostname that is Pando's own (R-165) or another
+// live app's.
+func checkHostname(ctx context.Context, q querier, reserved []string, appID, hostname string) error {
+	for _, h := range reserved {
+		if h != "" && strings.EqualFold(strings.TrimSuffix(h, "."), hostname) {
+			return errs.Newf(errs.StateAddressTaken,
+				"%s can't be this app's address: it is Pando's own address, where the console and its sign-in page are served.", hostname).
+				WithRemedy("Choose another hostname for this app, such as one under " + hostname + ".")
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return errs.Wrap(errs.Internal, "Could not check whether the address is free.", err)
+	}
+	var other string
+	err := q.QueryRow(ctx, `
+		SELECT name FROM apps
+		WHERE deleted_at IS NULL AND id <> $1 AND address_hostname = $2
+		LIMIT 1`, appID, hostname).Scan(&other)
+	if err == nil {
+		return taken(hostname, other, "is already reached at it")
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return errs.Wrap(errs.Internal, "Could not check whether the address is free.", err)
+	}
+	return nil
+}
+
+// checkPath refuses a path another live app holds, sits inside or around, or
+// whose slug it takes.
+func checkPath(ctx context.Context, q querier, appID, path string) error {
+	// The same path, or one inside or around it on a whole-segment
+	// boundary: /team and /team/notes cannot both be apps, since one
+	// would receive the other's requests, and an app claiming a path
+	// under another's is a page in that app's name it does not control.
+	var other, otherPath string
+	err := q.QueryRow(ctx, `
+		SELECT name, address_path FROM apps
+		WHERE deleted_at IS NULL AND id <> $1 AND address_path IS NOT NULL
+		  AND (address_path = $2
+		       OR starts_with($2, address_path || '/')
+		       OR starts_with(address_path, $2 || '/'))
+		LIMIT 1`, appID, path).Scan(&other, &otherPath)
+	if err == nil {
+		switch {
+		case otherPath == path:
+			return taken(path, other, "is already reached at it")
+		case strings.HasPrefix(path, otherPath+"/"):
+			return taken(path, other, "is reached at "+otherPath+", which this path is inside")
+		default:
+			return taken(path, other, "is reached at "+otherPath+", which is inside this path")
 		}
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return errs.Wrap(errs.Internal, "Could not check whether the address is free.", err)
+	}
+
+	// Another app's slug as the first segment. Every app answers at
+	// /<slug> as well as its own path (proxy.resolve), and a path that
+	// took one would take that app's requests.
+	first := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
+	err = q.QueryRow(ctx, `
+		SELECT name FROM apps
+		WHERE deleted_at IS NULL AND id <> $1 AND slug = $2
+		LIMIT 1`, appID, first).Scan(&other)
+	if err == nil {
+		return taken(path, other, "is reached at /"+first)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return errs.Wrap(errs.Internal, "Could not check whether the address is free.", err)
 	}
 	return nil
 }

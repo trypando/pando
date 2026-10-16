@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/core/spec"
@@ -146,6 +147,76 @@ func TestR092_ALocalPathIsNotARepositoryAddress(t *testing.T) {
 	_, err := Sources{}.Fetch(context.Background(), spec.Source{Type: spec.SourceGit, URL: "git://example.com/team/app.git"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unsupported scheme")
+}
+
+// TestR092_TheGuardsDefaultsAskTheSystem asserts the guard as startup
+// installs it, with no stubs: this machine's own interface addresses on
+// Pando's port, and a database named by a host name the system resolves.
+func TestR092_TheGuardsDefaultsAskTheSystem(t *testing.T) {
+	g := &Guard{OwnPorts: []uint16{8080}, Database: []HostPort{
+		{Host: "localhost", Port: 5432},
+		{Host: "10.0.0.9", Port: 5432},
+		{Host: "no-such-host.invalid", Port: 5432},
+	}}
+	ctx := context.Background()
+
+	local, err := interfaceAddrs()
+	require.NoError(t, err)
+	for _, a := range local {
+		if !refusedClass(a) {
+			require.ErrorIs(t, g.check(ctx, netip.AddrPortFrom(a, 8080)), errRefusedAddress, a.String())
+		}
+	}
+	require.NoError(t, g.check(ctx, netip.MustParseAddrPort("203.0.113.7:8080")), "Pando's port elsewhere is someone else's")
+
+	require.ErrorIs(t, g.check(ctx, netip.MustParseAddrPort("127.0.0.1:5432")), errRefusedAddress, "localhost resolves to the database")
+	require.NoError(t, g.check(ctx, netip.MustParseAddrPort("203.0.113.7:5432")))
+
+	withGuard(t, *g)
+	require.ErrorIs(t, checkHost(ctx, "localhost", 8080), errRefusedAddress)
+	require.Error(t, guardedControl(ctx, "tcp", "not-an-address", nil))
+	require.ErrorIs(t, guardedControl(ctx, "tcp", "169.254.169.254:80", nil), errRefusedAddress)
+}
+
+// stubTransport opens a session for anything it is asked.
+type stubTransport struct{ transport.Transport }
+
+func (stubTransport) NewUploadPackSession(*transport.Endpoint, transport.AuthMethod) (transport.UploadPackSession, error) {
+	return nil, nil
+}
+
+func (stubTransport) NewReceivePackSession(*transport.Endpoint, transport.AuthMethod) (transport.ReceivePackSession, error) {
+	return nil, nil
+}
+
+// TestR092_EverySessionIsGuarded asserts that both kinds of session go
+// through the guard and the local-path refusal, not only the fetch Pando
+// makes today: a push is the same connection the other way.
+func TestR092_EverySessionIsGuarded(t *testing.T) {
+	metadata, err := transport.NewEndpoint("http://169.254.169.254/team/app.git")
+	require.NoError(t, err)
+	forge, err := transport.NewEndpoint("https://203.0.113.7/team/app.git")
+	require.NoError(t, err)
+
+	g := guarded{stubTransport{}, 443}
+	_, err = g.NewReceivePackSession(metadata, nil)
+	require.ErrorIs(t, err, errRefusedAddress)
+	_, err = g.NewReceivePackSession(forge, nil)
+	require.NoError(t, err)
+
+	prev := localRepositories.Load()
+	t.Cleanup(func() { localRepositories.Store(prev) })
+	l := localOnly{stubTransport{}}
+
+	localRepositories.Store(false)
+	_, err = l.NewReceivePackSession(forge, nil)
+	require.ErrorIs(t, err, errLocalRepository)
+	_, err = l.NewUploadPackSession(forge, nil)
+	require.ErrorIs(t, err, errLocalRepository)
+
+	localRepositories.Store(true)
+	_, err = l.NewReceivePackSession(forge, nil)
+	require.NoError(t, err)
 }
 
 func TestCheckHostLetsAnUnresolvableNameThroughToGoGit(t *testing.T) {

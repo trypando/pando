@@ -398,14 +398,7 @@ func serve(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
-	// No repository fetch may reach Pando's own port or its database
-	// (R-092).
-	source.SetGuard(sourceGuard(cfg.Server.Addr, cfg.Database.URL))
-
-	// Validated in config.Load, so the error was already reported there.
-	if external, err := cfg.Server.External(); err == nil {
-		apps.ReservedHostnames = reservedHostnames(registry, external)
-	}
+	guardOwnAddresses(cfg, registry, apps)
 
 	// Secrets go through the configured secrets adapter. Core never encrypts —
 	// it stores what the adapter hands back (R-190, R-191).

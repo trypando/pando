@@ -10,7 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adapterapi "github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/core/state"
 )
 
 type routingCaps struct {
@@ -45,4 +47,17 @@ func TestR165_PandosOwnHostnamesAreReserved(t *testing.T) {
 	require.ElementsMatch(t, []string{"pando.example.com", "console.example.com"}, got)
 
 	require.Empty(t, reservedHostnames(nil, nil)(context.Background()))
+}
+
+// TestR165_StartupReservesTheExternalHostname asserts the wiring: the apps
+// store is told Pando's hostname, from the external URL.
+func TestR165_StartupReservesTheExternalHostname(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Server.Addr = ":8080"
+	cfg.Server.ExternalURL = "https://pando.example.com"
+	apps := state.NewApps(nil)
+
+	guardOwnAddresses(cfg, adapterapi.NewRegistry(), apps)
+	require.NotNil(t, apps.ReservedHostnames)
+	require.Equal(t, []string{"pando.example.com"}, apps.ReservedHostnames(context.Background()))
 }
