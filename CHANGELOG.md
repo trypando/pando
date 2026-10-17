@@ -21,7 +21,7 @@ Unreleased above it. -->
 
 ### Added
 
-- **Two-factor authentication for local accounts** (R-405). A local account can add an
+- **Two-factor authentication for local accounts** (#264, R-405). A local account can add an
   authenticator app, set up with a QR code, and sign-in then asks for its 6-digit code after the
   password. Setting it up gives ten single-use recovery codes. Pando offers it once at a person's
   first sign-in, and it is set up, replaced or turned off from **Your settings** or with
