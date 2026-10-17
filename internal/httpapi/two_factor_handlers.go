@@ -33,6 +33,11 @@ const signInCodeAttempts = 5
 // straight after signing in, which is when Pando asks.
 const recentSignIn = 10 * time.Minute
 
+// errUnreadableBody answers a request body that is not the JSON a route reads.
+func errUnreadableBody() error {
+	return errs.New(errs.ValidInvalid, "The request body could not be read.")
+}
+
 // codeLimit is the count wrong codes for an account are held to.
 func codeLimit(userID string) attemptLimit {
 	return attemptLimit{key: state.SignInCodeKey(userID), max: signInCodeAttempts, window: signInWindow}
@@ -288,7 +293,7 @@ func (s *Server) handleBeginTOTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var req reauthRequest
 	if err := decodeOptional(r, &req); err != nil {
-		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
+		Error(w, r, errUnreadableBody())
 		return
 	}
 	// Setting one up where policy requires it, on a session that can do
@@ -323,7 +328,7 @@ func (s *Server) handleConfirmTOTP(w http.ResponseWriter, r *http.Request) {
 		Code string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
+		Error(w, r, errUnreadableBody())
 		return
 	}
 
@@ -363,7 +368,7 @@ func (s *Server) handleNewRecoveryCodes(w http.ResponseWriter, r *http.Request) 
 	}
 	var req reauthRequest
 	if err := decodeOptional(r, &req); err != nil {
-		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
+		Error(w, r, errUnreadableBody())
 		return
 	}
 	if !s.reauthenticated(w, r, p, user, req.CurrentPassword) {
@@ -387,7 +392,7 @@ func (s *Server) handleTurnOffTwoFactor(w http.ResponseWriter, r *http.Request) 
 	}
 	var req reauthRequest
 	if err := decodeOptional(r, &req); err != nil {
-		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
+		Error(w, r, errUnreadableBody())
 		return
 	}
 	if !s.reauthenticated(w, r, p, user, req.CurrentPassword) {

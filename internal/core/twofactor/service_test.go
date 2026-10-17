@@ -120,13 +120,13 @@ func codeNow(t *testing.T, s secret.Value, now time.Time) string {
 	return code(key, step(now))
 }
 
-func enroll(t *testing.T, svc *Service, store *fakeStore, clk *clock.Fake) []string {
+func enroll(ctx context.Context, t *testing.T, svc *Service, store *fakeStore, clk *clock.Fake) []string {
 	t.Helper()
-	e, err := svc.Begin(context.Background(), "usr_1", "ben")
+	e, err := svc.Begin(ctx, "usr_1", "ben")
 	if err != nil {
 		t.Fatal(err)
 	}
-	codes, err := svc.Confirm(context.Background(), "usr_1", codeNow(t, e.Secret, clk.Now()))
+	codes, err := svc.Confirm(ctx, "usr_1", codeNow(t, e.Secret, clk.Now()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestConfirmWithNothingPending(t *testing.T) {
 func TestR405_SignInTakesACodeOnceOrARecoveryCodeOnce(t *testing.T) {
 	svc, store, clk := newService(false)
 	ctx := context.Background()
-	codes := enroll(t, svc, store, clk)
+	codes := enroll(ctx, t, svc, store, clk)
 
 	clk.Advance(period)
 	now := codeNow(t, store.current, clk.Now())
@@ -236,7 +236,7 @@ func TestNewRecoveryCodesReplaceTheOld(t *testing.T) {
 	if _, err := svc.NewRecoveryCodes(ctx, "usr_1"); errs.CodeOf(err) != errs.StateInvalid {
 		t.Errorf("without two-factor: %v", err)
 	}
-	old := enroll(t, svc, store, clk)
+	old := enroll(ctx, t, svc, store, clk)
 	fresh, err := svc.NewRecoveryCodes(ctx, "usr_1")
 	if err != nil || len(fresh) != RecoveryCodeCount {
 		t.Fatalf("%v, %v", fresh, err)
@@ -269,7 +269,7 @@ func TestR405_PolicyMakesItRequired(t *testing.T) {
 		t.Errorf("Decline: %v", err)
 	}
 
-	enroll(t, svc, store, clk)
+	enroll(ctx, t, svc, store, clk)
 	local.TwoFactorEnabled = true
 	if pending, _ := svc.SetupPending(ctx, local); pending {
 		t.Error("held back after setting it up")
@@ -298,7 +298,7 @@ func TestR405_AskedOnce(t *testing.T) {
 		t.Error("offered again after not now")
 	}
 
-	enroll(t, svc, store, clk)
+	enroll(ctx, t, svc, store, clk)
 	if had, err := svc.TurnOff(ctx, "usr_1"); err != nil || !had {
 		t.Fatalf("TurnOff = %v, %v", had, err)
 	}
@@ -306,7 +306,7 @@ func TestR405_AskedOnce(t *testing.T) {
 		t.Errorf("after turning it off: %+v", sum)
 	}
 
-	enroll(t, svc, store, clk)
+	enroll(ctx, t, svc, store, clk)
 	if had, err := svc.Reset(ctx, "usr_1"); err != nil || !had || !store.reoffered {
 		t.Fatalf("Reset = %v, %v", had, err)
 	}

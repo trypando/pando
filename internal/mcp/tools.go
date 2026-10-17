@@ -76,6 +76,13 @@ func appPath(id, suffix string) string {
 // appIDDescription describes the app_id every app tool takes.
 const appIDDescription = "The app's ID."
 
+// accountIDArg describes a user_id argument, and usersPrefix is the path the
+// account tools address one under.
+const (
+	accountIDArg = "The account's ID."
+	usersPrefix  = "/users/"
+)
+
 // appIDSchema is the schema of a tool that takes only an app.
 func appIDSchema() map[string]any {
 	return schema(map[string]any{"app_id": str(appIDDescription)}, "app_id")
@@ -936,9 +943,9 @@ var toolList = []tool{
 		Description: "One account, with every installation role it holds and where each comes from " +
 			"(install_roles), as pando_list_users shows it. Your own needs no permission; anyone else's needs " +
 			"install.view.",
-		Schema: schema(map[string]any{"user_id": str("The account's ID.")}, "user_id"),
+		Schema: schema(map[string]any{"user_id": str(accountIDArg)}, "user_id"),
 		request: func(args map[string]any) (string, string, any, error) {
-			return getByID(args, "user_id", "/users/")
+			return getByID(args, "user_id", usersPrefix)
 		},
 	},
 	{
@@ -963,20 +970,20 @@ var toolList = []tool{
 			"codes — for someone who has lost both, and sign it out everywhere. They then sign in with their " +
 			"password alone, and set it up again if host policy requires it. Needs install.users.manage and every " +
 			"installation permission that account holds.",
-		Schema: schema(map[string]any{"user_id": str("The account's ID.")}, "user_id"),
+		Schema: schema(map[string]any{"user_id": str(accountIDArg)}, "user_id"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, err := stringArg(args, "user_id", true)
 			if err != nil {
 				return "", "", nil, err
 			}
-			return "DELETE", "/users/" + url.PathEscape(id) + "/two-factor", nil, nil
+			return "DELETE", usersPrefix + url.PathEscape(id) + "/two-factor", nil, nil
 		},
 	},
 	{
 		Name:        "pando_list_user_apps",
 		Description: "The apps an account has access to: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (can_manage). By app name, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
 		Schema: schema(map[string]any{
-			"user_id": str("The account's ID."),
+			"user_id": str(accountIDArg),
 			"cursor":  str("The next_cursor from a previous page."),
 		}, "user_id"),
 		request: func(args map[string]any) (string, string, any, error) {
@@ -984,7 +991,7 @@ var toolList = []tool{
 			if err != nil {
 				return "", "", nil, err
 			}
-			return pagedGet("/users/"+url.PathEscape(id)+"/apps", args, "cursor")
+			return pagedGet(usersPrefix+url.PathEscape(id)+"/apps", args, "cursor")
 		},
 	},
 	{

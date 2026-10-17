@@ -86,7 +86,7 @@ describe('two-factor authentication in settings', () => {
     screen = mount(<TwoFactorSettings status={{ ...on, password_required: true }} />);
     await screen.press('Replace authenticator');
     expect(screen.text()).toContain('Replace your authenticator');
-    expect(sent.length).toBe(0);
+    expect(sent).toHaveLength(0);
     await screen.fill('Current password', 'hunter22');
     await screen.press('Continue');
     expect(sent.at(-1)!.body).toEqual({ current_password: 'hunter22' });

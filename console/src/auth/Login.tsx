@@ -257,7 +257,7 @@ function SecondStep({
   onRecovery,
   onSubmit,
   onStartOver,
-}: {
+}: Readonly<{
   code: string;
   recovery: boolean;
   pending: boolean;
@@ -266,7 +266,7 @@ function SecondStep({
   onRecovery: (recovery: boolean) => void;
   onSubmit: () => void;
   onStartOver: () => void;
-}) {
+}>) {
   return (
     <Frame
       heading="Enter your code"
@@ -657,13 +657,13 @@ export function Frame({
   heading = 'Sign in to Pando',
   lede,
   children,
-}: {
+}: Readonly<{
   /** A string is the page's h1; anything else — a loading outline — stands in
    *  its place without being announced as a heading. */
   heading?: React.ReactNode;
   lede?: string;
   children: React.ReactNode;
-}) {
+}>) {
   const wide = useWide();
 
   return (

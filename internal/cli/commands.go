@@ -114,34 +114,8 @@ func loginCmd(server *string) *cobra.Command {
 			}
 			anon := &Client{BaseURL: url, HTTP: &http.Client{Jar: jar, Timeout: time.Minute}}
 
-			var session struct {
-				UserID                 string `json:"user_id"`
-				MustChangePassword     bool   `json:"must_change_password"`
-				TwoFactorSetupRequired bool   `json:"two_factor_setup_required"`
-			}
-			signIn := map[string]string{"username": username, "password": password}
-			err = anon.Do("POST", "/sessions", signIn, &session)
-			// R-405: the password was right and the account has two-factor
-			// authentication. The same request again, with a code.
-			var apiErr *APIError
-			if errors.As(err, &apiErr) && apiErr.Code == codeTwoFactorRequired {
-				code, perr := prompt(cmd, "Code from your authenticator app, or a recovery code: ")
-				if perr != nil {
-					return perr
-				}
-				signIn["code"] = code
-				err = anon.Do("POST", "/sessions", signIn, &session)
-			}
-			if err != nil {
+			if err := signInSession(cmd, anon, username, password); err != nil {
 				return err
-			}
-			if session.MustChangePassword {
-				return fmt.Errorf("this account still has the password Pando generated for it.\n" +
-					"Open the web console and choose your own first")
-			}
-			if session.TwoFactorSetupRequired {
-				return fmt.Errorf("this installation requires two-factor authentication, and this account has not set it up.\n" +
-					"Open the web console, sign in, and set up an authenticator app first")
 			}
 
 			name, _ := os.Hostname()
@@ -159,7 +133,7 @@ func loginCmd(server *string) *cobra.Command {
 			// The session has done its job. Revoking it means the only
 			// credential left on this machine is the one in the file, with the
 			// permissions that file has.
-			_ = anon.Do("DELETE", "/sessions", nil, nil)
+			_ = anon.Do("DELETE", sessionsPath, nil, nil)
 
 			if err := SaveCredentials(Credentials{URL: url, Token: issued.Secret, User: username}); err != nil {
 				return err
@@ -172,6 +146,45 @@ func loginCmd(server *string) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&username, "username", "", "username to sign in as")
 	return cmd
+}
+
+// sessionsPath is where a password sign-in is posted, and a session ended.
+const sessionsPath = "/sessions"
+
+// signInSession signs anon in with a username and password, asking for a
+// second factor when the account has one (R-405), and refuses an account that
+// must change its password or set up two-factor authentication first.
+func signInSession(cmd *cobra.Command, anon *Client, username, password string) error {
+	var session struct {
+		UserID                 string `json:"user_id"`
+		MustChangePassword     bool   `json:"must_change_password"`
+		TwoFactorSetupRequired bool   `json:"two_factor_setup_required"`
+	}
+	signIn := map[string]string{"username": username, "password": password}
+	err := anon.Do("POST", sessionsPath, signIn, &session)
+	// R-405: the password was right and the account has two-factor
+	// authentication. The same request again, with a code.
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Code == codeTwoFactorRequired {
+		code, perr := prompt(cmd, "Code from your authenticator app, or a recovery code: ")
+		if perr != nil {
+			return perr
+		}
+		signIn["code"] = code
+		err = anon.Do("POST", sessionsPath, signIn, &session)
+	}
+	if err != nil {
+		return err
+	}
+	if session.MustChangePassword {
+		return fmt.Errorf("this account still has the password Pando generated for it.\n" +
+			"Open the web console and choose your own first")
+	}
+	if session.TwoFactorSetupRequired {
+		return fmt.Errorf("this installation requires two-factor authentication, and this account has not set it up.\n" +
+			"Open the web console, sign in, and set up an authenticator app first")
+	}
+	return nil
 }
 
 // appIconCmd sets or removes the image on an app's launcher tile (R-340).

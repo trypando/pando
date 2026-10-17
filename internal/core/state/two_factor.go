@@ -14,6 +14,9 @@ import (
 
 // The two credential fields a local account's second factor keeps (R-405).
 const (
+	errTurnOn  = "Could not turn on two-factor authentication."
+	errTurnOff = "Could not turn off two-factor authentication."
+
 	totpField        = "totp"
 	totpPendingField = "totp_pending"
 )
@@ -94,7 +97,7 @@ func (t *TwoFactor) Enable(ctx context.Context, userID string, v secret.Value, l
 	}
 	tx, err := t.db.Begin(ctx)
 	if err != nil {
-		return errs.Wrap(errs.Internal, "Could not turn on two-factor authentication.", err)
+		return errs.Wrap(errs.Internal, errTurnOn, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -104,7 +107,7 @@ func (t *TwoFactor) Enable(ctx context.Context, userID string, v secret.Value, l
 		    two_factor_offered_at = coalesce(two_factor_offered_at, now()), updated_at = now()
 		WHERE id = $1 AND adapter_id = $3 AND deleted_at IS NULL`, userID, lastStep, LocalAdapterID)
 	if err != nil {
-		return errs.Wrap(errs.Internal, "Could not turn on two-factor authentication.", err)
+		return errs.Wrap(errs.Internal, errTurnOn, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return errNotLocal()
@@ -114,10 +117,10 @@ func (t *TwoFactor) Enable(ctx context.Context, userID string, v secret.Value, l
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM user_two_factor_credentials WHERE user_id = $1 AND field = $2`,
 		userID, totpPendingField); err != nil {
-		return errs.Wrap(errs.Internal, "Could not turn on two-factor authentication.", err)
+		return errs.Wrap(errs.Internal, errTurnOn, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return errs.Wrap(errs.Internal, "Could not turn on two-factor authentication.", err)
+		return errs.Wrap(errs.Internal, errTurnOn, err)
 	}
 	return nil
 }
@@ -183,7 +186,7 @@ func replaceCodes(ctx context.Context, tx pgx.Tx, userID string, digests []strin
 func (t *TwoFactor) Disable(ctx context.Context, userID string, reoffer bool) (bool, error) {
 	tx, err := t.db.Begin(ctx)
 	if err != nil {
-		return false, errs.Wrap(errs.Internal, "Could not turn off two-factor authentication.", err)
+		return false, errs.Wrap(errs.Internal, errTurnOff, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -199,18 +202,18 @@ func (t *TwoFactor) Disable(ctx context.Context, userID string, reoffer bool) (b
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, errs.New(errs.NotFound, "There is no such account.")
 		}
-		return false, errs.Wrap(errs.Internal, "Could not turn off two-factor authentication.", err)
+		return false, errs.Wrap(errs.Internal, errTurnOff, err)
 	}
 	for _, q := range []string{
 		`DELETE FROM user_two_factor_credentials WHERE user_id = $1`,
 		`DELETE FROM user_recovery_codes WHERE user_id = $1`,
 	} {
 		if _, err := tx.Exec(ctx, q, userID); err != nil {
-			return false, errs.Wrap(errs.Internal, "Could not turn off two-factor authentication.", err)
+			return false, errs.Wrap(errs.Internal, errTurnOff, err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return false, errs.Wrap(errs.Internal, "Could not turn off two-factor authentication.", err)
+		return false, errs.Wrap(errs.Internal, errTurnOff, err)
 	}
 	return had, nil
 }

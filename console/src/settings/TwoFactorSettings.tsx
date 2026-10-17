@@ -24,7 +24,7 @@ import {
 
 type Open = 'enroll' | 'codes' | 'off' | null;
 
-export function TwoFactorSettings({ status, username }: { status: TwoFactorStatus; username?: string }) {
+export function TwoFactorSettings({ status, username }: Readonly<{ status: TwoFactorStatus; username?: string }>) {
   const [open, setOpen] = useState<Open>(null);
   const close = () => setOpen(null);
 
@@ -92,14 +92,13 @@ function EnrollDialog({
   passwordRequired,
   username,
   onClose,
-}: {
+}: Readonly<{
   replacing: boolean;
   passwordRequired: boolean;
   username?: string;
   onClose: () => void;
-}) {
+}>) {
   const enroll = useEnrollment();
-  const queries = useQueryClient();
   const { begin } = enroll;
 
   // Nothing to ask first when the session is recent: straight to the code.
@@ -115,43 +114,7 @@ function EnrollDialog({
   }
 
   if (enroll.step === 'scan' && enroll.begin.data) {
-    return (
-      <Dialog
-        open
-        title="Scan this code"
-        description={
-          replacing
-            ? 'Scan it with the new authenticator app. The current one keeps working until you enter a code from this one.'
-            : 'Open your authenticator app, add an account, and scan the code.'
-        }
-        onClose={onClose}
-        footer={
-          <>
-            <Button variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              disabled={enroll.confirm.isPending || enroll.code.length !== 6}
-              onClick={() =>
-                enroll.confirm.mutate(undefined, {
-                  onSuccess: () => void queries.invalidateQueries({ queryKey: ['me'] }),
-                })
-              }
-            >
-              {enroll.confirm.isPending ? 'Turning on' : 'Turn on'}
-            </Button>
-          </>
-        }
-      >
-        <ScanCode
-          enrollment={enroll.begin.data}
-          code={enroll.code}
-          onCode={enroll.setCode}
-          error={enroll.confirm.isError ? withRemedy(enroll.confirm.error) : undefined}
-        />
-      </Dialog>
-    );
+    return <ScanDialog enroll={enroll} enrollment={enroll.begin.data} replacing={replacing} onClose={onClose} />;
   }
 
   return (
@@ -188,16 +151,68 @@ function EnrollDialog({
   );
 }
 
+/** The QR code step: scan it, then enter the code the app shows. */
+function ScanDialog({
+  enroll,
+  enrollment,
+  replacing,
+  onClose,
+}: Readonly<{
+  enroll: ReturnType<typeof useEnrollment>;
+  enrollment: NonNullable<ReturnType<typeof useEnrollment>['begin']['data']>;
+  replacing: boolean;
+  onClose: () => void;
+}>) {
+  const queries = useQueryClient();
+  return (
+  <Dialog
+    open
+    title="Scan this code"
+    description={
+      replacing
+        ? 'Scan it with the new authenticator app. The current one keeps working until you enter a code from this one.'
+        : 'Open your authenticator app, add an account, and scan the code.'
+    }
+    onClose={onClose}
+    footer={
+      <>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          disabled={enroll.confirm.isPending || enroll.code.length !== 6}
+          onClick={() =>
+            enroll.confirm.mutate(undefined, {
+              onSuccess: () => void queries.invalidateQueries({ queryKey: ['me'] }),
+            })
+          }
+        >
+          {enroll.confirm.isPending ? 'Turning on' : 'Turn on'}
+        </Button>
+      </>
+    }
+  >
+    <ScanCode
+      enrollment={enrollment}
+      code={enroll.code}
+      onCode={enroll.setCode}
+      error={enroll.confirm.isError ? withRemedy(enroll.confirm.error) : undefined}
+    />
+  </Dialog>
+  );
+}
+
 /** New recovery codes, which end the old ones. */
 function NewCodesDialog({
   passwordRequired,
   username,
   onClose,
-}: {
+}: Readonly<{
   passwordRequired: boolean;
   username?: string;
   onClose: () => void;
-}) {
+}>) {
   const [password, setPassword] = useState('');
   const queries = useQueryClient();
   const make = useMutation({
@@ -245,7 +260,7 @@ function NewCodesDialog({
 }
 
 /** Turn it off: password sign-in alone again. */
-function TurnOffDialog({ passwordRequired, onClose }: { passwordRequired: boolean; onClose: () => void }) {
+function TurnOffDialog({ passwordRequired, onClose }: Readonly<{ passwordRequired: boolean; onClose: () => void }>) {
   const [password, setPassword] = useState('');
   const queries = useQueryClient();
   const off = useMutation({
@@ -297,12 +312,12 @@ function PasswordOrError({
   password,
   onPassword,
   error,
-}: {
+}: Readonly<{
   passwordRequired: boolean;
   password: string;
   onPassword: (v: string) => void;
   error?: string;
-}) {
+}>) {
   if (passwordRequired) return <CurrentPassword value={password} onChange={onPassword} error={error} />;
   return error ? <Banner tone="failed">{error}</Banner> : null;
 }
@@ -311,7 +326,7 @@ function PasswordOrError({
  * Recovery codes, shown once. Done waits for the person to say they saved
  * them, and so does closing: there is no second look.
  */
-function CodesShown({ codes, username, onDone }: { codes: string[]; username?: string; onDone: () => void }) {
+function CodesShown({ codes, username, onDone }: Readonly<{ codes: string[]; username?: string; onDone: () => void }>) {
   const [saved, setSaved] = useState(false);
   return (
     <Dialog

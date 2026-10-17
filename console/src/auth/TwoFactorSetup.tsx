@@ -89,13 +89,13 @@ export function TwoFactorSetup({
   username,
   onStarted,
   onDone,
-}: {
+}: Readonly<{
   required?: boolean;
   passwordRequired?: boolean;
   username?: string;
   onStarted?: () => void;
   onDone?: () => void;
-}) {
+}>) {
   const enroll = useEnrollment();
   const [saved, setSaved] = useState(false);
   const queries = useQueryClient();
@@ -209,7 +209,7 @@ export function TwoFactorSetup({
 }
 
 /** The person saying they kept the codes, which is what continuing waits for. */
-export function SavedCodes({ saved, onSaved }: { saved: boolean; onSaved: (saved: boolean) => void }) {
+export function SavedCodes({ saved, onSaved }: Readonly<{ saved: boolean; onSaved: (saved: boolean) => void }>) {
   return (
     <Checkbox
       label="I saved these recovery codes"
@@ -225,11 +225,11 @@ export function CurrentPassword({
   value,
   onChange,
   error,
-}: {
+}: Readonly<{
   value: string;
   onChange: (v: string) => void;
   error?: string;
-}) {
+}>) {
   return (
     <Input
       label="Current password"
@@ -256,12 +256,12 @@ export function ScanCode({
   code,
   onCode,
   error,
-}: {
+}: Readonly<{
   enrollment: Enrollment;
   code: string;
   onCode: (code: string) => void;
   error?: string;
-}) {
+}>) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
       <img
@@ -321,7 +321,7 @@ export function recoveryCodesText(codes: string[], username?: string, host = win
 }
 
 /** The codes, once, with ways to keep them. */
-export function RecoveryCodes({ codes, username }: { codes: string[]; username?: string }) {
+export function RecoveryCodes({ codes, username }: Readonly<{ codes: string[]; username?: string }>) {
   const [copied, setCopied] = useState<'yes' | 'no' | null>(null);
 
   async function copy() {

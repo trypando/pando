@@ -16,6 +16,8 @@ const codeTwoFactorRequired = "AUTH_TWO_FACTOR_REQUIRED"
 
 const twoFactorPath = "/me/two-factor"
 
+const currentPasswordPrompt = "Current password: "
+
 // twoFactorCmd is two-factor authentication on your own local account
 // (R-405): the same routes the console's settings use.
 func twoFactorCmd(client func() (*Client, error)) *cobra.Command {
@@ -72,7 +74,7 @@ func twoFactorCmd(client func() (*Client, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			password, err := promptSecret(cmd, "Current password: ")
+			password, err := promptSecret(cmd, currentPasswordPrompt)
 			if err != nil {
 				return err
 			}
@@ -118,7 +120,7 @@ func twoFactorCmd(client func() (*Client, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			password, err := promptSecret(cmd, "Current password: ")
+			password, err := promptSecret(cmd, currentPasswordPrompt)
 			if err != nil {
 				return err
 			}
@@ -144,7 +146,7 @@ func twoFactorCmd(client func() (*Client, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			password, err := promptSecret(cmd, "Current password: ")
+			password, err := promptSecret(cmd, currentPasswordPrompt)
 			if err != nil {
 				return err
 			}

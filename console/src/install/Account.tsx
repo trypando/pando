@@ -159,8 +159,7 @@ export function AccountPage({
                 <StatusToggle account={a} />
                 {/* An external provider holds its accounts' passwords; Pando has
                     nothing to reset. */}
-                {a.adapter_id === LOCAL && <ResetPassword account={a} />}
-                {a.adapter_id === LOCAL && a.two_factor_enabled && <ResetTwoFactor account={a} />}
+                <LocalResets account={a} />
                 <DeleteAccount account={a} onDeleted={onBack} />
               </div>
             )}
@@ -534,12 +533,27 @@ function GroupMembership({
 }
 
 /**
+ * What an administrator can reset on a local account: its password, and its
+ * two-factor authentication when it has some. An external provider's account
+ * has neither in Pando.
+ */
+function LocalResets({ account }: Readonly<{ account: Account }>) {
+  if (account.adapter_id !== LOCAL) return null;
+  return (
+    <>
+      <ResetPassword account={account} />
+      {account.two_factor_enabled && <ResetTwoFactor account={account} />}
+    </>
+  );
+}
+
+/**
  * Remove somebody else's authenticator and recovery codes (R-405), for a
  * person who lost both. Like a password reset, it signs them out everywhere;
  * they sign in with their password, and set it up again then if host policy
  * requires it. Your own is turned off in your settings.
  */
-export function ResetTwoFactor({ account }: { account: Account }) {
+export function ResetTwoFactor({ account }: Readonly<{ account: Account }>) {
   const [open, setOpen] = useState(false);
   const queries = useQueryClient();
 
