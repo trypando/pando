@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { mount, reply, unanswered, type Mounted, type Seed } from '../ui/testing';
+import { mount, reply, serverRender, unanswered, type Mounted, type Seed } from '../ui/testing';
 import type { TwoFactorStatus } from '../app/principal';
 import { ResetTwoFactor } from '../install/Account';
 import type { Account } from '../install/Accounts';
 import { App } from '../app/App';
+import { TwoFactorElsewhere } from '../auth/TwoFactorSetup';
 import { Settings } from './Settings';
 import { TwoFactorSettings, remaining } from './TwoFactorSettings';
 
@@ -199,14 +200,26 @@ describe('the console after signing in', () => {
     expect(screen.text()).toContain('Not now');
   });
 
-  it('on an app\'s hostname, sends a required setup to Pando\'s own address', () => {
+  const elsewhere = { ...off, required: true, setup_required: true, setup_here: false };
+
+  it('sends a required setup to Pando\'s own address', () => {
+    const html = serverRender(<TwoFactorElsewhere consoleURL="https://pando.example.com" />);
+    expect(html).toContain('Set it up in Pando');
+    expect(html).toContain('Open Pando');
+    expect(html).not.toContain('Not now');
+  });
+
+  it('says where Pando is when it does not know its own address', () => {
+    const html = serverRender(<TwoFactorElsewhere />);
+    expect(html).toContain('the address you use for its console');
+    expect(html).not.toContain('Open Pando<');
+  });
+
+  it('on an app\'s hostname, shows the required setup elsewhere and opens Pando\'s address', () => {
     serve(() => unanswered());
     const assign = vi.fn();
     vi.stubGlobal('location', { ...window.location, assign });
-    screen = mount(<App />, [
-      [['me'], me({ ...off, required: true, setup_required: true, setup_here: false, console_url: 'https://pando.example.com' })],
-    ]);
-    expect(screen.text()).toContain('Set it up in Pando');
+    screen = mount(<App />, [[['me'], me({ ...elsewhere, console_url: 'https://pando.example.com' })]]);
     expect(screen.text()).not.toContain('Not now');
     button('Open Pando')?.click();
     expect(assign).toHaveBeenCalledWith('https://pando.example.com');

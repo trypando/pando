@@ -80,7 +80,9 @@ export function useEnrollment() {
  * Where two-factor authentication is required and cannot be set up at this
  * address: an app's own hostname, where the app's script could read the key
  * and the recovery codes (R-405, issue #78). Sends the person to Pando's own
- * address, which the server names when it knows it.
+ * address, which the server knows when PANDO_SERVER_EXTERNAL_URL is set; when
+ * it is not, says where that is in words, since the person reached the console
+ * there to have an account at all.
  */
 export function TwoFactorElsewhere({ consoleURL }: Readonly<{ consoleURL?: string }>) {
   return (
@@ -89,10 +91,15 @@ export function TwoFactorElsewhere({ consoleURL }: Readonly<{ consoleURL?: strin
       lede="This installation requires two-factor authentication. Set it up in Pando's console, then come back to this app."
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        {consoleURL && (
+        {consoleURL ? (
           <Button variant="primary" fullWidth onClick={() => window.location.assign(consoleURL)}>
             Open Pando
           </Button>
+        ) : (
+          <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
+            Open Pando at the address you use for its console, not this app&rsquo;s, and sign in there. It asks you
+            to set up an authenticator app first.
+          </p>
         )}
         <SignOut />
       </div>
