@@ -192,12 +192,7 @@ export function AccountPage({
                 {a.alias_of}
               </Detail>
             )}
-            {a.adapter_id === LOCAL && (
-              <Detail term="Password">
-                {a.must_change_password ? 'Must be changed at next sign-in' : 'Set by the account holder'}
-              </Detail>
-            )}
-            {a.adapter_id === LOCAL && <Detail term="Two-factor">{a.two_factor_enabled ? 'On' : 'Off'}</Detail>}
+            <LocalCredentials account={a} />
             <Detail term="Created">{a.created_at ? new Date(a.created_at).toLocaleString() : '—'}</Detail>
             <Detail term="Groups">
               {/* Not "None" before the groups have arrived. */}
@@ -529,6 +524,22 @@ function GroupMembership({
       )}
       {error && <span style={{ font: 'var(--type-caption)', color: 'var(--marker-deep)' }}>{error}</span>}
     </div>
+  );
+}
+
+/**
+ * A local account's password and two-factor authentication, as details. An
+ * external provider's account has neither in Pando, so nothing is shown.
+ */
+function LocalCredentials({ account }: Readonly<{ account: Account }>) {
+  if (account.adapter_id !== LOCAL) return null;
+  return (
+    <>
+      <Detail term="Password">
+        {account.must_change_password ? 'Must be changed at next sign-in' : 'Set by the account holder'}
+      </Detail>
+      <Detail term="Two-factor">{account.two_factor_enabled ? 'On' : 'Off'}</Detail>
+    </>
   );
 }
 
