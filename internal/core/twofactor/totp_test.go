@@ -100,6 +100,9 @@ func TestOTPAuthURI(t *testing.T) {
 	if !strings.HasPrefix(u.Path, "/Pando (pando.example.com):ben") {
 		t.Errorf("label = %q", u.Path)
 	}
+	if strings.Contains(got, "+") || !strings.Contains(got, "issuer=Pando%20%28pando.example.com%29") {
+		t.Errorf("issuer's spaces are not %%20: %s", got)
+	}
 	if u.Query().Get("secret") != "ABC" || u.Query().Get("issuer") != "Pando (pando.example.com)" {
 		t.Errorf("query = %v", u.Query())
 	}

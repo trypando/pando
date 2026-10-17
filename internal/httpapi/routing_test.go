@@ -210,6 +210,11 @@ func TestR172_AnAppsHostnameAnswersSigningInAndNothingElse(t *testing.T) {
 		{http.MethodGet, "/.pando/api/v1/apps/app_01/secrets"},
 		{http.MethodGet, "/.pando/api/v1/apps/app_01/exec"},
 		{http.MethodPost, "/.pando/api/v1/setup"},
+		// R-405: an authenticator key and recovery codes, which the app's
+		// script could read; set up at Pando's own address instead.
+		{http.MethodPost, "/.pando/api/v1/me/two-factor/totp"},
+		{http.MethodPost, "/.pando/api/v1/me/two-factor/totp/confirm"},
+		{http.MethodPost, "/.pando/api/v1/me/two-factor/skip"},
 		{http.MethodGet, "/.pando/healthz"},
 		{http.MethodGet, "/.pando/admin"},
 	} {

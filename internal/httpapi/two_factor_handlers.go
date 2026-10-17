@@ -158,6 +158,13 @@ type meTwoFactorJSON struct {
 	// PasswordRequired says changing it needs current_password: the session
 	// is more than a few minutes old, or this is a token.
 	PasswordRequired bool `json:"password_required"`
+
+	// SetupHere says it can be set up at this address. Not on an app's own
+	// hostname or port, where the app's script could read the key and the
+	// recovery codes (issue #78); the page sends the person to ConsoleURL,
+	// Pando's own address, where one is configured.
+	SetupHere  bool   `json:"setup_here"`
+	ConsoleURL string `json:"console_url,omitempty"`
 }
 
 func (s *Server) meTwoFactor(r *http.Request, user state.User) (*meTwoFactorJSON, error) {
@@ -165,7 +172,11 @@ func (s *Server) meTwoFactor(r *http.Request, user state.User) (*meTwoFactorJSON
 	if err != nil {
 		return nil, err
 	}
-	return &meTwoFactorJSON{Summary: summary, PasswordRequired: !s.signedInRecently(r)}, nil
+	out := &meTwoFactorJSON{Summary: summary, PasswordRequired: !s.signedInRecently(r), SetupHere: !s.onAppAddress(r)}
+	if s.ExternalURL != nil {
+		out.ConsoleURL = s.ExternalURL.String()
+	}
+	return out, nil
 }
 
 // signedInRecently says the request's session began within recentSignIn. A
@@ -215,7 +226,8 @@ func (s *Server) selfLocal(w http.ResponseWriter, r *http.Request) (authz.Princi
 }
 
 type reauthRequest struct {
-	CurrentPassword string `json:"current_password"`
+	// Not needed within a few minutes of signing in (recentSignIn).
+	CurrentPassword string `json:"current_password,omitempty"`
 }
 
 // decodeOptional reads a JSON body that may be empty.

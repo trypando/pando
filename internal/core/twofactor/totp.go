@@ -85,7 +85,10 @@ func otpauthURI(issuer, account, secret string) string {
 	q := url.Values{}
 	q.Set("secret", secret)
 	q.Set("issuer", issuer)
-	return "otpauth://totp/" + label + "?" + q.Encode()
+	// Spaces as %20, not the + a query string uses: the key URI format asks
+	// for it, and some apps show a + literally. A + in the issuer is already
+	// %2B, so every + left is a space.
+	return "otpauth://totp/" + label + "?" + strings.ReplaceAll(q.Encode(), "+", "%20")
 }
 
 // IsAuthenticatorCode says whether what someone typed is shaped like an

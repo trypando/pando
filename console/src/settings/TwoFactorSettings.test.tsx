@@ -19,6 +19,7 @@ const off: TwoFactorStatus = {
   offer: false,
   password_required: false,
   recovery_codes_remaining: 0,
+  setup_here: true,
 };
 const on: TwoFactorStatus = { ...off, enabled: true, recovery_codes_remaining: 10 };
 
@@ -196,6 +197,26 @@ describe('the console after signing in', () => {
     screen = mount(<App />, [[['me'], me({ ...off, offer: true })]]);
     expect(screen.text()).toContain('Add two-factor authentication');
     expect(screen.text()).toContain('Not now');
+  });
+
+  it('on an app\'s hostname, sends a required setup to Pando\'s own address', () => {
+    serve(() => unanswered());
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign });
+    screen = mount(<App />, [
+      [['me'], me({ ...off, required: true, setup_required: true, setup_here: false, console_url: 'https://pando.example.com' })],
+    ]);
+    expect(screen.text()).toContain('Set it up in Pando');
+    expect(screen.text()).not.toContain('Not now');
+    button('Open Pando')?.click();
+    expect(assign).toHaveBeenCalledWith('https://pando.example.com');
+  });
+
+  it('on an app\'s hostname, does not offer it', () => {
+    serve(() => unanswered());
+    vi.stubGlobal('location', { ...window.location, replace: vi.fn() });
+    screen = mount(<App />, [[['me'], me({ ...off, offer: true, setup_here: false })]]);
+    expect(screen.text()).not.toContain('Add two-factor authentication');
   });
 
   it('asks nothing of an account that has it or was asked', () => {

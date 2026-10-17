@@ -86,6 +86,10 @@ export interface TwoFactorStatus {
   /** The session is old enough that changing it asks for the password again. */
   password_required: boolean;
   recovery_codes_remaining: number;
+  /** False on an app's own hostname, where it is set up at Pando's address instead. */
+  setup_here: boolean;
+  /** Pando's own address, where one is configured. */
+  console_url?: string;
 }
 
 export function usePrincipal() {

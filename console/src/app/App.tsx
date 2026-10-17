@@ -23,7 +23,7 @@ import { useTheme } from '../ui/theme';
 import { useRoute } from './route';
 import type { Route } from './route';
 import { ChangePassword, Login, Passcode } from '../auth/Login';
-import { TwoFactorSetup } from '../auth/TwoFactorSetup';
+import { TwoFactorElsewhere, TwoFactorSetup } from '../auth/TwoFactorSetup';
 import { returnTo } from '../auth/return-to';
 import { reservedPrefix } from '@api/client';
 import { passcodeApp } from '../auth/passcode';
@@ -97,8 +97,14 @@ export function App() {
   // redirect, so it is asked on whichever hostname the person signed in at.
   // Once begun the page stays up until it is finished, though GET /me stops
   // asking for it the moment it is on: the recovery codes are still to come.
+  // Not on an app's own hostname, where the app's script could read the key
+  // and the recovery codes: required, it is set up at Pando's address;
+  // offered, it waits until the person signs in there.
   const twoFactor = principal.data?.two_factor;
-  if (twoFactor && (twoFactor.setup_required || twoFactor.offer || settingUp)) {
+  if (twoFactor && !twoFactor.setup_here && twoFactor.setup_required) {
+    return <TwoFactorElsewhere consoleURL={twoFactor.console_url} />;
+  }
+  if (twoFactor?.setup_here && (twoFactor.setup_required || twoFactor.offer || settingUp)) {
     return (
       <TwoFactorSetup
         required={twoFactor.setup_required || twoFactor.required}

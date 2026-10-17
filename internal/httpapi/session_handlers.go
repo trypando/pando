@@ -27,7 +27,7 @@ type loginRequest struct {
 
 	// Code is the second factor, for an account with two-factor
 	// authentication (R-405): an authenticator code or a recovery code.
-	Code string `json:"code"`
+	Code string `json:"code,omitempty"`
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {

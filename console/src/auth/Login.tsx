@@ -305,12 +305,16 @@ function SecondStep({
             inputMode="numeric"
             autoComplete="one-time-code"
             autoFocus
-            maxLength={6}
             error={error}
             onChange={(e) => onCode(digitsOnly(e.target.value))}
           />
         )}
-        <Button type="submit" variant="primary" fullWidth disabled={pending || code === ''}>
+        <Button
+          type="submit"
+          variant="primary"
+          fullWidth
+          disabled={pending || code === '' || (!recovery && code.length !== 6)}
+        >
           {pending ? 'Signing in' : 'Sign in'}
         </Button>
         <Button type="button" variant="ghost" fullWidth onClick={() => onRecovery(!recovery)}>
@@ -325,9 +329,11 @@ function SecondStep({
 }
 
 /** What an authenticator code field keeps of what was typed or pasted: the
- *  digits, so "123 456" from an app that groups them still works. */
+ *  first six digits, so "123 456" from an app that groups them still works.
+ *  The field has no maxLength: a browser would cut a grouped paste to six
+ *  characters, a digit short, before this saw it. */
 export function digitsOnly(value: string): string {
-  return value.replace(/\D/g, '');
+  return value.replace(/\D/g, '').slice(0, 6);
 }
 
 /**

@@ -14579,8 +14579,7 @@
         },
         "required": [
           "username",
-          "password",
-          "code"
+          "password"
         ]
       },
       "Loosening": {
@@ -14685,6 +14684,12 @@
           },
           "password_required": {
             "type": "boolean"
+          },
+          "setup_here": {
+            "type": "boolean"
+          },
+          "console_url": {
+            "type": "string"
           }
         },
         "required": [
@@ -14693,7 +14698,8 @@
           "setup_required",
           "offer",
           "recovery_codes_remaining",
-          "password_required"
+          "password_required",
+          "setup_here"
         ]
       },
       "Mount": {
@@ -15428,10 +15434,7 @@
           "current_password": {
             "type": "string"
           }
-        },
-        "required": [
-          "current_password"
-        ]
+        }
       },
       "Record": {
         "type": "object",

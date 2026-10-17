@@ -358,8 +358,11 @@ that is unfinished, not a permission that is missing:
 - The API answers such a session only on `twoFactorSetupRoutes` — who it is, signing out, the
   first-run password change, and the two setup routes — and `POLICY_TWO_FACTOR_REQUIRED` everywhere
   else. It cannot mint a token around it.
-- The proxy takes it for anonymous, so a private app sends it to `/.pando` to sign in, where the
-  setup page is (the setup routes are in `signInRoutes` too).
+- The proxy takes it for anonymous, so a private app sends it to `/.pando` to sign in. The setup
+  routes are not in `signInRoutes`: on an app's own hostname the session cookie is the app's
+  origin's, and the app's script could read the key and recovery codes they answer with (issue #78).
+  GET /me says `setup_here: false` there, and the page sends the person to `console_url`, Pando's
+  own address, to set it up. Where it is only offered, it waits until they sign in there.
 - `checkPrincipal` refuses it at step 2 as well, so a route that forgot the gate is still closed.
 - Sessions open when the policy is turned on are held back on their next request: migration 75 adds
   a trigger on `host_policy` and on `users.totp_enabled_at` to the proxy cache's (issue #93).

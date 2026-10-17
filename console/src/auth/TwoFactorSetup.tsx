@@ -77,6 +77,30 @@ export function useEnrollment() {
 }
 
 /**
+ * Where two-factor authentication is required and cannot be set up at this
+ * address: an app's own hostname, where the app's script could read the key
+ * and the recovery codes (R-405, issue #78). Sends the person to Pando's own
+ * address, which the server names when it knows it.
+ */
+export function TwoFactorElsewhere({ consoleURL }: Readonly<{ consoleURL?: string }>) {
+  return (
+    <Frame
+      heading="Set up two-factor authentication"
+      lede="This installation requires two-factor authentication. Set it up in Pando's console, then come back to this app."
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        {consoleURL && (
+          <Button variant="primary" fullWidth onClick={() => window.location.assign(consoleURL)}>
+            Open Pando
+          </Button>
+        )}
+        <SignOut />
+      </div>
+    </Frame>
+  );
+}
+
+/**
  * The page offered after signing in, or required before anything else.
  *
  * `onStarted` and `onDone` let App keep this page up once it has begun: GET /me
@@ -295,7 +319,6 @@ export function ScanCode({
         mono
         inputMode="numeric"
         autoComplete="one-time-code"
-        maxLength={6}
         error={error}
         onChange={(e) => onCode(e.target.value)}
       />

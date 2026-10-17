@@ -63,11 +63,10 @@ var signInRoutes = []struct{ method, pattern string }{
 	// R-046: a first-run password must be changed before anything else, on
 	// whichever hostname the person signed in at. It needs the current one.
 	{http.MethodPost, "/api/v1/me/password"},
-	// R-405: and so must setting up two-factor authentication, where policy
-	// requires it, and being asked to the first time.
-	{http.MethodPost, "/api/v1/me/two-factor/totp"},
-	{http.MethodPost, "/api/v1/me/two-factor/totp/confirm"},
-	{http.MethodPost, "/api/v1/me/two-factor/skip"},
+	// Not two-factor setup (R-405). Its answers are an authenticator key and
+	// recovery codes, which the app's own script could read here with its
+	// visitor's cookie; GET /me's two_factor.setup_here tells the page to send
+	// the person to Pando's own address for it instead.
 	{http.MethodGet, "/api/v1/apps/{}/passcode"},
 	{http.MethodPost, "/api/v1/apps/{}/passcode"},
 }

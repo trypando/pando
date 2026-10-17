@@ -41,3 +41,11 @@ describe('setting up a new installation', () => {
     expect(render(false)).not.toContain('Setup token');
   });
 });
+
+describe('digitsOnly', () => {
+  it('keeps the six digits of a grouped paste', async () => {
+    const { digitsOnly } = await import('./Login');
+    expect(digitsOnly('123 456')).toBe('123456');
+    expect(digitsOnly('123-4567')).toBe('123456');
+  });
+});
