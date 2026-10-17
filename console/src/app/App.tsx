@@ -18,7 +18,7 @@
 import { useRef, useState } from 'react';
 import { Skeleton } from '@design';
 
-import { useAdministrative, usePrincipal } from './principal';
+import { useAdministrative, usePrincipal, type TwoFactorStatus } from './principal';
 import { useTheme } from '../ui/theme';
 import { useRoute } from './route';
 import type { Route } from './route';
@@ -32,6 +32,16 @@ import { AdminConsole } from '../admin/AdminConsole';
 import { Settings } from '../settings/Settings';
 import { Sheet } from '../ui/Sheet';
 import { HeadingSkeleton, Loading } from '../ui/Loading';
+
+/**
+ * Which two-factor page, if any, comes before the console (R-405): the setup
+ * itself, or on an app's own hostname a pointer to Pando's address for a
+ * required one. An offer waits there until the person signs in at Pando's.
+ */
+function twoFactorScreen(twoFactor: TwoFactorStatus, settingUp: boolean): 'setup' | 'elsewhere' | null {
+  if (!twoFactor.setup_here) return twoFactor.setup_required ? 'elsewhere' : null;
+  return twoFactor.setup_required || twoFactor.offer || settingUp ? 'setup' : null;
+}
 
 export function App() {
   // Before anything decides what to render: the sign-in page and the error
@@ -101,10 +111,11 @@ export function App() {
   // and the recovery codes: required, it is set up at Pando's address;
   // offered, it waits until the person signs in there.
   const twoFactor = principal.data?.two_factor;
-  if (twoFactor && !twoFactor.setup_here && twoFactor.setup_required) {
+  const twoFactorPage = twoFactor && twoFactorScreen(twoFactor, settingUp);
+  if (twoFactor && twoFactorPage === 'elsewhere') {
     return <TwoFactorElsewhere consoleURL={twoFactor.console_url} />;
   }
-  if (twoFactor?.setup_here && (twoFactor.setup_required || twoFactor.offer || settingUp)) {
+  if (twoFactor && twoFactorPage === 'setup') {
     return (
       <TwoFactorSetup
         required={twoFactor.setup_required || twoFactor.required}
