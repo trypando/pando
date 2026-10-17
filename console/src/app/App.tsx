@@ -15,10 +15,10 @@
 // the console back on the launcher, the back button did nothing, and there was
 // no way to send anybody a link to an app.
 
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Skeleton } from '@design';
 
-import { useAdministrative, usePrincipal, type TwoFactorStatus } from './principal';
+import { useAdministrative, usePrincipal, type Principal, type TwoFactorStatus } from './principal';
 import { useTheme } from '../ui/theme';
 import { useRoute } from './route';
 import type { Route } from './route';
@@ -34,13 +34,38 @@ import { Sheet } from '../ui/Sheet';
 import { HeadingSkeleton, Loading } from '../ui/Loading';
 
 /**
- * Which two-factor page, if any, comes before the console (R-405): the setup
- * itself, or on an app's own hostname a pointer to Pando's address for a
- * required one. An offer waits there until the person signs in at Pando's.
+ * The two-factor page that comes before the console, or null for none (R-405).
+ *
+ * Required by host policy, it comes before anything else for the reason the
+ * password change does: the server refuses everything else until it is done.
+ * Otherwise it is offered once, and "Not now" is an answer. Once begun the page
+ * stays up until it is finished, though GET /me stops asking for it the moment
+ * it is on: the recovery codes are still to come. That is remembered for the
+ * account it began for, so a session that ends partway and another person's
+ * sign-in on the same page do not inherit it.
+ *
+ * Not on an app's own hostname, where the app's script could read the key and
+ * the recovery codes: required, it is set up at Pando's address; offered, it
+ * waits until the person signs in there.
  */
-function twoFactorScreen(twoFactor: TwoFactorStatus, settingUp: boolean): 'setup' | 'elsewhere' | null {
-  if (!twoFactor.setup_here) return twoFactor.setup_required ? 'elsewhere' : null;
-  return twoFactor.setup_required || twoFactor.offer || settingUp ? 'setup' : null;
+function useTwoFactorPage(me: Principal | undefined): ReactNode {
+  const [settingUpFor, setSettingUpFor] = useState<string | null>(null);
+  const twoFactor: TwoFactorStatus | undefined = me?.two_factor;
+  if (!me || !twoFactor) return null;
+  if (!twoFactor.setup_here) {
+    return twoFactor.setup_required ? <TwoFactorElsewhere consoleURL={twoFactor.console_url} /> : null;
+  }
+  const settingUp = settingUpFor !== null && settingUpFor === me.user_id;
+  if (!twoFactor.setup_required && !twoFactor.offer && !settingUp) return null;
+  return (
+    <TwoFactorSetup
+      required={twoFactor.setup_required || twoFactor.required}
+      passwordRequired={twoFactor.password_required}
+      username={me.username}
+      onStarted={() => setSettingUpFor(me.user_id ?? null)}
+      onDone={() => setSettingUpFor(null)}
+    />
+  );
 }
 
 export function App() {
@@ -56,8 +81,7 @@ export function App() {
   // opened settings by its address has nothing behind them in this console,
   // and history.back() would take them off Pando altogether.
   const cameFrom = useRef<Route | null>(null);
-  // Two-factor setup begun from the page App shows after sign-in (R-405).
-  const [settingUp, setSettingUp] = useState(false);
+  const twoFactorPage = useTwoFactorPage(principal.data);
 
   // The passcode page shares the sign-in page's address, and comes before
   // anything that depends on who this is: a visitor who has a passcode needs no
@@ -100,31 +124,11 @@ export function App() {
     return <ChangePassword username={principal.data.username} />;
   }
 
-  // R-405: two-factor authentication for a local account. Required by host
-  // policy, it comes before anything else for the reason the password change
-  // does — the server refuses everything else until it is done. Otherwise it
-  // is offered once, and "Not now" is an answer. Before the reserved-path
-  // redirect, so it is asked on whichever hostname the person signed in at.
-  // Once begun the page stays up until it is finished, though GET /me stops
-  // asking for it the moment it is on: the recovery codes are still to come.
-  // Not on an app's own hostname, where the app's script could read the key
-  // and the recovery codes: required, it is set up at Pando's address;
-  // offered, it waits until the person signs in there.
-  const twoFactor = principal.data?.two_factor;
-  const twoFactorPage = twoFactor && twoFactorScreen(twoFactor, settingUp);
-  if (twoFactor && twoFactorPage === 'elsewhere') {
-    return <TwoFactorElsewhere consoleURL={twoFactor.console_url} />;
-  }
-  if (twoFactor && twoFactorPage === 'setup') {
-    return (
-      <TwoFactorSetup
-        required={twoFactor.setup_required || twoFactor.required}
-        passwordRequired={twoFactor.password_required}
-        username={principal.data?.username}
-        onStarted={() => setSettingUp(true)}
-        onDone={() => setSettingUp(false)}
-      />
-    );
+  // R-405: two-factor authentication for a local account (useTwoFactorPage).
+  // Before the reserved-path redirect, so it is asked on whichever hostname the
+  // person signed in at.
+  if (twoFactorPage) {
+    return twoFactorPage;
   }
 
   // Signed in, on the reserved path. On an app's own hostname that path
