@@ -29,7 +29,7 @@ one verb says nothing about another (R-082).
 
 | Endpoint | Verb | What it does |
 | --- | --- | --- |
-| `POST /api/v1/sessions` |  | Sign in with a username and password. Sets the session cookie. Refused when host policy has `disable_password_sign_in` on. |
+| `POST /api/v1/sessions` |  | Sign in with a username and password. Sets the session cookie. An account with two-factor authentication also needs `code`, a code from its authenticator app or one of its recovery codes: without it the answer is `AUTH_TWO_FACTOR_REQUIRED`, and the same request is sent again with it (R-405). `two_factor_setup_required` in the answer says the session can do nothing but set up two-factor authentication, which host policy `require_local_two_factor` asks of every local account. Refused when host policy has `disable_password_sign_in` on. |
 | `GET /api/v1/auth/options` |  | How people can sign in here: whether password sign-in is on, and the identity providers that are (`id`, `name`, `kind`). Public. |
 | `GET /api/v1/auth/providers/{providerID}/start` |  | Start signing in through an identity provider: a browser navigation, redirected to the provider. `next` is the path to land on afterwards. Works under `/.pando` on an app's own hostname too. Public. |
 | `GET /api/v1/auth/providers/{providerID}/callback` |  | Where an OpenID Connect provider returns the browser: the redirect URI to register with it. Public. |
@@ -40,8 +40,13 @@ one verb says nothing about another (R-082).
 | `DELETE /api/v1/sessions` |  | Sign out, ending this session. |
 | `GET /api/v1/setup` |  | Whether this installation is waiting for its first administrator (`needed`). Public. |
 | `POST /api/v1/setup` |  | Set up a new installation: the first account (`username`, `display_name`, `password`), made an administrator, and signed in. Public, but needs the one-time `setup_token` Pando printed to its log at startup (`pando admin setup-token` makes a new one), and refused once any account exists (R-046). |
-| `GET /api/v1/me` |  | Who the caller is, and the install-level verbs they hold. |
+| `GET /api/v1/me` |  | Who the caller is, and the install-level verbs they hold. On a local account, `two_factor` says whether two-factor authentication is on (`enabled`), whether host policy requires it (`required`) and so must be set up before anything else (`setup_required`), whether to ask its holder to set it up (`offer`, true once), how many recovery codes are left, and whether changing it needs the current password (`password_required`, false within 10 minutes of signing in) (R-405). |
 | `POST /api/v1/me/password` |  | Change your own password. Yours only, whatever verbs you hold. |
+| `POST /api/v1/me/two-factor/totp` |  | Make a new authenticator app key for your own local account: `secret` to type in, `uri` (an `otpauth://` key URI) and `qr_svg`, a QR code of it. It is not in use until confirmed with a code from it, and an authenticator already in use stays in use until then, so this is also how one is replaced. Needs `current_password` unless you signed in within 10 minutes (R-405). |
+| `POST /api/v1/me/two-factor/totp/confirm` |  | Put the authenticator from POST /me/two-factor/totp in use, given a `code` from it. Answers with `recovery_codes`, ten codes that each sign in once in place of a code. They are shown this once (R-405). |
+| `POST /api/v1/me/two-factor/recovery-codes` |  | Replace your recovery codes with ten new ones, shown this once; the old ones stop working. Needs `current_password` unless you signed in within 10 minutes (R-405). |
+| `POST /api/v1/me/two-factor/skip` |  | Say not now when asked to set up two-factor authentication, so you are not asked again. Refused where host policy requires it (R-405). |
+| `DELETE /api/v1/me/two-factor` |  | Turn off two-factor authentication on your own local account, removing its authenticator and recovery codes. Refused with `POLICY_TWO_FACTOR_REQUIRED` where host policy requires it. Needs `current_password` unless you signed in within 10 minutes (R-405). |
 | `GET /api/v1/me/apps` |  | The apps you can open, which is a different list from the apps you can administer (R-070, R-071). `favorite` marks the ones you have pinned, `section_id` the section you filed each under, and `sections` lists your sections. `can_manage` marks the ones you can also administer — those GET /apps lists for you. Favorites first, then apps filed in a section, then the rest, each by name, a page at a time: `limit` (default 100, at most 500), `cursor` (the previous page's `next_cursor`, empty after the last page) and `q` to match the name or slug. |
 | `PUT /api/v1/me/favorites/{appID}` |  | Mark an app you can open as a favorite, pinning it to the top of your launcher. Yours only; it grants nothing (R-341). |
 | `DELETE /api/v1/me/favorites/{appID}` |  | Unpin an app from your favorites. |
@@ -206,6 +211,7 @@ one verb says nothing about another (R-082).
 | `DELETE /api/v1/users/{userID}/role` | `install.users.manage` | Take an installation role away. The last administrator cannot be demoted. On someone else's account, refused unless the caller holds every installation permission that account holds (R-080a). |
 | `GET /api/v1/users/{userID}/app-limit` | `install.users.manage` | How many apps an account may own (R-244): `limit` (0 is unlimited), where it comes from (`source`: user, group or policy, with `group_id` and `group_name` for a group), how many it owns (`owned`), and the value set on the account itself (`max_apps`, null when none is). Your own needs no verb. |
 | `PUT /api/v1/users/{userID}/app-limit` | `install.users.manage` | Set `max_apps` on an account: a number, 0 for unlimited, or null to clear it. It applies whatever the account's groups say. Lowering it below what the account owns removes nothing; it refuses the next app (R-244). |
+| `DELETE /api/v1/users/{userID}/two-factor` | `install.users.manage` | Remove another local account's authenticator and recovery codes, for someone who has lost both, ending every session it holds. They sign in with their password alone, and set two-factor authentication up again there if host policy requires it. Your own is DELETE /me/two-factor. Refused unless the caller holds every installation permission that account holds (R-080a, R-405). |
 | `POST /api/v1/users/{userID}/password` | `install.users.manage` | Reset another local account's password (`password`), ending every session it holds. `must_change_password` defaults to true: whoever set it hands it over, and its holder chooses their own at the next sign-in. Your own is `POST /me/password`. On someone else's account, refused unless the caller holds every installation permission that account holds (R-080a). |
 | `POST /api/v1/passwords/generate` | `install.users.manage` | A strong random password, 18 to 22 characters with upper and lower case, digits and symbols, for creating or resetting an account. Stores nothing. |
 | `GET /api/v1/users/{userID}/apps` | `install.view` | The apps an account has something on: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (`can_manage`). Only apps you can see are listed. Your own needs nothing. By app name, a page of apps at a time: `limit` (default 100, at most 500) and `cursor` page; `next_cursor` continues, and a page can hold fewer apps than the limit when some are ones you cannot see. |
@@ -341,6 +347,7 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `AUTH_REQUIRED` | 401 | No credential was presented, or the session has expired. |
 | `AUTH_TOKEN_INVALID` | 401 | The token is unknown, revoked or expired. |
 | `AUTH_TOKEN_ORPHANED` | 401 | The token's owner was suspended or deleted, so the token no longer resolves to anyone. |
+| `AUTH_TWO_FACTOR_REQUIRED` | 401 | The password was right and the account has two-factor authentication. Sign in again with a code from its authenticator app, or one of its recovery codes, as `code`. |
 | `PERM_CROSS_ORIGIN` | 403 | A change sent with a browser's Pando sign-in from a page on another origin, such as an app's. Send it from the console, or with an API token. |
 | `PERM_DENIED` | 403 | Authenticated, but not permitted to do this. |
 | `PERM_PASSCODE_REQUIRED` | 403 | The app is shared with everyone who knows its passcode, and this request has not shown it. A browser is sent to the passcode page; entering it there lets the visitor in. |
@@ -350,6 +357,7 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `POLICY_BACKUP_REQUIRED` | 403 | Host policy requires a final backup before an app with storage is deleted, and the request said to delete without one. |
 | `POLICY_EXEC_DISABLED` | 403 | Host policy has turned off terminal access, including for an app's owner. |
 | `POLICY_SOURCE_NOT_ALLOWED` | 403 | Host policy does not allow apps from this source. |
+| `POLICY_TWO_FACTOR_REQUIRED` | 403 | Host policy requires two-factor authentication for local accounts. An account without it can only set it up, and an account with it cannot turn it off. |
 | `POLICY_WEBHOOK_PRIVATE_ADDRESS` | 403 | A webhook points at a private, loopback or link-local address, and host policy does not allow that. |
 | `NOT_FOUND` | 404 | No such object, or none the caller may see. |
 | `CAPACITY_NO_FREE_PORT` | 409 | Port-mode routing has no free port in the configured range. |

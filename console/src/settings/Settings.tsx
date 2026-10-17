@@ -16,6 +16,7 @@ import { Icon, IconButton, Logo, Radio } from '@design';
 
 import { usePrincipal } from '../app/principal';
 import { NotificationPreferences } from './NotificationPreferences';
+import { TwoFactorSettings } from './TwoFactorSettings';
 import { useTheme } from '../ui/theme';
 import type { Preference } from '../ui/theme';
 import { MEASURE } from '../ui/layout';
@@ -87,6 +88,9 @@ export function Settings({
               <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Notifications</h4>
               <NotificationPreferences />
             </section>
+
+            {/* Local accounts only; GET /me has no two_factor for others (R-405). */}
+            {me.data?.two_factor && <TwoFactorSettings status={me.data.two_factor} username={me.data.username} />}
 
             <section>
               <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Account</h4>

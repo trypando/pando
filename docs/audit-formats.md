@@ -218,5 +218,12 @@ is encoded as 6003 API Activity, 99 Other.
 | `user.scim.delete` | 3001 Account Change | 6 Delete | 300106 |
 | `user.scim.update` | 3001 Account Change | 99 Other | 300199 |
 | `user.suspend` | 3001 Account Change | 5 Disable | 300105 |
+| `user.two_factor.decline` | 3001 Account Change | 99 Other | 300199 |
+| `user.two_factor.denied` | 3001 Account Change | 99 Other | 300199 |
+| `user.two_factor.disable` | 3001 Account Change | 11 MFA Factor Disable | 300111 |
+| `user.two_factor.enable` | 3001 Account Change | 10 MFA Factor Enable | 300110 |
+| `user.two_factor.recovery_code_used` | 3001 Account Change | 99 Other | 300199 |
+| `user.two_factor.recovery_codes` | 3001 Account Change | 99 Other | 300199 |
+| `user.two_factor.reset` | 3001 Account Change | 11 MFA Factor Disable | 300111 |
 | `user.update` | 3001 Account Change | 99 Other | 300199 |
 | `volume.destroy` | 6003 API Activity | 4 Delete | 600304 |

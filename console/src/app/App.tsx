@@ -15,7 +15,7 @@
 // the console back on the launcher, the back button did nothing, and there was
 // no way to send anybody a link to an app.
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Skeleton } from '@design';
 
 import { useAdministrative, usePrincipal } from './principal';
@@ -23,6 +23,7 @@ import { useTheme } from '../ui/theme';
 import { useRoute } from './route';
 import type { Route } from './route';
 import { ChangePassword, Login, Passcode } from '../auth/Login';
+import { TwoFactorSetup } from '../auth/TwoFactorSetup';
 import { returnTo } from '../auth/return-to';
 import { reservedPrefix } from '@api/client';
 import { passcodeApp } from '../auth/passcode';
@@ -45,6 +46,8 @@ export function App() {
   // opened settings by its address has nothing behind them in this console,
   // and history.back() would take them off Pando altogether.
   const cameFrom = useRef<Route | null>(null);
+  // Two-factor setup begun from the page App shows after sign-in (R-405).
+  const [settingUp, setSettingUp] = useState(false);
 
   // The passcode page shares the sign-in page's address, and comes before
   // anything that depends on who this is: a visitor who has a passcode needs no
@@ -85,6 +88,26 @@ export function App() {
   // is a suggestion, and R-046 says must.
   if (principal.data?.must_change_password) {
     return <ChangePassword username={principal.data.username} />;
+  }
+
+  // R-405: two-factor authentication for a local account. Required by host
+  // policy, it comes before anything else for the reason the password change
+  // does — the server refuses everything else until it is done. Otherwise it
+  // is offered once, and "Not now" is an answer. Before the reserved-path
+  // redirect, so it is asked on whichever hostname the person signed in at.
+  // Once begun the page stays up until it is finished, though GET /me stops
+  // asking for it the moment it is on: the recovery codes are still to come.
+  const twoFactor = principal.data?.two_factor;
+  if (twoFactor && (twoFactor.setup_required || twoFactor.offer || settingUp)) {
+    return (
+      <TwoFactorSetup
+        required={twoFactor.setup_required || twoFactor.required}
+        passwordRequired={twoFactor.password_required}
+        username={principal.data?.username}
+        onStarted={() => setSettingUp(true)}
+        onDone={() => setSettingUp(false)}
+      />
+    );
   }
 
   // Signed in, on the reserved path. On an app's own hostname that path

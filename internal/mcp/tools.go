@@ -942,6 +942,37 @@ var toolList = []tool{
 		},
 	},
 	{
+		// R-405. Setting up, replacing or turning off one's own second factor
+		// has no tool, and is not missing one: each puts an authenticator key,
+		// recovery codes or the account's password into the conversation, which
+		// is a transcript somebody keeps. The console and `pando two-factor`
+		// do them.
+		Name: "pando_get_two_factor",
+		Description: "Who you are (GET /me), including, on a local account, two_factor: whether two-factor " +
+			"authentication is on, whether host policy requires it, and how many recovery codes are left. Setting " +
+			"it up or changing it is done in the console's settings or with `pando two-factor`, never here: each " +
+			"step handles an authenticator key, recovery codes or your password.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/me", nil, nil
+		},
+	},
+	{
+		Name: "pando_reset_user_two_factor",
+		Description: "Remove another local account's two-factor authentication — its authenticator and recovery " +
+			"codes — for someone who has lost both, and sign it out everywhere. They then sign in with their " +
+			"password alone, and set it up again if host policy requires it. Needs install.users.manage and every " +
+			"installation permission that account holds.",
+		Schema: schema(map[string]any{"user_id": str("The account's ID.")}, "user_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "user_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "DELETE", "/users/" + url.PathEscape(id) + "/two-factor", nil, nil
+		},
+	},
+	{
 		Name:        "pando_list_user_apps",
 		Description: "The apps an account has access to: its role for managing each, directly or through a group, whether it can use each, and whether you can change that (can_manage). By app name, a page at a time: pass `next_cursor` back as `cursor` for the next page.",
 		Schema: schema(map[string]any{

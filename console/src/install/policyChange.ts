@@ -39,6 +39,7 @@ const LABELS: Record<string, string> = {
   ignore_unfixable_findings: 'Ignore findings with no fix available',
   disable_password_sign_in: 'Disable password sign-in',
   disable_jit_provisioning: 'Disable just-in-time provisioning',
+  require_local_two_factor: 'Require two-factor authentication for local accounts',
 };
 
 const SHARING: Record<string, string> = { allowed: 'Allowed', passcode_only: 'Only with a passcode', none: 'Not allowed' };

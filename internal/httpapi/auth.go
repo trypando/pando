@@ -29,6 +29,12 @@ type Authenticator struct {
 	// Cookies names the session cookie this install sets, which is the only
 	// one read back (cookie.go).
 	Cookies CookieScheme
+
+	// TwoFactor says which sessions must set up a second factor before they
+	// are anything more (R-405). Nil holds none back.
+	TwoFactor interface {
+		SetupPending(ctx context.Context, user state.User) (bool, error)
+	}
 }
 
 // Authenticate resolves a request to a principal, or to anonymous.
@@ -109,17 +115,26 @@ func (a *Authenticator) SessionPrincipal(ctx context.Context, sessionID string) 
 		return authz.Anonymous(), time.Time{}, nil
 	}
 
+	pending := false
+	if a.TwoFactor != nil {
+		pending, err = a.TwoFactor.SetupPending(ctx, user)
+		if err != nil {
+			return authz.Anonymous(), time.Time{}, err
+		}
+	}
+
 	// Email and name go into the assertion an app receives (R-054). Display
 	// detail only: authorization reads ID and Status, never these.
 	return authz.Principal{
-		Kind:        authz.KindUser,
-		ID:          user.ID,
-		UserID:      user.ID,
-		Groups:      groups,
-		Email:       user.Email,
-		DisplayName: user.DisplayName,
-		AdapterID:   user.AdapterID,
-		Status:      user.Status,
+		TwoFactorSetupPending: pending,
+		Kind:                  authz.KindUser,
+		ID:                    user.ID,
+		UserID:                user.ID,
+		Groups:                groups,
+		Email:                 user.Email,
+		DisplayName:           user.DisplayName,
+		AdapterID:             user.AdapterID,
+		Status:                user.Status,
 	}, sess.ExpiresAt, nil
 }
 

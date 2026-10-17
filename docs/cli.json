@@ -54,6 +54,7 @@
         "pando source",
         "pando subscriptions",
         "pando token",
+        "pando two-factor",
         "pando updates",
         "pando upgrade",
         "pando user",
@@ -249,6 +250,7 @@
       "subcommands": [
         "pando admin enable-password-sign-in",
         "pando admin reset-password",
+        "pando admin reset-two-factor",
         "pando admin setup-token"
       ]
     },
@@ -293,6 +295,28 @@
           "required": false
         }
       ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando admin reset-two-factor",
+      "use": "reset-two-factor [username]",
+      "short": "Remove a local account's two-factor authentication when nobody can sign in",
+      "long": "Removes a local account's authenticator and recovery codes, ends every session it has,\nand lifts any limit its wrong codes put on signing in. It then signs in with its password\nalone, and sets two-factor authentication up again there if host policy requires it.\n\nAccounts that sign in through an external identity provider get their second factor\nfrom the provider, not here.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
       "inherited_flags": [
         {
           "name": "config",
@@ -5587,6 +5611,162 @@
       "subcommands": []
     },
     {
+      "path": "pando two-factor",
+      "use": "two-factor",
+      "short": "Set up or change two-factor authentication on your own local account",
+      "long": "Two-factor authentication asks for a code from an authenticator app after your password.\nAccounts from an identity provider set it up at the provider instead.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando two-factor disable",
+        "pando two-factor recovery-codes",
+        "pando two-factor setup",
+        "pando two-factor status"
+      ]
+    },
+    {
+      "path": "pando two-factor disable",
+      "use": "disable",
+      "short": "Turn off two-factor authentication",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando two-factor recovery-codes",
+      "use": "recovery-codes",
+      "short": "Replace your recovery codes with new ones",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando two-factor setup",
+      "use": "setup",
+      "short": "Set up an authenticator app, or replace the one in use",
+      "long": "Shows a QR code to scan with an authenticator app, asks for the code it then shows, and prints\nrecovery codes. An authenticator already in use keeps working until the new one is confirmed.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando two-factor status",
+      "use": "status",
+      "short": "Show whether two-factor authentication is on",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
       "path": "pando updates",
       "use": "updates",
       "short": "Show whether a newer Pando is released, what changed, and how to upgrade",
@@ -5732,6 +5912,7 @@
         "pando user get",
         "pando user list",
         "pando user reset-password",
+        "pando user reset-two-factor",
         "pando user update"
       ]
     },
@@ -5947,6 +6128,36 @@
           "required": false
         }
       ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando user reset-two-factor",
+      "use": "reset-two-factor <user-id>",
+      "short": "Remove an account's two-factor authentication",
+      "long": "Removes a local account's authenticator and recovery codes and ends every session it holds,\nfor someone who has lost both. They sign in with their password alone, and set it up again\nthere if host policy requires it.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
       "inherited_flags": [
         {
           "name": "config",

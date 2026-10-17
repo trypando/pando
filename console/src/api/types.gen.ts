@@ -127,6 +127,7 @@ export interface User {
   display_name?: string;
   status: string;
   must_change_password: boolean;
+  two_factor_enabled: boolean;
   alias_of?: string;
   created_at: string;
 }
@@ -267,6 +268,7 @@ export interface PolicyDocument {
   ignore_unfixable_findings?: boolean;
   disable_password_sign_in?: boolean;
   disable_jit_provisioning?: boolean;
+  require_local_two_factor?: boolean;
   disable_update_check?: boolean;
   allow_private_webhooks?: boolean;
   update_channel?: string;

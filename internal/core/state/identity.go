@@ -68,6 +68,11 @@ type User struct {
 
 	MustChangePassword bool `json:"must_change_password"`
 
+	// TwoFactorEnabled says a local account has an authenticator app turned
+	// on (R-405). An account from an identity provider never does here: its
+	// provider asks for its second factor.
+	TwoFactorEnabled bool `json:"two_factor_enabled"`
+
 	// AliasOf is set on an account whose identities an administrator moved to
 	// another (O-1). It stays, suspended, because its ID may be an assertion
 	// subject some app holds data under (R-054).
@@ -134,11 +139,11 @@ func (u *Users) ByExternalID(ctx context.Context, adapterID, externalID string) 
 	var user User
 	var email, display *string
 	err := u.db.QueryRow(ctx, `
-		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, created_at, coalesce(alias_of, '')
+		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, totp_enabled_at IS NOT NULL, created_at, coalesce(alias_of, '')
 		FROM users
 		WHERE adapter_id = $1 AND external_id = $2 AND deleted_at IS NULL`,
 		adapterID, externalID).
-		Scan(&user.ID, &user.AdapterID, &user.ExternalID, &email, &display, &user.Status, &user.MustChangePassword, &user.CreatedAt, &user.AliasOf)
+		Scan(&user.ID, &user.AdapterID, &user.ExternalID, &email, &display, &user.Status, &user.MustChangePassword, &user.TwoFactorEnabled, &user.CreatedAt, &user.AliasOf)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, false, nil
 	}
@@ -159,9 +164,9 @@ func (u *Users) ByID(ctx context.Context, userID string) (User, bool, error) {
 	var user User
 	var email, display *string
 	err := u.db.QueryRow(ctx, `
-		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, created_at, coalesce(alias_of, '')
+		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, totp_enabled_at IS NOT NULL, created_at, coalesce(alias_of, '')
 		FROM users WHERE id = $1`, userID).
-		Scan(&user.ID, &user.AdapterID, &user.ExternalID, &email, &display, &user.Status, &user.MustChangePassword, &user.CreatedAt, &user.AliasOf)
+		Scan(&user.ID, &user.AdapterID, &user.ExternalID, &email, &display, &user.Status, &user.MustChangePassword, &user.TwoFactorEnabled, &user.CreatedAt, &user.AliasOf)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, false, nil
 	}
@@ -256,7 +261,7 @@ func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error
 	}
 	listArgs = append(listArgs, limit)
 	rows, err := u.db.Query(ctx, `
-		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, created_at, coalesce(alias_of, '')`+
+		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, totp_enabled_at IS NOT NULL, created_at, coalesce(alias_of, '')`+
 		list+fmt.Sprintf(`
 		ORDER BY id DESC
 		LIMIT $%d`, len(listArgs)), listArgs...)
@@ -270,7 +275,7 @@ func (u *Users) list(ctx context.Context, page Page) ([]User, string, int, error
 		var user User
 		var email, display *string
 		if err := rows.Scan(&user.ID, &user.AdapterID, &user.ExternalID, &email, &display,
-			&user.Status, &user.MustChangePassword, &user.CreatedAt, &user.AliasOf); err != nil {
+			&user.Status, &user.MustChangePassword, &user.TwoFactorEnabled, &user.CreatedAt, &user.AliasOf); err != nil {
 			return nil, "", 0, errs.Wrap(errs.Internal, "Could not read the accounts.", err)
 		}
 		if email != nil {
@@ -575,7 +580,7 @@ func emailIsFree(ctx context.Context, tx pgx.Tx, userID, email string) error {
 func (u *Users) Search(ctx context.Context, q string, limit int) ([]User, error) {
 	where, args := usersMatch([]string{`deleted_at IS NULL`, `alias_of IS NULL`}, []any{limit}, q)
 	rows, err := u.db.Query(ctx, `
-		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, created_at, coalesce(alias_of, '')
+		SELECT id, adapter_id, external_id, email, display_name, status, must_change_password, totp_enabled_at IS NOT NULL, created_at, coalesce(alias_of, '')
 		FROM users
 		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY external_id
@@ -589,7 +594,7 @@ func (u *Users) Search(ctx context.Context, q string, limit int) ([]User, error)
 		var user User
 		var email, display *string
 		if err := rows.Scan(&user.ID, &user.AdapterID, &user.ExternalID, &email, &display,
-			&user.Status, &user.MustChangePassword, &user.CreatedAt, &user.AliasOf); err != nil {
+			&user.Status, &user.MustChangePassword, &user.TwoFactorEnabled, &user.CreatedAt, &user.AliasOf); err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not search the accounts.", err)
 		}
 		if email != nil {
@@ -738,20 +743,27 @@ type Session struct {
 	UserID    string    `json:"user_id"`
 	AdapterID string    `json:"adapter_id"`
 	ExpiresAt time.Time `json:"expires_at"`
+
+	// IssuedAt is when its holder signed in. A session younger than a few
+	// minutes changes its own second factor without the password again
+	// (R-405): its holder has just typed it.
+	IssuedAt time.Time `json:"issued_at"`
 }
 
 // Create issues a session.
 func (s *Sessions) Create(ctx context.Context, userID, adapterID string, lifetime time.Duration, userAgent, ip string) (Session, error) {
+	now := time.Now().UTC()
 	sess := Session{
 		ID:        id.New(id.Session),
 		UserID:    userID,
 		AdapterID: adapterID,
-		ExpiresAt: time.Now().UTC().Add(lifetime),
+		ExpiresAt: now.Add(lifetime),
+		IssuedAt:  now,
 	}
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, adapter_id, expires_at, user_agent, ip)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		sess.ID, userID, adapterID, sess.ExpiresAt, nullable(userAgent), nullableInet(ip))
+		INSERT INTO sessions (id, user_id, adapter_id, expires_at, user_agent, ip, issued_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		sess.ID, userID, adapterID, sess.ExpiresAt, nullable(userAgent), nullableInet(ip), now)
 	if err != nil {
 		return Session{}, errs.Wrap(errs.Internal, "Could not start a session.", err)
 	}
@@ -768,10 +780,10 @@ func (s *Sessions) Create(ctx context.Context, userID, adapterID string, lifetim
 func (s *Sessions) Active(ctx context.Context, sessionID string) (Session, bool, error) {
 	var sess Session
 	err := s.db.QueryRow(ctx, `
-		SELECT id, user_id, adapter_id, expires_at
+		SELECT id, user_id, adapter_id, expires_at, issued_at
 		FROM sessions
 		WHERE id = $1 AND revoked_at IS NULL AND expires_at > now()`,
-		sessionID).Scan(&sess.ID, &sess.UserID, &sess.AdapterID, &sess.ExpiresAt)
+		sessionID).Scan(&sess.ID, &sess.UserID, &sess.AdapterID, &sess.ExpiresAt, &sess.IssuedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, false, nil
 	}

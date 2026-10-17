@@ -46,6 +46,14 @@ type Principal struct {
 	// Status of the underlying user, checked at step 2 of the evaluation order.
 	Status string
 
+	// TwoFactorSetupPending marks a session of a local account that signed
+	// in with its password and must set up two-factor authentication, which
+	// host policy requires, before it is anything more (R-405). Authentication
+	// is not finished, so the API answers it only on the routes that set the
+	// second factor up and the proxy takes it for anonymous; step 2 refuses it
+	// as well, so a route that forgot to is refused anyway.
+	TwoFactorSetupPending bool
+
 	// Passcodes are the unlock tokens the request carried, by app ID (R-075a):
 	// proof that whoever is visiting entered a passcode-protected app's
 	// passcode. Unverified as carried — CheckData asks the store whether each
@@ -726,6 +734,11 @@ func (a *Authorizer) checkPrincipal(ctx context.Context, p Principal) error {
 		return nil
 
 	case KindUser:
+		if p.TwoFactorSetupPending {
+			return errs.New(errs.PolicyTwoFactorRequired,
+				"This installation requires two-factor authentication on local accounts, and this account has not set it up yet.").
+				WithRemedy("Sign in to the console and set up an authenticator app. It takes a minute.")
+		}
 		return statusError(p.Status)
 
 	case KindToken:

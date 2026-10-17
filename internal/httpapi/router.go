@@ -44,6 +44,7 @@ import (
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/subscription"
+	"github.com/trypando/pando/internal/core/twofactor"
 	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/core/upgrade"
 	"github.com/trypando/pando/internal/errs"
@@ -73,12 +74,16 @@ type Server struct {
 	// SCIM (issue #51). Nil leaves password sign-in the only way in.
 	IDP      *idp.Service
 	Sessions *state.Sessions
-	Tokens   *state.Tokens
-	Apps     *state.Apps
-	Volumes  *state.Volumes
-	Authz    *authz.Authorizer
-	Auditor  *audit.Writer
-	Authent  *Authenticator
+
+	// TwoFactor is local accounts' second factor (R-405). Nil leaves the
+	// password the only factor, and the two-factor routes say so.
+	TwoFactor *twofactor.Service
+	Tokens    *state.Tokens
+	Apps      *state.Apps
+	Volumes   *state.Volumes
+	Authz     *authz.Authorizer
+	Auditor   *audit.Writer
+	Authent   *Authenticator
 
 	Registry *api.Registry
 	Adapters *state.Adapters
@@ -491,6 +496,7 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.sameOriginWrites)
 		r.Use(Authenticate(s.Authent))
+		r.Use(s.twoFactorGate)
 		r.Use(s.versionHeader)
 
 		r.Post("/sessions", s.handleLogin)
@@ -537,6 +543,18 @@ func (s *Server) Routes() http.Handler {
 
 		// Changing your own password. Self only, no verb — see the handler.
 		r.Post("/me/password", s.handleChangePassword)
+
+		// Two-factor authentication on your own local account (R-405). Self
+		// only, no verb, like the password.
+		r.Post("/me/two-factor/totp", s.handleBeginTOTP)
+		r.Post("/me/two-factor/totp/confirm", s.handleConfirmTOTP)
+		r.Post("/me/two-factor/recovery-codes", s.handleNewRecoveryCodes)
+		r.Post("/me/two-factor/skip", s.handleSkipTwoFactor)
+		r.Delete("/me/two-factor", s.handleTurnOffTwoFactor)
+
+		// And an administrator's reset of someone else's, beside the routes
+		// for your own rather than in /users below.
+		r.Delete("/users/{userID}/two-factor", s.handleResetTwoFactor)
 
 		// The launcher (R-264). Data-plane scoped, deliberately a different
 		// list from GET /apps.

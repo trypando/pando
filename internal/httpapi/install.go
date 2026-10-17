@@ -130,6 +130,11 @@ type accountJSON struct {
 	MustChangePassword bool      `json:"must_change_password"`
 	CreatedAt          time.Time `json:"created_at"`
 
+	// TwoFactorEnabled says a local account has two-factor authentication
+	// on (R-405). Always false for a provider's account, whose provider
+	// holds its second factor.
+	TwoFactorEnabled bool `json:"two_factor_enabled"`
+
 	// The role granted to the account itself, which PUT /users/{id}/role
 	// sets. Empty when it has none — not null: absent and empty are the same
 	// thing to a client, and only one of them is an answer.
@@ -162,7 +167,8 @@ func (s *Server) accountViews(ctx context.Context, users []state.User) ([]accoun
 		v := accountJSON{
 			ID: u.ID, AdapterID: u.AdapterID, ExternalID: u.ExternalID, Email: u.Email,
 			DisplayName: u.DisplayName, Status: u.Status, MustChangePassword: u.MustChangePassword,
-			CreatedAt: u.CreatedAt, AliasOf: u.AliasOf,
+			TwoFactorEnabled: u.TwoFactorEnabled,
+			CreatedAt:        u.CreatedAt, AliasOf: u.AliasOf,
 			InstallRoles: append([]state.HeldInstallRole{}, held[u.ID]...),
 		}
 		for _, h := range v.InstallRoles {

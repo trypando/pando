@@ -161,6 +161,13 @@ var Actions = []string{
 	"user.scim.delete",
 	"user.scim.update",
 	"user.suspend",
+	"user.two_factor.decline",
+	"user.two_factor.denied",
+	"user.two_factor.disable",
+	"user.two_factor.enable",
+	"user.two_factor.recovery_code_used",
+	"user.two_factor.recovery_codes",
+	"user.two_factor.reset",
 	"user.update",
 	"volume.destroy",
 }

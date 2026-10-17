@@ -355,6 +355,8 @@ interface PolicyDoc {
 
   disable_password_sign_in?: boolean;
   disable_jit_provisioning?: boolean;
+  // R-405: local accounts sign in with a second factor.
+  require_local_two_factor?: boolean;
 
   // Event subscription webhooks (R-372).
   allow_private_webhooks?: boolean;
@@ -705,6 +707,17 @@ export function Policy({ canEdit }: { canEdit: boolean }) {
               label="Disable just-in-time provisioning"
               description="Overrides each identity provider's setting. People need an account from SCIM, or linked by an administrator."
               onChange={(e) => edit({ disable_jit_provisioning: e.target.checked })}
+            />
+          </Fixed>
+          {/* R-405: a local account without an authenticator sets one up
+              before anything else works. Provider accounts are the provider's. */}
+          <Fixed field="require_local_two_factor">
+            <Switch
+              checked={current.require_local_two_factor ?? false}
+              disabled={locked('require_local_two_factor')}
+              label="Require two-factor authentication for local accounts"
+              description="People with a local account set up an authenticator app before they can use Pando. Accounts from an identity provider use the provider's own."
+              onChange={(e) => edit({ require_local_two_factor: e.target.checked })}
             />
           </Fixed>
 

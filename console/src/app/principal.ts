@@ -66,8 +66,26 @@ export interface Principal {
   groups?: string[] | null;
   must_change_password?: boolean;
 
+  /** Present for a local account only: one from an identity provider has its
+   *  provider's second factor, and nothing here to set up (R-405). */
+  two_factor?: TwoFactorStatus;
+
   /** Install-level verbs the principal holds. Empty for most accounts. */
   verbs?: string[] | null;
+}
+
+/** A local account's two-factor authentication, as GET /me says it (R-405). */
+export interface TwoFactorStatus {
+  enabled: boolean;
+  /** Host policy requires it of every local account. */
+  required: boolean;
+  /** Required and not set up: nothing but setting it up works until it is. */
+  setup_required: boolean;
+  /** Not set up, not required, and not offered yet: asked once. */
+  offer: boolean;
+  /** The session is old enough that changing it asks for the password again. */
+  password_required: boolean;
+  recovery_codes_remaining: number;
 }
 
 export function usePrincipal() {

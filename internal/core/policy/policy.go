@@ -238,6 +238,14 @@ type Document struct {
 	// first — pushed by SCIM, or linked by an administrator.
 	DisableJITProvisioning bool `json:"disable_jit_provisioning,omitempty"`
 
+	// RequireLocalTwoFactor requires two-factor authentication on every local
+	// account (R-405). An account without it can sign in with its password
+	// and do nothing but set it up; one with it cannot turn it off. Accounts
+	// from an identity provider are not affected: their provider decides.
+	// `pando admin reset-two-factor` is the way back for someone who has lost
+	// their authenticator and their recovery codes.
+	RequireLocalTwoFactor bool `json:"require_local_two_factor,omitempty"`
+
 	// DisableUpdateCheck stops Pando asking GitHub whether a newer release
 	// exists (R-349). Default false — on — so an install learns about a
 	// security release without anyone remembering to look; off sends no

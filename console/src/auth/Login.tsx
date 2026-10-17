@@ -81,6 +81,12 @@ export function Login() {
 function SignIn({ notice }: { notice?: string }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  // The second step, once the password was right and the account has
+  // two-factor authentication (R-405): the code, and whether it is an
+  // authenticator's or a recovery code.
+  const [step, setStep] = useState<'password' | 'code'>('password');
+  const [code, setCode] = useState('');
+  const [recovery, setRecovery] = useState(false);
   const queries = useQueryClient();
 
   // The ways in this installation offers. Asked, not assumed: a failure to
@@ -103,7 +109,10 @@ function SignIn({ notice }: { notice?: string }) {
   });
 
   const signIn = useMutation({
-    mutationFn: () => api.post<unknown>('/sessions', { username, password }),
+    // The password goes again with the code. Nothing is kept on the server
+    // between the two steps, so there is no half-signed-in state to steal.
+    mutationFn: () =>
+      api.post<unknown>('/sessions', step === 'code' ? { username, password, code } : { username, password }),
     onSuccess: () => {
       // Somewhere to go back to, when the proxy sent them here (R-023). This
       // page is reachable on an app's own hostname at /.pando/login, and
@@ -122,12 +131,50 @@ function SignIn({ notice }: { notice?: string }) {
     },
   });
 
+  // The password was right and a code is the next thing to ask for: not a
+  // failure, so it is not shown as one.
+  const needsCode =
+    step === 'password' &&
+    signIn.isError &&
+    signIn.error instanceof RequestFailed &&
+    signIn.error.code === 'AUTH_TWO_FACTOR_REQUIRED';
+  useEffect(() => {
+    if (!needsCode) return;
+    setStep('code');
+    signIn.reset();
+  }, [needsCode, signIn]);
+
   // A rejection belongs to the value that caused it, and stops applying the
   // moment that value changes.
   const edit = (set: (v: string) => void) => (value: string) => {
     if (signIn.isError) signIn.reset();
     set(value);
   };
+
+  if (step === 'code') {
+    return (
+      <SecondStep
+        code={code}
+        recovery={recovery}
+        pending={signIn.isPending}
+        error={signIn.isError ? withRemedy(signIn.error) : undefined}
+        onCode={edit(setCode)}
+        onRecovery={(r) => {
+          if (signIn.isError) signIn.reset();
+          setRecovery(r);
+          setCode('');
+        }}
+        onSubmit={() => signIn.mutate()}
+        onStartOver={() => {
+          signIn.reset();
+          setStep('password');
+          setPassword('');
+          setCode('');
+          setRecovery(false);
+        }}
+      />
+    );
+  }
 
   return (
     <Frame>
@@ -179,7 +226,7 @@ function SignIn({ notice }: { notice?: string }) {
               onChange={(e) => edit(setPassword)(e.target.value)}
               // The server's message, shown as written. It is held to the R-105
               // standard, and paraphrasing it here would undo that in the UI layer.
-              error={signIn.isError ? messageOf(signIn.error) : undefined}
+              error={signIn.isError && !needsCode ? messageOf(signIn.error) : undefined}
             />
             <Button
               type="submit"
@@ -194,6 +241,93 @@ function SignIn({ notice }: { notice?: string }) {
       </form>
     </Frame>
   );
+}
+
+/**
+ * The code asked for after a right password, on an account with two-factor
+ * authentication (R-405): six digits from an authenticator app, or one of the
+ * recovery codes saved when it was set up, for someone without their phone.
+ */
+function SecondStep({
+  code,
+  recovery,
+  pending,
+  error,
+  onCode,
+  onRecovery,
+  onSubmit,
+  onStartOver,
+}: {
+  code: string;
+  recovery: boolean;
+  pending: boolean;
+  error?: string;
+  onCode: (code: string) => void;
+  onRecovery: (recovery: boolean) => void;
+  onSubmit: () => void;
+  onStartOver: () => void;
+}) {
+  return (
+    <Frame
+      heading="Enter your code"
+      lede={
+        recovery
+          ? 'Enter one of the recovery codes you saved when you set up two-factor authentication. Each one works once.'
+          : 'Enter the 6-digit code from your authenticator app.'
+      }
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit();
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        {recovery ? (
+          <Input
+            key="recovery"
+            label="Recovery code"
+            value={code}
+            mono
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus
+            placeholder="xxxx-xxxx-xxxx-xxxx"
+            error={error}
+            onChange={(e) => onCode(e.target.value.trim())}
+          />
+        ) : (
+          <Input
+            key="authenticator"
+            label="Code"
+            value={code}
+            mono
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            autoFocus
+            maxLength={6}
+            error={error}
+            onChange={(e) => onCode(digitsOnly(e.target.value))}
+          />
+        )}
+        <Button type="submit" variant="primary" fullWidth disabled={pending || code === ''}>
+          {pending ? 'Signing in' : 'Sign in'}
+        </Button>
+        <Button type="button" variant="ghost" fullWidth onClick={() => onRecovery(!recovery)}>
+          {recovery ? 'Use your authenticator app' : 'Use a recovery code'}
+        </Button>
+        <Button type="button" variant="ghost" fullWidth onClick={onStartOver}>
+          Start over
+        </Button>
+      </form>
+    </Frame>
+  );
+}
+
+/** What an authenticator code field keeps of what was typed or pasted: the
+ *  digits, so "123 456" from an app that groups them still works. */
+export function digitsOnly(value: string): string {
+  return value.replace(/\D/g, '');
 }
 
 /**
@@ -519,7 +653,7 @@ export function ChangePassword({ username }: { username?: string }) {
  * above the form. Either way the map ends where its lowest contour does — no
  * panel edge — and the form sits on plain paper, never over a line.
  */
-function Frame({
+export function Frame({
   heading = 'Sign in to Pando',
   lede,
   children,
@@ -594,13 +728,13 @@ function useWide(): boolean {
   return wide;
 }
 
-function messageOf(error: unknown): string {
+export function messageOf(error: unknown): string {
   if (error instanceof RequestFailed) return error.message;
   return 'Pando could not reach the server. Check that it is running and try again.';
 }
 
 /** The message and, when the server gave one, what to do about it. */
-function withRemedy(error: unknown): string {
+export function withRemedy(error: unknown): string {
   const message = messageOf(error);
   const remedy = error instanceof RequestFailed ? error.remedy : undefined;
   return remedy ? `${message} ${remedy}` : message;

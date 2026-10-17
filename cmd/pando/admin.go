@@ -48,6 +48,7 @@ func adminCmd(configPath *string) *cobra.Command {
 			"could change the row by hand.",
 	}
 	cmd.AddCommand(resetPasswordCmd(configPath))
+	cmd.AddCommand(resetTwoFactorCmd(configPath))
 	cmd.AddCommand(enablePasswordSignInCmd(configPath))
 	cmd.AddCommand(setupTokenCmd(configPath))
 	return cmd

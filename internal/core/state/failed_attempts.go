@@ -34,6 +34,10 @@ func SignInUsernameKey(username string) string {
 // under (R-404).
 func SignInAddrKey(addr string) string { return "signin|addr|" + addr }
 
+// SignInCodeKey is the key wrong two-factor codes for an account are counted
+// under (R-405). By account ID: the password was right, so it is known.
+func SignInCodeKey(userID string) string { return "signin|code|" + userID }
+
 // Recent counts failures for key within window.
 func (p *FailedAttempts) Recent(ctx context.Context, key string, window time.Duration) (int, error) {
 	var n int

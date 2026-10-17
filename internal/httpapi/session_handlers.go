@@ -24,6 +24,10 @@ const actionSessionDenied = "session.denied"
 type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+
+	// Code is the second factor, for an account with two-factor
+	// authentication (R-405): an authenticator code or a recovery code.
+	Code string `json:"code"`
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +94,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// signing in to an account of your own would otherwise reset the count
 	// for guessing at everyone else's.
 	_ = failures.Clear(r.Context(), account.key)
+
+	if !s.secondFactor(w, r, user, req.Code, addr) {
+		return
+	}
 
 	s.startSession(w, r, user, http.StatusOK)
 }
@@ -198,10 +206,24 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user state
 		TargetID:      sess.ID,
 	})
 
+	setupRequired := false
+	if s.TwoFactor != nil {
+		pending, err := s.TwoFactor.SetupPending(r.Context(), user)
+		if err != nil {
+			Error(w, r, err)
+			return
+		}
+		setupRequired = pending
+	}
+
 	JSON(w, status, map[string]any{
 		"user_id":              user.ID,
 		"must_change_password": user.MustChangePassword,
-		"expires_at":           sess.ExpiresAt.Format(time.RFC3339),
+
+		// R-405: this session can do nothing but set up two-factor
+		// authentication until it has.
+		"two_factor_setup_required": setupRequired,
+		"expires_at":                sess.ExpiresAt.Format(time.RFC3339),
 
 		// The revocation window is stated rather than implied (design 06 §3.1).
 		// Implying revocation is instant is the failure mode here.
@@ -335,6 +357,17 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			body["email"] = user.Email
 			body["display_name"] = user.DisplayName
 			body["must_change_password"] = user.MustChangePassword
+
+			// A local account's second factor (R-405). An identity
+			// provider's account has none here: the provider asks for it.
+			if s.TwoFactor != nil && user.AdapterID == state.LocalAdapterID {
+				tf, err := s.meTwoFactor(r, user)
+				if err != nil {
+					Error(w, r, err)
+					return
+				}
+				body["two_factor"] = tf
+			}
 		}
 	}
 	JSON(w, http.StatusOK, body)

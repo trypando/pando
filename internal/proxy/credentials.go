@@ -44,6 +44,18 @@ func isPandoToken(value string) bool {
 // a Pando token if the request carries one, and no Authorization header
 // otherwise.
 func (p *Proxy) authenticate(r *http.Request) (authz.Principal, error) {
+	principal, err := p.credential(r)
+	// A session that must still set up its second factor has not finished
+	// signing in (R-405). Taken for anonymous, a private app sends it to the
+	// sign-in page, which is where it sets one up.
+	if err == nil && principal.TwoFactorSetupPending {
+		return authz.Anonymous(), nil
+	}
+	return principal, err
+}
+
+// credential is who the request's own credential says it is.
+func (p *Proxy) credential(r *http.Request) (authz.Principal, error) {
 	// A session cookie alone, from the cache when it can be (issue #93).
 	if principal, ok, err := p.Cache.principal(r, p.Authenticator); ok {
 		return principal, err

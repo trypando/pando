@@ -315,6 +315,67 @@ lock everyone out of password sign-in. The check and the record are separate sta
 concurrent attempts can pass the limit by as many as are in flight at once. Each one costs an argon2id
 verification, which bounds how many that can be.
 
+### 3.4 Two-factor authentication on local accounts (R-405, discussion #263)
+
+**[D]** A local account may add an authenticator app (TOTP). Accounts from an identity provider are
+never asked: their provider authenticated them. The logic is `internal/core/twofactor`; the handlers
+check who is asking, count guesses and audit.
+
+**Setting one up.** `POST /me/two-factor/totp` makes a 160-bit key, seals it as the account's
+`totp_pending` credential (`user_two_factor_credentials`, scope `totp:`, R-190), and answers with
+the key, an `otpauth://` URI and a QR code of it as an SVG, black on white with its quiet zone, so it
+scans on a dark page. `POST /me/two-factor/totp/confirm` with a code from it seals the key again as
+`totp` (the field is bound into the ciphertext, so a pending key cannot be opened as the one in use),
+sets `users.totp_enabled_at`, and answers with ten recovery codes. An authenticator in use stays in use
+until a replacement is confirmed, so starting over never locks anyone out.
+
+**Signing in.** `POST /sessions` checks the password exactly as before (§3.3). If the account has an
+authenticator and no `code` came with it, the answer is `AUTH_TWO_FACTOR_REQUIRED` and no session; the
+client asks for a code and sends the same request with it. A code is good once:
+`users.totp_last_step` records the last time step accepted, and a code for it or an earlier step is
+refused, in one `UPDATE … WHERE totp_last_step < $step` so two sign-ins racing with the same code cannot
+both win. One step either side of now is accepted. A recovery code (80 random bits, stored as a SHA-256
+digest, like a passcode unlock) is spent by marking it used.
+
+| Count | Limit [P] | Why |
+|---|---|---|
+| Wrong codes per account | 5 in 15 minutes | The password was right, so what is guessed is six digits. Keyed by account ID, which is known by then |
+| Per client address | shared with §3.3's 50 | One address guessing codes is guessing |
+
+**Changing one** (new recovery codes, turning it off, replacing it) needs `current_password`, held to
+§3.3's counts, unless the session was issued in the last 10 minutes [P]: a borrowed session could
+otherwise swap in its own authenticator and lock the owner out. A token is never recent. GET /me
+says which (`two_factor.password_required`).
+
+**Asked once.** `users.two_factor_offered_at` is set when the holder declines (`POST
+/me/two-factor/skip`) or sets one up; until then GET /me's `two_factor.offer` is true and the
+console shows the setup page after the first-run password change. An administrator's reset clears it.
+
+**Required by policy.** With `require_local_two_factor` on, `Authenticator.SessionPrincipal` marks a
+session of a local account without an authenticator `TwoFactorSetupPending`. It is authentication
+that is unfinished, not a permission that is missing:
+
+- The API answers such a session only on `twoFactorSetupRoutes` — who it is, signing out, the
+  first-run password change, and the two setup routes — and `POLICY_TWO_FACTOR_REQUIRED` everywhere
+  else. It cannot mint a token around it.
+- The proxy takes it for anonymous, so a private app sends it to `/.pando` to sign in, where the
+  setup page is (the setup routes are in `signInRoutes` too).
+- `checkPrincipal` refuses it at step 2 as well, so a route that forgot the gate is still closed.
+- Sessions open when the policy is turned on are held back on their next request: migration 75 adds
+  a trigger on `host_policy` and on `users.totp_enabled_at` to the proxy cache's (issue #93).
+- Tokens made before are not held back. They were made by someone who signed in when policy allowed
+  it, and revoking them is a separate act.
+
+**Resetting.** `DELETE /users/{id}/two-factor` (`install.users.manage`, and R-080a's every-verb rule,
+since it weakens what stands between the account's password and whatever the account holds) removes
+the authenticator and recovery codes, clears the wrong-code count and ends every session. `pando admin
+reset-two-factor <username>` does the same from the host, for an installation whose only
+administrator lost their phone and their codes.
+
+**Not here.** Passkeys (WebAuthn) need a relying party ID, which is a hostname, and people also sign in
+on an app's own hostname (R-172), where a passkey for the console's would not work; they are left for
+later. A "trust this browser" cookie is not offered: a session already lasts 12 hours.
+
 ---
 
 ## 4. The proxy

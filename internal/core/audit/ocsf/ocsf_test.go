@@ -21,7 +21,7 @@ var known = map[int]struct {
 	activities map[int]string
 }{
 	1007: {"Process Activity", map[int]string{1: "Launch", 2: "Terminate", 99: "Other"}},
-	3001: {"Account Change", map[int]string{1: "Create", 2: "Enable", 3: "Password Change", 4: "Password Reset", 5: "Disable", 6: "Delete", 99: "Other"}},
+	3001: {"Account Change", map[int]string{1: "Create", 2: "Enable", 3: "Password Change", 4: "Password Reset", 5: "Disable", 6: "Delete", 10: "MFA Factor Enable", 11: "MFA Factor Disable", 99: "Other"}},
 	3002: {"Authentication", map[int]string{1: "Logon", 2: "Logoff", 99: "Other"}},
 	3005: {"User Access Management", map[int]string{1: "Assign Privileges", 2: "Revoke Privileges", 99: "Other"}},
 	3006: {"Group Management", map[int]string{1: "Assign Privileges", 2: "Revoke Privileges", 3: "Add User", 4: "Remove User", 5: "Delete", 6: "Create", 99: "Other"}},

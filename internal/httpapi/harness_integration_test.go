@@ -59,6 +59,7 @@ import (
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/state/statetest"
 	"github.com/trypando/pando/internal/core/subscription"
+	"github.com/trypando/pando/internal/core/twofactor"
 	"github.com/trypando/pando/internal/httpapi"
 	"github.com/trypando/pando/internal/reference"
 	"github.com/trypando/pando/internal/secret"
@@ -191,8 +192,15 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 	minter, err := assertion.NewMinter("https://pando.test", clock.System{})
 	require.NoError(t, err)
 
+	twoFactor := &twofactor.Service{
+		Store:  state.NewTwoFactor(db, secretsAdapter, "sec_local"),
+		Policy: effectivePolicy,
+		Clock:  clock.System{},
+		Issuer: "Pando (pando.test)",
+	}
 	authenticator := &httpapi.Authenticator{
 		Sessions: sessions, Tokens: tokens, Users: users, Groups: authzStore,
+		TwoFactor: twoFactor,
 	}
 	authorizer := authz.New(authzStore, hostPolicy, nil)
 
@@ -205,6 +213,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Identity:  identity,
 		Users:     users,
 		Sessions:  sessions,
+		TwoFactor: twoFactor,
 		Tokens:    tokens,
 		Apps:      apps,
 		Volumes:   volumes,

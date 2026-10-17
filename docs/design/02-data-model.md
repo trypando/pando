@@ -57,11 +57,28 @@ CREATE TABLE users (
     alias_of      text REFERENCES users(id), -- identities moved to another account (O-1)
     password_hash text,                      -- local adapter only, argon2id
     must_change_password boolean NOT NULL DEFAULT false,
+    totp_enabled_at timestamptz,             -- local only: an authenticator app is on (R-405)
+    totp_last_step  bigint,                  -- the last TOTP step accepted; each code works once
+    two_factor_offered_at timestamptz,       -- asked to set one up; cleared by an admin reset
     created_at    timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now(),
     deleted_at    timestamptz,
     UNIQUE (adapter_id, external_id),
     CHECK (alias_of IS NULL OR status <> 'active')
+);
+
+CREATE TABLE user_two_factor_credentials (  -- the authenticator key, sealed (R-190, R-405)
+    user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    field   text NOT NULL,                   -- totp | totp_pending
+    adapter_ref text NOT NULL, ciphertext bytea, external_ref text, version integer,
+    PRIMARY KEY (user_id, field)
+);
+
+CREATE TABLE user_recovery_codes (           -- SHA-256 digests of 80-bit codes (R-405)
+    user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    digest  text NOT NULL,
+    used_at timestamptz,
+    PRIMARY KEY (user_id, digest)
 );
 
 CREATE TABLE user_identities (

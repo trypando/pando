@@ -75,6 +75,9 @@ var descriptions = map[string]string{
 		"an external identity provider. Needs at least one provider turned on.",
 	"disable_jit_provisioning": "Don't make an account when someone first signs in through an identity provider, " +
 		"whatever the provider is set to. People need an account from SCIM or an administrator first.",
+	"require_local_two_factor": "Require two-factor authentication on every local account. Someone without it " +
+		"sets it up at their next sign-in, and can do nothing else until they have. Accounts from an identity " +
+		"provider are not affected.",
 	"disable_update_check": "Don't check GitHub for newer Pando releases. Off sends no request at all, for an " +
 		"installation that has no internet access or may not call out.",
 	"allow_private_webhooks": "Let event subscription webhooks send to private addresses — the local network, " +

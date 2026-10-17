@@ -36,6 +36,11 @@
       "meaning": "The token's owner was suspended or deleted, so the token no longer resolves to anyone."
     },
     {
+      "code": "AUTH_TWO_FACTOR_REQUIRED",
+      "status": 401,
+      "meaning": "The password was right and the account has two-factor authentication. Sign in again with a code from its authenticator app, or one of its recovery codes, as `code`."
+    },
+    {
       "code": "BACKUP_DECRYPT_FAILED",
       "status": 422,
       "meaning": "The backup could not be decrypted with the key supplied."
@@ -164,6 +169,11 @@
       "code": "POLICY_SOURCE_NOT_ALLOWED",
       "status": 403,
       "meaning": "Host policy does not allow apps from this source."
+    },
+    {
+      "code": "POLICY_TWO_FACTOR_REQUIRED",
+      "status": 403,
+      "meaning": "Host policy requires two-factor authentication for local accounts. An account without it can only set it up, and an account with it cannot turn it off."
     },
     {
       "code": "POLICY_WEBHOOK_PRIVATE_ADDRESS",

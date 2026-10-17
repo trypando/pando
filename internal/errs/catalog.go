@@ -23,6 +23,8 @@ var meanings = map[Code]string{
 	AuthInvalid:       "The credential presented is not valid.",
 	AuthTokenInvalid:  "The token is unknown, revoked or expired.",
 	AuthTokenOrphaned: "The token's owner was suspended or deleted, so the token no longer resolves to anyone.",
+	AuthTwoFactorRequired: "The password was right and the account has two-factor authentication. " +
+		"Sign in again with a code from its authenticator app, or one of its recovery codes, as `code`.",
 
 	PermDenied:       "Authenticated, but not permitted to do this.",
 	PermVerbRequired: "The caller holds no grant carrying the verb this action needs.",
@@ -39,6 +41,8 @@ var meanings = map[Code]string{
 	PolicyBackupRequired:          "Host policy requires a final backup before an app with storage is deleted, and the request said to delete without one.",
 	ValidUnknownEvent:             "A subscription names an event, or a pattern, that matches no event in the catalog.",
 	PolicyAnonymousGrantForbidden: "Host policy does not allow apps to be shared with everyone.",
+	PolicyTwoFactorRequired: "Host policy requires two-factor authentication for local accounts. An account without it " +
+		"can only set it up, and an account with it cannot turn it off.",
 
 	ValidInvalid:         "The request or spec is malformed.",
 	SourceUnreadable:     "Pando could not read the repository: it is private or missing and no source connection covers it, or the connection's credential was refused.",

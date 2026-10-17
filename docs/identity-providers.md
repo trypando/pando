@@ -16,6 +16,7 @@ Pando is always decided in Pando (R-044, R-078): a provider cannot send a role.
 - [Groups](#groups)
 - [Linking people who already have accounts](#linking-people-who-already-have-accounts)
 - [Turning off password sign-in](#turning-off-password-sign-in)
+- [Two-factor authentication on local accounts](#two-factor-authentication-on-local-accounts)
 - [How quickly access ends](#how-quickly-access-ends)
 - [When something goes wrong](#when-something-goes-wrong)
 
@@ -238,6 +239,32 @@ pando admin reset-password <username>    # if a password is also needed
 ```
 
 Both work against the database directly and are recorded in the audit log.
+
+## Two-factor authentication on local accounts
+
+A local account can add an authenticator app, such as 1Password, Google Authenticator or Authy. Sign-in
+then asks for the 6-digit code it shows after the password. Accounts from an identity provider get
+their second factor from the provider instead.
+
+**To set it up**, open **Your settings** and choose **Set up** under **Two-factor authentication**.
+Scan the QR code with the app, or type in the key shown beside it, and enter the code the app shows.
+Save the ten recovery codes Pando shows next: each one signs in once in place of a code, and Pando
+does not show them again. Pando also offers this once, at a person's first sign-in. From the CLI,
+`pando two-factor setup` does the same.
+
+**To require it** on every local account, turn on **Require two-factor authentication for local
+accounts** under Policy (`require_local_two_factor`, needs `install.policy.manage`). Anyone without it
+is shown the setup page at their next request and can do nothing else until they finish. Nobody can
+turn theirs off while the policy is on.
+
+**If someone loses their phone and their recovery codes**, an administrator opens their account under
+**Accounts** and chooses **Reset two-factor**, or runs `pando user reset-two-factor <user-id>`. That
+signs them out everywhere. They sign in with their password, and set it up again if the policy
+requires it. If nobody else can sign in, whoever runs the installation can run, on the host:
+
+```
+pando admin reset-two-factor <username>
+```
 
 ## How quickly access ends
 

@@ -91,6 +91,7 @@ import (
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/subscription"
 	"github.com/trypando/pando/internal/core/tokenkey"
+	"github.com/trypando/pando/internal/core/twofactor"
 	"github.com/trypando/pando/internal/core/update"
 	"github.com/trypando/pando/internal/detect"
 	"github.com/trypando/pando/internal/detect/registryprobe"
@@ -751,11 +752,21 @@ func serve(ctx context.Context, configPath string) error {
 			zap.String("external_url", externalURL.String()))
 	}
 
+	// A local account's second factor (R-405), sealed by the secrets adapter
+	// like every other credential (R-190).
+	twoFactor := &twofactor.Service{
+		Store:  state.NewTwoFactor(db, secretsAdapter, secretsRef),
+		Policy: policyStore,
+		Clock:  clock.System{},
+		Issuer: twofactor.IssuerFor(externalURL),
+	}
+
 	authenticator := &httpapi.Authenticator{
-		Sessions: sessions,
-		Tokens:   tokens,
-		Users:    users,
-		Groups:   authzStore,
+		TwoFactor: twoFactor,
+		Sessions:  sessions,
+		Tokens:    tokens,
+		Users:     users,
+		Groups:    authzStore,
 		// The same scheme the API's Server sets the cookie by, so the name
 		// it is read back by cannot disagree (httpapi/cookie.go).
 		Cookies: httpapi.CookieScheme{ExternalURL: externalURL},
@@ -1015,10 +1026,11 @@ func serve(ctx context.Context, configPath string) error {
 
 		// Policy is evaluated before grants, so it is wired into the
 		// authorizer rather than checked alongside it (R-272).
-		Authz:    authorizer,
-		Authent:  authenticator,
-		Minter:   minter,
-		AppProxy: appProxy,
+		Authz:     authorizer,
+		Authent:   authenticator,
+		TwoFactor: twoFactor,
+		Minter:    minter,
+		AppProxy:  appProxy,
 
 		// Decides whether the session cookie is marked Secure (O-19).
 		ExternalURL: externalURL,

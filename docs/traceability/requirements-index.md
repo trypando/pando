@@ -9,10 +9,10 @@ specify it, the phase that builds it, and the tests that prove it. Test coverage
 
 | | Count | Of total |
 |---|---:|---:|
-| Requirements | 311 | — |
-| Specified in a design doc | 278 | 89% |
-| Assigned to a phase | 137 | 44% |
-| Covered by a named test | 249 | 80% |
+| Requirements | 312 | — |
+| Specified in a design doc | 279 | 89% |
+| Assigned to a phase | 137 | 43% |
+| Covered by a named test | 250 | 80% |
 
 A requirement with no design reference is not necessarily a gap — it may be philosophy (R-002),
 a non-goal (R-010–R-016), or deferred (R-290+). A requirement with no *test* is either
@@ -56,6 +56,7 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-401** | D | The bundled install has no default credential. | 5.2 Bootstrap | 00 | — | `TestR401_TheBundledInstallHasNoDefaultDatabasePassword`, `TestR401_TheDatabasePasswordIsReadFromAFile` |
 | **R-402** | D | On Linux, Pando's documented install runs on a rootless container runtime, so that a… | 5.2 Bootstrap | 00 | — | `TestR402_DockerReportsWhetherItIsRootless`, `TestR402_RootlessDockerAppliesTheLimitsPandoSets` |
 | **R-404** | D | Wrong passwords are limited. | 5.3 Sessions and revocation | 02, 06, 12 | — | `TestR404_ARightPasswordClearsOnlyTheUsernamesCount`, `TestR404_AnUncountableSignInIsRefused`, `TestR404_AnUnreadableWaitIsAnError`, `TestR404_ResettingAPasswordFromTheHostLiftsTheSignInLimit`, `TestR404_TheInMemoryCountLimitsAndSaysWhen`, `TestR404_TheLimitAddressIsTheAuditedOne`, `TestR404_ThePasswordChangeIsHeldToTheSignInLimits`, `TestR404_TheWaitIsSaidInWords`, `TestR404_TheWaitIsUntilTheOldestFailureLeavesTheWindow`, `TestR404_WrongPasswordsAreLimitedPerAddress`, `TestR404_WrongPasswordsAreLimitedPerUsername` |
+| **R-405** | D | A local account can have a second factor. | 5.3 Sessions and revocation | 02, 06 | — | `TestR405_ACodeIsGoodOnce`, `TestR405_ASessionThatMustSetUpTwoFactorIsAnonymousToApps`, `TestR405_AnAdministratorResetsTwoFactor`, `TestR405_AskedOnce`, `TestR405_ChangingItOnAnOldSessionNeedsThePassword`, `TestR405_CodesMatchRFC6238`, `TestR405_DecliningIsAskedOnce`, `TestR405_MatchAcceptsOneStepEitherSide`, `TestR405_PolicyHoldsBackASessionUntilItSetsUpTwoFactor`, `TestR405_PolicyMakesItRequired`, `TestR405_SetUpWithAQRCodeAndAConfirmingCode`, `TestR405_SignInTakesACodeOnceOrARecoveryCodeOnce`, `TestR405_SignInWithTwoFactorNeedsACode`, `TestR405_WrongCodesAreLimited` |
 | **R-047** | D | Each identity adapter declares its own session policy and revocation mechanism, documented in… | 5.3 Sessions and revocation | 02, 03 | 01 | `TestR047_AdapterDeclaresItsOwnSessionPolicy`, `TestR047_JITFollowsHostPolicyAndPasswordSignInCanBeTurnedOff`, `TestR047_TheCLIListsEachProvidersRevocationWindow`, `TestR047_TheSessionPolicyIsDeclaredAndConfigurable` |
 | **R-048** | D | SCIM support is the enterprise revocation and provisioning path. | 5.3 Sessions and revocation | 02, 03, 04, 06 | 01 | `TestR048_ACachedSessionLivesNoLongerThanItself`, `TestR048_ADeployLogStreamEndsWhenTheViewersSessionIsRevoked`, `TestR048_ALogStreamEndsWhenTheViewersSessionIsRevoked`, `TestR048_AQueuedDeploysLogEndsWhenTheViewersAccessDoes`, `TestR048_ASCIMTokenIsOnlyASCIMToken`, `TestR048_EveryRevocationReachesTheProxyCache`, `TestR048_OktaProvisionsSuspendsAndGroupsPeople`, `TestR048_ResettingAPasswordFromTheHostEndsItsSessions`, `TestR048_RevokedAccessEndsALogStream`, `TestR048_RevokingASessionClosesItsOpenWebsocket`, `TestR048_SCIMRefusesWhatItCannotApplyAndReplacesWhole`, `TestR048_SuspensionEndsEverySessionImmediately`, `TestR048_TheCLIManagesSCIMTokensAndLinks`, `TestR048_TheProxyCacheIsEmptiedByEveryChange` |
 | **R-049** | D | Suspended is not deleted. | 5.3 Sessions and revocation | 02, 04, 06, 07 | 01 | `TestR049_EntraCannotLiftAnAdministratorsSuspension`, `TestR049_SuspendedAdministratorHoldsNothing`, `TestR049_SuspendedIsNotDeletedButBothDeny`, `TestR049_SuspendingAUserClosesTheirOpenWebsocket`, `TestR049_SuspendingAnAccountStopsItSigningInWithoutDeletingIt` |

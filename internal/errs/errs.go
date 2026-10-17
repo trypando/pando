@@ -23,6 +23,9 @@ const (
 	// AuthTokenOrphaned is R-059: a delegated token whose owning user was
 	// suspended or deleted. Resolved live on every request, never by cascade.
 	AuthTokenOrphaned Code = "AUTH_TOKEN_ORPHANED"
+	// AuthTwoFactorRequired is R-405: the password was right and the account
+	// has two-factor authentication, so sign-in needs a code as well.
+	AuthTwoFactorRequired Code = "AUTH_TWO_FACTOR_REQUIRED"
 
 	// PERM_* — authenticated, not permitted. 403.
 	PermDenied       Code = "PERM_DENIED"
@@ -47,6 +50,7 @@ const (
 	PolicyWebhookPrivateAddress   Code = "POLICY_WEBHOOK_PRIVATE_ADDRESS"   // R-372
 	PolicyAppLimitReached         Code = "POLICY_APP_LIMIT_REACHED"         // R-244
 	PolicyBackupRequired          Code = "POLICY_BACKUP_REQUIRED"           // R-284
+	PolicyTwoFactorRequired       Code = "POLICY_TWO_FACTOR_REQUIRED"       // R-405
 
 	// VALID_* — malformed request or spec. 400.
 	ValidInvalid         Code = "VALID_INVALID"

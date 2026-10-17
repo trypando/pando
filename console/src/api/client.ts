@@ -157,5 +157,5 @@ export const api = {
   putFile: <T>(path: string, file: Blob) => requestBytes<T>(path, file),
   postFile: <T>(path: string, file: Blob) => requestBytes<T>(path, file, 'POST'),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
-  del: <T>(path: string) => request<T>('DELETE', path),
+  del: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
 };

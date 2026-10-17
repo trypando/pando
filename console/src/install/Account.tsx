@@ -160,6 +160,7 @@ export function AccountPage({
                 {/* An external provider holds its accounts' passwords; Pando has
                     nothing to reset. */}
                 {a.adapter_id === LOCAL && <ResetPassword account={a} />}
+                {a.adapter_id === LOCAL && a.two_factor_enabled && <ResetTwoFactor account={a} />}
                 <DeleteAccount account={a} onDeleted={onBack} />
               </div>
             )}
@@ -197,6 +198,7 @@ export function AccountPage({
                 {a.must_change_password ? 'Must be changed at next sign-in' : 'Set by the account holder'}
               </Detail>
             )}
+            {a.adapter_id === LOCAL && <Detail term="Two-factor">{a.two_factor_enabled ? 'On' : 'Off'}</Detail>}
             <Detail term="Created">{a.created_at ? new Date(a.created_at).toLocaleString() : '—'}</Detail>
             <Detail term="Groups">
               {/* Not "None" before the groups have arrived. */}
@@ -528,6 +530,66 @@ function GroupMembership({
       )}
       {error && <span style={{ font: 'var(--type-caption)', color: 'var(--marker-deep)' }}>{error}</span>}
     </div>
+  );
+}
+
+/**
+ * Remove somebody else's authenticator and recovery codes (R-405), for a
+ * person who lost both. Like a password reset, it signs them out everywhere;
+ * they sign in with their password, and set it up again then if host policy
+ * requires it. Your own is turned off in your settings.
+ */
+export function ResetTwoFactor({ account }: { account: Account }) {
+  const [open, setOpen] = useState(false);
+  const queries = useQueryClient();
+
+  const reset = useMutation({
+    mutationFn: () => api.del<void>(`/users/${account.id}/two-factor`),
+    onSuccess: () => {
+      void queries.invalidateQueries({ queryKey: ['users', account.id] });
+      void queries.invalidateQueries({ queryKey: ['users'] });
+      void queries.invalidateQueries({ queryKey: ['audit'] });
+      setOpen(false);
+    },
+  });
+
+  const close = () => {
+    setOpen(false);
+    reset.reset();
+  };
+
+  return (
+    <>
+      <Button variant="secondary" onClick={() => setOpen(true)}>
+        Reset two-factor
+      </Button>
+      {open && (
+        <Dialog
+          open
+          title={`Reset two-factor for ${account.external_id}`}
+          description="Pando removes their authenticator and recovery codes and signs the account out everywhere."
+          onClose={close}
+          footer={
+            <>
+              <Button variant="ghost" onClick={close}>
+                Cancel
+              </Button>
+              <Button variant="primary" disabled={reset.isPending} onClick={() => reset.mutate()}>
+                {reset.isPending ? 'Resetting' : 'Reset two-factor'}
+              </Button>
+            </>
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            <Quiet>
+              {account.external_id} signs in with their password alone. If this installation requires two-factor
+              authentication, they set it up again at their next sign-in.
+            </Quiet>
+            {reset.isError && <Banner tone="failed">{messageOf(reset.error)}</Banner>}
+          </div>
+        </Dialog>
+      )}
+    </>
   );
 }
 

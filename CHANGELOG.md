@@ -19,6 +19,18 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Added
+
+- **Two-factor authentication for local accounts** (R-405). A local account can add an
+  authenticator app, set up with a QR code, and sign-in then asks for its 6-digit code after the
+  password. Setting it up gives ten single-use recovery codes. Pando offers it once at a person's
+  first sign-in, and it is set up, replaced or turned off from **Your settings** or with
+  `pando two-factor`. Host policy `require_local_two_factor` requires it on every local account. An
+  administrator resets someone's from their account page or with `pando user reset-two-factor`, and
+  `pando admin reset-two-factor` does it from the host. Accounts from an identity provider are
+  unchanged. Suggested by [@realPhrojoe](https://github.com/realPhrojoe) in
+  [discussion #263](https://github.com/trypando/pando/discussions/263).
+
 ## [0.8.0] - 2026-10-16
 
 This release fixes five vulnerabilities found in a security assessment of Pando. All affect 0.7.0

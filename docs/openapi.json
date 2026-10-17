@@ -7491,7 +7491,7 @@
       "get": {
         "operationId": "me",
         "summary": "Get the current caller",
-        "description": "Who the caller is, and the install-level verbs they hold.",
+        "description": "Who the caller is, and the install-level verbs they hold. On a local account, `two_factor` says whether two-factor authentication is on (`enabled`), whether host policy requires it (`required`) and so must be set up before anything else (`setup_required`), whether to ask its holder to set it up (`offer`, true once), how many recovery codes are left, and whether changing it needs the current password (`password_required`, false within 10 minutes of signing in).",
         "tags": [
           "Session"
         ],
@@ -7541,6 +7541,16 @@
                     },
                     "must_change_password": {
                       "type": "boolean"
+                    },
+                    "two_factor": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/MeTwoFactorJSON"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -8037,6 +8047,205 @@
         "responses": {
           "204": {
             "description": "Done. No body."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/me/two-factor": {
+      "delete": {
+        "operationId": "turnOffTwoFactor",
+        "summary": "Turn off two-factor authentication",
+        "description": "Turn off two-factor authentication on your own local account, removing its authenticator and recovery codes. Refused with `POLICY_TWO_FACTOR_REQUIRED` where host policy requires it. Needs `current_password` unless you signed in within 10 minutes.",
+        "tags": [
+          "Session"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Done. No body."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/me/two-factor/recovery-codes": {
+      "post": {
+        "operationId": "newRecoveryCodes",
+        "summary": "Make new recovery codes",
+        "description": "Replace your recovery codes with ten new ones, shown this once; the old ones stop working. Needs `current_password` unless you signed in within 10 minutes.",
+        "tags": [
+          "Session"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recovery_codes": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "recovery_codes"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/me/two-factor/skip": {
+      "post": {
+        "operationId": "skipTwoFactor",
+        "summary": "Decline two-factor setup",
+        "description": "Say not now when asked to set up two-factor authentication, so you are not asked again. Refused where host policy requires it.",
+        "tags": [
+          "Session"
+        ],
+        "responses": {
+          "204": {
+            "description": "Done. No body."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/me/two-factor/totp": {
+      "post": {
+        "operationId": "beginTOTP",
+        "summary": "Start setting up an authenticator",
+        "description": "Make a new authenticator app key for your own local account: `secret` to type in, `uri` (an `otpauth://` key URI) and `qr_svg`, a QR code of it. It is not in use until confirmed with a code from it, and an authenticator already in use stays in use until then, so this is also how one is replaced. Needs `current_password` unless you signed in within 10 minutes.",
+        "tags": [
+          "Session"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "secret": {
+                      "type": "string"
+                    },
+                    "uri": {
+                      "type": "string"
+                    },
+                    "qr_svg": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "secret",
+                    "uri",
+                    "qr_svg"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/me/two-factor/totp/confirm": {
+      "post": {
+        "operationId": "confirmTOTP",
+        "summary": "Confirm an authenticator",
+        "description": "Put the authenticator from POST /me/two-factor/totp in use, given a `code` from it. Answers with `recovery_codes`, ten codes that each sign in once in place of a code. They are shown this once.",
+        "tags": [
+          "Session"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recovery_codes": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "recovery_codes"
+                  ]
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -9127,7 +9336,7 @@
       "post": {
         "operationId": "login",
         "summary": "Sign in",
-        "description": "Sign in with a username and password. Sets the session cookie. Refused when host policy has `disable_password_sign_in` on.",
+        "description": "Sign in with a username and password. Sets the session cookie. An account with two-factor authentication also needs `code`, a code from its authenticator app or one of its recovery codes: without it the answer is `AUTH_TWO_FACTOR_REQUIRED`, and the same request is sent again with it. `two_factor_setup_required` in the answer says the session can do nothing but set up two-factor authentication, which host policy `require_local_two_factor` asks of every local account. Refused when host policy has `disable_password_sign_in` on.",
         "tags": [
           "Session"
         ],
@@ -9154,6 +9363,9 @@
                     "must_change_password": {
                       "type": "boolean"
                     },
+                    "two_factor_setup_required": {
+                      "type": "boolean"
+                    },
                     "expires_at": {
                       "type": "string"
                     },
@@ -9165,6 +9377,7 @@
                   "required": [
                     "user_id",
                     "must_change_password",
+                    "two_factor_setup_required",
                     "expires_at",
                     "revocation_window_seconds"
                   ]
@@ -9262,6 +9475,9 @@
                     "must_change_password": {
                       "type": "boolean"
                     },
+                    "two_factor_setup_required": {
+                      "type": "boolean"
+                    },
                     "expires_at": {
                       "type": "string"
                     },
@@ -9273,6 +9489,7 @@
                   "required": [
                     "user_id",
                     "must_change_password",
+                    "two_factor_setup_required",
                     "expires_at",
                     "revocation_window_seconds"
                   ]
@@ -11170,6 +11387,35 @@
         "x-pando-verb": "install.users.manage"
       }
     },
+    "/api/v1/users/{userID}/two-factor": {
+      "delete": {
+        "operationId": "resetTwoFactor",
+        "summary": "Reset two-factor authentication",
+        "description": "Remove another local account's authenticator and recovery codes, for someone who has lost both, ending every session it holds. They sign in with their password alone, and set two-factor authentication up again there if host policy requires it. Your own is DELETE /me/two-factor. Refused unless the caller holds every installation permission that account holds.\n\nNeeds `install.users.manage`.",
+        "tags": [
+          "Identity"
+        ],
+        "parameters": [
+          {
+            "name": "userID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done. No body."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.users.manage"
+      }
+    },
     "/api/v1/verbs": {
       "get": {
         "operationId": "listVerbs",
@@ -11362,6 +11608,9 @@
             "type": "string",
             "format": "date-time"
           },
+          "two_factor_enabled": {
+            "type": "boolean"
+          },
           "install_role_id": {
             "type": "string"
           },
@@ -11387,6 +11636,7 @@
           "status",
           "must_change_password",
           "created_at",
+          "two_factor_enabled",
           "install_role_id",
           "install_roles"
         ]
@@ -13437,6 +13687,7 @@
               "AUTH_REQUIRED",
               "AUTH_TOKEN_INVALID",
               "AUTH_TOKEN_ORPHANED",
+              "AUTH_TWO_FACTOR_REQUIRED",
               "PERM_CROSS_ORIGIN",
               "PERM_DENIED",
               "PERM_PASSCODE_REQUIRED",
@@ -13446,6 +13697,7 @@
               "POLICY_BACKUP_REQUIRED",
               "POLICY_EXEC_DISABLED",
               "POLICY_SOURCE_NOT_ALLOWED",
+              "POLICY_TWO_FACTOR_REQUIRED",
               "POLICY_WEBHOOK_PRIVATE_ADDRESS",
               "NOT_FOUND",
               "CAPACITY_NO_FREE_PORT",
@@ -14320,11 +14572,15 @@
           },
           "password": {
             "type": "string"
+          },
+          "code": {
+            "type": "string"
           }
         },
         "required": [
           "username",
-          "password"
+          "password",
+          "code"
         ]
       },
       "Loosening": {
@@ -14407,6 +14663,38 @@
             "format": "int64"
           }
         }
+      },
+      "MeTwoFactorJSON": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "setup_required": {
+            "type": "boolean"
+          },
+          "offer": {
+            "type": "boolean"
+          },
+          "recovery_codes_remaining": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "password_required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled",
+          "required",
+          "setup_required",
+          "offer",
+          "recovery_codes_remaining",
+          "password_required"
+        ]
       },
       "Mount": {
         "type": "object",
@@ -14769,6 +15057,9 @@
           "disable_jit_provisioning": {
             "type": "boolean"
           },
+          "require_local_two_factor": {
+            "type": "boolean"
+          },
           "disable_update_check": {
             "type": "boolean"
           },
@@ -15129,6 +15420,17 @@
           "id",
           "name",
           "kind"
+        ]
+      },
+      "ReauthRequest": {
+        "type": "object",
+        "properties": {
+          "current_password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_password"
         ]
       },
       "Record": {
@@ -16672,6 +16974,9 @@
           "must_change_password": {
             "type": "boolean"
           },
+          "two_factor_enabled": {
+            "type": "boolean"
+          },
           "alias_of": {
             "type": "string"
           },
@@ -16686,6 +16991,7 @@
           "external_id",
           "status",
           "must_change_password",
+          "two_factor_enabled",
           "created_at"
         ]
       },

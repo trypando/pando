@@ -46,6 +46,7 @@ func Commands() []*cobra.Command {
 		withServer(secretCmd(client)),
 		withServer(grantCmd(client)),
 		withServer(userCmd(client)),
+		withServer(twoFactorCmd(client)),
 		withServer(groupCmd(client)),
 		withServer(adapterCmd(client)),
 		withServer(sourceCmd(client)),
@@ -114,16 +115,33 @@ func loginCmd(server *string) *cobra.Command {
 			anon := &Client{BaseURL: url, HTTP: &http.Client{Jar: jar, Timeout: time.Minute}}
 
 			var session struct {
-				UserID             string `json:"user_id"`
-				MustChangePassword bool   `json:"must_change_password"`
+				UserID                 string `json:"user_id"`
+				MustChangePassword     bool   `json:"must_change_password"`
+				TwoFactorSetupRequired bool   `json:"two_factor_setup_required"`
 			}
-			if err := anon.Do("POST", "/sessions",
-				map[string]string{"username": username, "password": password}, &session); err != nil {
+			signIn := map[string]string{"username": username, "password": password}
+			err = anon.Do("POST", "/sessions", signIn, &session)
+			// R-405: the password was right and the account has two-factor
+			// authentication. The same request again, with a code.
+			var apiErr *APIError
+			if errors.As(err, &apiErr) && apiErr.Code == codeTwoFactorRequired {
+				code, perr := prompt(cmd, "Code from your authenticator app, or a recovery code: ")
+				if perr != nil {
+					return perr
+				}
+				signIn["code"] = code
+				err = anon.Do("POST", "/sessions", signIn, &session)
+			}
+			if err != nil {
 				return err
 			}
 			if session.MustChangePassword {
 				return fmt.Errorf("this account still has the password Pando generated for it.\n" +
 					"Open the web console and choose your own first")
+			}
+			if session.TwoFactorSetupRequired {
+				return fmt.Errorf("this installation requires two-factor authentication, and this account has not set it up.\n" +
+					"Open the web console, sign in, and set up an authenticator app first")
 			}
 
 			name, _ := os.Hostname()
@@ -1321,6 +1339,7 @@ func userCmd(client func() (*Client, error)) *cobra.Command {
 	}
 	reset.Flags().BoolVar(&keepReset, "no-change-required", false, "do not require a new password at the next sign-in")
 	cmd.AddCommand(reset)
+	cmd.AddCommand(userResetTwoFactorCmd(client))
 
 	cmd.AddCommand(userUpdateCmd(client))
 

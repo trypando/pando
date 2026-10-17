@@ -200,7 +200,7 @@ The settings are `source_allowlist`, `disabled_verbs`, `agent_disabled_verbs`,
 `max_log_disk_bytes`, `allow_cpu_oversubscription`, `allow_memory_oversubscription`,
 `max_concurrent_deploys`, `idle_stop_days`, `idle_delete_days`, `max_apps_per_user`, `disable_ai_screening`,
 `disable_anonymous_use_audit`, `disable_anonymous_denial_audit`,
-`disable_password_sign_in`, `disable_jit_provisioning`, `min_security_score`, `insecure_action`,
+`disable_password_sign_in`, `disable_jit_provisioning`, `require_local_two_factor`, `min_security_score`, `insecure_action`,
 `insecure_grace_hours` and `ignore_unfixable_findings`.
 
 `max_concurrent_deploys` is how many deploys each replica runs at once; 0, the default, means one per

@@ -856,6 +856,15 @@
       "secret": false
     },
     {
+      "env": "PANDO_POLICY_REQUIRE_LOCAL_TWO_FACTOR",
+      "key": "policy.require_local_two_factor",
+      "type": "bool",
+      "default": "false",
+      "description": "Require two-factor authentication on every local account. Someone without it sets it up at their next sign-in, and can do nothing else until they have. Accounts from an identity provider are not affected.",
+      "group": "policy",
+      "secret": false
+    },
+    {
       "env": "PANDO_POLICY_SOURCE_ALLOWLIST",
       "key": "policy.source_allowlist",
       "type": "list",

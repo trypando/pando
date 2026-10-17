@@ -37,6 +37,8 @@ export interface Account {
   display_name?: string;
   status: string;
   must_change_password: boolean;
+  /** A local account with an authenticator set up (R-405). */
+  two_factor_enabled?: boolean;
   /** The role granted to the account itself; '' for none. What RolePicker sets. */
   install_role_id: string;
   /**

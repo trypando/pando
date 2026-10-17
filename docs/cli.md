@@ -1676,6 +1676,52 @@ Revoke a token
 pando token revoke <token-id>
 ```
 
+### `two-factor`
+
+Set up or change two-factor authentication on your own local account
+
+```
+pando two-factor
+```
+
+Two-factor authentication asks for a code from an authenticator app after your password.
+Accounts from an identity provider set it up at the provider instead.
+
+#### `two-factor disable`
+
+Turn off two-factor authentication
+
+```
+pando two-factor disable
+```
+
+#### `two-factor recovery-codes`
+
+Replace your recovery codes with new ones
+
+```
+pando two-factor recovery-codes
+```
+
+#### `two-factor setup`
+
+Set up an authenticator app, or replace the one in use
+
+```
+pando two-factor setup
+```
+
+Shows a QR code to scan with an authenticator app, asks for the code it then shows, and prints
+recovery codes. An authenticator already in use keeps working until the new one is confirmed.
+
+#### `two-factor status`
+
+Show whether two-factor authentication is on
+
+```
+pando two-factor status
+```
+
 ### `updates`
 
 Show whether a newer Pando is released, what changed, and how to upgrade
@@ -1805,6 +1851,18 @@ the password once. By default its holder chooses their own at the next sign-in.
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--no-change-required` |  | do not require a new password at the next sign-in |
+
+#### `user reset-two-factor`
+
+Remove an account's two-factor authentication
+
+```
+pando user reset-two-factor <user-id>
+```
+
+Removes a local account's authenticator and recovery codes and ends every session it holds,
+for someone who has lost both. They sign in with their password alone, and set it up again
+there if host policy requires it.
 
 #### `user update`
 

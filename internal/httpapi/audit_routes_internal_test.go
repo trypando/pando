@@ -25,6 +25,12 @@ var auditedRoutes = map[string][]string{
 	"POST /api/v1/auth/providers/{providerID}/callback": {"session.create", "session.denied", "identity_provider.test", "user.create", "user.identity.link"},
 	"POST /api/v1/setup":                                {"user.create", "grant.create", "session.create"},
 	"POST /api/v1/me/password":                          {"user.password.change", "user.password.denied"},
+	"POST /api/v1/me/two-factor/totp":                   {"user.two_factor.denied"},
+	"POST /api/v1/me/two-factor/totp/confirm":           {"user.two_factor.enable"},
+	"POST /api/v1/me/two-factor/recovery-codes":         {"user.two_factor.recovery_codes", "user.two_factor.denied"},
+	"POST /api/v1/me/two-factor/skip":                   {"user.two_factor.decline"},
+	"DELETE /api/v1/me/two-factor":                      {"user.two_factor.disable", "user.two_factor.denied"},
+	"DELETE /api/v1/users/{userID}/two-factor":          {"user.two_factor.reset"},
 
 	// SCIM, audited by the idp service as the provider's token.
 	"POST /api/v1/scim/v2/Users":         {"user.create", "user.scim.adopt"},
