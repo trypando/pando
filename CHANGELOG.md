@@ -26,8 +26,9 @@ Unreleased above it. -->
 No new advisories.
 
 - The console's test dependency `undici` is at 8.12.2 (#260), clearing eight CVEs reported against
-  8.11.2 from dependency scans. It reaches the console only through its test DOM, so nothing that
-  ships changed.
+  8.11.2 from dependency scans: CVE-2026-87018, CVE-2026-87029, CVE-2026-109383, CVE-2026-109829,
+  CVE-2026-109841, CVE-2026-109869, CVE-2026-109924 and CVE-2026-109932. It reaches the console
+  only through its test DOM, so nothing that ships changed.
 
 ### Added
 
