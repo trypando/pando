@@ -19,6 +19,16 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-18
+
+### Security
+
+No new advisories.
+
+- The console's test dependency `undici` is at 8.12.2 (#260), clearing eight CVEs reported against
+  8.11.2 from dependency scans. It reaches the console only through its test DOM, so nothing that
+  ships changed.
+
 ### Added
 
 - **Two-factor authentication for local accounts** (#264, R-405). A local account can add an
@@ -1134,7 +1144,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.8.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.9.0...main
+[0.9.0]: https://github.com/trypando/pando/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/trypando/pando/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/trypando/pando/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/trypando/pando/compare/v0.6.0...v0.6.1
