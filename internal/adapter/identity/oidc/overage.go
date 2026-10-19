@@ -22,12 +22,15 @@ import (
 // cannot be, the sign-in is refused: a person whose groups are unknown is not
 // a person in no groups (R-078, R-079).
 
+// globalGraph is Microsoft Graph in Microsoft's global cloud.
+const globalGraph = "https://graph.microsoft.com"
+
 // graphHosts are the Microsoft Graph hosts of each Microsoft cloud. The
 // endpoint a token names is used only to pick one of these: the access token
 // is never sent anywhere a token merely says to send it.
 var graphHosts = map[string]string{
-	"graph.microsoft.com":             "https://graph.microsoft.com",
-	"graph.windows.net":               "https://graph.microsoft.com", // retired Azure AD Graph
+	"graph.microsoft.com":             globalGraph,
+	"graph.windows.net":               globalGraph, // retired Azure AD Graph
 	"graph.microsoft.us":              "https://graph.microsoft.us",
 	"dod-graph.microsoft.us":          "https://dod-graph.microsoft.us",
 	"microsoftgraph.chinacloudapi.cn": "https://microsoftgraph.chinacloudapi.cn",
@@ -149,7 +152,7 @@ func graphBase(issuer, endpoint string) string {
 			return b
 		}
 	}
-	return "https://graph.microsoft.com"
+	return globalGraph
 }
 
 func issuerHost(issuer string) string {

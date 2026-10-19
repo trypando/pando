@@ -119,7 +119,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	}
 	for _, r := range []struct{ label, value string }{
 		{"vulnerability database repository", a.config.DBRepository},
-		{"Java database repository", a.config.JavaDBRepository},
+		{javaDBLabel, a.config.JavaDBRepository},
 		{"checks bundle repository", a.config.ChecksBundleRepository},
 	} {
 		if strings.Contains(r.value, "://") {
@@ -350,6 +350,9 @@ func repositoryList(v string) string {
 	return strings.Join(out, ",")
 }
 
+// javaDBLabel is the Java database setting's label, which errors name it by.
+const javaDBLabel = "Java database repository"
+
 // downloadFailures are the messages Trivy 0.74 wraps a failed database
 // download in (pkg/db/db.go, pkg/javadb/client.go,
 // pkg/commands/operation/operation.go), each with the setting that says where
@@ -358,7 +361,7 @@ var downloadFailures = []struct{ text, what, setting, field, defaults string }{
 	{"failed to download vulnerability DB", "its vulnerability database",
 		"Vulnerability database repository", "db_repository", trivyDBRepository},
 	{"failed to download Java DB", "its Java database",
-		"Java database repository", "java_db_repository", trivyJavaDBRepository},
+		javaDBLabel, "java_db_repository", trivyJavaDBRepository},
 	{"failed to download checks bundle", "its misconfiguration checks",
 		"Checks bundle repository", "checks_bundle_repository", trivyChecksRepository},
 }
@@ -658,7 +661,7 @@ func Info() api.KindInfo {
 			{Key: "db_repository", Label: "Vulnerability database repository", Type: "string",
 				Help:    "OCI repositories to download Trivy's vulnerability database from, comma-separated, first tried first.",
 				Default: trivyDBRepository, Advanced: true},
-			{Key: "java_db_repository", Label: "Java database repository", Type: "string",
+			{Key: "java_db_repository", Label: javaDBLabel, Type: "string",
 				Help:    "OCI repositories to download Trivy's Java database from, comma-separated, first tried first.",
 				Default: trivyJavaDBRepository, Advanced: true},
 			{Key: "checks_bundle_repository", Label: "Checks bundle repository", Type: "string",

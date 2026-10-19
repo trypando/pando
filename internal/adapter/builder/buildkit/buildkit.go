@@ -341,45 +341,15 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 	if err := a.startBuildKit(ctx, buildKitStartWait); err != nil {
 		return api.BuildResult{}, err
 	}
-	dir, ok := req.Source.(interface{ Root() string })
-	if !ok {
-		return api.BuildResult{}, errs.New(errs.BuildFailed,
-			"This builder needs the source on disk and was given something else.")
+	contextDir, err := sourceDir(req)
+	if err != nil {
+		return api.BuildResult{}, err
 	}
-	contextDir := dir.Root()
-	if req.Context != "" {
-		contextDir = filepath.Join(contextDir, filepath.Clean("/"+req.Context))
+	dockerfileDir, dockerfile, cleanup, err := prepareDockerfile(req, contextDir)
+	if err != nil {
+		return api.BuildResult{}, err
 	}
-
-	dockerfile := req.Dockerfile
-	if dockerfile == "" {
-		dockerfile = "Dockerfile"
-	}
-	dockerfileDir := filepath.Dir(filepath.Join(contextDir, dockerfile))
-
-	// A strategy with no Dockerfile in the repository gets one written for it.
-	//
-	// The context stays the checkout; only the generated Dockerfile lives in a
-	// temporary directory, which BuildKit accepts because it takes the two as
-	// separate filesystems. So nothing is copied and the app's source is never
-	// modified.
-	if req.Strategy != spec.BuildDockerfile {
-		gen, genErr := synthesize(req, contextDir)
-		if genErr != nil {
-			return api.BuildResult{}, genErr
-		}
-		defer gen.Cleanup()
-		dockerfileDir, dockerfile = gen.Dir, gen.Name
-	} else if len(req.GeneratedFiles) > 0 {
-		// The repository's Dockerfile with its own build run first
-		// (prebuild.go), replayed from the spec as written (R-020).
-		if err := writeInto(contextDir, req.GeneratedFiles); err != nil {
-			return api.BuildResult{}, err
-		}
-		if err := writePlanIgnore(contextDir, dockerfile); err != nil {
-			return api.BuildResult{}, err
-		}
-	}
+	defer cleanup()
 
 	// R-119: a build that never finishes is a build that holds a slot forever.
 	timeout := req.Timeout
@@ -416,6 +386,62 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 		return result, err
 	}
 	return a.steer(ctx, req, contextDir, cacheDir, timeout, err, log)
+}
+
+// sourceDir is the directory on disk the build's context is read from: the
+// checkout, or the subdirectory of it the request names.
+func sourceDir(req api.BuildRequest) (string, error) {
+	dir, ok := req.Source.(interface{ Root() string })
+	if !ok {
+		return "", errs.New(errs.BuildFailed,
+			"This builder needs the source on disk and was given something else.")
+	}
+	contextDir := dir.Root()
+	if req.Context != "" {
+		contextDir = filepath.Join(contextDir, filepath.Clean("/"+req.Context))
+	}
+	return contextDir, nil
+}
+
+// prepareDockerfile returns the directory and name of the Dockerfile to build,
+// and a cleanup to run once the build is done.
+//
+// A strategy with no Dockerfile in the repository gets one written for it.
+//
+// The context stays the checkout; only the generated Dockerfile lives in a
+// temporary directory, which BuildKit accepts because it takes the two as
+// separate filesystems. So nothing is copied and the app's source is never
+// modified.
+func prepareDockerfile(req api.BuildRequest, contextDir string) (dir, name string, cleanup func(), err error) {
+	if req.Strategy != spec.BuildDockerfile {
+		gen, genErr := synthesize(req, contextDir)
+		if genErr != nil {
+			return "", "", nil, genErr
+		}
+		return gen.Dir, gen.Name, gen.Cleanup, nil
+	}
+	name = req.Dockerfile
+	if name == "" {
+		name = "Dockerfile"
+	}
+	dir = filepath.Dir(filepath.Join(contextDir, name))
+	if len(req.GeneratedFiles) > 0 {
+		// The repository's Dockerfile with its own build run first
+		// (prebuild.go), replayed from the spec as written (R-020).
+		if err := writeInto(contextDir, req.GeneratedFiles); err != nil {
+			return "", "", nil, err
+		}
+		if err := writePlanIgnore(contextDir, name); err != nil {
+			return "", "", nil, err
+		}
+	}
+	return dir, name, keepDockerfile, nil
+}
+
+// keepDockerfile is the cleanup for a Dockerfile the repository already has:
+// it is the app's own file, so there is nothing of Pando's to remove.
+func keepDockerfile() {
+	// Nothing to undo: the file is the repository's.
 }
 
 // solve runs one build of the plan or Dockerfile named, from contextDir.

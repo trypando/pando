@@ -32,8 +32,8 @@ func Warnings(raw json.RawMessage) []string {
 		return nil
 	}
 	addr := strings.TrimSpace(s.URL)
-	for _, scheme := range []string{"https://", "http://"} {
-		addr = strings.TrimPrefix(addr, scheme)
+	if _, rest, found := strings.Cut(addr, "://"); found {
+		addr = rest
 	}
 	host, prefix, _ := strings.Cut(strings.Trim(addr, "/"), "/")
 	host, prefix = strings.ToLower(host), strings.Trim(prefix, "/")

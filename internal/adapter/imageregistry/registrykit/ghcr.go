@@ -40,13 +40,17 @@ type packages struct {
 }
 
 type packageVersion struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"` // the manifest digest
-	Metadata struct {
-		Container struct {
-			Tags []string `json:"tags"`
-		} `json:"container"`
-	} `json:"metadata"`
+	ID       int64           `json:"id"`
+	Name     string          `json:"name"` // the manifest digest
+	Metadata versionMetadata `json:"metadata"`
+}
+
+type versionMetadata struct {
+	Container containerMetadata `json:"container"`
+}
+
+type containerMetadata struct {
+	Tags []string `json:"tags"`
 }
 
 // ghcrPackage splits a repository on ghcr.io into its owner and its package

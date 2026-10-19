@@ -74,20 +74,47 @@ func (a *Adapter) Capabilities() api.NotifyCapabilities {
 	return api.NotifyCapabilities{Audience: api.AudiencePeople}
 }
 
+// readConfig decodes the configuration, refusing a password stored in it.
+func readConfig(raw json.RawMessage) (Config, error) {
+	var cfg Config
+	if len(raw) == 0 {
+		return cfg, nil
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return cfg, fmt.Errorf("smtp: reading configuration: %w", err)
+	}
+	if _, inline := top["password"]; inline {
+		return cfg, errors.New("smtp: password is in this adapter's stored configuration, which is unencrypted; set it as a credential instead")
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return cfg, fmt.Errorf("smtp: reading configuration: %w", err)
+	}
+	return cfg, nil
+}
+
+// checkSignIn refuses a username and password that could never sign in.
+func checkSignIn(cfg Config) error {
+	if !cfg.Credentials.Password.IsZero() && cfg.Username == "" {
+		return errors.New("smtp: a password is set and no username. Set username, or remove the password for a server that needs none")
+	}
+	if cfg.Username != "" && cfg.Credentials.Password.IsZero() {
+		return errors.New("smtp: a username is set and no password, so the mail server would refuse every sign-in. Set the password as a credential, or remove the username for a server that needs none")
+	}
+	// net/smtp's PlainAuth refuses to send a password over a connection that
+	// is not encrypted, unless the server is this machine, so this
+	// combination would save and then fail every send.
+	if cfg.Security == SecurityNone && cfg.Username != "" && !isLocalhost(cfg.Host) {
+		return fmt.Errorf("smtp: security is none and a username is set, and Pando will not send a password unencrypted to %s, so every send would fail. Set security to starttls or tls, or remove the username and password", cfg.Host)
+	}
+	return nil
+}
+
 // Configure reads the configuration core assembled.
 func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
-	var cfg Config
-	if len(raw) > 0 {
-		var top map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &top); err != nil {
-			return fmt.Errorf("smtp: reading configuration: %w", err)
-		}
-		if _, inline := top["password"]; inline {
-			return errors.New("smtp: password is in this adapter's stored configuration, which is unencrypted; set it as a credential instead")
-		}
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return fmt.Errorf("smtp: reading configuration: %w", err)
-		}
+	cfg, err := readConfig(raw)
+	if err != nil {
+		return err
 	}
 	if cfg.Host == "" {
 		return errors.New("smtp: no server is set. Set host to your mail server, such as smtp.sendgrid.net")
@@ -113,17 +140,8 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("smtp: %q is not an address to send from. Use one such as Pando <pando@example.com>", cfg.From)
 	}
-	if !cfg.Credentials.Password.IsZero() && cfg.Username == "" {
-		return errors.New("smtp: a password is set and no username. Set username, or remove the password for a server that needs none")
-	}
-	if cfg.Username != "" && cfg.Credentials.Password.IsZero() {
-		return errors.New("smtp: a username is set and no password, so the mail server would refuse every sign-in. Set the password as a credential, or remove the username for a server that needs none")
-	}
-	// net/smtp's PlainAuth refuses to send a password over a connection that
-	// is not encrypted, unless the server is this machine, so this
-	// combination would save and then fail every send.
-	if cfg.Security == SecurityNone && cfg.Username != "" && !isLocalhost(cfg.Host) {
-		return fmt.Errorf("smtp: security is none and a username is set, and Pando will not send a password unencrypted to %s, so every send would fail. Set security to starttls or tls, or remove the username and password", cfg.Host)
+	if err := checkSignIn(cfg); err != nil {
+		return err
 	}
 	if cfg.TimeoutSeconds <= 0 {
 		cfg.TimeoutSeconds = 15
