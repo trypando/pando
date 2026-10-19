@@ -32,7 +32,7 @@ func checkApp(cfg *settings) (*rsa.PrivateKey, error) {
 	}
 	if cfg.appID() == "" {
 		return nil, errs.New(errs.ValidInvalid, "A GitHub App connection needs the App's ID.").
-			WithRemedy("Disconnect the connection and add it again, so Pando creates the App.")
+			WithRemedy(remedyRecreate)
 	}
 	if id := cfg.installationID(); id != "" && !digits(id) {
 		return nil, errs.Newf(errs.ValidInvalid,
@@ -63,10 +63,10 @@ func (s settings) installationID() string {
 func parseAppKey(v secret.Value) (*rsa.PrivateKey, error) {
 	if v.IsZero() {
 		return nil, errs.New(errs.ValidInvalid, "A GitHub App connection needs the App's private key.").
-			WithRemedy("Disconnect the connection and add it again, so Pando creates the App.")
+			WithRemedy(remedyRecreate)
 	}
 	bad := errs.New(errs.ValidInvalid, "The GitHub App private key could not be read. It may be incomplete.").
-		WithRemedy("Disconnect the connection and add it again, so Pando creates the App.")
+		WithRemedy(remedyRecreate)
 	block, _ := pem.Decode([]byte(strings.TrimSpace(v.Reveal())))
 	if block == nil {
 		return nil, bad
@@ -81,10 +81,14 @@ func parseAppKey(v secret.Value) (*rsa.PrivateKey, error) {
 	k, ok := parsed.(*rsa.PrivateKey)
 	if !ok {
 		return nil, errs.New(errs.ValidInvalid, "The GitHub App private key is not an RSA key, and GitHub Apps sign with RSA.").
-			WithRemedy("Disconnect the connection and add it again, so Pando creates the App.")
+			WithRemedy(remedyRecreate)
 	}
 	return k, nil
 }
+
+// remedyRecreate is what to do about an App Pando cannot use: connect again,
+// which creates a new one.
+const remedyRecreate = "Disconnect the connection and add it again, so Pando creates the App."
 
 func digits(s string) bool {
 	for _, r := range s {

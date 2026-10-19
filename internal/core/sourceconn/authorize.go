@@ -77,38 +77,13 @@ func (s *Service) BeginAuthorization(ctx context.Context, id string, mode api.Au
 		return Authorization{}, errs.Newf(errs.StateInvalid,
 			"The source connection %q cannot be authorized: %s", c.Name, c.Problem)
 	}
-	switch mode {
-	case api.AuthorizationDevice:
-		if !c.Capabilities.DeviceAuthorization {
-			return Authorization{}, errs.Newf(errs.ValidInvalid,
-				"The source connection %q cannot be authorized with a device code.", c.Name).
-				WithRemedy(remedyFor(c.Capabilities, mode))
-		}
-	case api.AuthorizationWeb:
-		if !c.Capabilities.WebAuthorization {
-			return Authorization{}, errs.Newf(errs.ValidInvalid,
-				"The source connection %q cannot be authorized in the browser.", c.Name).
-				WithRemedy(remedyFor(c.Capabilities, mode))
-		}
-	default:
-		return Authorization{}, errs.Newf(errs.ValidInvalid,
-			"%q is not a way to authorize. Valid answers: device, web.", mode)
+	if err := canAuthorize(c, mode); err != nil {
+		return Authorization{}, err
 	}
 
 	state := randomState()
-	redirectURL := ""
-	req := api.AuthorizationRequest{Mode: mode, State: id + "." + state}
-	if mode == api.AuthorizationWeb {
-		redirectURL = withoutQuery(at.Callback)
-		req.RedirectURL = redirectURL
-		req.SetupURL = at.Setup
-		req.HomepageURL = at.Homepage
-		// A provider refuses a webhook it cannot reach, and would refuse the
-		// whole App with it; without one, auto-deploy polls (R-142).
-		if Public(at.Webhook) {
-			req.WebhookURL = at.Webhook
-		}
-	}
+	req := request(mode, id+"."+state, at)
+	redirectURL := req.RedirectURL
 	a, err := c.adapter.BeginAuthorization(ctx, req)
 	if err != nil {
 		return Authorization{}, err
@@ -140,6 +115,46 @@ func (s *Service) BeginAuthorization(ctx context.Context, id string, mode api.Au
 		out.IntervalSeconds = int(a.Interval / time.Second)
 	}
 	return out, nil
+}
+
+// canAuthorize refuses a mode the connection cannot be authorized in.
+func canAuthorize(c Connection, mode api.AuthorizationMode) error {
+	switch mode {
+	case api.AuthorizationDevice:
+		if !c.Capabilities.DeviceAuthorization {
+			return errs.Newf(errs.ValidInvalid,
+				"The source connection %q cannot be authorized with a device code.", c.Name).
+				WithRemedy(remedyFor(c.Capabilities, mode))
+		}
+	case api.AuthorizationWeb:
+		if !c.Capabilities.WebAuthorization {
+			return errs.Newf(errs.ValidInvalid,
+				"The source connection %q cannot be authorized in the browser.", c.Name).
+				WithRemedy(remedyFor(c.Capabilities, mode))
+		}
+	default:
+		return errs.Newf(errs.ValidInvalid,
+			"%q is not a way to authorize. Valid answers: device, web.", mode)
+	}
+	return nil
+}
+
+// request is what the adapter is asked to begin: in web mode, with the
+// addresses the provider returns the browser and sends webhooks to.
+func request(mode api.AuthorizationMode, state string, at Addresses) api.AuthorizationRequest {
+	req := api.AuthorizationRequest{Mode: mode, State: state}
+	if mode != api.AuthorizationWeb {
+		return req
+	}
+	req.RedirectURL = withoutQuery(at.Callback)
+	req.SetupURL = at.Setup
+	req.HomepageURL = at.Homepage
+	// A provider refuses a webhook it cannot reach, and would refuse the
+	// whole App with it; without one, auto-deploy polls (R-142).
+	if Public(at.Webhook) {
+		req.WebhookURL = at.Webhook
+	}
+	return req
 }
 
 // PollAuthorization asks once whether a device authorization was approved,

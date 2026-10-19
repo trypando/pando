@@ -37,9 +37,9 @@ type Checker interface {
 	CheckApp(ctx context.Context, appID, delivery string) error
 }
 
-// SourceWebhooks reads the secret a source connection's own webhook is signed
+// WebhookSecretReader reads the secret a source connection's own webhook is signed
 // with (sourceconn.Service.WebhookSecret).
-type SourceWebhooks interface {
+type WebhookSecretReader interface {
 	WebhookSecret(ctx context.Context, id string) (secret.Value, bool, error)
 }
 
@@ -63,7 +63,7 @@ type Service struct {
 
 	// Sources holds the webhook secrets of source connections with a webhook
 	// of their own: a GitHub App Pando created (DeliverForSource).
-	Sources SourceWebhooks
+	Sources WebhookSecretReader
 
 	Audit  func(ctx context.Context, e audit.Event)
 	Logger *zap.Logger

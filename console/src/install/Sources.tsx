@@ -200,7 +200,7 @@ export function AuthorizeDialog({
 
 /** The last step of connecting a GitHub App: its logo. GitHub takes none from
  *  a manifest or its API, so the person uploads Pando's on the App's page. */
-export function AppLogoDialog({ source, onClose }: { source: SourceConnection; onClose: () => void }) {
+export function AppLogoDialog({ source, onClose }: Readonly<{ source: SourceConnection; onClose: () => void }>) {
   const settings = source.capabilities.manage_url ?? '';
   return (
     <Dialog
@@ -225,7 +225,6 @@ export function AppLogoDialog({ source, onClose }: { source: SourceConnection; o
             <a href={appLogo} download="pando-logo.png">
               Download the logo
             </a>
-            .
           </li>
           <li>
             On the App&apos;s settings page, under <strong>Display information</strong>, choose{' '}

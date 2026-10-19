@@ -33,6 +33,23 @@ func (s *Service) DeliverForSource(ctx context.Context, sourceID string, d Deliv
 		return Outcome{Message: "Pando received the test delivery. Pushes and releases to the App's repositories will now start a check."}, nil
 	}
 
+	repo, names := deliveredRepository(d)
+	if len(names) == 0 {
+		return Outcome{Message: "This delivery names no repository, so Pando ignored it."}, nil
+	}
+	checking, err := s.checkFollowers(ctx, d, names)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if checking == 0 {
+		return Outcome{Message: "No app deploys automatically from " + repo + " on this change, so Pando ignored this delivery."}, nil
+	}
+	return Outcome{Checking: true, Message: "Pando is checking the apps that deploy from " + repo + " for something new to deploy."}, nil
+}
+
+// deliveredRepository is the repository a delivery names: its full name, and
+// every address it gives for it, as repoKey reduces them.
+func deliveredRepository(d Delivery) (string, map[string]bool) {
 	var payload struct {
 		Repository struct {
 			FullName string `json:"full_name"`
@@ -49,13 +66,16 @@ func (s *Service) DeliverForSource(ctx context.Context, sourceID string, d Deliv
 			names[k] = true
 		}
 	}
-	if len(names) == 0 {
-		return Outcome{Message: "This delivery names no repository, so Pando ignored it."}, nil
-	}
+	return r.FullName, names
+}
 
+// checkFollowers starts a check of each app that deploys automatically from
+// one of the repository's names and that the delivery concerns, and says how
+// many it started.
+func (s *Service) checkFollowers(ctx context.Context, d Delivery, names map[string]bool) (int, error) {
 	apps, err := s.Apps.WithAutoDeploy(ctx)
 	if err != nil {
-		return Outcome{}, err
+		return 0, err
 	}
 	checking := 0
 	for _, app := range apps {
@@ -67,16 +87,12 @@ func (s *Service) DeliverForSource(ctx context.Context, sourceID string, d Deliv
 			continue
 		}
 		src, ad := pinned.Body.Source, pinned.Body.Deploy.AutoDeploy
-		if !ad.Enabled || !names[repoKey(src.URL)] || concerns(d, src, ad) != "" {
-			continue
+		if ad.Enabled && names[repoKey(src.URL)] && concerns(d, src, ad) == "" {
+			s.startCheck(ctx, app.ID)
+			checking++
 		}
-		s.startCheck(ctx, app.ID)
-		checking++
 	}
-	if checking == 0 {
-		return Outcome{Message: "No app deploys automatically from " + r.FullName + " on this change, so Pando ignored this delivery."}, nil
-	}
-	return Outcome{Checking: true, Message: "Pando is checking the apps that deploy from " + r.FullName + " for something new to deploy."}, nil
+	return checking, nil
 }
 
 func (s *Service) sourceSecret(ctx context.Context, sourceID string) (key secret.Value, found bool, err error) {
