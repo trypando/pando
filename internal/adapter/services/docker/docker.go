@@ -43,7 +43,29 @@ type config struct {
 	// Images overrides the image used per slot type, keyed by type name.
 	// An install that mirrors Docker Hub, or that has settled on a particular
 	// Postgres major version, sets it here rather than editing this file.
+	//
+	// The older spelling, kept for configurations declared in the config file
+	// (R-271) and stored before the per-type settings below existed. No form
+	// can set it: a form sends only the settings Info declares, and saving one
+	// replaces the whole configuration, so it is dropped by the first save
+	// from the console.
 	Images map[string]string `json:"images"`
+
+	// One setting per type, as Info declares them: postgres_image and so on.
+	// Decoded separately, by imageKey, so the list lives in one place.
+	perType map[spec.SlotType]string
+}
+
+// imageKey is the setting that overrides the image for a slot type.
+func imageKey(t spec.SlotType) string { return string(t) + "_image" }
+
+// imageLabels name each type the way its setting is labeled.
+var imageLabels = map[spec.SlotType]string{
+	spec.SlotPostgres:  "PostgreSQL image",
+	spec.SlotMySQL:     "MySQL image",
+	spec.SlotRedis:     "Redis image",
+	spec.SlotMongoDB:   "MongoDB image",
+	spec.SlotMemcached: "Memcached image",
 }
 
 // defaultImages are the images a provisioned service runs.
@@ -66,11 +88,9 @@ func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryServices }
 
 func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
-	cfg := config{}
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return errs.Wrap(errs.ValidInvalid, "The service provisioner could not be configured.", err)
-		}
+	cfg, err := parseConfig(raw)
+	if err != nil {
+		return err
 	}
 
 	a.images = map[spec.SlotType]string{}
@@ -89,7 +109,45 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		}
 		a.images[t] = img
 	}
+	// A per-type setting wins over the same type in the older images map.
+	// It is the spelling a form shows and sets, so when a configuration
+	// carries both, the per-type one is the more recent intent; and someone
+	// reading the adapter's settings sees the image it actually runs.
+	for t, img := range cfg.perType {
+		a.images[t] = img
+	}
 	return nil
+}
+
+func parseConfig(raw json.RawMessage) (config, error) {
+	cfg := config{perType: map[spec.SlotType]string{}}
+	if len(raw) == 0 {
+		return cfg, nil
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return cfg, errs.Wrap(errs.ValidInvalid, "The service provisioner could not be configured.", err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return cfg, errs.Wrap(errs.ValidInvalid, "The service provisioner could not be configured.", err)
+	}
+	for t := range defaultImages {
+		v, ok := keys[imageKey(t)]
+		if !ok {
+			continue
+		}
+		var img string
+		if err := json.Unmarshal(v, &img); err != nil {
+			return cfg, errs.Newf(errs.ValidInvalid, "The setting %s is not text.", imageKey(t)).
+				WithRemedy("Give an image reference such as " + defaultImages[t] + ", or leave it empty for that default.")
+		}
+		// Empty means the default, as it does for any setting a form leaves
+		// blank.
+		if img = strings.TrimSpace(img); img != "" {
+			cfg.perType[t] = img
+		}
+	}
+	return cfg, nil
 }
 
 // HealthCheck always passes.
@@ -442,6 +500,24 @@ func Info() api.KindInfo {
 		Name:        "Docker",
 		Description: "Provisions the databases and caches apps declare, as containers.",
 		IDPrefix:    "svcs_",
-		Fields:      []api.Field{},
+		Fields:      imageFields(),
 	}
+}
+
+// imageFields are the per-type image overrides, in the order Supports lists
+// the types, each stating the image it replaces as its default.
+func imageFields() []api.Field {
+	types := New().Supports()
+	fields := make([]api.Field, 0, len(types))
+	for _, t := range types {
+		fields = append(fields, api.Field{
+			Key:      imageKey(t),
+			Label:    imageLabels[t],
+			Help:     "The container image a provisioned " + t.DisplayName() + " runs.",
+			Type:     "string",
+			Advanced: true,
+			Default:  defaultImages[t],
+		})
+	}
+	return fields
 }

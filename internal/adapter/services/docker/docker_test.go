@@ -297,3 +297,81 @@ func TestR131_AProvisionedMemcachedIsAnAddressWithNothingToKeep(t *testing.T) {
 	again := provision(t, a, spec.SlotMemcached, res.ConnectionSecret)
 	require.Equal(t, res.ConnectionSecret.Reveal(), again.ConnectionSecret.Reveal())
 }
+
+// Each per-type setting a form can show replaces that type's image, and only
+// that type's.
+func TestEachImageSettingOverridesItsImage(t *testing.T) {
+	defaults := map[spec.SlotType]string{}
+	base := configured(t)
+	for _, typ := range base.Supports() {
+		defaults[typ] = provision(t, base, typ, secret.Value{}).Workloads[0].Image
+	}
+	for _, typ := range base.Supports() {
+		t.Run(string(typ), func(t *testing.T) {
+			a := servicesdocker.New()
+			raw := fmt.Sprintf(`{%q: "mirror.internal/%s:pinned"}`, string(typ)+"_image", typ)
+			require.NoError(t, a.Configure(context.Background(), json.RawMessage(raw)))
+			for _, other := range a.Supports() {
+				want := defaults[other]
+				if other == typ {
+					want = "mirror.internal/" + string(typ) + ":pinned"
+				}
+				require.Equal(t, want, provision(t, a, other, secret.Value{}).Workloads[0].Image, other)
+			}
+		})
+	}
+}
+
+// Configuration declared in the config file, or stored, before the per-type
+// settings existed still uses the images map (R-271).
+func TestTheImagesMapStillWorks(t *testing.T) {
+	a := servicesdocker.New()
+	require.NoError(t, a.Configure(context.Background(),
+		json.RawMessage(`{"images":{"redis":"mirror.internal/redis:7","mongodb":"mirror.internal/mongo:7"}}`)))
+	require.Equal(t, "mirror.internal/redis:7", provision(t, a, spec.SlotRedis, secret.Value{}).Workloads[0].Image)
+	require.Equal(t, "mirror.internal/mongo:7", provision(t, a, spec.SlotMongoDB, secret.Value{}).Workloads[0].Image)
+}
+
+// Given both for one type, the per-type setting wins; the map still sets the
+// others.
+func TestAnImageSettingWinsOverTheImagesMap(t *testing.T) {
+	a := servicesdocker.New()
+	require.NoError(t, a.Configure(context.Background(), json.RawMessage(
+		`{"images":{"postgres":"old/postgres:16","mysql":"old/mysql:8"},"postgres_image":"new/postgres:17"}`)))
+	require.Equal(t, "new/postgres:17", provision(t, a, spec.SlotPostgres, secret.Value{}).Workloads[0].Image)
+	require.Equal(t, "old/mysql:8", provision(t, a, spec.SlotMySQL, secret.Value{}).Workloads[0].Image)
+}
+
+// Nothing set, or a setting left blank, runs the defaults, and each setting
+// states that default for a form to show.
+func TestDefaultImagesWhenNothingIsSet(t *testing.T) {
+	want := map[spec.SlotType]string{
+		spec.SlotPostgres:  "postgres:17-alpine",
+		spec.SlotMySQL:     "mysql:8.4",
+		spec.SlotRedis:     "redis:7-alpine",
+		spec.SlotMongoDB:   "mongo:7",
+		spec.SlotMemcached: "memcached:1.6-alpine",
+	}
+	for _, raw := range []string{``, `{}`, `{"postgres_image":"  ","redis_image":""}`} {
+		a := servicesdocker.New()
+		require.NoError(t, a.Configure(context.Background(), json.RawMessage(raw)))
+		for typ, img := range want {
+			require.Equal(t, img, provision(t, a, typ, secret.Value{}).Workloads[0].Image, raw)
+		}
+	}
+
+	info := servicesdocker.Info()
+	require.NoError(t, info.Validate())
+	require.Len(t, info.Fields, len(want))
+	for _, f := range info.Fields {
+		typ := spec.SlotType(strings.TrimSuffix(f.Key, "_image"))
+		require.Equal(t, want[typ], f.Default, f.Key)
+		require.True(t, f.Advanced, f.Key)
+		require.Equal(t, "string", f.Type, f.Key)
+	}
+}
+
+func TestAnImageSettingThatIsNotTextIsRefused(t *testing.T) {
+	err := servicesdocker.New().Configure(context.Background(), json.RawMessage(`{"mysql_image":8}`))
+	require.ErrorContains(t, err, "mysql_image")
+}
