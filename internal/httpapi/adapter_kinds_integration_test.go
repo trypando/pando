@@ -74,3 +74,23 @@ func TestR261_AdapterKindsAreListedAndUnknownOnesRefused(t *testing.T) {
 		"id": "ai_x", "category": "ai", "kind": "anthropic", "name": "X", "config": map[string]any{},
 	}).Code)
 }
+
+// TestR105_AConfigurationThatCannotStartIsRefusedAsItIsSaved asserts R-105 for
+// a kind that checks itself as it is saved (KindInfo.Check): what would keep
+// the adapter from starting is said in a sentence, and nothing is saved.
+func TestR105_AConfigurationThatCannotStartIsRefusedAsItIsSaved(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+
+	refused := i.do(admin, http.MethodPost, "/adapters", map[string]any{
+		"id": "ai_anthropic", "category": "ai", "kind": "anthropic",
+		"config": map[string]any{"workspace_id": "default"}, "credentials": map[string]string{"api_key": "sk-ant-x"},
+	})
+	require.Equal(t, http.StatusBadRequest, refused.Code, refused.String())
+	require.Contains(t, refused.String(), "workspace")
+	require.NotContains(t, refused.String(), "anthropic: ")
+
+	listed := i.do(admin, http.MethodGet, "/adapters", nil)
+	require.NotContains(t, listed.String(), "ai_anthropic")
+}

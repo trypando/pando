@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 
@@ -154,4 +155,39 @@ func configObject(raw json.RawMessage) map[string]json.RawMessage {
 
 func sameURL(a, b string) bool {
 	return strings.EqualFold(strings.TrimRight(strings.TrimSpace(a), "/"), strings.TrimRight(strings.TrimSpace(b), "/"))
+}
+
+// checkKind runs a kind's own check of a configuration being saved
+// (KindInfo.Check), with the names of the credentials already stored for the
+// adapter so one not sent again still counts. Its refusal is said as an
+// invalid configuration, without the kind's own prefix.
+func (s *Server) checkKind(ctx context.Context, adapterID, category, kind string, config json.RawMessage, creds map[string]secret.Value) error {
+	info, ok := s.kindInfo(category, kind)
+	if !ok || info.Check == nil {
+		return nil
+	}
+	var stored []string
+	if s.AdapterCredentials != nil {
+		fields, err := s.AdapterCredentials.Fields(ctx)
+		if err != nil {
+			return err
+		}
+		stored = fields[adapterID]
+	}
+	err := info.Check(config, creds, stored)
+	if err == nil {
+		return nil
+	}
+	var e *errs.Error
+	if errors.As(err, &e) {
+		return err
+	}
+	msg := strings.TrimPrefix(err.Error(), kind+": ")
+	if msg != "" {
+		msg = strings.ToUpper(msg[:1]) + msg[1:]
+	}
+	if !strings.HasSuffix(msg, ".") {
+		msg += "."
+	}
+	return errs.New(errs.ValidInvalid, msg)
 }
