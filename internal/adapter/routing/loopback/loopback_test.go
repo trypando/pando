@@ -66,7 +66,10 @@ func TestEnsureRecordsIntentAndObserveReportsIt(t *testing.T) {
 	require.Equal(t, "http://localhost:3000", state.Address)
 }
 
-func TestObserveUsesTheConfiguredBaseURL(t *testing.T) {
+// A base_url stored by an earlier version still loads, and changes nothing:
+// the address a person sees comes from the host they reached Pando on
+// (spec.Address, R-261), not from a setting on this adapter.
+func TestR261_AStoredBaseURLLoadsAndChangesNoAddress(t *testing.T) {
 	a := loopback.New()
 	ctx := context.Background()
 	require.NoError(t, a.Configure(ctx, json.RawMessage(`{"base_url":"http://dev.local"}`)))
@@ -76,7 +79,35 @@ func TestObserveUsesTheConfiguredBaseURL(t *testing.T) {
 
 	state, err := a.Observe(ctx, handle)
 	require.NoError(t, err)
-	require.Equal(t, "http://dev.local:8443", state.Address)
+	require.Equal(t, "http://localhost:8443", state.Address)
+}
+
+// The form offers nothing that does nothing, and the description promises
+// only the mode Capabilities reports.
+func TestR161_InfoDescribesPortModeAndOffersNoBaseURL(t *testing.T) {
+	info := loopback.Info()
+	require.Equal(t, api.CategoryRouting, info.Category)
+	require.Equal(t, loopback.Kind, info.Kind)
+	for _, f := range info.Fields {
+		require.NotEqual(t, "base_url", f.Key, "base_url has no effect and must not be offered")
+	}
+	require.Contains(t, info.Description, "port")
+	require.NotContains(t, info.Description, "path", "Capabilities report port mode only")
+
+	caps, err := loopback.New().Capabilities(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []api.RoutingMode{spec.RoutingPort}, caps.Modes)
+}
+
+func TestWarningsNameAStoredBaseURL(t *testing.T) {
+	w := loopback.Warnings(json.RawMessage(`{"base_url":"http://dev.local"}`))
+	require.Len(t, w, 1)
+	require.Contains(t, w[0], "base_url")
+
+	require.Empty(t, loopback.Warnings(nil))
+	require.Empty(t, loopback.Warnings(json.RawMessage(`{}`)))
+	require.Empty(t, loopback.Warnings(json.RawMessage(`{"base_url":""}`)))
+	require.Empty(t, loopback.Warnings(json.RawMessage(`{`)), "unreadable configuration is Configure's error, not a warning")
 }
 
 func TestObserveOfAnUnknownAppReportsAbsentRatherThanFailing(t *testing.T) {

@@ -30,10 +30,33 @@ type Adapter struct {
 	config Config
 }
 
-// Config is the adapter's configuration.
+// Config is the adapter's configuration. There is nothing to set.
+//
+// BaseURL is accepted so a configuration stored by an earlier version still
+// loads, and is otherwise ignored. It never changed an address anyone saw: the
+// API renders a port-mode address from the host the request reached Pando on
+// (spec.Address, R-261), and the proxy listens on each allocated port on that
+// same host (design 03 §4.2), so any other host is an address nothing answers
+// on. server.external_url already names where browsers reach the install; a
+// second setting that could disagree with it would be a guess about DNS.
 type Config struct {
-	// BaseURL is where the proxy can be reached, for display.
 	BaseURL string `json:"base_url,omitempty"`
+}
+
+// baseURLIgnored is the save-time warning for a stored base_url.
+const baseURLIgnored = "The base_url setting has no effect and can be removed. " +
+	"Apps on the built-in routing are reached on their own port, on whatever address you reach Pando's console at."
+
+// Warnings returns what is worth telling someone saving this configuration,
+// without refusing it. A stored base_url is the only one: it is accepted for
+// compatibility but does nothing. Configuration that does not parse returns
+// nothing here; Configure reports that as an error.
+func Warnings(raw json.RawMessage) []string {
+	var c Config
+	if len(raw) == 0 || json.Unmarshal(raw, &c) != nil || c.BaseURL == "" {
+		return nil
+	}
+	return []string{baseURLIgnored}
 }
 
 func New() *Adapter {
@@ -112,11 +135,11 @@ func (a *Adapter) Observe(_ context.Context, h api.RouteHandle) (api.RouteState,
 	if !ok {
 		return api.RouteState{Present: false}, nil
 	}
-	base := a.config.BaseURL
-	if base == "" {
-		base = "http://localhost"
-	}
-	return api.RouteState{Present: true, Address: fmt.Sprintf("%s:%d", base, r.Port)}, nil
+	// The adapter cannot name the host a browser uses, so this is the laptop
+	// answer. It is not what anyone is shown: the API renders the address from
+	// the request's host (spec.Address). Config.BaseURL is deliberately not
+	// read here; see Config.
+	return api.RouteState{Present: true, Address: fmt.Sprintf("http://localhost:%d", r.Port)}, nil
 }
 
 // Edge: none. Loopback is Pando's own listeners; nothing stands in front.
@@ -133,10 +156,8 @@ func Info() api.KindInfo {
 		Category:    api.CategoryRouting,
 		Kind:        Kind,
 		Name:        "Built in",
-		Description: "Serves apps from Pando itself, on a path or a port.",
+		Description: "Serves each app from Pando itself on its own port, with no TLS.",
 		IDPrefix:    "rte_",
-		Fields: []api.Field{
-			{Key: "base_url", Label: "Base URL", Type: "string", Help: "The address apps are reached at.", Default: "The address each request arrives on"},
-		},
+		// No fields: there is nothing to configure (see Config).
 	}
 }
