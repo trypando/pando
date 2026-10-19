@@ -69,18 +69,23 @@ sign-in** refuses it everywhere, whatever each provider says.
 **SAML**
 
 1. **Create App Integration → SAML 2.0**. **Single sign-on URL**: Pando's ACS URL. **Audience URI**:
-   Pando's entity ID. **Name ID format**: Persistent.
-2. **Attribute statements**: `email` → `user.email`, `displayName` → `user.displayName`. **Group
-   attribute statement**: `groups`, *Matches regex* `.*`.
+   Pando's entity ID.
+2. **Attribute statements**: `okta_user_id` → `user.getInternalProperty("id")`, `email` →
+   `user.email`, `displayName` → `user.displayName`. **Group attribute statement**: `groups`,
+   *Matches regex* `.*`.
 3. Copy the app's **Metadata URL** into Pando, with the **Okta** SAML preset.
+
+The preset identifies people by `okta_user_id`, Okta's user ID, rather than the NameID: Okta's
+Persistent NameID is the application username, which changes when the username does. It also does not
+treat the email addresses Okta sends as verified, since Okta can let people edit theirs.
 
 **SCIM**: in the app's **General** settings enable **SCIM provisioning**; under **Provisioning →
 Integration**, set the **SCIM connector base URL** to Pando's SCIM base URL, **Unique identifier field
 for users** to `userName`, **Authentication Mode** to *HTTP Header* with Pando's SCIM token, and tick
 *Push New Users*, *Push Profile Updates* and *Push Groups*. Then **To App**: enable *Create*, *Update*
-and *Deactivate Users*. With OIDC, Pando matches pushed people by `externalId`, which Okta sets to
-the same user ID it sends as `sub`; with SAML by `userName`, which matches the NameID when the app
-uses the Okta username.
+and *Deactivate Users*. Pando matches pushed people by `externalId`, which Okta sets to its user ID —
+the same ID it sends as `sub` over OIDC and as `okta_user_id` over SAML. For SAML, set the provider's
+**SCIM identity attribute** to `externalId`, since SAML's default is `userName`.
 
 ## Microsoft Entra ID
 
@@ -89,10 +94,17 @@ uses the Okta username.
 1. **App registrations → New registration**. **Redirect URI**: *Web*, Pando's redirect URI.
 2. **Certificates & secrets → New client secret**; copy its value.
 3. **Token configuration → Add groups claim**: *Security groups*, ID token *Group ID*. Entra sends
-   group object IDs; they appear in Pando as synced groups named by ID.
-4. In Pando, use the **Microsoft Entra ID** preset: issuer
+   groups as object IDs; they appear in Pando as synced groups named by ID, so link each to a Pando
+   group to give it a name.
+4. **API permissions**: keep the delegated Microsoft Graph permission **User.Read**, which the preset
+   asks for in its scopes.
+5. In Pando, use the **Microsoft Entra ID** preset: issuer
    `https://login.microsoftonline.com/<tenant-id>/v2.0` (tenant-specific — `common` will not verify),
    **subject claim `oid`**. Entra's `sub` differs per application, so `oid` is what stays the same.
+
+When a person is in more than 200 groups, Entra leaves the groups out of the ID token, and Pando reads
+them from Microsoft Graph with the sign-in's access token. If Graph cannot be asked, the sign-in is
+refused with what to grant, rather than recording that the person is in no groups.
 
 Entra does not vouch for email addresses (there is no `email_verified` claim, and a user can have an
 unverified `email`), so Pando never links an Entra identity to an existing account by email. Link
@@ -100,8 +112,10 @@ those by hand.
 
 **SAML**: **Enterprise applications → New application → Create your own → SAML**. **Identifier
 (Entity ID)**: Pando's entity ID. **Reply URL**: the ACS URL. Add a group claim under **Attributes &
-Claims**. Paste the **App Federation Metadata Url** into Pando with the **Microsoft Entra ID** SAML
-preset.
+Claims**; groups arrive as object IDs, so link each to a Pando group to name it. Paste the **App
+Federation Metadata Url** into Pando with the **Microsoft Entra ID** SAML preset. Over SAML, Entra sends
+a link instead of the groups when a person is in more than 150, and Pando refuses that sign-in: send
+only groups assigned to the application, or use OpenID Connect.
 
 **SCIM**: in the enterprise application, **Provisioning → Automatic**. **Tenant URL**: Pando's SCIM
 base URL; **Secret Token**: Pando's SCIM token. Under **Mappings → Provision users**, map
@@ -117,8 +131,8 @@ made, never one an administrator made.
 2. In Pando, use the **Google Workspace** preset and set **Google Workspace domain** to your domain.
    Without it, *anyone with a Google account* can pass Google's sign-in.
 
-Google sends no groups over OpenID Connect. Use SAML (below), Pando groups, or SCIM from a tool that
-provisions from Google.
+Google sends no groups over OpenID Connect, so give access through Pando groups, or use SAML
+(below).
 
 **SAML**: in the Admin console, **Apps → Web and mobile apps → Add custom SAML app**. **ACS URL** and
 **Entity ID** are Pando's; **Name ID** *Primary email*. Map *Primary email* to `email` and **Group
@@ -142,7 +156,9 @@ Pando's own tests run against Keycloak, over both protocols.
 ## Authentik
 
 **OpenID Connect**: **Applications → Providers → Create → OAuth2/OpenID Provider**, confidential,
-**Redirect URIs**: Pando's redirect URI; then an **Application** using it. Issuer:
+**Redirect URIs**: Pando's redirect URI, and a **Signing Key**, such as the self-signed certificate
+Authentik creates; then an **Application** using it. Without a signing key Authentik signs ID tokens
+with HS256, which Pando cannot check against a published key, so it refuses the provider. Issuer:
 `https://<authentik-host>/application/o/<application-slug>/` — with the trailing slash. Authentik
 sends `groups` in the `profile` scope.
 

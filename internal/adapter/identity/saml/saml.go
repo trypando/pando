@@ -507,6 +507,17 @@ func (a *Adapter) subject(assertion *crewjam.Assertion) (api.Subject, error) {
 		}
 	}
 
+	// Entra ID sends a link instead of the groups when a person is in more
+	// than 150. SAML gives Pando no token to follow it with, and a person
+	// whose groups are unknown is not a person in no groups (R-078), so the
+	// sign-in is refused rather than leaving every group.
+	if len(s.Groups) == 0 && len(attrs[entraGroupsLink]) > 0 {
+		return api.Subject{}, errs.New(errs.AuthInvalid,
+			"Microsoft Entra ID left this person's groups out of the SAML assertion because they are in more than 150, so Pando cannot tell which groups they are in.").
+			WithRemedy("In the enterprise application's Attributes & Claims, edit the group claim to send only groups assigned " +
+				"to the application, and assign Pando the groups that matter. Or sign in with OpenID Connect, which reads them from Microsoft Graph.")
+	}
+
 	s.OneTimeID = assertion.ID
 	s.OneTimeUntil = time.Now().Add(10 * time.Minute)
 	if assertion.Conditions != nil && !assertion.Conditions.NotOnOrAfter.IsZero() {
@@ -514,6 +525,10 @@ func (a *Adapter) subject(assertion *crewjam.Assertion) (api.Subject, error) {
 	}
 	return s, nil
 }
+
+// entraGroupsLink is the attribute Entra ID sends in place of the groups
+// claim when there are too many to fit.
+const entraGroupsLink = "http://schemas.microsoft.com/claims/groups.link"
 
 func first(attrs map[string][]string, name string) string {
 	if v := attrs[name]; len(v) > 0 {

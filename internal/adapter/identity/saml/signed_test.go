@@ -265,3 +265,59 @@ func TestSAMLReadsMetadataFromAURL(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, errs.As(err).Message, "not SAML identity provider metadata")
 }
+
+// TestR078_SAMLEntraGroupsOverageRefusesTheSignIn asserts that when Entra ID
+// sends a link in place of more than 150 groups, the sign-in is refused with
+// what to change, rather than recording that the person is in no groups.
+func TestR078_SAMLEntraGroupsOverageRefusesTheSignIn(t *testing.T) {
+	p := newSigningIdP(t)
+	_, err := signIn(t, signingAdapter(t, p, nil), p, "0a21f0f2", "", map[string][]string{
+		"http://schemas.microsoft.com/claims/groups.link": {"https://graph.windows.net/t/users/u/getMemberObjects"},
+	})
+	require.Error(t, err)
+	require.Contains(t, errs.As(err).Message, "more than 150")
+	require.Contains(t, errs.As(err).Remedy, "groups assigned to the application")
+
+	// A link alongside the groups themselves changes nothing.
+	s, err := signIn(t, signingAdapter(t, p, nil), p, "0a21f0f2", "", map[string][]string{
+		"http://schemas.microsoft.com/claims/groups.link":                {"https://graph.windows.net/x"},
+		"http://schemas.microsoft.com/ws/2008/06/identity/claims/groups": {"g1"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"g1"}, s.Groups)
+}
+
+// TestSAMLOktaPresetIdentifiesPeopleByTheirOktaUserID asserts the Okta preset
+// identifies a person by Okta's user ID, which never changes, and not by the
+// NameID, which is the application username and changes with it; and that it
+// does not vouch for an email Okta may let people edit.
+func TestSAMLOktaPresetIdentifiesPeopleByTheirOktaUserID(t *testing.T) {
+	var okta map[string]string
+	for _, pr := range saml.Info().Presets {
+		if pr.ID == "okta" {
+			okta = pr.Values
+		}
+	}
+	require.NotNil(t, okta)
+	require.NotContains(t, okta, "trust_email")
+	require.NotContains(t, okta, "name_id_format", "Okta's persistent NameID is still the application username")
+
+	extra := map[string]any{}
+	for k, v := range okta {
+		extra[k] = v
+	}
+	p := newSigningIdP(t)
+	a := signingAdapter(t, p, extra)
+	s, err := signIn(t, a, p, "dana@example.com", "", map[string][]string{
+		"okta_user_id": {"00u1abcd"}, "email": {"dana@example.com"}, "groups": {"eng"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "00u1abcd", s.ExternalID)
+	require.Equal(t, "dana@example.com", s.Username)
+	require.False(t, s.EmailVerified)
+
+	// Renamed in Okta: the same person.
+	s, err = signIn(t, a, p, "dana.scully@example.com", "", map[string][]string{"okta_user_id": {"00u1abcd"}})
+	require.NoError(t, err)
+	require.Equal(t, "00u1abcd", s.ExternalID)
+}

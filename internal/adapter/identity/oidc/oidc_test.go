@@ -33,6 +33,8 @@ type fakeProvider struct {
 	challenge string
 	userinfo  map[string]any
 	noIDToken bool
+	algs      []string // discovery's id_token_signing_alg_values_supported; RS256 when nil
+	hsSecret  []byte   // sign the ID token with HS256 and this key, as Authentik does without a signing key
 }
 
 func newFake(t *testing.T) *fakeProvider {
@@ -48,7 +50,7 @@ func newFake(t *testing.T) *fakeProvider {
 			"issuer": f.srv.URL, "authorization_endpoint": f.srv.URL + "/authorize",
 			"token_endpoint": f.srv.URL + "/token", "jwks_uri": f.srv.URL + "/jwks",
 			"userinfo_endpoint":                     f.srv.URL + "/userinfo",
-			"id_token_signing_alg_values_supported": []string{"RS256"},
+			"id_token_signing_alg_values_supported": algsOr(f.algs),
 		})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
@@ -78,8 +80,11 @@ func newFake(t *testing.T) *fakeProvider {
 		for k, v := range f.claims {
 			claims[k] = v
 		}
-		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key},
-			(&jose.SignerOptions{}).WithHeader("kid", "k1"))
+		signingKey := jose.SigningKey{Algorithm: jose.RS256, Key: key}
+		if f.hsSecret != nil {
+			signingKey = jose.SigningKey{Algorithm: jose.HS256, Key: f.hsSecret}
+		}
+		signer, err := jose.NewSigner(signingKey, (&jose.SignerOptions{}).WithHeader("kid", "k1"))
 		require.NoError(t, err)
 		payload, _ := json.Marshal(claims)
 		jws, err := signer.Sign(payload)
@@ -93,6 +98,13 @@ func newFake(t *testing.T) *fakeProvider {
 		_ = json.NewEncoder(w).Encode(reply)
 	})
 	return f
+}
+
+func algsOr(algs []string) []string {
+	if algs == nil {
+		return []string{"RS256"}
+	}
+	return algs
 }
 
 func configured(t *testing.T, f *fakeProvider, extra map[string]any) *oidc.Adapter {

@@ -83,6 +83,7 @@ type Adapter struct {
 	secret   secret.Value
 	lifetime time.Duration
 	client   *http.Client
+	graphURL string
 
 	mu       sync.Mutex
 	provider *gooidc.Provider
@@ -96,6 +97,10 @@ func New() *Adapter {
 
 // WithHTTPClient replaces the client used to reach the provider, for tests.
 func (a *Adapter) WithHTTPClient(c *http.Client) *Adapter { a.client = c; return a }
+
+// WithGraphURL replaces the Microsoft Graph address used to read the groups an
+// Entra ID token left out, for tests.
+func (a *Adapter) WithGraphURL(u string) *Adapter { a.graphURL = u; return a }
 
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryIdentity }
@@ -184,9 +189,69 @@ func (a *Adapter) discover(ctx context.Context, fresh bool) (*gooidc.Provider, e
 			WithRemedy("Check the issuer URL, and that Pando can reach it. For Microsoft Entra ID the issuer " +
 				"includes your tenant ID: https://login.microsoftonline.com/<tenant-id>/v2.0.")
 	}
+	if err := checkSigningAlgs(p); err != nil {
+		return nil, err
+	}
 	a.provider = p
 	a.fetched = time.Now()
 	return p, nil
+}
+
+// asymmetric is the signing algorithms go-oidc verifies against the
+// provider's published keys.
+var asymmetric = map[string]bool{
+	"RS256": true, "RS384": true, "RS512": true, "ES256": true, "ES384": true, "ES512": true,
+	"PS256": true, "PS384": true, "PS512": true, "EdDSA": true,
+}
+
+// checkSigningAlgs refuses a provider whose discovery document says it signs
+// ID tokens only with an algorithm Pando cannot check against a published key
+// — Authentik with no signing key chosen signs with HS256, keyed by the client
+// secret, and advertises exactly that.
+func checkSigningAlgs(p *gooidc.Provider) error {
+	var d struct {
+		Algs []string `json:"id_token_signing_alg_values_supported"`
+	}
+	// A discovery document that does not say, or cannot be read for it, is
+	// left to the token check at sign-in, which refuses an HS-signed token.
+	if err := p.Claims(&d); err != nil {
+		return nil //nolint:nilerr // unreadable here is checked at sign-in, as above
+	}
+	if len(d.Algs) == 0 {
+		return nil
+	}
+	for _, alg := range d.Algs {
+		if asymmetric[alg] {
+			return nil
+		}
+	}
+	return symmetricSigning(errs.ValidInvalid, strings.Join(d.Algs, ", "))
+}
+
+func symmetricSigning(code errs.Code, alg string) error {
+	return errs.Newf(code,
+		"The identity provider signs ID tokens with %s, a key shared through the client secret rather than a published key, so Pando cannot check them.", alg).
+		WithRemedy("In Authentik, edit the OAuth2/OpenID provider and choose a Signing Key, such as the self-signed " +
+			"certificate Authentik creates. For another provider, set the application's ID token signing algorithm to RS256.")
+}
+
+// tokenAlg is the alg in a compact JWT's header, or "" if it cannot be read.
+func tokenAlg(raw string) string {
+	head, _, ok := strings.Cut(raw, ".")
+	if !ok {
+		return ""
+	}
+	b, err := base64.RawURLEncoding.DecodeString(head)
+	if err != nil {
+		return ""
+	}
+	var h struct {
+		Alg string `json:"alg"`
+	}
+	if json.Unmarshal(b, &h) != nil {
+		return ""
+	}
+	return h.Alg
 }
 
 func (a *Adapter) oauth(p *gooidc.Provider, callback string) *oauth2.Config {
@@ -289,6 +354,9 @@ func (a *Adapter) Authenticate(ctx context.Context, c api.Credential) (api.Subje
 			"The identity provider returned no ID token, so it is not acting as an OpenID Connect provider.").
 			WithRemedy("Check that the application in your provider is an OpenID Connect web application and that the openid scope is allowed.")
 	}
+	if alg := tokenAlg(rawID); strings.HasPrefix(alg, "HS") {
+		return api.Subject{}, symmetricSigning(errs.AuthInvalid, alg)
+	}
 	idToken, err := p.Verifier(&gooidc.Config{ClientID: a.cfg.ClientID}).Verify(httpCtx, rawID)
 	if err != nil {
 		return api.Subject{}, errs.Wrap(errs.AuthInvalid, "The ID token the identity provider returned did not verify.", err).
@@ -319,7 +387,16 @@ func (a *Adapter) Authenticate(ctx context.Context, c api.Credential) (api.Subje
 			}
 		}
 	}
-	return a.subject(claims)
+	s, err := a.subject(claims)
+	if err != nil {
+		return api.Subject{}, err
+	}
+	if over, endpoint := overage(claims, orDefault(a.cfg.GroupsClaim, "groups")); over {
+		if s.Groups, err = a.overageGroups(ctx, endpoint, token.AccessToken); err != nil {
+			return api.Subject{}, err
+		}
+	}
+	return s, nil
 }
 
 // subject maps claims to a Subject by the configured claim names.

@@ -43,12 +43,13 @@ func Info() api.KindInfo {
 		Presets: []api.Preset{
 			{ID: "okta", Label: "Okta",
 				Help: "In Okta, create a SAML 2.0 app. Single sign-on URL is Pando's ACS URL; Audience URI is Pando's entity ID. " +
-					"Add attribute statements email, displayName, and a group attribute statement groups (Matches regex .*). " +
-					"Then paste the app's Metadata URL here.",
-				Values: map[string]string{"name_id_format": "persistent", "groups_attribute": "groups", "trust_email": "true"}},
+					"Add attribute statements okta_user_id (user.getInternalProperty(\"id\")), email and displayName, and a group " +
+					"attribute statement groups (Matches regex .*). Then paste the app's Metadata URL here.",
+				Values: map[string]string{"subject_attribute": "okta_user_id", "groups_attribute": "groups"}},
 			{ID: "entra", Label: "Microsoft Entra ID",
 				Help: "In Entra, create an enterprise application with SAML. Identifier is Pando's entity ID, Reply URL is the ACS " +
-					"URL. Add a group claim. Paste the App Federation Metadata Url here.",
+					"URL. Add a group claim; groups arrive as object IDs, so link each to a Pando group to name it. Paste the App " +
+					"Federation Metadata Url here.",
 				Values: map[string]string{"groups_attribute": "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"}},
 			{ID: "google", Label: "Google Workspace",
 				Help: "In the Admin console, add a custom SAML app. ACS URL and Entity ID are Pando's. Map Primary email to email " +

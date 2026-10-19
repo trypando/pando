@@ -58,13 +58,13 @@ func Info() api.KindInfo {
 					"scopes": "openid email profile groups"}},
 			{ID: "entra", Label: "Microsoft Entra ID",
 				Help: "In Entra, register an application with a Web redirect URI set to the one Pando shows, create a " +
-					"client secret, and add the groups claim under Token configuration. Entra does not vouch for email " +
-					"addresses, so accounts are never linked by email.",
+					"client secret, and add the groups claim under Token configuration. Groups arrive as object IDs; link each " +
+					"to a Pando group to give it a name. Entra does not vouch for email addresses, so accounts are never linked by email.",
 				Values: map[string]string{"issuer": "https://login.microsoftonline.com/{tenant-id}/v2.0",
-					"subject_claim": "oid", "groups_claim": "groups", "scopes": "openid email profile"}},
+					"subject_claim": "oid", "groups_claim": "groups", "scopes": "openid email profile User.Read"}},
 			{ID: "google", Label: "Google Workspace",
 				Help: "In Google Cloud, create an OAuth client of type Web application with the redirect URI Pando shows. " +
-					"Google sends no groups; use SCIM or Pando groups for access.",
+					"Groups are not synced from Google, so give access through Pando groups.",
 				Values: map[string]string{"issuer": "https://accounts.google.com", "hosted_domain": "{your-domain.com}",
 					"scopes": "openid email profile"}},
 			{ID: "keycloak", Label: "Keycloak",
@@ -73,7 +73,7 @@ func Info() api.KindInfo {
 				Values: map[string]string{"issuer": "https://{keycloak-host}/realms/{realm}", "groups_claim": "groups"}},
 			{ID: "authentik", Label: "Authentik",
 				Help: "Create an OAuth2/OpenID Provider with a confidential client and the redirect URI Pando shows, and an " +
-					"application using it. Authentik sends groups in the profile scope.",
+					"application using it, and choose a Signing Key on the provider. Authentik sends groups in the profile scope.",
 				Values: map[string]string{"issuer": "https://{authentik-host}/application/o/{application-slug}/",
 					"groups_claim": "groups"}},
 		},
