@@ -57,7 +57,7 @@ source stored by one replica and built by both from the shared `/var/lib/pando`
 
 Found and fixed by that run: an app's IngressRoute was named with the app ID as is (`pando-app_01…`),
 which the API refuses, so every deploy failed at routing — it is lowercased with a hyphen now; Traefik
-3.2's CRD provider watches nodes and serves no route until it can, so `pando-edge-traefik` gets a
+3.2's CRD provider watches nodes, and from 3.4 the configmaps in its namespace too, and serves no route until it can, so `pando-edge-traefik` gets a
 ClusterRole reading nodes; a deleted app without storage left its namespace behind, and now goes in one
 delete; `Stop` deleted finished pods too, so the reconciler stopping an app as it gave up took the log
 of the crash that failed it — it now deletes only pods still running; and BuildKit's Deployment asked
@@ -79,7 +79,7 @@ ReadWriteMany volume (the test's is a directory every kind node mounts); usage f
 | File | What |
 |---|---|
 | `namespaces.yaml` | `pando` and `pando-edge`, both Pod Security `baseline`, and `pando-build`, `privileged`, for BuildKit alone (O-48) |
-| `rbac.yaml` | The tables under "RBAC, minimal" below: Pando's ClusterRole, `pando-app-manager`, the edge Role, and `pando-edge-traefik` (a Role in `pando-edge`, and a ClusterRole reading nodes, which Traefik 3.2 watches) |
+| `rbac.yaml` | The tables under "RBAC, minimal" below: Pando's ClusterRole, `pando-app-manager`, the edge Role, and `pando-edge-traefik` (a Role in `pando-edge`, and a ClusterRole reading nodes, which Traefik watches from 3.2; the Role covers the configmaps it watches from 3.4) |
 | `admission-policy.yaml` | The ValidatingAdmissionPolicies: namespace deletes only of Pando's, no NodePort or LoadBalancer Service but the edge's, no `ExternalName` outside `pando-edge`, no host network or host port, every IngressRoute to `pando-proxy` |
 | `networkpolicy.yaml` | Default deny in `pando`; Pando's server pods admit the edge and each other on 8080; BuildKit admits only Pando and reaches only outside the cluster |
 | `buildkit.yaml` | Rootless BuildKit alone in `pando-build`, which enforces Pod Security `privileged`: seccomp and AppArmor `Unconfined`, nothing privileged, no host path or runtime socket (O-48, R-112). It admits only Pando's server pods and reaches DNS, the in-cluster registry and outside the cluster (R-113) |

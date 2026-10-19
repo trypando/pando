@@ -152,8 +152,48 @@ func TestR105_AMissingDNSCredentialIsNamed(t *testing.T) {
 	e := configureErr(t, `{"dir":"DIR","certificates":"dns","acme_email":"ops@example.com",
 		"base_domain":"apps.example.com","dns_provider":"route53",
 		"credentials":{"dns_credentials":"AWS_ACCESS_KEY_ID=AKIA"}}`)
-	require.Contains(t, e.Message, "AWS_SECRET_ACCESS_KEY")
+	require.Contains(t, e.Message, "AWS_SECRET_ACCESS_KEY and AWS_REGION are not there")
 	require.Contains(t, e.Remedy, "NAME=value")
+}
+
+// TestR169_ARoute53ConfigurationWithoutARegionIsRefused asserts R-169: lego
+// cannot reach Route 53 without AWS_REGION, so a configuration missing it is
+// refused when it is saved, not when the first certificate fails to issue.
+func TestR169_ARoute53ConfigurationWithoutARegionIsRefused(t *testing.T) {
+	const route53 = `{"dir":"DIR","certificates":"dns","acme_email":"ops@example.com",
+		"base_domain":"apps.example.com","dns_provider":"route53",
+		"credentials":{"dns_credentials":"AWS_ACCESS_KEY_ID=AKIA\nAWS_SECRET_ACCESS_KEY=s%s"}}`
+
+	e := configureErr(t, fmt.Sprintf(route53, ""))
+	require.Contains(t, e.Message, "Amazon Route 53 needs AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_REGION")
+	require.Contains(t, e.Message, "AWS_REGION is not there")
+	require.Contains(t, e.Remedy, "us-east-1")
+
+	e = configureErr(t, fmt.Sprintf(route53, `\nAWS_REGION=`))
+	require.Contains(t, e.Message, "AWS_REGION is not there", "an empty value is not a region")
+
+	a, _ := adapter(t, fmt.Sprintf(route53, `\nAWS_REGION=us-east-1`))
+	plan, _, err := a.Edge(context.Background(), edgeReq)
+	require.NoError(t, err)
+	require.Equal(t, "us-east-1", plan.Env["AWS_REGION"].Reveal())
+}
+
+func TestAProviderWithNoCredentialsSaysNoneAreThere(t *testing.T) {
+	e := configureErr(t, `{"dir":"DIR","certificates":"dns","acme_email":"ops@example.com",
+		"base_domain":"apps.example.com","dns_provider":"cloudflare"}`)
+	require.Contains(t, e.Message, "CF_DNS_API_TOKEN, or CF_API_EMAIL and CF_API_KEY")
+	require.Contains(t, e.Message, "none of them is there")
+	require.Equal(t, "Enter each as a line of the form NAME=value in the DNS provider credentials.", e.Remedy)
+}
+
+func TestTheCredentialsHelpNamesTheRoute53Region(t *testing.T) {
+	for _, f := range traefik.Info().Fields {
+		if f.Key == "dns_credentials" {
+			require.Contains(t, f.Help, "Amazon Route 53: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_REGION (AWS_REGION can be us-east-1")
+			return
+		}
+	}
+	t.Fatal("no dns_credentials field")
 }
 
 func TestAMalformedCredentialLineIsNamedByNumberNeverQuoted(t *testing.T) {
@@ -210,6 +250,12 @@ func TestR174_ATraefikSomebodyElseRunsHasNoEdge(t *testing.T) {
 	require.False(t, needs)
 	require.NoFileExists(t, filepath.Join(dir, "pando-console.yml"),
 		"another Traefik's other hostnames are not Pando's to answer")
+}
+
+// TestTheBundledTraefikIsPinnedToARelease: a minor tag such as v3.7 moves
+// under an install between two starts; a patch release does not.
+func TestTheBundledTraefikIsPinnedToARelease(t *testing.T) {
+	require.Regexp(t, `^traefik:v3\.7\.\d+$`, traefik.DefaultImage)
 }
 
 func TestTheTraefikImageCanBeOverridden(t *testing.T) {

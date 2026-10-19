@@ -49,13 +49,22 @@ type dnsProvider struct {
 	// Needs lists the sets of variables that satisfy the provider; one full
 	// set is enough. Cloudflare takes a scoped token or a global key and email.
 	Needs [][]string
+
+	// Hint is said after Needs, in the form's help and in the remedy when a
+	// variable is missing, for a value whose answer is not obvious.
+	Hint string
 }
 
 // dnsProviders are the five offered by name (design 03 §4.4). Any other code
 // Traefik knows works through "other", with whatever variables it is given.
 var dnsProviders = []dnsProvider{
 	{Code: "cloudflare", Label: "Cloudflare", Needs: [][]string{{"CF_DNS_API_TOKEN"}, {"CF_API_EMAIL", "CF_API_KEY"}}},
-	{Code: "route53", Label: "Amazon Route 53", Needs: [][]string{{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}}},
+	// AWS_REGION: lego's Route 53 provider lists it among the credentials
+	// and has no default of its own, so without it the configuration saves and
+	// every certificate request then fails. Required here rather than
+	// defaulted, because the right answer differs in AWS GovCloud and China.
+	{Code: "route53", Label: "Amazon Route 53", Needs: [][]string{{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"}},
+		Hint: "AWS_REGION can be us-east-1 for any standard AWS account, since Route 53 is global."},
 	{Code: "digitalocean", Label: "DigitalOcean", Needs: [][]string{{"DO_AUTH_TOKEN"}}},
 	{Code: "porkbun", Label: "Porkbun", Needs: [][]string{{"PORKBUN_API_KEY", "PORKBUN_SECRET_API_KEY"}}},
 	{Code: "namecheap", Label: "Namecheap", Needs: [][]string{{"NAMECHEAP_API_USER", "NAMECHEAP_API_KEY"}}},
@@ -137,9 +146,9 @@ func validateManaged(cfg *Config) (map[string]secret.Value, error) {
 	if p, ok := knownProvider(cfg.DNSProvider); ok {
 		if !satisfies(env, p.Needs) {
 			return nil, errs.Newf(errs.ValidInvalid,
-				"%s needs %s in the DNS provider credentials, and they are not all there.",
-				p.Label, describeNeeds(p.Needs)).
-				WithRemedy("Enter each as a line of the form NAME=value in the DNS provider credentials.")
+				"%s needs %s in the DNS provider credentials, and %s.",
+				p.Label, describeNeeds(p.Needs), describeMissing(env, p.Needs)).
+				WithRemedy(strings.TrimSpace("Enter each as a line of the form NAME=value in the DNS provider credentials. " + p.Hint))
 		}
 	}
 	return env, nil
@@ -183,9 +192,43 @@ func satisfies(env map[string]secret.Value, needs [][]string) bool {
 func describeNeeds(needs [][]string) string {
 	sets := make([]string, 0, len(needs))
 	for _, set := range needs {
-		sets = append(sets, strings.Join(set, " and "))
+		sets = append(sets, joinAnd(set))
 	}
 	return strings.Join(sets, ", or ")
+}
+
+// describeMissing names what is missing from the set closest to complete, or
+// says none of it is there when no set has been started.
+func describeMissing(env map[string]secret.Value, needs [][]string) string {
+	var closest []string
+	started := false
+	for _, set := range needs {
+		var missing []string
+		for _, k := range set {
+			if env[k].IsZero() {
+				missing = append(missing, k)
+			}
+		}
+		if len(missing) < len(set) && (!started || len(missing) < len(closest)) {
+			closest, started = missing, true
+		}
+	}
+	switch {
+	case !started:
+		return "none of them is there"
+	case len(closest) == 1:
+		return closest[0] + " is not there"
+	default:
+		return joinAnd(closest) + " are not there"
+	}
+}
+
+// joinAnd is "A", "A and B", or "A, B and C".
+func joinAnd(names []string) string {
+	if len(names) < 3 {
+		return strings.Join(names, " and ")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 func (a *Adapter) tls() bool {
@@ -415,7 +458,11 @@ func providerOptions() []api.Option {
 func credentialsHelp() string {
 	parts := make([]string, 0, len(dnsProviders))
 	for _, p := range dnsProviders {
-		parts = append(parts, p.Label+": "+describeNeeds(p.Needs))
+		part := p.Label + ": " + describeNeeds(p.Needs)
+		if p.Hint != "" {
+			part += " (" + strings.TrimSuffix(p.Hint, ".") + ")"
+		}
+		parts = append(parts, part)
 	}
 	return "One NAME=value per line. " + strings.Join(parts, ". ") +
 		". For another provider, the variables Traefik's documentation lists for it."

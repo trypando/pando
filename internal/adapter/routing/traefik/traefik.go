@@ -135,7 +135,7 @@ const (
 )
 
 // DefaultImage is the Traefik this release of Pando runs.
-const DefaultImage = "traefik:v3.2"
+const DefaultImage = "traefik:v3.7.15"
 
 func New() *Adapter { return &Adapter{} }
 

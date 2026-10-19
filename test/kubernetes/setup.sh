@@ -10,7 +10,7 @@ CTX=kind-$CLUSTER
 IMAGE=${PANDO_K8S_IMAGE:-pando-k8s-test/pando:dev}
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
-TRAEFIK_CRDS=https://raw.githubusercontent.com/traefik/traefik/v3.2/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
+TRAEFIK_CRDS=https://raw.githubusercontent.com/traefik/traefik/v3.7/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
 REGISTRY_NAME=registry.pando.svc.cluster.local:5000
 REGISTRY_IP=10.96.0.50
 k() { kubectl --context "$CTX" "$@"; }

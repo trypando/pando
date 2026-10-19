@@ -146,8 +146,11 @@ rules:
     resources: [ingressroutes, ingressroutetcps, ingressrouteudps, middlewares, middlewaretcps,
       traefikservices, tlsoptions, tlsstores, serverstransports, serverstransporttcps]
     verbs: [get, list, watch]
+  # configmaps since v3.4: the CRD provider watches them in its namespace and
+  # serves no route until that watch syncs, so leaving them out is a 404 for
+  # every request to the edge.
   - apiGroups: [""]
-    resources: [services, secrets]
+    resources: [services, secrets, configmaps]
     verbs: [get, list, watch]
   - apiGroups: [discovery.k8s.io]
     resources: [endpointslices]
@@ -167,7 +170,7 @@ subjects:
     name: pando-edge-traefik
     namespace: pando-edge
 ---
-# Traefik's CRD provider (v3.2 and later) watches nodes, cluster-wide, and
+# Traefik's CRD provider (v3.2 and later, through v3.7) watches nodes, cluster-wide, and
 # serves no route until that watch syncs: without this every request to the
 # edge was a 404, with "nodes is forbidden" in its log. Read only; nodes hold
 # no secret.
