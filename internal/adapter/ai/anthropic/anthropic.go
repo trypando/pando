@@ -16,12 +16,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/adapter/checkkit"
 	"github.com/trypando/pando/internal/secret"
 )
 
@@ -50,6 +53,15 @@ const (
 	maxTokens = 8192
 )
 
+// workspaceHeader names the workspace a request acts in. Required on every
+// request made with a key that is not scoped to one workspace.
+const workspaceHeader = "anthropic-workspace-id"
+
+// workspaceIDPattern is a workspace's tagged ID as the Console and the List
+// Workspaces endpoint show it: wrkspc_ and an alphanumeric body. Checked here so
+// a mistyped value fails at save rather than as a 400 on the first screening.
+var workspaceIDPattern = regexp.MustCompile(`^wrkspc_[A-Za-z0-9]+$`)
+
 // Config is the adapter's own configuration (design 10 §7).
 type Config struct {
 	// Credentials are supplied by core, decrypted from adapter_credentials at
@@ -67,6 +79,12 @@ type Config struct {
 
 	// BaseURL points at a gateway or a proxy. Empty is the Anthropic API.
 	BaseURL string `json:"base_url,omitempty"`
+
+	// WorkspaceID is sent as the anthropic-workspace-id header on every
+	// request. The API refuses a key created for several workspaces without
+	// it; a key created for one workspace needs nothing, so empty sends no
+	// header at all.
+	WorkspaceID string `json:"workspace_id,omitempty"`
 
 	// ScreenPlans defaults to true (R-336): configuring this adapter meant
 	// supplying a credential, and that was the decision. False turns off both
@@ -104,22 +122,9 @@ func (a *Adapter) Category() api.Category { return api.CategoryAI }
 
 // Configure reads the adapter's row from adapter_configs.
 func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
-	var cfg Config
-	if len(raw) > 0 {
-		// A key at the top level is a key that was stored in the clear. The
-		// create handler and the database both refuse one; refusing it here as
-		// well means a row written some other way does not quietly work.
-		var top map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &top); err != nil {
-			return fmt.Errorf("anthropic: reading configuration: %w", err)
-		}
-		if _, inline := top["api_key"]; inline {
-			return errors.New("anthropic: api_key is in this adapter's stored configuration, which is " +
-				"unencrypted; set it as a credential instead")
-		}
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return fmt.Errorf("anthropic: reading configuration: %w", err)
-		}
+	cfg, err := decodeConfig(raw)
+	if err != nil {
+		return err
 	}
 
 	key := resolveKey(cfg, os.Getenv)
@@ -131,6 +136,12 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 			"credential, or name an environment variable in api_key_env")
 	}
 	cfg.Credentials.APIKey = key
+	cfg.WorkspaceID = strings.TrimSpace(cfg.WorkspaceID)
+	if cfg.WorkspaceID != "" && !workspaceIDPattern.MatchString(cfg.WorkspaceID) {
+		return fmt.Errorf("anthropic: workspace_id %q is not an Anthropic workspace ID — copy it from the "+
+			"ID column of the Workspaces page in the Claude Console (it starts with wrkspc_), or leave it "+
+			"empty if the API key was created for a single workspace", cfg.WorkspaceID)
+	}
 	if cfg.Model == "" {
 		cfg.Model = DefaultModel
 	}
@@ -141,18 +152,49 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		cfg.MaxBytes = DefaultMaxBytes
 	}
 
+	a.cfg = cfg
+	a.client = anthropic.NewClient(requestOptions(cfg)...)
+	a.ready = true
+	return nil
+}
+
+// decodeConfig reads raw into a Config, refusing an API key stored inline
+// in the unencrypted configuration (R-190).
+func decodeConfig(raw json.RawMessage) (Config, error) {
+	var cfg Config
+	if len(raw) > 0 {
+		// A key at the top level is a key that was stored in the clear. The
+		// create handler and the database both refuse one; refusing it here as
+		// well means a row written some other way does not quietly work.
+		var top map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &top); err != nil {
+			return Config{}, fmt.Errorf("anthropic: reading configuration: %w", err)
+		}
+		if _, inline := top["api_key"]; inline {
+			return Config{}, errors.New("anthropic: api_key is in this adapter's stored configuration, which is " +
+				"unencrypted; set it as a credential instead")
+		}
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			return Config{}, fmt.Errorf("anthropic: reading configuration: %w", err)
+		}
+	}
+	return cfg, nil
+}
+
+// requestOptions is what every request to the API carries: the key, and the
+// base URL, workspace and timeout where cfg sets them.
+func requestOptions(cfg Config) []option.RequestOption {
 	opts := []option.RequestOption{option.WithAPIKey(cfg.Credentials.APIKey.Reveal())}
 	if cfg.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
 	}
+	if cfg.WorkspaceID != "" {
+		opts = append(opts, option.WithHeader(workspaceHeader, cfg.WorkspaceID))
+	}
 	if cfg.TimeoutSeconds > 0 {
 		opts = append(opts, option.WithRequestTimeout(time.Duration(cfg.TimeoutSeconds)*time.Second))
 	}
-
-	a.cfg = cfg
-	a.client = anthropic.NewClient(opts...)
-	a.ready = true
-	return nil
+	return opts
 }
 
 // HealthCheck asks the API whether the configured model exists.
@@ -234,6 +276,7 @@ var _ api.AIAdapter = (*Adapter)(nil)
 // (api.KindInfo, R-261).
 func Info() api.KindInfo {
 	return api.KindInfo{
+		Check:       check,
 		Category:    api.CategoryAI,
 		Kind:        Kind,
 		Name:        "Anthropic",
@@ -242,8 +285,24 @@ func Info() api.KindInfo {
 		Fields: []api.Field{
 			{Key: "api_key", Label: "API key", Type: "string", Help: "An Anthropic API key. Stored encrypted and never shown again. Leave empty to use ANTHROPIC_API_KEY from Pando’s environment.", Credential: true, Placeholder: "sk-ant-…"},
 			{Key: "model", Label: "Model", Type: "string", Help: "The Claude model each function uses unless its assignment names another.", Default: DefaultModel},
+			{Key: "workspace_id", Label: "Workspace ID", Type: "string", Help: "Needed only when the API key was created for more than one workspace.", Placeholder: "wrkspc_…"},
 			{Key: "base_url", Label: "Base URL", Type: "string", Help: "A gateway or proxy in front of the Anthropic API. Empty is the API itself.", Default: "https://api.anthropic.com", Advanced: true},
 			{Key: "api_key_env", Label: "API key variable", Type: "string", Help: "The environment variable to read the key from, instead of a stored one.", Default: "ANTHROPIC_API_KEY", Advanced: true},
 		},
 	}
+}
+
+// check runs Configure on a configuration being saved, so what would keep it
+// from starting is said now (KindInfo.Check).
+func check(config json.RawMessage, credentials map[string]secret.Value, stored []string) error {
+	// A key not given here may be in Pando's environment when it starts, and
+	// that is checked then: an adapter is not refused for one it may read.
+	if credentials["api_key"].IsZero() {
+		stored = append(stored, "api_key")
+	}
+	merged, err := checkkit.Merge(config, credentials, stored)
+	if err != nil {
+		return err
+	}
+	return New().Configure(context.Background(), merged)
 }
