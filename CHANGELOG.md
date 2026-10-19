@@ -19,6 +19,28 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Security
+
+No new advisories.
+
+### Added
+
+- **Pando creates the GitHub App itself** (R-091). A GitHub source connection signs in with a GitHub
+  App by default, marked recommended. Saving one opens GitHub with the App filled in — read access
+  to repository contents and nothing more — under your account or the connection's organization;
+  choose **Create GitHub App**, pick the repositories, choose **Install**, and the connection is
+  ready. No App ID, private key or installation ID is copied by hand. Each installation of Pando
+  gets its own App. `pando source authorize` and the MCP tool hand you a console link to finish it
+  in the browser, where GitHub requires it.
+- The App Pando creates carries a **push webhook** when Pando's address is public (R-142), so a push
+  starts an automatic deploy at once rather than at the next poll; **Deploy on push** turns it off.
+  On a private address the App has no webhook, which GitHub would refuse, and auto-deploy polls.
+
+### Changed
+
+- The GitHub App fields (App ID, installation ID, private key) are no longer in the form. A
+  connection set up with them before keeps working.
+
 ## [0.10.0] - 2026-10-19
 
 ### Security

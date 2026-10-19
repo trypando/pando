@@ -1633,6 +1633,30 @@ replica finds it. Access tokens that expire are renewed by `GitCredential` (clon
 core calls before a listing: GitLab rotates its refresh token on every use, and a listing that refreshed on
 its own would lose the new one.
 
+**[D] A GitHub App is created by Pando, not entered by hand (R-091).** The `app` method is GitHub's first and
+recommended one. Saving a connection with it stores no App; authorizing it (`mode` `web`) runs two trips through
+the browser. The first posts a manifest — read access to contents and metadata, the setup and callback
+addresses, and, unless `push_webhook` is off, a webhook for `push`, `create` and `release` — to GitHub's
+registration page, the organization's when the owner is one. GitHub takes a manifest only as a form post, so
+`POST /authorize` returns it as `form` and the browser posts it: the console does so itself, and the CLI and
+MCP hand the person a console address that does (`?authorize=`). GitHub returns to the callback with a code
+the adapter exchanges (`POST /app-manifests/{code}/conversions`) for the App's ID, URL name, private key and
+webhook secret, all stored as the connection's credentials (R-190), and the callback sends the browser on to
+the App's installation page. GitHub returns from that to `GET /sources/{id}/installed` with the installation's
+ID, which is kept only once the App's own token reads it as one of its installations, on the connection's
+owner when it names one. The adapter keeps nothing between the trips (R-027): what is next is read from the
+credentials. One App per installation of Pando, created under the person's account or organization: a single
+App shipped with Pando would put one private key in every copy. A connection whose App was entered by hand
+before this keeps working from its stored settings; the form no longer asks for them.
+
+**[P] The App's webhook is registered only where GitHub can reach it.** github.com refuses an App whose
+webhook is on a loopback, private or single-label address, and the App with it, so the manifest carries the
+webhook only when Pando's address is public (`sourceconn.Public`); otherwise auto-deploy polls (R-142).
+Deliveries go to `POST /sources/{id}/webhook`, signed with the App's secret, and start a check of each app
+that deploys automatically from the repository named and the ref moved — the same check a poll runs, so
+nothing in the payload decides what deploys (`autodeploy.DeliverForSource`). Repositories are compared by
+host and path, lower-cased, without `.git`.
+
 **[D] Submodules are not fetched** (R-021), with or without a connection. Whether to fetch them with the
 parent's connection is O-57.
 

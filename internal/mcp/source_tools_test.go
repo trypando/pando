@@ -20,6 +20,7 @@ func TestR091_SourceConnectionToolsMapToTheirEndpoints(t *testing.T) {
 		{"pando_list_source_branches", `{"source_id":"src_github","url":"https://github.com/acme/api.git"}`, "GET",
 			"/sources/src_github/branches?url=https%3A%2F%2Fgithub.com%2Facme%2Fapi.git", ""},
 		{"pando_authorize_source", `{"source_id":"src_github"}`, "POST", "/sources/src_github/authorize", `{"mode":"device"}`},
+		{"pando_authorize_source", `{"source_id":"src_gh","mode":"web"}`, "POST", "/sources/src_gh/authorize", `{"mode":"web"}`},
 		{"pando_poll_source_authorization", `{"source_id":"src_github"}`, "POST", "/sources/src_github/authorize/poll", ""},
 	})
 }

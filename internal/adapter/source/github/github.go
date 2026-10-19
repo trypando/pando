@@ -2,6 +2,11 @@
 // GitHub Enterprise Server, reached with a GitHub App installation, an OAuth
 // application, a personal access token or a deploy key.
 //
+// A GitHub App is not entered by hand: authorizing the connection creates one
+// from a manifest, owned by the person's account or organization, and then
+// installs it (manifest.go). Each installation of Pando has its own App, so no
+// private key is shared between installations.
+//
 // Stateless like every adapter (R-027): an App installation token is minted
 // on every call rather than cached, and an OAuth token refreshed here goes
 // back to core in GitCredential.Rotated for core to store.
@@ -9,6 +14,7 @@ package github
 
 import (
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -28,9 +34,15 @@ const (
 	provider    = "GitHub"
 	defaultHost = "github.com"
 
-	// FieldAppPrivateKey is the credential field holding a GitHub App's
-	// private key.
-	FieldAppPrivateKey = "app_private_key"
+	// The credential fields a GitHub App connection holds, all written by
+	// Pando when it creates and installs the App: its private key, the
+	// secret its webhook is signed with, and its ID, URL name and
+	// installation, which are not secret but arrive with the key.
+	FieldAppPrivateKey  = "app_private_key"
+	FieldWebhookSecret  = api.CredentialWebhookSecret
+	FieldAppID          = "app_id"
+	FieldAppSlug        = "app_slug"
+	FieldInstallationID = "installation_id"
 
 	// tokenUser is the username GitHub expects beside a token over HTTPS.
 	tokenUser = "x-access-token"
@@ -53,10 +65,20 @@ type settings struct {
 	forgekit.Settings
 
 	// AppID is the GitHub App's ID, and InstallationID the installation of
-	// it to mint tokens for. An empty installation is looked up by owner.
+	// it to mint tokens for, for a connection whose App was entered by hand
+	// before Pando created Apps itself. An empty installation is looked up
+	// by owner. A connection Pando created the App for keeps both among its
+	// credentials instead.
 	AppID          string `json:"app_id"`
 	InstallationID string `json:"installation_id"`
+
+	// PushWebhook gives the App Pando creates a webhook, so a push starts a
+	// check at once (R-142). Nil is on.
+	PushWebhook *bool `json:"push_webhook"`
 }
+
+// pushWebhook says whether the App is created with its webhook.
+func (s settings) pushWebhook() bool { return s.PushWebhook == nil || *s.PushWebhook }
 
 // Adapter is one connection to GitHub.
 type Adapter struct {
@@ -66,7 +88,7 @@ type Adapter struct {
 	apiURL string // https://api.github.com, or https://HOST/api/v3
 	webURL string // https://github.com, or https://HOST; where OAuth lives
 	http   *http.Client
-	appKey any // the App's parsed private key, for method app
+	appKey *rsa.PrivateKey // the App's parsed private key, once it is created
 	now    func() time.Time
 }
 
@@ -151,9 +173,15 @@ func (a *Adapter) SourceCapabilities() api.SourceCapabilities {
 		ListRepositories: a.cfg.Method != forgekit.MethodSSH,
 		Authorized:       a.authorized(),
 	}
-	if a.cfg.Method == forgekit.MethodOAuth {
+	switch a.cfg.Method {
+	case forgekit.MethodOAuth:
 		c.DeviceAuthorization = true
 		c.WebAuthorization = !a.cfg.Credential(forgekit.FieldClientSecret).IsZero()
+	case forgekit.MethodApp:
+		// Creating the App, and installing it, happen in the browser. One
+		// entered by hand has no URL name to install it from.
+		c.WebAuthorization = a.appKey == nil || a.cfg.Credential(FieldAppSlug).Reveal() != ""
+		c.Webhook = a.appKey != nil && !a.cfg.Credential(FieldWebhookSecret).IsZero()
 	}
 	return c
 }
@@ -162,8 +190,11 @@ func (a *Adapter) authorized() bool {
 	if !a.configured {
 		return false
 	}
-	if a.cfg.Method == forgekit.MethodOAuth {
+	switch a.cfg.Method {
+	case forgekit.MethodOAuth:
 		return !a.cfg.Credential(forgekit.FieldAccessToken).IsZero()
+	case forgekit.MethodApp:
+		return a.appKey != nil && (a.cfg.installationID() != "" || a.cfg.byOwner())
 	}
 	return true
 }
@@ -242,8 +273,12 @@ func (a *Adapter) Refresh(ctx context.Context) (map[string]secret.Value, error) 
 	return tokens.Fields(), nil
 }
 
-// BeginAuthorization starts a device or browser authorization.
+// BeginAuthorization starts a device or browser authorization, or the
+// creation or installation of a GitHub App.
 func (a *Adapter) BeginAuthorization(ctx context.Context, req api.AuthorizationRequest) (api.Authorization, error) {
+	if a.configured && a.cfg.Method == forgekit.MethodApp {
+		return a.beginApp(ctx, req)
+	}
 	if err := a.requireOAuth(); err != nil {
 		return api.Authorization{}, err
 	}
@@ -260,8 +295,12 @@ func (a *Adapter) BeginAuthorization(ctx context.Context, req api.AuthorizationR
 	}
 }
 
-// CompleteAuthorization polls the device code or exchanges the browser's code.
+// CompleteAuthorization polls the device code or exchanges the browser's
+// code, or finishes a GitHub App's creation or installation.
 func (a *Adapter) CompleteAuthorization(ctx context.Context, req api.AuthorizationCompletion) (api.AuthorizationResult, error) {
+	if a.configured && a.cfg.Method == forgekit.MethodApp {
+		return a.completeApp(ctx, req)
+	}
 	if err := a.requireOAuth(); err != nil {
 		return api.AuthorizationResult{}, err
 	}
@@ -297,7 +336,7 @@ func (a *Adapter) requireOAuth() error {
 	}
 	if a.cfg.Method != forgekit.MethodOAuth {
 		return errs.Newf(errs.ValidInvalid,
-			"This GitHub connection signs in with %s; there is nothing to authorize. Only a connection whose method is oauth is authorized.", methodName(a.cfg.Method))
+			"This GitHub connection signs in with %s; there is nothing to authorize. Only a connection whose method is app or oauth is authorized.", methodName(a.cfg.Method))
 	}
 	return nil
 }
@@ -343,8 +382,8 @@ func Info() api.KindInfo {
 	appWhen := &api.Condition{Key: "method", Values: []string{forgekit.MethodApp}}
 	fields := []api.Field{
 		forgekit.MethodField(
-			api.Option{Value: forgekit.MethodApp, Label: "GitHub App",
-				Description: "An App installed on an organization or user. Tokens are short-lived and limited to the repositories the installation allows."},
+			api.Option{Value: forgekit.MethodApp, Label: "GitHub App", Recommended: true,
+				Description: "Pando creates an App on GitHub, and you pick the repositories it reads. Tokens are short-lived."},
 			api.Option{Value: forgekit.MethodOAuth, Label: "OAuth application",
 				Description: "Authorize as a GitHub user, with a code entered on GitHub or in the browser."},
 			api.Option{Value: forgekit.MethodToken, Label: "Personal access token",
@@ -354,14 +393,10 @@ func Info() api.KindInfo {
 		),
 		forgekit.HostField(defaultHost),
 		forgekit.ScopeField("Owner",
-			"The organization or user on GitHub. Empty is every repository the credential can read; a GitHub App without an installation ID needs one.",
+			"The organization or user on GitHub. Empty is every repository the credential reaches, and for a GitHub App, your own account.",
 			"acme"),
-		{Key: "app_id", Label: "App ID", Type: "string", ShownWhen: appWhen, Placeholder: "123456",
-			Help: "The App's ID, shown on its settings page in GitHub under General → About."},
-		{Key: "installation_id", Label: "Installation ID", Type: "string", ShownWhen: appWhen, Placeholder: "45678901",
-			Help: "The number at the end of the installation's settings address. Empty looks it up from the owner."},
-		{Key: FieldAppPrivateKey, Label: "App private key", Type: "string", Multiline: true, Credential: true, ShownWhen: appWhen,
-			Help: "The contents of the .pem file GitHub downloads under the App's Credentials, Key pairs."},
+		{Key: "push_webhook", Label: "Deploy on push", Type: "bool", Default: "true", ShownWhen: appWhen,
+			Help: "Needs a public Pando address. Without one, Pando checks for pushes on a schedule."},
 	}
 	fields = append(fields, forgekit.OAuthFields(
 		"From the OAuth application registered in GitHub under Settings → Developer settings → OAuth Apps, with device flow enabled.")...)
@@ -382,7 +417,7 @@ func Info() api.KindInfo {
 		Fields:      fields,
 		Presets: []api.Preset{
 			{ID: "github.com", Label: "GitHub.com",
-				Help:   "Install a GitHub App on the organization, or create a personal access token under Settings → Developer settings.",
+				Help:   "Pando creates a GitHub App for you when the connection is saved.",
 				Values: map[string]string{"host": defaultHost}},
 			{ID: "ghes", Label: "GitHub Enterprise Server",
 				Help: "Enter the server's host. Its API is at https://<host>/api/v3 unless it was moved."},

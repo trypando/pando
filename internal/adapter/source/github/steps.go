@@ -9,21 +9,12 @@ import (
 func steps() []api.Step {
 	return []api.Step{
 		forgekit.MethodStep(),
-		{ID: "app", Label: "Create the App", Title: "Create a GitHub App", ShownWhen: forgekit.WhenMethod(forgekit.MethodApp),
+		{ID: "app", Label: "GitHub App", Title: "Create the App on GitHub", ShownWhen: forgekit.WhenMethod(forgekit.MethodApp),
 			Do: []api.Action{
-				{Text: "In GitHub, open **Settings** → **Developer settings** → **GitHub Apps** → **New GitHub App**. For an organization, start from its settings."},
-				{Text: "Enter a **GitHub App name** and **Homepage URL**. Under **Webhook**, clear **Active**."},
-				{Text: "Under **Repository permissions**, set **Contents** to **Read-only**."},
-				{Text: "Choose **Create GitHub App** and copy the **App ID**. Under **Credentials** → **Key pairs**, choose **New key**."},
-			},
-			Links:  []api.Link{{Label: "Open GitHub Apps", URL: "https://{host}/settings/apps"}},
-			Fields: []string{"app_id", FieldAppPrivateKey}},
-		{ID: "install", Label: "Install it", Title: "Install the App", ShownWhen: forgekit.WhenMethod(forgekit.MethodApp),
-			Do: []api.Action{
-				{Text: "Choose **Install App**, then **Install** beside the owner."},
+				{Text: "After you save, choose **Create GitHub App** on GitHub."},
 				{Text: "Pick the repositories and choose **Install**."},
 			},
-			Fields: []string{"installation_id"}},
+			Fields: []string{"push_webhook"}},
 		forgekit.OAuthStep("OAuth app", "Register an OAuth application",
 			[]api.Link{{Label: "Open OAuth apps", URL: "https://{host}/settings/developers"}},
 			"In GitHub, open **Settings** → **Developer settings** → **OAuth apps** → **New OAuth App**.",

@@ -309,7 +309,7 @@ func TestR091_DeviceAuthorizationStoresTheTokenItReturns(t *testing.T) {
 	store := creds{}
 	s := service(configs{row("src_fake", "fake", map[string]any{"host": "forge.example"})}, store, &calls)
 
-	a, err := s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationDevice, "")
+	a, err := s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationDevice, sourceconn.Addresses{})
 	require.NoError(t, err)
 	require.Equal(t, "ABCD-1234", a.UserCode)
 	require.Equal(t, 5, a.IntervalSeconds)
@@ -337,16 +337,16 @@ func TestR091_WebAuthorizationChecksTheStateItStarted(t *testing.T) {
 	store := creds{}
 	s := service(configs{row("src_fake", "fake", map[string]any{"host": "forge.example"})}, store, new(int))
 
-	a, err := s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationWeb, "https://pando.example/api/v1/sources/callback?x=1")
+	a, err := s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationWeb, sourceconn.Addresses{Callback: "https://pando.example/api/v1/sources/callback?x=1"})
 	require.NoError(t, err)
 	state := a.AuthorizeURL[strings.Index(a.AuthorizeURL, "state=")+len("state="):]
 	require.True(t, strings.HasPrefix(state, "src_fake."))
 
-	_, err = s.CompleteWebAuthorization(ctx(), "src_fake.forged", "code")
+	_, _, err = s.CompleteWebAuthorization(ctx(), "src_fake.forged", "code")
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
 	require.Empty(t, store["src_fake"])
 
-	id, err := s.CompleteWebAuthorization(ctx(), state, "code")
+	id, _, err := s.CompleteWebAuthorization(ctx(), state, "code")
 	require.NoError(t, err)
 	require.Equal(t, "src_fake", id)
 	require.Equal(t, "good", store["src_fake"]["access_token"].Reveal())

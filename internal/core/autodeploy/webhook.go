@@ -14,6 +14,7 @@ import (
 	"github.com/trypando/pando/internal/core/reconciler"
 	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // Delivery is one webhook request from a git host, as it arrived.
@@ -78,32 +79,42 @@ func (s *Service) Deliver(ctx context.Context, appID string, d Delivery) (Outcom
 		return Outcome{Message: why}, nil
 	}
 
-	// Detached from the request, which ends when this returns. The ID is the
-	// one the store gave back, never the request's path: what reaches the log
-	// is an app that exists, not whatever a caller typed.
-	known := app.ID
-	go func() {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), checkTimeout)
-		defer cancel()
-		if err := s.Checker.CheckApp(ctx, known, reconciler.DeliveryWebhook); err != nil && s.Logger != nil {
-			s.Logger.Warn("could not check for new commits after a webhook",
-				zap.String("app_id", known), zap.Error(err))
-		}
-	}()
+	// The ID is the one the store gave back, never the request's path: what
+	// reaches the log is an app that exists, not whatever a caller typed.
+	s.startCheck(ctx, app.ID)
 	return Outcome{Checking: true, Message: "Pando is checking this app for something new to deploy."}, nil
 }
 
+// startCheck checks an app in the background, detached from the request,
+// which ends when the delivery is answered.
+func (s *Service) startCheck(ctx context.Context, appID string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), checkTimeout)
+		defer cancel()
+		if err := s.Checker.CheckApp(ctx, appID, reconciler.DeliveryWebhook); err != nil && s.Logger != nil {
+			s.Logger.Warn("could not check for new commits after a webhook",
+				zap.String("app_id", appID), zap.Error(err))
+		}
+	}()
+}
+
 func (s *Service) verify(ctx context.Context, appID string, d Delivery) bool {
+	key, found, err := s.Secrets.Get(ctx, appID)
+	if err != nil || !found {
+		return false
+	}
+	return signed(key, d)
+}
+
+// signed says whether a delivery's signature is the HMAC-SHA256 of its body
+// under key.
+func signed(key secret.Value, d Delivery) bool {
 	hexSig, ok := strings.CutPrefix(d.Signature, "sha256=")
-	if !ok {
+	if !ok || key.IsZero() {
 		return false
 	}
 	got, err := hex.DecodeString(hexSig)
 	if err != nil {
-		return false
-	}
-	key, found, err := s.Secrets.Get(ctx, appID)
-	if err != nil || !found {
 		return false
 	}
 	mac := hmac.New(sha256.New, []byte(key.Reveal()))

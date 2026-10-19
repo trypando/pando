@@ -4781,7 +4781,8 @@
                 {
                   "value": "app",
                   "label": "GitHub App",
-                  "description": "An App installed on an organization or user. Tokens are short-lived and limited to the repositories the installation allows."
+                  "description": "Pando creates an App on GitHub, and you pick the repositories it reads. Tokens are short-lived.",
+                  "recommended": true
                 },
                 {
                   "value": "oauth",
@@ -4813,49 +4814,22 @@
             {
               "key": "scope",
               "label": "Owner",
-              "help": "The organization or user on GitHub. Empty is every repository the credential can read; a GitHub App without an installation ID needs one.",
+              "help": "The organization or user on GitHub. Empty is every repository the credential reaches, and for a GitHub App, your own account.",
               "type": "string",
               "placeholder": "acme"
             },
             {
-              "key": "app_id",
-              "label": "App ID",
-              "help": "The App's ID, shown on its settings page in GitHub under General → About.",
-              "type": "string",
+              "key": "push_webhook",
+              "label": "Deploy on push",
+              "help": "Needs a public Pando address. Without one, Pando checks for pushes on a schedule.",
+              "type": "bool",
               "shown_when": {
                 "key": "method",
                 "values": [
                   "app"
                 ]
               },
-              "placeholder": "123456"
-            },
-            {
-              "key": "installation_id",
-              "label": "Installation ID",
-              "help": "The number at the end of the installation's settings address. Empty looks it up from the owner.",
-              "type": "string",
-              "shown_when": {
-                "key": "method",
-                "values": [
-                  "app"
-                ]
-              },
-              "placeholder": "45678901"
-            },
-            {
-              "key": "app_private_key",
-              "label": "App private key",
-              "help": "The contents of the .pem file GitHub downloads under the App's Credentials, Key pairs.",
-              "type": "string",
-              "multiline": true,
-              "shown_when": {
-                "key": "method",
-                "values": [
-                  "app"
-                ]
-              },
-              "credential": true
+              "default": "true"
             },
             {
               "key": "client_id",
@@ -4958,7 +4932,7 @@
             {
               "id": "github.com",
               "label": "GitHub.com",
-              "help": "Install a GitHub App on the organization, or create a personal access token under Settings → Developer settings.",
+              "help": "Pando creates a GitHub App for you when the connection is saved.",
               "values": {
                 "host": "github.com"
               }
@@ -4981,53 +4955,18 @@
             },
             {
               "id": "app",
-              "label": "Create the App",
-              "title": "Create a GitHub App",
+              "label": "GitHub App",
+              "title": "Create the App on GitHub",
               "do": [
                 {
-                  "text": "In GitHub, open **Settings** → **Developer settings** → **GitHub Apps** → **New GitHub App**. For an organization, start from its settings."
-                },
-                {
-                  "text": "Enter a **GitHub App name** and **Homepage URL**. Under **Webhook**, clear **Active**."
-                },
-                {
-                  "text": "Under **Repository permissions**, set **Contents** to **Read-only**."
-                },
-                {
-                  "text": "Choose **Create GitHub App** and copy the **App ID**. Under **Credentials** → **Key pairs**, choose **New key**."
-                }
-              ],
-              "links": [
-                {
-                  "label": "Open GitHub Apps",
-                  "url": "https://{host}/settings/apps"
-                }
-              ],
-              "fields": [
-                "app_id",
-                "app_private_key"
-              ],
-              "shown_when": {
-                "key": "method",
-                "values": [
-                  "app"
-                ]
-              }
-            },
-            {
-              "id": "install",
-              "label": "Install it",
-              "title": "Install the App",
-              "do": [
-                {
-                  "text": "Choose **Install App**, then **Install** beside the owner."
+                  "text": "After you save, choose **Create GitHub App** on GitHub."
                 },
                 {
                   "text": "Pick the repositories and choose **Install**."
                 }
               ],
               "fields": [
-                "installation_id"
+                "push_webhook"
               ],
               "shown_when": {
                 "key": "method",

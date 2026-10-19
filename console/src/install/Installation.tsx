@@ -5,7 +5,7 @@
 // no implication graph between verbs (R-082), so a sidebar that assumed one
 // would offer a screen whose every request comes back 403.
 
-import { createContext, useContext, useLayoutEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Banner,
@@ -27,7 +27,7 @@ import { api, base } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { AdapterDialog } from './AdapterDialog';
 import { InlineWarning } from '../ui/InlineWarning';
-import { AuthorizeDialog, covers, useSources } from './Sources';
+import { AuthorizeDialog, covers, needsAuthorizing, useSources } from './Sources';
 import type { SourceConnection } from './Sources';
 import { Capacity } from './Capacity';
 import { useAIFunctionOn } from './AIFunctions';
@@ -111,11 +111,22 @@ export function Installation({ query }: { query?: string } = {}) {
   const back = new URLSearchParams(query ?? '');
   const returnedError = back.get('error');
   const returnedOK = back.get('authorized');
+  // The CLI and an assistant send a person here to authorize a connection
+  // only a browser can: a GitHub App, whose manifest the browser posts.
+  const [toAuthorize, setToAuthorize] = useState<string | null>(back.get('authorize'));
 
   // Each source connection's state — ready, not authorized, or why it cannot
   // be used — beside its row.
   const sources = useSources();
   const connections = new Map((sources.data?.sources ?? []).map((s) => [s.id, s]));
+  // A connection just saved, or named in the address, that still needs
+  // authorizing opens its authorization straight away.
+  useEffect(() => {
+    if (!toAuthorize || !sources.data) return;
+    const c = (sources.data.sources ?? []).find((s) => s.id === toAuthorize);
+    setToAuthorize(null);
+    if (c && needsAuthorizing(c)) setAuthorizing(c);
+  }, [toAuthorize, sources.data]);
   const disconnect = useMutation({
     mutationFn: (id: string) => api.del<void>(`/sources/${encodeURIComponent(id)}`),
     onSuccess: (_, id) => {
@@ -249,12 +260,14 @@ export function Installation({ query }: { query?: string } = {}) {
           category={editing.category}
           adapters={rows}
           onClose={() => setEditing(null)}
-          onSaved={(name, category, saveWarnings) => {
+          onSaved={(name, category, saveWarnings, id) => {
             setEditing(null);
             setWarnings(saveWarnings ?? []);
             if (category === 'source' || category === 'image_registry') {
               setNotice(`${name} is saved and in use. No restart is needed.`);
-              if (category === 'source') void queries.invalidateQueries({ queryKey: ['sources'] });
+              if (category === 'source') {
+                void queries.invalidateQueries({ queryKey: ['sources'] }).then(() => setToAuthorize(id ?? null));
+              }
             } else {
               setSaved(name);
             }

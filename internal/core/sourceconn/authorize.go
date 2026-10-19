@@ -34,6 +34,21 @@ type Authorization struct {
 	AuthorizeURL    string                `json:"authorize_url,omitempty"`
 	IntervalSeconds int                   `json:"interval_seconds,omitempty"`
 	ExpiresAt       time.Time             `json:"expires_at,omitzero"`
+
+	// Form is what the browser posts to the provider instead of opening
+	// AuthorizeURL: a GitHub App's manifest. Only a browser can send it.
+	Form *api.AuthorizeForm `json:"form,omitempty"`
+}
+
+// Addresses are where Pando is reached, for a browser authorization: the
+// callback a provider returns the browser to, and for a connection that
+// creates a GitHub App, the setup address an installation returns to, the
+// connection's webhook, and Pando's own address.
+type Addresses struct {
+	Callback string
+	Setup    string
+	Webhook  string
+	Homepage string
 }
 
 // AuthorizationStatus is how an authorization stands.
@@ -45,10 +60,10 @@ type AuthorizationStatus struct {
 	SlowDown bool `json:"slow_down,omitempty"`
 }
 
-// BeginAuthorization starts an OAuth authorization of a connection. In web
-// mode redirectURL is Pando's callback. Starting one replaces any other in
-// progress for the connection.
-func (s *Service) BeginAuthorization(ctx context.Context, id string, mode api.AuthorizationMode, redirectURL string) (Authorization, error) {
+// BeginAuthorization starts an OAuth authorization of a connection, or the
+// creation or installation of its GitHub App. Starting one replaces any other
+// in progress for the connection.
+func (s *Service) BeginAuthorization(ctx context.Context, id string, mode api.AuthorizationMode, at Addresses) (Authorization, error) {
 	if s.Authorizations == nil {
 		return Authorization{}, errs.New(errs.StateInvalid,
 			"Pando has no secrets adapter configured, so it cannot keep an authorization while it is in progress.").
@@ -81,12 +96,20 @@ func (s *Service) BeginAuthorization(ctx context.Context, id string, mode api.Au
 	}
 
 	state := randomState()
+	redirectURL := ""
+	req := api.AuthorizationRequest{Mode: mode, State: id + "." + state}
 	if mode == api.AuthorizationWeb {
-		redirectURL = withoutQuery(redirectURL)
+		redirectURL = withoutQuery(at.Callback)
+		req.RedirectURL = redirectURL
+		req.SetupURL = at.Setup
+		req.HomepageURL = at.Homepage
+		// A provider refuses a webhook it cannot reach, and would refuse the
+		// whole App with it; without one, auto-deploy polls (R-142).
+		if Public(at.Webhook) {
+			req.WebhookURL = at.Webhook
+		}
 	}
-	a, err := c.adapter.BeginAuthorization(ctx, api.AuthorizationRequest{
-		Mode: mode, RedirectURL: redirectURL, State: id + "." + state,
-	})
+	a, err := c.adapter.BeginAuthorization(ctx, req)
 	if err != nil {
 		return Authorization{}, err
 	}
@@ -111,6 +134,7 @@ func (s *Service) BeginAuthorization(ctx context.Context, id string, mode api.Au
 		VerificationURL: a.VerificationURL,
 		AuthorizeURL:    a.AuthorizeURL,
 		ExpiresAt:       a.ExpiresAt,
+		Form:            a.Form,
 	}
 	if a.Interval > 0 {
 		out.IntervalSeconds = int(a.Interval / time.Second)
@@ -147,21 +171,23 @@ func (s *Service) PollAuthorization(ctx context.Context, id string) (Authorizati
 
 // CompleteWebAuthorization finishes a browser authorization from the
 // provider's callback. state is what the provider sent back; it names the
-// connection and must match the one this authorization was started with.
-func (s *Service) CompleteWebAuthorization(ctx context.Context, state, code string) (string, error) {
+// connection and must match the one this authorization was started with. It
+// returns the connection, and where the browser goes next when the provider
+// has another step — a GitHub App just created is installed next — or "".
+func (s *Service) CompleteWebAuthorization(ctx context.Context, state, code string) (id, next string, err error) {
 	id, raw, ok := strings.Cut(state, ".")
 	if !ok || id == "" || raw == "" {
-		return "", errs.New(errs.ValidInvalid,
+		return "", "", errs.New(errs.ValidInvalid,
 			"This authorization link is not one Pando started. Start the authorization again from Adapters in the console.")
 	}
 	c, pending, err := s.pending(ctx, id)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	sum := sha256.Sum256([]byte(raw))
 	if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(pending[pendingState].Reveal())) != 1 ||
 		pending[pendingMode].Reveal() != string(api.AuthorizationWeb) {
-		return "", errs.New(errs.ValidInvalid,
+		return "", "", errs.New(errs.ValidInvalid,
 			"This authorization link is not the one Pando is waiting for. Start the authorization again from Adapters in the console.")
 	}
 	res, err := c.adapter.CompleteAuthorization(ctx, api.AuthorizationCompletion{
@@ -169,12 +195,52 @@ func (s *Service) CompleteWebAuthorization(ctx context.Context, state, code stri
 		RedirectURL: pending[pendingRedir].Reveal(),
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := s.finish(ctx, id, res); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return id, nil
+	return id, onHost(res.ContinueURL, c.Capabilities.Host), nil
+}
+
+// onHost is a next step's address when it is on the connection's own host —
+// the only place a provider's next step can be — and "" otherwise, so the
+// callback never sends a browser anywhere else.
+func onHost(next, host string) string {
+	u, err := url.Parse(next)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || host == "" || !strings.EqualFold(u.Hostname(), host) {
+		return ""
+	}
+	return u.String()
+}
+
+// CompleteInstallation keeps the installation a provider's setup address was
+// given, once the connection's adapter has checked it is an installation of
+// its own App. installationID came through the browser and is trusted no
+// further than that check.
+func (s *Service) CompleteInstallation(ctx context.Context, id, installationID string) error {
+	if !s.stored(id) {
+		return errs.Newf(errs.StateInvalid,
+			"The source connection %q is declared in the configuration file, so Pando cannot store its installation.", id)
+	}
+	c, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if c.adapter == nil {
+		return errs.Newf(errs.StateInvalid,
+			"The source connection %q cannot be installed: %s", c.Name, c.Problem)
+	}
+	res, err := c.adapter.CompleteAuthorization(ctx, api.AuthorizationCompletion{
+		Mode: api.AuthorizationInstall, Code: installationID,
+	})
+	if err != nil {
+		return err
+	}
+	if len(res.Credentials) == 0 {
+		return errs.New(errs.AdapterFailed, "The provider finished the installation without an ID.")
+	}
+	return s.store(ctx, id, res.Credentials)
 }
 
 // pending is a connection and the authorization in progress for it.
@@ -210,12 +276,19 @@ func (s *Service) finish(ctx context.Context, id string, res api.AuthorizationRe
 	if len(res.Credentials) == 0 {
 		return errs.New(errs.AdapterFailed, "The provider finished the authorization without a token.")
 	}
-	for field, v := range res.Credentials {
+	if err := s.store(ctx, id, res.Credentials); err != nil {
+		return err
+	}
+	s.clear(ctx, id)
+	return nil
+}
+
+func (s *Service) store(ctx context.Context, id string, creds map[string]secret.Value) error {
+	for field, v := range creds {
 		if err := s.Credentials.Put(ctx, id, field, v); err != nil {
 			return err
 		}
 	}
-	s.clear(ctx, id)
 	return nil
 }
 

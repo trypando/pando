@@ -71,14 +71,16 @@ type SourceAdapter interface {
 	ListBranches(ctx context.Context, repoURL string) ([]string, error)
 
 	// BeginAuthorization starts an OAuth authorization, for a connection
-	// whose method is oauth. Device mode needs no address Pando can be
-	// reached at; web mode returns a URL to send the person to, which comes
-	// back to req.RedirectURL.
+	// whose method is oauth, or the creation and installation of a GitHub
+	// App. Device mode needs no address Pando can be reached at; web mode
+	// returns a URL or a form to send the person to, which comes back to
+	// req.RedirectURL.
 	BeginAuthorization(ctx context.Context, req AuthorizationRequest) (Authorization, error)
 
-	// CompleteAuthorization finishes one: polls the device code, or
-	// exchanges the web code. A device authorization the person has not
-	// approved yet returns a result with Pending set and no error.
+	// CompleteAuthorization finishes one: polls the device code, exchanges
+	// the web code, or checks an installation (AuthorizationInstall). A
+	// device authorization the person has not approved yet returns a result
+	// with Pending set and no error.
 	CompleteAuthorization(ctx context.Context, req AuthorizationCompletion) (AuthorizationResult, error)
 }
 
@@ -102,15 +104,27 @@ type SourceCapabilities struct {
 	ListRepositories bool `json:"list_repositories"`
 
 	// DeviceAuthorization and WebAuthorization say which OAuth flows the
-	// connection can run. Both false for every method but oauth.
+	// connection can run. Both false for every method but oauth, and for a
+	// GitHub App, whose creation and installation run in the browser.
 	DeviceAuthorization bool `json:"device_authorization"`
 	WebAuthorization    bool `json:"web_authorization"`
+
+	// Webhook says the connection has a webhook of its own the host sends
+	// pushes to, signed with a secret the connection holds under
+	// CredentialWebhookSecret (R-142): a GitHub App created with its push
+	// webhook. Pando then checks the apps it reads without waiting for the
+	// next poll.
+	Webhook bool `json:"webhook"`
 
 	// Authorized says the connection holds what it needs to clone: a token,
 	// a key, or a completed OAuth authorization. An oauth connection that
 	// has not been authorized yet is false, and covers nothing.
 	Authorized bool `json:"authorized"`
 }
+
+// CredentialWebhookSecret is the credential field a connection whose
+// capabilities say Webhook keeps the secret its webhook is signed with under.
+const CredentialWebhookSecret = "webhook_secret"
 
 // GitCredential is what core's git client clones with. Exactly one of
 // Password, BearerToken or SSHPrivateKey is set.
@@ -192,6 +206,12 @@ const (
 	// AuthorizationWeb sends the person's browser to the provider and back
 	// to Pando's callback.
 	AuthorizationWeb AuthorizationMode = "web"
+
+	// AuthorizationInstall finishes a GitHub App's installation: the
+	// provider sends the browser to SetupURL with the installation's ID,
+	// which CompleteAuthorization takes as Code. Never begun; core reaches
+	// it only from the setup address.
+	AuthorizationInstall AuthorizationMode = "install"
 )
 
 // AuthorizationRequest starts an OAuth authorization.
@@ -204,6 +224,21 @@ type AuthorizationRequest struct {
 	// State is what the provider returns to the callback, for web mode.
 	// Core makes it and checks it; the adapter only passes it along.
 	State string
+
+	// SetupURL is where the provider sends the browser once an App is
+	// installed, HomepageURL is Pando's own address, and WebhookURL is the
+	// connection's webhook — empty when the provider could not reach it, as
+	// on a private address. For a connection that creates a GitHub App.
+	SetupURL    string
+	HomepageURL string
+	WebhookURL  string
+}
+
+// AuthorizeForm is a form the person's browser submits to the provider, for
+// a flow that starts with a POST rather than a link: a GitHub App manifest.
+type AuthorizeForm struct {
+	Action string            `json:"action"`
+	Fields map[string]string `json:"fields"`
 }
 
 // Authorization is an OAuth authorization in progress.
@@ -217,6 +252,10 @@ type Authorization struct {
 
 	// AuthorizeURL is where to send the person's browser in web mode.
 	AuthorizeURL string
+
+	// Form, when set, is submitted by the browser instead of opening
+	// AuthorizeURL.
+	Form *AuthorizeForm
 
 	// Interval is how often to poll in device mode.
 	Interval time.Duration
@@ -252,4 +291,9 @@ type AuthorizationResult struct {
 
 	// ExpiresAt is when the access token expires, if it does.
 	ExpiresAt time.Time
+
+	// ContinueURL is where the browser goes next when the authorization has
+	// another step at the provider: a GitHub App just created is installed
+	// next. Empty when it is finished.
+	ContinueURL string
 }

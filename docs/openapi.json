@@ -9667,7 +9667,7 @@
       "post": {
         "operationId": "beginSourceAuthorization",
         "summary": "Authorize a source",
-        "description": "Start an OAuth authorization of a connection. `mode` `device` (the default) returns `user_code` and `verification_url` to show, and `interval_seconds` to poll POST /authorize/poll at; it needs no address the provider can reach. `mode` `web` returns `authorize_url` to send the browser to, which comes back to GET /api/v1/sources/callback.\n\nNeeds `install.adapters.manage`.",
+        "description": "Start an OAuth authorization of a connection, or create and install its GitHub App. `mode` `device` (the default) returns `user_code` and `verification_url` to show, and `interval_seconds` to poll POST /authorize/poll at; it needs no address the provider can reach. `mode` `web` returns `authorize_url` to send the browser to, which comes back to GET /api/v1/sources/callback. A GitHub App connection is web only: while its App is not created yet the answer also has `form`, an `action` and `fields` the browser posts to GitHub, and `authorize_url` is the console page that posts it. Once created, the App is installed next, and GitHub returns to GET /api/v1/sources/{sourceID}/installed.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Sources"
         ],
@@ -9809,6 +9809,50 @@
         "x-pando-verb": "app.create"
       }
     },
+    "/api/v1/sources/{sourceID}/installed": {
+      "get": {
+        "operationId": "sourceInstalled",
+        "summary": "GitHub App installed",
+        "description": "Where GitHub returns the browser once the App Pando created for a connection is installed: the App's setup URL. Keeps `installation_id` once the App's own token confirms it is an installation of that App, and redirects to the console's Adapters screen with `authorized` or `error`.\n\nNeeds `install.adapters.manage`.",
+        "tags": [
+          "Sources"
+        ],
+        "parameters": [
+          {
+            "name": "sourceID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "installation_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "A redirect, for a browser to follow.",
+            "headers": {
+              "Location": {
+                "description": "Where the browser is sent.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.adapters.manage"
+      }
+    },
     "/api/v1/sources/{sourceID}/repositories": {
       "get": {
         "operationId": "listSourceRepositories",
@@ -9871,6 +9915,76 @@
           }
         },
         "x-pando-verb": "app.create"
+      }
+    },
+    "/api/v1/sources/{sourceID}/webhook": {
+      "post": {
+        "operationId": "sourceWebhook",
+        "summary": "GitHub App webhook",
+        "description": "Where the GitHub App Pando created for a connection sends push and release events, signed with the App's webhook secret in `X-Hub-Signature-256`. A verified delivery starts a check of each app that deploys automatically from the repository it names and the ref it moved (202); anything else is ignored (200). Public: the signature is the credential.",
+        "tags": [
+          "Sources"
+        ],
+        "parameters": [
+          {
+            "name": "sourceID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-GitHub-Event",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Hub-Signature-256",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "The event as GitHub sends it, signed in `X-Hub-Signature-256`."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted: the work continues after the response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": []
       }
     },
     "/api/v1/subscriptions": {
@@ -12352,6 +12466,9 @@
           "expires_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "form": {
+            "$ref": "#/components/schemas/AuthorizeForm"
           }
         },
         "required": [
@@ -12370,6 +12487,27 @@
         },
         "required": [
           "status"
+        ]
+      },
+      "AuthorizeForm": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "fields": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "fields"
         ]
       },
       "AutoDeploy": {
@@ -14912,6 +15050,9 @@
           },
           "description": {
             "type": "string"
+          },
+          "recommended": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -16609,6 +16750,9 @@
           "web_authorization": {
             "type": "boolean"
           },
+          "webhook": {
+            "type": "boolean"
+          },
           "authorized": {
             "type": "boolean"
           }
@@ -16619,6 +16763,7 @@
           "list_repositories",
           "device_authorization",
           "web_authorization",
+          "webhook",
           "authorized"
         ]
       },

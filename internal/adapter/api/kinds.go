@@ -233,6 +233,10 @@ type Option struct {
 	// Description says what choosing it means, for a short list shown as
 	// radio buttons where the tradeoff should be visible.
 	Description string `json:"description,omitempty"`
+
+	// Recommended marks the choice to make unless there is a reason not to.
+	// At most one option of a setting carries it.
+	Recommended bool `json:"recommended,omitempty"`
 }
 
 // Condition is a setting's value a form checks before showing another.

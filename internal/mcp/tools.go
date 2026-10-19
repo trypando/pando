@@ -336,16 +336,29 @@ var toolList = []tool{
 	},
 	{
 		Name: "pando_authorize_source",
-		Description: "Start signing a source connection in with OAuth by device code. Returns user_code " +
+		Description: "Start signing a source connection in. By device code (the default) it returns user_code " +
 			"and verification_url: tell the person to open the URL and enter the code, then call " +
-			"pando_poll_source_authorization every interval_seconds until it says authorized.",
-		Schema: schema(map[string]any{"source_id": str("The connection's id, from pando_list_sources.")}, "source_id"),
+			"pando_poll_source_authorization every interval_seconds until it says authorized. A connection " +
+			"whose capabilities have web_authorization and not device_authorization — a GitHub App, which " +
+			"Pando creates on GitHub and then installs — takes mode web: give the person authorize_url to open " +
+			"in a browser signed in to Pando, and check pando_list_sources afterwards.",
+		Schema: schema(map[string]any{
+			"source_id": str("The connection's id, from pando_list_sources."),
+			"mode":      str("device (the default) or web."),
+		}, "source_id"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, err := stringArg(args, "source_id", true)
 			if err != nil {
 				return "", "", nil, err
 			}
-			return "POST", "/sources/" + url.PathEscape(id) + "/authorize", map[string]string{"mode": "device"}, nil
+			mode, err := stringArg(args, "mode", false)
+			if err != nil {
+				return "", "", nil, err
+			}
+			if mode == "" {
+				mode = "device"
+			}
+			return "POST", "/sources/" + url.PathEscape(id) + "/authorize", map[string]string{"mode": mode}, nil
 		},
 	},
 	{

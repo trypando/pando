@@ -184,9 +184,11 @@ is encoded as 6003 API Activity, 99 Other.
 | `session.denied` | 3002 Authentication | 1 Logon | 300201 |
 | `session.revoke` | 3002 Authentication | 2 Logoff | 300202 |
 | `setup.token.replace` | 6003 API Activity | 1 Create | 600301 |
+| `source.connection.app_created` | 6003 API Activity | 1 Create | 600301 |
 | `source.connection.authorize` | 6003 API Activity | 1 Create | 600301 |
 | `source.connection.authorized` | 6003 API Activity | 1 Create | 600301 |
 | `source.connection.delete` | 6003 API Activity | 4 Delete | 600304 |
+| `source.connection.installed` | 6003 API Activity | 1 Create | 600301 |
 | `source.connection.use` | 6003 API Activity | 2 Read | 600302 |
 | `spec.create` | 6003 API Activity | 1 Create | 600301 |
 | `spec.export` | 6003 API Activity | 2 Read | 600302 |

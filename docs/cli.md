@@ -1481,12 +1481,13 @@ pando source authorize <connection>
 
 Shows a code to enter on the provider's site, then waits until you have. Nothing needs to be
 able to reach this Pando, so it works on a laptop. --web prints an address to open in a browser
-instead, which returns to Pando's own address.
+instead, which returns to Pando's own address. A GitHub App connection is always authorized in a
+browser: the address creates the App on GitHub, then installs it.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--timeout` | `15m0s` | how long to wait for the code to be approved |
-| `--web` |  | authorize in a browser instead of with a code |
+| `--web` |  | authorize in a browser instead of with a code (always, for a GitHub App) |
 
 #### `source branches`
 

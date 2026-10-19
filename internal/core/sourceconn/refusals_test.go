@@ -220,25 +220,25 @@ func TestR091_AnAuthorizationThatCannotRunSaysWhatWould(t *testing.T) {
 		{"src_web", api.AuthorizationDevice, "with a device code", "in the browser instead"},
 		{"src_none", api.AuthorizationDevice, "with a device code", "client ID and secret"},
 	} {
-		_, err := s.BeginAuthorization(ctx(), c.id, c.mode, "")
+		_, err := s.BeginAuthorization(ctx(), c.id, c.mode, sourceconn.Addresses{})
 		require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), c.id)
 		require.Contains(t, err.Error(), c.says, c.id)
 		require.Contains(t, errs.As(err).Remedy, c.remedy, c.id)
 	}
 
-	_, err := s.BeginAuthorization(ctx(), "src_device", "sms", "")
+	_, err := s.BeginAuthorization(ctx(), "src_device", "sms", sourceconn.Addresses{})
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "Valid answers: device, web")
 
-	_, err = s.BeginAuthorization(ctx(), "src_unknown", api.AuthorizationDevice, "")
+	_, err = s.BeginAuthorization(ctx(), "src_unknown", api.AuthorizationDevice, sourceconn.Addresses{})
 	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "cannot be authorized")
 
-	_, err = s.BeginAuthorization(ctx(), "src_gone", api.AuthorizationDevice, "")
+	_, err = s.BeginAuthorization(ctx(), "src_gone", api.AuthorizationDevice, sourceconn.Addresses{})
 	require.Equal(t, errs.NotFound, errs.CodeOf(err))
 
 	s.Authorizations = nil
-	_, err = s.BeginAuthorization(ctx(), "src_device", api.AuthorizationDevice, "")
+	_, err = s.BeginAuthorization(ctx(), "src_device", api.AuthorizationDevice, sourceconn.Addresses{})
 	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "no secrets adapter")
 }
@@ -261,21 +261,21 @@ func TestR091_AnAuthorizationInProgressIsFinishedOnlyTheWayItStarted(t *testing.
 	c := clock.NewFake(time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC))
 	s.Clock = c
 
-	a, err := s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationWeb, "https://pando.example/cb")
+	a, err := s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationWeb, sourceconn.Addresses{Callback: "https://pando.example/cb"})
 	require.NoError(t, err)
 	require.Equal(t, c.Now().Add(15*time.Minute), a.ExpiresAt, "an authorization with no expiry of its own gets fifteen minutes")
 	_, err = s.PollAuthorization(ctx(), "src_fake")
 	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "in the browser")
 
-	_, err = s.CompleteWebAuthorization(ctx(), "no-dot-here", "code")
+	_, _, err = s.CompleteWebAuthorization(ctx(), "no-dot-here", "code")
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "not one Pando started")
 
 	// A device authorization is not finished by a browser callback.
-	_, err = s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationDevice, "")
+	_, err = s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationDevice, sourceconn.Addresses{})
 	require.NoError(t, err)
-	_, err = s.CompleteWebAuthorization(ctx(), "src_fake.anything", "code")
+	_, _, err = s.CompleteWebAuthorization(ctx(), "src_fake.anything", "code")
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
 
 	c.Advance(16 * time.Minute)
@@ -287,7 +287,7 @@ func TestR091_AnAuthorizationInProgressIsFinishedOnlyTheWayItStarted(t *testing.
 	require.Contains(t, err.Error(), "No authorization", "an expired authorization is forgotten")
 	require.Empty(t, store["src_fake"])
 
-	_, err = s.BeginAuthorization(ctx(), "src_empty", api.AuthorizationDevice, "")
+	_, err = s.BeginAuthorization(ctx(), "src_empty", api.AuthorizationDevice, sourceconn.Addresses{})
 	require.NoError(t, err)
 	_, err = s.PollAuthorization(ctx(), "src_empty")
 	require.Equal(t, errs.AdapterFailed, errs.CodeOf(err))

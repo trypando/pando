@@ -98,6 +98,12 @@ func overrides() map[string]override {
 			schema:      &Schema{Type: "object", Description: "The event as GitHub sends it, signed in `X-Hub-Signature-256`."},
 		}},
 
+		// A GitHub App's event, read raw for the same reason.
+		"POST /api/v1/sources/{sourceID}/webhook": {request: &body{
+			contentType: jsonType,
+			schema:      &Schema{Type: "object", Description: "The event as GitHub sends it, signed in `X-Hub-Signature-256`."},
+		}},
+
 		// The provider's answer is handed to core whole.
 		"GET /api/v1/auth/providers/{providerID}/callback": {
 			noRequestBody: true,

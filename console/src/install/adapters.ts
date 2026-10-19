@@ -15,6 +15,8 @@ interface KindOption {
   label: string;
   /** What choosing it means, shown under a radio button. */
   description?: string;
+  /** The choice to make unless there is a reason not to. */
+  recommended?: boolean;
 }
 
 /** One setting a kind of adapter takes. */

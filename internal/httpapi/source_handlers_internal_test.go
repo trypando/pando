@@ -326,14 +326,14 @@ func TestR091_ABrowserAuthorizationReturnsToTheConsole(t *testing.T) {
 // address the request came in on.
 func TestTheSourceCallbackIsOnTheAddressABrowserReachesPandoBy(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "http://pando.local:8080/api/v1/sources/x/authorize", nil)
-	require.Equal(t, "http://pando.local:8080/api/v1/sources/callback", (&Server{}).sourceCallbackURL(r))
+	require.Equal(t, "http://pando.local:8080", (&Server{}).externalBase(r))
 
 	s := &Server{ExternalURL: &url.URL{Scheme: "https", Host: "pando.example", Path: "/x", RawQuery: "a=b"}}
-	require.Equal(t, "https://pando.example/api/v1/sources/callback", s.sourceCallbackURL(r))
+	require.Equal(t, "https://pando.example", s.externalBase(r))
 
 	// An external address with no host is not one.
 	s = &Server{ExternalURL: &url.URL{Path: "/relative"}}
-	require.Equal(t, "http://pando.local:8080/api/v1/sources/callback", s.sourceCallbackURL(r))
+	require.Equal(t, "http://pando.local:8080", s.externalBase(r))
 }
 
 // TestR091_AnInstallationWithoutSourceConnectionsSaysSo asserts every source

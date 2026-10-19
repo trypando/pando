@@ -101,7 +101,7 @@ describe('making an adapter the default in place of another, issue 220', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toMatchObject({ id: 'rte_cloudflare', is_default: true });
-    expect(onSaved).toHaveBeenCalledWith('Cloudflare', 'routing', []);
+    expect(onSaved).toHaveBeenCalledWith('Cloudflare', 'routing', [], 'rte_cloudflare');
   });
 
   it('shows why a handover was refused', async () => {

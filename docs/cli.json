@@ -4828,7 +4828,7 @@
       "path": "pando source authorize",
       "use": "authorize <connection>",
       "short": "Sign a connection in with OAuth",
-      "long": "Shows a code to enter on the provider's site, then waits until you have. Nothing needs to be\nable to reach this Pando, so it works on a laptop. --web prints an address to open in a browser\ninstead, which returns to Pando's own address.",
+      "long": "Shows a code to enter on the provider's site, then waits until you have. Nothing needs to be\nable to reach this Pando, so it works on a laptop. --web prints an address to open in a browser\ninstead, which returns to Pando's own address. A GitHub App connection is always authorized in a\nbrowser: the address creates the App on GitHub, then installs it.",
       "example": "",
       "aliases": [],
       "hidden": false,
@@ -4847,7 +4847,7 @@
           "shorthand": "",
           "type": "bool",
           "default": "false",
-          "usage": "authorize in a browser instead of with a code",
+          "usage": "authorize in a browser instead of with a code (always, for a GitHub App)",
           "required": false
         }
       ],

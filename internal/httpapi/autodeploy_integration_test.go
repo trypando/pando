@@ -4,6 +4,7 @@ package httpapi_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/httpapi"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // gitSpec is minimalSpec built from a repository, deploying automatically
@@ -244,4 +246,69 @@ func TestR142_AVerifiedWebhookStartsACheckThroughTheSamePath(t *testing.T) {
 	i.rotateWebhookSecret(admin, appID)
 	require.Equal(t, http.StatusUnauthorized, i.webhook(appID, "push", key, `{"ref":"refs/heads/main"}`).Code,
 		"a replaced secret stops verifying at once")
+}
+
+// sourceSecrets is the webhook secret of each source connection, by ID.
+type sourceSecrets map[string]string
+
+func (s sourceSecrets) WebhookSecret(_ context.Context, id string) (secret.Value, bool, error) {
+	v, ok := s[id]
+	return secret.New(v), ok, nil
+}
+
+// sourceWebhook sends a delivery to a source connection's webhook as a
+// GitHub App would, signed with key.
+func (i *install) sourceWebhook(sourceID, event, key, body string) reply {
+	i.t.Helper()
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write([]byte(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sources/"+sourceID+"/webhook", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", event)
+	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	rec := httptest.NewRecorder()
+	i.handler.ServeHTTP(rec, req)
+	return reply{Code: rec.Code, Body: rec.Body.Bytes(), Hdr: rec.Header()}
+}
+
+// TestR142_AGitHubAppsWebhookChecksTheAppsThatDeployFromTheRepository
+// asserts the webhook of a GitHub App Pando created: public, verified with
+// the App's secret, and starting a check of each app that deploys
+// automatically from the repository a delivery names, through the same path
+// an app's own webhook takes — and of no other.
+func TestR142_AGitHubAppsWebhookChecksTheAppsThatDeployFromTheRepository(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	i.Server.AutoDeploy.Sources = sourceSecrets{"src_gh": "whsec"}
+	admin := i.admin()
+	notes := i.createApp(admin, "notes")
+	i.pinSpec(admin, notes, i.writeSpec(admin, notes, gitSpec(map[string]any{"enabled": true, "branch": "main"})))
+	manual := i.createApp(admin, "manual")
+	i.pinSpec(admin, manual, i.writeSpec(admin, manual, gitSpec(map[string]any{"enabled": false})))
+
+	push := func(repo, ref string) string {
+		return `{"ref":"` + ref + `","repository":{"full_name":"` + repo + `","clone_url":"https://github.com/` + repo + `.git"}}`
+	}
+
+	ping := i.sourceWebhook("src_gh", "ping", "whsec", `{"zen":"Speak like a human."}`)
+	require.Equal(t, http.StatusOK, ping.Code, ping.String())
+
+	got := i.sourceWebhook("src_gh", "push", "whsec", push("Acme/Notes", "refs/heads/main"))
+	require.Equal(t, http.StatusAccepted, got.Code, got.String())
+	require.Equal(t, notes+" webhook", i.checked(5*time.Second))
+	require.Equal(t, "", i.checked(100*time.Millisecond), "an app that does not deploy automatically is not checked")
+
+	for name, body := range map[string]string{
+		"another repository": push("acme/other", "refs/heads/main"),
+		"another branch":     push("acme/notes", "refs/heads/feature"),
+	} {
+		got := i.sourceWebhook("src_gh", "push", "whsec", body)
+		require.Equal(t, http.StatusOK, got.Code, "%s: %s", name, got.String())
+		require.Contains(t, got.String(), "ignored", name)
+	}
+	require.Equal(t, "", i.checked(100*time.Millisecond))
+
+	require.Equal(t, http.StatusUnauthorized, i.sourceWebhook("src_gh", "push", "wrong", push("acme/notes", "refs/heads/main")).Code)
+	require.Equal(t, http.StatusUnauthorized, i.sourceWebhook("src_other", "push", "whsec", push("acme/notes", "refs/heads/main")).Code)
+	require.Equal(t, "", i.checked(100*time.Millisecond))
 }

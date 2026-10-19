@@ -155,6 +155,7 @@ var auditedRoutes = map[string][]string{
 	// A verified delivery starts a check in the background; the deploy it
 	// leads to is written by the reconciler as the system (R-228).
 	"POST /api/v1/apps/{appID}/auto-deploy/webhook": {"app.auto_deploy"},
+	"POST /api/v1/sources/{sourceID}/webhook":       {"app.auto_deploy"},
 	"POST /api/v1/apps/{appID}/specs":               {"spec.create"},
 	"POST /api/v1/apps/{appID}/specs/{rev}/pin":     {"spec.pin"},
 }

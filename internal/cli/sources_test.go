@@ -105,6 +105,23 @@ func TestR091_AConnectionIsAuthorizedFromTheCLI(t *testing.T) {
 	require.ErrorContains(t, run(t, refused, "", "source", "authorize", "src_git").err, "cannot be authorized")
 }
 
+// TestR091_AGitHubAppConnectionIsAuthorizedInTheBrowserFromTheCLI asserts a
+// connection that can only be authorized in a browser — a GitHub App, whose
+// manifest the browser posts — is sent there without --web.
+func TestR091_AGitHubAppConnectionIsAuthorizedInTheBrowserFromTheCLI(t *testing.T) {
+	api := newAPI(t).
+		reply("GET /sources", map[string]any{"sources": []map[string]any{{
+			"id": "src_gh", "name": "src_gh", "kind": "github",
+			"capabilities": map[string]any{"method": "app", "web_authorization": true}}}}).
+		reply("POST /sources/src_gh/authorize", map[string]any{
+			"mode": "web", "authorize_url": "https://pando.example/admin/system/adapters?authorize=src_gh",
+			"form": map[string]any{"action": "https://github.com/settings/apps/new?state=x", "fields": map[string]string{"manifest": "{}"}}})
+	got := run(t, api, "", "source", "authorize", "src_gh")
+	require.NoError(t, got.err, got.errOut)
+	require.JSONEq(t, `{"mode":"web"}`, api.bodyFor("POST /sources/src_gh/authorize"))
+	require.Contains(t, got.out, "https://pando.example/admin/system/adapters?authorize=src_gh")
+}
+
 // TestR091_ASlowDownIsHonoredAndAPollErrorEndsTheWait asserts the device
 // wait's two other answers: the provider asking for slower polling, and the
 // server refusing the poll.

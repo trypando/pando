@@ -21,38 +21,52 @@ import (
 
 // checkApp refuses an App connection Pando could not mint a token with, at
 // configuration rather than at the first clone, and returns the parsed key.
+// A connection whose App is not created yet has no key and is not refused: it
+// is not authorized, and authorizing it creates the App (manifest.go).
 // Nothing about the key is put in an error.
 func checkApp(cfg *settings) (*rsa.PrivateKey, error) {
 	cfg.AppID = strings.TrimSpace(cfg.AppID)
 	cfg.InstallationID = strings.TrimSpace(cfg.InstallationID)
-	if cfg.AppID == "" {
+	if cfg.Credential(FieldAppPrivateKey).IsZero() {
+		return nil, nil
+	}
+	if cfg.appID() == "" {
 		return nil, errs.New(errs.ValidInvalid, "A GitHub App connection needs the App's ID.").
-			WithRemedy("Copy the App ID from the App's settings page in GitHub, under General → About.")
+			WithRemedy("Disconnect the connection and add it again, so Pando creates the App.")
 	}
-	if cfg.InstallationID != "" && !digits(cfg.InstallationID) {
+	if id := cfg.installationID(); id != "" && !digits(id) {
 		return nil, errs.Newf(errs.ValidInvalid,
-			"%q is not a GitHub App installation ID. It is a number, such as 45678901.", cfg.InstallationID).
-			WithRemedy("Copy the number at the end of the installation's settings address, or leave it empty to look it up from the owner.")
+			"%q is not a GitHub App installation ID. It is a number, such as 45678901.", id).
+			WithRemedy("Install the App again from the connection under Adapters in the console.")
 	}
-	if cfg.InstallationID == "" && cfg.Scope == "" {
-		return nil, errs.New(errs.ValidInvalid,
-			"A GitHub App connection needs either the installation ID or the owner the App is installed on.").
-			WithRemedy("Enter the organization or user the App is installed on as the owner, or enter the installation ID.")
-	}
-	key, err := parseAppKey(cfg.Credential(FieldAppPrivateKey))
-	if err != nil {
-		return nil, err
-	}
-	return key, nil
+	return parseAppKey(cfg.Credential(FieldAppPrivateKey))
+}
+
+// appID is the App's ID: the one Pando stored when it created the App, or one
+// entered by hand before it could.
+func (s settings) appID() string {
+	return firstNonEmpty(strings.TrimSpace(s.Credential(FieldAppID).Reveal()), s.AppID)
+}
+
+// byOwner says the installation is looked up from the owner: an App entered
+// by hand with an owner and no installation ID. One Pando created records its
+// installation when GitHub returns from installing it, and is not installed
+// until then.
+func (s settings) byOwner() bool { return s.AppID != "" && s.Scope != "" }
+
+// installationID is the installation Pando recorded when the App was
+// installed, or one entered by hand before it could.
+func (s settings) installationID() string {
+	return firstNonEmpty(strings.TrimSpace(s.Credential(FieldInstallationID).Reveal()), s.InstallationID)
 }
 
 func parseAppKey(v secret.Value) (*rsa.PrivateKey, error) {
 	if v.IsZero() {
 		return nil, errs.New(errs.ValidInvalid, "A GitHub App connection needs the App's private key.").
-			WithRemedy("Generate a private key on the App's settings page in GitHub and paste the whole .pem file here.")
+			WithRemedy("Disconnect the connection and add it again, so Pando creates the App.")
 	}
 	bad := errs.New(errs.ValidInvalid, "The GitHub App private key could not be read. It may be incomplete.").
-		WithRemedy("Paste the whole .pem file GitHub downloaded, including its BEGIN and END lines.")
+		WithRemedy("Disconnect the connection and add it again, so Pando creates the App.")
 	block, _ := pem.Decode([]byte(strings.TrimSpace(v.Reveal())))
 	if block == nil {
 		return nil, bad
@@ -67,7 +81,7 @@ func parseAppKey(v secret.Value) (*rsa.PrivateKey, error) {
 	k, ok := parsed.(*rsa.PrivateKey)
 	if !ok {
 		return nil, errs.New(errs.ValidInvalid, "The GitHub App private key is not an RSA key, and GitHub Apps sign with RSA.").
-			WithRemedy("Paste the .pem file GitHub generated for the App.")
+			WithRemedy("Disconnect the connection and add it again, so Pando creates the App.")
 	}
 	return k, nil
 }
@@ -92,7 +106,7 @@ func (a *Adapter) appJWT() (string, error) {
 	}
 	now := a.now()
 	tok, err := jwt.Signed(signer).Claims(jwt.Claims{
-		Issuer:   a.cfg.AppID,
+		Issuer:   a.cfg.appID(),
 		IssuedAt: jwt.NewNumericDate(now.Add(-60 * time.Second)),
 		Expiry:   jwt.NewNumericDate(now.Add(9 * time.Minute)),
 	}).Serialize()
@@ -105,13 +119,19 @@ func (a *Adapter) appJWT() (string, error) {
 // installationToken mints an installation access token. Minted on every call,
 // never cached (R-027); one lasts an hour, longer than any clone.
 func (a *Adapter) installationToken(ctx context.Context) (secret.Value, time.Time, error) {
+	if a.appKey == nil {
+		return secret.Value{}, time.Time{}, notCreated()
+	}
+	if a.cfg.installationID() == "" && !a.cfg.byOwner() {
+		return secret.Value{}, time.Time{}, notInstalled()
+	}
 	appTok, err := a.appJWT()
 	if err != nil {
 		return secret.Value{}, time.Time{}, err
 	}
 	c, status := a.appClient(secret.New(appTok))
 
-	id := a.cfg.InstallationID
+	id := a.cfg.installationID()
 	if id == "" {
 		id, err = a.lookupInstallation(ctx, c, status)
 		if err != nil {
@@ -126,8 +146,8 @@ func (a *Adapter) installationToken(ctx context.Context) (secret.Value, time.Tim
 	if _, err := c.Do(ctx, http.MethodPost, a.apiURL+"/app/installations/"+url.PathEscape(id)+"/access_tokens", nil, &resp); err != nil {
 		if errs.CodeOf(err) == errs.NotFound {
 			return secret.Value{}, time.Time{}, errs.Newf(errs.NotFound,
-				"GitHub has no installation %s of the App %s.", id, a.cfg.AppID).
-				WithRemedy("Check the installation ID in the connection's settings, or leave it empty to look it up from the owner.")
+				"GitHub has no installation %s of the App %s. It may have been uninstalled.", id, a.cfg.appID()).
+				WithRemedy("Install the App again from the connection under Adapters in the console.")
 		}
 		return secret.Value{}, time.Time{}, appErr(err, *status)
 	}
@@ -151,8 +171,8 @@ func (a *Adapter) lookupInstallation(ctx context.Context, c forgekit.Client, sta
 	}
 	if errs.CodeOf(err) == errs.NotFound {
 		return "", errs.Newf(errs.NotFound,
-			"The GitHub App %s is not installed on %s.", a.cfg.AppID, a.cfg.Scope).
-			WithRemedy("Install the App on the organization or user from the App's public page in GitHub, or check the owner in the connection's settings.")
+			"The GitHub App %s is not installed on %s.", a.cfg.appID(), a.cfg.Scope).
+			WithRemedy("Install the App from the connection under Adapters in the console.")
 	}
 	if err != nil {
 		return "", appErr(err, *status)
@@ -171,8 +191,8 @@ func appErr(err error, status int) error {
 		// AdapterFailed, not an AUTH_* code: GitHub refusing the App is not
 		// the caller failing to authenticate to Pando.
 		return errs.New(errs.AdapterFailed,
-			"GitHub did not accept the GitHub App's signed token. The App ID or the private key is wrong, or the key was revoked.").
-			WithRemedy("Check the App ID and paste a current private key from the App's settings page in GitHub.")
+			"GitHub did not accept the GitHub App's signed token. The App was deleted, or its private key was revoked.").
+			WithRemedy("Disconnect the connection and add it again, so Pando creates a new App.")
 	}
 	return err
 }

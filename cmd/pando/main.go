@@ -825,6 +825,9 @@ func serve(ctx context.Context, configPath string) error {
 	autoDeployJob, autoDeploy := wireAutoDeploy(autoDeployWiring{db: db, apps: apps, deployments: deployments, sources: sources,
 		deployer: approvals, auditor: auditor, policy: policyStore, authz: authorizer, secrets: secretsAdapter,
 		secretsRef: secretsRef, concurrency: cfg.Work.AutoDeploy, logger: logger})
+	// A GitHub App Pando created sends its webhook to the connection, signed
+	// with the App's secret the connection holds (R-142).
+	autoDeploy.Sources = sourceConnections
 
 	// One resolver, used by the proxy to route and by the router to tell an
 	// app's hostname from Pando's own.

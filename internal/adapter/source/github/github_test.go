@@ -323,9 +323,7 @@ func TestAppConfigurationIsCheckedUpFront(t *testing.T) {
 	_, keyPEM := rsaKey(t)
 	for name, cfg := range map[string]map[string]any{
 		"no app id":           {"method": "app", "scope": "acme", "credentials": map[string]string{"app_private_key": keyPEM}},
-		"no key":              {"method": "app", "scope": "acme", "app_id": "1"},
 		"bad key":             {"method": "app", "scope": "acme", "app_id": "1", "credentials": map[string]string{"app_private_key": "-----BEGIN RSA PRIVATE KEY-----\nnope\n-----END RSA PRIVATE KEY-----"}},
-		"no owner or install": {"method": "app", "app_id": "1", "credentials": map[string]string{"app_private_key": keyPEM}},
 		"bad installation id": {"method": "app", "app_id": "1", "installation_id": "abc", "credentials": map[string]string{"app_private_key": keyPEM}},
 	} {
 		if _, err := configure(t, cfg); err == nil {
@@ -336,6 +334,18 @@ func TestAppConfigurationIsCheckedUpFront(t *testing.T) {
 	}
 	mustConfigure(t, map[string]any{"method": "app", "app_id": "1", "installation_id": "42",
 		"credentials": map[string]string{"app_private_key": keyPEM}})
+
+	// An App not created yet, or created and not installed, is configured
+	// and not authorized: authorizing it is what creates and installs it.
+	for name, cfg := range map[string]map[string]any{
+		"not created":   {"method": "app"},
+		"not installed": {"method": "app", "credentials": map[string]string{"app_id": "1", "app_slug": "pando", "app_private_key": keyPEM}},
+	} {
+		a := mustConfigure(t, cfg)
+		if c := a.SourceCapabilities(); c.Authorized || !c.WebAuthorization {
+			t.Errorf("%s: capabilities = %+v", name, c)
+		}
+	}
 }
 
 func oauthServer(t *testing.T, handler http.HandlerFunc) (*Adapter, *httptest.Server) {
@@ -616,7 +626,7 @@ func TestUnauthorizedIsActionableAndSecretFree(t *testing.T) {
 	app := mustConfigure(t, map[string]any{"method": "app", "app_id": "1", "installation_id": "42", "api_url": srv.URL,
 		"credentials": map[string]string{"app_private_key": keyPEM}})
 	_, err3 := app.GitCredential(context.Background(), "https://github.com/acme/api")
-	if errs.CodeOf(err3) != errs.AdapterFailed || !strings.Contains(err3.Error(), "App ID or the private key") {
+	if errs.CodeOf(err3) != errs.AdapterFailed || !strings.Contains(err3.Error(), "private key was revoked") {
 		t.Fatalf("app error = %v", err3)
 	}
 

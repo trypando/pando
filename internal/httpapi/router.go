@@ -695,6 +695,11 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/branches", s.handleListSourceBranches)
 				r.Post("/authorize", s.handleBeginSourceAuthorization)
 				r.Post("/authorize/poll", s.handlePollSourceAuthorization)
+				// A GitHub App Pando created comes back here once installed,
+				// and sends its webhook here: public, signed with the
+				// App's own secret (R-142).
+				r.Get("/installed", s.handleSourceInstalled)
+				r.Post("/webhook", s.handleSourceWebhook)
 			})
 		})
 

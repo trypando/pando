@@ -157,7 +157,7 @@ describe('adding an adapter one step at a time', () => {
       config: { zone: 'example.com', other_zones: 'example.org, example.net', console_hostname: 'pando.example.com' },
       credentials: { api_token: 'tok' },
     });
-    expect(onSaved).toHaveBeenCalledWith('Tunnel', 'routing', ['Check the hostname.']);
+    expect(onSaved).toHaveBeenCalledWith('Tunnel', 'routing', ['Check the hostname.'], 'rte_tunnel');
   });
 
   it('says why there is nothing to choose when the kinds can’t be read', async () => {

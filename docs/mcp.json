@@ -186,9 +186,13 @@
     },
     {
       "name": "pando_authorize_source",
-      "description": "Start signing a source connection in with OAuth by device code. Returns user_code and verification_url: tell the person to open the URL and enter the code, then call pando_poll_source_authorization every interval_seconds until it says authorized.",
+      "description": "Start signing a source connection in. By device code (the default) it returns user_code and verification_url: tell the person to open the URL and enter the code, then call pando_poll_source_authorization every interval_seconds until it says authorized. A connection whose capabilities have web_authorization and not device_authorization — a GitHub App, which Pando creates on GitHub and then installs — takes mode web: give the person authorize_url to open in a browser signed in to Pando, and check pando_list_sources afterwards.",
       "input_schema": {
         "properties": {
+          "mode": {
+            "description": "device (the default) or web.",
+            "type": "string"
+          },
           "source_id": {
             "description": "The connection's id, from pando_list_sources.",
             "type": "string"

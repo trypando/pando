@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
+	"github.com/trypando/pando/internal/core/autodeploy"
 	"github.com/trypando/pando/internal/core/sourceconn"
 	"github.com/trypando/pando/internal/errs"
 )
@@ -137,10 +139,21 @@ func (s *Server) handleBeginSourceAuthorization(w http.ResponseWriter, r *http.R
 		Action: "source.connection.authorize", TargetKind: "source_connection", TargetID: id,
 		Detail: map[string]any{"mode": string(req.Mode)},
 	})
-	a, err := s.SourceConnections.BeginAuthorization(r.Context(), id, req.Mode, s.sourceCallbackURL(r))
+	base := s.externalBase(r)
+	a, err := s.SourceConnections.BeginAuthorization(r.Context(), id, req.Mode, sourceconn.Addresses{
+		Callback: base + "/api/v1/sources/callback",
+		Setup:    base + "/api/v1/sources/" + url.PathEscape(id) + "/installed",
+		Webhook:  base + "/api/v1/sources/" + url.PathEscape(id) + "/webhook",
+		Homepage: base,
+	})
 	if err != nil {
 		Error(w, r, err)
 		return
+	}
+	if a.Form != nil {
+		// Only a browser can post the form. The console posts it itself;
+		// the CLI and an assistant hand the person this page, which does.
+		a.AuthorizeURL = base + sourcesPage + "?" + url.Values{"authorize": {id}}.Encode()
 	}
 	JSON(w, http.StatusOK, a)
 }
@@ -187,14 +200,22 @@ func (s *Server) handleSourceCallback(w http.ResponseWriter, r *http.Request) {
 	if !s.sourcesConfigured(w, r) {
 		return
 	}
-	id, err := s.SourceConnections.CompleteWebAuthorization(r.Context(), q.Get("state"), q.Get("code"))
+	id, next, err := s.SourceConnections.CompleteWebAuthorization(r.Context(), q.Get("state"), q.Get("code"))
 	if err != nil {
-		msg := "The authorization could not be finished."
-		if e := errs.As(err); e != nil {
-			msg = e.Message
-		}
-		back.Set("error", msg)
+		back.Set("error", messageOr(err, "The authorization could not be finished."))
 		http.Redirect(w, r, sourcesPage+"?"+back.Encode(), http.StatusFound)
+		return
+	}
+	if next != "" {
+		// A GitHub App was created; installing it is the next step, and
+		// GitHub returns from it to /sources/{id}/installed.
+		s.audit(r, audit.Event{
+			PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
+			Action: "source.connection.app_created", TargetKind: "source_connection", TargetID: id,
+		})
+		// next is on the connection's own host (sourceconn.onHost), built by
+		// the adapter, never taken from the request.
+		http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // G710: not request input; see above
 		return
 	}
 	s.audit(r, audit.Event{
@@ -206,16 +227,75 @@ func (s *Server) handleSourceCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, sourcesPage+"?"+back.Encode(), http.StatusFound)
 }
 
-// sourceCallbackURL is the address a provider returns a browser
-// authorization to: the installation's external address when one is set,
-// otherwise the one this request came in on.
-func (s *Server) sourceCallbackURL(r *http.Request) string {
+// handleSourceInstalled is where GitHub sends the browser once the App Pando
+// created for a connection is installed. Like the callback it answers with a
+// redirect to the console, carrying the outcome.
+func (s *Server) handleSourceInstalled(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.requireInstall(w, r, authz.InstallAdaptersManage)
+	if !ok {
+		return
+	}
+	if !s.sourcesConfigured(w, r) {
+		return
+	}
+	id := chi.URLParam(r, "sourceID")
+	back := url.Values{}
+	installation := r.URL.Query().Get("installation_id")
+	if err := s.SourceConnections.CompleteInstallation(r.Context(), id, installation); err != nil {
+		back.Set("error", messageOr(err, "The installation could not be finished."))
+		http.Redirect(w, r, sourcesPage+"?"+back.Encode(), http.StatusFound)
+		return
+	}
+	s.audit(r, audit.Event{
+		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
+		Action: "source.connection.installed", TargetKind: "source_connection", TargetID: id,
+		Detail: map[string]any{"installation_id": installation},
+	})
+	back.Set("authorized", id)
+	http.Redirect(w, r, sourcesPage+"?"+back.Encode(), http.StatusFound)
+}
+
+// handleSourceWebhook takes a webhook sent to a source connection's own
+// address: a GitHub App Pando created (R-142). Public, like an app's webhook:
+// the signature, against the connection's secret, is the credential.
+func (s *Server) handleSourceWebhook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, webhookBodyLimit))
+	if err != nil {
+		Error(w, r, errs.New(errs.ValidInvalid, "This webhook's body is larger than Pando accepts."))
+		return
+	}
+	out, err := s.AutoDeploy.DeliverForSource(r.Context(), chi.URLParam(r, "sourceID"), autodeploy.Delivery{
+		Event:     r.Header.Get("X-GitHub-Event"),
+		Signature: r.Header.Get("X-Hub-Signature-256"),
+		Body:      body,
+	})
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	status := http.StatusOK
+	if out.Checking {
+		status = http.StatusAccepted
+	}
+	JSON(w, status, out)
+}
+
+// externalBase is the address Pando is reached at, scheme and host: the
+// installation's external address when one is set, otherwise the one this
+// request came in on. Providers send browsers and webhooks back to it.
+func (s *Server) externalBase(r *http.Request) string {
 	if s.ExternalURL != nil && s.ExternalURL.Host != "" {
-		u := *s.ExternalURL
-		u.Path = "/api/v1/sources/callback"
-		u.RawQuery = ""
-		return u.String()
+		return s.ExternalURL.Scheme + "://" + s.ExternalURL.Host
 	}
 	o := s.origin(r)
-	return o.Scheme + "://" + o.Host + "/api/v1/sources/callback"
+	return o.Scheme + "://" + o.Host
+}
+
+// messageOr is an error's message for a person, or fallback for one that has
+// none to show.
+func messageOr(err error, fallback string) string {
+	if e := errs.As(err); e != nil {
+		return e.Message
+	}
+	return fallback
 }

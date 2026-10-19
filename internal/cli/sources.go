@@ -149,12 +149,16 @@ func sourceCmd(client func() (*Client, error)) *cobra.Command {
 		Short: "Sign a connection in with OAuth",
 		Long: "Shows a code to enter on the provider's site, then waits until you have. Nothing needs to be\n" +
 			"able to reach this Pando, so it works on a laptop. --web prints an address to open in a browser\n" +
-			"instead, which returns to Pando's own address.",
+			"instead, which returns to Pando's own address. A GitHub App connection is always authorized in a\n" +
+			"browser: the address creates the App on GitHub, then installs it.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
 			if err != nil {
 				return err
+			}
+			if !web {
+				web = browserOnly(c, args[0])
 			}
 			mode := "device"
 			if web {
@@ -201,7 +205,7 @@ func sourceCmd(client func() (*Client, error)) *cobra.Command {
 			return fmt.Errorf("the code was not approved within %s; run `pando source authorize %s` again", wait, args[0])
 		},
 	}
-	authorize.Flags().BoolVar(&web, "web", false, "authorize in a browser instead of with a code")
+	authorize.Flags().BoolVar(&web, "web", false, "authorize in a browser instead of with a code (always, for a GitHub App)")
 	authorize.Flags().DurationVar(&wait, "timeout", 15*time.Minute, "how long to wait for the code to be approved")
 	cmd.AddCommand(authorize)
 
@@ -231,4 +235,28 @@ func orDashString(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// browserOnly says whether a connection can be authorized in a browser and
+// not with a code: a GitHub App connection, whose App is created and
+// installed there. Anything it cannot learn leaves the code, the default.
+func browserOnly(c *Client, id string) bool {
+	var out struct {
+		Sources []struct {
+			ID           string `json:"id"`
+			Capabilities struct {
+				Device bool `json:"device_authorization"`
+				Web    bool `json:"web_authorization"`
+			} `json:"capabilities"`
+		} `json:"sources"`
+	}
+	if err := c.Do("GET", "/sources", nil, &out); err != nil {
+		return false
+	}
+	for _, s := range out.Sources {
+		if s.ID == id {
+			return s.Capabilities.Web && !s.Capabilities.Device
+		}
+	}
+	return false
 }

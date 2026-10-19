@@ -83,7 +83,7 @@ export function AdapterDialog({
   onClose: () => void;
   /** Told the saved adapter's name, for the restart notice, and what the
    *  save warned of. */
-  onSaved: (name: string, category: string, warnings?: string[]) => void;
+  onSaved: (name: string, category: string, warnings?: string[], id?: string) => void;
 }) {
   const kinds = useQuery({
     queryKey: ['adapter-kinds'],
@@ -161,12 +161,14 @@ export function AdapterDialog({
       // what needs a restart, and choosing functions does not.
       const settingsChanged = draft !== null || !existing;
       let warnings: string[] = [];
+      let id = existing?.id;
       if (settingsChanged) {
         const saved = await api.post<{ id: string; note?: string; warnings?: string[] }>(
           '/adapters',
           adapterRequest(kind!, view!, isRegistry ? enabled : existing?.enabled),
         );
         warnings = saved.warnings ?? [];
+        id = saved.id;
       }
       if (existing && choice) {
         for (const c of choiceChanges(existing.id, had, choice)) {
@@ -174,10 +176,10 @@ export function AdapterDialog({
           else await api.put(`/ai/functions/${c.fn}`, { adapter_id: c.adapterID, model: c.model ?? '' });
         }
       }
-      return { settingsChanged, warnings };
+      return { settingsChanged, warnings, id };
     },
-    onSuccess: ({ settingsChanged, warnings }) => {
-      if (settingsChanged) onSaved(form!.name.trim() || kind!.name, kind!.category, warnings);
+    onSuccess: ({ settingsChanged, warnings, id }) => {
+      if (settingsChanged) onSaved(form!.name.trim() || kind!.name, kind!.category, warnings, id);
       else onClose();
     },
     onSettled: () => void queries.invalidateQueries({ queryKey: ['ai-functions'] }),
@@ -763,7 +765,7 @@ function ChoiceInput({
             key={o.value}
             name={field.key}
             value={o.value}
-            label={o.label}
+            label={optionLabel(o)}
             description={o.description}
             checked={current === o.value}
             onChange={() => onChange(o.value)}
@@ -782,7 +784,7 @@ function ChoiceInput({
         value={typing ? OTHER : current}
         options={[
           ...(current || typing ? [] : [{ value: '', label: `Choose ${field.label.toLowerCase()}` }]),
-          ...options.map((o) => ({ value: o.value, label: o.label })),
+          ...options.map((o) => ({ value: o.value, label: optionLabel(o) })),
           ...(field.other ? [{ value: OTHER, label: 'Other' }] : []),
         ]}
         onChange={(e) => {
@@ -809,4 +811,9 @@ function ChoiceInput({
       {!typing && error && <p style={{ font: 'var(--type-caption)', color: 'var(--marker-deep)', margin: 0 }}>{error}</p>}
     </div>
   );
+}
+
+/** An option as it is listed, marked when it is the one to choose. */
+export function optionLabel(o: { label: string; recommended?: boolean }): string {
+  return o.recommended ? `${o.label} (recommended)` : o.label;
 }
