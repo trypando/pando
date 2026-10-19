@@ -21,8 +21,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/log"
 )
 
 // Kind is the adapter kind.
@@ -44,8 +47,12 @@ type config struct {
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryBackup }
 
-func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
-	cfg := config{Path: "/var/lib/pando/backups"}
+// Configure sets the directory, and logs a warning when bundles written there
+// would not outlive Pando's container (see Warnings). Logged rather than
+// refused: the directory works until the container goes, so this is a warning,
+// and warnings are never blockers.
+func (a *Adapter) Configure(ctx context.Context, raw json.RawMessage) error {
+	cfg := config{Path: DefaultPath}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			return errs.Wrap(errs.ValidInvalid, "The local backup destination could not be configured.", err)
@@ -53,9 +60,13 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	}
 	if cfg.Path == "" {
 		return errs.New(errs.ValidInvalid, "The local backup destination needs a path.").
-			WithRemedy("Set path to a directory Pando can write to, for example /var/lib/pando/backups.")
+			WithRemedy("Set path to a directory Pando can write to, for example " + DefaultPath + ".")
 	}
 	a.dir = cfg.Path
+	for _, w := range pathWarnings(cfg.Path) {
+		log.From(ctx).Warn("backups in the local backup directory will be lost",
+			zap.String("path", cfg.Path), zap.String("reason", w))
+	}
 	return nil
 }
 
@@ -227,10 +238,10 @@ func Info() api.KindInfo {
 		Category:    api.CategoryBackup,
 		Kind:        Kind,
 		Name:        "Local disk",
-		Description: "Writes backups to a directory on the host.",
+		Description: "Writes backups to a directory in Pando's container, by default on its data volume.",
 		IDPrefix:    "bkp_",
 		Fields: []api.Field{
-			{Key: "path", Label: "Directory", Type: "string", Help: "Where backups are written.", Default: "/var/lib/pando/backups"},
+			{Key: "path", Label: "Directory", Type: "string", Help: "A directory inside Pando's container, such as one mounted from the host.", Default: DefaultPath},
 		},
 	}
 }
