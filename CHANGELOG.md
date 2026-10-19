@@ -19,6 +19,12 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-19
+
+### Security
+
+No new advisories.
+
 ### Added
 
 - **Guided setup for adapters and sign-in providers** (#268, R-261). Adding one now walks through
@@ -68,6 +74,14 @@ Unreleased above it. -->
 - The built-in routing adapter no longer shows a base URL setting that did nothing (#275).
 - Local backups warn at startup when the backup directory isn't on a mounted volume, so backups
   don't vanish with the container (#275).
+
+### Upgrade notes
+
+- A Traefik adapter using Amazon Route 53 for DNS challenges needs `AWS_REGION` beside its access
+  key. Without it, certificate requests were already failing, and the adapter can no longer be saved.
+  Add `AWS_REGION=us-east-1` for a standard AWS account.
+- Migration 000076 moves the Docker services adapter's `images` map to one setting per service type.
+  It runs at startup and needs nothing from you.
 
 ## [0.9.0] - 2026-10-18
 
@@ -1195,7 +1209,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.9.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.10.0...main
+[0.10.0]: https://github.com/trypando/pando/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/trypando/pando/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/trypando/pando/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/trypando/pando/compare/v0.6.1...v0.7.0
