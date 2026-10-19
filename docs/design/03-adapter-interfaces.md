@@ -1649,6 +1649,11 @@ credentials. One App per installation of Pando, created under the person's accou
 App shipped with Pando would put one private key in every copy. A connection whose App was entered by hand
 before this keeps working from its stored settings; the form no longer asks for them.
 
+**[D] The App's logo is uploaded by the person.** GitHub takes no logo from a manifest and has no API that
+sets one, so the App starts with GitHub's generated avatar. Once it is installed the connection reports the
+App's settings page as `manage_url` (from the owner the code exchange names), and the console's last step
+offers Pando's app icon (`pando-icon-ink.png`, 256 px square) to download beside a link to that page.
+
 **[P] The App's webhook is registered only where GitHub can reach it.** github.com refuses an App whose
 webhook is on a loopback, private or single-label address, and the App with it, so the manifest carries the
 webhook only when Pando's address is public (`sourceconn.Public`); otherwise auto-deploy polls (R-142).

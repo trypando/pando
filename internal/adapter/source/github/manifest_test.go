@@ -34,6 +34,7 @@ func fakeGitHub(t *testing.T, keyPEM string) *httptest.Server {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": 42, "slug": "pando-acme", "pem": keyPEM, "webhook_secret": "whsec",
+				"owner":     map[string]string{"login": "acme", "type": "Organization"},
 				"client_id": "Iv1.x", "client_secret": "not kept",
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/app/installations/"):
@@ -133,6 +134,8 @@ func TestR091_AGitHubAppIsCreatedFromAManifestAndInstalled(t *testing.T) {
 	a = mustConfigure(t, cfg)
 	caps = a.SourceCapabilities()
 	require.True(t, caps.Webhook)
+	require.Equal(t, "https://github.com/organizations/acme/settings/apps/pando-acme", caps.ManageURL,
+		"where the App's logo is uploaded")
 	require.True(t, caps.WebAuthorization)
 	again, err := a.BeginAuthorization(ctx, appRequest())
 	require.NoError(t, err)
@@ -235,6 +238,8 @@ func TestAnAppNotCreatedOrEnteredByHandSaysWhatToDo(t *testing.T) {
 
 	created := mustConfigure(t, map[string]any{"method": "app",
 		"credentials": map[string]string{FieldAppID: "1", FieldAppSlug: "p", FieldAppPrivateKey: keyPEM}})
+	require.Equal(t, "https://github.com/settings/apps/p", created.SourceCapabilities().ManageURL,
+		"an App owned by a person is under their own settings")
 	_, err = created.GitCredential(ctx, "https://github.com/acme/api")
 	require.Contains(t, err.Error(), "not installed yet")
 
@@ -243,6 +248,7 @@ func TestAnAppNotCreatedOrEnteredByHandSaysWhatToDo(t *testing.T) {
 	byHand := mustConfigure(t, map[string]any{"method": "app", "app_id": "1", "installation_id": "42",
 		"credentials": map[string]string{FieldAppPrivateKey: keyPEM}})
 	require.True(t, byHand.SourceCapabilities().Authorized)
+	require.Empty(t, byHand.SourceCapabilities().ManageURL)
 	require.False(t, byHand.SourceCapabilities().WebAuthorization)
 	_, err = byHand.BeginAuthorization(ctx, appRequest())
 	require.Contains(t, err.Error(), "entered by hand")

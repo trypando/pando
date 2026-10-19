@@ -116,6 +116,11 @@ type SourceCapabilities struct {
 	// next poll.
 	Webhook bool `json:"webhook"`
 
+	// ManageURL is the provider's page where what the connection created is
+	// managed — the settings of the GitHub App Pando created, where its logo
+	// is uploaded and its repositories changed — or empty.
+	ManageURL string `json:"manage_url,omitempty"`
+
 	// Authorized says the connection holds what it needs to clone: a token,
 	// a key, or a completed OAuth authorization. An oauth connection that
 	// has not been authorized yet is false, and covers nothing.

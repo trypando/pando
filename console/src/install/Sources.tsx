@@ -13,6 +13,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Banner, Button, CodeBlock, Dialog } from '@design';
 
 import { api } from '@api/client';
+import appLogo from '../design/assets/logo/pando-icon-ink.png';
 import { Quiet, refusal } from './Accounts';
 
 /** A source connection, as GET /sources returns it. */
@@ -29,6 +30,9 @@ export interface SourceConnection {
     device_authorization?: boolean;
     web_authorization?: boolean;
     authorized?: boolean;
+    /** The provider's page for what the connection created: a GitHub App's
+     *  settings, where its logo is uploaded. */
+    manage_url?: string;
   };
 }
 
@@ -193,3 +197,43 @@ export function AuthorizeDialog({
     </Dialog>
   );
 }
+
+/** The last step of connecting a GitHub App: its logo. GitHub takes none from
+ *  a manifest or its API, so the person uploads Pando's on the App's page. */
+export function AppLogoDialog({ source, onClose }: { source: SourceConnection; onClose: () => void }) {
+  const settings = source.capabilities.manage_url ?? '';
+  return (
+    <Dialog
+      open
+      title="Add Pando's logo to the App"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Done
+          </Button>
+          <Button variant="primary" onClick={() => window.open(settings, '_blank', 'noopener,noreferrer')}>
+            Open App settings
+          </Button>
+        </>
+      }
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+        <img src={appLogo} alt="Pando logo" style={{ width: 'var(--space-8)', height: 'var(--space-8)' }} />
+        <ol style={{ margin: 0, paddingLeft: 'var(--space-5)', font: 'var(--type-body-ui)', color: 'var(--ink)' }}>
+          <li>
+            <a href={appLogo} download="pando-logo.png">
+              Download the logo
+            </a>
+            .
+          </li>
+          <li>
+            On the App&apos;s settings page, under <strong>Display information</strong>, choose{' '}
+            <strong>Upload a logo</strong>.
+          </li>
+        </ol>
+      </div>
+    </Dialog>
+  );
+}
+

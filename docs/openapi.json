@@ -16753,6 +16753,9 @@
           "webhook": {
             "type": "boolean"
           },
+          "manage_url": {
+            "type": "string"
+          },
           "authorized": {
             "type": "boolean"
           }

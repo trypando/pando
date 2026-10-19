@@ -13,6 +13,7 @@ func steps() []api.Step {
 			Do: []api.Action{
 				{Text: "After you save, choose **Create GitHub App** on GitHub."},
 				{Text: "Pick the repositories and choose **Install**."},
+				{Text: "Back in Pando, download the logo, and upload it on the App's settings page under **Display information**."},
 			},
 			Fields: []string{"push_webhook"}},
 		forgekit.OAuthStep("OAuth app", "Register an OAuth application",

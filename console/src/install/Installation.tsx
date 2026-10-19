@@ -27,7 +27,7 @@ import { api, base } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { AdapterDialog } from './AdapterDialog';
 import { InlineWarning } from '../ui/InlineWarning';
-import { AuthorizeDialog, covers, needsAuthorizing, useSources } from './Sources';
+import { AppLogoDialog, AuthorizeDialog, covers, needsAuthorizing, useSources } from './Sources';
 import type { SourceConnection } from './Sources';
 import { Capacity } from './Capacity';
 import { useAIFunctionOn } from './AIFunctions';
@@ -114,6 +114,9 @@ export function Installation({ query }: { query?: string } = {}) {
   // The CLI and an assistant send a person here to authorize a connection
   // only a browser can: a GitHub App, whose manifest the browser posts.
   const [toAuthorize, setToAuthorize] = useState<string | null>(back.get('authorize'));
+  // A GitHub App just installed has one step left, its logo, which GitHub
+  // takes only on the App's own page.
+  const [logoFor, setLogoFor] = useState<string | null>(returnedError ? null : returnedOK);
 
   // Each source connection's state — ready, not authorized, or why it cannot
   // be used — beside its row.
@@ -286,6 +289,10 @@ export function Installation({ query }: { query?: string } = {}) {
             void queries.invalidateQueries({ queryKey: ['sources'] });
           }}
         />
+      )}
+
+      {logoFor && connections.get(logoFor)?.capabilities.manage_url && (
+        <AppLogoDialog source={connections.get(logoFor)!} onClose={() => setLogoFor(null)} />
       )}
 
       {disconnecting && (

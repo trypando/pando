@@ -42,6 +42,8 @@ const (
 	FieldWebhookSecret  = api.CredentialWebhookSecret
 	FieldAppID          = "app_id"
 	FieldAppSlug        = "app_slug"
+	FieldAppOwner       = "app_owner"
+	FieldAppOwnerType   = "app_owner_type"
 	FieldInstallationID = "installation_id"
 
 	// tokenUser is the username GitHub expects beside a token over HTTPS.
@@ -182,6 +184,7 @@ func (a *Adapter) SourceCapabilities() api.SourceCapabilities {
 		// entered by hand has no URL name to install it from.
 		c.WebAuthorization = a.appKey == nil || a.cfg.Credential(FieldAppSlug).Reveal() != ""
 		c.Webhook = a.appKey != nil && !a.cfg.Credential(FieldWebhookSecret).IsZero()
+		c.ManageURL = a.appSettingsURL()
 	}
 	return c
 }

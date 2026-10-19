@@ -4,7 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { AuthorizeDialog, needsAuthorizing, postForm, type SourceConnection } from './Sources';
+import { AppLogoDialog, AuthorizeDialog, needsAuthorizing, postForm, type SourceConnection } from './Sources';
 import { optionLabel } from './AdapterDialog';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -84,6 +84,27 @@ describe('a GitHub App connection, R-091', () => {
     expect(needsAuthorizing({ ...app, capabilities: { ...app.capabilities, authorized: true } })).toBe(false);
     expect(needsAuthorizing({ ...app, problem: 'refused' })).toBe(false);
     expect(needsAuthorizing({ ...app, capabilities: { method: 'token' } })).toBe(false);
+  });
+});
+
+describe('the App logo step, R-091', () => {
+  it('offers Pando\'s logo and opens the App\'s settings page, where GitHub takes it', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const installed = {
+      ...app,
+      capabilities: { ...app.capabilities, authorized: true, manage_url: 'https://github.com/organizations/acme/settings/apps/pando-acme' },
+    };
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => root!.render(<AppLogoDialog source={installed} onClose={() => undefined} />));
+
+    const download = [...document.body.querySelectorAll('a')].find((a) => a.textContent === 'Download the logo');
+    expect(download?.getAttribute('download')).toBe('pando-logo.png');
+    expect(download?.getAttribute('href')).toMatch(/pando-icon-ink\.png$/);
+    expect(document.body.textContent).toContain('Upload a logo');
+    await press('Open App settings');
+    expect(open).toHaveBeenCalledWith(installed.capabilities.manage_url, '_blank', 'noopener,noreferrer');
   });
 });
 

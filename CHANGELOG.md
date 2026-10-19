@@ -31,7 +31,8 @@ No new advisories.
   choose **Create GitHub App**, pick the repositories, choose **Install**, and the connection is
   ready. No App ID, private key or installation ID is copied by hand. Each installation of Pando
   gets its own App. `pando source authorize` and the MCP tool hand you a console link to finish it
-  in the browser, where GitHub requires it.
+  in the browser, where GitHub requires it. GitHub cannot set an App's logo for Pando, so the last
+  step offers Pando's logo to download and links to the App's settings page to upload it.
 - The App Pando creates carries a **push webhook** when Pando's address is public (R-142), so a push
   starts an automatic deploy at once rather than at the next poll; **Deploy on push** turns it off.
   On a private address the App has no webhook, which GitHub would refuse, and auto-deploy polls.

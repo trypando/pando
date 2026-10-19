@@ -156,6 +156,21 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// appSettingsURL is the settings page of the App Pando created, where its
+// logo is uploaded: GitHub has no way to set one from a manifest or its API.
+// Under the organization that owns the App, or the person's own settings.
+func (a *Adapter) appSettingsURL() string {
+	slug := a.cfg.Credential(FieldAppSlug).Reveal()
+	if a.appKey == nil || slug == "" {
+		return ""
+	}
+	if owner := a.cfg.Credential(FieldAppOwner).Reveal(); owner != "" &&
+		a.cfg.Credential(FieldAppOwnerType).Reveal() == "Organization" {
+		return a.webURL + "/organizations/" + url.PathEscape(owner) + "/settings/apps/" + url.PathEscape(slug)
+	}
+	return a.webURL + "/settings/apps/" + url.PathEscape(slug)
+}
+
 func (a *Adapter) installURL(slug string) string {
 	return a.webURL + "/apps/" + url.PathEscape(slug) + "/installations/new"
 }
@@ -185,6 +200,10 @@ func (a *Adapter) convertManifest(ctx context.Context, code string) (api.Authori
 		Slug          string `json:"slug"`
 		PEM           string `json:"pem"`
 		WebhookSecret string `json:"webhook_secret"`
+		Owner         struct {
+			Login string `json:"login"`
+			Type  string `json:"type"`
+		} `json:"owner"`
 	}
 	if _, err := a.anonymous().Do(ctx, http.MethodPost,
 		a.apiURL+"/app-manifests/"+url.PathEscape(code)+"/conversions", nil, &app); err != nil {
@@ -209,6 +228,10 @@ func (a *Adapter) convertManifest(ctx context.Context, code string) (api.Authori
 	}
 	if app.WebhookSecret != "" {
 		creds[FieldWebhookSecret] = secret.New(app.WebhookSecret)
+	}
+	if app.Owner.Login != "" {
+		creds[FieldAppOwner] = secret.New(app.Owner.Login)
+		creds[FieldAppOwnerType] = secret.New(app.Owner.Type)
 	}
 	return api.AuthorizationResult{Credentials: creds, ContinueURL: a.installURL(app.Slug)}, nil
 }
