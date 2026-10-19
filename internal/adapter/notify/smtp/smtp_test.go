@@ -82,6 +82,8 @@ func (s *fakeServer) serve(conn net.Conn) {
 			s.data = append(s.data, b.String())
 			s.mu.Unlock()
 			say("250 queued")
+		case strings.HasPrefix(cmd, "AUTH"):
+			say("235 accepted")
 		case cmd == "QUIT":
 			say("221 bye")
 			return
@@ -145,4 +147,84 @@ func TestMessageSubjectCannotCarryAHeader(t *testing.T) {
 	require.NotContains(t, headers, "\r\nBcc:")
 	require.Contains(t, msg, "line one\r\nline two")
 	require.Equal(t, 1, strings.Count(headers, "Subject:"), strconv.Quote(headers))
+}
+
+func configure(t *testing.T, cfg map[string]any) (*Adapter, error) {
+	t.Helper()
+	raw, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	a := New()
+	return a, a.Configure(context.Background(), raw)
+}
+
+// TestConfigureRefusesSignInOverAnUnencryptedConnection: net/smtp will not
+// send a password unencrypted to a remote host, so that combination is
+// refused before it is saved rather than failing every send.
+func TestConfigureRefusesSignInOverAnUnencryptedConnection(t *testing.T) {
+	_, err := configure(t, map[string]any{
+		"host": "smtp.example.com", "from": "a@example.com", "security": SecurityNone,
+		"username": "apikey", "credentials": map[string]string{"password": "k"},
+	})
+	require.ErrorContains(t, err, "will not send a password unencrypted to smtp.example.com")
+	require.ErrorContains(t, err, "Set security to starttls or tls")
+
+	// No username, nothing to send unencrypted: allowed.
+	_, err = configure(t, map[string]any{"host": "smtp.example.com", "from": "a@example.com", "security": SecurityNone})
+	require.NoError(t, err)
+}
+
+// TestConfigureAllowsUnencryptedSignInToThisMachine: the exception net/smtp
+// makes, which the adapter must make too, and which really signs in.
+func TestConfigureAllowsUnencryptedSignInToThisMachine(t *testing.T) {
+	for _, host := range []string{"localhost", "::1"} {
+		_, err := configure(t, map[string]any{
+			"host": host, "from": "a@example.com", "security": SecurityNone,
+			"username": "u", "credentials": map[string]string{"password": "p"},
+		})
+		require.NoError(t, err, host)
+	}
+
+	srv := startFake(t)
+	a, err := configure(t, map[string]any{
+		"host": "127.0.0.1", "port": srv.ln.Addr().(*net.TCPAddr).Port, "from": "a@example.com",
+		"security": SecurityNone, "username": "u", "credentials": map[string]string{"password": "p"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, a.HealthCheck(context.Background()))
+}
+
+func TestConfigureRefusesAUsernameWithoutAPassword(t *testing.T) {
+	_, err := configure(t, map[string]any{"host": "smtp.example.com", "from": "a@example.com", "username": "apikey"})
+	require.ErrorContains(t, err, "a username is set and no password")
+}
+
+// TestConfigurePortFollowsSecurity: an empty port is 465 with TLS and 587
+// otherwise, as the field's stated default says, and an explicit port that
+// no server would accept with the chosen security is refused, not dialed.
+func TestConfigurePortFollowsSecurity(t *testing.T) {
+	for security, want := range map[string]int{SecurityTLS: 465, SecurityStartTLS: 587, SecurityNone: 587, "": 587} {
+		a, err := configure(t, map[string]any{"host": "h", "from": "a@example.com", "security": security})
+		require.NoError(t, err, security)
+		require.Equal(t, want, a.cfg.Port, security)
+	}
+
+	_, err := configure(t, map[string]any{"host": "h", "from": "a@example.com", "security": SecurityTLS, "port": 587})
+	require.ErrorContains(t, err, "port 587 is for STARTTLS")
+	for _, security := range []string{SecurityStartTLS, SecurityNone} {
+		_, err = configure(t, map[string]any{"host": "h", "from": "a@example.com", "security": security, "port": 465})
+		require.ErrorContains(t, err, "port 465 is for TLS", security)
+	}
+	_, err = configure(t, map[string]any{"host": "h", "from": "a@example.com", "port": 70000})
+	require.ErrorContains(t, err, "70000 is not a port")
+
+	// Any other explicit port is honored as given.
+	a, err := configure(t, map[string]any{"host": "h", "from": "a@example.com", "security": SecurityTLS, "port": 2465})
+	require.NoError(t, err)
+	require.Equal(t, 2465, a.cfg.Port)
+
+	for _, f := range Info().Fields {
+		if f.Key == "port" {
+			require.Equal(t, "587, or 465 with TLS", f.Default)
+		}
+	}
 }

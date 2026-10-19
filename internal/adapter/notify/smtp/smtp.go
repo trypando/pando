@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/adapter/checkkit"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -99,11 +100,14 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	default:
 		return fmt.Errorf("smtp: %q is not a security setting. Valid answers: starttls, tls, none", cfg.Security)
 	}
+	if cfg.Port < 0 || cfg.Port > 65535 {
+		return fmt.Errorf("smtp: %d is not a port. Use a number from 1 to 65535, such as 587, or leave port empty", cfg.Port)
+	}
 	if cfg.Port == 0 {
-		cfg.Port = 587
-		if cfg.Security == SecurityTLS {
-			cfg.Port = 465
-		}
+		cfg.Port = DefaultPort(cfg.Security)
+	}
+	if err := portMatchesSecurity(cfg.Port, cfg.Security); err != nil {
+		return err
 	}
 	from, err := mail.ParseAddress(cfg.From)
 	if err != nil {
@@ -111,6 +115,15 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	}
 	if !cfg.Credentials.Password.IsZero() && cfg.Username == "" {
 		return errors.New("smtp: a password is set and no username. Set username, or remove the password for a server that needs none")
+	}
+	if cfg.Username != "" && cfg.Credentials.Password.IsZero() {
+		return errors.New("smtp: a username is set and no password, so the mail server would refuse every sign-in. Set the password as a credential, or remove the username for a server that needs none")
+	}
+	// net/smtp's PlainAuth refuses to send a password over a connection that
+	// is not encrypted, unless the server is this machine, so this
+	// combination would save and then fail every send.
+	if cfg.Security == SecurityNone && cfg.Username != "" && !isLocalhost(cfg.Host) {
+		return fmt.Errorf("smtp: security is none and a username is set, and Pando will not send a password unencrypted to %s, so every send would fail. Set security to starttls or tls, or remove the username and password", cfg.Host)
 	}
 	if cfg.TimeoutSeconds <= 0 {
 		cfg.TimeoutSeconds = 15
@@ -120,6 +133,35 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		a.dial = a.connect
 	}
 	return nil
+}
+
+// DefaultPort is the port used when none is set: 465 for TLS, which is
+// encrypted from the first byte, and 587 otherwise.
+func DefaultPort(security string) int {
+	if security == SecurityTLS {
+		return 465
+	}
+	return 587
+}
+
+// portMatchesSecurity refuses the two well-known ports paired with the other
+// kind of encryption. A server on 587 speaks plain SMTP first and expects
+// STARTTLS, so a TLS handshake there always fails; a server on 465 expects a
+// TLS handshake first, so plain SMTP or STARTTLS there always times out.
+func portMatchesSecurity(port int, security string) error {
+	switch {
+	case port == 587 && security == SecurityTLS:
+		return errors.New("smtp: port 587 is for STARTTLS, and security is tls, which no mail server accepts on 587. Set security to starttls, or set port to 465 or leave it empty for TLS")
+	case port == 465 && security != SecurityTLS:
+		return fmt.Errorf("smtp: port 465 is for TLS, and security is %s, which no mail server accepts on 465. Set security to tls, or set port to 587 or leave it empty", security)
+	}
+	return nil
+}
+
+// isLocalhost is the test net/smtp's PlainAuth applies before it will send
+// a password over an unencrypted connection.
+func isLocalhost(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func (a *Adapter) timeout() time.Duration { return time.Duration(a.cfg.TimeoutSeconds) * time.Second }
@@ -281,6 +323,7 @@ var _ api.NotifyAdapter = (*Adapter)(nil)
 // Info describes this kind of adapter for the forms that configure one.
 func Info() api.KindInfo {
 	return api.KindInfo{
+		Check:       check,
 		Category:    api.CategoryNotify,
 		Kind:        Kind,
 		Name:        "Email (SMTP)",
@@ -293,8 +336,18 @@ func Info() api.KindInfo {
 			{Key: "password", Label: "Password", Type: "string", Credential: true, Help: "For SendGrid, an API key. Stored encrypted and never shown again."},
 			{Key: "security", Label: "Security", Type: "select", Default: SecurityStartTLS, Advanced: true, Help: "How the connection is encrypted.",
 				Options: []api.Option{{Value: SecurityStartTLS, Label: "STARTTLS"}, {Value: SecurityTLS, Label: "TLS"}, {Value: SecurityNone, Label: "None"}}},
-			{Key: "port", Label: "Port", Type: "int", Default: "587", Advanced: true, Help: "587 for STARTTLS, 465 for TLS."},
+			{Key: "port", Label: "Port", Type: "int", Default: "587, or 465 with TLS", Advanced: true, Help: "587 for STARTTLS, 465 for TLS."},
 			{Key: "timeout_seconds", Label: "Timeout", Type: "int", Default: "15", Advanced: true, Help: "Seconds to wait for the server."},
 		},
 	}
+}
+
+// check runs Configure on a configuration being saved, so what would keep it
+// from starting is said now (KindInfo.Check).
+func check(config json.RawMessage, credentials map[string]secret.Value, stored []string) error {
+	merged, err := checkkit.Merge(config, credentials, stored)
+	if err != nil {
+		return err
+	}
+	return New().Configure(context.Background(), merged)
 }
