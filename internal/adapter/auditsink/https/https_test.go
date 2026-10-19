@@ -58,7 +58,7 @@ func TestR382_HTTPSBodiesMatchEachProvider(t *testing.T) {
 	}{
 		{"generic", BodyNDJSON, "Authorization", "", "/ingest", "application/x-ndjson", "Bearer tk_1",
 			`{"id":1,"action":"app.deploy"}` + "\n" + `{"id":2,"action":"app.use"}` + "\n"},
-		{"datadog", BodyJSONArray, "DD-API-KEY", SchemeNone, "/api/v2/logs?ddsource=pando", "application/json", "tk_1",
+		{"json_array", BodyJSONArray, "DD-API-KEY", SchemeNone, "/ingest?api-version=1", "application/json", "tk_1",
 			`[{"id":1,"action":"app.deploy"},{"id":2,"action":"app.use"}]`},
 		{"splunk", BodySplunkHEC, "Authorization", "Splunk", "/services/collector/event", "application/json", "Splunk tk_1",
 			`{"event":{"id":1,"action":"app.deploy"},"sourcetype":"pando:audit","source":"pando"}` + "\n" +

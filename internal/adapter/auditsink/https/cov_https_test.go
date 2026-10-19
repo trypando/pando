@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -181,8 +182,10 @@ func TestR194_ASecretURLIsShownByItsHostOnly(t *testing.T) {
 func TestR382_HTTPSPresetsAreValidSettings(t *testing.T) {
 	info := Info()
 	fields := map[string]bool{}
+	ints := map[string]bool{}
 	for _, f := range info.Fields {
 		fields[f.Key] = true
+		ints[f.Key] = f.Type == "int"
 	}
 	require.NotEmpty(t, info.Presets)
 	for _, p := range info.Presets {
@@ -190,6 +193,11 @@ func TestR382_HTTPSPresetsAreValidSettings(t *testing.T) {
 		for k, v := range p.Values {
 			require.True(t, fields[k], "preset %s sets %s, which is not a field", p.ID, k)
 			settings[k] = v
+			if ints[k] {
+				n, err := strconv.Atoi(v)
+				require.NoError(t, err, "preset %s sets %s to %q, not a number", p.ID, k, v)
+				settings[k] = n
+			}
 		}
 		if _, ok := settings["url"]; !ok {
 			if p.ID == "sumo_logic" {

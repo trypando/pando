@@ -195,13 +195,31 @@ Two kinds ship:
   The message is the event, encoded, as MSG; `MSGID` is the action; structured data carries
   `[pando@32473 id="…" outcome="…"]`.
 - **`audit_sink/https`** — a batch `POST` of newline-delimited JSON (or a JSON array, per `body`).
-  Settings: `url`, `body` (`ndjson`, `json_array`, `splunk_hec`, `elastic_bulk`), `auth_header` (the header name),
-  `auth_scheme` (`Bearer`, `Splunk`, none), `format`, `extra_headers` (non-secret). Credential:
+  Settings: `url`, `body` (`ndjson`, `json_array`, `splunk_hec`, `elastic_bulk`, `datadog`), `auth_header` (the header name),
+  `auth_scheme` (`Bearer`, `Splunk`, none), `format`, `extra_headers` (non-secret), `max_body_bytes`. Credential:
   `token`. Presets fill these in for Splunk HEC (`splunk_hec` wraps each event as `{"event": …,
-  "sourcetype": "pando:audit"}`), Datadog Logs, Elastic (`elastic_bulk` puts `{"create":{}}` before
+  "sourcetype": "pando:audit"}`), Datadog Logs (`datadog`, below), Elastic (`elastic_bulk` puts `{"create":{}}` before
   each event, for a data stream's `_bulk` endpoint), Sumo Logic HTTP source, and the Azure Monitor Logs
   ingestion API for Sentinel (`json_array`, to a data collection rule's stream). Google SecOps and anything else that takes NDJSON with a token are the generic
   preset.
+
+**[D] The `datadog` body is a JSON array of Datadog logs (Logs API v2).** Each event keeps its own fields
+as attributes and gains `message` (OCSF's own, or for a native event one line, `<action> by <actor> on
+<target>`), `ddsource` and `service` (both `pando`), and `date`, the event's time. An event more than 17
+hours old is sent with no `date`: Datadog drops a log dated more than 18 hours back while still answering
+202, so it would be counted delivered and never indexed, and the hour is margin for clock skew. Datadog
+then dates it on arrival, and its own time stays in `occurred_at` (native) or `time` (OCSF). That is a
+backlog — a new destination starting at the oldest event, or one catching up after an outage. The preset
+used `json_array` with `ddsource` and `service` in the URL's query, which gave a native event no message
+and dated every event by its arrival.
+
+**[D] `max_body_bytes` splits a batch into several POSTs, in order.** The default is none, except 5 MB
+(5 000 000) for the `datadog` body, Datadog's limit on one uncompressed payload; the Azure Monitor preset
+sets 1 MB (1 000 000), because the Logs Ingestion API caps one call at 1 MB
+(learn.microsoft.com/azure/azure-monitor/fundamentals/service-limits). The first refused POST fails the
+batch, and those before it are sent again with the rest: delivery is at least once, and each event's id is
+its idempotency key. One event larger than the limit on its own fails the batch with its id and the setting
+to raise.
 
 Both refuse a credential in plain configuration, as every adapter does (R-190), and an `https` URL
 carrying `user:pass@` is refused by a CHECK, as 000066 does for registries.

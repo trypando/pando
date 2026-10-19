@@ -1,7 +1,8 @@
 // Package https is the audit sink adapter for a SIEM's HTTPS ingest endpoint
 // (R-382, design 12 §5.1): one POST per batch, in the body shape the
 // destination reads — newline-delimited JSON, a JSON array, Splunk HEC's
-// envelope, or Elastic's bulk action lines.
+// envelope, Elastic's bulk action lines, or Datadog log items. A batch whose
+// body would pass max_body_bytes goes as several POSTs, in order.
 //
 // The provider's vocabulary stays here (R-251). Presets fill it in for Splunk,
 // Datadog, Elastic, Sumo Logic and Azure Monitor; core knows none of them.
@@ -38,7 +39,17 @@ const (
 	BodyJSONArray   = "json_array"
 	BodySplunkHEC   = "splunk_hec"
 	BodyElasticBulk = "elastic_bulk"
+	BodyDatadog     = "datadog"
 )
+
+// DatadogMaxBody is Datadog's limit on one uncompressed payload, 5 MB. Read
+// as decimal megabytes, the smaller reading, so a body never passes it.
+const DatadogMaxBody = 5_000_000
+
+// datadogMaxAge is how old an event may be and still carry its own time as
+// Datadog's date. Datadog rejects a log dated over 18 hours back; an hour of
+// margin covers clock skew between here and its intake.
+const datadogMaxAge = 17 * time.Hour
 
 // SchemeNone sends the token as the whole header value, as Datadog's
 // DD-API-KEY wants. A named value rather than an empty one, because an empty
@@ -62,6 +73,7 @@ type Config struct {
 	SourceType     string `json:"sourcetype,omitempty"`
 	CACertificate  string `json:"ca_certificate,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+	MaxBodyBytes   int    `json:"max_body_bytes,omitempty"`
 }
 
 // Credentials is what this adapter keeps secret (R-190).
@@ -81,10 +93,11 @@ type Adapter struct {
 	headers  http.Header
 	endpoint string
 	client   *http.Client
+	now      func() time.Time
 }
 
 // New returns an unconfigured adapter.
-func New() *Adapter { return &Adapter{} }
+func New() *Adapter { return &Adapter{now: time.Now} }
 
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryAuditSink }
@@ -114,27 +127,11 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		return err
 	}
 
-	switch cfg.Body {
-	case "":
-		cfg.Body = BodyNDJSON
-	case BodyNDJSON, BodyJSONArray, BodySplunkHEC, BodyElasticBulk:
-	default:
-		return fmt.Errorf("https: %q is not a body shape. Valid answers: ndjson, json_array, splunk_hec, elastic_bulk", cfg.Body)
+	if err := normalizeBody(&cfg); err != nil {
+		return err
 	}
-	if cfg.SourceType == "" {
-		cfg.SourceType = "pando:audit"
-	}
-	if cfg.AuthHeader == "" {
-		cfg.AuthHeader = "Authorization"
-	}
-	if !validHeaderName(cfg.AuthHeader) {
-		return fmt.Errorf("https: %q is not a header name. Use one such as Authorization or DD-API-KEY", cfg.AuthHeader)
-	}
-	if cfg.AuthScheme == "" {
-		cfg.AuthScheme = "Bearer"
-	}
-	if strings.ContainsAny(cfg.AuthScheme, " \t\r\n") {
-		return fmt.Errorf("https: %q is not an authorization scheme. Use one word such as Bearer, Splunk or ApiKey, or none to send the token as the whole header value", cfg.AuthScheme)
+	if err := normalizeAuth(&cfg); err != nil {
+		return err
 	}
 
 	headers, err := parseExtraHeaders(cfg.ExtraHeaders, cfg.AuthHeader)
@@ -159,6 +156,46 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		// would carry the audit log, and perhaps the token, somewhere the
 		// operator did not name.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	return nil
+}
+
+// normalizeBody defaults the body shape and, for Datadog, the body size
+// limit, refusing an unknown shape or a negative limit.
+func normalizeBody(cfg *Config) error {
+	switch cfg.Body {
+	case "":
+		cfg.Body = BodyNDJSON
+	case BodyNDJSON, BodyJSONArray, BodySplunkHEC, BodyElasticBulk, BodyDatadog:
+	default:
+		return fmt.Errorf("https: %q is not a body shape. Valid answers: ndjson, json_array, splunk_hec, elastic_bulk, datadog", cfg.Body)
+	}
+	switch {
+	case cfg.MaxBodyBytes < 0:
+		return fmt.Errorf("https: max_body_bytes is %d. Set it to the most bytes the destination takes in one POST, such as 5000000, or leave it empty", cfg.MaxBodyBytes)
+	case cfg.MaxBodyBytes == 0 && cfg.Body == BodyDatadog:
+		cfg.MaxBodyBytes = DatadogMaxBody
+	}
+	return nil
+}
+
+// normalizeAuth defaults the source type and the authorization header and
+// scheme, refusing a header name or scheme that cannot be sent.
+func normalizeAuth(cfg *Config) error {
+	if cfg.SourceType == "" {
+		cfg.SourceType = "pando:audit"
+	}
+	if cfg.AuthHeader == "" {
+		cfg.AuthHeader = "Authorization"
+	}
+	if !validHeaderName(cfg.AuthHeader) {
+		return fmt.Errorf("https: %q is not a header name. Use one such as Authorization or DD-API-KEY", cfg.AuthHeader)
+	}
+	if cfg.AuthScheme == "" {
+		cfg.AuthScheme = "Bearer"
+	}
+	if strings.ContainsAny(cfg.AuthScheme, " \t\r\n") {
+		return fmt.Errorf("https: %q is not an authorization scheme. Use one word such as Bearer, Splunk or ApiKey, or none to send the token as the whole header value", cfg.AuthScheme)
 	}
 	return nil
 }
@@ -252,10 +289,27 @@ func (a *Adapter) Send(ctx context.Context, b api.AuditBatch) error {
 	if len(b.Events) == 0 {
 		return nil
 	}
-	body, contentType, err := a.encode(b.Events)
+	items, err := a.items(b.Events)
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed, "An audit event could not be wrapped for the destination's body shape.", err)
 	}
+	bodies, err := a.split(items, b.IDs)
+	if err != nil {
+		return err
+	}
+	// Bodies go in order, and the first refused one fails the batch. Those
+	// before it were accepted and are sent again with the rest: delivery is
+	// at least once, and each event's id is its idempotency key.
+	for _, body := range bodies {
+		if err := a.post(ctx, body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// post sends one body.
+func (a *Adapter) post(ctx context.Context, body []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.target.String(), bytes.NewReader(body))
 	if err != nil {
 		return errs.New(errs.AdapterFailed, "The audit sink's URL could not be used.")
@@ -263,7 +317,7 @@ func (a *Adapter) Send(ctx context.Context, b api.AuditBatch) error {
 	for k, v := range a.headers {
 		req.Header[k] = v
 	}
-	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Content-Type", a.contentType())
 	if tok := a.cfg.Credentials.Token; !tok.IsZero() {
 		value := tok.Reveal()
 		if a.cfg.AuthScheme != SchemeNone {
@@ -347,51 +401,194 @@ func (a *Adapter) snippet(answer []byte) string {
 	return s
 }
 
-// encode builds the body in the configured shape.
-func (a *Adapter) encode(events []json.RawMessage) ([]byte, string, error) {
-	var buf bytes.Buffer
+// array reports whether the body shape is a JSON array of its items, rather
+// than items one after another.
+func (a *Adapter) array() bool {
+	return a.cfg.Body == BodyJSONArray || a.cfg.Body == BodyDatadog
+}
+
+func (a *Adapter) contentType() string {
 	switch a.cfg.Body {
-	case BodyJSONArray:
-		buf.WriteByte('[')
-		for i, ev := range events {
-			if i > 0 {
-				buf.WriteByte(',')
+	case BodyJSONArray, BodySplunkHEC, BodyDatadog:
+		return "application/json"
+	default:
+		return "application/x-ndjson"
+	}
+}
+
+// items is each event as it appears in the body, framing included except an
+// array's brackets and commas.
+func (a *Adapter) items(events []json.RawMessage) ([][]byte, error) {
+	out := make([][]byte, 0, len(events))
+	for _, ev := range events {
+		var item []byte
+		switch a.cfg.Body {
+		case BodyJSONArray:
+			item = ev
+		case BodyDatadog:
+			line, err := datadogItem(ev, a.now())
+			if err != nil {
+				return nil, err
 			}
-			buf.Write(ev)
-		}
-		buf.WriteByte(']')
-		return buf.Bytes(), "application/json", nil
-	case BodySplunkHEC:
-		// HEC's batch format: envelopes one after another (Splunk accepts any
-		// whitespace between them).
-		for _, ev := range events {
+			item = line
+		case BodySplunkHEC:
+			// HEC's batch format: envelopes one after another (Splunk accepts
+			// any whitespace between them).
 			line, err := json.Marshal(struct {
 				Event      json.RawMessage `json:"event"`
 				SourceType string          `json:"sourcetype"`
 				Source     string          `json:"source"`
 			}{ev, a.cfg.SourceType, "pando"})
 			if err != nil {
-				return nil, "", err
+				return nil, err
 			}
-			buf.Write(line)
-			buf.WriteByte('\n')
+			item = append(line, '\n')
+		case BodyElasticBulk:
+			// A data stream takes only create; the trailing newline is
+			// required.
+			item = append(append([]byte("{\"create\":{}}\n"), ev...), '\n')
+		default:
+			item = append(append([]byte{}, ev...), '\n')
 		}
-		return buf.Bytes(), "application/json", nil
-	case BodyElasticBulk:
-		// A data stream takes only create; the trailing newline is required.
-		for _, ev := range events {
-			buf.WriteString("{\"create\":{}}\n")
-			buf.Write(ev)
-			buf.WriteByte('\n')
-		}
-		return buf.Bytes(), "application/x-ndjson", nil
-	default:
-		for _, ev := range events {
-			buf.Write(ev)
-			buf.WriteByte('\n')
-		}
-		return buf.Bytes(), "application/x-ndjson", nil
+		out = append(out, item)
 	}
+	return out, nil
+}
+
+// split joins items into bodies, each within max_body_bytes when it is set.
+// ids name an event too large to send alone.
+func (a *Adapter) split(items [][]byte, ids []int64) ([][]byte, error) {
+	limit, arr := a.cfg.MaxBodyBytes, a.array()
+	var bodies [][]byte
+	var buf bytes.Buffer
+	n := 0
+	flush := func() {
+		if n == 0 {
+			return
+		}
+		if arr {
+			buf.WriteByte(']')
+		}
+		bodies = append(bodies, bytes.Clone(buf.Bytes()))
+		buf.Reset()
+		n = 0
+	}
+	// What adding an item costs: a comma or the opening bracket, and the
+	// closing bracket the body will need.
+	extra := 0
+	if arr {
+		extra = 2
+	}
+	for i, item := range items {
+		if n > 0 && limit > 0 && buf.Len()+len(item)+extra > limit {
+			flush()
+		}
+		if limit > 0 && len(item)+extra > limit {
+			return nil, tooLarge(i, ids, len(item)+extra, limit)
+		}
+		switch {
+		case arr && n == 0:
+			buf.WriteByte('[')
+		case arr:
+			buf.WriteByte(',')
+		}
+		buf.Write(item)
+		n++
+	}
+	flush()
+	return bodies, nil
+}
+
+// tooLarge refuses the item at position i, size bytes, as larger than limit.
+// It names the event by its ID where ids has one, by position otherwise.
+func tooLarge(i int, ids []int64, size, limit int) error {
+	id := "at position " + fmt.Sprint(i+1)
+	if i < len(ids) {
+		id = fmt.Sprint(ids[i])
+	}
+	return errs.Newf(errs.AdapterFailed,
+		"Audit event %s is %d bytes in the destination's body shape, more than the %d bytes max_body_bytes allows in one POST. Raise max_body_bytes if the destination takes larger requests.",
+		id, size, limit)
+}
+
+// datadogItem is one event as a Datadog log (Logs API v2): a readable
+// message, ddsource and service, the event's time as date, and the event's
+// own fields beside them as attributes.
+//
+// An event older than datadogMaxAge is sent without date, because Datadog
+// rejects a log dated more than 18 hours back while still answering 202 —
+// the event would be counted delivered and never indexed. Without date,
+// Datadog dates it on arrival; the event's own time stays in occurred_at
+// (native) or time (OCSF), neither of which Datadog reads as the date, so
+// it is still searchable by when it happened. That case is a backlog: a new
+// destination starting from the oldest event, or one catching up after an
+// outage.
+func datadogItem(ev json.RawMessage, now time.Time) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(ev, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, errors.New("the event is not a JSON object")
+	}
+	str := func(k string) string {
+		var s string
+		_ = json.Unmarshal(fields[k], &s)
+		return s
+	}
+	var at time.Time
+	if t, err := time.Parse(time.RFC3339Nano, str("occurred_at")); err == nil {
+		at = t
+	} else {
+		var ms int64
+		if json.Unmarshal(fields["time"], &ms) == nil && ms > 0 {
+			at = time.UnixMilli(ms)
+		}
+	}
+
+	out := make(map[string]any, len(fields)+4)
+	for k, v := range fields {
+		out[k] = v
+	}
+	// OCSF carries its own one-line message; a native line does not.
+	if str("message") == "" {
+		out["message"] = summary(str)
+	}
+	out["ddsource"], out["service"] = "pando", "pando"
+	if !at.IsZero() && now.Sub(at) <= datadogMaxAge {
+		out["date"] = at.UTC().Format(time.RFC3339Nano)
+	}
+	return json.Marshal(out)
+}
+
+// summary is a native line in one line, the way the OCSF mapping writes
+// message: "<action> by <actor> on <target>".
+func summary(str func(string) string) string {
+	who := str("actor_name")
+	for _, k := range []string{"principal_id", "principal_kind"} {
+		if who == "" {
+			who = str(k)
+		}
+	}
+	if who == "" {
+		who = "anonymous"
+	}
+	on := str("target_kind")
+	switch {
+	case on != "":
+		if id := str("target_id"); id != "" {
+			on += " " + id
+		}
+	case str("app_id") != "":
+		on = "app " + str("app_id")
+	default:
+		on = "install"
+	}
+	action := str("action")
+	if action == "" {
+		action = "audit event"
+	}
+	return action + " by " + who + " on " + on
 }
 
 var _ api.AuditSinkAdapter = (*Adapter)(nil)
@@ -412,6 +609,7 @@ func Info() api.KindInfo {
 				{Value: BodyJSONArray, Label: "JSON array", Description: "The batch as one array."},
 				{Value: BodySplunkHEC, Label: "Splunk HEC", Description: "Each event in a HEC envelope with a sourcetype."},
 				{Value: BodyElasticBulk, Label: "Elastic bulk", Description: "A create action before each event, for a data stream's _bulk endpoint."},
+				{Value: BodyDatadog, Label: "Datadog logs", Description: "Each event as a Datadog log, with a message, source and date."},
 			}},
 		{Key: "auth_header", Label: "Auth header", Type: "string", Default: "Authorization",
 			Help: "The header the token is sent in."},
@@ -430,6 +628,8 @@ func Info() api.KindInfo {
 			Help:      "The sourcetype each HEC envelope names."},
 		{Key: "allow_http", Label: "Allow http", Type: "bool", Advanced: true,
 			Help: "Post over plain http, unencrypted. Only for a destination on a trusted network."},
+		{Key: "max_body_bytes", Label: "Max body size", Type: "int", Default: "0", Advanced: true,
+			Help: "The most bytes one POST carries; a larger batch goes as several. 0 is no limit, or 5000000 for the Datadog body."},
 		{Key: "timeout_seconds", Label: "Timeout", Type: "int", Default: "15", Advanced: true,
 			Help: "Seconds to wait for the destination to answer a batch."},
 	}
@@ -452,7 +652,7 @@ func presets() []api.Preset {
 			Values: map[string]string{"url": "https://splunk.example.com:8088/services/collector/event", "body": BodySplunkHEC, "auth_scheme": "Splunk"}},
 		{ID: "datadog", Label: "Datadog Logs",
 			Help:   "In Datadog, Organization Settings > API Keys: create an API key and set it as the token. The URL is for the US1 site; for another site use its intake host, such as http-intake.logs.datadoghq.eu for EU or http-intake.logs.us5.datadoghq.com for US5.",
-			Values: map[string]string{"url": "https://http-intake.logs.datadoghq.com/api/v2/logs?ddsource=pando&service=pando", "body": BodyJSONArray, "auth_header": "DD-API-KEY", "auth_scheme": SchemeNone}},
+			Values: map[string]string{"url": "https://http-intake.logs.datadoghq.com/api/v2/logs", "body": BodyDatadog, "auth_header": "DD-API-KEY", "auth_scheme": SchemeNone}},
 		{ID: "elastic", Label: "Elastic",
 			Help:   "In Kibana, Stack Management > API keys: create a key that may write to the data stream and set its encoded value as the token. The URL is your Elasticsearch endpoint, then a data stream name such as logs-pando.audit-default, then /_bulk.",
 			Values: map[string]string{"url": "https://my-deployment.es.example.com/logs-pando.audit-default/_bulk", "body": BodyElasticBulk, "auth_scheme": "ApiKey"}},
@@ -462,7 +662,7 @@ func presets() []api.Preset {
 		{ID: "azure_monitor", Label: "Microsoft Sentinel (Azure Monitor Logs ingestion)",
 			Help: "In Azure, create a data collection endpoint and a data collection rule with a stream named Custom-PandoAudit_CL whose columns match the events, then use the endpoint's logs ingestion URL and the rule's immutable ID in the URL. " +
 				"The token is a Microsoft Entra ID access token for the https://monitor.azure.com scope. This adapter sends a static token and does not mint or refresh one, so a token that expires stops delivery until it is replaced.",
-			Values: map[string]string{"url": "https://my-dce.eastus-1.ingest.monitor.azure.com/dataCollectionRules/dcr-00000000000000000000000000000000/streams/Custom-PandoAudit_CL?api-version=2023-01-01", "body": BodyJSONArray, "auth_scheme": "Bearer"}},
+			Values: map[string]string{"url": "https://my-dce.eastus-1.ingest.monitor.azure.com/dataCollectionRules/dcr-00000000000000000000000000000000/streams/Custom-PandoAudit_CL?api-version=2023-01-01", "body": BodyJSONArray, "auth_scheme": "Bearer", "max_body_bytes": "1000000"}},
 		{ID: "generic", Label: "Generic NDJSON (Google SecOps and others)",
 			Help:   "Any endpoint that takes newline-delimited JSON with a token in a header. Set the URL, the header and scheme it expects, and the token.",
 			Values: map[string]string{"body": BodyNDJSON}},
