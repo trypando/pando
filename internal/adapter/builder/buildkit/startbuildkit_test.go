@@ -52,7 +52,7 @@ func TestR111_ABuildStartsTheBuildKitPandoRuns(t *testing.T) {
 	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err), "and one that does not answer says so")
 	require.Contains(t, errs.As(err).Remedy, "docker logs")
 
-	require.NoError(t, (&Adapter{cli: a.cli}).startBuildKit(ctx, 0), "a BuildKit somebody else runs is theirs to start")
+	require.NoError(t, (&Adapter{cli: a.cli}).startBuildKit(ctx, 0), "a BuildKit the install topology runs is the topology's to start")
 }
 
 // A BuildKit just started takes a moment to answer; the build waits for it.

@@ -29,8 +29,9 @@ import (
 )
 
 // Pando starts its own BuildKit (R-111: "Pando starts it, hands it source,
-// receives an image"), on the Docker daemon it runs apps on, unless it is
-// told the address of one somebody else runs (issue #130).
+// receives an image"), on the Docker daemon it runs apps on, unless the
+// install topology runs one beside it and sets PANDO_BUILDKIT_ADDRESS, as
+// deploy/kubernetes does (issue #130).
 //
 // So that the install is one Compose file. BuildKit runs rootless, which needs
 // user namespaces and mounts that Docker's default seccomp profile refuses,

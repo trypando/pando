@@ -113,3 +113,23 @@ func TestR261_AdvancedSettingsAreListedApartAndStillSet(t *testing.T) {
 	require.NoError(t, got.err, got.errOut)
 	require.Contains(t, api.bodyFor("POST /adapters"), `"config":{"timeout_seconds":900}`)
 }
+
+// TestR261_AKindPandoSetsUpItselfIsNotListedToAdd asserts R-261 for a kind
+// Pando sets up itself, such as its own BuildKit: `adapter kinds` leaves it
+// out as the console's Add adapter does, and its settings can still be set.
+func TestR261_AKindPandoSetsUpItselfIsNotListedToAdd(t *testing.T) {
+	api := newAPI(t).reply("GET /adapters/kinds", map[string]any{"kinds": []map[string]any{
+		{"category": "builder", "kind": "buildkit", "name": "BuildKit", "id_prefix": "bld_", "managed": true,
+			"fields": []map[string]any{{"key": "cache_max_bytes", "label": "Cache", "type": "int", "default": "1", "advanced": true}}},
+		{"category": "scanner", "kind": "trivy", "name": "Trivy", "id_prefix": "scan_"},
+	}})
+
+	kinds := run(t, api, "", "adapter", "kinds")
+	require.NoError(t, kinds.err, kinds.errOut)
+	require.Contains(t, kinds.out, "scanner/trivy")
+	require.NotContains(t, kinds.out, "builder/buildkit")
+
+	got := run(t, api, "", "adapter", "add", "builder/buildkit", "--set", "cache_max_bytes=2")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, api.bodyFor("POST /adapters"), `"cache_max_bytes":2`)
+}

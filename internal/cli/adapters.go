@@ -52,6 +52,9 @@ func adapterCmd(client func() (*Client, error)) *cobra.Command {
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "KIND\tSETTINGS\tADVANCED\tWHAT IT IS")
 			for _, k := range kinds {
+				if k.Managed {
+					continue
+				}
 				var basic, advanced []string
 				for _, f := range k.Fields {
 					key := f.Key
@@ -309,7 +312,10 @@ type kindInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	IDPrefix    string `json:"id_prefix"`
-	Fields      []struct {
+	// Managed is a kind Pando sets up itself, such as its own BuildKit: not
+	// one to add, though its advanced settings can still be changed.
+	Managed bool `json:"managed"`
+	Fields  []struct {
 		Key        string `json:"key"`
 		Label      string `json:"label"`
 		Type       string `json:"type"`

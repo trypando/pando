@@ -89,6 +89,20 @@ export interface AdapterKind {
   description: string;
   id_prefix: string;
   fields: KindField[] | null;
+  /** Pando sets this kind up itself, from its install topology: no form
+   *  offers to add one, and the one there is has no Edit. */
+  managed?: boolean;
+}
+
+/** The kinds a person may add: every kind but those Pando sets up itself. */
+export function addableKinds(kinds: AdapterKind[]): AdapterKind[] {
+  return kinds.filter((k) => !k.managed);
+}
+
+/** Whether an adapter's kind is one Pando sets up itself, so the adapters
+ *  screen shows it, and whether it is reachable, but offers no Edit. */
+export function isManaged(kinds: AdapterKind[], row: { category: string; kind: string }): boolean {
+  return kinds.some((k) => k.category === row.category && k.kind === row.kind && k.managed === true);
 }
 
 /** What the form holds: text for every field, whatever its type, and a

@@ -2213,8 +2213,8 @@ func registryImages(reg imageregistry.Provider, apps *state.Apps) reconciler.Reg
 func (d deletedAppImages) DeleteApp(ctx context.Context, appID string) error {
 	current, err := d.reg.Current(ctx)
 	if err != nil || !current.Configured() {
-		// No registry, nothing in it. One that cannot be read is retried at
-		// the next teardown pass.
+		// No registry, nothing in it. One that cannot be read leaves the
+		// app's images behind: the teardown says so and carries on.
 		return err
 	}
 	revisions, err := d.apps.ListRevisions(ctx, appID)

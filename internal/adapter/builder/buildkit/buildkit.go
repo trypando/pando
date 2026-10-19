@@ -36,8 +36,8 @@ type Adapter struct {
 	config  Config
 	address string
 
-	// managed is the BuildKit Pando runs itself, when no address names one
-	// somebody else runs. Nil otherwise.
+	// managed is the BuildKit Pando runs itself, when the install topology
+	// names none (Config.Address). Nil otherwise.
 	managed *managed
 
 	// answers asks BuildKit whether it is up; nil asks it for its workers.
@@ -54,18 +54,21 @@ type Adapter struct {
 
 // Config is the adapter's configuration.
 type Config struct {
-	// Address is a BuildKit somebody else runs: Kubernetes' Deployment, a
-	// multi-host control host's, one with its own registry configuration.
-	// Unset here and in PANDO_BUILDKIT_ADDRESS, Pando runs its own on the
-	// Docker daemon it runs apps on (managed.go, issue #130).
+	// Address is the BuildKit an install topology runs beside Pando, set by
+	// it through PANDO_BUILDKIT_ADDRESS: deploy/kubernetes runs one as its
+	// own Deployment. Internal, and not among Info's settings: Pando does not
+	// support a BuildKit on another server, so nobody sets this by hand.
+	// Unset, Pando runs its own on the Docker daemon it runs apps on
+	// (managed.go, issue #130).
 	Address string `json:"address,omitempty"`
 
 	// RegistryHost and RegistryCAFile let the BuildKit Pando runs trust a
 	// registry signed by the installation's own CA, such as the one
 	// docker-compose.registry.yml runs: host:port, and a file in Pando's
 	// container holding the CA. Default PANDO_BUILDKIT_REGISTRY_HOST and
-	// PANDO_BUILDKIT_REGISTRY_CA. Not used with Address, whose BuildKit is
-	// configured by whoever runs it.
+	// PANDO_BUILDKIT_REGISTRY_CA. Internal, like Networks: the install
+	// topology sets them. Not used with Address, whose BuildKit the topology
+	// configures itself.
 	RegistryHost   string `json:"registry_host,omitempty"`
 	RegistryCAFile string `json:"registry_ca_file,omitempty"`
 
@@ -73,6 +76,9 @@ type Config struct {
 	// own, so it reaches a registry on one of them. Default
 	// PANDO_BUILDKIT_NETWORKS, separated by commas.
 	Networks []string `json:"networks,omitempty"`
+
+	// CacheMaxBytes and LocalCacheMaxBytes are the only settings Info offers
+	// a person, both advanced.
 
 	// CacheMaxBytes caps the build service's own cache. Zero uses
 	// defaultCacheMaxBytes; a negative value leaves it unbounded.
@@ -128,8 +134,8 @@ var dockerClient = func() (dockerAPI, error) { return client.New(client.FromEnv)
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryBuilder }
 
-// configureManaged sets up the BuildKit Pando runs itself, when no address
-// names one somebody else runs. Started now if Docker is up, and by every
+// configureManaged sets up the BuildKit Pando runs itself, when the install
+// topology names none. Started now if Docker is up, and by every
 // health check after that if it is not, or if it stopped.
 func (a *Adapter) configureManaged(ctx context.Context) error {
 	dc, err := dockerClient()
@@ -701,10 +707,22 @@ func Info() api.KindInfo {
 		Category:    api.CategoryBuilder,
 		Kind:        Kind,
 		Name:        "BuildKit",
-		Description: "Builds images from source in an isolated BuildKit daemon.",
+		Description: "Builds images from source in a rootless BuildKit that Pando runs itself.",
 		IDPrefix:    "bld_",
+		// Pando starts this BuildKit itself, or the install topology does
+		// (Config.Address); a person never adds one or points it elsewhere.
+		Managed: true,
+		// Only the cache caps. The address, registry and networks are the
+		// install topology's, set through its environment (Config).
 		Fields: []api.Field{
-			{Key: "address", Label: "BuildKit address", Type: "string", Help: "Where the BuildKit daemon listens. PANDO_BUILDKIT_ADDRESS is used when this is empty.", Default: "tcp://buildkit:1234", Advanced: true},
+			{Key: "cache_max_bytes", Label: "Build service cache", Type: "int", Help: "Bytes BuildKit keeps between builds, oldest trimmed first; a negative number removes the limit.", Default: bytesDefault(defaultCacheMaxBytes), Advanced: true},
+			{Key: "local_cache_max_bytes", Label: "App build caches", Type: "int", Help: "Bytes every app's build cache may use together, least recently used evicted first; a negative number removes the limit.", Default: bytesDefault(defaultLocalCacheMaxBytes), Advanced: true},
 		},
 	}
+}
+
+// bytesDefault states a byte default as the number the setting takes and the
+// GiB it comes to, so the form shows what leaving it empty gets.
+func bytesDefault(n int64) string {
+	return fmt.Sprintf("%d (%d GiB)", n, n>>30)
 }
