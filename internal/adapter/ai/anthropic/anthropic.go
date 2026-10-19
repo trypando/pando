@@ -15,8 +15,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -298,7 +300,9 @@ func check(config json.RawMessage, credentials map[string]secret.Value, stored [
 	// A key not given here may be in Pando's environment when it starts, and
 	// that is checked then: an adapter is not refused for one it may read.
 	if credentials["api_key"].IsZero() {
-		stored = append(stored, "api_key")
+		stored = append(slices.Clone(stored), "api_key")
+		credentials = maps.Clone(credentials)
+		delete(credentials, "api_key")
 	}
 	merged, err := checkkit.Merge(config, credentials, stored)
 	if err != nil {

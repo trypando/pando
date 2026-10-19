@@ -4,7 +4,8 @@
 // Configure reads credentials from a `credentials` object beside the
 // settings, as Pando hands them over at startup. A credential already stored
 // and not sent again is given a stand-in value, so a check that it is there
-// passes; a check of what a stored credential says is the kind's to skip.
+// passes; a check of what a stored credential says is the kind's to skip. One
+// sent empty is being removed, and is left out.
 package checkkit
 
 import (
@@ -25,12 +26,17 @@ func Merge(config json.RawMessage, credentials map[string]secret.Value, stored [
 			return nil, err
 		}
 	}
+	if cfg == nil { // "config": null
+		cfg = map[string]json.RawMessage{}
+	}
 	plain := map[string]string{}
 	for _, field := range stored {
 		plain[field] = Stored
 	}
 	for field, v := range credentials {
-		if !v.IsZero() {
+		if v.IsZero() {
+			delete(plain, field) // sent empty: removed
+		} else {
 			plain[field] = v.Reveal()
 		}
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/imageregistry/oci"
+	"github.com/trypando/pando/internal/adapter/imageregistry/registrykit"
 	"github.com/trypando/pando/internal/errs"
 )
 
@@ -229,6 +230,33 @@ func TestR254_TheHealthCheckNotesARegistryThatWillNotDelete(t *testing.T) {
 		_, err = remote.Head(ref)
 		require.NoError(t, err, "the probe deleted nothing real")
 		f.refuse(func(http.ResponseWriter, *http.Request) bool { return false })
+	}
+}
+
+// TestAProvidersOwnDeleteRemedyIsTheNote asserts that a provider which
+// names what its credential needs to delete, as ECR does, gets that in the
+// note rather than advice for a registry Pando runs.
+func TestAProvidersOwnDeleteRemedyIsTheNote(t *testing.T) {
+	t.Parallel()
+	f := newFronted(t)
+	reg, err := registrykit.Open(registrykit.Settings{
+		URL: "http://" + f.host + "/pando", Insecure: true, Layout: "single",
+		DeleteRemedy: "Allow ecr:BatchDeleteImage.",
+	}, false, nil)
+	require.NoError(t, err)
+	for _, answer := range []int{http.StatusMethodNotAllowed, http.StatusForbidden} {
+		f.refuse(func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method != http.MethodDelete {
+				return false
+			}
+			registryError(w, answer, "DENIED")
+			return true
+		})
+		notes, err := reg.Health(context.Background())
+		require.NoError(t, err)
+		require.Len(t, notes, 1)
+		require.Contains(t, notes[0], "Allow ecr:BatchDeleteImage.")
+		require.NotContains(t, notes[0], "storage.delete.enabled")
 	}
 }
 

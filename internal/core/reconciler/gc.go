@@ -245,6 +245,7 @@ func (g *GC) tearDownDeletedBundles(ctx context.Context) {
 		return
 	}
 
+	var destroyed []state.TeardownTarget
 	for _, t := range targets {
 		if err := g.tearDown(ctx, t); err != nil {
 			// Left for the next pass rather than marked done. An unreachable
@@ -254,16 +255,21 @@ func (g *GC) tearDownDeletedBundles(ctx context.Context) {
 				zap.String("app_id", t.AppID), zap.Error(err))
 			continue
 		}
+		destroyed = append(destroyed, t)
+	}
 
-		// After the bundle, and never blocking it: a registry is the
-		// organization's, and a permanent refusal there — a token without
-		// delete permission, a registry that does not allow deletes — used to
-		// hold the app at the front of every pass, and twenty such apps held
-		// every later teardown (TeardownBatch). Tried once; a failure is
-		// recorded on the teardown's audit event with what to do, and the
-		// bundle is marked destroyed regardless (R-224).
-		registryErr := g.forgetRegistryImages(ctx, t)
+	// After every bundle, and never blocking one: a registry is the
+	// organization's, and a permanent refusal there — a token without delete
+	// permission, a registry that does not allow deletes — used to hold the
+	// app at the front of every pass, and twenty such apps held every later
+	// teardown (TeardownBatch). Tried once, side by side, so a slow registry
+	// costs a pass one timeout; a failure is recorded on the teardown's audit
+	// event with what to do, and the bundle is marked destroyed regardless
+	// (R-224). Marked only after, so a pass cut short leaves the app for the
+	// next one and its audit event is still written.
+	registryErrs := g.forgetAllRegistryImages(ctx, destroyed)
 
+	for i, t := range destroyed {
 		if err := g.Apps.MarkBundleDestroyed(ctx, t.AppID); err != nil {
 			// The bundle is gone but the row still says otherwise, so the next
 			// pass destroys it again. Destroy is idempotent, so that is noise
@@ -272,24 +278,45 @@ func (g *GC) tearDownDeletedBundles(ctx context.Context) {
 				zap.String("app_id", t.AppID), zap.Error(err))
 			continue
 		}
-
 		g.Logger.Info("tore down a deleted app's bundle", zap.String("app_id", t.AppID))
-		if g.Auditor != nil {
-			// Destroying a bundle is destruction, and R-227 has no exception
-			// for the janitor. kept_volumes is recorded explicitly so the log
-			// answers the question somebody will actually ask afterwards.
-			detail := map[string]any{"runtime": t.RuntimeRef, "kept_volumes": !t.DiscardStorage}
-			if registryErr != nil {
-				detail["registry_images_left"] = true
-				detail["registry_error"] = registryFailure(registryErr)
-			}
-			_ = g.Auditor.Write(ctx, AuditEvent{
-				Action: "app.bundle.destroy",
-				AppID:  t.AppID,
-				Detail: detail,
-			})
-		}
+		g.auditTeardown(ctx, t, registryErrs[i])
 	}
+}
+
+// auditTeardown records a destroyed bundle. Destroying a bundle is
+// destruction, and R-227 has no exception for the janitor. kept_volumes is
+// recorded explicitly so the log answers the question somebody will actually
+// ask afterwards.
+func (g *GC) auditTeardown(ctx context.Context, t state.TeardownTarget, registryErr error) {
+	if g.Auditor == nil {
+		return
+	}
+	detail := map[string]any{"runtime": t.RuntimeRef, "kept_volumes": !t.DiscardStorage}
+	if registryErr != nil {
+		detail["registry_images_left"] = true
+		detail["registry_error"] = registryFailure(registryErr)
+	}
+	_ = g.Auditor.Write(ctx, AuditEvent{
+		Action: "app.bundle.destroy",
+		AppID:  t.AppID,
+		Detail: detail,
+	})
+}
+
+// forgetAllRegistryImages runs forgetRegistryImages for each target at once,
+// returning each one's error in the targets' order.
+func (g *GC) forgetAllRegistryImages(ctx context.Context, targets []state.TeardownTarget) []error {
+	out := make([]error, len(targets))
+	var wg sync.WaitGroup
+	for i, t := range targets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out[i] = g.forgetRegistryImages(ctx, t)
+		}()
+	}
+	wg.Wait()
+	return out
 }
 
 // forgetRegistryImages deletes a deleted app's builds from the install's

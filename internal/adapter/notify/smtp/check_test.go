@@ -21,4 +21,6 @@ func TestASavedConfigurationIsCheckedAsItIsSaved(t *testing.T) {
 	ok := json.RawMessage(`{"host":"mail.example.com","from":"pando@example.com","username":"pando"}`)
 	require.NoError(t, check(ok, nil, []string{"password"}))
 	require.ErrorContains(t, check(ok, nil, nil), "no password")
+	// Sent empty, a stored password is being removed.
+	require.ErrorContains(t, check(ok, map[string]secret.Value{"password": {}}, []string{"password"}), "no password")
 }

@@ -4,6 +4,7 @@ package reconciler_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,9 +19,14 @@ import (
 
 // refusingRegistryImages is a registry that refuses every delete, as one
 // whose token lacks delete permission does, and counts the attempts.
-type refusingRegistryImages struct{ attempts map[string]int }
+type refusingRegistryImages struct {
+	mu       sync.Mutex
+	attempts map[string]int
+}
 
 func (r *refusingRegistryImages) DeleteApp(_ context.Context, appID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.attempts[appID]++
 	return errs.New(errs.AdapterFailed, "The registry ghcr.io refused to delete a deleted app's image.").
 		WithRemedy("Give the token delete:packages.")

@@ -1652,8 +1652,10 @@ address with no repository or a deeper path is refused with the form to use (`do
 dual-stack or FIPS endpoint when the registry host is one, so an install reaching AWS only over IPv6
 works.
 
-**[D] A failed cleanup does not block teardown (R-224).** Deleting a deleted app's images runs after its
-bundle is destroyed, is tried once, and is bounded to two minutes. A failure is logged and recorded on
+**[D] A failed cleanup does not block teardown (R-224).** Deleting a deleted app's images runs after
+every bundle in the pass is destroyed, for all of them at once, is tried once, and is bounded to two
+minutes, so a slow registry costs a pass one timeout. The bundles are marked destroyed after it, so a
+pass cut short is redone and its audit events are still written. A failure is logged and recorded on
 the teardown's `app.bundle.destroy` audit event as `registry_images_left` and `registry_error`, which
 says what failed and what to do, and the bundle is marked destroyed regardless. It used to leave the app
 for the next pass, and twenty apps a registry permanently refused then held every later teardown.

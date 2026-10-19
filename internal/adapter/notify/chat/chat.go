@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -202,7 +203,9 @@ func (p Platform) Info() api.KindInfo {
 // webhook URL kept from before was checked when it was saved, so it is only
 // checked when a new one is sent.
 func (p Platform) check(config json.RawMessage, credentials map[string]secret.Value, stored []string) error {
-	if credentials["webhook_url"].IsZero() {
+	// A stored webhook URL not sent again cannot be read here, so it is
+	// checked at startup instead. One sent, sent empty or never given is.
+	if _, sent := credentials["webhook_url"]; !sent && slices.Contains(stored, "webhook_url") {
 		return nil
 	}
 	merged, err := checkkit.Merge(config, credentials, stored)

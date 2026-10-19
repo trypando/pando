@@ -72,7 +72,10 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		}
 		return &api.RegistryAuth{Registry: host, Username: user, Password: pass}, nil
 	}
-	reg, err := registrykit.Open(registrykit.Settings{URL: cfg.URL, Layout: string(registrykit.LayoutSingle), Always: cfg.Always}, false, auth)
+	reg, err := registrykit.Open(registrykit.Settings{
+		URL: cfg.URL, Layout: string(registrykit.LayoutSingle), Always: cfg.Always,
+		DeleteRemedy: "Allow ecr:BatchDeleteImage on the repository in the IAM policy of Pando's credential.",
+	}, false, auth)
 	if err != nil {
 		return err
 	}

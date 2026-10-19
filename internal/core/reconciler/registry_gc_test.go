@@ -3,7 +3,9 @@ package reconciler
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -13,13 +15,52 @@ import (
 )
 
 type recordingRegistryImages struct {
+	mu      sync.Mutex
 	deleted []string
 	err     error
 }
 
 func (r *recordingRegistryImages) DeleteApp(_ context.Context, appID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.deleted = append(r.deleted, appID)
 	return r.err
+}
+
+// waitingRegistryImages answers no delete until every app's has arrived.
+type waitingRegistryImages struct {
+	all     sync.WaitGroup
+	refused string
+}
+
+func (r *waitingRegistryImages) DeleteApp(_ context.Context, appID string) error {
+	r.all.Done()
+	r.all.Wait()
+	if appID == r.refused {
+		return errors.New("refused")
+	}
+	return nil
+}
+
+// TestR224_RegistryCleanupsRunSideBySide asserts that a deleted app's
+// registry cleanup does not wait on another's: a pass with a slow registry
+// costs one timeout, not one per app. Each error comes back for its own app.
+func TestR224_RegistryCleanupsRunSideBySide(t *testing.T) {
+	images := &waitingRegistryImages{refused: "app_2"}
+	images.all.Add(3)
+	g := &GC{RegistryImages: images, Logger: zap.NewNop()}
+	targets := []state.TeardownTarget{{AppID: "app_1"}, {AppID: "app_2"}, {AppID: "app_3"}}
+
+	done := make(chan []error)
+	go func() { done <- g.forgetAllRegistryImages(context.Background(), targets) }()
+	select {
+	case got := <-done:
+		require.NoError(t, got[0])
+		require.Error(t, got[1])
+		require.NoError(t, got[2])
+	case <-time.After(10 * time.Second):
+		t.Fatal("each cleanup waited for the one before it")
+	}
 }
 
 // TestR224_TeardownDeletesADeletedAppsRegistryImages asserts R-224 for the

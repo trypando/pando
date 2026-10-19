@@ -61,6 +61,11 @@ type Settings struct {
 	// through, for a registry that is GitHub Container Registry. Set for
 	// ghcr.io when empty; a test sets it to treat its own registry as GHCR.
 	PackagesAPI string `json:"-"`
+
+	// DeleteRemedy is what a provider's credential needs to delete images,
+	// said when the health check finds it cannot. Empty gives the advice for
+	// a registry Pando runs or one with delete permissions to grant.
+	DeleteRemedy string `json:"-"`
 }
 
 // AuthFunc is the credential for one push or pull. Nil for anonymous.
@@ -81,6 +86,8 @@ type Registry struct {
 	// packagesAPI is GitHub's REST API where the registry is GHCR, whose
 	// images are not deleted through the registry API. Empty elsewhere.
 	packagesAPI string
+
+	deleteRemedy string
 }
 
 // Open reads the shared settings. createsOnPush is the provider's answer to
@@ -98,7 +105,7 @@ func Open(s Settings, createsOnPush bool, auth AuthFunc) (Registry, error) {
 		return Registry{}, errs.New(errs.ValidInvalid, "The image registry's address carries a username or password, which Pando does not keep in an address.").
 			WithRemedy("Give the registry's address alone, and the credential in its own settings.")
 	}
-	r := Registry{insecure: s.Insecure, always: s.Always, createsOn: createsOnPush, auth: auth}
+	r := Registry{insecure: s.Insecure, always: s.Always, createsOn: createsOnPush, auth: auth, deleteRemedy: s.DeleteRemedy}
 
 	raw, err := stripScheme(s, raw)
 	if err != nil {
@@ -377,6 +384,8 @@ func (r *Registry) deleteNote(repo name.Repository, opts []remote.Option) string
 		unsupported = unsupported || d.Code == transport.UnsupportedErrorCode
 	}
 	switch {
+	case (unsupported || te.StatusCode == http.StatusUnauthorized || te.StatusCode == http.StatusForbidden) && r.deleteRemedy != "":
+		return fmt.Sprintf("Pando cannot delete images in the image registry %s, so a deleted app's images will stay in it. %s", r.host, r.deleteRemedy)
 	case unsupported:
 		return fmt.Sprintf("The image registry %s does not allow deleting images, so a deleted app's images will stay in it. "+
 			"For a registry Pando runs, set storage.delete.enabled: true in its configuration.", r.host)

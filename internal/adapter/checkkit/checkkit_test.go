@@ -25,3 +25,15 @@ func TestMergeGivesConfigureWhatItReads(t *testing.T) {
 	_, err = Merge(json.RawMessage(`[1]`), nil, nil)
 	require.Error(t, err)
 }
+
+func TestMergeLeavesOutACredentialSentEmpty(t *testing.T) {
+	got, err := Merge(nil, map[string]secret.Value{"password": {}}, []string{"password", "token"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"credentials":{"token":"stored"}}`, string(got))
+}
+
+func TestMergeTakesANullConfiguration(t *testing.T) {
+	got, err := Merge(json.RawMessage(`null`), nil, []string{"password"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"credentials":{"password":"stored"}}`, string(got))
+}
