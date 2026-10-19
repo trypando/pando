@@ -53,6 +53,44 @@ func TestPlatformsRefuseAnotherPlatformsURL(t *testing.T) {
 	require.NoError(t, configure(t, New(Discord), "https://discord.com/api/webhooks/1/abc"))
 }
 
+// anyHost is p accepting any host, so a test server's address configures.
+func anyHost(p Platform) Platform {
+	p.Hosts, p.Retired = nil, nil
+	return p
+}
+
+func TestTeamsAcceptsWorkflowsURLsInEveryCloud(t *testing.T) {
+	for _, u := range []string{
+		"https://default0123456789abcdef.aa.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/abc/triggers/manual/paths/invoke?api-version=1",
+		"https://Default0123.AA.Environment.API.PowerPlatform.com/powerautomate/automations/direct/workflows/abc",
+		"https://env.environment.api.gov.powerplatform.microsoft.us/powerautomate/automations/direct/workflows/abc",
+		"https://env.environment.api.high.powerplatform.microsoft.us/powerautomate/automations/direct/workflows/abc",
+		"https://env.environment.api.appsplatform.us/powerautomate/automations/direct/workflows/abc",
+		"https://env.environment.api.powerplatform.partner.microsoftonline.cn/powerautomate/automations/direct/workflows/abc",
+		"https://prod-01.usgovtexas.logic.azure.us/workflows/abc/triggers/manual/paths/invoke",
+		"https://prod-01.chinaeast2.logic.azure.cn/workflows/abc/triggers/manual/paths/invoke",
+	} {
+		require.NoError(t, configure(t, New(Teams), u), u)
+	}
+}
+
+func TestTeamsRefusesOtherPlatformsAndRetiredURLs(t *testing.T) {
+	for _, u := range []string{
+		"https://hooks.slack.com/services/T/B/x",
+		"https://discord.com/api/webhooks/1/abc",
+		"https://api.powerplatform.com.evil.example/workflows/abc",
+		"https://notapi.powerplatform.com/workflows/abc",
+	} {
+		require.ErrorContains(t, configure(t, New(Teams), u), "not a Microsoft Teams address", u)
+	}
+	err := configure(t, New(Teams), "https://prod-12.westus.logic.azure.com:443/workflows/abc/triggers/manual/paths/invoke")
+	require.ErrorContains(t, err, "retired")
+	require.ErrorContains(t, err, "copy the new URL")
+	err = configure(t, New(Teams), "https://contoso.webhook.office.com/webhookb2/abc/IncomingWebhook/def")
+	require.ErrorContains(t, err, "Office 365 connector webhooks")
+	require.ErrorContains(t, err, "Send webhook alerts to a channel")
+}
+
 func TestTeamsPostsAnAdaptiveCard(t *testing.T) {
 	var got map[string]any
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +100,7 @@ func TestTeamsPostsAnAdaptiveCard(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := New(Teams)
+	a := New(anyHost(Teams))
 	require.NoError(t, configure(t, a, srv.URL+"/workflows/1"))
 	a.client = srv.Client()
 	require.NoError(t, a.Notify(context.Background(), sample))
@@ -79,7 +117,7 @@ func TestAFailedPostDoesNotRevealTheURL(t *testing.T) {
 		http.Error(w, "no such hook", http.StatusNotFound)
 	}))
 	defer srv.Close()
-	a := New(Teams)
+	a := New(anyHost(Teams))
 	require.NoError(t, configure(t, a, srv.URL+"/workflows/secret-token"))
 	a.client = srv.Client()
 	err := a.Notify(context.Background(), sample)

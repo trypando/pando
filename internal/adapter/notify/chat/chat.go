@@ -20,9 +20,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/adapter/checkkit"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -42,6 +44,11 @@ type Platform struct {
 	// into the wrong platform's form fails at the first event otherwise.
 	// Empty accepts any host.
 	Hosts []string
+
+	// Retired are hosts the platform once issued webhook URLs on and no
+	// longer serves, each with what to do instead. A URL on one is refused
+	// with that remedy rather than the generic wrong-platform message.
+	Retired map[string]string
 
 	Format func(n api.Notification) any
 }
@@ -77,18 +84,9 @@ func (a *Adapter) Capabilities() api.NotifyCapabilities {
 
 // Configure reads the configuration core assembled, credentials included.
 func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
-	var cfg Config
-	if len(raw) > 0 {
-		var top map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &top); err != nil {
-			return fmt.Errorf("%s: reading configuration: %w", a.platform.Kind, err)
-		}
-		if _, inline := top["webhook_url"]; inline {
-			return fmt.Errorf("%s: webhook_url is in this adapter's stored configuration, which is unencrypted; set it as a credential instead", a.platform.Kind)
-		}
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return fmt.Errorf("%s: reading configuration: %w", a.platform.Kind, err)
-		}
+	cfg, err := a.decode(raw)
+	if err != nil {
+		return err
 	}
 	if cfg.Credentials.WebhookURL.IsZero() {
 		return fmt.Errorf("%s: no webhook URL is set. Create an incoming webhook in %s and set its URL as this adapter's webhook_url credential", a.platform.Kind, a.platform.Name)
@@ -96,6 +94,11 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	u, err := url.Parse(cfg.Credentials.WebhookURL.Reveal())
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return fmt.Errorf("%s: the webhook URL is not an https address. Copy it again from %s", a.platform.Kind, a.platform.Name)
+	}
+	for h, remedy := range a.platform.Retired {
+		if hostIn(u.Hostname(), []string{h}) {
+			return fmt.Errorf("%s: the webhook URL is on %s. %s", a.platform.Kind, u.Hostname(), remedy)
+		}
 	}
 	if len(a.platform.Hosts) > 0 && !hostIn(u.Hostname(), a.platform.Hosts) {
 		return fmt.Errorf("%s: the webhook URL is on %s, which is not a %s address. Check it was copied from %s", a.platform.Kind, u.Hostname(), a.platform.Name, a.platform.Name)
@@ -108,7 +111,29 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	return nil
 }
 
+// decode reads raw into a Config, refusing a webhook URL stored inline in
+// the unencrypted configuration (R-190).
+func (a *Adapter) decode(raw json.RawMessage) (Config, error) {
+	var cfg Config
+	if len(raw) > 0 {
+		var top map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &top); err != nil {
+			return Config{}, fmt.Errorf("%s: reading configuration: %w", a.platform.Kind, err)
+		}
+		if _, inline := top["webhook_url"]; inline {
+			return Config{}, fmt.Errorf("%s: webhook_url is in this adapter's stored configuration, which is unencrypted; set it as a credential instead", a.platform.Kind)
+		}
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			return Config{}, fmt.Errorf("%s: reading configuration: %w", a.platform.Kind, err)
+		}
+	}
+	return cfg, nil
+}
+
+// hostIn reports whether host is one of hosts or a subdomain of one. DNS
+// names are case-insensitive, so a pasted URL's casing does not matter.
 func hostIn(host string, hosts []string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	for _, h := range hosts {
 		if host == h || len(host) > len(h) && host[len(host)-len(h)-1:] == "."+h {
 			return true
@@ -159,6 +184,7 @@ var _ api.NotifyAdapter = (*Adapter)(nil)
 // Info describes the platform's adapter for the forms that configure one.
 func (p Platform) Info() api.KindInfo {
 	return api.KindInfo{
+		Check:       p.check,
 		Category:    api.CategoryNotify,
 		Kind:        p.Kind,
 		Name:        p.Name,
@@ -170,4 +196,18 @@ func (p Platform) Info() api.KindInfo {
 			{Key: "timeout_seconds", Label: "Timeout", Type: "int", Help: "Seconds to wait for " + p.Name + " to answer.", Default: "10", Advanced: true},
 		},
 	}
+}
+
+// check runs Configure on a configuration being saved (KindInfo.Check). A
+// webhook URL kept from before was checked when it was saved, so it is only
+// checked when a new one is sent.
+func (p Platform) check(config json.RawMessage, credentials map[string]secret.Value, stored []string) error {
+	if credentials["webhook_url"].IsZero() {
+		return nil
+	}
+	merged, err := checkkit.Merge(config, credentials, stored)
+	if err != nil {
+		return err
+	}
+	return New(p).Configure(context.Background(), merged)
 }
