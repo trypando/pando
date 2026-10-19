@@ -88,7 +88,9 @@ type GC struct {
 	DiscardCredential func(ctx context.Context, appID string) error
 
 	// RegistryImages deletes a deleted app's builds from the install's image
-	// registry (issue #72 PR 5, R-224). Nil when the install has none.
+	// registry (issue #72 PR 5, R-224). Nil when the install has none. Best
+	// effort: a failure is recorded on the teardown's audit event and does
+	// not hold the teardown.
 	RegistryImages RegistryImages
 }
 
@@ -103,6 +105,9 @@ type RegistryImages interface {
 type BuildCaches interface {
 	Forget(ctx context.Context, builderRef, appID string) error
 }
+
+// registryCleanupTimeout bounds one deleted app's registry cleanup.
+const registryCleanupTimeout = 2 * time.Minute
 
 // TeardownBatch bounds how many bundles one pass destroys.
 //
@@ -250,6 +255,15 @@ func (g *GC) tearDownDeletedBundles(ctx context.Context) {
 			continue
 		}
 
+		// After the bundle, and never blocking it: a registry is the
+		// organization's, and a permanent refusal there — a token without
+		// delete permission, a registry that does not allow deletes — used to
+		// hold the app at the front of every pass, and twenty such apps held
+		// every later teardown (TeardownBatch). Tried once; a failure is
+		// recorded on the teardown's audit event with what to do, and the
+		// bundle is marked destroyed regardless (R-224).
+		registryErr := g.forgetRegistryImages(ctx, t)
+
 		if err := g.Apps.MarkBundleDestroyed(ctx, t.AppID); err != nil {
 			// The bundle is gone but the row still says otherwise, so the next
 			// pass destroys it again. Destroy is idempotent, so that is noise
@@ -264,13 +278,56 @@ func (g *GC) tearDownDeletedBundles(ctx context.Context) {
 			// Destroying a bundle is destruction, and R-227 has no exception
 			// for the janitor. kept_volumes is recorded explicitly so the log
 			// answers the question somebody will actually ask afterwards.
+			detail := map[string]any{"runtime": t.RuntimeRef, "kept_volumes": !t.DiscardStorage}
+			if registryErr != nil {
+				detail["registry_images_left"] = true
+				detail["registry_error"] = registryFailure(registryErr)
+			}
 			_ = g.Auditor.Write(ctx, AuditEvent{
 				Action: "app.bundle.destroy",
 				AppID:  t.AppID,
-				Detail: map[string]any{"runtime": t.RuntimeRef, "kept_volumes": !t.DiscardStorage},
+				Detail: detail,
 			})
 		}
 	}
+}
+
+// forgetRegistryImages deletes a deleted app's builds from the install's
+// registry. A deleted app keeps nothing there, a kept final backup included:
+// the backup is of volumes, and a restored app's image is rebuilt from its
+// spec (R-204, O-37).
+//
+// Best effort, and tried once. A failure is logged and returned for the
+// teardown's audit event, never for the teardown itself.
+func (g *GC) forgetRegistryImages(ctx context.Context, t state.TeardownTarget) error {
+	if g.RegistryImages == nil {
+		return nil
+	}
+	// Bounded, so a registry that accepts the connection and never answers
+	// does not stall the teardown loop either.
+	ctx, cancel := context.WithTimeout(ctx, registryCleanupTimeout)
+	defer cancel()
+	err := g.RegistryImages.DeleteApp(ctx, t.AppID)
+	if err != nil && g.Logger != nil {
+		g.Logger.Warn("could not delete a deleted app's images from the registry; they are left there",
+			zap.String("app_id", t.AppID), zap.Error(err))
+	}
+	return err
+}
+
+// registryFailure is what the audit event says about images left in the
+// registry: the failure, what to do about it, and that Pando will not try
+// again, so the entry is complete on its own (R-105).
+func registryFailure(err error) string {
+	msg, remedy := err.Error(), ""
+	if e := errs.As(err); e != nil {
+		msg, remedy = e.Message, e.Remedy
+	}
+	out := msg + " Pando does not try again; the app's images stay in the registry until they are deleted there."
+	if remedy != "" {
+		out += " " + remedy
+	}
+	return out
 }
 
 // reclaimOrphanedVolumes destroys the runtime volumes of deleted apps whose
@@ -380,13 +437,7 @@ func (g *GC) forgetFiles(ctx context.Context, t state.TeardownTarget) error {
 			return err
 		}
 	}
-	// A deleted app keeps nothing in the registry, a kept final backup
-	// included: the backup is of volumes, and a restored app's image is
-	// rebuilt from its spec (R-204, O-37).
-	if g.RegistryImages != nil {
-		if err := g.RegistryImages.DeleteApp(ctx, t.AppID); err != nil {
-			return err
-		}
-	}
+	// Registry images are not here: forgetRegistryImages, after the bundle,
+	// because a registry's refusal must not hold the teardown.
 	return nil
 }

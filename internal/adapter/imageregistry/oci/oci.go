@@ -21,6 +21,10 @@ const Kind = "oci"
 // Adapter is one OCI registry.
 type Adapter struct {
 	registrykit.Registry
+
+	// GitHubAPI overrides the GitHub REST API GHCR images are deleted
+	// through, and treats the registry as GHCR, for tests.
+	GitHubAPI string
 }
 
 // New returns an unconfigured adapter.
@@ -56,6 +60,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 			return &api.RegistryAuth{Registry: host, Username: user, Password: password}, nil
 		}
 	}
+	cfg.PackagesAPI = a.GitHubAPI
 	reg, err := registrykit.Open(cfg.Settings, true, auth)
 	if err != nil {
 		return err

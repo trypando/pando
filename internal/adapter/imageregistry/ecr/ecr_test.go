@@ -120,3 +120,18 @@ func TestR105_ARefusedECRKeySaysWhichCredentialToReplace(t *testing.T) {
 	require.Contains(t, e.Remedy, "image registry adapter's settings")
 	require.NotContains(t, err.Error(), "s3cr3t")
 }
+
+// TestADualStackECRAddressIsAccepted asserts that a repository on ECR's
+// dual-stack endpoint, <account>.dkr-ecr.<region>.on.aws, configures as ECR
+// and pushes to the address given.
+func TestADualStackECRAddressIsAccepted(t *testing.T) {
+	endpoint, _ := fakeECR(t)
+	const dual = "123456789012.dkr-ecr.us-east-1.on.aws/pando"
+	a, err := open(t, endpoint, map[string]any{"url": "https://" + dual, "access_key_id": "AKIAEXAMPLE"}, "s3cr3t")
+	require.NoError(t, err)
+	require.Equal(t, "123456789012.dkr-ecr.us-east-1.on.aws", a.ImageRegistryCapabilities().Host)
+	target, err := a.Target(context.Background(), "app_1", "", "dep_1")
+	require.NoError(t, err)
+	require.Equal(t, dual, target.Repository)
+	require.Equal(t, "minted-1", target.Auth.Password.Reveal())
+}

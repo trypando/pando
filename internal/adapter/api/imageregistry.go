@@ -54,6 +54,11 @@ type ImageRegistryAdapter interface {
 	// The layers they referenced are freed by the registry's own garbage
 	// collection (O-38).
 	DeleteApp(ctx context.Context, appID string, workloads []string) (int, error)
+
+	// Health is HealthCheck with notes: what works but will not do what the
+	// operator expects, such as a credential that may push but not delete, so
+	// a deleted app's images stay behind. A note never makes it unhealthy.
+	Health(ctx context.Context) (notes []string, err error)
 }
 
 // ImageRegistryCapabilities is what the registry does and how Pando uses it,

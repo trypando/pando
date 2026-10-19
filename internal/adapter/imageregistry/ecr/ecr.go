@@ -50,17 +50,18 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		}
 	}
 	host, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(cfg.URL), "https://"), "/")
-	region, ok := awsecr.Region(host)
+	parsed, ok := awsecr.Parse(host)
 	if !ok {
 		return errs.Newf(errs.ValidInvalid, "The image registry's address is %q, which is not an ECR registry.", cfg.URL).
-			WithRemedy("Use the repository's address as ECR shows it, such as 123456789012.dkr.ecr.us-east-1.amazonaws.com/pando, or choose the OCI registry kind for another registry.")
+			WithRemedy("Use the repository's address as ECR shows it, such as 123456789012.dkr.ecr.us-east-1.amazonaws.com/pando or 123456789012.dkr-ecr.us-east-1.on.aws/pando, or choose the OCI registry kind for another registry.")
 	}
 	secretKey := cfg.Credentials["secret_access_key"]
 	if cfg.AccessKeyID == "" || secretKey.IsZero() {
 		return errs.New(errs.ValidInvalid, "The ECR image registry needs an AWS access key ID and its secret access key.").
 			WithRemedy("Set both. The key's policy must allow ecr:GetAuthorizationToken and pushing to, pulling from and deleting in the repository.")
 	}
-	key := awsecr.Key{AccessKeyID: cfg.AccessKeyID, SecretAccessKey: secretKey, Region: region, Endpoint: a.Endpoint}
+	key := awsecr.Key{AccessKeyID: cfg.AccessKeyID, SecretAccessKey: secretKey, Region: parsed.Region,
+		DualStack: parsed.DualStack, FIPS: parsed.FIPS, Endpoint: a.Endpoint}
 	auth := func(ctx context.Context, host string) (*api.RegistryAuth, error) {
 		user, pass, err := awsecr.Mint(ctx, key, "the image registry's")
 		if err != nil {

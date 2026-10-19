@@ -134,17 +134,20 @@ func (r Resolver) Resolve(ctx context.Context, c Credential, reference string) (
 		return &Auth{Registry: registry, Username: c.Username, Password: c.Password}, nil
 
 	case CredentialECR:
+		// The registry's host says which ECR API endpoint to ask: dual-stack
+		// and FIPS hosts are answered by the matching endpoint.
+		host, isECR := ecr.Parse(registry)
 		region := c.Region
 		if region == "" {
-			var ok bool
-			if region, ok = ECRRegion(registry); !ok {
+			region = host.Region
+			if !isECR {
 				return nil, errs.Newf(errs.ValidInvalid,
 					"This app has AWS credentials for ECR, but its image is on %s, which is not an ECR registry.", registry).
 					WithRemedy("Use an image from an ECR registry such as 123456789012.dkr.ecr.us-east-1.amazonaws.com/team/app, or replace the credential with a username and token for " + registry + ".")
 			}
 		}
 		user, pass, err := ecr.Mint(ctx, ecr.Key{AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey,
-			Region: region, Endpoint: r.ECREndpoint}, "the app's")
+			Region: region, DualStack: host.DualStack, FIPS: host.FIPS, Endpoint: r.ECREndpoint}, "the app's")
 		if err != nil {
 			if e := errs.As(err); e != nil && e.Code == errs.ValidInvalid {
 				e.Remedy = "Check that the access key is active and that its policy allows ecr:GetAuthorizationToken, then replace the credential in the app's settings."

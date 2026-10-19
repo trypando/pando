@@ -23,16 +23,47 @@ import (
 	"github.com/trypando/pando/internal/secret"
 )
 
-var host = regexp.MustCompile(`^\d{12}\.dkr\.ecr(-fips)?\.([a-z0-9-]+)\.amazonaws\.com(\.cn)?$`)
+// host matches an ECR registry's host, in each form ECR serves it
+// (docs.aws.amazon.com/general/latest/gr/ecr.html):
+//
+//	123456789012.dkr.ecr.us-east-1.amazonaws.com       IPv4
+//	123456789012.dkr.ecr-fips.us-east-1.amazonaws.com  IPv4, FIPS
+//	123456789012.dkr-ecr.us-east-1.on.aws              dual-stack
+//	123456789012.dkr-ecr-fips.us-east-1.on.aws         dual-stack, FIPS
+//	123456789012.dkr.ecr.cn-north-1.amazonaws.com.cn   China
+var host = regexp.MustCompile(`^\d{12}\.(?:dkr\.ecr(-fips)?\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?|dkr-ecr(-fips)?\.([a-z0-9-]+)\.on\.aws)$`)
 
-// Region reads the region from an ECR registry host:
-// 123456789012.dkr.ecr.us-east-1.amazonaws.com is us-east-1.
-func Region(registry string) (string, bool) {
+// Host is what an ECR registry host says about where to ask for a password.
+type Host struct {
+	Region string
+
+	// DualStack is a host on ECR's dual-stack (IPv4 and IPv6) endpoint, so
+	// the password is asked of the API's dual-stack endpoint too: an install
+	// that reaches the registry only over IPv6 reaches nothing else.
+	DualStack bool
+
+	// FIPS is a host on a FIPS endpoint, so the API's FIPS endpoint is used.
+	FIPS bool
+}
+
+// Parse reads an ECR registry host.
+func Parse(registry string) (Host, bool) {
 	m := host.FindStringSubmatch(strings.ToLower(registry))
 	if m == nil {
-		return "", false
+		return Host{}, false
 	}
-	return m[2], true
+	if m[2] != "" {
+		return Host{Region: m[2], FIPS: m[1] != ""}, true
+	}
+	return Host{Region: m[4], DualStack: true, FIPS: m[3] != ""}, true
+}
+
+// Region reads the region from an ECR registry host:
+// 123456789012.dkr.ecr.us-east-1.amazonaws.com is us-east-1, and so is
+// 123456789012.dkr-ecr.us-east-1.on.aws.
+func Region(registry string) (string, bool) {
+	h, ok := Parse(registry)
+	return h.Region, ok
 }
 
 // Key is an AWS access key, and where to ask.
@@ -40,6 +71,11 @@ type Key struct {
 	AccessKeyID     string
 	SecretAccessKey secret.Value
 	Region          string
+
+	// DualStack and FIPS choose the API endpoint, as the registry host does
+	// (Parse).
+	DualStack bool
+	FIPS      bool
 
 	// Endpoint overrides the ECR API endpoint, for tests.
 	Endpoint string
@@ -53,6 +89,7 @@ func Mint(ctx context.Context, k Key, whose string) (string, secret.Value, error
 		Region:      k.Region,
 		Credentials: credentials.NewStaticCredentialsProvider(k.AccessKeyID, k.SecretAccessKey.Reveal(), ""),
 	}
+	opts.EndpointOptions = endpointOptions(k)
 	if k.Endpoint != "" {
 		opts.BaseEndpoint = aws.String(k.Endpoint)
 	}
@@ -74,4 +111,21 @@ func Mint(ctx context.Context, k Key, whose string) (string, secret.Value, error
 		return "", secret.Value{}, errs.New(errs.AdapterFailed, "ECR returned a registry password Pando could not read.")
 	}
 	return user, secret.New(pass), nil
+}
+
+// endpointOptions chooses the API endpoint the registry host implies. None
+// with an Endpoint override: the SDK refuses a custom endpoint combined with
+// either.
+func endpointOptions(k Key) ecr.EndpointResolverOptions {
+	var o ecr.EndpointResolverOptions
+	if k.Endpoint != "" {
+		return o
+	}
+	if k.DualStack {
+		o.UseDualStackEndpoint = aws.DualStackEndpointStateEnabled
+	}
+	if k.FIPS {
+		o.UseFIPSEndpoint = aws.FIPSEndpointStateEnabled
+	}
+	return o
 }

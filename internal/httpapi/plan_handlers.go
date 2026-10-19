@@ -304,7 +304,11 @@ func (s *Server) handleListAdapters(w http.ResponseWriter, r *http.Request) {
 				if err == nil {
 					entry["capabilities"] = a.ImageRegistryCapabilities()
 					if !isDeclared {
-						err = a.HealthCheck(r.Context())
+						var notes []string
+						notes, err = a.Health(r.Context())
+						if len(notes) > 0 {
+							entry["notes"] = notes
+						}
 					}
 				}
 				if err != nil {
