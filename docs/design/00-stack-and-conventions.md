@@ -85,8 +85,11 @@ networks `PANDO_BUILDKIT_NETWORKS` names. AppArmor stays unconfined: the default
 denies mount, and a narrower one has to be loaded into the host kernel. On Ubuntu 23.10 and later,
 the host must also allow unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns=0`)
 for rootless BuildKit to start at all, which only root on the host can do; the health check names it,
-and CI's integration job sets it as an operator would. `PANDO_BUILDKIT_ADDRESS`
-still names a BuildKit somebody else runs — Kubernetes', multi-host's — and then Pando starts none.
+and CI's integration job sets it as an operator would. `PANDO_BUILDKIT_ADDRESS` is internal to an
+install topology that runs BuildKit beside Pando itself — `deploy/kubernetes` runs it as its own
+Deployment — and then Pando starts none. Pando does not support a BuildKit on another server, so the
+adapter needs nothing from a person: its kind is `managed`, which the console reads to offer neither
+Add adapter nor Edit for it, and the only settings it lists are its two cache caps, both advanced.
 
 **[D] The database password is generated, not defaulted (R-401, issue #130).** The Compose file used to
 give Postgres `${POSTGRES_PASSWORD:-pando}`, so every install that did not set one had the same

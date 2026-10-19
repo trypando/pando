@@ -98,7 +98,7 @@ setting is joined with an underscore: `server.base_domain` is `PANDO_SERVER_BASE
 | `PANDO_DATABASE_URL` | the bundled Postgres | Point Pando at an existing database. |
 | `PANDO_DATABASE_PASSWORD_FILE` | — | A file holding the password for the URL's user, such as a Docker or Kubernetes secret. The URL must then name the user and no password. The bundled compose file sets it to the password its `secrets` service generates. |
 | `PANDO_DATABASE_MAX_CONNS` | `32` | Connections each Pando replica may hold as its application role. Postgres's `max_connections` must cover this for every replica, plus a few each for startup and the audit archiver; the bundled Postgres allows 100, which is three replicas. |
-| `PANDO_BUILDKIT_ADDRESS` | — | A BuildKit you run, such as `tcp://buildkit:1234`. Unset, Pando starts its own rootless BuildKit on the Docker it runs apps on, named after its Compose project (`pando-buildkit`), under a seccomp profile compiled into Pando. On Ubuntu 23.10 and later, the host must allow it unprivileged user namespaces: `sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` as root. On rootless Docker or Podman, the user it runs as needs more than the default 65,536 subordinate IDs, since BuildKit maps 65,536 of its own: see [Running Pando on rootless Docker or Podman](rootless.md). |
+| `PANDO_BUILDKIT_ADDRESS` | — | Internal: set by an install topology that runs BuildKit beside Pando, as the Kubernetes manifests do. Pando does not support a BuildKit on another server. Unset, Pando starts its own rootless BuildKit on the Docker it runs apps on, named after its Compose project (`pando-buildkit`), under a seccomp profile compiled into Pando. On Ubuntu 23.10 and later, the host must allow it unprivileged user namespaces: `sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` as root. On rootless Docker or Podman, the user it runs as needs more than the default 65,536 subordinate IDs, since BuildKit maps 65,536 of its own: see [Running Pando on rootless Docker or Podman](rootless.md). |
 | `PANDO_BUILDKIT_REGISTRY_HOST` / `_CA` | — | For Pando's own BuildKit: a registry as `host:port`, and a file in Pando's container holding the CA that signed its certificate, so builds can push to it. Set together; `docker-compose.registry.yml` sets both. |
 | `PANDO_BUILDKIT_NETWORKS` | — | Docker networks Pando's own BuildKit joins besides its own, separated by commas, so it reaches a registry on one of them. Never Pando's own network, where its database is. |
 | `PANDO_SERVER_ADDR` | `:8080` | Address the console and API listen on. |
@@ -299,11 +299,78 @@ default adapters in one category, two AI adapters of one kind (an installation h
 provider), one AI function under two adapters, or two services adapters that provide the same kind
 of service.
 
+The Docker services adapter takes one image setting per kind of service — `postgres_image`,
+`mysql_image`, `redis_image`, `mongodb_image` and `memcached_image` — for an install that mirrors
+Docker Hub or has settled on a version:
+
+```yaml
+adapters:
+  svcs_docker:
+    category: services
+    kind: docker
+    config:
+      postgres_image: registry.example.com/library/postgres:17-alpine
+```
+
+An older `images:` map keyed by kind is still read; where both name a kind, the per-kind setting wins.
+
+### Backups on local disk
+
+The `local` backup destination writes to a directory inside Pando's container. Its default,
+`/var/lib/pando/backups`, is on Pando's data volume (`pando-data` in the shipped Compose file), which
+every replica shares, so a bundle there survives the container being recreated but not the loss of
+that volume or the disk it is on. A directory that is not mounted into the container is in the
+container's own writable layer, and its bundles are lost when the container is recreated; Pando logs
+a warning at startup when the directory is one of these or a tmpfs.
+
+To keep bundles in a directory on the host, outside the data volume:
+
+1. Create the directory, owned by the user Pando runs as (`nonroot`, uid 65532). Run the `chown`
+   through Docker so it works on rootless Docker and Podman too:
+
+   ```sh
+   sudo mkdir -p /srv/pando-backups
+   docker run --rm -v /srv/pando-backups:/d alpine chown 65532:65532 /d
+   ```
+
+2. Mount it into Pando's container with a Compose override, saved beside `docker-compose.yml` as
+   `docker-compose.backups.yml`:
+
+   ```yaml
+   services:
+     pando:
+       volumes:
+         - /srv/pando-backups:/backups
+   ```
+
+3. Start Pando with both files:
+
+   ```sh
+   docker compose -f docker-compose.yml -f docker-compose.backups.yml up -d
+   ```
+
+4. Set the Local disk destination's **Directory** to `/backups` on the Adapters screen and restart
+   Pando, or declare it in the config file:
+
+   ```yaml
+   adapters:
+     bkp_local:
+       category: backup
+       kind: local
+       name: Local disk
+       default: true
+       config:
+         path: /backups
+   ```
+
+With more than one replica, mount the same directory into each.
+
 ### Running on Kubernetes
 
 The `kubernetes` runtime adapter runs apps on the cluster Pando itself runs in.
 `deploy/kubernetes` holds the manifests: `kubectl apply -k deploy/kubernetes` after creating the
-`pando-database` and `pando-keys` Secrets its `pando.yaml` describes, installing Traefik's CRDs, and
+`pando-database` and `pando-keys` Secrets its `pando.yaml` describes, installing Traefik v3.7's CRDs
+(the URL is in `kustomization.yaml`), and
 setting the cluster's pod and Service ranges. The cluster needs a network plugin that enforces
 NetworkPolicy, such as Calico or Cilium: Pando checks with a short-lived pair of pods in the namespace
 `pando-canary` and will not run apps on a cluster that does not. It also needs a storage class that
@@ -321,7 +388,9 @@ recommended: anything running with the host's network can reach app pods directl
 The Traefik routing adapter's `delivery` setting is `kubernetes_api` on this runtime. Its
 certificate settings work as on Docker, but Pando's leader orders and renews the certificates rather
 than Traefik, keeps them encrypted in the database, and answers HTTP-01 challenges itself; DNS-01 works
-with the five DNS providers named in the settings. What apps are using is reported when the cluster
+with the five DNS providers named in the settings. On either runtime, Amazon Route 53's credentials
+need `AWS_REGION` beside `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; `us-east-1` works for any
+standard AWS account, since Route 53 is global. What apps are using is reported when the cluster
 runs metrics-server. Draining a node
 that runs apps needs `kubectl drain --force`: an app's pods belong to no controller, and Pando's
 reconciler recreates them on another node.

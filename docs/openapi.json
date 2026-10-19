@@ -83,7 +83,7 @@
       "get": {
         "operationId": "listAdapters",
         "summary": "List adapters",
-        "description": "The adapters configured here and what they can currently do — live capabilities, not stored configuration. Names which credentials are set, never their values. `pending_restart` marks one saved since Pando started, which is not yet what runs; `restart_needed` says any is. A routing adapter Pando runs a process in front of itself for — Traefik, cloudflared — has `edge`: whether it is running, and why not to whoever may change it. An image registry is signed in to for its health, and has `capabilities` like a runtime.\n\nNeeds `install.view`.",
+        "description": "The adapters configured here and what they can currently do — live capabilities, not stored configuration. Names which credentials are set, never their values. `pending_restart` marks one saved since Pando started, which is not yet what runs; `restart_needed` says any is. A routing adapter Pando runs a process in front of itself for — Traefik, cloudflared — has `edge`: whether it is running, and why not to whoever may change it. An image registry is signed in to for its health, and has `capabilities` like a runtime. An image registry may also have `notes`: what works but will not do what an operator expects, such as a credential that cannot delete, so a deleted app's images stay behind.\n\nNeeds `install.view`.",
         "tags": [
           "Installation"
         ],
@@ -169,6 +169,15 @@
                               "running",
                               "checked_at"
                             ]
+                          },
+                          "notes": {
+                            "type": [
+                              "array",
+                              "null"
+                            ],
+                            "items": {
+                              "type": "string"
+                            }
                           }
                         },
                         "required": [
@@ -14531,6 +14540,9 @@
             "items": {
               "$ref": "#/components/schemas/Preset"
             }
+          },
+          "managed": {
+            "type": "boolean"
           }
         },
         "required": [

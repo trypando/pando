@@ -129,18 +129,18 @@
             {
               "id": "entra",
               "label": "Microsoft Entra ID",
-              "help": "In Entra, register an application with a Web redirect URI set to the one Pando shows, create a client secret, and add the groups claim under Token configuration. Entra does not vouch for email addresses, so accounts are never linked by email.",
+              "help": "In Entra, register an application with a Web redirect URI set to the one Pando shows, create a client secret, and add the groups claim under Token configuration. Groups arrive as object IDs; link each to a Pando group to give it a name. Entra does not vouch for email addresses, so accounts are never linked by email.",
               "values": {
                 "groups_claim": "groups",
                 "issuer": "https://login.microsoftonline.com/{tenant-id}/v2.0",
-                "scopes": "openid email profile",
+                "scopes": "openid email profile User.Read",
                 "subject_claim": "oid"
               }
             },
             {
               "id": "google",
               "label": "Google Workspace",
-              "help": "In Google Cloud, create an OAuth client of type Web application with the redirect URI Pando shows. Google sends no groups; use SCIM or Pando groups for access.",
+              "help": "In Google Cloud, create an OAuth client of type Web application with the redirect URI Pando shows. Groups are not synced from Google, so give access through Pando groups.",
               "values": {
                 "hosted_domain": "{your-domain.com}",
                 "issuer": "https://accounts.google.com",
@@ -159,7 +159,7 @@
             {
               "id": "authentik",
               "label": "Authentik",
-              "help": "Create an OAuth2/OpenID Provider with a confidential client and the redirect URI Pando shows, and an application using it. Authentik sends groups in the profile scope.",
+              "help": "Create an OAuth2/OpenID Provider with a confidential client and the redirect URI Pando shows, and an application using it, and choose a Signing Key on the provider. Authentik sends groups in the profile scope.",
               "values": {
                 "groups_claim": "groups",
                 "issuer": "https://{authentik-host}/application/o/{application-slug}/"
@@ -264,17 +264,16 @@
             {
               "id": "okta",
               "label": "Okta",
-              "help": "In Okta, create a SAML 2.0 app. Single sign-on URL is Pando's ACS URL; Audience URI is Pando's entity ID. Add attribute statements email, displayName, and a group attribute statement groups (Matches regex .*). Then paste the app's Metadata URL here.",
+              "help": "In Okta, create a SAML 2.0 app. Single sign-on URL is Pando's ACS URL; Audience URI is Pando's entity ID. Add attribute statements okta_user_id (user.getInternalProperty(\"id\")), email and displayName, and a group attribute statement groups (Matches regex .*). Then paste the app's Metadata URL here.",
               "values": {
                 "groups_attribute": "groups",
-                "name_id_format": "persistent",
-                "trust_email": "true"
+                "subject_attribute": "okta_user_id"
               }
             },
             {
               "id": "entra",
               "label": "Microsoft Entra ID",
-              "help": "In Entra, create an enterprise application with SAML. Identifier is Pando's entity ID, Reply URL is the ACS URL. Add a group claim. Paste the App Federation Metadata Url here.",
+              "help": "In Entra, create an enterprise application with SAML. Identifier is Pando's entity ID, Reply URL is the ACS URL. Add a group claim; groups arrive as object IDs, so link each to a Pando group to name it. Paste the App Federation Metadata Url here.",
               "values": {
                 "groups_attribute": "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"
               }
@@ -382,16 +381,8 @@
           "category": "routing",
           "kind": "loopback",
           "name": "Built in",
-          "description": "Serves apps from Pando itself, on a path or a port.",
-          "fields": [
-            {
-              "key": "base_url",
-              "label": "Base URL",
-              "help": "The address apps are reached at.",
-              "type": "string",
-              "default": "The address each request arrives on"
-            }
-          ],
+          "description": "Serves each app from Pando itself on its own port, with no TLS.",
+          "fields": null,
           "id_prefix": "rte_"
         },
         {
@@ -489,7 +480,7 @@
             {
               "key": "dns_credentials",
               "label": "DNS provider credentials",
-              "help": "One NAME=value per line. Cloudflare: CF_DNS_API_TOKEN, or CF_API_EMAIL and CF_API_KEY. Amazon Route 53: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. DigitalOcean: DO_AUTH_TOKEN. Porkbun: PORKBUN_API_KEY and PORKBUN_SECRET_API_KEY. Namecheap: NAMECHEAP_API_USER and NAMECHEAP_API_KEY. For another provider, the variables Traefik's documentation lists for it.",
+              "help": "One NAME=value per line. Cloudflare: CF_DNS_API_TOKEN, or CF_API_EMAIL and CF_API_KEY. Amazon Route 53: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_REGION (AWS_REGION can be us-east-1 for any standard AWS account, since Route 53 is global). DigitalOcean: DO_AUTH_TOKEN. Porkbun: PORKBUN_API_KEY and PORKBUN_SECRET_API_KEY. Namecheap: NAMECHEAP_API_USER and NAMECHEAP_API_KEY. For another provider, the variables Traefik's documentation lists for it.",
               "type": "string",
               "multiline": true,
               "shown_when": {
@@ -547,7 +538,7 @@
                 ]
               },
               "advanced": true,
-              "default": "traefik:v3.2"
+              "default": "traefik:v3.7.15"
             },
             {
               "key": "delivery",
@@ -672,18 +663,27 @@
           "category": "builder",
           "kind": "buildkit",
           "name": "BuildKit",
-          "description": "Builds images from source in an isolated BuildKit daemon.",
+          "description": "Builds images from source in a rootless BuildKit that Pando runs itself.",
           "fields": [
             {
-              "key": "address",
-              "label": "BuildKit address",
-              "help": "Where the BuildKit daemon listens. PANDO_BUILDKIT_ADDRESS is used when this is empty.",
-              "type": "string",
+              "key": "cache_max_bytes",
+              "label": "Build service cache",
+              "help": "Bytes BuildKit keeps between builds, oldest trimmed first; a negative number removes the limit.",
+              "type": "int",
               "advanced": true,
-              "default": "tcp://buildkit:1234"
+              "default": "10737418240 (10 GiB)"
+            },
+            {
+              "key": "local_cache_max_bytes",
+              "label": "App build caches",
+              "help": "Bytes every app's build cache may use together, least recently used evicted first; a negative number removes the limit.",
+              "type": "int",
+              "advanced": true,
+              "default": "21474836480 (20 GiB)"
             }
           ],
-          "id_prefix": "bld_"
+          "id_prefix": "bld_",
+          "managed": true
         }
       ]
     },
@@ -1292,7 +1292,48 @@
           "kind": "docker",
           "name": "Docker",
           "description": "Provisions the databases and caches apps declare, as containers.",
-          "fields": [],
+          "fields": [
+            {
+              "key": "postgres_image",
+              "label": "PostgreSQL image",
+              "help": "The container image a provisioned PostgreSQL database runs.",
+              "type": "string",
+              "advanced": true,
+              "default": "postgres:17-alpine"
+            },
+            {
+              "key": "mysql_image",
+              "label": "MySQL image",
+              "help": "The container image a provisioned MySQL database runs.",
+              "type": "string",
+              "advanced": true,
+              "default": "mysql:8.4"
+            },
+            {
+              "key": "redis_image",
+              "label": "Redis image",
+              "help": "The container image a provisioned Redis runs.",
+              "type": "string",
+              "advanced": true,
+              "default": "redis:7-alpine"
+            },
+            {
+              "key": "mongodb_image",
+              "label": "MongoDB image",
+              "help": "The container image a provisioned MongoDB database runs.",
+              "type": "string",
+              "advanced": true,
+              "default": "mongo:7"
+            },
+            {
+              "key": "memcached_image",
+              "label": "Memcached image",
+              "help": "The container image a provisioned Memcached runs.",
+              "type": "string",
+              "advanced": true,
+              "default": "memcached:1.6-alpine"
+            }
+          ],
           "id_prefix": "svcs_"
         }
       ]
@@ -1502,7 +1543,7 @@
               "help": "587 for STARTTLS, 465 for TLS.",
               "type": "int",
               "advanced": true,
-              "default": "587"
+              "default": "587, or 465 with TLS"
             },
             {
               "key": "timeout_seconds",
@@ -1528,7 +1569,7 @@
               "type": "string",
               "required": true,
               "credential": true,
-              "placeholder": "https://….logic.azure.com/workflows/…"
+              "placeholder": "https://….environment.api.powerplatform.com/powerautomate/automations/direct/workflows/…"
             },
             {
               "key": "timeout_seconds",
@@ -1550,12 +1591,12 @@
           "category": "backup",
           "kind": "local",
           "name": "Local disk",
-          "description": "Writes backups to a directory on the host.",
+          "description": "Writes backups to a directory in Pando's container, by default on its data volume.",
           "fields": [
             {
               "key": "path",
               "label": "Directory",
-              "help": "Where backups are written.",
+              "help": "A directory inside Pando's container, such as one mounted from the host.",
               "type": "string",
               "default": "/var/lib/pando/backups"
             }
@@ -1596,6 +1637,38 @@
               "type": "int",
               "advanced": true,
               "default": "600"
+            },
+            {
+              "key": "db_repository",
+              "label": "Vulnerability database repository",
+              "help": "OCI repositories to download Trivy's vulnerability database from, comma-separated, first tried first.",
+              "type": "string",
+              "advanced": true,
+              "default": "mirror.gcr.io/aquasec/trivy-db:2, ghcr.io/aquasecurity/trivy-db:2"
+            },
+            {
+              "key": "java_db_repository",
+              "label": "Java database repository",
+              "help": "OCI repositories to download Trivy's Java database from, comma-separated, first tried first.",
+              "type": "string",
+              "advanced": true,
+              "default": "mirror.gcr.io/aquasec/trivy-java-db:1, ghcr.io/aquasecurity/trivy-java-db:1"
+            },
+            {
+              "key": "checks_bundle_repository",
+              "label": "Checks bundle repository",
+              "help": "The OCI repository to download Trivy's misconfiguration checks from.",
+              "type": "string",
+              "advanced": true,
+              "default": "mirror.gcr.io/aquasec/trivy-checks:1"
+            },
+            {
+              "key": "offline_scan",
+              "label": "Offline scan",
+              "help": "Stop Trivy asking package registries about dependencies; database downloads still happen.",
+              "type": "bool",
+              "advanced": true,
+              "default": "false"
             }
           ],
           "id_prefix": "scn_"
@@ -1625,6 +1698,13 @@
               "help": "The Claude model each function uses unless its assignment names another.",
               "type": "string",
               "default": "claude-opus-5-5"
+            },
+            {
+              "key": "workspace_id",
+              "label": "Workspace ID",
+              "help": "Needed only when the API key was created for more than one workspace.",
+              "type": "string",
+              "placeholder": "wrkspc_…"
             },
             {
               "key": "base_url",
@@ -2936,6 +3016,11 @@
                   "value": "elastic_bulk",
                   "label": "Elastic bulk",
                   "description": "A create action before each event, for a data stream's _bulk endpoint."
+                },
+                {
+                  "value": "datadog",
+                  "label": "Datadog logs",
+                  "description": "Each event as a Datadog log, with a message, source and date."
                 }
               ],
               "default": "ndjson"
@@ -3009,6 +3094,14 @@
               "help": "Post over plain http, unencrypted. Only for a destination on a trusted network.",
               "type": "bool",
               "advanced": true
+            },
+            {
+              "key": "max_body_bytes",
+              "label": "Max body size",
+              "help": "The most bytes one POST carries; a larger batch goes as several. 0 is no limit, or 5000000 for the Datadog body.",
+              "type": "int",
+              "advanced": true,
+              "default": "0"
             },
             {
               "key": "timeout_seconds",
@@ -3098,8 +3191,8 @@
               "values": {
                 "auth_header": "DD-API-KEY",
                 "auth_scheme": "none",
-                "body": "json_array",
-                "url": "https://http-intake.logs.datadoghq.com/api/v2/logs?ddsource=pando&service=pando"
+                "body": "datadog",
+                "url": "https://http-intake.logs.datadoghq.com/api/v2/logs"
               }
             },
             {
@@ -3127,6 +3220,7 @@
               "values": {
                 "auth_scheme": "Bearer",
                 "body": "json_array",
+                "max_body_bytes": "1000000",
                 "url": "https://my-dce.eastus-1.ingest.monitor.azure.com/dataCollectionRules/dcr-00000000000000000000000000000000/streams/Custom-PandoAudit_CL?api-version=2023-01-01"
               }
             },

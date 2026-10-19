@@ -424,6 +424,13 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
+	// A kind that can tell without connecting anywhere refuses here what it
+	// would refuse at startup, so a configuration that cannot start is not
+	// saved and then skipped at the next restart.
+	if err := s.checkKind(r.Context(), req.ID, req.Category, req.Kind, req.Config, req.Credentials); err != nil {
+		Error(w, r, err)
+		return
+	}
 	if len(req.Credentials) > 0 && req.Category == string(api.CategorySecrets) {
 		Error(w, r, errs.New(errs.ValidInvalid,
 			"A secrets adapter cannot be given credentials, because it is the thing Pando would encrypt them with."))

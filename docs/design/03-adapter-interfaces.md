@@ -112,6 +112,26 @@ and every node pull it by digest (Kubernetes; `notes-image-registry-issue-72.md`
 the routing adapter in `EdgeRequest`, and a routing adapter whose delivery the runtime does not offer
 refuses its edge with a readable error rather than running one that never learns a route (§4.4).
 
+### 1.2 Kinds
+
+Each kind describes itself with a `KindInfo` (`adapter/api/kinds.go`): its name, its settings
+(`Fields`), and presets for known providers. `GET /adapters/kinds` returns it, and the console's Add
+adapter form and `pando adapter kinds` are built from it.
+
+**[D] `KindInfo.Check` refuses at save what `Configure` would refuse at startup.** It is a function, not
+data, and takes the settings, the credentials sent, and the names of the credentials already stored and
+not sent again. `POST /adapters` calls it before storing a row, so a configuration that cannot start is
+refused then rather than saved and skipped at the next restart. Only a kind that can tell without
+connecting anywhere has one: SMTP (port and security that cannot agree, a username with no password, a
+password over an unencrypted connection), Anthropic (a malformed `workspace_id`) and the chat notifiers
+(a webhook URL on another platform's host or a retired one, checked only when a new URL is sent). Nil
+means the kind is checked at startup only.
+
+**[D] `KindInfo.Managed` marks a kind Pando sets up itself** from its install topology — today only
+`buildkit`, which Pando runs itself or the install topology runs beside it (design 00 §1.1). A managed
+kind is not offered in Add adapter or in `pando adapter kinds`, and its row has no Edit; the row and its
+status are still shown. Its settings are all advanced and set through the API or the CLI.
+
 ## 2. Runtime
 
 The largest interface. Owns bundles, workloads, volumes, exec, logs, and capacity.
@@ -1586,6 +1606,7 @@ type ImageRegistryAdapter interface {
     Owns(ref string) bool                                                 // a build Pando pushed here. Pure.
     PullAuth(ctx) (*RegistryAuth, error)                                  // minted fresh where the provider does
     DeleteApp(ctx, appID string, workloads []string) (int, error)         // R-224
+    Health(ctx) (notes []string, err error)                               // HealthCheck, with notes
 }
 
 type ImageRegistryCapabilities struct {
@@ -1612,6 +1633,31 @@ it does a source connection, so an address Pando cannot push to or half a creden
 rather than the next build. Its health check signs in to the registry, so one Pando cannot reach is
 `unreachable` on the adapters screen before a deploy needs it.
 
+**[D] `Health` adds notes to the health check.** A note is something that works but will not do what
+the operator expects; it never makes the registry unhealthy. Its one probe asks the registry to delete a
+digest no image has: not found means deleting is permitted, and a refused credential, or a registry that
+does not allow deletes, is a note saying a deleted app's images will stay behind. `GET /adapters` shows
+them as `notes` on the registry's row.
+
+**[D] Deleting on GHCR.** GHCR refuses a manifest `DELETE`, so on `ghcr.io` a deleted app's images are
+deleted through GitHub's Packages REST API with the same token, which needs `delete:packages`. There the
+note comes from the token's scopes rather than the probe.
+
+**[D] Docker Hub cannot hold a repository per app.** A repository there is a namespace and a name, so
+`per_app` is refused when the adapter is configured, rather than by the first push after a build, and an
+address with no repository or a deeper path is refused with the form to use (`docker.io/acme/pando`).
+
+**[D] ECR's dual-stack hosts.** `ecr` reads `<account>.dkr-ecr[-fips].<region>.on.aws` as well as
+`<account>.dkr.ecr[-fips].<region>.amazonaws.com[.cn]`, and asks for the password at the API's
+dual-stack or FIPS endpoint when the registry host is one, so an install reaching AWS only over IPv6
+works.
+
+**[D] A failed cleanup does not block teardown (R-224).** Deleting a deleted app's images runs after its
+bundle is destroyed, is tried once, and is bounded to two minutes. A failure is logged and recorded on
+the teardown's `app.bundle.destroy` audit event as `registry_images_left` and `registry_error`, which
+says what failed and what to do, and the bundle is marked destroyed regardless. It used to leave the app
+for the next pass, and twenty apps a registry permanently refused then held every later teardown.
+
 **[D] Not this category:** the credential an image app pulls its own image with (issue #41; §2,
 "Registry authentication is not an adapter category"), and the probe for an image a project already
 publishes, which is a step of detection (R-094; `internal/detect/registryprobe`).
@@ -1625,15 +1671,15 @@ publishes, which is a step of detection (R-094; `internal/detect/registryprobe`)
 | identity | `local` | username/password, argon2id |
 | identity | `oidc` | any OpenID Connect provider by issuer; presets for Okta, Entra ID, Google Workspace, Keycloak, Authentik (§5) |
 | identity | `saml` | SAML 2.0 SP; IdP metadata by URL (re-read daily) or pasted; same presets (§5) |
-| routing | `loopback` | port mode, no TLS, laptop default |
+| routing | `loopback` | port mode only, no TLS, laptop default. No settings: the address shown is rendered from the host the request reached Pando on, so `base_url` was dropped from its form; a stored one still loads and is ignored |
 | routing | `traefik` | subdomain and path, TLS; Pando runs it by default (§4.4) |
 | routing | `cloudflare` | Cloudflare Tunnel; subdomain and path, TLS at Cloudflare's edge (§4.5) |
-| builder | `buildkit` | rootless, containerized, no socket (R-111) |
+| builder | `buildkit` | rootless, containerized, no socket (R-111). Managed (§1.2): Pando runs it, or the install topology does; its only settings are the two cache caps |
 | runtime | `docker` | enforces app egress through an internal network and a per-app gateway proxy (§2.1, R-187); container isolation class; `sandboxed` when `oci_runtime` names gVisor (`runsc`) or a Kata runtime (R-115), which the daemon must have registered or the adapter reports itself unavailable. A sandboxed trial run still reports whether the app started, but not its ports or writes — both are read from outside the container, and a sandbox hides them. Also drives rootless Podman through its Docker-compatible socket (see below). |
 | runtime | `kubernetes` | the cluster Pando runs in, one namespace per app under a default-deny NetworkPolicy admitting only Pando's server pods; bare pods with `restartPolicy: Never` (R-151); headless Services the proxy reaches by name; PVCs set to `Retain` (R-204); unusable on a cluster whose network plugin does not enforce NetworkPolicy, which a canary checks (O-43). Runs the edge as a spread Deployment (R-174). `notes-kubernetes-runtime-issue-72.md` |
 | secrets | `local` | encrypted at rest, key on disk (R-190) |
 | backup | `local` | a filesystem path; retention owned by Pando |
-| services | `docker` | postgres, mysql, redis in-bundle |
+| services | `docker` | postgres, mysql, redis, mongodb, memcached in-bundle; each image a setting of its own |
 | notify | `console`; `smtp`, `slack`, `teams`, `discord`, `ntfy` | R-231, R-232, R-374 |
 | ai | `anthropic` | performs the AI functions assigned to it, each on its own model if the assignment names one (design 10 §9). Not seeded — needs a credential. One per install, like any AI provider. |
 | ai | `openai` | the same functions with OpenAI's models, through the Responses API (design 10 §6.2). Not seeded — needs a credential. |
@@ -1647,7 +1693,7 @@ publishes, which is a step of detection (R-094; `internal/detect/registryprobe`)
 | image_registry | `oci` | Distribution, Harbor, GHCR, Artifact Registry, Zot: basic auth or anonymous, a repository per app (§11). Not seeded — a single Docker host needs none. |
 | image_registry | `ecr` | Amazon ECR: a password minted from an access key before each push and pull, one repository for every build (§11). Not seeded. |
 | audit_sink | `syslog` | RFC 5424 over TCP with TLS (RFC 5425 framing), mutual TLS optional; the event as MSG, the action as MSGID (design 12 §5). Not seeded. |
-| audit_sink | `https` | Batched POST of NDJSON, a JSON array, Splunk HEC envelopes or Elastic bulk lines, with a token; presets for Splunk HEC, Datadog, Elastic, Sumo Logic and Azure Monitor (Sentinel) (design 12 §5). Not seeded. |
+| audit_sink | `https` | Batched POST of NDJSON, a JSON array, Splunk HEC envelopes, Elastic bulk lines or Datadog logs, with a token, split by `max_body_bytes`; presets for Splunk HEC, Datadog, Elastic, Sumo Logic and Azure Monitor (Sentinel) (design 12 §5). Not seeded. |
 
 **[P] Podman is the Docker adapter pointed at a different socket, not an adapter of its own.** Its
 Docker-compatible API does what this adapter asks, and the adapter's integration suite passes against
