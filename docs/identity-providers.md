@@ -104,7 +104,9 @@ the same ID it sends as `sub` over OIDC and as `okta_user_id` over SAML. For SAM
 
 When a person is in more than 200 groups, Entra leaves the groups out of the ID token, and Pando reads
 them from Microsoft Graph with the sign-in's access token. If Graph cannot be asked, the sign-in is
-refused with what to grant, rather than recording that the person is in no groups.
+refused with what to grant, rather than recording that the person is in no groups. To skip the
+lookup, set the groups claim to *Groups assigned to the application*: the token then carries only
+those, and stays under the limit.
 
 Entra does not vouch for email addresses (there is no `email_verified` claim, and a user can have an
 unverified `email`), so Pando never links an Entra identity to an existing account by email. Link
