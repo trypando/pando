@@ -2,6 +2,8 @@ package github
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -131,21 +133,32 @@ func (a *Adapter) isOrganization(ctx context.Context, owner string) bool {
 }
 
 // appName names the App after the address Pando is reached at, which GitHub
-// shows on the installation page. GitHub's names are unique across GitHub, so
-// one already taken is changed on GitHub's form before creating it.
+// shows on the installation page. GitHub's rules: at most 34 characters,
+// unique across GitHub, and not an existing account's name. Its docs name no
+// characters beyond letters, digits, spaces and hyphens, so a host's dots
+// become hyphens. An installation with no name of its own — localhost — gets
+// a random suffix, since "Pando" alone is taken. One already taken is changed
+// on GitHub's form before creating it.
 func appName(homepage string) string {
 	host := ""
 	if u, err := url.Parse(homepage); err == nil {
 		host = u.Hostname()
 	}
-	if host == "" || isLoopback(host) {
-		return "Pando"
+	if host == "" || isLoopback(host) || net.ParseIP(host) != nil {
+		return "Pando " + randomSuffix()
 	}
-	name := "Pando " + host
+	name := "Pando " + strings.ReplaceAll(host, ".", "-")
 	if len(name) > maxAppName {
 		name = name[:maxAppName]
 	}
-	return strings.TrimRight(name, ".-")
+	return strings.TrimRight(name, "-")
+}
+
+// randomSuffix is six hex digits.
+func randomSuffix() string {
+	b := make([]byte, 3)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func isLoopback(host string) bool {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -108,7 +109,7 @@ func TestR091_AGitHubAppIsCreatedFromAManifestAndInstalled(t *testing.T) {
 	m := readManifest(t, begun)
 	require.Equal(t, map[string]string{"contents": "read", "metadata": "read"}, m.DefaultPermissions)
 	require.False(t, m.Public)
-	require.Equal(t, "Pando pando.acme.com", m.Name)
+	require.Equal(t, "Pando pando-acme-com", m.Name)
 	require.Equal(t, appRequest().RedirectURL, m.RedirectURL)
 	require.Equal(t, appRequest().SetupURL, m.SetupURL)
 	require.NotNil(t, m.HookAttributes, "the push webhook is on unless turned off")
@@ -136,6 +137,11 @@ func TestR091_AGitHubAppIsCreatedFromAManifestAndInstalled(t *testing.T) {
 	require.True(t, caps.Webhook)
 	require.Equal(t, "https://github.com/organizations/acme/settings/apps/pando-acme", caps.ManageURL,
 		"where the App's logo is uploaded")
+
+	// Deploy on push turned off: Pando no longer acts on the App's webhook.
+	cfg["push_webhook"] = false
+	require.False(t, mustConfigure(t, cfg).SourceCapabilities().Webhook)
+	delete(cfg, "push_webhook")
 	require.True(t, caps.WebAuthorization)
 	again, err := a.BeginAuthorization(ctx, appRequest())
 	require.NoError(t, err)
@@ -207,18 +213,27 @@ func TestTheAppIsCreatedWhereThePersonIsAndWithoutAWebhookGitHubCannotReach(t *t
 	require.Nil(t, readManifest(t, begun).HookAttributes, "turned off, the App has no webhook")
 }
 
-func TestAppNameFollowsPandosAddress(t *testing.T) {
+// TestAppNameFollowsGitHubsRules asserts the App's name keeps to what GitHub
+// documents: at most 34 characters, letters, digits, spaces and hyphens, and
+// never plain "Pando", an account GitHub already has.
+func TestAppNameFollowsGitHubsRules(t *testing.T) {
 	for addr, want := range map[string]string{
-		"https://pando.acme.com": "Pando pando.acme.com",
-		"http://localhost:8080":  "Pando",
-		"http://127.0.0.1:8080":  "Pando",
-		"":                       "Pando",
-		"https://a-very-long-subdomain.example-corp.io": "Pando a-very-long-subdomain.exampl",
+		"https://pando.acme.com":                        "Pando pando-acme-com",
+		"https://a-very-long-subdomain.example-corp.io": "Pando a-very-long-subdomain-exampl",
 	} {
-		got := appName(addr)
-		require.Equal(t, want, got, addr)
-		require.LessOrEqual(t, len(got), maxAppName)
+		require.Equal(t, want, appName(addr), addr)
 	}
+	allowed := regexp.MustCompile(`^[A-Za-z0-9 -]+$`)
+	for _, addr := range []string{"http://localhost:8080", "http://127.0.0.1:8080", "http://203.0.113.4", "",
+		"https://pando.acme.com", "https://a-very-long-subdomain.example-corp.io"} {
+		got := appName(addr)
+		require.LessOrEqual(t, len(got), maxAppName, addr)
+		require.Regexp(t, allowed, got, addr)
+		require.NotEqual(t, "Pando", got, addr)
+	}
+	require.Regexp(t, `^Pando [0-9a-f]{6}$`, appName("http://localhost:8080"))
+	require.NotEqual(t, appName("http://localhost:8080"), appName("http://localhost:8080"),
+		"two installations on localhost are not given one name")
 }
 
 // TestAnAppNotCreatedOrEnteredByHandSaysWhatToDo asserts what a connection

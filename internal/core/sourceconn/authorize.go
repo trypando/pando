@@ -77,6 +77,15 @@ func (s *Service) BeginAuthorization(ctx context.Context, id string, mode api.Au
 		return Authorization{}, errs.Newf(errs.StateInvalid,
 			"The source connection %q cannot be authorized: %s", c.Name, c.Problem)
 	}
+	if !s.stored(id) {
+		// What an authorization produces is stored as the connection's
+		// credentials, and a declared connection's are the file's. Refused
+		// before the provider is asked: a GitHub App would be created there
+		// with nowhere to keep its key.
+		return Authorization{}, errs.Newf(errs.StateInvalid,
+			"The source connection %q is declared in the configuration file, so Pando cannot store what authorizing it returns.", c.Name).
+			WithRemedy("Put the connection's credential in the configuration file, or add the connection under Adapters in the console instead.")
+	}
 	if err := canAuthorize(c, mode); err != nil {
 		return Authorization{}, err
 	}
@@ -298,11 +307,28 @@ func (s *Service) finish(ctx context.Context, id string, res api.AuthorizationRe
 	return nil
 }
 
+// store writes credentials an authorization returned, all or none: a
+// connection left with some of a GitHub App's — its key and not its URL name —
+// could neither be used nor authorized again. The store writes one field at a
+// time, so on a failure the fields already written are put back as they were.
 func (s *Service) store(ctx context.Context, id string, creds map[string]secret.Value) error {
+	before, err := s.Credentials.Resolve(ctx, id)
+	if err != nil {
+		return err
+	}
+	var written []string
 	for field, v := range creds {
 		if err := s.Credentials.Put(ctx, id, field, v); err != nil {
+			for _, f := range written {
+				if old, had := before[f]; had {
+					_ = s.Credentials.Put(ctx, id, f, old)
+				} else {
+					_ = s.Credentials.Delete(ctx, id, f)
+				}
+			}
 			return err
 		}
+		written = append(written, field)
 	}
 	return nil
 }

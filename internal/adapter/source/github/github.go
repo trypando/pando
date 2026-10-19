@@ -183,7 +183,9 @@ func (a *Adapter) SourceCapabilities() api.SourceCapabilities {
 		// Creating the App, and installing it, happen in the browser. One
 		// entered by hand has no URL name to install it from.
 		c.WebAuthorization = a.appKey == nil || a.cfg.Credential(FieldAppSlug).Reveal() != ""
-		c.Webhook = a.appKey != nil && !a.cfg.Credential(FieldWebhookSecret).IsZero()
+		// Turning the webhook off stops Pando acting on it at once, though the
+		// App on GitHub keeps sending until it is changed there.
+		c.Webhook = a.appKey != nil && a.cfg.pushWebhook() && !a.cfg.Credential(FieldWebhookSecret).IsZero()
 		c.ManageURL = a.appSettingsURL()
 	}
 	return c
@@ -396,7 +398,7 @@ func Info() api.KindInfo {
 		),
 		forgekit.HostField(defaultHost),
 		forgekit.ScopeField("Owner",
-			"The organization or user on GitHub. Empty is every repository the credential reaches, and for a GitHub App, your own account.",
+			"The organization or user on GitHub. Empty is every repository the credential reaches. A GitHub App is created and installed here only; empty is your own account.",
 			"acme"),
 		{Key: "push_webhook", Label: "Deploy on push", Type: "bool", Default: "true", ShownWhen: appWhen,
 			Help: "Needs a public Pando address. Without one, Pando checks for pushes on a schedule."},

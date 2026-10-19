@@ -83,7 +83,10 @@ func (s *Service) checkFollowers(ctx context.Context, d Delivery, names map[stri
 			continue
 		}
 		pinned, found, err := s.Apps.RevisionByID(ctx, app.PinnedSpecID)
-		if err != nil || !found || pinned.Body == nil {
+		if err != nil {
+			return checking, err
+		}
+		if !found || pinned.Body == nil {
 			continue
 		}
 		src, ad := pinned.Body.Source, pinned.Body.Deploy.AutoDeploy

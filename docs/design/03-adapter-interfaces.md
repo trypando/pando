@@ -1646,7 +1646,11 @@ the App's installation page. GitHub returns from that to `GET /sources/{id}/inst
 ID, which is kept only once the App's own token reads it as one of its installations, on the connection's
 owner when it names one. The adapter keeps nothing between the trips (R-027): what is next is read from the
 credentials. One App per installation of Pando, created under the person's account or organization: a single
-App shipped with Pando would put one private key in every copy. A connection whose App was entered by hand
+App shipped with Pando would put one private key in every copy. The App is private ("Only on this account"),
+and GitHub installs a private App only on the account that owns it, so the connection's owner decides both
+where the App is created and where it can be installed; empty is the person's own account. Its name is
+`Pando ` and Pando's host with dots as hyphens, within GitHub's 34 characters, or `Pando ` and six random
+hex digits on a loopback or bare IP address, since plain `Pando` is an existing account. A connection whose App was entered by hand
 before this keeps working from its stored settings; the form no longer asks for them.
 
 **[D] The App's logo is uploaded by the person.** GitHub takes no logo from a manifest and has no API that

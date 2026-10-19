@@ -106,3 +106,44 @@ func TestANextStepIsOnlyEverOnTheConnectionsOwnHost(t *testing.T) {
 		require.Equal(t, want, got, next)
 	}
 }
+
+// failingCreds is a credential store whose writes of one field fail.
+type failingCreds struct {
+	creds
+	fails string
+}
+
+func (f failingCreds) Put(ctx context.Context, id, field string, v secret.Value) error {
+	if field == f.fails {
+		return errs.New(errs.Internal, "the store is down")
+	}
+	return f.creds.Put(ctx, id, field, v)
+}
+
+// TestAnAuthorizationsCredentialsAreStoredAllOrNone asserts that a store
+// failing partway through what an authorization returned leaves the
+// connection's credentials as they were, rather than half of a GitHub App.
+func TestAnAuthorizationsCredentialsAreStoredAllOrNone(t *testing.T) {
+	for _, field := range []string{"access_token", "refresh_token"} {
+		store := creds{"src_fake": {"access_token": secret.New("old")}}
+		s := service(configs{row("src_fake", "fake", map[string]any{"host": "forge.example"})}, store, new(int))
+		s.Credentials = failingCreds{creds: store, fails: field}
+		a, err := s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationWeb, sourceconn.Addresses{Callback: "https://pando.example/cb"})
+		require.NoError(t, err)
+		state := a.AuthorizeURL[strings.Index(a.AuthorizeURL, "state=")+len("state="):]
+		_, _, err = s.CompleteWebAuthorization(ctx(), state, "code")
+		require.Error(t, err, field)
+		require.Equal(t, map[string]secret.Value{"access_token": secret.New("old")}, store["src_fake"], field)
+	}
+}
+
+// TestADeclaredConnectionIsNotAuthorized asserts that a connection the
+// configuration file declares is refused before the provider is asked:
+// what authorizing returns would have nowhere to be stored.
+func TestADeclaredConnectionIsNotAuthorized(t *testing.T) {
+	s := service(configs{}, creds{}, new(int))
+	s.Declared = map[string]api.SourceAdapter{"src_file": s.New("fake")}
+	_, err := s.BeginAuthorization(ctx(), "src_file", api.AuthorizationWeb, sourceconn.Addresses{Callback: "https://pando.example/cb"})
+	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
+	require.Contains(t, err.Error(), "declared in the configuration file")
+}

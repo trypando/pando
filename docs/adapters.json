@@ -4814,7 +4814,7 @@
             {
               "key": "scope",
               "label": "Owner",
-              "help": "The organization or user on GitHub. Empty is every repository the credential reaches, and for a GitHub App, your own account.",
+              "help": "The organization or user on GitHub. Empty is every repository the credential reaches. A GitHub App is created and installed here only; empty is your own account.",
               "type": "string",
               "placeholder": "acme"
             },
