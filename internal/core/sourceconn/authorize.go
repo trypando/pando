@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -319,18 +320,34 @@ func (s *Service) store(ctx context.Context, id string, creds map[string]secret.
 	var written []string
 	for field, v := range creds {
 		if err := s.Credentials.Put(ctx, id, field, v); err != nil {
-			for _, f := range written {
-				if old, had := before[f]; had {
-					_ = s.Credentials.Put(ctx, id, f, old)
-				} else {
-					_ = s.Credentials.Delete(ctx, id, f)
-				}
+			if !s.restore(ctx, id, before, written) {
+				return errs.Wrap(errs.Internal, fmt.Sprintf(
+					"Pando could not store the source connection %q's credentials, nor put back the ones it had. The connection may not work.", id), err).
+					WithRemedy("Disconnect the connection under Adapters in the console and add it again.")
 			}
 			return err
 		}
 		written = append(written, field)
 	}
 	return nil
+}
+
+// restore puts back fields as they were before a failed store, on a context
+// of its own: the request's may be what failed. It says whether every one was.
+func (s *Service) restore(ctx context.Context, id string, before map[string]secret.Value, fields []string) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	ok := true
+	for _, f := range fields {
+		var err error
+		if old, had := before[f]; had {
+			err = s.Credentials.Put(ctx, id, f, old)
+		} else {
+			err = s.Credentials.Delete(ctx, id, f)
+		}
+		ok = ok && err == nil
+	}
+	return ok
 }
 
 func (s *Service) clear(ctx context.Context, id string) {

@@ -107,17 +107,32 @@ func TestANextStepIsOnlyEverOnTheConnectionsOwnHost(t *testing.T) {
 	}
 }
 
-// failingCreds is a credential store whose writes of one field fail.
+// failingCreds is a credential store whose writes of one field fail — or,
+// with second set, whichever is written second — and whose deletes fail too
+// when stuck is set.
 type failingCreds struct {
 	creds
-	fails string
+	fails  string
+	second bool
+	stuck  bool
+	puts   *int
 }
 
 func (f failingCreds) Put(ctx context.Context, id, field string, v secret.Value) error {
-	if field == f.fails {
+	if f.puts != nil {
+		*f.puts++
+	}
+	if field == f.fails || (f.second && *f.puts == 2) {
 		return errs.New(errs.Internal, "the store is down")
 	}
 	return f.creds.Put(ctx, id, field, v)
+}
+
+func (f failingCreds) Delete(ctx context.Context, id, field string) error {
+	if f.stuck {
+		return errs.New(errs.Internal, "the store is down")
+	}
+	return f.creds.Delete(ctx, id, field)
 }
 
 // TestAnAuthorizationsCredentialsAreStoredAllOrNone asserts that a store
@@ -146,4 +161,20 @@ func TestADeclaredConnectionIsNotAuthorized(t *testing.T) {
 	_, err := s.BeginAuthorization(ctx(), "src_file", api.AuthorizationWeb, sourceconn.Addresses{Callback: "https://pando.example/cb"})
 	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "declared in the configuration file")
+}
+
+// TestACredentialStoreThatCannotBePutBackSaysTheConnectionNeedsRepair asserts
+// that when the fields already written cannot be restored either, the error
+// says so and what to do, rather than the bare store failure.
+func TestACredentialStoreThatCannotBePutBackSaysTheConnectionNeedsRepair(t *testing.T) {
+	store := creds{}
+	s := service(configs{row("src_fake", "fake", map[string]any{"host": "forge.example"})}, store, new(int))
+	s.Credentials = failingCreds{creds: store, second: true, stuck: true, puts: new(int)}
+	a, err := s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationWeb, sourceconn.Addresses{Callback: "https://pando.example/cb"})
+	require.NoError(t, err)
+	state := a.AuthorizeURL[strings.Index(a.AuthorizeURL, "state=")+len("state="):]
+	_, _, err = s.CompleteWebAuthorization(ctx(), state, "code")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nor put back")
+	require.Contains(t, errs.As(err).Remedy, "Disconnect the connection")
 }
