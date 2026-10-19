@@ -380,6 +380,22 @@ own filesystem. Two things were learned building it:
   worth repeating: a category that exists only in Go is a category no adapter
   can be configured in.
 
+**Where Trivy downloads its databases from is a setting.** Trivy fetches its
+vulnerability database, its Java index and its misconfiguration checks from
+`mirror.gcr.io` and `ghcr.io` before each scan, which an egress-restricted host
+cannot reach. Four advanced settings point it elsewhere: `db_repository` and
+`java_db_repository` (OCI references, comma-separated, first tried first),
+`checks_bundle_repository` (one reference), and `offline_scan`, which stops
+Trivy asking package registries such as Maven Central about dependencies it
+cannot identify locally — it does not stop the database downloads. Empty leaves
+Trivy's defaults, which the form shows. A reference with a URL scheme, or a list
+for the checks bundle, is refused when configured. A scan that fails because a
+download failed says which database, from which repositories, and which
+setting (by label and key) points it at a mirror, rather than Trivy's stderr
+alone (R-105). Not supported: a mirror that needs credentials (no credential
+is passed to Trivy for its databases), and fully offline scanning with
+databases loaded by hand.
+
 **Not built yet.** A scheduled rescan (O-20), static analysis of the app's own
 code (O-19), and the plan-time half of R-314 — `POST /apps/{id}/plan` does not
 yet report the standing, so a below-threshold app is refused when its deploy

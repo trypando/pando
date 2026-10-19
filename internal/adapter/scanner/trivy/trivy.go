@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,7 +74,31 @@ type Config struct {
 	// never finishes, and R-318 says a scanner that cannot answer must not
 	// block one.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+
+	// DBRepository, JavaDBRepository and ChecksBundleRepository are where
+	// Trivy downloads its vulnerability database, its Java index and its
+	// misconfiguration checks: OCI references, the first two comma-separated
+	// in order of priority. Empty leaves Trivy's own defaults, which are on
+	// mirror.gcr.io and ghcr.io — unreachable from an egress-restricted host,
+	// which is who sets these to a mirror of their own.
+	DBRepository           string `json:"db_repository,omitempty"`
+	JavaDBRepository       string `json:"java_db_repository,omitempty"`
+	ChecksBundleRepository string `json:"checks_bundle_repository,omitempty"`
+
+	// OfflineScan stops Trivy asking package registries such as Maven
+	// Central about dependencies it cannot identify locally. It does not stop
+	// the database downloads; the repositories above are for those.
+	OfflineScan bool `json:"offline_scan,omitempty"`
 }
+
+// The repositories Trivy 0.74 uses when none is given, as its --help states
+// them. Shown as the fields' defaults so a person sees what an empty field
+// means.
+const (
+	trivyDBRepository     = "mirror.gcr.io/aquasec/trivy-db:2, ghcr.io/aquasecurity/trivy-db:2"
+	trivyJavaDBRepository = "mirror.gcr.io/aquasec/trivy-java-db:1, ghcr.io/aquasecurity/trivy-java-db:1"
+	trivyChecksRepository = "mirror.gcr.io/aquasec/trivy-checks:1"
+)
 
 func New() *Adapter { return &Adapter{} }
 
@@ -91,6 +116,22 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	}
 	if a.config.TimeoutSeconds <= 0 {
 		a.config.TimeoutSeconds = 600
+	}
+	for _, r := range []struct{ label, value string }{
+		{"vulnerability database repository", a.config.DBRepository},
+		{"Java database repository", a.config.JavaDBRepository},
+		{"checks bundle repository", a.config.ChecksBundleRepository},
+	} {
+		if strings.Contains(r.value, "://") {
+			return errs.Newf(errs.ValidInvalid,
+				"The scanner's %s %q has a URL scheme, and Trivy reads it as an OCI reference.", r.label, r.value).
+				WithRemedy("Give it as registry/repository:tag with no scheme, such as registry.example.com/aquasec/trivy-db:2.")
+		}
+	}
+	if strings.Contains(a.config.ChecksBundleRepository, ",") {
+		return errs.New(errs.ValidInvalid,
+			"The scanner's checks bundle repository is a list, and Trivy takes one repository for it.").
+			WithRemedy("Give one OCI reference, such as registry.example.com/aquasec/trivy-checks:1.")
 	}
 
 	opts := []client.Opt{client.FromEnv}
@@ -249,8 +290,8 @@ func (a *Adapter) scanImage(ctx context.Context, ref string) ([]api.Finding, err
 	}
 
 	out, err := a.run(ctx,
-		[]string{"image", "--input", "/scan/image.tar", "--format", "json", "--quiet",
-			"--scanners", "vuln,secret,misconfig"},
+		append([]string{"image", "--input", "/scan/image.tar", "--format", "json", "--quiet",
+			"--scanners", "vuln,secret,misconfig"}, a.sourceFlags()...),
 		copyIn{path: "scan/image.tar", size: info.Size(), body: saved},
 		nil)
 	if err != nil {
@@ -267,13 +308,85 @@ func (a *Adapter) scanSource(ctx context.Context, dir string) ([]api.Finding, er
 	}
 
 	out, err := a.run(ctx,
-		[]string{"fs", "--format", "json", "--quiet", "--scanners", "vuln,secret,misconfig", "/scan/src"},
+		append(append([]string{"fs", "--format", "json", "--quiet", "--scanners", "vuln,secret,misconfig"},
+			a.sourceFlags()...), "/scan/src"),
 		copyIn{},
 		archive)
 	if err != nil {
 		return nil, err
 	}
 	return parse(out)
+}
+
+// sourceFlags are the flags that say where Trivy downloads its databases from,
+// and whether it may ask package registries about dependencies. Nothing is
+// passed for a setting left empty, so Trivy's own default applies.
+func (a *Adapter) sourceFlags() []string {
+	var flags []string
+	for _, f := range []struct{ flag, value string }{
+		{"--db-repository", a.config.DBRepository},
+		{"--java-db-repository", a.config.JavaDBRepository},
+		{"--checks-bundle-repository", a.config.ChecksBundleRepository},
+	} {
+		if v := repositoryList(f.value); v != "" {
+			flags = append(flags, f.flag, v)
+		}
+	}
+	if a.config.OfflineScan {
+		flags = append(flags, "--offline-scan")
+	}
+	return flags
+}
+
+// repositoryList normalizes "a, b ,," to "a,b", the form Trivy's list flags
+// read.
+func repositoryList(v string) string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+// downloadFailures are the messages Trivy 0.74 wraps a failed database
+// download in (pkg/db/db.go, pkg/javadb/client.go,
+// pkg/commands/operation/operation.go), each with the setting that says where
+// it downloads from.
+var downloadFailures = []struct{ text, what, setting, field, defaults string }{
+	{"failed to download vulnerability DB", "its vulnerability database",
+		"Vulnerability database repository", "db_repository", trivyDBRepository},
+	{"failed to download Java DB", "its Java database",
+		"Java database repository", "java_db_repository", trivyJavaDBRepository},
+	{"failed to download checks bundle", "its misconfiguration checks",
+		"Checks bundle repository", "checks_bundle_repository", trivyChecksRepository},
+}
+
+// downloadFailure reads a failed scan's stderr for a database download Trivy
+// could not make, and says which setting points it elsewhere (R-105). Nil
+// when the failure was something else.
+func (a *Adapter) downloadFailure(status int64, stderr string) error {
+	configured := map[string]string{
+		"db_repository":            repositoryList(a.config.DBRepository),
+		"java_db_repository":       repositoryList(a.config.JavaDBRepository),
+		"checks_bundle_repository": repositoryList(a.config.ChecksBundleRepository),
+	}
+	for _, f := range downloadFailures {
+		if !strings.Contains(stderr, f.text) {
+			continue
+		}
+		from := "Trivy's default repositories (" + f.defaults + ")"
+		if c := configured[f.field]; c != "" {
+			from = "the repositories set in the scanner adapter's " + strconv.Quote(f.setting) + " setting (" + c + ")"
+		}
+		return errs.Newf(errs.AdapterFailed,
+			"The Trivy scanner exited with status %d because it could not download %s from %s. Trivy said: %s",
+			status, f.what, from, tail(stderr)).
+			WithRemedy(fmt.Sprintf("Allow this host to reach that registry, or set the scanner adapter's "+
+				"advanced setting %q (%s) to an OCI mirror this host can reach.", f.setting, f.field))
+	}
+	return nil
 }
 
 // save streams `docker save` into a temporary file.
@@ -425,6 +538,9 @@ func (a *Adapter) runWith(ctx context.Context, entrypoint, cmd []string, file co
 		return nil, errs.Wrap(errs.AdapterFailed, "The scanner did not finish.", err)
 	case status := <-wait.Result:
 		if status.StatusCode != 0 {
+			if err := a.downloadFailure(status.StatusCode, stderr.String()); err != nil {
+				return nil, err
+			}
 			return nil, errs.Newf(errs.AdapterFailed,
 				"The scanner exited with status %d: %s", status.StatusCode, tail(stderr.String()))
 		}
@@ -539,6 +655,18 @@ func Info() api.KindInfo {
 			{Key: "image", Label: "Image", Type: "string", Help: "The Trivy image to run.", Default: "aquasec/trivy:0.74.0 (pinned)", Advanced: true},
 			{Key: "host", Label: "Docker host", Type: "string", Help: "Where to run it.", Default: "DOCKER_HOST, or the local socket", Advanced: true},
 			{Key: "timeout_seconds", Label: "Timeout", Type: "int", Help: "Seconds a scan may take.", Default: "600", Advanced: true},
+			{Key: "db_repository", Label: "Vulnerability database repository", Type: "string",
+				Help:    "OCI repositories to download Trivy's vulnerability database from, comma-separated, first tried first.",
+				Default: trivyDBRepository, Advanced: true},
+			{Key: "java_db_repository", Label: "Java database repository", Type: "string",
+				Help:    "OCI repositories to download Trivy's Java database from, comma-separated, first tried first.",
+				Default: trivyJavaDBRepository, Advanced: true},
+			{Key: "checks_bundle_repository", Label: "Checks bundle repository", Type: "string",
+				Help:    "The OCI repository to download Trivy's misconfiguration checks from.",
+				Default: trivyChecksRepository, Advanced: true},
+			{Key: "offline_scan", Label: "Offline scan", Type: "bool",
+				Help:    "Stop Trivy asking package registries about dependencies; database downloads still happen.",
+				Default: "false", Advanced: true},
 		},
 	}
 }
