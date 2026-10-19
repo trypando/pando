@@ -3245,7 +3245,7 @@
               "help": "The OCI repository to download Trivy's misconfiguration checks from.",
               "type": "string",
               "advanced": true,
-              "default": "mirror.gcr.io/aquasec/trivy-checks:1"
+              "default": "mirror.gcr.io/aquasec/trivy-checks:2"
             },
             {
               "key": "offline_scan",

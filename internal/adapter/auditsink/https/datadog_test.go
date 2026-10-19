@@ -202,6 +202,28 @@ func TestR382_BatchesAreCutToMaxBodyBytes(t *testing.T) {
 	})
 }
 
+// TestR382_DatadogBatchesHoldAtMostAThousandLogs asserts that a Datadog body
+// holds no more logs than its intake takes in one array, and that other
+// bodies have no such cap.
+func TestR382_DatadogBatchesHoldAtMostAThousandLogs(t *testing.T) {
+	events := make([]json.RawMessage, datadogMaxItems+1)
+	for i := range events {
+		events[i] = json.RawMessage(`{"action":"app.deploy","occurred_at":"2026-10-18T11:00:00Z"}`)
+	}
+	srv, ca, rec := record(t, 0)
+	a := datadogSink(t, srv.URL, ca, nil)
+	require.NoError(t, a.Send(context.Background(), api.AuditBatch{Events: events}))
+	require.Len(t, rec.bodies, 2)
+	require.Len(t, logs(t, rec.bodies[0]), datadogMaxItems)
+	require.Len(t, logs(t, rec.bodies[1]), 1)
+
+	srv, ca, rec = record(t, 0)
+	b, err := configure(t, map[string]any{"url": srv.URL, "body": BodyJSONArray, "ca_certificate": ca})
+	require.NoError(t, err)
+	require.NoError(t, b.Send(context.Background(), api.AuditBatch{Events: events}))
+	require.Len(t, rec.bodies, 1, "other bodies are not counted")
+}
+
 // TestR382_DatadogPresetUsesTheDatadogBody asserts the Datadog preset sends
 // log items to the v2 intake with no query parameters, which Datadog does not
 // read for a JSON body.

@@ -159,6 +159,21 @@ someone wants, each as a sentence saying what to do. An example is a Cloudflare 
 than one level below its zone, which the included certificate does not cover. `POST /adapters` returns
 these as `warnings`. They never refuse a save: refusing is the adapter's `Configure`.
 
+**[D] `KindInfo.Check` refuses at save what `Configure` would refuse at startup.** It is a function, not
+data, and takes the settings, the credentials sent, and the names of the credentials already stored and
+not sent again. `POST /adapters` calls it before storing a row, so a configuration that cannot start is
+refused then rather than saved and skipped at the next restart. Only a kind that can tell without
+connecting anywhere has one: SMTP (port and security that cannot agree, a username with no password, a
+password over an unencrypted connection), Anthropic (a malformed `workspace_id`) and the chat notifiers
+(a webhook URL on another platform's host or a retired one, checked when a URL is sent; the other
+settings always). A credential sent empty is being removed and counts as absent. Nil means the kind is
+checked at startup only.
+
+**[D] `KindInfo.Managed` marks a kind Pando sets up itself** from its install topology — today only
+`buildkit`, which Pando runs itself or the install topology runs beside it (design 00 §1.1). A managed
+kind is not offered in Add adapter or in `pando adapter kinds`, and its row has no Edit; the row and its
+status are still shown. Its settings are all advanced and set through the API or the CLI.
+
 ---
 
 **[P] `ImageDelivery` and `EdgeConfig` (issue #72).** `ImageDelivery` is how a built image can reach the
@@ -167,26 +182,6 @@ and every node pull it by digest (Kubernetes; `notes-image-registry-issue-72.md`
 `EdgeConfig` is how an edge on the runtime can receive routes; core passes the default runtime's list to
 the routing adapter in `EdgeRequest`, and a routing adapter whose delivery the runtime does not offer
 refuses its edge with a readable error rather than running one that never learns a route (§4.4).
-
-### 1.2 Kinds
-
-Each kind describes itself with a `KindInfo` (`adapter/api/kinds.go`): its name, its settings
-(`Fields`), and presets for known providers. `GET /adapters/kinds` returns it, and the console's Add
-adapter form and `pando adapter kinds` are built from it.
-
-**[D] `KindInfo.Check` refuses at save what `Configure` would refuse at startup.** It is a function, not
-data, and takes the settings, the credentials sent, and the names of the credentials already stored and
-not sent again. `POST /adapters` calls it before storing a row, so a configuration that cannot start is
-refused then rather than saved and skipped at the next restart. Only a kind that can tell without
-connecting anywhere has one: SMTP (port and security that cannot agree, a username with no password, a
-password over an unencrypted connection), Anthropic (a malformed `workspace_id`) and the chat notifiers
-(a webhook URL on another platform's host or a retired one, checked only when a new URL is sent). Nil
-means the kind is checked at startup only.
-
-**[D] `KindInfo.Managed` marks a kind Pando sets up itself** from its install topology — today only
-`buildkit`, which Pando runs itself or the install topology runs beside it (design 00 §1.1). A managed
-kind is not offered in Add adapter or in `pando adapter kinds`, and its row has no Edit; the row and its
-status are still shown. Its settings are all advanced and set through the API or the CLI.
 
 ## 2. Runtime
 

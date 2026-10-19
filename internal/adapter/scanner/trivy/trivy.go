@@ -97,7 +97,7 @@ type Config struct {
 const (
 	trivyDBRepository     = "mirror.gcr.io/aquasec/trivy-db:2, ghcr.io/aquasecurity/trivy-db:2"
 	trivyJavaDBRepository = "mirror.gcr.io/aquasec/trivy-java-db:1, ghcr.io/aquasecurity/trivy-java-db:1"
-	trivyChecksRepository = "mirror.gcr.io/aquasec/trivy-checks:1"
+	trivyChecksRepository = "mirror.gcr.io/aquasec/trivy-checks:2"
 )
 
 func New() *Adapter { return &Adapter{} }
@@ -131,7 +131,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	if strings.Contains(a.config.ChecksBundleRepository, ",") {
 		return errs.New(errs.ValidInvalid,
 			"The scanner's checks bundle repository is a list, and Trivy takes one repository for it.").
-			WithRemedy("Give one OCI reference, such as registry.example.com/aquasec/trivy-checks:1.")
+			WithRemedy("Give one OCI reference, such as registry.example.com/aquasec/trivy-checks:2.")
 	}
 
 	opts := []client.Opt{client.FromEnv}

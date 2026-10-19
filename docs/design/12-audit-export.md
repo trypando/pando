@@ -219,7 +219,9 @@ sets 1 MB (1 000 000), because the Logs Ingestion API caps one call at 1 MB
 (learn.microsoft.com/azure/azure-monitor/fundamentals/service-limits). The first refused POST fails the
 batch, and those before it are sent again with the rest: delivery is at least once, and each event's id is
 its idempotency key. One event larger than the limit on its own fails the batch with its id and the setting
-to raise.
+to raise. A `datadog` body also holds at most 1,000 logs, Datadog's limit on one array; a log over its 1 MB
+per-log limit is accepted and truncated by Datadog, so it is not refused here
+(docs.datadoghq.com/api/latest/logs/send-logs).
 
 Both refuse a credential in plain configuration, as every adapter does (R-190), and an `https` URL
 carrying `user:pass@` is refused by a CHECK, as 000066 does for registries.

@@ -35,8 +35,8 @@ func TestSourceFlagsPassEachSetting(t *testing.T) {
 			[]string{"--db-repository", "registry.example.com/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2"}},
 		{"java db repository", Config{JavaDBRepository: "registry.example.com/trivy-java-db:1"},
 			[]string{"--java-db-repository", "registry.example.com/trivy-java-db:1"}},
-		{"checks bundle repository", Config{ChecksBundleRepository: "registry.example.com/trivy-checks:1"},
-			[]string{"--checks-bundle-repository", "registry.example.com/trivy-checks:1"}},
+		{"checks bundle repository", Config{ChecksBundleRepository: "registry.example.com/trivy-checks:2"},
+			[]string{"--checks-bundle-repository", "registry.example.com/trivy-checks:2"}},
 		{"offline scan", Config{OfflineScan: true}, []string{"--offline-scan"}},
 		{"blank list", Config{DBRepository: " , "}, nil},
 	}

@@ -455,10 +455,25 @@ func (a *Adapter) items(events []json.RawMessage) ([][]byte, error) {
 	return out, nil
 }
 
-// split joins items into bodies, each within max_body_bytes when it is set.
-// ids name an event too large to send alone.
+// datadogMaxItems is the most logs Datadog takes in one array.
+const datadogMaxItems = 1000
+
+// maxItems is the most items one body may hold; -1 is no limit.
+func (a *Adapter) maxItems() int {
+	if a.cfg.Body == BodyDatadog {
+		return datadogMaxItems
+	}
+	return -1
+}
+
+// overLimit says whether size bytes exceed limit, where 0 is no limit.
+func overLimit(limit, size int) bool { return limit > 0 && size > limit }
+
+// split joins items into bodies, each within max_body_bytes when it is set,
+// and within datadogMaxItems for Datadog. ids name an event too large to send
+// alone.
 func (a *Adapter) split(items [][]byte, ids []int64) ([][]byte, error) {
-	limit, arr := a.cfg.MaxBodyBytes, a.array()
+	limit, arr, most := a.cfg.MaxBodyBytes, a.array(), a.maxItems()
 	var bodies [][]byte
 	var buf bytes.Buffer
 	n := 0
@@ -480,10 +495,10 @@ func (a *Adapter) split(items [][]byte, ids []int64) ([][]byte, error) {
 		extra = 2
 	}
 	for i, item := range items {
-		if n > 0 && limit > 0 && buf.Len()+len(item)+extra > limit {
+		if n > 0 && (overLimit(limit, buf.Len()+len(item)+extra) || n == most) {
 			flush()
 		}
-		if limit > 0 && len(item)+extra > limit {
+		if overLimit(limit, len(item)+extra) {
 			return nil, tooLarge(i, ids, len(item)+extra, limit)
 		}
 		switch {
