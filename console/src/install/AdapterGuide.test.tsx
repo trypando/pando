@@ -4,7 +4,7 @@ import { act } from 'react';
 
 import { AdapterDialog } from './AdapterDialog';
 import type { AdapterKind } from './adapters';
-import { mount, reply } from '../ui/testing';
+import { mount, reply, serverRender } from '../ui/testing';
 import type { Mounted } from '../ui/testing';
 
 const tunnel: AdapterKind = {
@@ -213,6 +213,12 @@ describe('adding an adapter one step at a time', () => {
       (query: string) =>
         ({ matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} }) as unknown as MediaQueryList,
     );
+    const html = serverRender(
+      <AdapterDialog category="routing" adapters={[]} onClose={() => undefined} onSaved={() => undefined} />,
+      [[['adapter-kinds'], { kinds: [tunnel] }]],
+    );
+    expect(html).toContain('Step 1 of 4');
+    expect(html).not.toContain('aria-label="Steps"');
     const { s } = open([tunnel], 'routing');
     expect(document.querySelector('nav[aria-label="Steps"]')).toBeNull();
     expect(s.text()).toContain('Step 1 of 4');
