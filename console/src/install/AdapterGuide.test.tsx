@@ -207,6 +207,22 @@ describe('adding an adapter one step at a time', () => {
     expect(s.text()).toContain('Create an API token');
   });
 
+  it('counts the steps above the one being answered at phone width, instead of a rail beside it', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      (query: string) =>
+        ({ matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} }) as unknown as MediaQueryList,
+    );
+    const { s } = open([tunnel], 'routing');
+    expect(document.querySelector('nav[aria-label="Steps"]')).toBeNull();
+    expect(s.text()).toContain('Step 1 of 4');
+    await s.fill('API token (required)', 'tok');
+    await s.press('Continue');
+    expect(s.text()).toContain('Step 2 of 4');
+    await s.press('Show all settings');
+    expect(s.text()).toContain('Set up step by step');
+  });
+
   it('can search a long list of adapters', async () => {
     const { s } = open([tunnel, ...[1, 2, 3, 4, 5, 6].map(plain)], 'routing');
     expect(s.text()).toContain('Plain 6');

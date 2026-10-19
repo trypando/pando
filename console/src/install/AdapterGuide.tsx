@@ -11,6 +11,7 @@ import { Banner, Button, Checkbox, Dialog, Icon, Input, Select } from '@design';
 
 import { refusal } from './Accounts';
 import { Disclosure } from '../ui/Disclosure';
+import { useNarrow } from '../ui/narrow';
 import {
   advancedCount,
   categoryLabel,
@@ -118,6 +119,7 @@ export function AdapterGuide({
   /** One line on the review, above the button that saves. */
   reviewNote?: string;
 }>) {
+  const narrow = useNarrow();
   const [at, setAt] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   // The provider chosen, for the kind it was chosen for: choosing another
@@ -249,16 +251,19 @@ export function AdapterGuide({
     >
       {/* Choosing the adapter has the dialog to itself: until one is chosen
           there are no steps to list. From its first step on, every step is
-          named beside the one being answered. */}
+          named beside the one being answered — or, at phone width, counted
+          above it, since a rail beside it leaves the step half the screen. */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: picking ? 'minmax(0, 1fr)' : 'calc(var(--space-9) + var(--space-7)) minmax(0, 1fr)',
-          gap: 'var(--space-6)',
+          gridTemplateColumns:
+            picking || narrow ? 'minmax(0, 1fr)' : 'calc(var(--space-9) + var(--space-7)) minmax(0, 1fr)',
+          gap: narrow ? 'var(--space-4)' : 'var(--space-6)',
           alignItems: 'start',
         }}
       >
-        {!picking && <StepRail screens={screens} index={index} pickLabel={pickLabel} onGo={go} onShowAll={onShowAll} />}
+        {!picking && narrow && <StepCount index={index} total={screens.length} onShowAll={onShowAll} />}
+        {!picking && !narrow && <StepRail screens={screens} index={index} pickLabel={pickLabel} onGo={go} onShowAll={onShowAll} />}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', minWidth: 0 }}>
           {screen.kind === 'choose' && (
@@ -497,6 +502,20 @@ const quietLink = {
   textUnderlineOffset: 'var(--space-1)',
 } as const;
 
+/** The step rail at phone width: where the walk-through is, in one line. */
+function StepCount({ index, total, onShowAll }: Readonly<{ index: number; total: number; onShowAll: () => void }>) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 'var(--space-3)' }}>
+      <span style={caption}>
+        Step {index + 1} of {total}
+      </span>
+      <button type="button" onClick={onShowAll} style={quietLink}>
+        Show all settings
+      </button>
+    </div>
+  );
+}
+
 /**
  * Every step by name, so what is still to come is in view: finished ones
  * marked and a click from going back to, the current one set off.
@@ -595,6 +614,7 @@ function TilePicker({
   chosen: string;
   onPick: (key: string) => void;
 }>) {
+  const narrow = useNarrow();
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
   const shown = q
@@ -608,7 +628,7 @@ function TilePicker({
       <div
         role="radiogroup"
         aria-label={label}
-        style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 'var(--space-3)' }}
+        style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: 'var(--space-3)' }}
       >
         {shown.map((k) => {
           const key = k.key;
@@ -754,8 +774,8 @@ function StepBody({
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 'var(--space-2)',
-                height: 'var(--control-console)',
-                padding: '0 var(--button-padding-console)',
+                minHeight: 'var(--control-console)',
+                padding: 'var(--space-1) var(--button-padding-console)',
                 font: 'var(--type-label)',
                 color: 'var(--ink)',
                 textDecoration: 'none',
@@ -776,38 +796,46 @@ function StepBody({
 }
 
 function StepTable({ table }: Readonly<{ table: NonNullable<NonNullable<KindStep['do']>[number]['table']> }>) {
+  // Scrolls sideways inside itself at phone width rather than widening the
+  // dialog, which pushed every step's text off the screen with it.
   return (
-    <table
+    <div
       style={{
         marginTop: 'var(--space-2)',
-        width: '100%',
+        overflowX: 'auto',
         background: 'var(--paper-sunken)',
         borderRadius: 'var(--radius-md)',
-        font: 'var(--type-code-sm)',
-        textAlign: 'left',
       }}
     >
-      <thead>
-        <tr>
-          {table.columns.map((c) => (
-            <th key={c} style={{ ...caption, fontWeight: 400, padding: 'var(--space-2) var(--space-3) var(--space-1)' }}>
-              {c}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {keyed(table.rows, (row) => row.join('|')).map(([key, row]) => (
-          <tr key={key}>
-            {table.columns.map((column, j) => (
-              <td key={column} style={{ padding: 'var(--space-1) var(--space-3)' }}>
-                {row[j]}
-              </td>
+      <table
+        style={{
+          width: '100%',
+          font: 'var(--type-code-sm)',
+          textAlign: 'left',
+        }}
+      >
+        <thead>
+          <tr>
+            {table.columns.map((c) => (
+              <th key={c} style={{ ...caption, fontWeight: 400, padding: 'var(--space-2) var(--space-3) var(--space-1)' }}>
+                {c}
+              </th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {keyed(table.rows, (row) => row.join('|')).map(([key, row]) => (
+            <tr key={key}>
+              {table.columns.map((column, j) => (
+                <td key={column} style={{ padding: 'var(--space-1) var(--space-3)' }}>
+                  {row[j]}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -888,7 +916,7 @@ function Review({
         style={{
           margin: 0,
           display: 'grid',
-          gridTemplateColumns: 'max-content 1fr max-content',
+          gridTemplateColumns: 'fit-content(40%) minmax(0, 1fr) max-content',
           gap: 'var(--space-2) var(--space-4)',
           font: 'var(--type-body-ui)',
         }}
