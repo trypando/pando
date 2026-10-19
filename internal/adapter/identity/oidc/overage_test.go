@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -143,6 +144,15 @@ func TestOIDCPresetsSayWhatEachProviderNeeds(t *testing.T) {
 		presets[p.ID], help[p.ID] = p.Values, p.Help
 	}
 	require.Contains(t, strings.Fields(presets["entra"]["scopes"]), "User.Read", "Graph is read for a groups overage")
-	require.Contains(t, help["google"], "Groups are not synced from Google")
-	require.Contains(t, help["authentik"], "Signing Key")
+	require.Contains(t, help["google"], "Google sends no groups")
+	steps := ""
+	for _, st := range oidc.Info().Steps {
+		if slices.Contains(st.Presets, "authentik") || slices.Contains(st.Presets, "entra") {
+			for _, a := range st.Do {
+				steps += a.Text + "\n"
+			}
+		}
+	}
+	require.Contains(t, steps, "**Signing Key**", "without one Authentik signs with HS256, which is refused")
+	require.Contains(t, steps, "**User.Read**", "Graph is read for a groups overage")
 }

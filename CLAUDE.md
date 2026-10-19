@@ -170,6 +170,29 @@ self-contained and pasteable into an assistant; the design system says *"Pando c
 command. Add one in app settings."* — no apology, no `Error:` prefix, no exclamation mark. An API
 message and a console message should read as one product, because to the user they are.
 
+**Interface copy is short, and it does not explain itself.** Over-explained copy was cut from the
+console in #240 and crept straight back into the next screen built, so the rules are here:
+
+- Labels, headers and options are noun phrases in the domain's own terms: *Source connection*, not
+  *Repository from*; *Private image*, not *The image is private*; *Subdomain*, not *Its own hostname*.
+- A caption, helper or description is one short sentence at most, and only when the field cannot be
+  filled in without it: a format (*PNG, JPEG, WebP, GIF or SVG, up to 256 KB.*), what empty means
+  (*Empty is the primary zone.*), or a consequence (*Can't be changed later.*). It never says where
+  the value is shown, who uses it, or why it is asked.
+- Say a thing once. A field under instructions that already say how to get its value has no caption;
+  a step has no lede restating its title; a dialog does not repeat what its button or the notice
+  after it will say.
+- No "…, so …" or "Nothing changes until …" walkthroughs, and no empty state explaining what will
+  appear one day: *No events yet*, not a sentence about events.
+- Facts a requirement mandates stay, shortened — the egress proxy limit (R-187), the backup
+  passphrase warning (R-214). Help text written into an adapter's `KindInfo` is shown by the
+  console, the CLI and MCP alike, so it obeys the same rules and never names one surface's controls
+  (*press Enter*).
+
+Before calling UI done, read every visible string on the screen and delete each one the screen works
+without. The same goes for controls: do not swap a plain input for a more elaborate one (a row and
+an add button per value, a picker for a short list) unless asked.
+
 ---
 
 ## 5. Definition of done

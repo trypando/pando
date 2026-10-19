@@ -139,6 +139,14 @@
           "required": false
         },
         {
+          "name": "preset",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "a known provider's settings to start from, by ID, as `pando adapter kinds` lists them; at a terminal, asked when not given",
+          "required": false
+        },
+        {
           "name": "set",
           "shorthand": "",
           "type": "stringArray",

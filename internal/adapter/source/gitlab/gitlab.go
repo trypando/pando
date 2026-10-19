@@ -101,7 +101,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	case forgekit.MethodOAuth:
 		if strings.TrimSpace(cfg.ClientID) == "" {
 			return errs.New(errs.ValidInvalid, "A GitLab OAuth connection needs the OAuth application's client ID.").
-				WithRemedy("Create an application in GitLab under Preferences → Applications (or the group's or instance's Applications page) with the read_repository and read_api scopes, and enter its Application ID as the client ID.")
+				WithRemedy("Create an application in GitLab under Edit profile → Access → Applications (or the group's Settings → Applications) with the read_repository and read_api scopes, and enter its Application ID as the client ID.")
 		}
 	}
 	if cfg.APIURL != "" {
@@ -409,7 +409,7 @@ func (a *Adapter) checkOAuth(mode api.AuthorizationMode) error {
 		if a.cfg.Credential(forgekit.FieldClientSecret).IsZero() {
 			return errs.New(errs.ValidInvalid,
 				"Browser authorization needs the GitLab OAuth application's secret, and this connection has none.").
-				WithRemedy("Enter the application's secret in the connection's settings, or authorize with a device code instead (GitLab 17.2 or later).")
+				WithRemedy("Enter the application's secret in the connection's settings, or authorize with a device code instead (GitLab 17.9 or later).")
 		}
 	default:
 		return errs.Newf(errs.ValidInvalid, "%q is not an authorization mode. Use device or web.", mode)
@@ -417,7 +417,7 @@ func (a *Adapter) checkOAuth(mode api.AuthorizationMode) error {
 	return nil
 }
 
-// BeginAuthorization starts device authorization (GitLab 17.2 and later) or
+// BeginAuthorization starts device authorization (GitLab 17.9 and later) or
 // browser authorization with PKCE.
 func (a *Adapter) BeginAuthorization(ctx context.Context, req api.AuthorizationRequest) (api.Authorization, error) {
 	if err := a.checkOAuth(req.Mode); err != nil {
@@ -473,11 +473,13 @@ func Info() api.KindInfo {
 		),
 		forgekit.HostField(DefaultHost),
 		forgekit.ScopeField("Group",
-			"Limit the connection to projects in this group and its subgroups, such as acme or acme/platform. Empty is every project the credential can read.",
+			"Subgroups are included. Empty is every project the credential can read.",
 			"acme/platform"),
 	}
 	fields = append(fields, forgekit.OAuthFields(
-		"The Application ID of a GitLab OAuth application with the read_repository and read_api scopes. Create one under Preferences → Applications, or on a group's or the instance's Applications page.")...)
+		"The Application ID of a GitLab OAuth application with the read_repository and read_api scopes.")...)
+	username := forgekit.UsernameField("The username GitLab shows beside the deploy token.", "gitlab+deploy-token-12")
+	username.ShownWhen = &api.Condition{Key: "token_type", Values: []string{TokenTypeDeploy}}
 	fields = append(fields,
 		api.Field{
 			Key: "token_type", Label: "Token type", Type: "select", Default: TokenTypeAccess, ShownWhen: tokenWhen,
@@ -488,8 +490,8 @@ func Info() api.KindInfo {
 					Description: "A deploy token with read_repository. It cannot list repositories, so they are entered by address."},
 			},
 		},
-		forgekit.UsernameField("For a deploy token, the username GitLab shows beside it, such as gitlab+deploy-token-12. Not used with an access token.", "gitlab+deploy-token-12"),
-		forgekit.TokenField("Token", "Read access to repositories is enough: read_repository, and read_api to pick repositories from a list."),
+		username,
+		forgekit.TokenField("Token", "An access token with read_repository and read_api, or a deploy token with read_repository."),
 	)
 	fields = append(fields, forgekit.SSHFields(
 		"The host's public key, as ssh-keyscan <host> prints it. Leave empty for gitlab.com; Pando knows its key.")...)
@@ -501,6 +503,7 @@ func Info() api.KindInfo {
 		Description: "Clone from gitlab.com or a self-managed GitLab with an OAuth application, an access or deploy token, or a deploy key, optionally limited to one group.",
 		IDPrefix:    "src_",
 		Fields:      fields,
+		Steps:       steps(),
 	}
 }
 

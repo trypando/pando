@@ -160,15 +160,16 @@ func Info() api.KindInfo {
 		IDPrefix:    "ntf_",
 		Fields: []api.Field{
 			{Key: "topic", Label: "Topic", Type: "string", Credential: true, Required: true, Placeholder: "pando-alerts-7f3k",
-				Help: "The topic to publish to. On ntfy.sh anyone who knows a topic's name can read it, so pick one nobody would guess. Stored encrypted."},
+				Help: "Up to 64 letters, numbers, dashes or underscores. On ntfy.sh, anyone who knows it can read it."},
 			{Key: "server_url", Label: "Server", Type: "string", Default: DefaultServer, Help: "The ntfy server."},
 			{Key: "access_token", Label: "Access token", Type: "string", Credential: true,
-				Help: "A token for a server that requires one. Stored encrypted and never shown again."},
+				Help: "A token starting tk_, for a server or topic that requires sign-in."},
 			{Key: "priority", Label: "Priority", Type: "select", Default: "default", Advanced: true,
 				Help: "How insistently the phone announces a message.",
 				Options: []api.Option{{Value: "min", Label: "Min"}, {Value: "low", Label: "Low"}, {Value: "default", Label: "Default"},
 					{Value: "high", Label: "High"}, {Value: "urgent", Label: "Urgent"}}},
 			{Key: "timeout_seconds", Label: "Timeout", Type: "int", Default: "10", Advanced: true, Help: "Seconds to wait for the server to answer."},
 		},
+		Steps: steps(),
 	}
 }

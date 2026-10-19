@@ -10,6 +10,7 @@ import (
 	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/id"
 	"github.com/trypando/pando/internal/secret"
 )
 
@@ -118,6 +119,10 @@ func (s *Service) view(ctx context.Context, o Origin, p state.IdentityProvider, 
 // stored encrypted, never returned (R-190). An empty credential value on
 // update removes it; an absent one leaves it.
 type ProviderInput struct {
+	// ID is a new provider's ID, chosen ahead so the addresses Endpoints
+	// builds from it can be registered with the provider before it is saved.
+	// Optional; ignored on update.
+	ID                    string            `json:"id,omitempty"`
 	Kind                  string            `json:"kind"`
 	Name                  *string           `json:"name"`
 	Config                json.RawMessage   `json:"config"`
@@ -191,19 +196,16 @@ func (s *Service) CreateProvider(ctx context.Context, p authz.Principal, in Prov
 	if err := s.checkSCIMAttribute(in.SCIMIdentityAttribute); err != nil {
 		return ProviderView{}, err
 	}
+	if err := s.checkNewID(ctx, in.ID); err != nil {
+		return ProviderView{}, err
+	}
 	cfg, err := cleanConfig(in.Config, s.credentialFields(in.Kind))
 	if err != nil {
 		return ProviderView{}, err
 	}
-	creds := map[string]secret.Value{}
-	allowed := s.credentialFields(in.Kind)
-	for k, v := range in.Credentials {
-		if !allowed[k] {
-			return ProviderView{}, errs.Newf(errs.ValidInvalid, "%q is not a credential a %s provider takes.", k, in.Kind)
-		}
-		if v != "" {
-			creds[k] = secret.New(v)
-		}
+	creds, err := s.newCredentials(in.Kind, in.Credentials)
+	if err != nil {
+		return ProviderView{}, err
 	}
 	if err := s.validate(ctx, in.Kind, cfg, creds); err != nil {
 		return ProviderView{}, err
@@ -213,7 +215,7 @@ func (s *Service) CreateProvider(ctx context.Context, p authz.Principal, in Prov
 		in.Enabled = &off
 	}
 	created, err := s.Providers.Create(ctx, in.Kind, state.ProviderSettings{
-		Name: in.Name, Config: cfg, Enabled: in.Enabled, JITProvisioning: in.JITProvisioning,
+		ID: in.ID, Name: in.Name, Config: cfg, Enabled: in.Enabled, JITProvisioning: in.JITProvisioning,
 		LinkByEmail: in.LinkByEmail, SCIMIdentityAttribute: in.SCIMIdentityAttribute,
 	})
 	if err != nil {
@@ -231,6 +233,42 @@ func (s *Service) CreateProvider(ctx context.Context, p authz.Principal, in Prov
 		"credentials": keys(creds),
 	}))
 	return s.Provider(ctx, o, created.ID)
+}
+
+// newCredentials checks a new provider's credentials are ones its kind takes,
+// and keeps those given a value.
+func (s *Service) newCredentials(kind string, given map[string]string) (map[string]secret.Value, error) {
+	creds := map[string]secret.Value{}
+	allowed := s.credentialFields(kind)
+	for k, v := range given {
+		if !allowed[k] {
+			return nil, errs.Newf(errs.ValidInvalid, "%q is not a credential a %s provider takes.", k, kind)
+		}
+		if v != "" {
+			creds[k] = secret.New(v)
+		}
+	}
+	return creds, nil
+}
+
+// checkNewID checks an ID chosen ahead for a new provider: well formed, not
+// the local provider's, and not taken. Empty is fine; Pando chooses one.
+func (s *Service) checkNewID(ctx context.Context, providerID string) error {
+	if providerID == "" {
+		return nil
+	}
+	if !id.Is(id.IdentityAdpt, providerID) || providerID == state.LocalAdapterID {
+		return errs.Newf(errs.ValidInvalid, "%q is not an identity provider ID. One is idp_ and a ULID, such as idp_01J9ZQ5Y8W3V7T2R6N4M1K0H8G.", providerID).
+			WithRemedy("Leave id out and Pando chooses one.")
+	}
+	_, taken, err := s.Providers.ByID(ctx, providerID)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return state.ProviderIDTaken(providerID)
+	}
+	return nil
 }
 
 // UpdateProvider changes a provider. Settings replace the stored ones whole

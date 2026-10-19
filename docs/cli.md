@@ -109,6 +109,7 @@ their own heading. Advanced settings take --set like any other.
 | `--disabled` |  | save it turned off: Pando keeps its settings and does not use it. A secret left empty keeps the stored one |
 | `--id` |  | the adapter's ID (default: the kind's usual prefix and name, e.g. ai_anthropic) |
 | `--name` |  | what the console calls it (default: the kind's name) |
+| `--preset` |  | a known provider's settings to start from, by ID, as `pando adapter kinds` lists them; at a terminal, asked when not given |
 | `--set` | `[]` | a setting, KEY=VALUE; repeat for more |
 
 #### `adapter kinds`

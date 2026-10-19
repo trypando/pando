@@ -2,6 +2,16 @@ package saml
 
 import "github.com/trypando/pando/internal/adapter/api"
 
+// Attribute names a preset sets because the provider's own defaults are not
+// among the ones Pando tries, or mean something else there.
+const (
+	entraGroups       = "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"
+	authentikGroups   = "http://schemas.xmlsoap.org/claims/Group"
+	authentikUsername = "http://schemas.goauthentik.io/2021/02/saml/username"
+	// authentik sends the full name as the claim Microsoft uses for a username.
+	authentikName = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"
+)
+
 // Info describes this kind of adapter for the console and CLI forms.
 func Info() api.KindInfo {
 	return api.KindInfo{
@@ -35,35 +45,31 @@ func Info() api.KindInfo {
 				Help: "The attribute holding the person's username in Pando. Empty tries username, uid, login and Microsoft's name claim."},
 			{Key: "trust_email", Label: "The provider's email addresses are verified", Type: "bool",
 				Help: "Only if people cannot set their own email in the provider. Needed to link accounts by email."},
-			{Key: "allow_idp_initiated", Label: "Allow sign-in from the provider's dashboard", Type: "bool",
+			{Key: "allow_idp_initiated", Label: "Allow sign-in from the provider's dashboard", Type: "bool", Advanced: true,
 				Help: "Off is safer: a sign-in the provider starts is not tied to the browser that presents it."},
-			{Key: "session_max_lifetime", Label: "Session length", Type: "string", Default: "12h",
+			{Key: "session_max_lifetime", Label: "Session length", Type: "string", Default: "12h", Advanced: true,
 				Help: "How long a sign-in lasts. Without SCIM this is also how long access can outlive its removal at the provider."},
 		},
 		Presets: []api.Preset{
 			{ID: "okta", Label: "Okta",
-				Help: "In Okta, create a SAML 2.0 app. Single sign-on URL is Pando's ACS URL; Audience URI is Pando's entity ID. " +
-					"Add attribute statements okta_user_id (user.getInternalProperty(\"id\")), email and displayName, and a group " +
-					"attribute statement groups (Matches regex .*). Then paste the app's Metadata URL here.",
+				Help:   "The Metadata URL is on the app's Sign On tab.",
 				Values: map[string]string{"subject_attribute": "okta_user_id", "groups_attribute": "groups"}},
 			{ID: "entra", Label: "Microsoft Entra ID",
-				Help: "In Entra, create an enterprise application with SAML. Identifier is Pando's entity ID, Reply URL is the ACS " +
-					"URL. Add a group claim; groups arrive as object IDs, so link each to a Pando group to name it. Paste the App " +
-					"Federation Metadata Url here.",
-				Values: map[string]string{"groups_attribute": "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"}},
+				Help:   "The App Federation Metadata Url is under SAML Certificates on the app's Single sign-on page.",
+				Values: map[string]string{"groups_attribute": entraGroups}},
 			{ID: "google", Label: "Google Workspace",
-				Help: "In the Admin console, add a custom SAML app. ACS URL and Entity ID are Pando's. Map Primary email to email " +
-					"and group membership to groups. Download the IdP metadata and paste it here.",
+				Help:   "Google offers the IdP metadata as a download when you add the app, not as a URL.",
 				Values: map[string]string{"name_id_format": "email", "groups_attribute": "groups", "trust_email": "true"}},
 			{ID: "keycloak", Label: "Keycloak",
-				Help: "Create a SAML client whose Client ID is Pando's entity ID and whose valid redirect URI is the ACS URL. " +
-					"Add a Group list mapper named groups. The metadata is at /realms/<realm>/protocol/saml/descriptor.",
-				Values: map[string]string{"idp_metadata_url": "https://{keycloak-host}/realms/{realm}/protocol/saml/descriptor",
+				Help: "The metadata is at /realms/<realm>/protocol/saml/descriptor on your Keycloak host.",
+				Values: map[string]string{"idp_metadata_url": "https://keycloak.example.com/realms/myrealm/protocol/saml/descriptor",
 					"groups_attribute": "groups", "name_id_format": "persistent"}},
 			{ID: "authentik", Label: "Authentik",
-				Help: "Create a SAML Provider with Pando's ACS URL and entity ID as audience, and an application using it. " +
-					"Its metadata can be downloaded from the provider page.",
-				Values: map[string]string{"groups_attribute": "http://schemas.xmlsoap.org/claims/Group"}},
+				Help: "Copy download URL, under Related objects on the provider's page, gives the metadata URL.",
+				Values: map[string]string{"name_id_format": "persistent", "groups_attribute": authentikGroups,
+					"username_attribute": authentikUsername, "name_attribute": authentikName}},
 		},
+		OtherPreset: "Another provider",
+		Steps:       steps(),
 	}
 }

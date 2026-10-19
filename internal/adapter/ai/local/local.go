@@ -219,5 +219,6 @@ func Info() api.KindInfo {
 			{Key: "api_key", Label: "API key", Type: "string", Help: "Only if your server asks for one. Stored encrypted and never shown again.", Credential: true},
 			{Key: "timeout_seconds", Label: "Timeout, in seconds", Type: "int", Help: "How long one request may take. Local models are slower than hosted ones.", Default: "300", Advanced: true},
 		},
+		Steps: steps(),
 	}
 }

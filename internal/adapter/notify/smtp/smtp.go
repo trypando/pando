@@ -357,6 +357,7 @@ func Info() api.KindInfo {
 			{Key: "port", Label: "Port", Type: "int", Default: "587, or 465 with TLS", Advanced: true, Help: "587 for STARTTLS, 465 for TLS."},
 			{Key: "timeout_seconds", Label: "Timeout", Type: "int", Default: "15", Advanced: true, Help: "Seconds to wait for the server."},
 		},
+		Steps: steps(),
 	}
 }
 

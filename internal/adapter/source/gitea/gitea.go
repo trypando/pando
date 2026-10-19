@@ -35,7 +35,10 @@ const maxPages = 100
 
 var methods = []string{forgekit.MethodToken, forgekit.MethodOAuth, forgekit.MethodSSH}
 
-var scopes = []string{"read:repository"}
+// Listing repositories is GET /user/repos, which Gitea refuses an OAuth2
+// token without read:user as well as read:repository (since 1.23). Forgejo
+// grants an OAuth2 token full access whatever it asks for.
+var scopes = []string{"read:repository", "read:user"}
 
 // Adapter is one connection to a Gitea or Forgejo host.
 type Adapter struct {
@@ -380,7 +383,7 @@ func Info() api.KindInfo {
 	fields := []api.Field{
 		forgekit.MethodField(
 			api.Option{Value: forgekit.MethodToken, Label: "Access token",
-				Description: "An access token with read permission on repositories. Repositories can be picked from a list."},
+				Description: "An access token with Read on repository and user. Repositories can be picked from a list."},
 			api.Option{Value: forgekit.MethodOAuth, Label: "OAuth2 application",
 				Description: "Authorize once in the browser. Needs an address the host can send you back to."},
 			api.Option{Value: forgekit.MethodSSH, Label: "Deploy key",
@@ -390,12 +393,12 @@ func Info() api.KindInfo {
 		forgekit.ScopeField("Owner",
 			"Limit the connection to one user's or organization's repositories, such as acme. Empty is every repository the credential can read.",
 			"acme"),
-		forgekit.UsernameField("The account the token belongs to. Defaults to oauth2, which Gitea and Forgejo accept beside a token.", "oauth2"),
-		forgekit.TokenField("Access token", "Create one under Settings → Applications with read permission on repositories."),
+		forgekit.UsernameField("The token's account. Empty is oauth2.", "oauth2"),
+		forgekit.TokenField("Access token", "Needs Read on repository and user."),
 		{Key: "client_id", Label: "OAuth2 client ID", Type: "string", ShownWhen: oauthWhen,
 			Help: "The client ID of an OAuth2 application created under Settings → Applications, with Pando's callback as its redirect URI."},
 		{Key: forgekit.FieldClientSecret, Label: "OAuth2 client secret", Type: "string", Credential: true, ShownWhen: oauthWhen,
-			Help: "The application's client secret. Gitea and Forgejo authorize only in the browser, so it is required."},
+			Help: "Required."},
 	}
 	fields = append(fields, forgekit.SSHFields("The host's public key, as ssh-keyscan <host> prints it.")...)
 	fields = append(fields, forgekit.APIURLField("https://<host>/api/v1"), forgekit.CAField())
@@ -406,9 +409,10 @@ func Info() api.KindInfo {
 		Description: "Clone from a Gitea or Forgejo server, Codeberg included, with an access token, an OAuth2 application, or a deploy key, optionally limited to one owner.",
 		IDPrefix:    "src_",
 		Fields:      fields,
+		Steps:       steps(),
 		Presets: []api.Preset{
 			{ID: "codeberg", Label: "Codeberg",
-				Help:   "Create an access token on Codeberg under Settings → Applications, with read permission on repositories.",
+				Help:   "Create an access token on Codeberg under Settings → Applications, with Read on repository and user.",
 				Values: map[string]string{"host": "codeberg.org"}},
 		},
 	}

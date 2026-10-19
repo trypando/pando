@@ -159,5 +159,6 @@ func Info() api.KindInfo {
 		Description: "Serves each app from Pando itself on its own port, with no TLS.",
 		IDPrefix:    "rte_",
 		// No fields: there is nothing to configure (see Config).
+		Warn: Warnings,
 	}
 }

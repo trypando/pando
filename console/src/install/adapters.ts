@@ -6,6 +6,9 @@
 // knows what an Anthropic or a Traefik adapter takes; a kind added to Pando is
 // configurable here without this file changing (R-261).
 
+/** A setting's value as a form holds it: text, or a bool's true or false. */
+export type FieldValue = string | boolean;
+
 /** One choice a `select` setting offers. */
 interface KindOption {
   value: string;
@@ -29,12 +32,19 @@ export interface KindField {
   default?: string;
   /** An example, for a setting with no default. */
   placeholder?: string;
+  /** Where a new adapter's setting starts, with {key} for another setting's
+   *  value, such as pando.{zone}. Sent as if typed. */
+  suggest?: string;
   /** What a `select` offers. */
   options?: KindOption[];
   /** A `select` that also takes a value it does not list, typed in. */
   other?: boolean;
   /** Asks for a text area, such as credentials given as NAME=value lines. */
   multiline?: boolean;
+  /** Any number of values typed into one field, sent comma-separated. */
+  list?: boolean;
+  /** The providers it is for, by preset ID; absent is every one. */
+  presets?: string[];
   /** Shown only while another setting has one of these values. */
   shown_when?: { key: string; values: string[] };
   /** A setting most people never change, asked for under "Advanced
@@ -44,7 +54,7 @@ export interface KindField {
 
 /** Whether any advanced setting is set to something other than its default,
  *  so a form opens them rather than hiding what is configured. */
-export function advancedChanged(kind: AdapterKind, values: Record<string, string | boolean>): boolean {
+export function advancedChanged(kind: AdapterKind, values: Record<string, FieldValue>): boolean {
   return (kind.fields ?? []).some((f) => {
     if (!f.advanced || !(f.key in values)) return false;
     if (f.type === 'bool') return boolValue(f, values[f.key]) !== (f.default === 'true');
@@ -54,13 +64,13 @@ export function advancedChanged(kind: AdapterKind, values: Record<string, string
 }
 
 /** A bool setting as it stands: what was set, or the kind's default. */
-export function boolValue(f: KindField, v: string | boolean | undefined): boolean {
+export function boolValue(f: KindField, v: FieldValue | undefined): boolean {
   return typeof v === 'boolean' ? v : f.default === 'true';
 }
 
 /** A setting as the adapter will read it, as text: what was entered, or the
  *  kind's default. A bool is "true" or "false". */
-export function effectiveText(f: KindField, v: string | boolean | undefined): string {
+export function effectiveText(f: KindField, v: FieldValue | undefined): string {
   if (f.type === 'bool') return String(boolValue(f, v));
   const text = typeof v === 'string' ? v.trim() : '';
   return text || f.default || '';
@@ -68,7 +78,7 @@ export function effectiveText(f: KindField, v: string | boolean | undefined): st
 
 /** Whether a setting applies, given the others. A hidden one is neither
  *  checked nor sent: a DNS provider means nothing without DNS certificates. */
-export function isShown(kind: AdapterKind, f: KindField, values: Record<string, string | boolean>): boolean {
+export function isShown(kind: AdapterKind, f: KindField, values: Record<string, FieldValue>): boolean {
   if (!f.shown_when) return true;
   const on = (kind.fields ?? []).find((x) => x.key === f.shown_when!.key);
   if (!on) return true;
@@ -92,6 +102,225 @@ export interface AdapterKind {
   /** Pando sets this kind up itself, from its install topology: no form
    *  offers to add one, and the one there is has no Edit. */
   managed?: boolean;
+  /** Guided setup: one screen per step, each asking for some of `fields`. */
+  steps?: KindStep[] | null;
+  /** Known providers of this kind, each a starting set of values. */
+  presets?: KindPreset[] | null;
+  /** The choice of a provider no preset names, such as "Another SIEM".
+   *  Absent when the presets cover every case. */
+  other_preset?: string;
+}
+
+/** A known provider of a kind, with the settings it needs filled in. */
+export interface KindPreset {
+  id: string;
+  label: string;
+  help?: string;
+  values?: Record<string, string>;
+}
+
+/** The provider choice that names no preset, in a step's `presets`. */
+export const PRESET_OTHER = 'other';
+
+/** One step of a kind's guided setup, as GET /adapters/kinds describes it. */
+export interface KindStep {
+  id: string;
+  /** Its name in the list of steps, a word or two. */
+  label: string;
+  /** An instruction or a question. */
+  title: string;
+  lede?: string;
+  /** What to do outside Pando, in order. */
+  do?: { text: string; table?: { columns: string[]; rows: string[][] } }[];
+  /** Pages the step starts on: one, or one per way of doing it. */
+  links?: { label: string; url: string }[];
+  /** The keys of the settings asked on this step. */
+  fields: string[];
+  shown_when?: { key: string; values: string[] };
+  /** The providers the step is for, by preset ID; absent is every one. */
+  presets?: string[];
+}
+
+/** A run of step text: plain, **bold** (a name on the provider's screen) or
+ *  `code` (something typed exactly). */
+export interface Run {
+  kind: 'text' | 'bold' | 'code';
+  text: string;
+}
+
+/** Step text split into runs. Only the two marks are read; anything else,
+ *  including an unclosed mark, is plain text. Never HTML. */
+export function runs(text: string): Run[] {
+  const out: Run[] = [];
+  const mark = /\*\*([^*]+)\*\*|`([^`]+)`/g;
+  let last = 0;
+  for (const m of text.matchAll(mark)) {
+    if (m.index > last) out.push({ kind: 'text', text: text.slice(last, m.index) });
+    out.push(m[1] === undefined ? { kind: 'code', text: m[2] ?? '' } : { kind: 'bold', text: m[1] });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ kind: 'text', text: text.slice(last) });
+  return out;
+}
+
+/**
+ * The kind's steps that apply, given what has been answered so far: a step
+ * shown only for another setting's value is skipped otherwise. A kind that
+ * declares no steps gets one, asking for all its basic settings, so every kind
+ * can be set up the guided way.
+ */
+export function kindSteps(
+  kind: AdapterKind,
+  values: Record<string, FieldValue>,
+  preset?: string,
+): KindStep[] {
+  const declared = (kind.steps ?? []).filter((st) => !preset || !st.presets?.length || st.presets.includes(preset));
+  if (declared.length === 0) {
+    const basic = (kind.fields ?? []).filter((f) => !f.advanced).map((f) => f.key);
+    return basic.length === 0 ? [] : [{ id: 'settings', label: 'Settings', title: `Enter the ${kind.name} settings`, fields: basic }];
+  }
+  return declared.filter((st) => {
+    if (!st.shown_when) return true;
+    const on = (kind.fields ?? []).find((f) => f.key === st.shown_when!.key);
+    return !on || st.shown_when.values.includes(effectiveText(on, values[on.key]));
+  });
+}
+
+/** The settings a step shows, in its order: those it names that apply. */
+export function stepFields(kind: AdapterKind, step: KindStep, values: Record<string, FieldValue>): KindField[] {
+  const byKey = new Map((kind.fields ?? []).map((f) => [f.key, f]));
+  return step.fields
+    .map((k) => byKey.get(k))
+    .filter((f): f is KindField => f !== undefined && isShown(kind, f, values));
+}
+
+/**
+ * A template with each {key} replaced by that setting's value as the adapter
+ * will read it — pando.{zone}, https://{host}/settings/apps — or by a value
+ * the form supplies, such as {callback_url}. Undefined while one it names is
+ * empty.
+ */
+export function fillRefs(
+  kind: AdapterKind,
+  values: Record<string, FieldValue>,
+  template: string,
+  supplied: Record<string, string> = {},
+): string | undefined {
+  let missing = false;
+  const text = template.replaceAll(/\{([a-z0-9_]+)\}/g, (_, key: string) => {
+    if (supplied[key]) return supplied[key];
+    const on = (kind.fields ?? []).find((x) => x.key === key);
+    const v = on ? effectiveText(on, values[key]) : '';
+    if (!v) missing = true;
+    return v;
+  });
+  return missing ? undefined : text;
+}
+
+/** Step text with its {key}s filled in where they can be; one still empty
+ *  stays as written, so the instruction still reads. */
+export function fillText(
+  kind: AdapterKind,
+  values: Record<string, FieldValue>,
+  text: string,
+  supplied: Record<string, string> = {},
+): string {
+  return text.replaceAll(/\{[a-z0-9_]+\}/g, (whole) => fillRefs(kind, values, whole, supplied) ?? whole);
+}
+
+/** The settings a person on this way through is not asked on any step: a
+ *  provider's preset settled them, or they do not apply. Review shows them
+ *  with the advanced ones. */
+export function unasked(
+  kind: AdapterKind,
+  steps: KindStep[],
+  values: Record<string, FieldValue>,
+  preset?: string,
+): KindField[] {
+  if ((kind.steps ?? []).length === 0) return [];
+  const asked = new Set(steps.flatMap((st) => st.fields));
+  return (kind.fields ?? []).filter(
+    (f) =>
+      !f.advanced &&
+      !asked.has(f.key) &&
+      isShown(kind, f, values) &&
+      (!preset || !f.presets?.length || f.presets.includes(preset)),
+  );
+}
+
+/**
+ * The values with each untouched setting that suggests one filled in from
+ * the settings it names: pando.{zone} reads pando.example.com while the zone
+ * is example.com, and follows it until the setting itself is edited. One
+ * naming a setting still empty is left empty.
+ */
+export function withSuggestions(kind: AdapterKind, values: Record<string, FieldValue>): Record<string, FieldValue> {
+  const out = { ...values };
+  for (const f of kind.fields ?? []) {
+    if (!f.suggest || f.key in values) continue;
+    const text = fillRefs(kind, values, f.suggest);
+    if (text !== undefined) out[f.key] = text;
+  }
+  return out;
+}
+
+/** A list setting's values, as typed: split on commas, spaces and new lines,
+ *  the way the adapter reads them. */
+export function listItems(text: string): string[] {
+  return text.split(/[\s,]+/).filter((v) => v !== '');
+}
+
+/** A list setting's values as the one string it is sent as. */
+export function joinList(items: string[]): string {
+  return items.map((v) => v.trim()).filter((v) => v !== '').join(', ');
+}
+
+/**
+ * The values after choosing a provider: the previous provider's own values
+ * taken back, unless they were changed since, and the new one's filled in.
+ */
+export function withPreset(
+  values: Record<string, FieldValue>,
+  previous: KindPreset | undefined,
+  next: KindPreset | undefined,
+): Record<string, FieldValue> {
+  const out = { ...values };
+  for (const [key, v] of Object.entries(previous?.values ?? {})) if (out[key] === v) delete out[key];
+  return { ...out, ...next?.values };
+}
+
+/** The problems with a step's own settings — what Continue checks. */
+export function stepProblems(
+  kind: AdapterKind,
+  step: KindStep,
+  form: AdapterForm,
+  credentialsSet: string[] = [],
+): Record<string, string> {
+  const all = formProblems(kind, form, credentialsSet);
+  const out: Record<string, string> = {};
+  for (const f of stepFields(kind, step, form.values)) {
+    const problem = all[f.key];
+    if (problem) out[f.key] = problem;
+  }
+  return out;
+}
+
+/** A setting as the review states it: what the adapter will use. */
+export function reviewText(f: KindField, v: FieldValue | undefined): string {
+  if (f.type === 'bool') return boolValue(f, v) ? 'Yes' : 'No';
+  const text = typeof v === 'string' ? v.trim() : '';
+  if (f.credential) return text ? 'Entered' : 'Not entered';
+  const used = text || f.default || '';
+  if (!used) return 'None';
+  if (f.type === 'select') return f.options?.find((o) => o.value === used)?.label ?? used;
+  return used;
+}
+
+/** How many advanced settings are changed from their defaults. */
+export function advancedCount(kind: AdapterKind, values: Record<string, FieldValue>): { total: number; changed: number } {
+  const adv = (kind.fields ?? []).filter((f) => f.advanced && isShown(kind, f, values));
+  const changed = adv.filter((f) => advancedChanged({ ...kind, fields: [f] }, values)).length;
+  return { total: adv.length, changed };
 }
 
 /** The kinds a person may add: every kind but those Pando sets up itself. */
@@ -111,7 +340,7 @@ export interface AdapterForm {
   id: string;
   name: string;
   isDefault: boolean;
-  values: Record<string, string | boolean>;
+  values: Record<string, FieldValue>;
 }
 
 export interface AdapterRequest {
@@ -225,7 +454,9 @@ export function formProblems(
     if (f.type === 'bool' || !isShown(kind, f, form.values)) continue;
     const text = typeof v === 'string' ? v.trim() : '';
     if (text === '') {
-      const kept = f.credential && credentialsSet.includes(f.key);
+      // A required setting with a default is answered by it: a select
+      // shows its default chosen, and the adapter uses it.
+      const kept = (f.credential && credentialsSet.includes(f.key)) || Boolean(f.default);
       if (f.required && !kept) problems[f.key] = `${f.label} is required.`;
       continue;
     }

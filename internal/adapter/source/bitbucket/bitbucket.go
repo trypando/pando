@@ -117,7 +117,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 			if cfg.Username == "" {
 				return errs.New(errs.ValidInvalid,
 					"A Bitbucket Cloud API token needs the Bitbucket username it belongs to, which git signs in with beside it.").
-					WithRemedy("Enter your Bitbucket username, shown under Personal settings → Account settings.")
+					WithRemedy("Enter your Bitbucket username, shown under Personal Bitbucket settings → Bitbucket profile settings.")
 			}
 		default:
 			return errs.Newf(errs.ValidInvalid,
@@ -608,15 +608,15 @@ func Info() api.KindInfo {
 				{Value: tokenTypeAPI, Label: "API token", Description: "An Atlassian account's API token, with your Bitbucket username."},
 			}},
 		forgekit.UsernameField(
-			"Bitbucket Cloud API token: your Bitbucket username. Data Center: the account the token belongs to, if git should sign in as it; x-token-auth otherwise.",
+			"Your username, for a Cloud API token or a Data Center personal token. Empty is x-token-auth.",
 			"alice"),
 		{Key: "email", Label: "Atlassian account email", Type: "string", ShownWhen: token, Placeholder: "alice@example.com",
-			Help: "Bitbucket Cloud API token only: the email of the Atlassian account the token was created under, which Bitbucket's API signs in with. The username when empty."},
+			Help: "Cloud API token only. Empty is the username."},
 		forgekit.TokenField("Token", "Read access to repositories is enough."),
 		{Key: "client_id", Label: "OAuth consumer key", Type: "string", ShownWhen: oauth,
-			Help: "From the workspace's settings → OAuth consumers. Give the consumer Pando's callback address and the Repositories: Read permission."},
+			Help: "The Key from Workspace settings → OAuth consumers."},
 		{Key: forgekit.FieldClientSecret, Label: "OAuth consumer secret", Type: "string", Credential: true, ShownWhen: oauth,
-			Help: "The consumer's secret, shown beside its key."},
+			Help: "The Secret shown beside the Key."},
 	}
 	fields = append(fields, forgekit.SSHFields(
 		"The host's public key, as ssh-keyscan bitbucket.org prints it. For Data Center, ssh-keyscan -p 7999 HOST, whose lines begin [HOST]:7999.")...)
@@ -634,6 +634,7 @@ func Info() api.KindInfo {
 		Description: "Clone from Bitbucket Cloud or Bitbucket Data Center with an access token, an OAuth consumer or an SSH access key, and pick repositories from a list.",
 		IDPrefix:    "src_",
 		Fields:      fields,
+		Steps:       steps(),
 	}
 }
 

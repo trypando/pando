@@ -36,6 +36,7 @@
               "label": "Scopes",
               "help": "Space-separated. Add groups if your provider needs a scope to send them.",
               "type": "string",
+              "advanced": true,
               "default": "openid email profile"
             },
             {
@@ -50,6 +51,7 @@
               "label": "Subject claim",
               "help": "The claim that identifies a person and never changes. Microsoft Entra ID needs oid.",
               "type": "string",
+              "advanced": true,
               "default": "sub"
             },
             {
@@ -57,6 +59,7 @@
               "label": "Username claim",
               "help": "The claim holding the person's username in Pando.",
               "type": "string",
+              "advanced": true,
               "default": "preferred_username"
             },
             {
@@ -64,6 +67,7 @@
               "label": "Email claim",
               "help": "The claim holding the person's email address.",
               "type": "string",
+              "advanced": true,
               "default": "email"
             },
             {
@@ -71,6 +75,7 @@
               "label": "Name claim",
               "help": "The claim holding the person's display name. When it is empty, given_name and family_name are used.",
               "type": "string",
+              "advanced": true,
               "default": "name"
             },
             {
@@ -78,7 +83,10 @@
               "label": "Google Workspace domain",
               "help": "Only accept Google accounts from this domain. Without it, anyone with a Google account can sign in.",
               "type": "string",
-              "placeholder": "example.com"
+              "placeholder": "example.com",
+              "presets": [
+                "google"
+              ]
             },
             {
               "key": "prompt",
@@ -104,13 +112,15 @@
               "key": "disable_userinfo",
               "label": "Skip the userinfo endpoint",
               "help": "Use only the ID token's claims. By default Pando fills in missing claims from userinfo.",
-              "type": "bool"
+              "type": "bool",
+              "advanced": true
             },
             {
               "key": "session_max_lifetime",
               "label": "Session length",
               "help": "How long a sign-in lasts. Without SCIM this is also how long access can outlive its removal at the provider.",
               "type": "string",
+              "advanced": true,
               "default": "12h"
             }
           ],
@@ -119,7 +129,6 @@
             {
               "id": "okta",
               "label": "Okta",
-              "help": "In Okta, create an OIDC Web Application, set its sign-in redirect URI to the one Pando shows, and assign it to people. Add a groups claim (Filter: Matches regex .*) to send groups.",
               "values": {
                 "groups_claim": "groups",
                 "issuer": "https://{your-okta-domain}",
@@ -129,7 +138,7 @@
             {
               "id": "entra",
               "label": "Microsoft Entra ID",
-              "help": "In Entra, register an application with a Web redirect URI set to the one Pando shows, create a client secret, and add the groups claim under Token configuration. Groups arrive as object IDs; link each to a Pando group to give it a name. Entra does not vouch for email addresses, so accounts are never linked by email.",
+              "help": "Groups arrive as object IDs, and Entra does not vouch for email addresses, so accounts are never linked by email.",
               "values": {
                 "groups_claim": "groups",
                 "issuer": "https://login.microsoftonline.com/{tenant-id}/v2.0",
@@ -140,9 +149,8 @@
             {
               "id": "google",
               "label": "Google Workspace",
-              "help": "In Google Cloud, create an OAuth client of type Web application with the redirect URI Pando shows. Groups are not synced from Google, so give access through Pando groups.",
+              "help": "Google sends no groups, so access is given through Pando's own groups.",
               "values": {
-                "hosted_domain": "{your-domain.com}",
                 "issuer": "https://accounts.google.com",
                 "scopes": "openid email profile"
               }
@@ -150,7 +158,6 @@
             {
               "id": "keycloak",
               "label": "Keycloak",
-              "help": "In the realm, create an OpenID Connect client with client authentication on and the redirect URI Pando shows. Add a Group Membership mapper named groups, with Full group path off.",
               "values": {
                 "groups_claim": "groups",
                 "issuer": "https://{keycloak-host}/realms/{realm}"
@@ -159,11 +166,386 @@
             {
               "id": "authentik",
               "label": "Authentik",
-              "help": "Create an OAuth2/OpenID Provider with a confidential client and the redirect URI Pando shows, and an application using it, and choose a Signing Key on the provider. Authentik sends groups in the profile scope.",
+              "help": "Authentik sends group names in the profile scope.",
               "values": {
                 "groups_claim": "groups",
                 "issuer": "https://{authentik-host}/application/o/{application-slug}/"
               }
+            }
+          ],
+          "other_preset": "Another provider",
+          "steps": [
+            {
+              "id": "okta_app",
+              "label": "Application",
+              "title": "Create an app integration",
+              "do": [
+                {
+                  "text": "In the Admin Console, open **Applications and Resources** → **Applications**."
+                },
+                {
+                  "text": "Choose **Create App Integration**, then **Classic experience**."
+                },
+                {
+                  "text": "Choose **OIDC - OpenID Connect**, then **Web Application**, then **Next**."
+                },
+                {
+                  "text": "Set **Sign-in redirect URIs** to `{callback_url}`."
+                },
+                {
+                  "text": "Under **Assignments**, choose who can sign in, then choose **Save**."
+                },
+                {
+                  "text": "On the **General** tab, copy the **Client ID** and the client secret."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Okta OIDC app integrations",
+                  "url": "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_oidc.htm"
+                }
+              ],
+              "fields": [
+                "issuer",
+                "client_id",
+                "client_secret"
+              ],
+              "presets": [
+                "okta"
+              ]
+            },
+            {
+              "id": "okta_groups",
+              "label": "Groups",
+              "title": "Add a groups claim",
+              "do": [
+                {
+                  "text": "On the app's **Sign On** tab, choose **Edit** under **OpenID Connect ID Token**."
+                },
+                {
+                  "text": "Set **Group claims filter** to `groups`, **Matches regex** and `.*`, then choose **Save**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Okta groups claim",
+                  "url": "https://developer.okta.com/docs/guides/customize-tokens-groups-claim/main/"
+                }
+              ],
+              "fields": [
+                "groups_claim"
+              ],
+              "presets": [
+                "okta"
+              ]
+            },
+            {
+              "id": "entra_app",
+              "label": "App registration",
+              "title": "Register an application",
+              "do": [
+                {
+                  "text": "In the Microsoft Entra admin center, open **Entra ID** → **App registrations** and choose **New registration**."
+                },
+                {
+                  "text": "Under **Supported account types**, choose **Single tenant only**, then choose **Register**."
+                },
+                {
+                  "text": "Copy the **Application (client) ID** and **Directory (tenant) ID** from **Overview**."
+                },
+                {
+                  "text": "Under **Manage**, open **Authentication** and choose **Add Redirect URI**."
+                },
+                {
+                  "text": "Choose **Web**, set **Redirect URI** to `{callback_url}`, and choose **Configure**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open App registrations",
+                  "url": "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+                }
+              ],
+              "fields": [
+                "issuer",
+                "client_id"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "entra_secret",
+              "label": "Client secret",
+              "title": "Create a client secret",
+              "do": [
+                {
+                  "text": "Open **Certificates & secrets** → **Client secrets** and choose **New client secret**."
+                },
+                {
+                  "text": "Choose an expiry, then choose **Add**."
+                },
+                {
+                  "text": "Copy its **Value**, not its **Secret ID**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Entra client secrets",
+                  "url": "https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials"
+                }
+              ],
+              "fields": [
+                "client_secret"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "entra_groups",
+              "label": "Groups",
+              "title": "Add a groups claim",
+              "do": [
+                {
+                  "text": "Under **Manage**, open **Token configuration** and choose **Add groups claim**."
+                },
+                {
+                  "text": "Choose **Groups assigned to the application**, then choose **Add**."
+                },
+                {
+                  "text": "In **Entra ID** → **Enterprise apps**, open the app and set **Assignment required?** to **Yes** under **Properties**."
+                },
+                {
+                  "text": "Under **Users and groups**, choose **Add user/group** and add the groups that use Pando."
+                },
+                {
+                  "text": "Under **API permissions**, keep **Microsoft Graph** → **User.Read**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Entra groups claim",
+                  "url": "https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims#configure-groups-optional-claims"
+                }
+              ],
+              "fields": [
+                "groups_claim"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "google_client",
+              "label": "OAuth client",
+              "title": "Create an OAuth client",
+              "do": [
+                {
+                  "text": "In Google Cloud, open **Google Auth Platform** → **Clients** and choose **Create client**."
+                },
+                {
+                  "text": "Set **Application type** to **Web application**."
+                },
+                {
+                  "text": "Under **Authorized redirect URIs**, add `{callback_url}`, then choose **Create**."
+                },
+                {
+                  "text": "Copy the **Client ID** and **Client secret**. Google shows the secret once."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Google Auth Platform clients",
+                  "url": "https://console.cloud.google.com/auth/clients"
+                }
+              ],
+              "fields": [
+                "client_id",
+                "client_secret"
+              ],
+              "presets": [
+                "google"
+              ]
+            },
+            {
+              "id": "google_domain",
+              "label": "Domain",
+              "title": "Limit sign-in to your domain",
+              "do": [
+                {
+                  "text": "On **Audience**, set **User type** to **Internal**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Google Auth Platform audience",
+                  "url": "https://console.cloud.google.com/auth/audience"
+                }
+              ],
+              "fields": [
+                "hosted_domain"
+              ],
+              "presets": [
+                "google"
+              ]
+            },
+            {
+              "id": "keycloak_client",
+              "label": "Client",
+              "title": "Create a client",
+              "do": [
+                {
+                  "text": "In the Admin Console, choose your realm, then **Clients** → **Create client**."
+                },
+                {
+                  "text": "Set **Client type** to **OpenID Connect**, enter a **Client ID**, and choose **Next**."
+                },
+                {
+                  "text": "Turn on **Client authentication**, keep **Standard flow** on, and choose **Next**."
+                },
+                {
+                  "text": "Set **Valid redirect URIs** to `{callback_url}`, then choose **Save**."
+                },
+                {
+                  "text": "On the **Credentials** tab, copy the **Client Secret**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Keycloak OIDC clients",
+                  "url": "https://www.keycloak.org/docs/latest/server_admin/#proc-creating-oidc-client_server_administration_guide"
+                }
+              ],
+              "fields": [
+                "issuer",
+                "client_id",
+                "client_secret"
+              ],
+              "presets": [
+                "keycloak"
+              ]
+            },
+            {
+              "id": "keycloak_groups",
+              "label": "Groups",
+              "title": "Add a groups mapper",
+              "do": [
+                {
+                  "text": "On the client's **Client scopes** tab, open the scope ending `-dedicated`."
+                },
+                {
+                  "text": "Choose **Configure a new mapper**, or **Add mapper** → **By configuration**, then **Group Membership**."
+                },
+                {
+                  "text": "Set **Name** and **Token Claim Name** to `groups`, turn off **Full group path**, and choose **Save**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Keycloak protocol mappers",
+                  "url": "https://www.keycloak.org/docs/latest/server_admin/#_protocol-mappers"
+                }
+              ],
+              "fields": [
+                "groups_claim"
+              ],
+              "presets": [
+                "keycloak"
+              ]
+            },
+            {
+              "id": "authentik_app",
+              "label": "Application",
+              "title": "Create an application and provider",
+              "do": [
+                {
+                  "text": "In the Admin interface, open **Applications** → **Applications** and choose **New Application**."
+                },
+                {
+                  "text": "Name the application, note its **Slug**, and choose **Next**."
+                },
+                {
+                  "text": "Choose **OAuth2/OpenID Connect**, then choose **Next**."
+                },
+                {
+                  "text": "Set **Client type** to **Confidential**."
+                },
+                {
+                  "text": "Add a **Strict** redirect URI of `{callback_url}`."
+                },
+                {
+                  "text": "Choose a **Signing Key**."
+                },
+                {
+                  "text": "Copy the **Client ID** and **Client Secret**, then choose **Submit**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Authentik OAuth2 provider",
+                  "url": "https://docs.goauthentik.io/add-secure-apps/providers/oauth2/create-oauth2-provider/"
+                }
+              ],
+              "fields": [
+                "issuer",
+                "client_id",
+                "client_secret"
+              ],
+              "presets": [
+                "authentik"
+              ]
+            },
+            {
+              "id": "other_client",
+              "label": "Application",
+              "title": "Register Pando as a web application",
+              "do": [
+                {
+                  "text": "In your provider, create an OpenID Connect web application that uses the authorization code flow."
+                },
+                {
+                  "text": "Set its redirect URI to `{callback_url}`."
+                },
+                {
+                  "text": "Copy its issuer, client ID and client secret."
+                }
+              ],
+              "fields": [
+                "issuer",
+                "client_id",
+                "client_secret"
+              ],
+              "presets": [
+                "other"
+              ]
+            },
+            {
+              "id": "other_groups",
+              "label": "Groups",
+              "title": "Send groups",
+              "do": [
+                {
+                  "text": "Add a claim listing the person's groups to the ID token or userinfo."
+                }
+              ],
+              "fields": [
+                "groups_claim"
+              ],
+              "presets": [
+                "other"
+              ]
+            },
+            {
+              "id": "other_signin",
+              "label": "Sign-in",
+              "title": "Choose sign-in options",
+              "fields": [
+                "prompt"
+              ],
+              "presets": [
+                "other"
+              ]
             }
           ]
         },
@@ -249,13 +631,15 @@
               "key": "allow_idp_initiated",
               "label": "Allow sign-in from the provider's dashboard",
               "help": "Off is safer: a sign-in the provider starts is not tied to the browser that presents it.",
-              "type": "bool"
+              "type": "bool",
+              "advanced": true
             },
             {
               "key": "session_max_lifetime",
               "label": "Session length",
               "help": "How long a sign-in lasts. Without SCIM this is also how long access can outlive its removal at the provider.",
               "type": "string",
+              "advanced": true,
               "default": "12h"
             }
           ],
@@ -264,7 +648,7 @@
             {
               "id": "okta",
               "label": "Okta",
-              "help": "In Okta, create a SAML 2.0 app. Single sign-on URL is Pando's ACS URL; Audience URI is Pando's entity ID. Add attribute statements okta_user_id (user.getInternalProperty(\"id\")), email and displayName, and a group attribute statement groups (Matches regex .*). Then paste the app's Metadata URL here.",
+              "help": "The Metadata URL is on the app's Sign On tab.",
               "values": {
                 "groups_attribute": "groups",
                 "subject_attribute": "okta_user_id"
@@ -273,7 +657,7 @@
             {
               "id": "entra",
               "label": "Microsoft Entra ID",
-              "help": "In Entra, create an enterprise application with SAML. Identifier is Pando's entity ID, Reply URL is the ACS URL. Add a group claim; groups arrive as object IDs, so link each to a Pando group to name it. Paste the App Federation Metadata Url here.",
+              "help": "The App Federation Metadata Url is under SAML Certificates on the app's Single sign-on page.",
               "values": {
                 "groups_attribute": "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"
               }
@@ -281,7 +665,7 @@
             {
               "id": "google",
               "label": "Google Workspace",
-              "help": "In the Admin console, add a custom SAML app. ACS URL and Entity ID are Pando's. Map Primary email to email and group membership to groups. Download the IdP metadata and paste it here.",
+              "help": "Google offers the IdP metadata as a download when you add the app, not as a URL.",
               "values": {
                 "groups_attribute": "groups",
                 "name_id_format": "email",
@@ -291,20 +675,509 @@
             {
               "id": "keycloak",
               "label": "Keycloak",
-              "help": "Create a SAML client whose Client ID is Pando's entity ID and whose valid redirect URI is the ACS URL. Add a Group list mapper named groups. The metadata is at /realms/<realm>/protocol/saml/descriptor.",
+              "help": "The metadata is at /realms/<realm>/protocol/saml/descriptor on your Keycloak host.",
               "values": {
                 "groups_attribute": "groups",
-                "idp_metadata_url": "https://{keycloak-host}/realms/{realm}/protocol/saml/descriptor",
+                "idp_metadata_url": "https://keycloak.example.com/realms/myrealm/protocol/saml/descriptor",
                 "name_id_format": "persistent"
               }
             },
             {
               "id": "authentik",
               "label": "Authentik",
-              "help": "Create a SAML Provider with Pando's ACS URL and entity ID as audience, and an application using it. Its metadata can be downloaded from the provider page.",
+              "help": "Copy download URL, under Related objects on the provider's page, gives the metadata URL.",
               "values": {
-                "groups_attribute": "http://schemas.xmlsoap.org/claims/Group"
+                "groups_attribute": "http://schemas.xmlsoap.org/claims/Group",
+                "name_attribute": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
+                "name_id_format": "persistent",
+                "username_attribute": "http://schemas.goauthentik.io/2021/02/saml/username"
               }
+            }
+          ],
+          "other_preset": "Another provider",
+          "steps": [
+            {
+              "id": "okta_app",
+              "label": "App",
+              "title": "Create a SAML app in Okta",
+              "do": [
+                {
+                  "text": "In the Admin Console, open **Applications** → **Applications** and choose **Create App Integration**."
+                },
+                {
+                  "text": "Choose **SAML 2.0**, then **Next**, and name the app."
+                },
+                {
+                  "text": "Set **Single sign-on URL** to `{callback_url}`."
+                },
+                {
+                  "text": "Set **Audience URI (SP Entity ID)** to `{entity_id}`."
+                },
+                {
+                  "text": "Set **Name ID format** to **Persistent**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Okta SAML app integrations",
+                  "url": "https://help.okta.com/en-us/content/topics/apps/apps_app_integration_wizard_saml.htm"
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "okta"
+              ]
+            },
+            {
+              "id": "okta_attributes",
+              "label": "Attributes",
+              "title": "Send email, name and groups",
+              "do": [
+                {
+                  "text": "Under **Attribute Statements**, add these:",
+                  "table": {
+                    "columns": [
+                      "Name",
+                      "Value"
+                    ],
+                    "rows": [
+                      [
+                        "okta_user_id",
+                        "`user.getInternalProperty(\"id\")`"
+                      ],
+                      [
+                        "email",
+                        "user.email"
+                      ],
+                      [
+                        "firstName",
+                        "user.firstName"
+                      ],
+                      [
+                        "lastName",
+                        "user.lastName"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "Under **Group Attribute Statements**, add `groups` with the filter **Matches regex** `.*`."
+                },
+                {
+                  "text": "Choose **Next**, then **Finish**."
+                }
+              ],
+              "fields": [
+                "groups_attribute"
+              ],
+              "presets": [
+                "okta"
+              ]
+            },
+            {
+              "id": "okta_metadata",
+              "label": "Metadata",
+              "title": "Copy the metadata URL",
+              "do": [
+                {
+                  "text": "On the **Assignments** tab, assign the people or groups who may sign in."
+                },
+                {
+                  "text": "On the **Sign On** tab, copy the **Metadata URL**."
+                }
+              ],
+              "fields": [
+                "idp_metadata_url"
+              ],
+              "presets": [
+                "okta"
+              ]
+            },
+            {
+              "id": "entra_app",
+              "label": "App",
+              "title": "Create an enterprise application",
+              "do": [
+                {
+                  "text": "In the Microsoft Entra admin center, open **Entra ID** → **Enterprise apps** → **All applications**."
+                },
+                {
+                  "text": "Choose **New application**, then **Create your own application**."
+                },
+                {
+                  "text": "Name it, choose **Integrate any other application you don't find in the gallery (Non-gallery)**, and choose **Create**."
+                },
+                {
+                  "text": "Open **Single sign-on** and choose **SAML**."
+                },
+                {
+                  "text": "In **Basic SAML Configuration**, choose **Edit**."
+                },
+                {
+                  "text": "Set **Identifier (Entity ID)** to `{entity_id}`."
+                },
+                {
+                  "text": "Set **Reply URL (Assertion Consumer Service URL)** to `{callback_url}`, then choose **Save**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Entra SAML single sign-on",
+                  "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/add-application-portal-setup-sso"
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "entra_groups",
+              "label": "Groups",
+              "title": "Add a group claim",
+              "do": [
+                {
+                  "text": "In **Attributes & Claims**, choose **Edit**, then **Add a group claim**."
+                },
+                {
+                  "text": "Choose **Groups assigned to the application**."
+                },
+                {
+                  "text": "Set **Source attribute** to **Cloud-only group display names**, then choose **Save**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Entra group claims",
+                  "url": "https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/how-to-connect-fed-group-claims"
+                }
+              ],
+              "fields": [
+                "groups_attribute",
+                "trust_email"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "entra_metadata",
+              "label": "Metadata",
+              "title": "Copy the metadata URL",
+              "do": [
+                {
+                  "text": "Under **Users and groups**, choose **Add user/group** and assign the people or groups who may sign in."
+                },
+                {
+                  "text": "On **Single sign-on**, under **SAML Certificates**, copy the **App Federation Metadata Url**."
+                }
+              ],
+              "fields": [
+                "idp_metadata_url"
+              ],
+              "presets": [
+                "entra"
+              ]
+            },
+            {
+              "id": "google_app",
+              "label": "App",
+              "title": "Add a custom SAML app",
+              "do": [
+                {
+                  "text": "In the Admin console, open **Menu** → **Apps** → **Web and mobile apps**."
+                },
+                {
+                  "text": "Choose **Add App**, then **Add custom SAML app**, name it, and choose **Continue**."
+                },
+                {
+                  "text": "Download the **IDP metadata** and choose **Continue**."
+                },
+                {
+                  "text": "Open the downloaded file and paste its contents here."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Web and mobile apps",
+                  "url": "https://admin.google.com/ac/apps/unified"
+                },
+                {
+                  "label": "Google custom SAML apps",
+                  "url": "https://knowledge.workspace.google.com/admin/apps/set-up-your-own-custom-saml-app"
+                }
+              ],
+              "fields": [
+                "idp_metadata_xml"
+              ],
+              "presets": [
+                "google"
+              ]
+            },
+            {
+              "id": "google_sp",
+              "label": "Service provider",
+              "title": "Enter Pando's details",
+              "do": [
+                {
+                  "text": "Set **ACS URL** to `{callback_url}`."
+                },
+                {
+                  "text": "Set **Entity ID** to `{entity_id}`."
+                },
+                {
+                  "text": "Set **Name ID format** to **EMAIL** and **Name ID** to **Basic Information > Primary email**, then choose **Continue**."
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "google"
+              ]
+            },
+            {
+              "id": "google_attributes",
+              "label": "Attributes",
+              "title": "Map the attributes",
+              "do": [
+                {
+                  "text": "Choose **Add mapping** for each of these:",
+                  "table": {
+                    "columns": [
+                      "Google Directory attribute",
+                      "App attribute"
+                    ],
+                    "rows": [
+                      [
+                        "Primary email",
+                        "email"
+                      ],
+                      [
+                        "First name",
+                        "firstName"
+                      ],
+                      [
+                        "Last name",
+                        "lastName"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "Under **Group membership (optional)**, choose the groups to send and set **App attribute** to `groups`."
+                },
+                {
+                  "text": "Choose **Finish**."
+                },
+                {
+                  "text": "Open **User access**, choose **On for everyone**, and choose **Save**."
+                }
+              ],
+              "fields": [
+                "groups_attribute",
+                "trust_email"
+              ],
+              "presets": [
+                "google"
+              ]
+            },
+            {
+              "id": "keycloak_client",
+              "label": "Client",
+              "title": "Create a SAML client",
+              "do": [
+                {
+                  "text": "In the realm's admin console, open **Clients** and choose **Create client**."
+                },
+                {
+                  "text": "Set **Client type** to **SAML** and **Client ID** to `{entity_id}`, then choose **Next**."
+                },
+                {
+                  "text": "Set **Valid redirect URIs** to `{callback_url}`, then choose **Save**."
+                },
+                {
+                  "text": "On the **Settings** tab, set **Name ID format** to **persistent** and choose **Save**."
+                },
+                {
+                  "text": "On the **Keys** tab, turn off **Client signature required**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Keycloak SAML clients",
+                  "url": "https://www.keycloak.org/docs/latest/server_admin/index.html#_client-saml-configuration"
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "keycloak"
+              ]
+            },
+            {
+              "id": "keycloak_mappers",
+              "label": "Attributes",
+              "title": "Send email, name and groups",
+              "do": [
+                {
+                  "text": "On the **Client scopes** tab, open the client's **-dedicated** scope."
+                },
+                {
+                  "text": "Choose **Add predefined mapper** and add **X500 email**, **X500 givenName** and **X500 surname**."
+                },
+                {
+                  "text": "Choose **Add mapper** → **By configuration** → **User Property**, with **Property** `username` and **SAML Attribute Name** `username`."
+                },
+                {
+                  "text": "Choose **Add mapper** → **By configuration** → **Group list**, with **Group attribute name** `groups`, and turn off **Full group path**."
+                }
+              ],
+              "fields": [
+                "groups_attribute",
+                "trust_email"
+              ],
+              "presets": [
+                "keycloak"
+              ]
+            },
+            {
+              "id": "keycloak_metadata",
+              "label": "Metadata",
+              "title": "Enter the realm's metadata URL",
+              "do": [
+                {
+                  "text": "Use your Keycloak host and realm in `https://<host>/realms/<realm>/protocol/saml/descriptor`."
+                }
+              ],
+              "fields": [
+                "idp_metadata_url"
+              ],
+              "presets": [
+                "keycloak"
+              ]
+            },
+            {
+              "id": "authentik_app",
+              "label": "Application",
+              "title": "Create an application",
+              "do": [
+                {
+                  "text": "In the Admin interface, open **Applications** → **Applications** and choose **New Application**."
+                },
+                {
+                  "text": "Name it and choose **Next**, then choose **SAML Provider** and **Next**."
+                },
+                {
+                  "text": "Set **ACS URL** to `{callback_url}` and **Audience** to `{entity_id}`."
+                },
+                {
+                  "text": "Under **Advanced protocol settings**, choose a **Signing Certificate** and leave **Sign assertions** on."
+                },
+                {
+                  "text": "Set **Service Provider Binding** to **Post**, then choose **Create Application**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Authentik SAML providers",
+                  "url": "https://docs.goauthentik.io/add-secure-apps/providers/saml/create-saml-provider/"
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "authentik"
+              ]
+            },
+            {
+              "id": "authentik_metadata",
+              "label": "Metadata",
+              "title": "Copy the metadata URL",
+              "do": [
+                {
+                  "text": "Open **Applications** → **Providers** and choose the provider."
+                },
+                {
+                  "text": "Under **Related objects**, beside **Metadata**, choose **Copy download URL**."
+                }
+              ],
+              "fields": [
+                "idp_metadata_url"
+              ],
+              "presets": [
+                "authentik"
+              ]
+            },
+            {
+              "id": "other_app",
+              "label": "Application",
+              "title": "Register Pando with your provider",
+              "do": [
+                {
+                  "text": "Create a SAML 2.0 application."
+                },
+                {
+                  "text": "Set its ACS URL, or reply URL, to `{callback_url}`, with the HTTP-POST binding."
+                },
+                {
+                  "text": "Set its entity ID, or audience, to `{entity_id}`."
+                },
+                {
+                  "text": "Or import Pando's metadata from `{entity_id}`."
+                },
+                {
+                  "text": "Sign the response, the assertion, or both."
+                },
+                {
+                  "text": "Assign the people or groups who may sign in."
+                }
+              ],
+              "fields": [
+                "name_id_format"
+              ],
+              "presets": [
+                "other"
+              ]
+            },
+            {
+              "id": "other_attributes",
+              "label": "Attributes",
+              "title": "Map the attributes",
+              "do": [
+                {
+                  "text": "Send each person's email, name, username and groups as attributes."
+                }
+              ],
+              "fields": [
+                "email_attribute",
+                "name_attribute",
+                "username_attribute",
+                "groups_attribute",
+                "subject_attribute",
+                "trust_email"
+              ],
+              "presets": [
+                "other"
+              ]
+            },
+            {
+              "id": "other_metadata",
+              "label": "Metadata",
+              "title": "Enter the provider's metadata",
+              "fields": [
+                "idp_metadata_url",
+                "idp_metadata_xml"
+              ],
+              "presets": [
+                "other"
+              ]
             }
           ]
         }
@@ -322,7 +1195,7 @@
             {
               "key": "api_token",
               "label": "API token",
-              "help": "In Cloudflare, go to My Profile, API Tokens, Create Token, Create Custom Token. Permissions: Account / Cloudflare Tunnel / Edit; Zone / DNS / Edit; Zone / Zone / Read. Account Resources: your account. Zone Resources: the zone below, and each of the other zones. Pando uses it to create the tunnel and to point each app's hostname at it.",
+              "help": "In Cloudflare, create a custom token under Manage account, Account API tokens, or under My Profile, API Tokens. Permissions: Account / Cloudflare Tunnel / Edit; Zone / DNS / Edit; Zone / Zone / Read. Account Resources: your account. Zone Resources: the primary zone, and each secondary zone. Pando uses it to create the tunnel and to point each app's hostname at it.",
               "type": "string",
               "required": true,
               "credential": true
@@ -330,37 +1203,39 @@
             {
               "key": "account_id",
               "label": "Account ID",
-              "help": "Shown on the account's overview page in Cloudflare's dashboard.",
+              "help": "On your domain's Overview page in Cloudflare, under API.",
               "type": "string",
               "required": true,
               "placeholder": "0123456789abcdef0123456789abcdef"
             },
             {
               "key": "zone",
-              "label": "Zone",
-              "help": "Your domain in Cloudflare. New apps are served at <app>.<zone>.",
+              "label": "Primary zone",
+              "help": "A domain on your Cloudflare account. New apps are served at <app>.<zone>.",
               "type": "string",
               "required": true,
               "placeholder": "example.com"
             },
             {
               "key": "other_zones",
-              "label": "Other zones",
-              "help": "More of your domains in Cloudflare that apps can be named in, separated by commas. An app moves to one by changing its address; new apps still use the zone above.",
+              "label": "Secondary zones",
+              "help": "More zones apps can be named in.",
               "type": "string",
-              "placeholder": "example.org, example.net"
+              "list": true,
+              "placeholder": "example.org"
             },
             {
               "key": "console_hostname",
               "label": "Console hostname",
-              "help": "Where the console is served, and the hostname apps on a path are served under. Empty is the zone itself.",
+              "help": "Where the console is served. Empty is the primary zone.",
               "type": "string",
-              "placeholder": "pando.example.com"
+              "placeholder": "pando.example.com",
+              "suggest": "pando.{zone}"
             },
             {
               "key": "tunnel_id",
               "label": "Existing tunnel",
-              "help": "Leave empty and Pando creates a tunnel of its own. Or give a tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
+              "help": "Leave empty and Pando creates a tunnel of its own. Or give a remotely managed tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
               "type": "string",
               "advanced": true,
               "default": "A tunnel of Pando's own",
@@ -375,7 +1250,94 @@
               "default": "cloudflare/cloudflared:2025.1.0"
             }
           ],
-          "id_prefix": "rte_"
+          "id_prefix": "rte_",
+          "steps": [
+            {
+              "id": "token",
+              "label": "API token",
+              "title": "Create an API token",
+              "do": [
+                {
+                  "text": "In Cloudflare, open **Manage account** → **Account API tokens** for an account token, or **My Profile** → **API Tokens** for a user token."
+                },
+                {
+                  "text": "Choose **Create Token**, then a custom token."
+                },
+                {
+                  "text": "Add these permissions:",
+                  "table": {
+                    "columns": [
+                      "Scope",
+                      "Resource",
+                      "Access"
+                    ],
+                    "rows": [
+                      [
+                        "Account",
+                        "Cloudflare Tunnel",
+                        "Edit"
+                      ],
+                      [
+                        "Zone",
+                        "DNS",
+                        "Edit"
+                      ],
+                      [
+                        "Zone",
+                        "Zone",
+                        "Read"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "Under **Account Resources**, include your account. Under **Zone Resources**, include each zone apps will use."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open the Cloudflare dashboard",
+                  "url": "https://dash.cloudflare.com/"
+                },
+                {
+                  "label": "Open user API tokens",
+                  "url": "https://dash.cloudflare.com/profile/api-tokens"
+                }
+              ],
+              "fields": [
+                "api_token"
+              ]
+            },
+            {
+              "id": "account",
+              "label": "Account",
+              "title": "Find your account ID",
+              "do": [
+                {
+                  "text": "Open one of your domains and copy **Account ID** from the **API** section of its **Overview** page."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Cloudflare",
+                  "url": "https://dash.cloudflare.com/"
+                }
+              ],
+              "fields": [
+                "account_id"
+              ]
+            },
+            {
+              "id": "domain",
+              "label": "Zones",
+              "title": "Choose zones",
+              "fields": [
+                "zone",
+                "other_zones",
+                "console_hostname"
+              ]
+            }
+          ]
         },
         {
           "category": "routing",
@@ -401,7 +1363,7 @@
             {
               "key": "console_hostname",
               "label": "Console hostname",
-              "help": "Where the console is served over HTTPS. Any hostname pointed at this machine that is not an app's shows the console; this is the one a certificate is issued for.",
+              "help": "Where the console is served over HTTPS.",
               "type": "string",
               "placeholder": "pando.example.com"
             },
@@ -431,7 +1393,7 @@
             {
               "key": "acme_email",
               "label": "Certificate email",
-              "help": "The address Let's Encrypt registers the certificates to.",
+              "help": "The address Let's Encrypt registers the account to.",
               "type": "string",
               "shown_when": {
                 "key": "certificates",
@@ -445,7 +1407,7 @@
             {
               "key": "dns_provider",
               "label": "DNS provider",
-              "help": "Who hosts the base domain's DNS. Choose Other for any provider Traefik supports, and enter its code, such as gcloud or ovh.",
+              "help": "Who hosts the base domain's DNS. Another provider is entered as its code, such as gcloud or ovh.",
               "type": "select",
               "options": [
                 {
@@ -494,7 +1456,7 @@
             {
               "key": "managed",
               "label": "Pando runs Traefik",
-              "help": "Off if this machine already runs a Traefik that should serve Pando's apps. Pando then only writes route files into the directory that Traefik watches.",
+              "help": "Off for a Traefik already running on this machine.",
               "type": "bool",
               "default": "true"
             },
@@ -641,7 +1603,7 @@
             {
               "key": "cert_resolver",
               "label": "Certificate resolver",
-              "help": "The certificate resolver your Traefik has configured.",
+              "help": "The certificate resolver your Traefik has configured. Empty asks for no certificates.",
               "type": "string",
               "shown_when": {
                 "key": "managed",
@@ -652,7 +1614,163 @@
               "placeholder": "letsencrypt"
             }
           ],
-          "id_prefix": "rte_"
+          "id_prefix": "rte_",
+          "steps": [
+            {
+              "id": "traefik",
+              "label": "Traefik",
+              "title": "Choose who runs Traefik",
+              "fields": [
+                "managed"
+              ]
+            },
+            {
+              "id": "existing",
+              "label": "Your Traefik",
+              "title": "Point your Traefik at Pando's routes",
+              "do": [
+                {
+                  "text": "Start Traefik with `--providers.file.directory` set to a directory, and `--providers.file.watch=true`."
+                },
+                {
+                  "text": "Mount that directory into Pando at `/etc/traefik/dynamic`."
+                },
+                {
+                  "text": "Copy the name of a resolver under `certificatesResolvers` in Traefik's static configuration."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Traefik's certificate resolver docs",
+                  "url": "https://doc.traefik.io/traefik/reference/install-configuration/tls/certificate-resolvers/acme/"
+                }
+              ],
+              "fields": [
+                "cert_resolver"
+              ],
+              "shown_when": {
+                "key": "managed",
+                "values": [
+                  "false"
+                ]
+              }
+            },
+            {
+              "id": "domain",
+              "label": "Domain",
+              "title": "Choose a domain",
+              "do": [
+                {
+                  "text": "At your DNS provider, add **A** records for the base domain, `*.` plus the base domain, and the console hostname, pointing at this machine's public IP address."
+                }
+              ],
+              "fields": [
+                "base_domain",
+                "console_hostname"
+              ]
+            },
+            {
+              "id": "certificates",
+              "label": "Certificates",
+              "title": "Choose how certificates are issued",
+              "fields": [
+                "certificates",
+                "acme_email"
+              ],
+              "shown_when": {
+                "key": "managed",
+                "values": [
+                  "true"
+                ]
+              }
+            },
+            {
+              "id": "dns",
+              "label": "DNS provider",
+              "title": "Create DNS provider credentials",
+              "do": [
+                {
+                  "text": "At the provider that hosts the base domain, create a credential with this access:",
+                  "table": {
+                    "columns": [
+                      "Provider",
+                      "Access",
+                      "Variables"
+                    ],
+                    "rows": [
+                      [
+                        "Cloudflare",
+                        "API token with Zone / Zone / Read and Zone / DNS / Edit",
+                        "CF_DNS_API_TOKEN"
+                      ],
+                      [
+                        "Amazon Route 53",
+                        "IAM user access key allowed route53:GetChange, route53:ListHostedZonesByName, route53:ListResourceRecordSets and route53:ChangeResourceRecordSets",
+                        "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION"
+                      ],
+                      [
+                        "DigitalOcean",
+                        "Personal access token with the domain:create, domain:read and domain:delete scopes",
+                        "DO_AUTH_TOKEN"
+                      ],
+                      [
+                        "Porkbun",
+                        "API key, with API Access turned on in the domain's details",
+                        "PORKBUN_API_KEY, PORKBUN_SECRET_API_KEY"
+                      ],
+                      [
+                        "Namecheap",
+                        "API access, with this machine's IPv4 address whitelisted",
+                        "NAMECHEAP_API_USER, NAMECHEAP_API_KEY"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "For another provider, find its code and variables in the lego DNS provider list."
+                },
+                {
+                  "text": "Enter each variable below as `NAME=value`, one to a line. For Route 53, add `AWS_REGION=us-east-1`."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Cloudflare API tokens",
+                  "url": "https://dash.cloudflare.com/profile/api-tokens"
+                },
+                {
+                  "label": "Open AWS IAM users",
+                  "url": "https://console.aws.amazon.com/iam/home#/users"
+                },
+                {
+                  "label": "Open DigitalOcean tokens",
+                  "url": "https://cloud.digitalocean.com/account/api/tokens"
+                },
+                {
+                  "label": "Open Porkbun API access",
+                  "url": "https://porkbun.com/account/api"
+                },
+                {
+                  "label": "Open Namecheap API access",
+                  "url": "https://ap.www.namecheap.com/settings/tools/apiaccess/"
+                },
+                {
+                  "label": "Open lego DNS providers",
+                  "url": "https://go-acme.github.io/lego/dns/"
+                }
+              ],
+              "fields": [
+                "dns_provider",
+                "dns_credentials"
+              ],
+              "shown_when": {
+                "key": "certificates",
+                "values": [
+                  "dns"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -852,7 +1970,89 @@
               "default": "Docker's default, runc"
             }
           ],
-          "id_prefix": "rt_"
+          "id_prefix": "rt_",
+          "steps": [
+            {
+              "id": "access",
+              "label": "Docker access",
+              "title": "Open each host's Docker API",
+              "do": [
+                {
+                  "text": "Install Docker Engine on each host. Use hosts of one CPU architecture."
+                },
+                {
+                  "text": "For a `tcp://` host, follow **Use TLS (HTTPS) to protect the Docker daemon socket** to run `dockerd --tlsverify` on port `2376`, and paste `ca.pem`, `cert.pem` and `key.pem` below."
+                },
+                {
+                  "text": "For an `ssh://` host, use rootful Docker: over SSH, Pando reaches only `/var/run/docker.sock`, not a rootless daemon's socket."
+                },
+                {
+                  "text": "For an `ssh://` host, run `ssh-keygen -t ed25519 -f pando-docker -N \"\"`."
+                },
+                {
+                  "text": "On each `ssh://` host, add a user to the `docker` group with `sudo usermod -aG docker <user>` and add `pando-docker.pub` to its `~/.ssh/authorized_keys`."
+                },
+                {
+                  "text": "Paste `pando-docker` below."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Docker's install guide",
+                  "url": "https://docs.docker.com/engine/install/"
+                },
+                {
+                  "label": "Open Docker's TLS guide",
+                  "url": "https://docs.docker.com/engine/security/protect-access/#use-tls-https-to-protect-the-docker-daemon-socket"
+                }
+              ],
+              "fields": [
+                "docker_tls",
+                "ssh_key"
+              ]
+            },
+            {
+              "id": "hosts",
+              "label": "Hosts",
+              "title": "List the hosts",
+              "do": [
+                {
+                  "text": "On each host, allow port `7443` from the control host's address only."
+                },
+                {
+                  "text": "On each host, let Docker pull from the install's image registry: trust its certificate, or list it under `insecure-registries` in `/etc/docker/daemon.json`."
+                },
+                {
+                  "text": "Give each host a `name` and an `endpoint`: `tcp://<host>:2376` or `ssh://<user>@<host>`."
+                },
+                {
+                  "text": "Mark the host Pando runs on with `\"control\": true` and give it an `agent_address`, such as `10.0.0.5:7443`."
+                },
+                {
+                  "text": "For each `ssh://` host, set `ssh_host_key` to its line from `ssh-keyscan -t ed25519 <host>`."
+                }
+              ],
+              "fields": [
+                "hosts"
+              ]
+            },
+            {
+              "id": "authority",
+              "label": "Authority",
+              "title": "Create the agent certificate authority",
+              "do": [
+                {
+                  "text": "On the host Pando runs on, run `pando host-agent new-authority`, or `docker compose exec pando pando host-agent new-authority` with Docker Compose."
+                },
+                {
+                  "text": "Paste its output below."
+                }
+              ],
+              "fields": [
+                "agent_authority"
+              ]
+            }
+          ]
         },
         {
           "category": "runtime",
@@ -870,14 +2070,14 @@
             {
               "key": "server_certificate",
               "label": "Server certificate",
-              "help": "For an https:// address: the Incus server's certificate, as PEM. On a cluster, any member's.",
+              "help": "For an https:// address: /var/lib/incus/server.crt on the Incus server, or cluster.crt on a cluster.",
               "type": "string",
               "multiline": true
             },
             {
               "key": "tls_client",
               "label": "TLS client certificate",
-              "help": "For an https:// address: a client certificate and its key, as PEM, trusted on the server with `incus config trust add-certificate`. Restrict it to the project below with --projects.",
+              "help": "For an https:// address: a client certificate and its key, as PEM, added with `incus config trust add-certificate`.",
               "type": "string",
               "multiline": true,
               "credential": true
@@ -893,8 +2093,9 @@
             {
               "key": "proxy_sources",
               "label": "Pando's addresses",
-              "help": "The addresses Pando connects to app VMs from, as seen on that network: the only connections a VM accepts. Comma-separated, as addresses or ranges.",
+              "help": "The addresses Pando connects to app VMs from, as seen on that network, as addresses or ranges.",
               "type": "string",
+              "list": true,
               "required": true
             },
             {
@@ -917,7 +2118,7 @@
             {
               "key": "project",
               "label": "Project",
-              "help": "The Incus project VMs, volumes and the guest image are made in. A project of Pando's own is recommended.",
+              "help": "The Incus project VMs, volumes and the guest image are made in. A restricted client certificate must be allowed it and the network's project.",
               "type": "string",
               "advanced": true,
               "default": "default"
@@ -941,8 +2142,9 @@
             {
               "key": "profiles",
               "label": "Profiles",
-              "help": "Incus profiles applied to each VM, comma-separated. Pando sets the VM's disk and NIC itself; a profile that adds another NIC gives the VM a way in that skips Pando.",
+              "help": "Incus profiles applied to each VM. Pando sets the VM's disk and NIC itself; a profile that adds another NIC gives the VM a way in that skips Pando.",
               "type": "string",
+              "list": true,
               "advanced": true,
               "default": "None"
             },
@@ -1035,7 +2237,78 @@
               "default": "What the members have"
             }
           ],
-          "id_prefix": "rt_"
+          "id_prefix": "rt_",
+          "steps": [
+            {
+              "id": "address",
+              "label": "Address",
+              "title": "Where is Incus?",
+              "fields": [
+                "address"
+              ]
+            },
+            {
+              "id": "https",
+              "label": "Certificates",
+              "title": "Connect over HTTPS",
+              "lede": "Skip this step for a unix:// address.",
+              "do": [
+                {
+                  "text": "On the Incus server, run `incus config set core.https_address=:8443`."
+                },
+                {
+                  "text": "Run `openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj /CN=pando -keyout pando.key -out pando.crt`."
+                },
+                {
+                  "text": "Run `incus config trust add-certificate pando.crt --restricted --projects default`."
+                },
+                {
+                  "text": "Paste `/var/lib/incus/server.crt` below, or `/var/lib/incus/cluster.crt` on a cluster."
+                },
+                {
+                  "text": "Paste `pando.crt` and `pando.key` together below."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open the Incus docs",
+                  "url": "https://linuxcontainers.org/incus/docs/main/howto/server_expose/"
+                }
+              ],
+              "fields": [
+                "server_certificate",
+                "tls_client"
+              ]
+            },
+            {
+              "id": "network",
+              "label": "Network",
+              "title": "Choose a network",
+              "do": [
+                {
+                  "text": "Run `incus network list` to see the networks."
+                }
+              ],
+              "fields": [
+                "network",
+                "proxy_sources"
+              ]
+            },
+            {
+              "id": "agent",
+              "label": "Agents",
+              "title": "Set up the forwarding agents",
+              "do": [
+                {
+                  "text": "Run `pando host-agent new-authority` and paste its output below."
+                }
+              ],
+              "fields": [
+                "agent_authority",
+                "agent_image"
+              ]
+            }
+          ]
         },
         {
           "category": "runtime",
@@ -1046,7 +2319,7 @@
             {
               "key": "pod_cidr",
               "label": "Pod address range",
-              "help": "The range the cluster gives pods. Apps may open connections out of the cluster, never into this range.",
+              "help": "The range the cluster assigns pods. Apps may not open connections into it.",
               "type": "string",
               "required": true,
               "placeholder": "10.244.0.0/16"
@@ -1054,7 +2327,7 @@
             {
               "key": "service_cidr",
               "label": "Service address range",
-              "help": "The range the cluster gives Services. Apps may not open connections into it.",
+              "help": "The range the cluster assigns Services. Apps may not open connections into it.",
               "type": "string",
               "required": true,
               "placeholder": "10.96.0.0/12"
@@ -1062,7 +2335,7 @@
             {
               "key": "egress_gateway_image",
               "label": "Egress gateway image",
-              "help": "An image with Pando's binary at /usr/local/bin/pando, run in front of an app whose egress rules restrict anything. Without one, such apps cannot be deployed.",
+              "help": "Any image with Pando's binary at /usr/local/bin/pando. Empty, apps that restrict egress can't be deployed.",
               "type": "string",
               "placeholder": "ghcr.io/trypando/pando:latest"
             },
@@ -1258,7 +2531,114 @@
               "default": "30443"
             }
           ],
-          "id_prefix": "rt_"
+          "id_prefix": "rt_",
+          "steps": [
+            {
+              "id": "cluster",
+              "label": "Cluster",
+              "title": "Prepare the cluster",
+              "do": [
+                {
+                  "text": "Use a network plugin that enforces NetworkPolicy, such as Calico or Cilium."
+                },
+                {
+                  "text": "Grant the ServiceAccount `pando` in the namespace `pando` these permissions, as `deploy/kubernetes/rbac.yaml` does:",
+                  "table": {
+                    "columns": [
+                      "Where",
+                      "Resources",
+                      "Verbs"
+                    ],
+                    "rows": [
+                      [
+                        "Cluster",
+                        "namespaces",
+                        "get, list, create, delete"
+                      ],
+                      [
+                        "Cluster",
+                        "serviceaccounts",
+                        "get"
+                      ],
+                      [
+                        "Cluster",
+                        "rolebindings",
+                        "create"
+                      ],
+                      [
+                        "Cluster",
+                        "clusterroles pando-app-manager",
+                        "bind"
+                      ],
+                      [
+                        "Cluster",
+                        "nodes, pods",
+                        "get, list, watch"
+                      ],
+                      [
+                        "Cluster",
+                        "persistentvolumes",
+                        "get, patch"
+                      ],
+                      [
+                        "Cluster",
+                        "runtimeclasses",
+                        "get"
+                      ],
+                      [
+                        "Cluster",
+                        "metrics.k8s.io pods, nodes",
+                        "list"
+                      ],
+                      [
+                        "Each app namespace, through ClusterRole pando-app-manager",
+                        "pods, pods/log, pods/exec, services, configmaps, secrets, persistentvolumeclaims, resourcequotas, networkpolicies",
+                        "get, list, watch, create, update, patch, delete"
+                      ],
+                      [
+                        "Namespace pando-edge",
+                        "deployments, services, secrets, poddisruptionbudgets, networkpolicies",
+                        "get, list, create, update, delete"
+                      ],
+                      [
+                        "Namespace pando-edge",
+                        "pods",
+                        "list"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "Run `kubectl get servicecidr kubernetes` and copy **CIDRS**."
+                },
+                {
+                  "text": "Run `kubectl cluster-info dump | grep -m1 -- --cluster-cidr` and copy the pod range. On a managed cluster, copy it from the cluster's network settings."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open rbac.yaml",
+                  "url": "https://github.com/trypando/pando/blob/main/deploy/kubernetes/rbac.yaml"
+                },
+                {
+                  "label": "Open the RBAC guide",
+                  "url": "https://kubernetes.io/docs/reference/access-authn-authz/rbac/"
+                }
+              ],
+              "fields": [
+                "pod_cidr",
+                "service_cidr"
+              ]
+            },
+            {
+              "id": "egress",
+              "label": "Egress gateway",
+              "title": "Choose an egress gateway image",
+              "fields": [
+                "egress_gateway_image"
+              ]
+            }
+          ]
         }
       ]
     },
@@ -1367,7 +2747,7 @@
             {
               "key": "webhook_url",
               "label": "Webhook URL",
-              "help": "The webhook URL from the Discord channel's Integrations settings. Stored encrypted and never shown again.",
+              "help": "The webhook URL from the server's Integrations settings. Stored encrypted and never shown again.",
               "type": "string",
               "required": true,
               "credential": true,
@@ -1382,7 +2762,37 @@
               "default": "10"
             }
           ],
-          "id_prefix": "ntf_"
+          "id_prefix": "ntf_",
+          "steps": [
+            {
+              "id": "webhook",
+              "label": "Webhook",
+              "title": "Create a channel webhook",
+              "do": [
+                {
+                  "text": "In Discord, open **Server Settings** → **Integrations**."
+                },
+                {
+                  "text": "Choose **Create Webhook**, or **New Webhook** under **Webhooks**."
+                },
+                {
+                  "text": "Pick the channel it posts to."
+                },
+                {
+                  "text": "Choose **Copy Webhook URL**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Discord",
+                  "url": "https://discord.com/app"
+                }
+              ],
+              "fields": [
+                "webhook_url"
+              ]
+            }
+          ]
         },
         {
           "category": "notify",
@@ -1393,7 +2803,7 @@
             {
               "key": "topic",
               "label": "Topic",
-              "help": "The topic to publish to. On ntfy.sh anyone who knows a topic's name can read it, so pick one nobody would guess. Stored encrypted.",
+              "help": "Up to 64 letters, numbers, dashes or underscores. On ntfy.sh, anyone who knows it can read it.",
               "type": "string",
               "required": true,
               "credential": true,
@@ -1409,7 +2819,7 @@
             {
               "key": "access_token",
               "label": "Access token",
-              "help": "A token for a server that requires one. Stored encrypted and never shown again.",
+              "help": "A token starting tk_, for a server or topic that requires sign-in.",
               "type": "string",
               "credential": true
             },
@@ -1452,7 +2862,70 @@
               "default": "10"
             }
           ],
-          "id_prefix": "ntf_"
+          "id_prefix": "ntf_",
+          "steps": [
+            {
+              "id": "server",
+              "label": "Server",
+              "title": "Choose a server",
+              "fields": [
+                "server_url"
+              ]
+            },
+            {
+              "id": "topic",
+              "label": "Topic",
+              "title": "Subscribe to a topic",
+              "do": [
+                {
+                  "text": "In the ntfy app, choose **Subscribe to topic**."
+                },
+                {
+                  "text": "Enter a **Topic name** nobody would guess."
+                },
+                {
+                  "text": "For your own server, turn on **Use another server** and enter its address."
+                },
+                {
+                  "text": "Choose **Subscribe**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open ntfy",
+                  "url": "{server_url}"
+                }
+              ],
+              "fields": [
+                "topic"
+              ]
+            },
+            {
+              "id": "token",
+              "label": "Access token",
+              "title": "Create an access token",
+              "do": [
+                {
+                  "text": "Sign in to the ntfy web app and open **Account**."
+                },
+                {
+                  "text": "Under **Access tokens**, choose **Create access token**, then **Create token**."
+                },
+                {
+                  "text": "Copy the token."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open your ntfy account",
+                  "url": "{server_url}/account"
+                }
+              ],
+              "fields": [
+                "access_token"
+              ]
+            }
+          ]
         },
         {
           "category": "notify",
@@ -1478,7 +2951,37 @@
               "default": "10"
             }
           ],
-          "id_prefix": "ntf_"
+          "id_prefix": "ntf_",
+          "steps": [
+            {
+              "id": "webhook",
+              "label": "Webhook",
+              "title": "Create an incoming webhook",
+              "do": [
+                {
+                  "text": "In Slack's app settings, choose **Create an app**, then **Blank app**, and pick your workspace."
+                },
+                {
+                  "text": "Open **Incoming Webhooks** and turn on **Activate Incoming Webhooks**."
+                },
+                {
+                  "text": "Choose **Add New Webhook to Workspace**, pick the channel, then **Allow**."
+                },
+                {
+                  "text": "Copy the URL under **Webhook URLs for Your Workspace**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Slack apps",
+                  "url": "https://api.slack.com/apps"
+                }
+              ],
+              "fields": [
+                "webhook_url"
+              ]
+            }
+          ]
         },
         {
           "category": "notify",
@@ -1554,7 +3057,49 @@
               "default": "15"
             }
           ],
-          "id_prefix": "ntf_"
+          "id_prefix": "ntf_",
+          "steps": [
+            {
+              "id": "server",
+              "label": "Server",
+              "title": "Enter your SMTP server",
+              "do": [
+                {
+                  "text": "Find your email provider's SMTP server name and port."
+                }
+              ],
+              "fields": [
+                "host"
+              ]
+            },
+            {
+              "id": "sign-in",
+              "label": "Sign-in",
+              "title": "Enter SMTP credentials",
+              "do": [
+                {
+                  "text": "Create SMTP credentials with your email provider, if the server requires sign-in."
+                }
+              ],
+              "fields": [
+                "username",
+                "password"
+              ]
+            },
+            {
+              "id": "sender",
+              "label": "Sender",
+              "title": "Choose the From address",
+              "do": [
+                {
+                  "text": "Verify the address or its domain with your email provider, if it requires a verified sender."
+                }
+              ],
+              "fields": [
+                "from"
+              ]
+            }
+          ]
         },
         {
           "category": "notify",
@@ -1565,7 +3110,7 @@
             {
               "key": "webhook_url",
               "label": "Webhook URL",
-              "help": "The URL of a Teams workflow that posts a webhook's adaptive card to the channel. Stored encrypted and never shown again.",
+              "help": "The webhook URL of a Send webhook alerts to a channel workflow. Stored encrypted and never shown again.",
               "type": "string",
               "required": true,
               "credential": true,
@@ -1580,7 +3125,37 @@
               "default": "10"
             }
           ],
-          "id_prefix": "ntf_"
+          "id_prefix": "ntf_",
+          "steps": [
+            {
+              "id": "workflow",
+              "label": "Workflow",
+              "title": "Create a webhook workflow",
+              "do": [
+                {
+                  "text": "In Teams, select **More options** next to a standard or shared channel, then **Workflows**."
+                },
+                {
+                  "text": "Choose the **Send webhook alerts to a channel** template."
+                },
+                {
+                  "text": "Check the team and channel, then select **Save**."
+                },
+                {
+                  "text": "Copy the webhook URL from the workflow's details page."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Teams",
+                  "url": "https://teams.microsoft.com/"
+                }
+              ],
+              "fields": [
+                "webhook_url"
+              ]
+            }
+          ]
         }
       ]
     },
@@ -1596,12 +3171,22 @@
             {
               "key": "path",
               "label": "Directory",
-              "help": "A directory inside Pando's container, such as one mounted from the host.",
+              "help": "A directory in Pando's container, created if it does not exist.",
               "type": "string",
               "default": "/var/lib/pando/backups"
             }
           ],
-          "id_prefix": "bkp_"
+          "id_prefix": "bkp_",
+          "steps": [
+            {
+              "id": "directory",
+              "label": "Directory",
+              "title": "Choose a directory",
+              "fields": [
+                "path"
+              ]
+            }
+          ]
         }
       ]
     },
@@ -1625,7 +3210,7 @@
             {
               "key": "host",
               "label": "Docker host",
-              "help": "Where to run it.",
+              "help": "The Docker endpoint Trivy runs on.",
               "type": "string",
               "advanced": true,
               "default": "DOCKER_HOST, or the local socket"
@@ -1687,7 +3272,7 @@
             {
               "key": "api_key",
               "label": "API key",
-              "help": "An Anthropic API key. Stored encrypted and never shown again. Leave empty to use ANTHROPIC_API_KEY from Pando’s environment.",
+              "help": "Empty reads ANTHROPIC_API_KEY from Pando’s environment.",
               "type": "string",
               "credential": true,
               "placeholder": "sk-ant-…"
@@ -1723,7 +3308,52 @@
               "default": "ANTHROPIC_API_KEY"
             }
           ],
-          "id_prefix": "ai_"
+          "id_prefix": "ai_",
+          "steps": [
+            {
+              "id": "key",
+              "label": "API key",
+              "title": "Create an API key",
+              "do": [
+                {
+                  "text": "In the Claude Console, open **API keys** and choose **Create key**."
+                },
+                {
+                  "text": "Name the key and choose an expiration."
+                },
+                {
+                  "text": "Set **Linked account** to a service account, or to yourself."
+                },
+                {
+                  "text": "Copy the key, which starts with `sk-ant-`."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open API keys",
+                  "url": "https://platform.claude.com/settings/keys"
+                }
+              ],
+              "fields": [
+                "api_key",
+                "workspace_id"
+              ]
+            },
+            {
+              "id": "model",
+              "label": "Model",
+              "title": "Choose a model",
+              "links": [
+                {
+                  "label": "Compare models",
+                  "url": "https://platform.claude.com/docs/en/models/overview"
+                }
+              ],
+              "fields": [
+                "model"
+              ]
+            }
+          ]
         },
         {
           "category": "ai",
@@ -1762,7 +3392,111 @@
               "default": "300"
             }
           ],
-          "id_prefix": "ai_"
+          "id_prefix": "ai_",
+          "steps": [
+            {
+              "id": "server",
+              "label": "Server",
+              "title": "Connect to your model server",
+              "do": [
+                {
+                  "text": "Enter the address of the OpenAI-compatible server you run, ending `/v1`. On this machine, by its default port:",
+                  "table": {
+                    "columns": [
+                      "Server",
+                      "Address"
+                    ],
+                    "rows": [
+                      [
+                        "Ollama",
+                        "http://host.docker.internal:11434/v1"
+                      ],
+                      [
+                        "LM Studio",
+                        "http://host.docker.internal:1234/v1"
+                      ],
+                      [
+                        "llama.cpp",
+                        "http://host.docker.internal:9931/v1"
+                      ],
+                      [
+                        "vLLM",
+                        "http://host.docker.internal:8000/v1"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "On another machine, use its address instead, such as `http://gpu.example:11434/v1`."
+                },
+                {
+                  "text": "On Linux, a server on this machine has to listen on an address other than `127.0.0.1`, and hosted apps can reach it there too."
+                },
+                {
+                  "text": "Enter an API key only if the server requires one: `--api-key` for `llama-server` or `vllm serve`, **Require Authentication** in LM Studio."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Ollama",
+                  "url": "https://docs.ollama.com/api/openai-compatibility"
+                },
+                {
+                  "label": "LM Studio",
+                  "url": "https://lmstudio.ai/docs/developer/core/server"
+                },
+                {
+                  "label": "llama.cpp",
+                  "url": "https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md"
+                },
+                {
+                  "label": "vLLM",
+                  "url": "https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/"
+                }
+              ],
+              "fields": [
+                "base_url",
+                "api_key"
+              ]
+            },
+            {
+              "id": "model",
+              "label": "Model",
+              "title": "Choose a model",
+              "do": [
+                {
+                  "text": "Enter the model's name as the server serves it:",
+                  "table": {
+                    "columns": [
+                      "Server",
+                      "Model name"
+                    ],
+                    "rows": [
+                      [
+                        "Ollama",
+                        "As `ollama list` shows it, after `ollama pull`"
+                      ],
+                      [
+                        "LM Studio",
+                        "Its identifier, as `lms ls` shows it"
+                      ],
+                      [
+                        "llama.cpp",
+                        "Its `--alias`, or else the `-m` path"
+                      ],
+                      [
+                        "vLLM",
+                        "Its `--served-model-name`, or else the model given to `vllm serve`"
+                      ]
+                    ]
+                  }
+                }
+              ],
+              "fields": [
+                "model"
+              ]
+            }
+          ]
         },
         {
           "category": "ai",
@@ -1773,7 +3507,7 @@
             {
               "key": "api_key",
               "label": "API key",
-              "help": "An OpenAI API key. Stored encrypted and never shown again. Leave empty to use OPENAI_API_KEY from Pando’s environment.",
+              "help": "Empty reads OPENAI_API_KEY from Pando’s environment.",
               "type": "string",
               "credential": true,
               "placeholder": "sk-…"
@@ -1788,7 +3522,7 @@
             {
               "key": "base_url",
               "label": "Base URL",
-              "help": "A gateway or proxy in front of the OpenAI API. Empty is the API itself.",
+              "help": "An endpoint that serves the OpenAI Responses API, such as a gateway or proxy.",
               "type": "string",
               "advanced": true,
               "default": "https://api.openai.com/v1"
@@ -1802,7 +3536,68 @@
               "default": "OPENAI_API_KEY"
             }
           ],
-          "id_prefix": "ai_"
+          "id_prefix": "ai_",
+          "steps": [
+            {
+              "id": "key",
+              "label": "API key",
+              "title": "Create an API key",
+              "do": [
+                {
+                  "text": "In the OpenAI platform, open **API keys** and choose **Create new secret key**."
+                },
+                {
+                  "text": "Under **Permissions**, choose **Restricted** and set:",
+                  "table": {
+                    "columns": [
+                      "Resource",
+                      "Access"
+                    ],
+                    "rows": [
+                      [
+                        "Models",
+                        "Read"
+                      ],
+                      [
+                        "Model capabilities",
+                        "Request"
+                      ],
+                      [
+                        "Responses API",
+                        "Write"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "Create the key and copy it."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open API keys",
+                  "url": "https://platform.openai.com/settings/organization/api-keys"
+                }
+              ],
+              "fields": [
+                "api_key"
+              ]
+            },
+            {
+              "id": "model",
+              "label": "Model",
+              "title": "Choose a model",
+              "links": [
+                {
+                  "label": "Open OpenAI models",
+                  "url": "https://developers.openai.com/api/docs/models"
+                }
+              ],
+              "fields": [
+                "model"
+              ]
+            }
+          ]
         }
       ]
     },
@@ -1828,7 +3623,7 @@
                 {
                   "value": "oauth",
                   "label": "Microsoft Entra ID sign-in",
-                  "description": "A person authorizes Pando with their Microsoft account, by device code or in the browser. Azure DevOps Services only."
+                  "description": "A person authorizes Pando with their work or school account, by device code or in the browser. Azure DevOps Services only."
                 },
                 {
                   "value": "service_principal",
@@ -1875,7 +3670,7 @@
             {
               "key": "tenant_id",
               "label": "Directory (tenant) ID",
-              "help": "The Microsoft Entra tenant. A service principal needs its own tenant's ID; a person's sign-in can use organizations.",
+              "help": "The app registration's directory (tenant) ID. Only a multitenant app accepts organizations.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -1902,7 +3697,7 @@
             {
               "key": "client_secret",
               "label": "Client secret",
-              "help": "The app registration's client secret. Required for a service principal and for browser authorization; device authorization works without one.",
+              "help": "Required for a service principal and for browser sign-in. Device sign-in works without one.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -1971,7 +3766,158 @@
               "default": "The system's trusted certificates"
             }
           ],
-          "id_prefix": "src_"
+          "id_prefix": "src_",
+          "steps": [
+            {
+              "id": "method",
+              "label": "Sign-in method",
+              "title": "Choose how Pando signs in",
+              "fields": [
+                "method",
+                "host"
+              ]
+            },
+            {
+              "id": "token",
+              "label": "Access token",
+              "title": "Create a personal access token",
+              "do": [
+                {
+                  "text": "In Azure DevOps, open **User settings** → **Personal access tokens** → **New Token**."
+                },
+                {
+                  "text": "Enter a **Name**, select the **Organization**, and set an **Expiration**. On Azure DevOps Server, select the collection."
+                },
+                {
+                  "text": "Under **Scopes**, choose **Custom defined**, then select **Read** under **Code**."
+                },
+                {
+                  "text": "Choose **Create** and copy the token."
+                }
+              ],
+              "fields": [
+                "token"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              }
+            },
+            {
+              "id": "app",
+              "label": "App registration",
+              "title": "Register an app in Microsoft Entra ID",
+              "do": [
+                {
+                  "text": "In the Microsoft Entra admin center, open **Entra ID** → **App registrations** → **New registration**."
+                },
+                {
+                  "text": "Enter a **Name** and choose **Register**."
+                },
+                {
+                  "text": "For Entra ID sign-in, under **API permissions**, choose **Add a permission** → **Azure DevOps** → **Delegated permissions**, select **vso.code**, and choose **Add permissions**."
+                },
+                {
+                  "text": "For Entra ID sign-in, under **Authentication**, set **Allow public client flows** to **Yes** and choose **Save**."
+                },
+                {
+                  "text": "For browser sign-in, under **Authentication**, choose **Add Redirect URI** → **Web**, enter your Pando address plus `/api/v1/sources/callback`, and choose **Configure**."
+                },
+                {
+                  "text": "For a service principal, in Azure DevOps open **Organization settings** → **Users** → **Add users**. Enter the app's name, choose **Basic** access and the projects, and choose **Add**."
+                },
+                {
+                  "text": "On the app's **Overview**, copy the **Application (client) ID** and **Directory (tenant) ID**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open App registrations",
+                  "url": "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+                }
+              ],
+              "fields": [
+                "client_id",
+                "tenant_id"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth",
+                  "service_principal"
+                ]
+              }
+            },
+            {
+              "id": "secret",
+              "label": "Client secret",
+              "title": "Create a client secret",
+              "do": [
+                {
+                  "text": "In the app registration, open **Certificates & secrets** → **Client secrets** → **New client secret**."
+                },
+                {
+                  "text": "Enter a description, choose an expiration, and choose **Add**."
+                },
+                {
+                  "text": "Copy the secret's **Value**."
+                }
+              ],
+              "fields": [
+                "client_secret"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth",
+                  "service_principal"
+                ]
+              }
+            },
+            {
+              "id": "ssh",
+              "label": "SSH key",
+              "title": "Add an SSH key",
+              "do": [
+                {
+                  "text": "Run `ssh-keygen -t rsa -b 3072 -f pando-azure -N \"\"`."
+                },
+                {
+                  "text": "In Azure DevOps, open **User settings** → **SSH public keys** → **New Key**."
+                },
+                {
+                  "text": "Paste `pando-azure.pub` into **Public Key Data**, enter a name, and choose **Save**."
+                },
+                {
+                  "text": "Paste `pando-azure` below."
+                },
+                {
+                  "text": "Run `ssh-keyscan ssh.dev.azure.com`, or your server's host, and paste its output below."
+                }
+              ],
+              "fields": [
+                "ssh_private_key",
+                "ssh_passphrase",
+                "known_hosts"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "id": "scope",
+              "label": "Organization",
+              "title": "Choose an organization",
+              "fields": [
+                "scope"
+              ]
+            }
+          ]
         },
         {
           "category": "source",
@@ -2046,7 +3992,7 @@
             {
               "key": "username",
               "label": "Username",
-              "help": "Bitbucket Cloud API token: your Bitbucket username. Data Center: the account the token belongs to, if git should sign in as it; x-token-auth otherwise.",
+              "help": "Your username, for a Cloud API token or a Data Center personal token. Empty is x-token-auth.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -2059,7 +4005,7 @@
             {
               "key": "email",
               "label": "Atlassian account email",
-              "help": "Bitbucket Cloud API token only: the email of the Atlassian account the token was created under, which Bitbucket's API signs in with. The username when empty.",
+              "help": "Cloud API token only. Empty is the username.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -2085,7 +4031,7 @@
             {
               "key": "client_id",
               "label": "OAuth consumer key",
-              "help": "From the workspace's settings → OAuth consumers. Give the consumer Pando's callback address and the Repositories: Read permission.",
+              "help": "The Key from Workspace settings → OAuth consumers.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -2097,7 +4043,7 @@
             {
               "key": "client_secret",
               "label": "OAuth consumer secret",
-              "help": "The consumer's secret, shown beside its key.",
+              "help": "The Secret shown beside the Key.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -2179,7 +4125,153 @@
               "default": "The system's trusted certificates"
             }
           ],
-          "id_prefix": "src_"
+          "id_prefix": "src_",
+          "steps": [
+            {
+              "id": "method",
+              "label": "Sign-in method",
+              "title": "Choose how Pando signs in",
+              "fields": [
+                "method",
+                "host"
+              ]
+            },
+            {
+              "id": "token",
+              "label": "Token",
+              "title": "Create a token",
+              "do": [
+                {
+                  "text": "Create one of these tokens:",
+                  "table": {
+                    "columns": [
+                      "Token",
+                      "Where",
+                      "Permission"
+                    ],
+                    "rows": [
+                      [
+                        "Cloud access token",
+                        "Workspace, project or repository settings → Security → Access tokens → Create access token",
+                        "Repositories: Read"
+                      ],
+                      [
+                        "Cloud API token",
+                        "Account settings → Security → Create API token with scopes → Bitbucket",
+                        "read:repository:bitbucket"
+                      ],
+                      [
+                        "Data Center HTTP access token",
+                        "Manage account, Project settings or Repository settings → HTTP access tokens → Create token",
+                        "Repository read"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "For a Cloud API token or a Data Center personal token, enter your username below."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Bitbucket",
+                  "url": "https://{host}/"
+                },
+                {
+                  "label": "Open Atlassian API tokens",
+                  "url": "https://id.atlassian.com/manage-profile/security/api-tokens"
+                }
+              ],
+              "fields": [
+                "token_type",
+                "username",
+                "email",
+                "token"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              }
+            },
+            {
+              "id": "oauth",
+              "label": "OAuth consumer",
+              "title": "Add an OAuth consumer",
+              "do": [
+                {
+                  "text": "In the workspace, open **Settings** → **Workspace settings** → **OAuth consumers** → **Add consumer**."
+                },
+                {
+                  "text": "Enter a **Name**. Set **Callback URL** to your Pando address plus `/api/v1/sources/callback`."
+                },
+                {
+                  "text": "Under **Permissions**, check **Repositories** **Read** and choose **Save**."
+                },
+                {
+                  "text": "Choose the consumer's name and copy its **Key** and **Secret**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open workspaces",
+                  "url": "https://bitbucket.org/account/workspaces/"
+                }
+              ],
+              "fields": [
+                "client_id",
+                "client_secret"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              }
+            },
+            {
+              "id": "ssh",
+              "label": "Access key",
+              "title": "Add an access key",
+              "do": [
+                {
+                  "text": "Run `ssh-keygen -t ed25519 -f pando-access -N \"\"`."
+                },
+                {
+                  "text": "On Bitbucket Cloud, open **Repository settings** → **Access keys** → **Add key**. Enter a **Label**, paste `pando-access.pub` into **Key** and save it."
+                },
+                {
+                  "text": "On Data Center, open the project's or repository's **Settings** → **Access keys** → **Add key**. Paste `pando-access.pub`, choose **Read** and choose **Add key**."
+                },
+                {
+                  "text": "Paste `pando-access` below."
+                },
+                {
+                  "text": "Run `ssh-keyscan bitbucket.org`, or `ssh-keyscan -p 7999 HOST` for Data Center, and paste its output below."
+                }
+              ],
+              "fields": [
+                "ssh_private_key",
+                "ssh_passphrase",
+                "known_hosts"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "id": "scope",
+              "label": "Workspace or project",
+              "title": "Choose a workspace or project",
+              "fields": [
+                "scope"
+              ]
+            }
+          ]
         },
         {
           "category": "source",
@@ -2217,14 +4309,14 @@
             {
               "key": "scope",
               "label": "Path prefix",
-              "help": "Limit the connection to repositories under this path, such as acme. Empty is every repository on the host.",
+              "help": "Empty is every repository on the host.",
               "type": "string",
               "placeholder": "acme"
             },
             {
               "key": "username",
               "label": "Username",
-              "help": "The account the token belongs to. Defaults to git.",
+              "help": "The account the token belongs to. Empty is git.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -2297,7 +4389,76 @@
               "default": "The system's trusted certificates"
             }
           ],
-          "id_prefix": "src_"
+          "id_prefix": "src_",
+          "steps": [
+            {
+              "id": "method",
+              "label": "Sign-in method",
+              "title": "Choose how Pando signs in",
+              "fields": [
+                "method",
+                "host"
+              ]
+            },
+            {
+              "id": "token",
+              "label": "Access token",
+              "title": "Create an access token",
+              "do": [
+                {
+                  "text": "On the git host, create an access token with read access to the repositories."
+                }
+              ],
+              "fields": [
+                "username",
+                "token"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              }
+            },
+            {
+              "id": "ssh",
+              "label": "SSH key",
+              "title": "Add an SSH key",
+              "do": [
+                {
+                  "text": "Run `ssh-keygen -t ed25519 -f pando-deploy -N \"\"`."
+                },
+                {
+                  "text": "On the git host, add `pando-deploy.pub` to the repository as a read-only deploy key."
+                },
+                {
+                  "text": "Paste `pando-deploy` below."
+                },
+                {
+                  "text": "Run `ssh-keyscan` with the host's name, on a machine you trust, and paste its output below."
+                }
+              ],
+              "fields": [
+                "ssh_private_key",
+                "ssh_passphrase",
+                "known_hosts"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "id": "scope",
+              "label": "Repositories",
+              "title": "Choose a path prefix",
+              "fields": [
+                "scope"
+              ]
+            }
+          ]
         },
         {
           "category": "source",
@@ -2313,7 +4474,7 @@
                 {
                   "value": "token",
                   "label": "Access token",
-                  "description": "An access token with read permission on repositories. Repositories can be picked from a list."
+                  "description": "An access token with Read on repository and user. Repositories can be picked from a list."
                 },
                 {
                   "value": "oauth",
@@ -2347,7 +4508,7 @@
             {
               "key": "username",
               "label": "Username",
-              "help": "The account the token belongs to. Defaults to oauth2, which Gitea and Forgejo accept beside a token.",
+              "help": "The token's account. Empty is oauth2.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -2360,7 +4521,7 @@
             {
               "key": "token",
               "label": "Access token",
-              "help": "Create one under Settings → Applications with read permission on repositories.",
+              "help": "Needs Read on repository and user.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -2385,7 +4546,7 @@
             {
               "key": "client_secret",
               "label": "OAuth2 client secret",
-              "help": "The application's client secret. Gitea and Forgejo authorize only in the browser, so it is required.",
+              "help": "Required.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -2458,10 +4619,151 @@
             {
               "id": "codeberg",
               "label": "Codeberg",
-              "help": "Create an access token on Codeberg under Settings → Applications, with read permission on repositories.",
+              "help": "Create an access token on Codeberg under Settings → Applications, with Read on repository and user.",
               "values": {
                 "host": "codeberg.org"
               }
+            }
+          ],
+          "steps": [
+            {
+              "id": "method",
+              "label": "Sign-in method",
+              "title": "Choose how Pando signs in",
+              "fields": [
+                "method",
+                "host"
+              ]
+            },
+            {
+              "id": "token",
+              "label": "Access token",
+              "title": "Create an access token",
+              "do": [
+                {
+                  "text": "Open **Settings** → **Applications**. On Forgejo, choose **New access token**."
+                },
+                {
+                  "text": "Enter a **Token name**. Under **Repository and organization access**, choose **All (public, private, and limited)**."
+                },
+                {
+                  "text": "Under **Select permissions**, set these:",
+                  "table": {
+                    "columns": [
+                      "Permission",
+                      "Access"
+                    ],
+                    "rows": [
+                      [
+                        "repository",
+                        "Read"
+                      ],
+                      [
+                        "user",
+                        "Read"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "Choose **Generate token** and copy the token."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Applications",
+                  "url": "https://{host}/user/settings/applications"
+                }
+              ],
+              "fields": [
+                "token",
+                "username"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              }
+            },
+            {
+              "id": "oauth",
+              "label": "OAuth2 app",
+              "title": "Create an OAuth2 application",
+              "do": [
+                {
+                  "text": "Open **Settings** → **Applications**."
+                },
+                {
+                  "text": "Under **Create a new OAuth2 application**, enter an **Application name**."
+                },
+                {
+                  "text": "Set **Redirect URIs** to your Pando address plus `/api/v1/sources/callback`."
+                },
+                {
+                  "text": "Leave **Confidential client** checked and choose **Create application**."
+                },
+                {
+                  "text": "Copy the **Client ID** and **Client secret**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Applications",
+                  "url": "https://{host}/user/settings/applications"
+                }
+              ],
+              "fields": [
+                "client_id",
+                "client_secret"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              }
+            },
+            {
+              "id": "ssh",
+              "label": "Deploy key",
+              "title": "Add a deploy key",
+              "do": [
+                {
+                  "text": "Run `ssh-keygen -t ed25519 -f pando-deploy -N \"\"`."
+                },
+                {
+                  "text": "In the repository, open **Settings** → **Deploy keys** → **Add deploy key** (**Add SSH key** on Gitea)."
+                },
+                {
+                  "text": "Enter a **Title**, paste `pando-deploy.pub` into **Content**, and add the key."
+                },
+                {
+                  "text": "Paste `pando-deploy` below."
+                },
+                {
+                  "text": "Run `ssh-keyscan` with the host's name, on a machine you trust, and paste its output below."
+                }
+              ],
+              "fields": [
+                "ssh_private_key",
+                "ssh_passphrase",
+                "known_hosts"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "id": "scope",
+              "label": "Owner",
+              "title": "Choose an owner",
+              "fields": [
+                "scope"
+              ]
             }
           ]
         },
@@ -2511,7 +4813,7 @@
             {
               "key": "scope",
               "label": "Owner",
-              "help": "The organization or user on GitHub. Empty is every repository the credential can read.",
+              "help": "The organization or user on GitHub. Empty is every repository the credential can read; a GitHub App without an installation ID needs one.",
               "type": "string",
               "placeholder": "acme"
             },
@@ -2544,7 +4846,7 @@
             {
               "key": "app_private_key",
               "label": "App private key",
-              "help": "The PEM private key generated on the App's settings page, beginning -----BEGIN RSA PRIVATE KEY-----.",
+              "help": "The contents of the .pem file GitHub downloads under the App's Credentials, Key pairs.",
               "type": "string",
               "multiline": true,
               "shown_when": {
@@ -2666,6 +4968,175 @@
               "label": "GitHub Enterprise Server",
               "help": "Enter the server's host. Its API is at https://<host>/api/v3 unless it was moved."
             }
+          ],
+          "steps": [
+            {
+              "id": "method",
+              "label": "Sign-in method",
+              "title": "Choose how Pando signs in",
+              "fields": [
+                "method",
+                "host"
+              ]
+            },
+            {
+              "id": "app",
+              "label": "Create the App",
+              "title": "Create a GitHub App",
+              "do": [
+                {
+                  "text": "In GitHub, open **Settings** → **Developer settings** → **GitHub Apps** → **New GitHub App**. For an organization, start from its settings."
+                },
+                {
+                  "text": "Enter a **GitHub App name** and **Homepage URL**. Under **Webhook**, clear **Active**."
+                },
+                {
+                  "text": "Under **Repository permissions**, set **Contents** to **Read-only**."
+                },
+                {
+                  "text": "Choose **Create GitHub App** and copy the **App ID**. Under **Credentials** → **Key pairs**, choose **New key**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open GitHub Apps",
+                  "url": "https://{host}/settings/apps"
+                }
+              ],
+              "fields": [
+                "app_id",
+                "app_private_key"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "app"
+                ]
+              }
+            },
+            {
+              "id": "install",
+              "label": "Install it",
+              "title": "Install the App",
+              "do": [
+                {
+                  "text": "Choose **Install App**, then **Install** beside the owner."
+                },
+                {
+                  "text": "Pick the repositories and choose **Install**."
+                }
+              ],
+              "fields": [
+                "installation_id"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "app"
+                ]
+              }
+            },
+            {
+              "id": "oauth",
+              "label": "OAuth app",
+              "title": "Register an OAuth application",
+              "do": [
+                {
+                  "text": "In GitHub, open **Settings** → **Developer settings** → **OAuth apps** → **New OAuth App**."
+                },
+                {
+                  "text": "Enter an **Application name** and **Homepage URL**. Set **Authorization callback URL** to your Pando address plus `/api/v1/sources/callback`."
+                },
+                {
+                  "text": "Check **Enable Device Flow** and choose **Register application**."
+                },
+                {
+                  "text": "Copy the **Client ID**. For browser sign-in, choose **Generate a new client secret**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open OAuth apps",
+                  "url": "https://{host}/settings/developers"
+                }
+              ],
+              "fields": [
+                "client_id",
+                "client_secret"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              }
+            },
+            {
+              "id": "token",
+              "label": "Access token",
+              "title": "Create a personal access token",
+              "do": [
+                {
+                  "text": "In GitHub, open **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**."
+                },
+                {
+                  "text": "Set **Resource owner** to the owner. Under **Repository access**, pick the repositories."
+                },
+                {
+                  "text": "Set **Contents** to **Read-only** and choose **Generate token**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open fine-grained tokens",
+                  "url": "https://{host}/settings/personal-access-tokens/new"
+                }
+              ],
+              "fields": [
+                "token"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              }
+            },
+            {
+              "id": "ssh",
+              "label": "Deploy key",
+              "title": "Add a deploy key",
+              "do": [
+                {
+                  "text": "Run `ssh-keygen -t ed25519 -f pando-deploy -N \"\"`."
+                },
+                {
+                  "text": "In the repository, open **Settings** → **Deploy keys** → **Add deploy key**. Paste `pando-deploy.pub` into **Key** and choose **Add key**."
+                },
+                {
+                  "text": "Paste `pando-deploy` below."
+                }
+              ],
+              "fields": [
+                "ssh_private_key",
+                "ssh_passphrase",
+                "known_hosts"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "id": "scope",
+              "label": "Repositories",
+              "title": "Choose an owner",
+              "fields": [
+                "scope"
+              ]
+            }
           ]
         },
         {
@@ -2709,14 +5180,14 @@
             {
               "key": "scope",
               "label": "Group",
-              "help": "Limit the connection to projects in this group and its subgroups, such as acme or acme/platform. Empty is every project the credential can read.",
+              "help": "Subgroups are included. Empty is every project the credential can read.",
               "type": "string",
               "placeholder": "acme/platform"
             },
             {
               "key": "client_id",
               "label": "OAuth client ID",
-              "help": "The Application ID of a GitLab OAuth application with the read_repository and read_api scopes. Create one under Preferences → Applications, or on a group's or the instance's Applications page.",
+              "help": "The Application ID of a GitLab OAuth application with the read_repository and read_api scopes.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -2765,12 +5236,12 @@
             {
               "key": "username",
               "label": "Username",
-              "help": "For a deploy token, the username GitLab shows beside it, such as gitlab+deploy-token-12. Not used with an access token.",
+              "help": "The username GitLab shows beside the deploy token.",
               "type": "string",
               "shown_when": {
-                "key": "method",
+                "key": "token_type",
                 "values": [
-                  "token"
+                  "deploy_token"
                 ]
               },
               "placeholder": "gitlab+deploy-token-12"
@@ -2778,7 +5249,7 @@
             {
               "key": "token",
               "label": "Token",
-              "help": "Read access to repositories is enough: read_repository, and read_api to pick repositories from a list.",
+              "help": "An access token with read_repository and read_api, or a deploy token with read_repository.",
               "type": "string",
               "shown_when": {
                 "key": "method",
@@ -2846,7 +5317,155 @@
               "default": "The system's trusted certificates"
             }
           ],
-          "id_prefix": "src_"
+          "id_prefix": "src_",
+          "steps": [
+            {
+              "id": "method",
+              "label": "Sign-in method",
+              "title": "Choose how Pando signs in",
+              "fields": [
+                "method",
+                "host"
+              ]
+            },
+            {
+              "id": "oauth",
+              "label": "OAuth app",
+              "title": "Create an OAuth application",
+              "do": [
+                {
+                  "text": "In GitLab, select your avatar, then **Edit profile** → **Access** → **Applications** → **Add new application**. For a group, start from its **Settings** → **Applications**."
+                },
+                {
+                  "text": "Enter a **Name**. Set **Redirect URI** to your Pando address plus `/api/v1/sources/callback`."
+                },
+                {
+                  "text": "Clear **Confidential**. Under **Scopes**, select **read_repository** and **read_api**."
+                },
+                {
+                  "text": "Choose **Save application** and copy the **Application ID** and **Secret**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open applications",
+                  "url": "https://{host}/-/user_settings/applications"
+                }
+              ],
+              "fields": [
+                "client_id",
+                "client_secret"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "oauth"
+                ]
+              }
+            },
+            {
+              "id": "token",
+              "label": "Token",
+              "title": "Create a token",
+              "do": [
+                {
+                  "text": "Create one of these in GitLab:",
+                  "table": {
+                    "columns": [
+                      "Token",
+                      "Where",
+                      "Settings"
+                    ],
+                    "rows": [
+                      [
+                        "Fine-grained personal access token (GitLab 19.2 or later)",
+                        "Avatar → Edit profile → Access → Personal access tokens → Generate token → Fine-grained token",
+                        "Code: Download, Project: Read and Branch: Read; boundary User to list every project, or the group"
+                      ],
+                      [
+                        "Personal access token",
+                        "Avatar → Edit profile → Access → Personal access tokens → Generate token → Legacy token",
+                        "Scopes read_repository, read_api"
+                      ],
+                      [
+                        "Project access token",
+                        "Project → Settings → Access tokens → Add new token",
+                        "Role Reporter; scopes read_repository, read_api"
+                      ],
+                      [
+                        "Group access token",
+                        "Group → Settings → Access tokens → Add new token",
+                        "Role Reporter; scopes read_repository, read_api"
+                      ],
+                      [
+                        "Deploy token",
+                        "Project or group → Settings → Repository → Deploy tokens → Add token",
+                        "Scope read_repository"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "Copy the token, and for a deploy token its username."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open personal access tokens",
+                  "url": "https://{host}/-/user_settings/personal_access_tokens?name=Pando&scopes=read_repository,read_api"
+                }
+              ],
+              "fields": [
+                "token_type",
+                "username",
+                "token"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "token"
+                ]
+              }
+            },
+            {
+              "id": "ssh",
+              "label": "Deploy key",
+              "title": "Add a deploy key",
+              "do": [
+                {
+                  "text": "Run `ssh-keygen -t ed25519 -f pando-deploy -N \"\"`."
+                },
+                {
+                  "text": "In the project, open **Settings** → **Repository**, expand **Deploy keys** and choose **Add new key**."
+                },
+                {
+                  "text": "Paste `pando-deploy.pub` into **Key** and choose **Add key**."
+                },
+                {
+                  "text": "Paste `pando-deploy` below."
+                }
+              ],
+              "fields": [
+                "ssh_private_key",
+                "ssh_passphrase",
+                "known_hosts"
+              ],
+              "shown_when": {
+                "key": "method",
+                "values": [
+                  "ssh"
+                ]
+              }
+            },
+            {
+              "id": "scope",
+              "label": "Group",
+              "title": "Choose a group",
+              "fields": [
+                "scope"
+              ]
+            }
+          ]
         }
       ]
     },
@@ -2862,7 +5481,7 @@
             {
               "key": "url",
               "label": "Registry address",
-              "help": "The repository's address, as ECR shows it. It has to exist already.",
+              "help": "The repository's URI. It has to exist already.",
               "type": "string",
               "required": true,
               "placeholder": "123456789012.dkr.ecr.us-east-1.amazonaws.com/pando"
@@ -2870,7 +5489,7 @@
             {
               "key": "access_key_id",
               "label": "Access key ID",
-              "help": "An AWS access key that can push to and pull from the repository.",
+              "help": "An IAM user's access key that can push to, pull from and delete in the repository.",
               "type": "string",
               "required": true,
               "placeholder": "AKIA…"
@@ -2892,7 +5511,120 @@
               "default": "false"
             }
           ],
-          "id_prefix": "reg_"
+          "id_prefix": "reg_",
+          "steps": [
+            {
+              "id": "repository",
+              "label": "Repository",
+              "title": "Create a repository",
+              "do": [
+                {
+                  "text": "In the Amazon ECR console, choose the Region from the navigation bar."
+                },
+                {
+                  "text": "Choose **Private repositories**, then **Create repository**."
+                },
+                {
+                  "text": "Enter a **Repository name**, such as `pando`, and choose **Create**."
+                },
+                {
+                  "text": "Copy the repository's **URI**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Amazon ECR",
+                  "url": "https://console.aws.amazon.com/ecr/repositories"
+                }
+              ],
+              "fields": [
+                "url"
+              ]
+            },
+            {
+              "id": "access_key",
+              "label": "Access key",
+              "title": "Create an access key",
+              "do": [
+                {
+                  "text": "In IAM, choose **Users**, then **Create user**."
+                },
+                {
+                  "text": "Enter a **User name**, then choose **Next** and **Create user**."
+                },
+                {
+                  "text": "On the user's **Permissions** tab, choose **Add permissions**, then **Create inline policy**."
+                },
+                {
+                  "text": "Allow these actions:",
+                  "table": {
+                    "columns": [
+                      "Action",
+                      "Resource"
+                    ],
+                    "rows": [
+                      [
+                        "ecr:GetAuthorizationToken",
+                        "All resources"
+                      ],
+                      [
+                        "ecr:BatchCheckLayerAvailability",
+                        "The repository"
+                      ],
+                      [
+                        "ecr:InitiateLayerUpload",
+                        "The repository"
+                      ],
+                      [
+                        "ecr:UploadLayerPart",
+                        "The repository"
+                      ],
+                      [
+                        "ecr:CompleteLayerUpload",
+                        "The repository"
+                      ],
+                      [
+                        "ecr:PutImage",
+                        "The repository"
+                      ],
+                      [
+                        "ecr:BatchGetImage",
+                        "The repository"
+                      ],
+                      [
+                        "ecr:GetDownloadUrlForLayer",
+                        "The repository"
+                      ],
+                      [
+                        "ecr:ListImages",
+                        "The repository"
+                      ],
+                      [
+                        "ecr:BatchDeleteImage",
+                        "The repository"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "On the **Security credentials** tab, choose **Create access key**, then **Other** and **Next**."
+                },
+                {
+                  "text": "Choose **Create access key**, then **Show**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open IAM users",
+                  "url": "https://console.aws.amazon.com/iam/home#/users"
+                }
+              ],
+              "fields": [
+                "access_key_id",
+                "secret_access_key"
+              ]
+            }
+          ]
         },
         {
           "category": "image_registry",
@@ -2903,7 +5635,7 @@
             {
               "key": "url",
               "label": "Registry address",
-              "help": "The registry, and a path to push under if you want one.",
+              "help": "The registry and the path to push under: ghcr.io/OWNER, a Harbor project, or an Artifact Registry repository.",
               "type": "string",
               "required": true,
               "placeholder": "https://registry.internal:5000"
@@ -2911,7 +5643,7 @@
             {
               "key": "username",
               "label": "Username",
-              "help": "What the registry signs Pando in with. Empty for a registry Pando reaches anonymously.",
+              "help": "Empty for a registry Pando reaches anonymously.",
               "type": "string"
             },
             {
@@ -2957,7 +5689,80 @@
               "default": "false"
             }
           ],
-          "id_prefix": "reg_"
+          "id_prefix": "reg_",
+          "steps": [
+            {
+              "id": "registry",
+              "label": "Registry",
+              "title": "Enter the registry address",
+              "fields": [
+                "url"
+              ]
+            },
+            {
+              "id": "credential",
+              "label": "Credential",
+              "title": "Create a credential to push with",
+              "do": [
+                {
+                  "text": "Create a credential that can push, pull and delete images:",
+                  "table": {
+                    "columns": [
+                      "Registry",
+                      "Credential",
+                      "Permissions",
+                      "Username",
+                      "Password"
+                    ],
+                    "rows": [
+                      [
+                        "GitHub Container Registry",
+                        "Personal access token (classic)",
+                        "`write:packages`, `delete:packages`",
+                        "Your GitHub username",
+                        "The token"
+                      ],
+                      [
+                        "Harbor",
+                        "Robot account in the project",
+                        "Push Repository, Pull Repository, Delete Artifact",
+                        "The robot's full name, such as `robot$project+pando`",
+                        "The secret"
+                      ],
+                      [
+                        "Artifact Registry",
+                        "Service account key",
+                        "Artifact Registry Repository Administrator",
+                        "`_json_key_base64`",
+                        "The key file, base64-encoded"
+                      ],
+                      [
+                        "Distribution, Zot",
+                        "A user in its htpasswd file",
+                        "",
+                        "The user",
+                        "The user's password"
+                      ]
+                    ]
+                  }
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open GitHub tokens (classic)",
+                  "url": "https://github.com/settings/tokens/new?scopes=write:packages,delete:packages"
+                },
+                {
+                  "label": "Open Google Cloud service accounts",
+                  "url": "https://console.cloud.google.com/iam-admin/serviceaccounts"
+                }
+              ],
+              "fields": [
+                "username",
+                "password"
+              ]
+            }
+          ]
         }
       ]
     },
@@ -2973,21 +5778,21 @@
             {
               "key": "url",
               "label": "URL",
-              "help": "The destination's ingest endpoint. Leave empty when the URL itself is the credential, and set secret_url instead.",
+              "help": "The destination's ingest endpoint. Empty when Secret URL is set.",
               "type": "string",
               "placeholder": "https://siem.example.com/ingest"
             },
             {
               "key": "secret_url",
               "label": "Secret URL",
-              "help": "For a destination whose URL carries its token, such as a Sumo Logic HTTP source: the whole URL, stored encrypted. Only its host is ever shown.",
+              "help": "The whole URL, for a destination whose URL carries its token, such as a Sumo Logic HTTP source.",
               "type": "string",
               "credential": true
             },
             {
               "key": "token",
               "label": "Token",
-              "help": "The API key or token the destination checks. Stored encrypted and never shown again.",
+              "help": "The API key or token the destination checks.",
               "type": "string",
               "credential": true
             },
@@ -3177,7 +5982,7 @@
             {
               "id": "splunk_hec",
               "label": "Splunk HTTP Event Collector",
-              "help": "In Splunk, Settings > Data inputs > HTTP Event Collector: create a token and copy its value. The URL is your Splunk host on the HEC port, usually 8088, ending /services/collector/event. On Splunk Cloud the host is http-inputs-<stack>.splunkcloud.com on port 443.",
+              "help": "In Splunk, Settings > Data inputs > HTTP Event Collector: under Global Settings set All Tokens to Enabled, then choose New Token and copy its value. The URL is your Splunk host on the HEC port, usually 8088, ending /services/collector/event. On Splunk Cloud the host is http-inputs-<stack>.splunkcloud.com on port 443.",
               "values": {
                 "auth_scheme": "Splunk",
                 "body": "splunk_hec",
@@ -3187,7 +5992,7 @@
             {
               "id": "datadog",
               "label": "Datadog Logs",
-              "help": "In Datadog, Organization Settings > API Keys: create an API key and set it as the token. The URL is for the US1 site; for another site use its intake host, such as http-intake.logs.datadoghq.eu for EU or http-intake.logs.us5.datadoghq.com for US5.",
+              "help": "In Datadog, Organization Settings > API Keys: choose New Key and set the key as the token. The URL is for the US1 site; for another site use its intake host, such as http-intake.logs.datadoghq.eu for EU or http-intake.logs.us5.datadoghq.com for US5.",
               "values": {
                 "auth_header": "DD-API-KEY",
                 "auth_scheme": "none",
@@ -3198,7 +6003,7 @@
             {
               "id": "elastic",
               "label": "Elastic",
-              "help": "In Kibana, Stack Management > API keys: create a key that may write to the data stream and set its encoded value as the token. The URL is your Elasticsearch endpoint, then a data stream name such as logs-pando.audit-default, then /_bulk.",
+              "help": "In Kibana, open API keys and choose Create API key, with create_doc and auto_configure on the data stream, and set its Encoded value as the token. The URL is your Elasticsearch endpoint, then a data stream name such as logs-pando.audit-default, then /_bulk.",
               "values": {
                 "auth_scheme": "ApiKey",
                 "body": "elastic_bulk",
@@ -3208,7 +6013,7 @@
             {
               "id": "sumo_logic",
               "label": "Sumo Logic HTTP source",
-              "help": "In Sumo Logic, Manage Data > Collection: add an HTTP Logs and Metrics source to a hosted collector and copy its URL. The URL contains the source's token, so set it as the secret URL credential and leave url and token empty.",
+              "help": "In Sumo Logic, Data Management > Data Collection > Collection: choose Add Source beside a hosted collector, then HTTP Logs & Metrics, and copy its HTTP Source Address. The URL contains the source's token, so set it as the secret URL credential and leave url and token empty.",
               "values": {
                 "body": "ndjson"
               }
@@ -3216,21 +6021,270 @@
             {
               "id": "azure_monitor",
               "label": "Microsoft Sentinel (Azure Monitor Logs ingestion)",
-              "help": "In Azure, create a data collection endpoint and a data collection rule with a stream named Custom-PandoAudit_CL whose columns match the events, then use the endpoint's logs ingestion URL and the rule's immutable ID in the URL. The token is a Microsoft Entra ID access token for the https://monitor.azure.com scope. This adapter sends a static token and does not mint or refresh one, so a token that expires stops delivery until it is replaced.",
+              "help": "In Azure, create a data collection rule with a stream named Custom-PandoAudit_CL whose columns match the events, and give the app that mints the token the Monitoring Metrics Publisher role on it. Use the rule's logs ingestion endpoint, or a data collection endpoint's, and its immutable ID in the URL. The token is a Microsoft Entra ID access token for the https://monitor.azure.com scope. This adapter sends a static token and does not mint or refresh one, so a token that expires stops delivery until it is replaced.",
               "values": {
                 "auth_scheme": "Bearer",
                 "body": "json_array",
                 "max_body_bytes": "1000000",
                 "url": "https://my-dce.eastus-1.ingest.monitor.azure.com/dataCollectionRules/dcr-00000000000000000000000000000000/streams/Custom-PandoAudit_CL?api-version=2023-01-01"
               }
+            }
+          ],
+          "other_preset": "Another SIEM",
+          "steps": [
+            {
+              "id": "splunk_token",
+              "label": "Token",
+              "title": "Create an HEC token",
+              "do": [
+                {
+                  "text": "In Splunk, open **Settings** → **Data inputs** → **HTTP Event Collector**."
+                },
+                {
+                  "text": "Under **Global Settings**, set **All Tokens** to **Enabled**."
+                },
+                {
+                  "text": "Choose **New Token**, finish it, and copy its value."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Splunk HEC",
+                  "url": "https://help.splunk.com/en/splunk-enterprise/get-started/get-data-in/9.4/get-data-with-http-event-collector/set-up-and-use-http-event-collector-in-splunk-web"
+                }
+              ],
+              "fields": [
+                "token"
+              ],
+              "presets": [
+                "splunk_hec"
+              ]
             },
             {
-              "id": "generic",
-              "label": "Generic NDJSON (Google SecOps and others)",
-              "help": "Any endpoint that takes newline-delimited JSON with a token in a header. Set the URL, the header and scheme it expects, and the token.",
-              "values": {
-                "body": "ndjson"
-              }
+              "id": "splunk_url",
+              "label": "Endpoint",
+              "title": "Enter the HEC endpoint",
+              "do": [
+                {
+                  "text": "Use your Splunk host on the HEC port, usually `8088`, ending `/services/collector/event`."
+                },
+                {
+                  "text": "On Splunk Cloud, use `https://http-inputs-<stack>.splunkcloud.com/services/collector/event`."
+                }
+              ],
+              "fields": [
+                "url"
+              ],
+              "presets": [
+                "splunk_hec"
+              ]
+            },
+            {
+              "id": "datadog_key",
+              "label": "API key",
+              "title": "Create an API key",
+              "do": [
+                {
+                  "text": "In Datadog, open **Organization Settings** → **API Keys** and choose **New Key**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Open Datadog API keys",
+                  "url": "https://app.datadoghq.com/organization-settings/api-keys"
+                }
+              ],
+              "fields": [
+                "token"
+              ],
+              "presets": [
+                "datadog"
+              ]
+            },
+            {
+              "id": "datadog_site",
+              "label": "Site",
+              "title": "Choose your Datadog site",
+              "do": [
+                {
+                  "text": "Outside US1, change the host to your site's intake host, such as `http-intake.logs.datadoghq.eu`."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Datadog sites",
+                  "url": "https://docs.datadoghq.com/getting_started/site/"
+                }
+              ],
+              "fields": [
+                "url"
+              ],
+              "presets": [
+                "datadog"
+              ]
+            },
+            {
+              "id": "elastic_key",
+              "label": "API key",
+              "title": "Create an API key",
+              "do": [
+                {
+                  "text": "In Kibana, open **API keys** and choose **Create API key**."
+                },
+                {
+                  "text": "Grant `create_doc` and `auto_configure` on the data stream."
+                },
+                {
+                  "text": "Copy the **Encoded** value."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Elastic API keys",
+                  "url": "https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys"
+                }
+              ],
+              "fields": [
+                "token"
+              ],
+              "presets": [
+                "elastic"
+              ]
+            },
+            {
+              "id": "elastic_url",
+              "label": "Endpoint",
+              "title": "Enter the bulk endpoint",
+              "do": [
+                {
+                  "text": "Use your Elasticsearch endpoint, then a data stream such as `logs-pando.audit-default`, then `/_bulk`."
+                }
+              ],
+              "fields": [
+                "url"
+              ],
+              "presets": [
+                "elastic"
+              ]
+            },
+            {
+              "id": "sumo_source",
+              "label": "HTTP source",
+              "title": "Add an HTTP source",
+              "do": [
+                {
+                  "text": "In Sumo Logic, open **Data Management** → **Data Collection** → **Collection**."
+                },
+                {
+                  "text": "Choose **Add Source** beside a hosted collector, then **HTTP Logs & Metrics**."
+                },
+                {
+                  "text": "Copy its **HTTP Source Address**."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Sumo Logic HTTP source",
+                  "url": "https://www.sumologic.com/help/docs/send-data/hosted-collectors/http-source/logs-metrics/"
+                }
+              ],
+              "fields": [
+                "secret_url"
+              ],
+              "presets": [
+                "sumo_logic"
+              ]
+            },
+            {
+              "id": "azure_rule",
+              "label": "Collection rule",
+              "title": "Create a data collection rule",
+              "do": [
+                {
+                  "text": "In Azure, create a data collection rule with a stream named `Custom-PandoAudit_CL`."
+                },
+                {
+                  "text": "Give the app that mints the token the **Monitoring Metrics Publisher** role on it."
+                },
+                {
+                  "text": "Use the rule's logs ingestion endpoint and immutable ID in the URL."
+                }
+              ],
+              "links": [
+                {
+                  "label": "Azure Logs Ingestion API",
+                  "url": "https://learn.microsoft.com/en-us/azure/azure-monitor/logs/logs-ingestion-api-overview"
+                }
+              ],
+              "fields": [
+                "url"
+              ],
+              "presets": [
+                "azure_monitor"
+              ]
+            },
+            {
+              "id": "azure_token",
+              "label": "Token",
+              "title": "Get an access token",
+              "do": [
+                {
+                  "text": "Get a Microsoft Entra ID access token for `https://monitor.azure.com`."
+                },
+                {
+                  "text": "Replace it before it expires: Pando does not refresh it."
+                }
+              ],
+              "fields": [
+                "token"
+              ],
+              "presets": [
+                "azure_monitor"
+              ]
+            },
+            {
+              "id": "endpoint",
+              "label": "Endpoint",
+              "title": "Enter the ingest endpoint",
+              "fields": [
+                "body",
+                "url",
+                "secret_url"
+              ],
+              "presets": [
+                "other"
+              ]
+            },
+            {
+              "id": "token",
+              "label": "Token",
+              "title": "Enter the token",
+              "fields": [
+                "token",
+                "auth_header",
+                "auth_scheme"
+              ],
+              "presets": [
+                "other"
+              ]
+            },
+            {
+              "id": "connection",
+              "label": "Connection",
+              "title": "Adjust the connection",
+              "fields": [
+                "ca_certificate",
+                "extra_headers"
+              ]
+            },
+            {
+              "id": "events",
+              "label": "Events",
+              "title": "Choose which events to send",
+              "fields": [
+                "actions",
+                "exclude"
+              ]
             }
           ]
         },
@@ -3251,7 +6305,7 @@
             {
               "key": "tls",
               "label": "TLS",
-              "help": "Whether the connection is encrypted. Off sends the audit log across the network in the clear.",
+              "help": "Off sends the audit log in the clear.",
               "type": "select",
               "options": [
                 {
@@ -3270,7 +6324,7 @@
             {
               "key": "ca_certificate",
               "label": "CA certificate",
-              "help": "PEM certificates to trust for a collector on a private certificate authority. Empty trusts the system's.",
+              "help": "PEM certificates of a private certificate authority to trust. Empty trusts the system's.",
               "type": "string",
               "multiline": true,
               "shown_when": {
@@ -3284,7 +6338,7 @@
             {
               "key": "client_certificate",
               "label": "Client certificate",
-              "help": "A PEM certificate Pando presents, for a collector that requires mutual TLS. Set with its key, or not at all. Stored encrypted.",
+              "help": "PEM, for a collector that requires mutual TLS. Set with its key, or not at all.",
               "type": "string",
               "multiline": true,
               "shown_when": {
@@ -3299,7 +6353,7 @@
             {
               "key": "client_key",
               "label": "Client key",
-              "help": "The PEM private key for the client certificate. Stored encrypted and never shown again.",
+              "help": "The client certificate's PEM private key. Stored encrypted.",
               "type": "string",
               "multiline": true,
               "shown_when": {
@@ -3462,7 +6516,44 @@
               "default": "oldest"
             }
           ],
-          "id_prefix": "as_"
+          "id_prefix": "as_",
+          "steps": [
+            {
+              "id": "collector",
+              "label": "Collector",
+              "title": "Connect to your collector",
+              "fields": [
+                "address",
+                "tls"
+              ]
+            },
+            {
+              "id": "certificates",
+              "label": "Certificates",
+              "title": "Add certificates",
+              "fields": [
+                "ca_certificate",
+                "client_certificate",
+                "client_key"
+              ],
+              "shown_when": {
+                "key": "tls",
+                "values": [
+                  "on",
+                  ""
+                ]
+              }
+            },
+            {
+              "id": "events",
+              "label": "Events",
+              "title": "Choose events",
+              "fields": [
+                "actions",
+                "exclude"
+              ]
+            }
+          ]
         }
       ]
     }

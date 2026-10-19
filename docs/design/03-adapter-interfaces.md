@@ -105,6 +105,62 @@ build moves (R-146). `ImportImage` returns the loaded image's content-addressed 
 
 ---
 
+### 1.2 Kinds, settings and guided setup
+
+**[D]** R-261: every surface configures an adapter from what its package says about itself. `Info()`
+returns an `api.KindInfo`: a name, a description, its `Fields`, and its `Steps`. `GET /adapters/kinds`
+serves it, and the console, the CLI and MCP build their forms from it, so a kind is configurable
+everywhere without any of them learning about it.
+
+**Fields** are the settings. A `Credential` is write-only and stored encrypted (R-190). An `Advanced`
+field is never required, never a credential, and states its `Default`. `ShownWhen` hides a field unless
+another has one of some values. `List` takes several values in one field, sent comma-separated.
+`Suggest` starts a new adapter's field from another's value — `pando.{zone}` — and the form follows that
+value until the field is edited. The adapter never applies a suggestion, so a stored configuration
+without the field means what it always did.
+
+**Steps** add an adapter one screen at a time. Every adapter is set up in the same order:
+
+1. **Adapter**, Pando's: choose the kind.
+2. **The kind's own steps**, from `Steps`.
+3. **Name**, Pando's: name, ID and whether it is the default.
+4. **Review**, Pando's: every answer, each a click from changing, with the advanced fields closed beneath.
+
+"Show all settings" switches to every field at once and keeps what was entered. Changing an adapter
+already added uses that form.
+
+**Writing a kind's steps.** `KindInfo.Validate` holds every kind to these rules, and
+`TestR261_EveryKindCanBeSetUpFromItsBasicSettings` runs it over every kind this build registers:
+
+- Every basic field is on exactly one step, and no advanced field is on any.
+- A field's `ShownWhen` names a field asked on the same step or an earlier one.
+- A step's own `ShownWhen` names a field asked on an earlier step. That is how a choice branches the
+  steps: the sign-in method is a step of its own, and each method's step is shown only for it.
+- Each step has an `ID`, a `Label` of a word or two for the step list ("API token"), a `Title` that is an
+  instruction or a question ("Create an API token", "Choose zones"), and at least one field.
+- `Do` lists what to do outside Pando, one action an item, in the provider's own words. `**Bold**` marks a
+  name on the provider's screen and backticks something typed exactly. A `Table` holds anything with
+  columns, such as a token's permissions. Leave `Do` out of a step with nothing to do outside Pando.
+- `Links` open the provider's pages where the step starts: one, or one per way when there are two, as
+  with Cloudflare's account and user tokens. A URL may hold `{key}` for a field's value
+  (`https://{host}/settings/apps`), so a link follows a self-managed host.
+- A kind with no basic fields declares no steps. Its setup is Adapter, Name and Review.
+
+Check every instruction against the provider's current documentation and against the calls the
+adapter's code makes. Name the exact permissions those calls need, no more. Pages, button names and
+permission names change, and a step that sends someone to a page that has moved is worse than no step.
+The copy rules in `CLAUDE.md` §4 apply: on a step with instructions the console shows no field captions,
+and a field's `Help` is one short sentence for the full form and the CLI.
+
+`internal/adapter/routing/cloudflare` and `internal/adapter/source/github` are the worked examples.
+
+**Warnings on save.** `KindInfo.Warn` returns what in a saved configuration works but may not do what
+someone wants, each as a sentence saying what to do. An example is a Cloudflare console hostname more
+than one level below its zone, which the included certificate does not cover. `POST /adapters` returns
+these as `warnings`. They never refuse a save: refusing is the adapter's `Configure`.
+
+---
+
 **[P] `ImageDelivery` and `EdgeConfig` (issue #72).** `ImageDelivery` is how a built image can reach the
 runtime: `import` streams it into `ImportImage` (single-host Docker), `registry` has the builder push it
 and every node pull it by digest (Kubernetes; `notes-image-registry-issue-72.md`, PR 5, wires the push).

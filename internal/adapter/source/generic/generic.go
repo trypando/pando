@@ -135,9 +135,9 @@ func Info() api.KindInfo {
 		),
 		forgekit.HostField(""),
 		forgekit.ScopeField("Path prefix",
-			"Limit the connection to repositories under this path, such as acme. Empty is every repository on the host.",
+			"Empty is every repository on the host.",
 			"acme"),
-		forgekit.UsernameField("The account the token belongs to. Defaults to git.", "git"),
+		forgekit.UsernameField("The account the token belongs to. Empty is git.", "git"),
 		forgekit.TokenField("Token or password", "Read access to the repositories is enough."),
 	}
 	fields = append(fields, forgekit.SSHFields("The host's public key, as ssh-keyscan <host> prints it.")...)
@@ -149,6 +149,7 @@ func Info() api.KindInfo {
 		Description: "Clone from any git server with a username and token over HTTPS, or an SSH key. Repositories are entered by address.",
 		IDPrefix:    "src_",
 		Fields:      fields,
+		Steps:       steps(),
 	}
 }
 

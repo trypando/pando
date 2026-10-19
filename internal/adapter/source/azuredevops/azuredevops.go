@@ -608,7 +608,7 @@ func Info() api.KindInfo {
 			api.Option{Value: forgekit.MethodToken, Label: "Personal access token",
 				Description: "A token with Code (Read) scope. Works with Azure DevOps Services and Server."},
 			api.Option{Value: forgekit.MethodOAuth, Label: "Microsoft Entra ID sign-in",
-				Description: "A person authorizes Pando with their Microsoft account, by device code or in the browser. Azure DevOps Services only."},
+				Description: "A person authorizes Pando with their work or school account, by device code or in the browser. Azure DevOps Services only."},
 			api.Option{Value: forgekit.MethodServicePrincipal, Label: "Service principal",
 				Description: "An app registration signs in with its client secret. It must be added to the organization. Azure DevOps Services only."},
 			api.Option{Value: forgekit.MethodSSH, Label: "SSH key",
@@ -620,11 +620,11 @@ func Info() api.KindInfo {
 			"acme or acme/Payments"),
 		forgekit.TokenField("Personal access token", "A personal access token with the Code (Read) scope."),
 		{Key: "tenant_id", Label: "Directory (tenant) ID", Type: "string", Default: defaultTenant, ShownWhen: entra,
-			Help: "The Microsoft Entra tenant. A service principal needs its own tenant's ID; a person's sign-in can use organizations."},
+			Help: "The app registration's directory (tenant) ID. Only a multitenant app accepts organizations."},
 		{Key: "client_id", Label: "Application (client) ID", Type: "string", ShownWhen: entra,
 			Help: "The app registration's application (client) ID, from Microsoft Entra ID."},
 		{Key: forgekit.FieldClientSecret, Label: "Client secret", Type: "string", Credential: true, ShownWhen: entra,
-			Help: "The app registration's client secret. Required for a service principal and for browser authorization; device authorization works without one."},
+			Help: "Required for a service principal and for browser sign-in. Device sign-in works without one."},
 	}
 	fields = append(fields, forgekit.SSHFields(
 		"The host's public key, as ssh-keyscan ssh.dev.azure.com (or your server's host) prints it.")...)
@@ -639,6 +639,7 @@ func Info() api.KindInfo {
 		Description: "Clone from Azure DevOps Services or Azure DevOps Server with a personal access token, Microsoft Entra ID or an SSH key, and pick repositories from a list.",
 		IDPrefix:    "src_",
 		Fields:      fields,
+		Steps:       steps(),
 	}
 }
 

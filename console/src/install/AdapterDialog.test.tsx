@@ -34,12 +34,12 @@ const loopback: ConfiguredAdapter = { id: 'rte_loopback', category: 'routing', k
 
 let root: Root;
 let container: HTMLDivElement;
-let onSaved: ReturnType<typeof vi.fn<(name: string, category: string) => void>>;
+let onSaved: ReturnType<typeof vi.fn<(name: string, category: string, warnings?: string[]) => void>>;
 
 beforeEach(() => {
   container = document.createElement('div');
   document.body.append(container);
-  onSaved = vi.fn<(name: string, category: string) => void>();
+  onSaved = vi.fn<(name: string, category: string, warnings?: string[]) => void>();
   const queries = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   queries.setQueryData(['adapter-kinds'], { kinds: [cloudflare] });
   root = createRoot(container);
@@ -101,7 +101,7 @@ describe('making an adapter the default in place of another, issue 220', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     const [, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toMatchObject({ id: 'rte_cloudflare', is_default: true });
-    expect(onSaved).toHaveBeenCalledWith('Cloudflare', 'routing');
+    expect(onSaved).toHaveBeenCalledWith('Cloudflare', 'routing', []);
   });
 
   it('shows why a handover was refused', async () => {

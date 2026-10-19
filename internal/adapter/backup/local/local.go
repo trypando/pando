@@ -241,7 +241,9 @@ func Info() api.KindInfo {
 		Description: "Writes backups to a directory in Pando's container, by default on its data volume.",
 		IDPrefix:    "bkp_",
 		Fields: []api.Field{
-			{Key: "path", Label: "Directory", Type: "string", Help: "A directory inside Pando's container, such as one mounted from the host.", Default: DefaultPath},
+			{Key: "path", Label: "Directory", Type: "string", Help: "A directory in Pando's container, created if it does not exist.", Default: DefaultPath},
 		},
+		Steps: steps(),
+		Warn:  Warnings,
 	}
 }

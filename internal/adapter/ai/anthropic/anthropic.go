@@ -285,12 +285,13 @@ func Info() api.KindInfo {
 		Description: "Performs the AI functions assigned to it: repairing a failed plan, answering detection's questions, revising a plan on request, drafting access and policy, searching the audit log, and answering from the reference. Needs an Anthropic API key.",
 		IDPrefix:    "ai_",
 		Fields: []api.Field{
-			{Key: "api_key", Label: "API key", Type: "string", Help: "An Anthropic API key. Stored encrypted and never shown again. Leave empty to use ANTHROPIC_API_KEY from Pando’s environment.", Credential: true, Placeholder: "sk-ant-…"},
+			{Key: "api_key", Label: "API key", Type: "string", Help: "Empty reads ANTHROPIC_API_KEY from Pando’s environment.", Credential: true, Placeholder: "sk-ant-…"},
 			{Key: "model", Label: "Model", Type: "string", Help: "The Claude model each function uses unless its assignment names another.", Default: DefaultModel},
 			{Key: "workspace_id", Label: "Workspace ID", Type: "string", Help: "Needed only when the API key was created for more than one workspace.", Placeholder: "wrkspc_…"},
 			{Key: "base_url", Label: "Base URL", Type: "string", Help: "A gateway or proxy in front of the Anthropic API. Empty is the API itself.", Default: "https://api.anthropic.com", Advanced: true},
 			{Key: "api_key_env", Label: "API key variable", Type: "string", Help: "The environment variable to read the key from, instead of a stored one.", Default: "ANTHROPIC_API_KEY", Advanced: true},
 		},
+		Steps: steps(),
 	}
 }
 

@@ -477,7 +477,7 @@ func TestR162_AppsCanBeNamedInOtherZones(t *testing.T) {
 	var e *errs.Error
 	require.ErrorAs(t, err, &e)
 	require.Contains(t, e.Message, "example.com or example.org")
-	require.Contains(t, e.Remedy, "other zones")
+	require.Contains(t, e.Remedy, "secondary zones")
 }
 
 func TestTheConsoleCanBeInAnotherZone(t *testing.T) {
@@ -491,7 +491,7 @@ func TestTheConsoleCanBeInAnotherZone(t *testing.T) {
 func TestAnOtherZoneThatIsNotADomainIsNamed(t *testing.T) {
 	err := New().Configure(context.Background(), json.RawMessage(
 		`{"account_id":"`+account+`","zone":"example.com","other_zones":"example.org, localhost","credentials":{"api_token":"t"}}`))
-	require.ErrorContains(t, err, `"localhost" in other zones`)
+	require.ErrorContains(t, err, `"localhost" in secondary zones`)
 }
 
 func TestAnOtherZoneTheTokenCannotSeeFailsTheHealthCheck(t *testing.T) {

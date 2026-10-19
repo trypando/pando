@@ -535,6 +535,13 @@ func (s *Server) handleCreateAdapter(w http.ResponseWriter, r *http.Request) {
 		note = "Saved, and in use from now on."
 	}
 	resp := map[string]any{"id": req.ID, "note": note}
+	// What saved but may not work as wanted, from the kind itself: never a
+	// refusal, which is the adapter's to make when it is configured.
+	if info, ok := s.kindInfo(req.Category, req.Kind); ok && info.Warn != nil {
+		if warnings := info.Warn(req.Config); len(warnings) > 0 {
+			resp["warnings"] = warnings
+		}
+	}
 	if replaced.ID != "" {
 		handover := defaultHandover(orID(req.Name, req.ID), orID(replaced.Name, replaced.ID), req.Category)
 		resp["replaced_default"] = replaced.ID

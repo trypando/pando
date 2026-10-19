@@ -115,6 +115,10 @@ func (s *IdentityProviders) BySCIMToken(ctx context.Context, digest string) (Ide
 // ProviderSettings are the fields an administrator sets. A nil field is left
 // as it is on update.
 type ProviderSettings struct {
+	// ID is a new provider's ID when the caller chose it, so the addresses
+	// built from it could be registered with the provider first. Empty is a
+	// fresh one. Not used by Update.
+	ID                    string
 	Name                  *string
 	Config                json.RawMessage
 	Enabled               *bool
@@ -125,7 +129,10 @@ type ProviderSettings struct {
 
 // Create adds a provider.
 func (s *IdentityProviders) Create(ctx context.Context, kind string, set ProviderSettings) (IdentityProvider, error) {
-	providerID := id.New(id.IdentityAdpt)
+	providerID := set.ID
+	if providerID == "" {
+		providerID = id.New(id.IdentityAdpt)
+	}
 	cfg := set.Config
 	if len(cfg) == 0 {
 		cfg = json.RawMessage(`{}`)
@@ -141,6 +148,11 @@ func (s *IdentityProviders) Create(ctx context.Context, kind string, set Provide
 		INSERT INTO identity_adapters (id, kind, name, config, enabled, jit_provisioning, link_by_email, scim_identity_attribute)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		providerID, kind, name, cfg, enabled, jit, link, nullableStr(set.SCIMIdentityAttribute))
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.ConstraintName == "identity_adapters_pkey" {
+		// Two creates with one ID, both past the service's check (R-105).
+		return IdentityProvider{}, ProviderIDTaken(providerID)
+	}
 	if err != nil {
 		return IdentityProvider{}, providerWriteError(err, name)
 	}
@@ -181,6 +193,15 @@ func (s *IdentityProviders) Update(ctx context.Context, providerID string, set P
 	}
 	p, _, err := s.ByID(ctx, providerID)
 	return p, err
+}
+
+// ProviderIDTaken refuses a new provider an ID another already has. A create
+// sent twice, its first answer lost, lands here too, and the provider it
+// added is the one wanted: its addresses are already registered upstream.
+func ProviderIDTaken(providerID string) error {
+	return errs.Newf(errs.ValidInvalid, "Another identity provider has the ID %s.", providerID).
+		WithRemedy("If this provider was just added, it was saved: find it in the list of identity providers. " +
+			"Otherwise leave id out and Pando chooses one.")
 }
 
 func providerWriteError(err error, name string) error {

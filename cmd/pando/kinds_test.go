@@ -24,6 +24,24 @@ func TestR261_EveryKindCanBeSetUpFromItsBasicSettings(t *testing.T) {
 	}
 }
 
+// TestR261_EveryKindHasGuidedSetup asserts R-261 for guided setup: every kind
+// this build registers with a setting to ask for walks through it in steps of
+// its own (design 03 §1.2), so every adapter is added the same way. The sign-in
+// providers are configured on a screen of their own and are not held to it yet.
+func TestR261_EveryKindHasGuidedSetup(t *testing.T) {
+	for _, k := range adapterKinds() {
+		basic := 0
+		for _, f := range k.Fields {
+			if !f.Advanced {
+				basic++
+			}
+		}
+		if basic > 0 {
+			require.NotEmpty(t, k.Steps, "%s/%s has settings to ask for and no steps: give its KindInfo Steps (design 03 §1.2)", k.Category, k.Kind)
+		}
+	}
+}
+
 // traceID matches a requirement (R-059) or open-decision (O-12) ID.
 var traceID = regexp.MustCompile(`\b[RO]-\d+`)
 

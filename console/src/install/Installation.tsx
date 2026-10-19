@@ -26,6 +26,7 @@ import {
 import { api, base } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { AdapterDialog } from './AdapterDialog';
+import { InlineWarning } from '../ui/InlineWarning';
 import { AuthorizeDialog, covers, useSources } from './Sources';
 import type { SourceConnection } from './Sources';
 import { Capacity } from './Capacity';
@@ -101,6 +102,8 @@ export function Installation({ query }: { query?: string } = {}) {
   // the moment they are saved, so saving one says that instead of asking for
   // a restart.
   const [notice, setNotice] = useState<string | null>(null);
+  // What the last save said may not work as wanted. Never a refusal.
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [authorizing, setAuthorizing] = useState<SourceConnection | null>(null);
   const [disconnecting, setDisconnecting] = useState<SourceConnection | null>(null);
 
@@ -188,6 +191,12 @@ export function Installation({ query }: { query?: string } = {}) {
         </div>
       )}
 
+      {warnings.map((w) => (
+        <div key={w} style={{ marginBottom: 'var(--space-4)' }}>
+          <InlineWarning onDismiss={() => setWarnings(warnings.filter((x) => x !== w))}>{w}</InlineWarning>
+        </div>
+      ))}
+
       {(restartNeeded || saved) && (
         <div style={{ marginBottom: 'var(--space-4)' }}>
           <Banner tone="info">
@@ -240,8 +249,9 @@ export function Installation({ query }: { query?: string } = {}) {
           category={editing.category}
           adapters={rows}
           onClose={() => setEditing(null)}
-          onSaved={(name, category) => {
+          onSaved={(name, category, saveWarnings) => {
             setEditing(null);
+            setWarnings(saveWarnings ?? []);
             if (category === 'source' || category === 'image_registry') {
               setNotice(`${name} is saved and in use. No restart is needed.`);
               if (category === 'source') void queries.invalidateQueries({ queryKey: ['sources'] });

@@ -80,9 +80,9 @@ func Info() api.KindInfo {
 		IDPrefix: "reg_",
 		Fields: []api.Field{
 			registrykit.URLField("https://registry.internal:5000",
-				"The registry, and a path to push under if you want one."),
+				"The registry and the path to push under: ghcr.io/OWNER, a Harbor project, or an Artifact Registry repository."),
 			{Key: "username", Label: "Username", Type: "string",
-				Help: "What the registry signs Pando in with. Empty for a registry Pando reaches anonymously."},
+				Help: "Empty for a registry Pando reaches anonymously."},
 			{Key: "password", Label: "Password", Type: "string", Credential: true,
 				Help: "Stored encrypted, and never shown again."},
 			{Key: "layout", Label: "Where images go", Type: "select", Advanced: true, Default: string(registrykit.LayoutPerApp),
@@ -96,6 +96,8 @@ func Info() api.KindInfo {
 				Help: "Only for a registry on a private network. Every host that pulls must also list it as an insecure registry."},
 			registrykit.AlwaysField(),
 		},
+		Steps: steps(),
+		Warn:  registrykit.Warnings,
 	}
 }
 

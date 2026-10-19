@@ -597,11 +597,11 @@ var _ api.AuditSinkAdapter = (*Adapter)(nil)
 func Info() api.KindInfo {
 	fields := []api.Field{
 		{Key: "url", Label: "URL", Type: "string", Placeholder: "https://siem.example.com/ingest",
-			Help: "The destination's ingest endpoint. Leave empty when the URL itself is the credential, and set secret_url instead."},
+			Help: "The destination's ingest endpoint. Empty when Secret URL is set."},
 		{Key: "secret_url", Label: "Secret URL", Type: "string", Credential: true,
-			Help: "For a destination whose URL carries its token, such as a Sumo Logic HTTP source: the whole URL, stored encrypted. Only its host is ever shown."},
+			Help: "The whole URL, for a destination whose URL carries its token, such as a Sumo Logic HTTP source."},
 		{Key: "token", Label: "Token", Type: "string", Credential: true,
-			Help: "The API key or token the destination checks. Stored encrypted and never shown again."},
+			Help: "The API key or token the destination checks."},
 		{Key: "body", Label: "Body", Type: "select", Default: BodyNDJSON,
 			Help: "The shape of each POST's body.",
 			Options: []api.Option{
@@ -639,32 +639,31 @@ func Info() api.KindInfo {
 		Name:     "HTTPS",
 		Description: "Posts every audit event, in batches as it is written, to a SIEM's HTTPS ingest endpoint: Splunk, Datadog, Elastic, Sumo Logic, Microsoft Sentinel, or anything that takes JSON with a token. " +
 			"A copy of the audit log leaves this installation.",
-		IDPrefix: "as_",
-		Fields:   append(fields, sinkkit.Fields(DefaultMaxBatch)...),
-		Presets:  presets(),
+		IDPrefix:    "as_",
+		Fields:      append(fields, sinkkit.Fields(DefaultMaxBatch)...),
+		Presets:     presets(),
+		OtherPreset: "Another SIEM",
+		Steps:       steps(),
 	}
 }
 
 func presets() []api.Preset {
 	return []api.Preset{
 		{ID: "splunk_hec", Label: "Splunk HTTP Event Collector",
-			Help:   "In Splunk, Settings > Data inputs > HTTP Event Collector: create a token and copy its value. The URL is your Splunk host on the HEC port, usually 8088, ending /services/collector/event. On Splunk Cloud the host is http-inputs-<stack>.splunkcloud.com on port 443.",
+			Help:   "In Splunk, Settings > Data inputs > HTTP Event Collector: under Global Settings set All Tokens to Enabled, then choose New Token and copy its value. The URL is your Splunk host on the HEC port, usually 8088, ending /services/collector/event. On Splunk Cloud the host is http-inputs-<stack>.splunkcloud.com on port 443.",
 			Values: map[string]string{"url": "https://splunk.example.com:8088/services/collector/event", "body": BodySplunkHEC, "auth_scheme": "Splunk"}},
 		{ID: "datadog", Label: "Datadog Logs",
-			Help:   "In Datadog, Organization Settings > API Keys: create an API key and set it as the token. The URL is for the US1 site; for another site use its intake host, such as http-intake.logs.datadoghq.eu for EU or http-intake.logs.us5.datadoghq.com for US5.",
+			Help:   "In Datadog, Organization Settings > API Keys: choose New Key and set the key as the token. The URL is for the US1 site; for another site use its intake host, such as http-intake.logs.datadoghq.eu for EU or http-intake.logs.us5.datadoghq.com for US5.",
 			Values: map[string]string{"url": "https://http-intake.logs.datadoghq.com/api/v2/logs", "body": BodyDatadog, "auth_header": "DD-API-KEY", "auth_scheme": SchemeNone}},
 		{ID: "elastic", Label: "Elastic",
-			Help:   "In Kibana, Stack Management > API keys: create a key that may write to the data stream and set its encoded value as the token. The URL is your Elasticsearch endpoint, then a data stream name such as logs-pando.audit-default, then /_bulk.",
+			Help:   "In Kibana, open API keys and choose Create API key, with create_doc and auto_configure on the data stream, and set its Encoded value as the token. The URL is your Elasticsearch endpoint, then a data stream name such as logs-pando.audit-default, then /_bulk.",
 			Values: map[string]string{"url": "https://my-deployment.es.example.com/logs-pando.audit-default/_bulk", "body": BodyElasticBulk, "auth_scheme": "ApiKey"}},
 		{ID: "sumo_logic", Label: "Sumo Logic HTTP source",
-			Help:   "In Sumo Logic, Manage Data > Collection: add an HTTP Logs and Metrics source to a hosted collector and copy its URL. The URL contains the source's token, so set it as the secret URL credential and leave url and token empty.",
+			Help:   "In Sumo Logic, Data Management > Data Collection > Collection: choose Add Source beside a hosted collector, then HTTP Logs & Metrics, and copy its HTTP Source Address. The URL contains the source's token, so set it as the secret URL credential and leave url and token empty.",
 			Values: map[string]string{"body": BodyNDJSON}},
 		{ID: "azure_monitor", Label: "Microsoft Sentinel (Azure Monitor Logs ingestion)",
-			Help: "In Azure, create a data collection endpoint and a data collection rule with a stream named Custom-PandoAudit_CL whose columns match the events, then use the endpoint's logs ingestion URL and the rule's immutable ID in the URL. " +
+			Help: "In Azure, create a data collection rule with a stream named Custom-PandoAudit_CL whose columns match the events, and give the app that mints the token the Monitoring Metrics Publisher role on it. Use the rule's logs ingestion endpoint, or a data collection endpoint's, and its immutable ID in the URL. " +
 				"The token is a Microsoft Entra ID access token for the https://monitor.azure.com scope. This adapter sends a static token and does not mint or refresh one, so a token that expires stops delivery until it is replaced.",
 			Values: map[string]string{"url": "https://my-dce.eastus-1.ingest.monitor.azure.com/dataCollectionRules/dcr-00000000000000000000000000000000/streams/Custom-PandoAudit_CL?api-version=2023-01-01", "body": BodyJSONArray, "auth_scheme": "Bearer", "max_body_bytes": "1000000"}},
-		{ID: "generic", Label: "Generic NDJSON (Google SecOps and others)",
-			Help:   "Any endpoint that takes newline-delimited JSON with a token in a header. Set the URL, the header and scheme it expects, and the token.",
-			Values: map[string]string{"body": BodyNDJSON}},
 	}
 }

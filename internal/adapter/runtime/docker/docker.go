@@ -225,9 +225,9 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 			return errs.Newf(errs.AdapterUnavailable,
 				"The Docker runtime is set to start apps with %q, and Docker has no container runtime by that name.",
 				a.config.OCIRuntime).
-				WithRemedy("Install it and register it under \"runtimes\" in /etc/docker/daemon.json, then " +
-					"restart Docker — for gVisor, `runsc install` does both. Or clear the container runtime " +
-					"setting to use Docker's default.")
+				WithRemedy("Install it and register it under \"runtimes\" in /etc/docker/daemon.json " +
+					"(~/.config/docker/daemon.json for rootless Docker), then restart Docker — for gVisor, " +
+					"`runsc install` does both. Or clear the container runtime setting to use Docker's default.")
 		}
 	}
 	return nil

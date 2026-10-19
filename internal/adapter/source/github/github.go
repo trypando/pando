@@ -354,14 +354,14 @@ func Info() api.KindInfo {
 		),
 		forgekit.HostField(defaultHost),
 		forgekit.ScopeField("Owner",
-			"The organization or user on GitHub. Empty is every repository the credential can read.",
+			"The organization or user on GitHub. Empty is every repository the credential can read; a GitHub App without an installation ID needs one.",
 			"acme"),
 		{Key: "app_id", Label: "App ID", Type: "string", ShownWhen: appWhen, Placeholder: "123456",
 			Help: "The App's ID, shown on its settings page in GitHub under General → About."},
 		{Key: "installation_id", Label: "Installation ID", Type: "string", ShownWhen: appWhen, Placeholder: "45678901",
 			Help: "The number at the end of the installation's settings address. Empty looks it up from the owner."},
 		{Key: FieldAppPrivateKey, Label: "App private key", Type: "string", Multiline: true, Credential: true, ShownWhen: appWhen,
-			Help: "The PEM private key generated on the App's settings page, beginning -----BEGIN RSA PRIVATE KEY-----."},
+			Help: "The contents of the .pem file GitHub downloads under the App's Credentials, Key pairs."},
 	}
 	fields = append(fields, forgekit.OAuthFields(
 		"From the OAuth application registered in GitHub under Settings → Developer settings → OAuth Apps, with device flow enabled.")...)
@@ -387,6 +387,7 @@ func Info() api.KindInfo {
 			{ID: "ghes", Label: "GitHub Enterprise Server",
 				Help: "Enter the server's host. Its API is at https://<host>/api/v3 unless it was moved."},
 		},
+		Steps: steps(),
 	}
 }
 

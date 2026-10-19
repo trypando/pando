@@ -132,9 +132,9 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 		return errs.New(errs.ValidInvalid, "Cloudflare routing needs an API token, and none is set.").
 			WithRemedy(tokenRemedy)
 	case !accountPattern.MatchString(cfg.AccountID):
-		return errs.New(errs.ValidInvalid, "Cloudflare routing needs the account ID, a 32-character code shown on the account's overview page in Cloudflare's dashboard.")
+		return errs.New(errs.ValidInvalid, "Cloudflare routing needs the account ID, a 32-character code shown under API on any of your domains' Overview pages in Cloudflare.")
 	case cfg.Zone == "" || !strings.Contains(cfg.Zone, "."):
-		return errs.New(errs.ValidInvalid, "Cloudflare routing needs the zone apps are named in, such as example.com.")
+		return errs.New(errs.ValidInvalid, "Cloudflare routing needs a primary zone, the domain new apps are named in, such as example.com.")
 	case cfg.TunnelID != "" && !uuidPattern.MatchString(cfg.TunnelID):
 		return errs.Newf(errs.ValidInvalid, "%q is not a Cloudflare tunnel ID. A tunnel ID looks like 6ff42ae2-765d-4adf-8112-31c55c1551ef.", cfg.TunnelID)
 	}
@@ -142,7 +142,7 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	for _, z := range strings.FieldsFunc(cfg.OtherZones, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' }) {
 		z = normalizeZone(z)
 		if !strings.Contains(z, ".") {
-			return errs.Newf(errs.ValidInvalid, "%q in other zones is not a Cloudflare zone. A zone is a domain such as example.org.", z)
+			return errs.Newf(errs.ValidInvalid, "%q in secondary zones is not a Cloudflare zone. A zone is a domain such as example.org.", z)
 		}
 		if !slices.Contains(zones, z) {
 			zones = append(zones, z)
@@ -444,7 +444,7 @@ func (a *Adapter) rule(r api.RouteRequest) (ingressRule, error) {
 		if zoneOf(host, a.zones) == "" {
 			return ingressRule{}, errs.Newf(errs.AdapterFailed,
 				"This app's hostname, %s, is not in the Cloudflare zone %s, so the tunnel cannot serve it.", host, strings.Join(a.zones, " or ")).
-				WithRemedy("Set the app's hostname to one ending in " + strings.Join(a.zones, " or ") + ", or add its zone to this adapter's other zones.")
+				WithRemedy("Set the app's hostname to one ending in " + strings.Join(a.zones, " or ") + ", or add its zone to this adapter's secondary zones.")
 		}
 		return ingressRule{Hostname: host, Service: r.ProxyUpstream}, nil
 
@@ -499,7 +499,7 @@ func (a *Adapter) zoneFor(ctx context.Context, host string) (string, error) {
 	if z == "" {
 		return "", errs.Newf(errs.AdapterFailed, "%s is not in the Cloudflare zone %s, so Pando cannot point it at the tunnel.",
 			host, strings.Join(a.zones, " or ")).
-			WithRemedy("Use a hostname in one of those zones, or add its zone to this adapter's other zones.")
+			WithRemedy("Use a hostname in one of those zones, or add its zone to this adapter's secondary zones.")
 	}
 	return a.zoneID(ctx, z)
 }
@@ -558,6 +558,31 @@ func (a *Adapter) removeRecord(ctx context.Context, host string) error {
 	return nil
 }
 
+// warn says what in a configuration works but needs more from Cloudflare:
+// a console hostname more than one level below its zone. Cloudflare's
+// included certificate covers a zone and one level under it, so TLS fails
+// there without one that covers it — which an Enterprise or Advanced
+// Certificate Manager zone may have, so it is not refused.
+func warn(raw json.RawMessage) []string {
+	var cfg Config
+	if json.Unmarshal(raw, &cfg) != nil {
+		return nil
+	}
+	host := normalizeZone(cfg.ConsoleHostname)
+	if host == "" {
+		return nil
+	}
+	zones := []string{normalizeZone(cfg.Zone)}
+	for _, z := range strings.FieldsFunc(cfg.OtherZones, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' }) {
+		zones = append(zones, normalizeZone(z))
+	}
+	zone := zoneOf(host, zones)
+	if zone == "" || strings.Count(host, ".")-strings.Count(zone, ".") < 2 {
+		return nil
+	}
+	return []string{fmt.Sprintf("The console hostname %s is more than one level below %s. Cloudflare's included certificate covers only one level, so TLS fails there unless the zone has a certificate covering it, such as one from Advanced Certificate Manager.", host, zone)}
+}
+
 // --- helpers -----------------------------------------------------------------
 
 // within reports whether host is zone or a name under it.
@@ -609,9 +634,9 @@ var _ api.RoutingAdapter = (*Adapter)(nil)
 //   - Zone, Zone, Read: find the zone's ID from its name.
 const tokenPermissions = "Account / Cloudflare Tunnel / Edit; Zone / DNS / Edit; Zone / Zone / Read"
 
-const tokenHelp = "In Cloudflare, go to My Profile, API Tokens, Create Token, Create Custom Token. " +
+const tokenHelp = "In Cloudflare, create a custom token under Manage account, Account API tokens, or under My Profile, API Tokens. " +
 	"Permissions: " + tokenPermissions + ". " +
-	"Account Resources: your account. Zone Resources: the zone below, and each of the other zones. " +
+	"Account Resources: your account. Zone Resources: the primary zone, and each secondary zone. " +
 	"Pando uses it to create the tunnel and to point each app's hostname at it."
 
 // tokenRemedy is what a refused or missing token's error says to do.
@@ -631,19 +656,21 @@ func Info() api.KindInfo {
 			{Key: "api_token", Label: "API token", Type: "string", Credential: true, Required: true,
 				Help: tokenHelp},
 			{Key: "account_id", Label: "Account ID", Type: "string", Required: true,
-				Help: "Shown on the account's overview page in Cloudflare's dashboard.", Placeholder: "0123456789abcdef0123456789abcdef"},
-			{Key: "zone", Label: "Zone", Type: "string", Required: true,
-				Help: "Your domain in Cloudflare. New apps are served at <app>.<zone>.", Placeholder: "example.com"},
-			{Key: "other_zones", Label: "Other zones", Type: "string",
-				Help:        "More of your domains in Cloudflare that apps can be named in, separated by commas. An app moves to one by changing its address; new apps still use the zone above.",
-				Placeholder: "example.org, example.net"},
+				Help: "On your domain's Overview page in Cloudflare, under API.", Placeholder: "0123456789abcdef0123456789abcdef"},
+			{Key: "zone", Label: "Primary zone", Type: "string", Required: true,
+				Help: "A domain on your Cloudflare account. New apps are served at <app>.<zone>.", Placeholder: "example.com"},
+			{Key: "other_zones", Label: "Secondary zones", Type: "string", List: true,
+				Help:        "More zones apps can be named in.",
+				Placeholder: "example.org"},
 			{Key: "console_hostname", Label: "Console hostname", Type: "string",
-				Help: "Where the console is served, and the hostname apps on a path are served under. Empty is the zone itself.", Placeholder: "pando.example.com"},
+				Help: "Where the console is served. Empty is the primary zone.", Placeholder: "pando.example.com", Suggest: "pando.{zone}"},
 			{Key: "tunnel_id", Label: "Existing tunnel", Type: "string",
-				Help:    "Leave empty and Pando creates a tunnel of its own. Or give a tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
+				Help:    "Leave empty and Pando creates a tunnel of its own. Or give a remotely managed tunnel's ID to use that one: Pando adds its rules and leaves the rest alone.",
 				Default: "A tunnel of Pando's own", Placeholder: "6ff42ae2-765d-4adf-8112-31c55c1551ef", Advanced: true},
 			{Key: "image", Label: "cloudflared image", Type: "string", Default: DefaultImage,
 				Help: "Set to run a different cloudflared release than this Pando ships with.", Advanced: true},
 		},
+		Warn:  warn,
+		Steps: steps(),
 	}
 }

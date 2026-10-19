@@ -97,6 +97,7 @@ func TestWarningsReadTheMountTable(t *testing.T) {
 	fakeMountinfo(t, containerMountinfo)
 
 	require.Empty(t, local.Warnings(nil), "the default is on the data volume")
+	require.NotNil(t, local.Info().Warn, "saving one returns them")
 	require.Empty(t, local.Warnings(json.RawMessage(`{"path":"/srv/pando backups"}`)))
 	require.Empty(t, local.Warnings(json.RawMessage(`{`)), "a malformed configuration is Configure's error, not a warning")
 	require.Empty(t, local.Warnings(json.RawMessage(`{"path":""}`)))

@@ -48,5 +48,6 @@ func Info() api.KindInfo {
 				Help:    "The runtime every host's Docker starts apps with, by the name it is registered under in daemon.json, such as runsc.",
 				Default: "Docker's default, runc"},
 		},
+		Steps: steps(),
 	}
 }

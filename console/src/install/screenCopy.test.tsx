@@ -147,7 +147,13 @@ describe('capacity', () => {
 });
 
 describe('adding a source connection', () => {
-  it('says it takes effect when saved', () => {
-    expect(render(<AdapterDialog category="source" adapters={[]} onClose={() => {}} onSaved={() => {}} />)).toContain('Takes effect when saved.');
+  // When it takes effect is said once, after it is saved, beside the
+  // restart notice; the steps before it are about setting it up.
+  it('does not interrupt the steps with when it takes effect', () => {
+    const html = render(<AdapterDialog category="source" adapters={[]} onClose={() => {}} onSaved={() => {}} />, [
+      [['adapter-kinds'], { kinds: [] }],
+    ]);
+    expect(html).toContain('Add source adapter');
+    expect(html).not.toContain('Takes effect');
   });
 });

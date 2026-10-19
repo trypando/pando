@@ -105,6 +105,7 @@ func TestWarningsNameAStoredBaseURL(t *testing.T) {
 	require.Contains(t, w[0], "base_url")
 
 	require.Empty(t, loopback.Warnings(nil))
+	require.Equal(t, w, loopback.Info().Warn(json.RawMessage(`{"base_url":"http://dev.local"}`)), "saving one returns them")
 	require.Empty(t, loopback.Warnings(json.RawMessage(`{}`)))
 	require.Empty(t, loopback.Warnings(json.RawMessage(`{"base_url":""}`)))
 	require.Empty(t, loopback.Warnings(json.RawMessage(`{`)), "unreadable configuration is Configure's error, not a warning")

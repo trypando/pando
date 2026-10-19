@@ -260,6 +260,13 @@ func TestAProvidersOwnDeleteRemedyIsTheNote(t *testing.T) {
 	}
 }
 
+// TestSavingARegistrySaysWhatWillNotWork asserts that saving one returns
+// registrykit's warnings.
+func TestSavingARegistrySaysWhatWillNotWork(t *testing.T) {
+	t.Parallel()
+	require.NotEmpty(t, oci.Info().Warn(json.RawMessage(`{"url":"ghcr.io"}`)))
+}
+
 // TestDockerHubIsOneRepositoryOrRefused asserts that Docker Hub, whose
 // repositories are one namespace and one name, defaults to one repository,
 // refuses a repository per app when configured rather than at the first

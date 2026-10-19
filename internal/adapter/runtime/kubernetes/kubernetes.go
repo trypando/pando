@@ -368,7 +368,7 @@ func (c *Config) validate() error {
 		if r.value == "" {
 			return errs.Newf(errs.ValidInvalid,
 				"The Kubernetes runtime needs the cluster's %s, so that apps can be kept from opening connections into the cluster. It is not set.", r.key).
-				WithRemedy("Set it to the range the cluster gives pods or Services, such as 10.244.0.0/16 for pods or 10.96.0.0/12 for Services. `kubectl cluster-info dump | grep -m1 -e cluster-cidr -e service-cluster-ip-range` shows them on most clusters.")
+				WithRemedy("Set it to the range the cluster gives pods or Services, such as 10.244.0.0/16 for pods or 10.96.0.0/12 for Services. `kubectl get servicecidr kubernetes` shows the Service range, and `kubectl cluster-info dump | grep -m1 -- --cluster-cidr` the pod range on most clusters.")
 		}
 		if _, _, err := net.ParseCIDR(r.value); err != nil {
 			return errs.Newf(errs.ValidInvalid, "The Kubernetes runtime's %s is %q, which is not an address range such as 10.244.0.0/16.", r.key, r.value)
@@ -743,11 +743,11 @@ func Info() api.KindInfo {
 		IDPrefix:    "rt_",
 		Fields: []api.Field{
 			{Key: "pod_cidr", Label: "Pod address range", Type: "string", Required: true, Placeholder: "10.244.0.0/16",
-				Help: "The range the cluster gives pods. Apps may open connections out of the cluster, never into this range."},
+				Help: "The range the cluster assigns pods. Apps may not open connections into it."},
 			{Key: "service_cidr", Label: "Service address range", Type: "string", Required: true, Placeholder: "10.96.0.0/12",
-				Help: "The range the cluster gives Services. Apps may not open connections into it."},
+				Help: "The range the cluster assigns Services. Apps may not open connections into it."},
 			{Key: "egress_gateway_image", Label: "Egress gateway image", Type: "string", Placeholder: "ghcr.io/trypando/pando:latest",
-				Help: "An image with Pando's binary at /usr/local/bin/pando, run in front of an app whose egress rules restrict anything. Without one, such apps cannot be deployed."},
+				Help: "Any image with Pando's binary at /usr/local/bin/pando. Empty, apps that restrict egress can't be deployed."},
 			{Key: "kubeconfig", Label: "Kubeconfig file", Type: "string", Advanced: true, Default: "The cluster Pando runs in",
 				Help: "A kubeconfig file, for running Pando outside the cluster during development. Pando's proxy reaches apps by cluster DNS names, so in production Pando runs inside the cluster."},
 			{Key: "context", Label: "Kubeconfig context", Type: "string", Advanced: true, Default: "The file's current context",
@@ -795,6 +795,7 @@ func Info() api.KindInfo {
 				Help:      "The port every node listens on for the edge's HTTPS.",
 				ShownWhen: &api.Condition{Key: "edge_service_type", Values: []string{string(corev1.ServiceTypeNodePort)}}},
 		},
+		Steps: steps(),
 	}
 }
 

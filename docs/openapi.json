@@ -215,7 +215,7 @@
       "post": {
         "operationId": "createAdapter",
         "summary": "Configure an adapter",
-        "description": "Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. A source connection (category `source`) and an image registry (category `image_registry`) are used from the moment they are saved, with no restart; an image registry Pando could not push to is refused before it is saved. An audit sink (category `audit_sink`) is used from the next delivery pass too, is refused when its settings are, and needs `install.audit.export` as well, because it sends the audit log off the installation. `is_default` makes it the default of its category in place of the current one, in one step: `replaced_default` names the adapter that stopped being the default, and `handover` says what that changes. Through the API, an adapter's `*_env` setting may name only its kind's default variable, and an adapter that would read its key from Pando's environment may not be pointed at another `base_url` without a stored key.\n\nNeeds `install.adapters.manage`.",
+        "description": "Configure an adapter. Settings go in config; credentials such as an API key go in credentials, which is write-only and stored encrypted. A source connection (category `source`) and an image registry (category `image_registry`) are used from the moment they are saved, with no restart; an image registry Pando could not push to is refused before it is saved. An audit sink (category `audit_sink`) is used from the next delivery pass too, is refused when its settings are, and needs `install.audit.export` as well, because it sends the audit log off the installation. `warnings` lists what saved but may not work as wanted, such as a Cloudflare console hostname its included certificate does not cover; a warning never refuses a save. `is_default` makes it the default of its category in place of the current one, in one step: `replaced_default` names the adapter that stopped being the default, and `handover` says what that changes. Through the API, an adapter's `*_env` setting may name only its kind's default variable, and an adapter that would read its key from Pando's environment may not be pointed at another `base_url` without a stored key.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Installation"
         ],
@@ -284,6 +284,15 @@
                     },
                     "note": {
                       "type": "string"
+                    },
+                    "warnings": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "replaced_default": {
                       "type": "string"
@@ -7111,7 +7120,7 @@
       "get": {
         "operationId": "listIdentityProviders",
         "summary": "List identity providers",
-        "description": "Every identity provider, local accounts included: settings, which credentials are set (never their values), the callback URL and entity ID to register with the provider, the SCIM base URL, and its revocation — session lifetime, mode, and the window that results. `kinds` describes the kinds that can be added, with presets for known providers.\n\nNeeds `install.view`.",
+        "description": "Every identity provider, local accounts included: settings, which credentials are set (never their values), the callback URL and entity ID to register with the provider, the SCIM base URL, and its revocation — session lifetime, mode, and the window that results. `kinds` describes the kinds that can be added, with presets for known providers. `endpoints` gives a new provider's `callback_url` and `entity_id` with `{id}` for the ID it is created with, so they can be registered with the provider before it is saved.\n\nNeeds `install.view`.",
         "tags": [
           "Identity providers"
         ],
@@ -7140,11 +7149,27 @@
                       "items": {
                         "$ref": "#/components/schemas/KindInfo"
                       }
+                    },
+                    "endpoints": {
+                      "type": "object",
+                      "properties": {
+                        "callback_url": {
+                          "type": "string"
+                        },
+                        "entity_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "callback_url",
+                        "entity_id"
+                      ]
                     }
                   },
                   "required": [
                     "providers",
-                    "kinds"
+                    "kinds",
+                    "endpoints"
                   ]
                 }
               }
@@ -7159,7 +7184,7 @@
       "post": {
         "operationId": "createIdentityProvider",
         "summary": "Add an identity provider",
-        "description": "Add an identity provider: `kind` (oidc or saml), `name`, `config`, write-only `credentials`, `jit_provisioning`, `link_by_email`. Off until `enabled` is set, so it can be tested first. Needs every installation permission, because a provider decides who signs in as which account.\n\nNeeds `install.adapters.manage`.",
+        "description": "Add an identity provider: `kind` (oidc or saml), `name`, `config`, write-only `credentials`, `jit_provisioning`, `link_by_email`. Off until `enabled` is set, so it can be tested first. Needs every installation permission, because a provider decides who signs in as which account. `id` may be given, an `idp_` ULID not yet used, to create it with the ID its registered addresses were built from.\n\nNeeds `install.adapters.manage`.",
         "tags": [
           "Identity providers"
         ],
@@ -11656,6 +11681,20 @@
           "install_roles"
         ]
       },
+      "Action": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "table": {
+            "$ref": "#/components/schemas/Table"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
       "Actor": {
         "type": "object",
         "properties": {
@@ -11717,6 +11756,9 @@
           "multiline": {
             "type": "boolean"
           },
+          "list": {
+            "type": "boolean"
+          },
           "shown_when": {
             "$ref": "#/components/schemas/Condition"
           },
@@ -11733,6 +11775,15 @@
             "type": "string"
           },
           "placeholder": {
+            "type": "string"
+          },
+          "presets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "suggest": {
             "type": "string"
           }
         },
@@ -14543,6 +14594,15 @@
           },
           "managed": {
             "type": "boolean"
+          },
+          "other_preset": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Step"
+            }
           }
         },
         "required": [
@@ -14586,6 +14646,21 @@
           "limit",
           "source",
           "owned"
+        ]
+      },
+      "Link": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "url"
         ]
       },
       "LoginRequest": {
@@ -15300,6 +15375,9 @@
       "ProviderInput": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string"
+          },
           "kind": {
             "type": "string"
           },
@@ -16698,6 +16776,59 @@
           "breaking"
         ]
       },
+      "Step": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "lede": {
+            "type": "string"
+          },
+          "do": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Action"
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            }
+          },
+          "fields": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "shown_when": {
+            "$ref": "#/components/schemas/Condition"
+          },
+          "presets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "title",
+          "fields"
+        ]
+      },
       "SubjectView": {
         "type": "object",
         "properties": {
@@ -16825,6 +16956,39 @@
           "created_by",
           "created_at",
           "updated_at"
+        ]
+      },
+      "Table": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "rows": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "required": [
+          "columns",
+          "rows"
         ]
       },
       "TestReport": {

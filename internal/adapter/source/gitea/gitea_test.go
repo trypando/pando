@@ -254,7 +254,7 @@ func TestOAuthWebFlow(t *testing.T) {
 	u, _ := url.Parse(auth.AuthorizeURL)
 	q := u.Query()
 	if u.Path != "/login/oauth/authorize" || q.Get("state") != "state-9" || q.Get("code_challenge") == "" ||
-		q.Get("code_challenge_method") != "S256" || q.Get("scope") != "read:repository" {
+		q.Get("code_challenge_method") != "S256" || q.Get("scope") != "read:repository read:user" {
 		t.Fatalf("authorize URL = %s", auth.AuthorizeURL)
 	}
 	verifier = auth.Flow.Reveal()

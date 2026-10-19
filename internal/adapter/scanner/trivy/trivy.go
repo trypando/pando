@@ -439,8 +439,7 @@ func (a *Adapter) ensureImage(ctx context.Context) error {
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed,
 			"Could not fetch the scanner image "+a.config.Image+".", err).
-			WithRemedy("The host needs to reach the registry once, or the image can be pulled " +
-				"by hand and the adapter pointed at a mirror.")
+			WithRemedy("Allow this host to reach the registry, or set the adapter's Image to a copy in a registry it can reach.")
 	}
 	defer func() { _ = rc.Close() }()
 
@@ -656,7 +655,7 @@ func Info() api.KindInfo {
 		IDPrefix:    "scn_",
 		Fields: []api.Field{
 			{Key: "image", Label: "Image", Type: "string", Help: "The Trivy image to run.", Default: "aquasec/trivy:0.74.0 (pinned)", Advanced: true},
-			{Key: "host", Label: "Docker host", Type: "string", Help: "Where to run it.", Default: "DOCKER_HOST, or the local socket", Advanced: true},
+			{Key: "host", Label: "Docker host", Type: "string", Help: "The Docker endpoint Trivy runs on.", Default: "DOCKER_HOST, or the local socket", Advanced: true},
 			{Key: "timeout_seconds", Label: "Timeout", Type: "int", Help: "Seconds a scan may take.", Default: "600", Advanced: true},
 			{Key: "db_repository", Label: "Vulnerability database repository", Type: "string",
 				Help:    "OCI repositories to download Trivy's vulnerability database from, comma-separated, first tried first.",

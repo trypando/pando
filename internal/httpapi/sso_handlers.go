@@ -231,7 +231,11 @@ func (s *Server) handleListIdentityProviders(w http.ResponseWriter, r *http.Requ
 		Error(w, r, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"providers": providers, "kinds": s.IDP.KindInfos()})
+	// A new provider's addresses, with {id} for the ID it is created with:
+	// registered with the provider while it is set up, before it is saved.
+	next := s.IDP.Endpoints(s.origin(r), "{id}")
+	JSON(w, http.StatusOK, map[string]any{"providers": providers, "kinds": s.IDP.KindInfos(),
+		"endpoints": map[string]string{"callback_url": next.CallbackURL, "entity_id": next.EntityID}})
 }
 
 func (s *Server) handleGetIdentityProvider(w http.ResponseWriter, r *http.Request) {

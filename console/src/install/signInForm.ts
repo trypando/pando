@@ -23,6 +23,27 @@ export interface ProviderKind extends AdapterKind {
   presets?: Preset[] | null;
 }
 
+/** Crockford's base32, the alphabet a ULID is written in. */
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+/**
+ * A new identity provider's ID, chosen before it is saved so the addresses
+ * built from it can be registered with the provider first: idp_ and a ULID,
+ * as Pando's own IDs are. The server checks it is well formed and unused.
+ */
+export function newProviderID(now = Date.now(), random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))): string {
+  let time = '';
+  let t = now;
+  for (let i = 0; i < 10; i++) {
+    time = CROCKFORD[t % 32] + time;
+    t = Math.floor(t / 32);
+  }
+  const bytes = random(16);
+  let rest = '';
+  for (let i = 0; i < 16; i++) rest += CROCKFORD[(bytes[i] ?? 0) % 32];
+  return `idp_${time}${rest}`;
+}
+
 /** A provider's revocation, as the server computes it (R-047, R-050). */
 export interface Revocation {
   max_lifetime_seconds: number;

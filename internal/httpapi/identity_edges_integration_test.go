@@ -300,3 +300,40 @@ func TestR048_SCIMRefusesWhatItCannotApplyAndReplacesWhole(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, offline.Code)
 	require.True(t, strings.Contains(offline.String(), "turned off"), offline.String())
 }
+
+// TestR261_AProviderCanBeRegisteredBeforeItIsSaved asserts R-261 for guided
+// sign-in setup: the listing gives a new provider's addresses with {id} for
+// its ID, and a provider created with an ID chosen ahead has exactly those
+// addresses, so they could be registered with the provider first.
+func TestR261_AProviderCanBeRegisteredBeforeItIsSaved(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+
+	list := i.do(admin, http.MethodGet, "/identity-providers", nil)
+	require.Equal(t, http.StatusOK, list.Code, list.String())
+	var got struct {
+		Endpoints struct {
+			CallbackURL string `json:"callback_url"`
+			EntityID    string `json:"entity_id"`
+		} `json:"endpoints"`
+	}
+	list.JSON(t, &got)
+	require.Contains(t, got.Endpoints.CallbackURL, "/api/v1/auth/providers/{id}/callback")
+	require.Contains(t, got.Endpoints.EntityID, "/api/v1/auth/providers/{id}/metadata")
+
+	const chosen = "idp_01J9ZQ5Y8W3V7T2R6N4M1K0H8G"
+	id := oidcProvider(t, i, admin, "Chosen", map[string]any{"id": chosen})
+	require.Equal(t, chosen, id)
+	one := i.do(admin, http.MethodGet, "/identity-providers/"+id, nil)
+	require.Equal(t, http.StatusOK, one.Code, one.String())
+	require.Contains(t, one.String(), strings.ReplaceAll(got.Endpoints.CallbackURL, "{id}", chosen))
+
+	for name, bad := range map[string]string{"taken": chosen, "not an ID": "okta", "another kind": "app_01J9ZQ5Y8W3V7T2R6N4M1K0H8G", "local": "idp_local"} {
+		refused := i.do(admin, http.MethodPost, "/identity-providers", map[string]any{
+			"id": bad, "kind": "oidc", "name": "Refused " + name,
+			"config": map[string]any{"issuer": "https://idp.example.com", "client_id": "x"},
+		})
+		require.Equal(t, http.StatusBadRequest, refused.Code, "%s: %s", name, refused.String())
+	}
+}

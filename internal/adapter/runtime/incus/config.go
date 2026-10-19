@@ -151,7 +151,7 @@ func (c *Config) validateAddress() error {
 	}
 	if strings.TrimSpace(c.ServerCertificate) == "" {
 		return refuse("The Incus server at %s is reached over HTTPS, and its certificate is not set, so Pando cannot tell it is talking to that server.", c.Address).
-			WithRemedy("Paste the server's certificate (the output of `incus info | sed -n '/BEGIN CERT/,/END CERT/p'` on the server) into server_certificate in " + settingIn + ".")
+			WithRemedy("Paste the certificate Incus serves, /var/lib/incus/server.crt on the server or /var/lib/incus/cluster.crt on a cluster, into server_certificate in " + settingIn + ".")
 	}
 	if _, err := clientCertificate(c.Credentials.TLSClient); err != nil {
 		return refuse("The Incus server at %s is reached over HTTPS, and the client certificate is not usable: %v.", c.Address, err).

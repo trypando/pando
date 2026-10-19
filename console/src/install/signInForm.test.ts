@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  newProviderID,
   duration,
   groupsText,
   outcomeText,
@@ -95,5 +96,16 @@ describe('groupsText', () => {
       'No groups sent. Check the groups claim or attribute if you expected some.',
     );
     expect(groupsText({ kind: 'existing', groups_from: 'sign_in' }, ['ops', 'dev'])).toBe('Set at each sign-in: ops, dev.');
+  });
+});
+
+describe('a new provider’s ID', () => {
+  it('is idp_ and a ULID, sortable by when it was made', () => {
+    const zeros = () => new Uint8Array(16);
+    expect(newProviderID(0, zeros)).toBe('idp_00000000000000000000000000');
+    const id = newProviderID(Date.UTC(2026, 9, 18), (n) => new Uint8Array(n).fill(31));
+    expect(id).toMatch(/^idp_[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(id.slice(-16)).toBe('ZZZZZZZZZZZZZZZZ');
+    expect(newProviderID(1) < newProviderID(2)).toBe(true);
   });
 });
