@@ -269,6 +269,10 @@ func (g *GC) tearDownDeletedBundles(ctx context.Context) {
 	// next one and its audit event is still written.
 	registryErrs := g.forgetAllRegistryImages(ctx, destroyed)
 
+	// The bundles are gone; recording that, and its audit event, is not cut
+	// short by a pass canceled meanwhile, so the two land together.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
 	for i, t := range destroyed {
 		if err := g.Apps.MarkBundleDestroyed(ctx, t.AppID); err != nil {
 			// The bundle is gone but the row still says otherwise, so the next

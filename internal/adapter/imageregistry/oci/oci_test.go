@@ -421,7 +421,8 @@ func TestR254_TheHealthCheckSignsInToTheRegistry(t *testing.T) {
 
 // TestASingleRepositoryTagNeverExceedsTheRegistrysLimit asserts that the
 // single layout's tag — app, workload and deployment in one — is cut to the
-// 128 characters a registry accepts, keeping its unique end.
+// 128 characters a registry accepts, keeping its unique end and the app it
+// is found by when the app is deleted.
 func TestASingleRepositoryTagNeverExceedsTheRegistrysLimit(t *testing.T) {
 	t.Parallel()
 	r, err := open(t, cfg{"url": "registry.internal/pando", "layout": "single"}, "")
@@ -429,6 +430,7 @@ func TestASingleRepositoryTagNeverExceedsTheRegistrysLimit(t *testing.T) {
 	_, tag := r.Repository("app_"+strings.Repeat("a", 100), strings.Repeat("w", 40), "dep_01HQ9")
 	require.LessOrEqual(t, len(tag), 128)
 	require.True(t, strings.HasSuffix(tag, "-dep_01hq9"), "the deployment, which makes it unique, is kept")
+	require.True(t, strings.HasPrefix(tag, "app_"+strings.Repeat("a", 100)+"-"), "the app, which DeleteApp finds it by, is kept")
 	_, err = name.NewTag("registry.internal/pando:" + tag)
 	require.NoError(t, err)
 }

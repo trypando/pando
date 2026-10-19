@@ -258,15 +258,16 @@ func component(s string) string {
 func (r *Registry) Repository(appID, workload, deploymentID string) (repository, tag string) {
 	app, wl, dep := component(appID), component(workload), component(deploymentID)
 	if r.layout == LayoutSingle {
-		tag = app + "-"
+		rest := dep
 		if wl != "" {
-			tag += wl + "-"
+			rest = wl + "-" + dep
 		}
-		tag += dep
-		if len(tag) > 128 {
-			tag = tag[len(tag)-128:]
+		// A tag is at most 128 characters. What is cut is the start of the
+		// workload, never the app: DeleteApp finds an app's tags by it.
+		if room := max(128-len(app)-1, 0); len(rest) > room {
+			rest = strings.TrimLeft(rest[len(rest)-room:], "._-")
 		}
-		return r.host + "/" + r.prefix, strings.TrimLeft(tag, "._-")
+		return r.host + "/" + r.prefix, app + "-" + rest
 	}
 	repository = r.join("apps/" + app)
 	if wl != "" {
