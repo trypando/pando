@@ -7,6 +7,7 @@ import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { RecipientField } from '../admin/RecipientField';
+import { RepositoryField } from '../admin/RepositoryField';
 import { ActorField } from '../install/ActorField';
 import { Menu, MenuItem } from './Menu';
 import { TagField } from './TagField';
@@ -159,6 +160,56 @@ describe('RecipientField, open', () => {
     expectWired(1);
     mouse(options()[0]!, 'mousedown');
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ label: 'ana' }));
+  });
+});
+
+describe('RepositoryField, open', () => {
+  const seed = () =>
+    queries.setQueryData(['source-repositories', 'src_01GH', ''], {
+      repositories: [
+        { url: 'https://github.com/acme/api', full_name: 'acme/api' },
+        { url: 'https://github.com/acme/web', full_name: 'acme/web' },
+      ],
+    });
+
+  it('is one field that lists repositories and chooses one', () => {
+    seed();
+    const onChange = vi.fn();
+    render(<RepositoryField source="src_01GH" onChange={onChange} />);
+    expect(container.querySelectorAll('input')).toHaveLength(1);
+    expect(container.querySelector('select')).toBeNull();
+
+    focus(input());
+    expectWired(0);
+    key(input(), 'ArrowDown');
+    expectWired(1);
+    key(input(), 'Enter');
+    expect(onChange).toHaveBeenLastCalledWith('https://github.com/acme/web');
+    expect(input().value).toBe('acme/web');
+    expect(container.querySelector('[role="listbox"]')).toBeNull();
+  });
+
+  it('drops the choice once the text changes', () => {
+    seed();
+    const onChange = vi.fn();
+    render(<RepositoryField source="src_01GH" onChange={onChange} />);
+    focus(input());
+    mouse(options()[0]!, 'mousedown');
+    expect(onChange).toHaveBeenLastCalledWith('https://github.com/acme/api');
+
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      set.call(input(), 'acme/ap');
+      input().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenLastCalledWith('');
+  });
+
+  it('says when nothing matches', () => {
+    queries.setQueryData(['source-repositories', 'src_01GH', ''], { repositories: null });
+    render(<RepositoryField source="src_01GH" onChange={() => {}} />);
+    focus(input());
+    expect(container.textContent).toContain('No repositories match.');
   });
 });
 

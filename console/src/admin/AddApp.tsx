@@ -22,7 +22,7 @@
 // goes to it rather than making a second one.
 
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { invalidateAppLists } from './appList';
 import { Banner, Button, Checkbox, Dialog, Input, Select } from '@design';
 
@@ -30,10 +30,10 @@ import { api } from '@api/client';
 import type { App } from '@api/types.gen';
 import { refusal } from '../install/Accounts';
 import { covers, ready as sourceReady, useSources } from '../install/Sources';
-import { useSettled } from '../ui/paged';
 import { trimTrailingSlashes } from '../ui/text';
 import { CredentialFields, credentialBody, credentialComplete, emptyCredential, type CredentialDraft } from './RegistryCredential';
 import { FilePicker, sendFiles } from './UploadSource';
+import { RepositoryField } from './RepositoryField';
 import type { PickedFile } from './pack';
 
 type Kind = 'git' | 'image' | 'upload';
@@ -60,16 +60,6 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
   const sources = useSources(kind === 'git');
   const listable = (sources.data?.sources ?? []).filter((s) => sourceReady(s) && s.capabilities.list_repositories);
   const [from, setFrom] = useState('');
-  const [search, setSearch] = useState('');
-  const settled = useSettled(search.trim());
-  const repos = useQuery({
-    queryKey: ['source-repositories', from, settled],
-    queryFn: () =>
-      api.get<{ repositories: { url: string; full_name: string }[] | null }>(
-        `/sources/${encodeURIComponent(from)}/repositories${settled ? `?q=${encodeURIComponent(settled)}` : ''}`,
-      ),
-    enabled: kind === 'git' && from !== '',
-  });
 
   const ready =
     name.trim() !== '' &&
@@ -159,35 +149,13 @@ export function AddApp({ onAdded, onClose }: { onAdded: (app: App) => void; onCl
             onChange={(e) => {
               if (create.isError) create.reset();
               setFrom(e.target.value);
-              setSearch('');
+              setUrl('');
             }}
           />
         )}
         {kind === 'git' && from !== '' && (
-          <>
-            <Input
-              label="Find a repository"
-              value={search}
-              placeholder="api"
-              helper="Part of its name."
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {repos.isError ? (
-              <Banner tone="failed">{refusal(repos.error)}</Banner>
-            ) : (
-              <Select
-                label="Repository"
-                value={url}
-                disabled={repos.isPending}
-                options={[
-                  ...(url ? [] : [{ value: '', label: repos.isPending ? 'Loading repositories' : 'Choose a repository' }]),
-                  ...(repos.data?.repositories ?? []).map((r) => ({ value: r.url, label: r.full_name })),
-                ]}
-                onChange={(e) => edit(setUrl)(e.target.value)}
-              />
-            )}
-            {error && <Banner tone="failed">{error}</Banner>}
-          </>
+          // Keyed by the connection, so switching starts a fresh search.
+          <RepositoryField key={from} source={from} error={error} onChange={edit(setUrl)} />
         )}
         {kind === 'git' && from === '' && (
           <Input

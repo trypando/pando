@@ -37,3 +37,37 @@ export function useCloseOnOutside(root: Roots, open: boolean, close: () => void)
 export function stepIndex(key: string, i: number, n: number): number {
   return key === 'ArrowDown' ? (i + 1) % n : (i - 1 + n) % n;
 }
+
+/**
+ * A combobox input's keydown for a list chosen from only: the arrow keys move
+ * through n options, Enter chooses the highlighted one, Escape closes.
+ */
+export function pickKeys({
+  open,
+  at,
+  n,
+  setOpen,
+  setAt,
+  choose,
+}: {
+  open: boolean;
+  at: number;
+  n: number;
+  setOpen: (open: boolean) => void;
+  setAt: (step: (i: number) => number) => void;
+  choose: (i: number) => void;
+}) {
+  return (e: { key: string; preventDefault: () => void }) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (n === 0) return;
+      setOpen(true);
+      setAt((i) => stepIndex(e.key, i, n));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (open && at < n) choose(at);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+}

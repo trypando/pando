@@ -58,3 +58,53 @@ export function ComboOption({
     </div>
   );
 }
+
+/** The list under a combobox's input, holding its ComboOptions. */
+export function ComboList({
+  id,
+  label,
+  none,
+  children,
+}: Readonly<{
+  id: string;
+  /** The list's accessible name, such as "Matching accounts". */
+  label: string;
+  /** Said in place of options when none match. */
+  none?: string;
+  children?: ReactNode;
+}>) {
+  return (
+    <div
+      role="listbox"
+      id={id}
+      aria-label={label}
+      style={{
+        position: 'absolute',
+        top: '100%',
+        left: 0,
+        right: 0,
+        zIndex: 20,
+        marginTop: 'var(--space-1)',
+        padding: 'var(--space-1)',
+        background: 'var(--paper-raised)',
+        border: 'var(--border-width) solid var(--rule-strong)',
+        borderRadius: 'var(--radius-md)',
+        boxShadow: 'var(--shadow-popover)',
+      }}
+    >
+      {none && (
+        <p
+          style={{
+            font: 'var(--type-body-ui)',
+            color: 'var(--ink-secondary)',
+            margin: 0,
+            padding: 'var(--space-2) var(--space-3)',
+          }}
+        >
+          {none}
+        </p>
+      )}
+      {children}
+    </div>
+  );
+}

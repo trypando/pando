@@ -21,7 +21,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Input } from '@design';
 
 import { matches } from '../ui/search';
-import { ComboOption } from '../ui/ComboOption';
+import { ComboList, ComboOption } from '../ui/ComboOption';
 import { unionPeople, usePeopleSearch, type Person } from '../ui/people';
 import { stepIndex, useCloseOnOutside } from '../ui/combobox';
 
@@ -144,24 +144,7 @@ export function ActorField({
         }}
       />
       {open && found.length > 0 && (
-        <div
-          role="listbox"
-          id={listID}
-          aria-label={`Matching ${label.toLowerCase()}`}
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            right: 0,
-            zIndex: 20,
-            marginTop: 'var(--space-1)',
-            padding: 'var(--space-1)',
-            background: 'var(--paper-raised)',
-            border: 'var(--border-width) solid var(--rule-strong)',
-            borderRadius: 'var(--radius-md)',
-            boxShadow: 'var(--shadow-popover)',
-          }}
-        >
+        <ComboList id={listID} label={`Matching ${label.toLowerCase()}`}>
           {found.map((o, i) => (
             <ComboOption
               key={o.value}
@@ -174,7 +157,7 @@ export function ActorField({
               mono
             />
           ))}
-        </div>
+        </ComboList>
       )}
     </div>
   );

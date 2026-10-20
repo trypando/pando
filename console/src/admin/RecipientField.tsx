@@ -20,8 +20,8 @@ import { Input } from '@design';
 
 import { api } from '@api/client';
 import type { Recipient } from './share-access';
-import { stepIndex, useCloseOnOutside } from '../ui/combobox';
-import { ComboOption } from '../ui/ComboOption';
+import { pickKeys, useCloseOnOutside } from '../ui/combobox';
+import { ComboList, ComboOption } from '../ui/ComboOption';
 
 interface Principals {
   users: { id: string; username: string; name?: string }[] | null;
@@ -87,6 +87,7 @@ export function RecipientField({
   // Said only once there is an answer to say it about: "No accounts match"
   // under a list that has not loaded yet would be a guess.
   const none = open && !found.isPending && !found.isPlaceholderData && options.length === 0;
+  const noMatch = kind === 'user' ? 'No accounts match.' : 'No groups match.';
 
   return (
     <div ref={root} style={{ position: 'relative' }}>
@@ -109,51 +110,14 @@ export function RecipientField({
           if (value) onChange(null);
         }}
         onFocus={() => setOpen(true)}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-            e.preventDefault();
-            if (options.length === 0) return;
-            setOpen(true);
-            setAt((i) => stepIndex(e.key, i, options.length));
-          } else if (e.key === 'Enter') {
-            e.preventDefault();
-            if (open && options[at]) choose(options[at]);
-          } else if (e.key === 'Escape') {
-            setOpen(false);
-          }
-        }}
+        onKeyDown={pickKeys({ open, at, n: options.length, setOpen, setAt, choose: (i) => choose(options[i]!) })}
       />
       {open && (options.length > 0 || none) && (
-        <div
-          role="listbox"
+        <ComboList
           id={listID}
-          aria-label={kind === 'user' ? 'Matching accounts' : 'Matching groups'}
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            right: 0,
-            zIndex: 20,
-            marginTop: 'var(--space-1)',
-            padding: 'var(--space-1)',
-            background: 'var(--paper-raised)',
-            border: 'var(--border-width) solid var(--rule-strong)',
-            borderRadius: 'var(--radius-md)',
-            boxShadow: 'var(--shadow-popover)',
-          }}
+          label={kind === 'user' ? 'Matching accounts' : 'Matching groups'}
+          none={none ? noMatch : undefined}
         >
-          {none && (
-            <p
-              style={{
-                font: 'var(--type-body-ui)',
-                color: 'var(--ink-secondary)',
-                margin: 0,
-                padding: 'var(--space-2) var(--space-3)',
-              }}
-            >
-              {kind === 'user' ? 'No accounts match.' : 'No groups match.'}
-            </p>
-          )}
           {options.map((o, i) => (
             <ComboOption
               key={o.id}
@@ -165,7 +129,7 @@ export function RecipientField({
               detail={o.note}
             />
           ))}
-        </div>
+        </ComboList>
       )}
     </div>
   );
