@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { RecipientField } from '../admin/RecipientField';
 import { RepositoryField } from '../admin/RepositoryField';
+import { api } from '@api/client';
 import { ActorField } from '../install/ActorField';
 import { Menu, MenuItem } from './Menu';
 import { TagField } from './TagField';
@@ -210,6 +211,15 @@ describe('RepositoryField, open', () => {
     render(<RepositoryField source="src_01GH" onChange={() => {}} />);
     focus(input());
     expect(container.textContent).toContain('No repositories match.');
+  });
+
+  it('says a failed search as an error, not as no matches', async () => {
+    const get = vi.spyOn(api, 'get').mockRejectedValue(new TypeError('Failed to fetch'));
+    render(<RepositoryField source="src_01GH" onChange={() => {}} />);
+    focus(input());
+    await vi.waitFor(() => expect(container.textContent).toContain('Pando could not reach the server.'));
+    expect(container.textContent).not.toContain('No repositories match.');
+    get.mockRestore();
   });
 });
 

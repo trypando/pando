@@ -67,7 +67,8 @@ export function RepositoryField({
   };
 
   // Said only once there is an answer to say it about.
-  const none = open && !found.isPending && !found.isPlaceholderData && options.length === 0;
+  // A failed search is said as the field's error, not as an empty list.
+  const none = open && !found.isPending && !found.isError && !found.isPlaceholderData && options.length === 0;
 
   return (
     <div ref={root} style={{ position: 'relative' }}>
