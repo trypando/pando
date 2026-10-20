@@ -19,6 +19,11 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Changed
+
+- **Adding an app from a source connection picks the repository in one field.** Type part of its
+  name and choose it from the list under the field; the separate search box is gone.
+
 ## [0.12.0] - 2026-10-20
 
 ### Security
