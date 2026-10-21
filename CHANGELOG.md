@@ -40,7 +40,6 @@ Unreleased above it. -->
 - **`pando app spec`** lists, shows, creates, pins and compares spec revisions; `pando app spec
   create` reads a whole spec as JSON from a file or stdin. **`pando secret delete`** removes a
   secret.
-
 - **An app whose owners are all gone is stopped** (R-407 – R-409). When every account that owns an
   app is suspended or deleted (for example, deactivated in Okta and pushed by SCIM) and no group owns
   it, Pando stops the app at once and tells everyone holding the Administrator role. The app keeps its
@@ -60,10 +59,6 @@ Unreleased above it. -->
 - **Adding an app from a source connection picks the repository in one field.** Type part of its
   name and choose it from the list under the field; the separate search box is gone.
 
-### Upgrade notes
-
-- Apps that already have no active owner when you upgrade are not stopped. Administrators get one
-  notice listing them.
 ### Fixed
 
 - **A CLI or MCP deploy after an edit no longer ships the old version quietly.** Editing writes a
@@ -72,6 +67,11 @@ Unreleased above it. -->
   `spec_revision`), and a deploy of the pinned revision answers with `newer_revision` when an edit
   is waiting. That includes making a variable a secret in the console: the old revision did not read
   the secret, so the container that was already running was left running.
+
+### Upgrade notes
+
+- Apps that already have no active owner when you upgrade are not stopped. Administrators get one
+  notice listing them.
 
 ## [0.12.0] - 2026-10-20
 

@@ -3951,7 +3951,8 @@
                     }
                   },
                   "required": [
-                    "key"
+                    "key",
+                    "read_by_spec"
                   ]
                 }
               }
