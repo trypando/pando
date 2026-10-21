@@ -19,6 +19,13 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Security
+
+- **Built with Go 1.27.3**, which fixes GO-2026-6809 (CVE-2026-111943) in `crypto/x509`: certificate
+  verification now refuses a set of intermediate certificates that are no longer trusted, where a
+  system trust store has not been updated to drop them. Pando 0.12.0 and earlier were built with
+  Go 1.27.2 or older and are affected.
+
 ### Added
 
 - **`pando login` signs in through the browser.** It opens Pando, where you sign in however your
