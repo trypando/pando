@@ -613,6 +613,67 @@ Show an app
 pando app show <app>
 ```
 
+#### `app spec`
+
+Read and write an app's spec revisions
+
+```
+pando app spec
+```
+
+##### `app spec create`
+
+Write a new spec revision from a JSON file
+
+```
+pando app spec create <app>
+```
+
+Writes a whole spec, read as JSON from --file or stdin, as a new revision.
+`pando export <app>` prints the pinned spec to start from. This does not pin
+or deploy: `pando app spec pin <app> <revision>` and `pando deploy <app>` do.
+--dry-run checks the spec and writes nothing.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--dry-run` |  | check the spec without writing it |
+| `-f`, `--file` |  | the spec as a JSON file (default: read stdin) |
+
+##### `app spec diff`
+
+Compare two spec revisions
+
+```
+pando app spec diff <app> <from> <to>
+```
+
+##### `app spec list`
+
+List spec revisions, and which one is pinned
+
+```
+pando app spec list <app>
+```
+
+##### `app spec pin`
+
+Pin a spec revision as what the app runs
+
+```
+pando app spec pin <app> <revision>
+```
+
+Pins a revision: what the app converges to, and what the next deploy ships.
+This does not deploy: `pando deploy <app>` does that.
+
+##### `app spec show`
+
+Print one spec revision
+
+```
+pando app spec show <app> <revision>
+```
+
 #### `app start`
 
 Start an app that was stopped
@@ -1438,6 +1499,14 @@ Manage an app's secrets
 
 ```
 pando secret
+```
+
+#### `secret delete`
+
+Remove a secret
+
+```
+pando secret delete <app> <key>
 ```
 
 #### `secret list`

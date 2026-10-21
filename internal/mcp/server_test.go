@@ -216,9 +216,20 @@ func TestO12_TheMostDangerousActionsAreNotOfferedAsTools(t *testing.T) {
 
 	for _, raw := range tools {
 		name := raw.(map[string]any)["name"].(string)
-		for _, forbidden := range []string{"exec", "secret", "grant", "policy", "delete_user"} {
+		// Reading a secret's value is excluded, not managing secrets: setting
+		// one is how an agent configures an app without the value landing in
+		// its spec, and app.secrets.write is not an agent-disabled verb.
+		for _, forbidden := range []string{"exec", "get_secret", "read_secret", "secret_value", "grant", "policy", "delete_user"} {
 			require.NotContains(t, name, forbidden)
 		}
+	}
+
+	// Nor does any secrets tool reach the value endpoint, whatever it is named.
+	for _, tool := range []string{"pando_list_secrets", "pando_set_secret", "pando_delete_secret"} {
+		srv, s := newSession()
+		s.run(t, srv, call(1, tool, `{"app_id":"app_1","key":"API_KEY","value":"x"}`))
+		require.Len(t, s.calls, 1, tool)
+		require.NotContains(t, s.calls[0].path, "/value", tool)
 	}
 }
 

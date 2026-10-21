@@ -661,6 +661,7 @@
         "pando app rename",
         "pando app restart",
         "pando app show",
+        "pando app spec",
         "pando app start",
         "pando app status",
         "pando app stop",
@@ -1753,6 +1754,209 @@
       "path": "pando app show",
       "use": "show <app>",
       "short": "Show an app",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app spec",
+      "use": "spec",
+      "short": "Read and write an app's spec revisions",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando app spec create",
+        "pando app spec diff",
+        "pando app spec list",
+        "pando app spec pin",
+        "pando app spec show"
+      ]
+    },
+    {
+      "path": "pando app spec create",
+      "use": "create <app>",
+      "short": "Write a new spec revision from a JSON file",
+      "long": "Writes a whole spec, read as JSON from --file or stdin, as a new revision.\n`pando export <app>` prints the pinned spec to start from. This does not pin\nor deploy: `pando app spec pin <app> <revision>` and `pando deploy <app>` do.\n--dry-run checks the spec and writes nothing.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "dry-run",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "check the spec without writing it",
+          "required": false
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": "",
+          "usage": "the spec as a JSON file (default: read stdin)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app spec diff",
+      "use": "diff <app> <from> <to>",
+      "short": "Compare two spec revisions",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app spec list",
+      "use": "list <app>",
+      "short": "List spec revisions, and which one is pinned",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app spec pin",
+      "use": "pin <app> <revision>",
+      "short": "Pin a spec revision as what the app runs",
+      "long": "Pins a revision: what the app converges to, and what the next deploy ships.\nThis does not deploy: `pando deploy <app>` does that.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app spec show",
+      "use": "show <app> <revision>",
+      "short": "Print one spec revision",
       "long": "",
       "example": "",
       "aliases": [],
@@ -4532,9 +4736,40 @@
         }
       ],
       "subcommands": [
+        "pando secret delete",
         "pando secret list",
         "pando secret set"
       ]
+    },
+    {
+      "path": "pando secret delete",
+      "use": "delete <app> <key>",
+      "short": "Remove a secret",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
     },
     {
       "path": "pando secret list",

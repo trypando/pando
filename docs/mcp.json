@@ -2,12 +2,34 @@
   "tools": [
     {
       "name": "pando_accept_proposal",
-      "description": "Accept what Pando worked out and pin it as the app's setup, optionally setting environment variables in the same step. This does not deploy — call pando_deploy after.",
+      "description": "Accept what Pando worked out and pin it as the app's setup, optionally setting environment variables and secrets in the same step. This does not deploy — call pando_deploy after. On an app that is already configured it is refused unless `confirm` is true: accepting again replaces how the app is built and what it runs with what detection found, and carries over variables, how each dependency is filled, and storage. pando_get_detection_diff shows what would change. To change only a variable on a configured app, write a spec revision with pando_create_spec instead.",
       "input_schema": {
         "properties": {
           "app_id": {
             "description": "The app's ID.",
             "type": "string"
+          },
+          "confirm": {
+            "description": "true to accept over an app that is already configured.",
+            "type": "boolean"
+          },
+          "hostname": {
+            "description": "The address to serve the app at, where its routing gives it a hostname of its own.",
+            "type": "string"
+          },
+          "optional": {
+            "description": "Dependencies the app runs without, by their keys.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "secrets": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Secret variables to set, name to value. Stored by the secrets adapter; needs app.secrets.write.",
+            "type": "object"
           },
           "values": {
             "additionalProperties": {
@@ -397,6 +419,31 @@
       }
     },
     {
+      "name": "pando_create_spec",
+      "description": "Write a new spec revision: the way to change a configured app's variables, egress, workloads or anything else in its spec. Send the whole spec — read the pinned one with pando_get_spec, change it, and send it back. Revisions are append-only, and this neither pins nor deploys: call pando_pin_spec with the revision it returns, then pando_deploy. With `dry_run` true nothing is written; the reply says whether the spec is accepted, the egress rules it would run with, and whether deploying it would need approval.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "dry_run": {
+            "description": "true to check the spec without writing it.",
+            "type": "boolean"
+          },
+          "spec": {
+            "description": "The whole spec, as pando_get_spec returns it under `body`.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "app_id",
+          "spec"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_create_subscription",
       "description": "Subscribe to events and send them to a webhook (url) or through a notification adapter such as Slack or email (adapter_id). events is a comma-separated list of event names, prefixes such as deploy.*, or *; pando_list_events lists them. With app_id it is about one app; without, it is install-wide and needs install.events.manage. A webhook's signing key is in the result once; tell the person to keep it.",
       "input_schema": {
@@ -449,6 +496,27 @@
       }
     },
     {
+      "name": "pando_delete_secret",
+      "description": "Remove one of an app's secrets. Needs app.secrets.write.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "key": {
+            "description": "The secret's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "key"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_delete_section",
       "description": "Delete one of your launcher sections. Its apps go back to Your apps; nothing else changes.",
       "input_schema": {
@@ -496,6 +564,32 @@
         },
         "required": [
           "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_diff_specs",
+      "description": "Compare two spec revisions: what changed, and whether deploying it restarts, rebuilds or leaves the app alone.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "from": {
+            "description": "The earlier revision, by number or ID.",
+            "type": "string"
+          },
+          "to": {
+            "description": "The later revision, by number or ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "from",
+          "to"
         ],
         "type": "object"
       }
@@ -722,6 +816,27 @@
         },
         "required": [
           "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_get_spec",
+      "description": "Read one spec revision in full: how the app is built, what it runs, its variables, egress and routing.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "revision": {
+            "description": "The revision number, such as \"3\", or the revision's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "revision"
         ],
         "type": "object"
       }
@@ -1022,6 +1137,22 @@
       }
     },
     {
+      "name": "pando_list_secrets",
+      "description": "List which secrets an app has, and where each came from. Never their values.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_list_source_branches",
       "description": "The branches of a repository, read through a source connection.",
       "input_schema": {
@@ -1068,6 +1199,22 @@
       "input_schema": {
         "properties": {},
         "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_specs",
+      "description": "List an app's spec revisions, and which one is pinned. The pinned revision is what runs and what the next deploy ships.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
         "type": "object"
       }
     },
@@ -1138,6 +1285,27 @@
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_pin_spec",
+      "description": "Pin a spec revision: what the app converges to, and what the next deploy ships. This does not deploy — call pando_deploy after.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "revision": {
+            "description": "The revision number, such as \"3\", or the revision's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "revision"
+        ],
         "type": "object"
       }
     },
@@ -1675,6 +1843,32 @@
         "required": [
           "app_id",
           "registry_credential"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_set_secret",
+      "description": "Set or rotate one of an app's secrets. Rotating one recreates the app's workload so it does not keep running with the old value. Needs app.secrets.write.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "key": {
+            "description": "The secret's name, such as NTFY_TOPIC.",
+            "type": "string"
+          },
+          "value": {
+            "description": "The value.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "key",
+          "value"
         ],
         "type": "object"
       }

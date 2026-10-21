@@ -576,6 +576,14 @@ rather than a second opinion about authorization (R-261).
 | `pando_answer_detection` | `POST /apps/{id}/detection/answers` |
 | `pando_accept_proposal` | `POST /apps/{id}/detection:accept` |
 | `pando_plan` | `POST /apps/{id}:plan` |
+| `pando_list_specs` | `GET /apps/{id}/specs` |
+| `pando_get_spec` | `GET /apps/{id}/specs/{rev}` |
+| `pando_create_spec` | `POST /apps/{id}/specs` |
+| `pando_pin_spec` | `POST /apps/{id}/specs/{rev}/pin` |
+| `pando_diff_specs` | `GET /apps/{id}/specs/{a}/diff/{b}` |
+| `pando_list_secrets` | `GET /apps/{id}/secrets` |
+| `pando_set_secret` | `PUT /apps/{id}/secrets/{key}` |
+| `pando_delete_secret` | `DELETE /apps/{id}/secrets/{key}` |
 | `pando_deploy` | `POST /apps/{id}/deployments` |
 | `pando_get_logs` | `GET /apps/{id}/logs` |
 | `pando_get_status` | `GET /apps/{id}/status` |
@@ -603,6 +611,10 @@ policy mutation that test keeps out.
 **[D]** An agent holds a token and is a principal like any other (R-262). No MCP tool bypasses authorization, and every action lands in the audit log under the token's owner.
 
 **[D] Not exposed via MCP:** exec, secret value reads, grant mutation, policy mutation, user deletion. Rationale — these are the highest-consequence actions in the system and R-086 already concedes exec is not bounded by the verb list. An agent should not hold the most dangerous capabilities by default.
+
+**[D]** Setting and removing a secret are exposed; reading one back is not. Writing a value is how an
+agent configures an app without the value landing in its spec, and `app.secrets.write` is not an
+agent-disabled verb.
 
 **[D]** Approving a deploy is excluded by the same default, for a different reason: approval is a
 human sign-off on a change (R-154), and an agent approving the deploy it — or another agent — just

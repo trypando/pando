@@ -3,7 +3,9 @@ package mcp
 import (
 	"encoding/base64"
 	"fmt"
+	"maps"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -172,6 +174,33 @@ func registryCredentialSchema(description string) map[string]any {
 		},
 		"required": []string{"kind"},
 	}
+}
+
+// acceptValues turns a name-to-value object into the variables POST
+// /detection/accept takes, marked secret or not.
+func acceptValues(args map[string]any, key string, secret bool) ([]map[string]any, error) {
+	values := []map[string]any{}
+	v, ok := args[key]
+	if !ok || v == nil {
+		return values, nil
+	}
+	raw, ok := v.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an object of names to values", key)
+	}
+	// In name order, so the same call sends the same body.
+	for _, name := range slices.Sorted(maps.Keys(raw)) {
+		value, isString := raw[name].(string)
+		if !isString {
+			return nil, fmt.Errorf("%s.%s must be a string", key, name)
+		}
+		entry := map[string]any{"key": name, "value": value}
+		if secret {
+			entry["secret"] = true
+		}
+		values = append(values, entry)
+	}
+	return values, nil
 }
 
 func str(description string) map[string]any {
@@ -446,7 +475,11 @@ var toolList = []tool{
 	{
 		Name: "pando_accept_proposal",
 		Description: "Accept what Pando worked out and pin it as the app's setup, optionally setting " +
-			"environment variables in the same step. This does not deploy — call pando_deploy after.",
+			"environment variables and secrets in the same step. This does not deploy — call pando_deploy after. " +
+			"On an app that is already configured it is refused unless `confirm` is true: accepting again " +
+			"replaces how the app is built and what it runs with what detection found, and carries over " +
+			"variables, how each dependency is filled, and storage. pando_get_detection_diff shows what would change. " +
+			"To change only a variable on a configured app, write a spec revision with pando_create_spec instead.",
 		Schema: schema(map[string]any{
 			"app_id": str(appIDDescription),
 			"values": map[string]any{
@@ -454,23 +487,177 @@ var toolList = []tool{
 				"description":          "Environment variables to set, name to value, e.g. {\"API_URL\": \"https://api\"}. Stored as ordinary variables, not secrets.",
 				"additionalProperties": map[string]any{"type": "string"},
 			},
+			"secrets": map[string]any{
+				"type":                 "object",
+				"description":          "Secret variables to set, name to value. Stored by the secrets adapter; needs app.secrets.write.",
+				"additionalProperties": map[string]any{"type": "string"},
+			},
+			"optional": strList("Dependencies the app runs without, by their keys."),
+			"hostname": str("The address to serve the app at, where its routing gives it a hostname of its own."),
+			"confirm":  map[string]any{"type": "boolean", "description": "true to accept over an app that is already configured."},
 		}, "app_id"),
 		request: func(args map[string]any) (string, string, any, error) {
 			id, err := stringArg(args, "app_id", true)
 			if err != nil {
 				return "", "", nil, err
 			}
-			values := []map[string]any{}
-			if raw, ok := args["values"].(map[string]any); ok {
-				for key, v := range raw {
-					value, isString := v.(string)
-					if !isString {
-						return "", "", nil, fmt.Errorf("values.%s must be a string", key)
-					}
-					values = append(values, map[string]any{"key": key, "value": value})
-				}
+			values, err := acceptValues(args, "values", false)
+			if err != nil {
+				return "", "", nil, err
 			}
-			return "POST", appPath(id, "/detection/accept"), map[string]any{"values": values}, nil
+			secrets, err := acceptValues(args, "secrets", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			body := map[string]any{"values": append(values, secrets...)}
+			optional, err := stringListArg(args, "optional")
+			if err != nil {
+				return "", "", nil, err
+			}
+			if len(optional) > 0 {
+				body["optional"] = optional
+			}
+			hostname, err := stringArg(args, "hostname", false)
+			if err != nil {
+				return "", "", nil, err
+			}
+			if hostname != "" {
+				body["hostname"] = hostname
+			}
+			if confirm, _ := args["confirm"].(bool); confirm {
+				body["confirm"] = true
+			}
+			return "POST", appPath(id, "/detection/accept"), body, nil
+		},
+	},
+	{
+		Name: "pando_list_specs",
+		Description: "List an app's spec revisions, and which one is pinned. The pinned revision is what " +
+			"runs and what the next deploy ships.",
+		Schema:  appIDSchema(),
+		request: appRequest("GET", "/specs"),
+	},
+	{
+		Name:        "pando_get_spec",
+		Description: "Read one spec revision in full: how the app is built, what it runs, its variables, egress and routing.",
+		Schema: schema(map[string]any{
+			"app_id":   str(appIDDescription),
+			"revision": str("The revision number, such as \"3\", or the revision's ID."),
+		}, "app_id", "revision"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, rev, err := twoArgs(args, "app_id", "revision")
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", appPath(id, "/specs/"+url.PathEscape(rev)), nil, nil
+		},
+	},
+	{
+		Name: "pando_create_spec",
+		Description: "Write a new spec revision: the way to change a configured app's variables, egress, " +
+			"workloads or anything else in its spec. Send the whole spec — read the pinned one with " +
+			"pando_get_spec, change it, and send it back. Revisions are append-only, and this neither pins " +
+			"nor deploys: call pando_pin_spec with the revision it returns, then pando_deploy. With " +
+			"`dry_run` true nothing is written; the reply says whether the spec is accepted, the egress " +
+			"rules it would run with, and whether deploying it would need approval.",
+		Schema: schema(map[string]any{
+			"app_id":  str(appIDDescription),
+			"spec":    map[string]any{"type": "object", "description": "The whole spec, as pando_get_spec returns it under `body`."},
+			"dry_run": map[string]any{"type": "boolean", "description": "true to check the spec without writing it."},
+		}, "app_id", "spec"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "app_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			body, ok := args["spec"].(map[string]any)
+			if !ok {
+				return "", "", nil, fmt.Errorf("spec is required, as an object")
+			}
+			path := appPath(id, "/specs")
+			if dry, _ := args["dry_run"].(bool); dry {
+				path += "?dry_run=true"
+			}
+			return "POST", path, body, nil
+		},
+	},
+	{
+		Name: "pando_pin_spec",
+		Description: "Pin a spec revision: what the app converges to, and what the next deploy ships. " +
+			"This does not deploy — call pando_deploy after.",
+		Schema: schema(map[string]any{
+			"app_id":   str(appIDDescription),
+			"revision": str("The revision number, such as \"3\", or the revision's ID."),
+		}, "app_id", "revision"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, rev, err := twoArgs(args, "app_id", "revision")
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "POST", appPath(id, "/specs/"+url.PathEscape(rev)+"/pin"), map[string]any{}, nil
+		},
+	},
+	{
+		Name: "pando_diff_specs",
+		Description: "Compare two spec revisions: what changed, and whether deploying it restarts, " +
+			"rebuilds or leaves the app alone.",
+		Schema: schema(map[string]any{
+			"app_id": str(appIDDescription),
+			"from":   str("The earlier revision, by number or ID."),
+			"to":     str("The later revision, by number or ID."),
+		}, "app_id", "from", "to"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, from, err := twoArgs(args, "app_id", "from")
+			if err != nil {
+				return "", "", nil, err
+			}
+			to, err := stringArg(args, "to", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "GET", appPath(id, "/specs/"+url.PathEscape(from)+"/diff/"+url.PathEscape(to)), nil, nil
+		},
+	},
+	{
+		Name:        "pando_list_secrets",
+		Description: "List which secrets an app has, and where each came from. Never their values.",
+		Schema:      appIDSchema(),
+		request:     appRequest("GET", "/secrets"),
+	},
+	{
+		Name: "pando_set_secret",
+		Description: "Set or rotate one of an app's secrets. Rotating one recreates the app's workload " +
+			"so it does not keep running with the old value. Needs app.secrets.write.",
+		Schema: schema(map[string]any{
+			"app_id": str(appIDDescription),
+			"key":    str("The secret's name, such as NTFY_TOPIC."),
+			"value":  str("The value."),
+		}, "app_id", "key", "value"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, key, err := twoArgs(args, "app_id", "key")
+			if err != nil {
+				return "", "", nil, err
+			}
+			value, err := stringArg(args, "value", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "PUT", appPath(id, "/secrets/"+url.PathEscape(key)), map[string]any{"value": value}, nil
+		},
+	},
+	{
+		Name:        "pando_delete_secret",
+		Description: "Remove one of an app's secrets. Needs app.secrets.write.",
+		Schema: schema(map[string]any{
+			"app_id": str(appIDDescription),
+			"key":    str("The secret's name."),
+		}, "app_id", "key"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, key, err := twoArgs(args, "app_id", "key")
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "DELETE", appPath(id, "/secrets/"+url.PathEscape(key)), nil, nil
 		},
 	},
 	{

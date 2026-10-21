@@ -397,6 +397,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 	cmd.AddCommand(registryCredentialCmd(client))
 	cmd.AddCommand(autoDeployCmd(client))
 	cmd.AddCommand(appDetectionCmd(client))
+	cmd.AddCommand(appSpecCmd(client))
 
 	del := &cobra.Command{
 		Use:   "delete <app>",
@@ -1098,6 +1099,23 @@ func secretCmd(client func() (*Client, error)) *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Set %s.\n", args[1])
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "delete <app> <key>",
+		Short: "Remove a secret",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			if err := c.Do("DELETE", "/apps/"+url.PathEscape(args[0])+"/secrets/"+url.PathEscape(args[1]), nil, nil); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Removed %s.\n", args[1])
 			return nil
 		},
 	})
