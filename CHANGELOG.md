@@ -25,6 +25,14 @@ Unreleased above it. -->
   account does — including through your identity provider, which had no way to sign the CLI in
   before — and approve the CLI. `pando mcp` uses the token it stores. `--no-browser` prints the
   address to open on another computer and asks for the code shown there.
+- **Agents can set secrets and change a configured app.** New MCP tools set, list and remove an app's
+  secrets, and list, read, write, pin and compare spec revisions — how an agent changes a configured
+  app's variables or narrows its outbound access. `pando_accept_proposal` takes `confirm` to accept
+  over an app that is already configured, and `secrets`, `optional` and `hostname` as the CLI does.
+  Reading a secret's value is still not a tool.
+- **`pando app spec`** lists, shows, creates, pins and compares spec revisions; `pando app spec
+  create` reads a whole spec as JSON from a file or stdin. **`pando secret delete`** removes a
+  secret.
 
 - **An app whose owners are all gone is stopped** (R-407 – R-409). When every account that owns an
   app is suspended or deleted (for example, deactivated in Okta and pushed by SCIM) and no group owns
