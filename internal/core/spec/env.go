@@ -156,3 +156,29 @@ func resolveSlot(s *AppSpec, slot string, r *Resolution) bool {
 	}
 	return false
 }
+
+// ReadsSecret reports whether the spec puts a stored secret into a workload:
+// an env entry that references it, or a slot filled with it.
+//
+// A secret is stored apart from the spec, and only a reference in the spec
+// brings it into the app. One that nothing references is stored and never
+// read — setting it and deploying changes nothing (R-193 covers a secret the
+// app reads, not one it does not).
+func ReadsSecret(s *AppSpec, key string) bool {
+	if s == nil {
+		return false
+	}
+	for _, w := range s.Workloads {
+		for _, e := range w.Env {
+			if e.SecretRef != nil && *e.SecretRef == key {
+				return true
+			}
+		}
+	}
+	for _, sl := range s.Slots {
+		if sl.Resolution != nil && sl.Resolution.SecretRef == key {
+			return true
+		}
+	}
+	return false
+}

@@ -75,6 +75,11 @@ func appPath(id, suffix string) string {
 	return "/apps/" + url.PathEscape(id) + suffix
 }
 
+// specPath builds a path under one of an app's spec revisions, escaping both.
+func specPath(id, rev, suffix string) string {
+	return appPath(id, "/specs/"+url.PathEscape(rev)+suffix)
+}
+
 // appIDDescription describes the app_id every app tool takes.
 const appIDDescription = "The app's ID."
 
@@ -549,7 +554,7 @@ var toolList = []tool{
 			if err != nil {
 				return "", "", nil, err
 			}
-			return "GET", appPath(id, "/specs/"+url.PathEscape(rev)), nil, nil
+			return "GET", specPath(id, rev, ""), nil, nil
 		},
 	},
 	{
@@ -594,7 +599,7 @@ var toolList = []tool{
 			if err != nil {
 				return "", "", nil, err
 			}
-			return "POST", appPath(id, "/specs/"+url.PathEscape(rev)+"/pin"), map[string]any{}, nil
+			return "POST", specPath(id, rev, "/pin"), map[string]any{}, nil
 		},
 	},
 	{
@@ -615,7 +620,7 @@ var toolList = []tool{
 			if err != nil {
 				return "", "", nil, err
 			}
-			return "GET", appPath(id, "/specs/"+url.PathEscape(from)+"/diff/"+url.PathEscape(to)), nil, nil
+			return "GET", specPath(id, from, "/diff/"+url.PathEscape(to)), nil, nil
 		},
 	},
 	{
@@ -626,8 +631,10 @@ var toolList = []tool{
 	},
 	{
 		Name: "pando_set_secret",
-		Description: "Set or rotate one of an app's secrets. Rotating one recreates the app's workload " +
-			"so it does not keep running with the old value. Needs app.secrets.write.",
+		Description: "Set or rotate one of an app's secrets. Needs app.secrets.write. The app gets it only " +
+			"through a `secret_ref` in its spec: when the reply's `read_by_spec` is false, add " +
+			"{\"key\": ..., \"secret_ref\": ...} to a workload's env with pando_create_spec. Deploying " +
+			"after rotating one the app reads recreates its workload with the new value.",
 		Schema: schema(map[string]any{
 			"app_id": str(appIDDescription),
 			"key":    str("The secret's name, such as NTFY_TOPIC."),
@@ -676,10 +683,16 @@ var toolList = []tool{
 	{
 		Name: "pando_deploy",
 		Description: "Deploy an app. Returns once the deployment has been accepted, not once it is running. " +
+			"Without `spec_revision` it ships the pinned revision; an edit, from the console or pando_create_spec, " +
+			"writes a newer one, and the reply's `newer_revision` names it — deploy again with that revision to ship the edit. " +
 			"When the deploy needs somebody's approval, it comes back with status `awaiting_approval` and " +
 			"`approval_reasons` saying why; it runs once a person approves it.",
 		Schema: schema(map[string]any{
-			"app_id":          str(appIDDescription),
+			"app_id": str(appIDDescription),
+			"spec_revision": map[string]any{
+				"type":        "integer",
+				"description": "The revision to deploy, by number, such as the newest from pando_list_specs. Left out, the pinned one.",
+			},
 			"idempotency_key": str("A key you choose. Retrying with the same key will not deploy twice."),
 		}, "app_id"),
 		request: func(args map[string]any) (string, string, any, error) {
@@ -691,6 +704,13 @@ var toolList = []tool{
 			body := map[string]any{}
 			if key != "" {
 				body["idempotency_key"] = key
+			}
+			if v, ok := args["spec_revision"]; ok && v != nil {
+				n, isNumber := v.(float64)
+				if !isNumber || n < 1 || n != float64(int(n)) {
+					return "", "", nil, fmt.Errorf("spec_revision must be a revision number, such as 3")
+				}
+				body["spec_revision"] = int(n)
 			}
 			return "POST", appPath(id, "/deployments"), body, nil
 		},

@@ -964,6 +964,7 @@ generated an app cannot commit and push, but it can run a command.
 | --- | --- | --- |
 | `--app` |  | deploy a directory as an existing app, instead of creating one |
 | `--env` | `[]` | KEY=VALUE, set when a new directory's setup is accepted; repeat for more (e.g. --env API_URL=https://api) |
+| `--revision` | `0` | the spec revision to deploy (defaults to the pinned one) |
 
 ### `events`
 

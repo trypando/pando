@@ -85,3 +85,21 @@ func TestSecretAndSpecToolsRefuseBadArgumentsWithoutCallingTheAPI(t *testing.T) 
 		})
 	}
 }
+
+// TestR261_DeployCanShipANewerRevision asserts R-261: the console's Deploy
+// ships an edit by naming its revision, so the deploy tool can too, and a
+// deploy that names none sends no revision.
+func TestR261_DeployCanShipANewerRevision(t *testing.T) {
+	requireToolCalls(t, []toolCase{
+		{tool: "pando_deploy", args: `{"app_id":"app_1","spec_revision":5}`,
+			method: "POST", path: "/apps/app_1/deployments", body: `{"spec_revision":5}`},
+		{tool: "pando_deploy", args: `{"app_id":"app_1"}`,
+			method: "POST", path: "/apps/app_1/deployments", body: `{}`},
+	})
+	for _, bad := range []string{`"5"`, `0`, `2.5`} {
+		srv, s := newSession()
+		replies := s.run(t, srv, call(1, "pando_deploy", `{"app_id":"app_1","spec_revision":`+bad+`}`))
+		require.Empty(t, s.calls, bad)
+		require.Contains(t, text(t, replies[0]), "spec_revision must be a revision number")
+	}
+}

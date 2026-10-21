@@ -98,3 +98,31 @@ func TestR261_SecretDeleteHasACommand(t *testing.T) {
 	api = newAPI(t).fail("DELETE /apps/app_1/secrets/NOPE", 404, map[string]string{"code": "NOT_FOUND", "message": "This app has no secret NOPE."})
 	require.ErrorContains(t, run(t, api, "", "secret", "delete", "app_1", "NOPE").err, "no secret NOPE")
 }
+
+// TestR261_DeployShipsANamedRevisionAndSaysWhenANewerOneWaits asserts R-261:
+// `pando deploy --revision` ships an edit as the console's Deploy does, and a
+// deploy of the pinned revision says when a newer one is not deployed.
+func TestR261_DeployShipsANamedRevisionAndSaysWhenANewerOneWaits(t *testing.T) {
+	api := newAPI(t).reply("POST /apps/app_1/deployments", map[string]any{"id": "dep_1", "status": "pending"})
+	got := run(t, api, "", "deploy", "app_1", "--revision", "5")
+	require.NoError(t, got.err)
+	require.JSONEq(t, `{"spec_revision":5}`, api.bodyFor("POST /apps/app_1/deployments"))
+	require.NotContains(t, got.out, "newer")
+
+	api = newAPI(t).reply("POST /apps/app_1/deployments",
+		map[string]any{"id": "dep_1", "status": "pending", "newer_revision": 5})
+	got = run(t, api, "", "deploy", "app_1")
+	require.NoError(t, got.err)
+	require.JSONEq(t, `{}`, api.bodyFor("POST /apps/app_1/deployments"))
+	require.Contains(t, got.out, "Revision 5 is newer and not deployed; `pando deploy app_1 --revision 5` deploys it.")
+	require.Contains(t, got.out, "Deploying.")
+}
+
+// R-193: setting a secret nothing reads says so, in the server's words.
+func TestR193_SecretSetPrintsTheNoteWhenNothingReadsIt(t *testing.T) {
+	note := `No workload reads API_KEY, so the app does not get this value.`
+	api := newAPI(t).reply("PUT /apps/app_1/secrets/API_KEY", map[string]any{"read_by_spec": false, "note": note})
+	got := run(t, api, "v\n", "secret", "set", "app_1", "API_KEY")
+	require.NoError(t, got.err)
+	require.Contains(t, got.out, "Set API_KEY.\n"+note)
+}

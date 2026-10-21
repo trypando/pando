@@ -2882,6 +2882,14 @@
           "required": false
         },
         {
+          "name": "revision",
+          "shorthand": "",
+          "type": "int",
+          "default": "0",
+          "usage": "the spec revision to deploy (defaults to the pinned one)",
+          "required": false
+        },
+        {
           "name": "server",
           "shorthand": "",
           "type": "string",

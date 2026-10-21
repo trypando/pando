@@ -85,6 +85,7 @@ type waitingDeploy struct {
 	AppID             string `json:"app_id"`
 	AppName           string `json:"app_name"`
 	Status            string `json:"status"`
+	NewerRevision     int    `json:"newer_revision"`
 	ApprovalsRequired int    `json:"approvals_required"`
 	ApprovalExpiresAt string `json:"approval_expires_at"`
 	ApprovalReasons   []struct {

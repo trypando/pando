@@ -406,3 +406,40 @@ func TestSequenceB_BuildFromSource(t *testing.T) {
 	require.Contains(t, strings.ToLower(tags), expected,
 		"the built image is named for the app it belongs to")
 }
+
+// TestR193_RotatingASecretAndRedeployingRestartsTheApp asserts R-193 along the
+// whole path a person takes: set a secret, deploy, set it again, deploy again.
+// The second deploy runs a new container with the new value; the old one, with
+// the old value, is gone.
+func TestR193_RotatingASecretAndRedeployingRestartsTheApp(t *testing.T) {
+	c := login(t)
+
+	app := c.createApp(t, "seq-b-rotate-"+stamp())
+	c.put(t, fmt.Sprintf("/apps/%s/secrets/NTFY_TOPIC", app), `{"value": "first-topic"}`)
+	c.putSpec(t, app, `{
+		"schema_version": 1,
+		"source": {"type": "image", "image": "nginx:alpine"},
+		"build": {"strategy": "prebuilt"},
+		"workloads": [{"name": "web", "primary": true, "exposed": true,
+			"env": [{"key": "NTFY_TOPIC", "secret_ref": "NTFY_TOPIC"}]}],
+		"routing": {"adapter_ref": "rte_loopback", "mode": "port", "port": 9112},
+		"runtime": {"adapter_ref": "rt_docker", "isolation_floor": 10},
+		"deploy": {"strategy": "recreate"}
+	}`)
+	c.pinSpec(t, app, 1)
+
+	container := fmt.Sprintf("pando-%s-web", app)
+	dep := c.deploy(t, app, 0)
+	require.Equal(t, "succeeded", c.awaitDeployment(t, app, dep["id"].(string), 3*time.Minute)["status"])
+	before := inspect(t, container, `{{.Id}}`)
+	require.Contains(t, inspect(t, container, `{{json .Config.Env}}`), "NTFY_TOPIC=first-topic")
+
+	c.put(t, fmt.Sprintf("/apps/%s/secrets/NTFY_TOPIC", app), `{"value": "second-topic"}`)
+	dep = c.deploy(t, app, 0)
+	require.Equal(t, "succeeded", c.awaitDeployment(t, app, dep["id"].(string), 3*time.Minute)["status"])
+
+	require.NotEqual(t, before, inspect(t, container, `{{.Id}}`), "the old container is still running")
+	env := inspect(t, container, `{{json .Config.Env}}`)
+	require.Contains(t, env, "NTFY_TOPIC=second-topic")
+	require.NotContains(t, env, "first-topic")
+}

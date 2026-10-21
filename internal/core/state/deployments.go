@@ -98,6 +98,13 @@ type Deployment struct {
 	// the queue. Set by the handlers from QueuePositions; the store's own
 	// reads never fill it in.
 	QueuePosition *int `json:"queue_position,omitempty"`
+
+	// NewerRevision is the newest revision of the app's spec, when a deploy
+	// that named no revision shipped the pinned one and a newer one exists —
+	// an edit nobody has deployed. Set by the deploy handler on its reply, so
+	// a client that sent no revision is told rather than left to find out;
+	// the store never fills it in.
+	NewerRevision int `json:"newer_revision,omitempty"`
 }
 
 // ApprovalReason is why a deploy needed approval. The store holds the reason;

@@ -46,7 +46,10 @@ Unreleased above it. -->
 - **`pando login` needs `--username` to sign in with a password in the terminal.** Without it, it
   opens the browser. A script that pipes a username and password into `pando login` passes
   `--username` and pipes only the password.
-
+- **Setting a secret says whether the app reads it.** `PUT /apps/{id}/secrets/{key}` answers 200
+  rather than 204, with `read_by_spec` and, when no workload references the secret, a `note` saying
+  what to add. `pando secret set` prints it. Before, a secret nothing referenced was stored, a
+  deploy after it changed nothing, and the old container kept running without a word.
 - **Adding an app from a source connection picks the repository in one field.** Type part of its
   name and choose it from the list under the field; the separate search box is gone.
 
@@ -54,6 +57,14 @@ Unreleased above it. -->
 
 - Apps that already have no active owner when you upgrade are not stopped. Administrators get one
   notice listing them.
+### Fixed
+
+- **A CLI or MCP deploy after an edit no longer ships the old version quietly.** Editing writes a
+  revision without pinning it, and the console's Deploy named the newest one; `pando deploy` and
+  `pando_deploy` shipped the pinned one. Both now take the revision to deploy (`--revision`,
+  `spec_revision`), and a deploy of the pinned revision answers with `newer_revision` when an edit
+  is waiting. That includes making a variable a secret in the console: the old revision did not read
+  the secret, so the container that was already running was left running.
 
 ## [0.12.0] - 2026-10-20
 

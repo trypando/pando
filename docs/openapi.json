@@ -1408,7 +1408,7 @@
       "post": {
         "operationId": "deploy",
         "summary": "Deploy an app",
-        "description": "Deploy. Returns 202 with the deployment; the build runs behind it. When the deploy needs approval it comes back `awaiting_approval` instead, the app is left as it is, the people who can approve are told, and any older request for the app still waiting is superseded. Retrying with the same idempotency key replays the first answer rather than deploying twice.\n\nNeeds `app.deploy`.",
+        "description": "Deploy. Returns 202 with the deployment; the build runs behind it. `spec_revision` names the revision to ship; without it the pinned one ships, and when a newer revision exists — an edit not yet deployed — the reply carries it as `newer_revision`. When the deploy needs approval it comes back `awaiting_approval` instead, the app is left as it is, the people who can approve are told, and any older request for the app still waiting is superseded. Retrying with the same idempotency key replays the first answer rather than deploying twice.\n\nNeeds `app.deploy`.",
         "tags": [
           "Deploys"
         ],
@@ -3893,7 +3893,7 @@
       "put": {
         "operationId": "putSecret",
         "summary": "Set a secret",
-        "description": "Set a secret. Rotating one recreates the workload rather than leaving it running with the old value.\n\nNeeds `app.secrets.write`.",
+        "description": "Set a secret. Only a `secret_ref` in the spec brings it into the app: the reply's `read_by_spec` says whether the newest revision has one, and `note` says what to add when it does not. Rotating one the app reads recreates the workload on the next deploy rather than leaving it running with the old value.\n\nNeeds `app.secrets.write`.",
         "tags": [
           "Secrets"
         ],
@@ -3933,8 +3933,29 @@
           }
         },
         "responses": {
-          "204": {
-            "description": "Done. No body."
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "read_by_spec": {
+                      "type": "boolean"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key"
+                  ]
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -12984,6 +13005,10 @@
             "type": "integer",
             "format": "int64"
           },
+          "newer_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
           "app_name": {
             "type": "string"
           },
@@ -14013,6 +14038,10 @@
             "type": "boolean"
           },
           "queue_position": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "newer_revision": {
             "type": "integer",
             "format": "int64"
           }

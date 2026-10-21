@@ -26,3 +26,18 @@ func TestR166_AnAppsHostnameCanBeChosenWhereRoutingServesOne(t *testing.T) {
 	require.Contains(t, errs.As(err).Message, "port")
 	require.Empty(t, port.Routing.Hostname)
 }
+
+func TestReadsSecret(t *testing.T) {
+	ref := "NTFY_TOPIC"
+	s := &AppSpec{Workloads: []Workload{{Name: "web", Env: []EnvEntry{{Key: "NTFY_TOPIC", SecretRef: &ref}}}}}
+	require.True(t, ReadsSecret(s, "NTFY_TOPIC"))
+	require.False(t, ReadsSecret(s, "OTHER"))
+
+	literal := "t"
+	plain := &AppSpec{Workloads: []Workload{{Name: "web", Env: []EnvEntry{{Key: "NTFY_TOPIC", Value: &literal}}}}}
+	require.False(t, ReadsSecret(plain, "NTFY_TOPIC"), "a literal with the same name is not the secret")
+
+	slotted := &AppSpec{Slots: []Slot{{Key: "db", Resolution: &Resolution{Mode: ResolutionLiteral, SecretRef: "DB_URL"}}}}
+	require.True(t, ReadsSecret(slotted, "DB_URL"))
+	require.False(t, ReadsSecret(nil, "DB_URL"))
+}

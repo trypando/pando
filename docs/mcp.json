@@ -550,7 +550,7 @@
     },
     {
       "name": "pando_deploy",
-      "description": "Deploy an app. Returns once the deployment has been accepted, not once it is running. When the deploy needs somebody's approval, it comes back with status `awaiting_approval` and `approval_reasons` saying why; it runs once a person approves it.",
+      "description": "Deploy an app. Returns once the deployment has been accepted, not once it is running. Without `spec_revision` it ships the pinned revision; an edit, from the console or pando_create_spec, writes a newer one, and the reply's `newer_revision` names it — deploy again with that revision to ship the edit. When the deploy needs somebody's approval, it comes back with status `awaiting_approval` and `approval_reasons` saying why; it runs once a person approves it.",
       "input_schema": {
         "properties": {
           "app_id": {
@@ -560,6 +560,10 @@
           "idempotency_key": {
             "description": "A key you choose. Retrying with the same key will not deploy twice.",
             "type": "string"
+          },
+          "spec_revision": {
+            "description": "The revision to deploy, by number, such as the newest from pando_list_specs. Left out, the pinned one.",
+            "type": "integer"
           }
         },
         "required": [
@@ -1849,7 +1853,7 @@
     },
     {
       "name": "pando_set_secret",
-      "description": "Set or rotate one of an app's secrets. Rotating one recreates the app's workload so it does not keep running with the old value. Needs app.secrets.write.",
+      "description": "Set or rotate one of an app's secrets. Needs app.secrets.write. The app gets it only through a `secret_ref` in its spec: when the reply's `read_by_spec` is false, add {\"key\": ..., \"secret_ref\": ...} to a workload's env with pando_create_spec. Deploying after rotating one the app reads recreates its workload with the new value.",
       "input_schema": {
         "properties": {
           "app_id": {
