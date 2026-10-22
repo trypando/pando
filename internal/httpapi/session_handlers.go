@@ -353,16 +353,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	// console is the launcher.
 	// Never nil: a missing key and an empty list are the same thing to a client
 	// reading `verbs ?? []`, and only one of them is an answer.
-	verbs := []string{}
-	if s.Verbs != nil {
-		held, err := s.Verbs.InstallVerbsFor(r.Context(), p)
-		if err != nil {
-			Error(w, r, err)
-			return
-		}
-		if held != nil {
-			verbs = held
-		}
+	verbs, err := s.installVerbs(r, p)
+	if err != nil {
+		Error(w, r, err)
+		return
 	}
 
 	body := map[string]any{
@@ -372,36 +366,53 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"verbs":          verbs,
 	}
 	if p.UserID != "" {
-		user, found, err := s.Users.ByID(r.Context(), p.UserID)
-		if err != nil {
+		if err := s.addMeUser(r, p.UserID, body); err != nil {
 			Error(w, r, err)
 			return
 		}
-		if found {
-			body["user_id"] = user.ID
-
-			// The sign-in name. The console shows it on the first-run password
-			// screen so a password manager has something to file the new
-			// credential under, and so the person can see which account they
-			// are changing.
-			body["username"] = user.ExternalID
-			body["email"] = user.Email
-			body["display_name"] = user.DisplayName
-			body["must_change_password"] = user.MustChangePassword
-
-			// A local account's second factor (R-405). An identity
-			// provider's account has none here: the provider asks for it.
-			if s.TwoFactor != nil && user.AdapterID == state.LocalAdapterID {
-				tf, err := s.meTwoFactor(r, user)
-				if err != nil {
-					Error(w, r, err)
-					return
-				}
-				body["two_factor"] = tf
-			}
-		}
 	}
 	JSON(w, http.StatusOK, body)
+}
+
+// installVerbs is the install-wide verbs p holds, never nil.
+func (s *Server) installVerbs(r *http.Request, p authz.Principal) ([]string, error) {
+	if s.Verbs == nil {
+		return []string{}, nil
+	}
+	held, err := s.Verbs.InstallVerbsFor(r.Context(), p)
+	if err != nil || held == nil {
+		return []string{}, err
+	}
+	return held, nil
+}
+
+// addMeUser adds the account behind a principal to /me's body.
+func (s *Server) addMeUser(r *http.Request, userID string, body map[string]any) error {
+	user, found, err := s.Users.ByID(r.Context(), userID)
+	if err != nil || !found {
+		return err
+	}
+	body["user_id"] = user.ID
+
+	// The sign-in name. The console shows it on the first-run password
+	// screen so a password manager has something to file the new
+	// credential under, and so the person can see which account they
+	// are changing.
+	body["username"] = user.ExternalID
+	body["email"] = user.Email
+	body["display_name"] = user.DisplayName
+	body["must_change_password"] = user.MustChangePassword
+
+	// A local account's second factor (R-405). An identity
+	// provider's account has none here: the provider asks for it.
+	if s.TwoFactor != nil && user.AdapterID == state.LocalAdapterID {
+		tf, err := s.meTwoFactor(r, user)
+		if err != nil {
+			return err
+		}
+		body["two_factor"] = tf
+	}
+	return nil
 }
 
 func clientIP(r *http.Request) string {
@@ -444,6 +455,24 @@ type changePasswordRequest struct {
 //
 // Without this endpoint R-046's "must be changed on first login" is a flag that
 // nothing can clear, which is what it was until now.
+// readChangePassword reads a password change's body and checks the new
+// password's shape.
+func readChangePassword(r *http.Request) (changePasswordRequest, error) {
+	var req changePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return req, errs.New(errs.ValidInvalid, "The request body could not be read.")
+	}
+	if req.NewPassword == "" {
+		return req, errs.New(errs.ValidInvalid, "A password cannot be empty.")
+	}
+	if len(req.NewPassword) < hash.MinPasswordLength {
+		return req, errs.Newf(errs.ValidInvalid,
+			"A password needs at least %d characters.", hash.MinPasswordLength).
+			WithRemedy("A short phrase you will remember is a good password.")
+	}
+	return req, nil
+}
+
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	p := PrincipalFrom(r.Context())
 	if p.Kind == authz.KindAnonymous {
@@ -457,19 +486,9 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req changePasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
-		return
-	}
-	if req.NewPassword == "" {
-		Error(w, r, errs.New(errs.ValidInvalid, "A password cannot be empty."))
-		return
-	}
-	if len(req.NewPassword) < hash.MinPasswordLength {
-		Error(w, r, errs.Newf(errs.ValidInvalid,
-			"A password needs at least %d characters.", hash.MinPasswordLength).
-			WithRemedy("A short phrase you will remember is a good password."))
+	req, err := readChangePassword(r)
+	if err != nil {
+		Error(w, r, err)
 		return
 	}
 
