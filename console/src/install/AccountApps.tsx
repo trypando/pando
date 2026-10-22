@@ -17,9 +17,8 @@ import { Banner, Button, Checkbox, Dialog, EmptyState, Select, Tag } from '@desi
 import { api } from '@api/client';
 import { InstallVerb, useInstallVerb } from '../app/principal';
 import { Table } from '../ui/Table';
-import { FieldSkeleton, LineSkeleton, Loading } from '../ui/Loading';
-import { SearchField } from '../ui/SearchField';
-import { ShowMore, usePaged, useSettled, withParams, type PageOf } from '../ui/paged';
+import { SHOWN, SearchPicker, type Search } from '../ui/SearchPicker';
+import { ShowMore, usePaged, withParams, type PageOf } from '../ui/paged';
 import type { Role } from './Accounts';
 import { Quiet, messageOf, sentence } from './Accounts';
 
@@ -56,6 +55,26 @@ const listKey = (p: Principal) => [p.kind === 'user' ? 'users' : 'groups', p.id,
  *  group. Every grant in a group's list is the group's own. */
 /** Apps offered at once in the picker; a search finds the rest. */
 const PICK_LIMIT = 50;
+
+/**
+ * Up to `want` apps matching q that the principal has nothing on. The API can
+ * only include IDs, not leave them out, so pages are read until enough are
+ * found or there are none left: a first page of apps it already has does not
+ * mean there is nothing to add.
+ */
+async function appsLeft(
+  q: string,
+  has: ReadonlySet<string>,
+  want: number,
+  cursor?: string,
+): Promise<{ id: string; name: string }[]> {
+  const page = await api.get<{ apps: { id: string; name: string }[] | null; next_cursor?: string }>(
+    withParams('/apps', { q, limit: PICK_LIMIT, cursor }),
+  );
+  const left = (page.apps ?? []).filter((a) => !has.has(a.id)).slice(0, want);
+  if (left.length === want || !page.next_cursor) return left;
+  return [...left, ...(await appsLeft(q, has, want - left.length, page.next_cursor))];
+}
 
 const isOwn = (p: Principal) => (g: Grant) => p.kind === 'group' || g.via === 'user';
 
@@ -119,7 +138,7 @@ export function AccountApps({ principal }: { principal: Principal }) {
         )}
       </div>
       <AppsTable principal={principal} />
-      {adding && <GiveAccess principal={principal} onClose={() => setAdding(false)} />}
+      {adding && <AddApp principal={principal} onClose={() => setAdding(false)} />}
     </section>
   );
 }
@@ -131,7 +150,7 @@ export function AppsDialog({ principal, onClose }: { principal: Principal; onClo
   const everyApp = useEveryApp();
   const [adding, setAdding] = useState(false);
 
-  if (adding) return <GiveAccess principal={principal} onClose={() => setAdding(false)} />;
+  if (adding) return <AddApp principal={principal} onClose={() => setAdding(false)} />;
   return (
     <Dialog
       open
@@ -315,26 +334,36 @@ function useInvalidate(principal: Principal, appID?: string) {
   };
 }
 
+/** GiveAccess for the principal, leaving out the apps its list already
+ *  shows, from the same cache the list reads. */
+function AddApp({ principal, onClose }: Readonly<{ principal: Principal; onClose: () => void }>) {
+  const has = new Set(useAccess(principal).rows.map((r) => r.app_id));
+  return <GiveAccess principal={principal} has={has} roles={useAppRoles().data?.roles ?? []} onClose={onClose} />;
+}
+
 /** Access to an app the principal has nothing on yet — for someone who manages
  *  every app, so every app offered is one they can grant. */
-function GiveAccess({ principal, onClose }: { principal: Principal; onClose: () => void }) {
-  // The apps already listed, from the same cache the list reads.
-  const has = new Set(useAccess(principal).rows.map((r) => r.app_id));
-  const roles = useAppRoles().data?.roles ?? [];
+export function GiveAccess({
+  principal,
+  has,
+  roles,
+  onClose,
+}: Readonly<{
+  principal: Principal;
+  has: Set<string>;
+  roles: Role[];
+  onClose: () => void;
+}>) {
   // Searched by the server, a screenful at a time: the install may hold
   // twenty thousand apps, and a picker of all of them is not one (issue #72).
-  const [search, setSearch] = useState('');
-  const settled = useSettled(search.trim());
-  const apps = useQuery({
-    queryKey: ['apps', 'pick', settled],
-    queryFn: () =>
-      api.get<{ apps: { id: string; name: string }[] | null; next_cursor?: string }>(
-        withParams('/apps', { q: settled, limit: PICK_LIMIT }),
-      ),
-    placeholderData: (previous) => previous,
-  });
-  const offered = (apps.data?.apps ?? []).filter((a) => !has.has(a.id));
-  const more = Boolean(apps.data?.next_cursor);
+  // Keyed by what the principal has, since that is what the answer leaves out.
+  const held = [...has];
+  const search: Search = {
+    key: (q) => ['apps', 'pick', held, q],
+    find: async (q) => (await appsLeft(q, has, SHOWN)).map((a) => ({ id: a.id, label: a.name })),
+  };
+  // Whether any app is left to add at all.
+  const left = useQuery({ queryKey: ['apps', 'pick-left', held], queryFn: () => appsLeft('', has, 1) });
   const [appID, setAppID] = useState('');
   const [role, setRole] = useState('');
   const [opens, setOpens] = useState(true);
@@ -373,30 +402,10 @@ function GiveAccess({ principal, onClose }: { principal: Principal; onClose: () 
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        {apps.isPending ? (
-          // The field in outline: a picker with only "Choose an app" in it
-          // reads as a list of no apps.
-          <Loading gap="var(--space-2)">
-            <LineSkeleton width="6ch" font="var(--type-label)" />
-            <FieldSkeleton />
-          </Loading>
-        ) : offered.length === 0 && settled === '' && !more ? (
+        {left.data?.length === 0 ? (
           <Quiet>This {noun} already has access to every app.</Quiet>
         ) : (
-          <>
-            <SearchField value={search} onChange={setSearch} placeholder="Search apps" width="100%" />
-            {offered.length === 0 ? (
-              <Quiet>No apps match &ldquo;{settled}&rdquo;.</Quiet>
-            ) : (
-              <Select
-                label="App"
-                value={appID}
-                onChange={(e) => setAppID(e.target.value)}
-                helper={more ? `The first ${PICK_LIMIT} apps. Search to find another.` : undefined}
-                options={[{ value: '', label: 'Choose an app' }, ...offered.map((a) => ({ value: a.id, label: a.name }))]}
-              />
-            )}
-          </>
+          <SearchPicker label="App" noun="apps" search={search} onChange={(chosen) => setAppID(chosen?.id ?? '')} />
         )}
         <Select
           label="Role"

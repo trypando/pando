@@ -31,15 +31,17 @@ interface Option {
   value: string;
   label: string;
   note?: string;
+  /** The label in the code face: Pando's own actors, and accounts with no name. */
+  mono?: boolean;
 }
 
 // Pando's own actors, as the server records them (principal kind "system" with
 // these IDs, and "anonymous" with none).
 const PANDO: Option[] = [
-  { value: 'kind:system', label: 'system', note: 'Any Pando process' },
-  { value: 'reconciler', label: 'reconciler', note: 'System' },
-  { value: 'detection', label: 'detection', note: 'System' },
-  { value: 'kind:anonymous', label: 'anonymous', note: 'Not signed in' },
+  { value: 'kind:system', label: 'system', note: 'Any Pando process', mono: true },
+  { value: 'reconciler', label: 'reconciler', note: 'System', mono: true },
+  { value: 'detection', label: 'detection', note: 'System', mono: true },
+  { value: 'kind:anonymous', label: 'anonymous', note: 'Not signed in', mono: true },
 ];
 
 const SHOWN = 8;
@@ -67,12 +69,17 @@ export function ActorField({
   const accounts = unionPeople(people, searched);
   const options: Option[] = [
     ...own,
-    ...accounts.map((p) => ({ value: p.id, label: p.external_id || p.id, note: p.display_name || p.email })),
+    // A person is shown by their name, their username the quieter detail.
+    ...accounts.map((p) =>
+      p.display_name
+        ? { value: p.id, label: p.display_name, note: p.external_id || p.email }
+        : { value: p.id, label: p.external_id || p.id, note: p.email, mono: true },
+    ),
   ];
   const labelOf = (v: string) => options.find((o) => o.value === v)?.label ?? v;
 
   // A value that arrived with the page — a link from an account — shows as an
-  // ID until the accounts load, and as the username once they have.
+  // ID until the accounts load, and as the name once they have.
   const known = value ? labelOf(value) : '';
   useEffect(() => {
     if (value && text === value && known !== value) setText(known);
@@ -107,13 +114,12 @@ export function ActorField({
     <div ref={root} style={{ position: 'relative' }}>
       <Input
         label={label}
-        mono
         role="combobox"
         aria-expanded={open && found.length > 0}
         aria-autocomplete="list"
         aria-controls={listID}
         aria-activedescendant={open && found[at] !== undefined ? `${listID}-${at}` : undefined}
-        placeholder="Username, email or ID"
+        placeholder="Name, username, email or ID"
         value={text}
         onChange={(e) => {
           setText(e.target.value);
@@ -154,7 +160,7 @@ export function ActorField({
               onHover={() => setAt(i)}
               label={o.label}
               detail={o.note}
-              mono
+              mono={o.mono}
             />
           ))}
         </ComboList>

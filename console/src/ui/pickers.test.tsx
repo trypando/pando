@@ -23,7 +23,7 @@ const render = (node: ReactNode) =>
 describe('pickers render closed', () => {
   it('ActorField', () => {
     const html = render(<ActorField people={[]} value="" onChange={() => {}} label="Actor" />);
-    expect(html).toContain('Username, email or ID');
+    expect(html).toContain('Name, username, email or ID');
     expect(html).toContain('aria-expanded="false"');
   });
 

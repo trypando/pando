@@ -87,7 +87,6 @@ describe('a group’s dialogs', () => {
       [['me'], { verbs: ['install.apps.view', 'install.apps.grants.manage'] }],
       [['groups', 'grp_1', 'apps', '', {}], page({ apps: [] })],
       [['roles', 'app'], { roles: [] }],
-      [['apps', 'pick', ''], { apps: [{ id: 'app_1', name: 'notes' }] }],
     ]);
     const dialogs = () => [...document.querySelectorAll('[role="dialog"]')];
     await s.press('Apps');
@@ -95,7 +94,7 @@ describe('a group’s dialogs', () => {
     expect(s.text()).toContain('Apps for ops');
     await s.press('Add app');
     expect(dialogs()).toHaveLength(1);
-    expect(dialogs()[0]?.textContent).toContain('Choose an app');
+    expect(dialogs()[0]?.querySelector('h3')?.textContent).toBe('Add app');
     await s.press('Cancel');
     expect(dialogs()).toHaveLength(1);
     expect(s.text()).toContain('Apps for ops');

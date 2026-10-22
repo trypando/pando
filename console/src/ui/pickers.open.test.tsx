@@ -10,6 +10,7 @@ import { RecipientField } from '../admin/RecipientField';
 import { RepositoryField } from '../admin/RepositoryField';
 import { api } from '@api/client';
 import { ActorField } from '../install/ActorField';
+import { GiveAccess } from '../install/AccountApps';
 import { Menu, MenuItem } from './Menu';
 import { TagField } from './TagField';
 import { TipButton } from './TipButton';
@@ -125,6 +126,26 @@ describe('ActorField, open', () => {
     mouse(options()[0]!, 'mousedown');
     expect(onChange).toHaveBeenCalledWith('kind:system');
   });
+
+  it('names an account first and its username second, and an unnamed one by username', () => {
+    const onChange = vi.fn();
+    const people = [
+      { id: 'usr_01ANA', external_id: 'ana', display_name: 'Ana Ruiz' },
+      { id: 'usr_01BO', external_id: 'bo', email: 'bo@example.com' },
+    ];
+    render(<ActorField people={people} value="" onChange={onChange} />);
+    act(() => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      set.call(input(), 'usr_01');
+      input().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const [ana, bo] = options().map((o) => Array.from(o.children, (c) => c.textContent));
+    expect(ana).toEqual(['Ana Ruiz', 'ana']);
+    expect(bo).toEqual(['bo', 'bo@example.com']);
+    mouse(options()[0]!, 'mousedown');
+    expect(onChange).toHaveBeenCalledWith('usr_01ANA');
+    expect(input().value).toBe('Ana Ruiz');
+  });
 });
 
 describe('RecipientField, open', () => {
@@ -160,18 +181,25 @@ describe('RecipientField, open', () => {
     key(input(), 'ArrowDown');
     expectWired(1);
     mouse(options()[0]!, 'mousedown');
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ label: 'ana' }));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ label: 'Ana Ruiz' }));
+  });
+
+  it('names a person first and their username second, and an unnamed one by username', () => {
+    seed();
+    render(<RecipientField appID="app_01NOTES" kind="user" value={null} onChange={() => {}} />);
+    focus(input());
+    const [ana, bo] = options().map((o) => Array.from(o.children, (c) => c.textContent));
+    expect(ana).toEqual(['Ana Ruiz', 'ana']);
+    expect(bo).toEqual(['bo']);
   });
 });
 
 describe('RepositoryField, open', () => {
   const seed = () =>
-    queries.setQueryData(['source-repositories', 'src_01GH', ''], {
-      repositories: [
-        { url: 'https://github.com/acme/api', full_name: 'acme/api' },
-        { url: 'https://github.com/acme/web', full_name: 'acme/web' },
-      ],
-    });
+    queries.setQueryData(['source-repositories', 'src_01GH', ''], [
+      { id: 'https://github.com/acme/api', label: 'acme/api' },
+      { id: 'https://github.com/acme/web', label: 'acme/web' },
+    ]);
 
   it('is one field that lists repositories and chooses one', () => {
     seed();
@@ -207,10 +235,23 @@ describe('RepositoryField, open', () => {
   });
 
   it('says when nothing matches', () => {
-    queries.setQueryData(['source-repositories', 'src_01GH', ''], { repositories: null });
+    queries.setQueryData(['source-repositories', 'src_01GH', ''], []);
     render(<RepositoryField source="src_01GH" onChange={() => {}} />);
     focus(input());
     expect(container.textContent).toContain('No repositories match.');
+  });
+
+  it('asks the connection for what is typed', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue({ repositories: [{ url: 'https://github.com/acme/web', full_name: 'acme/web' }] });
+    render(<RepositoryField source="src_01GH" onChange={() => {}} />);
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      set.call(input(), 'web');
+      input().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith('/sources/src_01GH/repositories?q=web'));
+    await vi.waitFor(() => expect(options().map((o) => o.textContent)).toEqual(['acme/web']));
+    get.mockRestore();
   });
 
   it('says a failed search as an error, not as no matches', async () => {
@@ -219,6 +260,50 @@ describe('RepositoryField, open', () => {
     focus(input());
     await vi.waitFor(() => expect(container.textContent).toContain('Pando could not reach the server.'));
     expect(container.textContent).not.toContain('No repositories match.');
+    get.mockRestore();
+  });
+});
+
+describe('Adding an app to an account', () => {
+  const dana = { kind: 'user' as const, id: 'usr_1', name: 'dana' };
+
+  it('picks the app from one field, leaving out apps the account has', async () => {
+    const get = vi.spyOn(api, 'get').mockImplementation(async (path: string) =>
+      path.includes('q=led')
+        ? { apps: [{ id: 'app_2', name: 'ledger' }] }
+        : { apps: [{ id: 'app_1', name: 'inventory' }, { id: 'app_2', name: 'ledger' }] },
+    );
+    render(<GiveAccess principal={dana} has={new Set(['app_1'])} roles={[]} onClose={() => {}} />);
+    await vi.waitFor(() => expect(input()).not.toBeNull());
+    expect(container.querySelectorAll('input[role="combobox"]')).toHaveLength(1);
+    expect(container.textContent).not.toContain('Search apps');
+
+    focus(input());
+    await vi.waitFor(() => expect(options().map((o) => o.textContent)).toEqual(['ledger']));
+    key(input(), 'Enter');
+    expect(input().value).toBe('ledger');
+    get.mockRestore();
+  });
+
+  it('says when every app is already given', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue({ apps: [{ id: 'app_1', name: 'inventory' }] });
+    render(<GiveAccess principal={dana} has={new Set(['app_1'])} roles={[]} onClose={() => {}} />);
+    await vi.waitFor(() => expect(container.textContent).toContain('This account already has access to every app.'));
+    expect(container.querySelector('input[role="combobox"]')).toBeNull();
+    get.mockRestore();
+  });
+
+  it('reads past a first page of apps the account already has', async () => {
+    const get = vi.spyOn(api, 'get').mockImplementation(async (path: string) =>
+      path.includes('cursor=c2')
+        ? { apps: [{ id: 'app_3', name: 'payroll' }] }
+        : { apps: [{ id: 'app_1', name: 'inventory' }], next_cursor: 'c2' },
+    );
+    render(<GiveAccess principal={dana} has={new Set(['app_1'])} roles={[]} onClose={() => {}} />);
+    await vi.waitFor(() => expect(input()).not.toBeNull());
+    focus(input());
+    await vi.waitFor(() => expect(options().map((o) => o.textContent)).toEqual(['payroll']));
+    expect(container.textContent).not.toContain('already has access to every app');
     get.mockRestore();
   });
 });
