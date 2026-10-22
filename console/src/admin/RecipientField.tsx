@@ -74,7 +74,9 @@ export function RecipientField({
 
   const options: Option[] =
     kind === 'user'
-      ? (found.data?.users ?? []).map((u) => ({ id: u.id, label: u.username, note: u.name }))
+      ? // A person is shown by their name; the username is the quieter
+        // detail, and the label when there is no name.
+        (found.data?.users ?? []).map((u) => ({ id: u.id, label: u.name || u.username, note: u.name ? u.username : undefined }))
       : (found.data?.groups ?? []).map((g) => ({ id: g.id, label: g.name }));
 
   const choose = (o: Option) => {
@@ -98,7 +100,7 @@ export function RecipientField({
         aria-autocomplete="list"
         aria-controls={listID}
         aria-activedescendant={open && options[at] !== undefined ? `${listID}-${at}` : undefined}
-        placeholder={kind === 'user' ? 'Username, name or email' : 'Group name'}
+        placeholder={kind === 'user' ? 'Name, username or email' : 'Group name'}
         value={text}
         autoComplete="off"
         onChange={(e) => {

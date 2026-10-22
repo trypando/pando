@@ -125,6 +125,26 @@ describe('ActorField, open', () => {
     mouse(options()[0]!, 'mousedown');
     expect(onChange).toHaveBeenCalledWith('kind:system');
   });
+
+  it('names an account first and its username second, and an unnamed one by username', () => {
+    const onChange = vi.fn();
+    const people = [
+      { id: 'usr_01ANA', external_id: 'ana', display_name: 'Ana Ruiz' },
+      { id: 'usr_01BO', external_id: 'bo', email: 'bo@example.com' },
+    ];
+    render(<ActorField people={people} value="" onChange={onChange} />);
+    act(() => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      set.call(input(), 'usr_01');
+      input().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const [ana, bo] = options().map((o) => Array.from(o.children, (c) => c.textContent));
+    expect(ana).toEqual(['Ana Ruiz', 'ana']);
+    expect(bo).toEqual(['bo', 'bo@example.com']);
+    mouse(options()[0]!, 'mousedown');
+    expect(onChange).toHaveBeenCalledWith('usr_01ANA');
+    expect(input().value).toBe('Ana Ruiz');
+  });
 });
 
 describe('RecipientField, open', () => {
@@ -160,7 +180,16 @@ describe('RecipientField, open', () => {
     key(input(), 'ArrowDown');
     expectWired(1);
     mouse(options()[0]!, 'mousedown');
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ label: 'ana' }));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ label: 'Ana Ruiz' }));
+  });
+
+  it('names a person first and their username second, and an unnamed one by username', () => {
+    seed();
+    render(<RecipientField appID="app_01NOTES" kind="user" value={null} onChange={() => {}} />);
+    focus(input());
+    const [ana, bo] = options().map((o) => Array.from(o.children, (c) => c.textContent));
+    expect(ana).toEqual(['Ana Ruiz', 'ana']);
+    expect(bo).toEqual(['bo']);
   });
 });
 
