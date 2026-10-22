@@ -145,3 +145,26 @@ func TestTheBuildNetworkPoolIsPandosUnlessSetOtherwise(t *testing.T) {
 	require.Empty(t, firstName(nil))
 	require.GreaterOrEqual(t, defaultDaemonLimit(), 2)
 }
+
+// A TLS file for the install topology's BuildKit that is missing or damaged
+// is reported by its setting when Pando configures the adapter.
+func TestATLSFileThatCannotBeReadIsReportedByItsSetting(t *testing.T) {
+	ca, cert, key := writeTLSFiles(t)
+	junk := filepath.Join(t.TempDir(), "junk.pem")
+	require.NoError(t, os.WriteFile(junk, []byte("not PEM"), 0o600))
+	for _, c := range []struct {
+		cfg  Config
+		want string
+	}{
+		{Config{TLSCAFile: filepath.Join(t.TempDir(), "missing.pem")}, "PANDO_BUILDKIT_TLS_CA"},
+		{Config{TLSCAFile: junk}, "PANDO_BUILDKIT_TLS_CA"},
+		{Config{TLSCAFile: ca, TLSCertFile: cert, TLSKeyFile: junk}, "PANDO_BUILDKIT_TLS_KEY"},
+		{Config{TLSCertFile: key, TLSKeyFile: cert}, "PANDO_BUILDKIT_TLS_CERT"},
+	} {
+		c.cfg.Address = "tcp://buildkit.example:1234"
+		raw, _ := json.Marshal(c.cfg)
+		err := New().Configure(context.Background(), raw)
+		require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), "%+v", c.cfg)
+		require.ErrorContains(t, err, c.want)
+	}
+}

@@ -782,3 +782,18 @@ func TestAPandoInAContainerReachesItsBuildKitsByAddress(t *testing.T) {
 	_, err = m.address(ctx, "gone", name)
 	require.Error(t, err)
 }
+
+// A Pando in a container that Docker could not answer for once is not taken
+// to run on the host: setup fails, and the next try finds its container.
+func TestADockerHiccupDoesNotMakeAContainerizedPandoHostRun(t *testing.T) {
+	f := newFakeDocker("pando-1")
+	m := testManaged(t, f)
+	f.fail = map[string]error{"ContainerInspect": errDaemon}
+	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(m.setup(context.Background())))
+	require.False(t, m.ready)
+
+	f.fail = nil
+	require.NoError(t, m.setup(context.Background()))
+	require.True(t, m.inContainer)
+	require.Equal(t, "full-pando-1", m.owner)
+}

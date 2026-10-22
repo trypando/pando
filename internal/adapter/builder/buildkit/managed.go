@@ -286,7 +286,9 @@ func (m *managed) setup(ctx context.Context) error {
 	if m.ready {
 		return nil
 	}
-	m.identify(ctx)
+	if err := m.identify(ctx); err != nil {
+		return err
+	}
 	if m.ca == nil {
 		ca, err := loadAuthority(m.profileDir())
 		if err != nil {
@@ -309,25 +311,36 @@ func (m *managed) setup(ctx context.Context) error {
 }
 
 // identify finds Pando's own container, if it is in one: its Compose project
-// names everything, and its ID owns the daemons it starts.
-func (m *managed) identify(ctx context.Context) {
+// names everything, and its ID owns the daemons it starts. Only Docker saying
+// there is no such container means Pando runs on the host; any other failure
+// is returned, so setup is tried again rather than settling on the host for
+// the life of the process.
+func (m *managed) identify(ctx context.Context) error {
 	self := m.selfName()
 	m.owner, m.inContainer = hostOwnerPrefix+self, false
 	if self == "" {
 		m.owner = hostOwnerPrefix + "unknown"
-		return
+		return nil
 	}
 	got, err := m.cli.ContainerInspect(ctx, self, client.ContainerInspectOptions{})
-	if err != nil || got.Container.ID == "" {
-		return
+	if cerrdefs.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return errs.Wrap(errs.AdapterUnavailable, "Pando could not ask Docker whether it runs in a container.", err).
+			WithRemedy("Check that Docker is running and that Pando can reach it, as it does to run apps.")
+	}
+	if got.Container.ID == "" {
+		return nil
 	}
 	m.owner, m.inContainer = got.Container.ID, true
 	if m.named || got.Container.Config == nil {
-		return
+		return nil
 	}
 	if project := got.Container.Config.Labels[labelComposeProject]; project != "" {
 		m.project = project
 	}
+	return nil
 }
 
 // ensureControlNetwork is the network Pando reaches its daemons on. Internal:

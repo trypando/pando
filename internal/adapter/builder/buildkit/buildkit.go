@@ -2,7 +2,10 @@ package buildkit
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -237,6 +240,9 @@ func (a *Adapter) externalTLS() ([]bkclient.ClientOpt, error) {
 			"The build service was given half a client certificate: PANDO_BUILDKIT_TLS_CERT and PANDO_BUILDKIT_TLS_KEY go together.").
 			WithRemedy("Set both, as files in Pando's container, or neither.")
 	}
+	if err := checkTLSFiles(ca, cert, key); err != nil {
+		return nil, err
+	}
 	var opts []bkclient.ClientOpt
 	if ca != "" {
 		if serverName == "" {
@@ -250,6 +256,30 @@ func (a *Adapter) externalTLS() ([]bkclient.ClientOpt, error) {
 		opts = append(opts, bkclient.WithCredentials(cert, key))
 	}
 	return opts, nil
+}
+
+// checkTLSFiles reads the TLS files named for the install topology's
+// BuildKit now, so one that is missing or damaged is reported by its setting
+// and path rather than later as a build service that does not answer.
+func checkTLSFiles(ca, cert, key string) error {
+	if ca != "" {
+		body, err := os.ReadFile(ca) //nolint:gosec // G304: the operator's own setting, read from Pando's own filesystem.
+		if err == nil && !x509.NewCertPool().AppendCertsFromPEM(body) {
+			err = errors.New("no PEM certificate in it")
+		}
+		if err != nil {
+			return errs.Wrap(errs.ValidInvalid, "PANDO_BUILDKIT_TLS_CA is "+ca+", which Pando could not read as a CA certificate.", err).
+				WithRemedy("Mount the CA that signed the build service's certificate into Pando's container at that path, as PEM.")
+		}
+	}
+	if cert != "" {
+		if _, err := tls.LoadX509KeyPair(cert, key); err != nil {
+			return errs.Wrap(errs.ValidInvalid, "PANDO_BUILDKIT_TLS_CERT and PANDO_BUILDKIT_TLS_KEY are "+cert+" and "+key+
+				", which Pando could not read as a certificate and its key.", err).
+				WithRemedy("Mount the client certificate and its key into Pando's container at those paths, as PEM.")
+		}
+	}
+	return nil
 }
 
 // setting is a configured value, or the environment's when there is none.
@@ -405,14 +435,14 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 	if err != nil {
 		return api.BuildResult{}, err
 	}
-	// Trim the build service's cache now that this build is done with it, and
-	// only then let the daemon go. In the background: the image is already on
-	// its way to the runtime, and a deploy does not wait on housekeeping.
+	// Let the daemon go, then trim its cache now that this build is done with
+	// it: released first, so a build waiting on another's trim is not counted
+	// as running and holds no daemon from eviction. A trim of a daemon removed
+	// meanwhile fails, and is ignored. In the background: the image is already
+	// on its way to the runtime, and a deploy does not wait on housekeeping.
 	defer func() {
-		go func() {
-			a.trimCache(context.WithoutCancel(ctx), cli)
-			done()
-		}()
+		done()
+		go a.trimCache(context.WithoutCancel(ctx), cli)
 	}()
 
 	// A build that may be steered keeps the end of its log, which is what
