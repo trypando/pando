@@ -366,9 +366,33 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"verbs":          verbs,
 	}
 	if p.UserID != "" {
-		if err := s.addMeUser(r, p.UserID, body); err != nil {
+		user, found, err := s.Users.ByID(r.Context(), p.UserID)
+		if err != nil {
 			Error(w, r, err)
 			return
+		}
+		if found {
+			body["user_id"] = user.ID
+
+			// The sign-in name. The console shows it on the first-run password
+			// screen so a password manager has something to file the new
+			// credential under, and so the person can see which account they
+			// are changing.
+			body["username"] = user.ExternalID
+			body["email"] = user.Email
+			body["display_name"] = user.DisplayName
+			body["must_change_password"] = user.MustChangePassword
+
+			// A local account's second factor (R-405). An identity
+			// provider's account has none here: the provider asks for it.
+			if s.TwoFactor != nil && user.AdapterID == state.LocalAdapterID {
+				tf, err := s.meTwoFactor(r, user)
+				if err != nil {
+					Error(w, r, err)
+					return
+				}
+				body["two_factor"] = tf
+			}
 		}
 	}
 	JSON(w, http.StatusOK, body)
@@ -384,35 +408,6 @@ func (s *Server) installVerbs(r *http.Request, p authz.Principal) ([]string, err
 		return []string{}, err
 	}
 	return held, nil
-}
-
-// addMeUser adds the account behind a principal to /me's body.
-func (s *Server) addMeUser(r *http.Request, userID string, body map[string]any) error {
-	user, found, err := s.Users.ByID(r.Context(), userID)
-	if err != nil || !found {
-		return err
-	}
-	body["user_id"] = user.ID
-
-	// The sign-in name. The console shows it on the first-run password
-	// screen so a password manager has something to file the new
-	// credential under, and so the person can see which account they
-	// are changing.
-	body["username"] = user.ExternalID
-	body["email"] = user.Email
-	body["display_name"] = user.DisplayName
-	body["must_change_password"] = user.MustChangePassword
-
-	// A local account's second factor (R-405). An identity
-	// provider's account has none here: the provider asks for it.
-	if s.TwoFactor != nil && user.AdapterID == state.LocalAdapterID {
-		tf, err := s.meTwoFactor(r, user)
-		if err != nil {
-			return err
-		}
-		body["two_factor"] = tf
-	}
-	return nil
 }
 
 func clientIP(r *http.Request) string {
