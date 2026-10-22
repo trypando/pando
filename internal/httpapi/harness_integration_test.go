@@ -142,7 +142,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 	auditor := audit.New(db.Pool)
 
 	users := state.NewUsers(db)
-	sessions := state.NewSessions(db)
+	sessions := state.NewSessions(db, testTokenKey)
 	tokens := state.NewTokens(db, testTokenKey)
 	apps := state.NewApps(db)
 	volumes := state.NewVolumes(db)

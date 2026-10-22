@@ -111,7 +111,7 @@ func TestR079_ASessionIsReadWithItsAccountAndGroupsInOneQuery(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := connected(t)
-	sessions := state.NewSessions(db)
+	sessions := state.NewSessions(db, testTokenKey)
 	users := state.NewUsers(db)
 	store := state.NewAuthzStore(db)
 
@@ -124,7 +124,7 @@ func TestR079_ASessionIsReadWithItsAccountAndGroupsInOneQuery(t *testing.T) {
 	sess, err := sessions.Create(ctx, carol.ID, carol.AdapterID, time.Hour, "test", "")
 	require.NoError(t, err)
 
-	wantSess, found, err := sessions.Active(ctx, sess.ID)
+	wantSess, found, err := sessions.Active(ctx, sess.Cookie.Reveal())
 	require.NoError(t, err)
 	require.True(t, found)
 	wantUser, _, err := users.ByID(ctx, carol.ID)
@@ -132,7 +132,7 @@ func TestR079_ASessionIsReadWithItsAccountAndGroupsInOneQuery(t *testing.T) {
 	wantGroups, err := store.GroupsForUser(ctx, carol.ID)
 	require.NoError(t, err)
 
-	gotSess, gotUser, gotGroups, found, err := sessions.ActiveWithUser(ctx, sess.ID)
+	gotSess, gotUser, gotGroups, found, err := sessions.ActiveWithUser(ctx, sess.Cookie.Reveal())
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, wantSess.ID, gotSess.ID)
@@ -141,8 +141,19 @@ func TestR079_ASessionIsReadWithItsAccountAndGroupsInOneQuery(t *testing.T) {
 	require.Equal(t, wantUser, gotUser)
 	require.ElementsMatch(t, wantGroups, gotGroups)
 
-	require.NoError(t, sessions.Revoke(ctx, sess.ID))
-	_, _, _, found, err = sessions.ActiveWithUser(ctx, sess.ID)
+	// The proxy reads the cookie as the API does (R-063): the public ID alone,
+	// or with a secret that is not the session's, is no session.
+	for _, forged := range []string{sess.Session.ID, sess.Session.ID + ".", sess.Session.ID + ".x" + sess.Cookie.Reveal()} {
+		_, _, _, found, err = sessions.ActiveWithUser(ctx, forged)
+		require.NoError(t, err)
+		require.False(t, found, "%q is not the session's cookie", forged)
+		_, found, err = sessions.Active(ctx, forged)
+		require.NoError(t, err)
+		require.False(t, found)
+	}
+
+	require.NoError(t, sessions.Revoke(ctx, sess.Session.ID))
+	_, _, _, found, err = sessions.ActiveWithUser(ctx, sess.Cookie.Reveal())
 	require.NoError(t, err)
 	require.False(t, found, "a revoked session is no session")
 }

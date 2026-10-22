@@ -225,7 +225,13 @@ func (t *Tokens) digest(v secret.Value) string {
 }
 
 func (t *Tokens) mac(s string) []byte {
-	m := hmac.New(sha256.New, t.key)
+	return keyedMAC(t.key, s)
+}
+
+// keyedMAC is HMAC-SHA-256 of s under the install's token key. API tokens and
+// sessions both store it in place of their secret (R-063).
+func keyedMAC(key []byte, s string) []byte {
+	m := hmac.New(sha256.New, key)
 	m.Write([]byte(s))
 	return m.Sum(nil)
 }

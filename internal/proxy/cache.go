@@ -148,7 +148,7 @@ func store[K comparable, T any](c *Cache, m map[K]cached[T], key K, value T, gen
 // cannot key on a cookie the Authenticator would have refused or ignored.
 type SessionResolver interface {
 	SessionID(r *http.Request) (string, error)
-	SessionPrincipal(ctx context.Context, sessionID string) (authz.Principal, time.Time, error)
+	SessionPrincipal(ctx context.Context, cookie string) (authz.Principal, time.Time, error)
 }
 
 // principal resolves a request carried by a session cookie alone, from the

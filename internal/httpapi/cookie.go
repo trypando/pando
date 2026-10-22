@@ -7,7 +7,7 @@ import (
 	"github.com/trypando/pando/internal/errs"
 )
 
-// SessionCookie carries only the session ID (design 02 §2.7), on an install
+// SessionCookie carries ses_<id>.<secret> (design 02 §2.7), on an install
 // reached over plain HTTP.
 const SessionCookie = "pando_session"
 
@@ -64,7 +64,8 @@ func (c CookieScheme) Name(r *http.Request) string {
 	return SessionCookie
 }
 
-// SessionID reads the session cookie by the name this install sets it under,
+// SessionID reads the session cookie's whole value — ID and secret, a
+// credential — by the name this install sets it under,
 // and only that name: on an HTTPS install a plain pando_session is one that
 // Pando did not set, whoever did.
 //

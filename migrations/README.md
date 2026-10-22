@@ -21,6 +21,7 @@ miss the thing they catch. When you write a migration, these are not optional ex
 | `identity_adapters_no_inline_credentials` refusing `credentials`, `client_secret`, `scim_token` | R-190 — an identity provider's secret is never stored in the clear |
 | `user_identities` primary key `(adapter_id, external_id)` | O-1 — one identity reaches exactly one account |
 | `users_alias_is_suspended` | O-1 — an account whose identities were moved away cannot be reactivated |
+| `sessions_secret_hash_form` | R-063 — a session's secret is stored only as an HMAC digest, never in the clear |
 | `group_links_direction` trigger | R-078 — a provider's group feeds a Pando group, never the reverse |
 
 **Adding a verb to a built-in role is done by migration, and only by migration** (R-081). That is the

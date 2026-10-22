@@ -12,7 +12,7 @@ R-261: the API is the product. Console, CLI, and MCP are clients of it. None may
 
 **Authentication**, in precedence order:
 1. `Authorization: Bearer tok_...` — a token principal (§02 2.1)
-2. Session cookie `__Host-pando_session=ses_...` on an HTTPS install, `pando_session=ses_...` on plain HTTP (R-173; `httpapi/cookie.go`)
+2. Session cookie `__Host-pando_session=ses_<id>.<secret>` on an HTTPS install, `pando_session=ses_<id>.<secret>` on plain HTTP (R-173; `httpapi/cookie.go`)
 
 **Errors** use the envelope from §00 3.2. Every response carries `X-Request-Id`.
 

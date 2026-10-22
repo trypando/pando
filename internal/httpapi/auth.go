@@ -51,18 +51,19 @@ func (a *Authenticator) Authenticate(r *http.Request) (authz.Principal, error) {
 		return a.fromToken(r.Context(), secret.New(raw))
 	}
 
-	sessionID, err := a.SessionID(r)
+	cookie, err := a.SessionID(r)
 	if err != nil {
 		return authz.Anonymous(), err
 	}
-	if sessionID != "" {
-		return a.fromSession(r.Context(), sessionID)
+	if cookie != "" {
+		return a.fromSession(r.Context(), cookie)
 	}
 
 	return authz.Anonymous(), nil
 }
 
-// SessionID is the session the request's cookie names, or "" for none. The
+// SessionID is the request's session cookie value, ses_<id>.<secret>, or ""
+// for none. It is a credential: never log or audit it. The
 // proxy's cache reads it too, so both resolve the same cookie (cookie.go).
 func (a *Authenticator) SessionID(r *http.Request) (string, error) {
 	if a == nil {
@@ -93,8 +94,8 @@ func (a *Authenticator) fromToken(ctx context.Context, presented secret.Value) (
 	return p, nil
 }
 
-func (a *Authenticator) fromSession(ctx context.Context, sessionID string) (authz.Principal, error) {
-	p, _, err := a.SessionPrincipal(ctx, sessionID)
+func (a *Authenticator) fromSession(ctx context.Context, cookie string) (authz.Principal, error) {
+	p, _, err := a.SessionPrincipal(ctx, cookie)
 	return p, err
 }
 
@@ -103,8 +104,8 @@ func (a *Authenticator) fromSession(ctx context.Context, sessionID string) (auth
 // (the proxy's cache, issue #93). The session, its account and the account's
 // groups are one query (Sessions.ActiveWithUser); groups are still read live
 // on every call (R-079).
-func (a *Authenticator) SessionPrincipal(ctx context.Context, sessionID string) (authz.Principal, time.Time, error) {
-	sess, user, groups, ok, err := a.Sessions.ActiveWithUser(ctx, sessionID)
+func (a *Authenticator) SessionPrincipal(ctx context.Context, cookie string) (authz.Principal, time.Time, error) {
+	sess, user, groups, ok, err := a.Sessions.ActiveWithUser(ctx, cookie)
 	if err != nil {
 		return authz.Anonymous(), time.Time{}, err
 	}

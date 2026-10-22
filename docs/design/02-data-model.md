@@ -712,7 +712,9 @@ search, hash chaining — is O-27.
 
 ```sql
 CREATE TABLE sessions (
-    id           text PRIMARY KEY,            -- ses_...
+    id           text PRIMARY KEY,            -- ses_...: public, what the audit log names
+    secret_hash  text NOT NULL                -- hmac-sha256:<hex> of the cookie's secret
+                 CHECK (secret_hash ~ '^hmac-sha256:[0-9a-f]{64}$'),
     user_id      text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     adapter_id   text NOT NULL REFERENCES identity_adapters(id),
     issued_at    timestamptz NOT NULL DEFAULT now(),
@@ -724,7 +726,7 @@ CREATE TABLE sessions (
 CREATE INDEX ON sessions (user_id) WHERE revoked_at IS NULL;
 ```
 
-**[D]** Sessions are server-side rows, not stateless cookies. R-047 defers session lifetime to each adapter, but revocation has to be immediate when an adapter *can* push (R-048), and that is impossible with a stateless cookie. The cookie carries only `ses_...`.
+**[D]** Sessions are server-side rows, not stateless cookies. R-047 defers session lifetime to each adapter, but revocation has to be immediate when an adapter *can* push (R-048), and that is impossible with a stateless cookie. The cookie carries `ses_<id>.<secret>`: the ID is public — the audit log, logs and the API name a session by it — and the secret is 256 random bits, stored only as its HMAC-SHA-256 under the API token key, as tokens are (R-063). A request is matched by ID and then by digest, compared in constant time, so neither the audit log nor a copy of the table signs anyone in. Sign-out and a password change resolve the cookie to its session before ending anything by ID. Migration 000080 added the digest and removed every session from before it: their cookies were their IDs.
 
 **[P]** The proxy checks session validity on every request. At single-host scale this is one indexed lookup; cache with a short TTL if it ever matters, accepting that the TTL becomes the revocation window.
 

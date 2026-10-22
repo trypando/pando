@@ -443,7 +443,7 @@ The single enforcement point (R-023). One path for every request to every app �
 ```
 1.  Resolve app from hostname or path prefix
 2.  App exists and is running?             → 404 / 503
-3.  Extract session cookie, or a bearer token shaped like Pando's (tok_…)
+3.  Extract session cookie (ses_<id>.<secret>, matched by digest), or a bearer token shaped like Pando's (tok_…)
 4.  Authenticate → Principal, or anonymous
 5.  CheckData(principal, app)
       passcode required   → redirect to the passcode page (R-075a)

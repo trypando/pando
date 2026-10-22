@@ -83,7 +83,7 @@ func resetTwoFactor(ctx context.Context, cfg *config.Config, username string, lo
 	if err != nil {
 		return err
 	}
-	if err := state.NewSessions(db).RevokeAllForUser(ctx, user.ID); err != nil {
+	if err := state.NewSessionRevoker(db).RevokeAllForUser(ctx, user.ID); err != nil {
 		return err
 	}
 	if err := state.NewFailedAttempts(db).Clear(ctx, state.SignInCodeKey(user.ID)); err != nil {

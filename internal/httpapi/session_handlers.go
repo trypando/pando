@@ -194,8 +194,8 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user state
 	}
 
 	//nolint:gosec // G124: CookieScheme.sessionCookie sets Secure, HttpOnly and SameSite.
-	cookie := s.cookies().sessionCookie(r, sess.ID)
-	cookie.Expires = sess.ExpiresAt
+	cookie := s.cookies().sessionCookie(r, sess.Cookie.Reveal())
+	cookie.Expires = sess.Session.ExpiresAt
 	http.SetCookie(w, cookie)
 
 	s.audit(r, audit.Event{
@@ -203,7 +203,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user state
 		PrincipalID:   user.ID,
 		Action:        "session.create",
 		TargetKind:    "session",
-		TargetID:      sess.ID,
+		TargetID:      sess.Session.ID,
 	})
 
 	setupRequired := false
@@ -223,7 +223,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user state
 		// R-405: this session can do nothing but set up two-factor
 		// authentication until it has.
 		"two_factor_setup_required": setupRequired,
-		"expires_at":                sess.ExpiresAt.Format(time.RFC3339),
+		"expires_at":                sess.Session.ExpiresAt.Format(time.RFC3339),
 
 		// The revocation window is stated rather than implied (design 06 §3.1).
 		// Implying revocation is instant is the failure mode here.
@@ -283,9 +283,26 @@ func (s *Server) secureCookie(r *http.Request) bool {
 	return s.cookies().Secure(r)
 }
 
+// currentSession is the active session the request's cookie carries, read by
+// its secret, or ok false for none. Callers name the session by sess.ID, the
+// public ID, never by the cookie: the cookie is a credential and the ID is
+// what the audit log records (R-063, R-194).
+func (s *Server) currentSession(r *http.Request) (sess state.Session, ok bool, err error) {
+	cookie, _ := s.cookies().SessionID(r)
+	if cookie == "" || s.Sessions == nil {
+		return state.Session{}, false, nil
+	}
+	return s.Sessions.Active(r.Context(), cookie)
+}
+
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if sessionID, _ := s.cookies().SessionID(r); sessionID != "" {
-		if err := s.Sessions.Revoke(r.Context(), sessionID); err != nil {
+	sess, ok, err := s.currentSession(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	if ok {
+		if err := s.Sessions.Revoke(r.Context(), sess.ID); err != nil {
 			Error(w, r, err)
 			return
 		}
@@ -294,7 +311,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 			PrincipalID:   PrincipalFrom(r.Context()).UserID,
 			Action:        "session.revoke",
 			TargetKind:    "session",
-			TargetID:      sessionID,
+			TargetID:      sess.ID,
 		})
 	}
 
@@ -522,8 +539,13 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// they think a credential has leaked, and leaving the leaked session alive
 	// would make the act cosmetic. The current one survives so that changing a
 	// password does not sign you out of the page you changed it on.
-	if sessionID, _ := s.cookies().SessionID(r); sessionID != "" {
-		if err := s.Sessions.RevokeOthersForUser(r.Context(), p.UserID, sessionID); err != nil {
+	current, ok, err := s.currentSession(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	if ok && current.UserID == p.UserID {
+		if err := s.Sessions.RevokeOthersForUser(r.Context(), p.UserID, current.ID); err != nil {
 			Error(w, r, err)
 			return
 		}
