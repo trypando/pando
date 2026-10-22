@@ -1164,6 +1164,18 @@ func (c *composeImport) mountedAnywhere(volume string) bool {
 // rather than a gap — the spec is the record of how the app runs, and a file
 // re-read from a branch at deploy time would make the same revision deploy
 // differently tomorrow.
+// underKernelPath reports, with a note, that a mount carrying files places
+// them where the kernel presents itself, which Pando does not do (R-240).
+func (c *composeImport) underKernelPath(name string, m mount) bool {
+	problem := spec.MountPathProblem(m.containerPath)
+	if problem == "" {
+		return false
+	}
+	c.rewrote(name, "volume "+m.raw,
+		"This places files at "+m.containerPath+", which "+problem+". Pando does not place files there, so this mount was left out.")
+	return true
+}
+
 func (c *composeImport) files(name string, s composeService) []spec.File {
 	var files []spec.File
 
@@ -1176,6 +1188,9 @@ func (c *composeImport) files(name string, s composeService) []spec.File {
 					"deploys a built image, and a deploy is how a change reaches this app.")
 			continue
 		case dirCarried:
+			if c.underKernelPath(name, m) {
+				continue
+			}
 			for _, rel := range c.repoFiles(m.hostPath) {
 				content, _ := c.read(path.Join(m.hostPath, rel))
 				files = append(files, spec.File{
@@ -1219,7 +1234,7 @@ func (c *composeImport) files(name string, s composeService) []spec.File {
 					"deploys a built image, and a deploy is how a change reaches this app.")
 			continue
 		}
-		if !readable {
+		if !readable || c.underKernelPath(name, m) {
 			continue
 		}
 

@@ -133,3 +133,26 @@ services:
 	}
 	require.True(t, hasSlot(draft.Slots, spec.SlotPostgres))
 }
+
+// TestR240_ACarriedFileIsNotPlacedWhereTheKernelIs asserts R-240 for files a
+// compose import carries: one bound under /proc, /sys or /dev is left out,
+// with a note, and the rest of the file imports.
+func TestR240_ACarriedFileIsNotPlacedWhereTheKernelIs(t *testing.T) {
+	const file = `
+services:
+  web:
+    image: example/app
+    volumes:
+      - ./app.conf:/sys/fs/app.conf
+      - ./conf:/dev/conf
+      - ./app.conf:/etc/app.conf
+`
+	draft, err := detect.ImportCompose(memSource{"compose.yaml": file, "app.conf": "a = 1\n", "conf/x.conf": "b = 2\n"}, "compose.yaml")
+	require.NoError(t, err)
+	var paths []string
+	for _, f := range workloadsByName(draft)["web"].Files {
+		paths = append(paths, f.Path)
+	}
+	require.Equal(t, []string{"/etc/app.conf"}, paths)
+	require.True(t, hasWarning(draft.Warnings, spec.WarnComposeConstructRewritten, "Pando does not place files there"))
+}
