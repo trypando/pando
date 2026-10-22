@@ -139,8 +139,8 @@ func TestR117_TwoAppsBuildOnTwoDaemonsAndNothingOutlivesTheIdleWindow(t *testing
 	}
 	require.NotEmpty(t, volumes, "the image's state volume, anonymous")
 
-	pool.release(a)
-	pool.release(b)
+	pool.release(context.Background(), a)
+	pool.release(context.Background(), b)
 	require.Eventually(t, func() bool {
 		return len(namesWithPrefix(t, "ps", m.daemonPrefix())) == 0 &&
 			len(namesWithPrefix(t, "network", m.daemonPrefix())) == 0

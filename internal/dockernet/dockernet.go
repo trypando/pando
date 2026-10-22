@@ -16,6 +16,12 @@ import (
 	"github.com/moby/moby/client"
 )
 
+// DefaultPool is the range Pando's networks take their addresses from when
+// none is set: app networks (/28s) and build networks (/29s) alike, kept apart
+// by the overlap check in Create. An unusual corner of private space; an
+// install whose own LAN uses it sets another.
+const DefaultPool = "10.213.0.0/16"
+
 // API is the part of the Docker client a network is made with.
 type API interface {
 	NetworkList(ctx context.Context, opts client.NetworkListOptions) (client.NetworkListResult, error)

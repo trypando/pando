@@ -305,7 +305,7 @@ func (a *Adapter) daemonFor(ctx context.Context, namespace string) (*bkclient.Cl
 	if err != nil {
 		return nil, nil, err
 	}
-	return d.inst.cli, func() { a.daemons.release(d) }, nil
+	return d.inst.cli, func() { a.daemons.release(ctx, d) }, nil
 }
 
 // keepShared is what a build does with the install topology's BuildKit when
@@ -423,11 +423,12 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 		log = newLogTail(req.LogSink)
 		req.LogSink = log
 	}
-	result, err := a.solve(ctx, cli, req, contextDir, dockerfileDir, dockerfile, cacheDir, timeout)
+	job := solveJob{cli: cli, req: req, contextDir: contextDir, cacheDir: cacheDir, timeout: timeout}
+	result, err := a.solve(ctx, job, dockerfileDir, dockerfile)
 	if err == nil || !steerable || ctx.Err() != nil {
 		return result, err
 	}
-	return a.steer(ctx, cli, req, contextDir, cacheDir, timeout, err, log)
+	return a.steer(ctx, job, err, log)
 }
 
 // sourceDir is the directory on disk the build's context is read from: the
@@ -487,7 +488,17 @@ func keepDockerfile() {
 }
 
 // solve runs one build of the plan or Dockerfile named, from contextDir.
-func (a *Adapter) solve(ctx context.Context, cli *bkclient.Client, req api.BuildRequest, contextDir, dockerfileDir, dockerfile, cacheDir string, timeout time.Duration) (api.BuildResult, error) {
+// solveJob is what every solve of one build shares: the daemon it runs on,
+// the request, the source and cache directories, and the time it has.
+type solveJob struct {
+	cli                  *bkclient.Client
+	req                  api.BuildRequest
+	contextDir, cacheDir string
+	timeout              time.Duration
+}
+
+func (a *Adapter) solve(ctx context.Context, job solveJob, dockerfileDir, dockerfile string) (api.BuildResult, error) {
+	cli, req, contextDir, cacheDir, timeout := job.cli, job.req, job.contextDir, job.cacheDir, job.timeout
 	contextFS, err := fsutil.NewFS(contextDir)
 	if err != nil {
 		return api.BuildResult{}, errs.Wrap(errs.BuildFailed, "Could not read the app's source.", err)

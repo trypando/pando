@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"os"
 	"path"
@@ -223,7 +224,7 @@ func newManaged(cli dockerAPI) *managed {
 // one range of the host's is Pando's. [P] A /29 each, and the overlap check
 // keeps them clear of the apps' /28s. PANDO_BUILDKIT_NETWORK_POOL sets
 // another, or "off" for Docker's own pool, which holds about thirty networks.
-const defaultBuildNetworkPool = "10.213.0.0/16"
+const defaultBuildNetworkPool = dockernet.DefaultPool
 
 func buildNetworkPool() (netip.Prefix, bool) {
 	raw := strings.TrimSpace(os.Getenv("PANDO_BUILDKIT_NETWORK_POOL"))
@@ -423,7 +424,10 @@ func (m *managed) launch(ctx context.Context, app string) (*instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	cli, err := bkclient.New(ctx, addr, bkclient.WithGRPCDialOption(grpc.WithTransportCredentials(credentials.NewTLS(clientTLS))))
+	cli, err := bkclient.New(ctx, addr,
+		bkclient.WithGRPCDialOption(grpc.WithTransportCredentials(credentials.NewTLS(clientTLS))),
+		// The name its certificate was issued for, which the address is not.
+		bkclient.WithGRPCDialOption(grpc.WithAuthority(serverName)))
 	if err != nil {
 		return nil, errs.Wrap(errs.AdapterUnavailable, "The build service is not responding.", err)
 	}
@@ -554,18 +558,31 @@ func (m *managed) finish(ctx context.Context, id string, server leaf) error {
 	return nil
 }
 
-// address is where Pando reaches a daemon: by name on the control network, or
-// on the host's loopback at the port Docker published when Pando is not in a
-// container — a developer running the binary.
+// address is where Pando reaches a daemon: at its address on the control
+// network, or on the host's loopback at the port Docker published when Pando
+// is not in a container — a developer running the binary.
+//
+// By address, not by name: a daemon's name holds the Compose project, the app
+// and the owner, and one past 63 characters is not a DNS label, so it never
+// resolved (a project of pando-smoke was enough). The name is the fallback
+// for an engine that reports no address.
 func (m *managed) address(ctx context.Context, id, name string) (string, error) {
-	if m.inContainer {
-		return "tcp://" + name + ":" + managedPort, nil
-	}
 	got, err := m.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", errs.Wrap(errs.AdapterFailed, "Could not find where the build service listens.", err)
 	}
-	if ns := got.Container.NetworkSettings; ns != nil {
+	ns := got.Container.NetworkSettings
+	if m.inContainer {
+		if ns != nil {
+			for netName, ep := range ns.Networks {
+				if ep != nil && ep.IPAddress.IsValid() && (netName == m.controlNetwork() || ep.NetworkID == m.controlID) {
+					return "tcp://" + net.JoinHostPort(ep.IPAddress.String(), managedPort), nil
+				}
+			}
+		}
+		return "tcp://" + name + ":" + managedPort, nil
+	}
+	if ns != nil {
 		for _, b := range ns.Ports[network.MustParsePort(managedPort+"/tcp")] {
 			if b.HostPort != "" {
 				return "tcp://127.0.0.1:" + b.HostPort, nil

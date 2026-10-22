@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,6 +36,7 @@ type fakeDocker struct {
 	containers map[string]*container.InspectResponse // by name
 	networks   map[string]network.Summary            // by name
 	joined     map[string]bool                       // "<container>@<network>"
+	addrs      int
 	created    []client.ContainerCreateOptions
 	netOpts    map[string]client.NetworkCreateOptions
 	started    int
@@ -127,10 +129,20 @@ func (f *fakeDocker) ContainerStart(_ context.Context, id string, _ client.Conta
 		return client.ContainerStartResult{}, cerrdefs.ErrNotFound
 	}
 	c.State.Running, c.State.Status = true, container.StateRunning
+	c.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{}}
 	if len(c.HostConfig.PortBindings) > 0 {
-		c.NetworkSettings = &container.NetworkSettings{Ports: network.PortMap{
+		c.NetworkSettings.Ports = network.PortMap{
 			network.MustParsePort(managedPort + "/tcp"): {{HostPort: "32768"}},
-		}}
+		}
+	}
+	// An address on every network it joined, as the engine gives one.
+	for key := range f.joined {
+		if n, ok := strings.CutPrefix(key, c.ID+"@"); ok {
+			f.addrs++
+			c.NetworkSettings.Networks[strings.TrimPrefix(n, "n-")] = &network.EndpointSettings{
+				NetworkID: n, IPAddress: netip.AddrFrom4([4]byte{10, 99, 0, byte(f.addrs)}),
+			}
+		}
 	}
 	return client.ContainerStartResult{}, nil
 }
@@ -739,4 +751,34 @@ func TestDaemonNamesAreSafeForDocker(t *testing.T) {
 	m := &managed{project: "pando", owner: "host-My Laptop.local"}
 	require.Equal(t, "pando-buildkit-none-my-laptop.lo", m.daemonName(""))
 	require.Equal(t, "pando-buildkit-app_01abc-my-laptop.lo", m.daemonName("app_01ABC"))
+}
+
+// TestAPandoInAContainerReachesItsBuildKitsByAddress covers a daemon whose
+// name is too long to be a DNS label, as one under a Compose project of
+// pando-smoke was: Pando dials its address on the control network, never its
+// name, unless the engine reports none.
+func TestAPandoInAContainerReachesItsBuildKitsByAddress(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeDocker("pando-1")
+	m := testManaged(t, f)
+	m.project, m.named = "a-compose-project-with-a-long-name", true
+	inst, err := m.launch(ctx, "app_01M5JDHNXNGDAMD4PX1PP9G75N")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = inst.cli.Close() })
+	name := m.daemonName("app_01M5JDHNXNGDAMD4PX1PP9G75N")
+	require.Greater(t, len(name), 63, "not a DNS label")
+
+	addr, err := m.address(ctx, inst.container, name)
+	require.NoError(t, err)
+	require.Regexp(t, `^tcp://10\.99\.0\.\d+:1234$`, addr)
+
+	f.mu.Lock()
+	f.containers[name].NetworkSettings = nil
+	f.mu.Unlock()
+	addr, err = m.address(ctx, inst.container, name)
+	require.NoError(t, err)
+	require.Equal(t, "tcp://"+name+":1234", addr, "the name, when the engine reports no address")
+
+	_, err = m.address(ctx, "gone", name)
+	require.Error(t, err)
 }

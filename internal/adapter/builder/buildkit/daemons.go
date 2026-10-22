@@ -88,10 +88,6 @@ type daemons struct {
 	now       func() time.Time
 	afterFunc func(time.Duration, func()) stopper
 
-	// base is what removals run under: an idle window ends, or a build lets
-	// a deleted app's daemon go, outside any request.
-	base context.Context
-
 	mu    sync.Mutex
 	byApp map[string]*daemon
 }
@@ -103,7 +99,6 @@ func newDaemons(l launcher) *daemons {
 		now:       time.Now,
 		afterFunc: func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) },
 		byApp:     map[string]*daemon{},
-		base:      context.Background(),
 	}
 }
 
@@ -150,7 +145,7 @@ func (p *daemons) acquire(ctx context.Context, app string) (*daemon, error) {
 	p.mu.Unlock()
 	close(d.ready)
 	if err != nil {
-		p.release(d)
+		p.release(ctx, d)
 		return nil, err
 	}
 	return d, nil
@@ -161,11 +156,11 @@ func (p *daemons) await(ctx context.Context, d *daemon) (*daemon, error) {
 	select {
 	case <-d.ready:
 	case <-ctx.Done():
-		p.release(d)
+		p.release(ctx, d)
 		return nil, ctx.Err()
 	}
 	if d.err != nil {
-		p.release(d)
+		p.release(ctx, d)
 		return nil, d.err
 	}
 	return d, nil
@@ -208,7 +203,9 @@ func (p *daemons) drop(d *daemon) {
 
 // release ends one build's use of d. The last one out starts its idle window,
 // or removes it at once if its app was deleted meanwhile.
-func (p *daemons) release(d *daemon) {
+func (p *daemons) release(ctx context.Context, d *daemon) {
+	// What removes it runs after the build, and its request, are over.
+	ctx = context.WithoutCancel(ctx)
 	p.mu.Lock()
 	d.users--
 	d.lastUsed = p.now()
@@ -219,16 +216,16 @@ func (p *daemons) release(d *daemon) {
 	if d.forget {
 		p.drop(d)
 		p.mu.Unlock()
-		p.launcher.remove(p.base, d.inst)
+		p.launcher.remove(ctx, d.inst)
 		return
 	}
-	d.timer = p.afterFunc(p.idle, func() { p.expire(d) })
+	d.timer = p.afterFunc(p.idle, func() { p.expire(ctx, d) })
 	p.mu.Unlock()
 }
 
 // expire removes d at the end of its idle window, unless a build took it up
 // again first.
-func (p *daemons) expire(d *daemon) {
+func (p *daemons) expire(ctx context.Context, d *daemon) {
 	p.mu.Lock()
 	if p.byApp[d.app] != d || d.users > 0 {
 		p.mu.Unlock()
@@ -236,7 +233,7 @@ func (p *daemons) expire(d *daemon) {
 	}
 	p.drop(d)
 	p.mu.Unlock()
-	p.launcher.remove(p.base, d.inst)
+	p.launcher.remove(ctx, d.inst)
 }
 
 // forgetApp removes a deleted app's daemon: now if it is idle, or when its

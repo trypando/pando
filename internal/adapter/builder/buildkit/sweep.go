@@ -33,26 +33,7 @@ func (m *managed) sweep(ctx context.Context, startup bool) {
 		// installation it is not.
 		m.removeShared(ctx)
 	}
-	alive := map[string]bool{}
-	gone := func(owner string) bool {
-		switch {
-		case owner == m.owner:
-			return startup
-		case strings.HasPrefix(owner, hostOwnerPrefix), owner == "":
-			// Another Pando on a host: only it knows whether it is running.
-			return false
-		}
-		if known, ok := alive[owner]; ok {
-			return !known
-		}
-		got, err := m.cli.ContainerInspect(ctx, owner, client.ContainerInspectOptions{})
-		running := err == nil && got.Container.State != nil && got.Container.State.Running
-		if err != nil && !cerrdefs.IsNotFound(err) {
-			running = true // cannot tell: left alone
-		}
-		alive[owner] = running
-		return !running
-	}
+	gone := m.ownerGone(ctx, startup)
 
 	containers, err := m.cli.ContainerList(ctx, client.ContainerListOptions{
 		All: true, Filters: make(client.Filters).Add("label", labelManagedBuild+"="+labelDaemon),
@@ -74,6 +55,38 @@ func (m *managed) sweep(ctx context.Context, startup bool) {
 			}
 		}
 	}
+}
+
+// ownerGone reports, for the owner label of a daemon, whether the Pando that
+// started it is no longer running: this one's previous run, when startup is
+// true, or another whose container is gone or stopped. A Pando on a host, or
+// one Docker cannot answer for, is taken to be running.
+func (m *managed) ownerGone(ctx context.Context, startup bool) func(owner string) bool {
+	alive := map[string]bool{}
+	return func(owner string) bool {
+		switch {
+		case owner == m.owner:
+			return startup
+		case strings.HasPrefix(owner, hostOwnerPrefix), owner == "":
+			// Another Pando on a host: only it knows whether it is running.
+			return false
+		}
+		if known, ok := alive[owner]; ok {
+			return !known
+		}
+		alive[owner] = m.running(ctx, owner)
+		return !alive[owner]
+	}
+}
+
+// running is whether a Pando's container is running, or cannot be told not
+// to be.
+func (m *managed) running(ctx context.Context, id string) bool {
+	got, err := m.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil {
+		return !cerrdefs.IsNotFound(err)
+	}
+	return got.Container.State != nil && got.Container.State.Running
 }
 
 // ours is whether something with these names and labels is a daemon, or a

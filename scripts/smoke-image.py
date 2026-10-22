@@ -258,6 +258,11 @@ def deploy(args, name, source, expect, files=None, restart=False):
     must(code, f"deleting {name}", out)
 
 
+def is_buildkit(name):
+    """A BuildKit this stack's Pando started: one per app, or the one an older Pando shared."""
+    return name.startswith(f"{PROJECT}-buildkit-") or name == f"{PROJECT}-buildkit"
+
+
 def cleanup(args):
     if args.keep:
         print(f"--keep: leaving compose project {PROJECT} running on {BASE}")
@@ -271,6 +276,8 @@ def cleanup(args):
             break
         time.sleep(3)
     compose(args, "down", "-v", "--remove-orphans", check=False)
+    # The network Pando reached its BuildKits on, which it made outside Compose.
+    subprocess.run(["docker", "network", "rm", f"{PROJECT}-buildctl"], capture_output=True)
     if ulids:
         # The app's network outlives Pando's container by design (removed at the
         # next start), and there is no next start here. Only what carries this
@@ -312,14 +319,14 @@ def main():
         compose(args, "exec", "-T", "postgres", "psql", "-U", "pando", "-d", "pando", "-c",
                 "SELECT id, state, consecutive_failures, last_reconcile_error FROM apps", check=False)
         for name in [n for n in subprocess.run(["docker", "ps", "-a", "--format", NAMES], capture_output=True,
-                                                text=True).stdout.split() if n.endswith("-buildkit")]:
+                                                text=True).stdout.split() if is_buildkit(n)]:
             print(f"--- {name} logs", flush=True)
             subprocess.run(["docker", "logs", "--tail", "40", name], check=False)
         # What the engine says when asked to start a stopped app, or a build
         # service that was never started, by hand.
         stopped = subprocess.run(["docker", "ps", "-a", "--filter", "status=exited", "--filter", "status=created",
                                   "--format", NAMES], capture_output=True, text=True).stdout.split()
-        for name in [n for n in stopped if n.startswith("pando-app_") or n.endswith("-buildkit")]:
+        for name in [n for n in stopped if n.startswith("pando-app_") or is_buildkit(n)]:
             print(f"--- {name}", flush=True)
             subprocess.run(["docker", "inspect", "-f", "{{json .State}}", name], check=False)
             subprocess.run(["docker", "logs", "--tail", "20", name], check=False)

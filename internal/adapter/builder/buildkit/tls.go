@@ -46,6 +46,9 @@ const (
 	buildLeafValidity      = 365 * 24 * time.Hour
 )
 
+// pemPrivateKey is the PEM block type of a PKCS #8 key.
+const pemPrivateKey = "PRIVATE KEY"
+
 // buildClientName is the subject of the certificate Pando presents to a
 // daemon.
 const buildClientName = "pando-build-client"
@@ -113,7 +116,7 @@ func newAuthorityPEM() ([]byte, error) {
 	}
 	var out bytes.Buffer
 	_ = pem.Encode(&out, &pem.Block{Type: "CERTIFICATE", Bytes: der})
-	_ = pem.Encode(&out, &pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	_ = pem.Encode(&out, &pem.Block{Type: pemPrivateKey, Bytes: keyDER})
 	return out.Bytes(), nil
 }
 
@@ -128,7 +131,7 @@ func parseAuthority(data []byte) (*authority, error) {
 				return nil, err
 			}
 			a.cert = cert
-		case "PRIVATE KEY":
+		case pemPrivateKey:
 			k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 			if err != nil {
 				return nil, err
@@ -168,7 +171,7 @@ func (a *authority) issueServer(name string) (leaf, error) {
 	}
 	return leaf{
 		certPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}),
-		keyPEM:  pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+		keyPEM:  pem.EncodeToMemory(&pem.Block{Type: pemPrivateKey, Bytes: keyDER}),
 	}, nil
 }
 
@@ -185,34 +188,12 @@ func (a *authority) clientTLS(serverName string) (*tls.Config, error) {
 	return &tls.Config{
 		MinVersion:   tls.VersionTLS12,
 		Certificates: []tls.Certificate{cert},
-		// Go's own check is replaced, not skipped: gRPC dials the daemon by
-		// its container's name and refuses a ServerName that differs from it,
-		// so the daemon's certificate is checked against the authority and
-		// its own name in VerifyConnection, on every handshake.
-		InsecureSkipVerify: true, //nolint:gosec // G402: verified in VerifyConnection, below
-		VerifyConnection: func(cs tls.ConnectionState) error {
-			return verifyDaemon(cs, pool, serverName)
-		},
+		// The daemon is dialed by address; its certificate is checked against
+		// the authority alone and for the name it was issued, which gRPC keeps
+		// when one is set.
+		RootCAs:    pool,
+		ServerName: serverName,
 	}, nil
-}
-
-// verifyDaemon checks the certificate a daemon presented: issued by the build
-// authority, for server authentication, to the name it was issued for.
-func verifyDaemon(cs tls.ConnectionState, roots *x509.CertPool, serverName string) error {
-	if len(cs.PeerCertificates) == 0 {
-		return errors.New("the build service presented no certificate")
-	}
-	intermediates := x509.NewCertPool()
-	for _, c := range cs.PeerCertificates[1:] {
-		intermediates.AddCert(c)
-	}
-	_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{
-		Roots:         roots,
-		Intermediates: intermediates,
-		DNSName:       serverName,
-		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	})
-	return err
 }
 
 func (a *authority) issue(subject pkix.Name, dnsNames []string, usage x509.ExtKeyUsage) (tls.Certificate, error) {

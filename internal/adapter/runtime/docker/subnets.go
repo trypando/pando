@@ -24,7 +24,7 @@ import (
 // 10.213.0.0/16 because it is an unusual corner of private space; an install
 // whose own LAN uses it sets another — a wider one, such as 10.208.0.0/12, for
 // more apps — or "off" to go back to Docker's pool.
-const defaultNetworkPool = "10.213.0.0/16"
+const defaultNetworkPool = dockernet.DefaultPool
 
 // DefaultNetworkPool is the range app networks take their addresses from when
 // none is set. The Incus runtime uses it inside each VM, where this adapter

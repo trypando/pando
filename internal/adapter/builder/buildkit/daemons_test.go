@@ -131,14 +131,14 @@ func TestR117_AnIdleDaemonIsRemovedAfterItsWindow(t *testing.T) {
 
 	d, err := p.acquire(ctx, "app_1")
 	require.NoError(t, err)
-	p.release(d)
+	p.release(context.Background(), d)
 	again, err := p.acquire(ctx, "app_1")
 	require.NoError(t, err)
 	require.Same(t, d, again, "warm: taken up again")
 	timers.fire() // the first window was stopped when it was taken up
 	require.Equal(t, 1, p.count())
 
-	p.release(again)
+	p.release(context.Background(), again)
 	timers.fire()
 	_, removed := l.state()
 	require.Equal(t, []string{"app_1"}, removed)
@@ -148,7 +148,7 @@ func TestR117_AnIdleDaemonIsRemovedAfterItsWindow(t *testing.T) {
 	// nothing.
 	d, err = p.acquire(ctx, "app_2")
 	require.NoError(t, err)
-	p.release(d)
+	p.release(context.Background(), d)
 	p.mu.Lock()
 	window := d.timer.(*manualTimer)
 	p.mu.Unlock()
@@ -169,9 +169,9 @@ func TestR117_WarmDaemonsAreBoundedByTheDeployLimit(t *testing.T) {
 	b, _ := p.acquire(ctx, "app_b")
 	c, _ := p.acquire(ctx, "app_c")
 	*now = now.Add(time.Minute)
-	p.release(b) // idle longest
+	p.release(context.Background(), b) // idle longest
 	*now = now.Add(time.Minute)
-	p.release(c)
+	p.release(context.Background(), c)
 	// a is still building.
 
 	_, err := p.acquire(ctx, "app_d")
@@ -257,7 +257,7 @@ func TestR117_ADeletedAppsDaemonIsRemoved(t *testing.T) {
 	p, l, _, _ := testPool(8)
 
 	idle, _ := p.acquire(ctx, "app_1")
-	p.release(idle)
+	p.release(context.Background(), idle)
 	p.forgetApp(context.Background(), "app_1")
 	_, removed := l.state()
 	require.Equal(t, []string{"app_1"}, removed)
@@ -266,7 +266,7 @@ func TestR117_ADeletedAppsDaemonIsRemoved(t *testing.T) {
 	p.forgetApp(context.Background(), "app_2")
 	_, removed = l.state()
 	require.Len(t, removed, 1, "not mid-build")
-	p.release(busy)
+	p.release(context.Background(), busy)
 	_, removed = l.state()
 	require.Equal(t, []string{"app_1", "app_2"}, removed)
 	require.Zero(t, p.count())
