@@ -88,9 +88,7 @@ const sessionSecretBytes = 32
 // Create issues a session.
 func (s *Sessions) Create(ctx context.Context, userID, adapterID string, lifetime time.Duration, userAgent, ip string) (Started, error) {
 	raw := make([]byte, sessionSecretBytes)
-	if _, err := rand.Read(raw); err != nil {
-		return Started{}, errs.Wrap(errs.Internal, "Could not start a session.", err)
-	}
+	_, _ = rand.Read(raw) // crypto/rand.Read never returns an error (Go 1.24+)
 	plaintext := base64.RawURLEncoding.EncodeToString(raw)
 
 	now := time.Now().UTC()

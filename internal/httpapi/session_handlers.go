@@ -295,6 +295,20 @@ func (s *Server) currentSession(r *http.Request) (sess state.Session, ok bool, e
 	return s.Sessions.Active(r.Context(), cookie)
 }
 
+// endOtherSessions ends every session userID holds except the one the
+// request's cookie carries, when that one is theirs. It is matched by its
+// secret first, so a cookie with the wrong secret keeps nothing alive.
+func (s *Server) endOtherSessions(r *http.Request, userID string) error {
+	current, ok, err := s.currentSession(r)
+	if err != nil {
+		return err
+	}
+	if ok && current.UserID == userID {
+		return s.Sessions.RevokeOthersForUser(r.Context(), userID, current.ID)
+	}
+	return s.Sessions.RevokeAllForUser(r.Context(), userID)
+}
+
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	sess, ok, err := s.currentSession(r)
 	if err != nil {
@@ -539,17 +553,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// they think a credential has leaked, and leaving the leaked session alive
 	// would make the act cosmetic. The current one survives so that changing a
 	// password does not sign you out of the page you changed it on.
-	current, ok, err := s.currentSession(r)
-	if err != nil {
-		Error(w, r, err)
-		return
-	}
-	if ok && current.UserID == p.UserID {
-		if err := s.Sessions.RevokeOthersForUser(r.Context(), p.UserID, current.ID); err != nil {
-			Error(w, r, err)
-			return
-		}
-	} else if err := s.Sessions.RevokeAllForUser(r.Context(), p.UserID); err != nil {
+	if err := s.endOtherSessions(r, p.UserID); err != nil {
 		Error(w, r, err)
 		return
 	}

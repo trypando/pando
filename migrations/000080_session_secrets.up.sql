@@ -7,7 +7,7 @@
 -- A session from before has no secret, and its cookie is its ID, which the
 -- audit log holds. It cannot be converted, so every one is removed: everyone
 -- signs in again after this upgrade.
-DELETE FROM sessions;
+TRUNCATE sessions;
 
 ALTER TABLE sessions
     ADD COLUMN secret_hash text NOT NULL
