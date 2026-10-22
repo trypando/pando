@@ -572,24 +572,31 @@ func (m *managed) address(ctx context.Context, id, name string) (string, error) 
 		return "", errs.Wrap(errs.AdapterFailed, "Could not find where the build service listens.", err)
 	}
 	ns := got.Container.NetworkSettings
+	if ns == nil {
+		ns = &container.NetworkSettings{}
+	}
 	if m.inContainer {
-		if ns != nil {
-			for netName, ep := range ns.Networks {
-				if ep != nil && ep.IPAddress.IsValid() && (netName == m.controlNetwork() || ep.NetworkID == m.controlID) {
-					return "tcp://" + net.JoinHostPort(ep.IPAddress.String(), managedPort), nil
-				}
-			}
+		if ip, ok := m.controlAddress(ns); ok {
+			return "tcp://" + net.JoinHostPort(ip, managedPort), nil
 		}
 		return "tcp://" + name + ":" + managedPort, nil
 	}
-	if ns != nil {
-		for _, b := range ns.Ports[network.MustParsePort(managedPort+"/tcp")] {
-			if b.HostPort != "" {
-				return "tcp://127.0.0.1:" + b.HostPort, nil
-			}
+	for _, b := range ns.Ports[network.MustParsePort(managedPort+"/tcp")] {
+		if b.HostPort != "" {
+			return "tcp://127.0.0.1:" + b.HostPort, nil
 		}
 	}
 	return "", errs.New(errs.AdapterFailed, "Docker published no port for the build service.")
+}
+
+// controlAddress is a daemon's address on the network Pando reaches it on.
+func (m *managed) controlAddress(ns *container.NetworkSettings) (string, bool) {
+	for netName, ep := range ns.Networks {
+		if ep != nil && ep.IPAddress.IsValid() && (netName == m.controlNetwork() || ep.NetworkID == m.controlID) {
+			return ep.IPAddress.String(), true
+		}
+	}
+	return "", false
 }
 
 // buildKitRetryEvery is how often waitAnswering asks again.
