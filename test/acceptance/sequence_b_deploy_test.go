@@ -304,17 +304,48 @@ func TestR120_DeployPinsACommit(t *testing.T) {
 
 func stamp() string { return time.Now().Format("150405.000") }
 
-// buildkitContainer is the BuildKit this stack's Pando started (R-111), named
-// after the stack's Compose project, as Pando names it.
+// buildkitContainer is a BuildKit this stack's Pando started (R-111): one per
+// app, named after the stack's Compose project, as Pando names them, and there
+// only while an app is being built or soon after (R-117). With none running,
+// it starts a build so that there is one.
 func buildkitContainer(t *testing.T) string {
 	t.Helper()
+	requireStack(t)
 	out, err := exec.Command("docker", "compose", "ps", "-q", "pando").Output()
 	require.NoError(t, err)
 	pando := strings.Fields(string(out))
 	require.NotEmpty(t, pando, "the pando service is not running")
-	project := inspect(t, pando[0], `{{index .Config.Labels "com.docker.compose.project"}}`)
-	name := project + "-buildkit"
-	require.Equal(t, "true", inspect(t, name, `{{.State.Running}}`), "Pando has not started %s", name)
+	prefix := inspect(t, pando[0], `{{index .Config.Labels "com.docker.compose.project"}}`) + "-buildkit-"
+	running := func() string {
+		out, err := exec.Command("docker", "ps", "--filter", "label=io.pando.buildkit=daemon",
+			"--format", "{{.Names}}").Output()
+		require.NoError(t, err)
+		for _, name := range strings.Fields(string(out)) {
+			if strings.HasPrefix(name, prefix) {
+				return name
+			}
+		}
+		return ""
+	}
+	if name := running(); name != "" {
+		return name
+	}
+	c := login(t)
+	app := c.createApp(t, "seq-b-buildkit-"+stamp())
+	c.putSpec(t, app, `{
+		"schema_version": 1,
+		"source": {"type": "git", "url": "https://github.com/docker/welcome-to-docker", "ref": "main"},
+		"build": {"strategy": "dockerfile", "adapter_ref": "bld_buildkit"},
+		"workloads": [{"name": "web", "primary": true, "exposed": true}],
+		"routing": {"adapter_ref": "rte_loopback", "mode": "port", "port": 9106},
+		"runtime": {"adapter_ref": "rt_docker", "isolation_floor": 10},
+		"deploy": {"strategy": "recreate"}
+	}`)
+	c.pinSpec(t, app, 1)
+	c.deploy(t, app, 0)
+	var name string
+	require.Eventually(t, func() bool { name = running(); return name != "" },
+		3*time.Minute, time.Second, "Pando started no BuildKit for a build")
 	return name
 }
 

@@ -656,6 +656,55 @@ type BuildResult struct {
 
 **[D]** A builder implementation must never receive or request a container runtime socket (R-112). This cannot be enforced by the type system; it is a review checklist item and an integration test that asserts the build environment has no socket mounted.
 
+### 3.1 One BuildKit per app
+
+**[D] Builds of different apps never share a daemon (R-117).** A rootless BuildKit runs every step in
+its own process namespace (`--oci-worker-no-process-sandbox`: a rootless container cannot make
+another) and its own network namespace, and shares cache mounts by ID across every build it runs. One
+daemon for every app let a step of one app's build reach the daemon's API on loopback — verified with
+a `RUN buildctl debug workers` on the shared daemon before this change — see and signal another app's
+steps, and read another app's cache mounts. So the managed builder (`daemons.go`, `managed.go`) runs a
+daemon per app, keyed by the build's bundle (`bundleOf(CacheNamespace)`), so a compose app's services
+share their app's:
+
+- **Started by the build that needs it.** Never by `HealthCheck`, which the planner calls before every
+  plan: that checks Docker answers, the build authority loads and the pinned image is present
+  (pulling it in the background when it is not), and starts or waits on nothing. `Plan` and
+  `PlanPrebuild` never touch a daemon.
+- **Warm for an idle window, then removed** — container, its anonymous state volume, its network.
+  **[P] 10 minutes**: a fix and a redeploy, or a deploy right after detection, find it warm. Cold
+  start, create to answering a solve with the image present, measured at **1.2–1.4 s** (Docker
+  Desktop 28.4, 12 CPUs; `TestR111_PandosOwnBuildKitStartsAndAnswers` logs it), which is what a build
+  after the window pays. Also removed when its app is deleted (`Forget`), and at startup a sweep removes
+  labeled daemons and networks this installation's earlier run, or a replica whose container is gone,
+  left behind — and the single shared daemon of earlier versions. Nothing per app is kept beyond
+  that, so an installation of thousands of apps holds at most the bound below.
+- **No new limit on builds.** The deploy queue already bounds them (host policy's
+  `max_concurrent_deploys`, design 05 §3). Daemons, running and warm together, are bounded by the
+  same number: starting one past it first removes the least recently used idle one. One with a build
+  running is never removed for room; with every one busy, the new one starts anyway.
+- **Mutual TLS.** One build authority per installation, `buildkit-ca.pem` in Pando's data directory
+  (written 0600, as `keyfile` writes keys). Each daemon gets the authority's certificate and a fresh
+  server-only leaf when it starts; Pando issues itself a client certificate per daemon, in memory.
+  Nothing is stored per app. The listener refuses a client without the certificate — a build step
+  included, which could read the daemon's server key but could not present it as a client.
+- **Its own network**, a /29 from `PANDO_BUILDKIT_NETWORK_POOL` **[P] `10.213.0.0/16`**, apart from the
+  runtime's app networks by the same overlap check (`internal/dockernet`). It is the daemon's only way
+  out; the network Pando reaches it on is internal. Build egress (R-118) attaches a per-app gateway to
+  this network the way the Docker runtime attaches one to an app's: make it internal and put the
+  gateway on it, with no change to how a daemon is started.
+
+**Tradeoff.** The persistent per-app layer cache is unchanged: every build exports to and imports from
+its app's directory on Pando's disk (`cachedir.go`, under `LocalCacheMaxBytes`, least recently used
+first), so a cold daemon still reuses layers. Cache mounts (`RUN --mount=type=cache`, Railpack's
+package caches) live only as long as the daemon, so the first build after the idle window downloads
+packages again. They were never exported, and sharing them across apps is what this removes.
+
+An install topology's BuildKit (`PANDO_BUILDKIT_ADDRESS`, `deploy/kubernetes`) is not changed: it stays
+one daemon shared by every app, where Railpack's per-app `cache-key` keeps package caches apart.
+`PANDO_BUILDKIT_TLS_CA`, `_CERT`, `_KEY` and `_SERVER_NAME` give the connection to it TLS when the
+topology serves it.
+
 **[P]** R-116: where a runtime adapter can provision an isolated environment per app — Incus, a
 Firecracker VM — building *inside that environment* is preferred, because build isolation then comes
 free from the boundary that already exists rather than from a second mechanism layered beside it. This
@@ -1319,7 +1368,8 @@ Pando post-processes the plan before storing it:
   image.
 
 The build sets Railpack's `cache-key` to the app's bundle, so its cache mounts are namespaced per app
-the way the layer cache is (R-117). A gateway frontend takes no `label:` options, so the bundle label
+the way the layer cache is (R-117) on a BuildKit the install topology shares; on Pando's own, the
+daemon is the app's already (§3.1). A gateway frontend takes no `label:` options, so the bundle label
 every image carries is added to the image config the frontend returns.
 
 An image an app's own toolchain chooses — PHP's `dunglas/frankenphp:php<version>`, `composer:latest`
@@ -1789,7 +1839,7 @@ publishes, which is a step of detection (R-094; `internal/detect/registryprobe`)
 | routing | `loopback` | port mode only, no TLS, laptop default. No settings: the address shown is rendered from the host the request reached Pando on, so `base_url` was dropped from its form; a stored one still loads and is ignored |
 | routing | `traefik` | subdomain and path, TLS; Pando runs it by default (§4.4) |
 | routing | `cloudflare` | Cloudflare Tunnel; subdomain and path, TLS at Cloudflare's edge (§4.5) |
-| builder | `buildkit` | rootless, containerized, no socket (R-111). Managed (§1.2): Pando runs it, or the install topology does; its only settings are the two cache caps |
+| builder | `buildkit` | rootless, containerized, no socket (R-111), one daemon per app (R-117, §3.1). Managed (§1.2): Pando runs them, or the install topology runs one shared by every app; its only settings are the two cache caps |
 | runtime | `docker` | enforces app egress through an internal network and a per-app gateway proxy (§2.1, R-187); container isolation class; `sandboxed` when `oci_runtime` names gVisor (`runsc`) or a Kata runtime (R-115), which the daemon must have registered or the adapter reports itself unavailable. A sandboxed trial run still reports whether the app started, but not its ports or writes — both are read from outside the container, and a sandbox hides them. Also drives rootless Podman through its Docker-compatible socket (see below). |
 | runtime | `kubernetes` | the cluster Pando runs in, one namespace per app under a default-deny NetworkPolicy admitting only Pando's server pods; bare pods with `restartPolicy: Never` (R-151); headless Services the proxy reaches by name; PVCs set to `Retain` (R-204); unusable on a cluster whose network plugin does not enforce NetworkPolicy, which a canary checks (O-43). Runs the edge as a spread Deployment (R-174). `notes-kubernetes-runtime-issue-72.md` |
 | secrets | `local` | encrypted at rest, key on disk (R-190) |
@@ -1842,7 +1892,8 @@ wrong result before it was handled; they live in `internal/adapter/runtime/docke
   container's mounts.
 - It answers a network join for a container already on the network "network is already connected",
   where Docker says "already exists". Read as a failure, Pando — back from a reboot still on every
-  app's network and its build network — could start neither the apps nor BuildKit again (R-023).
+  app's network and the network it reaches BuildKit on — could start neither the apps nor BuildKit
+  again (R-023).
 - It reads a short image name as `docker.io/library/…` and stores a local build as `localhost/…`, so
   a local build named short is never found. Pando never names one short — a build is run by its ID —
   and the tests name theirs `localhost/…`.

@@ -328,7 +328,9 @@ policy's `max_concurrent_deploys` at once **[P: one per CPU, at least two]**, so
 as many and none takes on more than it can build. It is policy rather than a startup setting (issue #93),
 so it is set in the console or fixed by configuration like every other policy field, and the queue reads
 it each time it looks for work: raising it takes effect at once, lowering it stops new claims until
-enough have finished. `work.deploys` is its older name and still fixes it.
+enough have finished. `work.deploys` is its older name and still fixes it. The same number bounds the
+BuildKits a replica runs, one per app, running and warm together (R-117, design 03 §3.1); no other
+limit is set on builds.
 
 **[D] A queued deploy says where it is (issue #93).** `queue_position` on the deployment is how many
 unclaimed deploys are ahead of it, in the order `Claim` takes them. Its log stream says the same while it

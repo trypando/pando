@@ -14,16 +14,22 @@ import (
 	"github.com/trypando/pando/internal/errs"
 )
 
-// Forget removes a deleted app's build cache.
+// Forget removes a deleted app's build cache, and its BuildKits (R-117).
 //
 // Every build exports its cache to a directory on Pando's own disk, one per
 // workload under the app's ID, and nothing removed it: a deleted app's cache
 // stayed forever, hundreds of megabytes for an ordinary Python app. The GC
 // calls this when it tears the app down.
-func (a *Adapter) Forget(_ context.Context, namespace string) error {
+func (a *Adapter) Forget(ctx context.Context, namespace string) error {
 	app := bundleOf(namespace)
 	if app == "" || strings.ContainsAny(app, `/\`) || app == "." || app == ".." {
 		return errs.Newf(errs.ValidInvalid, "%q does not name an app's build cache.", namespace)
+	}
+	if a.daemons != nil {
+		a.daemons.forgetApp(ctx, app)
+		if err := a.managed.removeApp(ctx, app); err != nil {
+			return err
+		}
 	}
 	if err := os.RemoveAll(cachePath(app)); err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Could not remove the app's build cache.", err)

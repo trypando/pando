@@ -75,19 +75,22 @@ the namespace, mount, keyring and hostname calls builds were observed to need, g
 `scripts/buildkit-seccomp.py` and guarded by `TestR111_TheBuildKitSeccompProfileAddsOnlyWhatRootlessNeeds`
 — but Compose reads a seccomp profile only from a file beside the Compose file, which made the install
 two files. So the BuildKit builder adapter runs it instead (`managed.go`): when no address is
-configured, it creates `pando-buildkit` on the Docker daemon Pando runs apps on, passing the profile
-compiled into Pando inline, as the Docker API takes it. It is pinned by digest, has a cache volume and
-a network of its own (`pando-build`) that Pando's container joins — never Pando's own networks, where
-Postgres is (R-113), and never a socket (R-112). The health check ensures it, so a stopped one is
-started and one from another Pando version replaced; replicas share it by its fixed name. An
-installation registry's CA reaches it as files Pando writes before it starts, and it joins only the
-networks `PANDO_BUILDKIT_NETWORKS` names. AppArmor stays unconfined: the default AppArmor profile
+configured, it creates one on the Docker daemon Pando runs apps on **for each app being built**
+(R-117; design 03 §3.1), passing the profile compiled into Pando inline, as the Docker API takes it.
+Each is pinned by digest, keeps its state in the image's anonymous volume, removed with it, and has a
+network of its own; Pando reaches it over `<project>-buildctl`, an internal network Pando's container
+joins — never Pando's own networks, where Postgres is (R-113), and never a socket (R-112). Its
+listener requires a client certificate from the installation's build authority. None is started by a
+health check or a plan: a build starts its app's, and nothing restarts one that stopped — the next
+build starts another. Each replica runs its own. An installation registry's CA reaches each as files
+Pando writes before it starts, and it joins only the networks `PANDO_BUILDKIT_NETWORKS` names. AppArmor stays unconfined: the default AppArmor profile
 denies mount, and a narrower one has to be loaded into the host kernel. On Ubuntu 23.10 and later,
 the host must also allow unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns=0`)
 for rootless BuildKit to start at all, which only root on the host can do; the health check names it,
 and CI's integration job sets it as an operator would. `PANDO_BUILDKIT_ADDRESS` is internal to an
 install topology that runs BuildKit beside Pando itself — `deploy/kubernetes` runs it as its own
-Deployment — and then Pando starts none. Pando does not support a BuildKit on another server, so the
+Deployment — and then Pando starts none, and every app's builds share that one (`PANDO_BUILDKIT_TLS_*`
+give the connection to it TLS when the topology serves it). Pando does not support a BuildKit on another server, so the
 adapter needs nothing from a person: its kind is `managed`, which the console reads to offer neither
 Add adapter nor Edit for it, and the only settings it lists are its two cache caps, both advanced.
 

@@ -14,8 +14,9 @@ STATE = os.path.join(OUT, "state.json")
 
 PROJECT = "pando-qa"
 PANDO = f"{PROJECT}-pando-1"
-# Started by the QA instance's Pando, not Compose, and named after its Compose
-# project (internal/adapter/builder/buildkit/managed.go).
+# The prefix of the BuildKits the QA instance's Pando starts, one per app, not
+# Compose, named after its Compose project (internal/adapter/builder/buildkit/
+# managed.go). Without the trailing dash, the single one an older Pando ran.
 BUILDKIT = f"{PROJECT}-buildkit"
 POSTGRES = f"{PROJECT}-postgres-1"
 # Every test source (the generated apps and the lists of public repositories

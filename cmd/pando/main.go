@@ -614,16 +614,20 @@ func serve(ctx context.Context, configPath string) error {
 	// run by whichever replica has room, at most host policy's
 	// max_concurrent_deploys at once here, read each time it looks for work
 	// (issue #93). Served once the loops start, below.
+	deployLimit := func(ctx context.Context) (int, error) {
+		doc, err := hostPolicy.Document(ctx)
+		return doc.MaxConcurrentDeploys, err
+	}
 	deployQueue := &deploy.Queue{
 		Runner:      deployer,
 		Deployments: deployments,
 		Revisions:   apps,
-		Concurrency: func(ctx context.Context) (int, error) {
-			doc, err := hostPolicy.Document(ctx)
-			return doc.MaxConcurrentDeploys, err
-		},
-		Logger: logger,
+		Concurrency: deployLimit,
+		Logger:      logger,
 	}
+	// The BuildKits Pando runs, one per app, are bounded by the same number,
+	// running and warm together (R-117).
+	limitBuildDaemons(registry, deployLimit)
 
 	// Detection (Sequence A). Every detector bids; the runtime supplies the
 	// trial run (R-097), and a registry probe would supply R-094's top tier.

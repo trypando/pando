@@ -4,45 +4,48 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	_ "embed" // go:embed of the seccomp profile, below
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/netip"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
+	bkclient "github.com/moby/buildkit/client"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
+	"github.com/trypando/pando/internal/dockernet"
 	"github.com/trypando/pando/internal/errs"
 )
 
 // Pando starts its own BuildKit (R-111: "Pando starts it, hands it source,
 // receives an image"), on the Docker daemon it runs apps on, unless the
 // install topology runs one beside it and sets PANDO_BUILDKIT_ADDRESS, as
-// deploy/kubernetes does (issue #130).
+// deploy/kubernetes does (issue #130). One per app, for as long as the app is
+// being built and its idle window after (daemons.go, R-117).
 //
-// So that the install is one Compose file. BuildKit runs rootless, which needs
-// user namespaces and mounts that Docker's default seccomp profile refuses,
-// and the narrower profile it runs under instead has to reach Docker somehow:
-// Compose reads a seccomp profile only from a file beside the Compose file,
-// which made every install and upgrade download two files. The Docker API
-// takes the profile itself, so Pando, which holds the API, passes the one
-// compiled into it.
+// BuildKit runs rootless, which needs user namespaces and mounts that Docker's
+// default seccomp profile refuses, and the narrower profile it runs under
+// instead has to reach Docker somehow: Compose reads a seccomp profile only
+// from a file beside the Compose file. The Docker API takes the profile
+// itself, so Pando, which holds the API, passes the one compiled into it.
 //
-// Never a runtime socket, here or anywhere a build can see (R-112): the
-// container gets its cache volume and a network shared with Pando, nothing of
+// Never a runtime socket, here or anywhere a build can see (R-112): a daemon
+// gets a network of its own, the network Pando reaches it on, and nothing of
 // the host's.
 
 // managedImage is the BuildKit Pando starts, pinned by digest: the bytes this
@@ -51,25 +54,54 @@ import (
 // the client in go.mod.
 const managedImage = "moby/buildkit:v0.34.1-rootless@sha256:f68752a5a94acfcdad2d07867b7075601a421638e17fc5f28efc1c814d0c4f89"
 
-// managedArgs: listen where Pando can reach it, and run each step in
-// BuildKit's own process namespace (--oci-worker-no-process-sandbox), since a
-// rootless container cannot make another. A step can then signal, and may be
-// able to ptrace, another step's processes — not the host's: BuildKit's own
-// container is the boundary, and it holds only builds.
-var managedArgs = []string{"--addr", "tcp://0.0.0.0:1234", "--oci-worker-no-process-sandbox"}
+// Where a daemon finds its TLS material, under the BuildKit user's home.
+const (
+	tlsDir     = ".config/buildkit/tls"
+	tlsCAFile  = tlsDir + "/ca.pem"
+	tlsCrtFile = tlsDir + "/cert.pem"
+	tlsKeyFile = tlsDir + "/key.pem"
+	homeDir    = "/home/user"
+)
+
+// managedArgs: listen where Pando can reach it, for clients with a
+// certificate from the install's build authority only (tls.go), and run each
+// step in BuildKit's own process namespace (--oci-worker-no-process-sandbox),
+// since a rootless container cannot make another. A step can then signal, and
+// may be able to ptrace, another step's processes — of the same app only,
+// since a daemon is one app's (R-117) — never the host's: BuildKit's own
+// container is the boundary.
+var managedArgs = []string{
+	"--addr", "tcp://0.0.0.0:" + managedPort,
+	"--tlscacert", homeDir + "/" + tlsCAFile,
+	"--tlscert", homeDir + "/" + tlsCrtFile,
+	"--tlskey", homeDir + "/" + tlsKeyFile,
+	"--oci-worker-no-process-sandbox",
+}
 
 const (
-	managedName    = "pando-buildkit"
-	managedNetwork = "pando-build"
-	managedVolume  = "pando-buildkit-cache"
-	managedPort    = "1234"
+	managedPort = "1234"
 
-	// labelManagedBuild marks the container and what it uses, with a digest
-	// of everything it was created from, so a Pando with a different image or
-	// profile replaces it rather than using a stale one. Not io.pando.managed,
-	// which the runtime's cleanup reads as an app's: this is Pando's own.
+	// labelManagedBuild marks what Pando makes for its BuildKits: "daemon"
+	// on a daemon, "network" on its network. Not io.pando.managed, which the
+	// runtime's cleanup reads as an app's: these are Pando's own.
 	labelManagedBuild = "io.pando.buildkit"
+	// labelBuildApp is the app a daemon builds for.
+	labelBuildApp = "io.pando.buildkit.app"
+	// labelBuildOwner is the Pando that started it: its container's ID, or
+	// host-<hostname> for one running on the host.
+	labelBuildOwner = "io.pando.buildkit.owner"
+
+	labelDaemon  = "daemon"
+	labelNetwork = "network"
+
+	// hostOwnerPrefix starts the owner of a daemon a Pando on the host
+	// started, which only that Pando removes.
+	hostOwnerPrefix = "host-"
 )
+
+// buildBlockBits is the size of a daemon's network: a /29, since only the
+// daemon is on it (and, with build egress, its gateway). [P]
+const buildBlockBits = 29
 
 // seccompProfile is Docker's default profile plus what rootless BuildKit
 // needs, generated by scripts/buildkit-seccomp.py and guarded by
@@ -88,26 +120,6 @@ var compactProfile = sync.OnceValue(func() string {
 	return b.String()
 })
 
-// digest is what the running container must have been created from: the
-// image, its arguments, the profile, and the files it is given.
-func (m *managed) digest() string {
-	h := sha256.New()
-	h.Write([]byte(managedImage))
-	h.Write([]byte(strings.Join(managedArgs, " ")))
-	h.Write([]byte(compactProfile()))
-	names := make([]string, 0, len(m.files))
-	for name := range m.files {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		h.Write([]byte(name))
-		h.Write(m.files[name])
-	}
-	h.Write([]byte(strings.Join(m.networks, ",")))
-	return hex.EncodeToString(h.Sum(nil))[:16]
-}
-
 // registryFiles are what a BuildKit needs to push to, and pull from, a
 // registry signed by a CA of the installation's own (docker-compose.registry.yml):
 // its configuration naming the CA, and the CA. Paths under the BuildKit user's
@@ -118,170 +130,557 @@ func registryFiles(host string, ca []byte) map[string][]byte {
 	}
 	const caPath = ".config/buildkit/registry-ca.crt"
 	return map[string][]byte{
-		".config/buildkit/buildkitd.toml": fmt.Appendf(nil, "[registry.%q]\n  ca = [%q]\n", host, "/home/user/"+caPath),
+		".config/buildkit/buildkitd.toml": fmt.Appendf(nil, "[registry.%q]\n  ca = [%q]\n", host, homeDir+"/"+caPath),
 		caPath:                            ca,
 	}
 }
 
-// dockerAPI is the part of the Docker client the managed BuildKit uses.
+// dockerAPI is the part of the Docker client the managed BuildKits use.
 type dockerAPI interface {
+	dockernet.API
 	ContainerInspect(ctx context.Context, id string, opts client.ContainerInspectOptions) (client.ContainerInspectResult, error)
 	ContainerCreate(ctx context.Context, opts client.ContainerCreateOptions) (client.ContainerCreateResult, error)
 	ContainerStart(ctx context.Context, id string, opts client.ContainerStartOptions) (client.ContainerStartResult, error)
 	ContainerRemove(ctx context.Context, id string, opts client.ContainerRemoveOptions) (client.ContainerRemoveResult, error)
+	ContainerList(ctx context.Context, opts client.ContainerListOptions) (client.ContainerListResult, error)
+	ContainerLogs(ctx context.Context, id string, opts client.ContainerLogsOptions) (client.ContainerLogsResult, error)
 	ImageInspect(ctx context.Context, ref string, opts ...client.ImageInspectOption) (client.ImageInspectResult, error)
 	ImagePull(ctx context.Context, ref string, opts client.ImagePullOptions) (client.ImagePullResponse, error)
-	NetworkList(ctx context.Context, opts client.NetworkListOptions) (client.NetworkListResult, error)
-	NetworkCreate(ctx context.Context, name string, opts client.NetworkCreateOptions) (client.NetworkCreateResult, error)
 	NetworkConnect(ctx context.Context, id string, opts client.NetworkConnectOptions) (client.NetworkConnectResult, error)
-	VolumeCreate(ctx context.Context, opts client.VolumeCreateOptions) (client.VolumeCreateResult, error)
+	NetworkRemove(ctx context.Context, id string, opts client.NetworkRemoveOptions) (client.NetworkRemoveResult, error)
+	VolumeRemove(ctx context.Context, id string, opts client.VolumeRemoveOptions) (client.VolumeRemoveResult, error)
 	CopyToContainer(ctx context.Context, id string, opts client.CopyToContainerOptions) (client.CopyToContainerResult, error)
+	Ping(ctx context.Context, opts client.PingOptions) (client.PingResult, error)
 }
 
-// managed is a BuildKit Pando runs.
+// managed starts and removes the BuildKits Pando runs: the launcher behind
+// daemons.
 //
-// Named after the Compose project Pando's own container belongs to, the way
-// Compose names its containers — pando-buildkit for the shipped file's — so
-// two installations on one Docker daemon, such as an operator's and a
-// throwaway one the deploy QA run brings up beside it, each run their own and
-// never remove the other's. Outside Compose, pando.
+// Names come from the Compose project Pando's own container belongs to, the
+// way Compose names its containers — pando-buildkit-<app>-… for the shipped
+// file's — so two installations on one Docker daemon, such as an operator's
+// and a throwaway one the deploy QA run brings up beside it, each run their
+// own and never remove the other's. Outside Compose, pando.
 type managed struct {
-	cli                         dockerAPI
-	name, network, volume, port string
+	cli dockerAPI
 
-	// named says the names were chosen by the caller (a test) and are not to
-	// be taken from the Compose project.
+	// project names everything: <project>-buildkit-<app>-<owner> for a
+	// daemon and its network, <project>-buildctl for the network Pando
+	// reaches them on.
+	project string
+
+	// named says project was chosen by the caller (a test) and is not to be
+	// taken from the Compose project.
 	named bool
 
-	// self is Pando's own container, which joins the network; empty asks the
-	// hostname, which is the container ID when Pando is in one.
+	// self is Pando's own container; empty asks the hostname, which is the
+	// container ID when Pando is in one.
 	self string
 
-	// dataDir is where the seccomp profile is written for an engine that
-	// takes it only as a file; empty is beside the build cache.
+	// dataDir is Pando's data directory: the build authority, and the
+	// seccomp profile for an engine that takes it only as a file. Empty is
+	// beside the build cache.
 	dataDir string
 
-	// files are written under the BuildKit user's home before it starts:
-	// registryFiles, when the installation runs a registry of its own.
+	// files are written under the BuildKit user's home before a daemon
+	// starts: registryFiles, when the installation runs a registry of its own.
 	files map[string][]byte
 
-	// networks are joined besides its own, by name: the one the
+	// networks are joined besides a daemon's own, by name: the one the
 	// installation's registry is on (docker-compose.registry.yml), so a push
 	// reaches it. Only those named — never Pando's own networks, where its
 	// database is (R-113).
 	networks []string
 
-	mu sync.Mutex
+	// pool is where daemons' networks take their addresses from; not
+	// poolOK leaves it to Docker.
+	pool   netip.Prefix
+	poolOK bool
+
+	// answers asks a daemon whether it is up; nil asks it for its workers.
+	answers func(context.Context, *bkclient.Client) error
+	// startWait is how long launch waits for a daemon to answer.
+	startWait time.Duration
+
+	mu      sync.Mutex // setup, and choosing a network's block
+	pulling sync.Mutex // one background pull of the image at a time
+
+	// Set once by setup.
+	ready       bool
+	owner       string
+	inContainer bool
+	ca          *authority
+	controlID   string
 }
 
 func newManaged(cli dockerAPI) *managed {
-	return &managed{cli: cli, name: managedName, network: managedNetwork, volume: managedVolume, port: managedPort}
+	pool, ok := buildNetworkPool()
+	return &managed{cli: cli, project: "pando", pool: pool, poolOK: ok, startWait: buildKitStartWait}
+}
+
+// defaultBuildNetworkPool is where daemons' networks take their addresses
+// from: the range the Docker runtime carves app networks from by default, so
+// one range of the host's is Pando's. [P] A /29 each, and the overlap check
+// keeps them clear of the apps' /28s. PANDO_BUILDKIT_NETWORK_POOL sets
+// another, or "off" for Docker's own pool, which holds about thirty networks.
+const defaultBuildNetworkPool = "10.213.0.0/16"
+
+func buildNetworkPool() (netip.Prefix, bool) {
+	raw := strings.TrimSpace(os.Getenv("PANDO_BUILDKIT_NETWORK_POOL"))
+	switch raw {
+	case "off", "docker":
+		return netip.Prefix{}, false
+	case "":
+		raw = defaultBuildNetworkPool
+	}
+	pool, err := netip.ParsePrefix(raw)
+	if err != nil || !pool.Addr().Is4() || pool.Bits() > buildBlockBits {
+		return netip.Prefix{}, false
+	}
+	return pool.Masked(), true
 }
 
 // labelComposeProject is the label Compose puts on every container it starts.
 const labelComposeProject = "com.docker.compose.project"
 
-// nameAfterProject takes the names from the Compose project of Pando's own
-// container, when it is in one.
-func (m *managed) nameAfterProject(ctx context.Context) {
-	if m.named {
+func (m *managed) selfName() string {
+	if m.self != "" {
+		return m.self
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return host
+}
+
+func (m *managed) controlNetwork() string { return m.project + "-buildctl" }
+
+// daemonPrefix starts the name of every daemon this installation runs.
+func (m *managed) daemonPrefix() string { return m.project + "-buildkit-" }
+
+// unsafeName is what a container name may not hold.
+var unsafeName = regexp.MustCompile(`[^a-z0-9_.-]`)
+
+// daemonName is the container, and network, of app's daemon started by this
+// Pando.
+func (m *managed) daemonName(app string) string {
+	app = unsafeName.ReplaceAllString(strings.ToLower(app), "-")
+	if app == "" {
+		app = "none"
+	}
+	owner := strings.TrimPrefix(m.owner, hostOwnerPrefix)
+	if len(owner) > 12 {
+		owner = owner[:12]
+	}
+	return m.daemonPrefix() + app + "-" + unsafeName.ReplaceAllString(strings.ToLower(owner), "-")
+}
+
+// setup does what every daemon needs once: who this Pando is, the build
+// authority, and the network Pando reaches daemons on. Retried by the next
+// launch when it fails.
+func (m *managed) setup(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ready {
+		return nil
+	}
+	m.identify(ctx)
+	if m.ca == nil {
+		ca, err := loadAuthority(m.profileDir())
+		if err != nil {
+			return authorityUnavailable(m.profileDir(), err)
+		}
+		m.ca = ca
+	}
+	if m.inContainer {
+		id, err := m.ensureControlNetwork(ctx)
+		if err != nil {
+			return err
+		}
+		if err := m.joinControlNetwork(ctx, id); err != nil {
+			return err
+		}
+		m.controlID = id
+	}
+	m.ready = true
+	return nil
+}
+
+// identify finds Pando's own container, if it is in one: its Compose project
+// names everything, and its ID owns the daemons it starts.
+func (m *managed) identify(ctx context.Context) {
+	self := m.selfName()
+	m.owner, m.inContainer = hostOwnerPrefix+self, false
+	if self == "" {
+		m.owner = hostOwnerPrefix + "unknown"
 		return
 	}
-	self := m.self
-	if self == "" {
-		host, err := os.Hostname()
-		if err != nil {
-			return
-		}
-		self = host
-	}
 	got, err := m.cli.ContainerInspect(ctx, self, client.ContainerInspectOptions{})
-	if err != nil || got.Container.Config == nil {
+	if err != nil || got.Container.ID == "" {
+		return
+	}
+	m.owner, m.inContainer = got.Container.ID, true
+	if m.named || got.Container.Config == nil {
 		return
 	}
 	if project := got.Container.Config.Labels[labelComposeProject]; project != "" {
-		m.name, m.network, m.volume = project+"-buildkit", project+"-build", project+"-buildkit-cache"
+		m.project = project
 	}
 }
 
-// address is where Pando reaches the BuildKit it runs: by name on the network
-// they share, or on the host's loopback when Pando is not in a container — a
-// developer running the binary.
-func (m *managed) address(inContainer bool) string {
-	if inContainer {
-		return "tcp://" + m.name + ":" + managedPort
-	}
-	return "tcp://127.0.0.1:" + m.port
-}
-
-// ensure makes the BuildKit container exist, match this Pando, run, and share
-// a network with Pando, and returns its address. Idempotent, and safe for
-// several replicas at once: the name is fixed, and a create that loses the
-// race finds the winner's container.
-func (m *managed) ensure(ctx context.Context) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.nameAfterProject(ctx)
-	networkID, err := m.ensureNetwork(ctx)
+// ensureControlNetwork is the network Pando reaches its daemons on. Internal:
+// no route off the host through it, so a daemon's way out is its own network
+// alone, where build egress can be held (R-118).
+func (m *managed) ensureControlNetwork(ctx context.Context) (string, error) {
+	name := m.controlNetwork()
+	existing, err := m.cli.NetworkList(ctx, client.NetworkListOptions{
+		Filters: make(client.Filters).Add("name", name),
+	})
 	if err != nil {
-		return "", err
+		return "", errs.Wrap(errs.AdapterUnavailable, "Could not list Docker networks.", err)
 	}
-	inContainer, err := m.joinNetwork(ctx, networkID)
-	if err != nil {
-		return "", err
-	}
-	addr := m.address(inContainer)
-
-	if done, err := m.useExisting(ctx); done || err != nil {
-		if err != nil {
-			return "", err
+	for _, n := range existing.Items {
+		if n.Name == name {
+			return n.ID, nil
 		}
-		return addr, nil
 	}
-	if err := m.create(ctx, networkID, inContainer); err != nil {
-		return "", err
+	created, err := m.cli.NetworkCreate(ctx, name, client.NetworkCreateOptions{
+		Driver: "bridge", Internal: true, Labels: map[string]string{labelManagedBuild: "control"},
+	})
+	if cerrdefs.IsConflict(err) {
+		return m.ensureControlNetwork(ctx)
 	}
-	return addr, nil
+	if err != nil {
+		return "", errs.Wrap(errs.AdapterFailed, "Could not set up the network Pando reaches its build services on.", err)
+	}
+	return created.ID, nil
 }
 
-// useExisting acts on the container already there, if any, and says whether
-// that is the whole of it. False with no error means there is none to use —
-// none at all, or one removed here — and create makes it.
-func (m *managed) useExisting(ctx context.Context) (bool, error) {
-	got, err := m.cli.ContainerInspect(ctx, m.name, client.ContainerInspectOptions{})
-	switch {
-	case cerrdefs.IsNotFound(err):
-		return false, nil
-	case err != nil:
-		return false, errs.Wrap(errs.AdapterUnavailable, "Could not look for Pando's build service.", err)
-	case got.Container.Config == nil || got.Container.Config.Labels[labelManagedBuild] != m.digest():
-		// Made by a Pando with another image or profile: replaced, so this
-		// one builds with what it was built against.
-		return false, m.remove(ctx, got.Container.ID, "Could not replace Pando's build service with this version's.")
+// joinControlNetwork connects Pando's own container to the control network.
+func (m *managed) joinControlNetwork(ctx context.Context, networkID string) error {
+	_, err := m.cli.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{Container: m.owner})
+	// On it already: Docker says "already exists", Podman "already connected".
+	// Podman's read as a failure stopped every build after a reboot (issue
+	// #179; alreadyAttached in the Docker runtime adapter is the same rule).
+	if err == nil || alreadyOn(err) {
+		return nil
+	}
+	return errs.Wrap(errs.AdapterFailed, "Could not connect Pando to the network it reaches its build services on.", err)
+}
+
+func alreadyOn(err error) bool {
+	return strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "already connected")
+}
+
+// launch starts app's daemon and returns it once it answers. On any failure,
+// what it made is removed.
+func (m *managed) launch(ctx context.Context, app string) (*instance, error) {
+	if err := m.setup(ctx); err != nil {
+		return nil, err
+	}
+	if err := m.ensureImage(ctx); err != nil {
+		return nil, err
+	}
+	name := m.daemonName(app)
+	// One left by this Pando before a crash, under the same name.
+	m.removeNamed(ctx, name)
+
+	serverName, err := daemonServerName()
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not name the build service's certificate.", err)
+	}
+	server, err := m.ca.issueServer(serverName)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not issue the build service its certificate.", err)
+	}
+	clientTLS, err := m.ca.clientTLS(serverName)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, "Could not issue Pando's certificate for the build service.", err)
 	}
 
-	state := got.Container.State
-	switch {
-	case state != nil && state.Running:
-		return true, nil
-	case state != nil && state.Status == container.StateCreated && !abandoned(got.Container.Created):
-		// Never started: the replica that made it is still giving it its
-		// files and networks, and starts it when it has (CodeRabbit on #173).
-		return true, nil
-	case state != nil && state.Status == container.StateCreated:
-		// Never started, long past any setup: whoever made it stopped
-		// partway. Made again, rather than started without what it lacks.
-		return false, m.remove(ctx, got.Container.ID, "Could not replace a build service that was never finished.")
+	inst := &instance{container: name, network: name}
+	keep := false
+	defer func() {
+		if !keep {
+			m.remove(context.WithoutCancel(ctx), inst)
+		}
+	}()
+
+	netID, err := m.createNetwork(ctx, app, name)
+	if err != nil {
+		return nil, err
 	}
-	// Started before, so set up in full, and stopped since.
-	return true, m.start(ctx, got.Container.ID)
+	id, err := m.create(ctx, app, name, netID)
+	if err != nil {
+		return nil, err
+	}
+	inst.container = id
+	if err := m.finish(ctx, id, server); err != nil {
+		return nil, err
+	}
+	addr, err := m.address(ctx, id, name)
+	if err != nil {
+		return nil, err
+	}
+	cli, err := bkclient.New(ctx, addr, bkclient.WithGRPCDialOption(grpc.WithTransportCredentials(credentials.NewTLS(clientTLS))))
+	if err != nil {
+		return nil, errs.Wrap(errs.AdapterUnavailable, "The build service is not responding.", err)
+	}
+	inst.cli = cli
+	if err := m.waitAnswering(ctx, inst); err != nil {
+		return nil, err
+	}
+	keep = true
+	return inst, nil
+}
+
+// createNetwork makes the daemon's own network: how it reaches registries and
+// package indexes, and nothing of any other app's. A bridge with a /29 of its
+// own, so a per-app egress gateway can stand on it later as it does on an
+// app's.
+func (m *managed) createNetwork(ctx context.Context, app, name string) (string, error) {
+	opts := client.NetworkCreateOptions{Driver: "bridge", Labels: m.labels(app, labelNetwork)}
+	var created client.NetworkCreateResult
+	var err error
+	if m.poolOK {
+		m.mu.Lock()
+		created, err = dockernet.Create(ctx, m.cli, name, m.pool, buildBlockBits, opts)
+		m.mu.Unlock()
+	} else {
+		created, err = m.cli.NetworkCreate(ctx, name, opts)
+	}
+	if err != nil {
+		return "", errs.Wrap(errs.AdapterFailed, "Could not create the build service's network.", err)
+	}
+	return created.ID, nil
+}
+
+func (m *managed) labels(app, kind string) map[string]string {
+	return map[string]string{labelManagedBuild: kind, labelBuildApp: app, labelBuildOwner: m.owner}
 }
 
 // securityOpts are the build service's security options, with its seccomp
 // profile given as the profile itself or as a path to it (profileOnHost).
 func securityOpts(seccomp string) []string {
 	return []string{"seccomp=" + seccomp, "apparmor=unconfined"}
+}
+
+// containerOptions is how a daemon is created: the pinned image, listening
+// for certified clients only, under the narrowed profile, on its own network,
+// with no volume but the anonymous one the image declares for its state —
+// removed with the container — and no restart policy: a daemon that stops is
+// started again by nobody, and the next build starts another.
+func (m *managed) containerOptions(app, name, networkID string) client.ContainerCreateOptions {
+	hostCfg := &container.HostConfig{
+		// Docker's default AppArmor profile denies mount, which builds cannot
+		// do without, and a narrower one has to be loaded into the host's
+		// kernel by root. The seccomp profile is the narrowed one.
+		SecurityOpt: securityOpts(compactProfile()),
+	}
+	if !m.inContainer {
+		// Loopback only, on a port Docker picks: reachable from a host-run
+		// Pando, and from nothing off the machine.
+		hostCfg.PortBindings = network.PortMap{
+			network.MustParsePort(managedPort + "/tcp"): {{HostIP: netip.MustParseAddr("127.0.0.1")}},
+		}
+	}
+	return client.ContainerCreateOptions{
+		Name: name,
+		Config: &container.Config{
+			Image:  managedImage,
+			Cmd:    managedArgs,
+			Labels: m.labels(app, labelDaemon),
+			ExposedPorts: network.PortSet{
+				network.MustParsePort(managedPort + "/tcp"): {},
+			},
+		},
+		HostConfig: hostCfg,
+		NetworkingConfig: &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{name: {NetworkID: networkID}},
+		},
+	}
+}
+
+// create makes the daemon's container.
+func (m *managed) create(ctx context.Context, app, name, networkID string) (string, error) {
+	opts := m.containerOptions(app, name, networkID)
+	created, err := m.cli.ContainerCreate(ctx, opts)
+	if err != nil && strings.Contains(err.Error(), "opening seccomp profile") {
+		// Podman reads seccomp= as a path where Docker takes the profile
+		// itself (issue #179): given a file on the host, it applies the same
+		// profile.
+		file, ferr := m.profileOnHost(ctx)
+		if ferr != nil {
+			return "", ferr
+		}
+		opts.HostConfig.SecurityOpt = securityOpts(file)
+		created, err = m.cli.ContainerCreate(ctx, opts)
+	}
+	if err != nil {
+		return "", errs.Wrap(errs.AdapterFailed, "Could not create Pando's build service.", err)
+	}
+	return created.ID, nil
+}
+
+// finish gives a new daemon its files and networks, then starts it.
+func (m *managed) finish(ctx context.Context, id string, server leaf) error {
+	files := map[string][]byte{
+		tlsCAFile:  m.ca.certPEM(),
+		tlsCrtFile: server.certPEM,
+		tlsKeyFile: server.keyPEM,
+	}
+	for name, body := range m.files {
+		files[name] = body
+	}
+	if err := m.copyFiles(ctx, id, files); err != nil {
+		return err
+	}
+	if m.inContainer {
+		if _, err := m.cli.NetworkConnect(ctx, m.controlID, client.NetworkConnectOptions{Container: id}); err != nil {
+			return errs.Wrap(errs.AdapterFailed, "Could not connect the build service to the network Pando reaches it on.", err)
+		}
+	}
+	for _, n := range m.networks {
+		if _, err := m.cli.NetworkConnect(ctx, n, client.NetworkConnectOptions{Container: id}); err != nil {
+			return errs.Wrap(errs.AdapterFailed, "Could not connect the build service to the network "+n+".", err).
+				WithRemedy("PANDO_BUILDKIT_NETWORKS names it; check that it exists with docker network ls.")
+		}
+	}
+	if _, err := m.cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
+		return errs.Wrap(errs.AdapterFailed, "Could not start Pando's build service.", err).
+			WithRemedy(notAnswering)
+	}
+	return nil
+}
+
+// address is where Pando reaches a daemon: by name on the control network, or
+// on the host's loopback at the port Docker published when Pando is not in a
+// container — a developer running the binary.
+func (m *managed) address(ctx context.Context, id, name string) (string, error) {
+	if m.inContainer {
+		return "tcp://" + name + ":" + managedPort, nil
+	}
+	got, err := m.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil {
+		return "", errs.Wrap(errs.AdapterFailed, "Could not find where the build service listens.", err)
+	}
+	if ns := got.Container.NetworkSettings; ns != nil {
+		for _, b := range ns.Ports[network.MustParsePort(managedPort+"/tcp")] {
+			if b.HostPort != "" {
+				return "tcp://127.0.0.1:" + b.HostPort, nil
+			}
+		}
+	}
+	return "", errs.New(errs.AdapterFailed, "Docker published no port for the build service.")
+}
+
+// buildKitRetryEvery is how often waitAnswering asks again.
+var buildKitRetryEvery = 250 * time.Millisecond
+
+// waitAnswering waits for a new daemon to answer, up to startWait.
+func (m *managed) waitAnswering(ctx context.Context, inst *instance) error {
+	answers := m.answers
+	if answers == nil {
+		answers = func(ctx context.Context, c *bkclient.Client) error {
+			_, err := c.ListWorkers(ctx)
+			return err
+		}
+	}
+	deadline := time.Now().Add(m.startWait)
+	for {
+		check, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := answers(check, inst.cli)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if time.Now().After(deadline) {
+			return m.notStarted(context.WithoutCancel(ctx), inst.container, err)
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(buildKitRetryEvery):
+		}
+	}
+}
+
+// notStarted is a daemon that never answered, with the end of its own log:
+// the daemon is removed, so its log is not there to read afterwards.
+func (m *managed) notStarted(ctx context.Context, id string, cause error) error {
+	message := "The build service did not start."
+	if tail := m.logTail(ctx, id); tail != "" {
+		message += " BuildKit's last words: " + tail
+	}
+	return errs.Wrap(errs.AdapterUnavailable, message, cause).WithRemedy(notAnswering)
+}
+
+// maxLogTail bounds the log quoted in an error.
+const maxLogTail = 800
+
+func (m *managed) logTail(ctx context.Context, id string) string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	rc, err := m.cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: "8"})
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = rc.Close() }()
+	var out bytes.Buffer
+	if _, err := stdcopy.StdCopy(&out, &out, io.LimitReader(rc, 64<<10)); err != nil && out.Len() == 0 {
+		return ""
+	}
+	text := strings.Join(strings.Fields(out.String()), " ")
+	if len(text) > maxLogTail {
+		text = "…" + strings.ToValidUTF8(text[len(text)-maxLogTail:], "")
+	}
+	return text
+}
+
+// notAnswering says what to look at when a BuildKit Pando runs is not
+// answering. Most often, on Ubuntu 23.10 and later, it is the host refusing
+// rootless BuildKit the user namespaces it needs (seen on Ubuntu 24.04:
+// "rootlesskit ... fork/exec /proc/self/exe: permission denied"). Only root on
+// the host can allow it; nothing Pando can ask Docker for does.
+//
+// On rootless Docker there is a second cause (issue #90): rootless BuildKit
+// maps 65536 user IDs of its own inside the container, and a container on
+// rootless Docker has only the IDs its user was given in /etc/subuid, by
+// default 65536 as well, so the map does not fit ("newuidmap: write to
+// uid_map failed: Operation not permitted").
+const notAnswering = "If BuildKit's log says \"permission denied\" from rootlesskit, the host confines unprivileged user namespaces, " +
+	"as Ubuntu 23.10 and later do, and rootless BuildKit cannot start until it allows them: as root, run " +
+	"sysctl -w kernel.apparmor_restrict_unprivileged_userns=0, and put the same setting in /etc/sysctl.d/ " +
+	"so it outlasts a reboot. If it says \"newuidmap: write to uid_map failed\", the user rootless Docker " +
+	"runs as has too few subordinate IDs for BuildKit's own: as root, give it more with " +
+	"usermod --add-subuids 1000000-1199999 --add-subgids 1000000-1199999 followed by that user's name, " +
+	"then restart that user's Docker. The next build starts the build service again."
+
+// remove removes a daemon and everything made for it: its container with its
+// anonymous state volume, and its network. Gone already is fine.
+func (m *managed) remove(ctx context.Context, inst *instance) {
+	if inst == nil {
+		return
+	}
+	if inst.cli != nil {
+		_ = inst.cli.Close()
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	if inst.container != "" {
+		_, _ = m.cli.ContainerRemove(ctx, inst.container, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+	}
+	if inst.network != "" {
+		_, _ = m.cli.NetworkRemove(ctx, inst.network, client.NetworkRemoveOptions{})
+	}
+}
+
+// removeNamed removes a daemon and network by name.
+func (m *managed) removeNamed(ctx context.Context, name string) {
+	m.remove(ctx, &instance{container: name, network: name})
 }
 
 // profileFileName is the seccomp profile as a file, for an engine that takes
@@ -308,13 +707,9 @@ func (m *managed) profileOnHost(ctx context.Context) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, profileFileName), []byte(compactProfile()), 0o644); err != nil { //nolint:gosec // read by the engine, as another user
 		return failed(err)
 	}
-	self := m.self
+	self := m.selfName()
 	if self == "" {
-		host, err := os.Hostname()
-		if err != nil {
-			return failed(err)
-		}
-		self = host
+		return failed(errors.New("no hostname"))
 	}
 	got, err := m.cli.ContainerInspect(ctx, self, client.ContainerInspectOptions{})
 	if err != nil {
@@ -326,8 +721,7 @@ func (m *managed) profileOnHost(ctx context.Context) (string, error) {
 	return failed(fmt.Errorf("no mount of %s holds %s", self, dir))
 }
 
-// profileDir is where the profile file is written: beside the build cache, in
-// Pando's data directory.
+// profileDir is Pando's data directory: beside the build cache.
 func (m *managed) profileDir() string {
 	if m.dataDir != "" {
 		return m.dataDir
@@ -356,125 +750,22 @@ func hostPath(mounts []container.MountPoint, inside string) (string, bool) {
 	return filepath.Join(best.Source, strings.TrimPrefix(inside, best.Destination)), true
 }
 
-// remove removes a container this one is replacing; gone already is fine.
-func (m *managed) remove(ctx context.Context, id, failure string) error {
-	if _, err := m.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
-		return errs.Wrap(errs.AdapterFailed, failure, err)
-	}
-	return nil
-}
-
-// create makes the container, gives it its files and networks, and starts it.
-func (m *managed) create(ctx context.Context, networkID string, inContainer bool) error {
-	if err := m.ensureImage(ctx); err != nil {
-		return err
-	}
-	if _, err := m.cli.VolumeCreate(ctx, client.VolumeCreateOptions{
-		Name: m.volume, Labels: map[string]string{labelManagedBuild: "cache"},
-	}); err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Could not create the build service's cache.", err)
-	}
-
-	hostCfg := &container.HostConfig{
-		Mounts: []mount.Mount{{Type: mount.TypeVolume, Source: m.volume, Target: "/home/user/.local/share/buildkit"}},
-		// Docker's default AppArmor profile denies mount, which builds cannot
-		// do without, and a narrower one has to be loaded into the host's
-		// kernel by root. The seccomp profile is the narrowed one.
-		SecurityOpt:   securityOpts(compactProfile()),
-		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
-	}
-	if !inContainer {
-		// Loopback only: reachable from a host-run Pando, and from nothing
-		// off the machine.
-		hostCfg.PortBindings = network.PortMap{
-			network.MustParsePort(managedPort + "/tcp"): {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: m.port}},
-		}
-	}
-	opts := client.ContainerCreateOptions{
-		Name: m.name,
-		Config: &container.Config{
-			Image:  managedImage,
-			Cmd:    managedArgs,
-			Labels: map[string]string{labelManagedBuild: m.digest()},
-			ExposedPorts: network.PortSet{
-				network.MustParsePort(managedPort + "/tcp"): {},
-			},
-		},
-		HostConfig: hostCfg,
-		NetworkingConfig: &network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{m.network: {NetworkID: networkID}},
-		},
-	}
-	created, err := m.cli.ContainerCreate(ctx, opts)
-	if err != nil && strings.Contains(err.Error(), "opening seccomp profile") {
-		// Podman reads seccomp= as a path where Docker takes the profile
-		// itself (issue #179): given a file on the host, it applies the same
-		// profile.
-		file, ferr := m.profileOnHost(ctx)
-		if ferr != nil {
-			return ferr
-		}
-		hostCfg.SecurityOpt = securityOpts(file)
-		created, err = m.cli.ContainerCreate(ctx, opts)
-	}
-	if cerrdefs.IsConflict(err) {
-		// Another replica made it between the inspect and the create, and is
-		// still giving it its files and networks. Starting it here could start
-		// it before it has them — BuildKit reads its configuration only as it
-		// starts — so the replica that made it starts it. This one's next health
-		// check finds it running; or, if the other's setup failed and removed
-		// it, makes it again (CodeRabbit on #173).
-		return nil
-	}
-	if err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Could not create Pando's build service.", err)
-	}
-	if err := m.finish(ctx, created.ID); err != nil {
-		// Labeled at create with everything it is made from, files and
-		// networks included, so one left without them would be found later and
-		// started as though it had them: every push would fail and nothing
-		// would replace it. And one whose first start failed would be left to
-		// its maker for setupGrace. Removed instead, and made again by the
-		// next ensure (CodeRabbit on #173).
-		_, _ = m.cli.ContainerRemove(context.WithoutCancel(ctx), created.ID, client.ContainerRemoveOptions{Force: true})
-		return err
-	}
-	return nil
-}
-
-// finish gives a new container its files and networks, then starts it.
-func (m *managed) finish(ctx context.Context, id string) error {
-	if err := m.copyFiles(ctx, id); err != nil {
-		return err
-	}
-	for _, n := range m.networks {
-		if _, err := m.cli.NetworkConnect(ctx, n, client.NetworkConnectOptions{Container: id}); err != nil {
-			return errs.Wrap(errs.AdapterFailed, "Could not connect the build service to the network "+n+".", err).
-				WithRemedy("PANDO_BUILDKIT_NETWORKS names it; check that it exists with docker network ls.")
-		}
-	}
-	return m.start(ctx, id)
-}
-
-// copyFiles writes m.files into the container before it first starts, owned by
+// copyFiles writes files into the container before it first starts, owned by
 // the rootless BuildKit's user (1000), which reads its configuration from its
 // home.
-func (m *managed) copyFiles(ctx context.Context, id string) error {
-	if len(m.files) == 0 {
-		return nil
-	}
-	archive, err := tarOf(m.files)
+func (m *managed) copyFiles(ctx context.Context, id string, files map[string][]byte) error {
+	archive, err := tarOf(files)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not prepare the build service's configuration.", err)
 	}
-	if _, err := m.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: "/home/user", Content: archive}); err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Could not give the build service its registry configuration.", err)
+	if _, err := m.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: homeDir, Content: archive}); err != nil {
+		return errs.Wrap(errs.AdapterFailed, "Could not give the build service its configuration.", err)
 	}
 	return nil
 }
 
 // tarOf is files as a tar archive, with every directory they are in, owned by
-// uid and gid 1000.
+// uid and gid 1000. A key is readable by its owner alone.
 func tarOf(files map[string][]byte) (*bytes.Buffer, error) {
 	names := make([]string, 0, len(files))
 	dirs := map[string]bool{}
@@ -492,7 +783,11 @@ func tarOf(files map[string][]byte) (*bytes.Buffer, error) {
 	// Parents sort before their children.
 	sort.Slice(headers, func(i, j int) bool { return headers[i].Name < headers[j].Name })
 	for _, name := range names {
-		headers = append(headers, &tar.Header{Name: name, Mode: 0o644, Size: int64(len(files[name])), Uid: 1000, Gid: 1000})
+		mode := int64(0o644)
+		if strings.HasSuffix(name, "key.pem") {
+			mode = 0o600
+		}
+		headers = append(headers, &tar.Header{Name: name, Mode: mode, Size: int64(len(files[name])), Uid: 1000, Gid: 1000})
 	}
 
 	var buf bytes.Buffer
@@ -510,49 +805,7 @@ func tarOf(files map[string][]byte) (*bytes.Buffer, error) {
 	return &buf, tw.Close()
 }
 
-// setupGrace is how long a never-started container is taken to be another
-// replica's, mid-setup. Setup is a file copy and a network join: seconds.
-const setupGrace = 2 * time.Minute
-
-// abandoned is whether a container created at created, never started, is
-// past any setup still running. An unreadable time is taken as abandoned, so a
-// container can never be waited on for ever.
-func abandoned(created string) bool {
-	at, err := time.Parse(time.RFC3339Nano, created)
-	return err != nil || time.Since(at) > setupGrace
-}
-
-func (m *managed) start(ctx context.Context, id string) error {
-	if _, err := m.cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Could not start Pando's build service.", err).
-			WithRemedy(m.notAnswering())
-	}
-	return nil
-}
-
-// notAnswering says what to look at when the BuildKit Pando runs is not
-// answering. Most often, on Ubuntu 23.10 and later, it is the host refusing
-// rootless BuildKit the user namespaces it needs (seen on Ubuntu 24.04: the
-// container restarts, logging "rootlesskit ... fork/exec /proc/self/exe:
-// permission denied"). Only root on the host can allow it; nothing Pando can
-// ask Docker for does.
-//
-// On rootless Docker there is a second cause (issue #90): rootless BuildKit
-// maps 65536 user IDs of its own inside the container, and a container on
-// rootless Docker has only the IDs its user was given in /etc/subuid, by
-// default 65536 as well, so the map does not fit ("newuidmap: write to
-// uid_map failed: Operation not permitted").
-func (m *managed) notAnswering() string {
-	return "Run docker logs " + m.name + " on the host for BuildKit's own account of why. " +
-		"If it says \"permission denied\" from rootlesskit, the host confines unprivileged user namespaces, " +
-		"as Ubuntu 23.10 and later do, and rootless BuildKit cannot start until it allows them: as root, run " +
-		"sysctl -w kernel.apparmor_restrict_unprivileged_userns=0, and put the same setting in /etc/sysctl.d/ " +
-		"so it outlasts a reboot. If it says \"newuidmap: write to uid_map failed\", the user rootless Docker " +
-		"runs as has too few subordinate IDs for BuildKit's own: as root, give it more with " +
-		"usermod --add-subuids 1000000-1199999 --add-subgids 1000000-1199999 followed by that user's name, " +
-		"then restart that user's Docker. Pando starts BuildKit again at its next check."
-}
-
+// ensureImage pulls the pinned image if Docker does not have it.
 func (m *managed) ensureImage(ctx context.Context) error {
 	if _, err := m.cli.ImageInspect(ctx, managedImage); err == nil {
 		return nil
@@ -566,57 +819,4 @@ func (m *managed) ensureImage(ctx context.Context) error {
 	// Drained: a pull that is not read to the end does not finish.
 	_, _ = io.Copy(io.Discard, rc)
 	return nil
-}
-
-func (m *managed) ensureNetwork(ctx context.Context) (string, error) {
-	existing, err := m.cli.NetworkList(ctx, client.NetworkListOptions{
-		Filters: make(client.Filters).Add("name", m.network),
-	})
-	if err != nil {
-		return "", errs.Wrap(errs.AdapterUnavailable, "Could not list Docker networks.", err)
-	}
-	for _, n := range existing.Items {
-		if n.Name == m.network {
-			return n.ID, nil
-		}
-	}
-	created, err := m.cli.NetworkCreate(ctx, m.network, client.NetworkCreateOptions{
-		Driver: "bridge", Labels: map[string]string{labelManagedBuild: "network"},
-	})
-	if cerrdefs.IsConflict(err) {
-		return m.ensureNetwork(ctx)
-	}
-	if err != nil {
-		return "", errs.Wrap(errs.AdapterFailed, "Could not set up the network Pando shares with its build service.", err)
-	}
-	return created.ID, nil
-}
-
-// joinNetwork connects Pando's own container to the build network, and says
-// whether Pando is in a container at all.
-func (m *managed) joinNetwork(ctx context.Context, networkID string) (bool, error) {
-	self := m.self
-	if self == "" {
-		host, err := os.Hostname()
-		if err != nil {
-			//nolint:nilerr // No hostname, no container to join: Pando is on the host, which address() handles.
-			return false, nil
-		}
-		self = host
-	}
-	_, err := m.cli.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{Container: self})
-	switch {
-	// On it already: Docker says "already exists", Podman "already
-	// connected". Podman's read as a failure stopped ensure before it started
-	// a stopped BuildKit, so after a reboot nothing could build (issue #179;
-	// alreadyAttached in the Docker runtime adapter is the same rule).
-	case err == nil, strings.Contains(err.Error(), "already exists"), strings.Contains(err.Error(), "already connected"):
-		return true, nil
-	case cerrdefs.IsNotFound(err):
-		// No container by that name: Pando is running on the host.
-		return false, nil
-	default:
-		return false, errs.Wrap(errs.AdapterFailed,
-			"Could not connect Pando to the network it shares with its build service.", err)
-	}
 }

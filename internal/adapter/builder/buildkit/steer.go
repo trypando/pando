@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	bkclient "github.com/moby/buildkit/client"
+
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
 )
@@ -218,7 +220,7 @@ func recordSteers(contextDir string, steers []steer) error {
 // steer plans a failed Railpack build again with whatever its log calls for,
 // and builds that, until it builds, nothing more is recognized, or maxSteers
 // is reached. The error returned on giving up is the last build's.
-func (a *Adapter) steer(ctx context.Context, req api.BuildRequest, contextDir, cacheDir string, timeout time.Duration, failed error, log *logTail) (api.BuildResult, error) {
+func (a *Adapter) steer(ctx context.Context, cli *bkclient.Client, req api.BuildRequest, contextDir, cacheDir string, timeout time.Duration, failed error, log *logTail) (api.BuildResult, error) {
 	// What the repository called for is in the plan already, and is planned
 	// with again.
 	applied := proactiveSteers(contextDir)
@@ -250,7 +252,7 @@ func (a *Adapter) steer(ctx context.Context, req api.BuildRequest, contextDir, c
 		if err != nil {
 			return api.BuildResult{}, err
 		}
-		result, err := a.solve(ctx, req, contextDir, filepath.Dir(filepath.Join(contextDir, name)), name, cacheDir, timeout)
+		result, err := a.solve(ctx, cli, req, contextDir, filepath.Dir(filepath.Join(contextDir, name)), name, cacheDir, timeout)
 		if err == nil {
 			result.GeneratedFiles = plan
 			return result, nil

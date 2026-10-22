@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,17 +33,16 @@ const Kind = "buildkit"
 // the topology rather than by this code being careful, which is the only way it
 // stays satisfied.
 type Adapter struct {
+	// cli is the BuildKit an install topology runs (Config.Address), shared
+	// by every app. Nil when Pando runs its own, one per app (daemons).
 	cli     *bkclient.Client
 	config  Config
 	address string
 
-	// managed is the BuildKit Pando runs itself, when the install topology
-	// names none (Config.Address). Nil otherwise.
+	// managed starts and removes the BuildKits Pando runs itself, one per
+	// app, and daemons holds them. Nil when the install topology names one.
 	managed *managed
-
-	// answers asks BuildKit whether it is up; nil asks it for its workers.
-	// For tests, which have no BuildKit to ask.
-	answers func(context.Context) error
+	daemons *daemons
 
 	// pruneMu keeps cache trims from piling up when builds finish together.
 	pruneMu sync.Mutex
@@ -58,9 +58,20 @@ type Config struct {
 	// it through PANDO_BUILDKIT_ADDRESS: deploy/kubernetes runs one as its
 	// own Deployment. Internal, and not among Info's settings: Pando does not
 	// support a BuildKit on another server, so nobody sets this by hand.
-	// Unset, Pando runs its own on the Docker daemon it runs apps on
-	// (managed.go, issue #130).
+	// Unset, Pando runs its own on the Docker daemon it runs apps on, one per
+	// app (managed.go, daemons.go). One named here is shared by every app.
 	Address string `json:"address,omitempty"`
+
+	// TLS for the BuildKit at Address: files in Pando's container holding
+	// the CA its certificate is checked against, and the client certificate
+	// and key Pando presents. Default PANDO_BUILDKIT_TLS_CA,
+	// PANDO_BUILDKIT_TLS_CERT and PANDO_BUILDKIT_TLS_KEY. TLSServerName,
+	// PANDO_BUILDKIT_TLS_SERVER_NAME, is the name its certificate is checked
+	// for when it is not the address's host. Unset, the connection is plain.
+	TLSCAFile     string `json:"tls_ca_file,omitempty"`
+	TLSCertFile   string `json:"tls_cert_file,omitempty"`
+	TLSKeyFile    string `json:"tls_key_file,omitempty"`
+	TLSServerName string `json:"tls_server_name,omitempty"`
 
 	// RegistryHost and RegistryCAFile let the BuildKit Pando runs trust a
 	// registry signed by the installation's own CA, such as the one
@@ -134,9 +145,9 @@ var dockerClient = func() (dockerAPI, error) { return client.New(client.FromEnv)
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryBuilder }
 
-// configureManaged sets up the BuildKit Pando runs itself, when the install
-// topology names none. Started now if Docker is up, and by every
-// health check after that if it is not, or if it stopped.
+// configureManaged sets up the BuildKits Pando runs itself, one per app, when
+// the install topology names none. None starts here: each starts when its
+// app's first build needs it. What an earlier run left behind is removed.
 func (a *Adapter) configureManaged(ctx context.Context) error {
 	dc, err := dockerClient()
 	if err != nil {
@@ -152,11 +163,19 @@ func (a *Adapter) configureManaged(ctx context.Context) error {
 	if len(a.managed.networks) == 0 {
 		a.managed.networks = envNetworks()
 	}
-	a.address = a.managed.address(true)
-	if addr, err := a.managed.ensure(ctx); err == nil {
-		a.address = addr
-	}
+	a.daemons = newDaemons(a.managed)
+	a.managed.sweep(ctx, true)
 	return nil
+}
+
+// LimitDaemons bounds how many of Pando's own BuildKits run and wait warm
+// together: limit is host policy's max_concurrent_deploys, read as the deploy
+// queue reads it, zero or less for its default. Without it, the bound is that
+// default.
+func (a *Adapter) LimitDaemons(limit func(context.Context) int) {
+	if a.daemons != nil {
+		a.daemons.limit = limit
+	}
 }
 
 // envNetworks is PANDO_BUILDKIT_NETWORKS, a comma-separated list.
@@ -182,16 +201,18 @@ func (a *Adapter) Configure(ctx context.Context, raw json.RawMessage) error {
 		a.address = os.Getenv("PANDO_BUILDKIT_ADDRESS")
 	}
 	if a.address == "" {
-		if err := a.configureManaged(ctx); err != nil {
-			return err
-		}
+		return a.configureManaged(ctx)
 	}
 
 	// Dialing is deferred: BuildKit may still be starting when Pando does, and
 	// an adapter that refuses to configure would be dropped from the registry
 	// for the life of the process. HealthCheck reports the truth instead, and
 	// the planner turns that into a readable refusal.
-	cli, err := bkclient.New(ctx, a.address)
+	opts, err := a.externalTLS()
+	if err != nil {
+		return err
+	}
+	cli, err := bkclient.New(ctx, a.address, opts...)
 	if err != nil {
 		//nolint:nilerr // Deliberate: a dial failure at configure time is not a
 		// configuration error. Returning it would drop the adapter from the
@@ -203,18 +224,54 @@ func (a *Adapter) Configure(ctx context.Context, raw json.RawMessage) error {
 	return nil
 }
 
+// externalTLS is the TLS the install topology's BuildKit is reached with, from
+// Config or the environment: none, a CA to check it against, a client
+// certificate to present, or both.
+func (a *Adapter) externalTLS() ([]bkclient.ClientOpt, error) {
+	ca := setting(a.config.TLSCAFile, "PANDO_BUILDKIT_TLS_CA")
+	cert := setting(a.config.TLSCertFile, "PANDO_BUILDKIT_TLS_CERT")
+	key := setting(a.config.TLSKeyFile, "PANDO_BUILDKIT_TLS_KEY")
+	serverName := setting(a.config.TLSServerName, "PANDO_BUILDKIT_TLS_SERVER_NAME")
+	if (cert == "") != (key == "") {
+		return nil, errs.New(errs.ValidInvalid,
+			"The build service was given half a client certificate: PANDO_BUILDKIT_TLS_CERT and PANDO_BUILDKIT_TLS_KEY go together.").
+			WithRemedy("Set both, as files in Pando's container, or neither.")
+	}
+	var opts []bkclient.ClientOpt
+	if ca != "" {
+		if serverName == "" {
+			if u, err := url.Parse(a.address); err == nil {
+				serverName = u.Hostname()
+			}
+		}
+		opts = append(opts, bkclient.WithServerConfig(serverName, ca))
+	}
+	if cert != "" {
+		opts = append(opts, bkclient.WithCredentials(cert, key))
+	}
+	return opts, nil
+}
+
+// setting is a configured value, or the environment's when there is none.
+func setting(configured, env string) string {
+	if configured != "" {
+		return configured
+	}
+	return os.Getenv(env)
+}
+
 func (a *Adapter) HealthCheck(ctx context.Context) error {
 	if a.managed != nil {
-		addr, err := a.managed.ensure(ctx)
+		// Plan time: Docker, the build authority and the image only. No
+		// daemon is started or waited on here.
+		return a.managed.healthy(ctx)
+	}
+	if a.cli == nil {
+		opts, err := a.externalTLS()
 		if err != nil {
 			return err
 		}
-		if addr != a.address {
-			a.address, a.cli = addr, nil
-		}
-	}
-	if a.cli == nil {
-		cli, err := bkclient.New(ctx, a.address)
+		cli, err := bkclient.New(ctx, a.address, opts...)
 		if err != nil {
 			return errs.Wrap(errs.AdapterUnavailable, "The build service is not responding.", err)
 		}
@@ -225,62 +282,36 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 	defer cancel()
 
 	if _, err := a.cli.ListWorkers(ctx); err != nil {
-		e := errs.Wrap(errs.AdapterUnavailable, "The build service is not responding.", err)
-		if a.managed != nil {
-			e = e.WithRemedy(a.managed.notAnswering())
-		}
-		return e
+		return errs.Wrap(errs.AdapterUnavailable, "The build service is not responding.", err)
 	}
 	return nil
 }
 
-// buildKitStartWait is how long a build waits for the BuildKit Pando runs to
-// answer, when the build is what found it stopped or missing.
+// buildKitStartWait is how long a build waits for the BuildKit Pando started
+// for it to answer.
 const buildKitStartWait = time.Minute
 
-// buildKitRetryEvery is how often startBuildKit asks again.
-var buildKitRetryEvery = time.Second
+// daemonFor is the BuildKit a build of namespace's app runs on, and what to
+// call when the build is done with it: the app's own when Pando runs them,
+// the install topology's otherwise.
+func (a *Adapter) daemonFor(ctx context.Context, namespace string) (*bkclient.Client, func(), error) {
+	if a.daemons == nil {
+		if a.cli == nil {
+			return nil, nil, errs.New(errs.AdapterUnavailable, "The build service is not responding.")
+		}
+		return a.cli, keepShared, nil
+	}
+	d, err := a.daemons.acquire(ctx, bundleOf(namespace))
+	if err != nil {
+		return nil, nil, err
+	}
+	return d.inst.cli, func() { a.daemons.release(d) }, nil
+}
 
-// startBuildKit makes sure the BuildKit Pando runs is there and answering
-// before a build, creating or starting it as ensure does.
-//
-// Configure did this once, and ignored a failure, and the planner checks no
-// builder's health before a deploy. So a BuildKit stopped after Pando started —
-// every container on rootless Podman, after a reboot, since Podman restarts
-// nothing — stayed down, and each build dialed a name that was not there
-// (issue #179). Not HealthCheck, which also replaces the client: builds run
-// side by side, and this touches only what ensure guards.
-func (a *Adapter) startBuildKit(ctx context.Context, wait time.Duration) error {
-	if a.managed == nil {
-		return nil
-	}
-	if _, err := a.managed.ensure(ctx); err != nil {
-		return err
-	}
-	answers := a.answers
-	if answers == nil {
-		answers = func(ctx context.Context) error {
-			_, err := a.cli.ListWorkers(ctx)
-			return err
-		}
-	}
-	deadline := time.Now().Add(wait)
-	for {
-		check, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := answers(check)
-		cancel()
-		if err == nil {
-			return nil
-		}
-		if time.Now().After(deadline) || ctx.Err() != nil {
-			return errs.Wrap(errs.AdapterUnavailable, "The build service is not responding.", err).
-				WithRemedy(a.managed.notAnswering())
-		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(buildKitRetryEvery):
-		}
-	}
+// keepShared is what a build does with the install topology's BuildKit when
+// it is done: nothing, since it outlives every build.
+func keepShared() {
+	// The topology's to keep running.
 }
 
 // Capabilities reports what this builder can do (R-254).
@@ -335,11 +366,8 @@ func (a *Adapter) Bid(_ context.Context, src api.SourceView) (api.Bid, error) {
 // setup cost R-002 says is paid once (O-34). A runtime that pulls from a
 // registry gets Push instead (issue #72, PR 5).
 func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildResult, error) {
-	if a.cli == nil {
+	if a.cli == nil && a.daemons == nil {
 		return api.BuildResult{}, errs.New(errs.AdapterUnavailable, "The build service is not responding.")
-	}
-	if err := a.startBuildKit(ctx, buildKitStartWait); err != nil {
-		return api.BuildResult{}, err
 	}
 	contextDir, err := sourceDir(req)
 	if err != nil {
@@ -373,6 +401,20 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 	// the build runs (cacheInUseFor), and ordered as most recently used after.
 	touchCache(bundleOf(req.CacheNamespace), time.Now())
 
+	cli, done, err := a.daemonFor(ctx, req.CacheNamespace)
+	if err != nil {
+		return api.BuildResult{}, err
+	}
+	// Trim the build service's cache now that this build is done with it, and
+	// only then let the daemon go. In the background: the image is already on
+	// its way to the runtime, and a deploy does not wait on housekeeping.
+	defer func() {
+		go func() {
+			a.trimCache(context.WithoutCancel(ctx), cli)
+			done()
+		}()
+	}()
+
 	// A build that may be steered keeps the end of its log, which is what
 	// the steering reads.
 	steerable := req.Steer && req.Strategy == spec.BuildBuildpack && isRailpackPlan(dockerfile)
@@ -381,11 +423,11 @@ func (a *Adapter) Build(ctx context.Context, req api.BuildRequest) (api.BuildRes
 		log = newLogTail(req.LogSink)
 		req.LogSink = log
 	}
-	result, err := a.solve(ctx, req, contextDir, dockerfileDir, dockerfile, cacheDir, timeout)
+	result, err := a.solve(ctx, cli, req, contextDir, dockerfileDir, dockerfile, cacheDir, timeout)
 	if err == nil || !steerable || ctx.Err() != nil {
 		return result, err
 	}
-	return a.steer(ctx, req, contextDir, cacheDir, timeout, err, log)
+	return a.steer(ctx, cli, req, contextDir, cacheDir, timeout, err, log)
 }
 
 // sourceDir is the directory on disk the build's context is read from: the
@@ -445,7 +487,7 @@ func keepDockerfile() {
 }
 
 // solve runs one build of the plan or Dockerfile named, from contextDir.
-func (a *Adapter) solve(ctx context.Context, req api.BuildRequest, contextDir, dockerfileDir, dockerfile, cacheDir string, timeout time.Duration) (api.BuildResult, error) {
+func (a *Adapter) solve(ctx context.Context, cli *bkclient.Client, req api.BuildRequest, contextDir, dockerfileDir, dockerfile, cacheDir string, timeout time.Duration) (api.BuildResult, error) {
 	contextFS, err := fsutil.NewFS(contextDir)
 	if err != nil {
 		return api.BuildResult{}, errs.Wrap(errs.BuildFailed, "Could not read the app's source.", err)
@@ -492,8 +534,9 @@ func (a *Adapter) solve(ctx context.Context, req api.BuildRequest, contextDir, d
 		frontendAttrs["target"] = req.Target
 	}
 	// A Railpack plan's cache mounts are keyed by this, and BuildKit shares a
-	// cache mount by key across every build it runs. The bundle keeps one
-	// app's package caches out of another's, as R-117 asks of the layer cache.
+	// cache mount by key across every build it runs. A daemon Pando runs is
+	// one app's (R-117); the install topology's is every app's, and there the
+	// bundle keeps one app's package caches out of another's.
 	railpack := isRailpackPlan(dockerfile)
 	if railpack {
 		frontendAttrs["build-arg:cache-key"] = bundleOf(req.CacheNamespace)
@@ -546,18 +589,13 @@ func (a *Adapter) solve(ctx context.Context, req api.BuildRequest, contextDir, d
 	var resp *bkclient.SolveResponse
 	if railpack {
 		solveOpt.Frontend = ""
-		resp, err = a.cli.Build(ctx, solveOpt, "pando", railpackBuild(map[string]string{
+		resp, err = cli.Build(ctx, solveOpt, "pando", railpackBuild(map[string]string{
 			api.ImageLabelBundle: bundleOf(req.CacheNamespace),
 		}), statusCh)
 	} else {
-		resp, err = a.cli.Solve(ctx, nil, solveOpt, statusCh)
+		resp, err = cli.Solve(ctx, nil, solveOpt, statusCh)
 	}
 	<-logsDone
-
-	// Trim the build service's cache now that this build is done with it. In
-	// the background: the image is already on its way to the runtime, and a
-	// deploy does not wait on housekeeping.
-	go a.trimCache(context.WithoutCancel(ctx))
 
 	if err != nil {
 		if ctx.Err() != nil {
@@ -680,12 +718,12 @@ func streamStatus(statusCh chan *bkclient.SolveStatus, sink io.Writer) {
 // trimCache prunes the build service's cache down to its cap, oldest first.
 // Failures are ignored: a cache that stays too big is the state before this
 // existed, not a broken build.
-func (a *Adapter) trimCache(ctx context.Context) {
+func (a *Adapter) trimCache(ctx context.Context, cli *bkclient.Client) {
 	limit := a.config.CacheMaxBytes
 	if limit == 0 {
 		limit = defaultCacheMaxBytes
 	}
-	if limit < 0 || a.cli == nil {
+	if limit < 0 || cli == nil {
 		return
 	}
 	a.pruneMu.Lock()
@@ -693,7 +731,7 @@ func (a *Adapter) trimCache(ctx context.Context) {
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	_ = a.cli.Prune(ctx, nil, bkclient.WithKeepOpt(0, 0, limit, 0))
+	_ = cli.Prune(ctx, nil, bkclient.WithKeepOpt(0, 0, limit, 0))
 }
 
 // bundleOf is the app a cache namespace belongs to: the namespace is the app's
