@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChangePassword, Login } from '../auth/Login';
@@ -37,9 +38,8 @@ describe('groups and roles as they open', () => {
   const synced = { id: 'grp_a', name: 'eng', source: 'idp_okta', source_name: 'Okta', member_count: 4 };
   const own = { id: 'grp_1', name: 'ops', member_count: 1 };
   const cases: Array<[string, object[], boolean, string, string]> = [
-    ['a synced group by its provider, with nothing to link', [synced], false, '>Okta<', 'Provider groups'],
-    ['a Pando group, with provider groups to link and no AI', [own, synced], false, 'Provider groups', 'Ask AI'],
-    ['a Pando group, with no provider groups to link', [own], false, '>Pando<', 'Provider groups'],
+    ['a synced group by its provider', [synced], false, '>Okta<', '>Pando<'],
+    ['a Pando group, with no AI', [own, synced], false, '>Pando<', 'Ask AI'],
     ['drafting with AI where it is on', [own], true, 'Ask AI', 'Okta'],
   ];
   it.each(cases)('shows %s', (_, list, drafting, said, unsaid) => {
@@ -54,6 +54,52 @@ describe('a group’s dialogs', () => {
     vi.stubGlobal('fetch', answering({}));
     return open(<Identity canEdit />, identity(list));
   };
+  /** Opens a group's options and chooses one; the menu is portaled to the body. */
+  const choose = async (group: string, item: string) => {
+    const button = document.querySelector<HTMLButtonElement>(`button[aria-label="Options for ${group}"]`)!;
+    await act(async () => button.click());
+    const found = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) => el.textContent === item)!;
+    await act(async () => found.click());
+  };
+
+  it.each([
+    ['a synced group: its app limit only', 'eng', ['App limit']],
+    ['a Pando group, with provider groups to link', 'ops', ['Edit members', 'Provider groups', 'App limit', 'Delete']],
+  ])('offers %s', async (_, group, items) => {
+    groups([
+      { id: 'grp_a', name: 'eng', source: 'idp_okta', source_name: 'Okta', member_count: 4 },
+      { id: 'grp_1', name: 'ops', member_count: 1 },
+    ]);
+    await act(async () => document.querySelector<HTMLButtonElement>(`button[aria-label="Options for ${group}"]`)!.click());
+    expect([...document.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent)).toEqual(items);
+  });
+
+  it('offers no provider groups to link when there are none', async () => {
+    groups([{ id: 'grp_1', name: 'ops', member_count: 1 }]);
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Options for ops"]')!.click());
+    expect(document.body.textContent).not.toContain('Provider groups');
+  });
+
+  it('opens a group’s apps in a dialog, and adding one takes the dialog over', async () => {
+    vi.stubGlobal('fetch', answering({}));
+    const s = open(<Identity canEdit />, [
+      ...identity([{ id: 'grp_1', name: 'ops', member_count: 1 }]),
+      [['me'], { verbs: ['install.apps.view', 'install.apps.grants.manage'] }],
+      [['groups', 'grp_1', 'apps', '', {}], page({ apps: [] })],
+      [['roles', 'app'], { roles: [] }],
+      [['apps', 'pick', ''], { apps: [{ id: 'app_1', name: 'notes' }] }],
+    ]);
+    const dialogs = () => [...document.querySelectorAll('[role="dialog"]')];
+    await s.press('Apps');
+    expect(dialogs()).toHaveLength(1);
+    expect(s.text()).toContain('Apps for ops');
+    await s.press('Add app');
+    expect(dialogs()).toHaveLength(1);
+    expect(dialogs()[0]?.textContent).toContain('Choose an app');
+    await s.press('Cancel');
+    expect(dialogs()).toHaveLength(1);
+    expect(s.text()).toContain('Apps for ops');
+  });
 
   it('titles adding a group, and editing one’s members by its name', async () => {
     const s = groups([{ id: 'grp_1', name: 'ops', member_count: 2 }]);
@@ -61,7 +107,7 @@ describe('a group’s dialogs', () => {
     // The button, and the dialog's title.
     expect(s.text().split('Add group')).toHaveLength(3);
     await s.press('Cancel');
-    await s.press('Edit members');
+    await choose('ops', 'Edit members');
     expect(s.text()).toContain('Members of ops');
   });
 
@@ -70,7 +116,7 @@ describe('a group’s dialogs', () => {
     [3, 'The 3 members keep their accounts and'],
   ])('counts %i member(s) kept on deleting a group', async (count, said) => {
     const s = groups([{ id: 'grp_1', name: 'ops', member_count: count }]);
-    await s.press('Delete');
+    await choose('ops', 'Delete');
     expect(s.text()).toContain(said);
   });
 
@@ -81,7 +127,7 @@ describe('a group’s dialogs', () => {
       { id: 'grp_c', name: 'legal', source: 'idp_okta' },
       { id: 'grp_1', name: 'ops', member_count: 0 },
     ]);
-    await s.press('Provider groups');
+    await choose('ops', 'Provider groups');
     expect(s.text()).toContain('Okta, 4 members');
     expect(s.text()).toContain('idp_okta, 1 member');
     expect(s.text()).toContain('idp_okta, 0 members');

@@ -13,12 +13,13 @@ import { Badge, Banner, Button, Checkbox, Dialog, Input, Select } from '@design'
 import { api } from '@api/client';
 import { Quiet, RoleLabel, Screen, messageOf, refusal, refreshMembership, sentence } from './Accounts';
 import { VERB_NOTES } from './verbNotes';
-import { AccountApps } from './AccountApps';
+import { AppsDialog } from './AccountApps';
 import { GroupAppLimit } from './AppLimit';
 import { NoMatches, SearchField } from '../ui/SearchField';
 import { matches } from '../ui/search';
 import { ShowMore, usePaged, useSettled, withParams, type PageOf } from '../ui/paged';
 import { Table } from '../ui/Table';
+import { Menu, MenuDivider, MenuItem } from '../ui/Menu';
 import { LineSkeleton, Loading } from '../ui/Loading';
 import { AIButton } from '../ui/AskAI';
 import { AccessAI } from './AccessAI';
@@ -154,17 +155,23 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
           loading={groups.query.isPending}
           skeletonRows={3}
           columns={[
-            { key: 'name', header: 'Name', width: 'minmax(0,36ch)' },
+            {
+              key: 'name',
+              header: 'Name',
+              width: 'minmax(16ch,1fr)',
+              // Cut short only when the window is: the full name on hover.
+              render: (row: Group) => <span title={row.name}>{row.name}</span>,
+            },
             {
               key: 'members',
               header: 'Members',
-              width: '14ch',
+              width: '10ch',
               render: (row: Group) => <Badge count={row.member_count ?? row.members?.length ?? 0} />,
             },
             {
               key: 'source',
               header: 'Source',
-              width: '20ch',
+              width: 'minmax(0,20ch)',
               muted: true,
               // A group synced from an identity provider is not Pando's to
               // edit: the provider is the source of truth for membership
@@ -195,36 +202,43 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
             {
               key: 'edit',
               header: '',
-              width: '42ch',
+              width: canEdit ? '14ch' : '8ch',
               align: 'right',
               render: (row: Group) => (
-                <span style={{ display: 'inline-flex', gap: 'var(--space-2)' }}>
-                  <Button variant="secondary" onClick={() => setShowing(showing === row.id ? null : row.id)}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
+                  <Button variant="secondary" onClick={() => setShowing(row.id)}>
                     Apps
                   </Button>
-                  {/* On a synced group too, like its role: the provider says
-                      who is in it, Pando says what it may do (R-078, R-244). */}
                   {canEdit && (
-                    <Button variant="secondary" onClick={() => setLimiting(row)}>
-                      App limit
-                    </Button>
-                  )}
-                  {/* Not for a synced group: the identity provider would make
-                      it again at the next sign-in (R-078). */}
-                  {canEdit && !row.source && (
-                    <>
-                      <Button variant="secondary" onClick={() => setEditing(row)}>
-                        Edit members
-                      </Button>
-                      {all.some((g) => g.source) && (
-                        <Button variant="secondary" onClick={() => setLinking(row)}>
-                          Provider groups
-                        </Button>
-                      )}
-                      <Button variant="secondary" onClick={() => setDeleting(row)}>
-                        Delete
-                      </Button>
-                    </>
+                    <Menu label={`Options for ${row.name}`}>
+                      {(close) => {
+                        const choose = (act: () => void) => () => {
+                          close();
+                          act();
+                        };
+                        return (
+                          <>
+                            {/* Members and provider groups are not for a synced
+                                group: the identity provider would put them back
+                                at the next sign-in (R-078). */}
+                            {!row.source && <MenuItem onSelect={choose(() => setEditing(row))}>Edit members</MenuItem>}
+                            {!row.source && all.some((g) => g.source) && (
+                              <MenuItem onSelect={choose(() => setLinking(row))}>Provider groups</MenuItem>
+                            )}
+                            {/* On a synced group too, like its role: the provider
+                                says who is in it, Pando says what it may do
+                                (R-078, R-244). */}
+                            <MenuItem onSelect={choose(() => setLimiting(row))}>App limit</MenuItem>
+                            {!row.source && (
+                              <>
+                                <MenuDivider />
+                                <MenuItem onSelect={choose(() => setDeleting(row))}>Delete</MenuItem>
+                              </>
+                            )}
+                          </>
+                        );
+                      }}
+                    </Menu>
                   )}
                 </span>
               ),
@@ -244,22 +258,12 @@ function Groups({ canEdit, query }: { canEdit: boolean; query: string }) {
         </div>
       </div>
 
-      {/* Below the table rather than in a dialog: giving access to an app
-          opens a dialog of its own, and a dialog over a dialog is one too
-          many. */}
       {shown && (
-        <div style={{ marginTop: 'var(--space-6)' }}>
-          <AccountApps
-            key={shown.id}
-            principal={{ kind: 'group', id: shown.id, name: shown.name }}
-            heading={`Apps for ${shown.name}`}
-            action={
-              <Button variant="ghost" onClick={() => setShowing(null)}>
-                Close
-              </Button>
-            }
-          />
-        </div>
+        <AppsDialog
+          key={shown.id}
+          principal={{ kind: 'group', id: shown.id, name: shown.name }}
+          onClose={() => setShowing(null)}
+        />
       )}
 
       {editing && <EditGroup group={editing} onClose={() => setEditing(null)} />}
@@ -506,11 +510,16 @@ function Roles({ canEdit, query }: { canEdit: boolean; query: string }) {
           loading={roles.isPending}
           skeletonRows={5}
           columns={[
-            { key: 'name', header: 'Name', width: 'minmax(0,24ch)' },
+            {
+              key: 'name',
+              header: 'Name',
+              width: 'minmax(16ch,1fr)',
+              render: (row: Role) => <span title={row.name}>{row.name}</span>,
+            },
             {
               key: 'scope',
               header: 'Scope',
-              width: '18ch',
+              width: '14ch',
               // R-080: the two scopes are never conflated. An install role and
               // an app role are different things and this column is where a
               // reader learns that.
@@ -519,14 +528,14 @@ function Roles({ canEdit, query }: { canEdit: boolean; query: string }) {
             {
               key: 'builtin',
               header: 'Source',
-              width: '14ch',
+              width: '18ch',
               muted: true,
               render: (row: Role) => (row.builtin ? 'Pando' : 'This installation'),
             },
             {
               key: 'verbs',
               header: 'Permissions',
-              width: 'minmax(0,28ch)',
+              width: '18ch',
               // A count, not the list: a role can hold twenty verbs, and every
               // one of them on the row made the table mostly tags. The list
               // opens from here, each verb with what it lets somebody do.

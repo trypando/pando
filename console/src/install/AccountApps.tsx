@@ -59,41 +59,38 @@ const PICK_LIMIT = 50;
 
 const isOwn = (p: Principal) => (g: Grant) => p.kind === 'group' || g.via === 'user';
 
-export function AccountApps({
-  principal,
-  heading = 'Apps',
-  action,
-}: {
-  principal: Principal;
-  heading?: string;
-  /** Beside "Add app", for the surface the list sits in. */
-  action?: React.ReactNode;
-}) {
-  const noun = principal.kind === 'user' ? 'account' : 'group';
-  // A page of apps at a time (issue #72): a group everyone is in can be
-  // granted every app in the install.
-  const paged = usePaged<{ apps: AppAccess[] | null } & PageOf, AppAccess>({
+/** The principal's apps a page at a time (issue #72): a group everyone is in
+ *  can be granted every app in the install. */
+function useAccess(principal: Principal) {
+  return usePaged<{ apps: AppAccess[] | null } & PageOf, AppAccess>({
     key: listKey(principal),
     path: `/${principal.kind === 'user' ? 'users' : 'groups'}/${principal.id}/apps`,
     rows: (p) => p.apps,
   });
-  const access = paged.query;
-  // The roles an app can be granted with: the three built-ins and any custom
-  // app role.
-  const roles = useQuery({
+}
+
+/** The roles an app can be granted with: the three built-ins and any custom
+ *  app role. */
+function useAppRoles() {
+  return useQuery({
     queryKey: ['roles', 'app'],
     queryFn: () => api.get<{ roles: Role[] }>('/roles?scope=app'),
   });
-  // Someone who sees every app and manages access to every app
-  // (install.apps.view and install.apps.grants.manage) can be offered an app
-  // the principal does not have yet. Anyone else manages the apps they were
-  // granted, from each app's Sharing tab.
+}
+
+/** Whether the viewer can offer an app the principal does not have yet:
+ *  someone who sees every app and manages access to every app
+ *  (install.apps.view and install.apps.grants.manage). Anyone else manages the
+ *  apps they were granted, from each app's Sharing tab. */
+function useEveryApp() {
   const seesEveryApp = useInstallVerb(InstallVerb.AppsView);
   const sharesEveryApp = useInstallVerb(InstallVerb.AppsGrantsManage);
-  const everyApp = seesEveryApp && sharesEveryApp;
-  const [adding, setAdding] = useState(false);
+  return seesEveryApp && sharesEveryApp;
+}
 
-  const rows = paged.rows;
+export function AccountApps({ principal }: { principal: Principal }) {
+  const everyApp = useEveryApp();
+  const [adding, setAdding] = useState(false);
 
   return (
     <section>
@@ -108,23 +105,66 @@ export function AccountApps({
         }}
       >
         <div>
-          <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>{heading}</h4>
+          <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-3)' }}>Apps</h4>
           <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: 0 }}>
             {principal.kind === 'user'
               ? 'This account’s role and access on each app.'
               : 'This group’s role and access on each app.'}
           </p>
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+        {everyApp && (
+          <Button variant="secondary" onClick={() => setAdding(true)}>
+            Add app
+          </Button>
+        )}
+      </div>
+      <AppsTable principal={principal} />
+      {adding && <GiveAccess principal={principal} onClose={() => setAdding(false)} />}
+    </section>
+  );
+}
+
+/** A group's apps, in a dialog over the list of groups. Adding an app takes
+ *  the dialog over rather than opening a second one on top of it, and
+ *  returns to the list when done. */
+export function AppsDialog({ principal, onClose }: { principal: Principal; onClose: () => void }) {
+  const everyApp = useEveryApp();
+  const [adding, setAdding] = useState(false);
+
+  if (adding) return <GiveAccess principal={principal} onClose={() => setAdding(false)} />;
+  return (
+    <Dialog
+      open
+      title={`Apps for ${principal.name}`}
+      width={640}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
           {everyApp && (
-            <Button variant="secondary" onClick={() => setAdding(true)}>
+            <Button variant="primary" onClick={() => setAdding(true)}>
               Add app
             </Button>
           )}
-          {action}
-        </div>
-      </div>
+        </>
+      }
+    >
+      <AppsTable principal={principal} />
+    </Dialog>
+  );
+}
 
+function AppsTable({ principal }: { principal: Principal }) {
+  const noun = principal.kind === 'user' ? 'account' : 'group';
+  const paged = useAccess(principal);
+  const access = paged.query;
+  const roles = useAppRoles();
+  const everyApp = useEveryApp();
+
+  return (
+    <>
       {access.isError && <Quiet>{messageOf(access.error)}</Quiet>}
 
       <Table
@@ -160,7 +200,7 @@ export function AccountApps({
             render: (row: AppAccess) => <UseCell principal={principal} row={row} />,
           },
         ]}
-        rows={rows.map((r) => ({ ...r, id: r.app_id }))}
+        rows={paged.rows.map((r) => ({ ...r, id: r.app_id }))}
         empty={
           <EmptyState heading="No apps">
             {everyApp
@@ -170,16 +210,7 @@ export function AccountApps({
         }
       />
       <ShowMore query={access} label="Show more apps" />
-
-      {adding && (
-        <GiveAccess
-          principal={principal}
-          has={new Set(rows.map((r) => r.app_id))}
-          roles={roles.data?.roles ?? []}
-          onClose={() => setAdding(false)}
-        />
-      )}
-    </section>
+    </>
   );
 }
 
@@ -286,17 +317,10 @@ function useInvalidate(principal: Principal, appID?: string) {
 
 /** Access to an app the principal has nothing on yet — for someone who manages
  *  every app, so every app offered is one they can grant. */
-function GiveAccess({
-  principal,
-  has,
-  roles,
-  onClose,
-}: {
-  principal: Principal;
-  has: Set<string>;
-  roles: Role[];
-  onClose: () => void;
-}) {
+function GiveAccess({ principal, onClose }: { principal: Principal; onClose: () => void }) {
+  // The apps already listed, from the same cache the list reads.
+  const has = new Set(useAccess(principal).rows.map((r) => r.app_id));
+  const roles = useAppRoles().data?.roles ?? [];
   // Searched by the server, a screenful at a time: the install may hold
   // twenty thousand apps, and a picker of all of them is not one (issue #72).
   const [search, setSearch] = useState('');
