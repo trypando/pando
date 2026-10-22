@@ -135,3 +135,33 @@ func TestR063_ACookieBuiltFromAnAuditedIDIsRefused(t *testing.T) {
 	require.True(t, signedIn(i, victim.cookie), "signing out with a forged cookie ends nobody's session")
 	require.True(t, signedIn(i, other.cookie))
 }
+
+// TestR048_APasswordChangeEndsEveryOtherSession asserts that changing a
+// password ends every other session the account holds, with the change, and
+// keeps only the one it was changed from (R-048). A cookie naming that
+// session with the wrong secret keeps nothing alive (R-063).
+func TestR048_APasswordChangeEndsEveryOtherSession(t *testing.T) {
+	i := newInstall(t)
+	here := i.admin()
+	elsewhere, _ := i.signIn(bootstrap.AdminUsername, i.adminPassword)
+	require.True(t, signedIn(i, elsewhere.cookie))
+
+	got := i.do(here, http.MethodPost, "/me/password", map[string]any{
+		"current_password": i.adminPassword,
+		"new_password":     "an-entirely-different-password",
+	})
+	require.Equal(t, http.StatusNoContent, got.Code, got.String())
+	require.True(t, signedIn(i, here.cookie), "the session it was changed from stays")
+	require.False(t, signedIn(i, elsewhere.cookie), "every other session ends")
+
+	// From a token, with a cookie that names this session but carries the
+	// wrong secret: nothing is kept.
+	sessionID, _, _ := strings.Cut(here.cookie, ".")
+	forged := &session{cookie: sessionID + ".not-the-secret", token: i.tokenFor(here).token}
+	got = i.do(forged, http.MethodPost, "/me/password", map[string]any{
+		"current_password": "an-entirely-different-password",
+		"new_password":     "yet-another-different-password",
+	})
+	require.Equal(t, http.StatusNoContent, got.Code, got.String())
+	require.False(t, signedIn(i, here.cookie), "a cookie with the wrong secret keeps no session alive")
+}

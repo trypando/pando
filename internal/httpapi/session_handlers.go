@@ -295,18 +295,16 @@ func (s *Server) currentSession(r *http.Request) (sess state.Session, ok bool, e
 	return s.Sessions.Active(r.Context(), cookie)
 }
 
-// endOtherSessions ends every session userID holds except the one the
-// request's cookie carries, when that one is theirs. It is matched by its
-// secret first, so a cookie with the wrong secret keeps nothing alive.
-func (s *Server) endOtherSessions(r *http.Request, userID string) error {
+// keptSession is the public ID of the session a password change keeps: the
+// one the request's cookie carries, matched by its secret, when it is
+// userID's. "" keeps none, so a cookie with the wrong secret keeps nothing
+// alive.
+func (s *Server) keptSession(r *http.Request, userID string) (string, error) {
 	current, ok, err := s.currentSession(r)
-	if err != nil {
-		return err
+	if err != nil || !ok || current.UserID != userID {
+		return "", err
 	}
-	if ok && current.UserID == userID {
-		return s.Sessions.RevokeOthersForUser(r.Context(), userID, current.ID)
-	}
-	return s.Sessions.RevokeAllForUser(r.Context(), userID)
+	return current.ID, nil
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -558,16 +556,15 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.Wrap(errs.Internal, "Could not secure the password.", err))
 		return
 	}
-	if err := s.Users.SetPassword(r.Context(), p.UserID, digest); err != nil {
+	// Every other session ends with the change, in one statement. The
+	// current one survives so that changing a password does not sign you out
+	// of the page you changed it on.
+	keep, err := s.keptSession(r, p.UserID)
+	if err != nil {
 		Error(w, r, err)
 		return
 	}
-
-	// Every other session ends. A password change is what someone does when
-	// they think a credential has leaked, and leaving the leaked session alive
-	// would make the act cosmetic. The current one survives so that changing a
-	// password does not sign you out of the page you changed it on.
-	if err := s.endOtherSessions(r, p.UserID); err != nil {
+	if err := s.Users.SetPassword(r.Context(), p.UserID, digest, keep); err != nil {
 		Error(w, r, err)
 		return
 	}

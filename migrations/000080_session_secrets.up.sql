@@ -7,6 +7,10 @@
 -- A session from before has no secret, and its cookie is its ID, which the
 -- audit log holds. It cannot be converted, so every one is removed: everyone
 -- signs in again after this upgrade.
+--
+-- Not for a rolling upgrade: a replica on an older build cannot write a
+-- session once this runs, and cannot read a newer one's cookie. An install
+-- with more than one replica stops every older replica first.
 TRUNCATE sessions;
 
 ALTER TABLE sessions

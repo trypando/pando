@@ -175,19 +175,3 @@ func (s *Sessions) Revoke(ctx context.Context, sessionID string) error {
 	}
 	return nil
 }
-
-// RevokeOthersForUser ends every session a user holds except one, named by
-// its public ID.
-//
-// For a password change: the sessions someone did not know about should end,
-// and the one they are typing in should not — being signed out by your own
-// password change teaches people that changing it is a risky thing to do.
-func (s *Sessions) RevokeOthersForUser(ctx context.Context, userID, keepSessionID string) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE sessions SET revoked_at = now()
-		WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL`, userID, keepSessionID)
-	if err != nil {
-		return errs.Wrap(errs.Internal, "Could not end the account's other sessions.", err)
-	}
-	return nil
-}

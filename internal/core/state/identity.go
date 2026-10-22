@@ -411,16 +411,29 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 //
 // Local accounts only. An external identity provider owns its own credentials
 // (R-044), and a password Pando could change would be a second copy of one.
-func (u *Users) SetPassword(ctx context.Context, userID, passwordHash string) error {
-	tag, err := u.db.Exec(ctx, `
-		UPDATE users
-		SET password_hash = $2, must_change_password = false, updated_at = now()
-		WHERE id = $1 AND adapter_id = $3 AND deleted_at IS NULL`,
-		userID, passwordHash, LocalAdapterID)
+//
+// Every session the account holds ends in the same statement, except
+// keepSessionID ("" keeps none): a password change is what someone does when
+// they think a credential has leaked, and a password that changed while a
+// leaked session lived on would make the act cosmetic (R-048).
+func (u *Users) SetPassword(ctx context.Context, userID, passwordHash, keepSessionID string) error {
+	var changed bool
+	err := u.db.QueryRow(ctx, `
+		WITH changed AS (
+			UPDATE users
+			SET password_hash = $2, must_change_password = false, updated_at = now()
+			WHERE id = $1 AND adapter_id = $3 AND deleted_at IS NULL
+			RETURNING id
+		), ended AS (
+			UPDATE sessions SET revoked_at = now()
+			WHERE user_id IN (SELECT id FROM changed) AND id <> $4 AND revoked_at IS NULL
+		)
+		SELECT EXISTS (SELECT 1 FROM changed)`,
+		userID, passwordHash, LocalAdapterID, keepSessionID).Scan(&changed)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not change the password.", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if !changed {
 		return errs.New(errs.ValidInvalid,
 			"This account signs in through an external identity provider, so Pando cannot change its password.").
 			WithRemedy("Change it where that account lives.")

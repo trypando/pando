@@ -59,6 +59,5 @@ func TestR105_ASessionTheDatabaseCannotReachIsAServerFault(t *testing.T) {
 	_, _, _, _, err = sessions.ActiveWithUser(ctx, cookie)
 	require.Equal(t, errs.Internal, errs.CodeOf(err))
 	require.Equal(t, errs.Internal, errs.CodeOf(sessions.Revoke(ctx, "ses_x")))
-	require.Equal(t, errs.Internal, errs.CodeOf(sessions.RevokeOthersForUser(ctx, "usr_x", "ses_x")))
 	require.Equal(t, errs.Internal, errs.CodeOf(sessions.RevokeAllForUser(ctx, "usr_x")))
 }
