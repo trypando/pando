@@ -17,6 +17,13 @@ class Pando:
         code, out = self.req("POST", "/sessions", {"username": "admin", "password": st["admin_password"]})
         if code >= 300:
             raise RuntimeError(f"could not sign in to the QA instance: {code} {out}")
+        if out.get("must_change_password"):
+            # R-046: a password set in the environment is changed at first
+            # sign-in before the session can do anything else. To itself here.
+            code, out = self.req("POST", "/me/password", {
+                "current_password": st["admin_password"], "new_password": st["admin_password"]})
+            if code >= 300:
+                raise RuntimeError(f"could not keep the QA instance's password: {code} {out}")
 
     def req(self, method, path, body=None, raw=None, ctype="application/json", timeout=180):
         url = self.base + "/api/v1" + path

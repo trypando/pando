@@ -2,6 +2,7 @@ package sourceconn_test
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -59,15 +60,68 @@ func TestAConnectionWithoutAWebhookHasNoSecret(t *testing.T) {
 func TestAnInstallationIsKeptOnlyForAStoredConnection(t *testing.T) {
 	store := creds{}
 	s := service(configs{row("src_fake", "fake", map[string]any{"host": "forge.example"})}, store, new(int))
-	require.NoError(t, s.CompleteInstallation(ctx(), "src_fake", "7"))
+	require.NoError(t, s.CompleteInstallation(ctx(), "src_fake", "7", beginWeb(t, s)))
 	require.Equal(t, "good", store["src_fake"]["access_token"].Reveal(), "what the adapter returned is stored")
 
-	err := s.CompleteInstallation(ctx(), "src_gone", "7")
+	err := s.CompleteInstallation(ctx(), "src_gone", "7", "src_gone.x")
 	require.Equal(t, errs.NotFound, errs.CodeOf(err))
 
 	s.Credentials = nil
-	err = s.CompleteInstallation(ctx(), "src_fake", "7")
+	err = s.CompleteInstallation(ctx(), "src_fake", "7", beginWeb(t, s))
 	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
+}
+
+// TestR091_AnInstallationIsKeptOnlyForTheBrowserPandoSentThere asserts that
+// the setup address a provider returns to after an installation changes the
+// connection only with the state Pando opened the installation page with: a
+// link somebody else sends an administrator, with no state or a made-up one,
+// or one for another connection, changes nothing.
+func TestR091_AnInstallationIsKeptOnlyForTheBrowserPandoSentThere(t *testing.T) {
+	store := creds{}
+	s := service(configs{
+		row("src_fake", "fake", map[string]any{"host": "forge.example"}),
+		row("src_other", "fake", map[string]any{"host": "forge.example"}),
+	}, store, new(int))
+
+	for _, state := range []string{"", "no-dot", "src_fake.forged"} {
+		err := s.CompleteInstallation(ctx(), "src_fake", "7", state)
+		require.Error(t, err, "%q, with no installation started", state)
+	}
+	beginWeb(t, s)
+	for _, state := range []string{"", "no-dot", "src_fake.forged"} {
+		err := s.CompleteInstallation(ctx(), "src_fake", "7", state)
+		require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), state)
+	}
+	other, err := s.BeginAuthorization(ctx(), "src_other", api.AuthorizationWeb, sourceconn.Addresses{Callback: "https://pando.example/cb"})
+	require.NoError(t, err)
+	err = s.CompleteInstallation(ctx(), "src_fake", "7", stateOf(other.AuthorizeURL))
+	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), "another connection's state")
+	require.Empty(t, store["src_fake"], "nothing was kept")
+
+	state := beginWeb(t, s)
+	require.NoError(t, s.CompleteInstallation(ctx(), "src_fake", "7", state))
+	require.Equal(t, errs.StateInvalid, errs.CodeOf(s.CompleteInstallation(ctx(), "src_fake", "7", state)),
+		"a state is used once")
+}
+
+// beginWeb starts a browser authorization of src_fake and returns its state.
+func beginWeb(t *testing.T, s *sourceconn.Service) string {
+	t.Helper()
+	a, err := s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationWeb, sourceconn.Addresses{Callback: "https://pando.example/cb"})
+	if err != nil {
+		require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
+		return "src_fake.none"
+	}
+	return stateOf(a.AuthorizeURL)
+}
+
+// stateOf is the state an address carries.
+func stateOf(addr string) string {
+	u, err := url.Parse(addr)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get("state")
 }
 
 // fakeNext is the fake adapter, whose web authorization has a next step at
@@ -103,7 +157,20 @@ func TestANextStepIsOnlyEverOnTheConnectionsOwnHost(t *testing.T) {
 		state := a.AuthorizeURL[strings.Index(a.AuthorizeURL, "state=")+len("state="):]
 		_, got, err := s.CompleteWebAuthorization(ctx(), state, "code")
 		require.NoError(t, err)
-		require.Equal(t, want, got, next)
+		if want == "" {
+			require.Empty(t, got, next)
+			continue
+		}
+		// Carried on under a state of its own, which the installation's
+		// setup address must be returned with.
+		u, err := url.Parse(got)
+		require.NoError(t, err)
+		installState := u.Query().Get("state")
+		require.True(t, strings.HasPrefix(installState, "src_fake."), got)
+		require.NotEqual(t, state, installState, "a new state for the next step")
+		u.RawQuery = ""
+		require.Equal(t, want, u.String(), next)
+		require.NoError(t, s.CompleteInstallation(ctx(), "src_fake", "7", installState))
 	}
 }
 
@@ -177,4 +244,37 @@ func TestACredentialStoreThatCannotBePutBackSaysTheConnectionNeedsRepair(t *test
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "nor put back")
 	require.Contains(t, errs.As(err).Remedy, "Disconnect the connection")
+}
+
+// fakeNextBare is fakeNext answering with no credentials, or failing.
+type fakeNextBare struct {
+	fakeNext
+	fail bool
+}
+
+func (f fakeNextBare) CompleteAuthorization(ctx context.Context, req api.AuthorizationCompletion) (api.AuthorizationResult, error) {
+	if f.fail {
+		return api.AuthorizationResult{}, errs.New(errs.AdapterFailed, "the provider refused")
+	}
+	res, err := f.fakeNext.CompleteAuthorization(ctx, req)
+	res.Credentials = nil
+	return res, err
+}
+
+// TestR091_ANextStepWithoutAnythingToKeepIsRefused asserts that a provider
+// answering a web authorization with a next step but nothing to keep, or
+// refusing it, leaves no installation step open.
+func TestR091_ANextStepWithoutAnythingToKeepIsRefused(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		s := service(configs{row("src_fake", "fake", map[string]any{"host": "forge.example"})}, creds{}, new(int))
+		inner := s.New
+		s.New = func(kind string) api.SourceAdapter {
+			return fakeNextBare{fakeNext: fakeNext{fake: inner(kind).(*fake), next: "https://forge.example/apps/p/installations/new"}, fail: fail}
+		}
+		a, err := s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationWeb, sourceconn.Addresses{Callback: "https://pando.example/cb"})
+		require.NoError(t, err)
+		_, next, err := s.CompleteWebAuthorization(ctx(), stateOf(a.AuthorizeURL), "code")
+		require.Equal(t, errs.AdapterFailed, errs.CodeOf(err), "fail=%v", fail)
+		require.Empty(t, next)
+	}
 }

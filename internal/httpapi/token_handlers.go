@@ -74,21 +74,10 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var expires *time.Time
-	if req.ExpiresDays > 0 {
-		at := time.Now().UTC().AddDate(0, 0, req.ExpiresDays)
-		expires = &at
-	}
-
-	// Host policy may forbid non-expiring tokens (R-061). Checked here rather
-	// than trusted to the caller, because the caller is the one being limited.
-	if expires == nil && s.PolicyStore != nil {
-		doc, err := s.PolicyStore.Load(r.Context())
-		if err != nil {
-			Error(w, r, err)
-			return
-		}
-		expires = doc.TokenExpiry(time.Now())
+	expires, err := s.tokenExpiry(r, req.ExpiresDays)
+	if err != nil {
+		Error(w, r, err)
+		return
 	}
 
 	issued, err := s.Tokens.Create(r.Context(), state.TokenDelegated, req.Name, p.UserID, p.ID, expires)
@@ -173,22 +162,10 @@ func (s *Server) handleCreateServiceToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var expires *time.Time
-	if req.ExpiresDays > 0 {
-		at := time.Now().UTC().AddDate(0, 0, req.ExpiresDays)
-		expires = &at
-	}
-
-	// R-061: a never-expires option exists, and host policy may forbid it. The
-	// clamp is here rather than in the caller, because the caller is the one
-	// being limited.
-	if expires == nil && s.PolicyStore != nil {
-		doc, err := s.PolicyStore.Load(r.Context())
-		if err != nil {
-			Error(w, r, err)
-			return
-		}
-		expires = doc.TokenExpiry(time.Now())
+	expires, err := s.tokenExpiry(r, req.ExpiresDays)
+	if err != nil {
+		Error(w, r, err)
+		return
 	}
 
 	issued, err := s.Tokens.Create(r.Context(), state.TokenAccount, req.Name, "", p.ID, expires)
@@ -268,4 +245,30 @@ func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 		Action: "token.revoke", TargetKind: "token", TargetID: tokenID,
 	})
 	JSON(w, http.StatusNoContent, nil)
+}
+
+// tokenExpiry is when a token asked to live days days expires, 0 meaning no
+// expiry asked for. Host policy may cap how long a token lives (R-061, R-272):
+// a token asked for without an expiry, or with a longer one, gets the cap. The
+// clamp is here rather than in the caller, because the caller is the one
+// being limited; the token's expires_at in the answer says what it got.
+func (s *Server) tokenExpiry(r *http.Request, days int) (*time.Time, error) {
+	now := time.Now().UTC()
+	var expires *time.Time
+	if days > 0 {
+		at := now.AddDate(0, 0, days)
+		expires = &at
+	}
+	if s.PolicyStore == nil {
+		return expires, nil
+	}
+	doc, err := s.PolicyStore.Load(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	limit := doc.TokenExpiry(now)
+	if limit != nil && (expires == nil || expires.After(*limit)) {
+		return limit, nil
+	}
+	return expires, nil
 }

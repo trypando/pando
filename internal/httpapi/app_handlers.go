@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -752,6 +753,11 @@ func (s *Server) handlePinSpec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.gatePinOnDeployed(r, app, rev); err != nil {
+		Error(w, r, err)
+		return
+	}
+
 	state := app.State
 	if state == "draft" {
 		state = "proposed"
@@ -768,6 +774,63 @@ func (s *Server) handlePinSpec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, updated)
+}
+
+// gatePinOnDeployed asks of a pin on an app that has been deployed what a
+// deploy of the same revision would ask. The reconciler converges a deployed
+// app to its pinned spec, so pinning one changes what runs — its command,
+// environment, files and address — without a build; it is a deploy in all but
+// name and is held to a deploy's rules: app.deploy, the egress, auto-deploy
+// and routing gates against what is pinned now (R-163, R-182 – R-184, R-158),
+// the plan, and approval (R-154). A revision that needs approval is deployed
+// instead, so the request reaches the approvers; one that already ran needs
+// none (R-157). A draft or proposed app runs nothing, and pinning one stays
+// app.spec.edit's (design 05 §1).
+func (s *Server) gatePinOnDeployed(r *http.Request, app state.App, rev state.Revision) error {
+	if app.State == state.StateDraft || app.State == state.StateProposed {
+		return nil
+	}
+	ctx := r.Context()
+	p := PrincipalFrom(ctx)
+	if err := s.Authz.CheckControl(ctx, p, app.ID, authz.AppDeploy); err != nil {
+		return err
+	}
+
+	var pinned *spec.AppSpec
+	if app.PinnedSpecID != "" {
+		current, found, err := s.Apps.RevisionByID(ctx, app.PinnedSpecID)
+		if err != nil {
+			return err
+		}
+		if found {
+			pinned = current.Body
+		}
+	}
+	if _, err := s.gateSpec(r, app, pinned, rev.Body); err != nil {
+		return err
+	}
+	if err := s.checkRoutingOverride(ctx, s.Authz, p, app.ID, pinned, &rev.Body.Routing); err != nil {
+		return err
+	}
+	if s.Planner != nil {
+		if _, err := s.Planner.Check(ctx, rev.Body); err != nil {
+			return err
+		}
+	}
+	if s.Approvals == nil {
+		return nil
+	}
+	reasons, err := s.Approvals.Needed(ctx, app, rev, state.TriggerRollback)
+	if err != nil {
+		return err
+	}
+	if len(reasons) > 0 {
+		return errs.Newf(errs.StateInvalid,
+			"Pinning revision %d would change what this app runs, and deploying that revision needs approval: %s",
+			rev.Revision, reasons[0].Message()).
+			WithRemedy(fmt.Sprintf("Deploy revision %d instead. The deploy waits for an approver.", rev.Revision))
+	}
+	return nil
 }
 
 // handleDiffSpecs returns the classified diff between two revisions.

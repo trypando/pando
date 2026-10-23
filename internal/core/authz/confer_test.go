@@ -133,3 +133,80 @@ func TestConferringAnAppVerbInstallWideIsAnInternalError(t *testing.T) {
 	err := a.CheckConfers(context.Background(), activeUser(bob), []authz.Verb{authz.AppExec}, "grant it")
 	require.Equal(t, errs.Internal, errs.CodeOf(err))
 }
+
+// TestR155_OnlyHeldAppVerbsAreHandedOn asserts R-155 at the authorizer: a
+// role carrying app.deploy.approve is conferred on an app only by someone who
+// holds it there, which the system principal does and nobody without a grant
+// does.
+func TestR155_OnlyHeldAppVerbsAreHandedOn(t *testing.T) {
+	ctx := context.Background()
+	s := conferStore()
+	s.roles["role_approver"] = authz.Role{ID: "role_approver", Name: "Approver",
+		Verbs: []authz.Verb{authz.AppView, authz.AppDeployApprove}}
+	a := authz.New(s, nil, &recorder{})
+
+	err := a.CheckConfersOnApp(ctx, activeUser("usr_carol"), "app_1", "role_approver", "grant the role %s")
+	require.Equal(t, errs.PermVerbRequired, errs.CodeOf(err))
+	require.Contains(t, err.Error(), "grant the role Approver")
+	require.Contains(t, err.Error(), string(authz.AppDeployApprove))
+
+	// An administrator holds install.deploys.approve, which stands for it.
+	require.NoError(t, a.CheckConfersOnApp(ctx, activeUser(bob), "app_1", "role_approver", "grant the role %s"))
+	require.NoError(t, a.CheckConfersOnApp(ctx, authz.System(), "app_1", "role_approver", "x"))
+	require.NoError(t, a.CheckConfersOnApp(ctx, activeUser("usr_carol"), "app_1", "", "x"), "a data grant has no role")
+
+	held, err := a.AppVerbsHeld(ctx, authz.Anonymous(), "app_1")
+	require.NoError(t, err)
+	require.Empty(t, held)
+}
+
+// failingStore is a store whose lookups fail on request, to show a failed
+// read refuses rather than confers.
+type failingStore struct {
+	*store
+	role, control, install bool
+}
+
+var errLookup = errs.New(errs.Internal, "lookup failed")
+
+func (f failingStore) Role(ctx context.Context, id string) (authz.Role, error) {
+	if f.role {
+		return authz.Role{}, errLookup
+	}
+	return f.store.Role(ctx, id)
+}
+
+func (f failingStore) ControlGrantsFor(ctx context.Context, appID string, p authz.Principal) ([]authz.Grant, error) {
+	if f.control {
+		return nil, errLookup
+	}
+	return f.store.ControlGrantsFor(ctx, appID, p)
+}
+
+func (f failingStore) InstallGrantsFor(ctx context.Context, p authz.Principal) ([]authz.Grant, error) {
+	if f.install {
+		return nil, errLookup
+	}
+	return f.store.InstallGrantsFor(ctx, p)
+}
+
+// TestR155_AFailedLookupConfersNothing asserts that CheckConfersOnApp refuses
+// when it cannot read the role or the caller's grants.
+func TestR155_AFailedLookupConfersNothing(t *testing.T) {
+	ctx := context.Background()
+	base := conferStore()
+	base.control["app_1"] = []authz.Grant{{ID: "gr_o", PrincipalKind: "user", PrincipalID: alice, RoleID: authz.RoleOwner}}
+	for name, f := range map[string]failingStore{
+		"role":    {store: base, role: true},
+		"control": {store: base, control: true},
+		"install": {store: base, install: true},
+	} {
+		a := authz.New(f, nil, &recorder{})
+		err := a.CheckConfersOnApp(ctx, activeUser(alice), "app_1", authz.RoleViewer, "x")
+		require.Equal(t, errs.Internal, errs.CodeOf(err), name)
+	}
+
+	// An Owner hands on what Owner holds.
+	a := authz.New(base, nil, &recorder{})
+	require.NoError(t, a.CheckConfersOnApp(ctx, activeUser(alice), "app_1", authz.RoleViewer, "x"))
+}

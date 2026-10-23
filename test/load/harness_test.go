@@ -800,3 +800,31 @@ func TestDropsAreCountedPerSurface(t *testing.T) {
 	u, c := r.someSession()
 	require.Empty(t, u+c, "nobody online")
 }
+
+// A sign-in whose password must be changed first (R-046) is answered by
+// changing it to itself, so the load run's session can do anything else.
+func TestSignInKeepsAPasswordThatMustBeChanged(t *testing.T) {
+	var changed atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/sessions":
+			http.SetCookie(w, &http.Cookie{Name: "pando_session", Value: "s1"})
+			_, _ = w.Write([]byte(`{"must_change_password":true}`))
+		case "/api/v1/me/password":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["current_password"] == "pw" && body["new_password"] == "pw" {
+				changed.Add(1)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cookie, _, err := NewClient(srv.URL, 5*time.Second).SignIn(context.Background(), "admin", "pw")
+	require.NoError(t, err)
+	require.Equal(t, "s1", cookie)
+	require.EqualValues(t, 1, changed.Load())
+}

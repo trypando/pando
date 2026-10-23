@@ -31,6 +31,11 @@ const (
 	PermDenied       Code = "PERM_DENIED"
 	PermVerbRequired Code = "PERM_VERB_REQUIRED"
 
+	// PermPasswordChangeRequired is R-046: a session signed in with a
+	// password somebody else set, which must be changed before the session
+	// does anything else.
+	PermPasswordChangeRequired Code = "PERM_PASSWORD_CHANGE_REQUIRED"
+
 	// PermPasscodeRequired: the app is shared with everyone who knows its
 	// passcode, and this request has not shown it (R-075a).
 	PermPasscodeRequired Code = "PERM_PASSCODE_REQUIRED"

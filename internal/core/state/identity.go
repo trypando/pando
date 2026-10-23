@@ -334,13 +334,20 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 		// now, and reactivating it would give back a way in that nothing
 		// should reach (O-1). The constraint says so too; this says it in
 		// words.
+		//
+		// A deleted account is never brought back by a status change (R-049):
+		// deletion is its own route, with its own destruction rules, and
+		// reinstating one here would revive its tokens and grants with them.
 		tag, err := u.db.Exec(ctx,
 			`UPDATE users SET status = $2, suspended_by = NULL, updated_at = now()
-			 WHERE id = $1 AND alias_of IS NULL`, userID, status)
+			 WHERE id = $1 AND alias_of IS NULL AND deleted_at IS NULL`, userID, status)
 		if err != nil {
 			return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
 		}
 		if tag.RowsAffected() == 0 {
+			if err := u.requireUndeleted(ctx, userID); err != nil {
+				return err
+			}
 			return errs.New(errs.ValidInvalid,
 				"This account's sign-in identities were moved to another account, so it stays suspended.").
 				WithRemedy("Sign in with the account they were moved to.")
@@ -377,10 +384,15 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
 	}
 
-	if _, err := tx.Exec(ctx,
-		`UPDATE users SET status = $2, suspended_by = $3, updated_at = now() WHERE id = $1`,
-		userID, status, by); err != nil {
+	tag, err := tx.Exec(ctx,
+		`UPDATE users SET status = $2, suspended_by = $3, updated_at = now()
+		 WHERE id = $1 AND deleted_at IS NULL`,
+		userID, status, by)
+	if err != nil {
 		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errNoSuchAccount()
 	}
 
 	// Counted after the update, so the account being suspended is already
@@ -398,6 +410,27 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 
 	if err := tx.Commit(ctx); err != nil {
 		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
+	}
+	return nil
+}
+
+// errNoSuchAccount is a status change aimed at an account that does not
+// exist, or no longer does.
+func errNoSuchAccount() error {
+	return errs.New(errs.NotFound, "There is no account with that ID.")
+}
+
+// requireUndeleted answers a status change that changed nothing: not found
+// when the account does not exist or was deleted, nil otherwise.
+func (u *Users) requireUndeleted(ctx context.Context, userID string) error {
+	var live bool
+	err := u.db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)`, userID).Scan(&live)
+	if err != nil {
+		return errs.Wrap(errs.Internal, couldNotUpdateAccount, err)
+	}
+	if !live {
+		return errNoSuchAccount()
 	}
 	return nil
 }
@@ -512,7 +545,7 @@ func (u *Users) UpdateProfile(ctx context.Context, userID string, p Profile) err
 		return err
 	}
 	if !found {
-		return errs.New(errs.NotFound, "There is no account with that ID.")
+		return errNoSuchAccount()
 	}
 	if user.AdapterID != LocalAdapterID && (p.Username != nil || p.Email != nil) {
 		return errs.New(errs.ValidInvalid,
@@ -715,7 +748,7 @@ func (u *Users) Delete(ctx context.Context, userID string) error {
 		return errs.Wrap(errs.Internal, "Could not delete the account.", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return errs.New(errs.NotFound, "There is no account with that ID.")
+		return errNoSuchAccount()
 	}
 	return nil
 }

@@ -105,7 +105,12 @@ func TestR091_AGitHubAppIsConnectedWithoutCopyingAnythingByHand(t *testing.T) {
 	w = asSystem(srv.handleSourceCallback, http.MethodGet,
 		"/api/v1/sources/callback?"+url.Values{"state": {state}, "code": {"good"}}.Encode(), "", nil)
 	require.Equal(t, http.StatusFound, w.Code, w.Body.String())
-	require.Equal(t, "https://github.com/apps/pando-acme/installations/new", w.Header().Get("Location"))
+	next, err := url.Parse(w.Header().Get("Location"))
+	require.NoError(t, err)
+	installState := next.Query().Get("state")
+	require.NotEmpty(t, installState, "the installation page carries a state GitHub hands back")
+	next.RawQuery = ""
+	require.Equal(t, "https://github.com/apps/pando-acme/installations/new", next.String())
 	require.Equal(t, "42", store["src_gh"]["app_id"].Reveal())
 	require.False(t, store["src_gh"]["app_private_key"].IsZero())
 	c, err := srv.SourceConnections.Get(t.Context(), "src_gh")
@@ -120,12 +125,22 @@ func TestR091_AGitHubAppIsConnectedWithoutCopyingAnythingByHand(t *testing.T) {
 		require.Equal(t, sourcesPage, u.Path)
 		return u.Query()
 	}
-	q := back(asSystem(srv.handleSourceInstalled, http.MethodGet, "/api/v1/sources/src_gh/installed?installation_id=9", "", ghID))
+	// A link to the setup address without the state, as somebody else could
+	// send an administrator, changes nothing (R-091).
+	q := back(asSystem(srv.handleSourceInstalled, http.MethodGet, "/api/v1/sources/src_gh/installed?installation_id=7", "", ghID))
+	require.Contains(t, q.Get("error"), "not one Pando started")
+	require.True(t, store["src_gh"]["installation_id"].IsZero())
+
+	installed := func(id string) string {
+		return "/api/v1/sources/src_gh/installed?" + url.Values{
+			"installation_id": {id}, "setup_action": {"install"}, "state": {installState},
+		}.Encode()
+	}
+	q = back(asSystem(srv.handleSourceInstalled, http.MethodGet, installed("9"), "", ghID))
 	require.Contains(t, q.Get("error"), "not an installation of this connection's GitHub App")
 	require.True(t, store["src_gh"]["installation_id"].IsZero())
 
-	q = back(asSystem(srv.handleSourceInstalled, http.MethodGet,
-		"/api/v1/sources/src_gh/installed?installation_id=7&setup_action=install", "", ghID))
+	q = back(asSystem(srv.handleSourceInstalled, http.MethodGet, installed("7"), "", ghID))
 	require.Equal(t, "src_gh", q.Get("authorized"))
 	require.Equal(t, "7", store["src_gh"]["installation_id"].Reveal())
 	c, err = srv.SourceConnections.Get(t.Context(), "src_gh")

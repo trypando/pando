@@ -133,6 +133,94 @@ func (a *Authorizer) CheckConfersRole(ctx context.Context, p Principal, roleID, 
 	return a.CheckConfers(ctx, p, install, strings.Replace(act, "%s", name, 1))
 }
 
+// AppVerbsHeld returns the app verbs p's grants carry on one app: its grants
+// on the app, directly and through groups, and the install verbs that stand
+// for an app verb on every app (R-080, R-081). Like InstallVerbsHeld it reads
+// grants only; host policy and account status decide use, not holding.
+func (a *Authorizer) AppVerbsHeld(ctx context.Context, p Principal, appID string) (map[Verb]bool, error) {
+	held := map[Verb]bool{}
+	switch p.Kind {
+	case KindSystem:
+		for _, v := range AppVerbs() {
+			held[v] = true
+		}
+		return held, nil
+	case KindAnonymous:
+		return held, nil
+	}
+	grants, err := a.store.ControlGrantsFor(ctx, appID, p)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range grants {
+		role, err := a.roleOf(ctx, nil, g)
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range role.Verbs {
+			if !InstallScoped(v) {
+				held[v] = true
+			}
+		}
+	}
+	install, err := a.store.InstallGrantsFor(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range install {
+		role, err := a.roleOf(ctx, nil, g)
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range role.Verbs {
+			if app, ok := everyApp[v]; ok {
+				held[app] = true
+			}
+		}
+	}
+	return held, nil
+}
+
+// CheckConfersOnApp refuses p granting a role on an app, or giving a grant on
+// it a new role, when the role carries an app verb p does not hold on that app
+// itself (R-080a, R-155). Without it app.grants.manage would be every app
+// verb: an Owner could give themselves app.deploy.approve through a custom
+// role and approve their own deploys, which is the two-person rule an
+// installation keeps by withholding that verb. act may use %s for the role's
+// name, for example "grant the role %s".
+func (a *Authorizer) CheckConfersOnApp(ctx context.Context, p Principal, appID, roleID, act string) error {
+	if roleID == "" {
+		return nil
+	}
+	role, err := a.store.Role(ctx, roleID)
+	if err != nil {
+		return err
+	}
+	held, err := a.AppVerbsHeld(ctx, p, appID)
+	if err != nil {
+		return err
+	}
+	var missing []Verb
+	for _, v := range Verbs {
+		if !InstallScoped(v) && role.Has(v) && !held[v] {
+			missing = append(missing, v)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	name := role.Name
+	if name == "" {
+		name = roleID
+	}
+	return a.deny(ctx, p, appID, missing[0], errs.Newf(errs.PermVerbRequired,
+		"Pando refused to %s, because that would hand on permissions you do not hold on this app yourself: %s. "+
+			"A permission on an app can be given only by someone who holds it there.",
+		strings.Replace(act, "%s", name, 1), joinVerbs(missing)).
+		WithRemedy("Choose a role with only permissions you hold on this app, or ask someone who holds the rest to make this change.").
+		WithDetail("missing_verbs", missing))
+}
+
 // CheckMayChangeAccount refuses p changing an account that holds install
 // verbs p does not (R-080a): a password reset, a linked identity or a changed
 // email is a way into that account, and a suspension or deletion is a way to

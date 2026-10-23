@@ -566,6 +566,7 @@ func TestPromotionIsItsOwnRouteRatherThanAFieldOnPatch(t *testing.T) {
 	// And the promoted account can now administer.
 	deputy, in := i.signIn("deputy", "a-long-enough-password")
 	require.Equal(t, http.StatusOK, in.Code, in.String())
+	i.keepPassword(deputy, in, "a-long-enough-password")
 	require.Equal(t, http.StatusOK, i.do(deputy, http.MethodGet, "/users", nil).Code)
 
 	demoted := i.do(admin, http.MethodDelete, "/users/"+user.ID+"/role", nil)

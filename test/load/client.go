@@ -170,10 +170,25 @@ func (c *Client) SignIn(ctx context.Context, username, password string) (string,
 	}
 	for _, ck := range resp.Cookies {
 		if ck.Name == "pando_session" {
-			return ck.Value, resp, nil
+			return ck.Value, resp, c.keepPassword(ctx, ck.Value, resp.Body, password)
 		}
 	}
 	return "", resp, errors.New("signing in set no session cookie")
+}
+
+// keepPassword answers a sign-in that must change its password first (R-046)
+// by changing it to itself, so the session can do anything else.
+func (c *Client) keepPassword(ctx context.Context, cookie string, signedIn []byte, password string) error {
+	var body struct {
+		MustChangePassword bool `json:"must_change_password"`
+	}
+	_ = json.Unmarshal(signedIn, &body) // an answer that is not JSON asks nothing
+	if !body.MustChangePassword {
+		return nil
+	}
+	payload, _ := json.Marshal(map[string]string{"current_password": password, "new_password": password})
+	_, err := c.JSON(ctx, http.MethodPost, "/me/password", Credential{Cookie: cookie}, string(payload), nil)
+	return err
 }
 
 // hostOf is the host part of the client's root, for port-mode requests.

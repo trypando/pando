@@ -589,7 +589,9 @@ var toolList = []tool{
 	{
 		Name: "pando_pin_spec",
 		Description: "Pin a spec revision: what the app converges to, and what the next deploy ships. " +
-			"This does not deploy — call pando_deploy after.",
+			"This does not deploy — call pando_deploy after. On an app that has been deployed, pinning " +
+			"changes what it runs, so it needs app.deploy, and a revision whose deploy needs approval " +
+			"is refused: deploy it instead.",
 		Schema: schema(map[string]any{
 			"app_id":   str(appIDDescription),
 			"revision": str("The revision number, such as \"3\", or the revision's ID."),

@@ -209,13 +209,15 @@ func TestSuspendingAnAdministratorIsAllowedWhenAnotherRemains(t *testing.T) {
 	require.Contains(t, []int{http.StatusOK, http.StatusNoContent, http.StatusCreated},
 		promoted.Code, promoted.String())
 
-	suspended := i.do(admin, http.MethodPatch, "/users/"+i.AdminID,
+	// The second administrator can still get in, which is what makes it safe,
+	// and suspends the first: nobody changes their own status (R-048).
+	deputy, in := i.signIn("second-admin", "a-long-enough-password")
+	require.Equal(t, http.StatusOK, in.Code, in.String())
+	i.keepPassword(deputy, in, "a-long-enough-password")
+
+	suspended := i.do(deputy, http.MethodPatch, "/users/"+i.AdminID,
 		map[string]any{"status": "suspended"})
 	require.Contains(t, []int{http.StatusOK, http.StatusNoContent}, suspended.Code, suspended.String())
-
-	// The second administrator can still get in, which is what made it safe.
-	_, in := i.signIn("second-admin", "a-long-enough-password")
-	require.Equal(t, http.StatusOK, in.Code, in.String())
 }
 
 // --- groups and roles ------------------------------------------------------

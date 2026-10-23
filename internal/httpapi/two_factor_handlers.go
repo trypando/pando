@@ -112,7 +112,7 @@ func (s *Server) secondFactor(w http.ResponseWriter, r *http.Request, user state
 // that comes before it, and setting the second factor up. Everything else
 // answers POLICY_TWO_FACTOR_REQUIRED. Listed rather than derived, like
 // signInRoutes, so adding one is a decision a reviewer sees.
-var twoFactorSetupRoutes = []struct{ method, pattern string }{
+var twoFactorSetupRoutes = []pendingRoute{
 	{http.MethodPost, sessionsPath},
 	{http.MethodDelete, sessionsPath},
 	{http.MethodGet, "/api/v1/me"},
@@ -133,20 +133,60 @@ func (s *Server) twoFactorGate(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		method := r.Method
-		if method == http.MethodHead {
-			method = http.MethodGet
-		}
-		for _, route := range twoFactorSetupRoutes {
-			if route.method == method && matchRoute(route.pattern, r.URL.Path) {
-				next.ServeHTTP(w, r)
-				return
-			}
+		if routeListed(twoFactorSetupRoutes, r) {
+			next.ServeHTTP(w, r)
+			return
 		}
 		Error(w, r, errs.New(errs.PolicyTwoFactorRequired,
 			"This installation requires two-factor authentication on local accounts. "+
 				"Set it up before doing anything else.").
 			WithRemedy("Open the console and follow the steps to set up an authenticator app."))
+	})
+}
+
+// pendingRoute is one route a session not yet fully signed in may reach.
+type pendingRoute struct{ method, pattern string }
+
+// routeListed reports whether r is one of routes. HEAD is read as GET.
+func routeListed(routes []pendingRoute, r *http.Request) bool {
+	method := r.Method
+	if method == http.MethodHead {
+		method = http.MethodGet
+	}
+	for _, route := range routes {
+		if route.method == method && matchRoute(route.pattern, r.URL.Path) {
+			return true
+		}
+	}
+	return false
+}
+
+// passwordChangeRoutes are what a session that must change its password may
+// reach (R-046): who it is, signing in and out, and changing the password.
+// Everything else answers PERM_PASSWORD_CHANGE_REQUIRED, minting a token
+// first of all: a temporary password somebody handed over is not to become a
+// credential that outlives it.
+var passwordChangeRoutes = []pendingRoute{
+	{http.MethodPost, sessionsPath},
+	{http.MethodDelete, sessionsPath},
+	{http.MethodGet, "/api/v1/me"},
+	{http.MethodPost, "/api/v1/me/password"},
+	{http.MethodGet, "/api/v1/auth/options"},
+	{http.MethodGet, "/api/v1/setup"},
+}
+
+// passwordChangeGate holds back a session that must change its password
+// before anything else (R-046). The console asks for the change at sign-in;
+// this is what makes it so for every other client.
+func (s *Server) passwordChangeGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !PrincipalFrom(r.Context()).PasswordChangePending || routeListed(passwordChangeRoutes, r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		Error(w, r, errs.New(errs.PermPasswordChangeRequired,
+			"This account signed in with a password somebody else set, and it must be changed before anything else.").
+			WithRemedy("Choose a new password in the console, or send current_password and new_password to POST /api/v1/me/password."))
 	})
 }
 
@@ -479,12 +519,14 @@ func (s *Server) handleResetTwoFactor(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	if err := s.Sessions.RevokeAllForUser(r.Context(), userID); err != nil {
+	revoked, err := s.signOutEverywhere(r, userID)
+	if err != nil {
 		Error(w, r, err)
 		return
 	}
 	// The wrong codes counted against them go too: they start clean.
 	_ = s.failedAttempts().Clear(r.Context(), state.SignInCodeKey(userID))
-	s.auditTwoFactor(r, p, "user.two_factor.reset", userID, map[string]any{"had_two_factor": had})
+	s.auditTwoFactor(r, p, "user.two_factor.reset", userID,
+		map[string]any{"had_two_factor": had, "tokens_revoked": revoked})
 	JSON(w, http.StatusNoContent, nil)
 }

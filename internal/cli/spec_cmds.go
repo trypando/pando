@@ -61,8 +61,9 @@ func appSpecCmd(client func() (*Client, error)) *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "pin <app> <revision>",
 		Short: "Pin a spec revision as what the app runs",
-		Long:  "Pins a revision: what the app converges to, and what the next deploy ships.\nThis does not deploy: `pando deploy <app>` does that.",
-		Args:  cobra.ExactArgs(2),
+		Long: "Pins a revision: what the app converges to, and what the next deploy ships.\nThis does not deploy: `pando deploy <app>` does that.\n\n" +
+			"On an app that has been deployed, pinning changes what it runs, so it needs\napp.deploy, and a revision whose deploy needs approval is refused: deploy it instead.",
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client()
 			if err != nil {

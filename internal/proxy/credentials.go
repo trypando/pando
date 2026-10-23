@@ -48,7 +48,9 @@ func (p *Proxy) authenticate(r *http.Request) (authz.Principal, error) {
 	// A session that must still set up its second factor has not finished
 	// signing in (R-405). Taken for anonymous, a private app sends it to the
 	// sign-in page, which is where it sets one up.
-	if err == nil && principal.TwoFactorSetupPending {
+	// So is one whose password somebody else set and that must change it
+	// before anything else (R-046).
+	if err == nil && (principal.TwoFactorSetupPending || principal.PasswordChangePending) {
 		return authz.Anonymous(), nil
 	}
 	return principal, err

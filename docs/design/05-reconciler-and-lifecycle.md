@@ -43,6 +43,14 @@ any state ──delete──> archived
 
 **[D]** `failed` is the only state the reconciler refuses to touch. That is what makes R-151's "stays failed until a human intervenes" true rather than aspirational — it is the absence of a code path, not a flag.
 
+**[D]** Pinning a revision on an app that has been deployed changes what it runs, because the
+reconciler converges to the pinned spec. So `POST /apps/{id}/specs/{rev}/pin` on any state but `draft`
+and `proposed` is held to a deploy's rules: `app.deploy`, the egress, auto-deploy and routing gates
+against what is pinned now (R-163, R-182 – R-184, R-158), the plan, and approval (R-154). A revision
+whose deploy needs approval is refused with a remedy to deploy it instead, so the request reaches the
+approvers; one that already ran needs none (R-157). On a draft or proposed app, which runs nothing,
+pinning stays `app.spec.edit`'s.
+
 **[D]** `degraded` vs `failed` is the distinction the requirements gestured at but never named: degraded is recoverable and still being worked; failed is terminal and needs a person.
 
 ### 1.2 Transitions

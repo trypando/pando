@@ -4681,7 +4681,7 @@
       "post": {
         "operationId": "pinSpec",
         "summary": "Pin a spec revision",
-        "description": "Pin a revision: what the reconciler converges to, and what the next deploy ships.\n\nNeeds `app.spec.edit`.",
+        "description": "Pin a revision: what the reconciler converges to, and what the next deploy ships. On an app that has been deployed it changes what runs, so it also needs `app.deploy`, passes the same gates as a deploy, and is refused for a revision whose deploy needs approval: deploy that revision instead.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Configuration"
         ],
@@ -10292,6 +10292,13 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -14418,6 +14425,7 @@
               "PERM_CROSS_ORIGIN",
               "PERM_DENIED",
               "PERM_PASSCODE_REQUIRED",
+              "PERM_PASSWORD_CHANGE_REQUIRED",
               "PERM_VERB_REQUIRED",
               "POLICY_ANONYMOUS_GRANT_FORBIDDEN",
               "POLICY_APP_LIMIT_REACHED",

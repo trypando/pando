@@ -1967,7 +1967,7 @@
       "path": "pando app spec pin",
       "use": "pin <app> <revision>",
       "short": "Pin a spec revision as what the app runs",
-      "long": "Pins a revision: what the app converges to, and what the next deploy ships.\nThis does not deploy: `pando deploy <app>` does that.",
+      "long": "Pins a revision: what the app converges to, and what the next deploy ships.\nThis does not deploy: `pando deploy <app>` does that.\n\nOn an app that has been deployed, pinning changes what it runs, so it needs\napp.deploy, and a revision whose deploy needs approval is refused: deploy it instead.",
       "example": "",
       "aliases": [],
       "hidden": false,

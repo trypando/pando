@@ -290,6 +290,19 @@ func (t *Tokens) Revoke(ctx context.Context, tokenID string) error {
 	return nil
 }
 
+// RevokeAllForUser revokes every delegated token userID owns, and says how
+// many it revoked. For an administrator's password or two-factor reset: a
+// reset is how an account is taken back from whoever else got into it, and a
+// token they minted while in would otherwise outlast it (R-059).
+func (t *Tokens) RevokeAllForUser(ctx context.Context, userID string) (int64, error) {
+	tag, err := t.db.Exec(ctx,
+		`UPDATE tokens SET revoked_at = now() WHERE owner_user_id = $1 AND revoked_at IS NULL`, userID)
+	if err != nil {
+		return 0, errs.Wrap(errs.Internal, "Could not revoke the account's tokens.", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func errInvalidToken() error {
 	return errs.New(errs.AuthTokenInvalid, "That token is not valid.")
 }

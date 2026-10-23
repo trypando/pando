@@ -115,7 +115,39 @@ func login(t *testing.T) *client {
 		}
 	}
 	require.NotEmpty(t, c.cookie)
+	require.NoError(t, c.keepPassword(resp, password))
 	return c
+}
+
+// keepPassword answers a sign-in that must change its password first (R-046)
+// by changing it to itself, so the session can do anything else.
+func (c *client) keepPassword(signedIn *http.Response, password string) error {
+	var body struct {
+		MustChangePassword bool `json:"must_change_password"`
+	}
+	_ = json.NewDecoder(signedIn.Body).Decode(&body) // an answer that is not JSON asks nothing
+	if !body.MustChangePassword {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]string{"current_password": password, "new_password": password})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, baseURL()+"/me/password", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", "pando_session="+c.cookie)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("keeping the password answered %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (c *client) do(t *testing.T, method, path, body string) (string, int) {
@@ -255,7 +287,7 @@ func cleanupClient() *client {
 				c.cookie = ck.Value
 			}
 		}
-		if c.cookie != "" {
+		if c.cookie != "" && c.keepPassword(resp, password) == nil {
 			cleanupCached = c
 		}
 	})
@@ -529,5 +561,6 @@ func (c *client) asUser(t *testing.T, userID string) *client {
 		}
 	}
 	require.NotEmpty(t, other.cookie)
+	require.NoError(t, other.keepPassword(resp, "correct-horse-battery"))
 	return other
 }

@@ -509,6 +509,7 @@ func (s *Server) Routes() http.Handler {
 		r.Use(s.sameOriginWrites)
 		r.Use(Authenticate(s.Authent))
 		r.Use(s.twoFactorGate)
+		r.Use(s.passwordChangeGate)
 		r.Use(s.versionHeader)
 
 		r.Post("/sessions", s.handleLogin)

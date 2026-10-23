@@ -76,7 +76,16 @@ func (s *Server) requireSelfOrInstall(w http.ResponseWriter, r *http.Request, us
 	// Self, and only for a principal that has a user at all. An account token
 	// is nobody's account (R-060), so p.UserID is empty and the comparison must
 	// not match a caller who passed an empty ID.
+	//
+	// Self still needs a live caller: a suspended or deleted account, or a
+	// delegated token whose owner is one, has no account to act on (R-048,
+	// R-059). Every other route reaches that check through its verb; this one
+	// has no verb, so it asks for it alone.
 	if p.UserID != "" && p.UserID == userID {
+		if err := s.Authz.CheckActive(r.Context(), p); err != nil {
+			Error(w, r, err)
+			return p, false
+		}
 		return p, true
 	}
 

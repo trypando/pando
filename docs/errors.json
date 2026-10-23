@@ -101,6 +101,11 @@
       "meaning": "The app is shared with everyone who knows its passcode, and this request has not shown it. A browser is sent to the passcode page; entering it there lets the visitor in."
     },
     {
+      "code": "PERM_PASSWORD_CHANGE_REQUIRED",
+      "status": 403,
+      "meaning": "The account signed in with a password somebody else set, which must be changed first. Until it is, the session can only read its own account, change the password and sign out."
+    },
+    {
       "code": "PERM_VERB_REQUIRED",
       "status": 403,
       "meaning": "The caller holds no grant carrying the verb this action needs."

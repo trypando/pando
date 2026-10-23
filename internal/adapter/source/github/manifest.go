@@ -74,8 +74,10 @@ func (a *Adapter) beginApp(ctx context.Context, req api.AuthorizationRequest) (a
 			WithRemedy("Install it from the App's page in GitHub, or disconnect the connection and add it again so Pando creates the App.")
 	}
 	return api.Authorization{
-		Mode:         api.AuthorizationWeb,
-		AuthorizeURL: a.installURL(slug),
+		Mode: api.AuthorizationWeb,
+		// GitHub hands state on to the setup address, which keeps the
+		// installation only for the browser it was given to.
+		AuthorizeURL: a.installURL(slug) + "?state=" + url.QueryEscape(req.State),
 		Flow:         secret.New(flowInstall),
 	}, nil
 }

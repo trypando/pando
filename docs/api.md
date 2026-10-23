@@ -117,7 +117,7 @@ one verb says nothing about another (R-082).
 | `DELETE /api/v1/apps/{appID}/auto-deploy/webhook-secret` | `app.spec.edit` | Remove the app's webhook secret, which turns its webhook off. Polling carries on. |
 | `POST /api/v1/apps/{appID}/auto-deploy/webhook` |  | Where a git host sends push and release events (R-142): GitHub's format, `X-GitHub-Event` and `X-Hub-Signature-256` signed with the app's webhook secret. A verified delivery about what the app watches starts a check (202); one about something else is ignored (200). The check reads the repository itself, so nothing in the payload decides what deploys. Public: the signature is the credential. |
 | `GET /api/v1/apps/{appID}/specs/{rev}` | `app.view` | One revision, in full. |
-| `POST /api/v1/apps/{appID}/specs/{rev}/pin` | `app.spec.edit` | Pin a revision: what the reconciler converges to, and what the next deploy ships. |
+| `POST /api/v1/apps/{appID}/specs/{rev}/pin` | `app.spec.edit` | Pin a revision: what the reconciler converges to, and what the next deploy ships. On an app that has been deployed it changes what runs, so it also needs `app.deploy`, passes the same gates as a deploy, and is refused for a revision whose deploy needs approval: deploy that revision instead (R-154). |
 | `GET /api/v1/apps/{appID}/specs/{a}/diff/{b}` | `app.view` | The classified difference between two revisions — what a deploy of it would restart, rebuild or leave alone. |
 | `GET /api/v1/apps/{appID}/export` | `app.view` | The app's configuration as a document, with every secret redacted (R-194). |
 | `POST /api/v1/apps/{appID}/plan` | `app.view` | What a deploy of the pinned spec would do, and every reason it would refuse — before anything is created. Carries the egress rules the app would run with, merged, with where each part came from and what every loosening needs (`egress`, R-188), `notes`, and whether the deploy would need approval and why (`approval`, R-154). |
@@ -361,6 +361,7 @@ that finds the log line. Branch on the code; the message may be reworded.
 | `PERM_CROSS_ORIGIN` | 403 | A change sent with a browser's Pando sign-in from a page on another origin, such as an app's. Send it from the console, or with an API token. |
 | `PERM_DENIED` | 403 | Authenticated, but not permitted to do this. |
 | `PERM_PASSCODE_REQUIRED` | 403 | The app is shared with everyone who knows its passcode, and this request has not shown it. A browser is sent to the passcode page; entering it there lets the visitor in. |
+| `PERM_PASSWORD_CHANGE_REQUIRED` | 403 | The account signed in with a password somebody else set, which must be changed first. Until it is, the session can only read its own account, change the password and sign out. |
 | `PERM_VERB_REQUIRED` | 403 | The caller holds no grant carrying the verb this action needs. |
 | `POLICY_ANONYMOUS_GRANT_FORBIDDEN` | 403 | Host policy does not allow apps to be shared with everyone. |
 | `POLICY_APP_LIMIT_REACHED` | 403 | The person who would own the new app already owns as many apps as their limit allows. The message names the limit and where it is set. |

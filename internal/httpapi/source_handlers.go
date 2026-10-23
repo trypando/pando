@@ -241,7 +241,7 @@ func (s *Server) handleSourceInstalled(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "sourceID")
 	back := url.Values{}
 	installation := r.URL.Query().Get("installation_id")
-	if err := s.SourceConnections.CompleteInstallation(r.Context(), id, installation); err != nil {
+	if err := s.SourceConnections.CompleteInstallation(r.Context(), id, installation, r.URL.Query().Get("state")); err != nil {
 		back.Set("error", messageOr(err, "The installation could not be finished."))
 		http.Redirect(w, r, sourcesPage+"?"+back.Encode(), http.StatusFound)
 		return

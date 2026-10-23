@@ -146,7 +146,8 @@ func TestR091_AGitHubAppIsCreatedFromAManifestAndInstalled(t *testing.T) {
 	again, err := a.BeginAuthorization(ctx, appRequest())
 	require.NoError(t, err)
 	require.Nil(t, again.Form)
-	require.Equal(t, "https://github.com/apps/pando-acme/installations/new", again.AuthorizeURL)
+	require.Equal(t, "https://github.com/apps/pando-acme/installations/new?state=src_gh.abc", again.AuthorizeURL,
+		"with the state GitHub hands on to the setup address")
 
 	// The installation's ID came through the browser: one that is not this
 	// App's, or is on another owner, is refused.

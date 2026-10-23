@@ -158,7 +158,7 @@ func TestR406_ARequiredSecondFactorComesFirst(t *testing.T) {
 func TestR406_AGeneratedPasswordIsChangedFirst(t *testing.T) {
 	t.Parallel()
 	i := newInstall(t)
-	got := approveCLI(i, i.user("erin"), 0)
+	got := approveCLI(i, i.userMustChange("erin"), 0)
 	require.Equal(t, http.StatusForbidden, got.Code, got.String())
-	require.Equal(t, "PERM_DENIED", got.ErrorCode())
+	require.Equal(t, "PERM_PASSWORD_CHANGE_REQUIRED", got.ErrorCode())
 }

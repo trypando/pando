@@ -73,6 +73,14 @@ func (s *Server) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// app.grants.manage hands on only what its holder holds here (R-080a,
+	// R-155): otherwise it would be every app verb, approval included.
+	if err := s.Authz.CheckConfersOnApp(r.Context(), PrincipalFrom(r.Context()), app.ID, req.RoleID,
+		"grant the role %s on this app"); err != nil {
+		Error(w, r, err)
+		return
+	}
+
 	grant, err := s.Grants.Create(r.Context(), app.ID, req.Plane, req.PrincipalKind, req.PrincipalID,
 		req.RoleID, PrincipalFrom(r.Context()).ID)
 	if err != nil {
@@ -218,6 +226,11 @@ func (s *Server) handleSetGrantRole(w http.ResponseWriter, r *http.Request) {
 			Detail: map[string]any{"passcode": digest != ""},
 		})
 		JSON(w, http.StatusNoContent, nil)
+		return
+	}
+	if err := s.Authz.CheckConfersOnApp(r.Context(), PrincipalFrom(r.Context()), app.ID, req.RoleID,
+		"give this grant the role %s"); err != nil {
+		Error(w, r, err)
 		return
 	}
 	if err := s.Grants.SetRole(r.Context(), app.ID, grantID, req.RoleID); err != nil {
@@ -475,7 +488,8 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 			WithRemedy("An account from an external identity provider changes its password where it lives."))
 		return
 	}
-	if err := s.Sessions.RevokeAllForUser(r.Context(), userID); err != nil {
+	revoked, err := s.signOutEverywhere(r, userID)
+	if err != nil {
 		Error(w, r, err)
 		return
 	}
@@ -483,7 +497,7 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	s.audit(r, audit.Event{
 		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
 		Action: "user.password.reset", TargetKind: "user", TargetID: userID,
-		Detail: map[string]any{"must_change_password": must},
+		Detail: map[string]any{"must_change_password": must, "tokens_revoked": revoked},
 	})
 	JSON(w, http.StatusNoContent, nil)
 }
@@ -555,6 +569,23 @@ func (s *Server) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Status is never your own to change (R-048, R-049): a suspended account
+	// that could lift its own suspension, through a token it minted while it
+	// was active, would make suspension mean nothing; an administrator who
+	// suspends themselves locks themselves out. Anyone else's needs
+	// install.users.manage, held now, on top of the account check above.
+	if req.Status != nil {
+		if userID == p.UserID {
+			Error(w, r, errs.New(errs.ValidInvalid, "You cannot change your own account's status.").
+				WithRemedy("Ask an administrator to suspend or reinstate this account."))
+			return
+		}
+		if err := s.Authz.CheckInstall(r.Context(), p, authz.InstallUsersManage); err != nil {
+			Error(w, r, err)
+			return
+		}
+	}
+
 	// A username is how an account signs in, so changing one is an
 	// administrator's act even on your own account: yours is not a name you
 	// can rename out from under the people who know you by it.
@@ -616,4 +647,17 @@ func (s *Server) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		Detail:        detail,
 	})
 	JSON(w, http.StatusNoContent, nil)
+}
+
+// signOutEverywhere ends every session userID holds and revokes every token
+// it owns, for an administrator's reset of its password or second factor. A
+// reset is how an account is taken back, so nothing minted before it may
+// outlast it (R-059). The holder changing their own password keeps their
+// tokens: they made them, and revoke them on the tokens screen if they
+// choose (R-058).
+func (s *Server) signOutEverywhere(r *http.Request, userID string) (int64, error) {
+	if err := s.Sessions.RevokeAllForUser(r.Context(), userID); err != nil {
+		return 0, err
+	}
+	return s.Tokens.RevokeAllForUser(r.Context(), userID)
 }

@@ -39,3 +39,23 @@ func TestR405_ASessionThatMustSetUpTwoFactorIsAnonymousToApps(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "anonymous", got.header.Get(proxy.HeaderUser))
 }
+
+// mustChangeAuth is a session whose password somebody else set (R-046).
+type mustChangeAuth struct{}
+
+func (mustChangeAuth) Authenticate(*http.Request) (authz.Principal, error) {
+	p := activeUser("usr_alice")
+	p.PasswordChangePending = true
+	return p, nil
+}
+
+// TestR046_ASessionThatMustChangeItsPasswordIsAnonymousToApps asserts R-046
+// in front of an app: until the password is changed the session reaches an
+// app as nobody, its owner's own included.
+func TestR046_ASessionThatMustChangeItsPasswordIsAnonymousToApps(t *testing.T) {
+	front, _, _, _ := harnessWith(t, mustChangeAuth{}, func(s *store) { s.owner[appID] = "usr_alice" },
+		func(url string) proxy.Upstreams { return fixedUpstream{addr: url} })
+	resp := send(t, front, true)
+	require.NotEqual(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Location, "/.pando", "sent to sign in, where the change is")
+}

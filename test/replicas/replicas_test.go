@@ -181,11 +181,43 @@ func login(t *testing.T) session {
 	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
 	for _, c := range resp.Cookies() {
 		if c.Name == "pando_session" {
+			require.NoError(t, keepPassword(fresh(), baseURL(), c.Value, body, password))
 			return session{cookie: c.Value}
 		}
 	}
 	t.Fatal("signing in set no session cookie")
 	return session{}
+}
+
+// keepPassword answers a sign-in that must change its password first (R-046)
+// by changing it to itself, so the session can do anything else.
+func keepPassword(c *http.Client, api, cookie string, signedIn []byte, password string) error {
+	var body struct {
+		MustChangePassword bool `json:"must_change_password"`
+	}
+	_ = json.Unmarshal(signedIn, &body) // an answer that is not JSON asks nothing
+	if !body.MustChangePassword {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]string{"current_password": password, "new_password": password})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, api+"/me/password", strings.NewReader(string(payload)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "pando_session", Value: cookie})
+	resp, err := c.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("keeping the password answered %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (s session) do(method, path, body string) (string, int, error) {

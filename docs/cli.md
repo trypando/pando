@@ -682,6 +682,9 @@ pando app spec pin <app> <revision>
 Pins a revision: what the app converges to, and what the next deploy ships.
 This does not deploy: `pando deploy <app>` does that.
 
+On an app that has been deployed, pinning changes what it runs, so it needs
+app.deploy, and a revision whose deploy needs approval is refused: deploy it instead.
+
 ##### `app spec show`
 
 Print one spec revision

@@ -54,6 +54,13 @@ type Principal struct {
 	// as well, so a route that forgot to is refused anyway.
 	TwoFactorSetupPending bool
 
+	// PasswordChangePending marks a session of an account whose password
+	// was set by somebody else and must be changed at its first sign-in
+	// (R-046). The API answers it only on the routes that change the
+	// password, so a temporary password cannot be turned into a token or
+	// used for anything else first.
+	PasswordChangePending bool
+
 	// Passcodes are the unlock tokens the request carried, by app ID (R-075a):
 	// proof that whoever is visiting entered a passcode-protected app's
 	// passcode. Unverified as carried — CheckData asks the store whether each
@@ -722,6 +729,18 @@ func (a *Authorizer) auditsAnonymousDenials(ctx context.Context) bool {
 	return true
 }
 
+// CheckActive runs steps 1–4 alone, for an act that needs no verb because it
+// is on the caller's own account: reading it, or changing its profile. A
+// suspended account, a deleted one, a delegated token whose owner is either,
+// or a session still setting up two-factor is refused here exactly as it
+// would be by any verb (R-048, R-059). The denial is audited.
+func (a *Authorizer) CheckActive(ctx context.Context, p Principal) error {
+	if err := a.checkPrincipal(ctx, p); err != nil {
+		return a.deny(ctx, p, "", "", err)
+	}
+	return nil
+}
+
 // checkPrincipal runs steps 1–4: status, token validity, and token derivation.
 func (a *Authorizer) checkPrincipal(ctx context.Context, p Principal) error {
 	switch p.Kind {
@@ -738,6 +757,11 @@ func (a *Authorizer) checkPrincipal(ctx context.Context, p Principal) error {
 			return errs.New(errs.PolicyTwoFactorRequired,
 				"This installation requires two-factor authentication on local accounts, and this account has not set it up yet.").
 				WithRemedy("Sign in to the console and set up an authenticator app. It takes a minute.")
+		}
+		if p.PasswordChangePending {
+			return errs.New(errs.PermPasswordChangeRequired,
+				"This account signed in with a password somebody else set, and it must be changed before anything else.").
+				WithRemedy("Sign in to the console and choose a new password.")
 		}
 		return statusError(p.Status)
 

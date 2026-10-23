@@ -556,6 +556,38 @@ func (i *install) admin() *session {
 	s, got := i.signIn(bootstrap.AdminUsername, i.adminPassword)
 	require.Equal(i.t, http.StatusOK, got.Code, got.String())
 	require.NotEmpty(i.t, s.cookie)
+	i.keepPassword(s, got, i.adminPassword)
+	return s
+}
+
+// keepPassword changes a password that must be changed at first sign-in to
+// itself, which is what lets the session do anything else (R-046).
+func (i *install) keepPassword(s *session, signedIn reply, password string) {
+	i.t.Helper()
+	var body struct {
+		MustChangePassword bool `json:"must_change_password"`
+	}
+	signedIn.JSON(i.t, &body)
+	if !body.MustChangePassword {
+		return
+	}
+	changed := i.do(s, http.MethodPost, "/me/password",
+		map[string]string{"current_password": password, "new_password": password})
+	require.Equal(i.t, http.StatusNoContent, changed.Code, changed.String())
+}
+
+// userMustChange creates an ordinary account the way an administrator hands
+// one over, with a password to be changed at first sign-in (R-046), and signs
+// in as it.
+func (i *install) userMustChange(username string) *session {
+	i.t.Helper()
+	const password = "another-correct-horse-staple"
+	created := i.do(i.admin(), http.MethodPost, "/users", map[string]any{
+		"username": username, "display_name": username, "password": password,
+	})
+	require.Equal(i.t, http.StatusCreated, created.Code, created.String())
+	s, got := i.signIn(username, password)
+	require.Equal(i.t, http.StatusOK, got.Code, got.String())
 	return s
 }
 
@@ -567,6 +599,7 @@ func (i *install) user(username string) *session {
 
 	created := i.do(i.admin(), http.MethodPost, "/users", map[string]any{
 		"username": username, "display_name": username, "password": password,
+		"must_change_password": false,
 	})
 	require.Equal(i.t, http.StatusCreated, created.Code, created.String())
 

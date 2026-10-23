@@ -355,22 +355,29 @@ func (a *Apps) ListForPrincipalPage(ctx context.Context, p authz.Principal, page
 }
 
 // controlGrantWhere narrows the list to apps $1 (a user) or $2 (an account
-// token) holds a control-plane grant on, directly or through a group. A UNION
-// of indexed lookups (grants_principal_idx) rather than a join of every
-// grant, so the list costs the caller's grants, not the install's — and no
-// DISTINCT over the result, since IN already answers once per app.
+// token) holds app.view on through a control-plane grant, directly or through
+// a group. A grant whose role lacks app.view — a custom role carrying only
+// app.restart, say — lets its holder act on the app by its ID and does not
+// list it: listing is viewing (R-082, no implication graph). A UNION of
+// indexed lookups (grants_principal_idx) rather than a join of every grant,
+// so the list costs the caller's grants, not the install's — and no DISTINCT
+// over the result, since IN already answers once per app.
 const controlGrantWhere = `
 		WHERE a.deleted_at IS NULL
 		  AND a.id IN (
-		        SELECT app_id FROM grants
-		        WHERE plane = 'control' AND principal_kind = 'user' AND principal_id = $1
+		        SELECT g.app_id FROM grants g JOIN roles r ON r.id = g.role_id
+		        WHERE g.plane = 'control' AND g.principal_kind = 'user' AND g.principal_id = $1
+		          AND 'app.view' = ANY (r.verbs)
 		        UNION
-		        SELECT app_id FROM grants
-		        WHERE plane = 'control' AND principal_kind = 'token' AND principal_id = $2
+		        SELECT g.app_id FROM grants g JOIN roles r ON r.id = g.role_id
+		        WHERE g.plane = 'control' AND g.principal_kind = 'token' AND g.principal_id = $2
+		          AND 'app.view' = ANY (r.verbs)
 		        UNION
 		        SELECT g.app_id FROM grants g
 		        JOIN effective_group_members m ON m.group_id = g.principal_id
+		        JOIN roles r ON r.id = g.role_id
 		        WHERE g.plane = 'control' AND g.principal_kind = 'group' AND m.user_id = $1
+		          AND 'app.view' = ANY (r.verbs)
 		  )`
 
 // ListAll returns every app, for a principal whose install role reaches every

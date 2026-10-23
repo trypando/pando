@@ -156,8 +156,30 @@ and status decide whether a verb may be used now, not whether it is held:
 | `CheckHoldsEveryInstallVerb` | every install verb | creating or changing an identity provider, issuing its SCIM token, restoring the installation |
 
 A refusal is `PERM_VERB_REQUIRED`, audited as a denial, naming the verbs the caller lacks in
-`details.missing_verbs`. Your own account is always yours to change; granting yourself a role is still
-handing it on.
+`details.missing_verbs`. Your own account is yours to change, except its status; granting yourself a
+role is still handing it on.
+
+**[D]** `CheckConfersOnApp` is the same question for an app: `POST /apps/{id}/grants` and
+`PATCH /apps/{id}/grants/{grantID}` refuse a role carrying an app verb the caller does not hold on that
+app, directly, through a group, or through the `install.apps.*` verb that stands for it (R-080a,
+R-155). Without it `app.grants.manage` would be every app verb, `app.deploy.approve` included, and an
+Owner could approve their own deploys.
+
+**[D]** Nobody changes their own status through `PATCH /users/{id}`, and changing anyone else's needs
+`install.users.manage` held now (R-048, R-049). The self path of `requireSelfOrInstall` still runs
+steps 1–4 (`CheckActive`), so a suspended or deleted account, or a token whose owner is one, has no
+account to act on. A status change never reaches a deleted account.
+
+**[D]** An administrator's password reset or two-factor reset ends every session the account holds and
+revokes every delegated token it owns: a reset is how an account is taken back, and a token minted
+while someone else was in would outlast it. The holder changing their own password ends their other
+sessions and keeps their tokens, which they made and revoke themselves (R-058).
+
+**[D]** A session whose password was set by somebody else (`must_change_password`, R-046) is marked
+`PasswordChangePending`, and the API answers it only on `passwordChangeRoutes` — who it is, signing in
+and out, and `POST /me/password` — and `PERM_PASSWORD_CHANGE_REQUIRED` everywhere else, so the
+password cannot be turned into a token first. Step 2 refuses it too, as a backstop for a route that
+forgot the gate, and the proxy takes it for anonymous: until the change it reaches only what anyone may, a public app.
 
 **[D]** Changing a group's membership is checked against the group's install role only. Its app grants
 are app verbs, and an account manager can reach those anyway by resetting an app owner's password;

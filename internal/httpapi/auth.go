@@ -128,6 +128,7 @@ func (a *Authenticator) SessionPrincipal(ctx context.Context, cookie string) (au
 	// detail only: authorization reads ID and Status, never these.
 	return authz.Principal{
 		TwoFactorSetupPending: pending,
+		PasswordChangePending: user.MustChangePassword,
 		Kind:                  authz.KindUser,
 		ID:                    user.ID,
 		UserID:                user.ID,
