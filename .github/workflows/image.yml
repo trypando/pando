@@ -36,7 +36,7 @@ env:
   # The Trivy the release gate runs is the one Pando runs against hosted apps
   # (internal/adapter/scanner/trivy defaultImage), so the bar is literally the
   # same. Bump the two together.
-  TRIVY_IMAGE: aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+  TRIVY_IMAGE: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
 
 jobs:
   image:
@@ -112,6 +112,17 @@ jobs:
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" \
             image --no-progress --severity CRITICAL --ignore-unfixed --exit-code 1 \
             "pando-scan:${{ steps.v.outputs.version }}"
+
+      # And trusts no root that has been distrusted, nor do Trivy and the images
+      # the release's compose file and builder pin (scripts/check-trust-store.py).
+      # Not BuildKit: its bundle still lists the emSign roots, and what protects
+      # it is the Go it is built with (managed.go).
+      - name: Trust store
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          python3 scripts/check-trust-store.py "pando-scan:$VERSION" "$TRIVY_IMAGE" \
+            --from docker-compose.yml --from internal/adapter/builder/buildkit/bases/Dockerfile
 
       # And made to work before anything is pushed: the same image, run from a
       # compose file shaped like the one the release ships, deploying an app.

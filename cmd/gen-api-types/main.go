@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/trypando/pando/internal/core/autodeploy"
+	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/security"
@@ -100,6 +101,9 @@ var exported = []any{
 	// with the last check, and what a save answers.
 	autodeploy.View{},
 	autodeploy.Saved{},
+
+	// What a check of an image app's tag found (R-143a).
+	deploy.ImageCheck{},
 }
 
 func main() {

@@ -1437,13 +1437,26 @@ func pinnedSpec(ctx context.Context, images *oci.Images, appID string, s *spec.A
 	if s.Source.Type != spec.SourceImage || s.Source.Digest != "" || s.Source.Image == "" || images == nil {
 		return nil, false, nil
 	}
-	insp, err := images.Inspect(ctx, appID, s.Source.Image, oci.Platform{})
+	digest, err := tagDigest(ctx, images, appID, s)
 	if err != nil {
 		return nil, false, err
 	}
+	return withDigest(s, digest), true, nil
+}
+
+// tagDigest is the digest an image app's tag names now. Read for no platform
+// in particular, so a multi-arch image's is the index's, as it is pinned.
+func tagDigest(ctx context.Context, images *oci.Images, appID string, s *spec.AppSpec) (string, error) {
+	insp, err := images.Inspect(ctx, appID, s.Source.Image, oci.Platform{})
+	return insp.Digest, err
+}
+
+// withDigest is s pinned to digest, as a copy: the revision it came from is
+// not changed (R-152).
+func withDigest(s *spec.AppSpec, digest string) *spec.AppSpec {
 	pinned := *s
-	pinned.Source.Digest = insp.Digest
-	return &pinned, true, nil
+	pinned.Source.Digest = digest
+	return &pinned
 }
 
 // pinWorkloads points every workload that runs the app's image at its pinned

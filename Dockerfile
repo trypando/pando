@@ -1,7 +1,8 @@
 # Pando ships as one binary (R-253). This image is how it reaches a host —
 # the artifact is unchanged, the container is just the delivery.
 #
-# Every stage is a Docker Hardened Image (dhi.io). The published image runs on
+# Every stage that builds or runs is a Docker Hardened Image (dhi.io); the one
+# exception supplies only the CA bundle, below. The published image runs on
 # the runtime variant of alpine-base: busybox, musl, CA certificates and a
 # non-root user, with no package manager. What Pando adds to it is installed in
 # the -dev variant and copied across, and the toolchains never leave the build
@@ -166,8 +167,18 @@ RUN apk add --no-cache bash curl git postgresql17-client su-exec tzdata \
          /usr/local/bin/railpack 2>/dev/null \
        | tar -xf - -C /staging
 
+# The CA bundle git, Railpack, mise and psql trust, taken from Alpine's own
+# image rather than the hardened base. Go's fix for the eMudhra compromise
+# (GO-2026-6809) covers the server and nothing else, and the hardened images'
+# package repository lagged Alpine's in removing the roots that compromise
+# distrusted. Alpine's image is pinned like the rest, so Dependabot moves it
+# when Alpine ships a new bundle; scripts/check-trust-store.py fails the image
+# in CI if a distrusted root is left either way.
+FROM alpine:3.24@sha256:71e9b7bae160ba167fa17414401b94cbcdaf3c32feeab9298bd794a2a0614c35 AS ca-bundle
+
 FROM dhi.io/alpine-base:3.24@sha256:a741d4f1ccaf31f9394a36477e50df4620a8030dbff3d9a2ea8e84672b683ada
 COPY --from=packages /staging/ /
+COPY --from=ca-bundle /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # Railpack's mise directory, writable by the server, which takes locks there.
 # A copy of its own rather than part of the staged tree: staging it under /tmp
 # replaced /tmp's own mode with the staging directory's 755, and the server

@@ -613,6 +613,8 @@ reference is dropped. It describes and never acts. Any signed-in user may ask.
 
 **R-143 [P] [LATER]** Watch for new tags on an upstream image, for apps deployed from a published image rather than source.
 
+**R-143a [D] [V1]** **An image app can be checked for a newer build of its tag, and upgraded to it.** Checking asks the registry which build the tag names now and changes nothing. Upgrading is an explicit act: it writes a revision pinning the build the check found and deploys it through the ordinary path, approval included (R-154). It is refused if the tag has moved since the check, so what ships is what the person was shown. Nothing upgrades on its own; watching for new builds is R-143.
+
 ### 10.3 Deploy strategy
 
 **R-144 [D]** **Recreate is the default strategy.** Stop the old workload, start the new one. Accepts downtime. Correct for anything holding an exclusive lock or a local database file.

@@ -48,7 +48,7 @@ const Kind = "trivy"
 // changes every score with it. The digest is what makes two scans of the same
 // image comparable — and the version in the tag is the readable half, as in the
 // Dockerfile.
-const defaultImage = "aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969"
+const defaultImage = "aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c"
 
 // cacheVolume holds Trivy's vulnerability database between scans. Roughly 50MB
 // downloaded on first use; without it every scan pays for it again.
@@ -654,7 +654,7 @@ func Info() api.KindInfo {
 		Description: "Scans source and images for known vulnerabilities and gives each app a security score.",
 		IDPrefix:    "scn_",
 		Fields: []api.Field{
-			{Key: "image", Label: "Image", Type: "string", Help: "The Trivy image to run.", Default: "aquasec/trivy:0.74.0 (pinned)", Advanced: true},
+			{Key: "image", Label: "Image", Type: "string", Help: "The Trivy image to run.", Default: "aquasec/trivy:0.76.1 (pinned)", Advanced: true},
 			{Key: "host", Label: "Docker host", Type: "string", Help: "The Docker endpoint Trivy runs on.", Default: "DOCKER_HOST, or the local socket", Advanced: true},
 			{Key: "timeout_seconds", Label: "Timeout", Type: "int", Help: "Seconds a scan may take.", Default: "600", Advanced: true},
 			{Key: "db_repository", Label: "Vulnerability database repository", Type: "string",

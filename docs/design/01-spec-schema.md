@@ -98,6 +98,15 @@ image the digest is the index's, so the runtime still selects its own build. Mov
 automatically is R-143, `[LATER]`, and would reuse the auto-deploy job (#40) with a digest in place of a
 commit.
 
+**[D] Moving the digest by hand is a check and an upgrade (R-143a).** `GET /apps/{id}/image-update` asks
+the registry which digest the pinned revision's `Image` names now and writes nothing. `POST` with that
+`digest` writes a revision with only `Digest` changed (`deploy.Runner.UpgradeImage`) and deploys it through
+`POST /deployments`, so plan, scan and approval apply as to any deploy. The `POST` names the digest rather
+than re-reading the tag, and is refused when the tag has moved since: what ships is what the person was
+shown. It is also refused while a revision newer than the pinned one is saved and not deployed, since an
+upgrade built on the pinned revision would bury that edit. Compose services' images have no `Digest` of
+their own and are not covered; a per-workload digest would be needed first.
+
 **[D] What an image declares fills its spec.** An image app has no repository for detectors to read, so
 detection reads the image's configuration from the registry before the trial run: `EXPOSE` becomes the
 ports (`Port.Source = expose`, superseded by a port the trial observes), `VOLUME` becomes volumes
