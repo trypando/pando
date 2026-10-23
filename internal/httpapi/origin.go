@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"mime"
 	"net"
 	"net/http"
@@ -114,15 +115,18 @@ func (s *Server) onAppAddress(r *http.Request) bool {
 	if onListener, _ := r.Context().Value(appListenerKey{}).(bool); onListener {
 		return true
 	}
-	if s.AppHosts == nil {
-		return false
-	}
 	host := r.Host
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	isApp, err := s.AppHosts.IsAppHostname(r.Context(), host)
-	return err != nil || isApp
+	if s.AppHosts != nil {
+		if isApp, err := s.AppHosts.IsAppHostname(r.Context(), host); err != nil || isApp {
+			return true
+		}
+	}
+	// A hostname that is neither Pando's nor an app's is treated as an
+	// app's here: it gets the sign-in page and nothing else (R-166).
+	return s.unknownHost(r.Context(), host)
 }
 
 // sessionsPath is where a password sign-in is posted, and a session ended.
@@ -210,10 +214,73 @@ func (s *Server) appHostnamesAreTheApps(next http.Handler) http.Handler {
 			}
 			toApp(r)
 			s.AppProxy.ServeHTTP(w, r)
+		case s.unknownHost(r.Context(), host) && !answeredOnAnyHost(r.URL.Path):
+			if s.answerACMEChallenge(w, r) {
+				return
+			}
+			s.notPandosAddress(w, r, host)
 		default:
 			next.ServeHTTP(w, r)
 		}
 	})
+}
+
+// unknownHost reports whether a hostname is neither Pando's own nor one that
+// can only be reached from nearby, once the install has said where it is
+// (PANDO_SERVER_EXTERNAL_URL). The caller has already asked whether it is an
+// app's.
+//
+// Such a hostname gets no console and no API (R-166). With wildcard DNS every
+// name under a domain reaches Pando; an app's former hostname is one of them,
+// and a service worker the app registered there while it was the app's still
+// runs. Serving the console and API there would hand that script a visitor's
+// Pando sign-in.
+//
+// An IP address, localhost, and a name without a dot are not wildcard DNS:
+// they are how an operator, a health check, or a container on Pando's own
+// network reaches it, and they are answered as before. So is every hostname
+// on an install that has not said where it is, which cannot tell its own
+// address from another.
+func (s *Server) unknownHost(ctx context.Context, host string) bool {
+	if s.ExternalURL == nil || s.ExternalURL.Hostname() == "" || host == "" {
+		return false
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if strings.EqualFold(host, s.ExternalURL.Hostname()) || net.ParseIP(host) != nil ||
+		host == "localhost" || strings.HasSuffix(host, ".localhost") || !strings.Contains(host, ".") {
+		return false
+	}
+	// The console hostname a routing adapter serves Pando on, which may
+	// differ from the external URL's.
+	if s.PandoHostnames != nil {
+		for _, h := range s.PandoHostnames(ctx) {
+			if strings.EqualFold(strings.TrimSuffix(h, "."), host) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// answeredOnAnyHost reports whether a path is answered on every hostname:
+// the health checks, which an orchestrator calls by whatever name it has, and
+// the assertion keys, which are public and which an app fetches from wherever
+// it can reach Pando (R-057). None carries any authority.
+func answeredOnAnyHost(path string) bool {
+	switch path {
+	case "/healthz", "/readyz", "/.well-known/jwks.json":
+		return true
+	}
+	return false
+}
+
+// notPandosAddress answers a request for a hostname that is neither Pando's
+// nor an app's.
+func (s *Server) notPandosAddress(w http.ResponseWriter, r *http.Request, host string) {
+	Error(w, r, errs.Newf(errs.NotFound,
+		"There is no app at %s, and Pando's console and API are not served there. Pando's own address is %s.",
+		host, s.ExternalURL.Host).
+		WithRemedy("Open "+s.ExternalURL.Scheme+"://"+s.ExternalURL.Host+" instead, or check the address."))
 }
 
 // pandosOnEveryHostname reports whether a request is Pando's whatever its

@@ -371,6 +371,12 @@ type Server struct {
 	// correct for a path-addressed install and wrong for a subdomain one.
 	AppHosts AppHosts
 
+	// PandoHostnames lists the hostnames Pando serves itself on besides the
+	// external URL's: a routing adapter's console hostname. With ExternalURL
+	// set, a hostname that is neither one of these nor an app's gets no
+	// console and no API (unknownHost). Nil means the external URL's alone.
+	PandoHostnames func(ctx context.Context) []string
+
 	// ACMEChallenges answers HTTP-01 challenges for the certificates Pando
 	// issues for the edge, on every hostname. Nil answers none.
 	ACMEChallenges ACMEChallenges

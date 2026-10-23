@@ -517,11 +517,12 @@ func (r *runner) proxyRequest(ctx context.Context) {
 		return
 	}
 
+	// A real app is on a port, and is served there and not also at /<slug> on
+	// Pando's address (R-166). One with no port is a path-mode app.
 	a := r.ws.Real[rand.IntN(len(r.ws.Real))]
-	byPort := n%2 == 0 && a.Port > 0
 	url := r.c.Root + "/" + a.Slug + "/"
 	how := "slug"
-	if byPort {
+	if a.Port > 0 {
 		url = fmt.Sprintf("http://%s:%d/", r.c.hostOf(), a.Port)
 		how = "port"
 	}

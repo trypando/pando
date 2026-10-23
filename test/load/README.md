@@ -121,7 +121,8 @@ owner's app: `GET /apps` (40%), `/apps/{id}` (30%), `/apps/{id}/deployments` (20
 
 **Proxied requests**, open loop at the step's rate. Half go to seeded apps, by `Host` or by path;
 those have no containers, so the proxy resolves the app and answers 503, and the measurement is the
-lookup. The other half go to real apps, by slug on the balancer's port or by the app's own port,
+lookup. The other half go to real apps, by the app's own port (an app on a port is not also served at
+`/<slug>`, R-166) or, for one on a path, by slug on the balancer's port,
 either anonymously (200 for an app shared with anyone, otherwise 302 to sign in) or with a
 signed-in user's session (200 for someone the app is shared with, otherwise 403). That is the whole
 request path: authentication, `CheckData`, the assertion and the forward.

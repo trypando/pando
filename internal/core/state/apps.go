@@ -1485,7 +1485,8 @@ func (a *Apps) SetStateIf(ctx context.Context, appID, from, to string) error {
 // columns are written with the pin (migrations 35 and 46), so they say what
 // the pinned spec says.
 //
-// `by` is "hostname", "slug", "id" or "port".
+// `by` is "hostname", "slug", "id" or "port". "slug" finds a path-mode app
+// only.
 func (a *Apps) ByRouting(ctx context.Context, by, value string) (App, *spec.AppSpec, bool, error) {
 	var where string
 	var arg any = value
@@ -1496,7 +1497,11 @@ func (a *Apps) ByRouting(ctx context.Context, by, value string) (App, *spec.AppS
 		where = `a.address_hostname = $1`
 		arg = strings.ToLower(value)
 	case "slug":
-		where = `a.slug = $1`
+		// A path-mode app only, by its pinned spec. An app on its own
+		// hostname or port is served there and nowhere else: at /<slug> its
+		// script would run on Pando's own origin (R-166). A spec with no mode,
+		// pinned before modes were required, answers here as it always has.
+		where = `a.slug = $1 AND coalesce(r.body->'routing'->>'mode', '') NOT IN ('subdomain', 'port')`
 	case "id":
 		where = `a.id = $1`
 	case "port":

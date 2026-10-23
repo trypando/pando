@@ -260,4 +260,15 @@ func (c *Cache) resolve(ctx context.Context, key string, read func(context.Conte
 	return app, s, ok, nil
 }
 
-func appKey(by, value string) string { return by + "\x00" + strings.ToLower(value) }
+// appKey is the cache key for a lookup, which must name exactly what the
+// lookup reads. A hostname is matched without regard to case (ByRouting
+// lowercases it), so its key is lowercased too; a slug or a port is matched
+// exactly, so its key is as given. Lowercasing a slug's key let a request for
+// /NOTES — no app's — keep a miss under the key /notes then read, and the app
+// at /notes answered 404 until the entry expired.
+func appKey(by, value string) string {
+	if by == "hostname" {
+		value = strings.ToLower(value)
+	}
+	return by + "\x00" + value
+}

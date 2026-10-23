@@ -127,9 +127,10 @@ func checkPath(ctx context.Context, q querier, appID, path string) error {
 		return errs.Wrap(errs.Internal, "Could not check whether the address is free.", err)
 	}
 
-	// Another app's slug as the first segment. Every app answers at
-	// /<slug> as well as its own path (proxy.resolve), and a path that
-	// took one would take that app's requests.
+	// Another app's slug as the first segment. A path-mode app answers at
+	// /<slug> as well as its own path (proxy.resolve), and a path that took
+	// one would take that app's requests. Every app's, not only path-mode
+	// ones': an app on a hostname today may be moved to a path tomorrow.
 	first := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
 	err = q.QueryRow(ctx, `
 		SELECT name FROM apps

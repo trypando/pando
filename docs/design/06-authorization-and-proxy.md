@@ -463,14 +463,14 @@ metadata) is a separate change; `pando mcp` runs over stdio with the token this 
 The single enforcement point (R-023). One path for every request to every app — authenticated, anonymous, proxy mode, per-domain mode.
 
 ```
-1.  Resolve app from hostname or path prefix
-2.  App exists and is running?             → 404 / 503
+1.  Resolve app from hostname, port, or path prefix  → 404
 3.  Extract session cookie (ses_<id>.<secret>, matched by digest), or a bearer token shaped like Pando's (tok_…)
 4.  Authenticate → Principal, or anonymous
 5.  CheckData(principal, app)
       passcode required   → redirect to the passcode page (R-075a)
       denied + anonymous  → redirect to login
       denied + authed     → 403 page
+2.  App running?                            → 503
 5a. Record use: app.use, once per visit (R-227, §6)
 5b. Anonymous over its rate for this app and address? → 429 (R-075)   (counted in 5 first)
 6.  Mint assertion (R-051)
@@ -481,6 +481,23 @@ The single enforcement point (R-023). One path for every request to every app �
 11. Forward to the workload
 12. Stream response
 ```
+
+**Step 2 runs after step 5.** Whether an app is stopped, and why — a reason that says whether its
+owners still have accounts — is told only to someone allowed to use it. Before, a stranger trying
+addresses learned it.
+
+**[D] An app on its own hostname or port is served there and nowhere else (R-166).** Step 1 finds a
+path-mode app by its path, or by its slug as the first segment of a path on Pando's own address. It
+finds an app given a hostname or a port only there: served at `/<slug>` as well, the app's script would
+run on Pando's origin, which is what giving it a hostname exists to prevent. The router holds the other
+half (`internal/httpapi/origin.go`, `unknownHost`): once the external URL is set, the console and the
+API answer only on its hostname and on a routing adapter's console hostname. A hostname that is neither
+Pando's nor an app's gets a 404 naming Pando's address. With wildcard DNS every name under a domain
+reaches Pando, and an app's former hostname is one of them; a service worker the app registered there
+still runs, and would share an origin with the console. The health checks and `/.well-known/jwks.json`
+answer on any name, as do an IP address, `localhost` and a name without a dot, which are how an
+operator, an orchestrator or a container on Pando's network reaches it. An install with no external
+URL cannot tell its own address from another and answers every name as before.
 
 **Step 5b is R-075's "rate-limited" (issue #189).** Numbered after 5a for where it is described, but
 it runs straight after the metrics count in step 5 and before the allow-or-deny branch, so a refused
@@ -651,6 +668,17 @@ was at connect time; reusing it meant a session revoked, a token revoked, or a u
 than running for the life of the process. On failure the connection closes with a
 normal WebSocket close frame carrying a policy-violation status, not an abrupt reset, so a client can
 tell revocation from a network fault.
+
+A response that streams without a hijack — server-sent events, a long poll, a long download — is
+re-authorized on the same interval, by a timer started when the request is forwarded and stopped when
+it ends, so a request answered within one interval runs no check. On failure the request to the app is
+canceled, which ends the stream where it is; a request the app has not yet answered gets a 403. A
+hijack hands the connection to the websocket loop above and stops the timer.
+
+**[D] A 1xx response carries only `Link` (R-173).** `httputil.ReverseProxy` sends an informational
+response's headers — 103 Early Hints — straight to the client, before the response filter that strips
+`Set-Cookie` from every final response. The proxy's writer drops every header but `Link`, the one a 1xx
+is sent for.
 
 ---
 

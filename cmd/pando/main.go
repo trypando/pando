@@ -1071,6 +1071,7 @@ func serve(ctx context.Context, configPath string) error {
 		// So the console does not answer on an app's own hostname. Without
 		// this the console's "/" route shadows every subdomain app's root.
 		AppHosts:       appResolver,
+		PandoHostnames: apps.ReservedHostnames,
 		ACMEChallenges: edgecert.Challenges{Store: edgeCerts},
 		Grants:         grants,
 		HostPolicy:     hostPolicy,

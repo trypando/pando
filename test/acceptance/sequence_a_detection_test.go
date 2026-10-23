@@ -385,25 +385,21 @@ func TestSequenceAtoB_ADetectedRepositoryDeploysAndServes(t *testing.T) {
 		"the build and deploy of a spec nobody hand-wrote\n%s",
 		c.deploymentLogs(t, appID, dep["id"].(string)))
 
-	// R-023: it is reachable through Pando's proxy, which is the only way in.
-	// Addressed by slug rather than by the spec's routing fields — the proxy is
-	// the fallback route and resolves the app itself, so there is no separate
-	// proxy port whatever mode the app is in.
-	app := c.get(t, "/apps/"+appID)
-	slug := app["slug"].(string)
+	// R-023: it is reachable through Pando's proxy, which is the only way in,
+	// at the address the API gives for it (R-166).
+	at := c.appURL(t, appID)
 
 	require.Eventually(t, func() bool {
-		return c.appResponds(t, slug)
+		return c.appResponds(t, at)
 	}, 120*time.Second, 3*time.Second,
 		"the deployed app never answered through the proxy")
 }
 
-// appResponds asks the app for its front page, through the proxy.
-func (c *client) appResponds(t *testing.T, slug string) bool {
+// appResponds asks the app at its URL for its front page, through the proxy.
+func (c *client) appResponds(t *testing.T, at string) bool {
 	t.Helper()
 
-	req, err := http.NewRequest(http.MethodGet,
-		strings.TrimSuffix(baseURL(), "/api/v1")+"/"+slug+"/", nil)
+	req, err := http.NewRequest(http.MethodGet, at+"/", nil)
 	require.NoError(t, err)
 	req.AddCookie(&http.Cookie{Name: "pando_session", Value: c.cookie})
 

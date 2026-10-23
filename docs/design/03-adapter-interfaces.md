@@ -758,7 +758,8 @@ the repository has nothing to say about it.
 **[D] A path-mode app's path is whatever it is set to**, not only its slug: up to four segments of
 lowercase letters, digits and hyphens (`spec.CheckPathPrefix`), such as `/team/notes`. The proxy finds
 the app by the longest whole-segment prefix of the request's path (`state.Apps.ByPath`), strips it,
-and names it in `X-Forwarded-Prefix` (R-167); `/<slug>` still answers as it always has. Three rules keep
+and names it in `X-Forwarded-Prefix` (R-167); `/<slug>` still answers for a path-mode app, and only
+for one: an app on a hostname or a port is served there alone (R-166, design 06 §4). Three rules keep
 one path to one app, decided when a revision is pinned (`state.Apps.Pin`, migration 35) and also asked
 before a change is saved so the person choosing hears it then:
 

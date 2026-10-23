@@ -211,6 +211,32 @@ func TestR023_AnAppLookupIsKeptMissesIncluded(t *testing.T) {
 	require.Equal(t, int32(3), reads.Load(), "no cache reads every time")
 }
 
+// TestR167_ASlugInAnotherCaseDoesNotHideTheApp asserts that a miss is kept
+// under the key of what was looked up and nothing else. A slug is matched
+// exactly, and its key was lowercased: an anonymous request for /NOTES, which
+// is no app's, kept a miss that /notes then read, and the app answered 404 for
+// as long as somebody kept asking.
+func TestR167_ASlugInAnotherCaseDoesNotHideTheApp(t *testing.T) {
+	now := time.Now()
+	c := listeningCache(&now)
+	exact := func(want string) func(string) func(context.Context) (state.App, *spec.AppSpec, bool, error) {
+		return func(got string) func(context.Context) (state.App, *spec.AppSpec, bool, error) {
+			return func(context.Context) (state.App, *spec.AppSpec, bool, error) {
+				return state.App{ID: "app_1"}, &spec.AppSpec{}, got == want, nil
+			}
+		}
+	}("notes")
+
+	for _, by := range []string{"slug", "port"} {
+		_, _, found, err := c.resolve(context.Background(), appKey(by, "NOTES"), exact("NOTES"))
+		require.NoError(t, err)
+		require.False(t, found)
+		_, _, found, err = c.resolve(context.Background(), appKey(by, "notes"), exact("notes"))
+		require.NoError(t, err)
+		require.True(t, found, "%s: the miss for another case is not this lookup's", by)
+	}
+}
+
 // A client choosing hostnames or cookies cannot grow the cache without bound.
 func TestTheCacheIsBounded(t *testing.T) {
 	now := time.Now()

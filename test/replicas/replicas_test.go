@@ -356,11 +356,15 @@ func TestR256_PandoServesAsSeveralReplicasAgainstOneDatabase(t *testing.T) {
 
 		// The app answers through every replica's proxy, not only the one
 		// that deployed it and joined its network (R-023). Up to one rejoin
-		// interval for the other replica to join it.
-		slug := s.must(t, http.MethodGet, "/apps/"+appID, "", http.StatusOK)["slug"].(string)
+		// interval for the other replica to join it. At its own port, the
+		// address the API gives: an app on a port is not also served at
+		// /<slug> on Pando's address (R-166).
+		address := s.must(t, http.MethodGet, "/apps/"+appID, "", http.StatusOK)["address"].(string)
+		require.True(t, strings.HasPrefix(address, "//"), "a port-mode address: %q", address)
+		at := strings.SplitN(rootURL(), "//", 2)[0] + address
 		require.Eventually(t, func() bool {
 			for range 10 {
-				req, err := http.NewRequest(http.MethodGet, rootURL()+"/"+slug+"/", nil)
+				req, err := http.NewRequest(http.MethodGet, at, nil)
 				if err != nil {
 					return false
 				}

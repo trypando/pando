@@ -77,7 +77,8 @@ type Resolver interface {
 	// ByPath resolves the path-mode app whose path is the longest whole-segment
 	// prefix of the request's path, and returns that path to strip (R-167).
 	ByPath(ctx context.Context, path string) (state.App, *spec.AppSpec, string, bool, error)
-	// BySlug resolves an app from the first path segment, for proxy mode.
+	// BySlug resolves a path-mode app from the first path segment. An app
+	// addressed by hostname or port is never found this way (R-166).
 	BySlug(ctx context.Context, slug string) (state.App, *spec.AppSpec, bool, error)
 	// ByPort resolves an app from the port the request arrived on, for port
 	// mode (design 03 §4.2).
@@ -199,12 +200,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx = context.WithValue(ctx, ctxKeyAppID{}, app.ID)
 	r = r.WithContext(ctx)
 
-	// 2. Is it running?
-	if app.State != state.StateRunning && app.State != state.StateDegraded {
-		p.fail(w, r, http.StatusServiceUnavailable, notRunning(app))
-		return
-	}
-
 	// 3-4. Authenticate, or fall through as anonymous.
 	//
 	// A bad credential is not fatal here: it resolves to anonymous and the data
@@ -241,6 +236,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if !allowed {
 		p.refuse(w, r, principal, denial, app.ID)
+		return
+	}
+
+	// 2. Is it running? Asked after CheckData, so whether an app is running,
+	// and why it was stopped — which says whether its owners still have
+	// accounts — is told only to someone allowed to use it.
+	if app.State != state.StateRunning && app.State != state.StateDegraded {
+		p.fail(w, r, http.StatusServiceUnavailable, notRunning(app))
 		return
 	}
 
@@ -377,6 +380,10 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target *url.URL,
 		FlushInterval: -1,
 
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if rw, ok := w.(*reauthorizing); ok && rw.wasRevoked() {
+				p.fail(w, r, http.StatusForbidden, "You no longer have access to this app.")
+				return
+			}
 			log.From(r.Context()).Warn("upstream failed", zap.Error(err))
 			p.fail(w, r, http.StatusBadGateway,
 				"This app didn't respond. It may still be starting up.")
@@ -387,15 +394,23 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target *url.URL,
 		Transport: transport,
 	}
 
-	// Long-lived connections are re-authorized for as long as they stay open
-	// (O-13). Wrapping here rather than inside ReverseProxy keeps the decision
-	// with the rest of the authorization logic.
-	rp.ServeHTTP(&reauthorizing{
+	// Long-lived connections and streaming responses are re-authorized for
+	// as long as they stay open (O-13). Wrapping here rather than inside
+	// ReverseProxy keeps the decision with the rest of the authorization
+	// logic. The request to the app is canceled when a re-check fails, which
+	// ends a response still streaming from it.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	rw := &reauthorizing{
 		ResponseWriter: w,
 		proxy:          p,
 		request:        r,
 		appID:          appIDOf(r),
-	}, r)
+		cancel:         cancel,
+	}
+	rw.startStreaming()
+	defer rw.stopStreaming(false)
+	rp.ServeHTTP(rw, r.WithContext(ctx))
 }
 
 type ctxKeyAppID struct{}
@@ -513,9 +528,13 @@ func (p *Proxy) resolve(r *http.Request) (state.App, *spec.AppSpec, string, bool
 		return app, s, prefix, true, nil
 	}
 
-	// Then the slug, as every app has always answered at /<slug> on Pando's
-	// own address. The address check refuses a path that takes another app's
-	// slug, so this cannot reach an app some other path already claimed.
+	// Then the slug, for a path-mode app reached at /<slug> as well as at a
+	// path of its own. Only a path-mode app: one on its own hostname or port
+	// is served there and nowhere else (R-166). Served at /<slug> too, its
+	// script would run on Pando's own origin, where nothing tells it from the
+	// console's — the very thing a hostname is given to prevent. The address
+	// check refuses a path that takes another app's slug, so this cannot reach
+	// an app some other path already claimed.
 	segment := firstSegment(r.URL.Path)
 	if segment == "" {
 		return state.App{}, nil, "", false, nil

@@ -94,12 +94,12 @@ func TestR023_AnAppOnAnotherHostIsReachedOnlyThroughTheProxy(t *testing.T) {
 	c.steerTo(t, "host-b")
 	app := c.deployEcho(t, "mh-proxy", 128<<20)
 	requireOn(t, app, "host-b")
-	slug := c.slug(t, app)
+	at := c.appAt(t, app, base)
 
 	var status int
 	var body string
 	eventually(t, time.Minute, "the app answers through the proxy", func() bool {
-		status, body = c.throughProxy(t, slug, "/", map[string]string{
+		status, body = c.throughProxy(t, at, "/", map[string]string{
 			"X-Pando-User":          "admin@corp.com",
 			"X-Pando-Email":         "admin@corp.com",
 			"X-Pando-Assertion":     "forged.assertion.value",
@@ -138,7 +138,7 @@ func TestR023_AnAppOnAnotherHostIsReachedOnlyThroughTheProxy(t *testing.T) {
 	// decision happens before anything is sent to host B.
 	anon := &http.Client{Timeout: 10 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := anon.Get(base + "/" + slug + "/")
+	resp, err := anon.Get(at + "/")
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	require.Equal(t, http.StatusFound, resp.StatusCode)
@@ -486,7 +486,7 @@ func TestR120_ABuildIsDeliveredThroughTheRegistryAndPulledByDigest(t *testing.T)
 	require.Contains(t, catalog, strings.ToLower(app))
 
 	eventually(t, time.Minute, "the built app answers through the proxy", func() bool {
-		status, page := c.throughProxy(t, c.slug(t, app), "/", nil)
+		status, page := c.throughProxy(t, c.appAt(t, app, base), "/", nil)
 		return status == http.StatusOK && strings.Contains(page, "built-and-pulled")
 	})
 }
@@ -515,9 +515,9 @@ func TestR023_AReplacedAgentIsJoinedToItsHostsAppNetworksAgain(t *testing.T) {
 	c.steerTo(t, "host-a")
 	app := c.deployEcho(t, "mh-rejoin", 128<<20)
 	requireOn(t, app, "host-a")
-	slug := c.slug(t, app)
+	at := c.appAt(t, app, base)
 	eventually(t, time.Minute, "the app answers through the proxy", func() bool {
-		status, _ := c.throughProxy(t, slug, "/", nil)
+		status, _ := c.throughProxy(t, at, "/", nil)
 		return status == http.StatusOK
 	})
 
@@ -535,7 +535,7 @@ func TestR023_AReplacedAgentIsJoinedToItsHostsAppNetworksAgain(t *testing.T) {
 		return err == nil && strings.Contains(joined, "pando-"+app)
 	})
 	eventually(t, time.Minute, "the app answers through the proxy again", func() bool {
-		status, _ := c.throughProxy(t, slug, "/", nil)
+		status, _ := c.throughProxy(t, at, "/", nil)
 		return status == http.StatusOK
 	})
 }
@@ -549,7 +549,6 @@ func TestR023_EitherReplicaReachesAnAppOnAnotherHost(t *testing.T) {
 	c.steerTo(t, "host-b")
 	app := c.deployEcho(t, "mh-replicas", 128<<20)
 	requireOn(t, app, "host-b")
-	slug := c.slug(t, app)
 
 	agents := map[string]string{}
 	for _, h := range []string{cHostA, cHostB} {
@@ -559,14 +558,14 @@ func TestR023_EitherReplicaReachesAnAppOnAnotherHost(t *testing.T) {
 	}
 	for _, via := range []string{base, base2} {
 		eventually(t, time.Minute, "the app answers through "+via, func() bool {
-			status, body := c.throughProxyVia(t, via, slug, "/")
+			status, body := c.throughProxyVia(t, c.appAt(t, app, via), "/")
 			return status == http.StatusOK && strings.Contains(body, "x-pando-assertion")
 		})
 	}
 	// Several rejoin passes of both replicas (every 15 s each).
 	time.Sleep(40 * time.Second)
 	for _, via := range []string{base, base2} {
-		status, _ := c.throughProxyVia(t, via, slug, "/")
+		status, _ := c.throughProxyVia(t, c.appAt(t, app, via), "/")
 		require.Equal(t, http.StatusOK, status, via)
 	}
 	for h, id := range agents {

@@ -68,10 +68,23 @@ class Pando:
             lines.append(f"[log stream ended: {e.__class__.__name__}]")
         return "\n".join(lines)
 
-    def fetch_app(self, slug, path="/", timeout=15):
+    def app_url(self, address, path="/"):
+        """The URL of path on an app, from the address the API gives for it.
+
+        An app on a port or a hostname is served there only, not at /<slug> on
+        Pando's own address (R-166), so the address is the one to use.
+        """
+        address = (address or "").rstrip("/")
+        if address.startswith("//"):  # port mode: the host this client reached Pando on
+            return self.base.split("//", 1)[0] + address + path
+        if address.startswith("/"):  # path mode
+            return self.base + address + path
+        return address + path
+
+    def fetch_app(self, address, path="/", timeout=15):
         """GET an app through Pando's proxy, signed in."""
         try:
-            with self.op.open(urllib.request.Request(f"{self.base}/{slug}{path}"), timeout=timeout) as resp:
+            with self.op.open(urllib.request.Request(self.app_url(address, path)), timeout=timeout) as resp:
                 return resp.status, resp.read(4096).decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             return e.code, e.read(4096).decode("utf-8", "replace")

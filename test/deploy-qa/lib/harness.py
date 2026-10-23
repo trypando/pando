@@ -345,8 +345,9 @@ def run_case(p, c, label):
         want = c.get("expect_text")
         t2 = time.time()
         hc, body = 0, ""
+        r["address"] = (p.get(f"/apps/{aid}") or {}).get("address") or f"/{r['slug']}/"
         while time.time() - t2 < int(os.environ.get("QA_HTTP_WAIT", "90")):
-            hc, body = p.fetch_app(r["slug"], path)
+            hc, body = p.fetch_app(r["address"], path)
             if hc and hc < 500 and not (want and want not in body and hc == 200 and time.time() - t2 < 60):
                 break
             time.sleep(5)

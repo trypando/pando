@@ -62,7 +62,8 @@ def compose(args, *cmd, check=True, capture=False):
 def request(method, path, body=None, timeout=30, raw=None, content_type=None):
     data = json.dumps(body).encode() if body is not None else raw
     headers = {"Content-Type": content_type or "application/json"} if data else {}
-    req = urllib.request.Request(BASE + path, data=data, method=method, headers=headers)
+    url = path if path.startswith("http") else BASE + path
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with opener.open(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", "replace")
@@ -71,6 +72,18 @@ def request(method, path, body=None, timeout=30, raw=None, content_type=None):
         return e.code, e.read().decode("utf-8", "replace")
     except OSError as e:
         return 0, str(e)
+
+
+def app_url(address):
+    """Where an app is reached, from the address the API gives for it. An app
+    on a port or a hostname is served there only, not at /<slug> on Pando's
+    own address (R-166)."""
+    address = address or ""
+    if address.startswith("//"):  # port mode: on the host Pando was reached on
+        return "http:" + address
+    if address.startswith("/"):  # path mode
+        return BASE + address
+    return address
 
 
 def api(method, path, body=None):
@@ -242,13 +255,13 @@ def deploy(args, name, source, expect, files=None, restart=False):
     detect(app_id, name)
     run_deploy(app_id, name)
 
-    slug = app.get("slug") or api("GET", f"/apps/{app_id}")[1].get("slug")
+    url = app_url(api("GET", f"/apps/{app_id}")[1].get("address"))
 
     def reachable():
-        r = request("GET", f"/{slug}/")
+        r = request("GET", url)
         return r[0] == 200 and expect in r[1], r
     body = wait(f"{name} was not reachable through Pando", reachable, 120)
-    step(f"{name} reachable through Pando's proxy at /{slug}/")
+    step(f"{name} reachable through Pando's proxy at {url}")
     print(body[1].splitlines()[0] if body[1] else "")
 
     if restart:

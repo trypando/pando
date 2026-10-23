@@ -732,6 +732,9 @@ func TestProxyRequestsExpectWhatPandoShouldAnswer(t *testing.T) {
 	port := f.Listener.Addr().(*net.TCPAddr).Port
 	f.Real["load-real-000"] = fakeReal{Members: map[string]bool{"member": true}}
 	f.Real["load-real-001"] = fakeReal{Anonymous: true}
+	// A real app with no port is on a path, and only it is reached by slug
+	// (R-166).
+	f.Real["load-real-002"] = fakeReal{Members: map[string]bool{"member": true}}
 	f.ByPort = "load-real-000"
 	ws := &workingSet{
 		Seeded: []wsApp{
@@ -741,6 +744,7 @@ func TestProxyRequestsExpectWhatPandoShouldAnswer(t *testing.T) {
 		Real: []wsReal{
 			{ID: "app_r0", Slug: "load-real-000", Port: port, Members: map[string]bool{"member": true}},
 			{ID: "app_r1", Slug: "load-real-001", Anonymous: true, Members: map[string]bool{}},
+			{ID: "app_r2", Slug: "load-real-002", Members: map[string]bool{"member": true}},
 		},
 	}
 	r := runnerFor(f, ws)

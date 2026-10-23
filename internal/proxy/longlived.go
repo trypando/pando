@@ -17,18 +17,30 @@ import (
 	"github.com/trypando/pando/internal/log"
 )
 
-// reauthorizing wraps a ResponseWriter so that a hijacked connection — a
-// websocket, almost always — is re-authorized for as long as it stays open.
+// reauthorizing wraps a ResponseWriter so that a request that stays open is
+// re-authorized for as long as it does: a hijacked connection — a websocket,
+// almost always — and a response that streams, such as server-sent events or a
+// long download.
 //
 // O-13. The per-request CheckData that enforces access never fires again once a
-// connection is upgraded, so without this a websocket would be the one way to
-// hold access indefinitely after revocation. That is precisely the property an
-// attacker looks for.
+// request is under way, so without this a websocket or an event stream would be
+// a way to hold access indefinitely after revocation. That is precisely the
+// property an attacker looks for.
 type reauthorizing struct {
 	http.ResponseWriter
 
 	proxy *Proxy
 	appID string
+
+	// cancel ends the request on its way to the app, which ends a response
+	// that is still streaming. Called when a re-check fails.
+	cancel context.CancelFunc
+
+	// mu guards timer and hijacked: the timer fires on its own goroutine.
+	mu       sync.Mutex
+	timer    *time.Timer
+	hijacked bool
+	revoked  bool
 
 	// request is the request that opened the connection. Its credentials —
 	// the session cookie or bearer token, and any passcode unlock — are
@@ -50,6 +62,9 @@ func (w *reauthorizing) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	// From here the connection's own loop re-authorizes it, and closes it
+	// with a frame a client can read; the request's timer stands down.
+	w.stopStreaming(true)
 
 	// Detached from the request context: the request is over the moment the
 	// connection is hijacked, and a canceled context would end the loop
@@ -62,18 +77,10 @@ func (w *reauthorizing) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return watched, rw, nil
 }
 
-// watch re-authorizes the connection on the assertion lifetime and closes it
-// on failure, until it closes some other way.
-//
-// The interval is assertion.Lifetime itself, not a copy of its value: the
-// revocation window, the assertion's life and this timer are one number, and
-// referencing the constant is what keeps them from drifting apart.
+// watch re-authorizes the connection every interval and closes it on failure,
+// until it closes some other way.
 func (w *reauthorizing) watch(ctx context.Context, r *http.Request, conn *closeWatch) {
-	every := w.proxy.reauthEvery
-	if every <= 0 {
-		every = assertion.Lifetime
-	}
-	ticker := time.NewTicker(every)
+	ticker := time.NewTicker(w.proxy.interval())
 	defer ticker.Stop()
 
 	for {
@@ -104,6 +111,101 @@ func (w *reauthorizing) watch(ctx context.Context, r *http.Request, conn *closeW
 		_ = conn.Close()
 		return
 	}
+}
+
+// interval is how often an open request is re-authorized: assertion.Lifetime
+// itself, not a copy of its value, so the revocation window, the assertion's
+// life and this timer stay one number.
+func (p *Proxy) interval() time.Duration {
+	if p.reauthEvery > 0 {
+		return p.reauthEvery
+	}
+	return assertion.Lifetime
+}
+
+// startStreaming re-authorizes the request every interval while it is being
+// served, and cancels it when a check fails (M5 of the 2026-10 assessment; R-048,
+// R-049). A request answered within one interval — nearly all of them — never
+// runs a check: the timer is stopped when the request ends.
+//
+// A timer rather than a goroutine per request, because this is on every
+// request's path and nearly every timer is stopped unfired.
+func (w *reauthorizing) startStreaming() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.timer = time.AfterFunc(w.proxy.interval(), w.recheck)
+}
+
+// stopStreaming stops the timer, for good. hijacked says the connection's own
+// loop has taken over.
+func (w *reauthorizing) stopStreaming(hijacked bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if hijacked {
+		w.hijacked = true
+	}
+	if w.timer != nil {
+		w.timer.Stop()
+		w.timer = nil
+	}
+}
+
+// recheck authenticates the request's credentials again and asks CheckData,
+// and on a refusal cancels the request: the stream ends where it is, and the
+// client's next request meets the proxy's front door like any other.
+func (w *reauthorizing) recheck() {
+	w.mu.Lock()
+	if w.timer == nil || w.hijacked {
+		w.mu.Unlock()
+		return
+	}
+	w.mu.Unlock()
+
+	ctx := w.request.Context()
+	principal, err := w.proxy.reauthenticate(w.request)
+	if err == nil {
+		err = w.proxy.Authz.CheckData(ctx, principal, w.appID)
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.timer == nil || w.hijacked {
+		return
+	}
+	if err == nil {
+		w.timer.Reset(w.proxy.interval())
+		return
+	}
+	w.timer = nil
+	w.revoked = true
+	log.From(ctx).Info("ending a streaming response after revocation",
+		zap.String("app_id", w.appID),
+		zap.String("principal_id", principal.ID))
+	w.cancel()
+}
+
+// wasRevoked reports whether a re-check refused the request and ended it.
+func (w *reauthorizing) wasRevoked() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.revoked
+}
+
+// WriteHeader passes a status on, and for an informational response (103 Early
+// Hints, 100 Continue) only its Link headers. ReverseProxy copies a 1xx
+// response's headers straight to the client, past ModifyResponse, so a
+// Set-Cookie on one would reach the browser without stripSetCookies seeing it
+// (R-173). Link is the one header a 1xx is sent for.
+func (w *reauthorizing) WriteHeader(code int) {
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		h := w.Header()
+		links := h.Values("Link")
+		clear(h)
+		for _, v := range links {
+			h.Add("Link", v)
+		}
+	}
+	w.ResponseWriter.WriteHeader(code)
 }
 
 // reauthenticate resolves a long-lived connection's credentials again, the

@@ -277,6 +277,8 @@ func TestAFailedUseRecordDoesNotBlockTheApp(t *testing.T) {
 // visit is not another's.
 func TestTheVisitCookieIsScopedToThePathPrefix(t *testing.T) {
 	p, _, _, _ := useProxy(t, activeUser("usr_alice"), func(s *store) { s.data[appID] = []string{"usr_alice"} })
+	// A path-mode app: only one is served at a path on Pando's address (R-166).
+	p.Resolver.(*resolver).spec.Routing = spec.Routing{Mode: spec.RoutingPath}
 	r := httptest.NewRequest(http.MethodGet, "http://pando.test/notes/dashboard", nil)
 	resp := serve(p, r)
 	require.Equal(t, http.StatusOK, resp.StatusCode)

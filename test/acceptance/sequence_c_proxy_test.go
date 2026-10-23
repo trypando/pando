@@ -21,6 +21,8 @@ import (
 
 // echoSpec deploys an image that echoes the request headers back, so the test
 // can see exactly what the app received rather than what Pando believes it sent.
+// The test reaches it on its port (R-166), so port is in the range Compose
+// publishes (9000-9019), at the top, clear of ports Pando hands out itself.
 func echoSpec(port int) string {
 	return fmt.Sprintf(`{
 		"schema_version": 1,
@@ -35,7 +37,8 @@ func echoSpec(port int) string {
 	}`, port)
 }
 
-// deployEcho brings up an echo app and returns its ID and slug.
+// deployEcho brings up an echo app and returns its ID and the URL it is
+// reached at.
 func deployEcho(t *testing.T, c *client, name string, port int) (string, string) {
 	t.Helper()
 
@@ -48,19 +51,17 @@ func deployEcho(t *testing.T, c *client, name string, port int) (string, string)
 	require.Equal(t, "succeeded", final["status"],
 		"deploy failed: %v\n%s", final["error_detail"], c.deploymentLogs(t, app, dep["id"].(string)))
 
-	slug := c.get(t, "/apps/"+app)["slug"].(string)
-	return app, slug
+	return app, c.appURL(t, app)
 }
 
 // throughProxy makes a request to an app through Pando's proxy and returns what
 // the app saw. The proxy is mounted as the fallback route, so any path that is
 // not one of Pando's own reaches an app — there is no separate proxy port to
 // address, which is the point.
-func throughProxy(t *testing.T, c *client, slug, path string, headers map[string]string) (map[string]any, int) {
+func throughProxy(t *testing.T, c *client, at, path string, headers map[string]string) (map[string]any, int) {
 	t.Helper()
 
-	base := strings.TrimSuffix(baseURL(), "/api/v1")
-	req, err := http.NewRequest(http.MethodGet, base+"/"+slug+path, nil)
+	req, err := http.NewRequest(http.MethodGet, at+path, nil)
 	require.NoError(t, err)
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -110,9 +111,9 @@ func echoedHeaders(t *testing.T, echoed map[string]any) map[string]string {
 // is for.
 func TestR053_ForgedHeadersReachTheAppReplaced(t *testing.T) {
 	c := login(t)
-	_, slug := deployEcho(t, c, "seq-c-forge-"+stamp(), 9301)
+	_, at := deployEcho(t, c, "seq-c-forge-"+stamp(), 9014)
 
-	echoed, status := throughProxy(t, c, slug, "/", map[string]string{
+	echoed, status := throughProxy(t, c, at, "/", map[string]string{
 		"X-Pando-User":          "admin@corp.com",
 		"x-pando-email":         "admin@corp.com",
 		"X-PANDO-GROUPS":        "admins,superusers",
@@ -153,9 +154,9 @@ func TestR053_ForgedHeadersReachTheAppReplaced(t *testing.T) {
 // trusting anything Pando says.
 func TestR054_TheAppReceivesAVerifiableAssertion(t *testing.T) {
 	c := login(t)
-	appID, slug := deployEcho(t, c, "seq-c-assert-"+stamp(), 9302)
+	appID, at := deployEcho(t, c, "seq-c-assert-"+stamp(), 9015)
 
-	echoed, status := throughProxy(t, c, slug, "/", nil)
+	echoed, status := throughProxy(t, c, at, "/", nil)
 	require.Equal(t, http.StatusOK, status, "%v", echoed)
 
 	token := echoedHeaders(t, echoed)["x-pando-assertion"]
@@ -188,10 +189,10 @@ func TestR054_TheAppReceivesAVerifiableAssertion(t *testing.T) {
 // with it, that the anonymous path is not a bypass (R-023).
 func TestR056_AnonymousReachesAPublicAppWithTheConstantSubject(t *testing.T) {
 	c := login(t)
-	appID, slug := deployEcho(t, c, "seq-c-anon-"+stamp(), 9303)
+	appID, at := deployEcho(t, c, "seq-c-anon-"+stamp(), 9016)
 
 	// Not shared yet: an anonymous caller is sent to sign in.
-	echoed, status := throughProxy(t, nil, slug, "/", nil)
+	echoed, status := throughProxy(t, nil, at, "/", nil)
 	require.Equal(t, http.StatusFound, status,
 		"an anonymous caller without access is redirected, not served: %v", echoed)
 
@@ -199,7 +200,7 @@ func TestR056_AnonymousReachesAPublicAppWithTheConstantSubject(t *testing.T) {
 	c.postRaw(t, fmt.Sprintf("/apps/%s/grants", appID),
 		`{"plane":"data","principal_kind":"anonymous"}`)
 
-	echoed, status = throughProxy(t, nil, slug, "/", nil)
+	echoed, status = throughProxy(t, nil, at, "/", nil)
 	require.Equal(t, http.StatusOK, status, "%v", echoed)
 
 	token := echoedHeaders(t, echoed)["x-pando-assertion"]
@@ -216,7 +217,7 @@ func TestR056_AnonymousReachesAPublicAppWithTheConstantSubject(t *testing.T) {
 // to every app's data.
 func TestR029_AnOperatorIsDeniedUseThroughTheProxy(t *testing.T) {
 	owner := login(t)
-	appID, slug := deployEcho(t, owner, "seq-c-planes-"+stamp(), 9304)
+	appID, at := deployEcho(t, owner, "seq-c-planes-"+stamp(), 9017)
 
 	// A second user, granted the operator role on the control plane only.
 	bob := owner.createUser(t, "bob-"+stamp())
@@ -230,27 +231,27 @@ func TestR029_AnOperatorIsDeniedUseThroughTheProxy(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, body)
 
 	// And is denied use of it.
-	echoed, proxyStatus := throughProxy(t, bobClient, slug, "/", nil)
+	echoed, proxyStatus := throughProxy(t, bobClient, at, "/", nil)
 	require.Equal(t, http.StatusForbidden, proxyStatus,
 		"an operator with no data grant must be denied USE of the app (R-029): %v", echoed)
 }
 
-// TestR167_PathPrefixIsStrippedAndDeclared asserts R-167: the app sees a clean
-// path and is told what was removed, so it can build correct links.
-func TestR167_PathPrefixIsStrippedAndDeclared(t *testing.T) {
+// TestR166_AnAppOnAPortIsNotServedOnPandosAddress asserts R-166 end to end:
+// an app on its own port is served there, with its path as sent, and not at
+// /<slug> on Pando's own address, where its pages would share an origin with
+// the console.
+func TestR166_AnAppOnAPortIsNotServedOnPandosAddress(t *testing.T) {
 	c := login(t)
-	_, slug := deployEcho(t, c, "seq-c-path-"+stamp(), 9305)
+	appID, at := deployEcho(t, c, "seq-c-own-"+stamp(), 9018)
+	slug := c.get(t, "/apps/"+appID)["slug"].(string)
 
-	echoed, status := throughProxy(t, c, slug, "/dashboard/settings", nil)
+	echoed, status := throughProxy(t, c, at, "/dashboard/settings", nil)
 	require.Equal(t, http.StatusOK, status, "%v", echoed)
-
 	path, _ := echoed["path"].(string)
-	require.Equal(t, "/dashboard/settings", path,
-		"the app sees its own path, with Pando's routing prefix removed")
+	require.Equal(t, "/dashboard/settings", path, "nothing is stripped from a path on the app's own port")
 
-	headers := echoedHeaders(t, echoed)
-	require.Equal(t, "/"+slug, headers["x-forwarded-prefix"],
-		"and is told what was stripped")
+	_, status = throughProxy(t, c, strings.TrimSuffix(baseURL(), "/api/v1")+"/"+slug, "/", nil)
+	require.Equal(t, http.StatusNotFound, status, "the app is not served at /%s on Pando's address", slug)
 }
 
 // TestTheProxyIsTheOnlyWayIn asserts R-023 structurally: the workload publishes
@@ -258,7 +259,7 @@ func TestR167_PathPrefixIsStrippedAndDeclared(t *testing.T) {
 // enforcement.
 func TestTheProxyIsTheOnlyWayIn(t *testing.T) {
 	c := login(t)
-	appID, _ := deployEcho(t, c, "seq-c-bypass-"+stamp(), 9306)
+	appID, _ := deployEcho(t, c, "seq-c-bypass-"+stamp(), 9019)
 
 	ports := inspect(t, fmt.Sprintf("pando-%s-web", appID), `{{json .NetworkSettings.Ports}}`)
 	require.NotContains(t, ports, "HostPort",

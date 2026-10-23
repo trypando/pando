@@ -349,3 +349,65 @@ func TestR172_AnUnknownHostnameIsNotServedTheAPI(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "could not tell whether this address belongs to an app")
 	require.Empty(t, reached)
 }
+
+// TestR166_TheConsoleAndAPIAnswerOnlyOnPandosOwnAddress asserts that a
+// hostname that is neither Pando's nor an app's gets no console and no API.
+// With wildcard DNS every name under a domain reaches Pando, an app's former
+// hostname among them, and a script the app left registered there would
+// otherwise share an origin with the console. Health checks and the public
+// keys answer on any name; an IP address, localhost and a dotless name are how
+// Pando is reached from nearby and are answered as before.
+func TestR166_TheConsoleAndAPIAnswerOnlyOnPandosOwnAddress(t *testing.T) {
+	var reached string
+	console := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = "console" })
+	appProxy := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = "proxy" })
+	external, err := url.Parse("https://pando.example.com")
+	require.NoError(t, err)
+	server := &httpapi.Server{
+		Logger: zap.NewNop(), DB: fakeDB{},
+		Console: console, AppProxy: appProxy, AppHosts: appHosts{host: "notes.example.com"},
+		ExternalURL:    external,
+		PandoHostnames: func(context.Context) []string { return []string{"console.example.com."} },
+	}
+	handler := server.Routes()
+
+	get := func(host, path string) *httptest.ResponseRecorder {
+		reached = ""
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	for _, path := range []string{"/", "/apps", "/api/v1/me", "/api/v1/config"} {
+		rec := get("old-notes.example.com", path)
+		require.Equal(t, http.StatusNotFound, rec.Code, path)
+		require.Empty(t, reached, path)
+		require.Contains(t, rec.Body.String(), "pando.example.com", path)
+	}
+	for _, path := range []string{"/healthz", "/.well-known/jwks.json"} {
+		rec := get("Old-Notes.Example.com:443", path)
+		require.NotEqual(t, http.StatusNotFound, rec.Code, path)
+	}
+	// Under /.pando it is treated as an app's hostname: signing in, nothing
+	// else.
+	rec := get("old-notes.example.com", "/.pando/api/v1/apps")
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), "answers only signing in here")
+
+	for _, host := range []string{"pando.example.com", "PANDO.example.com:443", "console.example.com",
+		"127.0.0.1:8080", "[::1]:8080", "localhost", "pando.localhost", "pando"} {
+		get(host, "/")
+		require.Equal(t, "console", reached, host)
+	}
+	get("notes.example.com", "/")
+	require.Equal(t, "proxy", reached)
+
+	// An install that has not said where it is cannot tell its own address
+	// from another, and answers every name as before.
+	server.ExternalURL = nil
+	handler = server.Routes()
+	get("old-notes.example.com", "/")
+	require.Equal(t, "console", reached)
+}

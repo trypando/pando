@@ -231,7 +231,8 @@ func setup() error {
 		publish  []string
 	}
 	for _, d := range []dind{
-		{cControl, ipControl, false, []string{"127.0.0.1::8080", "127.0.0.1::8081"}},
+		{cControl, ipControl, false, []string{"127.0.0.1::8080", "127.0.0.1::8081",
+			"127.0.0.1::" + appPorts, "127.0.0.1::" + appPorts2}},
 		{cHostA, ipHostA, true, []string{"127.0.0.1::7443"}},
 		{cHostB, ipHostB, true, []string{"127.0.0.1::7443"}},
 	} {
@@ -318,7 +319,7 @@ func setup() error {
 	// Two replicas sharing /var/lib/pando, the supported topology on the
 	// control host (O-47). The first migrates and claims the install; the
 	// second starts once it has.
-	if err := startReplica(cPando, "8080"); err != nil {
+	if err := startReplica(cPando, "8080", appPorts); err != nil {
 		return err
 	}
 	if err := findBases(); err != nil {
@@ -328,7 +329,7 @@ func setup() error {
 		return err
 	}
 	claim()
-	if err := startReplica(cPando2, "8081"); err != nil {
+	if err := startReplica(cPando2, "8081", appPorts2); err != nil {
 		return err
 	}
 	if err := awaitReady(base2, 3*time.Minute); err != nil {
@@ -337,9 +338,21 @@ func setup() error {
 	return awaitRuntime(5 * time.Minute)
 }
 
-func startReplica(name, port string) error {
+// appPorts are the port-mode apps' ports on the first replica, published on
+// the control host as themselves; appPorts2 are the same ports on the second
+// replica, published 100 higher. An app on a port is reached there and not at
+// /<slug> on Pando's address (R-166), so the test reaches each replica's
+// listener for it (appAt).
+const (
+	appPorts      = "9100-9139"
+	appPorts2     = "9200-9239"
+	replica2Shift = 100
+)
+
+func startReplica(name, port, apps string) error {
 	_, err := inner(cControl, "run", "-d", "--name", name, "--restart", "unless-stopped",
 		"-p", port+":8080",
+		"-p", apps+":"+appPorts,
 		"-v", "/var/run/docker.sock:/var/run/docker.sock",
 		"-v", "mh-test-pando-data:/var/lib/pando",
 		"-v", "/mh-test:/etc/mh-test:ro",

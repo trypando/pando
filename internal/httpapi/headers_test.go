@@ -37,7 +37,9 @@ func TestR173_PandosOwnPagesCannotBeFramedByAnApp(t *testing.T) {
 
 	for _, path := range []string{"/", "/healthz", "/.pando/login", "/api/v1/me"} {
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "pando.example.com"
+		handler.ServeHTTP(rec, req)
 		h := rec.Header()
 		require.Equal(t, "DENY", h.Get("X-Frame-Options"), path)
 		require.Contains(t, h.Get("Content-Security-Policy"), "frame-ancestors 'none'", path)

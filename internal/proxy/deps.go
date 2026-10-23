@@ -38,7 +38,8 @@ func (r *StateResolver) ByPath(ctx context.Context, path string) (state.App, *sp
 	return r.apps.ByPath(ctx, path)
 }
 
-// BySlug resolves an app by its slug, for path mode.
+// BySlug resolves a path-mode app by its slug. An app on its own hostname or
+// port is not found this way (R-166, state.Apps.ByRouting).
 func (r *StateResolver) BySlug(ctx context.Context, slug string) (state.App, *spec.AppSpec, bool, error) {
 	return r.Cache.resolve(ctx, appKey("slug", slug), func(ctx context.Context) (state.App, *spec.AppSpec, bool, error) {
 		return r.apps.ByRouting(ctx, "slug", slug)

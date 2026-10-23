@@ -166,3 +166,43 @@ func TestR161_MigrationFillsTheAddressPortFromPinnedSpecs(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, ported.ID, app.ID)
 }
+
+// TestR166_ASlugFindsOnlyAPathModeApp asserts the slug lookup the proxy falls
+// back to on Pando's own address: it finds an app on a path, and never one on
+// a hostname or a port, which are served there alone. An app moved between
+// them follows its pinned spec.
+func TestR166_ASlugFindsOnlyAPathModeApp(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	alice := seedUser(t, db, "alice")
+	apps := state.NewApps(db)
+
+	mk := func(slug string) string {
+		a, err := apps.Create(ctx, slug, slug, alice.ID, alice.ID, spec.Source{Type: spec.SourceGit, URL: "https://example.test/" + slug})
+		require.NoError(t, err)
+		return a.ID
+	}
+	onPath, onHost, onPort := mk("pathed-s1"), mk("hosted-s2"), mk("ported-s3")
+	require.NoError(t, pinRouting(t, apps, onPath, alice.ID,
+		spec.Routing{AdapterRef: "rte_cf", Mode: spec.RoutingPath, PathPrefix: "/team/pathed"}))
+	require.NoError(t, pinRouting(t, apps, onHost, alice.ID,
+		spec.Routing{AdapterRef: "rte_cf", Mode: spec.RoutingSubdomain, Hostname: "hosted-s2.example.com"}))
+	require.NoError(t, pinRouting(t, apps, onPort, alice.ID,
+		spec.Routing{AdapterRef: "rte_loopback", Mode: spec.RoutingPort, Port: 41011}))
+
+	app, _, found, err := apps.ByRouting(ctx, "slug", "pathed-s1")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, onPath, app.ID)
+	for _, slug := range []string{"hosted-s2", "ported-s3"} {
+		_, _, found, err := apps.ByRouting(ctx, "slug", slug)
+		require.NoError(t, err)
+		require.False(t, found, slug)
+	}
+
+	require.NoError(t, pinRouting(t, apps, onHost, alice.ID, spec.Routing{AdapterRef: "rte_cf", Mode: spec.RoutingPath, PathPrefix: "/hosted-s2"}))
+	_, _, found, err = apps.ByRouting(ctx, "slug", "hosted-s2")
+	require.NoError(t, err)
+	require.True(t, found, "moved to a path, it is found by its slug")
+}

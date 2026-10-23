@@ -116,8 +116,13 @@ func (r *resolver) ByPath(_ context.Context, path string) (state.App, *spec.AppS
 	return r.app, r.spec, prefix, true, nil
 }
 
+// BySlug matches the way the real query does: a path-mode app's slug only, so
+// an app on its own hostname or port is never found at /<slug> (R-166).
 func (r *resolver) BySlug(_ context.Context, slug string) (state.App, *spec.AppSpec, bool, error) {
 	if r.app.ID == "" || r.app.Slug != slug {
+		return state.App{}, nil, false, nil
+	}
+	if r.spec != nil && (r.spec.Routing.Mode == spec.RoutingSubdomain || r.spec.Routing.Mode == spec.RoutingPort) {
 		return state.App{}, nil, false, nil
 	}
 	return r.app, r.spec, true, nil
@@ -575,9 +580,11 @@ func TestR167_ACustomPathIsServedAndStripped(t *testing.T) {
 	require.Equal(t, "/x", got.path)
 }
 
-// TestAnAppThatIsNotRunningIs503 asserts step 2 of the request path.
+// TestAnAppThatIsNotRunningIs503 asserts step 2 of the request path, for
+// someone allowed to use the app.
 func TestAnAppThatIsNotRunningIs503(t *testing.T) {
 	s := newStore()
+	s.data[appID] = []string{"usr_alice"}
 	minter, err := assertion.NewMinter("https://pando.test", nil)
 	require.NoError(t, err)
 
