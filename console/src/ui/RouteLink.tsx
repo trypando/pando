@@ -11,6 +11,7 @@ import { isPlainClick } from '@design';
 export function RouteLink({
   href,
   onFollow,
+  style,
   ...rest
 }: AnchorHTMLAttributes<HTMLAnchorElement> & {
   href: string;
@@ -21,6 +22,9 @@ export function RouteLink({
     <a
       href={href}
       {...rest}
+      // Navigation, not a link in running text: the stylesheet's underline
+      // for links in prose would run under the logo and the launcher's Admin.
+      style={{ textDecoration: 'none', ...style }}
       onClick={(e) => {
         if (!isPlainClick(e)) return;
         e.preventDefault();

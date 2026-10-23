@@ -191,7 +191,6 @@ export function Launcher({
               style={{
                 font: 'var(--type-body-ui)',
                 color: 'var(--ink-secondary)',
-                textDecoration: 'none',
               }}
             >
               Admin

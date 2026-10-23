@@ -60,6 +60,7 @@ describe('RouteLink', () => {
     );
     const a = link('Admin');
     expect(a.getAttribute('href')).toBe('/admin');
+    expect(a.style.textDecoration).toBe('none');
 
     expect(click(a)).toBe(false);
     expect(onFollow).toHaveBeenCalledTimes(1);
