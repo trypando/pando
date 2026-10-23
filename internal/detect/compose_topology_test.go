@@ -146,8 +146,17 @@ services:
       - ./app.conf:/sys/fs/app.conf
       - ./conf:/dev/conf
       - ./app.conf:/etc/app.conf
+    secrets:
+      - source: key
+        target: /proc/key
+  cache:
+    image: redis
+    container_name: WEB
+secrets:
+  key:
+    file: ./key.txt
 `
-	draft, err := detect.ImportCompose(memSource{"compose.yaml": file, "app.conf": "a = 1\n", "conf/x.conf": "b = 2\n"}, "compose.yaml")
+	draft, err := detect.ImportCompose(memSource{"compose.yaml": file, "app.conf": "a = 1\n", "conf/x.conf": "b = 2\n", "key.txt": "k\n"}, "compose.yaml")
 	require.NoError(t, err)
 	var paths []string
 	for _, f := range workloadsByName(draft)["web"].Files {
@@ -155,4 +164,6 @@ services:
 	}
 	require.Equal(t, []string{"/etc/app.conf"}, paths)
 	require.True(t, hasWarning(draft.Warnings, spec.WarnComposeConstructRewritten, "Pando does not place files there"))
+	require.True(t, hasWarning(draft.Warnings, spec.WarnComposeConstructRewritten, "so this secret was left out"))
+	require.Empty(t, workloadsByName(draft)["cache"].Aliases, "a name another service has, in any case, is not answered to")
 }

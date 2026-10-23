@@ -823,12 +823,23 @@ func (c *composeImport) hostnames(service string) []string {
 func (c *composeImport) usableAliases(service string, names []string) []string {
 	var out []string
 	for _, n := range names {
-		_, other := c.file.Services[n]
+		other := c.isServiceName(n)
 		if spec.AliasProblem(n) == "" && (n == service || !other) {
 			out = append(out, n)
 		}
 	}
 	return out
+}
+
+// isServiceName reports whether name is a service's name in this file, in
+// any case: a network name resolves without regard to case.
+func (c *composeImport) isServiceName(name string) bool {
+	for svc := range c.file.Services {
+		if strings.EqualFold(svc, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func pointsAtAny(value string, hosts []string) bool {
@@ -907,7 +918,7 @@ func (c *composeImport) workload(name string, only bool) spec.Workload {
 	// `appseed_app:5005`, a DATABASE_URL naming the database's container
 	// (issue #90). Only inside the app's own network, so nothing collides.
 	if s.ContainerName != "" {
-		_, taken := c.file.Services[s.ContainerName]
+		taken := c.isServiceName(s.ContainerName)
 		// A name Pando keeps for its own containers, or one that is not a
 		// network name, is not answered to (R-025); the service keeps its
 		// own name.
@@ -1176,6 +1187,26 @@ func (c *composeImport) underKernelPath(name string, m mount) bool {
 	return true
 }
 
+// carriedDir is the files a directory mount carries in the spec.
+func (c *composeImport) carriedDir(name string, m mount) []spec.File {
+	if c.underKernelPath(name, m) {
+		return nil
+	}
+	var files []spec.File
+	for _, rel := range c.repoFiles(m.hostPath) {
+		content, _ := c.read(path.Join(m.hostPath, rel))
+		files = append(files, spec.File{
+			Path: path.Join(m.containerPath, rel), Content: content, Mode: fileMode(content),
+		})
+	}
+	c.rewrote(name, "volume "+m.raw,
+		"Pando copied the files in "+m.hostPath+" out of the repository and carries them in "+
+			"this app's configuration, placing them under "+m.containerPath+" each time the "+
+			"service starts. It is a copy taken now: editing them in the repository changes "+
+			"nothing until this app is read again.")
+	return files
+}
+
 func (c *composeImport) files(name string, s composeService) []spec.File {
 	var files []spec.File
 
@@ -1188,20 +1219,7 @@ func (c *composeImport) files(name string, s composeService) []spec.File {
 					"deploys a built image, and a deploy is how a change reaches this app.")
 			continue
 		case dirCarried:
-			if c.underKernelPath(name, m) {
-				continue
-			}
-			for _, rel := range c.repoFiles(m.hostPath) {
-				content, _ := c.read(path.Join(m.hostPath, rel))
-				files = append(files, spec.File{
-					Path: path.Join(m.containerPath, rel), Content: content, Mode: fileMode(content),
-				})
-			}
-			c.rewrote(name, "volume "+m.raw,
-				"Pando copied the files in "+m.hostPath+" out of the repository and carries them in "+
-					"this app's configuration, placing them under "+m.containerPath+" each time the "+
-					"service starts. It is a copy taken now: editing them in the repository changes "+
-					"nothing until this app is read again.")
+			files = append(files, c.carriedDir(name, m)...)
 			continue
 		}
 		if m.hostPath == "" || !c.isFile(m.hostPath) {
@@ -1277,6 +1295,11 @@ func (c *composeImport) secretFiles(service string, s composeService) []spec.Fil
 		}
 		content, ok := c.read(secret.File)
 		if !ok {
+			continue
+		}
+		if problem := spec.MountPathProblem(target); problem != "" {
+			c.rewrote(service, "secrets: "+source,
+				"This places the secret at "+target+", which "+problem+". Pando does not place files there, so this secret was left out.")
 			continue
 		}
 		files = append(files, spec.File{Path: path.Clean(target), Content: content})
