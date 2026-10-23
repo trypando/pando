@@ -449,7 +449,7 @@ function scoreFinding(security: Report): Finding | undefined {
   if (security.awaiting_image) return { key: 'Score', value: AWAITING_IMAGE, text: true };
   const score = security.scan?.score;
   if (score === undefined || score === null) return undefined;
-  return { key: 'Score', value: `${score} / 100` };
+  return { key: 'Score', value: String(score) };
 }
 
 /**

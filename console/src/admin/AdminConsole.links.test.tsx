@@ -37,8 +37,17 @@ describe('console links', () => {
       [me, [['apps', 'app_1'], { id: 'app_1', name: 'shop', status: 'running', pinned_spec_id: 'spec_1', verbs: [] }]],
     );
     expect(hrefs(html)).toEqual(
-      expect.arrayContaining(['/admin/apps/app_1/overview', '/admin/apps/app_1/sharing', '/admin/apps/app_1/detection']),
+      expect.arrayContaining([
+        '/admin/apps/app_1/overview',
+        '/admin/apps/app_1/events',
+        '/admin/apps/app_1/sharing',
+        '/admin/apps/app_1/settings',
+      ]),
     );
+    // Logs, Terminal and Configuration are no longer tabs.
+    for (const gone of ['logs', 'terminal', 'detection', 'resources']) {
+      expect(hrefs(html)).not.toContain(`/admin/apps/app_1/${gone}`);
+    }
   });
 
   it("gives the launcher's Admin its address", () => {

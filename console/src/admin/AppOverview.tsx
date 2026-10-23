@@ -1,9 +1,8 @@
 // One app: what it is, where it is, and the deploy that put it there.
 //
-// The log of that deploy is here because this is the screen somebody watches
-// while it happens. Every earlier deploy, and the app's own output, are on the
-// Logs tab — both are histories, and a history on the screen you deploy from is
-// a screen that scrolls forever.
+// Every deploy's log, and the app's own output, are in the side panel
+// (AppPanel), opened from here — both are histories, and a history on the
+// screen you deploy from is a screen that scrolls forever.
 
 import { useQuery } from '@tanstack/react-query';
 import { Banner, Button, Card, StatusIndicator, Tag } from '@design';
@@ -25,6 +24,7 @@ import { AppImage } from './AppImage';
 import { AppName } from './AppName';
 import { AppAddress } from './AppAddress';
 import { AppVerb, useCan } from './verbs';
+import { useOpenPanel } from './AppPanel';
 import { ApprovalRequest } from './ApprovalRequest';
 import { isAwaiting } from './approval';
 import type { ApprovalDeployment } from './approval';
@@ -44,14 +44,17 @@ export function AppOverview({
   onGo,
 }: {
   app: App & { last_backup?: BackupAttempt };
-  /** Where a warning's fix lives: a tab, and the section on it. */
+  /** Where a warning's fix lives: a tab, and the section on it. Output and
+   *  deploy logs open in the side panel instead (useOpenPanel). */
   onGo: (tab: string, focus?: string) => void;
 }) {
   // A fix is offered only to somebody who can make it: "Add storage" in front
   // of a person who may only look at the app is a control that is refused.
   // Every fix on this screen is a spec edit.
   const canEdit = useCan(AppVerb.SpecEdit);
-  const canReadLogs = useCan(AppVerb.LogsRead);
+  // Output and deployments both need app.logs.read; the opener is absent
+  // without it, and so is every control that would use it.
+  const openPanel = useOpenPanel('output');
   const narrow = useNarrow();
 
   const deployments = useQuery({
@@ -117,7 +120,7 @@ export function AppOverview({
   // Why an app is degraded, when it is made of several parts. The app's own
   // state is one word for all of them, and the part that is failing is the
   // thing somebody needs.
-  const parts = <Parts app={app} onLogs={canReadLogs ? (workload) => onGo('logs', workload) : undefined} />;
+  const parts = <Parts app={app} onLogs={openPanel ? (workload) => openPanel({ view: 'output', workload }) : undefined} />;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
@@ -125,12 +128,12 @@ export function AppOverview({
         // The one place red belongs on this screen. A banner, not stacked with
         // anything else — Banner's own rule is never to stack them. "Fix
         // what's wrong" needs a way to find out what is wrong, and that is the
-        // deploy log and the app's own output, both on Logs.
+        // app's own output, in the side panel.
         <Banner
           tone="failed"
           action={
-            canReadLogs && (
-              <Button variant="secondary" onClick={() => onGo('logs')}>
+            openPanel && (
+              <Button variant="secondary" onClick={() => openPanel({ view: 'output' })}>
                 Open logs
               </Button>
             )
@@ -218,8 +221,8 @@ export function AppOverview({
                         : `${deployLabel(latest.status, latest.result_state)} ${relative(latest.finished_at ?? latest.started_at)}`
                     }
                   />
-                  {canReadLogs && (
-                    <Button variant="secondary" onClick={() => onGo('logs')}>
+                  {openPanel && (
+                    <Button variant="secondary" onClick={() => openPanel({ view: 'deployments', deployment: latest.id })}>
                       Open logs
                     </Button>
                   )}
@@ -271,7 +274,7 @@ export function AppOverview({
             canEdit && (
               <Button
                 variant="secondary"
-                onClick={() => onGo('resources', 'variables')}
+                onClick={() => onGo('settings', 'variables')}
                 style={{ alignSelf: 'flex-start' }}
               >
                 Fill them in
@@ -338,9 +341,9 @@ function unsetMessage(keys: string[]): string {
  * not listed renders as before: text, with nothing claiming to be actionable.
  */
 const FIXES: Record<string, { label: string; tab: string; focus?: string }> = {
-  WARN_NO_PERSISTENT_VOLUME: { label: 'Add storage', tab: 'resources', focus: 'storage' },
-  WARN_COMPOSE_CONSTRUCT_REWRITTEN: { label: 'Review the configuration', tab: 'detection' },
-  WARN_UNDECLARED_DEPENDENCY_SUSPECTED: { label: 'Open dependencies', tab: 'resources' },
+  WARN_NO_PERSISTENT_VOLUME: { label: 'Add storage', tab: 'settings', focus: 'storage' },
+  WARN_COMPOSE_CONSTRUCT_REWRITTEN: { label: 'Review the configuration', tab: 'settings', focus: 'configuration' },
+  WARN_UNDECLARED_DEPENDENCY_SUSPECTED: { label: 'Open dependencies', tab: 'settings', focus: 'dependencies' },
 };
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {

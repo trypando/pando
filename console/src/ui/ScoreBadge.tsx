@@ -7,6 +7,9 @@
 // the two always travel together, which is the design system's own rule for
 // status: a symbol plus a word, never a colored pill.
 //
+// Shield and number, never "/ 100": every score is out of a hundred, and the
+// tooltip says so for anybody who has not met one before.
+//
 // The shape is drawn here rather than taken from the design system because its
 // vendored icon set has no shield. When one is added upstream this becomes an
 // `<Icon name="shield">` and nothing else changes; the stroke weight and the
@@ -43,15 +46,12 @@ export function ScoreBadge({
   score,
   verdict,
   threshold = 0,
-  full = false,
   size = 18,
 }: {
   score?: number | null;
   verdict?: Verdict;
   /** The installation's minimum, when the reader is allowed to know it. */
   threshold?: number;
-  /** Show "/ 100". On in a table, where a bare number is ambiguous. */
-  full?: boolean;
   size?: number;
 }) {
   const colors = TONES[tone(score, verdict, threshold)];
@@ -75,7 +75,7 @@ export function ScoreBadge({
     >
       <Shield color={colors.ink} fill={colors.fill} size={size} />
       <span style={{ font: 'var(--type-code-sm)', color: unscanned ? 'var(--ink-secondary)' : colors.ink }}>
-        {unscanned ? 'Not scanned' : full ? `${score} / 100` : score}
+        {unscanned ? 'Not scanned' : score}
       </span>
     </span>
   );

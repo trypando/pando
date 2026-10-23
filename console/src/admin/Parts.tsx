@@ -169,7 +169,7 @@ export function Parts({ app, onLogs }: { app: App; onLogs?: (workload: string) =
  * anybody looks at it, so "running" is the reading that makes a crash-looping
  * app look fine — which is how this one went unnoticed.
  */
-function symbolFor(part: Part): 'running' | 'failed' | 'building' | 'stopped' {
+export function symbolFor(part: Part): 'running' | 'failed' | 'building' | 'stopped' {
   if (part.restarting) return 'building';
   if (part.running) return 'running';
   if (part.present) return 'failed';

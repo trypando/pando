@@ -143,6 +143,9 @@ destructive actions. Proportion: roughly 85% paper and ink, 12% rules, tints and
 under 3% marker red. If a screen shows red in more than one or two places, something is
 wrong with the screen. A dark theme ("night survey") swaps paper and ink; the terminal
 surface is identical in both.
+`--contour-background` is the one line color for the terrain the console draws behind
+its pages: one step darker than the paper (`#E7E3D8` light, `#0F110F` dark), at full
+strength. The contour browns stay with the illustration itself.
 
 **Type.** Newsreader (variable optical size) for display and headings, Public Sans for
 interface and body, IBM Plex Mono for code, commands and IDs — and nothing else.

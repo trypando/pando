@@ -12,9 +12,12 @@
 // periods — so the lines meet across every seam and there is no edge to see.
 //
 // Behind working screens it is extremely quiet — one colour, one line width,
-// one opacity, no index contours — because a table has to be read over it.
-// TopoMap, below, is the same terrain drawn as a picture in colour, for the
-// sign-in screen. Each page gets its own terrain from a seed (the section, and
+// no index contours — because a table has to be read over it. The colour is
+// `--contour-background`, one step darker than the paper and drawn at full
+// strength, rather than the brown contour line faded down: the brown is the
+// illustration's, and kept for the places the map is meant to stand out.
+// TopoMap, below, is the same terrain drawn as a picture, for the sign-in
+// screen. Each page gets its own terrain from a seed (the section, and
 // the app when there is one); the same seed always gives the same map.
 
 import { useMemo } from 'react';
@@ -26,7 +29,6 @@ const CELL = 10;
 const TAU = Math.PI * 2;
 
 const BACKGROUND_LEVELS = 12;
-const BACKGROUND_OPACITY = 0.35;
 
 type Pt = [number, number];
 
@@ -241,7 +243,6 @@ export function TopoBackground({
         height: '100%',
         zIndex: -1,
         pointerEvents: 'none',
-        opacity: BACKGROUND_OPACITY,
         maskImage: fade,
         WebkitMaskImage: fade,
       }}
@@ -251,7 +252,7 @@ export function TopoBackground({
           <path
             d={d}
             fill="none"
-            stroke="var(--contour-line)"
+            stroke="var(--contour-background)"
             strokeWidth="var(--contour-line-width)"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -307,9 +308,9 @@ const RECEDE = {
 } as const;
 
 /**
- * The map as a picture rather than a background: the sign-in screen. Here it
- * is the thing to look at, so it is drawn in colour — every fifth line an
- * index contour in `--contour`, the rest in `--contour-line` — with the
+ * The map as a picture rather than a background: the sign-in screen. Its lines
+ * are the console's terrain colour, `--contour-background`, the same as behind
+ * every other page — every fifth line an index contour, heavier — with the
  * marker-red summit triangle on the top of a hill, as on the brand's own hero
  * figure.
  *
@@ -389,7 +390,7 @@ export function TopoMap({ seed, recede }: { seed: string; recede: Recede }) {
             key={i}
             d={d}
             fill="none"
-            stroke={index ? 'var(--contour)' : 'var(--contour-line)'}
+            stroke="var(--contour-background)"
             strokeWidth={index ? 'var(--contour-index-width)' : 'var(--contour-line-width)'}
             vectorEffect="non-scaling-stroke"
             strokeLinecap="round"

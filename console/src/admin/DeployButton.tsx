@@ -35,8 +35,15 @@ export function DeployButton({
   app,
   onRefused,
   onWaiting,
+  variant = 'primary',
+  label,
 }: {
   app: App;
+  /** Secondary where the screen's primary action is something else, such as
+   *  the deployments list in the side panel. */
+  variant?: 'primary' | 'secondary';
+  /** A fixed label, where the screen already says what is being deployed. */
+  label?: string;
   /** The refusal to show, or an empty message to clear one. */
   onRefused: (message: string, remedy?: string, code?: string) => void;
   /** The deploy was accepted and is waiting for approval (R-154): it has not
@@ -119,7 +126,7 @@ export function DeployButton({
 
   return (
     <Button
-      variant="primary"
+      variant={variant}
       onClick={() => deploy.mutate()}
       disabled={deploy.isPending || app.state === 'deploying'}
     >
@@ -127,13 +134,14 @@ export function DeployButton({
           that it will replace. The word it produces is still "Deployed" — in
           the log, in the deploy list, and in the app's state — because it is
           the same act either way. */}
-      {app.state === 'deploying'
+      {label ??
+        (app.state === 'deploying'
         ? shipped
           ? 'Re-deploying'
           : 'Deploying'
         : shipped
           ? 'Re-deploy'
-          : 'Deploy'}
+          : 'Deploy')}
     </Button>
   );
 }

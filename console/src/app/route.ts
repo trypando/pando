@@ -31,6 +31,24 @@ type SystemTab = 'adapters' | 'policy' | 'backups' | 'updates';
 
 const SYSTEM_TABS: SystemTab[] = ['adapters', 'policy', 'backups', 'updates'];
 
+/** The side panel over an app's screen: what it is printing, its deploys, and
+ *  a terminal in it. Each was a tab of its own. */
+export type PanelView = 'output' | 'deployments' | 'terminal';
+
+const PANEL_VIEWS: PanelView[] = ['output', 'deployments', 'terminal'];
+
+/**
+ * Where each of an app's old tabs lives now. Logs and Terminal became the side
+ * panel and Configuration was folded into Settings, which was `resources`; a
+ * link to any of them lands on its new home rather than on nothing.
+ */
+const MOVED_TABS: Record<string, { tab: string; panel?: PanelView }> = {
+  logs: { tab: 'overview', panel: 'output' },
+  terminal: { tab: 'overview', panel: 'terminal' },
+  resources: { tab: 'settings' },
+  detection: { tab: 'settings' },
+};
+
 export interface Route {
   /** Settings is its own page, not a section of the admin console: it is
    *  about the person, and everyone reaches it. It still lives under /admin,
@@ -41,6 +59,11 @@ export interface Route {
   appID?: string;
   /** An app's tab, or System's. */
   tab?: string;
+  /** The side panel open over an app's screen, and what it shows: which
+   *  workload's output or terminal, which deployment's log. */
+  panel?: PanelView;
+  workload?: string;
+  deployment?: string;
   /** An account's own page, under Accounts. */
   userID?: string;
   /** The Audit log's filters, as a query string without `?` — how an
@@ -69,10 +92,8 @@ export function parse(pathname: string, search = ''): Route {
   if (parts[1] === 'settings') return { view: 'settings', section: 'apps' };
   if (parts[1] === 'cli') return { view: 'cli', section: 'apps' };
 
-  // /admin/apps/{id}[/{tab}]
-  if (parts[1] === 'apps' && parts[2]) {
-    return { view: 'admin', section: 'apps', appID: parts[2], tab: parts[3] };
-  }
+  // /admin/apps/{id}[/{tab}][?panel=…&workload=…&deployment=…]
+  if (parts[1] === 'apps' && parts[2]) return appRoute(parts[2], parts[3], search);
 
   // /admin/accounts/{id}
   if (parts[1] === 'accounts' && parts[2]) {
@@ -108,6 +129,32 @@ export function parse(pathname: string, search = ''): Route {
   return { view: 'admin', section: section ?? 'apps' };
 }
 
+/** An app's screen: its tab, and the side panel when one is open. */
+function appRoute(appID: string, tab: string | undefined, search: string): Route {
+  const route: Route = { view: 'admin', section: 'apps', appID, tab };
+  const moved = tab ? MOVED_TABS[tab] : undefined;
+  if (moved) route.tab = moved.tab;
+
+  const params = new URLSearchParams(search);
+  const panel = PANEL_VIEWS.find((v) => v === params.get('panel')) ?? moved?.panel;
+  if (!panel) return route;
+  route.panel = panel;
+  const workload = params.get('workload');
+  const deployment = params.get('deployment');
+  if (workload) route.workload = workload;
+  if (deployment) route.deployment = deployment;
+  return route;
+}
+
+/** The query string of an app's side panel, or nothing when it is closed. */
+function panelQuery(route: Route): string {
+  if (!route.panel) return '';
+  const params = new URLSearchParams({ panel: route.panel });
+  if (route.workload) params.set('workload', route.workload);
+  if (route.deployment) params.set('deployment', route.deployment);
+  return `?${params.toString()}`;
+}
+
 /** The views that are one page each, at one address. */
 const FIXED_PATHS: Partial<Record<Route['view'], string>> = {
   launcher: '/',
@@ -120,7 +167,7 @@ export function format(route: Route): string {
   const fixed = FIXED_PATHS[route.view];
   if (fixed) return fixed;
   if (route.section === 'apps' && route.appID) {
-    return `/admin/apps/${route.appID}${route.tab ? `/${route.tab}` : ''}`;
+    return `/admin/apps/${route.appID}${route.tab ? `/${route.tab}` : ''}${panelQuery(route)}`;
   }
   if (route.section === 'accounts' && route.userID) return `/admin/accounts/${route.userID}`;
   if (route.section === 'system' && route.tab) {
@@ -141,6 +188,14 @@ export function format(route: Route): string {
  */
 export function useRoute(): [Route, (next: Route, replace?: boolean) => void] {
   const [route, setRoute] = useState<Route>(() => parse(window.location.pathname, window.location.search));
+
+  // An app's old tab is read as its new home; the address is made to say so,
+  // so that what is copied from it is the address of what is on the screen.
+  useEffect(() => {
+    if (!route.appID) return;
+    const path = format(route);
+    if (path !== window.location.pathname + window.location.search) window.history.replaceState({}, '', path);
+  }, []);
 
   useEffect(() => {
     const onPop = () => setRoute(parse(window.location.pathname, window.location.search));

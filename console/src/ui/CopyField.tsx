@@ -8,7 +8,7 @@ import { Icon, IconButton } from '@design';
 /** Copies text, or selects it where the browser will not: the clipboard is
  *  absent outside a secure context, and Pando reached over plain HTTP on a
  *  private network is normal. Says which happened. */
-async function copyOrSelect(text: string, node: HTMLElement | null): Promise<'copied' | 'selected'> {
+export async function copyOrSelect(text: string, node: HTMLElement | null): Promise<'copied' | 'selected'> {
   try {
     if (!navigator.clipboard) throw new Error('no clipboard');
     await navigator.clipboard.writeText(text);

@@ -18,6 +18,9 @@
   --contour: #A8764A;
   --contour-line: #D5C2A6;
   --contour-text: #8A5D35;
+  /* The terrain behind console pages: one step darker than the paper, at full
+     strength. Background only — the illustration keeps --contour-line. */
+  --contour-background: var(--paper-sunken);
 
   /* vegetation, water, marker */
   --vegetation: #DCE3D1;
@@ -66,6 +69,7 @@
   --contour: #C99A6B;
   --contour-line: #4A4238;
   --contour-text: #C99A6B;
+  --contour-background: #0F110F;
 
   --vegetation: #22301F;
   --vegetation-deep: #8FB58A;

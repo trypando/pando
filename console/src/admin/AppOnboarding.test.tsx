@@ -431,7 +431,8 @@ describe('AppOnboarding', () => {
         scope: 'image_and_source',
         ignoring_unfixable: false,
       });
-      expect(html).toContain('72 / 100');
+      expect(html).toContain('>72<');
+      expect(html).not.toContain('72 / 100');
       expect(html).not.toContain('Scored once the image is built');
     });
   });

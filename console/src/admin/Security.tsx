@@ -278,7 +278,7 @@ function Verdict({ report, scanning }: { report: Report; scanning: boolean }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-        <ScoreBadge score={score} verdict={standing.verdict as never} threshold={standing.threshold} full />
+        <ScoreBadge score={score} verdict={standing.verdict as never} threshold={standing.threshold} />
         <StatusIndicator
           status={standing.verdict === 'insecure' ? 'failed' : 'running'}
           label={

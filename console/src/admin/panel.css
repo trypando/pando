@@ -1,0 +1,22 @@
+/* The side panel over an app's screen (AppPanel.tsx): it slides in from the
+ * right on the panel duration, and under prefers-reduced-motion it is simply
+ * there. */
+
+@keyframes pando-panel-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.pando-panel {
+  animation: pando-panel-in var(--dur-base) var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pando-panel {
+    animation: none;
+  }
+}

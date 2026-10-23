@@ -832,7 +832,6 @@ function SecurityScore({ report, onView }: { report: Report; onView: () => void 
           score={report.standing.score}
           verdict={report.standing.verdict as never}
           threshold={report.standing.threshold}
-          full
           size={28}
         />
       )}

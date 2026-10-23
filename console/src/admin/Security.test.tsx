@@ -57,7 +57,8 @@ describe('the overview’s security section (R-311)', () => {
       scope: 'image_and_source',
       ignoring_unfixable: false,
     });
-    expect(html).toContain('61 / 100');
+    expect(html).toContain('>61<');
+    expect(html).not.toContain('/ 100');
     expect(html).toContain('of the image it runs and its source');
     expect(html).not.toContain('Scored once the image is built');
   });

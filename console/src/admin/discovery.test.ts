@@ -246,7 +246,7 @@ describe('the scan step (R-310)', () => {
   it('reports the score and what it found once there is a scan', () => {
     const scan = discoverySteps({ status: 'ready', proposal: found, source, security: report }).find((s) => s.id === 'scan');
     expect(scan?.result).toBe('3 vulnerabilities');
-    expect(scan?.findings).toContainEqual({ key: 'Score', value: '82 / 100' });
+    expect(scan?.findings).toContainEqual({ key: 'Score', value: '82' });
     expect(scan?.findings).toContainEqual({ key: 'High', value: '2' });
     expect(scan?.findings).toContainEqual({ key: 'Worst', value: 'CVE-2026-0001' });
   });
@@ -283,7 +283,7 @@ describe('the scan step (R-310)', () => {
       findings: [{ key: 'Image', value: '0123456789ab' }],
     });
     const scan = steps.find((s) => s.id === 'scan');
-    expect(scan?.findings).toContainEqual({ key: 'Score', value: '61 / 100' });
+    expect(scan?.findings).toContainEqual({ key: 'Score', value: '61' });
     expect(scan?.findings.some((f) => f.value === 'Scored once the image is built')).toBe(false);
   });
 
