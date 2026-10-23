@@ -831,10 +831,10 @@ func (c *composeImport) usableAliases(service string, names []string) []string {
 	return out
 }
 
-// isServiceName reports whether name is a service's name in this file, in
-// any case: a network name resolves without regard to case.
+// isServiceName reports whether name is the name of a service this import
+// runs, in any case: a network name resolves without regard to case.
 func (c *composeImport) isServiceName(name string) bool {
-	for svc := range c.file.Services {
+	for _, svc := range c.names() {
 		if strings.EqualFold(svc, name) {
 			return true
 		}
@@ -1182,9 +1182,14 @@ func (c *composeImport) underKernelPath(name string, m mount) bool {
 	if problem == "" {
 		return false
 	}
-	c.rewrote(name, "volume "+m.raw,
-		"This places files at "+m.containerPath+", which "+problem+". Pando does not place files there, so this mount was left out.")
+	c.rewrote(name, "volume "+m.raw, kernelPathNote("places files", m.containerPath, problem, "mount"))
 	return true
+}
+
+// kernelPathNote says a construct was left out because it puts something
+// where the kernel presents itself (R-240).
+func kernelPathNote(does, at, problem, what string) string {
+	return "This " + does + " at " + at + ", which " + problem + ". Pando does not put anything there, so this " + what + " was left out."
 }
 
 // carriedDir is the files a directory mount carries in the spec.
@@ -1273,6 +1278,20 @@ func (c *composeImport) files(name string, s composeService) []spec.File {
 // found no file, never initialized, and every service that needed it failed
 // (issue #55). The file is in the repository, which is what the compose file
 // reads it from too; it travels in the spec like any other carried file.
+// secretContent is a secret file's content, unless it cannot be read or is
+// placed where the kernel presents itself (R-240), which is noted.
+func (c *composeImport) secretContent(service, source, target, file string) (string, bool) {
+	content, ok := c.read(file)
+	if !ok {
+		return "", false
+	}
+	if problem := spec.MountPathProblem(target); problem != "" {
+		c.rewrote(service, "secrets: "+source, kernelPathNote("places the secret", target, problem, "secret"))
+		return "", false
+	}
+	return content, true
+}
+
 func (c *composeImport) secretFiles(service string, s composeService) []spec.File {
 	var files []spec.File
 	for _, raw := range s.Secrets {
@@ -1293,13 +1312,8 @@ func (c *composeImport) secretFiles(service string, s composeService) []spec.Fil
 		if !ok || secret.File == "" {
 			continue
 		}
-		content, ok := c.read(secret.File)
+		content, ok := c.secretContent(service, source, target, secret.File)
 		if !ok {
-			continue
-		}
-		if problem := spec.MountPathProblem(target); problem != "" {
-			c.rewrote(service, "secrets: "+source,
-				"This places the secret at "+target+", which "+problem+". Pando does not place files there, so this secret was left out.")
 			continue
 		}
 		files = append(files, spec.File{Path: path.Clean(target), Content: content})
@@ -1532,7 +1546,7 @@ func (c *composeImport) becomesVolume(name string, m mount) bool {
 	// with a note rather than refusing the whole file.
 	if problem := spec.MountPathProblem(m.containerPath); problem != "" {
 		c.rewrote(name, "volume "+m.raw,
-			"This mounts storage at "+m.containerPath+", which "+problem+". Pando does not mount storage there, so this mount was left out.")
+			kernelPathNote("mounts storage", m.containerPath, problem, "mount"))
 		return false
 	}
 	return true

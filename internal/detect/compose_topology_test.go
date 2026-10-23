@@ -163,7 +163,7 @@ secrets:
 		paths = append(paths, f.Path)
 	}
 	require.Equal(t, []string{"/etc/app.conf"}, paths)
-	require.True(t, hasWarning(draft.Warnings, spec.WarnComposeConstructRewritten, "Pando does not place files there"))
+	require.True(t, hasWarning(draft.Warnings, spec.WarnComposeConstructRewritten, "Pando does not put anything there, so this mount"))
 	require.True(t, hasWarning(draft.Warnings, spec.WarnComposeConstructRewritten, "so this secret was left out"))
 	require.Empty(t, workloadsByName(draft)["cache"].Aliases, "a name another service has, in any case, is not answered to")
 }
