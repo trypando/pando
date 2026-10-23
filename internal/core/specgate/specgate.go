@@ -1,13 +1,13 @@
 // Package specgate decides whether somebody may write a spec revision, for the
 // parts of a spec that app.spec.edit alone does not cover: an app's egress
-// rules (R-182 – R-184) and automatic deploys on an app whose deploys need
-// approval (R-158).
+// rules (R-182 – R-184), its resource limits (R-241) and automatic deploys on
+// an app whose deploys need approval (R-158).
 //
 // One function, called by every path that writes a revision from content the
 // caller supplied, so that no surface — console, CLI, MCP — can save a spec
 // another surface would refuse (R-261). Paths that copy the pinned spec and
-// change something else (routing, resources, a pinned commit) carry its egress
-// and auto-deploy settings unchanged and need nothing from here.
+// change something else (routing, a slot, a volume, a pinned commit) carry its
+// egress, limits and auto-deploy settings unchanged and need nothing from here.
 package specgate
 
 import (
@@ -66,6 +66,17 @@ type Change struct {
 
 	// Next is the revision being written.
 	Next *spec.AppSpec
+
+	// Latest is the app's newest revision, or nil. Limits it already sets are
+	// not a change somebody makes by keeping them: they were allowed when it
+	// was written (R-241).
+	Latest *spec.AppSpec
+
+	// HostResources is the installation's default limits (R-240). An app
+	// running on exactly these overrides nothing, so the first revision,
+	// written with the defaults, asks nothing, and nor does a spec that leaves
+	// its limits out after the host's defaults have changed.
+	HostResources spec.Resources
 }
 
 // Result is what the gate found about a change it allowed.
@@ -92,6 +103,8 @@ type Result struct {
 //   - A loosening the pinned spec did not already carry is judged by policy
 //     (R-183): forbidden refuses it, verb needs app.egress.loosen, approval
 //     lets it through for the deploy to be approved.
+//   - Any change to the app's resource limits, or to a workload's own, needs
+//     app.resources.override (R-241, R-241a).
 //   - Automatic deploys are refused on an app whose deploys need approval
 //     whatever they change (R-158).
 func Check(ctx context.Context, az Authorizer, p authz.Principal, c Change) (Result, error) {
@@ -116,7 +129,7 @@ func Check(ctx context.Context, az Authorizer, p authz.Principal, c Change) (Res
 		// denial, which is the point of asking it rather than Allows.
 		if !loosen {
 			if err := az.CheckControl(ctx, p, c.AppID, authz.AppEgressTighten); err != nil {
-				return out, withEgressMessage(err,
+				return out, withVerbMessage(err,
 					"Changing this app's egress rules needs permission to change them. It requires app.egress.tighten on this app, or app.egress.loosen.")
 			}
 		}
@@ -141,7 +154,7 @@ func Check(ctx context.Context, az Authorizer, p authz.Principal, c Change) (Res
 			default:
 				if !loosen {
 					if err := az.CheckControl(ctx, p, c.AppID, authz.AppEgressLoosen); err != nil {
-						return out, withEgressMessage(err, fmt.Sprintf(
+						return out, withVerbMessage(err, fmt.Sprintf(
 							"This change loosens the installation's egress rules for this app, which requires app.egress.loosen on this app. %s",
 							messages(out.Loosenings)))
 					}
@@ -150,10 +163,32 @@ func Check(ctx context.Context, az Authorizer, p authz.Principal, c Change) (Res
 		}
 	}
 
+	if err := checkResources(ctx, az, p, c); err != nil {
+		return out, err
+	}
 	if err := checkAutoDeploy(c); err != nil {
 		return out, err
 	}
 	return out, nil
+}
+
+// checkResources is R-241: changing how much of the host the app, or one of
+// its workloads, may take overrides the defaults the host operator chose,
+// which app.spec.edit alone does not cover. Limits the pinned spec or the
+// newest revision already sets are not a change, and nor are the host's own
+// defaults with no workload limited on its own: going back to those
+// overrides nothing.
+func checkResources(ctx context.Context, az Authorizer, p authz.Principal, c Change) error {
+	for _, base := range []*spec.AppSpec{c.Pinned, c.Latest, {Resources: c.HostResources}} {
+		if base != nil && !spec.LimitsChanged(base, c.Next) {
+			return nil
+		}
+	}
+	if err := az.CheckControl(ctx, p, c.AppID, authz.AppResourceOverride); err != nil {
+		return withVerbMessage(err,
+			"Changing this app's resource limits needs permission to override the host's defaults (app.resources.override). This change sets the CPU, memory or disk limit of the app or of one of its workloads.")
+	}
+	return nil
 }
 
 // forbidden is the refusal for a loosening policy does not permit, in the
@@ -210,11 +245,11 @@ func checkAutoDeploy(c Change) error {
 		WithDetail("reasons", reasons)
 }
 
-// withEgressMessage replaces the authorizer's general wording on a missing
-// verb with one that says which egress change needed it (R-105). Any other
+// withVerbMessage replaces the authorizer's general wording on a missing
+// verb with one that says which change needed it (R-105). Any other
 // refusal — a suspended account, a policy that disables the verb — keeps its
 // own words, because they are the true reason.
-func withEgressMessage(err error, message string) error {
+func withVerbMessage(err error, message string) error {
 	if errs.CodeOf(err) != errs.PermVerbRequired {
 		return err
 	}

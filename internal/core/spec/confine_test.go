@@ -103,3 +103,52 @@ func TestR240_ALimitIsNeverNegative(t *testing.T) {
 		spec.LimitWithin(spec.ResourceLimits{CPUMillis: 500, MemoryBytes: 1 << 20}, spec.Resources{}),
 		"an app with no limit of its own leaves the workload's")
 }
+
+// TestR241_WhichChangesAreChangesToLimits asserts what counts as changing an
+// app's resource limits, and so needs app.resources.override (R-241, R-241a):
+// the app's own limits, or a workload's given, taken away or changed — and
+// not anything else about the spec.
+func TestR241_WhichChangesAreChangesToLimits(t *testing.T) {
+	base := func() *spec.AppSpec {
+		return &spec.AppSpec{
+			Resources: spec.Resources{CPUMillis: 1000, MemoryBytes: 512 << 20, DiskBytes: 5 << 30},
+			Workloads: []spec.Workload{
+				{Name: "web", Primary: true, Image: "nginx:alpine"},
+				{Name: "worker", Resources: &spec.ResourceLimits{MemoryBytes: 256 << 20}},
+			},
+		}
+	}
+
+	cases := []struct {
+		name    string
+		change  func(*spec.AppSpec)
+		changed bool
+	}{
+		{"nothing", func(*spec.AppSpec) {}, false},
+		{"another field", func(s *spec.AppSpec) { s.Workloads[0].Image = "nginx:1.27" }, false},
+		{"a workload's empty limits are its absent ones", func(s *spec.AppSpec) { s.Workloads[0].Resources = &spec.ResourceLimits{} }, false},
+		{"a workload removed", func(s *spec.AppSpec) { s.Workloads = s.Workloads[:1] }, false},
+		{"a new workload without limits", func(s *spec.AppSpec) {
+			s.Workloads = append(s.Workloads, spec.Workload{Name: "cron"})
+		}, false},
+		{"app memory", func(s *spec.AppSpec) { s.Resources.MemoryBytes = 1 << 30 }, true},
+		{"app CPU", func(s *spec.AppSpec) { s.Resources.CPUMillis = 500 }, true},
+		{"app disk", func(s *spec.AppSpec) { s.Resources.DiskBytes = 1 << 30 }, true},
+		{"overridden", func(s *spec.AppSpec) { s.Resources.Overridden = true }, true},
+		{"a workload given a limit", func(s *spec.AppSpec) { s.Workloads[0].Resources = &spec.ResourceLimits{CPUMillis: 250} }, true},
+		{"a workload's limit taken away", func(s *spec.AppSpec) { s.Workloads[1].Resources = nil }, true},
+		{"a workload's limit changed", func(s *spec.AppSpec) { s.Workloads[1].Resources = &spec.ResourceLimits{MemoryBytes: 1 << 30} }, true},
+		{"a new workload with a limit", func(s *spec.AppSpec) {
+			s.Workloads = append(s.Workloads, spec.Workload{Name: "cron", Resources: &spec.ResourceLimits{CPUMillis: 100}})
+		}, true},
+	}
+	for _, c := range cases {
+		next := base()
+		c.change(next)
+		require.Equal(t, c.changed, spec.LimitsChanged(base(), next), c.name)
+	}
+
+	require.False(t, spec.LimitsChanged(base(), nil), "no spec changes nothing")
+	require.False(t, spec.LimitsChanged(nil, &spec.AppSpec{}), "no limits against none")
+	require.True(t, spec.LimitsChanged(nil, base()), "limits against none")
+}

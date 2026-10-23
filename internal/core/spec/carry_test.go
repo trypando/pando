@@ -159,3 +159,26 @@ func TestComposeSourcedEntriesAreNotCarried(t *testing.T) {
 		require.NotEqual(t, "PORT", e.Key)
 	}
 }
+
+// TestR241_ReDetectingKeepsTheAppsResourceLimits asserts that accepting a
+// re-detection keeps the limits somebody set, the app's and a workload's, so
+// that re-detecting changes no limit and needs no app.resources.override.
+func TestR241_ReDetectingKeepsTheAppsResourceLimits(t *testing.T) {
+	pinned := pinnedApp()
+	pinned.Resources = spec.Resources{CPUMillis: 2000, MemoryBytes: 2 << 30, DiskBytes: 10 << 30, Overridden: true}
+	pinned.Workloads[0].Resources = &spec.ResourceLimits{MemoryBytes: 1 << 30}
+
+	next := redetected()
+	next.Resources = spec.Resources{CPUMillis: 1000, MemoryBytes: 512 << 20, DiskBytes: 5 << 30}
+	got := spec.Carry(pinned, next)
+
+	require.Equal(t, pinned.Resources, got.Resources)
+	require.Equal(t, &spec.ResourceLimits{MemoryBytes: 1 << 30}, got.Workloads[0].Resources)
+	require.Nil(t, next.Workloads[0].Resources, "the proposal itself is not changed")
+	require.False(t, spec.LimitsChanged(pinned, got))
+
+	// A pinned spec with no limits recorded keeps the proposal's defaults.
+	bare := pinnedApp()
+	got = spec.Carry(bare, redetected())
+	require.Equal(t, redetected().Resources, got.Resources)
+}

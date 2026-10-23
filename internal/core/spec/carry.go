@@ -51,7 +51,39 @@ func Carry(pinned, next *AppSpec) *AppSpec {
 	// approval requirement without that change being approved (R-154).
 	out.Egress = pinned.Egress
 	out.Deploy.RequireApproval = pinned.Deploy.RequireApproval
+
+	// How much of the host the app and each workload may take. Not read from
+	// the repository either, and changed only under app.resources.override
+	// (R-241): a re-detection that put the host's defaults back would change
+	// the app's limits without anybody deciding it.
+	if pinned.Resources != (Resources{}) {
+		out.Resources = pinned.Resources
+	}
+	out.Workloads = carryLimits(pinned, out.Workloads)
 	return &out
+}
+
+// carryLimits keeps a workload's own resource limits, matched on name, where
+// the proposal gives that workload none.
+func carryLimits(pinned *AppSpec, workloads []Workload) []Workload {
+	kept := map[string]*ResourceLimits{}
+	for _, w := range pinned.Workloads {
+		if w.Resources != nil {
+			own := *w.Resources
+			kept[w.Name] = &own
+		}
+	}
+	if len(kept) == 0 {
+		return workloads
+	}
+	out := make([]Workload, len(workloads))
+	copy(out, workloads)
+	for i := range out {
+		if own, ok := kept[out[i].Name]; ok && out[i].Resources == nil {
+			out[i].Resources = own
+		}
+	}
+	return out
 }
 
 // carryEnv keeps environment entries a person set.

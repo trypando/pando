@@ -52,6 +52,12 @@ app's limit raises the app's limit to match, and the dialog says so before it sa
 workload keeps the limit it had, written into the spec as its own, so one change never quietly grows
 the rest (R-241a). Saving writes a revision; the Overview's attention list then offers to deploy it.
 
+The server holds the line, not the dialog: any revision whose limits differ from the pinned or newest
+one — the app's, or a workload's own, raised or lowered — needs `app.resources.override` (R-241), checked
+where every spec write is gated. Putting the host's defaults back needs nothing: the verb gates leaving
+the defaults, not returning to them. Re-running detection keeps limits an owner raised rather than
+quietly resetting them.
+
 ## The side panel: Output, Deployments, Terminal
 
 Logs and Terminal are not tabs. A panel slides over the app page at three quarters of the window, with

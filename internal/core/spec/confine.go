@@ -51,6 +51,45 @@ func LimitWithin(own ResourceLimits, app Resources) ResourceLimits {
 	return out
 }
 
+// LimitsChanged reports whether next sets resource limits prev does not, as
+// stored: the app's own (CPU, memory, disk and whether they override the
+// host's defaults), or any workload's — a limit given, taken away or changed
+// on a workload prev has, or one given to a workload prev does not have.
+// Changing any of them needs app.resources.override (R-241, R-241a). A
+// workload that goes, with its limit, lets nothing run larger, so it is not a
+// change here. A workload's resources left out and set to nothing are the same
+// (WorkloadLimits reads both as the app's). prev nil is a spec with no limits
+// of its own.
+func LimitsChanged(prev, next *AppSpec) bool {
+	if next == nil {
+		return false
+	}
+	if prev == nil {
+		prev = &AppSpec{}
+	}
+	if prev.Resources != next.Resources {
+		return true
+	}
+	before := make(map[string]ResourceLimits, len(prev.Workloads))
+	for _, w := range prev.Workloads {
+		before[w.Name] = ownLimits(w)
+	}
+	for _, w := range next.Workloads {
+		if before[w.Name] != ownLimits(w) {
+			return true
+		}
+	}
+	return false
+}
+
+// ownLimits is what a workload sets for itself, zero where it sets nothing.
+func ownLimits(w Workload) ResourceLimits {
+	if w.Resources == nil {
+		return ResourceLimits{}
+	}
+	return *w.Resources
+}
+
 // validateResources refuses a negative limit, which no runtime reads as a
 // size. Zero is unset, and is the app's (WorkloadLimits).
 func validateResources(s *AppSpec, add func(*errs.Error)) {

@@ -169,7 +169,7 @@ func (s *Service) Set(ctx context.Context, p authz.Principal, app state.App, ad 
 		return Saved{}, err
 	}
 	if _, err := specgate.Check(ctx, s.Authz, p, specgate.Change{
-		AppID: app.ID, Policy: doc, Pinned: pinned.Body, Next: &next,
+		AppID: app.ID, Policy: doc, Pinned: pinned.Body, Next: &next, Latest: base.Body,
 	}); err != nil {
 		return Saved{}, err
 	}

@@ -57,7 +57,7 @@ func newAuthorizer() (*authz.Authorizer, *auditor) {
 	}
 	a := &auditor{}
 	return authz.New(store{roles: map[string]authz.Role{
-		"owner":      with(authz.AppEgressTighten, authz.AppEgressLoosen),
+		"owner":      with(authz.AppEgressTighten, authz.AppEgressLoosen, authz.AppResourceOverride),
 		"operator":   with(authz.AppEgressTighten),
 		"loosenonly": with(authz.AppEgressLoosen),
 		"editor":     with(),
@@ -295,4 +295,81 @@ func TestR184_ADryRunRefusesWithoutAuditing(t *testing.T) {
 		require.Contains(t, errs.As(dry).Message, c.verb)
 		require.Empty(t, a.denied, "%s: a dry run audits nothing", c.who)
 	}
+}
+
+func withLimits(r spec.Resources, workloads ...spec.Workload) *spec.AppSpec {
+	return &spec.AppSpec{AppID: appID, Resources: r, Workloads: workloads}
+}
+
+var hostDefaults = spec.Resources{CPUMillis: 1000, MemoryBytes: 512 << 20, DiskBytes: 5 << 30}
+
+func checkLimits(t *testing.T, who string, c specgate.Change) (*auditor, error) {
+	t.Helper()
+	az, a := newAuthorizer()
+	c.AppID = appID
+	_, err := specgate.Check(context.Background(), az, user(who), c)
+	return a, err
+}
+
+// TestR241_ChangingLimitsNeedsTheOverrideVerb asserts R-241 and R-241a in the
+// gate every spec write goes through: raising the app's memory, or giving one
+// workload a limit of its own, needs app.resources.override, which Operator
+// lacks and Owner holds; the refusal names the verb and is audited.
+func TestR241_ChangingLimitsNeedsTheOverrideVerb(t *testing.T) {
+	pinned := withLimits(hostDefaults, spec.Workload{Name: "web"})
+	raised := hostDefaults
+	raised.MemoryBytes = 2 << 30
+	changes := map[string]*spec.AppSpec{
+		"app memory":     withLimits(raised, spec.Workload{Name: "web"}),
+		"workload limit": withLimits(hostDefaults, spec.Workload{Name: "web", Resources: &spec.ResourceLimits{MemoryBytes: 256 << 20}}),
+	}
+	for name, next := range changes {
+		a, err := checkLimits(t, "operator", specgate.Change{Pinned: pinned, Next: next, HostResources: hostDefaults})
+		require.Equal(t, errs.PermVerbRequired, errs.CodeOf(err), name)
+		e := errs.As(err)
+		require.Contains(t, e.Message, "app.resources.override", name)
+		require.Contains(t, e.Message, "resource limits", name)
+		require.NotEmpty(t, e.Remedy, name)
+		require.Equal(t, []authz.Verb{authz.AppResourceOverride}, a.denied, "%s: the refusal is audited", name)
+
+		a, err = checkLimits(t, "owner", specgate.Change{Pinned: pinned, Next: next, HostResources: hostDefaults})
+		require.NoError(t, err, name)
+		require.Empty(t, a.denied, name)
+	}
+}
+
+// TestR241_UnchangedLimitsAskNothing asserts that a revision which leaves the
+// limits as they are needs no app.resources.override: the first one, written
+// with the host's defaults; an ordinary edit; one keeping limits the newest
+// revision already sets; and one going back to the host's defaults.
+func TestR241_UnchangedLimitsAskNothing(t *testing.T) {
+	raised := hostDefaults
+	raised.MemoryBytes = 2 << 30
+	raised.Overridden = true
+	cases := map[string]specgate.Change{
+		"first revision": {Next: withLimits(hostDefaults, spec.Workload{Name: "web"}), HostResources: hostDefaults},
+		"ordinary edit": {
+			Pinned: withLimits(raised, spec.Workload{Name: "web", Image: "nginx:1"}),
+			Next:   withLimits(raised, spec.Workload{Name: "web", Image: "nginx:2"}),
+		},
+		"kept from the newest revision": {
+			Pinned: withLimits(hostDefaults), Latest: withLimits(raised), Next: withLimits(raised),
+			HostResources: hostDefaults,
+		},
+		"back to the host's defaults": {
+			Pinned: withLimits(raised), Next: withLimits(hostDefaults), HostResources: hostDefaults,
+		},
+	}
+	for name, c := range cases {
+		a, err := checkLimits(t, "editor", c)
+		require.NoError(t, err, name)
+		require.Empty(t, a.denied, name)
+	}
+
+	// The host's defaults with a workload limited on its own is an override.
+	_, err := checkLimits(t, "editor", specgate.Change{
+		Pinned: withLimits(raised), HostResources: hostDefaults,
+		Next: withLimits(hostDefaults, spec.Workload{Name: "web", Resources: &spec.ResourceLimits{CPUMillis: 100}}),
+	})
+	require.Equal(t, errs.PermVerbRequired, errs.CodeOf(err))
 }

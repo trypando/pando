@@ -1072,7 +1072,7 @@
       "patch": {
         "operationId": "patchApp",
         "summary": "Update an app",
-        "description": "Rename an app or change its source.\n\nNeeds `app.spec.edit`.",
+        "description": "Rename an app.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Apps"
         ],
@@ -4558,7 +4558,7 @@
       "post": {
         "operationId": "createSpec",
         "summary": "Create a spec revision",
-        "description": "Write a new spec revision. It does not deploy and does not become pinned. A routing mode other than its adapter's default, where the app did not already have one, also needs app.routing.override. A change to `egress` needs app.egress.tighten or app.egress.loosen; one that newly loosens the installation's egress rules needs app.egress.loosen where policy gates loosening by verb, is refused with PLAN_EGRESS_LOOSENING_FORBIDDEN where policy forbids it, and makes the next deploy need approval where policy says so. Turning on automatic deploys while the app's deploys need approval is refused. With `?dry_run=true` nothing is written: the same checks run and refuse with the same errors, and an accepted spec answers 200 with the egress rules it would run with, what it newly loosens, and whether deploying it would need approval and why.\n\nNeeds `app.spec.edit`.",
+        "description": "Write a new spec revision. It does not deploy and does not become pinned. A routing mode other than its adapter's default, where the app did not already have one, also needs app.routing.override. A change to `resources`, or to a workload's own `resources`, also needs app.resources.override, unless it puts back the installation's defaults. A change to `egress` needs app.egress.tighten or app.egress.loosen; one that newly loosens the installation's egress rules needs app.egress.loosen where policy gates loosening by verb, is refused with PLAN_EGRESS_LOOSENING_FORBIDDEN where policy forbids it, and makes the next deploy need approval where policy says so. Turning on automatic deploys while the app's deploys need approval is refused. With `?dry_run=true` nothing is written: the same checks run and refuse with the same errors, and an accepted spec answers 200 with the egress rules it would run with, what it newly loosens, and whether deploying it would need approval and why.\n\nNeeds `app.spec.edit`.",
         "tags": [
           "Configuration"
         ],

@@ -38,8 +38,8 @@ func (s *Server) pinnedSpec(ctx context.Context, app state.App) (*spec.AppSpec, 
 }
 
 // gateSpec asks specgate whether the caller may write next over the app's
-// pinned spec (R-158, R-182 – R-184). Every handler that writes a revision
-// from content the caller supplied calls it, after validation.
+// pinned spec (R-158, R-182 – R-184, R-241). Every handler that writes a
+// revision from content the caller supplied calls it, after validation.
 func (s *Server) gateSpec(r *http.Request, app state.App, pinned, next *spec.AppSpec) (specgate.Result, error) {
 	return s.gateSpecWith(r, s.Authz, app, pinned, next)
 }
@@ -51,8 +51,16 @@ func (s *Server) gateSpecWith(r *http.Request, az specgate.Authorizer, app state
 	if err != nil {
 		return specgate.Result{}, err
 	}
+	latest, err := s.latestRevisionSpec(r, app)
+	if err != nil {
+		return specgate.Result{}, err
+	}
+	var host spec.Resources
+	if s.Defaults != nil {
+		host = s.Defaults.Defaults(r.Context()).Resources
+	}
 	return specgate.Check(r.Context(), az, PrincipalFrom(r.Context()), specgate.Change{
-		AppID: app.ID, Policy: doc, Pinned: pinned, Next: next,
+		AppID: app.ID, Policy: doc, Pinned: pinned, Next: next, Latest: latest, HostResources: host,
 	})
 }
 
