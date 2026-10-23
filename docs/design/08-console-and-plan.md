@@ -149,11 +149,13 @@ is administration. Under `/admin` only because that prefix is already reserved a
 (R-023). The launcher does not link to *API and tools*; it is in the admin console.
 
 **[P] Bugs and ideas.** A bug button beside the inbox, in the launcher header and the admin
-sidebar header, opens a menu of two links to GitHub, each in a new tab: *Report a bug* opens the
+sidebar header, opens a menu of three links to GitHub, each in a new tab: *Report a bug* opens the
 `bug.yml` issue form with its Version field filled in from the `Pando-Version` header of the last
 signed-in response, and *Suggest an idea* starts a discussion in the Ideas category from
 `.github/DISCUSSION_TEMPLATE/ideas.yml`. Ideas are discussions rather than `enhancement` issues so
-an open issue stays accepted work; one becomes an issue when it is taken up. Pando sends nothing
+an open issue stays accepted work; one becomes an issue when it is taken up. *Sponsor Pando* opens
+the GitHub Sponsors page `.github/FUNDING.yml` names; it is a link rather than GitHub's embedded
+button, which is a frame from github.com that every screen would load. Pando sends nothing
 itself. An installation holds no GitHub credential, and a relay would be a service that every
 installation calls home to. Being a link, it is no capability the API lacks (R-261).
 

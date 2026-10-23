@@ -6,7 +6,7 @@
 
 **Deploy and share apps**
 
-[trypando.ai](https://trypando.ai) · [Quickstart](https://trypando.ai/quickstart) · [Docs](https://trypando.ai/docs)
+[trypando.ai](https://trypando.ai) · [Quickstart](https://trypando.ai/quickstart) · [Docs](https://trypando.ai/docs) · [Sponsor](https://github.com/sponsors/trypando)
 
 [![CI](https://github.com/trypando/pando/actions/workflows/ci.yml/badge.svg)](https://github.com/trypando/pando/actions/workflows/ci.yml)
 [![Docker Hub](https://img.shields.io/docker/v/trypando/pando?sort=semver&label=docker%20hub&color=1D63ED)](https://hub.docker.com/r/trypando/pando)

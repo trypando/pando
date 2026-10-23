@@ -9,7 +9,7 @@ vi.hoisted(() => {
 import { renderToString } from 'react-dom/server';
 
 import { api, runningVersion } from '@api/client';
-import { bugReportURL, FeedbackButton, IDEA_URL } from './Feedback';
+import { bugReportURL, FeedbackButton, IDEA_URL, SPONSOR_URL } from './Feedback';
 
 describe('bugReportURL', () => {
   it('opens the bug form with the version filled in', () => {
@@ -32,6 +32,12 @@ describe('IDEA_URL', () => {
     const url = new URL(IDEA_URL);
     expect(url.pathname).toBe('/trypando/pando/discussions/new');
     expect(url.searchParams.get('category')).toBe('ideas');
+  });
+});
+
+describe('SPONSOR_URL', () => {
+  it('is the GitHub Sponsors page .github/FUNDING.yml names', () => {
+    expect(SPONSOR_URL).toBe('https://github.com/sponsors/trypando');
   });
 });
 
