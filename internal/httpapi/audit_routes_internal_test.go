@@ -141,6 +141,7 @@ var auditedRoutes = map[string][]string{
 	"POST /api/v1/apps/{appID}/detection/accept":             {"spec.pin"},
 	"POST /api/v1/apps/{appID}/deployments":                  {"app.deploy", "deploy.request", "spec.create"},
 	"POST /api/v1/apps/{appID}/deployments/rollback":         {"app.deploy", "deploy.request"},
+	"POST /api/v1/apps/{appID}/image-update":                 {"spec.create", "app.deploy", "deploy.request"},
 	"POST /api/v1/apps/{appID}/deployments/{depID}/approve":  {"deploy.approve"},
 	"POST /api/v1/apps/{appID}/deployments/{depID}/reject":   {"deploy.reject"},
 	"POST /api/v1/apps/{appID}/passcode":                     {"app.passcode.unlock", "app.passcode.denied"},

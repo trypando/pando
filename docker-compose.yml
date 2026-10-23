@@ -155,7 +155,7 @@ services:
   # The Postgres image, so there is nothing more to pull, with its own
   # entrypoint set aside: it runs this script and exits.
   secrets:
-    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:17.11-alpine@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -188,7 +188,7 @@ services:
     restart: "no"
 
   postgres:
-    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:17.11-alpine@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
     depends_on:
       secrets:
         condition: service_completed_successfully

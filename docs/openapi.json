@@ -2981,6 +2981,101 @@
         "x-pando-verb": "app.spec.edit"
       }
     },
+    "/api/v1/apps/{appID}/image-update": {
+      "get": {
+        "operationId": "checkImageUpdate",
+        "summary": "Check for a newer image",
+        "description": "For an app deployed from a published image: whether its tag now names a different build than the pinned revision runs. Returns `image`, `current_digest`, `latest_digest`, `update_available` and the `revision` checked. Writes nothing.\n\nNeeds `app.view`.",
+        "tags": [
+          "Deploys"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageCheck"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.view"
+      },
+      "post": {
+        "operationId": "upgradeImage",
+        "summary": "Upgrade to a newer image",
+        "description": "Write a revision running `digest`, the `latest_digest` a check returned, and deploy it; also needs app.deploy. Refused when the tag has moved since the check, when nothing is newer, or while a newer revision is saved and not deployed. Answers as POST /deployments does, approval included, and a retry with the same idempotency key replays the first answer.\n\nNeeds `app.spec.edit`.",
+        "tags": [
+          "Deploys"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "description": "Makes a retry of this request return the first response rather than act twice. Also accepted as `idempotency_key` in the body."
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "digest": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "digest"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted: the work continues after the response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deployment"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.spec.edit"
+      }
+    },
     "/api/v1/apps/{appID}/logs": {
       "get": {
         "operationId": "appLogs",
@@ -14932,6 +15027,34 @@
             "format": "int64"
           }
         }
+      },
+      "ImageCheck": {
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string"
+          },
+          "current_digest": {
+            "type": "string"
+          },
+          "latest_digest": {
+            "type": "string"
+          },
+          "update_available": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "image",
+          "current_digest",
+          "latest_digest",
+          "update_available",
+          "revision"
+        ]
       },
       "ImageRegistryCapabilities": {
         "type": "object",

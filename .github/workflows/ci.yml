@@ -507,6 +507,18 @@ jobs:
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ env.build_date }}
 
+      # A distrusted root left in the image's CA bundle, or in one an image
+      # Pando pins carries. The pinned ones need no Docker account, so a
+      # Dependabot digest bump is checked too.
+      - name: Trust store
+        env:
+          BUILT: ${{ steps.dhi.outputs.available }}
+        run: |
+          images=""
+          if [ "$BUILT" = "true" ]; then images="trypando/pando:0.0.0-ci"; fi
+          python3 scripts/check-trust-store.py $images \
+            --from docker-compose.yml --from internal/adapter/builder/buildkit/bases/Dockerfile
+
       - name: Smoke test
         if: steps.dhi.outputs.available == 'true'
         run: |

@@ -395,6 +395,7 @@ func appCmd(client func() (*Client, error)) *cobra.Command {
 	add.Flags().Duration("timeout", detectionTimeout, "with --wait, how long to wait before giving up")
 	cmd.AddCommand(add)
 	cmd.AddCommand(registryCredentialCmd(client))
+	cmd.AddCommand(imageUpdateCmd(client))
 	cmd.AddCommand(autoDeployCmd(client))
 	cmd.AddCommand(appDetectionCmd(client))
 	cmd.AddCommand(appSpecCmd(client))

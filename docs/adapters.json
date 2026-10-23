@@ -3178,7 +3178,7 @@
               "help": "The Trivy image to run.",
               "type": "string",
               "advanced": true,
-              "default": "aquasec/trivy:0.74.0 (pinned)"
+              "default": "aquasec/trivy:0.76.1 (pinned)"
             },
             {
               "key": "host",

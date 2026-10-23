@@ -58,6 +58,7 @@ import { Reference } from './Reference';
 import { Approvals, useApprovals } from './Approvals';
 import { DeleteApp } from './DeleteApp';
 import { DeployButton } from './DeployButton';
+import { ImageUpdateButton } from './ImageUpdateButton';
 import { Lifecycle } from './Lifecycle';
 import { AppVerb, AppVerbs, can, changesAnything, type AppWithVerbs } from './verbs';
 import { format, type Route, type Section } from '../app/route';
@@ -866,6 +867,21 @@ function AppScreen({
                     onWaiting={() => setWaiting(true)}
                   />
                 )}
+
+                {/* An image app's tag can name a newer build than the one it runs (R-143a). */}
+                {app.data.pinned_spec_id &&
+                  app.data.source?.type === 'image' &&
+                  can(verbs, AppVerb.Deploy) &&
+                  can(verbs, AppVerb.SpecEdit) && (
+                    <ImageUpdateButton
+                      app={app.data}
+                      onRefused={(message, remedy, code) => {
+                        setRefusal(message ? { message, remedy, code } : null);
+                        if (message) setWaiting(false);
+                      }}
+                      onWaiting={() => setWaiting(true)}
+                    />
+                  )}
 
                 {/* Stopping is the thing somebody reaches for when they would
                     otherwise delete: it keeps the storage, the configuration and
