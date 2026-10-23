@@ -219,7 +219,7 @@ func resetPassword(ctx context.Context, cfg *config.Config, username string, pas
 	// Ending the sessions is not tidying up. A reset that leaves a live session
 	// alone has not reset anything: whoever is holding that cookie keeps the
 	// access the reset was meant to take back (R-048).
-	sessions := state.NewSessions(db)
+	sessions := state.NewSessionRevoker(db)
 	if err := sessions.RevokeAllForUser(ctx, userID); err != nil {
 		return err
 	}

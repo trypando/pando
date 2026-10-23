@@ -194,8 +194,8 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user state
 	}
 
 	//nolint:gosec // G124: CookieScheme.sessionCookie sets Secure, HttpOnly and SameSite.
-	cookie := s.cookies().sessionCookie(r, sess.ID)
-	cookie.Expires = sess.ExpiresAt
+	cookie := s.cookies().sessionCookie(r, sess.Cookie.Reveal())
+	cookie.Expires = sess.Session.ExpiresAt
 	http.SetCookie(w, cookie)
 
 	s.audit(r, audit.Event{
@@ -203,7 +203,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user state
 		PrincipalID:   user.ID,
 		Action:        "session.create",
 		TargetKind:    "session",
-		TargetID:      sess.ID,
+		TargetID:      sess.Session.ID,
 	})
 
 	setupRequired := false
@@ -223,7 +223,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user state
 		// R-405: this session can do nothing but set up two-factor
 		// authentication until it has.
 		"two_factor_setup_required": setupRequired,
-		"expires_at":                sess.ExpiresAt.Format(time.RFC3339),
+		"expires_at":                sess.Session.ExpiresAt.Format(time.RFC3339),
 
 		// The revocation window is stated rather than implied (design 06 §3.1).
 		// Implying revocation is instant is the failure mode here.
@@ -283,9 +283,37 @@ func (s *Server) secureCookie(r *http.Request) bool {
 	return s.cookies().Secure(r)
 }
 
+// currentSession is the active session the request's cookie carries, read by
+// its secret, or ok false for none. Callers name the session by sess.ID, the
+// public ID, never by the cookie: the cookie is a credential and the ID is
+// what the audit log records (R-063, R-194).
+func (s *Server) currentSession(r *http.Request) (sess state.Session, ok bool, err error) {
+	cookie, _ := s.cookies().SessionID(r)
+	if cookie == "" || s.Sessions == nil {
+		return state.Session{}, false, nil
+	}
+	return s.Sessions.Active(r.Context(), cookie)
+}
+
+// keptSession is the public ID of the session the request's cookie carries,
+// matched by its secret, or "" for none, so a cookie with the wrong secret
+// keeps nothing alive. Users.SetPassword keeps it only if it is the account's.
+func (s *Server) keptSession(r *http.Request) (string, error) {
+	current, ok, err := s.currentSession(r)
+	if err != nil || !ok {
+		return "", err
+	}
+	return current.ID, nil
+}
+
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if sessionID, _ := s.cookies().SessionID(r); sessionID != "" {
-		if err := s.Sessions.Revoke(r.Context(), sessionID); err != nil {
+	sess, ok, err := s.currentSession(r)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	if ok {
+		if err := s.Sessions.Revoke(r.Context(), sess.ID); err != nil {
 			Error(w, r, err)
 			return
 		}
@@ -294,7 +322,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 			PrincipalID:   PrincipalFrom(r.Context()).UserID,
 			Action:        "session.revoke",
 			TargetKind:    "session",
-			TargetID:      sessionID,
+			TargetID:      sess.ID,
 		})
 	}
 
@@ -322,16 +350,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	// console is the launcher.
 	// Never nil: a missing key and an empty list are the same thing to a client
 	// reading `verbs ?? []`, and only one of them is an answer.
-	verbs := []string{}
-	if s.Verbs != nil {
-		held, err := s.Verbs.InstallVerbsFor(r.Context(), p)
-		if err != nil {
-			Error(w, r, err)
-			return
-		}
-		if held != nil {
-			verbs = held
-		}
+	verbs, err := s.installVerbs(r, p)
+	if err != nil {
+		Error(w, r, err)
+		return
 	}
 
 	body := map[string]any{
@@ -371,6 +393,18 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	JSON(w, http.StatusOK, body)
+}
+
+// installVerbs is the install-wide verbs p holds, never nil.
+func (s *Server) installVerbs(r *http.Request, p authz.Principal) ([]string, error) {
+	if s.Verbs == nil {
+		return []string{}, nil
+	}
+	held, err := s.Verbs.InstallVerbsFor(r.Context(), p)
+	if err != nil || held == nil {
+		return []string{}, err
+	}
+	return held, nil
 }
 
 func clientIP(r *http.Request) string {
@@ -413,6 +447,24 @@ type changePasswordRequest struct {
 //
 // Without this endpoint R-046's "must be changed on first login" is a flag that
 // nothing can clear, which is what it was until now.
+// readChangePassword reads a password change's body and checks the new
+// password's shape.
+func readChangePassword(r *http.Request) (changePasswordRequest, error) {
+	var req changePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return req, errs.New(errs.ValidInvalid, "The request body could not be read.")
+	}
+	if req.NewPassword == "" {
+		return req, errs.New(errs.ValidInvalid, "A password cannot be empty.")
+	}
+	if len(req.NewPassword) < hash.MinPasswordLength {
+		return req, errs.Newf(errs.ValidInvalid,
+			"A password needs at least %d characters.", hash.MinPasswordLength).
+			WithRemedy("A short phrase you will remember is a good password.")
+	}
+	return req, nil
+}
+
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	p := PrincipalFrom(r.Context())
 	if p.Kind == authz.KindAnonymous {
@@ -426,19 +478,9 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req changePasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
-		return
-	}
-	if req.NewPassword == "" {
-		Error(w, r, errs.New(errs.ValidInvalid, "A password cannot be empty."))
-		return
-	}
-	if len(req.NewPassword) < hash.MinPasswordLength {
-		Error(w, r, errs.Newf(errs.ValidInvalid,
-			"A password needs at least %d characters.", hash.MinPasswordLength).
-			WithRemedy("A short phrase you will remember is a good password."))
+	req, err := readChangePassword(r)
+	if err != nil {
+		Error(w, r, err)
 		return
 	}
 
@@ -513,21 +555,15 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.Wrap(errs.Internal, "Could not secure the password.", err))
 		return
 	}
-	if err := s.Users.SetPassword(r.Context(), p.UserID, digest); err != nil {
+	// Every other session ends with the change, in one statement. The
+	// current one survives so that changing a password does not sign you out
+	// of the page you changed it on.
+	keep, err := s.keptSession(r)
+	if err != nil {
 		Error(w, r, err)
 		return
 	}
-
-	// Every other session ends. A password change is what someone does when
-	// they think a credential has leaked, and leaving the leaked session alive
-	// would make the act cosmetic. The current one survives so that changing a
-	// password does not sign you out of the page you changed it on.
-	if sessionID, _ := s.cookies().SessionID(r); sessionID != "" {
-		if err := s.Sessions.RevokeOthersForUser(r.Context(), p.UserID, sessionID); err != nil {
-			Error(w, r, err)
-			return
-		}
-	} else if err := s.Sessions.RevokeAllForUser(r.Context(), p.UserID); err != nil {
+	if err := s.Users.SetPassword(r.Context(), p.UserID, digest, keep); err != nil {
 		Error(w, r, err)
 		return
 	}

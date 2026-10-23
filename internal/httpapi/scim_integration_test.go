@@ -159,7 +159,7 @@ func TestR048_OktaProvisionsSuspendsAndGroupsPeople(t *testing.T) {
 	// Give Dana a session, then deactivate her the way Okta does.
 	sess, err := inst.Sessions.Create(t.Context(), dana.ID, providerID, 3600e9, "test", "")
 	require.NoError(t, err)
-	me := inst.do(&session{cookie: sess.ID}, http.MethodGet, "/me", nil)
+	me := inst.do(&session{cookie: sess.Cookie.Reveal()}, http.MethodGet, "/me", nil)
 	require.Equal(t, http.StatusOK, me.Code)
 
 	off := okta.do(http.MethodPatch, "/Users/"+dana.ID, `{
@@ -168,7 +168,7 @@ func TestR048_OktaProvisionsSuspendsAndGroupsPeople(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusOK, off.Code, off.String())
 	require.Contains(t, off.String(), `"active":false`)
-	me = inst.do(&session{cookie: sess.ID}, http.MethodGet, "/me", nil)
+	me = inst.do(&session{cookie: sess.Cookie.Reveal()}, http.MethodGet, "/me", nil)
 	require.Equal(t, http.StatusUnauthorized, me.Code, "a deactivation ends the session at once (R-048)")
 
 	account := inst.do(admin, http.MethodGet, "/users/"+dana.ID, nil)

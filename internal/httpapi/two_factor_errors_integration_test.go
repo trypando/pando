@@ -25,9 +25,9 @@ func (i *install) providerSession() (*session, string) {
 	require.NoError(i.t, err)
 	u, err := state.NewUsers(i.db).Create(ctx, "idp_okta", "okta-sub", "", "Okta Person", "", false)
 	require.NoError(i.t, err)
-	sess, err := state.NewSessions(i.db).Create(ctx, u.ID, "idp_okta", time.Hour, "", "")
+	sess, err := state.NewSessions(i.db, testTokenKey).Create(ctx, u.ID, "idp_okta", time.Hour, "", "")
 	require.NoError(i.t, err)
-	return &session{cookie: sess.ID}, u.ID
+	return &session{cookie: sess.Cookie.Reveal()}, u.ID
 }
 
 // TestR405_AProviderAccountHasNoTwoFactorHere asserts that an account from an

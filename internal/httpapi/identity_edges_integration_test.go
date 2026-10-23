@@ -202,7 +202,7 @@ func TestO1_LinkingIsRefusedWhereItMeansNothing(t *testing.T) {
 	okta.do(http.MethodPost, "/Users", map[string]any{"userName": "dana", "externalId": "00ud", "active": true}).JSON(t, &dana)
 	sess, err := i.Sessions.Create(t.Context(), dana.ID, "idp_local", 3600e9, "test", "")
 	require.NoError(t, err)
-	pw := i.do(&session{cookie: sess.ID}, http.MethodPost, "/me/password",
+	pw := i.do(&session{cookie: sess.Cookie.Reveal()}, http.MethodPost, "/me/password",
 		map[string]string{"current_password": "x", "new_password": "a-long-enough-password"})
 	require.Equal(t, http.StatusBadRequest, pw.Code, pw.String())
 	require.Contains(t, pw.String(), "identity provider")

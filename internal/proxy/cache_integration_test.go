@@ -37,7 +37,7 @@ func TestR048_EveryRevocationReachesTheProxyCache(t *testing.T) {
 	src := spec.Source{Type: spec.SourceGit, URL: "https://example.test/notes", Ref: "main"}
 	app, err := state.NewApps(db).Create(ctx, "notes", id.New(id.App), owner, owner, src)
 	require.NoError(t, err)
-	sess, err := state.NewSessions(db).Create(ctx, owner, first.User.AdapterID, time.Hour, "test", "")
+	sess, err := state.NewSessions(db, []byte("0123456789abcdef0123456789abcdef")).Create(ctx, owner, first.User.AdapterID, time.Hour, "test", "")
 	require.NoError(t, err)
 	groupID := id.New(id.Group)
 	_, err = db.Exec(ctx, `INSERT INTO groups (id, name) VALUES ($1, 'engineering')`, groupID)
@@ -62,7 +62,7 @@ func TestR048_EveryRevocationReachesTheProxyCache(t *testing.T) {
 			"%s must empty the cache on every replica", what)
 	}
 
-	notifies(t, "a session revoked", `UPDATE sessions SET revoked_at = now() WHERE id = $1`, sess.ID)
+	notifies(t, "a session revoked", `UPDATE sessions SET revoked_at = now() WHERE id = $1`, sess.Session.ID)
 	notifies(t, "a group membership removed", `DELETE FROM group_members WHERE group_id = $1`, groupID)
 	notifies(t, "a grant removed", `DELETE FROM grants WHERE app_id = $1 AND plane = 'data'`, app.ID)
 	notifies(t, "an app stopped", `UPDATE apps SET desired_state = 'stopped', state = 'stopped' WHERE id = $1`, app.ID)

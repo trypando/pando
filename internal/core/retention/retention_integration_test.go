@@ -133,12 +133,12 @@ func TestR224_RetentionRemovesExpiredRowsFromTablesThatOnlyGrew(t *testing.T) {
 		require.NoError(t, err)
 	}
 	// Sessions: expired long ago, revoked long ago, and live.
-	exec(`INSERT INTO sessions (id, user_id, adapter_id, expires_at) VALUES ($1, $2, $3, $4)`,
+	exec(`INSERT INTO sessions (id, secret_hash, user_id, adapter_id, expires_at) VALUES ($1, 'hmac-sha256:' || repeat('0', 64), $2, $3, $4)`,
 		id.New(id.Session), f.owner, adapterID, old)
-	exec(`INSERT INTO sessions (id, user_id, adapter_id, expires_at, revoked_at) VALUES ($1, $2, $3, $4, $5)`,
+	exec(`INSERT INTO sessions (id, secret_hash, user_id, adapter_id, expires_at, revoked_at) VALUES ($1, 'hmac-sha256:' || repeat('0', 64), $2, $3, $4, $5)`,
 		id.New(id.Session), f.owner, adapterID, now.Add(time.Hour), old)
 	live := id.New(id.Session)
-	exec(`INSERT INTO sessions (id, user_id, adapter_id, expires_at) VALUES ($1, $2, $3, $4)`,
+	exec(`INSERT INTO sessions (id, secret_hash, user_id, adapter_id, expires_at) VALUES ($1, 'hmac-sha256:' || repeat('0', 64), $2, $3, $4)`,
 		live, f.owner, adapterID, now.Add(time.Hour))
 
 	// Idempotency keys: one from last week, one from a minute ago.

@@ -54,8 +54,8 @@ func TestR048_ResettingAPasswordFromTheHostEndsItsSessions(t *testing.T) {
 
 	var userID string
 	require.NoError(t, db.QueryRow(ctx, `SELECT id FROM users WHERE external_id = $1`, bootstrap.AdminUsername).Scan(&userID))
-	_, err := db.Exec(ctx, `INSERT INTO sessions (id, user_id, adapter_id, expires_at)
-		SELECT 'ses_live', id, adapter_id, now() + interval '1 day' FROM users WHERE id = $1`, userID)
+	_, err := db.Exec(ctx, `INSERT INTO sessions (id, secret_hash, user_id, adapter_id, expires_at)
+		SELECT 'ses_live', 'hmac-sha256:' || repeat('0', 64), id, adapter_id, now() + interval '1 day' FROM users WHERE id = $1`, userID)
 	require.NoError(t, err)
 
 	out, err := runAdmin(t, "reset-password", "--password", "a-brand-new-password-9")

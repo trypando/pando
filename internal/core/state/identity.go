@@ -411,16 +411,29 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 //
 // Local accounts only. An external identity provider owns its own credentials
 // (R-044), and a password Pando could change would be a second copy of one.
-func (u *Users) SetPassword(ctx context.Context, userID, passwordHash string) error {
-	tag, err := u.db.Exec(ctx, `
-		UPDATE users
-		SET password_hash = $2, must_change_password = false, updated_at = now()
-		WHERE id = $1 AND adapter_id = $3 AND deleted_at IS NULL`,
-		userID, passwordHash, LocalAdapterID)
+//
+// Every session the account holds ends in the same statement, except
+// keepSessionID when it is this account's ("" keeps none): a password change is what someone does when
+// they think a credential has leaked, and a password that changed while a
+// leaked session lived on would make the act cosmetic (R-048).
+func (u *Users) SetPassword(ctx context.Context, userID, passwordHash, keepSessionID string) error {
+	var changed bool
+	err := u.db.QueryRow(ctx, `
+		WITH changed AS (
+			UPDATE users
+			SET password_hash = $2, must_change_password = false, updated_at = now()
+			WHERE id = $1 AND adapter_id = $3 AND deleted_at IS NULL
+			RETURNING id
+		), ended AS (
+			UPDATE sessions SET revoked_at = now()
+			WHERE user_id IN (SELECT id FROM changed) AND id <> $4 AND revoked_at IS NULL
+		)
+		SELECT EXISTS (SELECT 1 FROM changed)`,
+		userID, passwordHash, LocalAdapterID, keepSessionID).Scan(&changed)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not change the password.", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if !changed {
 		return errs.New(errs.ValidInvalid,
 			"This account signs in through an external identity provider, so Pando cannot change its password.").
 			WithRemedy("Change it where that account lives.")
@@ -728,103 +741,6 @@ func (u *Users) EnsureLocalAdapter(ctx context.Context) error {
 	}
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not set up local accounts.", err)
-	}
-	return nil
-}
-
-// Sessions are server-side rows; the cookie carries only ses_… (design 02 §2.7).
-type Sessions struct{ db *DB }
-
-func NewSessions(db *DB) *Sessions { return &Sessions{db: db} }
-
-// Session is an active login.
-type Session struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	AdapterID string    `json:"adapter_id"`
-	ExpiresAt time.Time `json:"expires_at"`
-
-	// IssuedAt is when its holder signed in. A session younger than a few
-	// minutes changes its own second factor without the password again
-	// (R-405): its holder has just typed it.
-	IssuedAt time.Time `json:"issued_at"`
-}
-
-// Create issues a session.
-func (s *Sessions) Create(ctx context.Context, userID, adapterID string, lifetime time.Duration, userAgent, ip string) (Session, error) {
-	now := time.Now().UTC()
-	sess := Session{
-		ID:        id.New(id.Session),
-		UserID:    userID,
-		AdapterID: adapterID,
-		ExpiresAt: now.Add(lifetime),
-		IssuedAt:  now,
-	}
-	_, err := s.db.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, adapter_id, expires_at, user_agent, ip, issued_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		sess.ID, userID, adapterID, sess.ExpiresAt, nullable(userAgent), nullableInet(ip), now)
-	if err != nil {
-		return Session{}, errs.Wrap(errs.Internal, "Could not start a session.", err)
-	}
-	return sess, nil
-}
-
-// Active returns a session if it exists, is unrevoked, and has not expired.
-//
-// The API checks this on every request. The proxy reads it with the account
-// and groups in one query (ActiveWithUser) and keeps the answer until a NOTIFY
-// says something changed, never more than 30 seconds — a bound that is in
-// design 06 §3.1's revocation window, which is a stated number rather than an
-// accident (issue #93).
-func (s *Sessions) Active(ctx context.Context, sessionID string) (Session, bool, error) {
-	var sess Session
-	err := s.db.QueryRow(ctx, `
-		SELECT id, user_id, adapter_id, expires_at, issued_at
-		FROM sessions
-		WHERE id = $1 AND revoked_at IS NULL AND expires_at > now()`,
-		sessionID).Scan(&sess.ID, &sess.UserID, &sess.AdapterID, &sess.ExpiresAt, &sess.IssuedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Session{}, false, nil
-	}
-	if err != nil {
-		return Session{}, false, errs.Wrap(errs.Internal, "Could not read the session.", err)
-	}
-	return sess, true, nil
-}
-
-// Revoke ends one session.
-func (s *Sessions) Revoke(ctx context.Context, sessionID string) error {
-	_, err := s.db.Exec(ctx,
-		`UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL`, sessionID)
-	if err != nil {
-		return errs.Wrap(errs.Internal, "Could not end the session.", err)
-	}
-	return nil
-}
-
-// RevokeAllForUser ends every session a user holds. Used when an adapter pushes
-// a revocation (R-048), which is what makes immediate revocation possible.
-func (s *Sessions) RevokeAllForUser(ctx context.Context, userID string) error {
-	_, err := s.db.Exec(ctx,
-		`UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, userID)
-	if err != nil {
-		return errs.Wrap(errs.Internal, "Could not end the account's sessions.", err)
-	}
-	return nil
-}
-
-// RevokeOthersForUser ends every session a user holds except one.
-//
-// For a password change: the sessions someone did not know about should end,
-// and the one they are typing in should not — being signed out by your own
-// password change teaches people that changing it is a risky thing to do.
-func (s *Sessions) RevokeOthersForUser(ctx context.Context, userID, keepSessionID string) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE sessions SET revoked_at = now()
-		WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL`, userID, keepSessionID)
-	if err != nil {
-		return errs.Wrap(errs.Internal, "Could not end the account's other sessions.", err)
 	}
 	return nil
 }

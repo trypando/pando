@@ -171,8 +171,8 @@ func (s *Server) handleSSOComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//nolint:gosec // G124: CookieScheme.sessionCookie sets Secure, HttpOnly and SameSite.
-	cookie := s.cookies().sessionCookie(r, done.Session.ID)
-	cookie.Expires = done.Session.ExpiresAt
+	cookie := s.cookies().sessionCookie(r, done.Session.Cookie.Reveal())
+	cookie.Expires = done.Session.Session.ExpiresAt
 	http.SetCookie(w, cookie)
 	http.Redirect(w, r, done.Next, http.StatusFound)
 }

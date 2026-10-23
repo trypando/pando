@@ -13,7 +13,7 @@ phase where the two-plane distinction is either established correctly or quietly
 - [x] `identity_adapters`, `users`, `groups`, `group_members`, `tokens`, `sessions` migrations
 - [x] Local identity adapter: username/password, argon2id (R-044)
 - [x] Bootstrap path for the first admin user
-- [x] Server-side sessions; the cookie carries only `ses_…` (R-047, R-048)
+- [x] Server-side sessions; the cookie carries `ses_<id>.<secret>`, the secret stored as a digest (R-047, R-048, R-063)
 - [x] `SessionPolicy` per adapter, and surface the effective revocation window rather than implying a
       global guarantee
 - [x] Tokens, both kinds: delegated (resolves through `owner_user_id` live) and account (its own

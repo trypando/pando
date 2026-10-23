@@ -182,11 +182,7 @@ func (s *Server) meTwoFactor(r *http.Request, user state.User) (*meTwoFactorJSON
 // signedInRecently says the request's session began within recentSignIn. A
 // token never did: it is not a sign-in.
 func (s *Server) signedInRecently(r *http.Request) bool {
-	sessionID, _ := s.cookies().SessionID(r)
-	if sessionID == "" || s.Sessions == nil {
-		return false
-	}
-	sess, ok, err := s.Sessions.Active(r.Context(), sessionID)
+	sess, ok, err := s.currentSession(r)
 	return err == nil && ok && time.Since(sess.IssuedAt) < recentSignIn
 }
 

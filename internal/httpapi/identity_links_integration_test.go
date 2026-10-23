@@ -39,7 +39,7 @@ func TestR078_AProvidersGroupCanStandInForAPandoGroup(t *testing.T) {
 
 	sess, err := i.Sessions.Create(t.Context(), eve.ID, "idp_local", 3600e9, "test", "")
 	require.NoError(t, err)
-	as := &session{cookie: sess.ID}
+	as := &session{cookie: sess.Cookie.Reveal()}
 	require.Equal(t, http.StatusNotFound, i.do(as, http.MethodGet, "/apps/"+appID, nil).Code)
 
 	// The link runs only from a synced group to a Pando one.

@@ -18,24 +18,30 @@ import (
 // ActiveWithUser is Sessions.Active, Users.ByID and the user's groups in one
 // query: a session unrevoked and unexpired, the account it belongs to, and the
 // groups that account is in through the effective_group_members view, read
-// live as R-079 requires. found is false where Active would have found no
-// session or ByID no user.
-func (s *Sessions) ActiveWithUser(ctx context.Context, sessionID string) (Session, User, []string, bool, error) {
+// live as R-079 requires. cookie is the session cookie's value, checked as
+// Active checks it. found is false where Active would have found no session
+// or ByID no user.
+func (s *Sessions) ActiveWithUser(ctx context.Context, cookie string) (Session, User, []string, bool, error) {
+	sessionID, plaintext, ok := splitCookie(cookie)
+	if !ok {
+		return Session{}, User{}, nil, false, nil
+	}
 	var (
 		sess           Session
+		stored         string
 		user           User
 		email, display *string
 		groups         []string
 	)
 	err := s.db.QueryRow(ctx, `
-		SELECT s.id, s.user_id, s.adapter_id, s.expires_at,
+		SELECT s.id, s.secret_hash, s.user_id, s.adapter_id, s.expires_at,
 		       u.id, u.adapter_id, u.external_id, u.email, u.display_name, u.status,
 		       u.must_change_password, u.totp_enabled_at IS NOT NULL, u.created_at, coalesce(u.alias_of, ''),
 		       coalesce(array(SELECT group_id FROM effective_group_members WHERE user_id = u.id), '{}')
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now()`, sessionID).
-		Scan(&sess.ID, &sess.UserID, &sess.AdapterID, &sess.ExpiresAt,
+		Scan(&sess.ID, &stored, &sess.UserID, &sess.AdapterID, &sess.ExpiresAt,
 			&user.ID, &user.AdapterID, &user.ExternalID, &email, &display, &user.Status,
 			&user.MustChangePassword, &user.TwoFactorEnabled, &user.CreatedAt, &user.AliasOf, &groups)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -43,6 +49,9 @@ func (s *Sessions) ActiveWithUser(ctx context.Context, sessionID string) (Sessio
 	}
 	if err != nil {
 		return Session{}, User{}, nil, false, errs.Wrap(errs.Internal, "Could not read the session.", err)
+	}
+	if !s.matches(plaintext, stored) {
+		return Session{}, User{}, nil, false, nil
 	}
 	if email != nil {
 		user.Email = *email

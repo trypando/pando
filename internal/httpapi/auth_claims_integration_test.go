@@ -32,7 +32,7 @@ func TestR054_ASignedInPrincipalCarriesEmailAndName(t *testing.T) {
 		Sessions: i.Sessions, Tokens: i.Tokens, Users: i.Users, Groups: state.NewAuthzStore(i.db),
 	}
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("Cookie", httpapi.SessionCookie+"="+sess.ID)
+	r.Header.Set("Cookie", httpapi.SessionCookie+"="+sess.Cookie.Reveal())
 	p, err := authenticator.Authenticate(r)
 	require.NoError(t, err)
 

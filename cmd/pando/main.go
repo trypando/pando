@@ -345,16 +345,16 @@ func serve(ctx context.Context, configPath string) error {
 	}
 
 	users := state.NewUsers(db)
-	sessions := state.NewSessions(db)
-	// API tokens are stored as HMAC-SHA-256 under a key kept beside the
-	// process, not in the database (R-063). Every replica must hold the same
-	// one, and one that does not stops here, before it rejects every token
-	// the others issued (issue #72).
+	// API tokens and session secrets are stored as HMAC-SHA-256 under a key
+	// kept beside the process, not in the database (R-063). Every replica must
+	// hold the same one, and one that does not stops here, before it rejects
+	// every token and session the others issued (issue #72).
 	tokenKey, err := tokenkey.LoadOrCreate(cfg.Server.TokenKeyPath)
 	if err != nil {
 		return err
 	}
 	tokens := state.NewTokens(db, tokenKey)
+	sessions := state.NewSessions(db, tokenKey)
 	if err := tokens.VerifyKey(ctx); err != nil {
 		return err
 	}
