@@ -14,6 +14,7 @@ import (
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/bootstrap"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/core/tokenkey"
 	"github.com/trypando/pando/internal/hash"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -29,6 +30,29 @@ func withAdmin(t *testing.T) (*state.DB, *state.Users) {
 	require.NoError(t, err)
 	t.Setenv("PANDO_DATABASE_URL", dsn)
 	return db, users
+}
+
+// withToken issues a delegated token to userID and returns its ID.
+func withToken(t *testing.T, db *state.DB, userID string) string {
+	t.Helper()
+	issued, err := state.NewTokens(db, bytes.Repeat([]byte{7}, tokenkey.Size)).
+		Create(context.Background(), state.TokenDelegated, "ci", userID, userID, nil)
+	require.NoError(t, err)
+	return issued.Token.ID
+}
+
+// requireTokenRevoked asserts tokenID is revoked and the reset's audit event
+// counted it.
+func requireTokenRevoked(t *testing.T, db *state.DB, tokenID, action, userID string) {
+	t.Helper()
+	ctx := context.Background()
+	var revoked bool
+	require.NoError(t, db.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM tokens WHERE id = $1`, tokenID).Scan(&revoked))
+	require.True(t, revoked, "a reset that left a token alive has not reset anything")
+	var counted string
+	require.NoError(t, db.QueryRow(ctx,
+		`SELECT detail->>'tokens_revoked' FROM audit_events WHERE action = $1 AND target_id = $2`, action, userID).Scan(&counted))
+	require.Equal(t, "1", counted)
 }
 
 func runAdmin(t *testing.T, args ...string) (string, error) {
@@ -57,6 +81,7 @@ func TestR048_ResettingAPasswordFromTheHostEndsItsSessions(t *testing.T) {
 	_, err := db.Exec(ctx, `INSERT INTO sessions (id, secret_hash, user_id, adapter_id, expires_at)
 		SELECT 'ses_live', 'hmac-sha256:' || repeat('0', 64), id, adapter_id, now() + interval '1 day' FROM users WHERE id = $1`, userID)
 	require.NoError(t, err)
+	tokenID := withToken(t, db, userID)
 
 	out, err := runAdmin(t, "reset-password", "--password", "a-brand-new-password-9")
 	require.NoError(t, err)
@@ -76,6 +101,7 @@ func TestR048_ResettingAPasswordFromTheHostEndsItsSessions(t *testing.T) {
 	var action string
 	require.NoError(t, db.QueryRow(ctx,
 		`SELECT action FROM audit_events WHERE action = 'user.password.reset' AND target_id = $1`, userID).Scan(&action))
+	requireTokenRevoked(t, db, tokenID, "user.password.reset", userID)
 }
 
 func TestWithoutAPasswordOneIsGeneratedAndShownOnce(t *testing.T) {

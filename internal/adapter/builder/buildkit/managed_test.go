@@ -397,7 +397,7 @@ func TestR117_EachAppGetsABuildKitOfItsOwn(t *testing.T) {
 	require.NotEqual(t, f.created[0].Name, f.created[1].Name, "two daemons")
 	require.Equal(t, "pando-buildkit-app_01aaa-full-pando-1", f.created[0].Name)
 	require.Equal(t, "c-"+f.created[0].Name, a.container)
-	require.Equal(t, f.created[0].Name, a.network, "and its network goes with it")
+	require.Equal(t, "n-"+f.created[0].Name, a.network, "and its network goes with it, by ID")
 
 	for i, o := range f.created {
 		app := []string{"app_01AAA", "app_01BBB"}[i]
@@ -796,4 +796,28 @@ func TestADockerHiccupDoesNotMakeAContainerizedPandoHostRun(t *testing.T) {
 	require.NoError(t, m.setup(context.Background()))
 	require.True(t, m.inContainer)
 	require.Equal(t, "full-pando-1", m.owner)
+}
+
+// TestRemovingAnOldDaemonLeavesANewOnesNetwork asserts a daemon's network is
+// removed by ID: every daemon of one app shares a name, and an old one removed
+// late must not take the network a new one was just given under it.
+func TestRemovingAnOldDaemonLeavesANewOnesNetwork(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeDocker("pando-1")
+	m := testManaged(t, f)
+
+	old, err := m.launch(ctx, "app_01AAA")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = old.cli.Close() })
+
+	// A new daemon's network, made under the same name after the old one's.
+	name := f.created[0].Name
+	f.mu.Lock()
+	n := f.networks[name]
+	n.ID = "n-newer"
+	f.networks[name] = n
+	f.mu.Unlock()
+
+	m.remove(ctx, old)
+	require.Contains(t, f.networkNames(), name, "the new daemon keeps its network")
 }

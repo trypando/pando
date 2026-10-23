@@ -113,6 +113,17 @@ func AliasProblem(alias string) string {
 	return ""
 }
 
+// unreservedName is a name to suggest in place of a reserved one: the name
+// without its pando- prefix, or "web" when that leaves nothing or is still
+// reserved, as "pando" would.
+func unreservedName(name string) string {
+	suggestion := strings.TrimPrefix(strings.ToLower(name), "pando-")
+	if suggestion == "" || ReservedName(suggestion) {
+		return "web"
+	}
+	return suggestion + "-app"
+}
+
 // validateNames holds workload names and aliases to the names a workload may
 // answer to on its network.
 func validateNames(s *AppSpec, add func(*errs.Error)) {
@@ -122,7 +133,7 @@ func validateNames(s *AppSpec, add func(*errs.Error)) {
 		if ReservedName(w.Name) {
 			add(errs.Newf(errs.ValidInvalid,
 				"A workload is named %q, and names starting with pando- are kept for Pando's own containers.", w.Name).
-				WithRemedy("Rename the workload, for example to " + strings.TrimPrefix(strings.ToLower(w.Name), "pando-") + "-app."))
+				WithRemedy("Rename the workload, for example to " + unreservedName(w.Name) + "."))
 		}
 	}
 	for _, w := range s.Workloads {

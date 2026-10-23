@@ -81,6 +81,12 @@ func TestR025_AWorkloadAnswersOnlyToItsOwnNames(t *testing.T) {
 	named.Workloads[0].Name = "pando-web"
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(spec.Validate(named)))
 	require.False(t, spec.ReservedName("pandora"))
+
+	// The suggested name is one the check accepts.
+	for name, suggested := range map[string]string{"pando-web": "web-app", "pando": "web", "pando-pando-x": "web", "pando-": "web"} {
+		named.Workloads[0].Name = name
+		require.Contains(t, errs.As(spec.Validate(named)).Remedy, "to "+suggested+".", name)
+	}
 }
 
 // TestR240_ALimitIsNeverNegative: no runtime reads a negative size as one.

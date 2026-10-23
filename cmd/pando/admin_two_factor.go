@@ -25,7 +25,7 @@ func resetTwoFactorCmd(configPath *string) *cobra.Command {
 		Use:   "reset-two-factor [username]",
 		Short: "Remove a local account's two-factor authentication when nobody can sign in",
 		Long: "Removes a local account's authenticator and recovery codes, ends every session it has,\n" +
-			"and lifts any limit its wrong codes put on signing in. It then signs in with its password\n" +
+			"revokes its API tokens, and lifts any limit its wrong codes put on signing in. It then signs in with its password\n" +
 			"alone, and sets two-factor authentication up again there if host policy requires it.\n\n" +
 			"Accounts that sign in through an external identity provider get their second factor\n" +
 			"from the provider, not here.",
@@ -49,7 +49,7 @@ func resetTwoFactorCmd(configPath *string) *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Two-factor authentication removed for %s.\n", username)
 			fmt.Fprintln(cmd.OutOrStdout(),
-				"Every session it had has ended. It signs in with its password next, and sets two-factor\n"+
+				"Every session and API token it had has ended. It signs in with its password next, and sets two-factor\n"+
 					"authentication up again if this installation requires it.")
 			return nil
 		},
@@ -86,6 +86,11 @@ func resetTwoFactor(ctx context.Context, cfg *config.Config, username string, lo
 	if err := state.NewSessionRevoker(db).RevokeAllForUser(ctx, user.ID); err != nil {
 		return err
 	}
+	// So do its delegated tokens, as the API's reset revokes them (R-059).
+	revoked, err := state.NewTokenRevoker(db).RevokeAllForUser(ctx, user.ID)
+	if err != nil {
+		return err
+	}
 	if err := state.NewFailedAttempts(db).Clear(ctx, state.SignInCodeKey(user.ID)); err != nil {
 		return err
 	}
@@ -104,6 +109,7 @@ func resetTwoFactor(ctx context.Context, cfg *config.Config, username string, lo
 			"had_two_factor": had,
 			"via":            "pando admin reset-two-factor",
 			"reason":         fromTheHostShell,
+			"tokens_revoked": revoked,
 		},
 	}); err != nil {
 		return errs.Wrap(errs.Internal,

@@ -413,7 +413,7 @@ func (m *managed) launch(ctx context.Context, app string) (*instance, error) {
 		return nil, errs.Wrap(errs.Internal, "Could not issue Pando's certificate for the build service.", err)
 	}
 
-	inst := &instance{container: name, network: name}
+	inst := &instance{container: name}
 	keep := false
 	defer func() {
 		if !keep {
@@ -425,6 +425,10 @@ func (m *managed) launch(ctx context.Context, app string) (*instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	// By ID, not name: every daemon of one app shares the name, and removing
+	// an old one outside the pool's lock must not take the network of a new
+	// one launched under it meanwhile.
+	inst.network = netID
 	id, err := m.create(ctx, app, name, netID)
 	if err != nil {
 		return nil, err

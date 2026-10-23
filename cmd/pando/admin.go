@@ -116,8 +116,8 @@ func resetPasswordCmd(configPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset-password [username]",
 		Short: "Set a local account's password when nobody can sign in",
-		Long: "Sets a new password for a local account, ends every session it has, and lifts\n" +
-			"any limit its wrong passwords put on signing in.\n\n" +
+		Long: "Sets a new password for a local account, ends every session it has, revokes its API\n" +
+			"tokens, and lifts any limit its wrong passwords put on signing in.\n\n" +
 			"The account must change the password again at its next sign-in: this hands a way\n" +
 			"back in to somebody, which is not the same as choosing their credential.\n\n" +
 			"Accounts that sign in through an external identity provider are changed where they\n" +
@@ -158,7 +158,7 @@ func resetPasswordCmd(configPath *string) *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "New password: %s\n", password.Reveal())
 			}
 			fmt.Fprintln(cmd.OutOrStdout(),
-				"Every session it had has ended, and it must set a new password at the next sign-in.")
+				"Every session and API token it had has ended, and it must set a new password at the next sign-in.")
 			return nil
 		},
 	}
@@ -223,6 +223,11 @@ func resetPassword(ctx context.Context, cfg *config.Config, username string, pas
 	if err := sessions.RevokeAllForUser(ctx, userID); err != nil {
 		return err
 	}
+	// So do its delegated tokens, as the API's reset revokes them (R-059).
+	revoked, err := state.NewTokenRevoker(db).RevokeAllForUser(ctx, userID)
+	if err != nil {
+		return err
+	}
 
 	// A way back in means now: the wrong passwords that may be why nobody
 	// can sign in would otherwise refuse the new one too (R-404).
@@ -245,9 +250,10 @@ func resetPassword(ctx context.Context, cfg *config.Config, username string, pas
 		TargetKind:    "user",
 		TargetID:      userID,
 		Detail: map[string]any{
-			"username": username,
-			"via":      "pando admin reset-password",
-			"reason":   fromTheHostShell,
+			"username":       username,
+			"via":            "pando admin reset-password",
+			"reason":         fromTheHostShell,
+			"tokens_revoked": revoked,
 		},
 	}); err != nil {
 		return errs.Wrap(errs.Internal,

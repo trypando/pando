@@ -295,7 +295,20 @@ func (t *Tokens) Revoke(ctx context.Context, tokenID string) error {
 // reset is how an account is taken back from whoever else got into it, and a
 // token they minted while in would otherwise outlast it (R-059).
 func (t *Tokens) RevokeAllForUser(ctx context.Context, userID string) (int64, error) {
-	tag, err := t.db.Exec(ctx,
+	return NewTokenRevoker(t.db).RevokeAllForUser(ctx, userID)
+}
+
+// TokenRevoker revokes tokens by owner. It needs no key: revoking reads no
+// digest, so the host commands that reset a credential can revoke the
+// account's tokens without the API token key (cmd/pando admin).
+type TokenRevoker struct{ db *DB }
+
+// NewTokenRevoker returns a store that can only revoke tokens.
+func NewTokenRevoker(db *DB) *TokenRevoker { return &TokenRevoker{db: db} }
+
+// RevokeAllForUser revokes every token userID owns, and says how many.
+func (r *TokenRevoker) RevokeAllForUser(ctx context.Context, userID string) (int64, error) {
+	tag, err := r.db.Exec(ctx,
 		`UPDATE tokens SET revoked_at = now() WHERE owner_user_id = $1 AND revoked_at IS NULL`, userID)
 	if err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not revoke the account's tokens.", err)

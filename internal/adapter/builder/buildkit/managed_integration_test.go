@@ -134,7 +134,7 @@ func TestR117_TwoAppsBuildOnTwoDaemonsAndNothingOutlivesTheIdleWindow(t *testing
 		for _, v := range strings.Fields(dockerInspect(t, `{{range .Mounts}}{{.Name}} {{end}}`, inst.container)) {
 			volumes = append(volumes, v)
 		}
-		nets := dockerInspect(t, `{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}`, inst.container)
+		nets := dockerInspect(t, `{{range .NetworkSettings.Networks}}{{.NetworkID}} {{end}}`, inst.container)
 		require.Equal(t, inst.network, strings.TrimSpace(nets), "its own network and no other")
 	}
 	require.NotEmpty(t, volumes, "the image's state volume, anonymous")
