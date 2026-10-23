@@ -93,6 +93,8 @@ func validateBuild(s *AppSpec, add func(*errs.Error)) {
 		}
 	}
 
+	validateSourcePaths(s, add)
+
 	for name := range s.Build.GeneratedFiles {
 		clean := path.Clean("/" + filepath.ToSlash(name))
 		if strings.TrimPrefix(clean, "/") != filepath.ToSlash(name) || name == "" {
@@ -102,6 +104,57 @@ func validateBuild(s *AppSpec, add func(*errs.Error)) {
 		}
 	}
 }
+
+// validateSourcePaths keeps what a build reads inside the app's checkout
+// (R-020).
+//
+// The subdirectory is relative to the repository, a build context to the
+// subdirectory, and a Dockerfile to its context. Each may use ".." to name a
+// sibling — a compose service's `dockerfile: ../docker/web.Dockerfile` — but
+// none may be absolute, and together they may not climb above the
+// repository: the build would read the server's own files.
+func validateSourcePaths(s *AppSpec, add func(*errs.Error)) {
+	check := func(field, value string, base ...string) {
+		if value == "" {
+			return
+		}
+		if path.IsAbs(filepath.ToSlash(value)) || filepath.IsAbs(value) {
+			add(errs.Newf(errs.ValidInvalid,
+				"%s is %q, an absolute path, and "+msgSourcePathWant, field, value).
+				WithRemedy(msgSourcePathRemedy))
+			return
+		}
+		if escapesRepository(path.Join(base...), value) {
+			add(errs.Newf(errs.ValidInvalid,
+				"%s is %q, which reaches above the repository, and "+msgSourcePathWant, field, value).
+				WithRemedy(msgSourcePathRemedy))
+		}
+	}
+	subdir := filepath.ToSlash(s.Source.Subdir)
+	if subdir != "" && !path.IsAbs(subdir) {
+		check("source.subdir", subdir)
+	}
+	// A leading slash on a subdirectory has always meant the repository's
+	// root, so it is read that way rather than refused.
+	subdir = strings.TrimPrefix(path.Clean("/"+subdir), "/")
+
+	check("build.context", s.Build.Context, subdir)
+	check("build.dockerfile", s.Build.Dockerfile, subdir, s.Build.Context)
+	for _, w := range s.Workloads {
+		if w.Build == nil {
+			continue
+		}
+		prefix := "workloads." + w.Name + ".build."
+		check(prefix+"context", w.Build.Context, subdir)
+		check(prefix+"dockerfile", w.Build.Dockerfile, subdir, w.Build.Context)
+	}
+}
+
+// msgSourcePathWant ends a message about a path outside the app's source.
+const msgSourcePathWant = "it has to be a path inside the app's source."
+
+// msgSourcePathRemedy says what a path in the app's source looks like.
+const msgSourcePathRemedy = "Use a path relative to the repository, such as docker/Dockerfile, that does not start with a slash or climb above the repository with \"..\"."
 
 // validatePrimaryWorkload asserts exactly one primary workload.
 //

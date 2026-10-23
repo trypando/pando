@@ -68,11 +68,8 @@ func (c *Checkout) View(subdir string) api.SourceView {
 	if c.Dir == "" {
 		return emptyView{}
 	}
-	root := c.Dir
-	if subdir != "" {
-		root = filepath.Join(c.Dir, filepath.Clean("/"+subdir))
-	}
-	return &dirView{root: root}
+	sub := strings.TrimPrefix(filepath.Clean("/"+subdir), "/")
+	return &dirView{checkout: c.Dir, sub: sub, root: filepath.Join(c.Dir, sub)}
 }
 
 // Sources fetches an app's source, and keeps the sources that were uploaded
@@ -306,7 +303,7 @@ func fetchGitOnce(ctx context.Context, src spec.Source, acc *gitAccess, mkdir fu
 		worktree, err := repo.Worktree()
 		if err != nil {
 			cleanup()
-			return nil, errs.Wrap(errs.Internal, "Could not read the fetched source.", err)
+			return nil, errs.Wrap(errs.Internal, msgReadFetched, err)
 		}
 		if err := worktree.Checkout(&git.CheckoutOptions{Hash: plumbing.NewHash(src.Commit)}); err != nil {
 			cleanup()
@@ -319,7 +316,14 @@ func fetchGitOnce(ctx context.Context, src spec.Source, acc *gitAccess, mkdir fu
 	head, err := repo.Head()
 	if err != nil {
 		cleanup()
-		return nil, errs.Wrap(errs.Internal, "Could not read the fetched source.", err)
+		return nil, errs.Wrap(errs.Internal, msgReadFetched, err)
+	}
+
+	// R-020: nothing in the checkout may lead out of it. Upload skips links
+	// for the same reason (upload.go).
+	if err := confineLinks(dir); err != nil {
+		cleanup()
+		return nil, errs.Wrap(errs.Internal, msgReadFetched, err)
 	}
 
 	return &Checkout{Dir: dir, Commit: head.Hash().String(), cleanup: cleanup}, nil
@@ -346,19 +350,45 @@ func referenceFor(ref string) plumbing.ReferenceName {
 	return plumbing.NewBranchReferenceName(ref)
 }
 
+// msgReadFetched is the message for a fetched source Pando could not read.
+const msgReadFetched = "Could not read the fetched source."
+
+// msgNotInSource is the message for a name a view cannot open.
+const msgNotInSource = "That file is not in the app's source."
+
 // dirView is a read-only view of a directory.
 //
-// It has no write methods, structurally (R-020), and every path is resolved
-// inside the root so a traversal cannot reach the host filesystem.
-type dirView struct{ root string }
+// It has no write methods, structurally (R-020), and every name is opened
+// through an os.Root at the checkout, so neither a ".." nor a symbolic link
+// can carry a read onto the host filesystem: os.Root follows a link only while
+// it stays inside.
+type dirView struct {
+	// checkout is the checkout's own directory; sub the directory under it the
+	// view is rooted at, slash-free of any "..", or "" for the checkout itself.
+	checkout, sub string
 
-func (v *dirView) resolve(name string) (string, error) {
-	clean := filepath.Clean("/" + name)
-	full := filepath.Join(v.root, clean)
-	if !strings.HasPrefix(full, filepath.Clean(v.root)) {
-		return "", errs.Newf(errs.ValidInvalid, "%q is outside the app's source.", name)
+	// root is checkout and sub joined, for Root.
+	root string
+}
+
+// open opens the view's directory as an os.Root, refusing a subdirectory that
+// is, or passes through, a link out of the checkout.
+func (v *dirView) open() (*os.Root, error) {
+	checkout, err := os.OpenRoot(v.checkout)
+	if err != nil || v.sub == "" {
+		return checkout, err
 	}
-	return full, nil
+	defer func() { _ = checkout.Close() }()
+	return checkout.OpenRoot(v.sub)
+}
+
+// relative is name as a path inside the view.
+func relative(name string) string {
+	rel := strings.TrimPrefix(filepath.Clean("/"+name), "/")
+	if rel == "" {
+		return "."
+	}
+	return rel
 }
 
 // Root exposes the directory the view is rooted at.
@@ -370,44 +400,59 @@ func (v *dirView) resolve(name string) (string, error) {
 // assertion makes that capability explicit at the one call site that needs it.
 func (v *dirView) Root() string { return v.root }
 
+// CheckoutRoot is the checkout the view is part of: everything a build reads
+// must resolve inside it (R-020), and Root may be a subdirectory of it.
+func (v *dirView) CheckoutRoot() string { return v.checkout }
+
 func (v *dirView) Open(name string) (io.ReadCloser, error) {
-	full, err := v.resolve(name)
+	root, err := v.open()
 	if err != nil {
-		return nil, err
+		return nil, errs.Wrap(errs.NotFound, msgNotInSource, err)
 	}
-	f, err := os.Open(full)
+	defer func() { _ = root.Close() }()
+	f, err := root.Open(relative(name))
 	if err != nil {
-		return nil, errs.Wrap(errs.NotFound, "That file is not in the app's source.", err)
+		return nil, errs.Wrap(errs.NotFound, msgNotInSource, err)
 	}
 	return f, nil
 }
 
 func (v *dirView) Stat(name string) (api.FileInfo, error) {
-	full, err := v.resolve(name)
+	root, err := v.open()
 	if err != nil {
-		return api.FileInfo{}, err
+		return api.FileInfo{}, errs.Wrap(errs.NotFound, msgNotInSource, err)
 	}
-	info, err := os.Stat(full)
+	defer func() { _ = root.Close() }()
+	rel := relative(name)
+	info, err := root.Stat(rel)
 	if err != nil {
-		return api.FileInfo{}, errs.Wrap(errs.NotFound, "That file is not in the app's source.", err)
+		return api.FileInfo{}, errs.Wrap(errs.NotFound, msgNotInSource, err)
 	}
-	return api.FileInfo{Name: info.Name(), Size: info.Size(), IsDir: info.IsDir()}, nil
+	base := info.Name()
+	if rel == "." {
+		// The root names itself "." through os.Root; the directory's own name
+		// is what a caller asking about it expects.
+		base = filepath.Base(v.root)
+	}
+	return api.FileInfo{Name: base, Size: info.Size(), IsDir: info.IsDir()}, nil
 }
 
 func (v *dirView) Glob(pattern string) ([]string, error) {
+	root, err := v.open()
+	if err != nil {
+		// No directory, no matches: the same as an empty one.
+		return nil, nil //nolint:nilerr // A missing subdirectory has nothing to glob.
+	}
+	defer func() { _ = root.Close() }()
 	var out []string
-	err := filepath.WalkDir(v.root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+	err = fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
+		if err != nil || rel == "." {
 			//nolint:nilerr // Returning nil continues the walk. One unreadable
 			// entry in a repository must not fail the whole glob — detection
 			// would then be defeated by a single bad symlink.
 			return nil
 		}
-		rel, relErr := filepath.Rel(v.root, path)
-		if relErr != nil {
-			//nolint:nilerr // Same: skip this entry, keep walking.
-			return nil
-		}
+		rel = filepath.FromSlash(rel)
 		if match, _ := filepath.Match(pattern, rel); match {
 			out = append(out, rel)
 		}

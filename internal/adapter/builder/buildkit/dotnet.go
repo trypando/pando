@@ -162,7 +162,7 @@ func committedProgram(contextDir, start string) string {
 func writeCommittedProgramPlan(contextDir, command string) (string, error) {
 	quoted, err := json.Marshal(command)
 	if err != nil {
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+		return "", errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 	}
 	program := strings.Fields(command)[0]
 	content := fmt.Sprintf(`# A program committed in the repository, run as it is.
@@ -180,14 +180,8 @@ CMD [%s]
 // collects a plan and the build replays it (R-020).
 func writePlan(contextDir, content string) (string, error) {
 	name := filepath.Join(planDir, "Dockerfile")
-	full := filepath.Join(contextDir, name)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
-	}
-	// G306: a generated build input in the build context, read by the rootless
-	// builder as a different user. It holds no secret.
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil { //nolint:gosec
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+	if err := writeContextFile(contextDir, name, []byte(content)); err != nil {
+		return "", errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 	}
 	return name, nil
 }
@@ -215,14 +209,8 @@ CMD ["exec dotnet %[3]s.dll"]
 `, b.Version, b.Project, b.Assembly)
 
 	name := filepath.Join(planDir, "Dockerfile")
-	full := filepath.Join(contextDir, name)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
-	}
-	// G306: a generated build input in the build context, read by the rootless
-	// builder as a different user. It holds no secret.
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil { //nolint:gosec
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+	if err := writeContextFile(contextDir, name, []byte(content)); err != nil {
+		return "", errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 	}
 	return name, nil
 }

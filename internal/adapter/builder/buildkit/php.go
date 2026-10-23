@@ -3,7 +3,6 @@ package buildkit
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -67,8 +66,7 @@ func pinRailpackPHP(contextDir string) (restore func()) {
 	restore = func() {
 		// Nothing was rewritten, so there is nothing to put back.
 	}
-	file := filepath.Join(contextDir, phpComposerJSON)
-	original, err := os.ReadFile(file) //nolint:gosec // G304: the checkout's own manifest.
+	original, err := readContextFile(contextDir, phpComposerJSON)
 	if err != nil {
 		return restore
 	}
@@ -87,11 +85,11 @@ func pinRailpackPHP(contextDir string) (restore func()) {
 	if err != nil {
 		return restore
 	}
-	// G306: the checkout's own file, rewritten for the planner and restored.
-	if os.WriteFile(file, body, 0o644) != nil { //nolint:gosec
+	// The checkout's own file, rewritten for the planner and restored.
+	if writeContextFile(contextDir, phpComposerJSON, body) != nil {
 		return restore
 	}
-	return func() { _ = os.WriteFile(file, original, 0o644) } //nolint:gosec // as above
+	return func() { _ = writeContextFile(contextDir, phpComposerJSON, original) }
 }
 
 // phpWebRoots are the directories a PHP app's front controller is served

@@ -583,14 +583,8 @@ ENTRYPOINT ["/bin/sh", "-c"]
 CMD ["exec nginx -g 'daemon off;'"]
 `, site.Framework, site.Node, site.Install, build, staticServerImage, out, printfFormat(staticConfig))
 
-	full := filepath.Join(contextDir, name)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
-	}
-	// G306: a generated build input in the build context, read by the rootless
-	// builder as a different user. It holds no secret.
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil { //nolint:gosec
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+	if err := writeContextFile(contextDir, name, []byte(content)); err != nil {
+		return "", errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 	}
 	return name, nil
 }

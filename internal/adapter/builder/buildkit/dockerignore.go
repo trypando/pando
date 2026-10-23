@@ -1,7 +1,6 @@
 package buildkit
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/trypando/pando/internal/errs"
@@ -37,14 +36,12 @@ func writePlanIgnore(contextDir, dockerfile string) error {
 	if isRailpackPlan(dockerfile) || filepath.Dir(filepath.Clean(dockerfile)) != planDir {
 		return nil
 	}
-	full := filepath.Join(contextDir, dockerfile) + ".dockerignore"
-	if _, err := os.Stat(full); err == nil {
+	name := filepath.Clean(dockerfile) + ".dockerignore"
+	if statContext(contextDir, name) {
 		return nil
 	}
-	// G306: a generated build input in the build context, read by the rootless
-	// builder as a different user. It holds no secret.
-	if err := os.WriteFile(full, []byte(planIgnore), 0o644); err != nil { //nolint:gosec
-		return errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+	if err := writeContextFile(contextDir, name, []byte(planIgnore)); err != nil {
+		return errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 	}
 	return nil
 }

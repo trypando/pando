@@ -352,7 +352,7 @@ func writeGoPlan(contextDir string, b goBuild) (string, error) {
 		}
 		quoted, err := json.Marshal(command)
 		if err != nil {
-			return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+			return "", errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 		}
 		start = string(quoted)
 	}

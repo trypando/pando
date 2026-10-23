@@ -47,3 +47,28 @@ func TestR096_AComposeBuildContextAboveTheAppsDirectoryIsBuiltFromThere(t *testi
 	require.Equal(t, "deploy", got.Source.Subdir)
 	require.Equal(t, "./app", got.Workloads[0].Build.Context)
 }
+
+// TestR020_AComposeContextAboveTheRepositoryIsBuiltFromItsRoot asserts R-020
+// beside R-096: a compose file at the repository's root naming `..`, or an
+// absolute path, as a context is built from inside the repository as it
+// always was, and the spec says so rather than recording a path validation
+// refuses.
+func TestR020_AComposeContextAboveTheRepositoryIsBuiltFromItsRoot(t *testing.T) {
+	got := detect.Assemble("app_1", spec.Source{Type: spec.SourceGit}, detect.Draft{
+		Workloads: []spec.Workload{
+			{Name: "web", Primary: true, Build: &spec.WorkloadBuild{Context: ".."}},
+			{Name: "api", Build: &spec.WorkloadBuild{Context: "/srv/api"}},
+			{Name: "worker", Build: &spec.WorkloadBuild{Context: "./worker"}},
+		},
+	})
+	require.Empty(t, got.Source.Subdir)
+	require.Equal(t, ".", got.Workloads[0].Build.Context)
+	require.Equal(t, "srv/api", got.Workloads[1].Build.Context)
+	require.Equal(t, "worker", got.Workloads[2].Build.Context)
+
+	got = detect.Assemble("app_1", spec.Source{Subdir: "deploy"}, detect.Draft{
+		Workloads: []spec.Workload{{Name: "web", Build: &spec.WorkloadBuild{Context: "../../.."}}},
+	})
+	require.Empty(t, got.Source.Subdir)
+	require.Equal(t, ".", got.Workloads[0].Build.Context)
+}

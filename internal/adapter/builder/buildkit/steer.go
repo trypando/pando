@@ -112,7 +112,7 @@ func steeredPlanner(base planner, steers []steer) planner {
 		if err != nil {
 			return "", err
 		}
-		if err := editPlan(filepath.Join(contextDir, name), steers); err != nil {
+		if err := editPlan(contextDir, name, steers); err != nil {
 			return "", err
 		}
 		if err := recordSteers(contextDir, steers); err != nil {
@@ -166,8 +166,8 @@ func dedupeKeepOrder(in []string) []string {
 	return out
 }
 
-// editPlan makes each steer's edit to the plan at path.
-func editPlan(path string, steers []steer) error {
+// editPlan makes each steer's edit to the plan at name in contextDir.
+func editPlan(contextDir, name string, steers []steer) error {
 	var edits []func(map[string]any)
 	for _, s := range steers {
 		if s.Edit != nil {
@@ -177,7 +177,7 @@ func editPlan(path string, steers []steer) error {
 	if len(edits) == 0 {
 		return nil
 	}
-	body, err := os.ReadFile(path) //nolint:gosec // G304: the plan this process just wrote into its own checkout.
+	body, err := readContextFile(contextDir, name)
 	if err != nil {
 		return errs.Wrap(errs.BuildFailed, "Could not read the build plan.", err)
 	}
@@ -192,8 +192,7 @@ func editPlan(path string, steers []steer) error {
 	if err != nil {
 		return errs.Wrap(errs.BuildFailed, msgWritePlan, err)
 	}
-	// G306: a build input in the throwaway checkout; it holds no secret.
-	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil { //nolint:gosec
+	if err := writeContextFile(contextDir, name, append(out, '\n')); err != nil {
 		return errs.Wrap(errs.BuildFailed, msgWritePlan, err)
 	}
 	return nil
@@ -206,8 +205,7 @@ func recordSteers(contextDir string, steers []steer) error {
 	for _, s := range steers {
 		fmt.Fprintf(&b, "%s: %s\n", s.Key, s.Why)
 	}
-	// G306: a build input in the throwaway checkout; it holds no secret.
-	if err := os.WriteFile(filepath.Join(contextDir, planDir, steeringFile), []byte(b.String()), 0o644); err != nil { //nolint:gosec
+	if err := writeContextFile(contextDir, filepath.Join(planDir, steeringFile), []byte(b.String())); err != nil {
 		return errs.Wrap(errs.BuildFailed, msgWritePlan, err)
 	}
 	return nil

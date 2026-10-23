@@ -61,7 +61,7 @@ These are permanent. A request falling into one of these is answered "no," not "
 
 These are load-bearing. Violating any of them is a design failure, not a tradeoff.
 
-**R-020 [D]** **Nothing lives in the repo.** There is no `pando.yaml`. The source tree is strictly read-only input. Pando looks at it and never asks it for permission. Consequence: Pando's state store is the sole record of how every app runs, which makes export, backup, and audit day-one requirements rather than polish.
+**R-020 [D]** **Nothing lives in the repo.** There is no `pando.yaml`. The source tree is strictly read-only input. Pando looks at it and never asks it for permission. It is also confined to its checkout: nothing in it — a symbolic link, or a subdirectory, build context or Dockerfile path that is absolute or climbs above the repository — leads a read or a write outside the checkout. A link that would is removed when the source is fetched, and the rest of the repository still deploys. Consequence: Pando's state store is the sole record of how every app runs, which makes export, backup, and audit day-one requirements rather than polish.
 
 **R-021 [D]** **Pando fills declared slots; it never invents topology.** If the repo declares what it needs, Pando's job is to satisfy that declaration. If it doesn't declare, Pando does not go hunting through imports to guess.
 

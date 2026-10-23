@@ -203,6 +203,7 @@ func (a *Apps) ByPath(ctx context.Context, requestPath string) (App, *spec.AppSp
 	if err := json.Unmarshal(body, &s); err != nil {
 		return App{}, nil, "", false, errs.Wrap(errs.Internal, "Could not read the app's spec.", err)
 	}
+	spec.ConfineStoredPaths(&s) // R-020: as a revision written before validation refused them.
 	return app, &s, prefix, true, nil
 }
 

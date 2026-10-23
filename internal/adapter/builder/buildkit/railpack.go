@@ -61,17 +61,23 @@ func isRailpackPlan(name string) bool {
 // env is Railpack's own settings (RAILPACK_BUILD_CMD and the rest), each one
 // either read out of the repository and passed safeCommand, or Pando's.
 func runRailpack(contextDir string, env []string) (string, error) {
-	if err := os.MkdirAll(filepath.Join(contextDir, planDir), 0o755); err != nil {
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build plan.", err)
-	}
+	// Made through the checkout's root, and any plan file already there
+	// removed, so the path Railpack writes to is a directory inside the
+	// checkout and not a link the repository carried (R-020).
 	name := filepath.Join(planDir, railpackPlanFile)
+	if err := mkdirContext(contextDir, planDir); err != nil {
+		return "", errs.Wrap(errs.BuildFailed, msgPreparePlan, err)
+	}
+	if err := removeContextFile(contextDir, name); err != nil {
+		return "", errs.Wrap(errs.BuildFailed, msgPreparePlan, err)
+	}
 	planPath := filepath.Join(contextDir, name)
 
 	// Railpack's HOME, and nothing else: it writes only the plan, and keeps
 	// its version lookups under /tmp/railpack, where the image put mise.
 	home, err := os.MkdirTemp("", "pando-railpack-*")
 	if err != nil {
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build plan.", err)
+		return "", errs.Wrap(errs.BuildFailed, msgPreparePlan, err)
 	}
 	defer func() { _ = os.RemoveAll(home) }()
 
@@ -120,7 +126,7 @@ func runRailpack(contextDir string, env []string) (string, error) {
 			WithRemedy("Add a Dockerfile to the repository saying how it should be built.")
 	}
 
-	body, err := os.ReadFile(planPath)
+	body, err := readContextFile(contextDir, name)
 	if err != nil {
 		return "", errs.Newf(errs.BuildFailed,
 			"Pando could not work out how to build this app: %s", trim(out)).
@@ -130,9 +136,7 @@ func runRailpack(contextDir string, env []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// G306: a build input in the throwaway checkout, read by the rootless
-	// builder running as a different user. It holds no secret.
-	if err := os.WriteFile(planPath, body, 0o644); err != nil { //nolint:gosec
+	if err := writeContextFile(contextDir, name, body); err != nil {
 		return "", errs.Wrap(errs.BuildFailed, "Could not write the build plan.", err)
 	}
 	return name, nil

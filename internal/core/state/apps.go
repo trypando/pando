@@ -914,6 +914,7 @@ func (a *Apps) scanRevision(ctx context.Context, where string, args ...any) (Rev
 	if err := json.Unmarshal(body, &s); err != nil {
 		return Revision{}, false, errs.Wrap(errs.Internal, "Could not read the stored spec.", err)
 	}
+	spec.ConfineStoredPaths(&s) // R-020: as a revision written before validation refused them.
 	rev.Body = &s
 	return rev, true, nil
 }
@@ -1534,6 +1535,7 @@ func (a *Apps) ByRouting(ctx context.Context, by, value string) (App, *spec.AppS
 	if err := json.Unmarshal(body, &s); err != nil {
 		return App{}, nil, false, errs.Wrap(errs.Internal, "Could not read the app's spec.", err)
 	}
+	spec.ConfineStoredPaths(&s) // R-020: as a revision written before validation refused them.
 	return app, &s, true, nil
 }
 

@@ -462,15 +462,10 @@ var (
 // Gemfile itself; this is kept for plans stored before it. The checkout is a
 // throwaway clone.
 func ensureRubyVersion(contextDir string) {
-	if _, err := os.Stat(filepath.Join(contextDir, "Gemfile")); err != nil {
+	if !statContext(contextDir, "Gemfile") || statContext(contextDir, ".ruby-version") {
 		return
 	}
-	target := filepath.Join(contextDir, ".ruby-version")
-	if _, err := os.Stat(target); err == nil {
-		return
-	}
-	// G306: a build input in the throwaway checkout; it holds no secret.
-	_ = os.WriteFile(target, []byte(gemfileRubyVersion(contextDir)+"\n"), 0o644) //nolint:gosec
+	_ = writeContextFile(contextDir, ".ruby-version", []byte(gemfileRubyVersion(contextDir)+"\n"))
 }
 
 // gemfileRubyVersion is the Ruby the Gemfile or its lockfile names, the
@@ -520,16 +515,8 @@ func writeInto(contextDir string, files map[string]string) error {
 				"A generated build file is written to %q, which is not a path inside the app's source.", name)
 		}
 
-		full := filepath.Join(contextDir, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			return errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
-		}
-		// G306: 0644 is deliberate. This is a generated build input inside the
-		// build context, and the rootless builder that reads it runs as a
-		// different user. It holds no secret — a secret reaches a build as a
-		// build secret, never as a file in the context.
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil { //nolint:gosec
-			return errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+		if err := writeContextFile(contextDir, filepath.FromSlash(rel), []byte(content)); err != nil {
+			return errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 		}
 	}
 	return nil
@@ -742,7 +729,7 @@ func staticDockerfile(req api.BuildRequest, contextDir string) (string, string, 
 
 	dir, err := os.MkdirTemp("", "pando-static-*")
 	if err != nil {
-		return "", "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+		return "", "", errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 	}
 
 	content := fmt.Sprintf(`FROM %s
@@ -755,13 +742,13 @@ RUN printf %s > /etc/nginx/conf.d/default.conf
 	// build as a build secret, never as a file in the context.
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(content), 0o644); err != nil { //nolint:gosec
 		_ = os.RemoveAll(dir)
-		return "", "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+		return "", "", errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 	}
 	// The directory served is the one the spec names, whatever the
 	// repository's .dockerignore says (dockerignore.go).
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile.dockerignore"), []byte(planIgnore), 0o644); err != nil { //nolint:gosec
 		_ = os.RemoveAll(dir)
-		return "", "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+		return "", "", errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 	}
 	return dir, "Dockerfile", nil
 }

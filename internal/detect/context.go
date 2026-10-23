@@ -17,26 +17,14 @@ import (
 // read the app's Dockerfile" (issue #90). The compose file names the
 // repository root as its context; that is what the build is given, and each
 // context is rewritten to name the same place from there. Nothing reaches
-// above the repository: a path cannot climb past its root.
+// above the repository: a path cannot climb past its root, and a context that
+// tries — `..` from the repository's root, or an absolute path — is written as
+// the place inside the repository the build has always been given, rather than
+// left for validation to refuse (R-020).
 func liftBuildContexts(src spec.Source, draft Draft) (spec.Source, Draft) {
 	base := path.Clean("/" + src.Subdir)
-	root := base
-	reach := func(context string) {
-		if context == "" {
-			return
-		}
-		dir := path.Join(base, context)
-		for !within(dir, root) {
-			root = path.Dir(root)
-		}
-	}
-	reach(draft.Build.Context)
-	for _, w := range draft.Workloads {
-		if w.Build != nil {
-			reach(w.Build.Context)
-		}
-	}
-	if root == base {
+	root, outside := reachOf(src.Subdir, draft)
+	if root == base && !outside {
 		return src, draft
 	}
 
@@ -70,4 +58,39 @@ func liftBuildContexts(src spec.Source, draft Draft) (spec.Source, Draft) {
 // within reports whether dir is root or below it. Both are clean and absolute.
 func within(dir, root string) bool {
 	return root == "/" || dir == root || strings.HasPrefix(dir, root+"/")
+}
+
+// leavesRepository reports whether a build context, relative to subdir, is
+// absolute or climbs above the repository.
+func leavesRepository(subdir, context string) bool {
+	if path.IsAbs(context) {
+		return true
+	}
+	rel := path.Join(strings.TrimPrefix(path.Clean("/"+subdir), "/"), context)
+	return rel == ".." || strings.HasPrefix(rel, "../")
+}
+
+// reachOf is the directory, clean and absolute from the repository's root,
+// that every build context in draft lies within, and whether any of them
+// leaves the repository.
+func reachOf(subdir string, draft Draft) (root string, outside bool) {
+	base := path.Clean("/" + subdir)
+	root = base
+	contexts := []string{draft.Build.Context}
+	for _, w := range draft.Workloads {
+		if w.Build != nil {
+			contexts = append(contexts, w.Build.Context)
+		}
+	}
+	for _, context := range contexts {
+		if context == "" {
+			continue
+		}
+		outside = outside || leavesRepository(subdir, context)
+		dir := path.Join(base, context)
+		for !within(dir, root) {
+			root = path.Dir(root)
+		}
+	}
+	return root, outside
 }

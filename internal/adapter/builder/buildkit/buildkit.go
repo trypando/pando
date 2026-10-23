@@ -397,10 +397,39 @@ func sourceDir(req api.BuildRequest) (string, error) {
 			"This builder needs the source on disk and was given something else.")
 	}
 	contextDir := dir.Root()
+	checkout := checkoutOf(req.Source, contextDir)
 	if req.Context != "" {
-		contextDir = filepath.Join(contextDir, filepath.Clean("/"+req.Context))
+		// As written, relative to the subdirectory: "../shared" names a
+		// sibling of it, which validation allows when it is inside the
+		// repository. Where it lands is what is checked.
+		contextDir = filepath.Join(contextDir, filepath.FromSlash(req.Context))
+	}
+	// R-020: the context is checked where it lands, as text and through every
+	// symbolic link. A ".." or a link in the repository named as the
+	// subdirectory or the context would otherwise hand the build a directory
+	// on the host.
+	if err := confined(checkout, contextDir, "build context"); err != nil {
+		return "", err
+	}
+	if req.Strategy == spec.BuildDockerfile {
+		name := req.Dockerfile
+		if name == "" {
+			name = "Dockerfile"
+		}
+		if err := confined(checkout, filepath.Join(contextDir, name), "Dockerfile"); err != nil {
+			return "", err
+		}
 	}
 	return contextDir, nil
+}
+
+// checkoutOf is the checkout a source view is part of, which may be above the
+// directory the view is rooted at; root when the view does not say.
+func checkoutOf(src any, root string) string {
+	if c, ok := src.(interface{ CheckoutRoot() string }); ok {
+		return c.CheckoutRoot()
+	}
+	return root
 }
 
 // prepareDockerfile returns the directory and name of the Dockerfile to build,
@@ -448,7 +477,7 @@ func keepDockerfile() {
 func (a *Adapter) solve(ctx context.Context, req api.BuildRequest, contextDir, dockerfileDir, dockerfile, cacheDir string, timeout time.Duration) (api.BuildResult, error) {
 	contextFS, err := fsutil.NewFS(contextDir)
 	if err != nil {
-		return api.BuildResult{}, errs.Wrap(errs.BuildFailed, "Could not read the app's source.", err)
+		return api.BuildResult{}, errs.Wrap(errs.BuildFailed, msgReadSource, err)
 	}
 	dockerfileFS, err := fsutil.NewFS(dockerfileDir)
 	if err != nil {

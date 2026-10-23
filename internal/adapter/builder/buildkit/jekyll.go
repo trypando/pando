@@ -270,14 +270,8 @@ CMD ["exec nginx -g 'daemon off;'"]
 
 	files[filepath.ToSlash(name)] = content
 	for name, body := range files {
-		full := filepath.Join(contextDir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
-		}
-		// G306: a generated build input, read by the rootless builder as a
-		// different user. It holds no secret.
-		if err := os.WriteFile(full, []byte(body), 0o644); err != nil { //nolint:gosec
-			return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build.", err)
+		if err := writeContextFile(contextDir, filepath.FromSlash(name), []byte(body)); err != nil {
+			return "", errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 		}
 	}
 	return name, nil
