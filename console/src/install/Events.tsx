@@ -341,7 +341,7 @@ function SubscriptionCards({
 
 /** Where a subscription sends, as a card's first line says it: the kind of
  *  destination, and the channel or address after it. */
-export function destinationLine(
+function destinationLine(
   s: Pick<Subscription, 'destination' | 'url' | 'adapter_id' | 'channel'>,
   destinations: Pick<Destination, 'id' | 'kind'>[],
 ): { kind: string; target?: string } {

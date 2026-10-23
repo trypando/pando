@@ -25,7 +25,7 @@ import { Sparkline } from './Sparkline';
 import { useNewestSpec } from './newestSpec';
 import { AppVerb, useCan } from './verbs';
 
-export interface VolumeUsage {
+interface VolumeUsage {
   id: string;
   name: string;
   path: string;
@@ -72,7 +72,7 @@ export interface Sample {
 }
 
 /** How many readings a line keeps: an hour of them at the page's interval. */
-export const KEEP = 120;
+const KEEP = 120;
 
 /**
  * The readings so far, with this one added to each workload it reports on.
@@ -100,7 +100,7 @@ export function addReading(
 }
 
 /** The readings this page has taken, kept for as long as it is open. */
-export function useReadings(reading: Reading | undefined): Record<string, Sample[]> {
+function useReadings(reading: Reading | undefined): Record<string, Sample[]> {
   const [history, setHistory] = useState<Record<string, Sample[]>>(() => addReading({}, reading));
   useEffect(() => {
     setHistory((h) => addReading(h, reading));

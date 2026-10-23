@@ -473,7 +473,7 @@ export function shortRef(ref?: string): string {
   return (ref ?? '').replace(/^refs\/(heads|tags)\//, '');
 }
 
-export function Failure({ error }: { error: unknown }) {
+function Failure({ error }: { error: unknown }) {
   const failed = error instanceof RequestFailed ? error : null;
   return (
     <Banner tone="failed">

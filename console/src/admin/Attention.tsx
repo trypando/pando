@@ -28,7 +28,7 @@ export function noticesKey(appID: string) {
  * where they read it is how people learn to dismiss warnings, so every code
  * the console has a screen for carries the way to it.
  */
-export const FIXES: Record<string, { label: string; tab: string; focus?: string }> = {
+const FIXES: Record<string, { label: string; tab: string; focus?: string }> = {
   WARN_NO_PERSISTENT_VOLUME: { label: 'Add storage', tab: 'settings', focus: 'storage' },
   WARN_COMPOSE_CONSTRUCT_REWRITTEN: { label: 'Review the configuration', tab: 'settings', focus: 'configuration' },
   WARN_UNDECLARED_DEPENDENCY_SUSPECTED: { label: 'Open dependencies', tab: 'settings', focus: 'dependencies' },

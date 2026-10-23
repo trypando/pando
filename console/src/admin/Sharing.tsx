@@ -665,7 +665,7 @@ function EveryoneDialog({
  * choosing it has to give it to somebody, with a toggle to hide it and Copy.
  * This is the one time it can be read: Pando keeps only a digest (R-075a).
  */
-export function PasscodeField({ value, onChange, error }: { value: string; onChange: (v: string) => void; error?: string }) {
+function PasscodeField({ value, onChange, error }: { value: string; onChange: (v: string) => void; error?: string }) {
   const [hidden, setHidden] = useState(false);
   const [copied, setCopied] = useState(false);
   return (
