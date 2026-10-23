@@ -25,10 +25,14 @@ OUT = ROOT / "docs" / "traceability" / "requirements-index.md"
 # Matches R-123 and the compound form the design docs use for adjacent
 # requirements: R-070/071, R-204/205. Without the suffix group the second half of
 # every compound reference reads as an undesigned requirement.
-RID = re.compile(r"R-\d{3}(?:/\d{3})*")
-DEFINITION = re.compile(r"^\*\*(R-\d{3})\s*((?:\[[^\]]+\]\s*)*)\*\*(.*)$")
+#
+# A letter after the number is a requirement of its own (R-075a, R-080a,
+# R-143a), not its base: read as the base, a [LATER] requirement looks covered
+# by tests of the one added beside it.
+RID = re.compile(r"R-\d{3}[a-z]?(?:/\d{3}[a-z]?)*(?![A-Za-z])")
+DEFINITION = re.compile(r"^\*\*(R-\d{3}[a-z]?)\s*((?:\[[^\]]+\]\s*)*)\*\*(.*)$")
 HEADING = re.compile(r"^##+[ \t](.*)$")
-TEST_NAME = re.compile(r"func\s+(TestR(\d{3})\w*)\s*\(")
+TEST_NAME = re.compile(r"func\s+(TestR(\d{3}[a-z]?)(?![a-z])\w*)\s*\(")
 
 
 def summarize(text: str, limit: int = 96) -> str:
@@ -80,7 +84,9 @@ def references(directory: Path, pattern: str) -> dict[str, set[str]]:
 
 
 def test_coverage() -> dict[str, set[str]]:
-    """Map each R-### to Go test functions named for it (design 00 section 4)."""
+    """Map each R-### to Go test functions named for it (design 00 section 4).
+
+    TestR143a_… is R-143a's, not R-143's."""
     out: dict[str, set[str]] = defaultdict(set)
     for path in ROOT.rglob("*_test.go"):
         if "/node_modules/" in str(path):

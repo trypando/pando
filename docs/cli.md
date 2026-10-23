@@ -534,6 +534,22 @@ These are app settings, not spec: nothing is deployed.
 | `--delete-days` |  | days without use before Pando deletes the app: a number, never, or default |
 | `--stop-days` |  | days without use before Pando stops the app: a number, never, or default |
 
+#### `app image-update`
+
+Check whether an image app's tag names a newer build, and upgrade to it
+
+```
+pando app image-update <app>
+```
+
+Asks the registry which build the app's image tag names now and compares it
+with the build the app runs. Nothing changes unless --upgrade is given, which
+writes a revision running that build and deploys it.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--upgrade` |  | deploy the newer build when there is one |
+
 #### `app list`
 
 List the apps you can manage

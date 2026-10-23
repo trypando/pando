@@ -423,6 +423,14 @@ export interface AutoDeploySaved {
   spec_id?: string;
 }
 
+export interface ImageCheck {
+  image: string;
+  current_digest: string;
+  latest_digest: string;
+  update_available: boolean;
+  revision: number;
+}
+
 export interface Source {
   type: string;
   url?: string;

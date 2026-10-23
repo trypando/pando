@@ -44,6 +44,11 @@ Unreleased above it. -->
   Keycloak and Authentik say where it goes. `pando idp add` prints it too (R-043).
 - **Turning on SCIM says how to set it up**: where the base URL and token go at the provider, as
   separate fields, and that SCIM requests fail while the provider is off in Pando.
+- **An app deployed from a published image can be checked for a newer build of its tag, and upgraded
+  to it** (R-143a). Re-deploying runs the build the app pinned, so a tag pushed again, such as
+  `:latest`, changed nothing before. **Check for update** beside Deploy, `pando app image-update
+  [--upgrade]` and two MCP tools ask the registry; the upgrade writes a revision and deploys it, with
+  approval where it is needed. Not yet for compose apps.
 
 ### Changed
 

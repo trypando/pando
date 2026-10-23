@@ -132,9 +132,11 @@ homebrew_casks:
         # them and Gatekeeper refuses to run them. Removing the attribute is
         # what every unsigned cask does; it is also a real weakening of the
         # check, and the fix is signing and notarization rather than this.
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/pando"]
+        # Homebrew's install-steps DSL, which replaced arbitrary Ruby in
+        # postflight (goreleaser v2.19).
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/pando"]
           end
 
 # .deb, .rpm and .apk attached to the release. Installable today with
