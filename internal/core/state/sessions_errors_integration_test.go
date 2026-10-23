@@ -61,3 +61,36 @@ func TestR105_ASessionTheDatabaseCannotReachIsAServerFault(t *testing.T) {
 	require.Equal(t, errs.Internal, errs.CodeOf(sessions.Revoke(ctx, "ses_x")))
 	require.Equal(t, errs.Internal, errs.CodeOf(sessions.RevokeAllForUser(ctx, "usr_x")))
 }
+
+// TestR048_APasswordChangeKeepsOnlyItsOwnAccountsSession asserts that
+// SetPassword ends every session of the account but the one it is told to
+// keep, and that naming another account's session keeps none (R-048).
+func TestR048_APasswordChangeKeepsOnlyItsOwnAccountsSession(t *testing.T) {
+	t.Parallel()
+	db := connected(t)
+	ctx := context.Background()
+	users := state.NewUsers(db)
+	sessions := state.NewSessions(db, testTokenKey)
+	sam, kim := seedUser(t, db, "sam"), seedUser(t, db, "kim")
+
+	start := func(userID string) state.Started {
+		s, err := sessions.Create(ctx, userID, state.LocalAdapterID, time.Hour, "", "")
+		require.NoError(t, err)
+		return s
+	}
+	active := func(s state.Started) bool {
+		_, ok, err := sessions.Active(ctx, s.Cookie.Reveal())
+		require.NoError(t, err)
+		return ok
+	}
+	here, there, theirs := start(sam.ID), start(sam.ID), start(kim.ID)
+
+	require.NoError(t, users.SetPassword(ctx, sam.ID, "digest-2", here.Session.ID))
+	require.True(t, active(here))
+	require.False(t, active(there))
+	require.True(t, active(theirs), "another account's sessions are not touched")
+
+	require.NoError(t, users.SetPassword(ctx, sam.ID, "digest-3", theirs.Session.ID))
+	require.False(t, active(here), "another account's session keeps none of this one's")
+	require.True(t, active(theirs))
+}

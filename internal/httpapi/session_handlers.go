@@ -295,13 +295,12 @@ func (s *Server) currentSession(r *http.Request) (sess state.Session, ok bool, e
 	return s.Sessions.Active(r.Context(), cookie)
 }
 
-// keptSession is the public ID of the session a password change keeps: the
-// one the request's cookie carries, matched by its secret, when it is
-// userID's. "" keeps none, so a cookie with the wrong secret keeps nothing
-// alive.
-func (s *Server) keptSession(r *http.Request, userID string) (string, error) {
+// keptSession is the public ID of the session the request's cookie carries,
+// matched by its secret, or "" for none, so a cookie with the wrong secret
+// keeps nothing alive. Users.SetPassword keeps it only if it is the account's.
+func (s *Server) keptSession(r *http.Request) (string, error) {
 	current, ok, err := s.currentSession(r)
-	if err != nil || !ok || current.UserID != userID {
+	if err != nil || !ok {
 		return "", err
 	}
 	return current.ID, nil
@@ -559,7 +558,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// Every other session ends with the change, in one statement. The
 	// current one survives so that changing a password does not sign you out
 	// of the page you changed it on.
-	keep, err := s.keptSession(r, p.UserID)
+	keep, err := s.keptSession(r)
 	if err != nil {
 		Error(w, r, err)
 		return

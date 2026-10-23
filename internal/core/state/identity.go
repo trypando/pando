@@ -413,7 +413,7 @@ func (u *Users) SetStatusBy(ctx context.Context, userID, status, by string) erro
 // (R-044), and a password Pando could change would be a second copy of one.
 //
 // Every session the account holds ends in the same statement, except
-// keepSessionID ("" keeps none): a password change is what someone does when
+// keepSessionID when it is this account's ("" keeps none): a password change is what someone does when
 // they think a credential has leaked, and a password that changed while a
 // leaked session lived on would make the act cosmetic (R-048).
 func (u *Users) SetPassword(ctx context.Context, userID, passwordHash, keepSessionID string) error {
