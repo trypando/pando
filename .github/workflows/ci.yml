@@ -83,7 +83,9 @@ jobs:
       - name: Release config is valid
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7
         with:
-          version: '~> v2'
+          # Pinned: 2.19 fails `check` on the deprecated homebrew_casks.hooks.post.install.
+          # Move to hooks.post.install_steps, then unpin.
+          version: 'v2.18.3'
           args: check
 
       - name: Traceability index is up to date
