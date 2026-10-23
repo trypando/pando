@@ -146,12 +146,16 @@ def final_sweep():
         sh("docker", "rmi", img)
 
 
-def prune_build_cache(keep_mb=20000):
-    """Trim the QA BuildKit cache to a cap. Serialized; never concurrent with itself."""
+def prune_build_cache(keep_mb=20000):  # noqa: ARG001 - callers still pass the cap they want
+    """Trim what builds leave. Serialized; never concurrent with itself.
+
+    Each app's BuildKit holds its cache only until Pando removes it, after its idle window or to
+    make room for another app's (R-117), and its API takes Pando's certificate alone, so there is
+    no shared BuildKit cache here to prune: dangling images are what is left to trim.
+    """
     if not _prune_lock.acquire(blocking=False):
         return
     try:
-        sh("docker", "exec", state.BUILDKIT, "buildctl", "prune", "--keep-storage", str(keep_mb), timeout=1800)
         sh("docker", "image", "prune", "-f")
     finally:
         _prune_lock.release()

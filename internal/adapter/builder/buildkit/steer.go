@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
@@ -216,7 +215,8 @@ func recordSteers(contextDir string, steers []steer) error {
 // steer plans a failed Railpack build again with whatever its log calls for,
 // and builds that, until it builds, nothing more is recognized, or maxSteers
 // is reached. The error returned on giving up is the last build's.
-func (a *Adapter) steer(ctx context.Context, req api.BuildRequest, contextDir, cacheDir string, timeout time.Duration, failed error, log *logTail) (api.BuildResult, error) {
+func (a *Adapter) steer(ctx context.Context, job solveJob, failed error, log *logTail) (api.BuildResult, error) {
+	req, contextDir := job.req, job.contextDir
 	// What the repository called for is in the plan already, and is planned
 	// with again.
 	applied := proactiveSteers(contextDir)
@@ -248,7 +248,7 @@ func (a *Adapter) steer(ctx context.Context, req api.BuildRequest, contextDir, c
 		if err != nil {
 			return api.BuildResult{}, err
 		}
-		result, err := a.solve(ctx, req, contextDir, filepath.Dir(filepath.Join(contextDir, name)), name, cacheDir, timeout)
+		result, err := a.solve(ctx, job, filepath.Dir(filepath.Join(contextDir, name)), name)
 		if err == nil {
 			result.GeneratedFiles = plan
 			return result, nil

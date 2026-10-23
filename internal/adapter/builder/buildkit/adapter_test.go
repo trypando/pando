@@ -3,6 +3,7 @@ package buildkit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	bkclient "github.com/moby/buildkit/client"
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -68,11 +70,12 @@ func TestTheAddressComesFromConfigThenTheEnvironmentThenPandosOwn(t *testing.T) 
 	dockerClient = func() (dockerAPI, error) { return fake, nil }
 	t.Cleanup(func() { dockerClient = orig })
 
+	t.Setenv("PANDO_BUILD_CACHE_DIR", filepath.Join(t.TempDir(), "buildcache"))
 	a := New()
 	require.NoError(t, a.Configure(context.Background(), nil))
 	require.NotNil(t, a.managed, "no address anywhere: Pando runs its own (issue #130)")
-	require.Equal(t, "tcp://127.0.0.1:1234", a.address, "on loopback, because the test is not in a container")
-	require.Len(t, fake.created, 1)
+	require.NotNil(t, a.daemons, "one per app")
+	require.Empty(t, fake.created, "none starts until an app's build needs it")
 
 	t.Setenv("PANDO_BUILDKIT_ADDRESS", "tcp://elsewhere:1234")
 	b := New()
@@ -299,11 +302,11 @@ func TestTheImageLabelNamesTheApp(t *testing.T) {
 // is no client, and otherwise asks the build service to prune, ignoring a
 // failure: a cache that stays too big is not a broken build.
 func TestTrimmingTheBuildCacheIgnoresFailure(t *testing.T) {
-	New().trimCache(context.Background()) // no client: nothing to do
+	New().trimCache(context.Background(), nil) // no client: nothing to do
 
 	unbounded := unreachable(t)
 	unbounded.config.CacheMaxBytes = -1
-	unbounded.trimCache(context.Background())
+	unbounded.trimCache(context.Background(), unbounded.cli)
 
 	a := unreachable(t)
 
@@ -313,7 +316,7 @@ func TestTrimmingTheBuildCacheIgnoresFailure(t *testing.T) {
 	cancel()
 	done := make(chan struct{})
 	go func() {
-		a.trimCache(ctx)
+		a.trimCache(ctx, a.cli)
 		close(done)
 	}()
 	select {
@@ -331,27 +334,26 @@ func (viewWithoutRoot) Open(string) (io.ReadCloser, error) { return nil, os.ErrN
 func (viewWithoutRoot) Stat(string) (api.FileInfo, error)  { return api.FileInfo{}, os.ErrNotExist }
 func (viewWithoutRoot) Glob(string) ([]string, error)      { return nil, nil }
 
-// TestR105_PandosBuildKitNotAnsweringSaysWhereToLook asserts the health check
-// on Pando's own BuildKit names what most often stops it — a host that
-// confines unprivileged user namespaces, as Ubuntu 23.10 and later do — and
-// how to see BuildKit's own account (issue #130) — and the second cause on
-// rootless Docker, too few subordinate IDs for BuildKit's own (issue #90).
+// TestR105_PandosBuildKitNotAnsweringSaysWhereToLook asserts a BuildKit
+// Pando started that never answers fails the build with BuildKit's own last
+// words — the daemon is removed, so its log is not there to read after — and
+// names what most often stops it: a host that confines unprivileged user
+// namespaces, as Ubuntu 23.10 and later do (issue #130), and on rootless
+// Docker too few subordinate IDs for BuildKit's own (issue #90).
 func TestR105_PandosBuildKitNotAnsweringSaysWhereToLook(t *testing.T) {
-	fake := newFakeDocker("")
-	orig := dockerClient
-	dockerClient = func() (dockerAPI, error) { return fake, nil }
-	t.Cleanup(func() { dockerClient = orig })
+	f := newFakeDocker("pando-1")
+	f.logs = "rootlesskit: fork/exec /proc/self/exe: permission denied"
+	m := testManaged(t, f)
+	m.startWait = 0
+	m.answers = func(context.Context, *bkclient.Client) error { return errors.New("connection refused") }
 
-	a := New()
-	require.NoError(t, a.Configure(context.Background(), nil))
-	a.managed.port = "1" // nothing listens: the BuildKit the fake "started" never answers
-	a.cli = nil
-
-	err := a.HealthCheck(context.Background())
+	_, err := m.launch(context.Background(), "app_01HQ8")
 	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err))
-	remedy := errs.As(err).Remedy
-	require.Contains(t, remedy, "docker logs pando-buildkit")
-	require.Contains(t, remedy, "kernel.apparmor_restrict_unprivileged_userns=0")
-	require.Contains(t, remedy, "newuidmap: write to uid_map failed")
-	require.Contains(t, remedy, "usermod --add-subuids")
+	e := errs.As(err)
+	require.Contains(t, e.Message, "permission denied", "BuildKit's own account, in the message")
+	require.Contains(t, e.Remedy, "kernel.apparmor_restrict_unprivileged_userns=0")
+	require.Contains(t, e.Remedy, "newuidmap: write to uid_map failed")
+	require.Contains(t, e.Remedy, "usermod --add-subuids")
+	require.Len(t, f.containers, 1, "the daemon that never answered is removed; only Pando is left")
+	require.Equal(t, []string{"pando-buildctl"}, f.networkNames(), "and its network")
 }

@@ -369,8 +369,16 @@ def cmd_down(a):
     print(f"Removing the QA instance, its volumes and build cache, and anything left of its {len(ulids)} apps…")
     if os.path.exists(state.path("qa.env")):
         compose("down", "-v", "--remove-orphans", timeout=600)
-    # The BuildKit the QA instance's Pando started, outside Compose, by the names it gives it: the
-    # QA project's, never another installation's.
+    # The BuildKits the QA instance's Pando started, one per app, outside Compose, by the names it
+    # gives them: the QA project's, never another installation's. Then the network it reaches them
+    # on, and what an older Pando's single shared BuildKit left.
+    for kind, fmt in (("container", ("ps", "-a", "--format", "{{.Names}}")),
+                      ("network", ("network", "ls", "--format", "{{.Name}}"))):
+        _, out, _ = sh("docker", *fmt)
+        for name in out.splitlines():
+            if name.startswith(state.BUILDKIT + "-"):
+                sh("docker", *(["rm", "-f", "-v"] if kind == "container" else ["network", "rm"]), name)
+    sh("docker", "network", "rm", f"{state.PROJECT}-buildctl")
     sh("docker", "rm", "-f", "-v", state.BUILDKIT)
     sh("docker", "network", "rm", f"{state.PROJECT}-build")
     sh("docker", "volume", "rm", "-f", f"{state.PROJECT}-buildkit-cache")

@@ -10,14 +10,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
-	bkclient "github.com/moby/buildkit/client"
-	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -32,51 +29,19 @@ import (
 // and serves HTTP.
 //
 // Needs railpack on PATH (it ships in the Pando image) and a Docker daemon.
-// The BuildKit is the one Pando would start, under names and a port of its
-// own, removed afterwards.
+// The BuildKit is the one Pando would start for the app, under names of the
+// test's own, removed afterwards.
 func TestR095_ARailpackPlanBuildsOnPandosRootlessBuildKit(t *testing.T) {
 	if _, err := exec.LookPath(railpackBinary); err != nil {
 		t.Skip("railpack is not on PATH; it ships in the Pando image")
 	}
 	ctx := context.Background()
-	if os.Getenv("DOCKER_HOST") == "" {
-		t.Setenv("DOCKER_HOST", client.DefaultDockerHost)
-	}
-	dc, err := client.New(client.FromEnv)
-	require.NoError(t, err)
-
+	m := realManaged(t)
 	stamp := fmt.Sprintf("%d", time.Now().UnixNano())
-	m := newManaged(dc)
-	m.name, m.network, m.volume, m.port = "pando-test-buildkit-"+stamp, "pando-test-build-"+stamp, "pando-test-buildkit-cache-"+stamp, "21235"
-	m.named = true
-	m.self = "not-a-container-" + stamp
-	t.Cleanup(func() {
-		for _, args := range [][]string{{"rm", "-f", m.name}, {"network", "rm", m.network}, {"volume", "rm", m.volume}} {
-			_ = exec.Command("docker", args...).Run()
-		}
-	})
-	addr, err := m.ensure(ctx)
-	require.NoError(t, err)
-
-	out, err := exec.Command("docker", "inspect", "-f",
-		"{{.HostConfig.Privileged}} {{json .HostConfig.Binds}} {{json .Mounts}}", m.name).CombinedOutput()
-	require.NoError(t, err, string(out))
-	require.True(t, strings.HasPrefix(string(out), "false "), "BuildKit is not privileged: %s", out)
-	require.NotContains(t, string(out), ".sock", "and has no runtime socket")
-
-	bk, err := bkclient.New(ctx, addr)
-	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		c, cancel := context.WithTimeout(ctx, 3*time.Second)
-		defer cancel()
-		workers, err := bk.ListWorkers(c)
-		return err == nil && len(workers) > 0
-	}, 60*time.Second, time.Second)
 
 	t.Setenv("PANDO_BUILD_CACHE_DIR", t.TempDir())
 	a := New()
-	cfg, _ := json.Marshal(Config{Address: addr})
-	require.NoError(t, a.Configure(ctx, cfg))
+	a.managed, a.daemons = m, newDaemons(m)
 
 	root := writeFiles(t, map[string]string{
 		"main.py": "import http.server, os\n" +
@@ -106,6 +71,13 @@ func TestR095_ARailpackPlanBuildsOnPandosRootlessBuildKit(t *testing.T) {
 		Timeout:        15 * time.Minute,
 	})
 	require.NoError(t, err, "build log:\n%s", tail(logs.String()))
+
+	name := m.daemonName("app_01RAILPACKTEST")
+	out, err := exec.Command("docker", "inspect", "-f",
+		"{{.HostConfig.Privileged}} {{json .HostConfig.Binds}} {{json .Mounts}}", name).CombinedOutput()
+	require.NoError(t, err, string(out))
+	require.True(t, strings.HasPrefix(string(out), "false "), "BuildKit is not privileged: %s", out)
+	require.NotContains(t, string(out), ".sock", "and has no runtime socket")
 
 	require.Equal(t, "app_01RAILPACKTEST", imageLabel(t, image.Bytes(), api.ImageLabelBundle),
 		"the bundle label survives a frontend that takes no label options")

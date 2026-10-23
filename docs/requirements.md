@@ -568,7 +568,7 @@ reference is dropped. It describes and never acts. Any signed-in user may ask.
 
 **R-116 [P]** Where a runtime adapter can provision an isolated environment per app (e.g. Incus), building *inside that environment* is preferred, since build isolation then comes free from the same boundary.
 
-**R-117 [P]** Build filesystem is discarded after the build. Layer cache is namespaced per app; no cross-app cache sharing.
+**R-117 [P]** Build filesystem is discarded after the build. Layer cache is namespaced per app; no cross-app cache sharing. **Builds of different apps never share a build daemon, its cache mounts or its process namespace** (amended with per-app BuildKit): the BuildKit Pando runs serves one app — a compose app's services share their app's — and its API answers only a client holding a certificate from the installation's build authority, never a build step. Nothing made for an app's builds (daemon, its state, its network) outlives a short idle window after the app's last build, or the app's deletion. A BuildKit an install topology runs beside Pando (`PANDO_BUILDKIT_ADDRESS`) is shared by every app, which then keeps only per-app cache keys.
 
 **R-118 [P]** Build egress defaults to open, on the grounds that build output is reviewed before it runs. Host policy may restrict it to a package-registry allowlist, accepting that some repos will then fail to build.
 

@@ -44,9 +44,10 @@ services:
       # nothing it is not told to; that config is how it is told. Unset, the
       # file is empty and the administrator is set up in the console.
       PANDO_ADMIN_PASSWORD_FILE: /run/pando-input/admin-password
-      # No build service here: Pando starts its own rootless BuildKit on the
-      # Docker it runs apps on, as pando-buildkit (R-111). It has no runtime
-      # socket (R-112), and runs under a seccomp profile compiled into Pando
+      # No build service here: Pando starts a rootless BuildKit for each app it
+      # builds on the Docker it runs apps on, as pando-buildkit-<app>-… (R-111,
+      # R-117), and removes it after an idle window. None has a runtime socket
+      # (R-112), and each runs under a seccomp profile compiled into Pando
       # (issue #130). Set PANDO_BUILDKIT_ADDRESS to use one you run instead.
       # Where per-app subdomains are carved from. localtest.me resolves every
       # subdomain to 127.0.0.1, so a laptop can exercise subdomain routing
