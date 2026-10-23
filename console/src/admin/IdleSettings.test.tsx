@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // The API client reads the page's address when it loads. Rendered on the
 // server here, so there is no page: give it the least it needs.
@@ -11,6 +12,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { App } from '@api/types.gen';
 import { AppVerbs } from './verbs';
+import { mount, reply, type Mounted } from '../ui/testing';
 import { IdleSection, choiceOf, idleValue, outlook } from './IdleSettings';
 import type { IdleReport } from './IdleSettings';
 
@@ -83,19 +85,73 @@ describe('the idle section', () => {
     expect(render(undefined)).toBe('');
   });
 
-  it("shows the installation's settings and no Save for somebody who cannot edit", () => {
+  it('shows two switches as they stand, fixed for somebody who cannot edit', () => {
     const html = render(report);
-    expect(html).toContain('>Idle<');
-    expect(html).toContain('Installation default (30 days)');
+    expect(html).toContain('Stop when unused');
+    expect(html).toContain('After 30 days without a visit');
+    expect(html).toContain('Delete when unused');
+    expect(html).toContain('>Off<');
     expect(html).toContain('If nobody uses it, Pando stops it on');
-    expect(html).not.toContain('>Save<');
+    expect(html.match(/role="switch"[^>]*disabled=""/g)).toHaveLength(2);
+    expect(html).not.toContain('>Change<');
   });
 
-  it('says when the installation never acts', () => {
-    expect(render({ ...report, install_delete_days: 0 })).toContain('Installation default (never)');
+  it('says one day, not one days', () => {
+    expect(render({ ...report, effective_stop_days: 1 })).toContain('After 1 day without a visit');
   });
 
-  it('offers Save to somebody who may edit the app', () => {
-    expect(render({ ...report, stop_days: 14 }, ['app.spec.edit'])).toContain('>Save<');
+  it('offers a change of days to somebody who may edit the app', () => {
+    const html = render({ ...report, stop_days: 14, effective_stop_days: 14 }, ['app.spec.edit']);
+    expect(html).toContain('After 14 days without a visit');
+    expect(html).toContain('>Change<');
+    expect(html).not.toMatch(/role="switch"[^>]*disabled=""/);
+  });
+});
+
+describe('flipping an idle switch (R-397)', () => {
+  let screen: Mounted | undefined;
+  afterEach(() => {
+    screen?.unmount();
+    vi.unstubAllGlobals();
+  });
+
+  const sent = () => {
+    const calls: unknown[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') calls.push(JSON.parse(String(init.body)));
+      return reply(report);
+    });
+    return calls;
+  };
+
+  it('turns stopping off, keeping the delete setting', async () => {
+    const calls = sent();
+    screen = mount(<IdleSection app={app} />, [[['apps', app.id, 'idle'], report]], ['app.spec.edit']);
+    await screen.toggle('Stop when unused');
+    expect(calls).toEqual([{ stop_days: 0, delete_days: 0 }]);
+  });
+
+  it('turns deleting on at the installation’s days', async () => {
+    const calls = sent();
+    screen = mount(<IdleSection app={app} />, [[['apps', app.id, 'idle'], report]], ['app.spec.edit']);
+    await screen.toggle('Delete when unused');
+    expect(calls).toEqual([{ stop_days: null, delete_days: null }]);
+  });
+
+  it('turns one on at the app’s own days where the installation has none', async () => {
+    const calls = sent();
+    const none = { ...report, install_delete_days: 0 };
+    screen = mount(<IdleSection app={app} />, [[['apps', app.id, 'idle'], none]], ['app.spec.edit']);
+    await screen.toggle('Delete when unused');
+    expect(calls).toEqual([{ stop_days: null, delete_days: 90 }]);
+  });
+
+  it('sets the app’s own days', async () => {
+    const calls = sent();
+    screen = mount(<IdleSection app={app} />, [[['apps', app.id, 'idle'], report]], ['app.spec.edit']);
+    await screen.press('Change');
+    await screen.fill('Days before stopping', '14');
+    await screen.press('Save');
+    expect(calls).toEqual([{ stop_days: 14, delete_days: 0 }]);
   });
 });

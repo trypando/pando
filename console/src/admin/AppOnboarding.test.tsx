@@ -188,8 +188,10 @@ describe('AppOnboarding', () => {
     // Every slot-filled variable is a value somebody can set here.
     const variables = html.slice(variablesAt, html.indexOf('The plan'));
     expect(variables).toContain('CREW_TOKEN_ENC_KEY');
-    expect(variables).toContain('Needs a value');
+    expect(variables).toContain('No value yet');
     expect(variables).toContain('Required');
+    // One card per workload, in the shared editor.
+    expect(variables).toContain('pando-vrow');
     // What Pando fills is said plainly, as what it holds, with no field to
     // overwrite by accident. Who provides the database is chosen above.
     expect(variables).toContain('Address of the PostgreSQL Pando creates');
@@ -197,9 +199,11 @@ describe('AppOnboarding', () => {
     expect(variables).not.toContain('Use your own');
     expect(variables).not.toContain('which Pando creates');
     expect(variables).not.toContain('Provisioned');
-    // Secret is a default on every value, never a lock.
-    expect(variables).toContain('>Secret<');
-    expect(variables).not.toMatch(/Secret<\/span><\/label>[^]*?disabled=""/);
+    // Secret is a default on every value, never fixed: the lock in each value
+    // box turns, closed on a credential and open on a plain value.
+    expect(variables).toContain('aria-pressed="true"');
+    expect(variables).toContain('aria-pressed="false"');
+    expect(variables).not.toMatch(/class="pando-vlock"[^>]*disabled/);
     // A required value still empty is marked in red, with a way to say the
     // app runs without it.
     expect(variables).toContain('var(--marker-deep)');

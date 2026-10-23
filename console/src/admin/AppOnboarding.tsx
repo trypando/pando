@@ -29,7 +29,6 @@ import {
   Badge,
   Button,
   Card,
-  Checkbox,
   CodeBlock,
   Dialog,
   Icon,
@@ -41,9 +40,9 @@ import {
   StatusIndicator,
   StatusSymbol,
   Tag,
-  Tooltip,
 } from '@design';
 import { AiStar } from '../ui/AiStar';
+import { VariableEditor, type EditorGroup, type EditorRow } from './VariableEditor';
 import { AiGlyph, AiThinking, useReducedMotion } from '../ui/AiThinking';
 
 import { api, RequestFailed } from '@api/client';
@@ -99,7 +98,6 @@ import {
   mergeRows,
   neededValues,
   absoluteAddress,
-  generateFor,
   primaryWorkload,
   rowProblems,
   suggestions,
@@ -672,11 +670,13 @@ export function AppOnboarding({
                 canEdit={canEdit}
                 canSecrets={canSecrets}
                 onEdit={edit}
-                onAdd={() => {
+                onAdd={(workload) => {
+                  // Added in a workload's card, it belongs to that workload,
+                  // and is sent with it (valuesPayload).
                   nextRow.current += 1;
                   setAdded((list) => [
                     ...list,
-                    { id: `added-${nextRow.current}`, workload: '', key: '', value: '', secret: false },
+                    { id: `added-${nextRow.current}`, workload, key: '', value: '', secret: false },
                   ]);
                 }}
                 onRemove={(row) => setAdded((list) => list.filter((r) => r.id !== row.id))}
@@ -1604,7 +1604,8 @@ function Variables({
   canEdit: boolean;
   canSecrets: boolean;
   onEdit: (row: VariableRow, patch: RowEdit & { key?: string }) => void;
-  onAdd: () => void;
+  /** Adds a variable to this workload. */
+  onAdd: (workload: string) => void;
   onRemove: (row: VariableRow) => void;
   /** Slots the person marked not required, by slot key. */
   optional: Set<string>;
@@ -1612,216 +1613,172 @@ function Variables({
   /** Ask before marking a required value optional: it may break the deploy. */
   onAskOptional: (row: VariableRow) => void;
 }) {
-  const workloads = spec.workloads ?? [];
-  const many = workloads.length > 1;
   // Values Pando generated, by row id, so the row can say so — until the
   // person changes the value, when it is simply theirs.
   const [generated, setGenerated] = useState<Record<string, string>>({});
-  // How many times each row has been generated, to replay its wash; and the
-  // row whose button says "Generated" for a moment.
-  const [flash, setFlash] = useState<Record<string, number>>({});
-  const [justGenerated, setJustGenerated] = useState<string | null>(null);
-  useEffect(() => {
-    if (!justGenerated) return;
-    const timer = window.setTimeout(() => setJustGenerated(null), 1_600);
-    return () => window.clearTimeout(timer);
-  }, [justGenerated, flash]);
   if (rows.length === 0 && !canEdit) return null;
+
+  const primary = primaryWorkload(spec);
+  // A row with no workload is one the server puts on the primary.
+  const workloadOf = (row: VariableRow) => row.workload || primary || (spec.workloads ?? [])[0]?.name || '';
+  const groups: EditorGroup[] = (spec.workloads ?? []).map((w) => ({
+    workload: w.name,
+    rows: rows
+      .filter((row) => workloadOf(row) === w.name)
+      .map((row) => planRow(row, { spec, problems, marks, canEdit, canSecrets, own, optional, onEdit, onOptional, onAskOptional, generated })),
+  }));
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
         <h3 style={{ font: 'var(--type-h3)', margin: 0 }}>Variables</h3>
         <span style={{ color: 'var(--ink-secondary)' }}>
-          {rows.length === 0
-            ? 'No variables found.'
-            : 'Used on every deploy.'}
+          {rows.length === 0 ? 'No variables found.' : 'Used on every deployment.'}
         </span>
       </div>
 
-      {rows.length > 0 && (
-        <Card tone="paper" padding="none">
-          {rows.map((row, i) => {
-            const isNew = row.original === undefined;
-            const ai = isNew ? undefined : marks.env[envKey(row.workload || primaryWorkload(spec), row.key)];
-            const changed = !isNew && row.value !== row.original;
-            const slot = row.slot;
-            const service = slot?.service ? slotLabel(slot.type) : undefined;
-            // Pando fills it, and nobody has chosen to provide their own: no
-            // field at all, so it cannot be overwritten by accident. Whether
-            // Pando creates the service is chosen under Services, not here.
-            const pandoFills = Boolean(slot && service && slot.provisioned && !own(slot.key));
-            let source: React.ReactNode;
-            let placeholder = row.secret ? 'Kept secret' : 'No value yet';
-            if (slot && service) {
-              // Said as what it holds: MEMCACHED is the address of a
-              // Memcached, not a Memcached to choose.
-              placeholder = servicePlaceholder(slot.type, slot.part);
-              source = <span>{serviceValueLabel(slot.type, slot.part, pandoFills)}</span>;
-            } else if (slot) {
-              const markedOptional = slot.required && optional.has(slot.key);
-              placeholder = slot.required && !markedOptional ? 'Needed to deploy' : 'Optional';
-              source = changed ? (
-                <span>Your value</span>
-              ) : markedOptional ? (
-                <span>Marked optional</span>
-              ) : (
-                <span style={{ color: slot.required ? 'var(--ink)' : undefined }}>
-                  {slot.required ? 'Needs a value' : 'Optional, no value yet'}
-                </span>
-              );
-            } else if (isNew) source = <span>Added by you</span>;
-            else if (changed) {
-              source = (
-                <>
-                  <span>Your value</span>
-                  {canEdit && (
-                    <button type="button" className="pando-link" onClick={() => onEdit(row, { value: row.original })}>
-                      {row.original ? 'Use Pando’s value' : 'Clear'}
-                    </button>
-                  )}
-                </>
-              );
-            } else if (ai) {
-              source = (
-                <span title={ai.reason} style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                  <AiStar size={12} />
-                  Suggested by AI
-                </span>
-              );
-            } else if (row.original) source = <span>Found in the repo</span>;
-            else source = <span style={{ color: 'var(--ink)' }}>No value yet</span>;
-
-            // Provenance for a value nobody here typed, most specific last.
-            const aiValue = isNew ? undefined : aiMarkFor(marks, row, spec);
-            if (row.fromAddress) {
-              source = <span>From the app’s address</span>;
-            } else if (aiValue && !changed && row.value !== '') {
-              source = (
-                <span title={aiValue.reason} style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                  <AiStar size={12} />
-                  Filled by AI
-                </span>
-              );
-            }
-            if (row.value !== '' && generated[row.id] === row.value) {
-              // Said, not offered again here: the Generate button beside the
-              // value does that.
-              source = <span>Generated by Pando</span>;
-            }
-
-            return (
-              <VariableLine
-                key={row.id}
-                first={i === 0}
-                name={
-                  isNew ? (
-                    <Input
-                      aria-label="Name"
-                      placeholder="NAME"
-                      mono
-                      value={row.key}
-                      error={problems[row.id]}
-                      onChange={(e) => onEdit(row, { key: e.target.value })}
-                    />
-                  ) : (
-                    row.key
-                  )
-                }
-                workload={many && !isNew ? row.workload : undefined}
-                required={
-                  // Not for a service Pando creates: nothing is asked of the
-                  // person. Once they provide their own, its value is
-                  // (neededValues).
-                  slot?.required && (!slot.provisioned || own(slot.key))
-                    ? {
-                        optional: optional.has(slot.key),
-                        filled: row.value.trim() !== '',
-                        onToggle: canEdit
-                          ? optional.has(slot.key)
-                            ? () => onOptional(slot.key, false)
-                            : () => onAskOptional(row)
-                          : undefined,
-                      }
-                    : undefined
-                }
-                source={source}
-              >
-                {pandoFills ? (
-                  <StatusIndicator status="info" label="Filled in by Pando at deploy" />
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                    <div
-                      // Re-keyed on each generation, so the wash replays every
-                      // time: the value visibly changed, even when it is
-                      // hidden as a secret.
-                      key={`${row.id}-${flash[row.id] ?? 0}`}
-                      className={flash[row.id] ? 'pando-generated' : undefined}
-                      style={{ flex: 1, minWidth: 0, borderRadius: 'var(--radius-sm)' }}
-                    >
-                      <Input
-                        aria-label={`Value of ${row.key || 'the new variable'}`}
-                        mono
-                        type={row.secret ? 'password' : 'text'}
-                        autoComplete="off"
-                        placeholder={placeholder}
-                        value={row.value}
-                        disabled={!canEdit}
-                        onChange={(e) => onEdit(row, { value: e.target.value })}
-                      />
-                    </div>
-                    {canEdit && (
-                      <GenerateValue
-                        justDone={justGenerated === row.id}
-                        onGenerate={() => {
-                          const value = generateFor(slot?.format);
-                          setGenerated((all) => ({ ...all, [row.id]: value }));
-                          setFlash((all) => ({ ...all, [row.id]: (all[row.id] ?? 0) + 1 }));
-                          setJustGenerated(row.id);
-                          // A generated value is a secret by nature; keep it
-                          // one unless the person says otherwise afterwards.
-                          onEdit(row, { value, secret: canSecrets ? true : row.secret });
-                        }}
-                      />
-                    )}
-                    <Divider />
-                    {/* A default, never a lock: every value can be kept as a
-                        secret or left readable. */}
-                    <Checkbox
-                      label="Secret"
-                      checked={row.secret}
-                      disabled={!canEdit || !canSecrets}
-                      onChange={(e) => onEdit(row, { secret: e.target.checked })}
-                    />
-                    {isNew && canEdit && (
-                      <IconButton label="Remove this variable" onClick={() => onRemove(row)}>
-                        <Icon name="x" size={16} />
-                      </IconButton>
-                    )}
-                  </div>
-                )}
-              </VariableLine>
-            );
-          })}
-        </Card>
-      )}
+      <VariableEditor
+        groups={groups}
+        canEdit={canEdit}
+        onChange={(id, patch) => {
+          const row = rows.find((r) => r.id === id);
+          if (row) onEdit(row, patch);
+        }}
+        onRemove={(id) => {
+          const row = rows.find((r) => r.id === id);
+          if (row) onRemove(row);
+        }}
+        onAdd={onAdd}
+        onGenerated={(id, value) => setGenerated((all) => ({ ...all, [id]: value }))}
+      />
 
       {canEdit && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 'var(--space-2)' }}>
-          <Button variant="secondary" onClick={onAdd}>
-            Add variable
-          </Button>
-          <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>
-            {canSecrets
-              ? 'Mark keys and passwords as secrets.'
-              : 'You can’t store secrets on this app. Leave keys and passwords empty for someone who can.'}
-          </p>
-        </div>
+        <p style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 }}>
+          {canSecrets
+            ? 'Lock keys and passwords to keep them secret.'
+            : 'You can’t store secrets on this app. Leave keys and passwords empty for someone who can.'}
+        </p>
       )}
     </section>
   );
 }
 
+/** One variable of the plan as the shared editor draws it: its source line, Required tag and value. */
+function planRow(
+  row: VariableRow,
+  {
+    spec,
+    problems,
+    marks,
+    canEdit,
+    canSecrets,
+    own,
+    optional,
+    onEdit,
+    onOptional,
+    onAskOptional,
+    generated,
+  }: {
+    spec: AppSpec;
+    problems: Record<string, string>;
+    marks: Suggestions;
+    canEdit: boolean;
+    canSecrets: boolean;
+    own: (slot: string) => boolean;
+    optional: Set<string>;
+    onEdit: (row: VariableRow, patch: RowEdit & { key?: string }) => void;
+    onOptional: (slot: string, optional: boolean) => void;
+    onAskOptional: (row: VariableRow) => void;
+    generated: Record<string, string>;
+  },
+): EditorRow {
+  const isNew = row.original === undefined;
+  const ai = isNew ? undefined : marks.env[envKey(row.workload || primaryWorkload(spec), row.key)];
+  const changed = !isNew && row.value !== row.original;
+  const slot = row.slot;
+  const service = slot?.service ? slotLabel(slot.type) : undefined;
+  // Pando fills it, and nobody has chosen to provide their own: no field at
+  // all, so it cannot be overwritten by accident. Whether Pando creates the
+  // service is chosen under Services, not here.
+  const pandoFills = Boolean(slot && service && slot.provisioned && !own(slot.key));
+  let source: React.ReactNode;
+  let placeholder = 'No value';
+  if (slot && service) {
+    // Said as what it holds: MEMCACHED is the address of a Memcached, not a
+    // Memcached to choose.
+    placeholder = servicePlaceholder(slot.type, slot.part);
+    source = <span>{serviceValueLabel(slot.type, slot.part, pandoFills)}</span>;
+  } else if (slot) {
+    const markedOptional = slot.required && optional.has(slot.key);
+    placeholder = slot.required && !markedOptional ? 'Needed to deploy' : 'Optional';
+    if (changed) source = <span>Your value</span>;
+    else if (markedOptional) source = <span>Marked optional</span>;
+    else if (slot.required) source = <span style={{ color: 'var(--contour-text)' }}>No value yet</span>;
+    else source = <span>Optional, no value yet</span>;
+  } else if (isNew) source = <span>Added by you</span>;
+  else if (changed) {
+    source = (
+      <>
+        <span>Your value</span>
+        {canEdit && (
+          <button type="button" className="pando-link" onClick={() => onEdit(row, { value: row.original })}>
+            {row.original ? 'Use Pando’s value' : 'Clear'}
+          </button>
+        )}
+      </>
+    );
+  } else if (ai) {
+    source = (
+      <span title={ai.reason} style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+        <AiStar size={12} />
+        Suggested by AI
+      </span>
+    );
+  } else if (row.original) source = <span>Found in the repo</span>;
+  else source = <span style={{ color: 'var(--contour-text)' }}>No value yet</span>;
+
+  // Provenance for a value nobody here typed, most specific last.
+  const aiValue = isNew ? undefined : aiMarkFor(marks, row, spec);
+  if (row.fromAddress) {
+    source = <span>From the app’s address</span>;
+  } else if (aiValue && !changed && row.value !== '') {
+    source = (
+      <span title={aiValue.reason} style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+        <AiStar size={12} />
+        Filled by AI
+      </span>
+    );
+  }
+  if (row.value !== '' && generated[row.id] === row.value) source = <span>Generated by Pando</span>;
+
+  // Whether the app can deploy without a value (R-132), as a tag beside the
+  // name that is also the switch. Not for a service Pando creates: nothing is
+  // asked of the person. Once they provide their own, its value is
+  // (neededValues).
+  let nameExtra: React.ReactNode;
+  if (slot?.required && (!slot.provisioned || own(slot.key))) {
+    const isOptional = optional.has(slot.key);
+    let toggle: (() => void) | undefined;
+    if (canEdit) toggle = isOptional ? () => onOptional(slot.key, false) : () => onAskOptional(row);
+    nameExtra = <RequirementBadge optional={isOptional} filled={row.value.trim() !== ''} onToggle={toggle} />;
+  }
+
+  return {
+    id: row.id,
+    key: row.key,
+    value: row.value,
+    secret: row.secret,
+    newName: isNew,
+    nameError: problems[row.id],
+    nameExtra,
+    source,
+    from: pandoFills ? <span>Filled in by Pando at deploy</span> : undefined,
+    lockable: canSecrets,
+    removable: isNew,
+    placeholder,
+    format: slot?.format,
+  };
+}
 /**
  * The services the app depends on — a database, a cache — and who provides
  * each, ahead of the variables that carry their addresses. A service listed
@@ -1911,58 +1868,6 @@ function aiMarkFor(marks: Suggestions, row: VariableRow, spec: AppSpec): Amendme
 }
 
 /**
- * Fill a value with a random one: for a variable that just needs a secret
- * nobody will type — an encryption key, a session secret. The info mark says
- * what it is, so nobody wonders whether Pando looked something up.
- */
-function GenerateValue({ onGenerate, justDone }: { onGenerate: () => void; justDone: boolean }) {
-  // The explanation is the button's own tooltip — hovering the thing is how
-  // somebody asks what it does. It is a short paragraph, so it sets its own
-  // width and wraps; Tooltip itself is one line, for labels.
-  return (
-    <Tooltip
-      side="top"
-      content={
-        <span style={{ display: 'block', width: '16rem', whiteSpace: 'normal', lineHeight: 1.4 }}>
-          Fills in a random, secure string.
-        </span>
-      }
-    >
-      {/* The label never changes, only the icon (the same size), so the
-          button keeps its width and the value beside it does not jump. */}
-      <Button
-        variant="ghost"
-        icon={<Icon name={justDone ? 'check' : 'dices'} size={16} />}
-        onClick={onGenerate}
-        aria-label={justDone ? 'Generated a random value. Generate another.' : 'Generate a random value'}
-      >
-        Generate
-      </Button>
-    </Tooltip>
-  );
-}
-
-/**
- * A full-height rule between two controls that should not read as one, with
- * room on both sides: the Generate button acts on the value, the Secret box
- * on how it is stored.
- */
-function Divider() {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        alignSelf: 'stretch',
-        flex: '0 0 auto',
-        width: 'var(--border-width)',
-        background: 'var(--rule-strong)',
-        margin: '0 var(--space-2)',
-      }}
-    />
-  );
-}
-
-/**
  * "Required" or "Optional", as a tag that is also the switch between them.
  * The ordinary Tag, same size, recolored: marker red while a required value is
  * missing — it blocks the deploy, one of the few things on this page that
@@ -2001,19 +1906,11 @@ function RequirementBadge({
 function VariableLine({
   first,
   name,
-  workload,
-  required,
   source,
   children,
 }: {
   first: boolean;
   name: React.ReactNode;
-  workload?: string;
-  /**
-   * Whether the app can deploy without a value (R-132): said beside the name
-   * as a tag that is also the switch (RequirementBadge).
-   */
-  required?: { optional: boolean; filled: boolean; onToggle?: () => void };
   source: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -2031,10 +1928,6 @@ function VariableLine({
       <div style={{ flex: '1 1 15rem', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'calc(var(--space-1) / 2)' }}>
         <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)', font: 'var(--type-code-sm)', color: 'var(--ink)', overflowWrap: 'anywhere' }}>
           {name}
-          {required && (
-            <RequirementBadge optional={required.optional} filled={required.filled} onToggle={required.onToggle} />
-          )}
-          {workload && <Tag mono>{workload}</Tag>}
         </span>
         <span
           style={{

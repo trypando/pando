@@ -11,41 +11,63 @@ import { serverRender as render } from '../ui/testing';
 import { AppImage } from './AppImage';
 import { AppOverview } from './AppOverview';
 import { DeploySection } from './DeploySettings';
-import { Blocked, DetectionFailed, DetectionReview } from './DetectionReview';
-import { Egress } from './Egress';
+import { Blocked, DetectionFailed } from './DetectionReview';
 import { RegistryCredential } from './RegistryCredential';
-import { Resources } from './Resources';
+import { SettingsDependencies } from './SettingsDependencies';
 import { Sharing } from './Sharing';
 import { AppVerb } from './verbs';
 
 const app = { id: 'app_1', name: 'inventory', pinned_spec_id: 'spec_1' } as App;
 
-// One of each way a dependency is filled.
+// One of each way a dependency is filled, and the two ways it is not.
 const slots = [
   { key: 'DATABASE_URL', type: 'postgres', required: true, resolution: { mode: 'provisioned' } },
-  { key: 'REDIS_URL', type: 'redis', resolution: { mode: 'bound' } },
+  { key: 'REDIS_URL', type: 'redis', resolution: { mode: 'bound', target: 'redis://cache:6379' } },
   { key: 'SMTP_URL', type: 'smtp', resolution: { mode: 'literal', secret_ref: 'sec_1' } },
+  { key: 'QUEUE_URL', type: 'redis' },
+  { key: 'STRIPE_KEY', type: 'unknown', required: true },
 ];
 
-describe('how a dependency is filled', () => {
-  it('reads Provisioned, External or Value on the app’s settings', () => {
-    const html = render(<Resources app={app} />, [[['slots', 'app_1'], { slots }]]);
-    expect(html).toContain('>Provisioned<');
-    expect(html).toContain('>External<');
-    expect(html).toContain('>Value<');
+describe('how a dependency is filled (R-131, R-132)', () => {
+  const page = (verbs: string[] = []) => render(<SettingsDependencies appID="app_1" />, [[['slots', 'app_1'], { slots }]], verbs);
+
+  it('says where each stands, a missing one in the warning color and never red', () => {
+    const html = page();
+    for (const said of ['Pando runs it', 'Connected', 'Value set', 'Optional, not set up', 'Needed to deploy']) {
+      expect(html).toContain(`>${said}<`);
+    }
+    expect(html).toContain('color:var(--contour-text)');
+    expect(html).not.toContain('var(--marker');
   });
 
-  it('reads the same words in the detection review', () => {
-    const detection = {
-      winning_bid: { detector: 'dockerfile', strategy: 'dockerfile', confidence: 0.9, evidence: [] },
-      draft_spec: { workloads: [{ name: 'web' }], slots },
-    };
-    const html = render(<DetectionReview appID="app_1" reviewed={false} />, [
-      [['apps', 'app_1', 'detection'], { status: 'ready', answers: {}, detection }],
-    ]);
-    expect(html).toContain('>Provisioned<');
-    expect(html).toContain('>External<');
-    expect(html).toContain('>Value<');
+  it('offers the three ways as one control, with the chosen one checked', () => {
+    const html = page([AppVerb.SpecEdit, AppVerb.SecretsWrite]);
+    expect(html).toContain('role="radiogroup" aria-label="How DATABASE_URL is filled"');
+    expect(html.match(/role="radio"/g)).toHaveLength(15);
+    expect(html.match(/aria-checked="true"/g)).toHaveLength(3);
+    // Where its data lives, the existing one it is pointed at, a value never shown.
+    expect(html).toContain('Runs beside this app');
+    expect(html).toContain('value="redis://cache:6379"');
+    expect(html).toContain('placeholder="••••••••••••"');
+  });
+
+  it('offers no way Pando can’t take: it doesn’t run a mail server or a bare value', () => {
+    const html = page([AppVerb.SpecEdit]);
+    // Each card's first way, Pando runs one, is offered only where Pando can.
+    const first = [...html.matchAll(/role="radio" aria-checked="(?:true|false)"( disabled="")?[^>]*>Pando runs one</g)].map((m) => Boolean(m[1]));
+    expect(first).toEqual([false, false, true, false, true]);
+    // A value is a secret, which needs app.secrets.write.
+    expect(html).toMatch(/disabled=""[^>]*>Enter a value</);
+  });
+
+  it('changes nothing for somebody who can only look', () => {
+    expect(page()).not.toMatch(/role="radio" aria-checked="(?:true|false)"(?! disabled)/);
+  });
+
+  it('says so when the app uses nothing', () => {
+    const html = render(<SettingsDependencies appID="app_1" />, [[['slots', 'app_1'], { slots: [] }]]);
+    expect(html).toContain('This app doesn’t use any databases or other services.');
+    expect(html).not.toContain('radiogroup');
   });
 });
 
@@ -86,24 +108,6 @@ describe('who has access', () => {
     expect(html).toContain('>Viewer<');
     expect(html).toContain('>No<');
     expect(html).not.toContain('Yes');
-  });
-});
-
-describe('egress, by the list’s mode', () => {
-  const egress = (mode: string, appMode: string) =>
-    render(<Egress appID="app_1" />, [
-      [['apps', 'app_1', 'egress'], { install: { mode }, spec: null, effective: { mode, list: [], app_mode: appMode, app_list: [], block_private: false, restricted: false } }],
-    ]);
-
-  it.each([
-    ['denylist', 'allowlist', 'Blocked', 'No destinations blocked.', 'App allowlist', 'No destinations allowed.'],
-    ['allowlist', 'denylist', 'Allowed', 'No destinations allowed.', 'App denylist', 'No destinations blocked.'],
-  ])('reads an installation %s with an app %s', (mode, appMode, header, empty, appWords, appEmpty) => {
-    const html = egress(mode, appMode);
-    expect(html).toContain(`>${header}<`);
-    expect(html).toContain(empty);
-    expect(html).toContain(`${appWords}, applied on top of the installation’s rules.`);
-    expect(html).toContain(appEmpty);
   });
 });
 

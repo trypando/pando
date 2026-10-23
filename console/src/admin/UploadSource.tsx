@@ -7,13 +7,11 @@
 // source. Nothing about what happens after differs from a repository.
 
 import { useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Button } from '@design';
 
 import { api } from '@api/client';
 import { Quiet } from '../install/Accounts';
 import { filesFromDrop, filesFromInput, folderOf, pack, prepare, totalBytes, type PickedFile } from './pack';
-import { RegistryCredential } from './RegistryCredential';
 
 /** The most Pando accepts, compressed (maxUploadBytes in the server). */
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
@@ -119,13 +117,3 @@ export function FilePicker({
   );
 }
 
-/** Whichever source section the app's source calls for on Settings. New
- *  files for an uploaded app are sent from the Overview's Source and deploys
- *  card. */
-export function SourceSection({ appID }: { appID: string }) {
-  const app = useQuery({
-    queryKey: ['apps', appID],
-    queryFn: () => api.get<{ source?: { type?: string } }>(`/apps/${appID}`),
-  });
-  return app.data?.source?.type === 'image' ? <RegistryCredential appID={appID} /> : null;
-}

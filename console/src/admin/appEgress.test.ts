@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import { appModeWords, draftOf, dryRunWords, gateWords, listEdits, modeWords, sameDraft, specOf } from './appEgress';
-import type { DryRunResult } from './appEgress';
+import {
+  addActions,
+  blocksPrivate,
+  draftOf,
+  egressLines,
+  hostLine,
+  installMode,
+  looseningNote,
+  ownLine,
+  sameDraft,
+  specOf,
+  unrestricted,
+  withEntry,
+  withoutEntry,
+} from './appEgress';
+import type { EgressDraft } from './appEgress';
 
 describe("an app's egress editor reads and writes the spec (R-182)", () => {
   it('opens an empty spec as following the installation', () => {
@@ -38,66 +52,78 @@ describe("an app's egress editor reads and writes the spec (R-182)", () => {
   });
 });
 
-describe('the merged rules in words (R-188)', () => {
-  it('names each mode', () => {
-    expect(modeWords('allow_all')).toBe('Anywhere');
-    expect(modeWords('')).toBe('Anywhere');
-    expect(modeWords('denylist')).toBe('Anywhere except the list');
-    expect(modeWords('allowlist')).toBe('Only the list');
-  });
+describe('the page’s one list of addresses (R-182, R-188)', () => {
+  const draft = (over: Partial<EgressDraft> = {}): EgressDraft => ({ ...draftOf(null), ...over });
 
-  it('names the app’s own list, or nothing when it follows the installation', () => {
-    expect(appModeWords('allowlist')).toBe('App allowlist');
-    expect(appModeWords('denylist')).toBe('App denylist');
-    expect(appModeWords(undefined)).toBeNull();
-  });
-
-  it('says what a loosening needs, with forbidden as the one blocker', () => {
-    expect(gateWords('forbidden').status).toBe('failed');
-    expect(gateWords('approval').label).toBe('Needs approval');
-    expect(gateWords('verb').label).toBe('Needs app.egress.loosen');
-    expect(gateWords(undefined).status).toBe('info');
-  });
-
-  it('names the edits to the installation by what they do under its mode', () => {
-    expect(listEdits('allowlist')?.add).toEqual({ label: 'Add to allowlist', loosens: true });
-    expect(listEdits('denylist')?.remove.loosens).toBe(true);
-    expect(listEdits('denylist')?.add.loosens).toBe(false);
-    expect(listEdits('allow_all')).toBeNull();
-  });
-});
-
-describe("the server's decision on a draft, in words (R-188)", () => {
-  const result = (over: Partial<DryRunResult>): DryRunResult => ({
-    dry_run: true,
-    egress: { mode: 'allowlist', block_private: false, restricted: true },
-    egress_changed: true,
-    new_loosenings: [],
-    approval: { required: false, reasons: [] },
-    ...over,
-  });
-
-  it('says a change stays within the rules', () => {
-    expect(dryRunWords(result({}))).toEqual(['This stays within the installation’s rules.']);
-  });
-
-  it('says nothing about a draft that changes nothing', () => {
-    expect(dryRunWords(result({ egress_changed: false }))).toEqual([]);
-  });
-
-  it("names each loosening in the server's words, and whether the deploy needs approval", () => {
-    const words = dryRunWords(
-      result({
-        new_loosenings: [{ kind: 'allowlist_add', entry: 'api.stripe.com', message: 'Adds api.stripe.com to the installation’s allowlist, so this app can reach it.' }],
-        approval: {
-          required: true,
-          reasons: [{ reason: 'egress_loosening', message: 'This deploy loosens the installation’s egress rules, which needs approval.' }],
-        },
-      }),
+  it('lists the host’s addresses first, then what the app adds and keeps', () => {
+    const lines = egressLines(
+      { mode: 'allowlist', list: ['registry.npmjs.org', 'api.github.com'] },
+      draft({ add: ['api.stripe.com'], remove: ['api.github.com'] }),
+      [{ kind: 'allowlist_add', entry: 'api.stripe.com', message: 'Adds it.' }],
     );
-    expect(words).toEqual([
-      'Adds api.stripe.com to the installation’s allowlist, so this app can reach it.',
-      'Deploying it needs approval. This deploy loosens the installation’s egress rules, which needs approval.',
+    expect(lines).toEqual([
+      { entry: 'registry.npmjs.org', from: 'host', loosens: false },
+      { entry: 'api.github.com', from: 'excluded', loosens: false },
+      { entry: 'api.stripe.com', from: 'added', loosens: true },
     ]);
+  });
+
+  it('lists no host addresses when the host allows everything', () => {
+    const lines = egressLines({ mode: 'allow_all', list: ['ignored.example'] }, draft({ ownMode: 'denylist', ownList: ['x.example'] }), []);
+    expect(lines).toEqual([{ entry: 'x.example', from: 'own', loosens: false }]);
+  });
+
+  it('is unrestricted only with no host list and nothing of the app’s own', () => {
+    expect(unrestricted({ mode: 'allow_all' }, draft())).toBe(true);
+    expect(unrestricted({ mode: 'denylist' }, draft())).toBe(false);
+    expect(unrestricted({}, draft({ ownMode: 'allowlist', ownList: ['a'] }))).toBe(false);
+    expect(unrestricted({}, draft({ add: ['a'] }))).toBe(false);
+  });
+
+  it('says where the host stands, and the app’s own list under it', () => {
+    expect(hostLine('allowlist')).toBe('This host only allows the addresses below.');
+    expect(hostLine('denylist')).toBe('This host blocks the addresses below.');
+    expect(hostLine(installMode(undefined))).toBe('This host allows any address.');
+    expect(ownLine(draft())).toBeNull();
+    expect(ownLine(draft({ ownMode: 'allowlist' }))).toContain('only connects');
+    expect(ownLine(draft({ ownMode: 'denylist' }))).toContain('never connects');
+  });
+
+  it('offers Allow or Block as the rules call for, and both with neither list', () => {
+    expect(addActions('allowlist', draft())).toEqual(['allow']);
+    expect(addActions('denylist', draft())).toEqual(['block']);
+    expect(addActions('allow_all', draft())).toEqual(['allow', 'block']);
+    expect(addActions('allowlist', draft({ ownMode: 'denylist' }))).toEqual(['block']);
+    expect(addActions('denylist', draft({ ownMode: 'allowlist' }))).toEqual(['allow']);
+  });
+
+  it('adds to the app’s own list, to the host’s, or starts a list of its own', () => {
+    expect(withEntry('allowlist', draft(), 'a.example', 'allow').add).toEqual(['a.example']);
+    expect(withEntry('allowlist', draft({ ownMode: 'denylist', ownList: ['b'] }), 'a', 'block').ownList).toEqual(['b', 'a']);
+    expect(withEntry('allow_all', draft(), 'a', 'block')).toMatchObject({ ownMode: 'denylist', ownList: ['a'] });
+    expect(withEntry('allow_all', draft(), 'a', 'allow')).toMatchObject({ ownMode: 'allowlist', ownList: ['a'] });
+  });
+
+  it('removes an addition, undoes an exclusion, and drops an emptied list of its own', () => {
+    const d = draft({ add: ['a'], remove: ['h'], ownMode: 'allowlist', ownList: ['o'] });
+    expect(withoutEntry(d, { entry: 'a', from: 'added', loosens: false }).add).toEqual([]);
+    expect(withoutEntry(d, { entry: 'h', from: 'excluded', loosens: false }).remove).toEqual([]);
+    expect(withoutEntry(d, { entry: 'o', from: 'own', loosens: false })).toMatchObject({ ownMode: 'inherit', ownList: [] });
+    expect(withoutEntry(d, { entry: 'h', from: 'host', loosens: false })).toBe(d);
+    const two = draft({ ownMode: 'denylist', ownList: ['o', 'p'] });
+    expect(withoutEntry(two, { entry: 'o', from: 'own', loosens: false })).toMatchObject({ ownMode: 'denylist', ownList: ['p'] });
+  });
+
+  it('says what a loosening needs, by the host’s gate (R-183)', () => {
+    expect(looseningNote('approval')).toBe('Needs approval to deploy');
+    expect(looseningNote('forbidden')).toBe('Not allowed on this host');
+    expect(looseningNote('verb')).toBe('Loosens this host’s rules');
+  });
+
+  it('blocks private addresses as the app says, else as the host does', () => {
+    expect(blocksPrivate({ block_private: true }, draft())).toBe(true);
+    expect(blocksPrivate({ block_private: true }, draft({ blockPrivate: 'off' }))).toBe(false);
+    expect(blocksPrivate({}, draft({ blockPrivate: 'on' }))).toBe(true);
+    expect(blocksPrivate({}, draft())).toBe(false);
   });
 });

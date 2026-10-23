@@ -1,376 +1,323 @@
-// Where this app may connect out to (R-182 – R-188).
+// The Egress page of an app's Settings: where this app may connect out to
+// (R-182 – R-188).
 //
-// Two halves. The rules the app runs with, merged — the installation's mode
-// and list with this app's additions and removals, the app's own list on top,
-// private-address blocking, and every way the app loosens the installation's
-// rules with what that needs — read from `GET /apps/{id}/egress`, which any
-// holder of app.view may ask, so an owner who cannot read host policy still
-// edits against rules they can see. And an editor, which writes the spec's
-// `egress` the ordinary way: a new revision, taking effect at the next deploy.
+// One list of addresses. What the host sets is shown with a lock and is
+// read-only here; what this app adds can be removed; an addition that loosens
+// the host's rules says what it needs (R-183). Rules are read from `GET
+// /apps/{id}/egress`, which any holder of app.view may ask, so an owner who
+// cannot read host policy still edits against rules they can see. Each change
+// writes the spec's `egress` the ordinary way: a new revision, taking effect
+// at the next deployment.
 //
-// The editor is offered on app.egress.tighten or app.egress.loosen (R-184).
-// Which change needs which is the server's decision. The editor asks for it
-// as the draft changes, with a dry-run save that runs every check a save runs
-// and writes nothing, and shows the answer — a refusal as it is written, or
-// what the draft loosens and whether its deploy would need approval.
+// Changing anything is offered on app.egress.tighten or app.egress.loosen
+// (R-184). Which change needs which is the server's decision: an address
+// typed to add is put to a dry-run save, which runs every check a save runs
+// and writes nothing, and its answer is shown before Allow is pressed.
+//
+// The console no longer offers to exclude one of the host's addresses for one
+// app. The API still does (R-182), and an exclusion made there is listed here
+// and can be undone.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Dialog, Radio, StatusIndicator } from '@design';
+import { Banner, Button, Card, Icon, Input, Tooltip } from '@design';
 
 import { api } from '@api/client';
-import { Quiet, messageOf, refusal } from '../install/Accounts';
-import { ListField } from '../ui/ListField';
-import { ENTRY_FORMS } from '../install/policyEgress';
+import { messageOf, refusal } from '../install/Accounts';
 import { InlineWarning } from '../ui/InlineWarning';
-import { Table } from '../ui/Table';
-import { MEASURE } from '../ui/layout';
 import { LineSkeleton, Loading } from '../ui/Loading';
 import {
-  appModeWords,
+  addActions,
+  blocksPrivate,
   draftOf,
-  dryRunWords,
-  fromWords,
-  gateWords,
+  egressLines,
+  hostLine,
   installMode,
-  listEdits,
-  modeWords,
+  looseningNote,
+  ownLine,
   sameDraft,
   specOf,
+  unrestricted,
+  withEntry,
+  withoutEntry,
 } from './appEgress';
-import type { DryRunResult, EgressDraft, EgressResponse } from './appEgress';
+import type { AddAction, DryRunResult, EgressDraft, EgressLine, EgressResponse } from './appEgress';
 import { useNewestSpec } from './newestSpec';
+import { PageHead, Quiet, SwitchRow } from './settingsParts';
 import { AppVerb, useCan } from './verbs';
 
-export function Egress({ appID, focus }: { appID: string; focus?: boolean }) {
-  const heading = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (focus) heading.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [focus]);
+const FROM_WORDS: Record<EgressLine['from'], string> = {
+  host: 'Set by this host',
+  added: 'Added for this app',
+  own: 'Added for this app',
+  excluded: 'Excluded for this app',
+};
 
+export function Egress({ appID }: Readonly<{ appID: string }>) {
+  const queries = useQueryClient();
   // Either verb: tightening needs one, loosening the other, and holding
   // app.egress.loosen covers both (R-184). The server says which on save.
   const canTighten = useCan(AppVerb.EgressTighten);
   const canLoosen = useCan(AppVerb.EgressLoosen);
   const canEdit = canTighten || canLoosen;
-  const [editing, setEditing] = useState(false);
+  const [restricting, setRestricting] = useState(false);
 
   const egress = useQuery({
     queryKey: ['apps', appID, 'egress'],
     queryFn: () => api.get<EgressResponse>(`/apps/${appID}/egress`),
   });
   const newest = useNewestSpec(appID);
+  const spec = newest.spec as (Record<string, unknown> & { egress?: EgressResponse['spec'] }) | undefined;
 
-  const eff = egress.data?.effective ?? null;
-  // A saved change not yet deployed: the rules below are what runs, and the
-  // change waits for the deploy, as every rule here does (O-10).
-  const unshipped =
-    newest.spec && egress.data && !newest.pinned
-      ? !sameDraft(draftOf(newest.spec.egress), draftOf(egress.data.spec))
-      : false;
+  const data = egress.data;
+  const eff = data?.effective ?? null;
+  // What the newest revision says, which is what an edit builds on and what
+  // the next deployment runs; the merged rules are what runs now.
+  const draft = draftOf(spec ? spec.egress : data?.spec);
+  const unshipped = Boolean(spec && data && !newest.pinned && !sameDraft(draft, draftOf(data.spec)));
 
-  return (
-    <section ref={heading} style={{ maxWidth: MEASURE }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Egress</h4>
-        {canEdit && newest.spec && egress.data && (
-          <Button variant="secondary" onClick={() => setEditing(true)}>
-            Change
-          </Button>
-        )}
-      </div>
-      <Quiet>The installation’s rules, with this app’s changes to them.</Quiet>
-
-      {egress.isPending && (
-        <Loading>
-          <LineSkeleton width="40ch" />
-          <LineSkeleton width="30ch" />
-        </Loading>
-      )}
-      {egress.isError && <Banner tone="failed">{messageOf(egress.error)}</Banner>}
-
-      {egress.isSuccess && !eff && (
-        <Quiet>No configuration yet.</Quiet>
-      )}
-
-      {eff && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
-          {unshipped && (
-            <Banner tone="info">A saved change to these rules takes effect at the next deploy.</Banner>
-          )}
-
-          <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: 'var(--space-2) var(--space-5)', font: 'var(--type-body-ui)' }}>
-            <dt style={{ color: 'var(--ink-secondary)' }}>Destinations</dt>
-            <dd style={{ margin: 0 }}>{modeWords(eff.mode)}</dd>
-            <dt style={{ color: 'var(--ink-secondary)' }}>Private addresses</dt>
-            <dd style={{ margin: 0 }}>
-              {eff.block_private ? 'Blocked' : 'Not blocked'}
-              {eff.block_private_from ? ` · set by ${eff.block_private_from === 'app' ? 'this app' : 'the installation'}` : ''}
-            </dd>
-          </dl>
-
-          {installMode(eff.mode) !== 'allow_all' && (
-            <Table
-              dense
-              columns={[
-                { key: 'entry', header: eff.mode === 'allowlist' ? 'Allowed' : 'Blocked', width: 'minmax(0,40ch)', mono: true },
-                { key: 'from', header: 'Source', width: '16ch', muted: true, render: (row: { from: string }) => fromWords(row.from) },
-              ]}
-              rows={(eff.list ?? []).map((e) => ({ id: `${e.from}:${e.entry}`, ...e }))}
-              empty={
-                <Quiet>
-                  {eff.mode === 'allowlist' ? 'No destinations allowed.' : 'No destinations blocked.'}
-                </Quiet>
-              }
-            />
-          )}
-
-          {appModeWords(eff.app_mode) && (
-            <div>
-              <p style={{ font: 'var(--type-body-ui)', margin: '0 0 var(--space-2)' }}>
-                {appModeWords(eff.app_mode)}, applied on top of the installation’s rules.
-              </p>
-              <Table
-                dense
-                columns={[{ key: 'entry', header: 'Destination', width: 'minmax(0,40ch)', mono: true }]}
-                rows={(eff.app_list ?? []).map((entry) => ({ id: entry, entry }))}
-                empty={
-                  <Quiet>
-                    {eff.app_mode === 'allowlist' ? 'No destinations allowed.' : 'No destinations blocked.'}
-                  </Quiet>
-                }
-              />
-            </div>
-          )}
-
-          {(eff.loosenings ?? []).length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-              <p style={{ font: 'var(--type-body-ui)', margin: 0 }}>
-                This app loosens the installation’s rules. {gateWords(eff.gate).detail}
-              </p>
-              {(eff.loosenings ?? []).map((l) => (
-                <div key={l.kind + (l.entry ?? '')} style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'baseline' }}>
-                  <StatusIndicator status={gateWords(eff.gate).status} label={gateWords(eff.gate).label} />
-                  <span style={{ font: 'var(--type-body-ui)' }}>{l.message}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Never a blocker: something somebody wrote expecting an effect,
-              that has none. */}
-          {(eff.unused ?? []).map((message) => (
-            <InlineWarning key={message}>{message}</InlineWarning>
-          ))}
-
-          {/* R-187, in body text wherever a restriction is in effect: an owner
-              choosing a denylist would otherwise expect everything else to
-              keep working. */}
-          {eff.restricted ? (
-            <Banner tone="info">
-              Only HTTP and HTTPS sent through Pando’s egress gateway, set in HTTP_PROXY and HTTPS_PROXY,
-              leave this app. A database protocol, raw TCP, or a client that ignores those variables can’t
-              connect out, even to an allowed destination.
-            </Banner>
-          ) : (
-            <Quiet>No restrictions.</Quiet>
-          )}
-        </div>
-      )}
-
-      {editing && canEdit && newest.spec && egress.data && (
-        <EditEgress
-          appID={appID}
-          data={egress.data}
-          spec={newest.spec as unknown as Record<string, unknown> & { egress?: EgressResponse['spec'] }}
-          onClose={() => setEditing(false)}
-        />
-      )}
-    </section>
-  );
-}
-
-function EditEgress({
-  appID,
-  data,
-  spec,
-  onClose,
-}: {
-  appID: string;
-  data: EgressResponse;
-  spec: Record<string, unknown> & { egress?: EgressResponse['spec'] };
-  onClose: () => void;
-}) {
-  const queries = useQueryClient();
-  const start = draftOf(spec.egress);
-  const [draft, setDraft] = useState<EgressDraft>(start);
-  const set = (patch: Partial<EgressDraft>) => setDraft((d) => ({ ...d, ...patch }));
-
-  const mode = installMode(data.install.mode);
-  const installList = data.install.list ?? [];
-  const edits = listEdits(mode);
-  const gate = gateWords(data.install.loosening);
-  const loosens = `This loosens the installation’s rules. ${gate.label}: ${gate.detail}`;
-
-  // The server's decision on the draft, asked once typing pauses.
-  const [settled, setSettled] = useState<EgressDraft>(start);
-  useEffect(() => {
-    const t = setTimeout(() => setSettled(draft), 400);
-    return () => clearTimeout(t);
-  }, [draft]);
-  const changed = !sameDraft(settled, start);
-  const decision = useQuery({
-    queryKey: ['apps', appID, 'egress-dry-run', specOf(settled)],
-    queryFn: () => api.post<DryRunResult>(`/apps/${appID}/specs?dry_run=true`, { ...spec, egress: specOf(settled) }),
-    enabled: changed,
+  // For a saved change not yet deployed, the server's reading of it: which of
+  // its addresses loosen, by the same dry-run an addition is put to.
+  const saved = useQuery({
+    queryKey: ['apps', appID, 'egress-dry-run', specOf(draft)],
+    queryFn: () => api.post<DryRunResult>(`/apps/${appID}/specs?dry_run=true`, { ...spec, egress: specOf(draft) }),
+    enabled: unshipped && canEdit,
     retry: false,
   });
-  const verdict = changed && settled === draft ? decision : undefined;
+  const rules = unshipped && saved.data ? saved.data.egress : eff;
 
-  const save = useMutation({
-    mutationFn: () => api.post(`/apps/${appID}/specs`, { ...spec, egress: specOf(draft) }),
+  const write = useMutation({
+    mutationFn: (next: EgressDraft) => api.post(`/apps/${appID}/specs`, { ...spec, egress: specOf(next) }),
     onSuccess: () => {
-      void queries.invalidateQueries({ queryKey: ['apps', appID] });
-      onClose();
+      for (const part of ['specs', 'egress', 'notices']) void queries.invalidateQueries({ queryKey: ['apps', appID, part] });
     },
   });
 
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      title="Edit egress"
-      description="Takes effect at the next deploy."
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            disabled={save.isPending || sameDraft(draft, start) || Boolean(verdict?.isError)}
-            onClick={() => save.mutate()}
-          >
-            {save.isPending ? 'Saving' : 'Save'}
-          </Button>
-        </>
-      }
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-        <div>
-          <p style={{ font: 'var(--type-label)', margin: '0 0 var(--space-1)' }}>The installation’s rules</p>
-          <Quiet>
-            {modeWords(mode)}
-            {mode !== 'allow_all' && installList.length > 0 ? `: ${installList.join(', ')}` : ''}.{' '}
-            Private addresses {data.install.block_private ? 'blocked' : 'not blocked'}.
-          </Quiet>
-        </div>
-
-        {edits ? (
-          <>
-            <ListField
-              label={edits.add.label}
-              rows={3}
-              value={draft.add}
-              helper={edits.add.loosens ? `${loosens} ${ENTRY_FORMS}` : ENTRY_FORMS}
-              onChange={(add) => set({ add })}
-            />
-            <ListField
-              label={edits.remove.label}
-              rows={3}
-              value={draft.remove}
-              helper={
-                edits.remove.loosens
-                  ? `${loosens} Each entry must match one in the installation’s list.`
-                  : 'Each entry must match one in the installation’s list.'
-              }
-              onChange={(remove) => set({ remove })}
-            />
-          </>
-        ) : (
-          (draft.add.length > 0 || draft.remove.length > 0) && (
-            // Kept visible so they can be cleared: the installation has no
-            // list, so additions and removals change nothing.
-            <>
-              <ListField label="Added to the installation’s list" rows={2} value={draft.add} helper="No effect without an installation list." onChange={(add) => set({ add })} />
-              <ListField label="Removed from the installation’s list" rows={2} value={draft.remove} helper="No effect without an installation list." onChange={(remove) => set({ remove })} />
-            </>
-          )
-        )}
-
-        <fieldset style={FIELDSET}>
-          <legend style={LEGEND}>App list</legend>
-          {(
-            [
-              ['inherit', 'None', 'Installation rules only.'],
-              ['allowlist', 'Allowlist', 'Only the destinations below, within the installation’s rules.'],
-              ['denylist', 'Denylist', 'Never the destinations below.'],
-            ] as const
-          ).map(([value, label, description]) => (
-            <Radio
-              key={value}
-              name="egress_own_mode"
-              value={value}
-              label={label}
-              description={description}
-              checked={draft.ownMode === value}
-              onChange={() => set({ ownMode: value })}
-            />
-          ))}
-        </fieldset>
-        {draft.ownMode !== 'inherit' && (
-          <ListField
-            label={draft.ownMode === 'allowlist' ? 'Allowed destinations' : 'Blocked destinations'}
-            value={draft.ownList}
-            helper={ENTRY_FORMS}
-            onChange={(ownList) => set({ ownList })}
-          />
-        )}
-
-        <fieldset style={FIELDSET}>
-          <legend style={LEGEND}>Private addresses</legend>
-          {(
-            [
-              ['inherit', `As the installation: ${data.install.block_private ? 'blocked' : 'not blocked'}`, ''],
-              ['on', 'Block', 'Local network, loopback and cloud metadata addresses.'],
-              [
-                'off',
-                'Don’t block',
-                data.install.block_private ? loosens : 'The installation doesn’t block them either.',
-              ],
-            ] as const
-          ).map(([value, label, description]) => (
-            <Radio
-              key={value}
-              name="egress_block_private"
-              value={value}
-              label={label}
-              description={description || undefined}
-              checked={draft.blockPrivate === value}
-              onChange={() => set({ blockPrivate: value })}
-            />
-          ))}
-        </fieldset>
-
-        {verdict?.isError && <Banner tone="failed">{refusal(verdict.error)}</Banner>}
-        {verdict?.data && dryRunWords(verdict.data).length > 0 && (
-          <Banner tone="info">
-            {dryRunWords(verdict.data).join(' ')}
-          </Banner>
-        )}
-        {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}
+  if (egress.isPending) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        <PageHead title="Egress" line="Where this app may connect out to" />
+        <Card tone="paper" padding="md">
+          <Loading>
+            <LineSkeleton width="40ch" />
+            <LineSkeleton width="30ch" />
+          </Loading>
+        </Card>
       </div>
-    </Dialog>
+    );
+  }
+  if (!data?.install) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        <PageHead title="Egress" line="Where this app may connect out to" />
+        <Banner tone="failed">{messageOf(egress.error)}</Banner>
+      </div>
+    );
+  }
+
+  const mode = installMode(data.install.mode);
+  const editable = canEdit && Boolean(spec);
+  const open = unrestricted(data.install, draft) && !restricting;
+  const lines = egressLines(data.install, draft, rules?.loosenings ?? []);
+  const gate = rules?.gate ?? data.install.loosening;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <PageHead title="Egress" line="Where this app may connect out to" />
+
+      {open ? (
+        <Card tone="paper" padding="md">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
+            <span style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-3)' }}>
+              <Icon name="globe" size={16} />
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+                <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink)' }}>Unrestricted</span>
+                <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>This app can connect anywhere.</span>
+              </span>
+            </span>
+            {editable && (
+              <Button variant="secondary" onClick={() => setRestricting(true)}>
+                Restrict this app
+              </Button>
+            )}
+          </div>
+        </Card>
+      ) : (
+        <Card tone="paper" padding="none">
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-3)', padding: 'var(--space-3) var(--space-4)' }}>
+            <Icon name={mode === 'allow_all' ? 'globe' : 'shield'} size={16} />
+            <span style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+              <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink)' }}>{hostLine(mode)}</span>
+              {ownLine(draft) && (
+                <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>{ownLine(draft)}</span>
+              )}
+            </span>
+          </div>
+          {lines.map((line) => (
+            <div key={`${line.from}:${line.entry}`} className="pando-line">
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', minWidth: 0 }}>
+                <span style={{ font: 'var(--type-code)', color: 'var(--ink)', overflowWrap: 'anywhere' }}>{line.entry}</span>
+                <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)' }}>{FROM_WORDS[line.from]}</span>
+              </span>
+              <span style={{ font: 'var(--type-caption)', color: 'var(--contour-text)' }}>
+                {line.loosens ? looseningNote(gate) : ''}
+              </span>
+              {line.from === 'host' ? (
+                <Tooltip content="Set by this host. Only an administrator can change it.">
+                  <span aria-label="Set by this host" style={{ display: 'inline-flex', padding: 'var(--space-2)' }}>
+                    <Icon name="lock" size={16} />
+                  </span>
+                </Tooltip>
+              ) : (
+                <span>
+                  {editable && (
+                    <Button variant="ghost" disabled={write.isPending} onClick={() => write.mutate(withoutEntry(draft, line))}>
+                      {line.from === 'excluded' ? 'Restore' : 'Remove'}
+                    </Button>
+                  )}
+                </span>
+              )}
+            </div>
+          ))}
+          {editable && (
+            <AddRow
+              appID={appID}
+              spec={spec!}
+              actions={addActions(mode, draft)}
+              gate={gate}
+              draftFor={(entry, action) => withEntry(mode, draft, entry, action)}
+              saving={write.isPending}
+              onAdd={(next) => write.mutate(next)}
+            />
+          )}
+        </Card>
+      )}
+
+      <Card tone="paper" padding="md">
+        <PrivateSwitch
+          install={data.install}
+          draft={draft}
+          disabled={!editable || write.isPending}
+          onChange={(blockPrivate) => write.mutate({ ...draft, blockPrivate })}
+        />
+      </Card>
+
+      {write.isError && <Banner tone="failed">{refusal(write.error)}</Banner>}
+      {unshipped && <Quiet>A saved change takes effect at the next deployment.</Quiet>}
+      {/* Never a blocker: something somebody wrote expecting an effect, that has none. */}
+      {(rules?.unused ?? []).map((message) => (
+        <InlineWarning key={message}>{message}</InlineWarning>
+      ))}
+      {/* R-187, wherever a restriction is in effect: somebody choosing a list
+          would otherwise expect everything else to keep working. */}
+      {rules?.restricted && (
+        <Quiet>
+          Only HTTP and HTTPS through Pando&rsquo;s egress gateway leave this app. A database protocol or raw TCP
+          can&rsquo;t connect out, even to an allowed address.
+        </Quiet>
+      )}
+    </div>
   );
 }
 
-const FIELDSET: React.CSSProperties = {
-  border: 0,
-  margin: 0,
-  padding: 0,
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--space-3)',
-};
+/**
+ * The address box and its buttons. What the address would do is asked of the
+ * server as typing pauses — a refusal as it is written, or that it loosens
+ * the host's rules and what that needs — before anything is saved.
+ */
+function AddRow({
+  appID,
+  spec,
+  actions,
+  gate,
+  draftFor,
+  saving,
+  onAdd,
+}: Readonly<{
+  appID: string;
+  spec: Record<string, unknown>;
+  actions: AddAction[];
+  gate: string | undefined;
+  draftFor: (entry: string, action: AddAction) => EgressDraft;
+  saving: boolean;
+  onAdd: (next: EgressDraft) => void;
+}>) {
+  const [entry, setEntry] = useState('');
+  const [settled, setSettled] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(entry.trim()), 400);
+    return () => clearTimeout(t);
+  }, [entry]);
+  // Asked of the first action: the one the host's rules call for, or, with
+  // neither list, allowing — which narrows to that address and loosens nothing.
+  const probe = settled ? specOf(draftFor(settled, actions[0]!)) : null;
+  const decision = useQuery({
+    queryKey: ['apps', appID, 'egress-dry-run', probe],
+    queryFn: () => api.post<DryRunResult>(`/apps/${appID}/specs?dry_run=true`, { ...spec, egress: probe }),
+    enabled: probe !== null,
+    retry: false,
+  });
+  const current = settled === entry.trim() && settled !== '' ? decision : undefined;
+  const loosens = (current?.data?.new_loosenings ?? []).length > 0;
 
-const LEGEND: React.CSSProperties = { font: 'var(--type-label)', color: 'var(--ink)', marginBottom: 'var(--space-2)' };
+  const add = (action: AddAction) => {
+    onAdd(draftFor(entry.trim(), action));
+    setEntry('');
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', padding: 'var(--space-3) var(--space-4)', borderTop: 'var(--border-width) solid var(--rule)' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+        <Input
+          aria-label="Address"
+          mono
+          placeholder="api.example.com or 203.0.113.0/24"
+          value={entry}
+          onChange={(e) => setEntry(e.target.value)}
+          style={{ flex: '1 1 18rem' }}
+        />
+        {actions.map((action) => (
+          <Button
+            key={action}
+            variant="secondary"
+            disabled={saving || entry.trim() === '' || Boolean(current?.isError)}
+            onClick={() => add(action)}
+          >
+            {action === 'allow' ? 'Allow' : 'Block'}
+          </Button>
+        ))}
+      </div>
+      {current?.isError && <span style={{ font: 'var(--type-caption)', color: 'var(--marker-deep)' }}>{refusal(current.error)}</span>}
+      {loosens && <span style={{ font: 'var(--type-caption)', color: 'var(--contour-text)' }}>{looseningNote(gate)}</span>}
+    </div>
+  );
+}
+
+/** Blocking private addresses: the host's, when it sets it, and otherwise the app's. */
+function PrivateSwitch({
+  install,
+  draft,
+  disabled,
+  onChange,
+}: Readonly<{
+  install: EgressResponse['install'];
+  draft: EgressDraft;
+  disabled: boolean;
+  onChange: (next: EgressDraft['blockPrivate']) => void;
+}>) {
+  const on = blocksPrivate(install, draft);
+  const hostSets = Boolean(install.block_private) && draft.blockPrivate !== 'off';
+  let line = on ? 'On' : 'Off';
+  if (hostSets) line = 'On for every app on this host';
+  else if (install.block_private) line = 'Off for this app. Loosens this host’s rules.';
+  return (
+    <SwitchRow
+      label="Block private addresses"
+      line={line}
+      checked={on}
+      disabled={disabled || hostSets}
+      // Back to the host's when the host blocks them; the app's own otherwise.
+      onChange={(checked) => onChange(checked ? (install.block_private ? 'inherit' : 'on') : 'inherit')}
+    />
+  );
+}

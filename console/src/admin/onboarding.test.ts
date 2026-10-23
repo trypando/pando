@@ -263,6 +263,19 @@ describe('valuesPayload', () => {
     ]);
   });
 
+  // The bug this fixed: a row added on the plan screen went with no workload,
+  // and the server put it on the primary whichever card it was added in.
+  it('sends each added row with the workload whose card it was added in', () => {
+    const rows = mergeRows(base, {}, [
+      { id: 'added-1', workload: 'worker', key: 'CONCURRENCY', value: '4', secret: false },
+      { id: 'added-2', workload: 'web', key: 'SESSION_SECRET', value: 's3cret', secret: true },
+    ]);
+    expect(valuesPayload(rows)).toEqual([
+      { key: 'CONCURRENCY', value: '4', workload: 'worker' },
+      { key: 'SESSION_SECRET', value: 's3cret', secret: true, workload: 'web' },
+    ]);
+  });
+
   it('sends a detected value turned into a secret, and never an empty secret', () => {
     const rows = mergeRows(base, { 'web/NODE_ENV': { secret: true }, 'worker/QUEUE': { secret: true } }, []);
     expect(valuesPayload(rows)).toEqual([{ key: 'NODE_ENV', value: 'production', secret: true, workload: 'web' }]);
@@ -278,16 +291,27 @@ describe('rowProblems', () => {
   it('checks only added rows, for a usable and unrepeated name', () => {
     const rows = [
       ...variableRows(twoWorkloads),
-      { id: 'a', workload: '', key: '1BAD', value: '', secret: false },
-      { id: 'b', workload: '', key: 'NODE_ENV', value: 'x', secret: false },
-      { id: 'c', workload: '', key: 'NEW', value: 'x', secret: false },
-      { id: 'd', workload: '', key: 'NEW', value: 'y', secret: false },
-      { id: 'e', workload: '', key: '', value: 'orphan', secret: false },
-      { id: 'f', workload: '', key: '', value: '', secret: false },
+      { id: 'a', workload: 'web', key: '1BAD', value: '', secret: false },
+      { id: 'b', workload: 'web', key: 'NODE_ENV', value: 'x', secret: false },
+      { id: 'c', workload: 'web', key: 'NEW', value: 'x', secret: false },
+      { id: 'd', workload: 'web', key: 'NEW', value: 'y', secret: false },
+      { id: 'e', workload: 'web', key: '', value: 'orphan', secret: false },
+      { id: 'f', workload: 'web', key: '', value: '', secret: false },
     ];
     const problems = rowProblems(rows);
     expect(Object.keys(problems).sort()).toEqual(['a', 'b', 'd', 'e']);
-    expect(problems.b).toContain('already in the list');
+    expect(problems.b).toContain('already in this list');
+  });
+
+  it('checks a name within its own workload: one name in two workloads is two variables', () => {
+    const rows = [
+      ...variableRows(twoWorkloads),
+      { id: 'a', workload: 'worker', key: 'NODE_ENV', value: 'x', secret: false },
+      { id: 'b', workload: 'worker', key: 'NEW', value: 'x', secret: false },
+      { id: 'c', workload: 'web', key: 'NEW', value: 'y', secret: false },
+      { id: 'd', workload: 'worker', key: 'QUEUE', value: 'z', secret: false },
+    ];
+    expect(Object.keys(rowProblems(rows))).toEqual(['d']);
   });
 });
 

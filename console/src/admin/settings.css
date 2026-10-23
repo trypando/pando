@@ -1,0 +1,227 @@
+/* An app's Settings tab, and the variable editor it shares with the plan
+ * screen.
+ *
+ * Everything else here is inline styles from tokens; these are the rules an
+ * inline style cannot hold — a grid that changes at phone width, a
+ * placeholder's color, a hover. 48em is the breakpoint useNarrow() and
+ * narrow.css use.
+ */
+
+/* The list of pages beside the page. */
+.pando-settings {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.pando-settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.pando-settings-nav a {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font: var(--type-body-ui);
+  color: var(--ink-secondary);
+  text-decoration: none;
+}
+
+.pando-settings-nav a:hover {
+  color: var(--ink);
+}
+
+.pando-settings-nav a[aria-current='page'] {
+  background: var(--paper-sunken);
+  color: var(--ink);
+  font: var(--type-label);
+}
+
+/* One variable: its name, its value, Generate, remove. Top-aligned, so a
+ * line under the name hangs below without moving the value. */
+.pando-vrow {
+  display: grid;
+  grid-template-columns: minmax(10rem, 17rem) minmax(0, 1fr) auto var(--control-console);
+  gap: var(--space-2);
+  align-items: start;
+}
+
+/* A fixed name sits level with its value box. */
+.pando-vname-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-input);
+  font: var(--type-code-sm);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.pando-vfield {
+  display: flex;
+  align-items: stretch;
+  height: var(--control-input);
+  min-width: 0;
+  background: var(--paper-raised);
+  border: var(--border-width) solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+
+.pando-vfield:focus-within {
+  outline: var(--focus-outline-width) solid var(--ink);
+  outline-offset: var(--focus-outline-offset);
+}
+
+.pando-vfield input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 0 var(--space-3);
+  font: var(--type-code);
+  color: var(--ink);
+}
+
+.pando-vfield input:disabled {
+  color: var(--ink-muted);
+}
+
+/* An empty value: outlined in the warning color, never red. */
+.pando-vfield--empty {
+  border-color: var(--contour-text);
+}
+
+.pando-vfield--empty input::placeholder {
+  color: var(--contour-text);
+}
+
+.pando-vlock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--control-console);
+  border: 0;
+  border-left: var(--border-width) solid var(--rule);
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  padding: 0;
+}
+
+.pando-vlock:disabled {
+  cursor: not-allowed;
+  color: var(--ink-muted);
+}
+
+.pando-vlock:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+/* A value something else supplies: read-only, across the rest of the row. */
+.pando-vfrom {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-input);
+  padding: 0 var(--space-3);
+  border: var(--border-width) solid var(--rule);
+  border-radius: var(--radius-sm);
+  font: var(--type-body-ui);
+  color: var(--ink-secondary);
+}
+
+/* Name, then a line saying where a setting stands, then its control. */
+.pando-setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+}
+
+/* One way of three, as one control. */
+.pando-segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: var(--border-width) solid var(--field-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  align-self: flex-start;
+}
+
+.pando-segmented button {
+  border: 0;
+  border-left: var(--border-width) solid var(--rule);
+  background: transparent;
+  padding: 0 var(--space-3);
+  height: var(--control-console);
+  font: var(--type-body-ui);
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+
+.pando-segmented button:first-child {
+  border-left: 0;
+}
+
+.pando-segmented button[aria-checked='true'] {
+  background: var(--paper-sunken);
+  color: var(--ink);
+  font: var(--type-label);
+}
+
+.pando-segmented button:disabled {
+  color: var(--ink-muted);
+  cursor: not-allowed;
+}
+
+/* One volume, one address: the main part, then what sits at the right. */
+.pando-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--border-width) solid var(--rule);
+}
+
+.pando-line:first-child {
+  border-top: 0;
+}
+
+@media (max-width: 48em) {
+  /* The list stacks above the page. */
+  .pando-settings {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .pando-settings-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  /* The name takes a line of its own; the value, Generate and remove share
+   * the next. */
+  .pando-vrow {
+    grid-template-columns: minmax(0, 1fr) auto var(--control-console);
+  }
+
+  .pando-vrow > :first-child {
+    grid-column: 1 / -1;
+  }
+
+  .pando-vfrom {
+    grid-column: 1 / -1;
+  }
+
+  .pando-line {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}

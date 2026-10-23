@@ -13,7 +13,7 @@ import { ApprovalRequest } from './ApprovalRequest';
 import type { ApprovalDeployment } from './approval';
 import { Egress } from './Egress';
 import type { EgressResponse } from './appEgress';
-import { AppVerbs } from './verbs';
+import { AppVerb, AppVerbs } from './verbs';
 
 function render(node: React.ReactNode, seed?: (q: QueryClient) => void, verbs: string[] = []) {
   const queries = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
@@ -76,29 +76,57 @@ describe("an app's egress, merged (R-187, R-188)", () => {
       restricted: true,
     },
   };
-  const seed = (q: QueryClient) => q.setQueryData(['apps', 'app_01', 'egress'], data);
+  // The newest revision, which an edit builds on.
+  const newest = (q: QueryClient, egress: unknown) => {
+    q.setQueryData(['apps', 'app_01', 'specs'], { revisions: [{ id: 'spec_1', revision: 1 }], pinned_spec_id: 'spec_1' });
+    q.setQueryData(['apps', 'app_01', 'spec', 1], { id: 'spec_1', revision: 1, body: { egress } });
+  };
+  const seed = (q: QueryClient) => {
+    q.setQueryData(['apps', 'app_01', 'egress'], data);
+    newest(q, data.spec);
+  };
 
-  it('shows each entry with where it came from, the loosening with what it needs, and the gateway note', () => {
-    const html = render(<Egress appID="app_01" />, seed);
-    expect(html).toContain('Only the list');
+  it('lists the host’s addresses locked, the app’s with Remove, a loosening with what it needs, and the gateway note', () => {
+    const html = render(<Egress appID="app_01" />, seed, [AppVerb.EgressTighten]);
+    expect(html).toContain('This host only allows the addresses below.');
     expect(html).toContain('api.example.com');
-    expect(html).toContain('Installation');
-    expect(html).toContain('This app');
-    expect(html).toContain('Needs approval');
+    expect(html).toContain('Set by this host');
+    expect(html).toContain('data-icon="lock"');
+    expect(html).toContain('extra.example.com');
+    expect(html).toContain('Added for this app');
+    expect(html).toContain('Needs approval to deploy');
     expect(html).toContain('changes nothing');
-    expect(html).toContain('Only HTTP and HTTPS sent through Pando’s egress gateway');
+    expect(html).toContain('Only HTTP and HTTPS through Pando’s egress gateway');
+    // One Remove, for the app's address; the host's has none.
+    expect(html.match(/>Remove</g)).toHaveLength(1);
+    // The host blocks private addresses for every app.
+    expect(html).toContain('On for every app on this host');
+    expect(html).toMatch(/disabled=""[^>]*aria-label="Block private addresses"/);
   });
 
-  it('says nothing is in the way when nothing is restricted', () => {
-    const html = render(<Egress appID="app_01" />, (q) =>
-      q.setQueryData(['apps', 'app_01', 'egress'], {
-        install: { mode: 'allow_all' },
-        spec: { mode: 'inherit' },
-        effective: { mode: 'allow_all', list: [], block_private: false, restricted: false },
-      }),
+  it('offers nothing to change without an egress verb', () => {
+    const html = render(<Egress appID="app_01" />, seed);
+    expect(html).not.toContain('>Remove<');
+    expect(html).not.toContain('>Allow<');
+  });
+
+  it('says the app is unrestricted when nothing is set anywhere', () => {
+    const html = render(
+      <Egress appID="app_01" />,
+      (q) => {
+        q.setQueryData(['apps', 'app_01', 'egress'], {
+          install: { mode: 'allow_all' },
+          spec: { mode: 'inherit' },
+          effective: { mode: 'allow_all', list: [], block_private: false, restricted: false },
+        });
+        newest(q, { mode: 'inherit' });
+      },
+      [AppVerb.EgressTighten],
     );
-    expect(html).toContain('Anywhere');
-    expect(html).toContain('No restrictions.');
+    expect(html).toContain('Unrestricted');
+    expect(html).toContain('This app can connect anywhere.');
+    expect(html).toContain('Restrict this app');
     expect(html).not.toContain('egress gateway');
+    expect(html).not.toContain('On for every app on this host');
   });
 });

@@ -8,14 +8,15 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Input, Select } from '@design';
+import { Banner, Button, Input } from '@design';
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
-import { MEASURE } from '../ui/layout';
 import { refusal } from '../install/Accounts';
 import { invalidateApp } from './appList';
+import { SwitchRow } from './settingsParts';
 import { AppVerb, useCan } from './verbs';
+import './onboarding.css';
 
 /** GET /apps/{id}/idle. */
 export interface IdleReport {
@@ -72,94 +73,125 @@ export function IdleSection({ app }: Readonly<{ app: App }>) {
     queryFn: () => api.get<IdleReport>(`/apps/${app.id}/idle`),
   });
   if (!report.data) return null;
-  // A new report starts the form again from what it says.
-  return <IdleSettings key={JSON.stringify([report.data.stop_days, report.data.delete_days])} app={app} report={report.data} />;
+  return <IdleSettings app={app} report={report.data} />;
 }
 
+/** What the switch for one setting turns on: the installation's days when it has some, else the app's own. */
+function turnedOn(install: number): Choice {
+  return install > 0 ? 'install' : 'days';
+}
+
+/**
+ * The two settings as switches, each saved as it flips. On, each says after
+ * how long, and the number can be changed to the app's own.
+ */
 function IdleSettings({ app, report }: Readonly<{ app: App; report: IdleReport }>) {
   const queries = useQueryClient();
   const canEdit = useCan(AppVerb.SpecEdit);
-  const [stop, setStop] = useState<Choice>(choiceOf(report.stop_days));
-  const [stopDays, setStopDays] = useState(String(report.stop_days || report.install_stop_days || 30));
-  const [del, setDel] = useState<Choice>(choiceOf(report.delete_days));
-  const [deleteDays, setDeleteDays] = useState(String(report.delete_days || report.install_delete_days || 90));
 
   const save = useMutation({
-    mutationFn: () =>
-      api.put<IdleReport>(`/apps/${app.id}/idle`, {
-        stop_days: idleValue(stop, stopDays),
-        delete_days: idleValue(del, deleteDays),
-      }),
+    mutationFn: (body: { stop_days: number | null; delete_days: number | null }) =>
+      api.put<IdleReport>(`/apps/${app.id}/idle`, body),
     onSuccess: () => {
       void queries.invalidateQueries({ queryKey: ['apps', app.id, 'idle'] });
       void invalidateApp(queries, app.id);
     },
   });
 
-  const installPhrase = (days: number) => (days > 0 ? `Installation default (${days} days)` : 'Installation default (never)');
+  const stop = { stop_days: report.stop_days, delete_days: report.delete_days };
   const ahead = outlook(report);
 
   return (
-    <section style={{ maxWidth: MEASURE }}>
-      <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Idle</h4>
-      <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)', margin: '0 0 var(--space-4)' }}>
-        Last used {day(report.last_activity_at)}. The owner is notified 7 days before Pando acts.
-      </p>
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <IdleSwitch
+        label="Stop when unused"
+        verb="stopping"
+        days={report.effective_stop_days}
+        fallback={report.install_stop_days || 30}
+        disabled={!canEdit || save.isPending}
+        onSet={(choice, days) =>
+          save.mutate({ ...stop, stop_days: idleValue(choice === 'on' ? turnedOn(report.install_stop_days) : choice, days) })
+        }
+      />
+      <IdleSwitch
+        label="Delete when unused"
+        verb="deleting"
+        days={report.effective_delete_days}
+        fallback={report.install_delete_days || 90}
+        disabled={!canEdit || save.isPending}
+        onSet={(choice, days) =>
+          save.mutate({ ...stop, delete_days: idleValue(choice === 'on' ? turnedOn(report.install_delete_days) : choice, days) })
+        }
+      />
+      {/* What will happen, in dates (R-395, R-396). */}
+      {ahead && <span style={{ font: 'var(--type-caption)', color: 'var(--ink-secondary)', paddingTop: 'var(--space-2)' }}>{ahead}</span>}
+      {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}
+    </div>
+  );
+}
 
-      {/* What will happen, in dates, before any control. */}
-      {ahead && <Banner tone="info">{ahead}</Banner>}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
-        <Select
-          label="Stop"
-          value={stop}
-          disabled={!canEdit}
-          onChange={(e) => setStop(e.target.value as Choice)}
-          options={[
-            { value: 'install', label: installPhrase(report.install_stop_days) },
-            { value: 'off', label: 'Never' },
-            { value: 'days', label: 'Custom' },
-          ]}
-        />
-        {stop === 'days' && (
+function IdleSwitch({
+  label,
+  verb,
+  days,
+  fallback,
+  disabled,
+  onSet,
+}: Readonly<{
+  label: string;
+  /** What Pando does, for the days field's name. */
+  verb: string;
+  /** In effect now; 0 is off. */
+  days: number;
+  /** The days a switch turned on with no installation default starts at. */
+  fallback: number;
+  disabled: boolean;
+  /** `on` turns it on at the installation's days, or the fallback; `days` sets the app's own. */
+  onSet: (choice: 'on' | 'off' | 'days', days: string) => void;
+}>) {
+  const [changing, setChanging] = useState(false);
+  const [draft, setDraft] = useState(String(days || fallback));
+  const on = days > 0;
+  return (
+    <>
+      <SwitchRow
+        label={label}
+        line={on ? `After ${days} ${days === 1 ? 'day' : 'days'} without a visit` : 'Off'}
+        checked={on}
+        disabled={disabled}
+        onChange={(checked) => onSet(checked ? 'on' : 'off', String(fallback))}
+      >
+        {on && !disabled && !changing && (
+          <button type="button" className="pando-link" onClick={() => setChanging(true)}>
+            Change
+          </button>
+        )}
+      </SwitchRow>
+      {changing && (
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 'var(--space-2)', paddingBottom: 'var(--space-2)' }}>
           <Input
-            label="Days idle"
+            label={`Days before ${verb}`}
             type="number"
-            value={stopDays}
-            disabled={!canEdit}
-            onChange={(e) => setStopDays(e.target.value)}
+            min={1}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            style={{ width: '10rem' }}
           />
-        )}
-        <Select
-          label="Delete"
-          value={del}
-          disabled={!canEdit}
-          onChange={(e) => setDel(e.target.value as Choice)}
-          options={[
-            { value: 'install', label: installPhrase(report.install_delete_days) },
-            { value: 'off', label: 'Never' },
-            { value: 'days', label: 'Custom' },
-          ]}
-        />
-        {del === 'days' && (
-          <Input
-            label="Days idle"
-            type="number"
-            value={deleteDays}
-            disabled={!canEdit}
-            helper="Must be longer than the stop setting."
-            onChange={(e) => setDeleteDays(e.target.value)}
-          />
-        )}
-        {save.isError && <Banner tone="failed">{refusal(save.error)}</Banner>}
-        {canEdit && (
-          <div>
-            <Button variant="secondary" disabled={save.isPending} onClick={() => save.mutate()}>
-              {save.isPending ? 'Saving' : 'Save'}
-            </Button>
-          </div>
-        )}
-      </div>
-    </section>
+          <Button
+            variant="secondary"
+            disabled={disabled}
+            onClick={() => {
+              onSet('days', draft);
+              setChanging(false);
+            }}
+          >
+            Save
+          </Button>
+          <Button variant="ghost" onClick={() => setChanging(false)}>
+            Cancel
+          </Button>
+        </div>
+      )}
+    </>
   );
 }

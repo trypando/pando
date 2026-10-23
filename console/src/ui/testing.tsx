@@ -70,6 +70,12 @@ export interface Mounted {
   fill: (label: string, value: string) => Promise<void>;
   /** Submits the form the field labeled `label` is in. */
   submit: (label: string) => Promise<void>;
+  /** Clicks the control whose aria-label is exactly `label`: a switch, an icon button. */
+  toggle: (label: string) => Promise<void>;
+  /** Types into the field whose aria-label is exactly `label`. */
+  type: (label: string, value: string) => Promise<void>;
+  /** Does something to the screen and waits for what it sets off. */
+  settle: (change: () => void) => Promise<void>;
   unmount: () => void;
 }
 
@@ -109,6 +115,20 @@ export function mount(screen: ReactNode, data: Seed = [], verbs: string[] = []):
     submit: async (label) => {
       await settle(() => field(label).closest('form')!.requestSubmit());
     },
+    toggle: async (label) => {
+      const all = [...container.querySelectorAll<HTMLElement>('[aria-label]')].filter((el) => el.getAttribute('aria-label') === label);
+      await settle(() => all.at(-1)!.click());
+    },
+    type: async (label, value) => {
+      const el = [...container.querySelectorAll<HTMLInputElement>('input[aria-label]')]
+        .filter((input) => input.getAttribute('aria-label') === label)
+        .at(-1)!;
+      await settle(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, value);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    },
+    settle,
     unmount: () => {
       act(() => root.unmount());
       container.remove();

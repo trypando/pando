@@ -5,12 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { App } from '@api/types.gen';
 import { mount, reply, serverRender, unanswered, type Mounted, type Seed } from '../ui/testing';
 import { AppAddress } from './AppAddress';
-import { Egress } from './Egress';
-import { Environment } from './Environment';
 import { Lifecycle } from './Lifecycle';
 import { Reference } from './Reference';
-import { Resources } from './Resources';
 import { Security } from './Security';
+import { SettingsVariables } from './SettingsVariables';
 import { AppVerb } from './verbs';
 
 // What a screen says as it opens over the data it reads, and once somebody
@@ -43,8 +41,7 @@ afterEach(() => {
 describe('a screen as it opens', () => {
   const screens: Array<[string, ReactNode, Seed, string, string]> = [
     ['the top five findings', <Security appID="app_1" />, scanned, 'Show all 7 findings', 'CVE-2026-5'],
-    ['what deleting the app does to storage', <Resources app={app} />, [[['slots', 'app_1'], { slots: [] }]], 'Deleting the app offers to keep a final backup.', 'Add storage'],
-    ['an app with no variables', <Environment appID="app_1" />, newest({ workloads: [{ name: 'web' }] }), 'No variables.', 'Add variable'],
+    ['a workload with no variables, to somebody who can only look', <SettingsVariables appID="app_1" />, newest({ workloads: [{ name: 'web' }] }), 'No variables.', 'Add variable'],
     ['asking AI, where it answers', <Reference />, answers(true), 'Ask AI', 'Ask another question'],
     ['no asking AI, where it doesn’t', <Reference />, answers(false), 'API and tools', 'Ask AI'],
   ];
@@ -99,58 +96,6 @@ describe('changing an app’s address', () => {
     const text = await change([option('Alpha'), option('Beta', { is_default: true }), option('Gamma'), option('Delta')], []);
     expect(text).toContain('Beta (default)');
     expect(text).toContain('Needs permission to override routing.');
-  });
-});
-
-describe('adding an environment variable', () => {
-  const add = async (verbs: string[]) => {
-    const s = open(<Environment appID="app_1" />, newest({ workloads: [{ name: 'web' }] }), [AppVerb.SpecEdit, ...verbs]);
-    await s.press('Add variable');
-    return s;
-  };
-
-  it('says why the type is fixed for somebody who can’t store secrets', async () => {
-    const s = await add([]);
-    expect(s.text()).toContain('You can’t store secrets on this app.');
-    expect(s.text()).not.toContain('Never shown again.');
-  });
-
-  it('says a secret is never shown again', async () => {
-    const s = await add([AppVerb.SecretsWrite]);
-    await s.fill('Type', 'secret');
-    expect(s.text()).toContain('Never shown again.');
-    expect(s.text()).not.toContain('You can’t store secrets');
-  });
-});
-
-describe('editing egress', () => {
-  const edit = async (install: string, egress: object) => {
-    const data = { install: { mode: install }, effective: { mode: install, block_private: false, restricted: false }, spec: egress };
-    const s = open(<Egress appID="app_1" />, [[['apps', 'app_1', 'egress'], data], ...newest({ egress })], [AppVerb.EgressTighten]);
-    await s.press('Change');
-    return s.text();
-  };
-
-  it.each([
-    ['allowlist', 'Allowed destinations'],
-    ['denylist', 'Blocked destinations'],
-  ])('names the app’s own %s', async (mode, label) => {
-    expect(await edit('denylist', { mode, list: ['example.com'] })).toContain(label);
-  });
-
-  it('keeps additions to an installation with no list, to be cleared', async () => {
-    expect(await edit('allow_all', { add: ['example.com'] })).toContain('No effect without an installation list.');
-  });
-});
-
-describe('a fill for a dependency Pando can’t provision', () => {
-  it.each([
-    ['smtp', 'Pando doesn’t provision email.'],
-    ['kafka', 'Pando doesn’t provision kafka.'],
-  ])('names a %s dependency', async (type, said) => {
-    const s = open(<Resources app={app} />, [[['slots', 'app_1'], { slots: [{ key: 'URL', type }] }]], [AppVerb.SpecEdit]);
-    await s.press('Change');
-    expect(s.text()).toContain(said);
   });
 });
 

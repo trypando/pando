@@ -42,12 +42,39 @@ const PANEL_VIEWS: PanelView[] = ['output', 'deployments', 'terminal'];
  * panel and Configuration was folded into Settings, which was `resources`; a
  * link to any of them lands on its new home rather than on nothing.
  */
-const MOVED_TABS: Record<string, { tab: string; panel?: PanelView }> = {
+const MOVED_TABS: Record<string, { tab: string; panel?: PanelView; page?: SettingsPage }> = {
   logs: { tab: 'overview', panel: 'output' },
   terminal: { tab: 'overview', panel: 'terminal' },
   resources: { tab: 'settings' },
-  detection: { tab: 'settings' },
+  detection: { tab: 'settings', page: 'general' },
 };
+
+/** The pages of an app's Settings tab, each at an address of its own:
+ *  /admin/apps/{id}/settings/{page}. The bare /settings is General. */
+export type SettingsPage = 'general' | 'variables' | 'dependencies' | 'storage' | 'egress';
+
+export const SETTINGS_PAGES: SettingsPage[] = ['general', 'variables', 'dependencies', 'storage', 'egress'];
+
+/**
+ * The Settings page a link's `focus` means. Settings was one long page, and a
+ * warning or a refusal sent somebody to a section of it by name; each section
+ * is a page now, and those names still land on the right one.
+ */
+const FOCUS_PAGES: Record<string, SettingsPage> = {
+  general: 'general',
+  variables: 'variables',
+  dependencies: 'dependencies',
+  storage: 'storage',
+  egress: 'egress',
+  'auto-deploy': 'general',
+  configuration: 'general',
+  detection: 'general',
+  idle: 'general',
+};
+
+export function settingsPageFor(focus: string | undefined): SettingsPage | undefined {
+  return focus ? FOCUS_PAGES[focus] : undefined;
+}
 
 export interface Route {
   /** Settings is its own page, not a section of the admin console: it is
@@ -59,6 +86,8 @@ export interface Route {
   appID?: string;
   /** An app's tab, or System's. */
   tab?: string;
+  /** The page of an app's Settings tab. Absent is General. */
+  page?: SettingsPage;
   /** The side panel open over an app's screen, and what it shows: which
    *  workload's output or terminal, which deployment's log. */
   panel?: PanelView;
@@ -92,8 +121,8 @@ export function parse(pathname: string, search = ''): Route {
   if (parts[1] === 'settings') return { view: 'settings', section: 'apps' };
   if (parts[1] === 'cli') return { view: 'cli', section: 'apps' };
 
-  // /admin/apps/{id}[/{tab}][?panel=…&workload=…&deployment=…]
-  if (parts[1] === 'apps' && parts[2]) return appRoute(parts[2], parts[3], search);
+  // /admin/apps/{id}[/{tab}[/{page}]][?panel=…&workload=…&deployment=…]
+  if (parts[1] === 'apps' && parts[2]) return appRoute(parts[2], parts[3], search, parts[4]);
 
   // /admin/accounts/{id}
   if (parts[1] === 'accounts' && parts[2]) {
@@ -130,10 +159,12 @@ export function parse(pathname: string, search = ''): Route {
 }
 
 /** An app's screen: its tab, and the side panel when one is open. */
-function appRoute(appID: string, tab: string | undefined, search: string): Route {
+function appRoute(appID: string, tab: string | undefined, search: string, sub?: string): Route {
   const route: Route = { view: 'admin', section: 'apps', appID, tab };
   const moved = tab ? MOVED_TABS[tab] : undefined;
   if (moved) route.tab = moved.tab;
+  const page = moved?.page ?? SETTINGS_PAGES.find((p) => p === sub);
+  if (route.tab === 'settings' && page) route.page = page;
 
   const params = new URLSearchParams(search);
   const panel = PANEL_VIEWS.find((v) => v === params.get('panel')) ?? moved?.panel;
@@ -167,7 +198,8 @@ export function format(route: Route): string {
   const fixed = FIXED_PATHS[route.view];
   if (fixed) return fixed;
   if (route.section === 'apps' && route.appID) {
-    return `/admin/apps/${route.appID}${route.tab ? `/${route.tab}` : ''}${panelQuery(route)}`;
+    const page = route.tab === 'settings' && route.page ? `/${route.page}` : '';
+    return `/admin/apps/${route.appID}${route.tab ? `/${route.tab}` : ''}${page}${panelQuery(route)}`;
   }
   if (route.section === 'accounts' && route.userID) return `/admin/accounts/${route.userID}`;
   if (route.section === 'system' && route.tab) {

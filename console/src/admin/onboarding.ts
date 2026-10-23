@@ -129,7 +129,8 @@ function cleanPath(p: string): string {
 export interface VariableRow {
   /** Stable across edits, for React. */
   id: string;
-  /** The workload it belongs to. Empty for a row added during review, which
+  /** The workload it belongs to. A row added during review belongs to the
+   *  workload whose card it was added in, and is sent with it; one with none
    *  the server puts on the primary workload. */
   workload: string;
   key: string;
@@ -410,7 +411,9 @@ export function valuesPayload(rows: VariableRow[]): ValueInput[] {
  */
 export function rowProblems(rows: VariableRow[]): Record<string, string> {
   const problems: Record<string, string> = {};
-  const detected = new Set(rows.filter((r) => r.original !== undefined).map((r) => r.key));
+  // By workload: each keeps its own variables, so one name in two workloads
+  // is two variables.
+  const detected = new Set(rows.filter((r) => r.original !== undefined).map((r) => envKey(r.workload, r.key)));
   const seen = new Set<string>();
   for (const row of rows) {
     if (row.original !== undefined) continue;
@@ -419,14 +422,15 @@ export function rowProblems(rows: VariableRow[]): Record<string, string> {
       if (row.value !== '') problems[row.id] = 'Give this variable a name.';
       continue;
     }
+    const at = envKey(row.workload, key);
     if (!ENV_KEY.test(key)) {
       problems[row.id] = 'A name uses letters, digits and underscores, and does not start with a digit.';
-    } else if (detected.has(key)) {
-      problems[row.id] = `${key} is already in the list above. Set its value there.`;
-    } else if (seen.has(key)) {
-      problems[row.id] = `${key} is in the list twice.`;
+    } else if (detected.has(at)) {
+      problems[row.id] = `${key} is already in this list. Set its value there.`;
+    } else if (seen.has(at)) {
+      problems[row.id] = `${key} is in this list twice.`;
     }
-    seen.add(key);
+    seen.add(at);
   }
   return problems;
 }

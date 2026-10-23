@@ -46,12 +46,11 @@ import { SystemTabs } from '../install/systemTabs';
 import { Audit, Installation, Policy } from '../install/Installation';
 import { statusLabel, statusSymbol } from '../ui/status';
 import { AppOnboarding } from './AppOnboarding';
-import { DetectionReview } from './DetectionReview';
 import { Sharing } from './Sharing';
 import { AppOverview, scrollToSecurity } from './AppOverview';
 import { useRecordFollowsStatus } from './appStatus';
 import { AppEvents } from './AppEvents';
-import { Resources } from './Resources';
+import { AppSettings } from './AppSettings';
 import { AddApp } from './AddApp';
 import { Reference } from './Reference';
 import { Approvals, useApprovals } from './Approvals';
@@ -64,7 +63,7 @@ import { HeaderScore } from './HeaderScore';
 import { Lifecycle } from './Lifecycle';
 import { AppVerb, AppVerbs, can, changesAnything, type AppWithVerbs } from './verbs';
 import { AppPanel, PanelOpener, type PanelTarget } from './AppPanel';
-import { format, type Route, type Section } from '../app/route';
+import { format, settingsPageFor, type Route, type Section, type SettingsPage } from '../app/route';
 import { MEASURE } from '../ui/layout';
 import { relative } from '../ui/time';
 import { ScoreBadge } from '../ui/ScoreBadge';
@@ -419,10 +418,12 @@ export function AdminConsole({
               appID={selectedID}
               listed={rows.find((a) => a.id === selectedID)}
               tab={route.tab}
-              onTab={(tab) => go({ view: 'admin', section: 'apps', appID: selectedID, tab }, true)}
+              page={route.page}
+              onTab={(tab, page) => go({ view: 'admin', section: 'apps', appID: selectedID, tab, ...(page && { page }) }, true)}
+              pageHref={(page) => format({ view: 'admin', section: 'apps', appID: selectedID, tab: 'settings', page })}
               panel={route.panel ? { view: route.panel, workload: route.workload, deployment: route.deployment } : undefined}
-              onPanel={(target) => go(panelRoute(selectedID, route.tab, target), true)}
-              panelHref={(target) => format(panelRoute(selectedID, route.tab, target))}
+              onPanel={(target) => go(panelRoute(selectedID, route.tab, target, route.page), true)}
+              panelHref={(target) => format(panelRoute(selectedID, route.tab, target, route.page))}
               onBack={() => setSelectedID(null)}
             />
           ) : (
@@ -449,8 +450,8 @@ export function AdminConsole({
 }
 
 /** An app's screen with the side panel showing `target`, or closed. */
-function panelRoute(appID: string, tab: string | undefined, target: PanelTarget | null): Route {
-  const route: Route = { view: 'admin', section: 'apps', appID, tab };
+function panelRoute(appID: string, tab: string | undefined, target: PanelTarget | null, page?: SettingsPage): Route {
+  const route: Route = { view: 'admin', section: 'apps', appID, tab, ...(page && { page }) };
   if (!target) return route;
   return { ...route, panel: target.view, workload: target.workload, deployment: target.deployment };
 }
@@ -674,7 +675,9 @@ function AppScreen({
   appID,
   listed,
   tab: routeTab,
+  page,
   onTab,
+  pageHref,
   panel,
   onPanel,
   panelHref,
@@ -685,7 +688,11 @@ function AppScreen({
    *  record will not load. */
   listed?: App;
   tab?: string;
-  onTab: (tab: string) => void;
+  /** The page of the Settings tab the address names. */
+  page?: SettingsPage;
+  onTab: (tab: string, page?: SettingsPage) => void;
+  /** The address of a Settings page, for its link in the list. */
+  pageHref?: (page: SettingsPage) => string;
   /** The side panel, when the address opens it. */
   panel?: PanelTarget;
   /** Opens the panel on a target, or closes it with null. */
@@ -733,9 +740,12 @@ function AppScreen({
   // it was started, because the button would otherwise go quiet and the app
   // would look as if nothing happened — or, worse, as if it were deploying.
   const [waiting, setWaiting] = useState(false);
+  // On Settings, where somebody was sent is a page of its own, in the
+  // address rather than a section to scroll to.
   const setTab = (next: string, at?: string) => {
-    setFocus(at);
-    onTab(next);
+    const settingsPage = next === 'settings' ? settingsPageFor(at) : undefined;
+    setFocus(next === 'settings' ? undefined : at);
+    onTab(next, settingsPage);
   };
 
   // Accepting a proposal is the moment `reviewed` flips, and the onboarding
@@ -1022,7 +1032,9 @@ function AppScreen({
             />
           )}
           {tab === 'events' && <AppEvents app={app.data} />}
-          {tab === 'settings' && <Settings app={app.data} focus={focus} />}
+          {tab === 'settings' && (
+            <AppSettings app={app.data} page={page ?? 'general'} onPage={(p) => onTab('settings', p)} hrefOf={pageHref} />
+          )}
         </div>
       </Sheet>
       {panel && (
@@ -1037,25 +1049,6 @@ function AppScreen({
       )}
       </PanelOpener>
     </AppVerbs.Provider>
-  );
-}
-
-/**
- * An app's settings: what was the Settings tab, then what was Configuration —
- * how Pando builds and runs it, and the detection behind that.
- */
-function Settings({ app, focus }: Readonly<{ app: App; focus?: string }>) {
-  const configuration = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (focus === 'configuration') configuration.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [focus]);
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-7)' }}>
-      <Resources app={app} focus={focus} />
-      <div ref={configuration}>
-        <DetectionReview appID={app.id} reviewed={Boolean(app.pinned_spec_id)} />
-      </div>
-    </div>
   );
 }
 

@@ -10,10 +10,10 @@ import type { ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import type { AppSpec } from '@api/types.gen';
+import type { App, AppSpec } from '@api/types.gen';
 import { BuildPlan } from './BuildPlan';
-import { CarriedFiles } from './CarriedFiles';
-import { Environment } from './Environment';
+import { SettingsGeneral } from './SettingsGeneral';
+import { SettingsVariables } from './SettingsVariables';
 import { AppVerb, AppVerbs } from './verbs';
 
 const appID = 'app_01NOTES';
@@ -57,35 +57,37 @@ function render(node: ReactNode, listError = false) {
 }
 
 describe('screens built on the newest spec revision', () => {
-  it('Environment lists the newest revision’s variables and counts the empty ones', () => {
-    const html = render(<Environment appID={appID} />);
+  it('Variables lists the newest revision’s variables, an empty one outlined', () => {
+    const html = render(<SettingsVariables appID={appID} />);
     expect(html).toContain('GREETING');
-    expect(html).toContain('hello');
-    expect(html).toContain('API_KEY has no value yet.');
+    expect(html).toContain('value="hello"');
+    expect(html).toContain('pando-vfield pando-vfield--empty');
   });
 
-  it('Environment offers to add a variable to someone who may edit the spec', () => {
+  it('Variables offers to add a variable to someone who may edit the spec', () => {
     const html = render(
       <AppVerbs.Provider value={[AppVerb.SpecEdit]}>
-        <Environment appID={appID} />
+        <SettingsVariables appID={appID} />
       </AppVerbs.Provider>,
     );
     expect(html).toContain('Add variable');
-    expect(html).toContain('>Remove<');
+    expect(html).toContain('Remove GREETING');
   });
 
-  it('Environment offers nothing to edit without app.spec.edit', () => {
-    expect(render(<Environment appID={appID} />)).not.toContain('Add variable');
+  it('Variables offers nothing to edit without app.spec.edit', () => {
+    const html = render(<SettingsVariables appID={appID} />);
+    expect(html).not.toContain('Add variable');
+    expect(html).not.toContain('Remove GREETING');
   });
 
-  it('Environment says why when the revisions cannot be read', () => {
-    const html = render(<Environment appID={appID} />, true);
+  it('Variables says why when the revisions cannot be read', () => {
+    const html = render(<SettingsVariables appID={appID} />, true);
     expect(html).toContain('Pando could not reach the server.');
-    expect(html).not.toContain('no value yet');
+    expect(html).not.toContain('GREETING');
   });
 
-  it('CarriedFiles lists the newest revision’s files', () => {
-    expect(render(<CarriedFiles appID={appID} />)).toContain('/etc/caddy/Caddyfile');
+  it('the Build card lists the newest revision’s carried files', () => {
+    expect(render(<SettingsGeneral app={{ id: appID, name: 'notes' } as App} />)).toContain('/etc/caddy/Caddyfile');
   });
 
   it('BuildPlan renders from the newest revision', () => {
