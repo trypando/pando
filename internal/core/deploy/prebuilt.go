@@ -88,7 +88,8 @@ func (r *Runner) BuildImages(ctx context.Context, s *spec.AppSpec, checkout *sou
 // BuiltImageAuth is the credential an image Pando built is pulled with: the
 // install registry's, for an image pushed there, and nil for any other.
 func (r *Runner) BuiltImageAuth(ctx context.Context, image string) *api.RegistryAuth {
-	return r.builtImageAuth(ctx, image)
+	// Detection asks only of images its own build produced.
+	return r.builtImageAuth(ctx, nil, image)
 }
 
 // detectionBuild is detection's build of this app when it is what this deploy

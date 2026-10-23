@@ -682,6 +682,12 @@ func (s *Server) handleCreateSpec(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
+	// An app deploys only its own upload (R-025). Checked here so a dry run
+	// says so; CreateRevision refuses it on every other path too.
+	if err := spec.CheckUploadOwner(body.Source, app.ID); err != nil {
+		Error(w, r, err)
+		return
+	}
 	// A new repository address is held to what creating an app with it is —
 	// including one the app already has that becomes a repository's only now,
 	// with the source's type. An address it already fetches from is left to

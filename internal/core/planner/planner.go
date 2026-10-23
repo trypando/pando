@@ -13,6 +13,7 @@ package planner
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -685,6 +686,25 @@ func (p *Planner) checkLargestFit(ctx context.Context, s *spec.AppSpec, runtime 
 	return nil
 }
 
+// WorkloadResources is what a workload runs limited to (R-240): its own CPU
+// and memory within the app's, the app's where it sets none, and the app's
+// disk. Zero is no limit to a runtime, so nothing here passes one on for a
+// limit the app has.
+func WorkloadResources(s *spec.AppSpec, w spec.Workload) api.ResourcePlan {
+	l := s.WorkloadLimits(w)
+	return api.ResourcePlan{CPUMillis: l.CPUMillis, MemoryBytes: l.MemoryBytes, DiskBytes: s.Resources.DiskBytes}
+}
+
+// MountPlans are a workload's mounts, each path in its clean form, so the
+// path a runtime is given is the one validation looked at.
+func MountPlans(w spec.Workload) []api.MountPlan {
+	var out []api.MountPlan
+	for _, m := range w.Mounts {
+		out = append(out, api.MountPlan{VolumeID: m.VolumeID, Path: path.Clean(m.Path), ReadOnly: m.ReadOnly})
+	}
+	return out
+}
+
 // bundlePlan builds the shape of what would be applied.
 //
 // Env is deliberately left empty here: resolving it means reading secrets, which
@@ -717,18 +737,9 @@ func (p *Planner) bundlePlan(s *spec.AppSpec, rules api.EgressRules) api.BundleP
 			DependsOn:  w.DependsOn,
 			Aliases:    w.Aliases,
 			Exposed:    w.Exposed,
-			Resources: api.ResourcePlan{
-				CPUMillis:   s.Resources.CPUMillis,
-				MemoryBytes: s.Resources.MemoryBytes,
-				DiskBytes:   s.Resources.DiskBytes,
-			},
+			Resources:  WorkloadResources(s, w),
 		}
-		if w.Resources != nil {
-			wp.Resources = api.ResourcePlan{CPUMillis: w.Resources.CPUMillis, MemoryBytes: w.Resources.MemoryBytes, DiskBytes: s.Resources.DiskBytes}
-		}
-		for _, m := range w.Mounts {
-			wp.Mounts = append(wp.Mounts, api.MountPlan{VolumeID: m.VolumeID, Path: m.Path, ReadOnly: m.ReadOnly})
-		}
+		wp.Mounts = MountPlans(w)
 		for _, port := range w.Ports {
 			wp.Ports = append(wp.Ports, api.PortPlan{Number: port.Number, Protocol: port.Protocol})
 		}

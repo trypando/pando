@@ -2232,8 +2232,12 @@ func (a registryAdapters) Routing(ref string) (adapterapi.RoutingAdapter, bool) 
 
 // builtImageAuth is the reconciler's view of the install registry: its
 // credential for an image Pando pushed there, read when it is needed.
-func builtImageAuth(reg imageregistry.Provider) func(context.Context, string) *adapterapi.RegistryAuth {
-	return func(ctx context.Context, ref string) *adapterapi.RegistryAuth {
+func builtImageAuth(reg imageregistry.Provider) func(context.Context, *spec.AppSpec, string) *adapterapi.RegistryAuth {
+	return func(ctx context.Context, s *spec.AppSpec, ref string) *adapterapi.RegistryAuth {
+		// An image the spec names is not one of the app's builds (R-025).
+		if s.NamesImage(ref) {
+			return nil
+		}
 		current, err := reg.Current(ctx)
 		if err != nil || !current.Owns(ref) {
 			return nil

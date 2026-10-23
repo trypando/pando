@@ -87,10 +87,10 @@ func TestR194_APullWithNoUsableCredentialIsAnonymousAndSaysWhyInTheServerLog(t *
 	ctx := log.Into(context.Background(), zap.New(core))
 
 	gone := errs.New(errs.Internal, "Pando could not read the install registry's settings.")
-	require.Nil(t, (&Runner{buildRegistry: unreadable{gone}}).builtImageAuth(ctx, built))
+	require.Nil(t, (&Runner{buildRegistry: unreadable{gone}}).builtImageAuth(ctx, nil, built))
 	require.Equal(t, 1, logs.FilterMessage("could not read the install registry").Len())
 
-	require.Nil(t, (&Runner{buildRegistry: ecrRegistry(t)}).builtImageAuth(ctx, built))
+	require.Nil(t, (&Runner{buildRegistry: ecrRegistry(t)}).builtImageAuth(ctx, nil, built))
 	warned := logs.FilterMessage("could not resolve the install registry's credential").All()
 	require.Len(t, warned, 1)
 	require.NotContains(t, warned[0].ContextMap()["error"], "ecr-secret-do-not-log")

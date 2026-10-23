@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -24,7 +25,7 @@ func TestR194_ARestoredWorkloadIsPulledWithTheInstallRegistrysCredential(t *test
 	h.runtime.setObserved(api.ObservedBundle{Exists: true})
 
 	var asked []string
-	h.rec.BuiltImageAuth = func(_ context.Context, ref string) *api.RegistryAuth {
+	h.rec.BuiltImageAuth = func(_ context.Context, _ *spec.AppSpec, ref string) *api.RegistryAuth {
 		asked = append(asked, ref)
 		return &api.RegistryAuth{Registry: "registry.internal:5000", Username: "pando",
 			Password: secret.New("registry-password-9")}
@@ -41,7 +42,7 @@ func TestR194_ARestoredWorkloadIsPulledWithTheInstallRegistrysCredential(t *test
 
 	h2 := newHarness(t, state.StateRunning)
 	h2.runtime.setObserved(api.ObservedBundle{Exists: true})
-	h2.rec.BuiltImageAuth = func(context.Context, string) *api.RegistryAuth { return nil }
+	h2.rec.BuiltImageAuth = func(context.Context, *spec.AppSpec, string) *api.RegistryAuth { return nil }
 	h2.rec.Tick(context.Background())
 	h2.runtime.mu.Lock()
 	defer h2.runtime.mu.Unlock()

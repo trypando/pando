@@ -14,6 +14,7 @@ import (
 	registryoci "github.com/trypando/pando/internal/adapter/imageregistry/oci"
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/imageregistry"
+	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
 )
 
@@ -81,18 +82,22 @@ func TestR194_TheReconcilerGetsTheRegistryCredentialOnlyForImagesPandoPushed(t *
 
 	reg := imageregistry.Of("reg_1", ociRegistry(t, map[string]any{"url": "https://registry.internal:5000", "username": "pando"}, "registry-password-9"))
 	auth := builtImageAuth(imageregistry.Static(reg))
-	require.Equal(t, "registry-password-9", auth(ctx, built).Password.Reveal())
-	require.Nil(t, auth(ctx, "docker.io/library/redis:7"), "a published image is not given the install's credential")
+	require.Equal(t, "registry-password-9", auth(ctx, nil, built).Password.Reveal())
+	require.Nil(t, auth(ctx, nil, "docker.io/library/redis:7"), "a published image is not given the install's credential")
+	named := &spec.AppSpec{Workloads: []spec.Workload{{Name: "web", Image: "registry.internal:5000/apps/app_01other:dep_1"}}}
+	require.Nil(t, auth(ctx, named, "registry.internal:5000/apps/app_01other@sha256:bbb"),
+		"another app's build, written into this app's spec, is not given the install's credential (R-025)")
+	require.NotNil(t, auth(ctx, named, built), "the app's own build still is")
 
 	ecr := registryecr.New()
 	ecr.Endpoint = "http://127.0.0.1:1"
 	require.NoError(t, ecr.Configure(ctx, json.RawMessage(`{"url":"123456789012.dkr.ecr.us-east-1.amazonaws.com/pando",`+
 		`"access_key_id":"AKIAEXAMPLE","credentials":{"secret_access_key":"ecr-secret"}}`)))
-	require.Nil(t, builtImageAuth(imageregistry.Static(imageregistry.Of("reg_ecr", ecr)))(ctx,
+	require.Nil(t, builtImageAuth(imageregistry.Static(imageregistry.Of("reg_ecr", ecr)))(ctx, nil,
 		"123456789012.dkr.ecr.us-east-1.amazonaws.com/pando@sha256:aaa"), "a credential that cannot be minted is none")
 
-	require.Nil(t, builtImageAuth(failingRegistry{})(ctx, built), "settings that cannot be read give none")
-	require.Nil(t, builtImageAuth(imageregistry.Static(nil))(ctx, built), "no registry, no credential")
+	require.Nil(t, builtImageAuth(failingRegistry{})(ctx, nil, built), "settings that cannot be read give none")
+	require.Nil(t, builtImageAuth(imageregistry.Static(nil))(ctx, nil, built), "no registry, no credential")
 }
 
 type failingRegistry struct{}

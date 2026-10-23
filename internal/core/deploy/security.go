@@ -74,7 +74,7 @@ func (r *Runner) scan(ctx context.Context, dep state.Deployment, appSpec *spec.A
 		// A published image is fetched with the app's registry credential,
 		// and a build pushed to the install's registry with the registry's
 		// (issue #72): neither is necessarily on the scanner's host.
-		PullAuth: firstAuth(target.Pull, r.builtImageAuth(ctx, image)),
+		PullAuth: firstAuth(target.Pull, r.builtImageAuth(ctx, appSpec, image)),
 	}, audit.Event{
 		PrincipalKind: audit.KindUser,
 		PrincipalID:   dep.CreatedBy,

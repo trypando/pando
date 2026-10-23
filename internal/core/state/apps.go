@@ -829,6 +829,12 @@ type Revision struct {
 // UNIQUE (app_id, revision) constraint is the backstop, and this is what keeps
 // it from being hit in normal operation.
 func (a *Apps) CreateRevision(ctx context.Context, appID string, s *spec.AppSpec, origin spec.Origin, createdBy string) (Revision, error) {
+	// Here, where every revision is written, so no path that writes one can
+	// point an app at another app's upload (R-025).
+	if err := spec.CheckUploadOwner(s.Source, appID); err != nil {
+		return Revision{}, err
+	}
+
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
 		return Revision{}, errs.Wrap(errs.Internal, "Could not save the spec.", err)
@@ -1347,6 +1353,9 @@ func (a *Apps) ForgetVolume(ctx context.Context, appID, volumeID string) error {
 // record of how an app runs, and a source nobody wrote down is a deploy nobody
 // can explain afterwards.
 func (a *Apps) SetSource(ctx context.Context, appID string, src spec.Source) error {
+	if err := spec.CheckUploadOwner(src, appID); err != nil {
+		return err
+	}
 	body, err := json.Marshal(src)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not record the app's source.", err)

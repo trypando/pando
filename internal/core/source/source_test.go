@@ -365,7 +365,7 @@ func TestAnUploadNeedsAnUploadDirectory(t *testing.T) {
 
 	_, err := none.StoreUpload("app_01HQ8", bytes.NewReader(nil))
 	require.Equal(t, errs.Internal, errs.CodeOf(err))
-	_, err = none.Fetch(ctx(), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
+	_, err = none.Fetch(source.ForApp(ctx(), "app_01HQ8"), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
 	require.Equal(t, errs.Internal, errs.CodeOf(err))
 	require.Equal(t, errs.Internal, errs.CodeOf(none.DiscardUpload("app_01HQ8")))
 }
@@ -380,7 +380,7 @@ func TestR262_AnUploadIsStoredThenExpandedIntoACheckout(t *testing.T) {
 	require.NoError(t, err)
 	require.FileExists(t, path)
 
-	co, err := src.Fetch(ctx(), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
+	co, err := src.Fetch(source.ForApp(ctx(), "app_01HQ8"), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
 	require.NoError(t, err)
 	defer co.Close()
 
@@ -399,7 +399,7 @@ func TestR262_AnUploadedCheckoutIsRemovedOnClose(t *testing.T) {
 	_, err := src.StoreUpload("app_01HQ8", bytes.NewReader(archive(t, map[string]string{"main.go": "package main"})))
 	require.NoError(t, err)
 
-	co, err := src.Fetch(ctx(), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
+	co, err := src.Fetch(source.ForApp(ctx(), "app_01HQ8"), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
 	require.NoError(t, err)
 	require.DirExists(t, co.Dir)
 
@@ -422,7 +422,7 @@ func TestStoreUploadReplacesTheArchiveAtomically(t *testing.T) {
 	require.Len(t, entries, 1, "no .partial is left behind")
 	require.Equal(t, "app_01HQ8.tar.gz", entries[0].Name())
 
-	co, err := src.Fetch(ctx(), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
+	co, err := src.Fetch(source.ForApp(ctx(), "app_01HQ8"), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
 	require.NoError(t, err)
 	defer co.Close()
 	body, err := os.ReadFile(filepath.Join(co.Dir, "v"))
@@ -448,7 +448,7 @@ func (failingReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 func TestAMissingUploadSaysHowToSendItAgain(t *testing.T) {
 	src := uploads(t)
 
-	_, err := src.Fetch(ctx(), spec.Source{Type: spec.SourceUpload, UploadID: "app_gone"})
+	_, err := src.Fetch(source.ForApp(ctx(), "app_gone"), spec.Source{Type: spec.SourceUpload, UploadID: "app_gone"})
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
 	require.Contains(t, errs.As(err).Remedy, "pando deploy")
 }
@@ -459,7 +459,7 @@ func TestAnUploadThatIsNotAGzippedTarIsRefused(t *testing.T) {
 	_, err := src.StoreUpload("app_01HQ8", bytes.NewReader([]byte("not gzip at all")))
 	require.NoError(t, err, "storing succeeds; it is unpacking that judges the bytes")
 
-	_, err = src.Fetch(ctx(), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
+	_, err = src.Fetch(source.ForApp(ctx(), "app_01HQ8"), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
 	require.Contains(t, errs.As(err).Message, "gzipped tar")
 }
@@ -471,7 +471,7 @@ func TestATruncatedArchiveIsRefused(t *testing.T) {
 	_, err := src.StoreUpload("app_01HQ8", bytes.NewReader(packed[:len(packed)-20]))
 	require.NoError(t, err)
 
-	_, err = src.Fetch(ctx(), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
+	_, err = src.Fetch(source.ForApp(ctx(), "app_01HQ8"), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
 }
 
@@ -485,7 +485,7 @@ func TestAnUploadCannotWriteOutsideItsDirectory(t *testing.T) {
 		_, err := src.StoreUpload("app_01HQ8", bytes.NewReader(packed))
 		require.NoError(t, err)
 
-		_, err = src.Fetch(ctx(), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
+		_, err = src.Fetch(source.ForApp(ctx(), "app_01HQ8"), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
 		if err == nil {
 			// filepath.Clean("/"+name) collapses the traversal, so the entry
 			// lands inside rather than escaping. Either outcome is safe; what
@@ -512,7 +512,7 @@ func TestSymlinksAndDevicesAreDroppedRatherThanUnpacked(t *testing.T) {
 	_, err := src.StoreUpload("app_01HQ8", bytes.NewReader(packed))
 	require.NoError(t, err)
 
-	co, err := src.Fetch(ctx(), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
+	co, err := src.Fetch(source.ForApp(ctx(), "app_01HQ8"), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
 	require.NoError(t, err, "the rest of the archive still unpacks")
 	defer co.Close()
 
@@ -537,7 +537,7 @@ func TestFileModesSurviveExtractionWithoutSetuid(t *testing.T) {
 	_, err := src.StoreUpload("app_01HQ8", bytes.NewReader(packed))
 	require.NoError(t, err)
 
-	co, err := src.Fetch(ctx(), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
+	co, err := src.Fetch(source.ForApp(ctx(), "app_01HQ8"), spec.Source{Type: spec.SourceUpload, UploadID: "app_01HQ8"})
 	require.NoError(t, err)
 	defer co.Close()
 
@@ -564,4 +564,35 @@ func methodsOf(v any) []string {
 		names = append(names, t.Method(i).Name)
 	}
 	return names
+}
+
+// TestR025_AnAppDeploysOnlyItsOwnUpload asserts R-025 for uploaded source: the
+// archive read is the one stored for the app being fetched for. A spec naming
+// another app's upload, or a path, is refused rather than read.
+func TestR025_AnAppDeploysOnlyItsOwnUpload(t *testing.T) {
+	src := uploads(t)
+	_, err := src.StoreUpload("app_A", bytes.NewReader(archive(t, map[string]string{"secret.txt": "A's"})))
+	require.NoError(t, err)
+	_, err = src.StoreUpload("app_B", bytes.NewReader(archive(t, map[string]string{"main.go": "B's"})))
+	require.NoError(t, err)
+
+	for _, named := range []string{"app_A", "../app_A", "../../tmp/x"} {
+		_, err := src.Fetch(source.ForApp(ctx(), "app_B"), spec.Source{Type: spec.SourceUpload, UploadID: named})
+		require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), "upload_id %q", named)
+	}
+
+	// Without the app it is for, nothing is read.
+	_, err = src.Fetch(ctx(), spec.Source{Type: spec.SourceUpload, UploadID: "app_B"})
+	require.Equal(t, errs.Internal, errs.CodeOf(err))
+
+	// An upload not yet named in the spec is the app's own.
+	co, err := src.Fetch(source.ForApp(ctx(), "app_B"), spec.Source{Type: spec.SourceUpload})
+	require.NoError(t, err)
+	defer co.Close()
+	require.FileExists(t, filepath.Join(co.Dir, "main.go"))
+	require.NoFileExists(t, filepath.Join(co.Dir, "secret.txt"))
+
+	// Stored and removed only under an app's ID.
+	_, err = src.StoreUpload("../x", bytes.NewReader(nil))
+	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
 }

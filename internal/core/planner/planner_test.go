@@ -892,3 +892,42 @@ func TestR242_ARedeployThatFitsWhereTheAppRunsIsAllowed(t *testing.T) {
 	_, err = p.Check(context.Background(), fresh)
 	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
 }
+
+// TestR240_AWorkloadRunsWithinTheAppsLimits asserts R-240 for a workload that
+// sets its own resources: an unset value is the app's, never zero (which a
+// runtime reads as no limit), and nothing is above the app's. The capacity
+// check sees those numbers, so a workload cannot leave it by setting nothing.
+func TestR240_AWorkloadRunsWithinTheAppsLimits(t *testing.T) {
+	s := plannableSpec()
+	s.Resources = spec.Resources{CPUMillis: 1000, MemoryBytes: 4 << 30, DiskBytes: 1 << 30}
+
+	cases := []struct {
+		name string
+		own  *spec.ResourceLimits
+		want api.ResourcePlan
+	}{
+		{"none", nil, api.ResourcePlan{CPUMillis: 1000, MemoryBytes: 4 << 30, DiskBytes: 1 << 30}},
+		{"empty", &spec.ResourceLimits{}, api.ResourcePlan{CPUMillis: 1000, MemoryBytes: 4 << 30, DiskBytes: 1 << 30}},
+		{"smaller", &spec.ResourceLimits{CPUMillis: 250, MemoryBytes: 1 << 30}, api.ResourcePlan{CPUMillis: 250, MemoryBytes: 1 << 30, DiskBytes: 1 << 30}},
+		{"larger", &spec.ResourceLimits{CPUMillis: 64000, MemoryBytes: 1 << 40}, api.ResourcePlan{CPUMillis: 1000, MemoryBytes: 4 << 30, DiskBytes: 1 << 30}},
+		{"one set", &spec.ResourceLimits{MemoryBytes: 1 << 30}, api.ResourcePlan{CPUMillis: 1000, MemoryBytes: 1 << 30, DiskBytes: 1 << 30}},
+	}
+	for _, c := range cases {
+		w := s.Workloads[0]
+		w.Resources = c.own
+		require.Equal(t, c.want, planner.WorkloadResources(s, w), c.name)
+	}
+
+	rt := capableRuntime()
+	rt.largestFit = &api.Fit{CPUMillis: 4000, MemoryBytes: 2 << 30}
+	p := planner.New(registry(t, rt, capableRouting(), capableBuilder()), policy.Static(policy.Default()), fixedAllocations{})
+	for i := range s.Workloads {
+		s.Workloads[i].Resources = &spec.ResourceLimits{}
+	}
+	_, err := p.Check(context.Background(), s)
+	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err), "empty resources are the app's 4 GiB, not zero")
+
+	s.Workloads[0].Resources = &spec.ResourceLimits{MemoryBytes: -1}
+	_, err = p.Check(context.Background(), s)
+	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
+}

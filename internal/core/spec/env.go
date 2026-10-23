@@ -128,6 +128,13 @@ func MarkSlotOptional(s *AppSpec, slot string) bool {
 // inner hyphens.
 var hostnamePattern = regexp.MustCompile(`^(?i)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
+// ValidHostname reports whether h is a DNS name, with or without the dot
+// that ends a fully qualified one.
+func ValidHostname(h string) bool {
+	h = strings.TrimSuffix(h, ".")
+	return len(h) <= 253 && hostnamePattern.MatchString(h)
+}
+
 // SetHostname sets the address an app is served at, in subdomain mode — the
 // one mode where the address is a name somebody chooses rather than a port
 // Pando allocates or a prefix derived from the app's slug. Refused in any
@@ -139,7 +146,7 @@ func SetHostname(s *AppSpec, hostname string) error {
 			"This app is reached by %s, so its address can't be set as a hostname.", s.Routing.Mode).
 			WithRemedy("Leave the address as Pando assigned it, or configure a routing adapter that serves apps at their own hostname.")
 	}
-	if len(hostname) > 253 || !hostnamePattern.MatchString(hostname) {
+	if !ValidHostname(hostname) {
 		return errs.Newf(errs.ValidInvalid, "%q isn't a hostname.", hostname).
 			WithRemedy("Use a name like crew.example.com: letters, digits and hyphens, separated by dots.")
 	}

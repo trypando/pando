@@ -197,3 +197,21 @@ func readOnly(t *testing.T, dir string) string {
 	require.NoError(t, err)
 	return string(body)
 }
+
+// TestR162_AnAddressCannotAddToTheRoutingRule: each value in a Traefik rule
+// is quoted in backticks, so an address carrying one would end the quote and
+// widen the rule. Refused, and nothing is written.
+func TestR162_AnAddressCannotAddToTheRoutingRule(t *testing.T) {
+	a, dir := adapter(t, "")
+	for _, req := range []api.RouteRequest{
+		{Mode: spec.RoutingSubdomain, Hostname: "x`) || HostRegexp(`.+"},
+		{Mode: spec.RoutingPath, PathPrefix: "/x`) || PathPrefix(`/"},
+	} {
+		req.AppID, req.ProxyUpstream = "app_01HQ8", "http://pando:8080"
+		_, err := a.Ensure(context.Background(), req)
+		require.Error(t, err)
+	}
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}

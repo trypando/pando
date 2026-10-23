@@ -343,7 +343,14 @@ func (a *Adapter) Observe(ctx context.Context, h api.RouteHandle) (api.RouteStat
 }
 
 // rule builds the Traefik matcher for a route.
+//
+// Each value is quoted in backticks, so one that carries a backtick would end
+// its quote and add to the rule. Core validates both before they get here;
+// this refuses them anyway, because the rule is where one would take effect.
 func (a *Adapter) rule(r api.RouteRequest) (string, error) {
+	if strings.Contains(r.Hostname, "`") || strings.Contains(r.PathPrefix, "`") {
+		return "", errs.New(errs.AdapterFailed, "This app's address contains a backtick, which Traefik's routing rules cannot hold.")
+	}
 	switch r.Mode {
 	case spec.RoutingSubdomain:
 		host := r.Hostname

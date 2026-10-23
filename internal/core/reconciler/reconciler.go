@@ -105,8 +105,9 @@ type Reconciler struct {
 	// BuiltImageAuth is the install registry's credential for an image Pando
 	// pushed there, nil for any other (issue #72, PR 5). A workload restored
 	// on a runtime that pulls needs it for the pull, as the deploy did. Nil
-	// means no install registry.
-	BuiltImageAuth func(ctx context.Context, ref string) *api.RegistryAuth
+	// means no install registry. Nil too for an image s names: the
+	// credential is for the app's own builds (R-025).
+	BuiltImageAuth func(ctx context.Context, s *spec.AppSpec, ref string) *api.RegistryAuth
 
 	// Backoff, FailureThreshold and FailureWindow override R-149 and R-150's
 	// defaults. Zero values mean the defaults, so a caller that does not care
@@ -749,7 +750,7 @@ func (r *Reconciler) correct(ctx context.Context, app state.Reconcilable, runtim
 	if r.BuiltImageAuth != nil {
 		for i := range want.Workloads {
 			if want.Workloads[i].PullAuth == nil {
-				want.Workloads[i].PullAuth = r.BuiltImageAuth(ctx, want.Workloads[i].Image)
+				want.Workloads[i].PullAuth = r.BuiltImageAuth(ctx, s, want.Workloads[i].Image)
 			}
 		}
 	}

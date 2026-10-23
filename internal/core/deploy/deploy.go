@@ -230,7 +230,14 @@ func (r *Runner) WithBuildRegistry(reg imageregistry.Provider) *Runner {
 // builtImageAuth is the install registry's credential for an image Pando
 // pushed there, and nil for any other image. Minted fresh for ECR. A failure
 // leaves the pull anonymous, which fails with the registry's own reason.
-func (r *Runner) builtImageAuth(ctx context.Context, image string) *api.RegistryAuth {
+//
+// Nil too for an image s names: a build is an app's own, and a spec that
+// writes down a reference to one, another app's included, is pulled
+// anonymously rather than with the install's credential (R-025).
+func (r *Runner) builtImageAuth(ctx context.Context, s *spec.AppSpec, image string) *api.RegistryAuth {
+	if s.NamesImage(image) {
+		return nil
+	}
 	reg, err := r.currentRegistry(ctx)
 	if err != nil {
 		log.From(ctx).Warn("could not read the install registry", zap.Error(err))
@@ -258,11 +265,11 @@ func (r *Runner) currentRegistry(ctx context.Context) (*imageregistry.Registry, 
 // withBuiltImageAuth gives every workload that runs a build from the install's
 // registry the registry's credential, for the one pull (design 03 §2.1). An
 // image app's own credential, set by withPullAuth, is left alone.
-func (r *Runner) withBuiltImageAuth(ctx context.Context, bundle *api.BundlePlan) {
+func (r *Runner) withBuiltImageAuth(ctx context.Context, s *spec.AppSpec, bundle *api.BundlePlan) {
 	for i := range bundle.Workloads {
 		w := &bundle.Workloads[i]
 		if w.PullAuth == nil {
-			w.PullAuth = r.builtImageAuth(ctx, w.Image)
+			w.PullAuth = r.builtImageAuth(ctx, s, w.Image)
 		}
 	}
 }
@@ -452,7 +459,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	// scan: a refusal must leave the running app untouched (R-146).
 	if needsPortCheck(appSpec) && image != "" {
 		if runtime, ok := r.registry.Runtime(appSpec.Runtime.AdapterRef); ok {
-			check := checkPortWith(ctx, runtime, appSpec, image, r.builtImageAuth(ctx, image), "port-"+strings.ToLower(dep.ID), sink)
+			check := checkPortWith(ctx, runtime, appSpec, image, r.builtImageAuth(ctx, appSpec, image), "port-"+strings.ToLower(dep.ID), sink)
 			if check.Refusal != nil {
 				writeFailure(sink, messageOf(check.Refusal), check.Refusal)
 				fmt.Fprintf(sink, "   The running version of this app was not touched.\n")
@@ -522,7 +529,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	if published != "" {
 		withPullAuth(&bundle, published, publishedAuth)
 	}
-	r.withBuiltImageAuth(ctx, &bundle)
+	r.withBuiltImageAuth(ctx, appSpec, &bundle)
 	bundle.FirstDeploy = r.firstDeploy(ctx, dep.AppID)
 
 	runtime, ok := r.registry.Runtime(appSpec.Runtime.AdapterRef)
@@ -1000,18 +1007,9 @@ func bundlePlanFor(s *spec.AppSpec, image string, perWorkload map[string]string,
 			DependsOn:  append(append([]string(nil), w.DependsOn...), svcs.dependsOn(s, w)...),
 			Aliases:    w.Aliases,
 			Exposed:    w.Exposed,
-			Resources: api.ResourcePlan{
-				CPUMillis:   s.Resources.CPUMillis,
-				MemoryBytes: s.Resources.MemoryBytes,
-				DiskBytes:   s.Resources.DiskBytes,
-			},
+			Resources:  planner.WorkloadResources(s, w),
 		}
-		if w.Resources != nil {
-			wp.Resources = api.ResourcePlan{CPUMillis: w.Resources.CPUMillis, MemoryBytes: w.Resources.MemoryBytes, DiskBytes: s.Resources.DiskBytes}
-		}
-		for _, m := range w.Mounts {
-			wp.Mounts = append(wp.Mounts, api.MountPlan{VolumeID: m.VolumeID, Path: m.Path, ReadOnly: m.ReadOnly})
-		}
+		wp.Mounts = planner.MountPlans(w)
 		// Configuration carried in the spec (R-020): read once at detection,
 		// pinned to this revision, replayed on every start.
 		for _, f := range w.Files {
@@ -1037,12 +1035,10 @@ func bundlePlanFor(s *spec.AppSpec, image string, perWorkload map[string]string,
 	// same one a second workload declared in the spec already gets.
 	for _, w := range svcs.workloads {
 		w.LogBytes = s.Retention.LogBytes
-		if w.Resources == (api.ResourcePlan{}) {
-			w.Resources = api.ResourcePlan{
-				CPUMillis:   s.Resources.CPUMillis,
-				MemoryBytes: s.Resources.MemoryBytes,
-			}
-		}
+		// Within the app's, like any workload's (R-240): what the adapter
+		// left unset, or set above the app's, is the app's.
+		within := spec.LimitWithin(spec.ResourceLimits{CPUMillis: w.Resources.CPUMillis, MemoryBytes: w.Resources.MemoryBytes}, s.Resources)
+		w.Resources.CPUMillis, w.Resources.MemoryBytes = within.CPUMillis, within.MemoryBytes
 		if w.Resources.DiskBytes == 0 {
 			w.Resources.DiskBytes = s.Resources.DiskBytes
 		}

@@ -752,7 +752,7 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 
 			// The provisioned instance answers to the service's names too, so
 			// a start command waiting on `db:5432` still finds it.
-			Aliases: c.hostnames(service),
+			Aliases: c.usableAliases(service, c.hostnames(service)),
 			Scheme:  scheme,
 
 			// Filled, because the compose file already answered it: it runs a
@@ -814,6 +814,32 @@ func (c *composeImport) hostnames(service string) []string {
 		names = append(names, cn)
 	}
 	return names
+}
+
+// usableAliases are the names a provisioned service may answer to on its
+// network: a name Pando keeps for its own containers, one that is not a
+// network name, or another service's name is left out (R-025). The service's
+// own name stays.
+func (c *composeImport) usableAliases(service string, names []string) []string {
+	var out []string
+	for _, n := range names {
+		other := c.isServiceName(n)
+		if spec.AliasProblem(n) == "" && (n == service || !other) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// isServiceName reports whether name is the name of a service this import
+// runs, in any case: a network name resolves without regard to case.
+func (c *composeImport) isServiceName(name string) bool {
+	for _, svc := range c.names() {
+		if strings.EqualFold(svc, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func pointsAtAny(value string, hosts []string) bool {
@@ -892,13 +918,23 @@ func (c *composeImport) workload(name string, only bool) spec.Workload {
 	// `appseed_app:5005`, a DATABASE_URL naming the database's container
 	// (issue #90). Only inside the app's own network, so nothing collides.
 	if s.ContainerName != "" {
-		if _, taken := c.file.Services[s.ContainerName]; !taken && s.ContainerName != name {
-			w.Aliases = []string{s.ContainerName}
+		taken := c.isServiceName(s.ContainerName)
+		// A name Pando keeps for its own containers, or one that is not a
+		// network name, is not answered to (R-025); the service keeps its
+		// own name.
+		if problem := spec.AliasProblem(s.ContainerName); problem != "" {
+			c.rewrote(name, "container_name: "+s.ContainerName,
+				"Pando names containers itself, and "+s.ContainerName+" "+problem+
+					", so the other services in this app reach it as "+name+" instead.")
+		} else {
+			if !taken && s.ContainerName != name {
+				w.Aliases = []string{s.ContainerName}
+			}
+			c.rewrote(name, "container_name: "+s.ContainerName,
+				"Pando names containers itself so that two apps importing compose files "+
+					"cannot collide over the same name. The other services in this app still reach it as "+
+					s.ContainerName+".")
 		}
-		c.rewrote(name, "container_name: "+s.ContainerName,
-			"Pando names containers itself so that two apps importing compose files "+
-				"cannot collide over the same name. The other services in this app still reach it as "+
-				s.ContainerName+".")
 	}
 
 	// Restart policy is configuration, not a question (R-104). Pando applies
@@ -1139,6 +1175,43 @@ func (c *composeImport) mountedAnywhere(volume string) bool {
 // rather than a gap — the spec is the record of how the app runs, and a file
 // re-read from a branch at deploy time would make the same revision deploy
 // differently tomorrow.
+// underKernelPath reports, with a note, that a mount carrying files places
+// them where the kernel presents itself, which Pando does not do (R-240).
+func (c *composeImport) underKernelPath(name string, m mount) bool {
+	problem := spec.MountPathProblem(m.containerPath)
+	if problem == "" {
+		return false
+	}
+	c.rewrote(name, "volume "+m.raw, kernelPathNote("places files", m.containerPath, problem, "mount"))
+	return true
+}
+
+// kernelPathNote says a construct was left out because it puts something
+// where the kernel presents itself (R-240).
+func kernelPathNote(does, at, problem, what string) string {
+	return "This " + does + " at " + at + ", which " + problem + ". Pando does not put anything there, so this " + what + " was left out."
+}
+
+// carriedDir is the files a directory mount carries in the spec.
+func (c *composeImport) carriedDir(name string, m mount) []spec.File {
+	if c.underKernelPath(name, m) {
+		return nil
+	}
+	var files []spec.File
+	for _, rel := range c.repoFiles(m.hostPath) {
+		content, _ := c.read(path.Join(m.hostPath, rel))
+		files = append(files, spec.File{
+			Path: path.Join(m.containerPath, rel), Content: content, Mode: fileMode(content),
+		})
+	}
+	c.rewrote(name, "volume "+m.raw,
+		"Pando copied the files in "+m.hostPath+" out of the repository and carries them in "+
+			"this app's configuration, placing them under "+m.containerPath+" each time the "+
+			"service starts. It is a copy taken now: editing them in the repository changes "+
+			"nothing until this app is read again.")
+	return files
+}
+
 func (c *composeImport) files(name string, s composeService) []spec.File {
 	var files []spec.File
 
@@ -1151,17 +1224,7 @@ func (c *composeImport) files(name string, s composeService) []spec.File {
 					"deploys a built image, and a deploy is how a change reaches this app.")
 			continue
 		case dirCarried:
-			for _, rel := range c.repoFiles(m.hostPath) {
-				content, _ := c.read(path.Join(m.hostPath, rel))
-				files = append(files, spec.File{
-					Path: path.Join(m.containerPath, rel), Content: content, Mode: fileMode(content),
-				})
-			}
-			c.rewrote(name, "volume "+m.raw,
-				"Pando copied the files in "+m.hostPath+" out of the repository and carries them in "+
-					"this app's configuration, placing them under "+m.containerPath+" each time the "+
-					"service starts. It is a copy taken now: editing them in the repository changes "+
-					"nothing until this app is read again.")
+			files = append(files, c.carriedDir(name, m)...)
 			continue
 		}
 		if m.hostPath == "" || !c.isFile(m.hostPath) {
@@ -1194,7 +1257,7 @@ func (c *composeImport) files(name string, s composeService) []spec.File {
 					"deploys a built image, and a deploy is how a change reaches this app.")
 			continue
 		}
-		if !readable {
+		if !readable || c.underKernelPath(name, m) {
 			continue
 		}
 
@@ -1215,6 +1278,20 @@ func (c *composeImport) files(name string, s composeService) []spec.File {
 // found no file, never initialized, and every service that needed it failed
 // (issue #55). The file is in the repository, which is what the compose file
 // reads it from too; it travels in the spec like any other carried file.
+// secretContent is a secret file's content, unless it cannot be read or is
+// placed where the kernel presents itself (R-240), which is noted.
+func (c *composeImport) secretContent(service, source, target, file string) (string, bool) {
+	content, ok := c.read(file)
+	if !ok {
+		return "", false
+	}
+	if problem := spec.MountPathProblem(target); problem != "" {
+		c.rewrote(service, "secrets: "+source, kernelPathNote("places the secret", target, problem, "secret"))
+		return "", false
+	}
+	return content, true
+}
+
 func (c *composeImport) secretFiles(service string, s composeService) []spec.File {
 	var files []spec.File
 	for _, raw := range s.Secrets {
@@ -1235,7 +1312,7 @@ func (c *composeImport) secretFiles(service string, s composeService) []spec.Fil
 		if !ok || secret.File == "" {
 			continue
 		}
-		content, ok := c.read(secret.File)
+		content, ok := c.secretContent(service, source, target, secret.File)
 		if !ok {
 			continue
 		}
@@ -1439,32 +1516,50 @@ func (c *composeImport) uncarryable(hostPath string) (string, bool) {
 		"Dockerfile.", false
 }
 
+// becomesVolume reports whether a compose mount becomes a volume of the
+// workload's own. What does not is carried another way or left out, with a
+// note where the author would want one.
+func (c *composeImport) becomesVolume(name string, m mount) bool {
+	if m.volumeName == "" {
+		return false
+	}
+	// A single file is carried in the spec instead (see files above).
+	// Making it a volume as well is two mechanisms for one path, and the
+	// one Docker refuses.
+	if m.hostPath != "" && c.isFile(m.hostPath) {
+		return false
+	}
+	// So is a directory of them, and one the image already has is left
+	// to the image (see files above).
+	if k := c.dirMount(name, m); k == dirInImage || k == dirCarried {
+		return false
+	}
+	if isHostClock(m) {
+		c.rewrote(name, "volume "+m.raw,
+			"This mounts the host's time zone into the app. Pando does not mount paths from the "+
+				"host machine, so the app keeps its image's time zone, usually UTC. Set TZ on the "+
+				"app's variables if it needs another.")
+		return false
+	}
+	// Where the kernel presents itself, storage would hide what the
+	// runtime put there; Pando does not mount over it (R-240). Left out
+	// with a note rather than refusing the whole file.
+	if problem := spec.MountPathProblem(m.containerPath); problem != "" {
+		c.rewrote(name, "volume "+m.raw,
+			kernelPathNote("mounts storage", m.containerPath, problem, "mount"))
+		return false
+	}
+	return true
+}
+
 func (c *composeImport) mounts(name string, s composeService) []spec.Mount {
 	var mounts []spec.Mount
 	for _, m := range serviceMounts(name, s.Volumes) {
-		if m.volumeName == "" {
-			continue
-		}
-		// A single file is carried in the spec instead (see files above).
-		// Making it a volume as well is two mechanisms for one path, and the
-		// one Docker refuses.
-		if m.hostPath != "" && c.isFile(m.hostPath) {
-			continue
-		}
-		// So is a directory of them, and one the image already has is left
-		// to the image (see files above).
-		if k := c.dirMount(name, m); k == dirInImage || k == dirCarried {
-			continue
-		}
-		if isHostClock(m) {
-			c.rewrote(name, "volume "+m.raw,
-				"This mounts the host's time zone into the app. Pando does not mount paths from the "+
-					"host machine, so the app keeps its image's time zone, usually UTC. Set TZ on the "+
-					"app's variables if it needs another.")
+		if !c.becomesVolume(name, m) {
 			continue
 		}
 		mounts = append(mounts, spec.Mount{
-			VolumeID: m.volumeName, Path: m.containerPath, ReadOnly: m.readOnly,
+			VolumeID: m.volumeName, Path: path.Clean(m.containerPath), ReadOnly: m.readOnly,
 		})
 
 		// A relative bind mount is the author saying "this directory matters",

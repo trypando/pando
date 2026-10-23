@@ -132,11 +132,8 @@ func (s *Service) Resolve(ctx context.Context, appID, slug string, current spec.
 			return Decision{}, err
 		}
 		next.Hostname = probe.Routing.Hostname
-		if len(caps.Domains) > 0 && inDomain(next.Hostname, caps.Domains) == "" {
-			return Decision{}, errs.Newf(errs.ValidInvalid,
-				"%s isn't in a domain the %s routing adapter serves. It serves %s.",
-				next.Hostname, ref, strings.Join(caps.Domains, ", ")).
-				WithRemedy("Choose a hostname ending in one of those domains, or add the domain to the routing adapter's settings.")
+		if err := checkServed(next.Hostname, ref, caps); err != nil {
+			return Decision{}, err
 		}
 
 	case spec.RoutingPath:
@@ -195,10 +192,27 @@ func (s *Service) Resolve(ctx context.Context, appID, slug string, current spec.
 	}, nil
 }
 
+// checkServed refuses a hostname outside every domain the adapter names, when
+// it names any.
+func checkServed(host, ref string, caps api.RoutingCapabilities) error {
+	if len(caps.Domains) == 0 || inDomain(strings.TrimSuffix(strings.ToLower(host), "."), caps.Domains) != "" {
+		return nil
+	}
+	return errs.Newf(errs.ValidInvalid,
+		"%s isn't in a domain the %s routing adapter serves. It serves %s.",
+		host, ref, strings.Join(caps.Domains, ", ")).
+		WithRemedy("Choose a hostname ending in one of those domains, or add the domain to the routing adapter's settings.")
+}
+
 // Overrides reports whether next deviates from its adapter's default mode
 // where current did not — for a spec written whole, through POST /specs,
 // rather than through Resolve. It also corrects next's ModeSource, which a
 // hand-written spec may have left saying anything.
+//
+// A hostname new to the app is held to the domains the adapter serves, as
+// Resolve holds it: a spec written whole is not a way around that. One the
+// app already has is left alone, so an adapter's domains changing later does
+// not stop the app's next edit.
 func (s *Service) Overrides(ctx context.Context, current *spec.Routing, next *spec.Routing) (bool, error) {
 	routing, ok := s.routing(next.AdapterRef)
 	if !ok {
@@ -210,6 +224,12 @@ func (s *Service) Overrides(ctx context.Context, current *spec.Routing, next *sp
 	if err != nil {
 		return false, errs.Wrap(errs.AdapterUnavailable,
 			fmt.Sprintf("Pando could not ask the %s routing adapter what it can do.", next.AdapterRef), err)
+	}
+	newHost := current == nil || current.AdapterRef != next.AdapterRef || current.Hostname != next.Hostname
+	if next.Mode == spec.RoutingSubdomain && newHost {
+		if err := checkServed(next.Hostname, next.AdapterRef, caps); err != nil {
+			return false, err
+		}
 	}
 	if next.Mode == caps.DefaultMode || next.Mode == "" {
 		next.ModeSource = spec.ModeFromAdapterDefault

@@ -66,3 +66,31 @@ func TestADomainIsCheckedAgainstTheBaseDomainAlone(t *testing.T) {
 	_, err = s.Resolve(context.Background(), "app_1", "notes", onLoopback, Request{AdapterRef: "rte_cf", Domain: "trypando.ai"})
 	require.ErrorContains(t, err, "doesn't serve the domain trypando.ai")
 }
+
+// TestR162_ASpecWrittenWholeIsHeldToTheAdaptersDomains: a hostname that
+// arrives in a whole spec rather than through Resolve is held to the domains
+// the adapter serves too. One the app already has is not asked about again.
+func TestR162_ASpecWrittenWholeIsHeldToTheAdaptersDomains(t *testing.T) {
+	reg := api.NewRegistry()
+	require.NoError(t, reg.Register("rte_cf", routingStub{caps: api.RoutingCapabilities{
+		Modes: []spec.RoutingMode{spec.RoutingSubdomain}, DefaultMode: spec.RoutingSubdomain,
+		BaseDomain: "bemeek.io", Domains: []string{"bemeek.io", "trypando.ai"}}}))
+	s := &Service{Registry: reg}
+	ctx := context.Background()
+	current := spec.Routing{AdapterRef: "rte_cf", Mode: spec.RoutingSubdomain, Hostname: "notes.bemeek.io"}
+
+	in := spec.Routing{AdapterRef: "rte_cf", Mode: spec.RoutingSubdomain, Hostname: "Docs.TryPando.ai."}
+	_, err := s.Overrides(ctx, &current, &in)
+	require.NoError(t, err)
+
+	out := spec.Routing{AdapterRef: "rte_cf", Mode: spec.RoutingSubdomain, Hostname: "notes.example.org"}
+	_, err = s.Overrides(ctx, &current, &out)
+	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
+	require.Contains(t, errs.As(err).Message, "It serves bemeek.io, trypando.ai")
+	_, err = s.Overrides(ctx, nil, &out)
+	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), "a first spec is held to them too")
+
+	kept := spec.Routing{AdapterRef: "rte_cf", Mode: spec.RoutingSubdomain, Hostname: "notes.example.org"}
+	_, err = s.Overrides(ctx, &kept, &out)
+	require.NoError(t, err, "a hostname the app already has is left alone")
+}

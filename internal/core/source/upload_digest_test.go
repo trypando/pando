@@ -35,7 +35,7 @@ func TestR312_AnUploadIsKnownByItsArchive(t *testing.T) {
 	src := spec.Source{Type: spec.SourceUpload, UploadID: "app_01UP"}
 	fetch := func() *Checkout {
 		t.Helper()
-		co, err := s.Fetch(context.Background(), src)
+		co, err := s.Fetch(ForApp(context.Background(), "app_01UP"), src)
 		require.NoError(t, err)
 		t.Cleanup(co.Close)
 		return co

@@ -32,6 +32,12 @@ import (
 // DefaultUploadDir is where a server keeps uploaded sources.
 const DefaultUploadDir = "/var/lib/pando/uploads"
 
+// isAppID reports whether an app ID can name a file in the upload
+// directory: not empty, not hidden, and no path separator.
+func isAppID(appID string) bool {
+	return appID != "" && !strings.ContainsAny(appID, `/\`) && !strings.HasPrefix(appID, ".")
+}
+
 // uploadPath is where an app's uploaded archive is kept.
 //
 // An empty UploadDir is refused rather than joined, which would put every
@@ -39,6 +45,9 @@ const DefaultUploadDir = "/var/lib/pando/uploads"
 func (s Sources) uploadPath(appID string) (string, error) {
 	if s.UploadDir == "" {
 		return "", errs.New(errs.Internal, "Pando has no directory configured for uploaded source.")
+	}
+	if !isAppID(appID) {
+		return "", errs.Newf(errs.ValidInvalid, "%q does not name an app.", appID)
 	}
 	return filepath.Join(s.UploadDir, appID+".tar.gz"), nil
 }
@@ -90,7 +99,7 @@ func (s Sources) StoreUpload(appID string, r io.Reader) (string, error) {
 // It had been kept forever (issue #55). A missing archive is not an error — an
 // app built from git never had one.
 func (s Sources) DiscardUpload(appID string) error {
-	if appID == "" || strings.ContainsAny(appID, `/\`) || strings.HasPrefix(appID, ".") {
+	if !isAppID(appID) {
 		return errs.Newf(errs.ValidInvalid, "%q does not name an app.", appID)
 	}
 	final, err := s.uploadPath(appID)
@@ -106,8 +115,21 @@ func (s Sources) DiscardUpload(appID string) error {
 }
 
 // fetchUpload expands a stored upload into a checkout.
-func (s Sources) fetchUpload(_ context.Context, src spec.Source) (*Checkout, error) {
-	archive, err := s.uploadPath(src.UploadID)
+//
+// The archive read is the one stored for the app the fetch is for (ForApp),
+// never one the spec names: an app deploys only what was uploaded to it
+// (R-025). A spec naming another is refused here as well as where it is
+// written (spec.CheckUploadOwner), since a revision written before that check
+// may still be deployed.
+func (s Sources) fetchUpload(ctx context.Context, src spec.Source) (*Checkout, error) {
+	appID := AppFrom(ctx)
+	if !isAppID(appID) {
+		return nil, errs.New(errs.Internal, "Pando could not tell which app this uploaded source is for.")
+	}
+	if err := spec.CheckUploadOwner(src, appID); err != nil {
+		return nil, err
+	}
+	archive, err := s.uploadPath(appID)
 	if err != nil {
 		return nil, err
 	}

@@ -33,6 +33,8 @@ func Validate(s *AppSpec) error {
 
 	validatePrimaryWorkload(s, add)
 	validateWorkloadNames(s, add)
+	validateNames(s, add)
+	validateResources(s, add)
 	validateMounts(s, add)
 	validateFiles(s, add)
 	validateEnv(s, add)
@@ -221,10 +223,10 @@ func validateMounts(s *AppSpec, add func(*errs.Error)) {
 					WithDetail("workload", w.Name).
 					WithDetail("volume_id", m.VolumeID))
 			}
-			if !strings.HasPrefix(m.Path, "/") {
+			if problem := MountPathProblem(m.Path); problem != "" {
 				add(errs.Newf(errs.ValidInvalid,
-					"Workload %q mounts storage at %q, which is not an absolute path.", w.Name, m.Path).
-					WithRemedy("Mount paths must start with /, for example /app/data."))
+					"Workload %q mounts storage at %q, which %s.", w.Name, m.Path, problem).
+					WithRemedy("Mount storage at an absolute path inside the app's own directories, for example /app/data."))
 			}
 		}
 	}
@@ -482,6 +484,11 @@ func validateRouting(s *AppSpec, add func(*errs.Error)) {
 		if s.Routing.Hostname == "" {
 			add(errs.New(errs.ValidInvalid, "This app is set to use its own hostname, but no hostname was given.").
 				WithRemedy("Provide the hostname, for example notes.example.com."))
+		} else if !ValidHostname(s.Routing.Hostname) {
+			// The hostname reaches a routing adapter's configuration, such as
+			// a Traefik rule, as written.
+			add(errs.Newf(errs.ValidInvalid, "%q isn't a hostname.", s.Routing.Hostname).
+				WithRemedy("Use a name like notes.example.com: letters, digits and hyphens, separated by dots."))
 		}
 	case RoutingPath:
 		if s.Routing.PathPrefix == "" {

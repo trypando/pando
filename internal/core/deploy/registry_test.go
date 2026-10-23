@@ -110,7 +110,7 @@ func TestR194_TheRegistryCredentialNeverReachesALogOrAWorkload(t *testing.T) {
 		{Name: "web", Image: built, Env: map[string]secret.Value{"PORT": secret.New("8080")}},
 		{Name: "cache", Image: "redis:7"},
 	}}
-	r.withBuiltImageAuth(context.Background(), &bundle)
+	r.withBuiltImageAuth(context.Background(), nil, &bundle)
 	require.NotNil(t, bundle.Workloads[0].PullAuth)
 	require.Equal(t, "registry-password-9", bundle.Workloads[0].PullAuth.Password.Reveal())
 	require.Nil(t, bundle.Workloads[1].PullAuth, "a published image is not given the install's credential")
@@ -124,5 +124,37 @@ func TestR194_TheRegistryCredentialNeverReachesALogOrAWorkload(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "registry-password-9", "a logged plan shows [redacted]")
 
-	require.Nil(t, (&Runner{}).builtImageAuth(context.Background(), built), "no registry, no credential")
+	require.Nil(t, (&Runner{}).builtImageAuth(context.Background(), nil, built), "no registry, no credential")
+}
+
+// TestR025_TheRegistryCredentialIsOnlyForTheAppsOwnBuilds asserts R-025 for
+// the install registry: an app whose spec names another app's build, in the
+// install registry, is not given the install's credential to pull it.
+func TestR025_TheRegistryCredentialIsOnlyForTheAppsOwnBuilds(t *testing.T) {
+	const own = "registry.internal:5000/apps/app_01hq8@sha256:aaa"
+	const other = "registry.internal:5000/apps/app_01other:dep_9"
+	r := &Runner{buildRegistry: installRegistry(t, false)}
+	s := &spec.AppSpec{
+		Source:    spec.Source{Type: spec.SourceImage, Image: other},
+		Workloads: []spec.Workload{{Name: "web"}, {Name: "side", Image: "registry.internal:5000/apps/app_01third/db:x"}},
+	}
+	bundle := api.BundlePlan{Workloads: []api.WorkloadPlan{
+		{Name: "web", Image: "registry.internal:5000/apps/app_01other@sha256:bbb"},
+		{Name: "side", Image: "registry.internal:5000/apps/app_01third/db:x"},
+		{Name: "built", Image: own},
+	}}
+	r.withBuiltImageAuth(context.Background(), s, &bundle)
+	require.Nil(t, bundle.Workloads[0].PullAuth, "an image app naming another app's build, pinned, gets no credential")
+	require.Nil(t, bundle.Workloads[1].PullAuth, "a workload naming another app's build gets no credential")
+	require.NotNil(t, bundle.Workloads[2].PullAuth, "the app's own build still gets it")
+	require.Nil(t, r.builtImageAuth(context.Background(), s, other))
+
+	require.True(t, s.NamesImage("registry.internal:5000/apps/app_01other"))
+	require.False(t, (*spec.AppSpec)(nil).NamesImage(own))
+	require.False(t, s.NamesImage(""))
+
+	// A workload with a build of its own runs what was built, even pushed to
+	// the repository its image names.
+	built := &spec.AppSpec{Workloads: []spec.Workload{{Name: "web", Image: "registry.internal:5000/apps/app_01hq8", Build: &spec.WorkloadBuild{}}}}
+	require.False(t, built.NamesImage(own))
 }
