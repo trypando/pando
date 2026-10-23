@@ -48,8 +48,8 @@ import { statusLabel, statusSymbol } from '../ui/status';
 import { AppOnboarding } from './AppOnboarding';
 import { DetectionReview } from './DetectionReview';
 import { Sharing } from './Sharing';
-import { AppOverview } from './AppOverview';
-import { useRecordFollowsStatus } from './Parts';
+import { AppOverview, scrollToSecurity } from './AppOverview';
+import { useRecordFollowsStatus } from './appStatus';
 import { AppEvents } from './AppEvents';
 import { Resources } from './Resources';
 import { AddApp } from './AddApp';
@@ -57,7 +57,10 @@ import { Reference } from './Reference';
 import { Approvals, useApprovals } from './Approvals';
 import { DeleteApp } from './DeleteApp';
 import { DeployButton } from './DeployButton';
-import { ImageUpdateButton } from './ImageUpdateButton';
+import { AppImage } from './AppImage';
+import { AppName } from './AppName';
+import { AppAddress } from './AppAddress';
+import { HeaderScore } from './HeaderScore';
 import { Lifecycle } from './Lifecycle';
 import { AppVerb, AppVerbs, can, changesAnything, type AppWithVerbs } from './verbs';
 import { AppPanel, PanelOpener, type PanelTarget } from './AppPanel';
@@ -658,7 +661,7 @@ function AppsList({
 const REFUSALS: Record<string, { label: string; tab: string; focus?: string }> = {
   PLAN_SLOT_UNFILLED: { label: 'Fill it in', tab: 'settings', focus: 'dependencies' },
   PLAN_CAPABILITY_UNSUPPORTED: { label: 'Open settings', tab: 'settings' },
-  PLAN_SECURITY_BELOW_THRESHOLD: { label: 'See the findings', tab: 'overview' },
+  PLAN_SECURITY_BELOW_THRESHOLD: { label: 'See the findings', tab: 'overview', focus: 'security' },
   // R-183: the refusal names the entries; the app's egress section is where
   // they are taken out.
   PLAN_EGRESS_LOOSENING_FORBIDDEN: { label: 'Open egress', tab: 'settings', focus: 'egress' },
@@ -862,13 +865,37 @@ function AppScreen({
             <Button variant="ghost" icon={<Icon name="arrow-left" />} onClick={onBack} style={{ alignSelf: 'flex-start' }}>
               Apps
             </Button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-3)' }}>
-                <h3 style={{ font: 'var(--type-h3)', margin: 0 }}>{app.data.name}</h3>
-                <StatusIndicator
-                  status={statusSymbol(app.data.state)}
-                  label={statusLabel(app.data.state, app.data.stopped_for_idle, app.data.stopped_for_disk, app.data.stopped_for_orphan)}
-                />
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                flexWrap: 'wrap',
+                gap: 'var(--space-4)',
+                width: '100%',
+              }}
+            >
+              {/* What the app is: its tile, its name, how it is, its score,
+                  and where it is reached. */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-4)', minWidth: 0 }}>
+                <AppImage app={app.data} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', minWidth: 0 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-3)' }}>
+                    <AppName app={app.data} />
+                    <StatusIndicator
+                      status={statusSymbol(app.data.state)}
+                      label={statusLabel(app.data.state, app.data.stopped_for_idle, app.data.stopped_for_disk, app.data.stopped_for_orphan)}
+                    />
+                    <HeaderScore
+                      appID={app.data.id}
+                      onOpen={() => {
+                        if (tab === 'overview') scrollToSecurity();
+                        else setTab('overview', 'security');
+                      }}
+                    />
+                  </div>
+                  <AppAddress app={app.data} />
+                </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-3)' }}>
                 {/* Deploy where somebody looking at an app can reach it, from any
@@ -885,21 +912,6 @@ function AppScreen({
                     onWaiting={() => setWaiting(true)}
                   />
                 )}
-
-                {/* An image app's tag can name a newer build than the one it runs (R-143a). */}
-                {app.data.pinned_spec_id &&
-                  app.data.source?.type === 'image' &&
-                  can(verbs, AppVerb.Deploy) &&
-                  can(verbs, AppVerb.SpecEdit) && (
-                    <ImageUpdateButton
-                      app={app.data}
-                      onRefused={(message, remedy, code) => {
-                        setRefusal(message ? { message, remedy, code } : null);
-                        if (message) setWaiting(false);
-                      }}
-                      onWaiting={() => setWaiting(true)}
-                    />
-                  )}
 
                 {/* Stopping is the thing somebody reaches for when they would
                     otherwise delete: it keeps the storage, the configuration and
@@ -997,7 +1009,18 @@ function AppScreen({
 
         <div style={{ paddingTop: 'var(--space-5)' }}>
           {tab === 'sharing' && <Sharing appID={app.data.id} appName={app.data.name} />}
-          {tab === 'overview' && <AppOverview app={app.data} onGo={setTab} />}
+          {tab === 'overview' && (
+            <AppOverview
+              app={app.data}
+              onGo={setTab}
+              focus={focus}
+              onRefused={(message, remedy, code) => {
+                setRefusal(message ? { message, remedy, code } : null);
+                if (message) setWaiting(false);
+              }}
+              onWaiting={() => setWaiting(true)}
+            />
+          )}
           {tab === 'events' && <AppEvents app={app.data} />}
           {tab === 'settings' && <Settings app={app.data} focus={focus} />}
         </div>

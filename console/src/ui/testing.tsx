@@ -90,7 +90,8 @@ export function mount(screen: ReactNode, data: Seed = [], verbs: string[] = []):
   return {
     text: () => String(container.textContent),
     press: async (label) => {
-      const buttons = [...container.querySelectorAll('button')].filter((b) => b.textContent === label);
+      // Trimmed: an icon's markup leaves whitespace before the label.
+      const buttons = [...container.querySelectorAll('button')].filter((b) => b.textContent?.trim() === label);
       await settle(() => buttons.at(-1)!.click());
     },
     click: async (text) => {

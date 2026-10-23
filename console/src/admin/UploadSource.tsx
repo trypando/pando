@@ -7,14 +7,13 @@
 // source. Nothing about what happens after differs from a repository.
 
 import { useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@design';
 
 import { api } from '@api/client';
-import { Quiet, messageOf } from '../install/Accounts';
+import { Quiet } from '../install/Accounts';
 import { filesFromDrop, filesFromInput, folderOf, pack, prepare, totalBytes, type PickedFile } from './pack';
 import { RegistryCredential } from './RegistryCredential';
-import { AppVerb, useCan } from './verbs';
 
 /** The most Pando accepts, compressed (maxUploadBytes in the server). */
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
@@ -120,52 +119,13 @@ export function FilePicker({
   );
 }
 
-/** The files section of an app that was sent from somebody's computer. */
-function UploadedFiles({ appID }: { appID: string }) {
-  const queries = useQueryClient();
-  const canEdit = useCan(AppVerb.SpecEdit);
-  const [files, setFiles] = useState<PickedFile[]>([]);
-
-  const send = useMutation({
-    mutationFn: () => sendFiles(appID, files),
-    onSuccess: () => {
-      setFiles([]);
-      void queries.invalidateQueries({ queryKey: ['apps', appID] });
-    },
-  });
-
-  return (
-    <section>
-      <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Files</h4>
-      <Quiet>Sending new files replaces these and runs detection again.</Quiet>
-      {canEdit && (
-        <div style={{ marginTop: 'var(--space-4)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          <FilePicker files={files} onPick={setFiles} disabled={send.isPending} />
-          {send.isError && <Quiet>{messageOf(send.error)}</Quiet>}
-          {send.isSuccess && <Quiet>Sent.</Quiet>}
-          <div>
-            <Button variant="primary" disabled={files.length === 0 || send.isPending} onClick={() => send.mutate()}>
-              {send.isPending ? 'Sending' : 'Send files'}
-            </Button>
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
-/** Whichever source section the app's source calls for. */
+/** Whichever source section the app's source calls for on Settings. New
+ *  files for an uploaded app are sent from the Overview's Source and deploys
+ *  card. */
 export function SourceSection({ appID }: { appID: string }) {
   const app = useQuery({
     queryKey: ['apps', appID],
     queryFn: () => api.get<{ source?: { type?: string } }>(`/apps/${appID}`),
   });
-  switch (app.data?.source?.type) {
-    case 'upload':
-      return <UploadedFiles appID={appID} />;
-    case 'image':
-      return <RegistryCredential appID={appID} />;
-    default:
-      return null;
-  }
+  return app.data?.source?.type === 'image' ? <RegistryCredential appID={appID} /> : null;
 }

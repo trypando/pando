@@ -44,3 +44,28 @@ describe('the overview of a failed app', () => {
     expect(html).not.toContain('Open logs');
   });
 });
+
+describe('the overview of a running app', () => {
+  it('has the sections in order: attention, source, workloads, security', () => {
+    const running = { ...app, state: 'running', pinned_spec_id: 'spec_1', source: { type: 'git', url: 'github.com/acme/skyjo' } } as unknown as App;
+    const html = serverRender(<AppOverview app={running} onGo={() => {}} />, [
+      ...seed,
+      [['apps', app.id, 'notices'], { notices: [{ key: 'config.unshipped', message: 'The configuration has changed.', fingerprint: 'f', ignored: false }] }],
+      [['apps', app.id, 'specs'], { revisions: [{ id: 'spec_1', revision: 1 }], pinned_spec_id: 'spec_1' }],
+      [['apps', app.id, 'spec', 1], { id: 'spec_1', revision: 1, body: { source: running.source, deploy: {} } }],
+    ]);
+    const at = (s: string) => html.indexOf(s);
+    expect(at('Needs your attention')).toBeGreaterThan(-1);
+    expect(at('Needs your attention')).toBeLessThan(at('Source and deploys'));
+    expect(at('Source and deploys')).toBeLessThan(at('Workloads'));
+    expect(at('Workloads')).toBeLessThan(at('Security'));
+    expect(html).not.toContain('Pando has stopped trying');
+  });
+
+  it('shows a deploy waiting for approval, which is state rather than a to-do', () => {
+    const html = serverRender(<AppOverview app={{ ...app, state: 'running' } as App} onGo={() => {}} />, [
+      [['apps', app.id, 'deployments'], { deployments: [{ id: 'dep_1', status: 'awaiting_approval', started_at: '2026-10-23T10:00:00Z' }] }],
+    ]);
+    expect(html).toContain('A deploy is waiting for approval');
+  });
+});

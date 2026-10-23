@@ -74,7 +74,9 @@ A plain table, **Time · Event · Actor** (the audit log's own column names wher
 line per event, a symbol only on successes and failures, the detail after a dash, day divider rows.
 All thirty days the outbox keeps (R-366) in one scrolling box with the header pinned; no filters and no
 "show older". Under it: *Anything older than 30 days is in the audit log*, linked for those who may read
-it. A row opens its details in the side panel. Subscriptions are a column of cards on the right:
+it. A deployment's row opens the side panel on that deployment; any other row opens a small dialog of
+its fields. The Actor column names the person who acted, or the person a token acted for, as the
+audit log does (R-379); Pando's own work is "Pando". Subscriptions are a column of cards on the right:
 destination, the events it sends, on or turned off (with the reason and **Turn on**, R-370), and
 **Send a test · Edit · Deliveries**.
 

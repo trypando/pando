@@ -49,19 +49,14 @@ describe('how a dependency is filled', () => {
   });
 });
 
-describe('variables declared with no value', () => {
-  const overview = (keys: string[]) =>
-    render(<AppOverview app={app} onGo={() => {}} />, [
-      [['apps', 'app_1', 'specs'], { revisions: [{ id: 'spec_1', revision: 1 }], pinned_spec_id: 'spec_1' }],
-      [['apps', 'app_1', 'spec', 1], { id: 'spec_1', revision: 1, body: { workloads: [{ name: 'web', env: keys.map((key) => ({ key })) }] } }],
+describe('what the overview asks of somebody', () => {
+  // The words are the server's (GET /notices, R-412); the overview lists them.
+  it('lists the notices from the server', () => {
+    const html = render(<AppOverview app={app} onGo={() => {}} />, [
+      [['apps', 'app_1', 'notices'], { notices: [{ key: 'variables.unset', message: 'API_KEY is declared with no value.', fingerprint: 'f', ignored: false }] }],
     ]);
-
-  it('names one', () => {
-    expect(overview(['API_KEY'])).toContain('API_KEY is declared with no value.');
-  });
-
-  it('names four, then counts the rest', () => {
-    expect(overview(['A', 'B', 'C', 'D', 'E', 'F'])).toContain('6 variables are declared with no value: A, B, C, D, and 2 more.');
+    expect(html).toContain('Needs your attention');
+    expect(html).toContain('API_KEY is declared with no value.');
   });
 });
 
@@ -69,24 +64,28 @@ describe('who has access', () => {
   const sharing = (grants: unknown[]) =>
     render(<Sharing appID="app_1" appName="inventory" />, [[['apps', 'app_1', 'grants', '', {}], { pages: [{ grants }], pageParams: [''] }]]);
 
-  it('says what everyone can do, with or without a passcode', () => {
-    expect(sharing([{ id: 'gr_1', plane: 'data', principal_kind: 'anonymous', passcode: true }])).toContain('Use, with the passcode');
-    expect(sharing([{ id: 'gr_1', plane: 'data', principal_kind: 'anonymous' }])).toContain('Use, without signing in');
+  it('says what making it public means, on the switch itself (R-077)', () => {
+    const html = sharing([{ id: 'gr_1', plane: 'data', principal_kind: 'anonymous', passcode: true }]);
+    expect(html).toContain('Accessible to anyone on the internet');
+    expect(html).toContain('Visitors need the passcode to open it');
   });
 
-  it('lists a person’s role and their use of the app in one cell', () => {
+  it('lists a person’s role and their use of the app in separate columns', () => {
     const html = sharing([
       { id: 'gr_1', plane: 'control', principal_kind: 'user', principal_id: 'usr_1', principal_name: 'dana', role_name: 'owner' },
       { id: 'gr_2', plane: 'data', principal_kind: 'user', principal_id: 'usr_1', principal_name: 'dana' },
     ]);
+    expect(html).toContain('>Opens it<');
+    expect(html).toContain('>Manages it<');
     expect(html).toContain('>Owner<');
-    expect(html).toContain('>Use<');
+    expect(html).toContain('Yes');
   });
 
   it('lists a role alone for a person who can’t use the app', () => {
     const html = sharing([{ id: 'gr_1', plane: 'control', principal_kind: 'user', principal_id: 'usr_1', principal_name: 'dana', role_name: 'viewer' }]);
     expect(html).toContain('>Viewer<');
-    expect(html).not.toContain('>Use<');
+    expect(html).toContain('>No<');
+    expect(html).not.toContain('Yes');
   });
 });
 
@@ -172,8 +171,8 @@ describe('detection that stopped', () => {
 });
 
 describe('an app’s icon', () => {
-  it('says what it takes only to somebody who can change it', () => {
-    expect(render(<AppImage app={app} />, [], [AppVerb.SpecEdit])).toContain('up to 256 KB');
-    expect(render(<AppImage app={app} />)).not.toContain('up to 256 KB');
+  it('offers a change only to somebody who can make it', () => {
+    expect(render(<AppImage app={app} />, [], [AppVerb.SpecEdit])).toContain('aria-label="Change image"');
+    expect(render(<AppImage app={app} />)).not.toContain('Change image');
   });
 });

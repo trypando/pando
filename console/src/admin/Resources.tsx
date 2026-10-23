@@ -53,10 +53,23 @@ export function Resources({ app, focus }: { app: App; focus?: string }) {
           section. */}
       <Volumes appID={appID} focus={focus === 'storage'} />
       <Egress appID={appID} focus={focus === 'egress'} />
-      <DeploySection app={app} />
+      {/* What automatic deploys watch; the Overview's switch turns them on,
+          and its Options link lands here. */}
+      <Focused focus={focus === 'auto-deploy'}>
+        <DeploySection app={app} />
+      </Focused>
       <IdleSection app={app} />
     </div>
   );
+}
+
+/** A section that scrolls into view when something sent somebody to it. */
+function Focused({ focus, children }: { focus: boolean; children: React.ReactNode }) {
+  const at = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focus) at.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [focus]);
+  return <div ref={at}>{children}</div>;
 }
 
 // --- slots -----------------------------------------------------------------

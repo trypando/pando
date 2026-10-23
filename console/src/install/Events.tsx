@@ -15,14 +15,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Banner,
   Button,
+  Card,
   Checkbox,
   CodeBlock,
   Dialog,
   EmptyState,
+  Icon,
   InlineCode,
   Input,
   Radio,
   Select,
+  Skeleton,
   StatusIndicator,
   Tag,
 } from '@design';
@@ -147,17 +150,20 @@ export function Events({ canManageAll, apps }: { canManageAll: boolean; apps: Ap
 /**
  * Subscriptions, as a table with the dialogs that make, show and change one.
  * The Events screen shows the caller's across the installation; an app's
- * Events tab passes `app` and shows that app's, and makes new ones about it.
+ * Events tab passes `app` and shows that app's, and makes new ones about it —
+ * as a column of cards beside the app's events (`layout="cards"`).
  */
 export function Subscriptions({
   apps,
   app,
+  layout = 'table',
   canManageAll,
   creating,
   onCreating,
 }: {
   apps: App[];
   app?: App;
+  layout?: 'table' | 'cards';
   canManageAll: boolean;
   creating: boolean;
   onCreating: (open: boolean) => void;
@@ -165,6 +171,7 @@ export function Subscriptions({
   const [everyone, setEveryone] = useState(false);
   const [created, setCreated] = useState<Subscription | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [log, setLog] = useState<string | null>(null);
 
   const catalog = useCatalog();
   // Newest first, a page at a time (issue #72).
@@ -191,6 +198,15 @@ export function Subscriptions({
 
       {subs.isError && <Quiet>{messageOf(subs.error)}</Quiet>}
 
+      {layout === 'cards' ? (
+        <SubscriptionCards
+          loading={subs.isPending}
+          rows={rows}
+          destinations={destinations}
+          onEdit={setOpen}
+          onDeliveries={setLog}
+        />
+      ) : (
       <Table
         loading={subs.isPending}
         onRowClick={(row: Subscription) => setOpen(row.id)}
@@ -249,6 +265,7 @@ export function Subscriptions({
         ]}
         rows={rows}
       />
+      )}
       <ShowMore query={subs} label="Show more subscriptions" />
 
       {creating && (
@@ -274,12 +291,163 @@ export function Subscriptions({
           onKey={(s) => setCreated(s)}
         />
       )}
+      {log && <DeliveriesDialog id={log} onClose={() => setLog(null)} />}
     </>
   );
 }
 
+/**
+ * One card per subscription: where it sends, what it sends, whether it is on,
+ * and what can be done to it. A subscription Pando turned off after failing
+ * (R-370) says why, with the way to turn it back on beside the reason.
+ */
+function SubscriptionCards({
+  loading,
+  rows,
+  destinations,
+  onEdit,
+  onDeliveries,
+}: {
+  loading: boolean;
+  rows: Subscription[];
+  destinations: Destination[];
+  onEdit: (id: string) => void;
+  onDeliveries: (id: string) => void;
+}) {
+  if (loading) {
+    return (
+      <Card padding="md">
+        <Skeleton width="60%" />
+      </Card>
+    );
+  }
+  if (rows.length === 0) {
+    return <EmptyState heading="No subscriptions yet">Send events to a webhook or a notification channel.</EmptyState>;
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+      {rows.map((s) => (
+        <SubscriptionCard
+          key={s.id}
+          sub={s}
+          destinations={destinations}
+          onEdit={() => onEdit(s.id)}
+          onDeliveries={() => onDeliveries(s.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Where a subscription sends, as a card's first line says it: the kind of
+ *  destination, and the channel or address after it. */
+export function destinationLine(
+  s: Pick<Subscription, 'destination' | 'url' | 'adapter_id' | 'channel'>,
+  destinations: Pick<Destination, 'id' | 'kind'>[],
+): { kind: string; target?: string } {
+  if (s.destination === 'webhook') return { kind: 'Webhook', target: s.url };
+  const d = destinations.find((x) => x.id === s.adapter_id);
+  const kind = d ? (KIND_NAMES[d.kind] ?? d.kind) : (s.adapter_id ?? 'Notification');
+  return { kind, target: s.channel || undefined };
+}
+
+function SubscriptionCard({
+  sub,
+  destinations,
+  onEdit,
+  onDeliveries,
+}: {
+  sub: Subscription;
+  destinations: Destination[];
+  onEdit: () => void;
+  onDeliveries: () => void;
+}) {
+  const queries = useQueryClient();
+  const refresh = () => {
+    void queries.invalidateQueries({ queryKey: ['subscriptions'] });
+    void queries.invalidateQueries({ queryKey: ['subscription', sub.id] });
+    void queries.invalidateQueries({ queryKey: ['deliveries', sub.id] });
+  };
+  const turnOn = useMutation({
+    mutationFn: () => api.patch<Subscription>(`/subscriptions/${sub.id}`, { enabled: true }),
+    onSuccess: refresh,
+  });
+  const test = useMutation({
+    mutationFn: () => api.post<Delivery>(`/subscriptions/${sub.id}/test`, {}),
+    onSuccess: refresh,
+  });
+  const to = destinationLine(sub, destinations);
+  const failure = turnOn.error ?? test.error;
+  const caption = { font: 'var(--type-caption)', color: 'var(--ink-secondary)', margin: 0 };
+
+  return (
+    <Card padding="md" as="article" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 'var(--space-2)', minWidth: 0, font: 'var(--type-label)' }}>
+          {to.kind}
+          {to.target && sub.destination !== 'webhook' && <span style={{ ...caption, overflowWrap: 'anywhere' }}>{to.target}</span>}
+        </span>
+        <SubscriptionStatus sub={sub} />
+      </div>
+      {sub.destination === 'webhook' && to.target && (
+        <code style={{ font: 'var(--type-code-sm)', color: 'var(--ink)', overflowWrap: 'anywhere' }}>{to.target}</code>
+      )}
+      <span style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)' }}>
+        {sub.events.map((e) => (
+          <Tag key={e} mono>
+            {e}
+          </Tag>
+        ))}
+      </span>
+      {!sub.enabled && sub.disabled_reason && (
+        <span style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-2)', font: 'var(--type-caption)', color: 'var(--contour-text)' }}>
+          <Icon name="triangle-alert" color="var(--contour-text)" />
+          <span>{sub.disabled_reason}</span>
+        </span>
+      )}
+      {test.isSuccess && <p style={caption}>Test sent. Its delivery is under Deliveries.</p>}
+      {failure && <p style={{ ...caption, color: 'var(--marker-deep)' }}>{messageOf(failure)}</p>}
+      <span style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)' }}>
+        {!sub.enabled && (
+          <Button variant="secondary" disabled={turnOn.isPending} onClick={() => turnOn.mutate()}>
+            {turnOn.isPending ? 'Turning on' : 'Turn on'}
+          </Button>
+        )}
+        <Button variant="ghost" disabled={!sub.enabled || test.isPending} onClick={() => test.mutate()}>
+          {test.isPending ? 'Sending test' : 'Send a test'}
+        </Button>
+        <Button variant="ghost" onClick={onEdit}>
+          Edit
+        </Button>
+        <Button variant="ghost" onClick={onDeliveries}>
+          Deliveries
+        </Button>
+      </span>
+    </Card>
+  );
+}
+
+/** A subscription's deliveries, on their own. */
+function DeliveriesDialog({ id, onClose }: { id: string; onClose: () => void }) {
+  return (
+    <Dialog
+      open
+      width={880}
+      title="Deliveries"
+      onClose={onClose}
+      footer={
+        <Button variant="secondary" onClick={onClose}>
+          Close
+        </Button>
+      }
+    >
+      <DeliveryLog id={id} />
+    </Dialog>
+  );
+}
+
 function SubscriptionStatus({ sub }: { sub: Subscription }) {
-  if (!sub.enabled) return <StatusIndicator status="stopped" label="Off" />;
+  if (!sub.enabled) return <StatusIndicator status="stopped" label="Turned off" />;
   if (sub.consecutive_failures > 0) return <StatusIndicator status="failed" label="Failing" />;
   return <StatusIndicator status="running" label="On" />;
 }
@@ -548,21 +716,12 @@ function SubscriptionDetail({
   onKey: (s: Subscription) => void;
 }) {
   const queries = useQueryClient();
-  const [openDelivery, setOpenDelivery] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
 
   const sub = useQuery({
     queryKey: ['subscription', id],
     queryFn: () => api.get<Subscription>(`/subscriptions/${id}`),
-  });
-  const deliveries = useQuery({
-    queryKey: ['deliveries', id],
-    queryFn: () => api.get<{ deliveries: Delivery[] }>(`/subscriptions/${id}/deliveries`),
-    // Pending deliveries move on their own; the list follows them, as often
-    // as they can move (deliveriesInterval) rather than every three seconds
-    // through hours of retries.
-    refetchInterval: (q) => deliveriesInterval(q.state.data?.deliveries),
   });
 
   const refresh = () => {
@@ -687,6 +846,31 @@ function SubscriptionDetail({
         )}
 
         <h4 style={{ font: 'var(--type-h4)', margin: 'var(--space-2) 0 0' }}>Recent deliveries</h4>
+        <DeliveryLog id={id} />
+        {editing && s && <EditRequest sub={s} onClose={() => setEditing(false)} onSaved={refresh} />}
+      </div>
+    </Dialog>
+  );
+}
+
+/** A subscription's recent deliveries; one opens to its attempts. */
+function DeliveryLog({ id }: { id: string }) {
+  const queries = useQueryClient();
+  const [openDelivery, setOpenDelivery] = useState<string | null>(null);
+  const deliveries = useQuery({
+    queryKey: ['deliveries', id],
+    queryFn: () => api.get<{ deliveries: Delivery[] }>(`/subscriptions/${id}/deliveries`),
+    // Pending deliveries move on their own; the list follows them, as often
+    // as they can move (deliveriesInterval) rather than every three seconds
+    // through hours of retries.
+    refetchInterval: (q) => deliveriesInterval(q.state.data?.deliveries),
+  });
+  const refresh = () => {
+    void queries.invalidateQueries({ queryKey: ['subscriptions'] });
+    void queries.invalidateQueries({ queryKey: ['deliveries', id] });
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
         <Table
           loading={deliveries.isPending}
           onRowClick={(row: Delivery) => setOpenDelivery(openDelivery === row.id ? null : row.id)}
@@ -725,9 +909,7 @@ function SubscriptionDetail({
           rows={deliveries.data?.deliveries ?? []}
         />
         {openDelivery && <DeliveryDetail subscriptionID={id} deliveryID={openDelivery} onChange={refresh} />}
-        {editing && s && <EditRequest sub={s} onClose={() => setEditing(false)} onSaved={refresh} />}
-      </div>
-    </Dialog>
+    </div>
   );
 }
 

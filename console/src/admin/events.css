@@ -1,0 +1,22 @@
+/* An app's events table (AppEvents.tsx): the header stays put while the box
+ * scrolls under it, and a row shows it can be opened. */
+
+.pando-events thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.pando-event {
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.pando-event:hover {
+  background: var(--paper-raised);
+}
+
+.pando-event:focus-visible {
+  outline: var(--focus-outline-width) solid var(--ink);
+  outline-offset: calc(-1 * var(--focus-outline-width));
+}

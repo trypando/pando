@@ -3,7 +3,18 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { describeChoice, everyone, orderRoles, roleChoice, shareRequests, type Grant } from './share-access';
+import {
+  describeChoice,
+  everyone,
+  initialOf,
+  openRequests,
+  orderRoles,
+  people,
+  roleChoice,
+  roleRequests,
+  shareRequests,
+  type Grant,
+} from './share-access';
 
 const ada = { kind: 'user' as const, id: 'usr_ada' };
 
@@ -96,5 +107,62 @@ describe('the access dropdown', () => {
       'Open, deploy and restart the app, and change its settings.',
     );
     expect(describeChoice({ id: 'role_owner', name: 'owner' })).toBe('Everything, including sharing and deleting the app.');
+  });
+});
+
+// R-070, R-071: the two columns of the People and groups table, each one plane.
+describe('one plane at a time', () => {
+  const sam = { kind: 'user', id: 'usr_sam' };
+  const grants: Grant[] = [
+    { id: 'gr_c', app_id: 'app_1', plane: 'control', principal_kind: 'user', principal_id: 'usr_sam', role_id: 'role_viewer' },
+    { id: 'gr_d', app_id: 'app_1', plane: 'data', principal_kind: 'user', principal_id: 'usr_sam' },
+  ];
+
+  it('lets somebody open the app, or stops them, without touching their role', () => {
+    expect(openRequests(grants, sam, true)).toEqual([]);
+    expect(openRequests(grants, sam, false)).toEqual([{ method: 'delete', grant: 'gr_d' }]);
+    expect(openRequests([grants[0]!], sam, true)).toEqual([
+      { method: 'post', body: { plane: 'data', principal_kind: 'user', principal_id: 'usr_sam' } },
+    ]);
+  });
+
+  it('gives, moves and takes away a role, without touching opening it', () => {
+    expect(roleRequests(grants, sam, 'role_viewer')).toEqual([]);
+    expect(roleRequests(grants, sam, 'role_owner')).toEqual([{ method: 'patch', grant: 'gr_c', body: { role_id: 'role_owner' } }]);
+    expect(roleRequests(grants, sam, '')).toEqual([{ method: 'delete', grant: 'gr_c' }]);
+    expect(roleRequests([grants[1]!], sam, 'role_owner')).toEqual([
+      { method: 'post', body: { plane: 'control', principal_kind: 'user', principal_id: 'usr_sam', role_id: 'role_owner' } },
+    ]);
+    expect(roleRequests([grants[1]!], sam, '')).toEqual([]);
+  });
+});
+
+describe('the people an app is shared with', () => {
+  const grants: Grant[] = [
+    { id: 'gr_a', app_id: 'app_1', plane: 'data', principal_kind: 'anonymous' },
+    { id: 'gr_1', app_id: 'app_1', plane: 'data', principal_kind: 'group', principal_id: 'grp_1', principal_name: 'Design' },
+    { id: 'gr_2', app_id: 'app_1', plane: 'control', principal_kind: 'user', principal_id: 'usr_me', principal_name: 'ben', role_id: 'role_owner', role_name: 'owner' },
+    { id: 'gr_3', app_id: 'app_1', plane: 'data', principal_kind: 'user', principal_id: 'usr_me', principal_name: 'ben' },
+    { id: 'gr_4', app_id: 'app_1', plane: 'control', principal_kind: 'token', principal_id: 'tok_1', role_id: 'role_x' },
+  ];
+
+  it('is one row each, you first, and never everyone', () => {
+    const rows = people(grants, { id: 'usr_me' });
+    expect(rows.map((p) => [p.kind, p.name, p.you, p.opens, p.role?.name])).toEqual([
+      ['user', 'ben', true, true, 'Owner'],
+      ['group', 'Design', false, true, undefined],
+      ['token', 'tok_1', false, false, 'Role_x'],
+    ]);
+    expect(rows[0]?.grantIDs).toEqual(['gr_2', 'gr_3']);
+  });
+
+  it('marks nobody as you when nobody is signed in', () => {
+    expect(people(grants).some((p) => p.you)).toBe(false);
+  });
+
+  it('draws a person as the first letter of their name', () => {
+    expect(initialOf('sam ortiz')).toBe('S');
+    expect(initialOf('  Émile')).toBe('É');
+    expect(initialOf('')).toBe('?');
   });
 });

@@ -33,3 +33,13 @@ export function RouteLink({
     />
   );
 }
+
+/**
+ * Goes to a console address in place, for a link on a screen that is not
+ * handed the console's own navigation. `useRoute` listens for popstate, the
+ * way it follows the browser's back button, and reads the new address.
+ */
+export function followInPlace(href: string): void {
+  window.history.pushState({}, '', href);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}

@@ -29,6 +29,7 @@ interface Principals {
 }
 
 interface Option {
+  kind: 'user' | 'group';
   id: string;
   label: string;
   note?: string;
@@ -44,7 +45,8 @@ export function RecipientField({
   onChange,
 }: {
   appID: string;
-  kind: 'user' | 'group';
+  /** What to look for: people, groups, or both in one list. */
+  kind: 'user' | 'group' | 'any';
   value: Chosen | null;
   onChange: (chosen: Chosen | null) => void;
 }) {
@@ -72,24 +74,44 @@ export function RecipientField({
     placeholderData: keepPreviousData,
   });
 
-  const options: Option[] =
-    kind === 'user'
-      ? // A person is shown by their name; the username is the quieter
-        // detail, and the label when there is no name.
-        (found.data?.users ?? []).map((u) => ({ id: u.id, label: u.name || u.username, note: u.name ? u.username : undefined }))
-      : (found.data?.groups ?? []).map((g) => ({ id: g.id, label: g.name }));
+  // A person is shown by their name; the username is the quieter detail, and
+  // the label when there is no name. Beside people, a group says it is one.
+  const people: Option[] = (found.data?.users ?? []).map((u) => ({
+    kind: 'user',
+    id: u.id,
+    label: u.name || u.username,
+    note: u.name ? u.username : undefined,
+  }));
+  const groups: Option[] = (found.data?.groups ?? []).map((g) => ({
+    kind: 'group',
+    id: g.id,
+    label: g.name,
+    note: kind === 'any' ? 'Group' : undefined,
+  }));
+  const options: Option[] = kind === 'user' ? people : kind === 'group' ? groups : [...people, ...groups];
 
   const choose = (o: Option) => {
     setText(o.label);
     setOpen(false);
-    onChange({ kind, id: o.id, label: o.label });
+    onChange({ kind: o.kind, id: o.id, label: o.label });
   };
 
-  const label = kind === 'user' ? 'Account' : 'Group';
+  const WORDS = {
+    user: { label: 'Account', placeholder: 'Name, username or email', list: 'Matching accounts', none: 'No accounts match.' },
+    group: { label: 'Group', placeholder: 'Group name', list: 'Matching groups', none: 'No groups match.' },
+    any: {
+      label: 'Person or group',
+      placeholder: 'Name, username, email or group',
+      list: 'Matching people and groups',
+      none: 'No people or groups match.',
+    },
+  } as const;
+  const words = WORDS[kind];
+  const label = words.label;
   // Said only once there is an answer to say it about: "No accounts match"
   // under a list that has not loaded yet would be a guess.
   const none = open && !found.isPending && !found.isPlaceholderData && options.length === 0;
-  const noMatch = kind === 'user' ? 'No accounts match.' : 'No groups match.';
+  const noMatch = words.none;
 
   return (
     <div ref={root} style={{ position: 'relative' }}>
@@ -100,7 +122,7 @@ export function RecipientField({
         aria-autocomplete="list"
         aria-controls={listID}
         aria-activedescendant={open && options[at] !== undefined ? `${listID}-${at}` : undefined}
-        placeholder={kind === 'user' ? 'Name, username or email' : 'Group name'}
+        placeholder={words.placeholder}
         value={text}
         autoComplete="off"
         onChange={(e) => {
@@ -117,12 +139,12 @@ export function RecipientField({
       {open && (options.length > 0 || none) && (
         <ComboList
           id={listID}
-          label={kind === 'user' ? 'Matching accounts' : 'Matching groups'}
+          label={words.list}
           none={none ? noMatch : undefined}
         >
           {options.map((o, i) => (
             <ComboOption
-              key={o.id}
+              key={`${o.kind}:${o.id}`}
               id={`${listID}-${i}`}
               active={i === at}
               onChoose={() => choose(o)}

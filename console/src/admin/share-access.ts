@@ -16,7 +16,8 @@ export interface Recipient {
 /** One call against /apps/{id}/grants. */
 export type GrantRequest =
   | { method: 'post'; body: { plane: 'control' | 'data'; principal_kind: string; principal_id: string; role_id?: string } }
-  | { method: 'patch'; grant: string; body: { role_id: string } };
+  | { method: 'patch'; grant: string; body: { role_id: string } }
+  | { method: 'delete'; grant: string };
 
 /**
  * The calls that give `who` what the form asked for, given the grants already
@@ -102,9 +103,13 @@ export const BUILT_IN_APP_ROLES = [
   { id: 'role_owner', name: 'owner' },
 ];
 
-/** The least access: using the app — its tile on their launcher — and no role
- *  on it, so nothing in its settings (R-070, R-071). */
-export const USE_ONLY = 'Use only (no role)';
+/** The least access, and the share bar's default: using the app — its tile
+ *  on their launcher — and no role on it, so nothing in its settings (R-070,
+ *  R-071). */
+export const CAN_OPEN = 'Can open';
+
+/** A principal with no role on the app, in the Manages it column. */
+export const NO_ROLE = 'No role';
 
 type RoleLike = { id: string; name: string; builtin?: boolean; verbs?: string[] };
 
@@ -144,4 +149,97 @@ export function describeChoice(role: RoleLike | undefined): string {
   return verbs.length > 0
     ? `Open the app, plus: ${verbs.join(', ')}.`
     : `Open the app, with the ${roleChoice(role)} role.`;
+}
+
+/** Whoever holds grants on the app: a person, a group or a token. */
+export interface Holder {
+  kind: string;
+  id: string;
+}
+
+function theirs(existing: Grant[], who: Holder): Grant[] {
+  return existing.filter((g) => g.principal_kind === who.kind && g.principal_id === who.id);
+}
+
+/**
+ * The calls that let `who` open the app or stop them — the data plane alone.
+ * Their role, if any, is left as it is: opening an app and managing it are
+ * separate grants (R-070, R-071).
+ */
+export function openRequests(existing: Grant[], who: Holder, open: boolean): GrantRequest[] {
+  const data = theirs(existing, who).filter((g) => g.plane === 'data');
+  if (open) {
+    return data.length > 0
+      ? []
+      : [{ method: 'post', body: { plane: 'data', principal_kind: who.kind, principal_id: who.id } }];
+  }
+  return data.map((g) => ({ method: 'delete', grant: g.id }));
+}
+
+/**
+ * The calls that give `who` this role on the app, or none ('') — the control
+ * plane alone. A role they already hold is moved rather than added beside, so
+ * nobody is left with two or with nothing in between.
+ */
+export function roleRequests(existing: Grant[], who: Holder, role: string): GrantRequest[] {
+  const [control, ...extra] = theirs(existing, who).filter((g) => g.plane === 'control');
+  if (!role) return [control, ...extra].filter((g) => g !== undefined).map((g) => ({ method: 'delete', grant: g.id }));
+  if (!control) {
+    return [{ method: 'post', body: { plane: 'control', principal_kind: who.kind, principal_id: who.id, role_id: role } }];
+  }
+  return control.role_id === role ? [] : [{ method: 'patch', grant: control.id, body: { role_id: role } }];
+}
+
+/** One person, group or token in the People and groups table, with both
+ *  planes side by side. */
+export interface Person {
+  key: string;
+  kind: 'user' | 'group' | 'token';
+  id: string;
+  name: string;
+  /** The signed-in person themselves. */
+  you: boolean;
+  /** The data plane: they can open the app. */
+  opens: boolean;
+  /** The control plane: the role they manage it with, if any. */
+  role?: { id: string; name: string };
+  grantIDs: string[];
+}
+
+/**
+ * One row per principal, not one per grant, and nobody anonymous: the grant
+ * to everyone is the Public access card's, not a person (R-075).
+ */
+export function people(grants: Grant[], me?: { id?: string; user_id?: string }): Person[] {
+  const out = new Map<string, Person>();
+  for (const g of grants) {
+    if (g.principal_kind === 'anonymous') continue;
+    const kind = (g.principal_kind === 'group' || g.principal_kind === 'token' ? g.principal_kind : 'user') as Person['kind'];
+    const id = g.principal_id ?? '';
+    const key = `${g.principal_kind}:${id}`;
+    const entry = out.get(key) ?? {
+      key,
+      kind,
+      id,
+      // The name the server resolved, falling back to the identifier only when
+      // there is nothing else — a principal deleted since the grant was made.
+      name: g.principal_name || id,
+      you: kind === 'user' && Boolean(me) && (id === me?.user_id || id === me?.id),
+      opens: false,
+      grantIDs: [],
+    };
+    entry.grantIDs.push(g.id);
+    if (g.plane === 'data') entry.opens = true;
+    else if (!entry.role) entry.role = { id: g.role_id ?? '', name: roleChoice({ id: g.role_id ?? '', name: g.role_name || g.role_id || '' }) };
+    out.set(key, entry);
+  }
+  // You first; everyone else in the order the server lists them.
+  return [...out.values()].sort((a, b) => Number(b.you) - Number(a.you));
+}
+
+/** The letter in a person's circle: Pando has no pictures of anybody, so the
+ *  first letter of the name they go by. */
+export function initialOf(name: string): string {
+  const first = [...name.trim()][0];
+  return first ? first.toLocaleUpperCase() : '?';
 }

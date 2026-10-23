@@ -10,7 +10,7 @@ import { Button, Skeleton, StatusIndicator, Switch } from '@design';
 import { api, base } from '@api/client';
 import type { App } from '@api/types.gen';
 import { messageOf } from '../install/Accounts';
-import { labelFor, symbolFor, useAppStatus } from './Parts';
+import { labelFor, symbolFor, useAppStatus } from './appStatus';
 import { appendCapped, followLog } from './logStream';
 import { Body, CopyButton, LogBox, Note, Toolbar, WorkloadPicker } from './panelParts';
 

@@ -1,13 +1,13 @@
 // Renaming an app: PATCH /apps/{id}, app.spec.edit.
 //
-// In place, in the row that shows the name. Only the display name changes —
-// the ID and the address stay — so there is nothing to confirm and nothing to
-// warn about, and a dialog would be ceremony.
+// The app's heading, with Rename beside it, edited in place. Only the display
+// name changes — the ID and the address stay — so there is nothing to confirm
+// and nothing to warn about, and a dialog would be ceremony.
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { invalidateAppLists } from './appList';
-import { Button, Input } from '@design';
+import { Button, Icon, Input } from '@design';
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
@@ -28,18 +28,18 @@ export function AppName({ app }: { app: App }) {
     },
   });
 
-  // Without app.spec.edit the name is a value to read, not a control that
+  // Without app.spec.edit the name is a heading to read, not a control that
   // is refused when used.
   if (draft === null || !canRename) {
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-        {app.name}
+      <>
+        <h3 style={{ font: 'var(--type-h3)', margin: 0 }}>{app.name}</h3>
         {canRename && (
-          <Button variant="secondary" onClick={() => setDraft(app.name)}>
+          <Button variant="ghost" icon={<Icon name="pencil" />} onClick={() => setDraft(app.name)}>
             Rename
           </Button>
         )}
-      </span>
+      </>
     );
   }
 

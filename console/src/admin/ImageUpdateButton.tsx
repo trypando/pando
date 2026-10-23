@@ -1,12 +1,11 @@
 // Check for a newer build of an image app's tag, then upgrade to it (R-143a).
 //
-// One button that changes with what it found: a check writes nothing, and the
-// upgrade sends the digest that check returned, so what ships is the build the
-// person was shown. Secondary, beside Deploy, which stays the view's primary.
+// A check writes nothing, and the upgrade sends the digest that check
+// returned, so what ships is the build the person was shown. Used by the
+// Overview's Source and deploys card.
 
 import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button } from '@design';
 
 import { api, RequestFailed } from '@api/client';
 import type { App, ImageCheck } from '@api/types.gen';
@@ -19,21 +18,14 @@ export function imageUpdateLabel(check: ImageCheck | undefined, checking: boolea
   return check.update_available ? 'Upgrade' : 'Up to date';
 }
 
-export function ImageUpdateButton({
-  app,
-  onRefused,
-  onWaiting,
-}: {
-  app: App;
-  /** The refusal to show, or an empty message to clear one. */
-  onRefused: (message: string, remedy?: string, code?: string) => void;
-  /** The upgrade's deploy is waiting for approval (R-154). */
-  onWaiting?: () => void;
-}) {
+type OnRefused = (message: string, remedy?: string, code?: string) => void;
+
+/** The check and the upgrade, for the button and for the Overview's update strip. */
+export function useImageUpdate(app: App, onRefused: OnRefused, onWaiting?: () => void) {
   const queries = useQueryClient();
   const key = ['apps', app.id, 'image-update'];
 
-  // Fetched only when pressed: a check reads a registry, which can be slow or rate limited.
+  // Fetched only when asked: a check reads a registry, which can be slow or rate limited.
   const check = useQuery({
     queryKey: key,
     queryFn: () => api.get<ImageCheck>(`/apps/${app.id}/image-update`),
@@ -49,7 +41,7 @@ export function ImageUpdateButton({
       if (deployment?.status === 'awaiting_approval') onWaiting?.();
       void queries.resetQueries({ queryKey: key });
       void queries.invalidateQueries({ queryKey: ['apps', app.id], exact: true });
-      for (const part of ['deployments', 'status', 'security', 'specs']) {
+      for (const part of ['deployments', 'status', 'security', 'specs', 'notices']) {
         void queries.invalidateQueries({ queryKey: ['apps', app.id, part] });
       }
       void queries.invalidateQueries({ queryKey: APP_LIST_KEY });
@@ -71,19 +63,18 @@ export function ImageUpdateButton({
   }, [failed, check.isSuccess, upgrade.isSuccess, refusal?.message, refusal?.remedy, refusal?.code]);
 
   const found = check.data;
-  return (
-    <Button
-      variant="secondary"
-      disabled={check.isFetching || upgrade.isPending || app.state === 'deploying'}
-      onClick={() => {
-        if (found?.update_available) upgrade.mutate(found.latest_digest);
-        else {
-          upgrade.reset();
-          void check.refetch();
-        }
-      }}
-    >
-      {imageUpdateLabel(found, check.isFetching, upgrade.isPending)}
-    </Button>
-  );
+  return {
+    found,
+    checkedAt: check.dataUpdatedAt,
+    checking: check.isFetching,
+    upgrading: upgrade.isPending,
+    busy: check.isFetching || upgrade.isPending || app.state === 'deploying',
+    check: () => {
+      upgrade.reset();
+      void check.refetch();
+    },
+    upgrade: () => {
+      if (found) upgrade.mutate(found.latest_digest);
+    },
+  };
 }

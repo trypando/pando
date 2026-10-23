@@ -1,23 +1,14 @@
-// What each part of an app is doing (R-221, R-261).
+// What an app and each of its parts is doing now (R-221, R-261).
 //
 // "Degraded" is one word for a whole app, and an app can be a web service, a
-// worker and a database it brought with it. crewmate reported degraded while
-// its application container restarted every two seconds on a missing variable,
-// and the only place that was visible was `docker ps` on the host — which is
-// exactly the thing Pando exists so nobody has to do.
-//
-// Read from GET /apps/{id}/status, the same endpoint `pando app status` and
-// pando_get_status use.
+// worker and a database it brought with it. Read from GET /apps/{id}/status,
+// the same endpoint `pando app status` and pando_get_status use.
 
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, StatusIndicator, Tag } from '@design';
 
 import { api } from '@api/client';
 import type { App } from '@api/types.gen';
-import { Quiet, messageOf } from '../install/Accounts';
-import { MEASURE } from '../ui/layout';
-import { Table } from '../ui/Table';
 import { recordIsBehind, statusInterval } from '../ui/polling';
 
 export interface Part {
@@ -84,82 +75,6 @@ export function useRecordFollowsStatus(app: App | undefined, recordUpdatedAt: nu
     void queries.invalidateQueries({ queryKey: ['apps', appID, 'deployments'] });
     void queries.invalidateQueries({ queryKey: ['apps', appID, 'security'] });
   }, [behind, appID, status.dataUpdatedAt, queries]);
-}
-
-export function Parts({ app, onLogs }: { app: App; onLogs?: (workload: string) => void }) {
-  const status = useAppStatus(app);
-  const parts = status.data?.workloads ?? [];
-
-  // One part is the app, and the app's own status line already says how it is.
-  // Nothing while the status loads either, not a skeleton: most apps are one
-  // part, and a placeholder for a section that then does not appear moves
-  // everything under it twice.
-  if (!app.pinned_spec_id || parts.length < 2) return null;
-
-  return (
-    <section style={{ maxWidth: MEASURE }}>
-      <h4 style={{ font: 'var(--type-h4)', margin: '0 0 var(--space-2)' }}>Parts</h4>
-
-      {status.data?.observability === 'unreachable' && (
-        <Quiet>Pando couldn’t reach the runtime. State unknown.</Quiet>
-      )}
-      {status.isError && <Quiet>{messageOf(status.error)}</Quiet>}
-
-      <div style={{ marginTop: 'var(--space-4)' }}>
-        <Table
-          columns={[
-            {
-              key: 'name',
-              header: 'Part',
-              width: 'minmax(0,24ch)',
-              mono: true,
-              render: (row: Part) => (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                  {row.name}
-                  {row.primary && <Tag>address</Tag>}
-                </span>
-              ),
-            },
-            {
-              key: 'state',
-              header: 'State',
-              width: '22ch',
-              render: (row: Part) => <StatusIndicator status={symbolFor(row)} label={labelFor(row)} />,
-            },
-            {
-              key: 'healthy',
-              header: 'Health',
-              width: '16ch',
-              muted: true,
-              // R-221: no health check is not a failing one.
-              render: (row: Part) =>
-                row.healthy === null ? 'No check' : row.healthy ? 'Healthy' : 'Failing',
-            },
-            {
-              key: 'restart_count',
-              header: 'Restarts',
-              width: '12ch',
-              align: 'right',
-              muted: true,
-            },
-            {
-              key: 'logs',
-              header: '',
-              width: '12ch',
-              align: 'right',
-              render: (row: Part) =>
-                onLogs && (
-                  <Button variant="secondary" onClick={() => onLogs(row.name)}>
-                    Logs
-                  </Button>
-                ),
-            },
-          ]}
-          rows={parts}
-        />
-      </div>
-    </section>
-  );
 }
 
 /**

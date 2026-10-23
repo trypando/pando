@@ -194,6 +194,25 @@ describe('RecipientField, open', () => {
   });
 });
 
+describe('RecipientField, people and groups in one list', () => {
+  it('lists both, says which is a group, and chooses either', () => {
+    queries.setQueryData(['apps', 'app_01NOTES', 'principals', ''], {
+      users: [{ id: 'usr_01ANA', username: 'ana', name: 'Ana Ruiz' }],
+      groups: [{ id: 'grp_01DESIGN', name: 'Design' }],
+    });
+    const onChange = vi.fn();
+    render(<RecipientField appID="app_01NOTES" kind="any" value={null} onChange={onChange} />);
+    expect(container.textContent).toContain('Person or group');
+    focus(input());
+    const [ana, design] = options().map((o) => Array.from(o.children, (c) => c.textContent));
+    expect(ana).toEqual(['Ana Ruiz', 'ana']);
+    expect(design).toEqual(['Design', 'Group']);
+
+    mouse(options()[1]!, 'mousedown');
+    expect(onChange).toHaveBeenCalledWith({ kind: 'group', id: 'grp_01DESIGN', label: 'Design' });
+  });
+});
+
 describe('RepositoryField, open', () => {
   const seed = () =>
     queries.setQueryData(['source-repositories', 'src_01GH', ''], [

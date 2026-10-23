@@ -1,6 +1,6 @@
 // Where an app is reached, and changing it: GET and PUT /apps/{id}/routing.
 //
-// In the Overview's Address row, beside the address itself. A dialog rather
+// Under the app's name in its header, with Copy and Change address. A dialog rather
 // than an edit in place, unlike the name: a changed address moves the app, the
 // old one stops working once it is deployed, and that is said before anything
 // is saved (R-165).
@@ -12,13 +12,14 @@
 // refuses it otherwise, and a control that is refused when used teaches
 // nothing.
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banner, Button, Dialog, Input, Radio, Select } from '@design';
+import { Banner, Button, Dialog, Icon, IconButton, Input, Radio, Select } from '@design';
 
 import { api } from '@api/client';
 import type { App, Routing } from '@api/types.gen';
 import { messageOf } from '../install/Accounts';
+import { copyOrSelect } from '../ui/CopyField';
 import { endingIn, type RoutingOption } from './routingOption';
 import { AppVerb, useCan } from './verbs';
 
@@ -38,6 +39,8 @@ export function shown(address: string): string {
 export function AppAddress({ app }: { app: App }) {
   const canEdit = useCan(AppVerb.SpecEdit);
   const [changing, setChanging] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const link = useRef<HTMLAnchorElement>(null);
 
   const routing = useQuery({
     queryKey: ['apps', app.id, 'routing'],
@@ -48,21 +51,34 @@ export function AppAddress({ app }: { app: App }) {
 
   return (
     <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)', flexWrap: 'wrap' }}>
         {/* From the server, not assembled here: where an app is reached
             follows its routing mode, and the console does not decide routing
             (R-261). */}
         {app.address ? (
-          // Its own tab: an app is a different place from the console.
-          <a href={app.address} target="_blank" rel="noopener noreferrer">
-            {shown(app.address)}
-          </a>
+          <>
+            {/* Its own tab: an app is a different place from the console. */}
+            <a ref={link} href={app.address} target="_blank" rel="noopener noreferrer" style={{ font: 'var(--type-code-sm)' }}>
+              {shown(app.address)}
+            </a>
+            <IconButton
+              label={copied ? 'Copied' : 'Copy address'}
+              onClick={() =>
+                void copyOrSelect(app.address ?? '', link.current).then((done) => {
+                  setCopied(done === 'copied');
+                  window.setTimeout(() => setCopied(false), 2_000);
+                })
+              }
+            >
+              <Icon name={copied ? 'check' : 'copy'} />
+            </IconButton>
+          </>
         ) : (
-          <span style={{ color: 'var(--ink-secondary)' }}>Not deployed yet.</span>
+          <span style={{ font: 'var(--type-body-ui)', color: 'var(--ink-secondary)' }}>Not deployed yet.</span>
         )}
         {canEdit && app.pinned_spec_id && routing.data && (
-          <Button variant="secondary" onClick={() => setChanging(true)}>
-            Change
+          <Button variant="ghost" icon={<Icon name="pencil" />} onClick={() => setChanging(true)}>
+            Change address
           </Button>
         )}
       </span>
