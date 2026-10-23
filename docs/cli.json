@@ -656,6 +656,7 @@
         "pando app favorite",
         "pando app icon",
         "pando app idle",
+        "pando app image-update",
         "pando app list",
         "pando app registry-credential",
         "pando app rename",
@@ -1488,6 +1489,45 @@
           "type": "string",
           "default": "",
           "usage": "days without use before Pando stops the app: a number, never, or default",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app image-update",
+      "use": "image-update <app>",
+      "short": "Check whether an image app's tag names a newer build, and upgrade to it",
+      "long": "Asks the registry which build the app's image tag names now and compares it\nwith the build the app runs. Nothing changes unless --upgrade is given, which\nwrites a revision running that build and deploys it.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "upgrade",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "deploy the newer build when there is one",
           "required": false
         }
       ],
