@@ -211,7 +211,7 @@ one verb says nothing about another (R-082).
 | `POST /api/v1/me/notifications/read` |  | Mark every one of your notifications read. |
 | `GET /api/v1/notification-preferences` |  | Which of Pando's own notifications reach you, on which channel: every `kind`, every `channel` that reaches people (the console, email), and your `choices` with defaults filled in (R-373). |
 | `PUT /api/v1/notification-preferences` |  | Set your notification preferences: `choices`, each a `kind`, a `channel` and `enabled`. Choices not sent keep their current value. |
-| `GET /api/v1/apps/{appID}/events` | `app.view` | The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days (R-378). |
+| `GET /api/v1/apps/{appID}/events` | `app.view` | The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`actor_name`, the person who acted or a token acted for; `subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days (R-378). |
 
 ### Secrets
 

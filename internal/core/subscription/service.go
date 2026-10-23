@@ -80,6 +80,10 @@ type Service struct {
 	// system resolver.
 	Resolver Resolver
 
+	// Names says who a person is, so an app's feed names who acted rather
+	// than showing an ID, as the audit log does (R-379). Nil leaves names out.
+	Names ActorNames
+
 	Audit  func(ctx context.Context, e audit.Event)
 	Clock  clock.Clock
 	Logger *zap.Logger
@@ -653,9 +657,45 @@ func (s *Service) Redeliver(ctx context.Context, p authz.Principal, subscription
 // same event described for a person.
 type FeedItem struct {
 	Envelope
-	Subject string                  `json:"subject"`
-	Body    string                  `json:"body,omitempty"`
-	Fields  []api.NotificationField `json:"fields,omitempty"`
+	// ActorName is the person who acted, or the person a token acted for, as
+	// they are named now. Only the feed carries it: a webhook receiver gets
+	// IDs, and names somebody by its own records.
+	ActorName string                  `json:"actor_name,omitempty"`
+	Subject   string                  `json:"subject"`
+	Body      string                  `json:"body,omitempty"`
+	Fields    []api.NotificationField `json:"fields,omitempty"`
+}
+
+// ActorNames looks a person up by ID.
+type ActorNames interface {
+	ByID(ctx context.Context, userID string) (state.User, bool, error)
+}
+
+// actorName names the person behind an event's actor, once per person per
+// page. Pando itself and a service token acting for nobody have no name.
+func (s *Service) actorName(ctx context.Context, a Actor, seen map[string]string) string {
+	if s.Names == nil {
+		return ""
+	}
+	id := a.OnBehalfOf
+	if a.Kind == string(authz.KindUser) {
+		id = a.ID
+	}
+	if id == "" {
+		return ""
+	}
+	if name, ok := seen[id]; ok {
+		return name
+	}
+	name := ""
+	if u, ok, err := s.Names.ByID(ctx, id); err == nil && ok {
+		name = u.DisplayName
+		if name == "" {
+			name = u.ExternalID
+		}
+	}
+	seen[id] = name
+	return name
 }
 
 // Feed is an app's recent events, for anyone who can see the app (R-378).
@@ -670,11 +710,14 @@ func (s *Service) Feed(ctx context.Context, appID, before string, limit int) ([]
 	}
 	app := appOf(ctx, s.Apps, appID)
 	out := make([]FeedItem, 0, len(list))
+	seen := map[string]string{}
 	for _, e := range list {
 		n := Describe(e, app)
+		env := envelopeOf(e, app, LinkFor(s.ExternalURL, appID))
 		out = append(out, FeedItem{
-			Envelope: envelopeOf(e, app, LinkFor(s.ExternalURL, appID)),
-			Subject:  n.Subject, Body: n.Body, Fields: n.Fields,
+			Envelope:  env,
+			ActorName: s.actorName(ctx, env.Actor, seen),
+			Subject:   n.Subject, Body: n.Body, Fields: n.Fields,
 		})
 	}
 	next := ""

@@ -1462,8 +1462,8 @@ type Notification struct {
 
 // NotificationField is one labeled value.
 type NotificationField struct {
-	Label string
-	Value string
+	Label string `json:"label"`
+	Value string `json:"value"`
 }
 
 // PlanDeclaration is what in a repository dictated its build plan.

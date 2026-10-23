@@ -2407,7 +2407,7 @@
       "get": {
         "operationId": "appEvents",
         "summary": "List an app's events",
-        "description": "The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days.\n\nNeeds `app.view`.",
+        "description": "The app's recent events, newest first: each as a webhook receives it (`id`, `type`, `occurred_at`, `actor`, `data`, `link`) and as a person reads it (`actor_name`, the person who acted or a token acted for; `subject`, `body`, `fields`). `before` and `limit` page. Kept as long as the event outbox keeps them, 30 days.\n\nNeeds `app.view`.",
         "tags": [
           "Events"
         ],
@@ -14646,6 +14646,9 @@
           "link": {
             "type": "string"
           },
+          "actor_name": {
+            "type": "string"
+          },
           "subject": {
             "type": "string"
           },
@@ -15720,16 +15723,16 @@
       "NotificationField": {
         "type": "object",
         "properties": {
-          "Label": {
+          "label": {
             "type": "string"
           },
-          "Value": {
+          "value": {
             "type": "string"
           }
         },
         "required": [
-          "Label",
-          "Value"
+          "label",
+          "value"
         ]
       },
       "NotificationPreference": {

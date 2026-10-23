@@ -825,6 +825,7 @@ func serve(ctx context.Context, configPath string) error {
 		Apps:          apps,
 		Registry:      registry,
 		Notifiers:     notifyConnections,
+		Names:         users,
 		Audit:         httpapi.AuditFunc(auditor),
 		Clock:         clock.System{},
 		Logger:        logger,
