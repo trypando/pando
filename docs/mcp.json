@@ -949,6 +949,27 @@
       }
     },
     {
+      "name": "pando_ignore_notice",
+      "description": "Hide one of an app's notices from yourself until what it says changes. Only you: everyone else still sees it. It hides a reminder and nothing more — a deploy the notice warned about is still refused.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "key": {
+            "description": "The notice's key, as pando_list_notices lists it, such as variables.unset.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "key"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_list_adapter_kinds",
       "description": "The kinds of adapter this build of Pando can run, and the settings each takes: which are credentials, which are required, and the default each takes when left out.",
       "input_schema": {
@@ -1131,6 +1152,22 @@
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_notices",
+      "description": "What an app's Overview asks of somebody: a configuration not yet deployed, variables with no value, a backup that was not taken, a security score below this installation's minimum, the spec's warnings. Each has a stable key, a message, a fingerprint and whether you have ignored it as it reads now.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id"
+        ],
         "type": "object"
       }
     },
@@ -1605,6 +1642,27 @@
         },
         "required": [
           "app_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_restore_notice",
+      "description": "Show one of an app's notices you ignored again.",
+      "input_schema": {
+        "properties": {
+          "app_id": {
+            "description": "The app's ID.",
+            "type": "string"
+          },
+          "key": {
+            "description": "The notice's key, as pando_list_notices lists it, such as variables.unset.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "key"
         ],
         "type": "object"
       }

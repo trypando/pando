@@ -31,6 +31,7 @@ import (
 	"github.com/trypando/pando/internal/core/autodeploy"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/idp"
+	"github.com/trypando/pando/internal/core/notice"
 	"github.com/trypando/pando/internal/core/policy"
 	"github.com/trypando/pando/internal/core/security"
 	"github.com/trypando/pando/internal/core/spec"
@@ -104,6 +105,10 @@ var exported = []any{
 
 	// What a check of an image app's tag found (R-143a).
 	deploy.ImageCheck{},
+
+	// What an app's Overview asks of somebody, with whether the caller has
+	// ignored it (R-412).
+	notice.Notice{},
 }
 
 func main() {

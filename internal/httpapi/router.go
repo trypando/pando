@@ -37,6 +37,7 @@ import (
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
+	"github.com/trypando/pando/internal/core/notice"
 	"github.com/trypando/pando/internal/core/notifyconn"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/planner"
@@ -157,6 +158,10 @@ type Server struct {
 	// Subscriptions manages event subscriptions and notification
 	// preferences (issue #50). Nil answers that they are unavailable.
 	Subscriptions *subscription.Service
+
+	// Notices is what an app's Overview asks of somebody, and each person's
+	// ignores of them (R-412). Nil answers that notices are unavailable.
+	Notices *notice.Service
 
 	// Inbox is the console notifications a person reads (R-377).
 	Inbox *subscription.Inbox
@@ -875,6 +880,13 @@ func (s *Server) Routes() http.Handler {
 				// what the next deploy will do.
 				r.Get("/security", s.handleAppSecurity)
 				r.Post("/security/scan", s.handleScanApp)
+
+				// What the Overview asks of somebody, and each person's
+				// ignores of it (R-412). All app.view: ignoring is the
+				// caller's own and changes nothing about the app.
+				r.Get("/notices", s.handleListNotices)
+				r.Put("/notices/{key}/ignore", s.handleIgnoreNotice)
+				r.Delete("/notices/{key}/ignore", s.handleRestoreNotice)
 
 				r.Get("/slots", s.handleListSlots)
 				r.Put("/slots/{key}", s.handleSetSlot)

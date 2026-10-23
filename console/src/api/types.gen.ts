@@ -431,6 +431,13 @@ export interface ImageCheck {
   revision: number;
 }
 
+export interface Notice {
+  key: string;
+  message: string;
+  fingerprint: string;
+  ignored: boolean;
+}
+
 export interface Source {
   type: string;
   url?: string;

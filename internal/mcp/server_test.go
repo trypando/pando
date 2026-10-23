@@ -315,6 +315,11 @@ func TestEachToolMapsToItsEndpoint(t *testing.T) {
 		{"pando_favorite_app", `{"app_id":"app_01HQ8"}`, "PUT", "/me/favorites/app_01HQ8"},
 		{"pando_unfavorite_app", `{"app_id":"app_01HQ8"}`, "DELETE", "/me/favorites/app_01HQ8"},
 
+		// R-412: an app's notices, listed, ignored and restored from every surface.
+		{"pando_list_notices", `{"app_id":"app_01HQ8"}`, "GET", "/apps/app_01HQ8/notices"},
+		{"pando_ignore_notice", `{"app_id":"app_01HQ8","key":"variables.unset"}`, "PUT", "/apps/app_01HQ8/notices/variables.unset/ignore"},
+		{"pando_restore_notice", `{"app_id":"app_01HQ8","key":"warning.WARN_X"}`, "DELETE", "/apps/app_01HQ8/notices/warning.WARN_X/ignore"},
+
 		// R-342 and renaming: every surface (R-261).
 		{"pando_rename_app", `{"app_id":"app_01HQ8","name":"Notes"}`, "PATCH", "/apps/app_01HQ8"},
 		{"pando_list_my_apps", `{}`, "GET", "/me/apps"},

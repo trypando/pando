@@ -95,6 +95,14 @@ func appIDSchema() map[string]any {
 	return schema(map[string]any{"app_id": str(appIDDescription)}, "app_id")
 }
 
+// noticeSchema names one of an app's notices (R-412).
+func noticeSchema() map[string]any {
+	return schema(map[string]any{
+		"app_id": str(appIDDescription),
+		"key":    str("The notice's key, as pando_list_notices lists it, such as variables.unset."),
+	}, "app_id", "key")
+}
+
 // appRequest is the request of a tool that takes only an app and calls one
 // endpoint under it.
 func appRequest(method, suffix string) func(args map[string]any) (string, string, any, error) {
@@ -1046,6 +1054,41 @@ var toolList = []tool{
 				return "", "", nil, err
 			}
 			return "DELETE", "/me/favorites/" + url.PathEscape(id), nil, nil
+		},
+	},
+	{
+		Name: "pando_list_notices",
+		Description: "What an app's Overview asks of somebody: a configuration not yet deployed, " +
+			"variables with no value, a backup that was not taken, a security score below this " +
+			"installation's minimum, the spec's warnings. Each has a stable key, a message, a fingerprint " +
+			"and whether you have ignored it as it reads now.",
+		Schema:  appIDSchema(),
+		request: appRequest("GET", "/notices"),
+	},
+	{
+		Name: "pando_ignore_notice",
+		Description: "Hide one of an app's notices from yourself until what it says changes. " +
+			"Only you: everyone else still sees it. It hides a reminder and nothing more — a deploy " +
+			"the notice warned about is still refused.",
+		Schema: noticeSchema(),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, key, err := twoArgs(args, "app_id", "key")
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "PUT", appPath(id, "/notices/"+url.PathEscape(key)+"/ignore"), nil, nil
+		},
+	},
+	{
+		Name:        "pando_restore_notice",
+		Description: "Show one of an app's notices you ignored again.",
+		Schema:      noticeSchema(),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, key, err := twoArgs(args, "app_id", "key")
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "DELETE", appPath(id, "/notices/"+url.PathEscape(key)+"/ignore"), nil, nil
 		},
 	},
 	{

@@ -80,6 +80,7 @@ import (
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
+	"github.com/trypando/pando/internal/core/notice"
 	"github.com/trypando/pando/internal/core/notifyconn"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/oci"
@@ -1045,8 +1046,14 @@ func serve(ctx context.Context, configPath string) error {
 
 		Subscriptions: subscriptions,
 		Inbox:         &subscription.Inbox{Store: notifications},
-		Notifier:      notifyRouter,
-		Logs:          logStore,
+		// What an app's Overview asks of somebody, and each person's
+		// ignores of it (R-412).
+		Notices: &notice.Service{
+			Revisions: apps, Backups: backups, Security: securityService,
+			Ignores: state.NewNoticeIgnores(db),
+		},
+		Notifier: notifyRouter,
+		Logs:     logStore,
 		LogOwner: cluster.LogOwner{
 			Self: member.ID, Deployments: deployments, Replicas: replicas,
 		}.Where,

@@ -558,6 +558,51 @@ List the apps you can manage
 pando app list
 ```
 
+#### `app notices`
+
+See what an app asks of you, and ignore a notice until it changes
+
+```
+pando app notices
+```
+
+##### `app notices ignore`
+
+Ignore a notice until what it says changes
+
+```
+pando app notices ignore <app> <key>
+```
+
+Hides a notice from you until what it says changes. Only you: everyone else
+still sees it. A deploy the notice warned about is still refused for the same
+reason.
+
+##### `app notices list`
+
+List an app's notices
+
+```
+pando app notices list <app>
+```
+
+Lists what the app's Overview asks of somebody: a configuration not yet
+deployed, variables with no value, a backup that was not taken, a security
+score below this installation's minimum, the spec's warnings. Notices you
+have ignored are left out unless --all is given.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--all` |  | include notices you have ignored |
+
+##### `app notices restore`
+
+Show a notice you ignored again
+
+```
+pando app notices restore <app> <key>
+```
+
 #### `app registry-credential`
 
 Manage the credential an app's private image is pulled with

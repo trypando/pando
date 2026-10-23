@@ -95,6 +95,8 @@ is encoded as 6003 API Activity, 99 Other.
 | `app.idle.notice` | 6003 API Activity | 99 Other | 600399 |
 | `app.idle.stopped` | 6002 Application Lifecycle | 4 Stop | 600204 |
 | `app.logs.read` | 6003 API Activity | 2 Read | 600302 |
+| `app.notice.ignore` | 6003 API Activity | 3 Update | 600303 |
+| `app.notice.restore` | 6003 API Activity | 3 Update | 600303 |
 | `app.orphan.stopped` | 6002 Application Lifecycle | 4 Stop | 600204 |
 | `app.orphaned` | 6003 API Activity | 99 Other | 600399 |
 | `app.passcode.denied` | 6004 Web Resource Access Activity | 2 Access Deny | 600402 |

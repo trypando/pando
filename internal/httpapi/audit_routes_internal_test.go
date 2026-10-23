@@ -52,8 +52,12 @@ var auditedRoutes = map[string][]string{
 	"DELETE /api/v1/identity-providers/{providerID}/scim-token": {"identity_provider.scim.disable"},
 
 	// The launcher. Favorites and sections are per person, and audited anyway.
-	"PUT /api/v1/me/favorites/{appID}":                    {"app.favorite"},
-	"DELETE /api/v1/me/favorites/{appID}":                 {"app.unfavorite"},
+	"PUT /api/v1/me/favorites/{appID}":    {"app.favorite"},
+	"DELETE /api/v1/me/favorites/{appID}": {"app.unfavorite"},
+
+	// Notices on an app (R-412): ignoring is per person, and audited anyway.
+	"PUT /api/v1/apps/{appID}/notices/{key}/ignore":       {"app.notice.ignore"},
+	"DELETE /api/v1/apps/{appID}/notices/{key}/ignore":    {"app.notice.restore"},
 	"POST /api/v1/me/sections":                            {"launcher.section.create"},
 	"PATCH /api/v1/me/sections/{sectionID}":               {"launcher.section.rename"},
 	"DELETE /api/v1/me/sections/{sectionID}":              {"launcher.section.delete"},

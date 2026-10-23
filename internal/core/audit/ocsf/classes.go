@@ -143,6 +143,8 @@ var classes = map[string]Mapping{
 	"app.stop":                           appStop,
 	"app.stopped_by_reconciler":          appStop,
 	"app.unfavorite":                     apiUpdate,
+	"app.notice.ignore":                  apiUpdate,
+	"app.notice.restore":                 apiUpdate,
 	"app.update":                         apiUpdate,
 	"app.use":                            webAccessGrant,
 	"app.use.denied":                     webAccessDeny,

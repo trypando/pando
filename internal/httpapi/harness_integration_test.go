@@ -51,6 +51,7 @@ import (
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
+	"github.com/trypando/pando/internal/core/notice"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
@@ -410,6 +411,9 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 	router := subscription.Router{Registry: registry, Preferences: prefs, Users: users}
 	srv.Notifier = router
 	srv.Inbox = &subscription.Inbox{Store: state.NewNotifications(db)}
+	srv.Notices = &notice.Service{
+		Revisions: apps, Backups: srv.Backups, Security: srv.Security, Ignores: state.NewNoticeIgnores(db),
+	}
 	srv.Subscriptions = &subscription.Service{
 		Subscriptions: state.NewSubscriptions(db),
 		Deliveries:    state.NewDeliveries(db),

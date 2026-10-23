@@ -658,6 +658,7 @@
         "pando app idle",
         "pando app image-update",
         "pando app list",
+        "pando app notices",
         "pando app registry-credential",
         "pando app rename",
         "pando app restart",
@@ -1555,6 +1556,139 @@
       "path": "pando app list",
       "use": "list",
       "short": "List the apps you can manage",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app notices",
+      "use": "notices",
+      "short": "See what an app asks of you, and ignore a notice until it changes",
+      "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        "pando app notices ignore",
+        "pando app notices list",
+        "pando app notices restore"
+      ]
+    },
+    {
+      "path": "pando app notices ignore",
+      "use": "ignore <app> <key>",
+      "short": "Ignore a notice until what it says changes",
+      "long": "Hides a notice from you until what it says changes. Only you: everyone else\nstill sees it. A deploy the notice warned about is still refused for the same\nreason.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app notices list",
+      "use": "list <app>",
+      "short": "List an app's notices",
+      "long": "Lists what the app's Overview asks of somebody: a configuration not yet\ndeployed, variables with no value, a backup that was not taken, a security\nscore below this installation's minimum, the spec's warnings. Notices you\nhave ignored are left out unless --all is given.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "all",
+          "shorthand": "",
+          "type": "bool",
+          "default": "false",
+          "usage": "include notices you have ignored",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando app notices restore",
+      "use": "restore <app> <key>",
+      "short": "Show a notice you ignored again",
       "long": "",
       "example": "",
       "aliases": [],

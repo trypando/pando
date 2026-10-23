@@ -3183,6 +3183,121 @@
         "x-pando-verb": "app.logs.read"
       }
     },
+    "/api/v1/apps/{appID}/notices": {
+      "get": {
+        "operationId": "listNotices",
+        "summary": "List an app's notices",
+        "description": "What the app's Overview asks of somebody, computed when asked: `notices`, each with `key` (stable: `config.unshipped`, `security.below_threshold`, `backup.not_taken`, `variables.unset`, or `warning.` and a spec warning's code), `message`, `fingerprint` (changes exactly when what the notice says changes) and `ignored`, whether you have ignored it as it reads now. A caller that is not a person sees every notice unignored.\n\nNeeds `app.view`.",
+        "tags": [
+          "Apps"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoticeList"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.view"
+      }
+    },
+    "/api/v1/apps/{appID}/notices/{key}/ignore": {
+      "delete": {
+        "operationId": "restoreNotice",
+        "summary": "Restore a notice",
+        "description": "Show a notice you ignored again. Restoring one that is not ignored is not an error.\n\nNeeds `app.view`.",
+        "tags": [
+          "Apps"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done. No body."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.view"
+      },
+      "put": {
+        "operationId": "ignoreNotice",
+        "summary": "Ignore a notice",
+        "description": "Hide a notice from yourself until what it says changes. Answers with the notice. Yours only: everyone else still sees it. Hides a reminder and nothing more: a deploy the notice warned about is refused for the same reason. `NOT_FOUND` when the app has no such notice now.\n\nNeeds `app.view`.",
+        "tags": [
+          "Apps"
+        ],
+        "parameters": [
+          {
+            "name": "appID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Notice"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "app.view"
+      }
+    },
     "/api/v1/apps/{appID}/passcode": {
       "get": {
         "operationId": "getPasscodeApp",
@@ -15513,6 +15628,46 @@
           "volume_id",
           "path",
           "read_only"
+        ]
+      },
+      "Notice": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "ignored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "message",
+          "fingerprint",
+          "ignored"
+        ]
+      },
+      "NoticeList": {
+        "type": "object",
+        "properties": {
+          "notices": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Notice"
+            }
+          }
+        },
+        "required": [
+          "notices"
         ]
       },
       "Notification": {
