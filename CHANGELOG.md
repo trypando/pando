@@ -26,8 +26,9 @@ Unreleased above it. -->
 No new advisories.
 
 - **Changing resource limits needs `app.resources.override`.** A spec that changes an app's
-  `resources`, or a workload's own, is refused without it, unless it puts back the installation's
-  defaults (R-241). Before, `app.spec.edit` was enough.
+  `resources`, or a workload's own, is refused without it (R-241). Keeping the limits the app's
+  deployed or newest revision already sets, or putting back the installation's defaults, needs
+  nothing more. Before, `app.spec.edit` was enough.
 
 ### Added
 
