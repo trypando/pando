@@ -19,6 +19,55 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-24
+
+### Security
+
+No new advisories.
+
+- **Changing resource limits needs `app.resources.override`.** A spec that changes an app's
+  `resources`, or a workload's own, is refused without it, unless it puts back the installation's
+  defaults (R-241). Before, `app.spec.edit` was enough.
+
+### Added
+
+- **A redesigned console, usable on a phone.**
+  - The app page has four tabs: Overview, Events, Sharing and Settings.
+  - Logs, the terminal and deployments open in a side panel.
+  - Each workload card shows memory, CPU and disk.
+  - "Require passcode" works without making the app public.
+  - Every admin page is redesigned: Apps, Approvals, Accounts, Groups and roles, System, Audit
+    log, Events, API and tools, and your settings.
+  - On a phone, column filters become a row of buttons.
+- **Notices you can ignore** (R-412). An app's Overview lists what needs attention. Ignoring a notice
+  hides it from you until what it says changes; it never unblocks a deploy.
+  - API: `GET /apps/{appID}/notices`, `PUT` and `DELETE /apps/{appID}/notices/{key}/ignore`.
+  - CLI: `pando app notices`.
+  - MCP: `pando_list_notices`, `pando_ignore_notice`, `pando_restore_notice`.
+  - `GET /apps` carries `notice_count` for each app.
+- **Custom roles can be edited.** Rename one or replace its permissions with `PATCH /roles/{roleID}`
+  (`pando role edit`, `pando_edit_role`). Built-in roles still cannot be changed.
+- **See who holds a role** with `GET /roles/{roleID}/holders` (`pando role holders`,
+  `pando_list_role_holders`): directly or through a group.
+- **Groups made in Pando can be renamed** with `PATCH /groups/{groupID}` (`pando group rename`,
+  `pando_rename_group`). A synced group keeps its provider's name.
+- **Audit events read as sentences.** Each event carries `summary`, `app_name` and `target_name`.
+  `GET /audit` filters by `outcome` and by text with `q` (`pando audit --outcome --search`).
+- `GET /approvals?decidable=true` lists only the deployments you can approve or reject
+  (`pando approvals list --decidable`).
+- Other new fields:
+  - accounts carry `adapter_name`, the identity provider they sign in with
+  - subscriptions carry `last_delivery_at`
+  - app events carry `actor_name`
+  - `GET /apps/{appID}/status` names the dependency each Pando-run service fills
+- A GitHub Sponsors link in the README and the console's feedback menu.
+
+### Changed
+
+- Approval reasons say "deployment" instead of "deploy".
+- Host policy is edited in seven short pages under System, with one save bar. The update settings
+  moved to System's Overview.
+
 ## [0.14.0] - 2026-10-22
 
 ### Security
