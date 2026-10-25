@@ -16,8 +16,8 @@
 // `--contour-background`, one step darker than the paper and drawn at full
 // strength, rather than the brown contour line faded down: the brown is the
 // illustration's, and kept for the places the map is meant to stand out.
-// TopoMap, below, is the same terrain drawn as a picture, for the sign-in
-// screen. Each page gets its own terrain from a seed (the section, and
+// TopoMap, below, is the same terrain drawn as a picture in colour, for the
+// sign-in screen. Each page gets its own terrain from a seed (the section, and
 // the app when there is one); the same seed always gives the same map.
 
 import { useMemo } from 'react';
@@ -308,9 +308,9 @@ const RECEDE = {
 } as const;
 
 /**
- * The map as a picture rather than a background: the sign-in screen. Its lines
- * are the console's terrain colour, `--contour-background`, the same as behind
- * every other page — every fifth line an index contour, heavier — with the
+ * The map as a picture rather than a background: the sign-in screen. Here it
+ * is the thing to look at, so it is drawn in colour — every fifth line an
+ * index contour in `--contour`, the rest in `--contour-line` — with the
  * marker-red summit triangle on the top of a hill, as on the brand's own hero
  * figure.
  *
@@ -390,7 +390,7 @@ export function TopoMap({ seed, recede }: { seed: string; recede: Recede }) {
             key={i}
             d={d}
             fill="none"
-            stroke="var(--contour-background)"
+            stroke={index ? 'var(--contour)' : 'var(--contour-line)'}
             strokeWidth={index ? 'var(--contour-index-width)' : 'var(--contour-line-width)'}
             vectorEffect="non-scaling-stroke"
             strokeLinecap="round"

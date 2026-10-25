@@ -130,7 +130,6 @@ A list on the left that is real navigation — one page at a time, each with its
 
 ## Contour background
 
-The terrain behind every console page — the app pages, the launcher, account settings and sign-in —
-is drawn one step darker than the paper instead of in contour brown: `--contour-background` is
+The terrain behind every console page — the app pages, the launcher and account settings — is drawn one step darker than the paper instead of in contour brown: `--contour-background` is
 `#0F110F` in the dark theme and `#E7E3D8` in the light, at full strength. The brown contour line stays
-where the brand wants the map to stand out: empty states, the 404, generated app tiles.
+where the brand wants the map to stand out: the sign-in map, empty states, the 404, generated app tiles.

@@ -25,10 +25,10 @@ describe('the contour background', () => {
     expect(html).not.toContain('var(--contour-line)');
   });
 
-  it('draws the sign-in map in the same color', () => {
+  it('draws the sign-in map in colour: brown lines, every fifth an index contour', () => {
     const html = renderToString(<TopoMap seed="sign-in" recede="down" />);
-    expect(html).toContain('var(--contour-background)');
-    expect(html).not.toContain('var(--contour-line)');
-    expect(html).not.toContain('stroke="var(--contour)"');
+    expect(html).toContain('stroke="var(--contour)"');
+    expect(html).toContain('stroke="var(--contour-line)"');
+    expect(html).not.toContain('var(--contour-background)');
   });
 });
