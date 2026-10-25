@@ -19,6 +19,12 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-25
+
+### Security
+
+No new advisories.
+
 ### Added
 
 - **Pando serves MCP itself.** Add `https://<your Pando>/api/v1/mcp` to an MCP client — Claude.ai,
@@ -1507,7 +1513,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.15.1...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.16.0...main
+[0.16.0]: https://github.com/trypando/pando/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/trypando/pando/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/trypando/pando/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/trypando/pando/compare/v0.13.0...v0.14.0
