@@ -25,6 +25,7 @@ import type { Route } from './route';
 import { ChangePassword, Login, Passcode } from '../auth/Login';
 import { TwoFactorElsewhere, TwoFactorSetup } from '../auth/TwoFactorSetup';
 import { CliSignIn } from '../auth/CliSignIn';
+import { OAuthAuthorize } from '../auth/OAuthAuthorize';
 import { returnTo } from '../auth/return-to';
 import { reservedPrefix } from '@api/client';
 import { passcodeApp } from '../auth/passcode';
@@ -146,6 +147,11 @@ export function App() {
   // and the page is still here when it has.
   if (route.view === 'cli') {
     return <CliSignIn username={principal.data?.username} />;
+  }
+
+  // An MCP client's approval page (R-413), after the same checks.
+  if (route.view === 'authorize') {
+    return <OAuthAuthorize username={principal.data?.username} />;
   }
 
   // Signing out lands on the sign-in form at the root, not at whatever admin

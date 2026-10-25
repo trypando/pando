@@ -19,6 +19,13 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Added
+
+- **Pando serves MCP itself.** Add `https://<your Pando>/api/v1/mcp` to an MCP client — Claude.ai,
+  Claude Code, or any client that speaks Streamable HTTP — and approve it when it opens Pando in your
+  browser. It gets a token that acts as you, listed and revoked under API and tools (R-413). `pando
+  mcp` still works for a client that runs a program.
+
 ## [0.15.1] - 2026-10-24
 
 ### Security

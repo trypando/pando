@@ -215,6 +215,8 @@ var classes = map[string]Mapping{
 	"server.start":                       apiOther,
 	"cli_sign_in.approve":                authLogon,
 	"cli_sign_in.denied":                 authLogon,
+	"oauth.approve":                      authLogon,
+	"oauth.denied":                       authLogon,
 	"session.create":                     authLogon,
 	"session.denied":                     authLogon,
 	"session.revoke":                     authLogoff,

@@ -570,6 +570,17 @@ rather than a second opinion about authorization (R-261).
 
 **[D]** R-262. The MCP server exposes the same service layer. Tools map to endpoints:
 
+**[D] Two transports, one server (R-413).** Pando answers MCP at `POST /api/v1/mcp` over Streamable
+HTTP, and `pando mcp` answers the same server over stdio. Over HTTP each tool is an API request made
+in-process through the router with the caller's `Authorization` header, so it passes every middleware
+an HTTP request does and is audited as one; nothing in `internal/mcp` decides access on either
+transport. The endpoint is under `/api/v1`, which no app slug can take. It takes a token only (design
+06 §3.6). Each message is answered as JSON in its own response: no event stream (`GET` is `405`, as the
+transport allows) and no session, because no tool sends anything unasked and a tool call needs nothing
+from the one before it. A long read is a long poll, as detection's is. The `2025-06-18`, `2025-03-26`
+and `2024-11-05` revisions are answered; they differ only in what this server does not use.
+
+
 | Tool | Endpoint |
 |---|---|
 | `pando_list_apps` | `GET /apps` |

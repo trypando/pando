@@ -39,6 +39,7 @@ import (
 	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/notice"
 	"github.com/trypando/pando/internal/core/notifyconn"
+	"github.com/trypando/pando/internal/core/oauth"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
@@ -52,6 +53,7 @@ import (
 	"github.com/trypando/pando/internal/core/upgrade"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/log"
+	"github.com/trypando/pando/internal/mcp"
 	"github.com/trypando/pando/internal/secret"
 )
 
@@ -86,11 +88,16 @@ type Server struct {
 	// CLISignIn signs the CLI in through the browser (R-406). Nil leaves
 	// pando login --username, with a password, the only way.
 	CLISignIn *clisignin.Service
-	Apps      *state.Apps
-	Volumes   *state.Volumes
-	Authz     *authz.Authorizer
-	Auditor   *audit.Writer
-	Authent   *Authenticator
+
+	// OAuth signs MCP clients in (R-413): registration, the console's
+	// approval, the token endpoint. Nil leaves the MCP endpoint to clients
+	// given a token by hand.
+	OAuth   *oauth.Service
+	Apps    *state.Apps
+	Volumes *state.Volumes
+	Authz   *authz.Authorizer
+	Auditor *audit.Writer
+	Authent *Authenticator
 
 	Registry *api.Registry
 	Adapters *state.Adapters
@@ -521,9 +528,22 @@ func (s *Server) Routes() http.Handler {
 		JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	// Where an MCP client finds out how to sign in (R-413): protected
+	// resource metadata (RFC 9728), at the root and at the MCP endpoint's
+	// path under it, and authorization server metadata (RFC 8414). Public.
+	r.Get(protectedResourcePath, s.handleProtectedResource)
+	r.Get(protectedResourcePath+mcp.HTTPPath, s.handleProtectedResource)
+	r.Get("/.well-known/oauth-authorization-server", s.handleAuthorizationServer)
+
+	// The MCP endpoint calls back into this router, through every middleware
+	// above, for each tool.
+	root := r
+
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(withRoot(root))
 		r.Use(boundBodies)
 		r.Use(s.sameOriginWrites)
+		r.Use(s.mcpChallenges)
 		r.Use(Authenticate(s.Authent))
 		r.Use(s.twoFactorGate)
 		r.Use(s.passwordChangeGate)
@@ -548,6 +568,18 @@ func (s *Server) Routes() http.Handler {
 		// the verifier only it holds. The second is public.
 		r.Post("/cli-sign-ins", s.handleApproveCLISignIn)
 		r.Post("/cli-sign-ins/token", s.handleExchangeCLISignIn)
+
+		// Signing an MCP client in with OAuth (R-413, design 06 §3.6): a
+		// client registers itself, a session approves it on the console's
+		// page, and the client collects a token with its verifier. The
+		// first and last are public.
+		r.Post("/oauth/register", s.handleRegisterOAuthClient)
+		r.Get("/oauth/authorize", s.handleCheckOAuthAuthorization)
+		r.Post("/oauth/authorize", s.handleDecideOAuthAuthorization)
+		r.Post("/oauth/token", s.handleOAuthToken)
+
+		// MCP over HTTP (R-413), for a token.
+		r.Post("/mcp", s.handleMCP)
 
 		// SCIM 2.0 (R-048): a provider's own bearer token, not a Pando one.
 		// The Authenticate middleware leaves this prefix alone.

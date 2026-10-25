@@ -181,6 +181,8 @@ is encoded as 6003 API Activity, 99 Other.
 | `launcher.section.unplace` | 6003 API Activity | 3 Update | 600303 |
 | `notify.connection.authorize` | 6003 API Activity | 1 Create | 600301 |
 | `notify.connection.authorized` | 6003 API Activity | 1 Create | 600301 |
+| `oauth.approve` | 3002 Authentication | 1 Logon | 300201 |
+| `oauth.denied` | 3002 Authentication | 1 Logon | 300201 |
 | `policy.update` | 6003 API Activity | 3 Update | 600303 |
 | `role.create` | 6003 API Activity | 1 Create | 600301 |
 | `role.delete` | 6003 API Activity | 4 Delete | 600304 |

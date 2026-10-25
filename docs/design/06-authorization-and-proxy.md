@@ -453,8 +453,74 @@ machine with no browser — over SSH, in a container. The device authorization g
 the same with a code typed into the console, and is not offered: it is the flow device-code phishing
 uses, and pasting a code back into the terminal one is using needs nothing new on the server.
 
-**Not here.** MCP over HTTP with its own OAuth (dynamic client registration, protected resource
-metadata) is a separate change; `pando mcp` runs over stdio with the token this flow stores (R-262).
+**Not here.** An MCP client of Pando's own endpoint signs in by §3.6, the same flow with the client's
+redirect address in place of the loopback port; `pando mcp` uses the token this flow stores (R-262).
+
+### 3.6 Signing an MCP client in with OAuth (R-413)
+
+Pando serves MCP at `/api/v1/mcp` (design 04 §3), and a client added by that address has no token. The
+MCP specification's authorization section says how it gets one, and Pando follows it: OAuth 2.1, with
+Pando as authorization server and the console as consent page — §3.5's flow, opened to clients Pando
+did not write. The logic is `internal/core/oauth`.
+
+```
+1. client → POST /api/v1/mcp                no token → 401
+                                            WWW-Authenticate: Bearer resource_metadata="{base}/.well-known/oauth-protected-resource/api/v1/mcp"
+   GET that                                 { resource: {base}/api/v1/mcp, authorization_servers: [{base}] }   RFC 9728
+   GET /.well-known/oauth-authorization-server                                                        RFC 8414
+                                            authorization_endpoint {base}/admin/authorize, token_endpoint,
+                                            registration_endpoint, S256 only, auth method none
+2. POST /api/v1/oauth/register              public; { client_name, redirect_uris } → { client_id }    RFC 7591
+3. browser → /admin/authorize?client_id&redirect_uri&response_type=code&code_challenge&…&state&resource
+   console, signed in                       GET /api/v1/oauth/authorize → { client_name, returns_to }
+                                            Approve → POST /api/v1/oauth/authorize { …, approve: true }
+                                            session only; stores SHA-256(code), client, user, challenge,
+                                            the resolved redirect_uri, 5 minutes
+                                            → { redirect_url: {redirect_uri}?code&state&iss }
+4. client → POST /api/v1/oauth/token        public, form-encoded: grant_type, code, code_verifier,
+                                            client_id, redirect_uri → { access_token, token_type: Bearer,
+                                            expires_in }  a delegated token named for the client
+```
+
+**[D] The verifier is the binding, as in §3.5,** and the rest of §3.5 holds unchanged: approving is a
+session's, a code is spent by its first attempt, the token is made at the exchange, a refused code is
+audited only when it named an approval, and an account that must change its password or set up a
+second factor does that first.
+
+**[D] Registering is open.** A client Pando has never seen — Claude.ai's connector, an editor, an
+agent framework — must be able to sign in without an administrator registering it first, which is what
+dynamic registration is for and what MCP clients expect. A client gets nothing by registering: it can
+ask a signed-in person to approve it, and that person sees its name and where it returns to. Registering
+is not audited, since anyone can do it, and a client nobody approves within a day is removed by
+retention [P], so registering and walking away grows nothing. Every client is public: whatever token
+endpoint authentication a client asks for, it is registered with `none`, and PKCE is what proves the
+exchange.
+
+**[D] The browser goes only where the client registered.** HTTPS; HTTP only on the loopback address,
+where any port matches (RFC 8252 §7.3); or a native app's own scheme (§7.1). Never `javascript:`,
+`data:`, `file:` and the like, never a fragment or user info. Both Approve and Cancel answer with the
+address to go to, built by the server from the registered one, so the page cannot be made to send a
+browser anywhere else. The consent page names the host the code goes to, because a client's name is
+whatever it said when it registered: an attacker can call a client "Claude", but not make
+`claude.ai` the place the code is sent.
+
+**[P] A malformed request is shown, not sent back.** RFC 6749 §4.1.2.1 requires an unknown client or
+redirect address be shown on the page rather than redirected; the other errors may go back to the
+client, and are shown on the page too, so there is one path.
+
+**[D] The token is the API's, not only MCP's.** RFC 8707's `resource` may name the MCP endpoint or
+Pando itself, and either way the token is a delegated token, good for the API as a CLI token is. An
+agent holding a token can call the API directly anyway (O-12), so a token limited to `/api/v1/mcp`
+would be a distinction without a boundary.
+
+**[P] No refresh token.** The token lives as long as host policy lets any token (R-061); a client
+signs in again after that. A refresh token would be a second credential to store, rotate and revoke
+for one person's convenience once a policy period.
+
+**[D] The MCP endpoint takes a token, never a session cookie.** Host policy's `agent_disabled_verbs`
+apply to token principals (O-12); an agent arriving on someone's browser session would be outside
+them. With a bearer token as the only credential there is nothing ambient for a page elsewhere or a
+DNS-rebound name to borrow, so the endpoint needs no Origin check of its own.
 
 ---
 

@@ -24,6 +24,8 @@ var auditedRoutes = map[string][]string{
 	"DELETE /api/v1/sessions":                           {"session.revoke"},
 	"POST /api/v1/cli-sign-ins":                         {"cli_sign_in.approve"},
 	"POST /api/v1/cli-sign-ins/token":                   {"token.create", "cli_sign_in.denied"},
+	"POST /api/v1/oauth/authorize":                      {"oauth.approve"},
+	"POST /api/v1/oauth/token":                          {"token.create", "oauth.denied"},
 	"POST /api/v1/auth/providers/{providerID}/callback": {"session.create", "session.denied", "identity_provider.test", "user.create", "user.identity.link"},
 	"POST /api/v1/setup":                                {"user.create", "grant.create", "session.create"},
 	"POST /api/v1/me/password":                          {"user.password.change", "user.password.denied"},
@@ -174,6 +176,10 @@ var auditedRoutes = map[string][]string{
 // log, and why (R-391). A reason prefixed "GAP: " is a route that should be
 // audited and is not yet.
 var auditExempt = map[string]string{
+	"POST /api/v1/mcp": "A transport, not an action: each tool is an API call made through the router " +
+		"with the caller's token, and that call is audited as the route it reaches (R-413).",
+	"POST /api/v1/oauth/register": "Public, and grants nothing: a registered client can only ask a signed-in " +
+		"person to approve it, which writes oauth.approve. A row per request would be a row anybody can add (R-413).",
 	"POST /api/v1/apps/{appID}/plan": "A read expressed as POST: it plans the pinned revision and returns the " +
 		"plan, creating nothing. Auditing it would audit every keystroke of the spec editor.",
 	"POST /api/v1/policy/preview": "A read expressed as POST: it evaluates a proposed policy against the apps " +
@@ -193,8 +199,10 @@ var auditExempt = map[string]string{
 }
 
 // maxAuditExempt bounds auditExempt, so an exemption is a decision somebody
-// makes in review rather than a line that slips in.
-const maxAuditExempt = 8
+// makes in review rather than a line that slips in. Raised from 8 to 10 for
+// R-413: the MCP endpoint is a transport whose tool calls are each audited as
+// the route they reach, and client registration is public and grants nothing.
+const maxAuditExempt = 10
 
 func servedMutatingRoutes(t *testing.T) map[string]bool {
 	t.Helper()

@@ -34,13 +34,13 @@ describe('API and tools', () => {
     expect(html).toContain('API reference');
   });
 
-  // R-262: the CLI signs in to this installation; MCP runs from the CLI over
-  // stdio, so it is a command, not an address.
+  // R-413: the CLI signs in to this installation, and an MCP client is added
+  // by the address Pando serves MCP at.
   it('says how to connect to this installation', () => {
     const html = render();
     expect(html).toContain('>Connect<');
     expect(html).toContain('pando login https://pando.internal.test');
-    expect(html).toContain('>pando mcp<');
+    expect(html).toContain('https://pando.internal.test/api/v1/mcp');
     expect(html).toContain('https://pando.internal.test/api/v1');
     expect(html).not.toContain('This installation is at');
   });

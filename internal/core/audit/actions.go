@@ -124,6 +124,8 @@ var Actions = []string{
 	"launcher.section.unplace",
 	"notify.connection.authorize",
 	"notify.connection.authorized",
+	"oauth.approve",
+	"oauth.denied",
 	"policy.update",
 	"role.create",
 	"role.delete",

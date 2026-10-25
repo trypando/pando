@@ -160,7 +160,16 @@ func MCPMarkdown(doc Document) string {
 	b.WriteString("its owner, is bounded by their live grants, and its actions land in the audit log\n")
 	b.WriteString("under their name (R-262).\n\n")
 	b.WriteString("## Connecting\n\n")
-	b.WriteString("`" + doc.Connect.MCPCmd + "` speaks MCP over stdio. In Claude Code:\n\n")
+	url := "https://pando.example.com" + doc.Connect.MCPPath
+	b.WriteString("Pando serves MCP at `" + doc.Connect.MCPPath + "` on its own address. Add it to an MCP client by\n" +
+		"that address, and approve the client when it opens Pando in your browser: it signs in with\n" +
+		"OAuth and gets a token that acts as you, revoked under API and tools like any other (R-413).\n" +
+		"In Claude Code:\n\n")
+	b.WriteString("```\nclaude mcp add --transport http pando " + url + "\n```\n\n")
+	b.WriteString("A client that takes a token instead sends one in the `Authorization` header, as\n" +
+		"`Bearer tok_…`.\n\n")
+	b.WriteString("### On your machine\n\n")
+	b.WriteString("`" + doc.Connect.MCPCmd + "` speaks MCP over stdio, with the token `pando login` stored. In Claude Code:\n\n")
 	b.WriteString("```\nclaude mcp add pando -- " + doc.Connect.MCPCmd + "\n```\n\n")
 	b.WriteString("Or, by hand, in an MCP client's configuration:\n\n")
 	b.WriteString("```json\n{\n  \"mcpServers\": {\n    \"pando\": {\n      \"command\": \"pando\",\n" +

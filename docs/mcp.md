@@ -9,7 +9,21 @@ under their name (R-262).
 
 ## Connecting
 
-`pando mcp` speaks MCP over stdio. In Claude Code:
+Pando serves MCP at `/api/v1/mcp` on its own address. Add it to an MCP client by
+that address, and approve the client when it opens Pando in your browser: it signs in with
+OAuth and gets a token that acts as you, revoked under API and tools like any other (R-413).
+In Claude Code:
+
+```
+claude mcp add --transport http pando https://pando.example.com/api/v1/mcp
+```
+
+A client that takes a token instead sends one in the `Authorization` header, as
+`Bearer tok_…`.
+
+### On your machine
+
+`pando mcp` speaks MCP over stdio, with the token `pando login` stored. In Claude Code:
 
 ```
 claude mcp add pando -- pando mcp

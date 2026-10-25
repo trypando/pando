@@ -53,6 +53,10 @@ const (
 	Subscription Kind = "sub"
 	Delivery     Kind = "dlv"
 
+	// OAuthClient is an MCP client that registered itself to be signed in
+	// with OAuth (R-413).
+	OAuthClient Kind = "oac"
+
 	// Replica is one running Pando process (issue #72). Fresh on every start:
 	// a restarted process is a new replica, which is how work the old one had
 	// under way is recognized as nobody's.

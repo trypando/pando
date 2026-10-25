@@ -12,10 +12,10 @@ import (
 
 // MCPCommand runs the MCP server over stdio (R-262, design 04 §3).
 //
-// In the CLI rather than the server because that is where the credential is: an
-// agent runs this on its own machine with its own token, and the token is what
-// makes it a principal. A server-side MCP endpoint would need its own
-// authentication and would be a second way in.
+// Pando also serves the same server itself at /api/v1/mcp (R-413), which a
+// client adds by address and signs in to with OAuth. This is for a client
+// that runs a program instead: it uses the token `pando login` stored, on the
+// agent's own machine.
 func MCPCommand() *cobra.Command {
 	var server string
 

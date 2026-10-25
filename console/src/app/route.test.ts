@@ -8,6 +8,7 @@ describe('route', () => {
     { view: 'launcher', section: 'apps' },
     { view: 'settings', section: 'apps' },
     { view: 'cli', section: 'apps' },
+    { view: 'authorize', section: 'apps' },
     { view: 'admin', section: 'apps' },
     { view: 'admin', section: 'api' },
     { view: 'admin', section: 'apps', appID: 'app_01', tab: 'settings' },

@@ -138,8 +138,8 @@ const docLink: React.CSSProperties = {
 
 function Connect() {
   // The one thing the published docs cannot know: where this installation
-  // is. The CLI signs in to it; MCP runs on the machine the CLI signed in
-  // from and speaks over stdio, so it has no address of its own (R-262).
+  // is. The CLI signs in to it, and an MCP client is added by its MCP
+  // endpoint's address (R-413).
   const origin = window.location.origin;
 
   return (
@@ -147,7 +147,7 @@ function Connect() {
       <CardHead title="Connect" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 20rem), 1fr))', gap: 'var(--space-4)' }}>
         <CopyField label="CLI" value={`pando login ${origin}`} />
-        <CopyField label="MCP server" value="pando mcp" />
+        <CopyField label="MCP server" value={`${origin}/api/v1/mcp`} />
         <CopyField label="API" value={`${origin}/api/v1`} />
       </div>
       <nav

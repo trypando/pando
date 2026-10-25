@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 )
 
-// A minimal MCP server over JSON-RPC 2.0 on stdio.
+// A minimal MCP server over JSON-RPC 2.0, on stdio (pando mcp) or HTTP (http.go).
 //
 // Written rather than pulled in: the protocol surface Pando needs is
 // initialize, tools/list and tools/call, and an SDK for three methods is a
@@ -22,7 +23,10 @@ import (
 // owner. A tool that reached into the service layer directly would be a second
 // path to the same actions with its own idea of who is allowed to take them.
 
-const protocolVersion = "2024-11-05"
+// protocolVersions are the MCP revisions this server speaks, latest first.
+// The three differ in what this server does not use — batching, streams,
+// structured tool output — so one implementation answers all of them.
+var protocolVersions = []string{"2025-06-18", "2025-03-26", "2024-11-05"}
 
 // Server speaks MCP on a pair of streams.
 type Server struct {
@@ -46,9 +50,8 @@ type Server struct {
 	// Version is reported as serverInfo.version. Empty reports "dev".
 	Version string
 
-	out  *json.Encoder
-	mu   sync.Mutex
-	name string
+	out *json.Encoder
+	mu  sync.Mutex
 }
 
 type request struct {
@@ -73,12 +76,11 @@ type rpcError struct {
 // Serve reads requests until the stream closes.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s.out = json.NewEncoder(out)
-	s.name = "pando"
 
 	scanner := bufio.NewScanner(in)
 	// MCP messages are one JSON object per line, and a tools/call result can
 	// carry a whole app spec. The default 64 KiB would truncate one.
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxMessage)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -88,65 +90,86 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 
 		var req request
 		if err := json.Unmarshal(line, &req); err != nil {
-			s.reply(response{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+			s.reply(&response{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
 			continue
 		}
-		s.dispatch(ctx, req)
+		s.reply(s.handle(ctx, req))
 	}
 	return scanner.Err()
 }
 
-func (s *Server) dispatch(ctx context.Context, req request) {
+// maxMessage is the largest message either transport reads.
+const maxMessage = 8 * 1024 * 1024
+
+// handle answers one message. Nil for a notification, which has no answer.
+func (s *Server) handle(ctx context.Context, req request) *response {
 	switch req.Method {
 	case "initialize":
-		s.reply(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-			"protocolVersion": protocolVersion,
+		return &response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+			"protocolVersion": negotiate(req.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "pando", "version": s.version()},
-		}})
+		}}
 
 	case "notifications/initialized", "initialized":
 		// A notification: no id, no reply.
+		return nil
 
 	case "tools/list":
-		s.reply(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+		return &response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 			"tools": s.tools(),
-		}})
+		}}
 
 	case "tools/call":
-		s.callTool(ctx, req)
+		return s.callTool(ctx, req)
 
 	case "ping":
-		s.reply(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}})
+		return &response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}
 
 	default:
-		s.reply(response{JSONRPC: "2.0", ID: req.ID,
-			Error: &rpcError{Code: -32601, Message: "unknown method: " + req.Method}})
+		if req.ID == nil {
+			// Any other notification, such as notifications/cancelled, is
+			// one this server has nothing to do about.
+			return nil
+		}
+		return &response{JSONRPC: "2.0", ID: req.ID,
+			Error: &rpcError{Code: -32601, Message: "unknown method: " + req.Method}}
 	}
 }
 
-func (s *Server) callTool(ctx context.Context, req request) {
+// negotiate answers initialize's protocolVersion: the client's, when this
+// server speaks it, and otherwise the latest this server does, which the
+// client may then decline (MCP lifecycle, "Version Negotiation").
+func negotiate(params json.RawMessage) string {
+	var p struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	_ = json.Unmarshal(params, &p)
+	if slices.Contains(protocolVersions, p.ProtocolVersion) {
+		return p.ProtocolVersion
+	}
+	return protocolVersions[0]
+}
+
+func (s *Server) callTool(ctx context.Context, req request) *response {
 	var params struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		s.reply(response{JSONRPC: "2.0", ID: req.ID,
-			Error: &rpcError{Code: -32602, Message: "invalid params"}})
-		return
+		return &response{JSONRPC: "2.0", ID: req.ID,
+			Error: &rpcError{Code: -32602, Message: "invalid params"}}
 	}
 
 	tool, ok := toolsByName[params.Name]
 	if !ok || s.ToolsDisabled[params.Name] {
-		s.reply(response{JSONRPC: "2.0", ID: req.ID,
-			Error: &rpcError{Code: -32602, Message: "unknown tool: " + params.Name}})
-		return
+		return &response{JSONRPC: "2.0", ID: req.ID,
+			Error: &rpcError{Code: -32602, Message: "unknown tool: " + params.Name}}
 	}
 
 	method, path, body, err := tool.request(params.Arguments)
 	if err != nil {
-		s.toolError(req.ID, err.Error())
-		return
+		return toolError(req.ID, err.Error())
 	}
 
 	var result []byte
@@ -155,8 +178,7 @@ func (s *Server) callTool(ctx context.Context, req request) {
 		// contained, actionable, and written to be pasted into an assistant.
 		// An agent is exactly that reader, so rewriting it here would discard
 		// the thing it was written for.
-		s.toolError(req.ID, err.Error())
-		return
+		return toolError(req.ID, err.Error())
 	}
 
 	// An endpoint that answers 204 has no body. An empty result reads to an
@@ -165,9 +187,9 @@ func (s *Server) callTool(ctx context.Context, req request) {
 	if strings.TrimSpace(text) == "" {
 		text = "Done."
 	}
-	s.reply(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+	return &response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 		"content": []map[string]any{{"type": "text", "text": text}},
-	}})
+	}}
 }
 
 // toolError reports a failure as a tool result rather than a protocol error.
@@ -176,15 +198,15 @@ func (s *Server) callTool(ctx context.Context, req request) {
 // failure and most clients surface it as one. "You do not have permission to do
 // this, it requires app.deploy" is information the agent should get, not a
 // broken connection.
-func (s *Server) toolError(id json.RawMessage, message string) {
-	s.reply(response{JSONRPC: "2.0", ID: id, Result: map[string]any{
+func toolError(id json.RawMessage, message string) *response {
+	return &response{JSONRPC: "2.0", ID: id, Result: map[string]any{
 		"isError": true,
 		"content": []map[string]any{{"type": "text", "text": message}},
-	}})
+	}}
 }
 
-func (s *Server) reply(r response) {
-	if r.ID == nil && r.Error == nil && r.Result == nil {
+func (s *Server) reply(r *response) {
+	if r == nil || (r.ID == nil && r.Error == nil && r.Result == nil) {
 		return
 	}
 	s.mu.Lock()

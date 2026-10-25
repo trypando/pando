@@ -52,6 +52,7 @@ import (
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/notice"
+	"github.com/trypando/pando/internal/core/oauth"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
 	corepolicy "github.com/trypando/pando/internal/core/policy"
@@ -221,6 +222,10 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		CLISignIn: &clisignin.Service{
 			Store: state.NewCLISignIns(db), Users: users, Tokens: tokens,
 			Policy: effectivePolicy, Clock: clock.System{},
+		},
+		OAuth: &oauth.Service{
+			Clients: state.NewOAuthClients(db), Codes: state.NewOAuthCodes(db), Users: users,
+			Tokens: tokens, Policy: effectivePolicy, Clock: clock.System{},
 		},
 		Apps:    apps,
 		Volumes: volumes,

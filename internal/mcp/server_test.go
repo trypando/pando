@@ -135,9 +135,24 @@ func TestInitializeAnnouncesTheProtocolAndTools(t *testing.T) {
 
 	require.Len(t, replies, 1)
 	res := result(t, replies[0])
-	require.Equal(t, "2024-11-05", res["protocolVersion"])
+	require.Equal(t, "2025-06-18", res["protocolVersion"], "no version asked for gets the latest")
 	require.Contains(t, res["capabilities"].(map[string]any), "tools")
 	require.Equal(t, "pando", res["serverInfo"].(map[string]any)["name"])
+}
+
+// A client gets the revision it asked for when this server speaks it, and the
+// latest this server speaks when it does not.
+func TestInitializeNegotiatesTheProtocolVersion(t *testing.T) {
+	srv, s := newSession()
+	replies := s.run(t, srv,
+		rpc(1, "initialize", `{"protocolVersion":"2024-11-05"}`),
+		rpc(2, "initialize", `{"protocolVersion":"2025-03-26"}`),
+		rpc(3, "initialize", `{"protocolVersion":"1999-01-01"}`))
+
+	require.Len(t, replies, 3)
+	require.Equal(t, "2024-11-05", result(t, replies[0])["protocolVersion"])
+	require.Equal(t, "2025-03-26", result(t, replies[1])["protocolVersion"])
+	require.Equal(t, "2025-06-18", result(t, replies[2])["protocolVersion"])
 }
 
 // A notification has no id and takes no reply. Answering one is a protocol

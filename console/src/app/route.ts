@@ -94,8 +94,9 @@ export interface Route {
   /** Settings is its own page, not a section of the admin console: it is
    *  about the person, and everyone reaches it. It still lives under /admin,
    *  because that prefix is already reserved against app slugs (R-023).
-   *  So is the CLI's approval page (R-406), which `pando login` opens. */
-  view: 'launcher' | 'admin' | 'settings' | 'cli';
+   *  So is the CLI's approval page (R-406), which `pando login` opens, and
+   *  an MCP client's (R-413), OAuth's authorization endpoint. */
+  view: 'launcher' | 'admin' | 'settings' | 'cli' | 'authorize';
   section: Section;
   appID?: string;
   /** An app's tab, or System's. */
@@ -139,6 +140,7 @@ export function parse(pathname: string, search = ''): Route {
   if (parts[0] !== 'admin') return { view: 'launcher', section: 'apps' };
   if (parts[1] === 'settings') return { view: 'settings', section: 'apps' };
   if (parts[1] === 'cli') return { view: 'cli', section: 'apps' };
+  if (parts[1] === 'authorize') return { view: 'authorize', section: 'apps' };
 
   // /admin/apps/{id}[/{tab}[/{page}]][?panel=…&workload=…&deployment=…]
   if (parts[1] === 'apps' && parts[2]) return appRoute(parts[2], parts[3], search, parts[4]);
@@ -224,6 +226,7 @@ const FIXED_PATHS: Partial<Record<Route['view'], string>> = {
   launcher: '/',
   settings: '/admin/settings',
   cli: '/admin/cli',
+  authorize: '/admin/authorize',
 };
 
 /** The path for a route. The inverse of parse, and tested as such. */

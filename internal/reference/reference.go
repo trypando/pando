@@ -50,6 +50,9 @@ type Connect struct {
 	TokenEnv  string `json:"token_env"`
 	LoginCmd  string `json:"login_cmd"`
 	MCPCmd    string `json:"mcp_cmd"`
+
+	// MCPPath is where Pando serves MCP itself (R-413).
+	MCPPath string `json:"mcp_path"`
 }
 
 // API describes the HTTP surface.
@@ -142,6 +145,7 @@ func Build(routes []Route) Document {
 			TokenEnv:  cli.EnvToken,
 			LoginCmd:  "pando login <server-url>",
 			MCPCmd:    "pando mcp",
+			MCPPath:   mcp.HTTPPath,
 		},
 		Install: install(),
 	}

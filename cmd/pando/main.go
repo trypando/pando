@@ -82,6 +82,7 @@ import (
 	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/notice"
 	"github.com/trypando/pando/internal/core/notifyconn"
+	"github.com/trypando/pando/internal/core/oauth"
 	"github.com/trypando/pando/internal/core/observe"
 	"github.com/trypando/pando/internal/core/oci"
 	"github.com/trypando/pando/internal/core/planner"
@@ -1080,6 +1081,13 @@ func serve(ctx context.Context, configPath string) error {
 		CLISignIn: &clisignin.Service{
 			Store: state.NewCLISignIns(db), Users: users, Tokens: tokens,
 			Policy: policyStore, Clock: clock.System{},
+		},
+
+		// MCP clients sign in with OAuth (R-413): R-406's flow, with the
+		// client's own redirect address, minting the same delegated token.
+		OAuth: &oauth.Service{
+			Clients: state.NewOAuthClients(db), Codes: state.NewOAuthCodes(db), Users: users,
+			Tokens: tokens, Policy: policyStore, Clock: clock.System{},
 		},
 		AppProxy: appProxy,
 

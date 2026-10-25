@@ -90,6 +90,8 @@ var summaries = map[string]string{
 
 	"cli_sign_in.approve": "Approved a CLI sign-in",
 	"cli_sign_in.denied":  "Refused a CLI sign-in",
+	"oauth.approve":       "Approved an MCP client sign-in",
+	"oauth.denied":        "Refused an MCP client sign-in",
 
 	"deploy.approve":   "Approved a deployment of {app}",
 	"deploy.expire":    "A deployment request for {app} expired",

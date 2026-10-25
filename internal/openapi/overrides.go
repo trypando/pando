@@ -74,6 +74,25 @@ func overrides() map[string]override {
 	}
 
 	out := map[string]override{
+		// RFC 6749 §4.1.3: the token request is a form, read with ParseForm.
+		"POST /api/v1/oauth/token": {request: &body{contentType: "application/x-www-form-urlencoded", schema: &Schema{
+			Type: "object", Required: []string{"grant_type", "code", "code_verifier"},
+			Properties: Props{
+				{Name: "grant_type", Schema: &Schema{Type: "string", Enum: []string{"authorization_code"}}},
+				{Name: "code", Schema: &Schema{Type: "string"}},
+				{Name: "code_verifier", Schema: &Schema{Type: "string"}},
+				{Name: "client_id", Schema: &Schema{Type: "string"}},
+				{Name: "redirect_uri", Schema: &Schema{Type: "string"}},
+			},
+		}}},
+		// MCP's own JSON-RPC messages, answered by internal/mcp (R-413).
+		"POST /api/v1/mcp": {
+			request: &body{contentType: jsonType, schema: anySchema(), description: "A JSON-RPC 2.0 MCP message, or a batch of them."},
+			responses: map[int]*body{
+				200: {contentType: jsonType, schema: anySchema(), description: "The message's JSON-RPC answer."},
+				202: {description: "A notification or a response, accepted, with nothing to answer."},
+			},
+		},
 		// The image's bytes, in whichever of the accepted types it is: the
 		// handler sets Content-Type from the stored image.
 		"GET /api/v1/apps/{appID}/icon": {responses: map[int]*body{

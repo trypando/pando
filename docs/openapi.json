@@ -8008,6 +8008,40 @@
         "x-pando-verb": "install.adapters.manage"
       }
     },
+    "/api/v1/mcp": {
+      "post": {
+        "operationId": "mcp",
+        "summary": "Call MCP tools",
+        "description": "Pando's MCP server over Streamable HTTP: a JSON-RPC message in, its answer out as JSON, the same tools as `pando mcp`, each an API call with the caller's token. A token only, not a browser session. Without one the answer is 401 with `WWW-Authenticate` naming /.well-known/oauth-protected-resource/api/v1/mcp, where an MCP client finds how to sign in with OAuth. No event stream and no session.",
+        "tags": [
+          "Session"
+        ],
+        "requestBody": {
+          "description": "A JSON-RPC 2.0 MCP message, or a batch of them.",
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The message's JSON-RPC answer.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "202": {
+            "description": "A notification or a response, accepted, with nothing to answer."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/api/v1/me": {
       "get": {
         "operationId": "me",
@@ -9062,6 +9096,385 @@
             "$ref": "#/components/responses/Error"
           }
         }
+      }
+    },
+    "/api/v1/oauth/authorize": {
+      "get": {
+        "operationId": "checkOAuthAuthorization",
+        "summary": "Check an MCP client sign-in",
+        "description": "What the console's approval page shows for an OAuth authorization request: it sends on its address's `client_id`, `redirect_uri`, `response_type` (`code`), `code_challenge`, `code_challenge_method` (`S256`), `state` and `resource`, and gets `client_name` and `returns_to`, the host or app scheme the browser goes back to. A session only.",
+        "tags": [
+          "Session"
+        ],
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge_method",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "response_type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Consent"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "decideOAuthAuthorization",
+        "summary": "Decide an MCP client sign-in",
+        "description": "Approve (`approve` true) or cancel an OAuth authorization request, sent as GET /oauth/authorize takes it. Answers with `redirect_url`, the client's address carrying a one-time `code` valid 5 minutes, or `error=access_denied` when canceled, with `state` and `iss`. A session only: a token cannot approve.",
+        "tags": [
+          "Session"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "redirect_uri": {
+                    "type": "string"
+                  },
+                  "response_type": {
+                    "type": "string"
+                  },
+                  "code_challenge": {
+                    "type": "string"
+                  },
+                  "code_challenge_method": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "resource": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  },
+                  "approve": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "client_id",
+                  "redirect_uri",
+                  "response_type",
+                  "code_challenge",
+                  "code_challenge_method",
+                  "state",
+                  "resource",
+                  "scope",
+                  "approve"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "redirect_url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "redirect_url"
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "redirect_url": {
+                      "type": "string"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "redirect_url",
+                    "expires_at"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/oauth/register": {
+      "post": {
+        "operationId": "registerOAuthClient",
+        "summary": "Register an MCP client",
+        "description": "Dynamic client registration (RFC 7591), for an MCP client signing in with OAuth. Takes `client_name` and `redirect_uris` — 1 to 10, each https, http on the loopback address, or a native app's own scheme — and answers with `client_id`. Every client is public: `token_endpoint_auth_method` is always `none`. A client nobody approves is removed after a day. Errors are OAuth's (`error`, `error_description`). Public.",
+        "tags": [
+          "Session"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Registration"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Registered"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Status 400",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/ErrorResponse"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Status 500",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/oauth/token": {
+      "post": {
+        "operationId": "oAuthToken",
+        "summary": "Collect an MCP client sign-in",
+        "description": "The OAuth token endpoint: form-encoded `grant_type` (`authorization_code`), `code`, `code_verifier`, `client_id` and `redirect_uri`. Answers with `access_token`, a delegated token named for the client acting as whoever approved it under host policy's token lifetime, `token_type` `Bearer` and `expires_in` when it expires. No refresh token. A code is tried once. Errors are OAuth's. Public: the verifier is the proof.",
+        "tags": [
+          "Session"
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "grant_type": {
+                    "type": "string",
+                    "enum": [
+                      "authorization_code"
+                    ]
+                  },
+                  "code": {
+                    "type": "string"
+                  },
+                  "code_verifier": {
+                    "type": "string"
+                  },
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "redirect_uri": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "grant_type",
+                  "code",
+                  "code_verifier"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "access_token": {
+                      "type": "string"
+                    },
+                    "token_type": {
+                      "type": "string"
+                    },
+                    "expires_in": {
+                      "type": "integer",
+                      "format": "int64"
+                    }
+                  },
+                  "required": [
+                    "access_token",
+                    "token_type"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Status 400",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/ErrorResponse"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Status 500",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": []
       }
     },
     "/api/v1/passwords/generate": {
@@ -13873,13 +14286,17 @@
           },
           "mcp_cmd": {
             "type": "string"
+          },
+          "mcp_path": {
+            "type": "string"
           }
         },
         "required": [
           "server_env",
           "token_env",
           "login_cmd",
-          "mcp_cmd"
+          "mcp_cmd",
+          "mcp_path"
         ]
       },
       "Connection": {
@@ -13906,6 +14323,25 @@
           "name",
           "kind",
           "capabilities"
+        ]
+      },
+      "Consent": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "returns_to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "client_name",
+          "returns_to"
         ]
       },
       "Counts": {
@@ -14900,6 +15336,20 @@
         "required": [
           "code",
           "message"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "error_description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
         ]
       },
       "EventsField": {
@@ -16933,6 +17383,105 @@
           "covered",
           "adapter_id",
           "model"
+        ]
+      },
+      "Registered": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client_id_issued_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "redirect_uris": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "grant_types": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "response_types": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "token_endpoint_auth_method": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "client_id_issued_at",
+          "client_name",
+          "redirect_uris",
+          "grant_types",
+          "response_types",
+          "token_endpoint_auth_method"
+        ]
+      },
+      "Registration": {
+        "type": "object",
+        "properties": {
+          "client_name": {
+            "type": "string"
+          },
+          "redirect_uris": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "grant_types": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "response_types": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "token_endpoint_auth_method": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_name",
+          "redirect_uris",
+          "grant_types",
+          "response_types",
+          "token_endpoint_auth_method"
         ]
       },
       "Release": {
