@@ -678,6 +678,7 @@ export interface Connect {
   token_env: string;
   login_cmd: string;
   mcp_cmd: string;
+  mcp_path: string;
 }
 
 export interface Install {
