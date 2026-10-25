@@ -20,6 +20,9 @@ import (
 // endpoint. Under /admin, which no app slug can take (consoleRoutes).
 const AuthorizePath = "/admin/authorize"
 
+// headerCacheControl is the header every answer here sets.
+const headerCacheControl = "Cache-Control"
+
 const (
 	oauthTokenPath    = "/api/v1/oauth/token"
 	oauthRegisterPath = "/api/v1/oauth/register"
@@ -52,7 +55,7 @@ func (s *Server) handleProtectedResource(w http.ResponseWriter, r *http.Request)
 	if s.oauthUnavailable(w, r) {
 		return
 	}
-	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Header().Set(headerCacheControl, "public, max-age=300")
 	JSON(w, http.StatusOK, map[string]any{
 		"resource":                 s.issuer(r) + mcp.HTTPPath,
 		"resource_name":            "Pando",
@@ -68,7 +71,7 @@ func (s *Server) handleAuthorizationServer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	base := s.issuer(r)
-	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Header().Set(headerCacheControl, "public, max-age=300")
 	JSON(w, http.StatusOK, map[string]any{
 		"issuer":                                         base,
 		"authorization_endpoint":                         base + AuthorizePath,
@@ -182,7 +185,7 @@ func (s *Server) handleDecideOAuthAuthorization(w http.ResponseWriter, r *http.R
 	})
 	// The code rides in the address, worth nothing without the client's
 	// verifier, but still not for a cache to keep.
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerCacheControl, "no-store")
 	JSON(w, http.StatusCreated, map[string]any{
 		"redirect_url": approved.RedirectURL,
 		"expires_at":   approved.ExpiresAt,
@@ -261,7 +264,7 @@ func oauthFailed(w http.ResponseWriter, e *oauth.ErrorResponse) {
 
 // oauthJSON answers in OAuth's format, never cached (RFC 6749 §5.1).
 func oauthJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerCacheControl, "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	JSON(w, status, body)
 }

@@ -111,9 +111,9 @@ func oauthError(status int, code, description string) *ErrorResponse {
 type Registration struct {
 	ClientName              string   `json:"client_name"`
 	RedirectURIs            []string `json:"redirect_uris"`
-	GrantTypes              []string `json:"grant_types"`
-	ResponseTypes           []string `json:"response_types"`
-	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+	GrantTypes              []string `json:"grant_types,omitempty"`
+	ResponseTypes           []string `json:"response_types,omitempty"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
 }
 
 // Registered is the answer to a registration (RFC 7591 §3.2.1).
@@ -453,6 +453,11 @@ func (s *Service) Exchange(ctx context.Context, req TokenRequest) (Exchanged, *E
 		return Exchanged{}, oauthError(http.StatusBadRequest, "unsupported_grant_type",
 			"Pando issues tokens for the authorization_code grant only.")
 	}
+	// A public client names itself at the exchange (RFC 6749 §4.1.3), so a
+	// code is bound to the client it was issued to as well as to its verifier.
+	if req.ClientID == "" {
+		return Exchanged{}, oauthError(http.StatusBadRequest, "invalid_request", "The token request names no client_id.")
+	}
 	if req.Code == "" || !verifierShape.MatchString(req.CodeVerifier) {
 		return Exchanged{}, invalidGrant()
 	}
@@ -466,21 +471,29 @@ func (s *Service) Exchange(ctx context.Context, req TokenRequest) (Exchanged, *E
 
 	refused := Exchanged{UserID: approval.UserID, ApprovedBy: approval.ApprovedBy, ClientID: approval.ClientID}
 	if !s.Clock.Now().Before(approval.ExpiresAt) ||
-		(req.ClientID != "" && req.ClientID != approval.ClientID) ||
+		req.ClientID != approval.ClientID ||
 		(req.RedirectURI != "" && req.RedirectURI != approval.RedirectURI) ||
 		subtle.ConstantTimeCompare([]byte(clisignin.Challenge(req.CodeVerifier)), []byte(approval.CodeChallenge)) != 1 {
 		return refused, invalidGrant()
 	}
 
+	// A store that cannot be read is Pando's failure, not a bad code: it is
+	// answered as one and, with no refusal returned, not audited as one.
 	client, found, err := s.Clients.ByID(ctx, approval.ClientID)
-	if err != nil || !found {
+	if err != nil {
+		return Exchanged{}, oauthError(http.StatusInternalServerError, "server_error", "Could not read the client.")
+	}
+	if !found {
 		return refused, invalidGrant()
 	}
 	refused.ClientName = client.Name
 
 	// Approved minutes ago, but the account may have been suspended since.
 	user, found, err := s.Users.ByID(ctx, approval.UserID)
-	if err != nil || !found || user.Status != "active" {
+	if err != nil {
+		return Exchanged{}, oauthError(http.StatusInternalServerError, "server_error", "Could not read the account.")
+	}
+	if !found || user.Status != "active" {
 		return refused, invalidGrant()
 	}
 

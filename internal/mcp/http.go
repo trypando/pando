@@ -47,22 +47,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// A batch, which the 2025-03-26 revision allows and later ones dropped.
 	if len(raw) > 0 && raw[0] == '[' {
-		var batch []request
-		if err := json.Unmarshal(raw, &batch); err != nil || len(batch) == 0 {
-			writeRPC(w, http.StatusBadRequest, &response{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
-			return
-		}
-		var out []*response
-		for _, req := range batch {
-			if resp := s.answer(r, req); resp != nil {
-				out = append(out, resp)
-			}
-		}
-		if len(out) == 0 {
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		writeRPC(w, http.StatusOK, out)
+		s.serveBatch(w, r, raw)
 		return
 	}
 
@@ -79,6 +64,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeRPC(w, http.StatusOK, resp)
+}
+
+// serveBatch answers a batch: every answer together, or 202 when there are none.
+func (s *Server) serveBatch(w http.ResponseWriter, r *http.Request, raw []byte) {
+	var batch []request
+	if err := json.Unmarshal(raw, &batch); err != nil || len(batch) == 0 {
+		writeRPC(w, http.StatusBadRequest, &response{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		return
+	}
+	var out []*response
+	for _, req := range batch {
+		if resp := s.answer(r, req); resp != nil {
+			out = append(out, resp)
+		}
+	}
+	if len(out) == 0 {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	writeRPC(w, http.StatusOK, out)
 }
 
 // answer is handle for a message that may be a client's response rather than a

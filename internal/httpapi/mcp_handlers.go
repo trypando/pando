@@ -105,18 +105,9 @@ var innerHeaders = []string{
 // mcpCall makes a tool's API call through root as the MCP request's caller.
 func (s *Server) mcpCall(root http.Handler, outer *http.Request) func(ctx context.Context, method, path string, body, out any) error {
 	return func(ctx context.Context, method, path string, body, out any) error {
-		var reader io.Reader = http.NoBody
-		contentType := ""
-		switch b := body.(type) {
-		case nil:
-		case mcp.Bytes:
-			reader, contentType = bytes.NewReader(b.Data), b.ContentType
-		default:
-			encoded, err := json.Marshal(b)
-			if err != nil {
-				return err
-			}
-			reader, contentType = bytes.NewReader(encoded), "application/json"
+		reader, contentType, err := innerBody(body)
+		if err != nil {
+			return err
 		}
 
 		// The outer request's route context would make the router treat
@@ -151,6 +142,23 @@ func (s *Server) mcpCall(root http.Handler, outer *http.Request) func(ctx contex
 			return nil
 		}
 		return json.Unmarshal(rec.body.Bytes(), out)
+	}
+}
+
+// innerBody is a tool's request body as the API takes it: none, a file sent
+// as-is, or JSON.
+func innerBody(body any) (io.Reader, string, error) {
+	switch b := body.(type) {
+	case nil:
+		return http.NoBody, "", nil
+	case mcp.Bytes:
+		return bytes.NewReader(b.Data), b.ContentType, nil
+	default:
+		encoded, err := json.Marshal(b)
+		if err != nil {
+			return nil, "", err
+		}
+		return bytes.NewReader(encoded), "application/json", nil
 	}
 }
 
@@ -192,5 +200,8 @@ func (b *bufferedResponse) Write(p []byte) (int, error) {
 	return b.body.Write(p)
 }
 
-// Flush is a no-op: the response goes to the tool whole.
-func (b *bufferedResponse) Flush() {}
+// Flush is here for handlers that flush as they write.
+func (b *bufferedResponse) Flush() {
+	// Nothing to do: the response is held until the handler returns and goes
+	// to the tool whole.
+}

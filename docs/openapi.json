@@ -9396,7 +9396,8 @@
                 "required": [
                   "grant_type",
                   "code",
-                  "code_verifier"
+                  "code_verifier",
+                  "client_id"
                 ]
               }
             }
@@ -17455,19 +17456,13 @@
             }
           },
           "grant_types": {
-            "type": [
-              "array",
-              "null"
-            ],
+            "type": "array",
             "items": {
               "type": "string"
             }
           },
           "response_types": {
-            "type": [
-              "array",
-              "null"
-            ],
+            "type": "array",
             "items": {
               "type": "string"
             }
@@ -17478,10 +17473,7 @@
         },
         "required": [
           "client_name",
-          "redirect_uris",
-          "grant_types",
-          "response_types",
-          "token_endpoint_auth_method"
+          "redirect_uris"
         ]
       },
       "Release": {

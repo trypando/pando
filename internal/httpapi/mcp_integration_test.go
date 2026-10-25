@@ -240,11 +240,11 @@ func TestR413_AnMCPClientConnectsToPandoByItsAddress(t *testing.T) {
 	require.NoError(t, err)
 	stolen := i.form("/oauth/token", url.Values{
 		"grant_type": {"authorization_code"}, "code": {to.Query().Get("code")},
-		"code_verifier": {cliVerifier + "-not-the-one"},
+		"client_id": {clientID}, "code_verifier": {cliVerifier + "-not-the-one"},
 	})
 	require.Equal(t, http.StatusBadRequest, stolen.Code)
 	guess := i.form("/oauth/token", url.Values{
-		"grant_type": {"authorization_code"}, "code": {"a-guess"}, "code_verifier": {cliVerifier},
+		"grant_type": {"authorization_code"}, "code": {"a-guess"}, "client_id": {clientID}, "code_verifier": {cliVerifier},
 	})
 	require.Equal(t, http.StatusBadRequest, guess.Code)
 	require.Equal(t, 1, auditCount(t, i, "oauth.denied", danaID))

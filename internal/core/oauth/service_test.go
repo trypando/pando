@@ -439,7 +439,7 @@ func TestExchangeRefusals(t *testing.T) {
 	require.Equal(t, "invalid_grant", oerr.Code)
 	require.Empty(t, got.UserID, "a guess names nobody, so nothing is audited")
 
-	_, oerr = r.svc.Exchange(ctx, oauth.TokenRequest{GrantType: "authorization_code", Code: "c", CodeVerifier: "short"})
+	_, oerr = r.svc.Exchange(ctx, oauth.TokenRequest{GrantType: "authorization_code", Code: "c", ClientID: id, CodeVerifier: "short"})
 	require.Equal(t, "invalid_grant", oerr.Code)
 
 	approve := func(user string) string {
@@ -449,6 +449,23 @@ func TestExchangeRefusals(t *testing.T) {
 		}))
 		return "code-" + user
 	}
+
+	// A client names itself, and a request that does not spends nothing.
+	unnamed := approve("usr_ada")
+	_, oerr = r.svc.Exchange(ctx, oauth.TokenRequest{GrantType: "authorization_code", Code: unnamed, CodeVerifier: verifier})
+	require.Equal(t, "invalid_request", oerr.Code)
+	require.Len(t, r.codes.rows, 1, "the code was not spent")
+	delete(r.codes.rows, clisignin.Digest(unnamed))
+
+	// A store that cannot be read is Pando's failure, with no refusal to audit.
+	got, oerr = r.svc.Exchange(ctx, exchange(id, approve("usr_broken")))
+	require.Equal(t, "server_error", oerr.Code)
+	require.Empty(t, got.UserID)
+	r.clients.err = errors.New("database down")
+	got, oerr = r.svc.Exchange(ctx, exchange(id, approve("usr_ada")))
+	require.Equal(t, "server_error", oerr.Code)
+	require.Empty(t, got.UserID)
+	r.clients.err = nil
 
 	// Suspended since approving.
 	_, oerr = r.svc.Exchange(ctx, exchange(id, approve("usr_gone")))

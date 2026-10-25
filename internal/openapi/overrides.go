@@ -76,7 +76,7 @@ func overrides() map[string]override {
 	out := map[string]override{
 		// RFC 6749 §4.1.3: the token request is a form, read with ParseForm.
 		"POST /api/v1/oauth/token": {request: &body{contentType: "application/x-www-form-urlencoded", schema: &Schema{
-			Type: "object", Required: []string{"grant_type", "code", "code_verifier"},
+			Type: "object", Required: []string{"grant_type", "code", "code_verifier", "client_id"},
 			Properties: Props{
 				{Name: "grant_type", Schema: &Schema{Type: "string", Enum: []string{"authorization_code"}}},
 				{Name: "code", Schema: &Schema{Type: "string"}},
