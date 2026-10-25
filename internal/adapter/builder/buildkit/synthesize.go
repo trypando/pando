@@ -732,9 +732,15 @@ func staticDockerfile(req api.BuildRequest, contextDir string) (string, string, 
 		return "", "", errs.Wrap(errs.BuildFailed, msgPrepareBuild, err)
 	}
 
+	// nginx starts directly, as in every other static plan, not through the
+	// image's entrypoint scripts: one of them touches default.conf to see
+	// whether it may edit it, and the trial run reports that touch as the app
+	// writing outside its storage (R-202).
 	content := fmt.Sprintf(`FROM %s
 COPY %s/ /usr/share/nginx/html/
 RUN printf %s > /etc/nginx/conf.d/default.conf
+ENTRYPOINT ["/bin/sh", "-c"]
+CMD ["exec nginx -g 'daemon off;'"]
 `, staticServerImage, serve, printfFormat(staticConfig))
 
 	// G306: a generated Dockerfile in the build context, read by the rootless

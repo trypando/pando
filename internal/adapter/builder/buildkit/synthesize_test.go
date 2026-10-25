@@ -50,6 +50,10 @@ func TestR110_AStaticSiteNeedsNoDockerfileInTheRepository(t *testing.T) {
 	// app routes itself asks the server for a file that does not exist.
 	require.Contains(t, content, "try_files")
 
+	// nginx starts directly. The base image's entrypoint touches default.conf,
+	// and the trial run reported that as a write outside storage (R-202).
+	require.Contains(t, content, "CMD [\"exec nginx -g 'daemon off;'\"]")
+
 	// Written outside the checkout: the app's own source is never modified by
 	// building it.
 	require.False(t, strings.HasPrefix(gen.Dir, root), "the Dockerfile is not written into the app's source")

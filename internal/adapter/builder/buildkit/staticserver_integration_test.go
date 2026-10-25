@@ -55,6 +55,33 @@ func TestR160_AStaticSitesDirectoryRedirectKeepsItsPort(t *testing.T) {
 		fmt.Sprintf("the redirect must not name a host without its port; got %q", location))
 }
 
+// TestR202_AStaticSiteWritesNothingToItsConfiguration asserts that the generated
+// static server gives the trial run nothing to report under R-202.
+//
+// Started through the base image's entrypoint, nginx's IPv6 script touched
+// default.conf to see whether it could edit it. The file was unchanged, but the
+// container's diff listed it, and every plain static site was told it wrote to
+// /etc/nginx/conf.d outside its storage.
+func TestR202_AStaticSiteWritesNothingToItsConfiguration(t *testing.T) {
+	root := pagesSite(t)
+	dir, name, err := staticDockerfile(api.BuildRequest{StaticDir: "."}, root)
+	require.NoError(t, err)
+
+	tag := fmt.Sprintf("pando-test-static-%d", time.Now().UnixNano())
+	docker(t, "build", "-q", "-t", tag, "-f", dir+"/"+name, root)
+	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", tag).Run() })
+
+	container := docker(t, "run", "-d", tag)
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", container).Run() })
+	require.Eventually(t, func() bool {
+		return docker(t, "inspect", "-f", "{{.State.Running}}", container) == "true" &&
+			strings.Contains(docker(t, "diff", container), "/run/nginx.pid")
+	}, 30*time.Second, 200*time.Millisecond, "nginx did not start")
+
+	require.NotContains(t, docker(t, "diff", container), "/etc/",
+		"the static server must not change its own configuration at startup")
+}
+
 func docker(t *testing.T, args ...string) string {
 	t.Helper()
 	out, err := exec.Command("docker", args...).CombinedOutput()
