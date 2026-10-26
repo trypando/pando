@@ -72,6 +72,9 @@ func (a *Adapter) refreshLocked(ctx context.Context) {
 		return nil
 	})
 
+	homes := map[string]string{}
+	a.preferHomes(ctx, homes, found) // standby.go: a promoted app's home wins (R-419)
+
 	a.placement.mu.Lock()
 	defer a.placement.mu.Unlock()
 	next := map[string]string{}
@@ -93,6 +96,9 @@ func (a *Adapter) refreshLocked(ctx context.Context) {
 				next[b] = h.cfg.Name
 			}
 		}
+	}
+	for b, on := range homes {
+		next[b] = on
 	}
 	// A bundle placed here and not yet visible on its host (its network is
 	// about to be made) is kept.

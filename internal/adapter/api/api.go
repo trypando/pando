@@ -150,6 +150,13 @@ type RuntimeCapabilities struct {
 	// Data, never a type assertion (R-254).
 	SupportsBundleEvents bool
 
+	// SupportsStandby means the runtime can keep a stopped standby of an app
+	// in a second place and start it there when the first is lost (R-419):
+	// the adapter implements StandbyRuntime. False on a runtime with one
+	// place, where there is nowhere else to keep one. Data, never a type
+	// assertion (R-254).
+	SupportsStandby bool
+
 	// Platform is the operating system and CPU architecture the runtime runs
 	// images for, as a registry names them: linux/amd64, linux/arm64. Empty
 	// when the runtime cannot say, and then an image's platforms are not
@@ -1252,6 +1259,12 @@ type ServicesCapabilities struct {
 	// Data, not a type assertion, so the backup path can state in its manifest
 	// which services it captured and how.
 	DataInAppVolumes bool
+
+	// ReplicaTypes are the slot types whose standby the adapter keeps
+	// current through the engine's own replication (R-420): it implements
+	// ReplicaServices. A type not listed has its data copied with the app's
+	// volumes, and the app's notice says the copy may be inconsistent.
+	ReplicaTypes []spec.SlotType
 }
 
 // ProvisionRequest asks for a service instance.

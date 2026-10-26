@@ -94,6 +94,9 @@ type Adapter struct {
 
 	// watchRetry overrides defaultWatchRetry (events.go). Tests shorten it.
 	watchRetry []time.Duration
+
+	// standby is what this process promoted (standby.go, R-419).
+	standby standbyState
 }
 
 // New builds an unconfigured adapter.
@@ -292,6 +295,9 @@ func (a *Adapter) Capabilities(ctx context.Context) (api.RuntimeCapabilities, er
 	// The egress gateway runs on the app's host, from an image every host
 	// can pull.
 	caps.SupportsEgressRestriction = a.agentImage(ctx) != ""
+
+	// A standby needs a second host open to new apps (R-419).
+	caps.SupportsStandby = a.standbyPossible()
 
 	// One platform for every host, or none stated (HealthCheck refuses the
 	// mix).
