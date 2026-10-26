@@ -135,7 +135,7 @@ RUN --mount=type=cache,target=/cache/go-mod --mount=type=cache,target=/cache/go-
 # lists what the image actually holds: a scanner reads it to know what is
 # installed, and an entry for a package manager that is not there is a finding
 # about nothing.
-FROM dhi.io/alpine-base:3.24-dev@sha256:08d37dc414e07a688b0c3b9405e0b33688507e41a74bc24118a7f0817b772e27 AS packages
+FROM dhi.io/alpine-base:3.24-dev@sha256:7182e0bc2f186386bb23bc0718508913450ba1876e93cf07e5e3cf263c4dbb63 AS packages
 ARG RAILPACK_VERSION=0.40.0
 ARG MISE_VERSION=2026.9.12
 ARG TARGETARCH
@@ -176,7 +176,7 @@ RUN apk add --no-cache bash curl git postgresql17-client su-exec tzdata \
 # in CI if a distrusted root is left either way.
 FROM alpine:3.24@sha256:71e9b7bae160ba167fa17414401b94cbcdaf3c32feeab9298bd794a2a0614c35 AS ca-bundle
 
-FROM dhi.io/alpine-base:3.24@sha256:a741d4f1ccaf31f9394a36477e50df4620a8030dbff3d9a2ea8e84672b683ada
+FROM dhi.io/alpine-base:3.24@sha256:7b06d747fcb428a0699679955e903b13322c92c79d94ce94c108634f13a714f1
 COPY --from=packages /staging/ /
 COPY --from=ca-bundle /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # Railpack's mise directory, writable by the server, which takes locks there.
