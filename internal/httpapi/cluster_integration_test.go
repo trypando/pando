@@ -82,3 +82,33 @@ func TestR414_TheClusterNeedsItsOwnVerb(t *testing.T) {
 	gone := i.do(i.admin(), http.MethodDelete, "/cluster/hosts/host_nobody", nil)
 	require.Equal(t, string(errs.NotFound), gone.ErrorCode(), gone.String())
 }
+
+// TestR415_AJoinTokenRequestIsCheckedBeforeAnythingIsMinted asserts R-415 and
+// R-105: an unreadable body, an unknown role or a limit out of range is refused
+// with a message saying what is wanted, and nothing is minted.
+func TestR415_AJoinTokenRequestIsCheckedBeforeAnythingIsMinted(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	admin := i.admin()
+
+	bad := i.do(admin, http.MethodPost, "/cluster/join-tokens", "not json")
+	require.Equal(t, string(errs.ValidInvalid), bad.ErrorCode(), bad.String())
+	for _, body := range []map[string]any{
+		{"roles": []string{"scheduler"}},
+		{"roles": []string{"app"}, "max_uses": 1000},
+		{"roles": []string{"app"}, "expires_hours": 10000},
+		{"roles": []string{"app"}, "address": "pando.example.com"},
+	} {
+		got := i.do(admin, http.MethodPost, "/cluster/join-tokens", body)
+		require.Equal(t, string(errs.ValidInvalid), got.ErrorCode(), got.String())
+	}
+
+	list := i.do(admin, http.MethodGet, "/cluster/join-tokens", nil)
+	require.JSONEq(t, `{"tokens":[]}`, list.String())
+
+	// With no roles named, a cluster of one mints both, which needs every
+	// install verb: the Administrator holds them.
+	def := i.do(admin, http.MethodPost, "/cluster/join-tokens", map[string]any{})
+	require.Equal(t, http.StatusCreated, def.Code, def.String())
+	require.Contains(t, def.String(), `"control"`)
+}
