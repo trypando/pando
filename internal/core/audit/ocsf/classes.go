@@ -169,6 +169,7 @@ var classes = map[string]Mapping{
 	"cluster.host.remove":                apiDelete,
 	"cluster.join_token.create":          apiCreate,
 	"cluster.join_token.revoke":          apiDelete,
+	"cluster.runtime.convert":            apiUpdate,
 	"deploy.approve":                     apiUpdate,
 	"deploy.expire":                      apiDelete,
 	"deploy.finish":                      appUpdate,

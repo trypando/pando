@@ -164,9 +164,12 @@ func TestListRevokeAndRemovePassThrough(t *testing.T) {
 	list, err := svc.Hosts(ctx)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
+	changes := 0
+	svc.OnChange = func(context.Context) { changes++ }
 	h, err := svc.Remove(ctx, "host_1")
 	require.NoError(t, err)
 	require.Equal(t, "host_1", h.ID)
+	require.Equal(t, 1, changes, "a removed host leaves the runtime's host list")
 	tok, err := svc.Revoke(ctx, "jt_1")
 	require.NoError(t, err)
 	require.Equal(t, "jt_1", tok.ID)

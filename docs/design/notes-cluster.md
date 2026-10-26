@@ -196,3 +196,37 @@ Amended: R-010, R-013, R-080, R-080a, R-153, R-256. Added: R-414 – R-422.
 
 Open: O-64 (confirming a host is off through its management interface), O-65 (a storage adapter
 category for operator-supplied replicated storage), O-66 (whether clustering is in every edition).
+
+### As built: agent and hosts
+
+- **Runtime calls through the agent (R-416).** After the TLS handshake the request line
+  `PANDO-AGENT/1 docker` asks for the host's runtime; the agent answers `OK` and splices the stream to
+  `PANDO_AGENT_RUNTIME_SOCKET`, or `NO <reason>`. Only for a certificate that `hostagent.IsControl`
+  accepts: subject `pando-proxy` with organizational unit `control`, which only a holder of the cluster
+  authority's key — a control host — can issue (`Authorities.IssueClient`). A host's own certificate
+  (`Authorities.IssueHost`: subject and DNS name `pando-agent.<name>.invalid`, the roles as
+  organizational units, server and client usage) is never accepted, nor is an agent's server-only one.
+  An agent without a socket carries no runtime calls, so agents the runtime starts itself are unchanged.
+- **`agent://host:port` endpoints.** The `docker-hosts` runtime reaches such a host's Docker API with
+  one agent stream per client connection, verifying the agent by name and by the pinned
+  `cert_sha256`; the proxy reaches that host's apps with the same TLS configuration. The runtime does not
+  create or replace a joined host's agent: the host runs its own, as a container named `pando-agent`, so
+  the per-host Docker adapter still joins it to the host's app networks. `tcp://` and `ssh://` hosts
+  are unchanged.
+- **Hosts from core.** `hosts.Runtime.Sync` writes every app-role row of `cluster_hosts` into the
+  default runtime's host list as `agent://<address>` entries, keeps every entry the operator wrote, puts
+  the cluster authority as the runtime's `agent_authority` credential and signals `cluster_signals`. It
+  runs from `hosts.Service.OnChange`, after a host is removed or (for the join) after it is recorded.
+  A join calls `hosts.Service.Runtime.CheckJoin(roles)` first.
+- **Conversion (R-418).** `Sync` on a `docker` runtime with an app host rewrites the same adapter row
+  (same ID, so apps stay pinned) to `docker-hosts`, with this machine as the control host under the
+  name `control` [P], its `host`, totals, `network_pool`, `network_block_bits`, `oci_runtime`,
+  `pids_limit` and `egress_gateway_image` (as `agent_image`) carried over. It is audited
+  `cluster.runtime.convert` before the write, and a second run is a no-op. A volume handle recorded
+  without a host is read as the control host's until the reconciler records it with one. The control
+  host's agent address is the host of `server.advertise_url` and port 7443; without one, an app-role
+  join is refused saying to set it. A runtime declared in the configuration file, and `network_pool`
+  `off`, are refused the same way. Kubernetes and Incus refuse app-role joins (`hosts.CheckAppRoleJoin`).
+- **Not done here.** The `docker-hosts` runtime still has exactly one control host: a second control
+  host's replica would read the first one's `unix://` endpoint as its own machine's. Renewing a host's
+  certificate must update `cert_sha256`, which the next `Sync` then pins.

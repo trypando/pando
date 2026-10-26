@@ -88,6 +88,7 @@ var Actions = []string{
 	"cluster.host.remove",
 	"cluster.join_token.create",
 	"cluster.join_token.revoke",
+	"cluster.runtime.convert",
 	"deploy.approve",
 	"deploy.expire",
 	"deploy.finish",

@@ -208,18 +208,18 @@ func TestNewClientMakesOneForEachKindOfEndpoint(t *testing.T) {
 	hostKey := string(ssh.MarshalAuthorizedKey(hostSigner.PublicKey()))
 	creds := Credentials{DockerTLS: dockerTLSBundle(t), SSHKey: clientKey}
 	for _, endpoint := range []string{"", "unix:///var/run/docker.sock", "tcp://10.0.0.6:2376", "ssh://10.0.0.7"} {
-		cli, err := newClient(HostConfig{Name: "h", Endpoint: endpoint, SSHHostKey: hostKey}, creds)
+		cli, err := newClient(HostConfig{Name: "h", Endpoint: endpoint, SSHHostKey: hostKey}, creds, "", nil)
 		require.NoError(t, err, endpoint)
 		require.NotNil(t, cli)
 		_ = cli.Close()
 	}
-	_, err := newClient(HostConfig{Endpoint: "tcp://10.0.0.6:2376"}, Credentials{DockerTLS: "nothing"})
+	_, err := newClient(HostConfig{Endpoint: "tcp://10.0.0.6:2376"}, Credentials{DockerTLS: "nothing"}, "", nil)
 	require.Error(t, err)
-	_, err = newClient(HostConfig{Endpoint: "ssh://10.0.0.7", SSHHostKey: hostKey}, Credentials{SSHKey: "not a key"})
+	_, err = newClient(HostConfig{Endpoint: "ssh://10.0.0.7", SSHHostKey: hostKey}, Credentials{SSHKey: "not a key"}, "", nil)
 	require.ErrorContains(t, err, "ssh_key is not a private key")
-	_, err = newClient(HostConfig{Endpoint: "ssh://10.0.0.7", SSHHostKey: "not a key"}, creds)
+	_, err = newClient(HostConfig{Endpoint: "ssh://10.0.0.7", SSHHostKey: "not a key"}, creds, "", nil)
 	require.ErrorContains(t, err, "ssh_host_key")
-	_, err = newClient(HostConfig{Endpoint: "ftp://10.0.0.7"}, creds)
+	_, err = newClient(HostConfig{Endpoint: "ftp://10.0.0.7"}, creds, "", nil)
 	require.Error(t, err)
 }
 

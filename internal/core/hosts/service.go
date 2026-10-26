@@ -50,7 +50,24 @@ type Service struct {
 	// is minted without one: the server's advertise address.
 	Address string
 
+	// Runtime keeps the runtime adapter's host list in line with the
+	// cluster's app hosts (runtime.go). A join checks Runtime.CheckJoin
+	// before it lets an app host in. Nil in tests that do not need it.
+	Runtime *Runtime
+
+	// OnChange runs after a host joins or is removed: the server syncs the
+	// runtime's host list there (Runtime.Sync) and logs what fails, which
+	// does not undo the change. Nil does nothing.
+	OnChange func(ctx context.Context)
+
 	Now func() time.Time
+}
+
+// Changed reports a change to the host list (OnChange).
+func (s *Service) Changed(ctx context.Context) {
+	if s.OnChange != nil {
+		s.OnChange(ctx)
+	}
 }
 
 // MintRequest is what a join token is minted from. Zero values take the
@@ -225,5 +242,9 @@ func (s *Service) Hosts(ctx context.Context) ([]state.Host, error) {
 
 // Remove removes a host from the cluster.
 func (s *Service) Remove(ctx context.Context, hostID string) (state.Host, error) {
-	return s.Store.RemoveHost(ctx, hostID)
+	h, err := s.Store.RemoveHost(ctx, hostID)
+	if err == nil {
+		s.Changed(ctx)
+	}
+	return h, err
 }

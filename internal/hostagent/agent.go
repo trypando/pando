@@ -31,6 +31,13 @@ const DefaultPort = 7443
 // and the agent answers "OK\n" and from then on carries bytes both ways, or
 // "NO <reason>\n" and closes. Nothing else is said by either side, so HTTP,
 // websockets and server-sent events pass through unchanged.
+//
+// On a joined host the agent also carries the host's container runtime API
+// (R-416), for a control host only: the line is then
+//
+//	PANDO-AGENT/1 docker\n
+//
+// answered the same way, and the stream that follows is the runtime's own.
 const (
 	protocolVersion = "PANDO-AGENT/1"
 	maxHeaderLine   = 512
@@ -65,6 +72,15 @@ type Agent struct {
 
 	// Dial connects to the permitted address. Nil is a TCP dial.
 	Dial func(ctx context.Context, addr string) (net.Conn, error)
+
+	// RuntimeSocket is the host's own container runtime socket, rootless on
+	// a joined host. Set, the agent also carries runtime API calls to it, for
+	// a control host's certificate only (R-416, runtime.go). Empty carries
+	// none: the agents this runtime starts itself are given no socket.
+	RuntimeSocket string
+
+	// DialRuntime connects to the runtime. Nil dials RuntimeSocket.
+	DialRuntime func(ctx context.Context) (net.Conn, error)
 
 	Logger *zap.Logger
 }
@@ -128,14 +144,8 @@ func (a *Agent) handle(ctx context.Context, raw net.Conn) {
 	if err != nil {
 		return
 	}
-	name, port, err := parseHeader(line)
+	upstream, err := a.open(ctx, conn, line)
 	if err != nil {
-		refuse(conn, err.Error())
-		return
-	}
-	upstream, err := a.connect(ctx, name, port)
-	if err != nil {
-		a.logger().Info("refused a forward", zap.String("target", name), zap.Int("port", port), zap.Error(err))
 		refuse(conn, err.Error())
 		return
 	}
@@ -144,9 +154,33 @@ func (a *Agent) handle(ctx context.Context, raw net.Conn) {
 		return
 	}
 	_ = conn.SetDeadline(time.Time{})
+	splice(ctx, conn, reader, upstream)
+}
 
-	// Bytes both ways until either side closes. The reader, not conn, so
-	// anything the proxy sent after the header line is not lost.
+// open connects what the header line asks for: the host's container runtime
+// (runtime.go) or a workload.
+func (a *Agent) open(ctx context.Context, conn *tls.Conn, line string) (net.Conn, error) {
+	if isRuntimeRequest(line) {
+		upstream, err := a.openRuntime(ctx, conn.ConnectionState())
+		if err != nil {
+			a.logger().Info("refused a runtime call", zap.String("from", conn.RemoteAddr().String()), zap.Error(err))
+		}
+		return upstream, err
+	}
+	name, port, err := parseHeader(line)
+	if err != nil {
+		return nil, err
+	}
+	upstream, err := a.connect(ctx, name, port)
+	if err != nil {
+		a.logger().Info("refused a forward", zap.String("target", name), zap.Int("port", port), zap.Error(err))
+	}
+	return upstream, err
+}
+
+// splice carries bytes both ways until either side closes. From reader, not
+// conn, so anything sent after the header line is not lost.
+func splice(ctx context.Context, conn *tls.Conn, reader io.Reader, upstream net.Conn) {
 	done := make(chan struct{}, 2)
 	go func() {
 		_, _ = io.Copy(upstream, reader)
@@ -334,6 +368,12 @@ func lastAddr(p netip.Prefix) netip.Addr {
 // port, as the client tlsConfig (ClientTLS) authenticates. The connection it
 // returns is a stream to the workload.
 func Dial(ctx context.Context, addr string, tlsConfig *tls.Config, name string, port int) (net.Conn, error) {
+	return dialAgent(ctx, addr, tlsConfig, fmt.Sprintf("%s %s %d", protocolVersion, name, port))
+}
+
+// dialAgent opens a connection to the agent at addr, sends header and returns
+// the stream once the agent has answered OK.
+func dialAgent(ctx context.Context, addr string, tlsConfig *tls.Config, header string) (net.Conn, error) {
 	d := tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
 		Config:    tlsConfig,
@@ -348,7 +388,7 @@ func Dial(ctx context.Context, addr string, tlsConfig *tls.Config, name string, 
 	} else {
 		_ = conn.SetDeadline(time.Now().Add(headerTimeout))
 	}
-	if _, err := fmt.Fprintf(conn, "%s %s %d\n", protocolVersion, name, port); err != nil {
+	if _, err := io.WriteString(conn, header+"\n"); err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("the host agent at %s closed the connection: %w", addr, err)
 	}

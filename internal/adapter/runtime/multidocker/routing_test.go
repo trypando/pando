@@ -409,7 +409,7 @@ func TestR204_AVolumeIsMadeOnItsAppsHostAndCarriesIt(t *testing.T) {
 	require.Empty(t, hosts["control"].got())
 
 	require.Error(t, a.SnapshotVolume(ctx, api.VolumeHandle{Handle: "gone/pando-x"}, &buf))
-	require.Error(t, a.RestoreVolume(ctx, api.VolumeHandle{Handle: "no-host"}, strings.NewReader("")))
+	require.NoError(t, a.RestoreVolume(ctx, api.VolumeHandle{Handle: "no-host"}, strings.NewReader("")), "a handle without a host is the control host's (R-418)")
 
 	// The host refuses: no handle.
 	hosts["app-1"].down = true

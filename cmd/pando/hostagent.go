@@ -77,8 +77,14 @@ func hostAgentServeCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("the host agent could not listen on %s: %w", listen, err)
 			}
-			logger.Info("host agent listening", zap.String("addr", listen), zap.String("pool", pool.String()))
-			agent := &hostagent.Agent{TLS: tlsConfig, Pool: pool.Masked(), Logger: logger}
+			logger.Info("host agent listening", zap.String("addr", listen), zap.String("pool", pool.String()),
+				zap.Bool("carries_runtime_calls", os.Getenv(multidocker.EnvAgentRuntimeSocket) != ""))
+			// On a joined host the agent is also the only way to its runtime
+			// (R-416): the socket is never published.
+			agent := &hostagent.Agent{
+				TLS: tlsConfig, Pool: pool.Masked(), Logger: logger,
+				RuntimeSocket: os.Getenv(multidocker.EnvAgentRuntimeSocket),
+			}
 			return agent.Serve(ctx, ln)
 		},
 	}

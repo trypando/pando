@@ -61,6 +61,11 @@ const (
 	EnvAgentAuthorities = "PANDO_AGENT_AUTHORITIES"
 	EnvAgentPool        = "PANDO_AGENT_NETWORK_POOL"
 	EnvAgentListen      = "PANDO_AGENT_LISTEN"
+
+	// EnvAgentRuntimeSocket is the host's own container runtime socket, on a
+	// host that joined a cluster: the agent then carries a control host's
+	// runtime calls to it (R-416). This adapter sets it on no agent it starts.
+	EnvAgentRuntimeSocket = "PANDO_AGENT_RUNTIME_SOCKET"
 )
 
 // clientCert is Pando's certificate for the agents, issued at Configure from
