@@ -117,7 +117,7 @@ spec:
         - name: pando
           # Pinned by digest, and moved to each release by Dependabot; the
           # egress gateway image above moves with it.
-          image: trypando/pando:0.13.0@sha256:e9492ae349c88da4f56530cf0b05b03cd6405b61b55eab68c3617de468c1cdf5
+          image: trypando/pando:0.14.0@sha256:84ce2a7da0d861a2db586fd7f469a445819b5044fb8296d3dc848ce3feb499f2
           args: [serve, --config, /etc/pando/pando.yaml]
           ports:
             - name: http
