@@ -55,6 +55,9 @@ var descriptions = map[string]string{
 	"allow_memory_oversubscription": "Let apps together ask for more memory than the runtime has. Off by " +
 		"default: a deploy that would need more memory than is left is refused. On, the host may run out and " +
 		"stop an app to free memory. Disk is never oversubscribed.",
+	"allow_failover_oversubscription": "In a cluster, let apps' standbys be placed past the CPU and memory kept " +
+		"free for losing a host. Off by default: an app whose standby could not start anywhere runs without one. " +
+		"On, a host that takes over starts what fits, highest availability.priority first. Disk is never oversubscribed.",
 	"audit_retention_months": "How many months the audit log keeps before an older month is archived and removed " +
 		"from the live log. 0 means 3, which is also the least it may be.",
 	"audit_archive": "Where a month of the audit log goes once it is past retention: keep (archived under Pando's " +

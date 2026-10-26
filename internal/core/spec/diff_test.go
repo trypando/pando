@@ -226,3 +226,14 @@ func TestEveryChangeHasAReadableSummary(t *testing.T) {
 		require.NotEmpty(t, c.Path)
 	}
 }
+
+// TestR422_AFailoverPriorityChangeIsBenign asserts that changing an app's
+// availability.priority restarts nothing: it is read only at failover.
+func TestR422_AFailoverPriorityChangeIsBenign(t *testing.T) {
+	next := valid()
+	next.Availability.Priority = 5
+	c, ok := changeAt(spec.Compare(valid(), next), "availability.priority")
+	require.True(t, ok)
+	require.Equal(t, spec.Benign, c.Class)
+	require.Equal(t, "This app's failover priority is now 5.", c.Summary)
+}

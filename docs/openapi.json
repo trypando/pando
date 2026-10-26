@@ -13676,6 +13676,9 @@
           "retention": {
             "$ref": "#/components/schemas/Retention"
           },
+          "availability": {
+            "$ref": "#/components/schemas/Availability"
+          },
           "warnings": {
             "type": "array",
             "items": {
@@ -14082,6 +14085,15 @@
           "app_id",
           "checked_at"
         ]
+      },
+      "Availability": {
+        "type": "object",
+        "properties": {
+          "priority": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "AwaitingApproval": {
         "type": "object",
@@ -17112,6 +17124,9 @@
             "type": "boolean"
           },
           "allow_memory_oversubscription": {
+            "type": "boolean"
+          },
+          "allow_failover_oversubscription": {
             "type": "boolean"
           },
           "audit_retention_months": {

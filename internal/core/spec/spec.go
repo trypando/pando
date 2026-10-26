@@ -44,6 +44,9 @@ type AppSpec struct {
 	Egress    Egress     `json:"egress"`
 	Retention Retention  `json:"retention"`
 
+	// Availability is how the app fails over in a cluster (R-422).
+	Availability Availability `json:"availability,omitzero"`
+
 	// Warnings are carried, not resolved. A warning is never a blocker —
 	// blockers are PLAN_* errors.
 	Warnings []Warning `json:"warnings,omitempty"`
@@ -710,6 +713,15 @@ type Retention struct {
 	LogBytes         int64 `json:"log_bytes"`
 	BackupDailyCount int   `json:"backup_daily_count"`
 	SpecRevisions    int   `json:"spec_revisions"`
+}
+
+// Availability is how the app is treated when its host is lost (R-422).
+type Availability struct {
+	// Priority orders the apps a host starts at failover when host policy
+	// allow_failover_oversubscription let their standbys be placed past what
+	// it keeps free: higher first, then by app. 0 by default; negative is
+	// allowed, for an app that should start last.
+	Priority int `json:"priority,omitempty"`
 }
 
 // Warning codes that must exist (design 01 §2.8).

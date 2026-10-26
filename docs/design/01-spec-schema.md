@@ -45,6 +45,7 @@ type AppSpec struct {
     Resources  Resources   `json:"resources"`
     Egress     Egress      `json:"egress"`
     Retention  Retention   `json:"retention"`
+    Availability Availability `json:"availability,omitzero"` // R-422
     PerUser    PerUser     `json:"per_user"`      // R-290, LATER
     Warnings   []Warning   `json:"warnings"`      // carried, not resolved
 }
@@ -447,6 +448,10 @@ type Retention struct {
     BackupDaily      int   `json:"backup_daily_count"` // R-211
     SpecRevisions    int   `json:"spec_revisions"`     // R-152
 }
+
+type Availability struct {
+    Priority int `json:"priority,omitempty"` // failover start order, higher first (R-422)
+}
 ```
 
 **[D]** An app's egress **starts from the install's rules and is layered on them** (R-182). It never
@@ -529,7 +534,7 @@ Diff operates on the spec tree and classifies each change:
 
 | Class | Meaning | UI treatment |
 |---|---|---|
-| `benign` | Retention, warnings, display-only | Collapsed |
+| `benign` | Retention, warnings, failover priority, display-only | Collapsed |
 | `restart` | Env, resources, health | Shown; requires restart |
 | `rebuild` | Source, build config | Shown; triggers a build |
 | `destructive` | Volume removed, slot resolution changed from provisioned to bound, routing mode changed, **runtime adapter changed** | **Shown prominently, requires explicit confirmation** |

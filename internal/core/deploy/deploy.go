@@ -539,6 +539,7 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 	}
 	r.withBuiltImageAuth(ctx, appSpec, &bundle)
 	bundle.FirstDeploy = r.firstDeploy(ctx, dep.AppID)
+	bundle.Failover.AllowOversubscription = r.failoverOversubscription(ctx, appSpec)
 
 	runtime, ok := r.registry.Runtime(appSpec.Runtime.AdapterRef)
 	if !ok {
@@ -984,7 +985,8 @@ func bundlePlanFor(s *spec.AppSpec, image string, perWorkload map[string]string,
 			Private: true, // R-026, always.
 			Egress:  rules,
 		},
-		Labels: map[string]string{"pando.app": s.AppID},
+		Labels:   map[string]string{"pando.app": s.AppID},
+		Failover: api.FailoverPlan{Priority: s.Availability.Priority},
 	}
 
 	for _, v := range s.Volumes {
@@ -1726,4 +1728,16 @@ func (r *Runner) firstDeploy(ctx context.Context, appID string) bool {
 	}
 	running, err := r.deploys.RunningSpecID(ctx, appID)
 	return err == nil && running == ""
+}
+
+// failoverOversubscription is host policy allow_failover_oversubscription,
+// for the runtime placing the app's standby (R-422). Any doubt answers false,
+// the safe value: the standby is then placed only where room is kept free for
+// its host's loss.
+func (r *Runner) failoverOversubscription(ctx context.Context, s *spec.AppSpec) bool {
+	if r.planner == nil {
+		return false
+	}
+	plan, err := r.planner.FailoverPlan(ctx, s)
+	return err == nil && plan.AllowOversubscription
 }

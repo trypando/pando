@@ -158,6 +158,15 @@ type Document struct {
 	AllowCPUOversubscription    bool `json:"allow_cpu_oversubscription,omitempty"`
 	AllowMemoryOversubscription bool `json:"allow_memory_oversubscription,omitempty"`
 
+	// AllowFailoverOversubscription lets an app's standby be placed past the
+	// CPU and memory the other hosts keep free for its host's loss (R-422).
+	// Off by default: a standby goes only where, if its app's host were lost,
+	// it would start, and an app with nowhere like that runs without one.
+	// On, a host that takes over starts what fits, by each app's
+	// availability.priority. Disk is still never oversubscribed (R-242): a
+	// standby's copies are on its host's disk all the time.
+	AllowFailoverOversubscription bool `json:"allow_failover_oversubscription,omitempty"`
+
 	// Audit retention (R-347, R-348). The live audit log keeps
 	// AuditRetentionMonths whole months; an older month is archived, the
 	// archive read back and checked, and only then is the month removed.

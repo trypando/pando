@@ -230,3 +230,37 @@ category for operator-supplied replicated storage), O-66 (whether clustering is 
 - **Not done here.** The `docker-hosts` runtime still has exactly one control host: a second control
   host's replica would read the first one's `unix://` endpoint as its own machine's. Renewing a host's
   certificate must update `cert_sha256`, which the next `Sync` then pins.
+
+### As built: failover capacity
+
+R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_place.go`
+(`chooseStandbyHost`), because placement is the adapter's (R-256).
+
+- **Pairwise reservation.** For a lost host H and another host G, the standbys on G of H's apps must
+  fit G's free CPU and memory, where free is G's total less its *running* containers' limits.
+  Standbys are stopped, so they are not in free; G keeps the largest of its per-H sums, not their sum.
+- **Choosing a host [P]:** any open host other than the app's own where the standby fits; among those
+  the most room left for the app's host's loss (memory, then CPU), then fewer standbys, then host
+  order. This spreads a large host's standbys rather than filling the roomiest host first.
+- **Disk:** every standby's copies are counted on its host always, at what the standby reports or
+  three times the app's disk limit [P], against the host's configured `total_disk_bytes`. The adapter
+  does not know what running apps hold on a host's disk, so copies are counted against the whole
+  total; a host that reports no disk total is not checked, as the planner does not check it.
+- **No room** is `standbyChoice.NoRoom`, an `errs.Error` (`CAPACITY_WOULD_OVERSUBSCRIBE`) whose message
+  names the largest room any host has. It is never returned as an error and never blocks a deploy:
+  the standby code records it, and `notice.Service.Standbys` raises it as notice `standby.no_room`.
+  Existing standbys are never moved or dropped for a new one.
+- **Policy** `allow_failover_oversubscription` (host policy document, no column) reaches the adapter
+  as `BundlePlan.Failover.AllowOversubscription`, set by a deploy only; the reconciler sends false.
+  It skips the CPU and memory check, never disk.
+- **Priority** is the spec's `availability.priority` (integer, default 0, a benign change), carried as
+  `BundlePlan.Failover.Priority`. `failoverOrder` starts a lost host's standbys on a host highest
+  priority first, then by app, each if it fits what is left; one that does not fit is skipped and
+  the next tried.
+- **Capacity details** gain, per host row, `failover`: `kept_free_for` (lost host, CPU, memory and a
+  sentence such as "b's failover needs 20.00 cores and 40.0 GB free on c."), `reserved_cpu_millis`,
+  `reserved_memory_bytes` and `standby_disk_bytes` (R-243), once the standby code sets
+  `Adapter.standbys`.
+- **Not yet:** a new app's own placement (`choose` in `placement.go`) does not subtract what a host
+  keeps free for failover, so a new running app can take reserved room (O-67). Doing so would refuse a
+  deploy for room kept for standbys, which R-422 does not say; left for a decision.

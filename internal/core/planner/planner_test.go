@@ -931,3 +931,27 @@ func TestR240_AWorkloadRunsWithinTheAppsLimits(t *testing.T) {
 	_, err = p.Check(context.Background(), s)
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
 }
+
+// TestR422_TheFailoverPlanCarriesPriorityAndPolicy asserts what a runtime
+// keeping standbys is told: the spec's availability.priority, and host
+// policy allow_failover_oversubscription, off unless policy says on.
+func TestR422_TheFailoverPlanCarriesPriorityAndPolicy(t *testing.T) {
+	s := plannableSpec()
+	s.Availability.Priority = 7
+	reg := registry(t, capableRuntime(), capableRouting(), capableBuilder())
+
+	got, err := planner.New(reg, nil, nil).FailoverPlan(context.Background(), s)
+	require.NoError(t, err)
+	require.Equal(t, api.FailoverPlan{Priority: 7}, got)
+
+	doc := policy.Default()
+	doc.AllowFailoverOversubscription = true
+	got, err = planner.New(reg, policy.Static(doc), nil).FailoverPlan(context.Background(), s)
+	require.NoError(t, err)
+	require.Equal(t, api.FailoverPlan{Priority: 7, AllowOversubscription: true}, got)
+
+	plan, err := planner.New(reg, policy.Static(doc), nil).Check(context.Background(), s)
+	require.NoError(t, err)
+	require.Equal(t, 7, plan.Bundle.Failover.Priority)
+	require.False(t, plan.Bundle.Failover.AllowOversubscription, "policy is read when a standby is placed, at deploy")
+}
