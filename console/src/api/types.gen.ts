@@ -439,6 +439,30 @@ export interface Notice {
   ignored: boolean;
 }
 
+export interface Host {
+  id: string;
+  name: string;
+  roles: (string[] | null);
+  address: string;
+  cert_sha256: string;
+  platform?: string;
+  version?: string;
+  joined_with?: string;
+  joined_at: string;
+  last_seen_at?: string;
+}
+
+export interface JoinToken {
+  id: string;
+  roles: (string[] | null);
+  max_uses: number;
+  uses: number;
+  created_by: string;
+  created_at: string;
+  expires_at: string;
+  revoked_at?: string;
+}
+
 export interface Source {
   type: string;
   url?: string;

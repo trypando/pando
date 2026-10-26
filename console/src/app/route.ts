@@ -27,9 +27,9 @@ export type Section =
 /** The pages of System (issue #154): how the installation itself is set up
  *  and kept, as opposed to its apps or its people. Each was a sidebar item of
  *  its own, and its old address still opens it. */
-export type SystemTab = 'overview' | 'adapters' | 'policy' | 'backups';
+export type SystemTab = 'overview' | 'adapters' | 'policy' | 'backups' | 'hosts';
 
-const SYSTEM_TABS: SystemTab[] = ['overview', 'adapters', 'policy', 'backups'];
+const SYSTEM_TABS: SystemTab[] = ['overview', 'adapters', 'policy', 'backups', 'hosts'];
 
 /** Where a System page that was folded into another lives now: Updates is
  *  the Pando card on Overview. */

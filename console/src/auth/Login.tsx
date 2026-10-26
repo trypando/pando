@@ -62,7 +62,7 @@ export function Login() {
   // installation but a new one — and on a new one, signing in says why not.
   if (setup.data?.needed) {
     return (
-      <Setup
+      <SetupChoice
         onTaken={async (message) => {
           const again = await setup.refetch();
           if (again.data?.needed === false) {
@@ -440,6 +440,90 @@ export function Passcode({ appID, signedIn }: { appID: string; signedIn: boolean
 }
 
 /**
+ * A new installation is set up one of two ways: its first administrator, or
+ * joining a cluster that already exists (R-415), which is offered at setup
+ * only.
+ */
+function SetupChoice({ onTaken }: Readonly<{ onTaken: (message: string) => Promise<boolean> }>) {
+  const [joining, setJoining] = useState(false);
+  const other = (
+    <Button variant="ghost" fullWidth onClick={() => setJoining(!joining)}>
+      {joining ? 'Create administrator' : 'Join a cluster'}
+    </Button>
+  );
+  return joining ? <JoinCluster other={other} /> : <Setup onTaken={onTaken} other={other} />;
+}
+
+/** What POST /setup/join answers once the host has joined (R-415). */
+interface Joined {
+  roles: string[];
+  status: string;
+}
+
+/** "control and app". */
+function roleWords(roles: string[]): string {
+  return roles.join(' and ');
+}
+
+/**
+ * Joining a cluster with a join token minted on one of its hosts (R-415). The
+ * host restarts into the cluster once it has joined; there is no account here
+ * to sign in to until it has.
+ */
+function JoinCluster({ other }: Readonly<{ other: React.ReactNode }>) {
+  const [token, setToken] = useState('');
+  const [name, setName] = useState('');
+
+  const join = useMutation({
+    mutationFn: () => api.post<Joined>('/setup/join', { token, name }),
+  });
+
+  const edit = (set: (v: string) => void) => (value: string) => {
+    if (join.isError) join.reset();
+    set(value);
+  };
+
+  if (join.isSuccess) {
+    const roles = join.data?.roles ?? [];
+    return (
+      <Frame
+        heading="Joined the cluster"
+        lede={`${roles.length > 0 ? `Roles: ${roleWords(roles)}. ` : ''}Pando is restarting into the cluster.`}
+      >
+        {null}
+      </Frame>
+    );
+  }
+
+  return (
+    <Frame heading="Join a cluster">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          join.mutate();
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
+      >
+        <Input
+          label="Join token"
+          value={token}
+          autoComplete="off"
+          spellCheck={false}
+          autoFocus
+          error={join.isError ? withRemedy(join.error) : undefined}
+          onChange={(e) => edit(setToken)(e.target.value.trim())}
+        />
+        <Input label="Host name" value={name} autoComplete="off" onChange={(e) => edit(setName)(e.target.value)} />
+        <Button type="submit" variant="primary" fullWidth disabled={join.isPending || token === '' || name.trim() === ''}>
+          {join.isPending ? 'Joining' : 'Join'}
+        </Button>
+        {other}
+      </form>
+    </Frame>
+  );
+}
+
+/**
  * A new installation's first account.
  *
  * It needs the setup token Pando printed to its log (R-046, issue #130), so
@@ -450,7 +534,10 @@ export function Passcode({ appID, signedIn }: { appID: string; signedIn: boolean
  * about this form — a wrong token, a short password, an unusable username —
  * and stays on it.
  */
-function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) {
+function Setup({
+  onTaken,
+  other,
+}: Readonly<{ onTaken: (message: string) => Promise<boolean>; other: React.ReactNode }>) {
   const [token, setToken] = useState('');
   const [username, setUsername] = useState('admin');
   const [displayName, setDisplayName] = useState('');
@@ -541,6 +628,7 @@ function Setup({ onTaken }: { onTaken: (message: string) => Promise<boolean> }) 
         >
           {create.isPending ? 'Setting up' : 'Create account'}
         </Button>
+        {other}
       </form>
     </Frame>
   );
