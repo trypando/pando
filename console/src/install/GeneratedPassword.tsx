@@ -20,6 +20,7 @@ import { Button, Checkbox, Icon, IconButton, Input } from '@design';
 import { api } from '@api/client';
 import { messageOf } from './Accounts';
 import './GeneratedPassword.css';
+import { copyText } from '../ui/clipboard';
 
 export function GeneratedPassword({
   value,
@@ -102,14 +103,10 @@ export function PasswordToCopy({
   useEffect(() => setCopied(null), [value]);
 
   async function copy() {
-    try {
-      // Absent outside a secure context, and an install reached over plain
-      // HTTP on a private network is a normal way to run Pando.
-      if (!navigator.clipboard) throw new Error('no clipboard');
-      await navigator.clipboard.writeText(value);
+    if (await copyText(value)) {
       setCopied('yes');
       window.setTimeout(() => setCopied(null), 2_000);
-    } catch {
+    } else {
       // Select it instead, so copying it is one keystroke away — shown first,
       // because browsers will not copy out of a masked field.
       setShown(true);

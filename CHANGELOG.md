@@ -19,6 +19,20 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+### Security
+
+No new advisories.
+
+### Fixed
+
+- **Copy buttons copy over plain HTTP** (#322). Browsers withhold the clipboard API from a page
+  served over plain HTTP, as the shipped `docker-compose.yml` serves Pando, so copy buttons there
+  selected the text at best and some did nothing: two-factor recovery codes, the generated
+  password, the CLI sign-in code, sign-in URLs and tokens, logs, code blocks and setup questions.
+  They now copy, and fall back to selecting the text only when the browser refuses every way to
+  copy. Reported by [@realPhrojoe](https://github.com/realPhrojoe)
+  in [#322](https://github.com/trypando/pando/issues/322).
+
 ## [0.16.0] - 2026-10-25
 
 ### Security

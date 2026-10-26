@@ -42,6 +42,7 @@ import {
   Tag,
 } from '@design';
 import { AiStar } from '../ui/AiStar';
+import { copyOrSelect } from '../ui/CopyField';
 import { VariableEditor, type EditorGroup, type EditorRow } from './VariableEditor';
 import { AiGlyph, AiThinking, useReducedMotion } from '../ui/AiThinking';
 
@@ -1440,6 +1441,7 @@ function QuestionCard({
   onSave?: (value: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const prompt = useRef<HTMLSpanElement>(null);
   const state = answerState(question, value);
   const suggested = question.suggested;
   const label = saving
@@ -1454,7 +1456,8 @@ function QuestionCard({
   async function copy() {
     // The prompt exactly, and nothing else. Anything prepended would arrive in
     // the assistant as part of the question.
-    await navigator.clipboard.writeText(question.prompt);
+    // Selected instead where the browser will not copy.
+    if ((await copyOrSelect(question.prompt, prompt.current)) !== 'copied') return;
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2_000);
   }
@@ -1467,7 +1470,7 @@ function QuestionCard({
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-4)' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', minWidth: 0 }}>
             {/* Verbatim. Not shortened, not re-worded, not split up. */}
-            <span style={{ font: 'var(--type-label)', color: 'var(--ink)', textWrap: 'pretty' } as React.CSSProperties}>
+            <span ref={prompt} style={{ font: 'var(--type-label)', color: 'var(--ink)', textWrap: 'pretty' } as React.CSSProperties}>
               {question.prompt}
             </span>
             {question.why && (

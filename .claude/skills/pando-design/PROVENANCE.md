@@ -67,9 +67,10 @@ A re-sync will revert them, so push them first.
   links use, exported for the console's own. Nothing changes without an `href`.
 
 - `components/code/CodeBlock.jsx` — its copy button said *Copied* and copied
-  nothing. It now writes the block's text to the clipboard, or selects it where
-  the browser has no clipboard (Pando over plain HTTP on a private network), and
-  keeps room on the right so the button never sits on the text.
+  nothing. It now writes the block's text to the clipboard; where the browser has
+  no clipboard API (Pando over plain HTTP on a private network) it selects the
+  text and copies the selection, and leaves it selected if even that is refused.
+  It keeps room on the right so the button never sits on the text.
 
 - `components/forms/Switch.jsx` — a `tone="status"` prop draws the on state in
   the running status color instead of ink, for a switch whose state is what the

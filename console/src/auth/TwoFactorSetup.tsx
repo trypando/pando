@@ -23,6 +23,7 @@ import { Banner, Button, Checkbox, Input } from '@design';
 import { api } from '@api/client';
 import { SignOut } from '../ui/SignOut';
 import { Frame, digitsOnly, messageOf, withRemedy } from './Login';
+import { copyText } from '../ui/clipboard';
 
 /** A pending authenticator: what the app is given to add the account. */
 export interface Enrollment {
@@ -355,14 +356,10 @@ export function RecoveryCodes({ codes, username }: Readonly<{ codes: string[]; u
   const [copied, setCopied] = useState<'yes' | 'no' | null>(null);
 
   async function copy() {
-    try {
-      // Absent outside a secure context, which a private-network install over
-      // plain HTTP is (see PasswordToCopy).
-      if (!navigator.clipboard) throw new Error('no clipboard');
-      await navigator.clipboard.writeText(codes.join('\n'));
+    if (await copyText(codes.join('\n'))) {
       setCopied('yes');
       window.setTimeout(() => setCopied(null), 2_000);
-    } catch {
+    } else {
       setCopied('no');
     }
   }

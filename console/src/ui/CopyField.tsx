@@ -4,24 +4,19 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Icon, IconButton } from '@design';
+import { copyText } from './clipboard';
 
-/** Copies text, or selects it where the browser will not: the clipboard is
- *  absent outside a secure context, and Pando reached over plain HTTP on a
- *  private network is normal. Says which happened. */
+/** Copies text, or selects it where the browser will not copy at all. Says
+ *  which happened. */
 export async function copyOrSelect(text: string, node: HTMLElement | null): Promise<'copied' | 'selected'> {
-  try {
-    if (!navigator.clipboard) throw new Error('no clipboard');
-    await navigator.clipboard.writeText(text);
-    return 'copied';
-  } catch {
-    if (node) {
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      window.getSelection()?.removeAllRanges();
-      window.getSelection()?.addRange(range);
-    }
-    return 'selected';
+  if (await copyText(text)) return 'copied';
+  if (node) {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
   }
+  return 'selected';
 }
 
 function useCopy(value: string) {

@@ -227,6 +227,35 @@ describe('the setup page', () => {
     clicked.mockRestore();
   });
 
+  // R-405: the holder is told to save the codes, and over plain HTTP, as the
+  // shipped compose file serves Pando, there is no clipboard API (#322).
+  it('R-405 copies the recovery codes over plain HTTP', async () => {
+    serve((_, path) => {
+      if (path === '/me/two-factor/totp') return reply(enrollment);
+      if (path === '/me/two-factor/totp/confirm') return reply({ recovery_codes: codes });
+      return unanswered();
+    });
+    vi.stubGlobal('navigator', {});
+    let copied = '';
+    const execCommand = vi.fn(() => {
+      const field = document.activeElement as HTMLTextAreaElement;
+      copied = field.value.slice(field.selectionStart, field.selectionEnd);
+      return true;
+    });
+    Object.defineProperty(document, 'execCommand', { value: execCommand, configurable: true });
+
+    screen = mount(<TwoFactorSetup />);
+    await screen.press('Set up');
+    await screen.fill('Code from the app', '123456');
+    await screen.submit('Code from the app');
+    await screen.press('Copy');
+
+    expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(copied).toBe(codes.join('\n'));
+    expect(screen.text()).toContain('Copied');
+    Reflect.deleteProperty(document, 'execCommand');
+  });
+
   it('says how to copy when the browser will not', async () => {
     serve((_, path) => {
       if (path === '/me/two-factor/totp') return reply(enrollment);

@@ -25,12 +25,13 @@
 // questions and any answers already given are shown, and nothing offers to
 // change them.
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button, Card, CodeBlock, Icon, IconButton, Input, Select, Tag } from '@design';
 
 import { api, RequestFailed } from '@api/client';
 import type { Candidate, Proposal, Question } from '@api/types.gen';
 import { rejectedEntries } from './rejections';
+import { copyOrSelect } from '../ui/CopyField';
 
 /** Why a detection failed: the server's envelope. */
 export interface DetectionError {
@@ -111,11 +112,13 @@ export function QuestionCard({
 }) {
   const [value, setValue] = useState(answer ?? '');
   const [copied, setCopied] = useState(false);
+  const prompt = useRef<HTMLParagraphElement>(null);
 
   async function copy() {
     // The prompt exactly, and nothing else. Anything prepended would arrive in
     // the assistant as part of the question.
-    await navigator.clipboard.writeText(question.prompt);
+    // Selected instead where the browser will not copy.
+    if ((await copyOrSelect(question.prompt, prompt.current)) !== 'copied') return;
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2_000);
   }
@@ -125,7 +128,7 @@ export function QuestionCard({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-3)' }}>
           {/* Verbatim. Not shortened, not re-worded, not split up. */}
-          <p style={{ font: 'var(--type-body-ui)', color: 'var(--ink)', margin: 0, flex: 1 }}>
+          <p ref={prompt} style={{ font: 'var(--type-body-ui)', color: 'var(--ink)', margin: 0, flex: 1 }}>
             {question.prompt}
           </p>
           <IconButton label={copied ? 'Copied' : 'Copy this question'} onClick={copy}>

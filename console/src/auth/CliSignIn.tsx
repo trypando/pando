@@ -17,6 +17,7 @@ import { Banner, Button, Input } from '@design';
 
 import { api } from '@api/client';
 import { Frame, withRemedy } from './Login';
+import { copyText } from '../ui/clipboard';
 
 /** What `pando login` put in the address, as POST /cli-sign-ins takes it. */
 export interface CliRequest {
@@ -87,14 +88,10 @@ function CodeToPaste({ code }: Readonly<{ code: string }>) {
   const [copied, setCopied] = useState<'yes' | 'no' | null>(null);
 
   async function copy() {
-    try {
-      // Absent outside a secure context, which an install over plain HTTP on
-      // a private network is (see PasswordToCopy).
-      if (!navigator.clipboard) throw new Error('no clipboard');
-      await navigator.clipboard.writeText(code);
+    if (await copyText(code)) {
       setCopied('yes');
       window.setTimeout(() => setCopied(null), 2_000);
-    } catch {
+    } else {
       setCopied('no');
     }
   }
