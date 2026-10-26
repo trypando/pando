@@ -174,7 +174,7 @@ RUN apk add --no-cache bash curl git postgresql17-client su-exec tzdata \
 # distrusted. Alpine's image is pinned like the rest, so Dependabot moves it
 # when Alpine ships a new bundle; scripts/check-trust-store.py fails the image
 # in CI if a distrusted root is left either way.
-FROM alpine:3.24@sha256:71e9b7bae160ba167fa17414401b94cbcdaf3c32feeab9298bd794a2a0614c35 AS ca-bundle
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS ca-bundle
 
 FROM dhi.io/alpine-base:3.24@sha256:7b06d747fcb428a0699679955e903b13322c92c79d94ce94c108634f13a714f1
 COPY --from=packages /staging/ /
