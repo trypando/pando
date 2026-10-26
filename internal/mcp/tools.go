@@ -1593,6 +1593,88 @@ var toolList = []tool{
 		},
 	},
 	{
+		Name: "pando_list_hosts",
+		Description: "The hosts that have joined this installation's cluster: each one's name, roles " +
+			"(control, app), address, version and when it was last heard from. Needs install.cluster.manage.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/cluster/hosts", nil, nil
+		},
+	},
+	{
+		Name:        "pando_remove_host",
+		Description: "Remove a host from the cluster. Needs install.cluster.manage.",
+		Schema:      schema(map[string]any{"host_id": str("The host's ID, from pando_list_hosts.")}, "host_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "host_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "DELETE", "/cluster/hosts/" + url.PathEscape(id), nil, nil
+		},
+	},
+	{
+		Name: "pando_list_join_tokens",
+		Description: "Every join token, newest first: its roles, how many of its uses are spent, when it " +
+			"expires and whether it was revoked. Never the token itself. Needs install.cluster.manage.",
+		Schema: schema(map[string]any{}),
+		request: func(map[string]any) (string, string, any, error) {
+			return "GET", "/cluster/join-tokens", nil, nil
+		},
+	},
+	{
+		Name: "pando_create_join_token",
+		Description: "Create a token a new Pando joins this installation with, at its setup. `join` in the " +
+			"reply is the token and is shown once. A token for the control role needs every install permission.",
+		Schema: schema(map[string]any{
+			"roles": strList("control, app, or both. Left out: both while the cluster has fewer than three hosts, then app."),
+			"max_uses": map[string]any{
+				"type": "integer", "minimum": 1, "maximum": 100,
+				"description": "How many hosts may join with it. Left out, 1.",
+			},
+			"expires_hours": map[string]any{
+				"type": "integer", "minimum": 1, "maximum": 720,
+				"description": "How many hours it lasts. Left out, 24.",
+			},
+			"address": str("The installation's address the joining host reaches, such as https://pando.example.com. Left out, this server's advertise address."),
+		}),
+		request: func(args map[string]any) (string, string, any, error) {
+			body := map[string]any{}
+			roles, err := stringListArg(args, "roles")
+			if err != nil {
+				return "", "", nil, err
+			}
+			if len(roles) > 0 {
+				body["roles"] = roles
+			}
+			for _, key := range []string{"max_uses", "expires_hours"} {
+				if v, ok := args[key]; ok && v != nil {
+					n, isNumber := v.(float64)
+					if !isNumber || n < 1 || n != float64(int(n)) {
+						return "", "", nil, fmt.Errorf("%s must be a whole number, at least 1", key)
+					}
+					body[key] = int(n)
+				}
+			}
+			if a, _ := stringArg(args, "address", false); a != "" {
+				body["address"] = a
+			}
+			return "POST", "/cluster/join-tokens", body, nil
+		},
+	},
+	{
+		Name:        "pando_revoke_join_token",
+		Description: "Revoke a join token, so no host can join with it. Needs install.cluster.manage.",
+		Schema:      schema(map[string]any{"token_id": str("The join token's ID, from pando_list_join_tokens.")}, "token_id"),
+		request: func(args map[string]any) (string, string, any, error) {
+			id, err := stringArg(args, "token_id", true)
+			if err != nil {
+				return "", "", nil, err
+			}
+			return "DELETE", "/cluster/join-tokens/" + url.PathEscape(id), nil, nil
+		},
+	},
+	{
 		Name: "pando_get_updates",
 		Description: "Whether a newer Pando is released: the version the server runs, the latest on " +
 			"the update channel, and each version in between with its changelog, security fixes " +

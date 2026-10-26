@@ -57,6 +57,11 @@ const (
 	// with OAuth (R-413).
 	OAuthClient Kind = "oac"
 
+	// Host is a machine that has joined the install's cluster, and JoinToken
+	// what it joined with (R-414, R-415).
+	Host      Kind = "host"
+	JoinToken Kind = "jt"
+
 	// Replica is one running Pando process (issue #72). Fresh on every start:
 	// a restarted process is a new replica, which is how work the old one had
 	// under way is recognized as nobody's.

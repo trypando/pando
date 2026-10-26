@@ -45,6 +45,8 @@ export const InstallVerb = {
   EventsManage: 'install.events.manage',
   /** Send the audit log to an audit sink, off the installation (R-385). */
   AuditExport: 'install.audit.export',
+  /** Join tokens and the cluster's hosts (R-414, R-415). */
+  ClusterManage: 'install.cluster.manage',
   AppCreate: 'app.create',
 } as const;
 

@@ -348,6 +348,16 @@ one verb says nothing about another (R-082).
 | `POST /api/v1/ai/reference/answer` |  | Answer a "How can I…" question from this reference, citing the endpoints, commands and tools it relies on. Body: `question`. Describes; does nothing (R-346). |
 | `GET /api/v1/reference` |  | This document: every endpoint, every CLI command, every MCP tool and every error code, built from the running binary. |
 
+### Cluster
+
+| Endpoint | Verb | What it does |
+| --- | --- | --- |
+| `GET /api/v1/cluster/hosts` | `install.cluster.manage` | Every host that has joined this installation's cluster (R-414): `name`, `roles` (`control`, `app`), `address`, `version`, `platform`, `joined_at` and `last_seen_at`. A single-host installation lists none. |
+| `DELETE /api/v1/cluster/hosts/{hostID}` | `install.cluster.manage` | Remove a host from the cluster (R-414). It can no longer reach the installation, and the installation no longer reaches it. |
+| `GET /api/v1/cluster/join-tokens` | `install.cluster.manage` | Every join token, newest first (R-415): `roles`, `uses` of `max_uses`, `expires_at`, `revoked_at` and who created it. Never the token itself. |
+| `POST /api/v1/cluster/join-tokens` | `install.cluster.manage` | Mint a token a new Pando joins this installation with, at its setup (R-415). Body: `roles` (`control`, `app`, or both; default both while the cluster has fewer than three hosts, then `app`), `max_uses` (default 1, at most 100), `expires_hours` (default 24, at most 720) and `address` (default this server's advertise address). A token for the `control` role needs every install verb (R-080a). `join` is shown once. |
+| `DELETE /api/v1/cluster/join-tokens/{tokenID}` | `install.cluster.manage` | Revoke a join token, so no host can join with it (R-415). |
+
 ## Errors
 
 Every error crossing this boundary carries the same envelope: a stable machine

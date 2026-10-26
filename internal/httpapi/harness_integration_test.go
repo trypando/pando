@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -47,6 +48,7 @@ import (
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/deploy"
 	"github.com/trypando/pando/internal/core/detection"
+	corehosts "github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/idle"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
@@ -219,6 +221,7 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 		Sessions:  sessions,
 		TwoFactor: twoFactor,
 		Tokens:    tokens,
+		Hosts:     harnessHosts(t, db),
 		CLISignIn: &clisignin.Service{
 			Store: state.NewCLISignIns(db), Users: users, Tokens: tokens,
 			Policy: effectivePolicy, Clock: clock.System{},
@@ -726,4 +729,13 @@ func harnessSink(kind string) adapterapi.AuditSinkAdapter {
 		return sinksyslog.New()
 	}
 	return nil
+}
+
+// harnessHosts is the cluster service, with an authority in a temporary
+// directory and the harness's token key (R-414, R-415).
+func harnessHosts(t *testing.T, db *state.DB) *corehosts.Service {
+	t.Helper()
+	authority, err := corehosts.LoadOrCreateAuthority(filepath.Join(t.TempDir(), "cluster-ca.pem"))
+	require.NoError(t, err)
+	return &corehosts.Service{Store: state.NewCluster(db, testTokenKey), Authority: authority, Address: "https://pando.example.com"}
 }

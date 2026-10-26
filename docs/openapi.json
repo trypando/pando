@@ -76,6 +76,9 @@
     },
     {
       "name": "Reference"
+    },
+    {
+      "name": "Cluster"
     }
   ],
   "paths": {
@@ -6531,6 +6534,221 @@
           }
         },
         "security": []
+      }
+    },
+    "/api/v1/cluster/hosts": {
+      "get": {
+        "operationId": "listHosts",
+        "summary": "List hosts",
+        "description": "Every host that has joined this installation's cluster: `name`, `roles` (`control`, `app`), `address`, `version`, `platform`, `joined_at` and `last_seen_at`. A single-host installation lists none.\n\nNeeds `install.cluster.manage`.",
+        "tags": [
+          "Cluster"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hosts": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "$ref": "#/components/schemas/Host"
+                      }
+                    }
+                  },
+                  "required": [
+                    "hosts"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.cluster.manage"
+      }
+    },
+    "/api/v1/cluster/hosts/{hostID}": {
+      "delete": {
+        "operationId": "removeHost",
+        "summary": "Remove a host",
+        "description": "Remove a host from the cluster. It can no longer reach the installation, and the installation no longer reaches it.\n\nNeeds `install.cluster.manage`.",
+        "tags": [
+          "Cluster"
+        ],
+        "parameters": [
+          {
+            "name": "hostID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done. No body."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.cluster.manage"
+      }
+    },
+    "/api/v1/cluster/join-tokens": {
+      "get": {
+        "operationId": "listJoinTokens",
+        "summary": "List join tokens",
+        "description": "Every join token, newest first: `roles`, `uses` of `max_uses`, `expires_at`, `revoked_at` and who created it. Never the token itself.\n\nNeeds `install.cluster.manage`.",
+        "tags": [
+          "Cluster"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tokens": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "$ref": "#/components/schemas/JoinToken"
+                      }
+                    }
+                  },
+                  "required": [
+                    "tokens"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.cluster.manage"
+      },
+      "post": {
+        "operationId": "createJoinToken",
+        "summary": "Create a join token",
+        "description": "Mint a token a new Pando joins this installation with, at its setup. Body: `roles` (`control`, `app`, or both; default both while the cluster has fewer than three hosts, then `app`), `max_uses` (default 1, at most 100), `expires_hours` (default 24, at most 720) and `address` (default this server's advertise address). A token for the `control` role needs every install verb. `join` is shown once.\n\nNeeds `install.cluster.manage`.",
+        "tags": [
+          "Cluster"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "roles": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "max_uses": {
+                    "type": "integer",
+                    "format": "int64"
+                  },
+                  "expires_hours": {
+                    "type": "integer",
+                    "format": "int64"
+                  },
+                  "address": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "roles",
+                  "max_uses",
+                  "expires_hours",
+                  "address"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "$ref": "#/components/schemas/JoinToken"
+                    },
+                    "join": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "token",
+                    "join",
+                    "note"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.cluster.manage"
+      }
+    },
+    "/api/v1/cluster/join-tokens/{tokenID}": {
+      "delete": {
+        "operationId": "revokeJoinToken",
+        "summary": "Revoke a join token",
+        "description": "Revoke a join token, so no host can join with it.\n\nNeeds `install.cluster.manage`.",
+        "tags": [
+          "Cluster"
+        ],
+        "parameters": [
+          {
+            "name": "tokenID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done. No body."
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-pando-verb": "install.cluster.manage"
       }
     },
     "/api/v1/config": {
@@ -15772,6 +15990,57 @@
           "via"
         ]
       },
+      "Host": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "roles": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "address": {
+            "type": "string"
+          },
+          "cert_sha256": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "joined_with": {
+            "type": "string"
+          },
+          "joined_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "roles",
+          "address",
+          "cert_sha256",
+          "joined_at"
+        ]
+      },
       "Identity": {
         "type": "object",
         "properties": {
@@ -16083,6 +16352,55 @@
         },
         "required": [
           "kind"
+        ]
+      },
+      "JoinToken": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "roles": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_uses": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "uses": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revoked_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "roles",
+          "max_uses",
+          "uses",
+          "created_by",
+          "created_at",
+          "expires_at"
         ]
       },
       "KV": {

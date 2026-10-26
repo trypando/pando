@@ -1003,6 +1003,77 @@ Check a backup is complete, without restoring it
 pando backup verify <backup-id>
 ```
 
+### `cluster`
+
+The hosts this installation runs on, and joining new ones
+
+```
+pando cluster
+```
+
+#### `cluster hosts`
+
+The cluster's hosts
+
+```
+pando cluster hosts
+```
+
+##### `cluster hosts list`
+
+List the cluster's hosts
+
+```
+pando cluster hosts list
+```
+
+##### `cluster hosts remove`
+
+Remove a host from the cluster
+
+```
+pando cluster hosts remove <host-id>
+```
+
+#### `cluster tokens`
+
+Tokens new hosts join with
+
+```
+pando cluster tokens
+```
+
+##### `cluster tokens create`
+
+Create a join token. It is shown once
+
+```
+pando cluster tokens create
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--address` |  | The installation's address the joining host reaches (default this server's advertise address) |
+| `--expires-hours` | `0` | How many hours it lasts (default 24) |
+| `--role` | `[]` | control, app, or both (repeat or comma-separate). Default: both while the cluster has fewer than three hosts, then app |
+| `--uses` | `0` | How many hosts may join with it (default 1) |
+
+##### `cluster tokens list`
+
+List join tokens
+
+```
+pando cluster tokens list
+```
+
+##### `cluster tokens revoke`
+
+Revoke a join token
+
+```
+pando cluster tokens revoke <token-id>
+```
+
 ### `config`
 
 Show the server's startup configuration and where each setting came from

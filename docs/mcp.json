@@ -419,6 +419,39 @@
       }
     },
     {
+      "name": "pando_create_join_token",
+      "description": "Create a token a new Pando joins this installation with, at its setup. `join` in the reply is the token and is shown once. A token for the control role needs every install permission.",
+      "input_schema": {
+        "properties": {
+          "address": {
+            "description": "The installation's address the joining host reaches, such as https://pando.example.com. Left out, this server's advertise address.",
+            "type": "string"
+          },
+          "expires_hours": {
+            "description": "How many hours it lasts. Left out, 24.",
+            "maximum": 720,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_uses": {
+            "description": "How many hosts may join with it. Left out, 1.",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "roles": {
+            "description": "control, app, or both. Left out: both while the cluster has fewer than three hosts, then app.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_create_section",
       "description": "Make a section in your own launcher: a named grouping of apps. Only you see it.",
       "input_schema": {
@@ -1177,6 +1210,24 @@
       }
     },
     {
+      "name": "pando_list_hosts",
+      "description": "The hosts that have joined this installation's cluster: each one's name, roles (control, app), address, version and when it was last heard from. Needs install.cluster.manage.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_list_join_tokens",
+      "description": "Every join token, newest first: its roles, how many of its uses are spent, when it expires and whether it was revoked. Never the token itself. Needs install.cluster.manage.",
+      "input_schema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_list_my_apps",
       "description": "The apps you can open — your launcher — with which are favorites, which of your sections each is filed under, and whether you can also manage it (can_manage), and your sections. Favorites first, then filed apps, then the rest, a page at a time: pass `next_cursor` back as `cursor` for the next page. A different list from pando_list_apps, which is the apps you can administer.",
       "input_schema": {
@@ -1600,6 +1651,22 @@
       }
     },
     {
+      "name": "pando_remove_host",
+      "description": "Remove a host from the cluster. Needs install.cluster.manage.",
+      "input_schema": {
+        "properties": {
+          "host_id": {
+            "description": "The host's ID, from pando_list_hosts.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_remove_registry_credential",
       "description": "Remove an image app's registry credential, so its image is pulled anonymously.",
       "input_schema": {
@@ -1764,6 +1831,22 @@
         "required": [
           "app_id",
           "message"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pando_revoke_join_token",
+      "description": "Revoke a join token, so no host can join with it. Needs install.cluster.manage.",
+      "input_schema": {
+        "properties": {
+          "token_id": {
+            "description": "The join token's ID, from pando_list_join_tokens.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token_id"
         ],
         "type": "object"
       }

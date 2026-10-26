@@ -77,6 +77,7 @@ import (
 	"github.com/trypando/pando/internal/core/detection"
 	"github.com/trypando/pando/internal/core/edge"
 	"github.com/trypando/pando/internal/core/edgecert"
+	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
 	"github.com/trypando/pando/internal/core/logstream"
@@ -356,6 +357,19 @@ func serve(ctx context.Context, configPath string) error {
 		return err
 	}
 	tokens := state.NewTokens(db, tokenKey)
+	clusterAuthority, err := hosts.LoadOrCreateAuthority(cfg.Server.ClusterAuthorityPath)
+	if err != nil {
+		return err
+	}
+	joinAddress := cfg.Server.ExternalURL
+	if joinAddress == "" {
+		joinHostname, _ := os.Hostname()
+		joinAddress = cfg.Server.Advertise(joinHostname)
+	}
+	clusterHosts := &hosts.Service{
+		Store: state.NewCluster(db, tokenKey), Authority: clusterAuthority,
+		Address: strings.TrimSuffix(joinAddress, "/"),
+	}
 	sessions := state.NewSessions(db, tokenKey)
 	if err := tokens.VerifyKey(ctx); err != nil {
 		return err
@@ -987,6 +1001,7 @@ func serve(ctx context.Context, configPath string) error {
 		Users:           users,
 		Sessions:        sessions,
 		Tokens:          tokens,
+		Hosts:           clusterHosts,
 		Apps:            apps,
 		Volumes:         volumes,
 		Auditor:         auditor,

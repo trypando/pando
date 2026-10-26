@@ -370,6 +370,15 @@
       "secret": false
     },
     {
+      "env": "PANDO_SERVER_CLUSTER_AUTHORITY_PATH",
+      "key": "server.cluster_authority_path",
+      "type": "string",
+      "default": "/var/lib/pando/cluster-ca.pem",
+      "description": "The file holding the cluster's certificate authority, which hosts join and reach each other through. Made on first start. Every control host must read the same one.",
+      "group": "server",
+      "secret": false
+    },
+    {
       "env": "PANDO_SERVER_EXTERNAL_URL",
       "key": "server.external_url",
       "type": "string",

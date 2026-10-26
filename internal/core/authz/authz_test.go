@@ -442,15 +442,16 @@ func TestSystemPrincipalBypassesGrantsButIsStillAPrincipal(t *testing.T) {
 }
 
 func TestVerbCatalogIsClosed(t *testing.T) {
-	// 15 app verbs, and 26 install-scoped ones: the twelve that stand on their
-	// own (O-17, R-217, install.tokens.manage, install.deploys.approve,
+	// 15 app verbs, and 27 install-scoped ones: the thirteen that stand on
+	// their own (O-17, R-217, install.tokens.manage, install.deploys.approve,
 	// install.upgrade, install.events.manage, install.audit.export,
-	// app.create) and the fourteen install.apps.* counterparts of app verbs
+	// install.cluster.manage, app.create) and the fourteen install.apps.* counterparts of app verbs
 	// (issue #81). The count is here deliberately: R-080 says the catalog is
 	// fixed, so adding a verb should require editing a test rather than only a
 	// constant.
-	require.Len(t, authz.Verbs, 41)
+	require.Len(t, authz.Verbs, 42)
 	require.True(t, authz.IsVerb(authz.InstallAuditExport), "R-385's verb must exist")
+	require.True(t, authz.IsVerb(authz.InstallClusterManage), "R-414's verb must exist")
 	require.True(t, authz.IsVerb(authz.InstallUpgrade), "R-356's verb must exist")
 	require.True(t, authz.IsVerb(authz.AppEgressTighten), "R-184's verbs must exist")
 	require.True(t, authz.IsVerb(authz.AppEgressLoosen), "R-184's verbs must exist")
@@ -468,7 +469,7 @@ func TestVerbCatalogIsClosed(t *testing.T) {
 			app++
 		}
 	}
-	require.Equal(t, 26, install)
+	require.Equal(t, 27, install)
 	require.Equal(t, 15, app)
 }
 

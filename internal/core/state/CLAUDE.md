@@ -38,14 +38,17 @@ a migration simpler.
 | `audit_events.txid` defaulting to `pg_current_xact_id()` | R-381 — the stream reads below the oldest running transaction in `(txid, id)` order, so an event that commits late is never behind a cursor. Never give it another default |
 | `pando_private` schema, granted to nobody, holding the restricted roles' passwords | R-348 — the application role cannot read the archiver's password. Never move it into `public`, where `applyGrants` would hand it to `pando_app` |
 | `pando_replicas.assertion_key` is exactly 32 bytes | R-051 — only the public half of a signing key is ever stored |
+| `join_tokens.hash`, keyed with the API token key; `uses <= max_uses` | R-415 — a dump cannot be used to join, and a single-use token joins one host |
 
 ## Things deliberately absent from the schema
 
 Adding any of these is a design change, not a refactor:
 
-- **Hosts.** R-256: multi-machine capability lives entirely in adapters. A `hosts` table is the first
-  step toward the scheduler R-010 forbids. `pando_replicas` is not one: it records Pando's own
-  processes (issue #72), and nothing that plans or places a workload may read it.
+- **Placement by host.** Hosts are modeled since R-414 (`cluster_hosts`): the cluster's membership,
+  roles and liveness. Nothing in core may read it to choose where a workload goes — that stays the
+  runtime adapter's (R-256), and a query that ranks hosts for a workload is the scheduler R-010
+  forbids. `pando_replicas` is Pando's own processes (issue #72), and nothing that plans or places a
+  workload may read it either.
 - **Tenants / orgs.** R-015.
 - **Per-user instances.** R-290 is LATER. When it lands it is an `app_instances` table keyed on
   `(app_id, user_id)` with its own volume rows; nothing needs restructuring to accommodate it.

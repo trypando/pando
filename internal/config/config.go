@@ -315,6 +315,12 @@ type Server struct {
 	// beside the secrets key, and a DR bundle carries it (R-212).
 	TokenKeyPath string `mapstructure:"token_key_path" desc:"The file holding the key API tokens are stored under. Made on first start. Every replica must read the same file, and a disaster-recovery bundle carries it."`
 
+	// ClusterAuthorityPath is the file holding the cluster's certificate
+	// authority (R-415): every host's certificate is issued from it, and a
+	// joining host checks it against its join token's hash. Generated on first
+	// start; a control host is given a copy when it joins.
+	ClusterAuthorityPath string `mapstructure:"cluster_authority_path" desc:"The file holding the cluster's certificate authority, which hosts join and reach each other through. Made on first start. Every control host must read the same one."`
+
 	// AdvertiseURL is where the other Pando replicas reach this one, for the
 	// one request that has to go to a particular replica: a deploy's live log
 	// (issue #72). Empty means http://<hostname><port of addr>, which is right
@@ -429,6 +435,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.work_dir", "/var/lib/pando/work")
 	v.SetDefault("server.audit_archive_dir", "/var/lib/pando/audit-archives")
 	v.SetDefault("server.token_key_path", tokenkey.DefaultPath)
+	v.SetDefault("server.cluster_authority_path", "/var/lib/pando/cluster-ca.pem") // hosts.DefaultAuthorityPath
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.development", false)
 
@@ -507,9 +514,10 @@ var boundEnv = map[string]string{
 	"server.work_dir":        "PANDO_SERVER_WORK_DIR",
 	"server.advertise_url":   "PANDO_SERVER_ADVERTISE_URL",
 
-	"server.audit_archive_dir": "PANDO_SERVER_AUDIT_ARCHIVE_DIR",
-	"server.token_key_path":    "PANDO_SERVER_TOKEN_KEY_PATH",
-	"log.level":                "PANDO_LOG_LEVEL",
+	"server.audit_archive_dir":      "PANDO_SERVER_AUDIT_ARCHIVE_DIR",
+	"server.token_key_path":         "PANDO_SERVER_TOKEN_KEY_PATH",
+	"server.cluster_authority_path": "PANDO_SERVER_CLUSTER_AUTHORITY_PATH",
+	"log.level":                     "PANDO_LOG_LEVEL",
 
 	"apps.docker_credentials": "PANDO_APPS_DOCKER_CREDENTIALS",
 

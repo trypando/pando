@@ -86,6 +86,12 @@ const (
 	// it somewhere new is a different thing to trust someone with.
 	InstallAuditExport Verb = "install.audit.export"
 
+	// InstallClusterManage mints and revokes join tokens, removes a host and
+	// changes a host's roles (R-414, R-415). A token for the control role
+	// hands the joining host every key the install has, so minting one also
+	// needs every install verb (R-080a).
+	InstallClusterManage Verb = "install.cluster.manage"
+
 	// AppCreate is install-scoped despite its name: there is no app yet when it
 	// is checked. Sequence A step 1 has always called it install-level.
 	AppCreate Verb = "app.create"
@@ -156,6 +162,7 @@ var Verbs = []Verb{
 	InstallUpgrade,
 	InstallEventsManage,
 	InstallAuditExport,
+	InstallClusterManage,
 	AppCreate,
 
 	AppView,
@@ -260,7 +267,7 @@ func InstallScoped(v Verb) bool {
 	switch v {
 	case InstallView, InstallUsersManage, InstallPolicyManage,
 		InstallAdaptersManage, InstallAuditRead, InstallBackupManage,
-		InstallTokensManage, InstallDeploysApprove, InstallUpgrade, InstallEventsManage, InstallAuditExport, AppCreate:
+		InstallTokensManage, InstallDeploysApprove, InstallUpgrade, InstallEventsManage, InstallAuditExport, InstallClusterManage, AppCreate:
 		return true
 	default:
 		_, ok := everyApp[v]

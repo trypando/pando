@@ -98,6 +98,11 @@ var auditedRoutes = map[string][]string{
 	"POST /api/v1/tokens/service":     {"token.create"},
 	"DELETE /api/v1/tokens/{tokenID}": {"token.revoke"},
 
+	// The cluster (R-414, R-415).
+	"POST /api/v1/cluster/join-tokens":             {"cluster.join_token.create"},
+	"DELETE /api/v1/cluster/join-tokens/{tokenID}": {"cluster.join_token.revoke"},
+	"DELETE /api/v1/cluster/hosts/{hostID}":        {"cluster.host.remove"},
+
 	// Adapters, sources and AI.
 	"POST /api/v1/adapters":                          {"adapter.configure"},
 	"DELETE /api/v1/sources/{sourceID}":              {"source.connection.delete"},
