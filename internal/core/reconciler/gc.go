@@ -80,7 +80,7 @@ type GC struct {
 	// BuildCaches and DiscardUpload remove a deleted app's build cache and
 	// uploaded source at teardown. Nil skips each.
 	BuildCaches   BuildCaches
-	DiscardUpload func(appID string) error
+	DiscardUpload func(ctx context.Context, appID string) error
 
 	// DiscardCredential removes a deleted app's registry credential (issue
 	// #41). Apps soft-delete, so the row's cascade never fires; a credential
@@ -459,7 +459,7 @@ func (g *GC) forgetFiles(ctx context.Context, t state.TeardownTarget) error {
 		}
 	}
 	if g.DiscardUpload != nil {
-		if err := g.DiscardUpload(t.AppID); err != nil {
+		if err := g.DiscardUpload(ctx, t.AppID); err != nil {
 			return err
 		}
 	}

@@ -66,6 +66,11 @@ type BackupCapabilities struct {
 	// constraint on small destinations, and it is a plan-time question rather
 	// than a discovery to make at byte 4,294,967,296.
 	MaxBundleBytes int64
+
+	// OffHost says bundles are kept somewhere other than the machine Pando
+	// runs on, so losing that machine does not lose them. A cluster with a
+	// second host requires it of the default destination (R-417).
+	OffHost bool
 }
 
 // StoredBundle is one bundle as the destination sees it.

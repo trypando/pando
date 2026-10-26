@@ -158,7 +158,7 @@ func TestR224_TearingDownAnAppRemovesItsBuildCacheAndUpload(t *testing.T) {
 		Logger:        zap.NewNop(),
 		Registry:      fakeRegistry{runtime: map[string]api.RuntimeAdapter{"rt_docker": runtime}},
 		BuildCaches:   caches,
-		DiscardUpload: func(appID string) error { discarded = append(discarded, appID); return nil },
+		DiscardUpload: func(_ context.Context, appID string) error { discarded = append(discarded, appID); return nil },
 	}
 
 	require.NoError(t, g.tearDown(context.Background(), state.TeardownTarget{
@@ -182,14 +182,14 @@ func TestABuildCacheThatCannotBeRemovedIsRetried(t *testing.T) {
 		Logger:        zap.NewNop(),
 		Registry:      fakeRegistry{},
 		BuildCaches:   &recordingCaches{err: errors.New("read-only file system")},
-		DiscardUpload: func(string) error { return nil },
+		DiscardUpload: func(context.Context, string) error { return nil },
 	}
 	require.Error(t, g.tearDown(context.Background(), state.TeardownTarget{
 		AppID: "app_01HQ8", BuilderRef: "bld_buildkit",
 	}))
 
 	g.BuildCaches = &recordingCaches{}
-	g.DiscardUpload = func(string) error { return errors.New("permission denied") }
+	g.DiscardUpload = func(context.Context, string) error { return errors.New("permission denied") }
 	require.Error(t, g.tearDown(context.Background(), state.TeardownTarget{AppID: "app_01HQ8"}))
 }
 

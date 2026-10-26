@@ -12,7 +12,7 @@ specify it, the phase that builds it, and the tests that prove it. Test coverage
 | Requirements | 336 | — |
 | Specified in a design doc | 298 | 88% |
 | Assigned to a phase | 137 | 40% |
-| Covered by a named test | 272 | 80% |
+| Covered by a named test | 273 | 81% |
 
 A requirement with no design reference is not necessarily a gap — it may be philosophy (R-002),
 a non-goal (R-010–R-016), or deferred (R-290+). A requirement with no *test* is either
@@ -287,7 +287,7 @@ philosophy, deferred, or a real gap, and the difference should be stated rather 
 | **R-414** | D | An install may run on several hosts, as one cluster. | 18. Adapters | — | — | `TestR414_ClusterAsTools`, `TestR414_ClusterCommandsCallTheirEndpoints`, `TestR414_HostsAreRecordedListedAndRemoved`, `TestR414_TheClusterNeedsItsOwnVerb`, `TestR414_TheFirstThreeHostsTakeBothRoles` |
 | **R-415** | D | A host joins with a join token, at setup only. | 18. Adapters | — | — | `TestR415_AControlRoleJoinTokenNeedsEveryInstallVerb`, `TestR415_AJoinTokenCarriesTheAddressAndTheAuthoritysHash`, `TestR415_AJoinTokenDefaultsToOneUseAndADay`, `TestR415_AJoinTokenIsStoredOnlyAsAKeyedDigest`, `TestR415_AJoinTokenRequestIsCheckedBeforeAnythingIsMinted`, `TestR415_ARevokedExpiredOrWrongJoinTokenIsRefusedTheSameWay`, `TestR415_ASingleUseJoinTokenJoinsOneHost`, `TestR415_TheClusterAuthorityIsMadeOnceAndReadBack` |
 | **R-416** | D | A joined host never exposes its container runtime's API. | 18. Adapters | — | — | `TestR416_AJoinedHostsAgentCarriesRuntimeCallsForAControlHostOnly`, `TestR416_AJoinedHostsRuntimeIsReachedThroughItsAgent`, `TestR416_AnAgentWithoutARuntimeSocketCarriesNoRuntimeCalls` |
-| **R-417** | D | Losing a control host leaves the install working. | 18. Adapters | — | — | — |
+| **R-417** | D | Losing a control host leaves the install working. | 18. Adapters | — | — | `TestR417_AClusterOfSeveralHostsIsNotUpgradedInPlace`, `TestR417_ASecondHostJoinsOnlyOnceNothingStaysOnThisHost`, `TestR417_AnOldUploadFileIsMovedIntoTheDatabaseOnFirstRead`, `TestR417_AnOldUploadFileIsMovedIntoTheStoreWhenRead`, `TestR417_AnUnchangedRouteIsNotRewritten`, `TestR417_AnUploadIsReadOnAnotherHostWithNoSharedDirectory`, `TestR417_AnUploadStoreFailureIsSaid`, `TestR417_AnUploadThatDoesNotMatchItsDigestIsRefused`, `TestR417_AnUploadWrittenOnOneReplicaIsReadOnAnother`, `TestR417_EveryControlHostWritesEveryRouteFromTheDatabase`, `TestR417_MigrateUploadsMovesEveryFileTheStoreLacks`, `TestR417_TheClusterCountIncludesThisHost` |
 | **R-418** | D | The first app host to join turns a single-host Docker install into a multi-host one in place. | 18. Adapters | — | — | `TestR418_AJoinIsRefusedWhenDockerCannotBecomeSeveralHosts`, `TestR418_AppsOfTheFormerSingleHostStayOnIt`, `TestR418_KubernetesAndIncusTakeControlRoleJoinsOnly`, `TestR418_TheFirstAppHostTurnsDockerIntoDockerHostsInPlace` |
 | **R-419** | D | An app may have a warm standby on another app host: the same spec, created and stopped, with… | 18. Adapters | — | — | — |
 | **R-420** | D | A standby's data is shipped without pausing the app and without changing a host's filesystem. | 18. Adapters | — | — | — |

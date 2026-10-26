@@ -50,7 +50,7 @@ func (s *Server) handleUploadSource(w http.ResponseWriter, r *http.Request) {
 	body := http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	defer func() { _ = body.Close() }()
 
-	path, err := s.Sources.StoreUpload(app.ID, body)
+	err := s.Sources.StoreUpload(r.Context(), app.ID, body)
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -84,6 +84,6 @@ func (s *Server) handleUploadSource(w http.ResponseWriter, r *http.Request) {
 
 	JSON(w, http.StatusOK, map[string]any{
 		"app_id": app.ID,
-		"stored": path != "",
+		"stored": true,
 	})
 }

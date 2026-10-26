@@ -582,7 +582,19 @@ func serve(ctx context.Context, configPath string) error {
 
 	// Where an app's source comes from, and where an uploaded one is kept
 	// (R-262). One value for the deploy path, detection, the API and the GC.
-	sources := source.Sources{UploadDir: source.DefaultUploadDir, WorkDir: cfg.Server.WorkDir}
+	// Uploads are kept in the database, so control hosts share no directory
+	// (R-417). Files from before that are moved in, in the background: each
+	// is also moved the first time a deploy reads it.
+	sources := source.Sources{Uploads: state.NewUploads(db), UploadDir: source.DefaultUploadDir, WorkDir: cfg.Server.WorkDir}
+	go func() {
+		moved, err := sources.MigrateUploads(ctx)
+		if err != nil {
+			logger.Warn("some uploaded source could not be moved into the database; it is moved when next deployed", zap.Error(err))
+		}
+		if moved > 0 {
+			logger.Info("moved uploaded source into the database", zap.Int("apps", moved))
+		}
+	}()
 
 	// The install's source connections (R-091, issue #127): what a private
 	// repository is cloned with. Sources read through it for a credential,
@@ -973,6 +985,7 @@ func serve(ctx context.Context, configPath string) error {
 		live, err := replicas.Live(ctx)
 		return len(live), err
 	}
+	upgrades.Hosts = clusterHosts.Count
 
 	apiHandler := (&httpapi.Server{
 		ClientAddr: trustedProxies,
@@ -1518,6 +1531,14 @@ func serve(ctx context.Context, configPath string) error {
 			}
 		}
 	}()
+
+	// On every replica, not only the leader: each control host's edge gets
+	// every app's route from the database rather than from a shared
+	// directory (R-417). Skipped while the cluster is one host.
+	go (&reconciler.RouteSync{
+		Apps: apps, Registry: registryAdapters{registry}, ProxyUpstream: proxyUpstream,
+		Hosts: clusterHosts.Count, Clock: clock.System{}, Logger: logger,
+	}).Run(loopCtx)
 
 	// R-211's rolling backups, which had a column, a default and an expiry
 	// query and nothing that ever took one — and then took them in series

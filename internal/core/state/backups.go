@@ -240,6 +240,9 @@ func (b *BundleSource) Counts(ctx context.Context) (map[string]int, error) {
 		"grants": `SELECT count(*) FROM grants`,
 		"specs":  `SELECT count(*) FROM spec_revisions`,
 		"tokens": `SELECT count(*) FROM tokens`,
+		// Uploaded source kept in the database travels in the dump (R-212,
+		// R-417); "uploads" counts the files not yet moved there.
+		"uploads_in_database": `SELECT count(*) FROM app_uploads`,
 	} {
 		var n int
 		if err := b.db.QueryRow(ctx, query).Scan(&n); err != nil {

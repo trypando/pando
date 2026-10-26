@@ -3,8 +3,8 @@
 package httpapi_test
 
 import (
+	"context"
 	"net/http"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -65,7 +65,7 @@ func TestR312_ScanningAnAppWhoseUploadIsGoneSaysHowToSendItAgain(t *testing.T) {
 
 	stored := i.upload(admin, id, packed(t, map[string]string{"main.go": "package main"}))
 	require.Less(t, stored.Code, 400, stored.String())
-	require.NoError(t, os.RemoveAll(i.Server.Sources.UploadDir))
+	require.NoError(t, i.Server.Sources.DiscardUpload(context.Background(), id))
 
 	got := i.do(admin, http.MethodPost, "/apps/"+id+"/security/scan", nil)
 	require.Equal(t, http.StatusBadRequest, got.Code, got.String())

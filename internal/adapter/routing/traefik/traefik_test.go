@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -113,6 +114,32 @@ func TestEnsureIsIdempotent(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1, "one app, one file, however many times it is applied")
+}
+
+// TestR417_AnUnchangedRouteIsNotRewritten asserts that ensuring a route that
+// is already written leaves the file alone: every control host ensures every
+// route each minute, and Traefik reloads on every write.
+func TestR417_AnUnchangedRouteIsNotRewritten(t *testing.T) {
+	a, dir := adapter(t, "")
+	req := api.RouteRequest{
+		AppID: "app_01HQ8", Mode: spec.RoutingSubdomain, Hostname: "notes.example.com",
+		ProxyUpstream: "http://pando:8080",
+	}
+	h, err := a.Ensure(context.Background(), req)
+	require.NoError(t, err)
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(h.Handle, old, old))
+
+	_, err = a.Ensure(context.Background(), req)
+	require.NoError(t, err)
+	info, err := os.Stat(h.Handle)
+	require.NoError(t, err)
+	require.True(t, info.ModTime().Equal(old), "an unchanged route is not written again")
+
+	req.Hostname = "notes2.example.com"
+	_, err = a.Ensure(context.Background(), req)
+	require.NoError(t, err)
+	require.Contains(t, readOnly(t, dir), "notes2.example.com")
 }
 
 // TestObserveReportsWithoutRemediating asserts design 05's division: adapters

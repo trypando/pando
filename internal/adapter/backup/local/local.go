@@ -101,6 +101,9 @@ func (a *Adapter) Capabilities() api.BackupCapabilities {
 		// will not guess. A destination that reports a limit it invented would
 		// refuse a backup that would have succeeded.
 		MaxBundleBytes: 0,
+
+		// A directory on this host, as far as the adapter can tell (R-417).
+		OffHost: false,
 	}
 }
 

@@ -59,6 +59,9 @@ type Service struct {
 	// Replicas counts the live Pando processes serving this install. An
 	// in-place upgrade is for one (issue #72).
 	Replicas func(ctx context.Context) (int, error)
+	// Hosts counts the cluster's hosts, this one included (R-414). An
+	// in-place upgrade is for an install on one (R-359, R-417).
+	Hosts func(ctx context.Context) (int, error)
 
 	DatabaseURL  secret.Value
 	WorkDir      string
@@ -122,6 +125,14 @@ func (s *Service) PlanFor(ctx context.Context, version string) (Plan, error) {
 	if s.Replicas != nil {
 		if n, err := s.Replicas(ctx); err == nil && n > 1 {
 			no(fmt.Sprintf("This install runs %d Pando replicas, and an in-place upgrade replaces only the one it runs in. Upgrade by rolling every replica to the new release's image with whatever runs them, such as `docker compose up -d` or `kubectl rollout`.", n))
+		}
+	}
+	// The same on several hosts: the helper replaces the Pando on its own
+	// host, and every other host would keep running the old release against
+	// a database migrated for the new one.
+	if s.Hosts != nil {
+		if n, err := s.Hosts(ctx); err == nil && n > 1 {
+			no(fmt.Sprintf("This install is a cluster of %d hosts, and an in-place upgrade replaces Pando only on the host it runs on. Upgrade by changing the image Pando runs on every host to the new release's, one host at a time.", n))
 		}
 	}
 

@@ -79,9 +79,15 @@ func (c *Checkout) View(subdir string) api.SourceView {
 // directory used to be one, and two servers in one process — which is what a
 // parallel test run is — wrote their uploads into each other's (issue #31).
 //
-// The zero value fetches git and image sources. An upload needs UploadDir.
+// The zero value fetches git and image sources. An upload needs Uploads or
+// UploadDir.
 type Sources struct {
-	// UploadDir is where uploaded sources are kept.
+	// Uploads keeps uploaded sources in the database, where every control
+	// host reads them (R-417). Nil keeps them as files under UploadDir.
+	Uploads UploadStore
+
+	// UploadDir is where uploaded sources were kept as files. With Uploads
+	// set, a file found here is moved into the database when it is read.
 	UploadDir string
 
 	// WorkDir is where a clone or an unpacked upload is made while a deploy or

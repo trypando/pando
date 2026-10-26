@@ -35,3 +35,25 @@ func TestR355_AnInstallOfSeveralReplicasIsNotUpgradedInPlace(t *testing.T) {
 		require.True(t, p.Possible, "%s: %v", name, p.Reasons)
 	}
 }
+
+// TestR417_AClusterOfSeveralHostsIsNotUpgradedInPlace asserts that the
+// in-place upgrade (R-359), which replaces Pando on one host, is refused once
+// a second host has joined, saying how to upgrade instead.
+func TestR417_AClusterOfSeveralHostsIsNotUpgradedInPlace(t *testing.T) {
+	ctx := context.Background()
+
+	h := newHarness(t)
+	h.svc.Hosts = func(context.Context) (int, error) { return 2, nil }
+	p, err := h.svc.PlanFor(ctx, "0.3.2")
+	require.NoError(t, err)
+	require.False(t, p.Possible)
+	require.Len(t, p.Reasons, 1)
+	require.Contains(t, p.Reasons[0], "cluster of 2 hosts")
+	require.Contains(t, p.Reasons[0], "every host", "the reason says how to upgrade instead")
+
+	h = newHarness(t)
+	h.svc.Hosts = func(context.Context) (int, error) { return 1, nil }
+	p, err = h.svc.PlanFor(ctx, "0.3.2")
+	require.NoError(t, err)
+	require.True(t, p.Possible, p.Reasons)
+}

@@ -264,3 +264,38 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
 - **Not yet:** a new app's own placement (`choose` in `placement.go`) does not subtract what a host
   keeps free for failover, so a new running app can take reserved room (O-67). Doing so would refuse a
   deploy for room kept for standbys, which R-422 does not say; left for a decision.
+
+### As built: control-plane availability
+
+- **Uploads** are in `app_uploads` and `app_upload_chunks` (migration 000086): 4 MiB bytea chunks
+  under one row holding the archive's SHA-256 and size, checked on every read. Not one bytea, which
+  holds a 256 MiB archive whole in memory on both sides, and not a large object, which outlives its
+  row unless something unlinks it and carries privileges `applyGrants` does not cover. A write is one
+  transaction, so a deploy reading during an upload reads the previous archive whole.
+  `source.Sources.Uploads` (`state.Uploads`) is the store; a file under `/var/lib/pando/uploads` from
+  before is moved into the database the first time it is read, and at start (`MigrateUploads`). The
+  DR bundle carries database uploads in its `pg_dump`, still carries files not yet moved under
+  `uploads/`, and counts the first as `uploads_in_database` in its manifest.
+- **Readiness for a second host** is `hosts.Readiness.ReadyToJoin`, for any role: the default backup
+  destination must keep backups off the host, `audit_archive` must be `export` (or `off`), an
+  `audit_archive_destination` must be off the host too, and the install must have an image registry.
+  "Off the host" is a capability, `BackupCapabilities.OffHost` (R-254), not the kind's name; `local`
+  reports false. No backup kind reports true yet (O-69).
+- **The in-place upgrade** is refused while the cluster has more than one host (`upgrade.Service.Hosts`,
+  `hosts.Service.Count`), as it is with more than one replica.
+- **The edge's routes** are written on every replica by `reconciler.RouteSync` once a minute [P],
+  from every live app's pinned spec, while the cluster has more than one host. The reconciler writes
+  a route only on the replica holding the app's lease, so without it a second control host's edge
+  would never learn the route. Traefik's `Ensure` now leaves an unchanged file alone, since Traefik
+  reloads on each write. A route left on a host for a deleted app still points at Pando's proxy,
+  which no longer knows the hostname (R-023); it is removed by the GC only on the host that ran it.
+- **What stays under `/var/lib/pando`, per host, and why that is fine:**
+
+  | Path | Why it need not be shared |
+  |---|---|
+  | `secrets.key`, `token.key`, `cluster-ca.pem` | Handed to each control host at join |
+  | `work/` | Clones, unpacked uploads and the upgrade's outcome file: scratch for work done on that host |
+  | `buildcache/` | Per host by design: a cold cache makes a build slower, not wrong. A deleted app's cache is forgotten only on the host that runs the GC |
+  | `audit-archives/` | Used only with `audit_archive: keep`, which a second host's join refuses |
+  | `backups/` | The `local` destination, which a second host's join refuses as the default. An app whose spec names a `local` destination explicitly still backs up there |
+  | The edge's `acme` volume | Per edge; how several edges share certificates is O-68 |

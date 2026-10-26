@@ -1,6 +1,7 @@
 package source
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,19 +15,19 @@ import (
 func TestR224_ADeletedAppsUploadIsRemoved(t *testing.T) {
 	s := Sources{UploadDir: t.TempDir()}
 
-	_, err := s.StoreUpload("app_01GONE", strings.NewReader("archive"))
+	err := s.StoreUpload(context.Background(), "app_01GONE", strings.NewReader("archive"))
 	require.NoError(t, err)
-	_, err = s.StoreUpload("app_01KEEP", strings.NewReader("archive"))
+	err = s.StoreUpload(context.Background(), "app_01KEEP", strings.NewReader("archive"))
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(s.UploadDir, "app_01GONE.tar.gz.partial"), []byte("x"), 0o600))
 
-	require.NoError(t, s.DiscardUpload("app_01GONE"))
+	require.NoError(t, s.DiscardUpload(context.Background(), "app_01GONE"))
 	require.NoFileExists(t, filepath.Join(s.UploadDir, "app_01GONE.tar.gz"))
 	require.NoFileExists(t, filepath.Join(s.UploadDir, "app_01GONE.tar.gz.partial"))
 	require.FileExists(t, filepath.Join(s.UploadDir, "app_01KEEP.tar.gz"))
 
-	require.NoError(t, s.DiscardUpload("app_01GONE"), "an app with no upload is not an error")
+	require.NoError(t, s.DiscardUpload(context.Background(), "app_01GONE"), "an app with no upload is not an error")
 	for _, bad := range []string{"", "../x", ".hidden", `a\b`} {
-		require.Error(t, s.DiscardUpload(bad), bad)
+		require.Error(t, s.DiscardUpload(context.Background(), bad), bad)
 	}
 }

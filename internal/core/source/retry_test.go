@@ -76,6 +76,6 @@ func TestAnUploadThatCannotBeRemovedIsReported(t *testing.T) {
 	stuck := filepath.Join(s.UploadDir, "app_01STUCK.tar.gz")
 	require.NoError(t, os.MkdirAll(filepath.Join(stuck, "inside"), 0o700))
 
-	err := s.DiscardUpload("app_01STUCK")
+	err := s.DiscardUpload(context.Background(), "app_01STUCK")
 	require.ErrorContains(t, err, "could not remove the app's uploaded source")
 }

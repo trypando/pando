@@ -172,11 +172,10 @@ func newInstallWith(t *testing.T, overlay *corepolicy.Overlay, startup *config.C
 	require.NoError(t, registry.Register("sec_local", secretsAdapter))
 	require.NoError(t, registry.SetDefault(adapterapi.CategorySecrets, "sec_local"))
 
-	// Uploaded source goes to a directory this test owns. The default is
-	// /var/lib/pando/uploads, which a test cannot write to — and the failure
-	// arrives as a 500 from the upload endpoint rather than as anything that
-	// names the directory.
-	sources := source.Sources{UploadDir: t.TempDir()}
+	// Uploaded source is kept in the database, as a server keeps it (R-417),
+	// with a directory this test owns for files from before that. The default
+	// is /var/lib/pando/uploads, which a test cannot write to.
+	sources := source.Sources{Uploads: state.NewUploads(db), UploadDir: t.TempDir()}
 
 	backupAdapter := backuplocal.New()
 	require.NoError(t, backupAdapter.Configure(ctx,

@@ -287,6 +287,12 @@ func (a *Adapter) Ensure(ctx context.Context, r api.RouteRequest) (api.RouteHand
 	body := a.render(r, rule)
 	path := a.pathFor(r.AppID)
 
+	// Unchanged is left alone: Traefik reloads on every write, and every
+	// control host ensures every route once a minute (R-417).
+	if existing, err := os.ReadFile(path); err == nil && string(existing) == body {
+		return api.RouteHandle{AppID: r.AppID, Handle: path}, nil
+	}
+
 	// Written to a temporary file and renamed, because Traefik watches the
 	// directory and will read a half-written file the moment it appears.
 	tmp := path + ".tmp"

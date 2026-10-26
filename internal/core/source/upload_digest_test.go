@@ -41,7 +41,7 @@ func TestR312_AnUploadIsKnownByItsArchive(t *testing.T) {
 		return co
 	}
 
-	_, err := s.StoreUpload("app_01UP", archive(t, "index.js", "console.log(1)"))
+	err := s.StoreUpload(context.Background(), "app_01UP", archive(t, "index.js", "console.log(1)"))
 	require.NoError(t, err)
 	first := fetch()
 	require.Empty(t, first.Commit, "an upload has no commit, and none is invented (R-120)")
@@ -50,7 +50,7 @@ func TestR312_AnUploadIsKnownByItsArchive(t *testing.T) {
 
 	require.Equal(t, first.Digest, fetch().Digest, "the same archive, deployed again, is the same source")
 
-	_, err = s.StoreUpload("app_01UP", archive(t, "index.js", "console.log(2)"))
+	err = s.StoreUpload(context.Background(), "app_01UP", archive(t, "index.js", "console.log(2)"))
 	require.NoError(t, err)
 	require.NotEqual(t, first.Digest, fetch().Digest, "a new upload is a new source")
 }
