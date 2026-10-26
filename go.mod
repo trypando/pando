@@ -32,7 +32,7 @@ require (
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/openai/openai-go/v3 v3.86.0
 	github.com/pelletier/go-toml/v2 v2.4.3
-	github.com/pkg/sftp v1.13.11
+	github.com/pkg/sftp v1.13.12
 	github.com/russellhaering/goxmldsig v1.6.1
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/spf13/cobra v1.10.2
