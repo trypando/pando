@@ -754,6 +754,10 @@ func serve(ctx context.Context, configPath string) error {
 		return err
 	}
 	replicas := state.NewReplicas(db)
+	wireClusterRuntime(clusterHosts, &hosts.Runtime{
+		Hosts: clusterHosts.Store, Adapters: adapters, Credentials: adapterCredentials,
+		Restart: replicas, Audit: auditor,
+	}, cfg, logger)
 	hostname, _ := os.Hostname()
 	member := &cluster.Member{
 		Store:        replicas,

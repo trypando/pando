@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"time"
 )
 
@@ -37,6 +38,10 @@ import (
 // authority issued to an agent (a server certificate) cannot be used to open a
 // connection through another agent.
 const ClientCommonName = "pando-proxy"
+
+// RoleControl is the organizational unit a certificate issued for a control
+// host carries: the cluster's own name for the role (R-414).
+const RoleControl = "control"
 
 // serverNamePrefix starts the DNS name in an agent's certificate. The proxy
 // checks it by name rather than by address, so an agent reached through a NAT
@@ -201,8 +206,12 @@ func (as Authorities) Fingerprint() string {
 
 // IssueClient issues the certificate Pando's proxy presents to agents. Held
 // in memory only: every replica issues its own from the authority at start.
+//
+// It carries RoleControl: only a control host holds an authority's key, so
+// only a control host can issue one, and an agent carries runtime calls for
+// no other certificate (R-416).
 func (as Authorities) IssueClient() (tls.Certificate, error) {
-	return as.issue(pkix.Name{CommonName: ClientCommonName}, nil, x509.ExtKeyUsageClientAuth)
+	return as.issue(pkix.Name{CommonName: ClientCommonName, OrganizationalUnit: []string{RoleControl}}, nil, x509.ExtKeyUsageClientAuth)
 }
 
 // IssueServer issues an agent's certificate for the host named host, as PEM.
@@ -225,17 +234,30 @@ func (as Authorities) IssueServer(host string) (certPEM, keyPEM []byte, err erro
 }
 
 func (as Authorities) issue(subject pkix.Name, dnsNames []string, usage x509.ExtKeyUsage) (tls.Certificate, error) {
-	if len(as) == 0 {
-		return tls.Certificate{}, errors.New("no agent authority is configured")
-	}
-	ca := as[0]
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	serial, err := serialNumber()
+	der, err := as.sign(subject, dnsNames, &key.PublicKey, usage)
 	if err != nil {
 		return tls.Certificate{}, err
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, nil
+}
+
+// sign issues a certificate for pub from the first authority, as DER.
+func (as Authorities) sign(subject pkix.Name, dnsNames []string, pub crypto.PublicKey, usages ...x509.ExtKeyUsage) ([]byte, error) {
+	if len(as) == 0 {
+		return nil, errors.New("no agent authority is configured")
+	}
+	ca := as[0]
+	serial, err := serialNumber()
+	if err != nil {
+		return nil, err
 	}
 	now := time.Now().UTC()
 	notAfter := now.Add(leafValidity)
@@ -249,17 +271,37 @@ func (as Authorities) issue(subject pkix.Name, dnsNames []string, usage x509.Ext
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{usage},
+		ExtKeyUsage:  usages,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.Cert, &key.PublicKey, ca.Key)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	leaf, err := x509.ParseCertificate(der)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, nil
+	return x509.CreateCertificate(rand.Reader, tmpl, ca.Cert, pub, ca.Key)
+}
+
+// IssueHost issues a joined host's certificate for its key pub, as DER: the
+// one its agent serves with, and the one it presents to other hosts (R-416,
+// notes-cluster.md). It names the host as ServerName does, so a dialer
+// verifies it by name, and carries the host's roles as organizational units.
+// It is never Pando's proxy's: its subject is not ClientCommonName, which an
+// agent requires of every connection, so a host's own certificate opens
+// nothing through another host's agent.
+func (as Authorities) IssueHost(name string, roles []string, pub crypto.PublicKey) ([]byte, error) {
+	server := ServerName(name)
+	return as.sign(pkix.Name{CommonName: server, OrganizationalUnit: roles}, []string{server}, pub,
+		x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth)
+}
+
+// IsControl reports whether a verified client certificate was issued for a
+// control host: Pando's proxy's, carrying RoleControl. Only a holder of the
+// authority's key — a control host — can issue one (R-416).
+func IsControl(cert *x509.Certificate) bool {
+	return cert != nil && cert.Subject.CommonName == ClientCommonName &&
+		slices.Contains(cert.Subject.OrganizationalUnit, RoleControl)
+}
+
+// Fingerprint256 is a certificate's fingerprint as the cluster records it:
+// the SHA-256 of its DER, hex (cluster_hosts.cert_sha256).
+func Fingerprint256(der []byte) string {
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:])
 }
 
 func serialNumber() (*big.Int, error) {
@@ -275,6 +317,24 @@ func ClientTLS(as Authorities, client tls.Certificate, host string) *tls.Config 
 		RootCAs:      as.Pool(),
 		ServerName:   ServerName(host),
 	}
+}
+
+// PinnedClientTLS is ClientTLS that also requires the agent's certificate to
+// be the one its host joined the cluster with (cluster_hosts.cert_sha256), so
+// a machine given another certificate under the host's name is not taken for
+// it. An empty pin is ClientTLS.
+func PinnedClientTLS(as Authorities, client tls.Certificate, host, pin string) *tls.Config {
+	cfg := ClientTLS(as, client, host)
+	if pin == "" {
+		return cfg
+	}
+	cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+		if len(cs.PeerCertificates) == 0 || Fingerprint256(cs.PeerCertificates[0].Raw) != pin {
+			return fmt.Errorf("the agent's certificate is not the one host %s joined the cluster with", host)
+		}
+		return nil
+	}
+	return cfg
 }
 
 // ServerTLS is the agent's TLS configuration: its own certificate, and a

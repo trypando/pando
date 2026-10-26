@@ -342,7 +342,10 @@ func TestVolumeHandlesCarryTheirHost(t *testing.T) {
 	require.Contains(t, hosts["app-1"].observed, "destroy pando-app_db-vol_1")
 
 	require.Error(t, a.DestroyVolume(context.Background(), api.VolumeHandle{Handle: "gone/pando-x"}))
-	require.Error(t, a.DestroyVolume(context.Background(), api.VolumeHandle{Handle: "no-host-part"}))
+	// A handle from before the install had several hosts is the control
+	// host's (R-418).
+	require.NoError(t, a.DestroyVolume(context.Background(), api.VolumeHandle{Handle: "no-host-part"}))
+	require.Contains(t, hosts["control"].observed, "destroy no-host-part")
 }
 
 func TestConfigurationIsCheckedBeforeAnythingIsContacted(t *testing.T) {

@@ -14,6 +14,7 @@ package multidocker
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,8 +64,10 @@ type host struct {
 	cfg HostConfig
 	rt  hostRuntime
 
-	// agentAddr is where the proxy dials this host's agent.
+	// agentAddr is where the proxy dials this host's agent, and agentTLS how
+	// it authenticates there.
 	agentAddr string
+	agentTLS  *tls.Config
 
 	// agent keeps this host's forwarding agent running (agent.go). Nil in
 	// tests that do not exercise it.
@@ -137,16 +140,19 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	a.hosts = nil
 	pool, _ := networkPool(cfg)
 	for _, hc := range hosts {
-		cli, err := newClient(hc, cfg.Credentials)
+		addr, _ := agentAddress(hc, agentPort(cfg))
+		agentTLS := hostagent.PinnedClientTLS(authorities, client, hc.Name, hc.CertSHA256)
+		cli, err := newClient(hc, cfg.Credentials, addr, agentTLS)
 		if err != nil {
 			return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not set up the connection to Docker on %s.", hc.Name), err)
 		}
-		addr, _ := agentAddress(hc, agentPort(cfg))
 		h := &host{
 			cfg:       hc,
 			agentAddr: addr,
+			agentTLS:  agentTLS,
 		}
 		dcfg := docker.Config{
+			PidsLimit:          cfg.PidsLimit,
 			TotalCPUMillis:     hc.TotalCPUMillis,
 			TotalMemoryBytes:   hc.TotalMemoryBytes,
 			TotalDiskBytes:     hc.TotalDiskBytes,
@@ -157,9 +163,14 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 			EgressGatewayImage: cfg.AgentImage,
 		}
 		h.rt = docker.NewWithClient(cli, dcfg)
-		h.agent = &agentKeeper{
-			cli: cli, host: hc.Name, port: agentPort(cfg), pool: pool,
-			authorities: authorities, image: a.agentImage,
+		// A host that joined the cluster runs its own agent, which is also
+		// how its runtime is reached (R-416): replacing it from here would
+		// cut the connection replacing it.
+		if !isAgentEndpoint(hc) {
+			h.agent = &agentKeeper{
+				cli: cli, host: hc.Name, port: agentPort(cfg), pool: pool,
+				authorities: authorities, image: a.agentImage,
+			}
 		}
 		if hc.Control {
 			a.control = h
@@ -506,6 +517,12 @@ func volumeHandle(h *host, name string) string { return h.cfg.Name + "/" + name 
 
 func (a *Adapter) volumeHost(handle string) (*host, api.VolumeHandle, error) {
 	name, volume, ok := strings.Cut(handle, "/")
+	if !ok && a.control != nil {
+		// Recorded before the install had several hosts, when its one host
+		// became the control host (R-418). The reconciler records the
+		// handle with its host at the next observation.
+		return a.control, api.VolumeHandle{Handle: handle}, nil
+	}
 	if !ok {
 		return nil, api.VolumeHandle{}, errs.Newf(errs.AdapterFailed,
 			"The storage %q does not say which Docker host it is on.", handle)
@@ -615,7 +632,10 @@ func (a *Adapter) Upstream(ctx context.Context, ref api.WorkloadRef, port int) (
 	name := u.Hostname()
 	targetPort, _ := strconv.Atoi(u.Port())
 	addr := h.agentAddr
-	tlsConfig := hostagent.ClientTLS(a.authorities, a.clientCert.cert, h.cfg.Name)
+	tlsConfig := h.agentTLS
+	if tlsConfig == nil {
+		tlsConfig = hostagent.ClientTLS(a.authorities, a.clientCert.cert, h.cfg.Name)
+	}
 	return api.Upstream{
 		URL: direct.URL,
 		Dial: func(ctx context.Context) (net.Conn, error) {
