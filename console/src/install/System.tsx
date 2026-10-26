@@ -18,6 +18,7 @@ import { useNarrow } from '../ui/narrow';
 import { AIButton } from '../ui/AskAI';
 import { useAIFunctionOn } from './AIFunctions';
 import { Backups } from './Backups';
+import { Hosts } from './Hosts';
 import { Installation } from './Installation';
 import { Overview } from './Overview';
 import { POLICY_LABELS, PolicyPageView, SaveBar, UpdateSettings } from './PolicyPages';
@@ -33,14 +34,22 @@ const LABELS: Record<SystemTab, string> = {
   adapters: 'Adapters',
   policy: 'Policy',
   backups: 'Backups',
+  hosts: 'Hosts',
 };
 
 /** The pages a person may see, in order. */
-export function systemPages(can: { view: boolean; managePolicy: boolean; manageBackups: boolean }): SystemTab[] {
+export function systemPages(can: {
+  view: boolean;
+  managePolicy: boolean;
+  manageBackups: boolean;
+  /** install.cluster.manage: the cluster's hosts and join tokens (R-414). */
+  manageCluster?: boolean;
+}): SystemTab[] {
   const pages: SystemTab[] = [];
   if (can.view) pages.push('overview', 'adapters');
   if (can.view || can.managePolicy) pages.push('policy');
   if (can.manageBackups) pages.push('backups');
+  if (can.manageCluster) pages.push('hosts');
   return pages;
 }
 
@@ -126,6 +135,7 @@ export function System({
             )}
             {tab === 'policy' && <Policy page={policyPage} canEdit={canManagePolicy} />}
             {tab === 'backups' && <Backups />}
+            {tab === 'hosts' && <Hosts />}
             <SaveBar />
           </div>
         </div>

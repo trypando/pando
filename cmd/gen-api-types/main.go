@@ -109,6 +109,11 @@ var exported = []any{
 	// What an app's Overview asks of somebody, with whether the caller has
 	// ignored it (R-412).
 	notice.Notice{},
+
+	// The cluster's hosts and the tokens they join with (R-414, R-415), on
+	// System's Hosts page.
+	state.Host{},
+	state.JoinToken{},
 }
 
 func main() {

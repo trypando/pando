@@ -132,6 +132,7 @@ export function AdminConsole({
   const canManagePolicy = useInstallVerb(InstallVerb.PolicyManage);
   const canReadAudit = useInstallVerb(InstallVerb.AuditRead);
   const canManageBackups = useInstallVerb(InstallVerb.BackupManage);
+  const canManageCluster = useInstallVerb(InstallVerb.ClusterManage);
   const canApproveAll = useInstallVerb(InstallVerb.DeploysApprove);
   const canManageEvents = useInstallVerb(InstallVerb.EventsManage);
 
@@ -210,7 +211,12 @@ export function AdminConsole({
   // only when one of them is, so nobody sees a screen here they could not see
   // before. The versions behind ride on System as well as on Overview, so
   // they are not hidden behind a click.
-  const systemPagesShown = systemPages({ view: canView, managePolicy: canManagePolicy, manageBackups: canManageBackups });
+  const systemPagesShown = systemPages({
+    view: canView,
+    managePolicy: canManagePolicy,
+    manageBackups: canManageBackups,
+    manageCluster: canManageCluster,
+  });
   if (systemPagesShown.length > 0) {
     items.push({ value: 'system', label: 'System', trailing: behind > 0 ? <Badge count={behind} /> : undefined });
   }
