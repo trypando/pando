@@ -41,7 +41,7 @@
 #
 # One Go base for the console and server stages, so the image is pinned in one
 # place.
-FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:9a9160e3c89a37572e35271c65a2b38a2d1671c8ab0d6abee19ce3d6cecb9be9 AS go
+FROM --platform=$BUILDPLATFORM dhi.io/golang:1.27-alpine3.24-dev@sha256:2ceb813d69b9c82501323484e0c0ae612efde281f5dffce2a3d83a79a9c87304 AS go
 # GOTOOLCHAIN=auto because go.mod requires Go 1.27.3, the security release for
 # GO-2026-6809 (1.27.2 was for GO-2026-6599 – GO-2026-6617), and the hardened
 # image is older. The go command fetches 1.27.3 from the module proxy, checked
