@@ -323,6 +323,10 @@ func compareOperational(old, next *AppSpec, add func(Class, string, string, any,
 	if old.Retention != next.Retention {
 		add(Benign, "retention", "How long logs, backups, and revisions are kept changed.", old.Retention, next.Retention)
 	}
+	if old.Availability.Priority != next.Availability.Priority {
+		add(Benign, "availability.priority", fmt.Sprintf("This app's failover priority is now %d.", next.Availability.Priority),
+			old.Availability.Priority, next.Availability.Priority)
+	}
 }
 
 func modeOf(s Slot) ResolutionMode {

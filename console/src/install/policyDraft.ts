@@ -40,6 +40,7 @@ export interface PolicyDoc {
 
   // R-242, as amended by issue #72. Disk has no counterpart.
   allow_cpu_oversubscription?: boolean;
+  allow_failover_oversubscription?: boolean;
   allow_memory_oversubscription?: boolean;
   max_concurrent_deploys?: number;
 
@@ -139,6 +140,7 @@ const FIELD_PAGES: Record<keyof PolicyDoc, PolicyPage | 'overview'> = {
   max_concurrent_deploys: 'deployments',
   allow_cpu_oversubscription: 'deployments',
   allow_memory_oversubscription: 'deployments',
+  allow_failover_oversubscription: 'deployments',
 
   max_token_lifetime_days: 'tokens',
   agent_disabled_verbs: 'tokens',

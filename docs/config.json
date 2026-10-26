@@ -532,6 +532,15 @@
       "secret": false
     },
     {
+      "env": "PANDO_POLICY_ALLOW_FAILOVER_OVERSUBSCRIPTION",
+      "key": "policy.allow_failover_oversubscription",
+      "type": "bool",
+      "default": "false",
+      "description": "In a cluster, let apps' standbys be placed past the CPU and memory kept free for losing a host. Off by default: an app whose standby could not start anywhere runs without one. On, a host that takes over starts what fits, highest availability.priority first. Disk is never oversubscribed.",
+      "group": "policy",
+      "secret": false
+    },
+    {
       "env": "PANDO_POLICY_ALLOW_MEMORY_OVERSUBSCRIPTION",
       "key": "policy.allow_memory_oversubscription",
       "type": "bool",

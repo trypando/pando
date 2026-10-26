@@ -350,3 +350,40 @@ func TestR412_TheAppsListCountsOnlyTheNoticesYouHaveNotIgnored(t *testing.T) {
 	_, err = s.Counts(ctx, "usr_a", []state.App{app})
 	require.Error(t, err)
 }
+
+type fakeStandbys struct {
+	standing StandbyStanding
+	err      error
+}
+
+func (f *fakeStandbys) Standby(context.Context, string) (StandbyStanding, error) {
+	return f.standing, f.err
+}
+
+// TestR422_AnAppWithNoRoomForItsStandbyGetsANotice asserts that an app
+// whose standby fits nowhere is told so on its Overview, in the runtime's
+// words naming the largest room any host has — a notice, never a blocker —
+// and that it comes back when the room changes.
+func TestR422_AnAppWithNoRoomForItsStandbyGetsANotice(t *testing.T) {
+	s, _ := newService()
+	s.Standbys = &fakeStandbys{}
+	got, err := s.List(context.Background(), "usr_a", app)
+	require.NoError(t, err)
+	require.NotContains(t, keys(got), KeyNoStandby, "an app with its standby has nothing to be told")
+
+	unplaced := "This app runs without a standby: it needs 2.00 cores of CPU, 4.0 GB of memory and 0 MB of disk on a host other than b, kept free for when b is lost, and the most any host has is 1.00 cores of CPU, 2.0 GB of memory and 0 MB of disk, on c."
+	s.Standbys = &fakeStandbys{standing: StandbyStanding{Unplaced: unplaced, Remedy: "Add a host."}}
+	got, err = s.List(context.Background(), "usr_a", app)
+	require.NoError(t, err)
+	n := find(t, got, KeyNoStandby)
+	require.Equal(t, unplaced+" Add a host.", n.Message)
+	require.Equal(t, []string{KeyUnshipped, KeyNoStandby, KeyUnsetVars}, keys(got))
+
+	again, _ := noStandby(&StandbyStanding{Unplaced: unplaced + " ", Remedy: "Add a host."})
+	require.NotEqual(t, n.Fingerprint, again.Fingerprint, "what it says changed, so an ignore no longer hides it")
+
+	boom := errors.New("boom")
+	s.Standbys = &fakeStandbys{err: boom}
+	_, err = s.List(context.Background(), "usr_a", app)
+	require.ErrorIs(t, err, boom)
+}

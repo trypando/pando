@@ -37,6 +37,7 @@ const (
 	KeyUnsetVars     = "variables.unset"
 	KeyBackup        = "backup.not_taken"
 	KeySecurity      = "security.below_threshold"
+	KeyNoStandby     = "standby.no_room"
 	WarningPrefix    = "warning."
 	maxKeyLength     = 200
 	shownVariables   = 4
@@ -77,6 +78,21 @@ type Security interface {
 	Report(ctx context.Context, appID, specID string) (security.Report, error)
 }
 
+// Standbys is where each app's warm standby stands (R-419, R-422).
+type Standbys interface {
+	Standby(ctx context.Context, appID string) (StandbyStanding, error)
+}
+
+// StandbyStanding is an app's standby as its runtime last placed it.
+type StandbyStanding struct {
+	// Unplaced is the runtime's reason when the app should have a standby
+	// and no host had room for one, naming the largest room any host has.
+	// Remedy is what to do. Both empty when the app has its standby or wants
+	// none.
+	Unplaced string
+	Remedy   string
+}
+
 // Ignores is each person's ignored notices.
 type Ignores interface {
 	For(ctx context.Context, userID, appID string) (map[string]string, error)
@@ -86,12 +102,13 @@ type Ignores interface {
 
 // Service lists an app's notices and keeps each person's ignores.
 //
-// Backups and Security may be nil, on an installation with neither: their
-// notices are then never raised.
+// Backups, Security and Standbys may be nil, on an installation without
+// them: their notices are then never raised.
 type Service struct {
 	Revisions Revisions
 	Backups   Backups
 	Security  Security
+	Standbys  Standbys
 	Ignores   Ignores
 }
 
@@ -107,6 +124,9 @@ type Inputs struct {
 
 	// Standing is the app's security standing, if the installation has one.
 	Standing *security.Standing
+
+	// Standby is the app's standby, on an installation that keeps them.
+	Standby *StandbyStanding
 }
 
 // List returns every current notice on an app, each marked with whether the
@@ -256,6 +276,13 @@ func (s *Service) inputs(ctx context.Context, app state.App) (Inputs, error) {
 		}
 		in.Standing = &report.Standing
 	}
+	if s.Standbys != nil {
+		standby, err := s.Standbys.Standby(ctx, app.ID)
+		if err != nil {
+			return in, err
+		}
+		in.Standby = &standby
+	}
 	return in, nil
 }
 
@@ -269,6 +296,9 @@ func Compute(in Inputs) []Notice {
 		out = append(out, n)
 	}
 	if n, ok := backupNotTaken(in.LastBackup); ok {
+		out = append(out, n)
+	}
+	if n, ok := noStandby(in.Standby); ok {
 		out = append(out, n)
 	}
 	var body *spec.AppSpec
@@ -328,6 +358,18 @@ func backupNotTaken(attempt *state.BackupAttempt) (Notice, bool) {
 	}
 	return newNotice(KeyBackup, msg,
 		attempt.AttemptedAt.UTC().Format(time.RFC3339Nano), attempt.Outcome, attempt.Message, attempt.Remedy), true
+}
+
+// noStandby: the app runs without the standby it should have, because no
+// host had room for one (R-422). A notice and never a blocker: the app
+// deployed. The message is the runtime's, which names the largest room any
+// host has; it changes as the room does, and the notice comes back with it.
+func noStandby(standing *StandbyStanding) (Notice, bool) {
+	if standing == nil || standing.Unplaced == "" {
+		return Notice{}, false
+	}
+	msg := strings.TrimSpace(standing.Unplaced + " " + standing.Remedy)
+	return newNotice(KeyNoStandby, msg, standing.Unplaced, standing.Remedy), true
 }
 
 // unsetVariables: variables the pinned spec declares with no value, no secret

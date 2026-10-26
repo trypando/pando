@@ -194,6 +194,7 @@ export interface AppSpec {
   resources: Resources;
   egress: Egress;
   retention: Retention;
+  availability?: Availability;
   warnings?: (Warning[] | null);
 }
 
@@ -264,6 +265,7 @@ export interface PolicyDocument {
   max_apps_per_user?: number;
   allow_cpu_oversubscription?: boolean;
   allow_memory_oversubscription?: boolean;
+  allow_failover_oversubscription?: boolean;
   audit_retention_months?: number;
   audit_archive?: string;
   audit_archive_destination?: string;
@@ -629,6 +631,10 @@ export interface Retention {
   log_bytes: number;
   backup_daily_count: number;
   spec_revisions: number;
+}
+
+export interface Availability {
+  priority?: number;
 }
 
 export interface Warning {

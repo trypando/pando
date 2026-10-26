@@ -200,6 +200,7 @@ The settings are `source_allowlist`, `disabled_verbs`, `agent_disabled_verbs`,
 `deploy_approval_required`, `deploy_approval_apps`, `deploy_approval_count`,
 `deploy_approval_expiry_hours`, `require_backup_before_destroy`, `max_token_lifetime_days`,
 `max_log_disk_bytes`, `allow_cpu_oversubscription`, `allow_memory_oversubscription`,
+`allow_failover_oversubscription`,
 `max_concurrent_deploys`, `idle_stop_days`, `idle_delete_days`, `stop_orphaned_apps`, `max_apps_per_user`, `disable_ai_screening`,
 `disable_anonymous_use_audit`, `disable_anonymous_denial_audit`,
 `disable_password_sign_in`, `disable_jit_provisioning`, `require_local_two_factor`, `min_security_score`, `insecure_action`,
@@ -231,6 +232,12 @@ ask for more CPU, or more memory, than it reports having. Both are off, so a dep
 more than is left is refused at plan time (R-242). With CPU allowed, busy apps share the CPU and run
 slower; with memory allowed, the host can run out and the kernel stops an app to free memory. Disk
 is never oversubscribed. For example, `PANDO_POLICY_ALLOW_CPU_OVERSUBSCRIPTION=true`.
+
+`allow_failover_oversubscription`, off by default, lets apps' standbys in a cluster be placed past
+the CPU and memory the other hosts keep free for losing one host (R-422). Off, an app whose standby
+would not fit if its host were lost runs without one, with a notice on its page. On, a host that takes
+over starts what fits, highest `availability.priority` first, then by app. Disk is never
+oversubscribed.
 
 `public_sharing` is how an app may be shared with everyone: `allowed` (with or without a passcode),
 `passcode_only`, or `none`. The older `allow_anonymous_grants: false` still means `none` when

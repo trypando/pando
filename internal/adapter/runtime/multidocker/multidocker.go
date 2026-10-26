@@ -94,6 +94,10 @@ type Adapter struct {
 
 	// watchRetry overrides defaultWatchRetry (events.go). Tests shorten it.
 	watchRetry []time.Duration
+
+	// standbys lists the standbys placed, for the failover reservation
+	// (reserve.go, R-422). Nil until the standby code sets it.
+	standbys standbyLister
 }
 
 // New builds an unconfigured adapter.
@@ -361,6 +365,7 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	if answered == 0 {
 		return api.Capacity{}, errs.New(errs.AdapterUnavailable, "None of the Docker hosts is responding.")
 	}
+	a.failoverDetails(ctx, perHost)
 	out.Details["hosts"] = perHost
 	return out, nil
 }

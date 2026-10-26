@@ -629,6 +629,25 @@ type BundlePlan struct {
 	// run in the part that is silent (O-46). False is the safe value, and
 	// what the reconciler sends.
 	FirstDeploy bool
+
+	// Failover is what a runtime that keeps a warm standby of the app needs
+	// to place it and, when its host is lost, to start it (R-419, R-422).
+	// A runtime with no standbys ignores it.
+	Failover FailoverPlan
+}
+
+// FailoverPlan is how an app's standby is placed and started (R-422).
+type FailoverPlan struct {
+	// Priority orders the apps a host starts when another is lost and not
+	// all of their standbys fit: higher first, then by app. The spec's
+	// availability.priority; 0 by default.
+	Priority int
+
+	// AllowOversubscription is host policy allow_failover_oversubscription:
+	// a standby may be placed past the CPU and memory kept free for its
+	// host's loss. Never disk (R-242). False is the safe value, and what the
+	// reconciler sends; it is read only when a standby is placed.
+	AllowOversubscription bool
 }
 
 // WorkloadPlan is one workload, fully resolved.
