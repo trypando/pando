@@ -1,6 +1,6 @@
-# A Pando cluster (issue #346)
+# A Pando cluster (#347)
 
-Issue #346 asks for an install that spans several hosts: start a new Pando, give it a join token minted
+Issue #347 asks for an install that spans several hosts: start a new Pando, give it a join token minted
 by an install, and it becomes part of that install. This note is the design. It builds on what issue
 #72 already shipped — several replicas of Pando's process against one database
 (`notes-multiple-replicas-issue-72.md`) and the `docker-hosts` runtime with its forwarding agent
