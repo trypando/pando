@@ -85,7 +85,7 @@ jobs:
       # Every stage of the Dockerfile is a Docker Hardened Image, and dhi.io
       # serves them only to a signed-in Docker account. The same account pushes
       # the image below.
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: dhi.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -135,7 +135,7 @@ jobs:
           scripts/release-compose.sh "$VERSION" pando-scan > "$RUNNER_TEMP/local-compose.yml"
           python3 scripts/smoke-image.py "$RUNNER_TEMP/local-compose.yml" --version "$VERSION"
 
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
