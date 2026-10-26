@@ -41,13 +41,13 @@ Requirement IDs are stable. Refer to them rather than to section numbers.
 
 These are permanent. A request falling into one of these is answered "no," not "later."
 
-**R-010 [D]** **Pando is not a scheduler.** It places; it does not schedule. One app lives in one place. No cross-host bin-packing, no autoscaling groups, no service mesh, no rescheduling on node failure. A runtime that spans machines moving a workload after a failure is not Pando scheduling: when such a runtime (Kubernetes, for example) recreates an app's workload on another node because the node it ran on failed, the runtime places it as it places any workload, and Pando has decided nothing about where it runs (R-256, O-44).
+**R-010 [D]** **Pando is not a scheduler.** It places; it does not schedule. One app lives in one place. No cross-host bin-packing, no autoscaling groups, no service mesh, no rescheduling on node failure. A runtime that spans machines moving a workload after a failure is not Pando scheduling: when such a runtime (Kubernetes, for example) recreates an app's workload on another node because the node it ran on failed, the runtime places it as it places any workload, and Pando has decided nothing about where it runs (R-256, O-44). One exception, by Pando itself: in a cluster, an app's warm standby is started when a majority of the cluster's hosts agree its host is lost (R-419, R-421). That is the only thing Pando does on a host's failure; it still never packs, scales, runs copies side by side, or moves an app on a timer. *(Amended by issue #346.)*
 
 **R-011 [D]** **Pando does not test.** It builds and deploys. It does not run your test suite and does not gate deploys on test results.
 
 **R-012 [D]** **Pando is not a marketplace.** No catalog of one-click apps, no curated app store.
 
-**R-013 [D]** **Pando is not a disaster-recovery product.** It takes backups sufficient to recover from recent mistakes and host loss. It does not offer RPO/RTO guarantees, continuous replication, or point-in-time recovery.
+**R-013 [D]** **Pando is not a disaster-recovery product.** It takes backups sufficient to recover from recent mistakes and host loss. It does not offer RPO/RTO guarantees, continuous replication, or point-in-time recovery. In a cluster, a warm standby's data is shipped on an interval and a failover loses what changed since the last copy (R-420); that loss window is stated, not guaranteed, and is not point-in-time recovery. *(Amended by issue #346.)*
 
 **R-014 [D]** **No multi-AZ or multi-region.** Possibly revisited if a cloud provider adapter is built. Not now.
 
@@ -248,6 +248,7 @@ Install-scoped:
 | `install.backup.manage` | Take, verify and restore backups (R-212–R-216) |
 | `install.tokens.manage` | List, create and revoke service tokens (R-060) |
 | `install.deploys.approve` | Approve or reject any deploy that needs approval, on any app, including one's own (R-155) |
+| `install.cluster.manage` | Mint and revoke join tokens, remove a host, change a host's roles, and start a standby by hand (R-414 – R-421) |
 | `app.create` | Create an app. Install-scoped despite the name: there is no app yet when it is checked |
 | `install.apps.*` | One per app verb, below: that app verb on every app, without a grant on it |
 
@@ -307,7 +308,8 @@ not hold:
   deleting the account each need every install verb that account holds, directly or through a group.
 - **Reaching all of them at once.** Adding or changing an identity provider, or issuing its SCIM token,
   needs every install verb, because a provider decides who signs in as which account, administrators
-  included. So does restoring the installation from a backup, which replaces every grant with the
+  included. So does minting a join token for the control role (R-415), which hands the joining host
+  every key the install has. So does restoring the installation from a backup, which replaces every grant with the
   backup's. Taking and verifying a backup stay `install.backup.manage`.
 - **Reading Pando's environment.** An adapter configured through the API may not name an environment
   variable for Pando to read and send other than the one its kind defaults to, and may not send a key
@@ -661,7 +663,7 @@ Approval is a human sign-off on a change. It is not a test gate (R-011).
 
 ### 10.6 Scale
 
-**R-153 [D]** One app, one place (R-010). Replica counts from compose are rejected (R-099).
+**R-153 [D]** One app, one place (R-010). Replica counts from compose are rejected (R-099). A warm standby (R-419) is not a replica: it is stopped until its app's host is lost, and one copy of an app runs at a time. *(Amended by issue #346.)*
 
 ### 10.7 Idle apps
 
@@ -1042,7 +1044,25 @@ assertion. A `Destination` interface would have had to grow one anyway, under a 
 
 **R-255 [D]** Runtime adapters declare an isolation class. Host policy may require a minimum (R-114).
 
-**R-256 [P]** Multi-machine capability comes entirely from adapters that span machines (e.g. Incus placing VMs across a cluster). Pando remains a single control plane, models no host objects, and performs no placement logic. The scope line (R-010) holds: Pando delegates to something that schedules; it does not schedule. A single control plane may run as several replicas of the Pando process sharing one database: they are one control plane — one state store, one leader for install-wide work, one policy and one audit log — and none of them is a place an app runs. Running several copies of Pando is not scheduling apps (issue #72; topology and prerequisites in `docs/design/notes-multiple-replicas-issue-72.md`).
+**R-256 [P]** Multi-machine capability comes entirely from adapters that span machines (e.g. Incus placing VMs across a cluster). Pando remains a single control plane and performs no placement logic. It models the hosts of a cluster (R-414) — membership, roles and liveness — and hands app hosts to the runtime adapter as configuration; which host a workload goes on stays the adapter's. The scope line (R-010) holds: Pando delegates to something that schedules; it does not schedule. A single control plane may run as several replicas of the Pando process sharing one database: they are one control plane — one state store, one leader for install-wide work, one policy and one audit log — and none of them is a place an app runs. Running several copies of Pando is not scheduling apps (issue #72; topology and prerequisites in `docs/design/notes-multiple-replicas-issue-72.md`). *(Amended by issue #346: hosts are modeled; `docs/design/notes-cluster-issue-346.md`.)*
+
+**R-414 [D]** **An install may run on several hosts, as one cluster.** A host is a machine running Pando's binary that has joined the install; core models it (`host_…`), with its roles, its liveness and when it joined. A host holds the **control** role (API, console, proxy, edge, builds, leader candidate), the **app** role (runs workloads through its agent), or both [P: the first three hosts both; later tokens the app role]. Every install is a cluster of one until a host joins, and a single-host install behaves as before. Still one install, one organization (R-015). *(Added by issue #346; design in `docs/design/notes-cluster-issue-346.md`.)*
+
+**R-415 [D]** **A host joins with a join token, at setup only.** A Pando that has any account or app cannot join. The token names the control plane's address, the hash of the cluster's certificate authority and a secret; the joining host checks the authority against the hash before sending anything. Tokens are minted with `install.cluster.manage` — every install verb for the control role (R-080a) — stored as a keyed digest, expire [P: 24 hours], are single use by default, can be revoked, and every mint, join, refusal and revocation is audited. The keys a control host needs (R-190, R-063) and the database address are sent only over the mutually authenticated join, never in the token; an app host receives none of them. *(Added by issue #346.)*
+
+**R-416 [D]** **A joined host never exposes its container runtime's API.** It publishes one port, its agent's, which accepts only mutual TLS from the cluster's hosts; runtime calls and proxied traffic to its apps both pass through it (R-023, O-45). [P] Every host reaches every other on that port. *(Added by issue #346.)*
+
+**R-417 [D]** **Losing a control host leaves the install working.** Control hosts share one Postgres, whose availability the operator supplies (Pando-run replication: issue #341), and share no directory: keys are handed over at join, uploaded sources are kept in the database, build caches are per host, and once a second host joins, backups need a destination off the host and audit archives are exported. Images reach hosts through the install registry. *(Added by issue #346; resolves O-39 and O-47.)*
+
+**R-418 [D]** **The first app host to join turns a single-host Docker install into a multi-host one in place.** The existing host becomes an app host, its apps stay where they are and nothing is re-created; this is not a runtime swap (R-257). A runtime that already spans machines (Kubernetes, Incus) accepts control-role joins only. *(Added by issue #346.)*
+
+**R-419 [D]** **An app may have a warm standby on another app host**: the same spec, created and stopped, with its data kept current, started when the app's host is lost (R-421) and then the app's home. One copy runs at a time (R-153). [P] On by host policy (`standby`), overridable per app in the spec (R-020). An app that is `failed` is not failed over (R-151). When the lost host returns, its copy is removed, never restarted (R-148 does not apply to it). *(Added by issue #346.)*
+
+**R-420 [D]** **A standby's data is shipped without pausing the app and without changing a host's filesystem.** Provisioned services replicate through their engine's own replication. A volume is copied live and incrementally from host to host every interval [P: 5 minutes]; a failover loses what changed since the last copy (R-013). Because a live copy may not be consistent, the app carries a notice saying so — never a blocker — and the standby host keeps the last copies [P: three]: a failover starts from the newest and falls back to the one before if the app does not come up healthy. *(Added by issue #346.)*
+
+**R-421 [D]** **A host is taken for lost only by a majority, and stops its own apps only when it is the one cut off.** Hosts check each other on the agent port. A host stops its apps only when it has reached fewer than half the cluster's hosts for a period [P: 30 s]; the leader starts its standbys only when more than half the hosts have not reached it for three times that. With fewer than three hosts, nothing fails over or stops by itself: a person with `install.cluster.manage` starts a standby after saying the host is gone. Postgres or the control plane being unreachable never stops an app. Every failover, fence and manual start is audited. *(Added by issue #346.)*
+
+**R-422 [D]** **Standbys reserve room for the loss of any one host.** The check is per pair of hosts, so hosts of different sizes are counted by what each can absorb. An app whose standby fits nowhere deploys without one, with a notice naming the largest room any host has [P]. Host policy `allow_failover_oversubscription`, off by default, lets standbys be placed past the reservation, and at failover apps then start in priority order. Disk is never oversubscribed: a standby's copies are counted on its host (R-242). *(Added by issue #346.)*
 
 **R-258 [D]** **AI is the tenth adapter category.** It passes both halves of the test design 03 §8.1
 states before a category may be added. The planner's half: whether a screener can read a repository at
