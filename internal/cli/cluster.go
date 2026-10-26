@@ -35,9 +35,36 @@ type joinTokenRow struct {
 	RevokedAt *time.Time `json:"revoked_at"`
 }
 
+// stamp is t in RFC 3339, or empty for none.
+func stamp(t *time.Time, none string) string {
+	if t == nil {
+		return none
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+// deleteByID is a command that DELETEs base/<id> and says done.
+func deleteByID(client func() (*Client, error), use, short, base, done string) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			if err := c.Do("DELETE", base+url.PathEscape(args[0]), nil, nil); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), done)
+			return nil
+		},
+	}
+}
+
 func clusterHostsCmd(client func() (*Client, error)) *cobra.Command {
 	cmd := &cobra.Command{Use: "hosts", Short: "The cluster's hosts"}
-
 	cmd.AddCommand(&cobra.Command{
 		Use:   "list",
 		Short: "List the cluster's hosts",
@@ -54,38 +81,17 @@ func clusterHostsCmd(client func() (*Client, error)) *cobra.Command {
 			}
 			t := table(cmd.OutOrStdout(), "NAME", "ROLES", "ADDRESS", "VERSION", "LAST SEEN", "ID")
 			for _, h := range out.Hosts {
-				seen := "never"
-				if h.LastSeenAt != nil {
-					seen = h.LastSeenAt.UTC().Format(time.RFC3339)
-				}
-				fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\n", h.Name, strings.Join(h.Roles, ","), h.Address, h.Version, seen, h.ID)
+				fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\n", h.Name, strings.Join(h.Roles, ","), h.Address, h.Version, stamp(h.LastSeenAt, "never"), h.ID)
 			}
 			return t.Flush()
 		},
 	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "remove <host-id>",
-		Short: "Remove a host from the cluster",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client()
-			if err != nil {
-				return err
-			}
-			if err := c.Do("DELETE", "/cluster/hosts/"+url.PathEscape(args[0]), nil, nil); err != nil {
-				return err
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Removed the host.")
-			return nil
-		},
-	})
+	cmd.AddCommand(deleteByID(client, "remove <host-id>", "Remove a host from the cluster", "/cluster/hosts/", "Removed the host."))
 	return cmd
 }
 
 func clusterTokensCmd(client func() (*Client, error)) *cobra.Command {
 	cmd := &cobra.Command{Use: "tokens", Short: "Tokens new hosts join with"}
-
 	cmd.AddCommand(&cobra.Command{
 		Use:   "list",
 		Short: "List join tokens",
@@ -102,21 +108,44 @@ func clusterTokensCmd(client func() (*Client, error)) *cobra.Command {
 			}
 			t := table(cmd.OutOrStdout(), "ID", "ROLES", "USES", "EXPIRES", "REVOKED")
 			for _, tok := range out.Tokens {
-				revoked := ""
-				if tok.RevokedAt != nil {
-					revoked = tok.RevokedAt.UTC().Format(time.RFC3339)
-				}
 				fmt.Fprintf(t, "%s\t%s\t%d/%d\t%s\t%s\n", tok.ID, strings.Join(tok.Roles, ","), tok.Uses, tok.MaxUses,
-					tok.ExpiresAt.UTC().Format(time.RFC3339), revoked)
+					stamp(&tok.ExpiresAt, ""), stamp(tok.RevokedAt, ""))
 			}
 			return t.Flush()
 		},
 	})
+	cmd.AddCommand(createJoinTokenCmd(client))
+	cmd.AddCommand(deleteByID(client, "revoke <token-id>", "Revoke a join token", "/cluster/join-tokens/", "Revoked the join token."))
+	return cmd
+}
 
-	var roles []string
-	var uses, hours int
-	var address string
-	create := &cobra.Command{
+type joinTokenFlags struct {
+	roles   []string
+	uses    int
+	hours   int
+	address string
+}
+
+func (f joinTokenFlags) body() map[string]any {
+	body := map[string]any{}
+	if len(f.roles) > 0 {
+		body["roles"] = f.roles
+	}
+	if f.uses > 0 {
+		body["max_uses"] = f.uses
+	}
+	if f.hours > 0 {
+		body["expires_hours"] = f.hours
+	}
+	if f.address != "" {
+		body["address"] = f.address
+	}
+	return body
+}
+
+func createJoinTokenCmd(client func() (*Client, error)) *cobra.Command {
+	var f joinTokenFlags
+	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a join token. It is shown once",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -124,54 +153,23 @@ func clusterTokensCmd(client func() (*Client, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			body := map[string]any{}
-			if len(roles) > 0 {
-				body["roles"] = roles
-			}
-			if uses > 0 {
-				body["max_uses"] = uses
-			}
-			if hours > 0 {
-				body["expires_hours"] = hours
-			}
-			if address != "" {
-				body["address"] = address
-			}
 			var out struct {
 				Token joinTokenRow `json:"token"`
 				Join  string       `json:"join"`
 			}
-			if err := c.Do("POST", "/cluster/join-tokens", body, &out); err != nil {
+			if err := c.Do("POST", "/cluster/join-tokens", f.body(), &out); err != nil {
 				return err
 			}
 			w := cmd.OutOrStdout()
 			fmt.Fprintln(w, out.Join)
 			fmt.Fprintf(w, "\nRoles %s, %d use, expires %s. Shown once.\n",
-				strings.Join(out.Token.Roles, ","), out.Token.MaxUses, out.Token.ExpiresAt.UTC().Format(time.RFC3339))
+				strings.Join(out.Token.Roles, ","), out.Token.MaxUses, stamp(&out.Token.ExpiresAt, ""))
 			return nil
 		},
 	}
-	create.Flags().StringSliceVar(&roles, "role", nil, "control, app, or both (repeat or comma-separate). Default: both while the cluster has fewer than three hosts, then app")
-	create.Flags().IntVar(&uses, "uses", 0, "How many hosts may join with it (default 1)")
-	create.Flags().IntVar(&hours, "expires-hours", 0, "How many hours it lasts (default 24)")
-	create.Flags().StringVar(&address, "address", "", "The installation's address the joining host reaches (default this server's advertise address)")
-	cmd.AddCommand(create)
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "revoke <token-id>",
-		Short: "Revoke a join token",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client()
-			if err != nil {
-				return err
-			}
-			if err := c.Do("DELETE", "/cluster/join-tokens/"+url.PathEscape(args[0]), nil, nil); err != nil {
-				return err
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Revoked the join token.")
-			return nil
-		},
-	})
+	cmd.Flags().StringSliceVar(&f.roles, "role", nil, "control, app, or both (repeat or comma-separate). Default: both while the cluster has fewer than three hosts, then app")
+	cmd.Flags().IntVar(&f.uses, "uses", 0, "How many hosts may join with it (default 1)")
+	cmd.Flags().IntVar(&f.hours, "expires-hours", 0, "How many hours it lasts (default 24)")
+	cmd.Flags().StringVar(&f.address, "address", "", "The installation's address the joining host reaches (default this server's advertise address)")
 	return cmd
 }
