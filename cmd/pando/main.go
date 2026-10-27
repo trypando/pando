@@ -1644,12 +1644,18 @@ func serve(ctx context.Context, configPath string) error {
 		}
 	}()
 
-	// On every replica, not only the leader: each control host's edge gets
-	// every app's route from the database rather than from a shared
-	// directory (R-417). Skipped while the cluster is one host.
+	// On one replica of each control host, not only the leader: each
+	// control host's edge gets every app's route from the database rather
+	// than from a shared directory (R-417). Skipped while one host holds the
+	// control role, and writes only the routes that changed.
+	routeHost := routeSyncHost(joined, hasJoined)
 	go (&reconciler.RouteSync{
 		Apps: apps, Registry: registryAdapters{registry}, ProxyUpstream: proxyUpstream,
-		Hosts: clusterHosts.Count, Clock: clock.System{}, Logger: logger,
+		ControlHosts: clusterHosts.ControlCount,
+		Exclusive: func(ctx context.Context, pass func(context.Context)) (bool, error) {
+			return clusterStore.OnePerHost(ctx, "route-sync", routeHost, pass)
+		},
+		Clock: clock.System{}, Logger: logger,
 	}).Run(loopCtx)
 
 	// R-211's rolling backups, which had a column, a default and an expiry

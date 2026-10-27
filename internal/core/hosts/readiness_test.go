@@ -176,6 +176,31 @@ func TestR417_TheClusterCountIncludesThisHost(t *testing.T) {
 	require.Equal(t, 2, n)
 }
 
+// TestR417_ControlHostsAreCountedByRole asserts that the control hosts are
+// those holding the control role, at least this install's own: a cluster of
+// one control host and app hosts has one edge.
+func TestR417_ControlHostsAreCountedByRole(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeStore{}
+	n, err := newService(t, store).ControlCount(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "this install, before it is recorded")
+
+	store.hosts = []state.Host{
+		{ID: "host_01A", Roles: []string{"control", "app"}},
+		{ID: "host_01B", Roles: []string{"app"}},
+		{ID: "host_01C", Roles: []string{"app"}},
+	}
+	n, err = newService(t, store).ControlCount(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	store.hosts = append(store.hosts, state.Host{ID: "host_01D", Roles: []string{"control"}})
+	n, err = newService(t, store).ControlCount(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+}
+
 type fakeRouting struct {
 	api.RoutingAdapter
 	perEdge bool

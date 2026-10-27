@@ -468,6 +468,16 @@ func selfHost(joined hosts.Joined, hasJoined bool) func(state.Host) bool {
 	return hosts.InstallHost
 }
 
+// routeSyncHost is what the replicas of this host share for route sync's
+// one pass at a time (R-417): the ID it joined as, or one name for every
+// replica of the install's first host.
+func routeSyncHost(joined hosts.Joined, hasJoined bool) string {
+	if hasJoined {
+		return joined.HostID
+	}
+	return "install"
+}
+
 // unreachableRuntime is a container runtime this host could not connect to:
 // every call fails with why.
 type unreachableRuntime struct{ err error }

@@ -452,6 +452,29 @@ func (c *Cluster) AddHost(ctx context.Context, h Host) (Host, error) {
 	return addHost(ctx, c.db, h, false)
 }
 
+// OnePerHost runs pass unless another replica on host is running job's pass,
+// and reports whether it ran (R-417): replicas of one host share its edge, so
+// one of them writing its routes is enough. host is what the replicas of one
+// host share — the ID their join gave them, or one name for the install's
+// own first host. The lock is the transaction's, so a replica that dies
+// mid-pass lets go of it.
+func (c *Cluster) OnePerHost(ctx context.Context, job, host string, pass func(context.Context)) (bool, error) {
+	const msg = "Could not check whether another replica on this host is doing this work."
+	tx, err := c.db.Begin(ctx)
+	if err != nil {
+		return false, errs.Wrap(errs.Internal, msg, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var mine bool
+	if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))`, "one-per-host:"+job+":"+host).Scan(&mine); err != nil {
+		return false, errs.Wrap(errs.Internal, msg, err)
+	}
+	if mine {
+		pass(ctx)
+	}
+	return mine, nil
+}
+
 // firstHostLock serializes recording the install's first host, so replicas
 // starting together on one database record one host between them.
 const firstHostLock int64 = 0x70616e646f03

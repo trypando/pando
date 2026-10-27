@@ -135,6 +135,30 @@ func TestR415_OnlyANewInstallIsFresh(t *testing.T) {
 	require.True(t, accounts)
 }
 
+// TestR417_OneReplicaOfAHostRunsItsPassAtATime asserts that a pass taken
+// for one host is not run by a second replica of the same host while the
+// first runs it, and is by a replica of another host.
+func TestR417_OneReplicaOfAHostRunsItsPassAtATime(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c, _ := clusterStore(t)
+	var inner, other bool
+	ran, err := c.OnePerHost(ctx, "route-sync", "host_a", func(ctx context.Context) {
+		var err error
+		inner, err = c.OnePerHost(ctx, "route-sync", "host_a", func(context.Context) {})
+		require.NoError(t, err)
+		other, err = c.OnePerHost(ctx, "route-sync", "host_b", func(context.Context) {})
+		require.NoError(t, err)
+	})
+	require.NoError(t, err)
+	require.True(t, ran)
+	require.False(t, inner, "a second replica of the host does not run it")
+	require.True(t, other, "another host does")
+	ran, err = c.OnePerHost(ctx, "route-sync", "host_a", func(context.Context) {})
+	require.NoError(t, err)
+	require.True(t, ran, "let go once the pass ends")
+}
+
 // TestR415_TwoHostsJoiningUnderOneNameDoNotEvictEachOther asserts R-415's
 // pending join against two machines that both call themselves the same name,
 // such as cloned VMs that both default to "ubuntu": the second is refused

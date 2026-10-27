@@ -117,3 +117,11 @@ func TestUnreachableRuntimeSaysWhy(t *testing.T) {
 	_, err = u.ContainerStop(context.Background(), "c1", client.ContainerStopOptions{})
 	require.ErrorContains(t, err, "no socket")
 }
+
+// TestR417_ReplicasOfAHostShareOneRouteSyncPass asserts that every replica
+// of one host takes route sync's pass under one name: the ID it joined as,
+// or one name for the install's first host.
+func TestR417_ReplicasOfAHostShareOneRouteSyncPass(t *testing.T) {
+	require.Equal(t, "host_01A", routeSyncHost(hosts.Joined{HostID: "host_01A"}, true))
+	require.Equal(t, "install", routeSyncHost(hosts.Joined{}, false))
+}
