@@ -1910,7 +1910,7 @@
             {
               "key": "hosts",
               "label": "Hosts",
-              "help": "The hosts as a JSON list. Each has a name; an endpoint (unix:///var/run/docker.sock, tcp://host:2376 with the Docker TLS credential, or ssh://user@host with the SSH key and the host's ssh_host_key); an agent_address where Pando reaches the host's agent; and optionally no_placement to keep new apps off it. Exactly one is \"control\": true, the host Pando runs on.",
+              "help": "The hosts as a JSON list. Each has a name; an endpoint (unix:///var/run/docker.sock, tcp://host:2376 with the Docker TLS credential, or ssh://user@host with the SSH key and the host's ssh_host_key); an agent_address where Pando reaches the host's agent; and optionally no_placement to keep new apps off it. Exactly one is \"control\": true, the host Pando first ran on.",
               "type": "string",
               "multiline": true,
               "required": true,

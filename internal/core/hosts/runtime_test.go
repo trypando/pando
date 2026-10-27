@@ -164,8 +164,8 @@ func TestR418_TheFirstAppHostTurnsDockerIntoDockerHostsInPlace(t *testing.T) {
 	r := newRuntime(t, f)
 	ctx := context.Background()
 
-	// A cluster of one, or one with a control host only, is left as it is.
-	f.hosts = []state.Host{appHost("ctl-2", "10.0.0.7:7443", state.HostRoleControl)}
+	// A cluster of one is left as it is.
+	f.hosts = []state.Host{installRow("pando-1", "10.0.0.5:7443")}
 	res, err := r.Sync(ctx)
 	require.NoError(t, err)
 	require.False(t, res.Changed)
@@ -278,7 +278,9 @@ func TestR418_AJoinIsRefusedWhenDockerCannotBecomeSeveralHosts(t *testing.T) {
 	r = newRuntime(t, f)
 	r.Declared = func(id string) bool { return id == "rt_docker" }
 	require.ErrorContains(t, r.CheckJoin(ctx, "edge-2", app), "configuration file")
-	require.NoError(t, r.CheckJoin(ctx, "edge-2", []string{state.HostRoleControl}))
+	// A second control host is refused the same way: it reaches this
+	// machine through its agent, so the runtime is converted (R-416).
+	require.ErrorContains(t, r.CheckJoin(ctx, "edge-2", []string{state.HostRoleControl}), "configuration file")
 
 	require.Error(t, newRuntime(t, &runtimeFakes{}).CheckJoin(ctx, "edge-2", app), "no runtime stored")
 	r = newRuntime(t, &runtimeFakes{adapters: []state.AdapterConfig{singleDocker(`not json`)}})

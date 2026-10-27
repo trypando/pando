@@ -232,9 +232,9 @@ category for operator-supplied replicated storage), O-66 (whether clustering is 
   host's agent address is the host of `server.advertise_url` and port 7443; without one, an app-role
   join is refused saying to set it. A runtime declared in the configuration file, and `network_pool`
   `off`, are refused the same way. Kubernetes and Incus refuse app-role joins (`hosts.CheckAppRoleJoin`).
-- **Not done here.** The `docker-hosts` runtime still has exactly one control host: a second control
-  host's replica would read the first one's `unix://` endpoint as its own machine's. Renewing a host's
-  certificate must update `cert_sha256`, which the next `Sync` then pins.
+- **Several control hosts** read this one host list, each as its own machine sees it: see "As built:
+  several control hosts", below. Renewing a host's certificate updates `cert_sha256`, which the next
+  `Sync` pins ("every host is watched", below).
 
 ### As built: failover capacity
 
@@ -1175,3 +1175,69 @@ The owner's third review of #347 found three faults in the standby. What changed
   check through the first start (`standbyState.holdRoom`; the health wait is outside it), so two
   never both take room only one fits, as when the policy is turned off over standbys placed past
   the reservation.
+
+### As built: several control hosts
+
+The cluster's end-to-end test found a host joined with the control and app roles deleting its own
+Pando container. Every control host reads one stored host list, and the install's machine's entry
+names its Docker by its own socket (or the environment): on the joined host that is the joined host's
+Docker. Its runtime took it for the install's machine, kept "that machine's agent" there by the agent's
+container name, found its own Pando under that name (a joined host's container is named `pando-agent`)
+and force-removed it. A control-only joined host instead tried to start the install machine's agent in
+its own Docker and failed on port 7443.
+
+- **Each process is told which machine it is (R-414, R-416).** `multidocker.Machine` is a constructor
+  argument (`multidocker.NewOn`), not something the adapter reads from core (R-027):
+  `cmd/pando` `runtimeMachine` passes nothing on the install's first host, which is the entry marked
+  `control`, and on a joined host the name it joined with and its own runtime (`ownRuntimeEndpoint`:
+  the agent's runtime socket for a host with the app role, the environment's otherwise). The stored
+  list is unchanged and means the right thing everywhere (`seenFrom`): a process reaches its own entry
+  directly — an `agent://` entry at its own runtime — and every other machine through that machine's
+  agent; an entry whose endpoint names a local Docker (empty, `unix://`, `npipe://`) is, on every
+  other machine, `agent://<agent_address>`. Entries an operator wrote over `tcp://` or `ssh://` are as
+  before.
+- **`control` now means the install's own machine**, whose agent the runtime keeps: still exactly
+  one, and still where a volume handle recorded without a host is (R-418). The edge, trial runs and
+  self-upgrade run on each control host's own machine (`Adapter.local`), and `HealthCheck` asks that
+  machine's Docker, not the install's: a control host does not stop deploying because another one is
+  away. A control host with no app role has no entry; its own Docker is still `local`, and its edge's
+  storage is named for it (`Adapter.unlisted`).
+- **The install machine's agent carries runtime calls (R-416).** Only the install's machine's own
+  process keeps its agent, and gives it the machine's runtime socket: the bind mount Pando's own
+  container reaches Docker through (`docker.Adapter.OwnSocket`: the mount at the `unix://` path the
+  client uses), mounted into the agent alone with the socket's group (`GroupAdd`), and
+  `PANDO_AGENT_RUNTIME_SOCKET` set. The Docker API is never published: the agent publishes its one
+  mutual-TLS port and carries runtime calls only for a control host's certificate
+  (`hostagent.IsControl`), as a joined host's does. An agent kept without the socket is made again
+  with it (the socket is part of its digest); one with no socket to give — Pando not in a container,
+  or reaching Docker over TCP — is made as before, so operators' `tcp://` and `ssh://` hosts' agents
+  are not re-created. **[P]** The install machine's entry has no `cert_sha256`: the agent's certificate
+  is issued again whenever the agent is re-created, so it is verified by the cluster authority and its
+  name, `pando-agent.<name>.invalid`, which no joined host can hold (names are unique in
+  `cluster_hosts`).
+- **The agent keeper never removes a container it did not make.** `agentKeeper.keepCurrent` replaces,
+  removes or starts the container named `pando-agent` only when it carries the keeper's labels
+  (`io.pando.managed=true`, `io.pando.role=host-agent`), and otherwise refuses with what to do.
+  Pando's own container never carries them. No keeper is made for an `agent://` entry, nor for a
+  joined host's own entry seen from itself, whose agent is that very process.
+- **A second control host converts a single-host Docker runtime (R-418 amended).** It reaches the
+  install's machine through its agent, which only `docker-hosts` does, so `hosts.Runtime.Sync`
+  converts when a host other than the install's machine holds the control role, not only on the first
+  app host; a control host with no app role adds no entry. `CheckJoin` makes the refusals the
+  conversion would make (a declared runtime, `network_pool` `off`, no advertise address) for a
+  control-role join too. A conversion made on a joined control host takes the install machine's
+  agent address from that machine's `cluster_hosts` row (`Runtime.Joined`), not from its own
+  advertise address, so every control host writes the same list.
+- **Tests.** `multidocker`: `TestR416_ASecondControlHostNeverTouchesItsOwnPandoContainer` (the bug,
+  reproduced with the old reading: Pando's own container force-removed),
+  `TestR414_EachControlHostTreatsOnlyItsOwnEntryAsLocal`,
+  `TestR414_AControlHostWithNoAppRoleRunsItsEdgeOnItsOwnMachine`,
+  `TestR416_TheAgentKeeperNeverRemovesAContainerItDidNotMake`,
+  `TestR416_TheInstallMachinesAgentCarriesRuntimeCalls`; `hosts`:
+  `TestR416_ASecondControlHostTurnsDockerIntoDockerHosts`,
+  `TestR416_AConversionOnAJoinedControlHostNamesTheInstallsMachine`; `cmd/pando`:
+  `TestR416_EachControlHostTellsTheRuntimeWhichMachineItIs`.
+- **Not done here.** The install machine's agent is not fenced: a runtime call from another control
+  host to start a container there is not refused while the install's machine is fencing, as a joined
+  host's agent refuses it (R-421). The machine's own replicas reconcile nothing while it fences, and
+  the reconciler leaves apps on a fenced host alone (`Holds.HostHeld`), which is what stands in.

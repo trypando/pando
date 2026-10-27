@@ -120,7 +120,7 @@ func TestACurrentAgentIsStartedIfStoppedAndKeptOtherwise(t *testing.T) {
 	f.on("GET /containers/pando-agent/json", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"Id":     "c-old",
-			"Config": map[string]any{"Labels": map[string]string{labelAgentDigest: k.digest(testAgentImage), labelAgentIssued: time.Now().UTC().Format(time.RFC3339)}},
+			"Config": map[string]any{"Labels": kept(map[string]string{labelAgentDigest: k.digest(testAgentImage), labelAgentIssued: time.Now().UTC().Format(time.RFC3339)})},
 			"State":  map[string]any{"Running": running},
 		})
 	})
@@ -169,7 +169,7 @@ func TestAnAgentOnAnotherConfigurationOrAnOldCertificateIsReplaced(t *testing.T)
 			f := newFakeDaemon(t)
 			k := newKeeper(t, f, testAgentImage)
 			f.on("GET /containers/pando-agent/json", respond(http.StatusOK, map[string]any{
-				"Id": "c-old", "Config": map[string]any{"Labels": labels(k)}, "State": map[string]any{"Running": true},
+				"Id": "c-old", "Config": map[string]any{"Labels": kept(labels(k))}, "State": map[string]any{"Running": true},
 			}))
 			f.on("DELETE /containers/c-old", noContent)
 			f.on("GET /networks", respond(http.StatusOK, []map[string]any{
@@ -228,7 +228,7 @@ func TestAnAgentThatCannotBeMadeSaysWhy(t *testing.T) {
 
 	t.Run("the old agent cannot be removed", func(t *testing.T) {
 		f := newFakeDaemon(t)
-		f.on("GET /containers/pando-agent/json", respond(http.StatusOK, map[string]any{"Id": "c-old", "Config": map[string]any{}}))
+		f.on("GET /containers/pando-agent/json", respond(http.StatusOK, map[string]any{"Id": "c-old", "Config": map[string]any{"Labels": kept(nil)}}))
 		f.on("DELETE /containers/c-old", respond(http.StatusInternalServerError, map[string]string{"message": "busy"}))
 		_, err := newKeeper(t, f, testAgentImage).ensure(ctx)
 		require.Equal(t, errs.AdapterFailed, errs.CodeOf(err))

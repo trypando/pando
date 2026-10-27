@@ -24,7 +24,7 @@ func Info() api.KindInfo {
 				Help: "The hosts as a JSON list. Each has a name; an endpoint (unix:///var/run/docker.sock, tcp://host:2376 " +
 					"with the Docker TLS credential, or ssh://user@host with the SSH key and the host's ssh_host_key); an " +
 					"agent_address where Pando reaches the host's agent; and optionally no_placement to keep new apps off it. " +
-					"Exactly one is \"control\": true, the host Pando runs on.",
+					"Exactly one is \"control\": true, the host Pando first ran on.",
 				Placeholder: `[{"name":"control","control":true,"agent_address":"10.0.0.5:7443"},{"name":"app-1","endpoint":"tcp://10.0.0.6:2376"}]`},
 			{Key: "agent_authority", Label: "Agent certificate authority", Type: "string", Multiline: true, Credential: true, Required: true,
 				Help: "The output of `pando host-agent new-authority`. Pando issues its own certificate and each agent's from it."},

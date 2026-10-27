@@ -14,9 +14,11 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
+	"github.com/trypando/pando/internal/adapter/runtime/docker"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/hostagent"
 )
@@ -64,7 +66,8 @@ const (
 
 	// EnvAgentRuntimeSocket is the host's own container runtime socket, on a
 	// host that joined a cluster: the agent then carries a control host's
-	// runtime calls to it (R-416). This adapter sets it on no agent it starts.
+	// runtime calls to it (R-416). This adapter sets it only on the agent it
+	// keeps on the install's own machine (carryRuntime).
 	EnvAgentRuntimeSocket = "PANDO_AGENT_RUNTIME_SOCKET"
 )
 
@@ -85,6 +88,11 @@ type agentKeeper struct {
 	// settings names where agent_image and agent_port are set, for remedies.
 	// Empty is this adapter's.
 	settings string
+
+	// socket is the runtime socket the agent carries runtime calls to: set
+	// only for the agent on the install's own machine, from Pando's own
+	// container there (R-416). Nil, or false, carries none.
+	socket func(context.Context) (docker.OwnSocket, bool)
 
 	mu      sync.Mutex
 	checked time.Time
@@ -144,10 +152,16 @@ func (a *Adapter) ensureAgent(ctx context.Context, h *host) error {
 }
 
 // digest names what the agent is run with, apart from its certificate.
-func (k *agentKeeper) digest(image string) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		image, strconv.Itoa(k.port), k.pool.String(), k.authorities.Fingerprint(), k.host,
-	}, "\n")))
+func (k *agentKeeper) digest(image string) string { return k.digestWith(image, docker.OwnSocket{}) }
+
+// digestWith is digest for an agent given sock, the runtime socket it
+// carries calls to, if any: one that gains or loses it is made again.
+func (k *agentKeeper) digestWith(image string, sock docker.OwnSocket) string {
+	parts := []string{image, strconv.Itoa(k.port), k.pool.String(), k.authorities.Fingerprint(), k.host}
+	if sock.Source != "" {
+		parts = append(parts, "runtime", sock.Source, sock.Group)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return hex.EncodeToString(sum[:8])
 }
 
@@ -165,47 +179,85 @@ func (k *agentKeeper) ensure(ctx context.Context) (bool, error) {
 			"Pando could not tell which image to run the host agent on %s from.", k.host).
 			WithRemedy("Set agent_image in " + k.settingsName() + " to the image of this version of Pando, such as one in the install's registry.")
 	}
-	digest := k.digest(image)
+	var sock docker.OwnSocket
+	if k.socket != nil {
+		sock, _ = k.socket(ctx)
+	}
+	digest := k.digestWith(image, sock)
 
+	kept, err := k.keepCurrent(ctx, digest)
+	if err != nil || kept {
+		return false, err
+	}
+	if err := k.create(ctx, image, digest, sock); err != nil {
+		return false, err
+	}
+	k.checked = time.Now()
+	return true, nil
+}
+
+// keepCurrent looks at the container by the agent's name: one made with
+// digest is started if stopped and kept; one of another version,
+// configuration or a certificate due for renewal is removed. It removes or
+// replaces only a container this keeper made, by its labels: on a host that
+// joined the cluster the container by that name is the host's own Pando,
+// which runs the host's agent itself (R-416), and Pando never removes itself.
+func (k *agentKeeper) keepCurrent(ctx context.Context, digest string) (bool, error) {
 	existing, err := k.cli.ContainerInspect(ctx, agentContainer, client.ContainerInspectOptions{})
 	switch {
-	case err == nil:
-		c := existing.Container
-		current := c.Config != nil && c.Config.Labels[labelAgentDigest] == digest && !stale(c.Config.Labels[labelAgentIssued])
-		if current {
-			if c.State == nil || !c.State.Running {
-				if _, err := k.cli.ContainerStart(ctx, c.ID, client.ContainerStartOptions{}); err != nil {
-					return false, errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start the host agent on %s.", k.host), err)
-				}
-			}
-			k.checked = time.Now()
-			return false, nil
-		}
-		// An older version, another configuration, or a certificate due for
-		// renewal: replaced. Its connections drop, and clients reconnect.
-		if _, err := k.cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
-			return false, errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not replace the host agent on %s.", k.host), err)
-		}
 	case cerrdefs.IsNotFound(err):
-	default:
+		return false, nil
+	case err != nil:
 		return false, errs.Wrap(errs.AdapterUnavailable, fmt.Sprintf("Docker on %s is not responding.", k.host), err)
 	}
+	c := existing.Container
+	if !keptAgent(c.Config) {
+		return false, errs.Newf(errs.AdapterFailed,
+			"The container named %s on %s was not made by Pando's Docker hosts runtime as that host's agent, so Pando does not replace or remove it. "+
+				"On a host that joined the cluster, that container is the host's own Pando, which runs the host's agent itself.",
+			agentContainer, k.host).
+			WithRemedy("If " + k.host + " joined the cluster, reach it in the runtime's host list as agent://<address>:<port>, as Pando writes it. Otherwise rename that container.")
+	}
+	if c.Config.Labels[labelAgentDigest] == digest && !stale(c.Config.Labels[labelAgentIssued]) {
+		if c.State == nil || !c.State.Running {
+			if _, err := k.cli.ContainerStart(ctx, c.ID, client.ContainerStartOptions{}); err != nil {
+				return false, errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start the host agent on %s.", k.host), err)
+			}
+		}
+		k.checked = time.Now()
+		return true, nil
+	}
+	// An older version, another configuration, or a certificate due for
+	// renewal: replaced. Its connections drop, and clients reconnect.
+	if _, err := k.cli.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+		return false, errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not replace the host agent on %s.", k.host), err)
+	}
+	return false, nil
+}
 
+// keptAgent reports whether a container's labels say an agent keeper made
+// it.
+func keptAgent(cfg *container.Config) bool {
+	return cfg != nil && cfg.Labels[labelManaged] == "true" && cfg.Labels[labelRole] == roleAgent
+}
+
+// create makes the agent's container and starts it.
+func (k *agentKeeper) create(ctx context.Context, image, digest string, sock docker.OwnSocket) error {
 	networkID, err := k.ensureNetwork(ctx)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if err := k.pull(ctx, image); err != nil {
-		return false, err
+		return err
 	}
 
 	certPEM, keyPEM, err := k.authorities.IssueServer(k.host)
 	if err != nil {
-		return false, errs.Wrap(errs.AdapterFailed, "Could not issue the host agent's certificate.", err)
+		return errs.Wrap(errs.AdapterFailed, "Could not issue the host agent's certificate.", err)
 	}
 	port, err := network.ParsePort(strconv.Itoa(k.port) + "/tcp")
 	if err != nil {
-		return false, errs.Wrap(errs.ValidInvalid, "The agent port is not usable.", err)
+		return errs.Wrap(errs.ValidInvalid, "The agent port is not usable.", err)
 	}
 	cfg := &container.Config{
 		Image:      image,
@@ -244,6 +296,7 @@ func (k *agentKeeper) ensure(ctx context.Context) (bool, error) {
 		},
 		LogConfig: container.LogConfig{Type: "json-file", Config: map[string]string{"max-size": "5m", "max-file": "2"}},
 	}
+	carryRuntime(cfg, hostCfg, sock)
 	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{agentNetwork: {NetworkID: networkID}},
 	}
@@ -251,15 +304,35 @@ func (k *agentKeeper) ensure(ctx context.Context) (bool, error) {
 		Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, Name: agentContainer,
 	})
 	if err != nil {
-		return false, errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not create the host agent on %s.", k.host), err)
+		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not create the host agent on %s.", k.host), err)
 	}
 	if _, err := k.cli.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		return false, errs.Wrap(errs.AdapterFailed,
+		return errs.Wrap(errs.AdapterFailed,
 			fmt.Sprintf("Could not start the host agent on %s. The likeliest cause is something else on the host using port %d.", k.host, k.port), err).
 			WithRemedy("Free that port on the host, or set agent_port in " + k.settingsName() + " to one that is free.")
 	}
-	k.checked = time.Now()
-	return true, nil
+	return nil
+}
+
+// agentRuntimeSocket is where the agent on the install's own machine finds
+// the machine's runtime socket.
+const agentRuntimeSocket = "/var/run/docker.sock"
+
+// carryRuntime gives the agent the machine's runtime socket, when it has one
+// to give: the agent on the install's own machine then carries the runtime
+// calls of the cluster's other control hosts, as a joined host's agent does
+// (R-416). The socket is mounted into the agent alone and never published:
+// the agent publishes only its mutual-TLS port, and carries runtime calls
+// only for a control host's certificate (hostagent.IsControl).
+func carryRuntime(cfg *container.Config, hostCfg *container.HostConfig, sock docker.OwnSocket) {
+	if sock.Source == "" {
+		return
+	}
+	cfg.Env = append(cfg.Env, EnvAgentRuntimeSocket+"="+agentRuntimeSocket)
+	hostCfg.Mounts = append(hostCfg.Mounts, mount.Mount{Type: mount.TypeBind, Source: sock.Source, Target: agentRuntimeSocket})
+	if sock.Group != "" {
+		hostCfg.GroupAdd = append(hostCfg.GroupAdd, sock.Group)
+	}
 }
 
 func stale(issued string) bool {
