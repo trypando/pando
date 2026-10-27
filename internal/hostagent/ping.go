@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -209,28 +210,69 @@ func peerName(conn *tls.Conn) string {
 	return ""
 }
 
+// PingError is a ping that got no view back. Contact says whether the
+// machine at the address answered anyway (R-421): a connection refused or
+// reset, a TLS alert, a certificate, a refusal or any other reply all come
+// from a machine that is up and on the network, whatever its Pando process is
+// doing. Only silence — a timeout, no route — is not contact. A host whose
+// Pando process is down, restarting or waiting for its database is not cut
+// off, and must never be taken for one that is: its apps may be running.
+type PingError struct {
+	Addr    string
+	Contact bool
+	Err     error
+}
+
+func (e *PingError) Error() string { return e.Err.Error() }
+func (e *PingError) Unwrap() error { return e.Err }
+
+// Contacted reports whether err, from Ping, still came from the machine:
+// true for nil, and for a PingError with Contact.
+func Contacted(err error) bool {
+	if err == nil {
+		return true
+	}
+	var pe *PingError
+	return errors.As(err, &pe) && pe.Contact
+}
+
 // Ping checks the agent at addr, as the client tlsConfig authenticates, and
 // returns the view it answered with. from is the checking host's ID, or ""
-// for the leader's collector.
+// for the leader's collector. An error is a *PingError, which says whether
+// the machine answered at all (Contacted).
 func Ping(ctx context.Context, addr string, tlsConfig *tls.Config, from string) ([]byte, error) {
 	if from == "" {
 		from = noSender
 	}
-	cfg := tlsConfig.Clone()
-	cfg.NextProtos = []string{PingProtocol}
-	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: headerTimeout}, Config: cfg}
+	d := net.Dialer{Timeout: headerTimeout}
 	raw, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("could not reach the host agent at %s: %w", addr, err)
+		return nil, &PingError{Addr: addr, Contact: refusedByPeer(err),
+			Err: fmt.Errorf("could not reach the host agent at %s: %w", addr, err)}
 	}
-	conn := raw.(*tls.Conn)
-	defer func() { _ = conn.Close() }()
+	// The machine took the connection: from here on whatever happens is an
+	// answer from it.
+	defer func() { _ = raw.Close() }()
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(headerTimeout)
 	}
-	_ = conn.SetDeadline(deadline)
+	_ = raw.SetDeadline(deadline)
+	view, err := pingOn(ctx, raw, addr, tlsConfig, from)
+	if err != nil {
+		return nil, &PingError{Addr: addr, Contact: true, Err: err}
+	}
+	return view, nil
+}
 
+// pingOn sends the ping over an open connection and reads the answer.
+func pingOn(ctx context.Context, raw net.Conn, addr string, tlsConfig *tls.Config, from string) ([]byte, error) {
+	cfg := tlsConfig.Clone()
+	cfg.NextProtos = []string{PingProtocol}
+	conn := tls.Client(raw, cfg)
+	if err := conn.HandshakeContext(ctx); err != nil {
+		return nil, fmt.Errorf("the host agent at %s did not complete the handshake: %w", addr, err)
+	}
 	if _, err := fmt.Fprintf(conn, "%s %s %s\n", protocolVersion, pingVerb, from); err != nil {
 		return nil, fmt.Errorf("the host agent at %s closed the connection: %w", addr, err)
 	}
@@ -246,4 +288,11 @@ func Ping(ctx context.Context, addr string, tlsConfig *tls.Config, from string) 
 		return nil, fmt.Errorf("the host agent at %s refused the ping: %s", addr, strings.TrimPrefix(reply, "NO "))
 	}
 	return nil, errors.New("the host agent at " + addr + " answered the ping with something else")
+}
+
+// refusedByPeer reports whether a dial failed because the machine itself
+// turned the connection away: refused or reset. A timeout, an unreachable
+// network or host, or a canceled context is silence.
+func refusedByPeer(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET)
 }

@@ -1011,6 +1011,25 @@ type TLSRequest struct {
 	Hostname string
 }
 
+// RouteFor is the route an app's spec asks for, pointed at upstream.
+//
+// Every writer of a route builds it here — the deploy, the reconciler's drift
+// correction and each control host's route sync — so none of them can write
+// a route that differs from the others'. One that left TLS out would strip
+// the app's certificate from the edge on its next pass (R-169, R-174).
+// upstream is always Pando's proxy (R-023).
+func RouteFor(appID string, r spec.Routing, upstream string) RouteRequest {
+	return RouteRequest{
+		AppID:         appID,
+		Mode:          r.Mode,
+		Hostname:      r.Hostname,
+		PathPrefix:    r.PathPrefix,
+		Port:          r.Port,
+		ProxyUpstream: upstream,
+		TLS:           TLSRequest{Enabled: r.Mode != spec.RoutingPort, Hostname: r.Hostname},
+	}
+}
+
 // RouteHandle is the adapter's own identifier for a route.
 type RouteHandle struct {
 	AppID  string

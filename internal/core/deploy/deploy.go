@@ -594,18 +594,8 @@ func (r *Runner) Run(ctx context.Context, dep state.Deployment, rev state.Revisi
 		return fail("route", errs.Newf(errs.PlanAdapterNotConfigured,
 			"The routing option %q is not configured.", appSpec.Routing.AdapterRef))
 	}
-	if _, err := routing.Ensure(ctx, api.RouteRequest{
-		AppID:      dep.AppID,
-		Mode:       appSpec.Routing.Mode,
-		Hostname:   appSpec.Routing.Hostname,
-		PathPrefix: appSpec.Routing.PathPrefix,
-		Port:       appSpec.Routing.Port,
-
-		// R-023 has no exceptions. Every route points here.
-		ProxyUpstream: r.ProxyUpstream,
-
-		TLS: api.TLSRequest{Enabled: appSpec.Routing.Mode != spec.RoutingPort, Hostname: appSpec.Routing.Hostname},
-	}); err != nil {
+	// R-023 has no exceptions: the route points at Pando's proxy.
+	if _, err := routing.Ensure(ctx, api.RouteFor(dep.AppID, appSpec.Routing, r.ProxyUpstream)); err != nil {
 		return fail("route", err)
 	}
 

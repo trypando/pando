@@ -1,8 +1,11 @@
 package atomicfile_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +38,67 @@ func TestAFileIsWrittenWholeAndOnlyWhenItChanges(t *testing.T) {
 	require.Equal(t, "two", string(got))
 	_, err = os.Stat(path + ".tmp")
 	require.True(t, os.IsNotExist(err), "no temporary file is left")
+}
+
+// TestR417_ConcurrentWritersNeverLeaveAPartialFile asserts that writers of one
+// path at once — route sync, the reconciler and a deploy each write an app's
+// route — each land whole. With one fixed temporary name, one writer
+// truncated the file another was about to rename into place, so a watcher
+// read half a route, and a rename found its file already moved.
+func TestR417_ConcurrentWritersNeverLeaveAPartialFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.yml")
+	const size = 1 << 20
+	bodies := make([][]byte, 4)
+	for i := range bodies {
+		bodies[i] = bytes.Repeat([]byte{byte('a' + i)}, size)
+	}
+
+	stop := make(chan struct{})
+	var bad atomic.Int32
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			if len(got) != size || !bytes.Equal(got, bytes.Repeat(got[:1], size)) {
+				bad.Add(1)
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 4*20)
+	for i := range bodies {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := range 20 {
+				// Alternating, so no write is skipped as unchanged.
+				errs <- atomicfile.WriteIfChanged(path, bodies[(i+n)%len(bodies)], 0o644)
+			}
+		}()
+	}
+	wg.Wait()
+	close(stop)
+	<-readerDone
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.Zero(t, bad.Load(), "a reader saw a partial file")
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "no temporary file is left")
 }
 
 // TestAFileThatCannotBeWrittenIsAnError asserts each failure is returned:

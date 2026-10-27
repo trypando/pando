@@ -174,6 +174,10 @@ type simHost struct {
 	listener string
 	monitor  *liveness.Monitor
 	docker   *appDocker
+	// stop ends the host's Pando process, its machine still running; dead
+	// is that it has.
+	stop func()
+	dead bool
 }
 
 type simCluster struct {
@@ -205,9 +209,9 @@ var errCut = errors.New("the network between these hosts is cut")
 // throughNetwork makes a Monitor's probes cross the simulated network.
 func (c *simCluster) throughNetwork(h *simHost) {
 	probe := h.monitor.Probe
-	h.monitor.Probe = func(ctx context.Context, p liveness.Peer) error {
+	h.monitor.Probe = func(ctx context.Context, p liveness.Peer) ([]byte, error) {
 		if !c.reachable(h.id, p.ID) {
-			return errCut
+			return nil, errCut
 		}
 		return probe(ctx, p)
 	}
@@ -274,8 +278,9 @@ func (c *simCluster) startControlHost(h *simHost, dir string, isSelf func(state.
 	srv, err := startClusterListener(&config.Config{Server: config.Server{ClusterAddr: addr}}, c.authority, http.NotFoundHandler(), pings, zap.NewNop())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = srv.Close() })
+	h.stop = func() { _ = srv.Close() }
 
-	_, watch := clusterLiveness(c.rows, c.authority, nil, nil, zap.NewNop())
+	_, watch := clusterLiveness(c.rows, c.authority, nil, nil, pings.unreachedFor, zap.NewNop())
 	probe := watch.Probe
 	watch.Probe = func(ctx context.Context, p liveness.Peer) ([]byte, error) {
 		if !c.reachable(h.id, p.ID) {
@@ -321,6 +326,7 @@ func (c *simCluster) startAppHost(h *simHost) (string, string) {
 	done := make(chan struct{})
 	go func() { _ = agent.Serve(ctx, ln); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
+	h.stop = func() { cancel(); <-done }
 	return ln.Addr().String(), hostagent.Fingerprint256(der)
 }
 
@@ -328,7 +334,7 @@ func (c *simCluster) startAppHost(h *simHost) (string, string) {
 // when its lease passes to the other control host.
 func (c *simCluster) leader() string {
 	for _, h := range c.hosts {
-		if h.control && c.reachable(h.id, h.id) {
+		if h.control && !h.dead && c.reachable(h.id, h.id) {
 			return h.id
 		}
 	}
@@ -342,7 +348,11 @@ func (c *simCluster) run(d time.Duration) {
 	for elapsed := time.Duration(0); elapsed < d; elapsed += interval {
 		c.clock.Advance(interval)
 		for _, h := range c.hosts {
+			if h.dead {
+				continue
+			}
 			h.monitor.Round(ctx)
+			h.monitor.Settle()
 		}
 		if l := c.leader(); l != "" {
 			c.watches[l].Round(ctx)
@@ -457,4 +467,27 @@ func TestR421_PostgresDownStopsNothing(t *testing.T) {
 	c.run(10 * period)
 	require.Empty(t, c.fenced())
 	require.Empty(t, c.lost())
+}
+
+// TestR421_ADeadPandoOnARunningMachineIsNotTakenForLost asserts R-421's
+// "a host that is not cut off is never taken for lost": each host's Pando
+// process stops in turn — a crash loop, a slow restart — while its machine
+// runs on, and so may its apps. Its port refuses every probe, which is an
+// answer from the machine: nobody is taken for lost, and nobody fences.
+func TestR421_ADeadPandoOnARunningMachineIsNotTakenForLost(t *testing.T) {
+	for _, victim := range []string{"core-1", "core-2", "app-1"} {
+		t.Run(victim, func(t *testing.T) {
+			c := newSimCluster(t)
+			c.run(2 * period)
+			for _, h := range c.hosts {
+				if h.name == victim {
+					h.stop()
+					h.dead = true
+				}
+			}
+			c.run(10 * period)
+			require.Empty(t, c.lost())
+			require.Empty(t, c.fenced())
+		})
+	}
 }

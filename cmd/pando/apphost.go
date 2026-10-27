@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -27,9 +28,24 @@ import (
 // place of the server: its agent, in this process, with what the join gave it
 // (R-416, R-421). It needs no database: the control plane being away changes
 // nothing here.
+//
+// An agent that cannot start in full — its runtime socket unknown, a file
+// missing — still answers the cluster's pings, when its own certificate can be
+// read, rather than exit: an app host whose Pando cannot start is not cut off,
+// and its apps may be running (R-421). It reports nothing it has not watched,
+// so it counts for nothing against the other hosts.
 func runAppHost(ctx context.Context, dir string, joined hosts.Joined, logger *zap.Logger) error {
 	agent, monitor, certs, err := appHostAgent(dir, joined, logger)
 	if err != nil {
+		answerer, aerr := appHostAnswerer(dir, joined, logger)
+		if aerr != nil {
+			return err
+		}
+		logger.Error("this app host cannot run its agent; it only answers the cluster's liveness checks until this is fixed and Pando restarted",
+			zap.String("host_id", joined.HostID), zap.Error(err))
+		if serr := serveAgent(ctx, answerer, nil, agentListen()); serr != nil {
+			return serr
+		}
 		return err
 	}
 	// R-421: renewed from the cluster listener before they expire.
@@ -100,6 +116,34 @@ func appHostAgent(dir string, joined hosts.Joined, logger *zap.Logger) (*hostage
 // certRenewCheck is how often a joined host looks whether its certificates
 // are due for renewal (hostagent.RenewBefore).
 const certRenewCheck = time.Hour
+
+// appHostAnswerer is an agent that answers pings, forwards as any agent does,
+// and carries no runtime calls: what an app host runs when its full agent
+// cannot start.
+func appHostAnswerer(dir string, joined hosts.Joined, logger *zap.Logger) (*hostagent.Agent, error) {
+	files, err := readClusterFiles(dir, hosts.HostCertFile, hosts.HostKeyFile, hosts.AuthorityCertFile)
+	if err != nil {
+		return nil, err
+	}
+	serverTLS, err := hostagent.ServerTLS(files[0], files[1], files[2])
+	if err != nil {
+		return nil, err
+	}
+	pool, err := appHostPool(joined)
+	if err != nil {
+		pool = netip.MustParsePrefix(dockernet.DefaultPool)
+	}
+	return &hostagent.Agent{TLS: serverTLS, Pool: pool, Liveness: answerOnly{self: joined.HostID}, Logger: logger}, nil
+}
+
+// answerOnly answers a ping with a view that reports no peer: a host that is
+// not watching says nothing about the others (R-421).
+type answerOnly struct{ self string }
+
+func (a answerOnly) Answer(string) []byte {
+	out, _ := json.Marshal(liveness.View{Host: a.self, UnreachedMS: map[string]int64{}})
+	return out
+}
 
 // readClusterFiles reads names from the cluster directory, in order.
 func readClusterFiles(dir string, names ...string) ([][]byte, error) {

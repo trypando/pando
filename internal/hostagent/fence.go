@@ -3,6 +3,7 @@ package hostagent
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/moby/moby/client"
 )
@@ -18,8 +19,13 @@ const (
 // fenceStopSeconds is how long an app container is given to stop before it is
 // killed. Short: a fenced host is cut off, its requests already reach nobody,
 // and what fencing is for is ending its background writes before the
-// standby starts, two periods later (R-421).
-const fenceStopSeconds = 10
+// standby starts, two periods later (R-421). Every container is stopped at
+// once (fenceParallel at a time), so a fence takes about this long however
+// many apps the host runs.
+const fenceStopSeconds = 3
+
+// fenceParallel is how many containers a fence stops at a time.
+const fenceParallel = 32
 
 // ContainerAPI is the slice of the Docker client a fence uses.
 type ContainerAPI interface {
@@ -40,9 +46,9 @@ type DockerFencer struct {
 	Docker ContainerAPI
 }
 
-// Fence stops the running app containers and returns how many it stopped. It
-// tries every one before reporting the first failure, so one container that
-// will not stop does not keep the rest running.
+// Fence stops the running app containers, all at once, and returns how many
+// it stopped. It tries every one before reporting the first failure, so one
+// container that will not stop does not keep the rest running.
 func (f DockerFencer) Fence(ctx context.Context) (int, error) {
 	list, err := f.Docker.ContainerList(ctx, client.ContainerListOptions{
 		Filters: make(client.Filters).Add("label", labelManaged+"=true").Add("label", labelApp),
@@ -50,20 +56,34 @@ func (f DockerFencer) Fence(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("could not list this host's app containers: %w", err)
 	}
-	timeout := fenceStopSeconds
-	stopped := 0
-	var first error
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		stopped int
+		first   error
+	)
+	slots := make(chan struct{}, fenceParallel)
 	for _, c := range list.Items {
 		if c.Labels[labelApp] == "" {
 			continue
 		}
-		if _, err := f.Docker.ContainerStop(ctx, c.ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
-			if first == nil {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			timeout := fenceStopSeconds
+			_, err := f.Docker.ContainerStop(ctx, c.ID, client.ContainerStopOptions{Timeout: &timeout})
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				stopped++
+			case first == nil:
 				first = fmt.Errorf("could not stop app container %s: %w", c.ID, err)
 			}
-			continue
-		}
-		stopped++
+		}()
 	}
+	wg.Wait()
 	return stopped, first
 }

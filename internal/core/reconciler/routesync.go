@@ -91,11 +91,7 @@ func (s *RouteSync) ensure(ctx context.Context, app planner.InventoryApp) bool {
 	if !ok {
 		return false
 	}
-	r := app.Spec.Routing
-	if _, err := routing.Ensure(ctx, api.RouteRequest{
-		AppID: app.AppID, Mode: r.Mode, Hostname: r.Hostname, PathPrefix: r.PathPrefix, Port: r.Port,
-		ProxyUpstream: s.ProxyUpstream,
-	}); err != nil {
+	if _, err := routing.Ensure(ctx, api.RouteFor(app.AppID, app.Spec.Routing, s.ProxyUpstream)); err != nil {
 		if s.Logger != nil {
 			s.Logger.Warn("could not write an app's route on this host", zap.String("app_id", app.AppID), zap.Error(err))
 		}

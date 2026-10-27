@@ -81,21 +81,16 @@ func newMonitor(self string, peers func(context.Context) ([]hosts.Peer, error),
 		Self: self,
 		Peers: func(ctx context.Context) ([]liveness.Peer, error) {
 			list, err := peers(ctx)
-			out := make([]liveness.Peer, len(list))
-			for i, p := range list {
-				out[i] = liveness.Peer(p)
-			}
-			return out, err
+			return livenessPeers(list), err
 		},
-		Probe: func(ctx context.Context, p liveness.Peer) error {
+		Probe: func(ctx context.Context, p liveness.Peer) ([]byte, error) {
 			cfg := &tls.Config{
 				MinVersion:           tls.VersionTLS13,
 				GetClientCertificate: clientCert,
 				RootCAs:              roots,
 				ServerName:           hostagent.ServerName(p.Name),
 			}
-			_, err := hostagent.Ping(ctx, p.Address, cfg, self)
-			return err
+			return probeResult(hostagent.Ping(ctx, p.Address, cfg, self))
 		},
 		Fencer: hostagent.DockerFencer{Docker: docker},
 		Logger: logger.Named("liveness"),

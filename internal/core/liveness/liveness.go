@@ -28,6 +28,7 @@
 package liveness
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -58,7 +59,27 @@ type Config struct {
 	// Timeout bounds one probe. Interval/2 when zero, and never more than
 	// Interval.
 	Timeout time.Duration
+
+	// PeerWait is how long a round waits for the list of peers before it
+	// probes the last one known. The list is read beside the round, never
+	// in it, so a database that hangs never keeps a host from probing, or
+	// from fencing. The smaller of Timeout and 2 s when zero.
+	PeerWait time.Duration
 }
+
+// maxPeerWait bounds PeerWait.
+const maxPeerWait = 2 * time.Second
+
+// ErrContactOnly is wrapped by a probe's error when the peer's machine
+// answered but gave no view: it turned the connection away, failed the
+// handshake, or refused the ping. That is contact (R-421): the machine is up
+// and on the network, though its Pando process may be down, restarting or
+// waiting for its database, and its apps may be running. Only silence — a
+// probe that timed out or found no route — is not contact.
+var ErrContactOnly = errors.New("the host's machine answered without its view")
+
+// contact reports whether a probe that returned err reached the peer.
+func contact(err error) bool { return err == nil || errors.Is(err, ErrContactOnly) }
 
 // Normalize fills in the defaults and holds the timings to each other.
 func (c Config) Normalize() Config {
@@ -70,6 +91,9 @@ func (c Config) Normalize() Config {
 	}
 	if c.Timeout <= 0 || c.Timeout > c.Interval {
 		c.Timeout = c.Interval / 2
+	}
+	if c.PeerWait <= 0 || c.PeerWait > c.Timeout {
+		c.PeerWait = min(c.Timeout, maxPeerWait)
 	}
 	return c
 }

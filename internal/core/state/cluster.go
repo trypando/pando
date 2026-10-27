@@ -59,6 +59,8 @@ type Host struct {
 	// PrevCertSHA256 is the certificate the host held before its latest
 	// renewal, still its own until it presents the new one (R-421).
 	PrevCertSHA256 string `json:"-"`
+	// Lost is that the host is marked lost (R-421, lost_at).
+	Lost bool `json:"-"`
 }
 
 // Pins is every certificate fingerprint that is the host's now, comma
@@ -257,11 +259,11 @@ func (c *Cluster) Fresh(ctx context.Context) (accounts, apps bool, err error) {
 
 const msgRecordHost = "Could not record the host."
 
-const hostColumns = `id, name, roles, address, cert_sha256, platform, version, coalesce(joined_with, ''), joined_at, last_seen_at, coalesce(prev_cert_sha256, '')`
+const hostColumns = `id, name, roles, address, cert_sha256, platform, version, coalesce(joined_with, ''), joined_at, last_seen_at, lost_at IS NOT NULL, coalesce(prev_cert_sha256, '')`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
-	err := row.Scan(&h.ID, &h.Name, &h.Roles, &h.Address, &h.CertSHA256, &h.Platform, &h.Version, &h.JoinedWith, &h.JoinedAt, &h.LastSeenAt, &h.PrevCertSHA256)
+	err := row.Scan(&h.ID, &h.Name, &h.Roles, &h.Address, &h.CertSHA256, &h.Platform, &h.Version, &h.JoinedWith, &h.JoinedAt, &h.LastSeenAt, &h.Lost, &h.PrevCertSHA256)
 	return h, err
 }
 

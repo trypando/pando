@@ -329,6 +329,22 @@ func serve(ctx context.Context, configPath string) error {
 		return runAppHost(ctx, cfg.Server.ClusterDir, joined, logger)
 	}
 
+	// R-421: this control host answers the cluster's pings, and watches the
+	// other hosts, from what it keeps on disk, before it waits for Postgres:
+	// a control host whose database is slow to answer is not cut off, and
+	// must not look it. The cluster listener serves joins once the API is
+	// built, and pings from now on.
+	clusterAuthority, err := hosts.LoadOrCreateAuthority(cfg.Server.ClusterAuthorityPath)
+	if err != nil {
+		return err
+	}
+	controlPings := startControlLiveness(ctx, cfg.Server.ClusterDir, clusterPort(cfg), clusterAuthority, joined, hasJoined, logger)
+	clusterRoutes := &startingHandler{}
+	clusterListener, clusterListenErr := startClusterListener(cfg, clusterAuthority, clusterRoutes, controlPings, logger)
+	if clusterListener != nil {
+		defer func() { _ = clusterListener.Close() }()
+	}
+
 	// Adapters saved after this are not running until a restart (R-253); the
 	// adapters list compares against it. restartCh is how POST /restart asks.
 	startedAt := time.Now().UTC()
@@ -369,10 +385,6 @@ func serve(ctx context.Context, configPath string) error {
 		return err
 	}
 	tokens := state.NewTokens(db, tokenKey)
-	clusterAuthority, err := hosts.LoadOrCreateAuthority(cfg.Server.ClusterAuthorityPath)
-	if err != nil {
-		return err
-	}
 	sessions := state.NewSessions(db, tokenKey)
 	if err := tokens.VerifyKey(ctx); err != nil {
 		return err
@@ -412,12 +424,17 @@ func serve(ctx context.Context, configPath string) error {
 	if !hasJoined {
 		recordInstallHost(ctx, cfg, clusterStore, logger)
 	}
-	// R-421: taking a host for lost, and the leader job that decides it.
-	hostLoss, livenessWatch := clusterLiveness(clusterStore, clusterAuthority, apps, auditor, logger)
+	// R-414: a single host runs without its cluster listener when the port
+	// is taken; a cluster cannot.
+	if err := requireClusterListener(ctx, clusterListenErr, hasJoined, clusterHosts, logger); err != nil {
+		return err
+	}
 	// R-421: this control host is watched like every other host, answering
-	// pings on its cluster listener, and watches them, on every replica.
-	controlPings := startControlLiveness(ctx, cfg.Server.ClusterDir, clusterPort(cfg), clusterStore, clusterAuthority,
-		joined, hasJoined, logger)
+	// pings on its cluster listener, and watches them, on every replica; it
+	// reads its peers from the database from now on.
+	controlPings.useStore(clusterStore)
+	// R-421: taking a host for lost, and the leader job that decides it.
+	hostLoss, livenessWatch := clusterLiveness(clusterStore, clusterAuthority, apps, auditor, controlPings.unreachedFor, logger)
 	allocations := state.NewAllocations(db)
 	authzStore := state.NewAuthzStore(db)
 	grants := state.NewGrants(db)
@@ -1244,11 +1261,7 @@ func serve(ctx context.Context, configPath string) error {
 	apiHandler := apiServer.Routes()
 
 	// Where hosts join the cluster (R-415), over TLS from its authority.
-	clusterListener, err := startClusterListener(cfg, clusterAuthority, apiServer.ClusterRoutes(), controlPings, logger)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = clusterListener.Close() }()
+	clusterRoutes.set(apiServer.ClusterRoutes())
 
 	srv := &http.Server{
 		Addr:    cfg.Server.Addr,

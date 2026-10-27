@@ -86,14 +86,16 @@ func TestStartControlLivenessPicksItsRowAndARuntime(t *testing.T) {
 	defer cancel()
 
 	t.Setenv("DOCKER_HOST", "unix:///nowhere/docker.sock")
-	joined := startControlLiveness(ctx, filepath.Join(t.TempDir(), "cluster"), 7444, store, authority,
+	joined := startControlLiveness(ctx, filepath.Join(t.TempDir(), "cluster"), 7444, authority,
 		hosts.Joined{HostID: joinedID}, true, zap.NewNop())
+	joined.useStore(store)
 	require.Eventually(t, func() bool { return joined.current.Load() != nil }, 5*time.Second, 10*time.Millisecond)
 	require.Equal(t, joinedID, joined.current.Load().monitor.Self)
 
 	t.Setenv("DOCKER_HOST", "::not a host::")
-	first := startControlLiveness(ctx, filepath.Join(t.TempDir(), "cluster"), 7444, store, authority,
+	first := startControlLiveness(ctx, filepath.Join(t.TempDir(), "cluster"), 7444, authority,
 		hosts.Joined{}, false, zap.NewNop())
+	first.useStore(store)
 	require.Eventually(t, func() bool { return first.current.Load() != nil }, 5*time.Second, 10*time.Millisecond)
 	require.Equal(t, firstID, first.current.Load().monitor.Self)
 	_, err = first.current.Load().monitor.Fencer.Fence(ctx)

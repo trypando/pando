@@ -94,6 +94,29 @@ func TestR417_EveryControlHostWritesEveryRouteFromTheDatabase(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestR169_RouteSyncKeepsTLSOnEveryAppsRoute asserts that the route each
+// control host writes every minute asks for TLS as the deploy's did. It used
+// to leave TLS out, so once a cluster had two hosts every app's Traefik route
+// lost its certificate on the next pass and the leader stopped ordering app
+// certificates (R-169, R-174, R-417).
+func TestR169_RouteSyncKeepsTLSOnEveryAppsRoute(t *testing.T) {
+	routing := &syncRouting{}
+	s := &RouteSync{
+		Apps: syncApps{apps: []planner.InventoryApp{
+			routed("app_a", "rt_traefik", spec.RoutingSubdomain),
+			routed("app_b", "rt_traefik", spec.RoutingPath),
+		}},
+		Registry: syncRegistry{routing}, ProxyUpstream: "http://pando-2:8080",
+		Hosts: func(context.Context) (int, error) { return 2, nil },
+	}
+	n, err := s.Once(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	for _, got := range routing.got {
+		require.Equal(t, api.TLSRequest{Enabled: true, Hostname: got.AppID + ".example.com"}, got.TLS, got.AppID)
+	}
+}
+
 func TestRouteSyncRunsUntilItsContextEnds(t *testing.T) {
 	routing := &syncRouting{}
 	fake := clock.NewFake(time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC))

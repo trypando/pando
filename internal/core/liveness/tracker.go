@@ -50,6 +50,12 @@ func (t *Tracker) SetPeers(now time.Duration, ids []string) {
 	}
 }
 
+// Has reports whether peer is one of the cluster's other hosts here.
+func (t *Tracker) Has(peer string) bool {
+	_, ok := t.peers[peer]
+	return ok
+}
+
 // Hosts is the cluster's size as this host knows it, itself included.
 func (t *Tracker) Hosts() int { return len(t.peers) + 1 }
 
