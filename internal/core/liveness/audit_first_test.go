@@ -70,4 +70,19 @@ func TestR421_AFailoverWhoseAuditCannotBeWrittenDoesNotHappen(t *testing.T) {
 		reasons[s.AppID] = s.Reason
 	}
 	require.Equal(t, "audit_unavailable", reasons["app_ok"])
+
+	// A host no longer lost is not tried again; one that cannot be read is
+	// tried the round after.
+	m.audit.failing()
+	m.svc.refail(ctx, map[string]bool{})
+	m.svc.Settle()
+	require.Empty(t, m.failover.promoted)
+	m.svc.retryLater("nope", asked{person, triggerManual}, true)
+	m.svc.refail(ctx, map[string]bool{"nope": true})
+	m.svc.Settle()
+	require.Empty(t, m.failover.promoted)
+	m.svc.mu.Lock()
+	require.Contains(t, m.svc.retry, "nope")
+	require.NotContains(t, m.svc.retry, "x")
+	m.svc.mu.Unlock()
 }
