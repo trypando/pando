@@ -550,13 +550,15 @@ function JoinCluster({ other }: Readonly<{ other: React.ReactNode }>) {
           error={join.isError && !setupRefused ? withRemedy(join.error) : undefined}
           onChange={(e) => edit(setToken)(e.target.value.trim())}
         />
-        <Input label="Host name" value={name} autoComplete="off" onChange={(e) => edit(setName)(e.target.value)} />
-        <Button
-          type="submit"
-          variant="primary"
-          fullWidth
-          disabled={join.isPending || setupToken === '' || token === '' || name.trim() === ''}
-        >
+        {/* Optional: POST /setup/join names an unnamed host after its machine (R-261). */}
+        <Input
+          label="Host name"
+          value={name}
+          placeholder="This machine's hostname"
+          autoComplete="off"
+          onChange={(e) => edit(setName)(e.target.value)}
+        />
+        <Button type="submit" variant="primary" fullWidth disabled={join.isPending || setupToken === '' || token === ''}>
           {join.isPending ? 'Joining' : 'Join'}
         </Button>
         {other}
