@@ -22,6 +22,8 @@ type fakeStore struct {
 	rows    map[string]state.Standby
 	deleted []string
 	states  map[string]string
+	getErr  error
+	listErr error
 }
 
 func (f *fakeStore) Candidates(context.Context) ([]state.StandbyApp, error) {
@@ -37,6 +39,9 @@ func (f *fakeStore) Candidates(context.Context) ([]state.StandbyApp, error) {
 }
 
 func (f *fakeStore) Get(_ context.Context, appID string) (state.Standby, bool, error) {
+	if f.getErr != nil {
+		return state.Standby{}, false, f.getErr
+	}
 	sb, ok := f.rows[appID]
 	return sb, ok, nil
 }
@@ -92,6 +97,10 @@ type fakeRuntime struct {
 	applyErr  error
 	shipErr   error
 	promoteOK api.PromoteResult
+	// promoteErr refuses the promotion of an app; staleErr every removal of
+	// a stale copy.
+	promoteErr map[string]error
+	staleErr   error
 }
 
 func (f *fakeRuntime) Capabilities(context.Context) (api.RuntimeCapabilities, error) {
@@ -103,7 +112,7 @@ func (f *fakeRuntime) ApplyStandby(_ context.Context, req api.StandbyRequest) (a
 	if f.applyErr != nil {
 		return api.StandbyHandle{}, f.applyErr
 	}
-	return api.StandbyHandle{Host: "app-2"}, nil
+	return api.StandbyHandle{Host: "app-2", Home: "app-1"}, nil
 }
 
 func (f *fakeRuntime) ShipVolumes(_ context.Context, req api.ShipRequest) (api.ShipResult, error) {
@@ -116,6 +125,9 @@ func (f *fakeRuntime) ShipVolumes(_ context.Context, req api.ShipRequest) (api.S
 
 func (f *fakeRuntime) PromoteStandby(_ context.Context, req api.PromoteRequest) (api.PromoteResult, error) {
 	f.promoted = append(f.promoted, req)
+	if err := f.promoteErr[req.Bundle.BundleID]; err != nil {
+		return api.PromoteResult{}, err
+	}
 	return f.promoteOK, nil
 }
 
@@ -125,6 +137,9 @@ func (f *fakeRuntime) RemoveStandby(_ context.Context, ref api.BundleRef) error 
 }
 
 func (f *fakeRuntime) RemoveStaleCopy(_ context.Context, ref api.BundleRef, host string) error {
+	if f.staleErr != nil {
+		return f.staleErr
+	}
 	f.stale = append(f.stale, ref.BundleID+"@"+host)
 	return nil
 }

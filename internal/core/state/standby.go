@@ -32,6 +32,15 @@ type Standby struct {
 	LastError    string     `json:"last_error,omitempty"`
 	StaleHost    string     `json:"stale_host,omitempty"`
 	PromotedAt   *time.Time `json:"promoted_at,omitempty"`
+
+	// Home is the runtime's name for where the app runs, as it last said
+	// (api.StandbyHandle.Home, api.PromoteResult.Host): the liveness pass's
+	// record of which apps a lost host held (R-421). Empty until said.
+	Home string `json:"home,omitempty"`
+	// LastErrorCode and LastErrorRemedy are LastError's envelope code and
+	// remedy. CAPACITY_WOULD_OVERSUBSCRIBE is the no-room notice (R-422).
+	LastErrorCode   string `json:"last_error_code,omitempty"`
+	LastErrorRemedy string `json:"last_error_remedy,omitempty"`
 }
 
 // StandbyApp is an app the standby pass looks at: a live app with a pinned
@@ -47,14 +56,14 @@ type StandbyApp struct {
 }
 
 const standbyColumns = `s.app_id, s.runtime_ref, s.host, coalesce(s.spec_id, ''), s.volumes, s.copies, s.shipped_at,
-	s.unreplicated, s.last_error, s.stale_host, s.promoted_at`
+	s.unreplicated, s.last_error, s.stale_host, s.promoted_at, s.home_host, s.last_error_code, s.last_error_remedy`
 
 func scanStandby(row pgx.Row, extra ...any) (Standby, error) {
 	var s Standby
-	dest := make([]any, 0, len(extra)+10)
+	dest := make([]any, 0, len(extra)+14)
 	dest = append(dest, extra...)
 	dest = append(dest, &s.AppID, &s.RuntimeRef, &s.Host, &s.SpecID, &s.Volumes, &s.Copies, &s.ShippedAt,
-		&s.Unreplicated, &s.LastError, &s.StaleHost, &s.PromotedAt)
+		&s.Unreplicated, &s.LastError, &s.StaleHost, &s.PromotedAt, &s.Home, &s.LastErrorCode, &s.LastErrorRemedy)
 	err := row.Scan(dest...)
 	return s, err
 }
@@ -67,7 +76,8 @@ func (s *Standbys) Candidates(ctx context.Context) ([]StandbyApp, error) {
 		       s.app_id IS NOT NULL,
 		       coalesce(s.app_id, ''), coalesce(s.runtime_ref, ''), coalesce(s.host, ''), coalesce(s.spec_id, ''), coalesce(s.volumes, 0),
 		       coalesce(s.copies, 0), s.shipped_at, coalesce(s.unreplicated, '{}'), coalesce(s.last_error, ''),
-		       coalesce(s.stale_host, ''), s.promoted_at
+		       coalesce(s.stale_host, ''), s.promoted_at, coalesce(s.home_host, ''),
+		       coalesce(s.last_error_code, ''), coalesce(s.last_error_remedy, '')
 		FROM apps a
 		LEFT JOIN app_standbys s ON s.app_id = a.id
 		WHERE (a.deleted_at IS NULL AND a.pinned_spec_id IS NOT NULL) OR s.app_id IS NOT NULL
@@ -115,17 +125,50 @@ func (s *Standbys) Save(ctx context.Context, sb Standby) error {
 	}
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO app_standbys (app_id, host, spec_id, volumes, copies, shipped_at, unreplicated,
-		                          last_error, stale_host, promoted_at, runtime_ref)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		                          last_error, stale_host, promoted_at, runtime_ref,
+		                          home_host, last_error_code, last_error_remedy)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (app_id) DO UPDATE SET
 		    host = $2, spec_id = $3, volumes = $4, copies = $5, shipped_at = $6, unreplicated = $7,
-		    last_error = $8, stale_host = $9, promoted_at = $10, runtime_ref = $11, updated_at = now()`,
+		    last_error = $8, stale_host = $9, promoted_at = $10, runtime_ref = $11,
+		    home_host = $12, last_error_code = $13, last_error_remedy = $14, updated_at = now()`,
 		sb.AppID, sb.Host, specID, sb.Volumes, sb.Copies, sb.ShippedAt, sb.Unreplicated,
-		sb.LastError, sb.StaleHost, sb.PromotedAt, sb.RuntimeRef)
+		sb.LastError, sb.StaleHost, sb.PromotedAt, sb.RuntimeRef, sb.Home, sb.LastErrorCode, sb.LastErrorRemedy)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not record the app's standby.", err)
 	}
 	return nil
+}
+
+// HomedOn is the standby of every live app whose home is host, the runtime's
+// name for it, by app: the apps a lost host held (R-421).
+func (s *Standbys) HomedOn(ctx context.Context, host string) ([]Standby, error) {
+	return s.listWhere(ctx, `s.home_host = $1`, host, "Could not list the apps on the host.")
+}
+
+// LeftOn is the standby of every live app failed over away from host, which
+// still holds the app's stale copy (R-419), by app.
+func (s *Standbys) LeftOn(ctx context.Context, host string) ([]Standby, error) {
+	return s.listWhere(ctx, `s.stale_host = $1`, host, "Could not list the apps failed over from the host.")
+}
+
+func (s *Standbys) listWhere(ctx context.Context, where, host, message string) ([]Standby, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+standbyColumns+` FROM app_standbys s
+		JOIN apps a ON a.id = s.app_id AND a.deleted_at IS NULL
+		WHERE `+where+` ORDER BY s.app_id`, host)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, message, err)
+	}
+	defer rows.Close()
+	var out []Standby
+	for rows.Next() {
+		sb, err := scanStandby(rows)
+		if err != nil {
+			return nil, errs.Wrap(errs.Internal, message, err)
+		}
+		out = append(out, sb)
+	}
+	return out, rows.Err()
 }
 
 // Delete forgets one app's standby.

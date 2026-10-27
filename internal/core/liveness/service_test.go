@@ -17,12 +17,13 @@ import (
 )
 
 type fakeStore struct {
-	mu      sync.Mutex
-	hosts   map[string]state.Host
-	lost    map[string]string
-	fences  map[string]string
-	lostErr error
-	markErr error
+	mu       sync.Mutex
+	hosts    map[string]state.Host
+	lost     map[string]string
+	fences   map[string]string
+	lostErr  error
+	markErr  error
+	clearErr error
 }
 
 func newFakeStore(ids ...string) *fakeStore {
@@ -54,6 +55,16 @@ func (s *fakeStore) MarkHostLost(_ context.Context, id, by string) (bool, error)
 	}
 	s.lost[id] = by
 	return true, nil
+}
+
+func (s *fakeStore) ClearHostLost(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.clearErr != nil {
+		return s.clearErr
+	}
+	delete(s.lost, id)
+	return nil
 }
 
 func (s *fakeStore) LostHosts(context.Context) (map[string]bool, error) {

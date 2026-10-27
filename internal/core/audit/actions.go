@@ -94,6 +94,7 @@ var Actions = []string{
 	"cluster.host.fence",
 	"cluster.host.lost",
 	"cluster.host.remove",
+	"cluster.host.returned",
 	"cluster.join_token.create",
 	"cluster.join_token.revoke",
 	"cluster.runtime.convert",

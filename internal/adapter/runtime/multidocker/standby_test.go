@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"sort"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -40,6 +41,7 @@ type standbyFake struct {
 	copies    map[string][]fakeCopy
 	incoming  map[string]map[string]fakeFile
 	stopped   []string // ApplyStopped bundles
+	standbys  map[string]api.BundlePlan
 	destroyed []string
 	reads     [][]string // the paths each ReadVolumeFiles sent
 	restored  map[string]int
@@ -89,11 +91,35 @@ func (f *standbyFake) ApplyStopped(_ context.Context, p api.BundlePlan) error {
 		return errDown
 	}
 	f.stopped = append(f.stopped, p.BundleID)
+	if f.standbys == nil {
+		f.standbys = map[string]api.BundlePlan{}
+	}
+	f.standbys[p.BundleID] = p
 	return nil
+}
+
+// StandbyLoads reads the standbys back from their plans' labels, as Docker
+// reads them from their containers' (docker.StandbyLoads).
+func (f *standbyFake) StandbyLoads(context.Context) ([]docker.StandbyLoad, error) {
+	f.sm.Lock()
+	defer f.sm.Unlock()
+	if f.down {
+		return nil, errDown
+	}
+	out := []docker.StandbyLoad{}
+	for _, p := range f.standbys {
+		l := docker.StandbyLoad{Bundle: p.Labels["pando.standby"], Primary: p.Labels["pando.standby.primary"], Need: need(p)}
+		l.Priority, _ = strconv.Atoi(p.Labels["pando.standby.priority"])
+		l.DiskBytes, _ = strconv.ParseInt(p.Labels["pando.standby.disk"], 10, 64)
+		out = append(out, l)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Bundle < out[j].Bundle })
+	return out, nil
 }
 
 func (f *standbyFake) Destroy(_ context.Context, ref api.BundleRef, _ api.DestroyOptions) error {
 	f.sm.Lock()
+	delete(f.standbys, ref.BundleID)
 	f.destroyed = append(f.destroyed, ref.BundleID)
 	f.sm.Unlock()
 	f.mu.Lock()

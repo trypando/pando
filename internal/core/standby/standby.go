@@ -132,7 +132,7 @@ func (s *Service) Once(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		s.visit(ctx, app, doc.KeepsStandbys())
+		s.visit(ctx, app, doc)
 	}
 }
 
@@ -150,7 +150,7 @@ func (s *Service) standbyOf(ctx context.Context, ref string) (api.StandbyRuntime
 	return sr, ok
 }
 
-func (s *Service) visit(ctx context.Context, app state.StandbyApp, policyDefault bool) {
+func (s *Service) visit(ctx context.Context, app state.StandbyApp, doc policy.Document) {
 	if app.Deleted {
 		s.remove(ctx, app.AppID, app.Standby, "the app was deleted")
 		return
@@ -171,7 +171,7 @@ func (s *Service) visit(ctx context.Context, app state.StandbyApp, policyDefault
 		}
 		return
 	}
-	if !sp.Availability.WantsStandby(policyDefault) {
+	if !sp.Availability.WantsStandby(doc.KeepsStandbys()) {
 		s.remove(ctx, app.AppID, app.Standby, "the standby was turned off")
 		return
 	}
@@ -186,6 +186,10 @@ func (s *Service) visit(ctx context.Context, app state.StandbyApp, policyDefault
 	sb.RuntimeRef = ref
 	sb.Volumes = len(plan.Volumes)
 	sb.Unreplicated = s.unreplicated(sp)
+	// Host policy allow_failover_oversubscription reaches the runtime here:
+	// the standby pass is what places standbys, and Shape, like the
+	// reconciler, sends false (R-422).
+	plan.Failover.AllowOversubscription = doc.AllowFailoverOversubscription
 	if sb.Host == "" || sb.SpecID != app.PinnedSpecID {
 		if !s.apply(ctx, sr, plan, sp, app.PinnedSpecID, &sb) {
 			s.save(ctx, sb)
@@ -201,12 +205,15 @@ func (s *Service) visit(ctx context.Context, app state.StandbyApp, policyDefault
 // apply makes or refreshes the standby, and reports whether it now exists.
 func (s *Service) apply(ctx context.Context, sr api.StandbyRuntime, plan api.BundlePlan, sp *spec.AppSpec, specID string, sb *state.Standby) bool {
 	if err := s.Plans.Complete(ctx, &plan, sp); err != nil {
-		sb.LastError = message(err)
+		failed(sb, err)
 		return false
 	}
 	handle, err := sr.ApplyStandby(ctx, api.StandbyRequest{Bundle: plan, Host: sb.Host})
 	if err != nil {
-		sb.LastError = message(err)
+		// No room is recorded like any other failure, with its code: the
+		// app keeps running, and Standby turns it into the app's notice. It
+		// never blocks a deploy (R-422).
+		failed(sb, err)
 		return false
 	}
 	if handle.Host != sb.Host {
@@ -214,7 +221,11 @@ func (s *Service) apply(ctx context.Context, sr api.StandbyRuntime, plan api.Bun
 		sb.Copies, sb.ShippedAt = 0, nil
 		s.audit(ctx, "app.standby.create", sb.AppID, "", map[string]any{"host": handle.Host, "previous_host": sb.Host})
 	}
-	sb.Host, sb.SpecID, sb.LastError = handle.Host, specID, ""
+	sb.Host, sb.SpecID = handle.Host, specID
+	if handle.Home != "" {
+		sb.Home = handle.Home
+	}
+	cleared(sb)
 	return true
 }
 
@@ -225,12 +236,13 @@ func (s *Service) ship(ctx context.Context, sr api.StandbyRuntime, plan api.Bund
 	}
 	got, err := sr.ShipVolumes(ctx, api.ShipRequest{BundleID: plan.BundleID, Host: sb.Host, VolumeIDs: ids, Keep: s.Keep})
 	if err != nil {
-		sb.LastError = message(err)
+		failed(sb, err)
 		s.logger().Warn("could not ship an app's volumes to its standby", zap.String("app_id", sb.AppID), zap.Error(err))
 		return
 	}
 	now := s.now()
-	sb.ShippedAt, sb.Copies, sb.LastError = &now, got.Copies, ""
+	sb.ShippedAt, sb.Copies = &now, got.Copies
+	cleared(sb)
 }
 
 func (s *Service) due(shipped *time.Time) bool {
@@ -319,6 +331,20 @@ func (s *Service) logger() *zap.Logger {
 		return zap.NewNop()
 	}
 	return s.Logger
+}
+
+// failed records err on the standby: its message, and its code and remedy
+// when it is an envelope.
+func failed(sb *state.Standby, err error) {
+	sb.LastError, sb.LastErrorCode, sb.LastErrorRemedy = message(err), "", ""
+	if e := errs.As(err); e != nil {
+		sb.LastErrorCode, sb.LastErrorRemedy = string(e.Code), e.Remedy
+	}
+}
+
+// cleared forgets the standby's last error.
+func cleared(sb *state.Standby) {
+	sb.LastError, sb.LastErrorCode, sb.LastErrorRemedy = "", "", ""
 }
 
 // message is what an error says, for the standby record.

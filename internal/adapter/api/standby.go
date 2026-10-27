@@ -69,6 +69,11 @@ type StandbyRequest struct {
 // StandbyHandle says where a standby is.
 type StandbyHandle struct {
 	Host string
+
+	// Home is where the bundle runs, the place whose loss starts this
+	// standby, in the same names as Host. Core records it to know which
+	// apps a lost place held (R-421); empty when the runtime cannot say.
+	Home string
 }
 
 // ShipRequest asks for one copy of a bundle's volumes to be sent to its

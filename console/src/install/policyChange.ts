@@ -32,6 +32,7 @@ const LABELS: Record<string, string> = {
   allow_cpu_oversubscription: 'Allow CPU oversubscription',
   allow_memory_oversubscription: 'Allow memory oversubscription',
   allow_failover_oversubscription: 'Allow failover oversubscription',
+  standby: 'Warm standby',
   disable_ai_screening: 'Disable AI screening',
   disable_anonymous_use_audit: "Don't log anonymous visits",
   disable_anonymous_denial_audit: "Don't log anonymous refusals",

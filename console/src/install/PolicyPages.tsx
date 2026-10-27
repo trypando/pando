@@ -532,6 +532,14 @@ function DeploymentsPage() {
         on={current.allow_memory_oversubscription ?? false}
         onChange={(on) => edit({ allow_memory_oversubscription: on })}
       />
+      {/* R-419: on unless set false; an app's spec may say otherwise. */}
+      <SwitchRow
+        label="Warm standby"
+        caption="A stopped copy of each app on another host."
+        field="standby"
+        on={current.standby ?? true}
+        onChange={(on) => edit({ standby: on })}
+      />
       {/* R-422: standbys keep room for losing any one host unless this is
           on. Disk is never oversubscribed. */}
       <SwitchRow

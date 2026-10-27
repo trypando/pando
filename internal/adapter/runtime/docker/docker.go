@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"slices"
@@ -619,6 +620,9 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		if err != nil {
 			return err
 		}
+		// A standby made for another primary or priority says so in its
+		// labels, which the failover reservation reads (R-422): made again.
+		matches = matches && sameStandbyLabels(existing.Labels, p)
 		if matches {
 			if !strings.HasPrefix(existing.State, "running") && !createOnly(ctx) {
 				if _, err := a.cli.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
@@ -682,6 +686,7 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		},
 	}
 	limitLabels(cfg.Labels, w.Resources.CPUMillis, w.Resources.MemoryBytes)
+	maps.Copy(cfg.Labels, standbyLabels(p)) // a standby's, for the reservation (standby_loads.go)
 	if w.Health != nil {
 		cfg.Healthcheck = healthConfig(w.Health)
 	}

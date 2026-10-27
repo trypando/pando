@@ -465,6 +465,19 @@ func serve(ctx context.Context, configPath string) error {
 	backups := state.NewBackups(db)
 	bundleSource := state.NewBundleSource(db)
 	standbys := state.NewStandbys(db) // R-419, R-420
+	// Warm standbys (R-419, R-420): made, refreshed and kept current on a
+	// runtime with a second host, and removed when turned off. Inert on a
+	// runtime with one place. Its Plans are the reconciler, set below. It
+	// answers the app's no-room notice (R-422), and the liveness pass starts
+	// a lost host's standbys and removes a returned host's copies through
+	// it (R-421, R-419).
+	standbyService := &standby.Service{
+		Store: standbys, Runtimes: registry, Services: registry,
+		Policy: policyStore, Apps: standbys, Auditor: auditor,
+		Clock: clock.System{}, Logger: logger,
+	}
+	failover := &standby.Failover{Standbys: standbyService, Homes: standbys, Hosts: clusterStore}
+	hostLoss.Homes, hostLoss.Failover, hostLoss.Returns = failover, failover, failover
 	backupService := &backup.Service{
 		Registry:    registry,
 		DatabaseURL: secret.New(cfg.Database.URL),
@@ -1093,6 +1106,7 @@ func serve(ctx context.Context, configPath string) error {
 		Notices: &notice.Service{
 			Revisions: apps, Backups: backups, Security: securityService,
 			Ignores: state.NewNoticeIgnores(db), Standbys: standbys,
+			Rooms: standbyService, // R-422: no room for a standby is a notice, never a blocker
 		},
 		Notifier: notifyRouter,
 		Logs:     logStore,
@@ -1586,15 +1600,8 @@ func serve(ctx context.Context, configPath string) error {
 	if livenessWatch != nil {
 		job("liveness", livenessWatch.Run)
 	}
-	// Warm standbys (R-419, R-420): made, refreshed and kept current on a
-	// runtime with a second host, and removed when turned off. Inert on a
-	// runtime with one place. Promote and RemoveStale are the liveness
-	// pass's to call (R-421).
-	standbyService := &standby.Service{
-		Store: standbys, Plans: loop, Runtimes: registry, Services: registry,
-		Policy: policyStore, Apps: standbys, Auditor: auditor,
-		Clock: clock.System{}, Logger: logger,
-	}
+	// The standby pass (R-419, R-420), on the leader. Built above.
+	standbyService.Plans = loop
 	job("standby", standbyService.Run)
 
 	// Metrics about this process, pushed to the operator's collector (R-399).

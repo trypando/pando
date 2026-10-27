@@ -90,18 +90,35 @@ func (w *Watch) Round(ctx context.Context) {
 			w.Service.RecordFence(ctx, h.ID, v)
 		}
 	}
-	if len(ids) < MinHosts {
-		return
-	}
-
 	lost, err := w.Service.Store.LostHosts(ctx)
 	if err != nil {
 		w.Logger.Warn("could not read which hosts are lost; deciding nothing this round", zap.Error(err))
 		return
 	}
+	w.welcomeBack(ctx, now, ids, lost, views)
+	if len(ids) < MinHosts {
+		return
+	}
 	for _, x := range ids {
 		if !lost[x] && w.ledger.Lost(now, ids, x) {
 			w.Service.declare(ctx, x)
+		}
+	}
+}
+
+// welcomeBack hands each host marked lost that answered this round, and that
+// the majority no longer takes for lost, to Service.back (R-419). At any
+// cluster size: a host a person marked lost in a cluster of two comes back
+// the same way. The majority rule is asked too, so a host the leader alone
+// still reaches, while most of the cluster does not, stays lost.
+func (w *Watch) welcomeBack(ctx context.Context, now time.Duration, ids []string, lost map[string]bool, views map[string]View) {
+	for _, x := range ids {
+		if _, answered := views[x]; !answered || !lost[x] || w.ledger.Lost(now, ids, x) {
+			continue
+		}
+		if err := w.Service.back(ctx, x); err != nil {
+			w.Logger.Warn("a lost host is back, and its copies of the apps failed over from it could not all be removed; trying again next round",
+				zap.String("host_id", x), zap.Error(err))
 		}
 	}
 }
