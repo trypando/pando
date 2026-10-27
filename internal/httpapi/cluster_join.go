@@ -11,6 +11,7 @@ import (
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // Joining a cluster (R-415, docs/design/notes-cluster.md). Two halves: the
@@ -33,7 +34,28 @@ func (s *Server) ClusterRoutes() http.Handler {
 	r.Use(Logger(s.Logger))
 	r.Get(hosts.AuthorityPath, s.handleClusterAuthority)
 	r.Post(hosts.JoinPath, s.handleClusterJoin)
+	r.Get(hosts.PeersPath, s.handleClusterPeers)
 	return r
+}
+
+// handleClusterPeers lists the cluster's hosts to a host that has joined it,
+// which presents the certificate it joined with (R-421). The listener checks
+// the certificate against the authority; Peers checks it is a host's.
+func (s *Server) handleClusterPeers(w http.ResponseWriter, r *http.Request) {
+	if s.Hosts == nil {
+		Error(w, r, errClusterOff)
+		return
+	}
+	var der []byte
+	if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && len(r.TLS.VerifiedChains[0]) > 0 {
+		der = r.TLS.VerifiedChains[0][0].Raw
+	}
+	peers, err := s.Hosts.Peers(r.Context(), der)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"hosts": peers})
 }
 
 // handleClusterAuthority is the authority's certificate, public: every host
@@ -81,8 +103,9 @@ func (s *Server) handleClusterJoin(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePostSetupJoin joins a fresh Pando to a cluster (R-415). Public, like
-// POST /setup, and refused the same way once this Pando has an account or an
-// app. Answers before Pando restarts into the cluster.
+// POST /setup, needing the same setup token (R-046), and refused the same way
+// once this Pando has an account or an app. Answers before Pando restarts
+// into the cluster.
 func (s *Server) handlePostSetupJoin(w http.ResponseWriter, r *http.Request) {
 	if refuseFormBody(w, r) {
 		return
@@ -92,14 +115,15 @@ func (s *Server) handlePostSetupJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Token string `json:"token"`
-		Name  string `json:"name"`
+		SetupToken string `json:"setup_token"`
+		Token      string `json:"token"`
+		Name       string `json:"name"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJoinBody)).Decode(&req); err != nil {
 		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
 		return
 	}
-	joined, err := s.Joiner.Setup(r.Context(), strings.TrimSpace(req.Token), req.Name)
+	joined, err := s.Joiner.SetupWithToken(r.Context(), secret.New(strings.TrimSpace(req.SetupToken)), strings.TrimSpace(req.Token), req.Name)
 	if err != nil {
 		s.audit(r, audit.Event{
 			PrincipalKind: audit.KindAnonymous, Action: "cluster.join.denied", TargetKind: "host",

@@ -4574,7 +4574,7 @@
       "path": "pando join",
       "use": "join <token>",
       "short": "Join a new Pando to a cluster with a join token",
-      "long": "Joins the Pando at --server, which must be new, with no account or app, to the\ncluster that minted the token (pando cluster tokens create). The Pando checks the\ncluster's certificate authority against the token, joins, and restarts into the\ncluster.",
+      "long": "Joins the Pando at --server, which must be new, with no account or app, to the\ncluster that minted the token (pando cluster tokens create). The Pando checks the\ncluster's certificate authority against the token, joins, and restarts into the\ncluster. --setup-token is the setup_token that Pando printed to its log at startup.",
       "example": "",
       "aliases": [],
       "hidden": false,
@@ -4595,6 +4595,14 @@
           "default": "",
           "usage": "Pando server URL (defaults to the one you logged in to)",
           "required": false
+        },
+        {
+          "name": "setup-token",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "the setup token from the joining Pando's log (setup_token)",
+          "required": true
         }
       ],
       "inherited_flags": [

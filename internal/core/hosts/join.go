@@ -13,8 +13,10 @@ import (
 )
 
 // DefaultClusterPort is where a control host's cluster listener answers
-// unless server.cluster_addr says otherwise (R-415).
-const DefaultClusterPort = 7443
+// unless server.cluster_addr says otherwise (R-415): the port after the host
+// agent's (hostagent.DefaultPort), which a host holding both roles also
+// listens on.
+const DefaultClusterPort = 7444
 
 // JoinReadiness says whether the cluster can take a host with roles now, such
 // as a second host needing a backup destination off the host first (R-417).
@@ -58,6 +60,16 @@ type JoinResult struct {
 	// the authority's certificate. Both PEM.
 	Certificate []byte
 	Authority   []byte
+	// HostClientCert and HostClientKey are the certificate, and its key, the
+	// host checks the others' agents with (R-421): subject pando-host, client
+	// authentication only, which an agent answers with a ping and nothing
+	// else. Issued here because only a holder of the authority's key can
+	// issue one. PEM.
+	HostClientCert []byte
+	HostClientKey  secret.Value
+	// NetworkPool is the runtime's app network range, which the host's agent
+	// forwards into and nowhere else (R-416). Empty is the runtime's default.
+	NetworkPool string
 	// Keys is set for a host with the control role, and only then.
 	Keys *ControlKeys
 }
@@ -141,6 +153,12 @@ func (s *Service) Join(ctx context.Context, req JoinRequest) (JoinResult, error)
 			return state.Host{}, err
 		}
 		res.Certificate = cert
+		if res.HostClientCert, res.HostClientKey, err = s.Authority.IssueHostClient(); err != nil {
+			return state.Host{}, errs.Wrap(errs.Internal, "Pando could not issue the certificate the joining host checks other hosts with.", err)
+		}
+		if s.Runtime != nil && slices.Contains(t.Roles, state.HostRoleApp) {
+			res.NetworkPool = s.Runtime.NetworkPool(ctx)
+		}
 		if slices.Contains(t.Roles, state.HostRoleControl) {
 			if res.Keys, err = s.controlKeys(ctx); err != nil {
 				return state.Host{}, err

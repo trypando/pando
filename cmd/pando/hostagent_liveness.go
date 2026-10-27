@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"github.com/moby/moby/client"
 	"go.uber.org/zap"
 
+	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/hostagent"
 )
@@ -33,12 +33,6 @@ const (
 	envHostCert = "PANDO_HOST_CLIENT_CERT"
 	envHostKey  = "PANDO_HOST_CLIENT_KEY"
 )
-
-type peerEntry struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Address string `json:"address"`
-}
 
 // agentLiveness is this host's Monitor (R-421), or nil when the agent takes
 // no part. It probes the other hosts with the host certificate, answers
@@ -66,10 +60,25 @@ func agentLiveness(authoritiesPEM []byte, logger *zap.Logger) (*liveness.Monitor
 	if err != nil {
 		return nil, fmt.Errorf("the host agent could not reach this host's container runtime, which it stops apps through when the host is cut off: %w", err)
 	}
+	return newMonitor(self, func(context.Context) ([]hosts.Peer, error) { return hosts.ReadPeers(peersFile) },
+		cert, roots, docker, logger), nil
+}
 
+// newMonitor is a joined host's Monitor (R-421): it probes the hosts peers
+// lists with cert, checking each agent against roots and the name it joined
+// under, and fences through docker.
+func newMonitor(self string, peers func(context.Context) ([]hosts.Peer, error), cert tls.Certificate,
+	roots *x509.CertPool, docker *client.Client, logger *zap.Logger) *liveness.Monitor {
 	return &liveness.Monitor{
-		Self:  self,
-		Peers: func(context.Context) ([]liveness.Peer, error) { return readPeers(peersFile) },
+		Self: self,
+		Peers: func(ctx context.Context) ([]liveness.Peer, error) {
+			list, err := peers(ctx)
+			out := make([]liveness.Peer, len(list))
+			for i, p := range list {
+				out[i] = liveness.Peer(p)
+			}
+			return out, err
+		},
 		Probe: func(ctx context.Context, p liveness.Peer) error {
 			cfg := &tls.Config{
 				MinVersion:   tls.VersionTLS13,
@@ -82,21 +91,5 @@ func agentLiveness(authoritiesPEM []byte, logger *zap.Logger) (*liveness.Monitor
 		},
 		Fencer: hostagent.DockerFencer{Docker: docker},
 		Logger: logger.Named("liveness"),
-	}, nil
-}
-
-func readPeers(path string) ([]liveness.Peer, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: the path is the agent's own configuration.
-	if err != nil {
-		return nil, err
 	}
-	var entries []peerEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("%s is not a list of hosts: %w", path, err)
-	}
-	out := make([]liveness.Peer, len(entries))
-	for i, e := range entries {
-		out[i] = liveness.Peer(e)
-	}
-	return out, nil
 }

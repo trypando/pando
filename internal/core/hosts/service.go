@@ -110,13 +110,11 @@ func ControlRoleNeedsEveryVerb(roles []string) bool {
 // DefaultRoles is the roles a token minted without any gets [P]: both while
 // the cluster has fewer than three hosts, the app role after.
 func (s *Service) DefaultRoles(ctx context.Context) ([]string, error) {
-	hosts, err := s.Store.Hosts(ctx)
+	n, err := s.Count(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// A cluster of one has no rows until hosts join: the install itself is
-	// the first host.
-	if len(hosts)+1 < bothRolesUpTo {
+	if n < bothRolesUpTo {
 		return []string{state.HostRoleControl, state.HostRoleApp}, nil
 	}
 	return []string{state.HostRoleApp}, nil

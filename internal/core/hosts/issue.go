@@ -17,6 +17,7 @@ import (
 
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/hostagent"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // listenerCertLifetime is how long the cluster listener's own certificate is
@@ -68,10 +69,27 @@ func (a *Authority) IssueHost(csrPEM []byte, name string, roles []string) (certP
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), hostagent.Fingerprint256(der), nil
 }
 
+// IssueHostClient issues the certificate a host checks the other hosts'
+// agents with (hostagent.Authorities.IssueHostClient, R-421), as PEM.
+func (a *Authority) IssueHostClient() (certPEM []byte, keyPEM secret.Value, err error) {
+	cert, err := hostagent.Authorities{{Cert: a.Cert, Key: a.Key}}.IssueHostClient()
+	if err != nil {
+		return nil, secret.Value{}, err
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	if err != nil {
+		return nil, secret.Value{}, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}),
+		secret.New(string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))), nil
+}
+
 // ListenerTLS is the TLS configuration of the cluster listener (R-415): a
 // certificate issued from the authority now, for names, sent with the
 // authority's own so a joining host can check the chain against its token's
-// hash before it sends anything.
+// hash before it sends anything. A client certificate is checked against the
+// authority when one is presented: a joining host has none yet, and a host
+// that has joined presents its own for the peer list (PeersPath).
 func (a *Authority) ListenerTLS(names []string, now time.Time) (*tls.Config, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -95,12 +113,16 @@ func (a *Authority) ListenerTLS(names []string, now time.Time) (*tls.Config, err
 	if err != nil {
 		return nil, err
 	}
+	pool := x509.NewCertPool()
+	pool.AddCert(a.Cert)
 	return &tls.Config{
 		MinVersion: tls.VersionTLS13,
 		Certificates: []tls.Certificate{{
 			Certificate: [][]byte{der, a.Cert.Raw},
 			PrivateKey:  key,
 		}},
+		ClientAuth: tls.VerifyClientCertIfGiven,
+		ClientCAs:  pool,
 	}, nil
 }
 

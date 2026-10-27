@@ -391,7 +391,7 @@
       "env": "PANDO_SERVER_CLUSTER_ADDR",
       "key": "server.cluster_addr",
       "type": "string",
-      "default": ":7443",
+      "default": ":7444",
       "description": "The address new hosts join the cluster on, as host:port, served over TLS. Join tokens name its port; it must be reachable from every host that joins.",
       "group": "server",
       "secret": false

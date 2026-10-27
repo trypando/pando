@@ -11079,7 +11079,7 @@
       "post": {
         "operationId": "postSetupJoin",
         "summary": "Join a cluster",
-        "description": "Join this new Pando to a cluster as a host: `token`, a join token minted on a host already in the cluster, and `name`, this host's name (lowercase letters, digits and hyphens; default this machine's hostname). Pando checks the cluster's certificate authority against the token before sending anything, then restarts into the cluster. Answers 202 with `roles`, `host_id`, `name` and `status` `joined`. Public, and refused once this Pando has any account or app.",
+        "description": "Join this new Pando to a cluster as a host: `token`, a join token minted on a host already in the cluster, and `name`, this host's name (lowercase letters, digits and hyphens; default this machine's hostname). Pando checks the cluster's certificate authority against the token before sending anything, then restarts into the cluster. Answers 202 with `roles`, `host_id`, `name` and `status` `joined`. Public, but needs the one-time `setup_token` Pando printed to its log, as `POST /api/v1/setup` does, and refused once this Pando has any account or app.",
         "tags": [
           "Session"
         ],
@@ -11089,6 +11089,9 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "setup_token": {
+                    "type": "string"
+                  },
                   "token": {
                     "type": "string"
                   },
@@ -11097,6 +11100,7 @@
                   }
                 },
                 "required": [
+                  "setup_token",
                   "token",
                   "name"
                 ]

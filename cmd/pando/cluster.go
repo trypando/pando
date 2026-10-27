@@ -93,6 +93,26 @@ func joinFromEnvironment(ctx context.Context, cfg *config.Config, joiner *hosts.
 	return true, nil
 }
 
+// recordInstallHost records this machine as the install's first host, once
+// (R-414). A failure is logged and does not stop startup: until the row is
+// made the cluster still counts as one host (hosts.Service.Count).
+func recordInstallHost(ctx context.Context, cfg *config.Config, store hosts.InstallHostStore, logger *zap.Logger) {
+	machine, _ := os.Hostname()
+	address := localAgentAddress(cfg.Server.AdvertiseURL)
+	if address == "" {
+		address = net.JoinHostPort(clusterHostname(cfg), strconv.Itoa(hostagent.DefaultPort))
+	}
+	h, recorded, err := hosts.RecordInstallHost(ctx, store, hosts.InstallHostInfo{
+		Hostname: machine, Address: address, Platform: runtime.GOOS + "/" + runtime.GOARCH, Version: buildVersion,
+	})
+	switch {
+	case err != nil:
+		logger.Warn("could not record this machine as the cluster's first host", zap.Error(err))
+	case recorded:
+		logger.Info("recorded this machine as the cluster's first host", zap.String("host_id", h.ID), zap.String("name", h.Name))
+	}
+}
+
 // startClusterListener serves the cluster listener on server.cluster_addr,
 // over TLS from the cluster authority (R-415). The returned server is shut
 // down with the API's.
@@ -116,17 +136,4 @@ func startClusterListener(cfg *config.Config, authority *hosts.Authority, handle
 		}
 	}()
 	return srv, nil
-}
-
-// runAppHost is what a host that joined with the app role alone runs in
-// place of the server: its agent, with the certificate it was issued (R-416).
-//
-// The agent that carries the docker-hosts runtime's calls is another slice of
-// #347's work; until it lands this says what the host is and waits, rather
-// than serving an API it has no database for.
-func runAppHost(ctx context.Context, joined hosts.Joined, logger *zap.Logger) error {
-	logger.Info("this host joined a cluster as an app host and runs its agent",
-		zap.String("host_id", joined.HostID), zap.String("name", joined.Name), zap.String("cluster", joined.Cluster))
-	<-ctx.Done()
-	return nil
 }

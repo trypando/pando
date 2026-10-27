@@ -4,6 +4,7 @@ package httpapi_test
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,8 +64,17 @@ func freshHost(t *testing.T) *corehosts.Joiner {
 			TokenKeyPath: filepath.Join(dir, "token.key"), AuthorityPath: filepath.Join(dir, "cluster-ca.pem"),
 		},
 		Version: "test", AgentAddress: "edge:7443",
+		SetupToken: func(_ context.Context, token secret.Value) error {
+			if token.Reveal() != testSetupToken {
+				return state.ErrSetupTokenWrong
+			}
+			return nil
+		},
 	}
 }
+
+// testSetupToken is the fresh host's setup token (R-046).
+const testSetupToken = "s3tup-token"
 
 // TestR415_AHostJoinsThroughTheClusterListener asserts R-415 end to end
 // against the database: an app host joins with a single-use token and is
@@ -147,7 +157,7 @@ func TestR415_APandoWithAnAccountCannotJoinAtSetup(t *testing.T) {
 	joiner.Fresh = state.NewCluster(i.db, testTokenKey).Fresh
 	i.Server.Joiner = joiner
 	srv := clusterListener(t, i)
-	got := i.anon(http.MethodPost, "/setup/join", map[string]any{"token": mintJoin(t, i, srv, "app"), "name": "edge"})
+	got := i.anon(http.MethodPost, "/setup/join", map[string]any{"setup_token": testSetupToken, "token": mintJoin(t, i, srv, "app"), "name": "edge"})
 	require.Equal(t, string(errs.StateInvalid), got.ErrorCode(), got.String())
 	require.Contains(t, got.String(), "already has accounts or apps")
 
@@ -166,7 +176,7 @@ func TestR415_SetupJoinAnswersAndRestarts(t *testing.T) {
 	joiner.Restart = func() { restarted <- struct{}{} }
 	i.Server.Joiner = joiner
 
-	got := i.anon(http.MethodPost, "/setup/join", map[string]any{"token": mintJoin(t, i, srv, "app"), "name": "edge-9"})
+	got := i.anon(http.MethodPost, "/setup/join", map[string]any{"setup_token": testSetupToken, "token": mintJoin(t, i, srv, "app"), "name": "edge-9"})
 	require.Equal(t, http.StatusAccepted, got.Code, got.String())
 	var out struct {
 		Roles  []string `json:"roles"`
@@ -179,4 +189,65 @@ func TestR415_SetupJoinAnswersAndRestarts(t *testing.T) {
 
 	unreadable := i.anon(http.MethodPost, "/setup/join", "not an object")
 	require.Equal(t, string(errs.ValidInvalid), unreadable.ErrorCode(), unreadable.String())
+}
+
+// TestR415_JoiningAtSetupNeedsTheSetupToken asserts R-046 on R-415's setup
+// join: POST /setup/join without this Pando's setup token, or with another,
+// is refused before the cluster is reached, audited, and spends no use of the
+// join token; with it, the host joins.
+func TestR415_JoiningAtSetupNeedsTheSetupToken(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	srv := clusterListener(t, i)
+	joiner := freshHost(t)
+	joiner.Restart = func() {}
+	i.Server.Joiner = joiner
+	token := mintJoin(t, i, srv, "app")
+
+	for name, body := range map[string]map[string]any{
+		"none":    {"token": token, "name": "edge-3"},
+		"another": {"setup_token": "guess", "token": token, "name": "edge-3"},
+	} {
+		got := i.anon(http.MethodPost, "/setup/join", body)
+		require.Equal(t, string(errs.AuthInvalid), got.ErrorCode(), name+": "+got.String())
+		require.Contains(t, got.String(), "setup token")
+	}
+	listed := i.do(i.admin(), http.MethodGet, "/cluster/hosts", nil)
+	require.NotContains(t, listed.String(), "edge-3", "the cluster was never reached")
+
+	got := i.anon(http.MethodPost, "/setup/join", map[string]any{"setup_token": " " + testSetupToken + " ", "token": token, "name": "edge-3"})
+	require.Equal(t, http.StatusAccepted, got.Code, got.String())
+
+	audit := i.do(i.admin(), http.MethodGet, "/audit?action=cluster.join.denied", nil)
+	require.Contains(t, audit.String(), string(errs.AuthInvalid))
+}
+
+// TestR421_AJoinedHostReadsThePeerListWithItsCertificate asserts R-421's peer
+// list on the cluster listener: a host that joined reads every joined host
+// with the certificate it joined with, and a client without one is refused.
+func TestR421_AJoinedHostReadsThePeerListWithItsCertificate(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	srv := clusterListener(t, i)
+	ctx := context.Background()
+	app := freshHost(t)
+	joined, err := app.Join(ctx, mintJoin(t, i, srv, "app"), "edge-4")
+	require.NoError(t, err)
+
+	cert, err := tls.LoadX509KeyPair(filepath.Join(app.Files.Dir, corehosts.HostCertFile), filepath.Join(app.Files.Dir, corehosts.HostKeyFile))
+	require.NoError(t, err)
+	ca, err := os.ReadFile(filepath.Join(app.Files.Dir, corehosts.AuthorityCertFile))
+	require.NoError(t, err)
+	cfg, err := corehosts.JoinedTLS(ca, cert)
+	require.NoError(t, err)
+	sync := &corehosts.PeerSync{Address: joined.Cluster, TLS: cfg, File: filepath.Join(app.Files.Dir, corehosts.PeersFile)}
+	peers, err := sync.Peers(ctx)
+	require.NoError(t, err)
+	require.Contains(t, peers, corehosts.Peer{ID: joined.HostID, Name: "edge-4", Address: "edge:7443"})
+
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: corehosts.PinnedTLS(i.Server.Hosts.Authority.Hash())}}
+	resp, err := client.Do(mustGet(t, srv.URL+corehosts.PeersPath))
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }

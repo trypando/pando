@@ -16,6 +16,9 @@ import (
 const (
 	AuthorityPath = "/cluster/authority"
 	JoinPath      = "/cluster/join"
+	// PeersPath lists the cluster's hosts to a host that has joined, which
+	// presents its own certificate (Service.Peers, R-421).
+	PeersPath = "/cluster/peers"
 )
 
 // WireJoinRequest is POST /cluster/join's body.
@@ -48,10 +51,13 @@ type WireKeys struct {
 
 // WireJoinResult is POST /cluster/join's answer.
 type WireJoinResult struct {
-	Host        state.Host `json:"host"`
-	Certificate string     `json:"certificate"`
-	Authority   string     `json:"authority"`
-	Keys        *WireKeys  `json:"keys,omitempty"`
+	Host           state.Host `json:"host"`
+	Certificate    string     `json:"certificate"`
+	Authority      string     `json:"authority"`
+	HostClientCert string     `json:"host_client_certificate,omitempty"`
+	HostClientKey  string     `json:"host_client_key,omitempty"`
+	NetworkPool    string     `json:"network_pool,omitempty"`
+	Keys           *WireKeys  `json:"keys,omitempty"`
 }
 
 func b64(v secret.Value) string {
@@ -71,7 +77,10 @@ func unb64(s string) (secret.Value, error) {
 
 // Wire is the result as the listener sends it.
 func (r JoinResult) Wire() WireJoinResult {
-	out := WireJoinResult{Host: r.Host, Certificate: string(r.Certificate), Authority: string(r.Authority)}
+	out := WireJoinResult{
+		Host: r.Host, Certificate: string(r.Certificate), Authority: string(r.Authority),
+		HostClientCert: string(r.HostClientCert), HostClientKey: r.HostClientKey.Reveal(), NetworkPool: r.NetworkPool,
+	}
 	if r.Keys != nil {
 		out.Keys = &WireKeys{
 			DatabaseURL:      r.Keys.DatabaseURL.Reveal(),
@@ -86,7 +95,10 @@ func (r JoinResult) Wire() WireJoinResult {
 
 // result is the answer as the joining host reads it.
 func (w WireJoinResult) result() (JoinResult, error) {
-	out := JoinResult{Host: w.Host, Certificate: []byte(w.Certificate), Authority: []byte(w.Authority)}
+	out := JoinResult{
+		Host: w.Host, Certificate: []byte(w.Certificate), Authority: []byte(w.Authority),
+		HostClientCert: []byte(w.HostClientCert), HostClientKey: secret.New(w.HostClientKey), NetworkPool: w.NetworkPool,
+	}
 	if w.Keys == nil {
 		return out, nil
 	}

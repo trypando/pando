@@ -1438,11 +1438,12 @@ pando join <token>
 Joins the Pando at --server, which must be new, with no account or app, to the
 cluster that minted the token (pando cluster tokens create). The Pando checks the
 cluster's certificate authority against the token, joins, and restarts into the
-cluster.
+cluster. --setup-token is the setup_token that Pando printed to its log at startup.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--name` |  | this host's name in the cluster (default: the machine's hostname) |
+| `--setup-token` |  | the setup token from the joining Pando's log (setup_token) |
 
 ### `login`
 

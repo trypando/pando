@@ -321,10 +321,12 @@ func serve(ctx context.Context, configPath string) error {
 
 	// A host that joined a cluster with the app role alone has no database
 	// and serves no API: it runs its agent (R-414, R-416).
-	if joined, done, err := joinFiles(cfg).Read(); err != nil {
+	joined, hasJoined, err := joinFiles(cfg).Read()
+	if err != nil {
 		return err
-	} else if done && joined.AppOnly() {
-		return runAppHost(ctx, joined, logger)
+	}
+	if hasJoined && joined.AppOnly() {
+		return runAppHost(ctx, cfg.Server.ClusterDir, joined, logger)
 	}
 
 	// Adapters saved after this are not running until a restart (R-253); the
@@ -397,9 +399,16 @@ func serve(ctx context.Context, configPath string) error {
 		default: // one is already on its way
 		}
 	})
+	// POST /setup/join needs the setup token POST /setup does (R-046).
+	joiner.SetupToken = users.CheckSetupToken
 	if joined, err := joinFromEnvironment(ctx, cfg, joiner, logger); err != nil || joined {
 		restartRequested.Store(joined)
 		return err
+	}
+	// R-414: the machine the install started on is its first host. A host
+	// that joined was recorded by its join.
+	if !hasJoined {
+		recordInstallHost(ctx, cfg, clusterStore, logger)
 	}
 	// R-421: taking a host for lost, and the leader job that decides it.
 	hostLoss, livenessWatch := clusterLiveness(clusterStore, clusterAuthority, apps, auditor, logger)

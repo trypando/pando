@@ -342,9 +342,8 @@ another host's apps (R-023).
 
 Left to other slices: `Homes` and `Failover` (the standby slice; until set, a lost host is marked
 and nothing is started), clearing `lost_at` and removing the returned host's copies (R-419,
-`Cluster.ClearHostLost`), and the join giving a host its ID, peer file and host certificate. The
-install's first host has no `cluster_hosts` row until the join slice records it; until then the
-cluster counts one host fewer, which can only keep it under three, never cause a fence.
+`Cluster.ClearHostLost`). The join now gives a host its ID, peer file and host certificate, and
+the install's first host is recorded; see "finishing the join" for why it is not yet watched.
 
 ### As built: warm standby
 
@@ -385,10 +384,11 @@ cluster counts one host fewer, which can only keep it under three, never cause a
 
 ### As built: joining
 
-- **The cluster listener** is `server.cluster_addr` [P: `:7443`] on every control host, TLS 1.3 with a
+- **The cluster listener** is `server.cluster_addr` [P: `:7444`] on every control host, TLS 1.3 with a
   certificate issued from the cluster authority at each start and sent with the authority's own. It
   serves `GET /cluster/authority` (the authority's certificate, public) and `POST /cluster/join`, and
-  nothing else; it is not under `/api/v1` and not in the API reference. A join token's address is this
+  `GET /cluster/peers` (finishing the join), and nothing else; it is not under `/api/v1` and not in
+  the API reference. A join token's address is this
   listener's, `https://<host>:<port>`: `https` only, and the default port is added when the minter
   gives none. Minted without one, it is the external URL's host (else the advertise URL's, else the
   machine's) with `cluster_addr`'s port.
@@ -415,20 +415,17 @@ cluster counts one host fewer, which can only keep it under three, never cause a
   what says the join happened. `config.Load` reads `database-url`, when present, ahead of
   `database.url` and `PANDO_DATABASE_URL`: the join is later than the Compose file.
 - **After the join** Pando restarts in place. A control host comes back as a replica of the cluster on
-  its database. A host with the app role alone starts no server and runs its agent; that agent is a
-  later slice, and until it lands `runAppHost` logs what the host is and waits.
+  its database. A host with the app role alone starts no server and runs its agent (finishing the join).
 - **"Has an account or an app"** counts any row in `users` or `apps`, deleted ones included. A Pando
   that has already joined cannot join again. `PANDO_JOIN_TOKEN` (with `PANDO_JOIN_NAME`) joins at
   first start and is ignored once `joined.json` exists; a failed join stops startup with its reason.
-- **`POST /setup/join`** needs no setup token, as the contract the console builds against says; it is
-  refused cross-site like sign-in. Being first to a fresh Pando's setup URL can therefore join it to
-  a cluster of one's own, which the setup token prevents for `POST /setup`. Flagged for a decision.
+- **`POST /setup/join`** needs the setup token, as `POST /setup` does (finishing the join), and is
+  refused cross-site like sign-in.
 - **Audit:** the cluster writes `cluster.host.join` (principal: the join token) and
   `cluster.join.denied`; the joining Pando writes `cluster.join` and `cluster.join.denied` in its own
   log, which a control host leaves behind for the cluster's when it restarts.
-- **Ports.** `cluster_addr`'s default and the host agent's (`hostagent.DefaultPort`) are both 7443. A
-  host holding both roles cannot bind both; the agent slice decides whether the agent serves joins on
-  its port or one moves.
+- **Ports.** The cluster listener's default is 7444, the host agent's (`hostagent.DefaultPort`) 7443,
+  so a host holding both roles binds both.
 - The DR bundle carries the cluster authority as `cluster-ca.pem`, beside the token key (R-212).
 
   | The edge's `acme` volume | Used only while the cluster is one host. Once it is more, Pando orders the edge's certificates and every edge serves them (O-68, below) |
@@ -517,3 +514,59 @@ cluster counts one host fewer, which can only keep it under three, never cause a
   when unset, beside *Failover oversubscription*.
 - **Migration number.** 000089 was the next free number on `cluster-design` when this was built; a
   parallel slice adding its own 000089 renumbers one of them at merge.
+
+### As built: finishing the join
+
+- **The setup token (R-046).** `POST /setup/join` takes `setup_token` beside `token` and `name`, and
+  `hosts.Joiner.SetupWithToken` checks it (`state.Users.CheckSetupToken`, the same digest and
+  constant-time compare as `POST /setup`) before the join token is read, so a wrong one reaches no
+  cluster. It is checked, not used up: once joined, Pando restarts into the cluster and leaves this
+  database behind. `PANDO_JOIN_TOKEN` needs none, since setting it takes the host. The console's
+  Join a cluster form and `pando join --setup-token` send it.
+- **Ports.** `server.cluster_addr` defaults to `:7444` (`hosts.DefaultClusterPort`), the agent stays
+  on 7443; a token minted with an address without a port gets 7444.
+- **What an app host is given** besides its certificate: a `pando-host` client certificate and its
+  key (`host-client.crt`, `host-client.key`), issued by the control side at join because only a
+  holder of the authority's key can issue one — it opens nothing but pings (R-421) — and the
+  runtime's `network_pool`, kept in `joined.json` as `network_pool`. Every join gets the client
+  certificate; the pool is sent for the app role.
+- **`runAppHost`** runs the agent in the Pando process, as `host-agent serve` does
+  (`serveAgent`): `host.crt`/`host.key` (named `hostagent.ServerName(<name>)` by `IssueHost`),
+  clients checked against `ca.crt`, the network pool from `PANDO_AGENT_NETWORK_POOL`, else
+  `joined.json`, else 10.213.0.0/16, and the runtime socket from `PANDO_AGENT_RUNTIME_SOCKET`, else
+  `DOCKER_HOST` when it is `unix://`, else `$XDG_RUNTIME_DIR/docker.sock` (rootless, R-402, R-416);
+  none of those found stops it with the variable to set. It listens on `PANDO_AGENT_LISTEN`, else
+  `:7443`. Its `liveness.Monitor` is its host ID from `joined.json`, probing with the `pando-host`
+  certificate and fencing through the same socket.
+- **The peer list** is `GET /cluster/peers` on the cluster listener, which now asks for a client
+  certificate and checks one when given (`VerifyClientCertIfGiven`: a joining host has none). The
+  certificate must be one a host joined with — its fingerprint is a row's `cert_sha256` — so a
+  removed host hears nothing (`hosts.Service.Peers`, `AUTH_INVALID` otherwise). It answers
+  `{"hosts":[{id,name,address}]}`. `hosts.PeerSync` fetches it from the join token's address every
+  round (2 s timeout), writes `peers.json` in the cluster directory, and when the listener cannot be
+  reached returns what that file last held. The joined host connects trusting the authority in
+  `ca.crt`, by its key, not the listener's name, as at join.
+- **The first host (R-414).** At each start a control host that has not joined calls
+  `hosts.RecordInstallHost`: `state.Cluster.RecordFirstHost` inserts it under an advisory lock unless
+  a row with no join token exists, so replicas of one install record one host between them and a
+  restart records none. Name: the first label of the machine's hostname as a DNS label, else
+  `control`; roles control and app; address the advertise URL's host, else the external URL's, else
+  the machine's, with port 7443; `cert_sha256` 64 zeros [P], since nothing pins it (below). A failure
+  is logged and startup goes on. **A host with no join token is the install's own** (`hosts.InstallHost`);
+  join tokens are never deleted, so `joined_with` stays set on every joined host.
+- **Counting.** The "+1" is gone: `hosts.Service.Count` is the rows, and never less than one, so a
+  single-host install reports one host before and after its row is made; `DefaultRoles` reads
+  `Count`.
+- **What the first host is left out of, and why.** `RuntimeHosts` skips it, since it is the
+  runtime's `control` entry already, so a conversion is unchanged. `hosts.LivenessPeers` (the
+  leader's `Watch` and the peer list) skips it too: its agent is the one the runtime starts, which
+  takes no part in liveness and refuses pings, and a host that never answers would be taken for lost
+  by the joined hosts once the cluster has three. So the first host is counted in the cluster's
+  size and not watched, as before.
+- **Not done here.** Joined *control* hosts run no agent and no `Monitor` either, yet are watched:
+  with app-only hosts more than half the cluster, they would report a control host unreached. A
+  control host's agent taking part in liveness (and the first host's with it) is left to the
+  liveness slice. An app host's agent has to be on the host's app networks to reach its containers;
+  the per-host Docker adapter connects the container named `pando-agent`, so on an app host Pando's
+  own container must be named `pando-agent` (install files not changed here). `peers.json` is
+  rewritten every round even when unchanged.

@@ -29,7 +29,7 @@ func TestR415_AJoinedControlHostUsesTheClustersDatabase(t *testing.T) {
 	cfg, err = Load("")
 	require.NoError(t, err)
 	require.Equal(t, "postgres://pando:c@db.example.com/pando", cfg.Database.URL)
-	require.Equal(t, ":7443", cfg.Server.ClusterAddr)
+	require.Equal(t, ":7444", cfg.Server.ClusterAddr)
 
 	require.NoError(t, os.Remove(joined))
 	require.NoError(t, os.Mkdir(joined, 0o700))

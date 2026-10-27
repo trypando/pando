@@ -144,15 +144,17 @@ func TestClusterLivenessListsHostsAndAsksWhetherOneAnswers(t *testing.T) {
 	require.NoError(t, ln.Close())
 
 	store := wiringStore{hosts: []state.Host{
-		{ID: "host_up", Name: "app-1", Address: addr},
-		{ID: "host_down", Name: "app-2", Address: silent},
+		{ID: "host_first", Name: "core-1", Address: silent},
+		{ID: "host_up", Name: "app-1", Address: addr, JoinedWith: "jt_1"},
+		{ID: "host_down", Name: "app-2", Address: silent, JoinedWith: "jt_2"},
 	}}
 	svc, watch := clusterLiveness(store, authority, nil, nil, zap.NewNop())
 	ctx := context.Background()
 
 	peers, err := watch.Hosts(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []liveness.Peer{{ID: "host_up", Name: "app-1", Address: addr}, {ID: "host_down", Name: "app-2", Address: silent}}, peers)
+	require.Equal(t, []liveness.Peer{{ID: "host_up", Name: "app-1", Address: addr}, {ID: "host_down", Name: "app-2", Address: silent}}, peers,
+		"the install's first host, whose agent answers no ping, is not watched")
 
 	require.True(t, svc.Answering(ctx, "host_up"))
 	require.False(t, svc.Answering(ctx, "host_down"))
