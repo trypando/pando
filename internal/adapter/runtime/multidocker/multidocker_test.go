@@ -259,8 +259,9 @@ func TestR148_AnUnreachableHostMarksItsAppsUnobservableNotFailed(t *testing.T) {
 	}
 	a := newTestAdapter(t, hosts, "control", "app-1")
 	ctx := context.Background()
-	_, err := a.Observe(ctx, api.BundleRef{BundleID: "app_known"})
+	seen, err := a.Observe(ctx, api.BundleRef{BundleID: "app_known"})
 	require.NoError(t, err)
+	require.Equal(t, "app-1", seen.Host, "where it is, for core's holds (R-151, R-421)")
 
 	hosts["app-1"].down = true
 

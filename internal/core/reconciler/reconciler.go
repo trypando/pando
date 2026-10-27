@@ -525,6 +525,12 @@ func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) v
 		seen.failed = true
 		return seen
 	}
+	// R-151, R-421: an app the runtime found on a lost or fenced host is
+	// left alone too, standby or not; its host stopped it.
+	if why := r.heldOn(ctx, observed.Host); why != "" {
+		r.unobservable(ctx, app, why)
+		return seen
+	}
 	if app.UnobservableSince != nil {
 		_ = r.Reconciles.ClearUnobservable(ctx, app.ID)
 	}

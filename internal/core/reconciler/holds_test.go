@@ -17,6 +17,12 @@ type fixedHold struct {
 
 func (f fixedHold) Held(context.Context, string) (state.Hold, error) { return f.hold, f.err }
 
+func (f fixedHold) HostHeld(_ context.Context, host string) (state.Hold, error) {
+	h := f.hold
+	h.Home = host
+	return h, f.err
+}
+
 // TestR421_WhatHoldsAnAppSaysWhy asserts each hold's reason names the host
 // and what Pando does about it (R-105), that a hold that cannot be read
 // holds, and that nothing holds without Holds.
@@ -41,6 +47,11 @@ func TestR421_WhatHoldsAnAppSaysWhy(t *testing.T) {
 	}
 	r.Holds = fixedHold{err: errors.New("database away")}
 	require.Contains(t, r.held(ctx, "app_a"), "could not read")
+	require.Contains(t, r.heldOn(ctx, "app-1"), "could not read")
+	r.Holds = fixedHold{hold: state.Hold{}}
+	require.Empty(t, r.heldOn(ctx, ""), "a runtime with one place names no host")
+	r.Holds = fixedHold{hold: state.Hold{HomeFenced: true}}
+	require.Contains(t, r.heldOn(ctx, "app-3"), "app-3, is cut off")
 	r.LocalFenced = func() bool { return true }
 	require.True(t, r.localFenced())
 }

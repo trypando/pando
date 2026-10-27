@@ -23,9 +23,14 @@ import (
 //     and a second Apply beside it would start it twice.
 //
 // Each is reported as the app being unobservable, never as a failure, so it
-// counts toward nothing (R-151).
+// counts toward nothing (R-151). That holds for every app on such a host,
+// with a standby or without: an app's home is its standby row's, and for
+// any app the host the runtime found it on (HostHeld).
 type Holds interface {
 	Held(ctx context.Context, appID string) (state.Hold, error)
+	// HostHeld is what holds every app on host, a name the runtime gave
+	// (api.ObservedBundle.Host): whether it is lost or fenced.
+	HostHeld(ctx context.Context, host string) (state.Hold, error)
 }
 
 // held says why the app is left alone this visit, or "" when it is not.
@@ -34,6 +39,21 @@ func (r *Reconciler) held(ctx context.Context, appID string) string {
 		return ""
 	}
 	h, err := r.Holds.Held(ctx, appID)
+	return holdReason(h, err)
+}
+
+// heldOn says why an app the runtime found on host is left alone this visit,
+// or "" when it is not. An app with no standby row is known to be on a lost
+// or fenced host only this way.
+func (r *Reconciler) heldOn(ctx context.Context, host string) string {
+	if r.Holds == nil || host == "" {
+		return ""
+	}
+	h, err := r.Holds.HostHeld(ctx, host)
+	return holdReason(h, err)
+}
+
+func holdReason(h state.Hold, err error) string {
 	switch {
 	case err != nil:
 		return "Pando could not read whether this app's host is lost or cut off, so it left the app as it is this time."

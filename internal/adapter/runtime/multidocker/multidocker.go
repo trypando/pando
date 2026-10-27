@@ -459,6 +459,9 @@ func (a *Adapter) Observe(ctx context.Context, ref api.BundleRef) (api.ObservedB
 	for i := range observed.Volumes {
 		observed.Volumes[i].Handle = volumeHandle(h, observed.Volumes[i].Handle)
 	}
+	// Where it is, so core leaves alone an app whose host is lost or fenced,
+	// standby or not (R-151, R-421).
+	observed.Host = h.cfg.Name
 	return observed, nil
 }
 
