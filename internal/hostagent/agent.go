@@ -88,7 +88,7 @@ type Agent struct {
 	Liveness Liveness
 
 	// Fence, when set, refuses runtime calls that create or start a
-	// container while this host is fenced (runtime.go, R-421).
+	// container while this host is fencing (runtime.go, R-421).
 	Fence Fence
 
 	// Member reports whether a host is in the cluster now; a ping from one

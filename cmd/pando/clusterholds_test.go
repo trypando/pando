@@ -77,9 +77,9 @@ func TestR421_AControlHostThatHasNotStartedWatchingHasNotFenced(t *testing.T) {
 	var none *controlPings
 	require.False(t, none.fenced())
 	pings := &controlPings{}
-	require.False(t, pings.Fenced())
+	require.False(t, pings.Fencing())
 	pings.current.Store(&controlPing{monitor: &liveness.Monitor{}})
-	require.False(t, pings.Fenced())
+	require.False(t, pings.Fencing())
 
 	// The control role alone: nothing is read from the (empty) directory.
 	startJoinedAgent(context.Background(), t.TempDir(), hosts.Joined{Roles: []string{state.HostRoleControl}}, pings, zap.NewNop())

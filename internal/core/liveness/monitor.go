@@ -344,6 +344,18 @@ func (m *Monitor) Fenced() bool {
 	return m.fenced
 }
 
+// Fencing reports whether a fence is decided and not lifted: from the moment
+// this host decides it is cut off, through the stopping of its containers,
+// until it reaches the cluster again (R-421). While it is, nothing may start
+// a container here: one started while the others stop would run on beside
+// the standby that replaces it.
+func (m *Monitor) Fencing() bool {
+	m.init()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.fencing || m.fenced
+}
+
 // UnreachedFor is how long this host has watched peer without contact, and
 // whether it watches peer at all: what a person marking peer lost is checked
 // against (Witness).

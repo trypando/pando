@@ -138,6 +138,7 @@ func TestR421_ASlowFenceDoesNotStallProbing(t *testing.T) {
 	require.Equal(t, 1, f.calls, "one fence at a time")
 	f.mu.Unlock()
 	require.False(t, r.mon.Fenced(), "not yet stopped")
+	require.True(t, r.mon.Fencing(), "but fencing, so nothing starts meanwhile")
 	close(f.release)
 	r.mon.Settle()
 	require.True(t, r.mon.Fenced())
