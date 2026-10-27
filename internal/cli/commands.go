@@ -38,6 +38,7 @@ func Commands() []*cobra.Command {
 
 	return []*cobra.Command{
 		withServer(loginCmd(&server)),
+		withServer(joinCmd(&server)),
 		withServer(appCmd(client)),
 		withServer(deployCmd(client)),
 		withServer(execCmd(client)),

@@ -1417,6 +1417,23 @@ Unlink a provider's identity from an account
 pando identity-provider unlink <user-id> <provider-id> <external-id>
 ```
 
+### `join`
+
+Join a new Pando to a cluster with a join token
+
+```
+pando join <token>
+```
+
+Joins the Pando at --server, which must be new, with no account or app, to the
+cluster that minted the token (pando cluster tokens create). The Pando checks the
+cluster's certificate authority against the token, joins, and restarts into the
+cluster.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--name` |  | this host's name in the cluster (default: the machine's hostname) |
+
 ### `login`
 
 Sign in and store a token for this machine

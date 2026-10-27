@@ -299,3 +299,51 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   | `audit-archives/` | Used only with `audit_archive: keep`, which a second host's join refuses |
   | `backups/` | The `local` destination, which a second host's join refuses as the default. An app whose spec names a `local` destination explicitly still backs up there |
   | The edge's `acme` volume | Per edge; how several edges share certificates is O-68 |
+
+### As built: joining
+
+- **The cluster listener** is `server.cluster_addr` [P: `:7443`] on every control host, TLS 1.3 with a
+  certificate issued from the cluster authority at each start and sent with the authority's own. It
+  serves `GET /cluster/authority` (the authority's certificate, public) and `POST /cluster/join`, and
+  nothing else; it is not under `/api/v1` and not in the API reference. A join token's address is this
+  listener's, `https://<host>:<port>`: `https` only, and the default port is added when the minter
+  gives none. Minted without one, it is the external URL's host (else the advertise URL's, else the
+  machine's) with `cluster_addr`'s port.
+- **Pinning.** The joining host connects trusting only a certificate authority in the server's chain
+  whose public key hashes to the token's hash, and checks the server certificate chains to it. The
+  server's name is not checked: the pinned authority is the trust, as in kubeadm. The joining host is
+  authenticated by the token's secret; it has no certificate until the join issues one.
+- **One transaction.** `state.Cluster.Join` checks and spends the token's use, asks
+  `hosts.Service.Readiness` (a `hosts.JoinReadiness`; the server sets `hosts.Readiness`) and then
+  `Runtime.CheckJoin`, issues the certificate and records the host together, and `OnChange` runs after.
+  A refusal after the token checked out (a name taken, a cluster not ready) gives the use back. The
+  host gets the token's roles, never ones it asked for.
+- **Refused before the token is touched:** a version other than the server's (R-415 [P]), and a name
+  that is not a DNS label. The certificate is `hostagent.Authorities.IssueHost`'s, for the key in the
+  joining host's request: `pando-agent.<name>.invalid`, the roles as organizational units.
+- **What a control host is handed:** the database URL the server connects with (its owner URL), the
+  API token key, the cluster authority's certificate and key, and the local secrets key with the path
+  the secrets adapter's configuration names, which the joining host reads from the shared database
+  after it restarts. An install using another secrets adapter hands no secrets key.
+- **The joining side** writes, each file 0600 and replaced whole, into `server.cluster_dir`
+  [P: `/var/lib/pando/cluster`]: `host.key`, `host.crt`, `ca.crt`, and for a control host
+  `database-url`; the token key and authority replace the files at `server.token_key_path` and
+  `server.cluster_authority_path`, made at its own first start. `joined.json` is written last and is
+  what says the join happened. `config.Load` reads `database-url`, when present, ahead of
+  `database.url` and `PANDO_DATABASE_URL`: the join is later than the Compose file.
+- **After the join** Pando restarts in place. A control host comes back as a replica of the cluster on
+  its database. A host with the app role alone starts no server and runs its agent; that agent is a
+  later slice, and until it lands `runAppHost` logs what the host is and waits.
+- **"Has an account or an app"** counts any row in `users` or `apps`, deleted ones included. A Pando
+  that has already joined cannot join again. `PANDO_JOIN_TOKEN` (with `PANDO_JOIN_NAME`) joins at
+  first start and is ignored once `joined.json` exists; a failed join stops startup with its reason.
+- **`POST /setup/join`** needs no setup token, as the contract the console builds against says; it is
+  refused cross-site like sign-in. Being first to a fresh Pando's setup URL can therefore join it to
+  a cluster of one's own, which the setup token prevents for `POST /setup`. Flagged for a decision.
+- **Audit:** the cluster writes `cluster.host.join` (principal: the join token) and
+  `cluster.join.denied`; the joining Pando writes `cluster.join` and `cluster.join.denied` in its own
+  log, which a control host leaves behind for the cluster's when it restarts.
+- **Ports.** `cluster_addr`'s default and the host agent's (`hostagent.DefaultPort`) are both 7443. A
+  host holding both roles cannot bind both; the agent slice decides whether the agent serves joins on
+  its port or one moves.
+- The DR bundle carries the cluster authority as `cluster-ca.pem`, beside the token key (R-212).

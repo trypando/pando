@@ -38,6 +38,7 @@
         "pando group",
         "pando host-agent",
         "pando identity-provider",
+        "pando join",
         "pando login",
         "pando logs",
         "pando mcp",
@@ -4533,6 +4534,45 @@
           "type": "string",
           "default": "",
           "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando join",
+      "use": "join <token>",
+      "short": "Join a new Pando to a cluster with a join token",
+      "long": "Joins the Pando at --server, which must be new, with no account or app, to the\ncluster that minted the token (pando cluster tokens create). The Pando checks the\ncluster's certificate authority against the token, joins, and restarts into the\ncluster.",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "name",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "this host's name in the cluster (default: the machine's hostname)",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
           "required": false
         }
       ],

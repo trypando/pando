@@ -131,10 +131,10 @@ func TestDataForStorageTheDatabaseDoesNotKnowIsReported(t *testing.T) {
 func TestAKeyIsNotWrittenWhereThereIsNoLocalKey(t *testing.T) {
 	s, _ := restoring(t)
 	s.SecretsKeyPath = ""
-	require.NoError(t, s.restoreSecretsKey(strings.NewReader("k")), "an external secrets adapter keeps its own")
+	require.NoError(t, restoreKeyFile(strings.NewReader("k"), s.SecretsKeyPath, "secrets key"), "an external secrets adapter keeps its own")
 
 	s.SecretsKeyPath = filepath.Join(t.TempDir(), "no-such-dir", "secrets.key")
-	require.ErrorContains(t, s.restoreSecretsKey(strings.NewReader("k")), "could not write")
+	require.ErrorContains(t, restoreKeyFile(strings.NewReader("k"), s.SecretsKeyPath, "secrets key"), "could not write")
 }
 
 // TestADatabaseThatCannotBeRestoredSaysTheInstallIsNotReplaced covers the
@@ -198,11 +198,15 @@ func TestAVolumeEntryWithoutAnAppStillRestores(t *testing.T) {
 // key (R-063): it goes into a DR bundle beside the secrets key and a restore
 // puts it back, 0600. Without it a restored install holds every token's
 // HMAC-SHA-256 digest and can check none of them.
+// It carries the cluster authority beside it (R-415).
 func TestR212_TheTokenKeySurvivesABundleRoundTrip(t *testing.T) {
 	s, _ := restoring(t)
 	s.TokenKeyPath = filepath.Join(t.TempDir(), "token.key")
 	tokenKey := []byte("0123456789abcdef0123456789abcdef")
 	require.NoError(t, os.WriteFile(s.TokenKeyPath, tokenKey, 0o600))
+	s.ClusterAuthorityPath = filepath.Join(t.TempDir(), "cluster-ca.pem")
+	authority := []byte("-----BEGIN CERTIFICATE-----\n")
+	require.NoError(t, os.WriteFile(s.ClusterAuthorityPath, authority, 0o600))
 	secretsKey, err := os.ReadFile(s.SecretsKeyPath)
 	require.NoError(t, err)
 
@@ -215,7 +219,7 @@ func TestR212_TheTokenKeySurvivesABundleRoundTrip(t *testing.T) {
 	for _, e := range manifest.Entries {
 		names = append(names, e.Name)
 	}
-	require.ElementsMatch(t, []string{SecretsKey, TokenKey}, names)
+	require.ElementsMatch(t, []string{SecretsKey, TokenKey, ClusterAuthority}, names)
 
 	dest, _, err := s.destination("")
 	require.NoError(t, err)
@@ -227,6 +231,7 @@ func TestR212_TheTokenKeySurvivesABundleRoundTrip(t *testing.T) {
 	// A new machine: neither key is there.
 	require.NoError(t, os.Remove(s.TokenKeyPath))
 	require.NoError(t, os.Remove(s.SecretsKeyPath))
+	require.NoError(t, os.Remove(s.ClusterAuthorityPath))
 
 	_, err = s.Restore(context.Background(), RestoreRequest{AdapterRef: "bk_local", ObjectName: "dr_keys",
 		Passphrase: passphrase, Confirm: true})
@@ -241,6 +246,9 @@ func TestR212_TheTokenKeySurvivesABundleRoundTrip(t *testing.T) {
 	got, err = os.ReadFile(s.SecretsKeyPath)
 	require.NoError(t, err)
 	require.Equal(t, secretsKey, got)
+	got, err = os.ReadFile(s.ClusterAuthorityPath)
+	require.NoError(t, err)
+	require.Equal(t, authority, got, "the cluster authority too (R-415)")
 }
 
 func TestABundleWithoutTheTokenKeyItShouldHaveIsNotMade(t *testing.T) {

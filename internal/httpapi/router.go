@@ -90,6 +90,10 @@ type Server struct {
 	// R-415). Nil leaves the cluster routes answering that it is not set up.
 	Hosts *hosts.Service
 
+	// Joiner joins this Pando to a cluster at setup (POST /setup/join, R-415).
+	// Nil answers that joining is not set up.
+	Joiner *hosts.Joiner
+
 	// CLISignIn signs the CLI in through the browser (R-406). Nil leaves
 	// pando login --username, with a password, the only way.
 	CLISignIn *clisignin.Service
@@ -609,6 +613,7 @@ func (s *Server) Routes() http.Handler {
 		// exists.
 		r.Get("/setup", s.handleGetSetup)
 		r.Post("/setup", s.handlePostSetup)
+		r.Post("/setup/join", s.handlePostSetupJoin)
 
 		// A strong random password, for creating or resetting an account.
 		r.Post("/passwords/generate", s.handleGeneratePassword)

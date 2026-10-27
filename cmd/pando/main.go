@@ -317,6 +317,14 @@ func serve(ctx context.Context, configPath string) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// A host that joined a cluster with the app role alone has no database
+	// and serves no API: it runs its agent (R-414, R-416).
+	if joined, done, err := joinFiles(cfg).Read(); err != nil {
+		return err
+	} else if done && joined.AppOnly() {
+		return runAppHost(ctx, joined, logger)
+	}
+
 	// Adapters saved after this are not running until a restart (R-253); the
 	// adapters list compares against it. restartCh is how POST /restart asks.
 	startedAt := time.Now().UTC()
@@ -361,15 +369,6 @@ func serve(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
-	joinAddress := cfg.Server.ExternalURL
-	if joinAddress == "" {
-		joinHostname, _ := os.Hostname()
-		joinAddress = cfg.Server.Advertise(joinHostname)
-	}
-	clusterHosts := &hosts.Service{
-		Store: state.NewCluster(db, tokenKey), Authority: clusterAuthority,
-		Address: strings.TrimSuffix(joinAddress, "/"),
-	}
 	sessions := state.NewSessions(db, tokenKey)
 	if err := tokens.VerifyKey(ctx); err != nil {
 		return err
@@ -377,6 +376,29 @@ func serve(ctx context.Context, configPath string) error {
 	apps := state.NewApps(db)
 	volumes := state.NewVolumes(db)
 	adapters := state.NewAdapters(db)
+
+	// The cluster (R-414, R-415). A control host joining is handed the
+	// database address and the keys, read from disk at each join.
+	clusterStore := state.NewCluster(db, tokenKey)
+	clusterHosts := &hosts.Service{
+		Store: clusterStore, Authority: clusterAuthority,
+		Address: clusterAddress(cfg), Version: buildVersion,
+		Keys: hosts.KeySource{
+			DatabaseURL:    secret.New(cfg.Database.URL),
+			TokenKeyPath:   cfg.Server.TokenKeyPath,
+			SecretsKeyPath: func(ctx context.Context) string { return secretsKeyPath(ctx, adapters, logger) },
+		},
+	}
+	joiner := newJoiner(cfg, clusterStore, func() {
+		select {
+		case restartCh <- struct{}{}:
+		default: // one is already on its way
+		}
+	})
+	if joined, err := joinFromEnvironment(ctx, cfg, joiner, logger); err != nil || joined {
+		restartRequested.Store(joined)
+		return err
+	}
 	allocations := state.NewAllocations(db)
 	authzStore := state.NewAuthzStore(db)
 	grants := state.NewGrants(db)
@@ -475,6 +497,10 @@ func serve(ctx context.Context, configPath string) error {
 		// install holds every token's digest and cannot check any of them.
 		TokenKeyPath: cfg.Server.TokenKeyPath,
 
+		// And the cluster authority, which every host's certificate chains to
+		// (R-415).
+		ClusterAuthorityPath: cfg.Server.ClusterAuthorityPath,
+
 		// Uploaded source is the only record of what an uploaded app is built
 		// from, and the registry's images are not in the bundle (O-37).
 		UploadDir: source.DefaultUploadDir,
@@ -533,6 +559,10 @@ func serve(ctx context.Context, configPath string) error {
 		logger.Info("built images may be pushed to the install's image registry", zap.String("adapter", current.ID()),
 			zap.String("registry", current.Host()), zap.Bool("always", current.Always()))
 	}
+
+	// A second host joins only once nothing the install keeps is on this
+	// host alone (R-417): asked before a join spends its token.
+	clusterHosts.Readiness = hosts.NewReadiness(registry, policyStore, buildRegistry)
 
 	// Audit sinks (R-382, design 12 §5): where the audit log is pushed as it
 	// is written. Built from their rows on every delivery pass, like the
@@ -987,7 +1017,7 @@ func serve(ctx context.Context, configPath string) error {
 	}
 	upgrades.Hosts = clusterHosts.Count
 
-	apiHandler := (&httpapi.Server{
+	apiServer := &httpapi.Server{
 		ClientAddr: trustedProxies,
 		Updates:    updates,
 		Upgrades:   upgrades,
@@ -1019,6 +1049,7 @@ func serve(ctx context.Context, configPath string) error {
 		Sessions:        sessions,
 		Tokens:          tokens,
 		Hosts:           clusterHosts,
+		Joiner:          joiner,
 		Apps:            apps,
 		Volumes:         volumes,
 		Auditor:         auditor,
@@ -1167,7 +1198,15 @@ func serve(ctx context.Context, configPath string) error {
 		// retries on a timeout, and a deploy that clones regularly outlasts
 		// a client's patience.
 		Idempotency: state.NewIdempotency(db),
-	}).Routes()
+	}
+	apiHandler := apiServer.Routes()
+
+	// Where hosts join the cluster (R-415), over TLS from its authority.
+	clusterListener, err := startClusterListener(cfg, clusterAuthority, apiServer.ClusterRoutes(), logger)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = clusterListener.Close() }()
 
 	srv := &http.Server{
 		Addr:    cfg.Server.Addr,

@@ -234,6 +234,12 @@ type Bootstrap struct {
 	// AdminPasswordFile names a file holding AdminPassword, so the password
 	// need not be in the environment at all. The bundled Compose file uses it.
 	AdminPasswordFile string `mapstructure:"admin_password_file" desc:"A file holding the first administrator's password, in place of admin_password. An empty file is no password. The bundled Compose file writes PANDO_ADMIN_PASSWORD here."`
+
+	// JoinToken joins this new Pando to a cluster at its first start, as the
+	// setup screen's Join a cluster does (R-415). A credential, like
+	// AdminPassword, and never reported.
+	JoinToken string `mapstructure:"join_token" desc:"A join token, which joins this new Pando to a cluster at its first start in place of setting it up. Ignored once it has joined; refused when it already has an account or an app."`
+	JoinName  string `mapstructure:"join_name" desc:"This host's name in the cluster when it joins with join_token. Empty is the machine's hostname."`
 }
 
 type Server struct {
@@ -321,6 +327,15 @@ type Server struct {
 	// start; a control host is given a copy when it joins.
 	ClusterAuthorityPath string `mapstructure:"cluster_authority_path" desc:"The file holding the cluster's certificate authority, which hosts join and reach each other through. Made on first start. Every control host must read the same one."`
 
+	// ClusterAddr is where the cluster listener answers joining hosts, over
+	// TLS from the cluster authority (R-415). Join tokens name its port.
+	ClusterAddr string `mapstructure:"cluster_addr" desc:"The address new hosts join the cluster on, as host:port, served over TLS. Join tokens name its port; it must be reachable from every host that joins."`
+
+	// ClusterDir is where a host that joined keeps what the cluster gave it:
+	// its certificate and key, the authority's certificate, and for a control
+	// host the database address, read ahead of database.url (R-415).
+	ClusterDir string `mapstructure:"cluster_dir" desc:"Where a host that joined a cluster keeps its certificate, the cluster's authority and, on a control host, the cluster's database address, which then takes the place of database.url."`
+
 	// AdvertiseURL is where the other Pando replicas reach this one, for the
 	// one request that has to go to a particular replica: a deploy's live log
 	// (issue #72). Empty means http://<hostname><port of addr>, which is right
@@ -402,6 +417,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing configuration: %w", err)
 	}
 	cfg.File = path
+	if err := cfg.Database.joined(cfg.Server.ClusterDatabaseURLPath()); err != nil {
+		return nil, err
+	}
 	if err := cfg.Database.withPasswordFile(); err != nil {
 		return nil, err
 	}
@@ -436,6 +454,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.audit_archive_dir", "/var/lib/pando/audit-archives")
 	v.SetDefault("server.token_key_path", tokenkey.DefaultPath)
 	v.SetDefault("server.cluster_authority_path", "/var/lib/pando/cluster-ca.pem") // hosts.DefaultAuthorityPath
+	v.SetDefault("server.cluster_addr", ":7443")                                   // hosts.DefaultClusterPort
+	v.SetDefault("server.cluster_dir", "/var/lib/pando/cluster")                   // hosts.DefaultClusterDir
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.development", false)
 
@@ -473,6 +493,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("retention.deleted_apps", time.Duration(0))
 	v.SetDefault("bootstrap.admin_password", "")
 	v.SetDefault("bootstrap.admin_password_file", "")
+	v.SetDefault("bootstrap.join_token", "")
+	v.SetDefault("bootstrap.join_name", "")
 	v.SetDefault("registry.url", "")
 	v.SetDefault("registry.username", "")
 	v.SetDefault("registry.password", "")
@@ -517,6 +539,8 @@ var boundEnv = map[string]string{
 	"server.audit_archive_dir":      "PANDO_SERVER_AUDIT_ARCHIVE_DIR",
 	"server.token_key_path":         "PANDO_SERVER_TOKEN_KEY_PATH",
 	"server.cluster_authority_path": "PANDO_SERVER_CLUSTER_AUTHORITY_PATH",
+	"server.cluster_addr":           "PANDO_SERVER_CLUSTER_ADDR",
+	"server.cluster_dir":            "PANDO_SERVER_CLUSTER_DIR",
 	"log.level":                     "PANDO_LOG_LEVEL",
 
 	"apps.docker_credentials": "PANDO_APPS_DOCKER_CREDENTIALS",
@@ -545,6 +569,8 @@ var boundEnv = map[string]string{
 	// line below the variable is read by nothing at all.
 	"bootstrap.admin_password":      "PANDO_ADMIN_PASSWORD",
 	"bootstrap.admin_password_file": "PANDO_ADMIN_PASSWORD_FILE",
+	"bootstrap.join_token":          "PANDO_JOIN_TOKEN",
+	"bootstrap.join_name":           "PANDO_JOIN_NAME",
 }
 
 func (c *Config) validate() error {

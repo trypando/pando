@@ -59,13 +59,17 @@ type Entry struct {
 
 // Named parts of a bundle. Fixed names because restore looks for them.
 const (
-	ManifestName  = "manifest.json"
-	PostgresName  = "postgres.dump"
-	SecretsKey    = "secrets.key"
-	TokenKey      = "token.key"
-	AdaptersName  = "adapters.json"
-	PolicyName    = "policy.json"
-	VolumesPrefix = "volumes/"
+	ManifestName = "manifest.json"
+	PostgresName = "postgres.dump"
+	SecretsKey   = "secrets.key"
+	TokenKey     = "token.key"
+	// ClusterAuthority is the cluster's certificate authority (R-415): every
+	// host's certificate chains to it, so a restore without it is a cluster
+	// whose hosts must all join again.
+	ClusterAuthority = "cluster-ca.pem"
+	AdaptersName     = "adapters.json"
+	PolicyName       = "policy.json"
+	VolumesPrefix    = "volumes/"
 
 	// ServicesPrefix holds provisioned services whose data is not in an app
 	// volume (R-212).
