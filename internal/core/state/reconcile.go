@@ -3,10 +3,13 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/trypando/pando/internal/egress"
 	"github.com/trypando/pando/internal/errs"
@@ -166,26 +169,7 @@ func (l *Lease) Claim(ctx context.Context, now, cutoff time.Time, limit int, lea
 		       a.consecutive_failures, a.last_failure_at,
 		       a.next_attempt_at, a.unobservable_since,
 		       a.applied_env_fingerprint, a.claimed_at,
-		       coalesce((
-		           SELECT d.image_ref FROM deployments d
-		           WHERE d.app_id = a.id AND d.status = 'succeeded' AND d.image_ref IS NOT NULL
-		           ORDER BY d.started_at DESC LIMIT 1
-		       ), ''),
-		       coalesce((
-		           SELECT d.image_digest FROM deployments d
-		           WHERE d.app_id = a.id AND d.status = 'succeeded' AND d.image_digest IS NOT NULL
-		           ORDER BY d.started_at DESC LIMIT 1
-		       ), ''),
-		       (
-		           SELECT d.workload_images FROM deployments d
-		           WHERE d.app_id = a.id AND d.status = 'succeeded' AND d.workload_images IS NOT NULL
-		           ORDER BY d.started_at DESC LIMIT 1
-		       ),
-		       (
-		           SELECT d.egress_rules FROM deployments d
-		           WHERE d.app_id = a.id AND d.status = 'succeeded'
-		           ORDER BY d.started_at DESC LIMIT 1
-		       )
+		       `+lastDeployFacts+`
 		FROM claimed a
 		ORDER BY a.id
 	`, now, cutoff, limit, l.holder, lease)
@@ -200,26 +184,15 @@ func (l *Lease) Claim(ctx context.Context, now, cutoff time.Time, limit int, lea
 		var owner, pinned *string
 		var source []byte
 
-		var workloadImages, egressRules []byte
+		var facts deployFacts
 		if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &owner, &a.State, &a.DesiredState,
 			&pinned, &source, &a.CreatedAt, &a.UpdatedAt,
 			&a.ConsecutiveFailures, &a.LastFailureAt,
 			&a.NextAttemptAt, &a.UnobservableSince,
-			&a.AppliedEnvHash, &a.ClaimedAt, &a.ImageRef, &a.ImageDigest, &workloadImages, &egressRules); err != nil {
+			&a.AppliedEnvHash, &a.ClaimedAt, &a.ImageRef, &a.ImageDigest, &facts.workloadImages, &facts.egressRules); err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not read which apps need attention.", err)
 		}
-		if len(workloadImages) > 0 {
-			// A deployment written before this column, or by a version that
-			// wrote something else into it, leaves the map empty: the
-			// reconciler then knows nothing per workload, which is where it
-			// started, rather than knowing something wrong.
-			_ = json.Unmarshal(workloadImages, &a.WorkloadImages)
-		}
-		if len(egressRules) > 0 {
-			// A deployment from before egress was enforced records none, and
-			// ran unrestricted, which is what an empty value restores.
-			_ = json.Unmarshal(egressRules, &a.EgressRules)
-		}
+		facts.into(&a)
 		if owner != nil {
 			a.OwnerUserID = *owner
 		}
@@ -506,4 +479,75 @@ func (r *Reconciles) SetAppliedEnvFingerprint(ctx context.Context, appID, finger
 		return errs.Wrap(errs.Internal, "Could not record the applied environment.", err)
 	}
 	return nil
+}
+
+// lastDeployFacts are the columns, over apps as a, that say what the app's
+// last successful deployment ran: image_ref, image_digest, workload_images
+// and egress_rules, in that order. Each an index probe on deployments
+// (app_id, started_at DESC).
+const lastDeployFacts = `coalesce((
+		           SELECT d.image_ref FROM deployments d
+		           WHERE d.app_id = a.id AND d.status = 'succeeded' AND d.image_ref IS NOT NULL
+		           ORDER BY d.started_at DESC LIMIT 1
+		       ), ''),
+		       coalesce((
+		           SELECT d.image_digest FROM deployments d
+		           WHERE d.app_id = a.id AND d.status = 'succeeded' AND d.image_digest IS NOT NULL
+		           ORDER BY d.started_at DESC LIMIT 1
+		       ), ''),
+		       (
+		           SELECT d.workload_images FROM deployments d
+		           WHERE d.app_id = a.id AND d.status = 'succeeded' AND d.workload_images IS NOT NULL
+		           ORDER BY d.started_at DESC LIMIT 1
+		       ),
+		       (
+		           SELECT d.egress_rules FROM deployments d
+		           WHERE d.app_id = a.id AND d.status = 'succeeded'
+		           ORDER BY d.started_at DESC LIMIT 1
+		       )`
+
+// deployFacts holds the two of lastDeployFacts that are JSON until decoded.
+type deployFacts struct{ workloadImages, egressRules []byte }
+
+func (f deployFacts) into(a *Reconcilable) {
+	if len(f.workloadImages) > 0 {
+		// A deployment written before this column, or by a version that
+		// wrote something else into it, leaves the map empty: the
+		// reconciler then knows nothing per workload, which is where it
+		// started, rather than knowing something wrong.
+		_ = json.Unmarshal(f.workloadImages, &a.WorkloadImages)
+	}
+	if len(f.egressRules) > 0 {
+		// A deployment from before egress was enforced records none, and
+		// ran unrestricted, which is what an empty value restores.
+		_ = json.Unmarshal(f.egressRules, &a.EgressRules)
+	}
+}
+
+// ForApp reads what the reconciler would know of one live app with a pinned
+// spec, without claiming it: for building its plan somewhere other than the
+// loop, such as its warm standby (R-419). False when there is no such app.
+func (r *Reconciles) ForApp(ctx context.Context, appID string) (Reconcilable, bool, error) {
+	var a Reconcilable
+	var owner *string
+	var facts deployFacts
+	err := r.db.QueryRow(ctx, `
+		SELECT a.id, a.name, a.slug, a.owner_user_id, a.state, a.desired_state, a.pinned_spec_id,
+		       a.created_at, a.updated_at,
+		       `+lastDeployFacts+`
+		FROM apps a
+		WHERE a.id = $1 AND a.deleted_at IS NULL AND a.pinned_spec_id IS NOT NULL`, appID).
+		Scan(&a.ID, &a.Name, &a.Slug, &owner, &a.State, &a.DesiredState, &a.PinnedSpecID,
+			&a.CreatedAt, &a.UpdatedAt, &a.ImageRef, &a.ImageDigest, &facts.workloadImages, &facts.egressRules)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Reconcilable{}, false, nil
+	}
+	if err != nil {
+		return Reconcilable{}, false, errs.Wrap(errs.Internal, "Could not read the app.", err)
+	}
+	if owner != nil {
+		a.OwnerUserID = *owner
+	}
+	facts.into(&a)
+	return a, true, nil
 }

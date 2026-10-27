@@ -13676,6 +13676,9 @@
           "retention": {
             "$ref": "#/components/schemas/Retention"
           },
+          "availability": {
+            "$ref": "#/components/schemas/Availability"
+          },
           "warnings": {
             "type": "array",
             "items": {
@@ -14082,6 +14085,14 @@
           "app_id",
           "checked_at"
         ]
+      },
+      "Availability": {
+        "type": "object",
+        "properties": {
+          "standby": {
+            "type": "string"
+          }
+        }
       },
       "AwaitingApproval": {
         "type": "object",
@@ -17102,6 +17113,9 @@
             "format": "int64"
           },
           "stop_orphaned_apps": {
+            "type": "boolean"
+          },
+          "standby": {
             "type": "boolean"
           },
           "max_apps_per_user": {

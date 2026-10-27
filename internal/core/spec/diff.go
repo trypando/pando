@@ -323,6 +323,9 @@ func compareOperational(old, next *AppSpec, add func(Class, string, string, any,
 	if old.Retention != next.Retention {
 		add(Benign, "retention", "How long logs, backups, and revisions are kept changed.", old.Retention, next.Retention)
 	}
+	if old.Availability != next.Availability {
+		add(Benign, "availability", "Whether this app keeps a standby on another host changed.", old.Availability, next.Availability)
+	}
 }
 
 func modeOf(s Slot) ResolutionMode {

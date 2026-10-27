@@ -136,7 +136,7 @@ func parseEntry(line string) (VolumeEntry, error) {
 	mode, err1 := strconv.ParseUint(fields[0], 16, 32)
 	size, err2 := strconv.ParseInt(fields[1], 10, 64)
 	mtime, err3 := strconv.ParseInt(fields[2], 10, 64)
-	if err1 != nil || err2 != nil || err3 != nil || !(fields[3] == "." || safePath(fields[3])) {
+	if err1 != nil || err2 != nil || err3 != nil || (fields[3] != "." && !safePath(fields[3])) {
 		return VolumeEntry{}, bad
 	}
 	return VolumeEntry{Path: fields[3], Mode: uint32(mode), Size: size, MTime: mtime}, nil

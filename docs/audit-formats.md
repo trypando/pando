@@ -115,6 +115,11 @@ is encoded as 6003 API Activity, 99 Other.
 | `app.security.stopped` | 6002 Application Lifecycle | 4 Stop | 600204 |
 | `app.slot.set` | 6003 API Activity | 1 Create | 600301 |
 | `app.source.upload` | 6003 API Activity | 1 Create | 600301 |
+| `app.standby.create` | 6003 API Activity | 1 Create | 600301 |
+| `app.standby.promote` | 6002 Application Lifecycle | 3 Start | 600203 |
+| `app.standby.promote.failed` | 6002 Application Lifecycle | 3 Start | 600203 |
+| `app.standby.remove` | 6003 API Activity | 4 Delete | 600304 |
+| `app.standby.stale_removed` | 6003 API Activity | 4 Delete | 600304 |
 | `app.start` | 6002 Application Lifecycle | 3 Start | 600203 |
 | `app.stop` | 6002 Application Lifecycle | 4 Stop | 600204 |
 | `app.stopped_by_reconciler` | 6002 Application Lifecycle | 4 Stop | 600204 |
@@ -142,6 +147,9 @@ is encoded as 6003 API Activity, 99 Other.
 | `backup.verify.failed` | 6003 API Activity | 2 Read | 600302 |
 | `cli_sign_in.approve` | 3002 Authentication | 1 Logon | 300201 |
 | `cli_sign_in.denied` | 3002 Authentication | 1 Logon | 300201 |
+| `cluster.host.remove` | 6003 API Activity | 4 Delete | 600304 |
+| `cluster.join_token.create` | 6003 API Activity | 1 Create | 600301 |
+| `cluster.join_token.revoke` | 6003 API Activity | 4 Delete | 600304 |
 | `deploy.approve` | 6003 API Activity | 3 Update | 600303 |
 | `deploy.expire` | 6003 API Activity | 4 Delete | 600304 |
 | `deploy.finish` | 6002 Application Lifecycle | 8 Update | 600208 |

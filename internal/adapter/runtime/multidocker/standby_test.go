@@ -274,7 +274,7 @@ func threeHosts() (map[string]*standbyFake, *Adapter) {
 	hosts := map[string]*standbyFake{
 		"control": newStandbyFake(2 * gib), "app-1": newStandbyFake(20 * gib), "app-2": newStandbyFake(10 * gib),
 	}
-	hosts["control"].fakeHost.free.CPUMillis = 8000
+	hosts["control"].free.CPUMillis = 8000
 	return hosts, standbyAdapter(hosts, "control", "app-1", "app-2")
 }
 
@@ -295,7 +295,7 @@ func TestR419_AnAppGetsAStoppedStandbyOnAnotherHost(t *testing.T) {
 	require.Empty(t, hosts["app-2"].applied, "nothing of the standby is started (R-153)")
 
 	// Kept where it is on the next pass, though another host is now roomier.
-	hosts["control"].fakeHost.free.MemoryBytes = 30 * gib
+	hosts["control"].free.MemoryBytes = 30 * gib
 	sb, err = a.ApplyStandby(ctx, api.StandbyRequest{Bundle: volumePlan("app_a"), Host: "app-2"})
 	require.NoError(t, err)
 	require.Equal(t, "app-2", sb.Host)

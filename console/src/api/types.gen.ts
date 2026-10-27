@@ -194,6 +194,7 @@ export interface AppSpec {
   resources: Resources;
   egress: Egress;
   retention: Retention;
+  availability?: Availability;
   warnings?: (Warning[] | null);
 }
 
@@ -261,6 +262,7 @@ export interface PolicyDocument {
   idle_stop_days?: number;
   idle_delete_days?: number;
   stop_orphaned_apps?: boolean;
+  standby?: boolean;
   max_apps_per_user?: number;
   allow_cpu_oversubscription?: boolean;
   allow_memory_oversubscription?: boolean;
@@ -653,6 +655,10 @@ export interface Retention {
   log_bytes: number;
   backup_daily_count: number;
   spec_revisions: number;
+}
+
+export interface Availability {
+  standby?: string;
 }
 
 export interface Warning {

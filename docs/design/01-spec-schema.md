@@ -45,6 +45,7 @@ type AppSpec struct {
     Resources  Resources   `json:"resources"`
     Egress     Egress      `json:"egress"`
     Retention  Retention   `json:"retention"`
+    Availability Availability `json:"availability,omitzero"` // R-419
     PerUser    PerUser     `json:"per_user"`      // R-290, LATER
     Warnings   []Warning   `json:"warnings"`      // carried, not resolved
 }
@@ -477,6 +478,20 @@ old `Allowlist` becomes `List` under `allowlist` mode, which now narrows where i
 
 Build egress (`Build.EgressMode`, R-118) is a separate setting and does not follow this model (R-189).
 
+### 2.7a Availability (R-419)
+
+```go
+type Availability struct {
+    Standby StandbyMode `json:"standby,omitempty"` // "default" (or empty) | "on" | "off"
+}
+```
+
+**[D]** Whether an app keeps a warm standby — a stopped copy on another host, started when its host is
+lost — is host policy's `standby` (on by default **[P]**), and `availability.standby` overrides it for
+one app. The override is in the spec because how an app runs is the spec's (R-020). Only a runtime that
+reports `SupportsStandby` keeps one; elsewhere the setting changes nothing and is not an error. A
+change to it is `benign`: the standby pass makes or removes the standby, the app is not restarted.
+
 ### 2.8 Warnings
 
 ```go
@@ -516,6 +531,7 @@ Run on every spec before it is pinned, and again at plan time.
 | Every `Required` slot has a `Resolution` | `PLAN_SLOT_UNFILLED` |
 | Every egress entry parses; no egress `List` under `inherit` (R-185) | `VALID_INVALID` |
 | Not both `Deploy.RequireApproval` and `AutoDeploy.Enabled` (R-158) | `VALID_INVALID` |
+| `Availability.Standby` is empty, `default`, `on` or `off` (R-419) | `VALID_INVALID` |
 | No egress loosening host policy forbids (R-183) | `PLAN_EGRESS_LOOSENING_FORBIDDEN` |
 | Egress restricted only on a runtime that enforces it (R-186) | `PLAN_CAPABILITY_UNSUPPORTED` |
 

@@ -44,6 +44,7 @@ func Validate(s *AppSpec) error {
 	validateBuild(s, add)
 	validateEgress(s, add)
 	validateAutoDeploy(s, add)
+	validateAvailability(s, add)
 
 	switch len(problems) {
 	case 0:
@@ -577,5 +578,16 @@ func validateAutoDeploy(s *AppSpec, add func(*errs.Error)) {
 		add(errs.Newf(errs.ValidInvalid,
 			"The release tag pattern %q is not a valid pattern.", ad.TagPattern).
 			WithRemedy("Use a pattern such as release-* or v*, where * matches any characters. Leave it empty to count tags like v1.2.3 as releases."))
+	}
+}
+
+// validateAvailability checks the standby override (R-419).
+func validateAvailability(s *AppSpec, add func(*errs.Error)) {
+	switch s.Availability.Standby {
+	case "", StandbyDefault, StandbyOn, StandbyOff:
+	default:
+		add(errs.Newf(errs.ValidInvalid,
+			"availability.standby is %q, which is not a setting Pando knows.", s.Availability.Standby).
+			WithRemedy("Use on to keep a stopped copy of this app on another host, off to keep none, or default to follow host policy."))
 	}
 }

@@ -898,6 +898,15 @@ Migration 000079.
 | `apps.stopped_for_orphan` | Pando stopped it for having no active owner (R-408). Cleared by `app_activity_started` on start, which leaves `orphaned_at`. In the proxy cache trigger's column list. |
 | Triggers `app_owners_*` on `users`, `grants`, `apps` | Notify `pando_app_owners` when an account's status or `deleted_at`, an Owner grant, or an app's owner of record changes, so the pass runs at once (design 05 §6.0a). |
 
+### 2.14 Warm standby (R-419, R-420)
+
+Migration 000087. Host policy's `standby` (on unless `false`) is in the policy document; an app's
+`availability.standby` in its spec overrides it.
+
+| Object | What it holds |
+|---|---|
+| `app_standbys` | One row per app with a standby, written by the leader's standby pass (`internal/core/standby`). `host` is the runtime's own name for where the standby is (`api.StandbyHandle`), recorded to show and hand back, never chosen by core (R-256). `spec_id` is the pinned spec it was made from. `volumes`, `copies` and `shipped_at` say how current its data is; `unreplicated` names provisioned service types whose data travels in the volume copy. `stale_host` and `promoted_at` are set by a failover: the host the app left, whose copy is removed when it returns (R-419). Cascades with its app's hard delete; the pass deletes a soft-deleted app's row once the runtime has removed the standby. |
+
 ## 3. Things deliberately not in the schema
 
 - **Hosts.** R-256: multi-machine capability lives entirely in adapters. Adding a `hosts` table would be the first step toward the scheduler R-010 forbids.
