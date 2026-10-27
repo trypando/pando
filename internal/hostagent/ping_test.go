@@ -174,6 +174,10 @@ type fakeDocker struct {
 	items   []container.Summary
 	listErr error
 	stopErr map[string]bool
+	// delay is how long each stop takes, as a container that does not stop
+	// before its grace runs out.
+	delay   time.Duration
+	mu      sync.Mutex
 	stopped []string
 }
 
@@ -191,6 +195,9 @@ func (f *fakeDocker) ContainerStop(_ context.Context, id string, o client.Contai
 	if f.stopErr[id] {
 		return client.ContainerStopResult{}, errors.New("would not stop")
 	}
+	time.Sleep(f.delay)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.stopped = append(f.stopped, id)
 	return client.ContainerStopResult{}, nil
 }
@@ -211,7 +218,7 @@ func TestR421_AFenceStopsOnlyAppContainers(t *testing.T) {
 	n, err := DockerFencer{Docker: d}.Fence(context.Background())
 	require.ErrorContains(t, err, "could not stop app container stuck")
 	require.Equal(t, 2, n)
-	require.Equal(t, []string{"web", "worker"}, d.stopped)
+	require.ElementsMatch(t, []string{"web", "worker"}, d.stopped)
 
 	d = &fakeDocker{listErr: errors.New("socket gone")}
 	_, err = DockerFencer{Docker: d}.Fence(context.Background())

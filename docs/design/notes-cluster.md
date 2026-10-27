@@ -170,6 +170,11 @@ would make two copies diverge.
 
 Durations are measured on each host's own monotonic clock; no host compares its clock to another's.
 
+**Any answer from a host's machine is contact [D]**: a connection refused or reset, a TLS alert, a
+refusal, a reply of any kind. Only silence is not. A host whose Pando process is down, restarting or
+waiting for Postgres is not cut off, and its apps may be running. A host marked lost no longer counts
+toward the cluster's size, on the leader and on every host alike.
+
 ### After a failover
 
 The app's home is the standby's host. When the lost host returns, its stopped copy is removed and never
@@ -309,7 +314,8 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   fewer than half for at least `2T`. A host fences when the cluster has three or more hosts, it
   reached fewer than half (itself included) in the last `T`, **and it has probed without a break for
   all of `T`**. A pause between its own rounds longer than three intervals (a suspended machine, a
-  stalled process) restarts the window rather than counting as silence.
+  stalled process) restarts the window rather than counting as silence; such a host learns it was
+  taken for lost from its peers' answers instead (see "review fixes, liveness").
 - **`Ledger`**, the leader's. A host is lost when the cluster has three or more hosts and more than
   half of them report having watched it without contact for `3T`, in a report the leader heard in
   the last three intervals. A host's report never claims longer than it has watched without a break,
@@ -317,8 +323,10 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
 - **`Monitor`** runs on every host: on an app host in its agent (`host-agent serve`, given
   `PANDO_HOST_ID`, `PANDO_CLUSTER_PEERS_FILE` and a host certificate), on a control host in the
   Pando process (see "every host is watched"). It needs no database: a peer list it cannot
-  read keeps the last. Its fence stops every running container labeled for an app through the
-  host's own runtime (`hostagent.DockerFencer`), every round while cut off; it never starts one.
+  read keeps the last, and the list is read beside the round, never in it. Hosts marked lost are
+  left out of it. Its fence stops every running container labeled for an app through the host's
+  own runtime (`hostagent.DockerFencer`), all at once and beside the round, every round while cut
+  off; it never starts one.
   App containers have no restart policy, so they stay stopped; starting them again is the control
   plane's (R-148), once the host is reached and was not taken for lost.
 - **`Watch`** is the leader job `liveness`. It probes every host's agent, and each answers with its
@@ -329,10 +337,11 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   gone. Migration 000088 keeps only outcomes: `cluster_hosts.lost_at`/`lost_by`, and
   `last_fence_id` so that each fence a host reports is audited once (`cluster.host.fence`).
 - **`Service`** marks a host lost and calls `Failover.PromoteStandby` for each app homed on it with
-  a standby, skipping a `failed` app (R-151). The manual path, `POST /cluster/hosts/{hostID}/lost`
-  (`install.cluster.manage`), works at any cluster size and **[P] is refused while the host answers
-  to a ping**, since a standby started beside running apps would be a second copy (R-153).
-  Audited: `cluster.host.lost`, and `cluster.failover` per app before its standby starts.
+  a standby, skipping a `failed` app (R-151); the leader's failovers run beside its round. The
+  manual path, `POST /cluster/hosts/{hostID}/lost` (`install.cluster.manage`), works at any cluster
+  size and **[P] is refused unless the host has gone unheard for `T`** (`liveness.Witness`), since a
+  standby started beside running apps would be a second copy (R-153). Audited:
+  `cluster.host.lost`, and `cluster.failover` per app before its standby starts.
 
 Timings **[P]**: `T` 30 s, probes every `T/6` (5 s), each within half an interval.
 
@@ -597,9 +606,11 @@ host that was cut off never fenced.
   runtime it cannot reach still leaves it answering pings; its fence then fails and says so every
   round it is cut off.
 - **Who it is.** A joined control host is the row of its `joined.json` host ID; the install's own
-  host is the row with no join token (`hosts.InstallHost`). Until it finds its row, issues its
-  certificate and so on, it tries again every 5 s [P] and refuses pings by name meanwhile, because a
-  host that answers none would be reported unreached.
+  host is the row with no join token (`hosts.InstallHost`). Both are kept in `server.cluster_dir`
+  (`joined.json`, `control-host.json`), with the peers last read (`peers.json`), so a control host
+  answers pings and watches its peers before it reaches Postgres (see "review fixes, liveness").
+  Only the first start ever waits for the database; until then it tries again every 5 s [P] and
+  refuses pings by name.
 - **Its certificate** is `host.crt`/`host.key` in `server.cluster_dir` (`hosts.ControlHostCert`):
   for a joined control host, the one its join wrote; for the first host, one issued from the
   authority at its first start and kept there, so its pin is the same across restarts. Either is
@@ -657,3 +668,81 @@ host that was cut off never fenced.
   `TestR417_AnUploadReachesTheStoreOnlyOnceItHasArrived`, `TestR417_ABodyThatFailsIsSaidAsItFailed`,
   `TestR417_AnOldUploadFileForADeletedAppIsRemoved`, `TestR417_ReadingAnOldFileKeepsANewerUpload`,
   `TestR417_ConcurrentWritersNeverLeaveAPartialFile`.
+
+### As built: review fixes, liveness
+
+Fixes to the liveness slice after review of #347, all held to one rule: a host that is not cut off is
+never taken for lost and never stops its apps (R-421).
+
+- **Contact is any answer from the machine.** `hostagent.Ping` returns a `*PingError` whose
+  `Contact` says whether the machine answered: a dial refused or reset, and anything after the TCP
+  connection is made (a failed handshake, a certificate for another name, a `NO …` refusal, an odd
+  reply, even a read that times out on a connection the machine accepted). Only a dial that times
+  out or finds no route is silence. The wiring wraps such an error in `liveness.ErrContactOnly`, and
+  `Monitor`, `Watch` and `Witness` all count it as contact. A dead or restarting Pando on a running
+  machine is no longer reported unreached by anyone.
+- **The leader never takes for lost a host its own probe reached this round**, whatever the others
+  report (`Watch.Round`).
+- **A control host answers before its database.** `serve` loads the cluster authority, starts the
+  control host's `Monitor` (`startControlLiveness`) and binds the cluster listener before
+  `state.Connect`. The listener's HTTP is a `startingHandler` that refuses joins until the API is
+  built; pings are answered from the start. Who the host is comes from the database when it
+  answers, else `joined.json`, else `control-host.json` written at an earlier start; its peers come
+  from the database once given (`controlPings.useStore`), and are kept in `peers.json` for the next
+  start. **An app host whose agent cannot start in full** (its runtime socket unknown, a file
+  unreadable) serves an agent that answers pings with a view naming no peer (`answerOnly`), carries
+  no runtime calls, and returns the startup error when stopped; only a host without its own
+  certificate exits.
+- **The manual guard is sustained silence** (`liveness.Witness`): this control host's `Monitor` has
+  watched the host without contact for `T` (`Monitor.UnreachedFor`), a probe now gets no answer,
+  and no other host that answers reports contact with it within `T` (each host's `View`, read on
+  the spot, so any replica can decide, not only the leader). A host already marked lost is no
+  longer watched, and re-marking it (a retry) skips the first check. The remedy says to turn the
+  machine off or disconnect it, never to stop Pando while apps run.
+- **The peer list never waits on the database.** `Monitor` reads it in a goroutine, one read at a
+  time, waiting `PeerWait` [P: the smaller of the probe timeout and 2 s] before it probes the last
+  list; a read that comes back late is taken the next round. A cut-off control host whose Postgres
+  read hangs still fences after `T`.
+- **Fencing is bounded.** `DockerFencer` stops up to 32 [P] containers at once, each with a 3 s [P]
+  grace before Docker kills it (was 10 s, one after another), and the `Monitor` runs the fence
+  beside the round, under a bound of 20 s [P] (at most `T`), one at a time. Twenty slow containers
+  stop in about one grace.
+- **A suspended host learns it was lost.** Its monotonic clock stops while it sleeps, so its own
+  window restarts on waking and counts no silence. Each `View` now carries `silent_for_ms`: how long
+  the answering host had watched the sender without contact until its ping arrived. When more than
+  half the cluster (three hosts or more) answers with at least `3T`, the host fences at once, and
+  keeps fencing until its apps are stopped. **[P] `CLOCK_BOOTTIME` was not adopted**: a clock that
+  counts the sleep would only make the window restart visible, and the peers' answers decide this
+  without comparing clocks.
+- **Lost hosts leave the count.** `cluster_hosts.lost_at` now reaches `state.Host.Lost`, the peer
+  list (`hosts.Peer.Lost`, `lost` in `GET /cluster/peers`) and `liveness.Peer.Lost`. A `Monitor`
+  neither probes nor counts a lost host; `Watch` counts only hosts not marked lost, and weighs a
+  returning host among them. Below three counted hosts nothing fails over or fences by itself.
+  Hosts learn of a loss at their next peer read, and until then count one host more: the direction
+  that only delays a failover.
+- **Failovers run beside the leader's round.** `Service.declare` marks and audits the host, then
+  promotes in a goroutine; rounds go on probing, auditing fences and welcoming hosts back.
+  `Service.back` does not clear `lost_at` while a failover from that host runs in this process.
+  **Not done:** a manual `MarkLost` on one replica and `back()` on the leader replica are not
+  coordinated; the window is the length of one promotion.
+- **An app host's peer list survives its join address going away.** `hosts.Peer.Control` marks
+  control hosts; `PeerSync` asks the join token's address, then every control host in the list it
+  last kept, and keeps the first answer.
+- **Startup on upgrade.** `server.cluster_authority_path` empty (the default now) is `cluster-ca.pem`
+  beside `server.token_key_path`, so an install that moved its token key needs no new directory.
+  A cluster listener that cannot bind stops a host of a cluster but not a single host that never
+  joined: it logs, runs without it, and cannot be joined until it is restarted with a free port
+  (R-414).
+- **Tests.** `TestR421_AMachineThatRefusesTheProbeIsNotLost`,
+  `TestR421_ADeadPandoOnARunningMachineIsNotTakenForLost` (real listeners, each host's Pando stopped
+  in turn), `TestR421_AnyAnswerFromTheMachineIsContact`,
+  `TestR421_ACutOffHostWhosePeerListHangsStillFences`, `TestR421_ASlowFenceDoesNotStallProbing`,
+  `TestR421_ManySlowContainersFenceWithinTheBound`,
+  `TestR421_ASuspendedHostFencesWhenItWakesIfTheMajorityTookItForLost`,
+  `TestR421_AnAnswerSaysHowLongTheSenderWentUnreached`, `TestR421_LostHostsLeaveTheClusterSize`,
+  `TestR421_AFailoverDoesNotStallTheLeader`, `TestR421_MarkingAHostLostByHandNeedsSustainedSilence`,
+  `TestR421_AJoinedHostAsksTheOtherControlHostsWhenItsOwnIsGone`,
+  `TestR421_AControlHostAnswersPingsBeforeItReachesItsDatabase`,
+  `TestR421_AnAppHostThatCannotStartItsAgentStillAnswersPings`,
+  `TestR414_ASingleHostStartsWithoutItsClusterListener`. The last checks the listener decision and
+  the configuration default as units; no test starts the whole server with the port taken.

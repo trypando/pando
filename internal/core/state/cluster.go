@@ -56,6 +56,8 @@ type Host struct {
 	JoinedWith string     `json:"joined_with,omitempty"`
 	JoinedAt   time.Time  `json:"joined_at"`
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+	// Lost is that the host is marked lost (R-421, lost_at).
+	Lost bool `json:"-"`
 }
 
 // Cluster stores the cluster's hosts and its join tokens.
@@ -238,11 +240,11 @@ func (c *Cluster) Fresh(ctx context.Context) (accounts, apps bool, err error) {
 
 const msgRecordHost = "Could not record the host."
 
-const hostColumns = `id, name, roles, address, cert_sha256, platform, version, coalesce(joined_with, ''), joined_at, last_seen_at`
+const hostColumns = `id, name, roles, address, cert_sha256, platform, version, coalesce(joined_with, ''), joined_at, last_seen_at, lost_at IS NOT NULL`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
-	err := row.Scan(&h.ID, &h.Name, &h.Roles, &h.Address, &h.CertSHA256, &h.Platform, &h.Version, &h.JoinedWith, &h.JoinedAt, &h.LastSeenAt)
+	err := row.Scan(&h.ID, &h.Name, &h.Roles, &h.Address, &h.CertSHA256, &h.Platform, &h.Version, &h.JoinedWith, &h.JoinedAt, &h.LastSeenAt, &h.Lost)
 	return h, err
 }
 
