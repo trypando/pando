@@ -35,39 +35,67 @@ const couldNotStoreUpload = "Pando could not store the upload."
 //
 // One transaction: a deploy reading the app's upload while this runs reads the
 // previous archive whole, never part of each. The app_uploads row is written
-// first, which locks it, so two uploads to one app take turns.
+// first, which locks it, so two uploads to one app take turns. The
+// transaction holds a connection until r ends, so r is a file already on disk
+// rather than a request body a client may send slowly (R-417).
 func (u *Uploads) PutUpload(ctx context.Context, appID string, r io.Reader) error {
+	_, err := u.put(ctx, appID, r, `
+		INSERT INTO app_uploads (app_id, sha256, size) VALUES ($1, repeat('0', 64), 0)
+		ON CONFLICT (app_id) DO UPDATE SET updated_at = now()`)
+	return err
+}
+
+// AddUpload stores r as appID's uploaded archive only if the app has none,
+// and reports whether it did. It is how an archive file from before R-417 is
+// moved in: an upload stored meanwhile is newer, and is kept rather than
+// overwritten by the file. An app that no longer exists is errs.NotFound.
+func (u *Uploads) AddUpload(ctx context.Context, appID string, r io.Reader) (bool, error) {
+	return u.put(ctx, appID, r, `
+		INSERT INTO app_uploads (app_id, sha256, size) VALUES ($1, repeat('0', 64), 0)
+		ON CONFLICT (app_id) DO NOTHING`)
+}
+
+// put writes the app_uploads row with claim, which holds the row's lock for
+// the rest of the transaction, then replaces the chunks with r's. It reports
+// false, writing nothing, when claim wrote no row.
+//
+// The row's digest is a placeholder until the update below, before the
+// commit, so no reader sees it.
+func (u *Uploads) put(ctx context.Context, appID string, r io.Reader, claim string) (bool, error) {
 	tx, err := u.db.Begin(ctx)
 	if err != nil {
-		return errs.Wrap(errs.Internal, couldNotStoreUpload, err)
+		return false, errs.Wrap(errs.Internal, couldNotStoreUpload, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// A placeholder digest, overwritten below before the commit, which no
-	// reader sees.
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO app_uploads (app_id, sha256, size) VALUES ($1, repeat('0', 64), 0)
-		ON CONFLICT (app_id) DO UPDATE SET updated_at = now()`, appID); err != nil {
-		return errs.Wrap(errs.Internal, couldNotStoreUpload, err)
+	tag, err := tx.Exec(ctx, claim, appID)
+	if isForeignKeyViolation(err) {
+		return false, errs.Newf(errs.NotFound, "The app %s no longer exists, so its upload was not stored.", appID)
+	}
+	if err != nil {
+		return false, errs.Wrap(errs.Internal, couldNotStoreUpload, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return false, nil
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM app_upload_chunks WHERE app_id = $1`, appID); err != nil {
-		return errs.Wrap(errs.Internal, couldNotStoreUpload, err)
+		return false, errs.Wrap(errs.Internal, couldNotStoreUpload, err)
 	}
 
 	sum := sha256.New()
 	size, err := writeChunks(ctx, tx, appID, io.TeeReader(r, sum))
 	if err != nil {
-		return err
+		return false, err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE app_uploads SET sha256 = $2, size = $3, updated_at = now() WHERE app_id = $1`,
 		appID, hex.EncodeToString(sum.Sum(nil)), size); err != nil {
-		return errs.Wrap(errs.Internal, couldNotStoreUpload, err)
+		return false, errs.Wrap(errs.Internal, couldNotStoreUpload, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return errs.Wrap(errs.Internal, couldNotStoreUpload, err)
+		return false, errs.Wrap(errs.Internal, couldNotStoreUpload, err)
 	}
-	return nil
+	return true, nil
 }
 
 // writeChunks copies r into the app's chunks and returns how many bytes it

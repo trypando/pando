@@ -43,9 +43,11 @@ const DefaultUploadDir = "/var/lib/pando/uploads"
 // UploadStore keeps uploaded archives (state.Uploads).
 type UploadStore interface {
 	PutUpload(ctx context.Context, appID string, r io.Reader) error
+	// AddUpload stores r only if the app has none, and reports whether it
+	// did. An app that no longer exists is errs.NotFound.
+	AddUpload(ctx context.Context, appID string, r io.Reader) (bool, error)
 	// OpenUpload answers ok false when the app has no upload stored.
 	OpenUpload(ctx context.Context, appID string) (io.ReadCloser, bool, error)
-	HasUpload(ctx context.Context, appID string) (bool, error)
 	DeleteUpload(ctx context.Context, appID string) error
 }
 
@@ -85,11 +87,73 @@ func (s Sources) StoreUpload(ctx context.Context, appID string, r io.Reader) err
 	if !isAppID(appID) {
 		return notAnApp(appID)
 	}
-	if err := s.Uploads.PutUpload(ctx, appID, r); err != nil {
+	spooled, err := s.spool(r)
+	if err != nil {
+		return err
+	}
+	defer spooled.discard()
+	if err := s.Uploads.PutUpload(ctx, appID, spooled.f); err != nil {
 		return err
 	}
 	// A file from before the move is now older than what the database holds.
 	return s.removeUploadFiles(appID)
+}
+
+// bodyReader keeps the error reading r failed with, so a failure of the body
+// is told from a failure of the disk.
+type bodyReader struct {
+	r   io.Reader
+	err error
+}
+
+func (b *bodyReader) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		b.err = err
+	}
+	return n, err
+}
+
+// spoolFile is a request body copied to disk, removed by discard.
+type spoolFile struct{ f *os.File }
+
+func (s spoolFile) discard() {
+	_ = s.f.Close()
+	_ = os.Remove(s.f.Name())
+}
+
+// spool copies an upload to a file under WorkDir and returns it rewound.
+//
+// The store writes an upload in one transaction, which holds a database
+// connection until its reader ends. Read from the request body, that was as
+// long as the client took to send it, and a few dozen slow uploads held every
+// connection Pando has (R-417). Read from this file it is as long as the disk
+// takes. The caller bounds r (maxUploadBytes in httpapi), and a read error is
+// returned as it came, so the caller can tell a body over its limit.
+func (s Sources) spool(r io.Reader) (spoolFile, error) {
+	if s.WorkDir != "" {
+		if err := os.MkdirAll(s.WorkDir, 0o700); err != nil {
+			return spoolFile{}, errs.Wrap(errs.Internal, couldNotStore, err)
+		}
+	}
+	f, err := os.CreateTemp(s.WorkDir, ".upload-*")
+	if err != nil {
+		return spoolFile{}, errs.Wrap(errs.Internal, couldNotStore, err)
+	}
+	spooled := spoolFile{f: f}
+	body := &bodyReader{r: r}
+	if _, err := io.Copy(f, body); err != nil {
+		spooled.discard()
+		if body.err != nil {
+			return spoolFile{}, body.err
+		}
+		return spoolFile{}, errs.Wrap(errs.Internal, couldNotStore, err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		spooled.discard()
+		return spoolFile{}, errs.Wrap(errs.Internal, couldNotStore, err)
+	}
+	return spooled, nil
 }
 
 // storeUploadFile writes an uploaded archive under UploadDir.
@@ -168,8 +232,15 @@ func (s Sources) removeUploadFiles(appID string) error {
 	return nil
 }
 
-// migrateUpload moves an app's archive file into the database (R-417). It
-// reports whether there was one to move.
+// migrateUpload moves an app's archive file into the database (R-417), and
+// reports whether it stored one.
+//
+// Only into an app with no upload there (AddUpload): StoreUpload removes the
+// file when it writes the row, so a row beside a file is the newer, whether
+// it was there before or written by an upload while this ran, and the file
+// is removed without being stored. A file whose app was deleted is removed
+// too: it has no deploy to serve (R-206), and kept it would be tried again at
+// every start.
 func (s Sources) migrateUpload(ctx context.Context, appID string) (bool, error) {
 	if s.UploadDir == "" {
 		return false, nil
@@ -181,12 +252,12 @@ func (s Sources) migrateUpload(ctx context.Context, appID string) (bool, error) 
 	if err != nil {
 		return false, errs.Wrap(errs.Internal, couldNotRead, err)
 	}
-	err = s.Uploads.PutUpload(ctx, appID, f)
+	stored, err := s.Uploads.AddUpload(ctx, appID, f)
 	_ = f.Close()
-	if err != nil {
+	if err != nil && errs.CodeOf(err) != errs.NotFound {
 		return false, err
 	}
-	return true, s.removeUploadFiles(appID)
+	return stored, s.removeUploadFiles(appID)
 }
 
 // MigrateUploads moves every archive file under UploadDir that the database
@@ -210,7 +281,7 @@ func (s Sources) MigrateUploads(ctx context.Context) (int, error) {
 		if !ok || !e.Type().IsRegular() || !isAppID(appID) {
 			continue
 		}
-		did, err := s.migrateOne(ctx, appID)
+		did, err := s.migrateUpload(ctx, appID)
 		if err != nil && first == nil {
 			first = err
 		}
@@ -219,19 +290,6 @@ func (s Sources) MigrateUploads(ctx context.Context) (int, error) {
 		}
 	}
 	return moved, first
-}
-
-func (s Sources) migrateOne(ctx context.Context, appID string) (bool, error) {
-	has, err := s.Uploads.HasUpload(ctx, appID)
-	if err != nil {
-		return false, err
-	}
-	if has {
-		// The database's is the newer: StoreUpload removes the file when it
-		// writes the row, so a file beside a row was left by a failure.
-		return false, s.removeUploadFiles(appID)
-	}
-	return s.migrateUpload(ctx, appID)
 }
 
 // openUpload returns the app's stored archive: from the database, or from its
@@ -244,14 +302,13 @@ func (s Sources) openUpload(ctx context.Context, appID string) (io.ReadCloser, e
 	if err != nil || ok {
 		return rc, err
 	}
-	moved, err := s.migrateUpload(ctx, appID)
-	if err != nil {
+	// Opened again whether or not the file was the one stored: an upload
+	// stored while this ran is kept over the file, and is the one to read.
+	if _, err := s.migrateUpload(ctx, appID); err != nil {
 		return nil, err
 	}
-	if moved {
-		if rc, ok, err = s.Uploads.OpenUpload(ctx, appID); err != nil || ok {
-			return rc, err
-		}
+	if rc, ok, err = s.Uploads.OpenUpload(ctx, appID); err != nil || ok {
+		return rc, err
 	}
 	return nil, uploadGone()
 }
