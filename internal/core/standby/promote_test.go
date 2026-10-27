@@ -228,3 +228,28 @@ func TestR419_ASingleHostInstallDoesNoStandbyWork(t *testing.T) {
 	h.svc.Once(ctx)
 	require.Zero(t, h.plans.shaped)
 }
+
+// TestR421_APromotionCutShortIsNotFinishedWithoutItsAuditEvent asserts R-421
+// and R-228 for the one start the liveness pass does not audit itself:
+// finishing a promotion cut short is written to the audit log first, and
+// waits for the next pass when it cannot be.
+func TestR421_APromotionCutShortIsNotFinishedWithoutItsAuditEvent(t *testing.T) {
+	ctx := context.Background()
+	h := placed(t)
+	sb := h.store.rows["app_a"]
+	at := h.clock.Now()
+	sb.Home, sb.StaleHost, sb.PromotingAt, sb.PromotedAt = "app-2", "app-1", &at, &at
+	h.store.rows["app_a"] = sb
+	h.rt.promoteOK = api.PromoteResult{Host: "app-2", Healthy: true}
+
+	h.auditor.fail = true
+	h.clock.Advance(h.svc.promoteGrace() + time.Minute)
+	h.svc.Once(ctx)
+	require.Empty(t, h.rt.promoted, "not started without its audit event")
+	require.NotNil(t, h.store.rows["app_a"].PromotingAt, "still under way, for the next pass")
+
+	h.auditor.fail = false
+	h.svc.Once(ctx)
+	require.Len(t, h.rt.promoted, 1)
+	require.Contains(t, h.auditor.actions, "cluster.failover")
+}

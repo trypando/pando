@@ -101,6 +101,9 @@ func (w *Watch) Round(ctx context.Context) {
 		}
 	}
 	w.welcomeBack(ctx, now, counted, lost, views)
+	// A failover not started for want of its audit event is tried again
+	// (R-421, R-228).
+	w.Service.refail(ctx, lost)
 	if len(counted) < MinHosts {
 		return
 	}

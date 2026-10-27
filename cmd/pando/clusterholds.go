@@ -18,18 +18,20 @@ import (
 // host's agent; and every host's answer, recorded by the leader so every
 // replica's reconciler leaves a fenced host's apps stopped.
 
-// fenced reports whether this control host's Monitor has fenced. False until
-// the Monitor runs: a host that has not started watching has not fenced.
+// fenced reports whether this control host's Monitor is fencing: it decided
+// it is cut off, and has not reached the cluster again, whether or not its
+// apps are stopped yet (R-421). False until the Monitor runs: a host that has
+// not started watching has not fenced.
 func (c *controlPings) fenced() bool {
 	if c == nil {
 		return false
 	}
 	p := c.current.Load()
-	return p != nil && p.monitor.Fenced()
+	return p != nil && p.monitor.Fencing()
 }
 
-// Fenced is fenced, for hostagent.Fence.
-func (c *controlPings) Fenced() bool { return c.fenced() }
+// Fencing is fenced, for hostagent.Fence.
+func (c *controlPings) Fencing() bool { return c.fenced() }
 
 // hostFences records whether a host says it is fenced: state.Cluster.
 type hostFences interface {
@@ -86,7 +88,7 @@ func (f *fenceRecorder) record(ctx context.Context, hostID string, raw []byte) {
 // host's apps only through it, at the address the host joined with. Its pings
 // are answered on the cluster listener (controlhost.go), so the agent answers
 // none, and it refuses to start containers while the control host's Monitor
-// has fenced (R-421). A host with the control role alone runs no agent.
+// is fencing (R-421). A host with the control role alone runs no agent.
 func startJoinedAgent(ctx context.Context, dir string, joined hosts.Joined, pings *controlPings, logger *zap.Logger) {
 	if !slices.Contains(joined.Roles, state.HostRoleApp) || joined.AppOnly() {
 		return

@@ -784,6 +784,12 @@ type ObservedBundle struct {
 	Exists    bool
 	Workloads []ObservedWorkload
 	Volumes   []ObservedVolume
+
+	// Host is where the bundle was found, in the names StandbyHandle uses:
+	// the cluster host's name for a runtime with several (R-256). Empty for
+	// a runtime with one place. Core reads it to leave alone an app whose
+	// host is lost or fenced, standby or not (R-151, R-421).
+	Host string
 }
 
 // ObservedWorkload is a workload as found.

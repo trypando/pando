@@ -101,16 +101,48 @@ func (t *Tracker) Watched(now time.Duration) time.Duration {
 func (t *Tracker) Reached(now time.Duration) int {
 	n := 1
 	for _, p := range t.peers {
-		if p.contacted && now-p.contact <= t.cfg.Period {
+		if t.reached(now, p) {
 			n++
 		}
 	}
 	return n
 }
 
+// unsilent is Reached, with every peer known for no longer than Period and
+// not yet reached counted as reached too. A host that has just joined is
+// still starting its agent, and may not be reached until it has: several
+// joining at once would otherwise leave a host that reaches every host it
+// knew short of half the cluster, and stop its apps (R-421).
+func (t *Tracker) unsilent(now time.Duration) int {
+	n := 1
+	for _, p := range t.peers {
+		if t.reached(now, p) || now-p.added < t.cfg.Period {
+			n++
+		}
+	}
+	return n
+}
+
+// reached reports whether this host had contact with p in the last Period.
+func (t *Tracker) reached(now time.Duration, p *peerContact) bool {
+	return p.contacted && now-p.contact <= t.cfg.Period
+}
+
+// since is when this host last had contact with the peer, or when the peer
+// was added if that is later.
+func (p *peerContact) since() time.Duration {
+	if p.contacted && p.contact > p.added {
+		return p.contact
+	}
+	return p.added
+}
+
 // CutOff reports whether this host reaches fewer than half the cluster's
 // hosts in the last Period. It is not yet a reason to stop anything:
-// MustFence also needs the whole Period to have been watched.
+// MustFence also needs the whole Period to have been watched, and a peer
+// that joined less than Period ago to have been reached or to have stayed
+// silent that long. A fence already decided ends only on contact, so a peer
+// newly added never ends one.
 func (t *Tracker) CutOff(now time.Duration) bool {
 	return belowHalf(t.Reached(now), t.Hosts())
 }
@@ -118,7 +150,9 @@ func (t *Tracker) CutOff(now time.Duration) bool {
 // MustFence reports whether this host must stop its own apps (R-421): the
 // cluster has at least three hosts, this host has probed without a break for
 // at least Period, and in all of that Period it had contact with fewer than
-// half the cluster's hosts, itself included.
+// half the cluster's hosts, itself included. A peer known for less than
+// Period and not yet reached counts as reached: a host joining is never a
+// reason for another to fence.
 func (t *Tracker) MustFence(now time.Duration) bool {
 	if t.Hosts() < MinHosts {
 		return false
@@ -126,7 +160,7 @@ func (t *Tracker) MustFence(now time.Duration) bool {
 	if t.Watched(now) < t.cfg.Period {
 		return false
 	}
-	return t.CutOff(now)
+	return belowHalf(t.unsilent(now), t.Hosts())
 }
 
 // UnreachedFor is how long this host has watched peer without contact, up to
@@ -137,11 +171,7 @@ func (t *Tracker) UnreachedFor(now time.Duration, peer string) time.Duration {
 	if !ok {
 		return 0
 	}
-	since := p.added
-	if p.contacted && p.contact > since {
-		since = p.contact
-	}
-	return min(now-since, t.Watched(now))
+	return min(now-p.since(), t.Watched(now))
 }
 
 // Unreached is UnreachedFor for every peer: what this host reports to the

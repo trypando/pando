@@ -254,6 +254,22 @@ func (s *Standbys) Held(ctx context.Context, appID string) (Hold, error) {
 	return h, nil
 }
 
+// HostHeld is what holds every app on the cluster host named host, the
+// runtime's name for it: whether it is marked lost or says it is fenced. A
+// name that is no cluster host's holds nothing.
+func (s *Standbys) HostHeld(ctx context.Context, host string) (Hold, error) {
+	h := Hold{Home: host}
+	err := s.db.QueryRow(ctx, `SELECT lost_at IS NOT NULL, fenced_at IS NOT NULL FROM cluster_hosts WHERE name = $1`, host).
+		Scan(&h.HomeLost, &h.HomeFenced)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return h, nil
+	}
+	if err != nil {
+		return Hold{}, errs.Wrap(errs.Internal, "Could not read whether the app's host is lost.", err)
+	}
+	return h, nil
+}
+
 // AppState is a live app's state: false when there is no such app.
 func (s *Standbys) AppState(ctx context.Context, appID string) (string, bool, error) {
 	var st string

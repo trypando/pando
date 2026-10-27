@@ -16,7 +16,7 @@ import (
 
 type switchFence struct{ on atomic.Bool }
 
-func (f *switchFence) Fenced() bool { return f.on.Load() }
+func (f *switchFence) Fencing() bool { return f.on.Load() }
 
 // dockerish is a Docker API on a unix socket that creates and starts
 // anything, and counts what it was asked to.

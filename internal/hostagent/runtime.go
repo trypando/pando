@@ -29,12 +29,14 @@ func isRuntimeRequest(line string) bool {
 	return len(fields) == 2 && fields[0] == protocolVersion && fields[1] == runtimeTarget
 }
 
-// Fence is whether this host has fenced (R-421): cut off from most of the
-// cluster, its apps stopped. core's liveness.Monitor is one. While it has,
-// the agent refuses every runtime call that would create or start a
-// container, so the control plane cannot undo the fence through it.
+// Fence is whether this host is fencing (R-421): it decided it is cut off
+// from most of the cluster, and has not reached it again since, whether or
+// not its apps are stopped yet. core's liveness.Monitor is one. From the
+// decision on, through the stop, the agent refuses every runtime call that
+// would create or start a container, so the control plane cannot undo the
+// fence through it, nor start a container the stop has already passed.
 type Fence interface {
-	Fenced() bool
+	Fencing() bool
 }
 
 // startCall is a Docker API call that creates or starts a container, with or
@@ -42,12 +44,12 @@ type Fence interface {
 var startCall = regexp.MustCompile(`^(/v[0-9.]+)?/containers/(create|[^/]+/(start|restart|unpause))$`)
 
 // fencedMessage is what a refused call answers, in Docker's error shape.
-const fencedMessage = `{"message":"This host is cut off from most of the cluster and has stopped its apps, so it starts none until it reaches the cluster again."}`
+const fencedMessage = `{"message":"This host is cut off from most of the cluster and stops its apps, so it starts none until it reaches the cluster again."}`
 
 // openRuntime connects to the host's runtime for a control host's
 // certificate. With a Fence set, the stream is served call by call
-// (fenceable), so a call made while the host is fenced is refused even on a
-// connection opened before it fenced.
+// (fenceable), so a call made while the host is fencing is refused even on a
+// connection opened before the fence began.
 func (a *Agent) openRuntime(ctx context.Context, cs tls.ConnectionState) (net.Conn, error) {
 	if a.RuntimeSocket == "" && a.DialRuntime == nil {
 		return nil, errors.New("this agent does not carry container runtime calls")
@@ -88,8 +90,8 @@ func (a *Agent) fenceable(first net.Conn) net.Conn {
 	}
 	srv := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodPost && startCall.MatchString(r.URL.Path) && a.Fence.Fenced() {
-				a.logger().Info("refused a runtime call while this host is fenced", zap.String("path", r.URL.Path))
+			if r.Method == http.MethodPost && startCall.MatchString(r.URL.Path) && a.Fence.Fencing() {
+				a.logger().Info("refused a runtime call while this host is fencing", zap.String("path", r.URL.Path))
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusConflict)
 				_, _ = w.Write([]byte(fencedMessage))

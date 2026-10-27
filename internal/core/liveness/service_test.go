@@ -41,6 +41,7 @@ func (s *fakeStore) Host(_ context.Context, id string) (state.Host, error) {
 	if !ok {
 		return h, errs.Newf(errs.NotFound, "There is no host %s in the cluster.", id)
 	}
+	_, h.Lost = s.lost[id]
 	return h, nil
 }
 
@@ -129,13 +130,27 @@ type fakeAudit struct {
 	mu     sync.Mutex
 	events []audit.Event
 	err    error
+	// fail refuses these actions, recording nothing.
+	fail map[string]bool
 }
 
 func (a *fakeAudit) Write(_ context.Context, e audit.Event) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.fail[e.Action] {
+		return errors.New("audit log away")
+	}
 	a.events = append(a.events, e)
 	return a.err
+}
+
+func (a *fakeAudit) failing(actions ...string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.fail = map[string]bool{}
+	for _, x := range actions {
+		a.fail[x] = true
+	}
 }
 
 func (a *fakeAudit) actions() []string {
@@ -274,10 +289,12 @@ func TestServiceWithoutAuditOrLoggerStillWorks(t *testing.T) {
 	_, err := r.svc.MarkLost(context.Background(), "x", person)
 	require.NoError(t, err)
 
+	// Without its audit event nothing is marked (R-421, R-228).
 	r = newServiceRig("x")
 	r.audit.err = errors.New("audit away")
 	_, err = r.svc.MarkLost(context.Background(), "x", person)
-	require.NoError(t, err)
+	require.Equal(t, errs.Internal, errs.CodeOf(err))
+	require.Empty(t, r.store.lost)
 }
 
 // watchRig is a leader watching hosts whose views it is handed.
@@ -481,6 +498,7 @@ func TestDeclareLogsWhatItCannotDo(t *testing.T) {
 	require.Empty(t, r.failover.promoted)
 
 	r.store.markErr = nil
+	before := len(r.audit.events)
 	r.svc.RecordFence(context.Background(), "x", View{})
-	require.Empty(t, r.audit.events)
+	require.Len(t, r.audit.events, before)
 }

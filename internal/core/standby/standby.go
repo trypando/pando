@@ -298,7 +298,7 @@ func (s *Service) apply(ctx context.Context, sr api.StandbyRuntime, plan api.Bun
 	if handle.Host != sb.Host {
 		// A new place starts with no copies: the first ship there is full.
 		sb.Copies, sb.ShippedAt = 0, nil
-		s.audit(ctx, "app.standby.create", sb.AppID, "", map[string]any{"host": handle.Host, "previous_host": sb.Host})
+		_ = s.audit(ctx, "app.standby.create", sb.AppID, "", map[string]any{"host": handle.Host, "previous_host": sb.Host})
 	}
 	sb.Host, sb.SpecID = handle.Host, specID
 	if handle.Home != "" {
@@ -370,7 +370,7 @@ func (s *Service) remove(ctx context.Context, appID string, sb *state.Standby, w
 		}
 	}
 	s.forget(ctx, appID)
-	s.audit(ctx, "app.standby.remove", appID, "", map[string]any{"host": sb.Host, "reason": why})
+	_ = s.audit(ctx, "app.standby.remove", appID, "", map[string]any{"host": sb.Host, "reason": why})
 }
 
 func (s *Service) forget(ctx context.Context, appID string) {
@@ -394,18 +394,22 @@ func (s *Service) save(ctx context.Context, sb state.Standby, prev *state.Standb
 	return ok && err == nil
 }
 
-func (s *Service) audit(ctx context.Context, action, appID, by string, detail map[string]any) {
+// audit writes one event, and returns the error when it could not be
+// written, having logged it.
+func (s *Service) audit(ctx context.Context, action, appID, by string, detail map[string]any) error {
 	if s.Auditor == nil {
-		return
+		return nil
 	}
 	e := audit.Event{PrincipalKind: audit.KindSystem, PrincipalID: "standby",
 		Action: action, AppID: appID, TargetKind: "app", TargetID: appID, Detail: detail}
 	if by != "" {
 		e.PrincipalKind, e.PrincipalID = audit.KindUser, by
 	}
-	if err := s.Auditor.Write(ctx, e); err != nil {
+	err := s.Auditor.Write(ctx, e)
+	if err != nil {
 		s.logger().Error("audit write failed", zap.String("action", action), zap.Error(err))
 	}
+	return err
 }
 
 // now is the clock's time to the microsecond, as Postgres keeps it, so a row

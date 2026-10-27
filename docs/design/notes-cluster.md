@@ -315,7 +315,10 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   reached fewer than half (itself included) in the last `T`, **and it has probed without a break for
   all of `T`**. A pause between its own rounds longer than three intervals (a suspended machine, a
   stalled process) restarts the window rather than counting as silence; such a host learns it was
-  taken for lost from its peers' answers instead (see "review fixes, liveness").
+  taken for lost from its peers' answers instead (see "review fixes, liveness"). **A peer known for
+  less than `T` and not yet reached counts as reached** toward fencing, so hosts joining at once,
+  still starting their agents, never make a host that reaches every host it knew fence; a fence
+  already decided ends only on contact.
 - **`Ledger`**, the leader's. A host is lost when the cluster has three or more hosts and more than
   half of them report having watched it without contact for `3T`, in a report the leader heard in
   the last three intervals. A host's report never claims longer than it has watched without a break,
@@ -341,7 +344,14 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   manual path, `POST /cluster/hosts/{hostID}/lost` (`install.cluster.manage`), works at any cluster
   size and **[P] is refused unless the host has gone unheard for `T`** (`liveness.Witness`), since a
   standby started beside running apps would be a second copy (R-153). Audited:
-  `cluster.host.lost`, and `cluster.failover` per app before its standby starts.
+  `cluster.host.lost` before the host is marked, and `cluster.failover` per app before its standby
+  starts. **Each event is a precondition** (R-421, R-228): a host whose `cluster.host.lost` cannot be
+  written is not marked (by hand, the request fails with `INTERNAL`), and an app whose
+  `cluster.failover` cannot be written is not started and is skipped as `audit_unavailable`; the
+  leader tries that host's failover again every round until the event is written
+  (`Service.refail`). Finishing a promotion cut short (`standby.Service.resume`) writes its own
+  `cluster.failover` (`trigger: resume`) first, and waits for the next pass without it.
+  `app.standby.promote` records the outcome after the runtime has acted, so it gates nothing.
 
 Timings **[P]**: `T` 30 s, probes every `T/6` (5 s), each within half an interval.
 
@@ -525,8 +535,10 @@ host is watched").
   starts anything (written ahead, review fixes below). It is how the
   leader knows which apps a lost host held, in the runtime's host names, which are `cluster_hosts`
   names (`hosts.Runtime.Sync`; the install's own machine included, review fixes below). Asking the runtime instead would fail exactly when it matters: a new
-  leader cannot see a lost host's bundles. An app with no standby row is not listed for a lost host;
-  one whose placement never succeeded has no home recorded. A promotion whose runtime did not name
+  leader cannot see a lost host's bundles. An app with no standby row is not listed for a lost host
+  (it has nothing to fail over to); one whose placement never succeeded has no home recorded. The
+  reconciler still holds such an app by the host the runtime found it on (`api.ObservedBundle.Host`,
+  review fixes below). A promotion whose runtime did not name
   the former host takes the recorded home as the stale one.
 - **Fencing calls standby (R-421).** `standby.Failover` implements `liveness.Homes`, `Failover` and
   `Returns` over `*standby.Service`, `state.Standbys` and `state.Cluster`; `cmd/pando` sets all three on
@@ -673,8 +685,9 @@ Fixes from the review of #347, for what the standby, the reconciler and the runt
 
 - **A fence is not undone (R-148, R-421).** A host's agent given a `Fence` (`hostagent.Agent.Fence`,
   its `liveness.Monitor`) serves each runtime stream call by call through an HTTP proxy and refuses
-  `POST …/containers/create` and `…/containers/<id>/start|restart|unpause` while the host is fenced,
-  answering 409 with Docker's `{"message": …}`, on a connection opened before the fence too. Stopping,
+  `POST …/containers/create` and `…/containers/<id>/start|restart|unpause` while the host is fencing
+  (`Monitor.Fencing`: from the decision to fence, through the stop, until the host reaches the
+  cluster again; not only once every container has stopped), answering 409 with Docker's `{"message": …}`, on a connection opened before the fence too. Stopping,
   listing and everything else pass. An app host's agent takes its own Monitor; a host with both roles
   takes the control host's. The leader records what each host's answer says of its fence
   (`cluster_hosts.fenced_at`, migration 000091, written only when it changes, `cmd/pando`
@@ -683,8 +696,12 @@ Fixes from the review of #347, for what the standby, the reconciler and the runt
 - **The reconciler leaves a held app alone (R-153).** `reconciler.Holds` (`state.Standbys.Held`)
   reads the app's standby row: a home host marked lost or fenced, or a promotion under way. Such an
   app is not observed or corrected; it is recorded unobservable with why, which counts toward
-  nothing (R-151). A replica whose own control host is fenced (`Reconciler.LocalFenced`) reconciles
-  nothing, and its standby pass does nothing. Deploys from a fenced control host are not stopped by
+  nothing (R-151). **An app with no standby is held too:** a runtime with several hosts names the
+  host it found a bundle on (`api.ObservedBundle.Host`, set by `multidocker.Observe`), and an app
+  found on a lost or fenced host (`Holds.HostHeld`) is recorded unobservable the same way, until the
+  host is back or a person acts. A host that does not answer was already an observation error. A
+  replica whose own control host is fencing (`Reconciler.LocalFenced`) reconciles nothing, and its
+  standby pass does nothing. Deploys from a fenced control host are not stopped by
   this; only what Pando does by itself is.
 - **One writer per app's standby (R-153).** Every write is compare-and-set on the row as it was read
   (`state.Standbys.SaveIf`: standby host, home, `promoted_at`, `promoting_at`), and one process
@@ -735,6 +752,11 @@ Fixes from the review of #347, for what the standby, the reconciler and the runt
 - **A single-host install does no standby work.** The pass builds no app's plan when no runtime
   adapter reports `SupportsStandby` (`Service.RuntimeRefs`), and still forgets rows left from before.
 - **Tests:** `TestR153_TheReconcilerNeverRestartsAFencedOrFailedOverCopy`,
+  `TestR151_AnAppWithoutAStandbyIsNotFailedWhileItsHostIsDown`,
+  `TestR421_AnAgentStartsNothingWhileItsFenceIsUnderWay`, `TestR419_RemovingAHostLeavesNoStandbyNamingIt`,
+  `TestR421_HostsJoiningAtOnceNeverMakeAHealthyHostFence`,
+  `TestR421_AFailoverWhoseAuditCannotBeWrittenDoesNotHappen`,
+  `TestR421_APromotionCutShortIsNotFinishedWithoutItsAuditEvent`,
   `TestR421_AFencedHostsAgentStartsNothingTheControlPlaneAsks`,
   `TestR153_AStandbyPassNeverPutsBackAPromotedAppsOldHome`,
   `TestR153_AStandbyRowIsWrittenOnlyOverWhatWasRead`,
@@ -821,7 +843,11 @@ kept working credentials. What changed:
     request, the same exposure sign-in has. A single-host install behaves as before.
 - **A removed host's credentials are refused (R-415).** `state.Cluster.RemoveHost` records the
   host's current and previous fingerprints in `cluster_revoked_certs` in the same transaction as the
-  delete; `Service.Peers` and `Service.Renew` refuse a revoked certificate, and the runtime's host
+  delete, and in it clears the host from every `app_standbys` row (`forgetStandbyHost`): a standby
+  there is placed again by the next pass, an app homed there has no home and is restored by the
+  reconciler on a host the runtime has (R-148), a promotion onto it ends as a refused one does, a
+  copy left on it is forgotten, and a promotion away from it goes on. Removing a host is not a
+  failover: to start apps from their standbys, mark the host lost first; `Service.Peers` and `Service.Renew` refuse a revoked certificate, and the runtime's host
   list no longer has the host. Pings are refused by identity rather than by fingerprint: an agent
   and a control host's listener refuse a ping from a host ID not in the peer list they last heard
   (`hosts.Members`, `hostagent.Agent.Member`, `AnswerPing`'s `member`), which covers every probe
@@ -928,7 +954,7 @@ never taken for lost and never stops its apps (R-421).
   returning host among them. Below three counted hosts nothing fails over or fences by itself.
   Hosts learn of a loss at their next peer read, and until then count one host more: the direction
   that only delays a failover.
-- **Failovers run beside the leader's round.** `Service.declare` marks and audits the host, then
+- **Failovers run beside the leader's round.** `Service.declare` audits and marks the host, then
   promotes in a goroutine; rounds go on probing, auditing fences and welcoming hosts back.
   `Service.back` does not clear `lost_at` while a failover from that host runs in this process.
   **Not done:** a manual `MarkLost` on one replica and `back()` on the leader replica are not
