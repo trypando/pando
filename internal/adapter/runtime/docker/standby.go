@@ -193,13 +193,26 @@ func stagingMount(bundleID, volumeID string, readOnly bool) mount.Mount {
 	return mount.Mount{Type: mount.TypeVolume, Source: StandbyVolumeName(bundleID, volumeID), Target: standbyMount, ReadOnly: readOnly}
 }
 
+// vanishedOK runs cmd, its output to the script's, and fails only for an
+// error other than a file being gone. A live volume's files come and go
+// while it is read (R-420): one removed between being found and being read
+// is left out, as one the listing shows removed, rather than failing the
+// whole ship. Any other error, or a failure that says nothing, fails it with
+// what cmd said.
+func vanishedOK(cmd string) string {
+	return `{ err=$( { ` + cmd + `; } 2>&1 1>&3 3>&-); s=$?; } 3>&1; ` +
+		`if [ "$s" -ne 0 ] && printf '%s\n' "$err" | grep -v -e 'No such file or directory' -e 'error exit delayed from previous errors' >&2; then exit "$s"; fi`
+}
+
 // listScript prints the time, then every entry under /volume. -xdev keeps it
 // in the volume.
-const listScript = `cd /volume && echo "T $(date +%s)" && exec find . -xdev -exec stat -c '%f %s %Y %n' {} +`
+var listScript = `cd /volume || exit 1; echo "T $(date +%s)"; ` + vanishedOK(`find . -xdev -exec stat -c '%f %s %Y %n' {} +`)
 
 // readScript archives the paths on stdin that still exist, each on its own:
-// a directory's entry carries its owner and mode, not its contents.
-const readScript = `cd /volume && while IFS= read -r p; do if [ -e "$p" ] || [ -L "$p" ]; then printf '%s\n' "$p"; fi; done | exec tar -cf - --no-recursion -T -`
+// a directory's entry carries its owner and mode, not its contents. One gone
+// by the time tar reaches it is left out (vanishedOK).
+var readScript = `cd /volume || exit 1; ` +
+	vanishedOK(`while IFS= read -r p; do if [ -e "$p" ] || [ -L "$p" ]; then printf '%s\n' "$p"; fi; done | tar -cf - --no-recursion -T -`)
 
 // ListVolume lists what is in one of the bundle's volumes, live.
 func (a *Adapter) ListVolume(ctx context.Context, bundleID, volumeID string) (VolumeListing, error) {
