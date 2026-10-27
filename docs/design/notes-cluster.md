@@ -410,16 +410,30 @@ host is watched").
   gives none. Minted without one, it is the external URL's host (else the advertise URL's, else the
   machine's) with `cluster_addr`'s port.
 - **Pinning.** The joining host connects trusting only a certificate authority in the server's chain
-  whose public key hashes to the token's hash, and checks the server certificate chains to it. The
-  server's name is not checked: the pinned authority is the trust, as in kubeadm. The joining host is
-  authenticated by the token's secret; it has no certificate until the join issues one.
+  whose public key hashes to the token's hash, and checks the server certificate chains to it and is
+  the listener's: subject `pando-cluster-listener` and the one URI `urn:pando:cluster-listener`,
+  which only the listener's own issuance writes (`hosts.PinnedTLS`, `isListener`). Chaining alone
+  would not do: every host holds a certificate from the same authority, so an app host could pose as
+  the listener and take a join token's secret, and for a control-role token the control keys. A
+  host's certificate is named for the host, and the probe, collector and proxy certificates carry
+  other subjects and client authentication only; only a holder of the authority's key, a control
+  host, can issue the listener's. The joined host's peer list and renewal connect the same way. The
+  server's name is not checked: the pinned authority and the listener's identity are the trust, as
+  in kubeadm. The joining host is authenticated by the token's secret; it has no certificate until
+  the join issues one.
 - **One transaction.** `state.Cluster.Join` checks and spends the token's use, asks
   `hosts.Service.Readiness` (a `hosts.JoinReadiness`; the server sets `hosts.Readiness`) and then
   `Runtime.CheckJoin`, issues the certificate and records the host together, and `OnChange` runs after.
   A refusal after the token checked out (a name taken, a cluster not ready) gives the use back. The
   host gets the token's roles, never ones it asked for.
-- **Refused before the token is touched:** a version other than the server's (R-415 [P]), and a name
-  that is not a DNS label. The certificate is `hostagent.Authorities.IssueHost`'s, for the key in the
+- **Refused before the token is touched:** a name the `docker-hosts` runtime cannot take (its own
+  rule: lower-case letters, digits and hyphens, up to 40, starting and ending with a letter or
+  digit), and `control`, the name the install's own machine falls back to (`hosts.CheckHostName`).
+  A joined app host is written into the runtime's host list under its name, and one bad name stopped
+  every later sync of it. Once the token checks out, `Runtime.CheckJoin` refuses an app host named as
+  an entry of the runtime's host list Pando did not write (the operator's, or the install's
+  machine's), and a version other than the server's (R-415 [P]) is refused (review fixes below);
+  neither spends the use. The certificate is `hostagent.Authorities.IssueHost`'s, for the key in the
   joining host's request: `pando-agent.<name>.invalid`, the roles as organizational units.
 - **What a control host is handed:** the database URL the server connects with (its owner URL), the
   API token key, the cluster authority's certificate and key, and the local secrets key with the path
@@ -565,7 +579,8 @@ host is watched").
   `{"hosts":[{id,name,address}]}`. `hosts.PeerSync` fetches it from the join token's address every
   round (2 s timeout), writes `peers.json` in the cluster directory, and when the listener cannot be
   reached returns what that file last held. The joined host connects trusting the authority in
-  `ca.crt`, by its key, not the listener's name, as at join.
+  `ca.crt`, by its key, and requiring the listener's own identity, not the listener's name, as at
+  join (`hosts.PinnedTLS`).
 - **The first host (R-414).** At each start a control host that has not joined calls
   `hosts.RecordInstallHost`: `state.Cluster.RecordFirstHost` inserts it under an advisory lock unless
   a row with no join token exists, so replicas of one install record one host between them and a
@@ -786,9 +801,18 @@ kept working credentials. What changed:
   when they pass, `(invalid)` otherwise, and no message echoes more than 64 characters of them. The
   cluster's version is said only once the token is good: the check moved inside the join's
   transaction, after the token is redeemed, so it still spends no use. Refused joins are limited per
-  client address as wrong passwords are, `state.ClusterJoinAddrKey` [P: 20 in 15 minutes], on
-  `POST /cluster/join` and `POST /setup/join`; over the limit the answer is `RATE_LIMITED` with
-  `Retry-After`, audited with the reason only, as R-404 audits every refusal.
+  client address as wrong passwords are, on `POST /cluster/join` and `POST /setup/join`. A refusal
+  that tested a secret (a join token wrong, expired, used up or revoked, `AUTH_TOKEN_INVALID`, or a
+  wrong setup token, `AUTH_INVALID`) counts under `state.ClusterJoinAddrKey` [P: 20 in 15 minutes].
+  Any other refusal (a name, an address or a version Pando cannot use, an unreadable body, a cluster
+  not ready) guesses at nothing and does not spend those; it counts under its own key instead
+  [P: 200 in 15 minutes], so it still cannot fill the audit log (`settleJoin`). Over either limit the
+  answer is `RATE_LIMITED` with `Retry-After`, audited with the reason only, as R-404 audits every
+  refusal.
+- **Join-token role rules are the service's (R-261).** `hosts.Service.Mint` takes the principal and
+  an every-install-verb checker (`authz.Authorizer`) and applies the default roles, their
+  normalization and R-080a's rule for a control-role token itself; the handler decodes, calls,
+  audits and answers.
   - **The listener stays on by default.** Considered and not done: starting it only once a join
     token exists or a second host has joined. Tokens are minted on any replica and a join is expected
     within minutes of minting, so every replica would have to watch for tokens; and once a second
