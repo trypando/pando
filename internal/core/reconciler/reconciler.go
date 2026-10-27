@@ -149,6 +149,16 @@ type Reconciler struct {
 	eventsOnce sync.Once
 	ev         *eventState
 
+	// Holds keeps the reconciler off an app whose host is lost or fenced, or
+	// whose standby is being promoted (holds.go). Nil holds nothing, as on
+	// an install with one host.
+	Holds Holds
+
+	// LocalFenced reports whether this replica's own host is fenced (R-421).
+	// While it is, Tick does nothing: a host cut off from most of the
+	// cluster starts nothing. Nil is never.
+	LocalFenced func() bool
+
 	// ProxyUpstream is where routes point. Every route points at Pando's proxy
 	// and never at a workload (R-023) — the reconciler re-ensuring a route must
 	// not be the one place that forgets.
@@ -208,6 +218,10 @@ func (r *Reconciler) Run(ctx context.Context) {
 // one app. Nothing is held on a database connection while an app is
 // reconciled, however long its Apply takes.
 func (r *Reconciler) Tick(ctx context.Context) {
+	if r.localFenced() {
+		r.Logger.Debug("this host is cut off from most of the cluster; reconciling nothing")
+		return
+	}
 	cutoff, err := r.Reconciles.Cutoff(ctx, r.MinRevisit)
 	if err != nil {
 		r.Logger.Warn("could not list apps to reconcile", zap.Error(err))
@@ -495,6 +509,13 @@ func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) v
 		// unreachable adapter is rather than counted against the app.
 		r.unobservable(ctx, app, "the runtime adapter "+s.Runtime.AdapterRef+" is not configured")
 		seen.failed = true
+		return seen
+	}
+
+	// R-148 does not restart a copy on a lost or fenced host, nor one a
+	// promotion is starting (holds.go).
+	if why := r.held(ctx, app.ID); why != "" {
+		r.unobservable(ctx, app, why)
 		return seen
 	}
 
