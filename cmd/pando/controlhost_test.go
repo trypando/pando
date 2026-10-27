@@ -181,6 +181,8 @@ func (d *appDocker) ContainerStop(context.Context, string, client.ContainerStopO
 	return client.ContainerStopResult{}, nil
 }
 
+func (d *appDocker) Reachable(context.Context) error { return nil }
+
 func (d *appDocker) stops() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()

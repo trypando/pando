@@ -973,6 +973,22 @@ never taken for lost and never stops its apps (R-421).
   Pando can reach no runtime cannot stop apps running on one Pando does not know of; with no restart
   policy, such apps exist only if Pando was restarted under a different runtime socket while they
   ran. The fallback does not renew its certificates; it lasts until Pando is restarted.
+  **A control host is held to the same rule** (`controlPing.answer`, the same `fenceGate`): while
+  the Docker its fence stops apps through (`client.FromEnv`) does not answer, its cluster listener
+  refuses every ping with the same reason, rechecked at most every probe interval, and answers again
+  once Docker does. It used to answer and only log the fences that failed: cut off, it was taken for
+  lost and its apps' standbys started beside its own copies. **The exception is a control host the
+  install's runtime places no apps on** (`placesApps`): on Kubernetes or Incus apps run on that
+  runtime's own machines, never through this host's Docker, and such installs take no app-role join
+  (`hosts.CheckAppRoleJoin`); a host with the control role alone runs none under Docker either; and
+  with no runtime nothing runs anywhere. Such a host has nothing of its own to fence, so it answers
+  whatever its Docker does; refusing would only hide its view of the other hosts. Docker on one host
+  or many places apps on the install's own host and on any host holding the app role, so those
+  refuse. The kind is the install's default runtime, known once the adapters are loaded
+  (`controlPings.useRuntime`) and kept in `control-runtime.json` in `server.cluster_dir` for the
+  next start. Before it is ever known (the first start, before the database), a host with the app
+  role is taken as one apps run on: refusing then is contact and costs nothing but its view, while
+  answering could be saying it is well with apps it cannot stop.
 - **The manual guard is sustained silence** (`liveness.Witness`): this control host's `Monitor` has
   watched the host without contact for `T` (`Monitor.UnreachedFor`), a probe now gets no answer,
   and no other host that answers reports contact with it within `T` (each host's `View`, read on
@@ -1025,5 +1041,6 @@ never taken for lost and never stops its apps (R-421).
   `TestR421_AControlHostAnswersPingsBeforeItReachesItsDatabase`,
   `TestR421_AnAppHostThatCannotStartItsAgentIsStillContact`,
   `TestR153_AnAppHostWhoseAgentFailsToStartStillFencesWhenCutOff`,
+  `TestR153_AControlHostThatCannotReachItsRuntimeIsNeverTakenForLost`,
   `TestR414_ASingleHostStartsWithoutItsClusterListener`. The last checks the listener decision and
   the configuration default as units; no test starts the whole server with the port taken.
