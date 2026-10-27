@@ -384,7 +384,7 @@ func mergeHosts(raw json.RawMessage, app []RuntimeHost) (json.RawMessage, bool, 
 		return nil, false, err
 	}
 
-	next := make([]any, 0, len(current)+len(app))
+	next := make([]any, 0, len(current))
 	names := map[string]bool{}
 	for _, e := range current {
 		if endpoint, _ := e["endpoint"].(string); strings.HasPrefix(endpoint, agentScheme) {
