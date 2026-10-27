@@ -35,6 +35,9 @@ type fakeHost struct {
 	// disk limits hold of it (CommittedDisk).
 	totalDisk int64
 	diskUsed  int64
+	// takes has Apply take what the bundle needs from free, as a started
+	// app does.
+	takes bool
 }
 
 var errDown = errors.New("connection refused")
@@ -92,6 +95,11 @@ func (f *fakeHost) Apply(_ context.Context, p api.BundlePlan) (api.BundleHandle,
 	}
 	f.bundles[p.BundleID] = true
 	f.applied = append(f.applied, p.BundleID)
+	if f.takes {
+		n := need(p)
+		f.free.CPUMillis -= n.CPUMillis
+		f.free.MemoryBytes -= n.MemoryBytes
+	}
 	return api.BundleHandle{BundleID: p.BundleID}, nil
 }
 

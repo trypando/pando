@@ -6,17 +6,19 @@
 // the runtime make or refresh the stopped standby when the app's pinned spec
 // changed, and ships the app's volumes to it when a copy is due [P: every 5
 // minutes]. An app whose standby is turned off, or that is deleted, has its
-// standby removed. Nothing here decides a host is lost: that is the
-// liveness pass's (R-421), which calls Promote.
+// standby removed; a deleted app's copy a failover left on a lost host is
+// kept on record until the host returns and it is removed (RemoveStale).
+// Nothing here decides a host is lost: that is the liveness pass's (R-421),
+// which calls Promote.
 //
 // A failed app is not failed over (R-151): Promote refuses it, and the pass
 // leaves its standby as it was rather than refreshing it.
 //
 // One app's standby has one writer at a time (R-153). In this process the
 // pass and a promotion take the app's lock (Service.lock); across processes
-// every write is conditional on the row being as it was read (SaveIf), so a
-// pass working from a reading taken before a promotion never puts the old
-// home back. The pass leaves alone an app whose home is lost or whose
+// every write is conditional on the row being as it was read (SaveIf, on the
+// row's version), so a pass working from a reading taken before a promotion
+// never puts the old home back. The pass leaves alone an app whose home is lost or whose
 // promotion is under way: that standby is the failover's.
 package standby
 
@@ -57,6 +59,9 @@ type Store interface {
 	// Delete forgets the app's standby, unless a promotion of it is under
 	// way.
 	Delete(ctx context.Context, appID string) error
+	// Fate reads whether the app is deleted, and what its delete said of
+	// its storage (R-204).
+	Fate(ctx context.Context, appID string) (state.AppFate, error)
 }
 
 // Plans builds what an app is started with. *reconciler.Reconciler is one.
@@ -222,6 +227,12 @@ func (s *Service) standbyOf(ctx context.Context, ref string) (api.StandbyRuntime
 }
 
 func (s *Service) visit(ctx context.Context, app state.StandbyApp, doc policy.Document) {
+	if app.Deleted {
+		// Before the failover's check: a deleted app is never failed over,
+		// so a lost home does not keep its standby (R-419).
+		s.clearDeleted(ctx, app)
+		return
+	}
 	if sb := app.Standby; sb != nil && (sb.PromotingAt != nil || app.HomeLost) {
 		// R-153: the failover's. Placing, shipping or removing this standby
 		// now could remove or overwrite what a promotion starts from.
@@ -233,10 +244,6 @@ func (s *Service) visit(ctx context.Context, app state.StandbyApp, doc policy.Do
 		return // a promotion has it (R-153)
 	}
 	defer unlock()
-	if app.Deleted {
-		s.remove(ctx, app.AppID, app.Standby, "the app was deleted")
-		return
-	}
 	plan, sp, err := s.Plans.Shape(ctx, app.AppID)
 	if err != nil {
 		s.logger().Warn("could not build an app's plan for its standby", zap.String("app_id", app.AppID), zap.Error(err))
@@ -369,17 +376,76 @@ func (s *Service) unreplicated(sp *spec.AppSpec) []string {
 // cannot be reached keeps the row, so the next pass tries again. Never
 // during a promotion: the pass does not reach here for one (visit).
 func (s *Service) remove(ctx context.Context, appID string, sb *state.Standby, why string) {
-	if sb == nil {
+	if sb == nil || !s.removeStandby(ctx, appID, sb) {
 		return
-	}
-	if sr, ok := s.standbyOf(ctx, sb.RuntimeRef); ok {
-		if err := sr.RemoveStandby(ctx, api.BundleRef{BundleID: appID}); err != nil {
-			s.logger().Warn("could not remove an app's standby", zap.String("app_id", appID), zap.Error(err))
-			return
-		}
 	}
 	s.forget(ctx, appID)
 	_ = s.audit(ctx, "app.standby.remove", appID, "", map[string]any{"host": sb.Host, "reason": why})
+}
+
+// removeStandby takes the standby off the runtime, from every host that
+// answers, and reports whether every host did. A runtime no longer
+// configured has nothing left to remove.
+func (s *Service) removeStandby(ctx context.Context, appID string, sb *state.Standby) bool {
+	sr, ok := s.standbyOf(ctx, sb.RuntimeRef)
+	if !ok {
+		return true
+	}
+	if err := sr.RemoveStandby(ctx, api.BundleRef{BundleID: appID}); err != nil {
+		s.logger().Warn("could not remove an app's standby from every host; trying again next pass",
+			zap.String("app_id", appID), zap.Error(err))
+		return false
+	}
+	return true
+}
+
+const deletedReason = "the app was deleted"
+
+// clearDeleted removes a deleted app's standby (R-419). Its own copy, on its
+// home, is the reconciler's teardown, with the rest of the app and as the
+// delete said of its storage (R-204), lost home or not. What is left here:
+//
+//   - a promotion under way is left to end, or to be taken for cut short
+//     (promoteGrace), since it may be running in another process;
+//   - the standby is removed from every host that answers, and tried again
+//     each pass until every host has;
+//   - a copy a failover left on another host (stale_host) is not the
+//     teardown's: the row is kept, with no standby, until that host returns
+//     and RemoveStale removes it. A host removed from the cluster instead
+//     clears it (state.forgetStandbyHost), and the row then goes.
+func (s *Service) clearDeleted(ctx context.Context, app state.StandbyApp) {
+	sb := app.Standby
+	if sb == nil {
+		return
+	}
+	promoting := sb.PromotingAt != nil
+	if promoting && s.now().Sub(*sb.PromotingAt) < s.promoteGrace() {
+		return
+	}
+	if !promoting && sb.StaleHost != "" && sb.Host == "" {
+		return // only the stale copy is left, for when its host returns
+	}
+	unlock, ok := s.tryLock(app.AppID)
+	if !ok {
+		return // a promotion has it (R-153)
+	}
+	defer unlock()
+	if !promoting && sb.StaleHost == "" {
+		s.remove(ctx, app.AppID, sb, deletedReason)
+		return
+	}
+	if !s.removeStandby(ctx, app.AppID, sb) {
+		return
+	}
+	left := *sb
+	left.Host, left.SpecID, left.Copies, left.ShippedAt, left.PromotingAt = "", "", 0, nil, nil
+	if !s.save(ctx, left, sb) {
+		return
+	}
+	if left.StaleHost == "" {
+		s.forget(ctx, app.AppID)
+	}
+	_ = s.audit(ctx, "app.standby.remove", app.AppID, "", map[string]any{"host": sb.Host, "reason": deletedReason})
 }
 
 func (s *Service) forget(ctx context.Context, appID string) {

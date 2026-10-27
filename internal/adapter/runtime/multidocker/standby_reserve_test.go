@@ -2,7 +2,9 @@ package multidocker
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -108,6 +110,60 @@ func TestR422_APromotedStandbyStartsOnlyWhereItFits(t *testing.T) {
 	hosts["app-2"].down = true
 	_, err = a.PromoteStandby(ctx, api.PromoteRequest{Bundle: plan("app_a", 6*gib), Host: "app-2"})
 	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err))
+}
+
+// TestR422_TwoStandbysStartedAtOnceOnOneHostDoNotBothTakeItsRoom asserts
+// that promotions to one host check its room one at a time, through each
+// one's first start: two standbys started side by side, with room for one,
+// start one and refuse the other, rather than both passing the check
+// before either has started.
+func TestR422_TwoStandbysStartedAtOnceOnOneHostDoNotBothTakeItsRoom(t *testing.T) {
+	ctx := context.Background()
+	hosts, a := threeHosts()
+	for _, b := range []string{"app_a", "app_b"} {
+		_, err := a.Apply(ctx, plan(b, 6*gib))
+		require.NoError(t, err)
+		p := plan(b, 6*gib)
+		p.Failover.AllowOversubscription = true // past the reservation: both on app-2
+		h, err := a.ApplyStandby(ctx, api.StandbyRequest{Bundle: p})
+		require.NoError(t, err)
+		require.Equal(t, "app-2", h.Host)
+	}
+	target := hosts["app-2"]
+	target.free.MemoryBytes, target.takes = 8*gib, true
+
+	// Each promotion waits a moment, before its first start, for the other
+	// to reach the same point.
+	arrived := make(chan struct{}, 2)
+	target.onDestroy = func(bundle string) {
+		if !strings.HasSuffix(bundle, "-standby") {
+			return
+		}
+		arrived <- struct{}{}
+		deadline := time.After(200 * time.Millisecond)
+		for len(arrived) < 2 {
+			select {
+			case <-deadline:
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}
+	errsOf := make(chan error, 2)
+	for _, b := range []string{"app_a", "app_b"} {
+		go func() {
+			_, err := a.PromoteStandby(ctx, api.PromoteRequest{Bundle: plan(b, 6*gib), Host: "app-2", PollEvery: time.Millisecond})
+			errsOf <- err
+		}()
+	}
+	var refused int
+	for range 2 {
+		if err := <-errsOf; err != nil {
+			require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
+			refused++
+		}
+	}
+	require.Equal(t, 1, refused, "one fits, and only one starts")
 }
 
 // TestListStandbysFallsBackToPlacementAndSkipsSilentHosts covers a standby

@@ -38,6 +38,7 @@ func TestR153_AStandbyPassNeverPutsBackAPromotedAppsOldHome(t *testing.T) {
 	h.rt.onApply = func() {
 		sb := h.store.rows["app_a"]
 		sb.Home, sb.StaleHost, sb.Host, sb.PromotedAt = "app-2", "app-1", "", &promoted
+		sb.Version++ // another process's write
 		h.store.rows["app_a"] = sb
 	}
 	h.svc.Once(ctx)
@@ -124,12 +125,15 @@ func TestR153_APromotionCutShortLeavesTheHomeOnTheNewHost(t *testing.T) {
 	h.rt.promoteErr = map[string]error{"app_a": errs.New(errs.CapacityWouldOversubscribe, "no room")}
 	_, err = h.svc.Promote(ctx, "app_a", "")
 	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
-	require.Equal(t, before, h.store.rows["app_a"])
+	after := h.store.rows["app_a"]
+	require.Greater(t, after.Version, before.Version, "written ahead, then put back")
+	after.Version = before.Version
+	require.Equal(t, before, after)
 	require.Contains(t, h.auditor.actions, "app.standby.promote.failed")
 
 	// A row changed since it was read is not promoted over.
 	h = placed(t)
-	h.store.rows["app_a"] = func() state.Standby { sb := h.store.rows["app_a"]; sb.Home = "app-3"; return sb }()
+	h.store.rows["app_a"] = func() state.Standby { sb := h.store.rows["app_a"]; sb.Home = "app-3"; sb.Version++; return sb }()
 	h.svc.Store = &staleReads{fakeStore: h.store, row: before}
 	_, err = h.svc.Promote(ctx, "app_a", "")
 	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))

@@ -23,6 +23,11 @@ type Failover interface {
 type HomedApp struct {
 	AppID      string
 	HasStandby bool
+	// Queue is which apps start one after another: those sharing a queue
+	// start in the order listed, each once the one before has ended, and
+	// different queues start side by side (R-422: standbys sharing one
+	// host past the reservation take its room in priority order).
+	Queue string
 }
 
 // Homes lists the apps homed on a host. The standby slice implements it, with
@@ -129,6 +134,10 @@ type Service struct {
 	Witness interface {
 		Silent(ctx context.Context, h state.Host) error
 	}
+
+	// FailoverConcurrency is how many queues of a lost host's apps start
+	// at once; zero is DefaultFailoverConcurrency.
+	FailoverConcurrency int
 
 	mu       sync.Mutex
 	inflight map[string]int
@@ -343,7 +352,10 @@ func (s *Service) mark(ctx context.Context, h state.Host, by Actor, trigger stri
 // failover starts the standby of each app homed on h, each only once its
 // cluster.failover event is written (R-421, R-228). An app whose event
 // cannot be written is skipped, and the leader tries the host again next
-// round (refail).
+// round (refail). Queues start side by side, up to FailoverConcurrency at
+// once, so one app slow to come up does not hold back the rest; the apps in
+// one queue start one after another, in the order listed (HomedApp.Queue).
+// What was started and skipped is reported in that order too.
 func (s *Service) failover(ctx context.Context, h state.Host, a asked, out *HostLoss) {
 	if s.Homes == nil || s.Failover == nil {
 		out.Skipped = append(out.Skipped, SkippedApp{Reason: SkipNotWired,
@@ -355,23 +367,73 @@ func (s *Service) failover(ctx context.Context, h state.Host, a asked, out *Host
 		out.Skipped = append(out.Skipped, SkippedApp{Reason: SkipPromoteErr, Detail: messageOf(err)})
 		return
 	}
-	unaudited := false
-	for _, app := range homed {
-		reason, detail := s.skip(ctx, app)
+	results := make([]SkippedApp, len(homed))
+	s.eachQueue(homed, func(i int) {
+		reason, detail := s.skip(ctx, homed[i])
 		if reason == "" {
-			reason, detail = s.start(ctx, h, a, app.AppID)
+			reason, detail = s.start(ctx, h, a, homed[i].AppID)
 		}
-		switch reason {
+		results[i] = SkippedApp{AppID: homed[i].AppID, Reason: reason, Detail: detail}
+	})
+	unaudited := false
+	for _, r := range results {
+		switch r.Reason {
 		case "":
-			out.Started = append(out.Started, app.AppID)
+			out.Started = append(out.Started, r.AppID)
 		case SkipAuditErr:
 			unaudited = true
 			fallthrough
 		default:
-			out.Skipped = append(out.Skipped, SkippedApp{AppID: app.AppID, Reason: reason, Detail: detail})
+			out.Skipped = append(out.Skipped, r)
 		}
 	}
 	s.retryLater(h.ID, a, unaudited)
+}
+
+// DefaultFailoverConcurrency is how many of a lost host's queues of apps
+// start at once [P].
+const DefaultFailoverConcurrency = 8
+
+// eachQueue runs run for the index of every app in homed: the apps of one
+// queue one after another, in order, and up to FailoverConcurrency queues
+// side by side, taken in the order each first appears. It returns once
+// every app has run.
+func (s *Service) eachQueue(homed []HomedApp, run func(i int)) {
+	limit := s.FailoverConcurrency
+	if limit <= 0 {
+		limit = DefaultFailoverConcurrency
+	}
+	slots := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for _, queue := range queuesOf(homed) {
+		slots <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			for _, i := range queue {
+				run(i)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// queuesOf is homed's indexes by queue, each queue in list order, the
+// queues in the order each first appears.
+func queuesOf(homed []HomedApp) [][]int {
+	at := map[string]int{}
+	var out [][]int
+	for i, app := range homed {
+		q, ok := at[app.Queue]
+		if !ok {
+			q = len(out)
+			at[app.Queue] = q
+			out = append(out, nil)
+		}
+		out[q] = append(out[q], i)
+	}
+	return out
 }
 
 // start audits one app's failover and then starts its standby, and says why

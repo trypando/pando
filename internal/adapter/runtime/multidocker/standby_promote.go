@@ -49,6 +49,8 @@ func (a *Adapter) PromoteStandby(ctx context.Context, req api.PromoteRequest) (a
 		result.Healthy = err == nil && healthyBundle(req.Bundle, observed)
 		return result, nil
 	}
+	release := a.standby.holdRoom(target.cfg.Name)
+	defer release()
 	if err := a.roomToStart(ctx, target, req.Bundle); err != nil {
 		return api.PromoteResult{}, err
 	}
@@ -66,7 +68,7 @@ func (a *Adapter) PromoteStandby(ctx context.Context, req api.PromoteRequest) (a
 	result.Host = target.cfg.Name
 	for i := 0; i < attempts; i++ {
 		result.Copy, result.FellBack = i, i > 0
-		healthy, err := a.startFromCopy(ctx, target, side, req, copies, i)
+		healthy, err := a.startFromCopy(ctx, target, side, req, copies, i, release)
 		if err != nil {
 			return result, err
 		}
@@ -139,8 +141,9 @@ func (a *Adapter) restore(ctx context.Context, side standbyHost, p api.BundlePla
 
 // startFromCopy applies the app's plan and waits for it to come up healthy:
 // from the copy prepare restored, for i 0, and otherwise stopped and filled
-// from copy i first.
-func (a *Adapter) startFromCopy(ctx context.Context, target *host, side standbyHost, req api.PromoteRequest, copies map[string][]int, i int) (bool, error) {
+// from copy i first. Once applied the app holds its room, so started gives
+// the host's room back (holdRoom) before the wait.
+func (a *Adapter) startFromCopy(ctx context.Context, target *host, side standbyHost, req api.PromoteRequest, copies map[string][]int, i int, started func()) (bool, error) {
 	if i > 0 {
 		if err := target.rt.Stop(ctx, api.BundleRef{BundleID: req.Bundle.BundleID}); err != nil {
 			return false, err
@@ -149,7 +152,9 @@ func (a *Adapter) startFromCopy(ctx context.Context, target *host, side standbyH
 			return false, err
 		}
 	}
-	if _, err := target.rt.Apply(ctx, req.Bundle); err != nil {
+	_, err := target.rt.Apply(ctx, req.Bundle)
+	started()
+	if err != nil {
 		return false, err
 	}
 	return a.waitHealthy(ctx, target, req)

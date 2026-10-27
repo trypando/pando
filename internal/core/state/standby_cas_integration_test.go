@@ -162,3 +162,130 @@ func TestR151_APromotionIsWrittenAheadOnlyForAnAppThatHasNotFailed(t *testing.T)
 	require.NoError(t, err)
 	require.True(t, ok)
 }
+
+// TestR421_ALostHostsAppsAreReadWithTheirPriorityAndDeletedAppsCopies
+// asserts what the failover and a returning host read: each app homed on a
+// host with its pinned spec's availability.priority, so no plan is built to
+// order them (R-422), and a deleted app's copy left on a host, with its
+// delete's choice about its storage (R-204), so it is removed when the host
+// returns (R-419).
+func TestR421_ALostHostsAppsAreReadWithTheirPriorityAndDeletedAppsCopies(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	alice := seedUser(t, db, "standby-priority-alice")
+	apps := state.NewApps(db)
+	standbys := state.NewStandbys(db)
+	suffix := strings.ToLower(id.New(id.App)[4:14])
+	home, left := "h-"+suffix, "l-"+suffix
+	newApp := func(name string, priority int) string {
+		app, err := apps.Create(ctx, name+"-"+suffix, name+"-"+suffix, alice.ID, alice.ID, spec.Source{Type: spec.SourceGit, URL: "https://example.test/app"})
+		require.NoError(t, err)
+		if priority >= 0 {
+			s := minimalSpec()
+			s.AppID = app.ID
+			s.Availability.Priority = priority
+			rev, err := apps.CreateRevision(ctx, app.ID, s, spec.OriginEdited, alice.ID)
+			require.NoError(t, err)
+			require.NoError(t, apps.Pin(ctx, app.ID, rev.ID, state.StateProposed, alice.ID))
+		}
+		return app.ID
+	}
+	high, unpinned := newApp("high", 7), newApp("unpinned", -1)
+	for _, appID := range []string{high, unpinned} {
+		require.NoError(t, standbys.Save(ctx, state.Standby{AppID: appID, Home: home, Host: left}))
+	}
+	homed, err := standbys.HomedOn(ctx, home)
+	require.NoError(t, err)
+	priority := map[string]int{}
+	for _, sb := range homed {
+		priority[sb.AppID] = sb.Priority
+	}
+	require.Equal(t, map[string]int{high: 7, unpinned: 0}, priority)
+
+	kept, discarded := newApp("kept", -1), newApp("discarded", -1)
+	for _, appID := range []string{kept, discarded} {
+		require.NoError(t, standbys.Save(ctx, state.Standby{AppID: appID, Home: home, StaleHost: left}))
+		require.NoError(t, apps.Archive(ctx, appID))
+	}
+	require.NoError(t, apps.DiscardStorage(ctx, discarded))
+	leftOn, err := standbys.LeftOn(ctx, left)
+	require.NoError(t, err)
+	require.Len(t, leftOn, 2, "a deleted app's copy is still removed")
+	fate, err := standbys.Fate(ctx, kept)
+	require.NoError(t, err)
+	require.Equal(t, state.AppFate{Deleted: true}, fate)
+	fate, err = standbys.Fate(ctx, discarded)
+	require.NoError(t, err)
+	require.Equal(t, state.AppFate{Deleted: true, DiscardStorage: true}, fate)
+	fate, err = standbys.Fate(ctx, high)
+	require.NoError(t, err)
+	require.Equal(t, state.AppFate{}, fate)
+	homed, err = standbys.HomedOn(ctx, home)
+	require.NoError(t, err)
+	require.Len(t, homed, 2, "a deleted app is not failed over")
+}
+
+// TestR153_AStaleStandbyReadCannotPutBackAClearedStaleHost asserts that the
+// compare-and-set covers every column a concurrent writer may change, not
+// only the ones a promotion changes: a write from a reading taken before a
+// stale copy was removed and its stale_host cleared is refused, so the copy
+// is not put back on the record and removed twice (R-153, R-419). The row's
+// version changes on every write, whoever makes it; a row forgotten
+// meanwhile is not written back.
+func TestR153_AStaleStandbyReadCannotPutBackAClearedStaleHost(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	alice := seedUser(t, db, "standby-version-alice")
+	apps := state.NewApps(db)
+	standbys := state.NewStandbys(db)
+	suffix := strings.ToLower(id.New(id.App)[4:14])
+	app, err := apps.Create(ctx, "ver-"+suffix, "ver-"+suffix, alice.ID, alice.ID, spec.Source{Type: spec.SourceGit, URL: "https://example.test/app"})
+	require.NoError(t, err)
+	home, left := "h-"+suffix, "l-"+suffix
+	ok, err := standbys.SaveIf(ctx, state.Standby{AppID: app.ID, Home: home, StaleHost: left}, nil)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// Two leaders read the row; the first removes the stale copy.
+	first, _, err := standbys.Get(ctx, app.ID)
+	require.NoError(t, err)
+	second, _, err := standbys.Get(ctx, app.ID)
+	require.NoError(t, err)
+	removed := first
+	removed.StaleHost, removed.Host = "", left
+	ok, err = standbys.SaveIf(ctx, removed, &first)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// The second, from its earlier reading, loses.
+	shipped := second
+	shipped.Copies = 3
+	ok, err = standbys.SaveIf(ctx, shipped, &second)
+	require.NoError(t, err)
+	require.False(t, ok, "a write from before the stale host was cleared is refused")
+	got, _, err := standbys.Get(ctx, app.ID)
+	require.NoError(t, err)
+	require.Empty(t, got.StaleHost)
+	require.Equal(t, left, got.Host)
+
+	// A write from outside SaveIf (a host's removal from the cluster)
+	// changes what SaveIf compares too.
+	_, err = db.Exec(ctx, `UPDATE app_standbys SET copies = 1 WHERE app_id = $1`, app.ID)
+	require.NoError(t, err)
+	ok, err = standbys.SaveIf(ctx, got, &got)
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	// Forgotten meanwhile: not written back.
+	now, _, err := standbys.Get(ctx, app.ID)
+	require.NoError(t, err)
+	require.NoError(t, standbys.Delete(ctx, app.ID))
+	ok, err = standbys.SaveIf(ctx, now, &now)
+	require.NoError(t, err)
+	require.False(t, ok)
+	_, found, err := standbys.Get(ctx, app.ID)
+	require.NoError(t, err)
+	require.False(t, found)
+}

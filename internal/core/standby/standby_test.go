@@ -29,6 +29,8 @@ type fakeStore struct {
 	lost int
 	// stateRead runs after each AppState, for what happens meanwhile.
 	stateRead func()
+	// discard is each deleted app's choice to discard its storage (R-204).
+	discard map[string]bool
 }
 
 func (f *fakeStore) Candidates(context.Context) ([]state.StandbyApp, error) {
@@ -56,21 +58,24 @@ func (f *fakeStore) SaveIf(_ context.Context, sb state.Standby, prev *state.Stan
 		f.rows = map[string]state.Standby{}
 	}
 	have, ok := f.rows[sb.AppID]
-	if (prev == nil && ok) || (prev != nil && (!ok || !sameRow(have, *prev))) {
+	if (prev == nil && ok) || (prev != nil && (!ok || have.Version != prev.Version)) {
 		f.lost++
 		return false, nil
 	}
+	// Every write changes the row's version, as migration 000094's trigger
+	// does.
+	sb.Version = have.Version + 1
 	f.rows[sb.AppID] = sb
 	return true, nil
 }
 
-// sameRow is what SaveIf compares, as state.Standbys does.
-func sameRow(a, b state.Standby) bool {
-	return a.Host == b.Host && a.Home == b.Home && sameTime(a.PromotedAt, b.PromotedAt) && sameTime(a.PromotingAt, b.PromotingAt)
-}
-
-func sameTime(a, b *time.Time) bool {
-	return (a == nil) == (b == nil) && (a == nil || a.Equal(*b))
+func (f *fakeStore) Fate(_ context.Context, appID string) (state.AppFate, error) {
+	for _, a := range f.apps {
+		if a.AppID == appID && a.Deleted {
+			return state.AppFate{Deleted: true, DiscardStorage: f.discard[appID]}, nil
+		}
+	}
+	return state.AppFate{}, nil
 }
 
 func (f *fakeStore) Delete(_ context.Context, appID string) error {
@@ -148,6 +153,11 @@ type fakeRuntime struct {
 	// a stale copy.
 	promoteErr map[string]error
 	staleErr   error
+	// removeErr is what RemoveStandby reports, after removing what it
+	// reached; staleKept and staleDeleted are each stale removal's options.
+	removeErr    error
+	staleKept    []bool
+	staleDeleted []bool
 }
 
 func (f *fakeRuntime) Capabilities(context.Context) (api.RuntimeCapabilities, error) {
@@ -186,14 +196,16 @@ func (f *fakeRuntime) PromoteStandby(_ context.Context, req api.PromoteRequest) 
 
 func (f *fakeRuntime) RemoveStandby(_ context.Context, ref api.BundleRef) error {
 	f.removed = append(f.removed, ref.BundleID)
-	return nil
+	return f.removeErr
 }
 
-func (f *fakeRuntime) RemoveStaleCopy(_ context.Context, ref api.BundleRef, host string) error {
+func (f *fakeRuntime) RemoveStaleCopy(_ context.Context, ref api.BundleRef, host string, opts api.StaleCopyOptions) error {
 	if f.staleErr != nil {
 		return f.staleErr
 	}
 	f.stale = append(f.stale, ref.BundleID+"@"+host)
+	f.staleKept = append(f.staleKept, opts.KeepVolumes)
+	f.staleDeleted = append(f.staleDeleted, opts.AppDeleted)
 	return nil
 }
 

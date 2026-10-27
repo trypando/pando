@@ -128,6 +128,7 @@ func (s *Service) writeAhead(ctx context.Context, sb state.Standby) (state.Stand
 			"This app's standby changed while Pando was starting it, so it was not started.").
 			WithRemedy("Mark the host lost again to start the standby as it now is.")
 	}
+	ahead.Version = sb.Version + 1 // the row as written: each write is one version on (migration 000094)
 	return ahead, nil
 }
 
@@ -209,9 +210,11 @@ func (s *Service) standbyToStart(ctx context.Context, appID string) (state.Stand
 // RemoveStale removes the copy an app left on the host it was failed over
 // from, once that host is back (R-419): it is removed, never started. That
 // host then becomes where the app's next standby goes, unless the app has
-// one elsewhere already. Whether the host is back is the caller's to say.
-// While the app's promotion is under way nothing is removed and the caller
-// is told to try again, so the host stays marked lost until it is done.
+// one elsewhere already. A deleted app's copy is removed too, keeping its
+// volumes when the delete kept the app's storage (R-204), and its row is
+// then forgotten. Whether the host is back is the caller's to say. While the
+// app's promotion is under way nothing is removed and the caller is told to
+// try again, so the host stays marked lost until it is done.
 func (s *Service) RemoveStale(ctx context.Context, appID, by string) error {
 	unlock := s.lock(appID)
 	defer unlock()
@@ -229,15 +232,22 @@ func (s *Service) RemoveStale(ctx context.Context, appID, by string) error {
 		return errs.Newf(errs.AdapterUnavailable,
 			"The runtime %s, which ran this app before its failover, cannot remove the copy it left.", sb.RuntimeRef)
 	}
-	if err := sr.RemoveStaleCopy(ctx, api.BundleRef{BundleID: appID}, sb.StaleHost); err != nil {
+	fate, err := s.Store.Fate(ctx, appID)
+	if err != nil {
+		return err
+	}
+	opts := api.StaleCopyOptions{AppDeleted: fate.Deleted, KeepVolumes: fate.Deleted && !fate.DiscardStorage}
+	if err := sr.RemoveStaleCopy(ctx, api.BundleRef{BundleID: appID}, sb.StaleHost, opts); err != nil {
 		return err
 	}
 	stale, prev := sb.StaleHost, sb
-	if sb.Host == "" {
+	sb.StaleHost = ""
+	if !fate.Deleted && sb.Host == "" {
 		sb.Host, sb.SpecID = stale, ""
 	}
-	sb.StaleHost = ""
-	s.save(ctx, sb, &prev)
-	_ = s.audit(ctx, "app.standby.stale_removed", appID, by, map[string]any{"host": stale})
+	if s.save(ctx, sb, &prev) && fate.Deleted && sb.Host == "" {
+		s.forget(ctx, appID) // nothing of it is left: its standby went with the delete (clearDeleted)
+	}
+	_ = s.audit(ctx, "app.standby.stale_removed", appID, by, map[string]any{"host": stale, "kept_volumes": opts.KeepVolumes})
 	return nil
 }

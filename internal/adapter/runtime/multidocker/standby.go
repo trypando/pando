@@ -60,6 +60,28 @@ type standbyState struct {
 	// promoting are the bundles being promoted: nothing else touches their
 	// standby meanwhile (R-153, busy).
 	promoting map[string]bool
+	// rooms holds, per host, a promotion's room check through its first
+	// start (holdRoom).
+	rooms map[string]*sync.Mutex
+}
+
+// holdRoom takes the host's room for one promotion: from its check of what
+// the host has free through its first start, so two promotions to one host
+// side by side never both pass the check before either has started (R-422).
+// The release it returns may be called more than once.
+func (s *standbyState) holdRoom(host string) func() {
+	s.mu.Lock()
+	if s.rooms == nil {
+		s.rooms = map[string]*sync.Mutex{}
+	}
+	mu, ok := s.rooms[host]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.rooms[host] = mu
+	}
+	s.mu.Unlock()
+	mu.Lock()
+	return sync.OnceFunc(mu.Unlock)
 }
 
 // begin marks the bundle as being promoted, and reports false when it
@@ -239,13 +261,15 @@ func (a *Adapter) RemoveStandby(ctx context.Context, ref api.BundleRef) error {
 }
 
 // RemoveStaleCopy removes the bundle from host, which it was failed over from
-// (R-419). The app's home is refused: that copy is the app.
-func (a *Adapter) RemoveStaleCopy(ctx context.Context, ref api.BundleRef, hostName string) error {
+// (R-419). The app's home is refused: that copy is the app. A deleted app has
+// no home, and its copy keeps its volumes when the delete kept its storage
+// (R-204).
+func (a *Adapter) RemoveStaleCopy(ctx context.Context, ref api.BundleRef, hostName string, opts api.StaleCopyOptions) error {
 	h, err := a.hostNamed(hostName)
 	if err != nil {
 		return err
 	}
-	if home, ok := a.standby.get(ref.BundleID); (ok && home == hostName) || (!ok && a.cached(ref.BundleID) == h) {
+	if !opts.AppDeleted && a.isHome(ref.BundleID, h) {
 		return errs.Newf(errs.ValidInvalid,
 			"%s is where this app runs now, so its copy there is not stale and is not removed.", hostName)
 	}
@@ -253,7 +277,8 @@ func (a *Adapter) RemoveStaleCopy(ctx context.Context, ref api.BundleRef, hostNa
 	if err != nil {
 		return err
 	}
-	if err := h.rt.Destroy(ctx, ref, api.DestroyOptions{KeepVolumes: false}); err != nil {
+	keep := opts.AppDeleted && opts.KeepVolumes
+	if err := h.rt.Destroy(ctx, ref, api.DestroyOptions{KeepVolumes: keep}); err != nil {
 		return err
 	}
 	if !h.cfg.Control {
@@ -266,6 +291,15 @@ func (a *Adapter) RemoveStaleCopy(ctx context.Context, ref api.BundleRef, hostNa
 	}
 	a.refresh(ctx)
 	return nil
+}
+
+// isHome reports whether h is where the bundle runs now: the host this
+// process promoted it to, or else where placement has it.
+func (a *Adapter) isHome(bundle string, h *host) bool {
+	if home, ok := a.standby.get(bundle); ok {
+		return home == h.cfg.Name
+	}
+	return a.cached(bundle) == h
 }
 
 // promotionCopies is each volume's copies, oldest first, and how many starts
