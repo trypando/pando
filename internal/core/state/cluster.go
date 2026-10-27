@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -81,8 +82,13 @@ type Host struct {
 	// presented the certificate it was issued (migration 000093): it is not
 	// listed (Hosts) and takes no part in the cluster until it does
 	// (ConfirmJoin), and its row is removed after PendingJoinLifetime or when
-	// its name joins again (R-415).
+	// its name joins again with the same key (R-415).
 	Pending bool `json:"-"`
+	// KeySHA256 is the SHA-256 of the public key the host joined with, hex
+	// (migration 000095): a pending join is replaced only by a join with the
+	// same key, the same joining host trying again (R-415). Empty for hosts
+	// recorded before it and for the install's own first host.
+	KeySHA256 string `json:"-"`
 	// NextCertPEM is the certificate the host's latest renewal answered
 	// with, until the host presents it (R-421): a renewal presenting the
 	// certificate before it, for the same key, is answered with it again.
@@ -162,7 +168,7 @@ func (c *Cluster) CreateJoinToken(ctx context.Context, roles []string, maxUses i
 // JoinTokens lists every join token, newest first, with the uses of joins
 // pending past their lifetime given back first (forgetPending).
 func (c *Cluster) JoinTokens(ctx context.Context) ([]JoinToken, error) {
-	if err := forgetPendingJoins(ctx, c.db, ""); err != nil {
+	if err := forgetPendingJoins(ctx, c.db, "", ""); err != nil {
 		return nil, err
 	}
 	rows, err := c.db.Query(ctx, `SELECT `+joinTokenColumns+` FROM join_tokens ORDER BY created_at DESC, id DESC`)
@@ -289,14 +295,17 @@ func (c *Cluster) CheckJoinToken(ctx context.Context, presented secret.Value) (J
 // failed on the joining side.
 const PendingJoinLifetime = 10 * time.Minute
 
-// forgetPending removes the pending joins of the host named $1 and every one
-// older than $2 seconds (R-415): their certificates are revoked, so a joining
-// host that was slow cannot confirm one later, and the uses of their join
-// tokens are given back.
+// forgetPending removes the pending join of the host named $1 whose key's
+// digest is $3, the same joining host trying again, and every one older than
+// $2 seconds (R-415): their certificates are revoked, so a joining host that
+// was slow cannot confirm one later, and the uses of their join tokens are
+// given back. Another machine's pending join of the same name is kept until
+// its lifetime ends (pendingClash).
 const forgetPending = `
 	WITH gone AS (
 	    DELETE FROM cluster_hosts
-	    WHERE confirmed_at IS NULL AND (name = $1 OR joined_at < now() - make_interval(secs => $2))
+	    WHERE confirmed_at IS NULL
+	      AND ((name = $1 AND key_sha256 = $3) OR joined_at < now() - make_interval(secs => $2))
 	    RETURNING id, joined_with, cert_sha256
 	), revoked AS (
 	    INSERT INTO cluster_revoked_certs (cert_sha256, host_id)
@@ -307,20 +316,42 @@ const forgetPending = `
 	FROM (SELECT joined_with, count(*)::int AS n FROM gone WHERE joined_with IS NOT NULL GROUP BY joined_with) g
 	WHERE t.id = g.joined_with`
 
-func forgetPendingJoins(ctx context.Context, q Execer, name string) error {
-	if _, err := q.Exec(ctx, forgetPending, name, PendingJoinLifetime.Seconds()); err != nil {
+// forgetPendingJoins runs forgetPending. An empty name or key forgets only
+// the joins past their lifetime.
+func forgetPendingJoins(ctx context.Context, q Execer, name, keySHA256 string) error {
+	if _, err := q.Exec(ctx, forgetPending, name, PendingJoinLifetime.Seconds(), nullable(keySHA256)); err != nil {
 		return errs.Wrap(errs.Internal, "Could not forget the joins that were never confirmed.", err)
 	}
 	return nil
+}
+
+// pendingClash refuses a join named as another machine's pending join
+// (R-415): cloned machines that both default to one hostname would otherwise
+// evict each other's join back and forth, and neither would finish.
+func pendingClash(ctx context.Context, q querier, name string) error {
+	var pending bool
+	if err := q.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM cluster_hosts WHERE name = $1 AND confirmed_at IS NULL)`, name).Scan(&pending); err != nil {
+		return errs.Wrap(errs.Internal, msgCheckJoinToken, err)
+	}
+	if !pending {
+		return nil
+	}
+	return errs.Newf(errs.StateInvalid,
+		"Another machine is joining the cluster under the name %q right now, so this host's join was refused. Two machines cannot share a host name; cloned machines often do, from the same default hostname.", name).
+		WithRemedy(fmt.Sprintf("Join this host under another name: `pando join --name %s-2`, PANDO_JOIN_NAME, or the host name on the setup screen. Its join token was not spent.", name))
 }
 
 // Join spends one use of the presented token and records h, pending, with
 // the token's roles, in one short transaction (R-415): whatever is slow — the
 // cluster's readiness, the runtime's checks, issuing the host's certificates
 // — is done before it (CheckJoinToken), so the token's row is locked only
-// for the spend and the insert. A pending join of the same name, or one past
-// PendingJoinLifetime, is forgotten first and its use given back, so a join
-// that failed on the joining side can be tried again under its name. When
+// for the spend and the insert. A pending join of the same name and the same
+// key (h.KeySHA256), or one past PendingJoinLifetime, is forgotten first and
+// its use given back, so a join that failed on the joining side can be tried
+// again under its name. A pending join of the same name and another key is
+// another machine's, and this join is refused while it lasts (pendingClash).
+// When
 // recording the host fails, the use is given back too. The host is listed
 // once it confirms the join (ConfirmJoin).
 func (c *Cluster) Join(ctx context.Context, presented secret.Value, h Host) (JoinToken, Host, error) {
@@ -334,7 +365,10 @@ func (c *Cluster) Join(ctx context.Context, presented secret.Value, h Host) (Joi
 	if err != nil {
 		return JoinToken{}, Host{}, err
 	}
-	if err := forgetPendingJoins(ctx, tx, h.Name); err != nil {
+	if err := forgetPendingJoins(ctx, tx, h.Name, h.KeySHA256); err != nil {
+		return JoinToken{}, Host{}, err
+	}
+	if err := pendingClash(ctx, tx, h.Name); err != nil {
 		return JoinToken{}, Host{}, err
 	}
 	t, err := spend(ctx, tx, tokenID)
@@ -400,13 +434,13 @@ func (c *Cluster) Fresh(ctx context.Context) (accounts, apps bool, err error) {
 const msgRecordHost = "Could not record the host."
 
 const hostColumns = `id, name, roles, address, cert_sha256, platform, version, coalesce(joined_with, ''), joined_at, last_seen_at, lost_at IS NOT NULL, coalesce(prev_cert_sha256, ''),
-	ping_address, ping_cert_sha256, confirmed_at IS NULL, coalesce(next_cert_pem, '')`
+	ping_address, ping_cert_sha256, confirmed_at IS NULL, coalesce(next_cert_pem, ''), coalesce(key_sha256, '')`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
 	var next string
 	err := row.Scan(&h.ID, &h.Name, &h.Roles, &h.Address, &h.CertSHA256, &h.Platform, &h.Version, &h.JoinedWith, &h.JoinedAt, &h.LastSeenAt, &h.Lost, &h.PrevCertSHA256,
-		&h.PingAddress, &h.PingCertSHA256, &h.Pending, &next)
+		&h.PingAddress, &h.PingCertSHA256, &h.Pending, &next, &h.KeySHA256)
 	if next != "" {
 		h.NextCertPEM = []byte(next)
 	}
@@ -458,10 +492,10 @@ func addHost(ctx context.Context, q querier, h Host, pending bool) (Host, error)
 		h.ID = id.New(id.Host)
 	}
 	row := q.QueryRow(ctx, `
-		INSERT INTO cluster_hosts (id, name, roles, address, cert_sha256, platform, version, joined_with, confirmed_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $9 THEN NULL ELSE now() END)
+		INSERT INTO cluster_hosts (id, name, roles, address, cert_sha256, platform, version, joined_with, confirmed_at, key_sha256)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $9 THEN NULL ELSE now() END, $10)
 		RETURNING `+hostColumns,
-		h.ID, h.Name, h.Roles, h.Address, h.CertSHA256, h.Platform, h.Version, nullable(h.JoinedWith), pending)
+		h.ID, h.Name, h.Roles, h.Address, h.CertSHA256, h.Platform, h.Version, nullable(h.JoinedWith), pending, nullable(h.KeySHA256))
 	out, err := scanHost(row)
 	if err != nil {
 		if isUniqueViolation(err) {

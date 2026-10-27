@@ -232,7 +232,8 @@ const DefaultJoinCheckTimeout = 30 * time.Second
 // spend and the record are one short transaction (state.Cluster.Join). The
 // host is listed once it presents the certificate it was issued
 // (Service.Peers, which the joining host asks right after writing its files);
-// until then a join of the same name replaces it.
+// until then a join of the same name and key replaces it, and one of the
+// same name and another key, another machine's, is refused.
 func (s *Service) Join(ctx context.Context, req JoinRequest) (JoinResult, error) {
 	if err := CheckJoinRequest(req); err != nil {
 		return JoinResult{}, err
@@ -283,6 +284,10 @@ func (s *Service) issueJoin(ctx context.Context, req JoinRequest, t state.JoinTo
 		return res, state.Host{}, err
 	}
 	res.Certificate = cert
+	keySHA, err := csrKeySHA256(req.CSR)
+	if err != nil {
+		return res, state.Host{}, err
+	}
 	if res.HostClientCert, res.HostClientKey, err = s.Authority.IssueHostClient(hostID, s.now()); err != nil {
 		return res, state.Host{}, errs.Wrap(errs.Internal, "Pando could not issue the certificate the joining host checks other hosts with.", err)
 	}
@@ -295,7 +300,7 @@ func (s *Service) issueJoin(ctx context.Context, req JoinRequest, t state.JoinTo
 		}
 	}
 	return res, state.Host{
-		ID: hostID, Name: req.Name, Address: req.Address, CertSHA256: sha,
+		ID: hostID, Name: req.Name, Address: req.Address, CertSHA256: sha, KeySHA256: keySHA,
 		Platform: req.Platform, Version: req.Version,
 	}, ctx.Err()
 }

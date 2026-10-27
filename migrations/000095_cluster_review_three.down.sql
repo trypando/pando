@@ -1,0 +1,1 @@
+ALTER TABLE cluster_hosts DROP COLUMN IF EXISTS key_sha256;

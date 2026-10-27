@@ -398,7 +398,23 @@ func TestR415_AJoinThatFailsOnTheJoiningHostCanBeTriedAgain(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	require.Equal(t, done.HostID, list[0].ID)
-	require.Len(t, c.store.revoked, 2, "the unfinished joins' certificates are refused")
+	require.Len(t, c.store.revoked, 1, "the unfinished join's certificate is refused")
+	require.NotEmpty(t, list[0].KeySHA256, "the host is known by the key it joined with")
+	require.NoFileExists(t, filepath.Join(j.Files.Dir, hosts.JoinKeyFile), "the key is host.key once joined")
+
+	// Another machine under the same name, with its own key, is refused
+	// while a join of that name is pending, rather than evicting it.
+	c.store.live["jt_01more.plain"] = &state.JoinToken{ID: "jt_01more", Roles: []string{"app"}, MaxUses: 2}
+	other := hosts.Encode(c.srv.URL, c.svc.Authority.Hash(), secret.New("jt_01more.plain"))
+	c.peersDown.Store(true)
+	pending := joiningHost(t)
+	_, err = pending.Join(ctx, other, "edge-3")
+	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err), "%v", err)
+	_, err = joiningHost(t).Join(ctx, other, "edge-3")
+	require.Equal(t, errs.StateInvalid, errs.CodeOf(err), "a second machine of the same name")
+	c.peersDown.Store(false)
+	_, err = pending.Join(ctx, other, "edge-3")
+	require.NoError(t, err, "the first machine finishes its own join")
 }
 
 // hung answers once its context ends.

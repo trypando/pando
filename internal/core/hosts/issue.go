@@ -100,6 +100,22 @@ func csrKey(csrPEM []byte) (any, error) {
 	return csr.PublicKey, nil
 }
 
+// csrKeySHA256 is the SHA-256 of the public key in a host's certificate
+// request, hex: what tells a joining host trying again from another machine
+// joining under the same name (R-415, state.Host.KeySHA256).
+func csrKeySHA256(csrPEM []byte) (string, error) {
+	pub, err := csrKey(csrPEM)
+	if err != nil {
+		return "", err
+	}
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return "", errs.Wrap(errs.ValidInvalid, "The host's certificate request holds a key Pando cannot use.", err)
+	}
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 // IssueHostClient issues the certificate the host hostID checks the other
 // hosts with (hostagent.Authorities.IssueHostClient, R-421), as PEM: it
 // carries the host's ID, which is who its pings are from.

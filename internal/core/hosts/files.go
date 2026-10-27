@@ -1,6 +1,9 @@
 package hosts
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +36,11 @@ const (
 	// HostNextKeyFile is the key a renewal not yet answered and written asks
 	// a certificate for (HostRenewal.nextKey, R-421).
 	HostNextKeyFile = "host-next.key"
+	// JoinKeyFile is the key a join not yet finished asks a certificate for,
+	// kept so a join tried again asks for the same one and replaces its own
+	// pending join rather than being taken for another machine of the same
+	// name (R-415, Joiner.Join).
+	JoinKeyFile = "join.key"
 )
 
 // JoinFiles is where a joining host writes what it was given.
@@ -139,4 +147,43 @@ func (f JoinFiles) write(j Joined, res JoinResult, keyPEM []byte) error {
 		}
 	}
 	return nil
+}
+
+// joinKey is the key this host joins with, and a certificate request for it
+// named name: the one a join tried before left in JoinKeyFile, else a new one,
+// written there before the join is sent (R-415).
+func (f JoinFiles) joinKey(name string) (*ecdsa.PrivateKey, []byte, error) {
+	path := filepath.Join(f.Dir, JoinKeyFile)
+	key, err := readECKey(path)
+	if err != nil {
+		if key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+			return nil, nil, errs.Wrap(errs.Internal, "Pando could not make this host's key.", err)
+		}
+		if err = writeKey(path, key); err != nil {
+			return nil, nil, errs.Wrap(errs.Internal, fmt.Sprintf("Pando could not write %s, the key this host joins with.", path), err).
+				WithRemedy("Make the directory writable by Pando and start the join again.")
+		}
+	}
+	csr, err := hostCSR(key, name)
+	if err != nil {
+		return nil, nil, errs.Wrap(errs.Internal, "Pando could not make this host's certificate request.", err)
+	}
+	return key, csr, nil
+}
+
+func writeKey(path string, key *ecdsa.PrivateKey) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	keyPEM, err := keyPEMOf(key)
+	if err != nil {
+		return err
+	}
+	return keyfile.Replace(path, keyPEM)
+}
+
+// forgetJoinKey removes JoinKeyFile once the join is confirmed: the key is
+// host.key from then on.
+func (f JoinFiles) forgetJoinKey() {
+	_ = os.Remove(filepath.Join(f.Dir, JoinKeyFile))
 }

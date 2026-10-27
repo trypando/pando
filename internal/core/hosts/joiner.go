@@ -110,9 +110,9 @@ func (j *Joiner) Join(ctx context.Context, token, name string) (Joined, error) {
 		return Joined{}, err
 	}
 
-	key, csr, err := newHostKey(name)
+	key, csr, err := j.Files.joinKey(name)
 	if err != nil {
-		return Joined{}, errs.Wrap(errs.Internal, "Pando could not make this host's key.", err)
+		return Joined{}, err
 	}
 	res, err := j.post(ctx, d, WireJoinRequest{
 		Secret: d.Secret.Reveal(), Name: name, CSR: string(csr),
@@ -151,6 +151,7 @@ func (j *Joiner) Join(ctx context.Context, token, name string) (Joined, error) {
 		j.Files.unmark()
 		return Joined{}, err
 	}
+	j.Files.forgetJoinKey()
 	return joined, nil
 }
 

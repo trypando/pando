@@ -92,7 +92,7 @@ func (f *fakeStore) Join(ctx context.Context, presented secret.Value, h state.Ho
 	if err != nil {
 		return t, state.Host{}, err
 	}
-	f.forgetPending(h.Name)
+	f.forgetPending(h.Name, h.KeySHA256)
 	live := f.live[presented.Reveal()]
 	if live.Uses >= live.MaxUses {
 		return state.JoinToken{}, state.Host{}, errs.New(errs.AuthTokenInvalid, "This join token is not valid.")
@@ -111,10 +111,13 @@ func (f *fakeStore) Join(ctx context.Context, presented secret.Value, h state.Ho
 	return *live, h, nil
 }
 
-func (f *fakeStore) forgetPending(name string) {
+// forgetPending forgets the pending join of the host named name joining with
+// the same key, as state.Cluster.Join does: another key's is another
+// machine's, and is kept.
+func (f *fakeStore) forgetPending(name, key string) {
 	kept := f.hosts[:0]
 	for _, h := range f.hosts {
-		if !h.Pending || h.Name != name {
+		if !h.Pending || h.Name != name || key == "" || h.KeySHA256 != key {
 			kept = append(kept, h)
 			continue
 		}
