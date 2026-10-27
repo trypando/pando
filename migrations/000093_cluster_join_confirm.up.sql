@@ -9,7 +9,7 @@
 -- token's use given back. Hosts recorded before this migration, and the
 -- install's own first host, are confirmed.
 ALTER TABLE cluster_hosts ADD COLUMN confirmed_at timestamptz;
-UPDATE cluster_hosts SET confirmed_at = joined_at;
+UPDATE cluster_hosts SET confirmed_at = joined_at WHERE confirmed_at IS NULL;
 CREATE INDEX cluster_hosts_pending_idx ON cluster_hosts (joined_at) WHERE confirmed_at IS NULL;
 
 -- The certificate the host's latest renewal answered with, PEM, kept until

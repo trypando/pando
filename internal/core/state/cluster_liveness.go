@@ -28,7 +28,7 @@ func (c *Cluster) MarkHostLost(ctx context.Context, hostID, by string) (bool, er
 		return false, errs.Wrap(errs.Internal, "Could not record that the host is lost.", err)
 	}
 	if !exists {
-		return false, errs.Newf(errs.NotFound, "There is no host %s in the cluster.", hostID)
+		return false, errNoHost(hostID)
 	}
 	return newly, nil
 }
@@ -111,7 +111,7 @@ func (c *Cluster) RotateHostCert(ctx context.Context, hostID, next string) error
 			return errs.Wrap(errs.Internal, "Could not record the host's renewed certificate.", err)
 		}
 		if !exists {
-			return errs.Newf(errs.NotFound, "There is no host %s in the cluster.", hostID)
+			return errNoHost(hostID)
 		}
 	}
 	return nil
@@ -130,7 +130,7 @@ func (c *Cluster) SetHostPing(ctx context.Context, hostID, address, certSHA256 s
 		return errs.Wrap(errs.Internal, "Could not record where the host answers the cluster's liveness checks.", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return errs.Newf(errs.NotFound, "There is no host %s in the cluster.", hostID)
+		return errNoHost(hostID)
 	}
 	return nil
 }

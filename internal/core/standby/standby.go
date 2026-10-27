@@ -260,7 +260,13 @@ func (s *Service) visit(ctx context.Context, app state.StandbyApp, doc policy.Do
 	if app.State == state.StateFailed {
 		return // R-151: left as it is, and never started
 	}
+	s.refresh(ctx, sr, plan, sp, app, ref, doc)
+}
 
+// refresh places or refreshes an app's standby, ships its volumes when they
+// are due, and saves what happened (R-419, R-420).
+func (s *Service) refresh(ctx context.Context, sr api.StandbyRuntime, plan api.BundlePlan, sp *spec.AppSpec,
+	app state.StandbyApp, ref string, doc policy.Document) {
 	sb, prev := state.Standby{AppID: app.AppID}, app.Standby
 	if prev != nil {
 		sb = *prev

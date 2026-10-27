@@ -44,6 +44,11 @@ type IssuedJoinToken struct {
 	Secret secret.Value `json:"secret"`
 }
 
+// errNoHost is a host ID with no row in cluster_hosts.
+func errNoHost(hostID string) error {
+	return errs.Newf(errs.NotFound, "There is no host %s in the cluster.", hostID)
+}
+
 // Host is one machine in the install's cluster (R-414).
 type Host struct {
 	ID         string     `json:"id"`
@@ -491,7 +496,7 @@ func (c *Cluster) Hosts(ctx context.Context) ([]Host, error) {
 func (c *Cluster) Host(ctx context.Context, hostID string) (Host, error) {
 	h, err := scanHost(c.db.QueryRow(ctx, `SELECT `+hostColumns+` FROM cluster_hosts WHERE id = $1 AND confirmed_at IS NOT NULL`, hostID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return h, errs.Newf(errs.NotFound, "There is no host %s in the cluster.", hostID)
+		return h, errNoHost(hostID)
 	}
 	if err != nil {
 		return h, errs.Wrap(errs.Internal, "Could not read the host.", err)
@@ -545,7 +550,7 @@ func (c *Cluster) RemoveHost(ctx context.Context, hostID string) (Host, error) {
 	defer func() { _ = tx.Rollback(ctx) }()
 	h, err := scanHost(tx.QueryRow(ctx, `SELECT `+hostColumns+` FROM cluster_hosts WHERE id = $1 FOR UPDATE`, hostID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return h, errs.Newf(errs.NotFound, "There is no host %s in the cluster.", hostID)
+		return h, errNoHost(hostID)
 	}
 	if err != nil {
 		return h, errs.Wrap(errs.Internal, msgRemoveHost, err)

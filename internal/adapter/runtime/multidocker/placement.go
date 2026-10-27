@@ -344,25 +344,7 @@ func choose(candidates []candidate, n api.Fit, disk int64, order []*host) (*host
 		}
 	}
 	if len(ok) == 0 {
-		if len(candidates) == 0 {
-			return nil, errs.New(errs.AdapterUnavailable, "No Docker host is open to new apps.").
-				WithRemedy("Open a host to new apps in the Docker hosts runtime's settings, or add one.")
-		}
-		if err := noDisk(candidates, n, disk); err != nil {
-			return nil, err
-		}
-		largest := candidates[0]
-		for _, c := range candidates[1:] {
-			if c.free.MemoryBytes > largest.free.MemoryBytes {
-				largest = c
-			}
-		}
-		return nil, errs.Newf(errs.CapacityWouldOversubscribe,
-			"No Docker host has room for this app: it asks for %s of memory and %s of CPU, and the most any one host has free is %s of memory and %s of CPU, on %s.",
-			bytes(n.MemoryBytes), millis(n.CPUMillis), bytes(largest.free.MemoryBytes), millis(largest.free.CPUMillis), largest.host.cfg.Name).
-			WithDetail("largest_free_memory_bytes", largest.free.MemoryBytes).
-			WithDetail("largest_free_cpu_millis", largest.free.CPUMillis).
-			WithRemedy("Lower what the app asks for, stop or delete an app on a host, or add a host.")
+		return nil, noPlaceFor(candidates, n, disk)
 	}
 	sort.SliceStable(ok, func(i, j int) bool {
 		a, b := ok[i], ok[j]
@@ -375,6 +357,30 @@ func choose(candidates []candidate, n api.Fit, disk int64, order []*host) (*host
 		return rank[a.host] < rank[b.host]
 	})
 	return ok[0].host, nil
+}
+
+// noPlaceFor is choose's refusal when no candidate fits: none open, no disk, or
+// not enough CPU and memory on any one host, naming the roomiest (R-242).
+func noPlaceFor(candidates []candidate, n api.Fit, disk int64) error {
+	if len(candidates) == 0 {
+		return errs.New(errs.AdapterUnavailable, "No Docker host is open to new apps.").
+			WithRemedy("Open a host to new apps in the Docker hosts runtime's settings, or add one.")
+	}
+	if err := noDisk(candidates, n, disk); err != nil {
+		return err
+	}
+	largest := candidates[0]
+	for _, c := range candidates[1:] {
+		if c.free.MemoryBytes > largest.free.MemoryBytes {
+			largest = c
+		}
+	}
+	return errs.Newf(errs.CapacityWouldOversubscribe,
+		"No Docker host has room for this app: it asks for %s of memory and %s of CPU, and the most any one host has free is %s of memory and %s of CPU, on %s.",
+		bytes(n.MemoryBytes), millis(n.CPUMillis), bytes(largest.free.MemoryBytes), millis(largest.free.CPUMillis), largest.host.cfg.Name).
+		WithDetail("largest_free_memory_bytes", largest.free.MemoryBytes).
+		WithDetail("largest_free_cpu_millis", largest.free.CPUMillis).
+		WithRemedy("Lower what the app asks for, stop or delete an app on a host, or add a host.")
 }
 
 // noDisk is the refusal when some host has the CPU and memory for the app
