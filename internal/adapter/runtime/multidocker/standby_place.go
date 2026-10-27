@@ -2,6 +2,7 @@ package multidocker
 
 import (
 	"context"
+	"slices"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/errs"
@@ -25,6 +26,10 @@ type standbyRequest struct {
 	// as BundlePlan.Failover carries it. CPU and memory may then be placed
 	// past the reservation; disk never is (R-242).
 	AllowOversubscription bool
+
+	// Prefer is the host the standby is on now: kept while it qualifies
+	// (standbyAsk.Prefer).
+	Prefer string
 }
 
 // standbyChoice is where a standby goes, or why it goes nowhere.
@@ -63,6 +68,7 @@ func (a *Adapter) chooseStandbyHost(ctx context.Context, req standbyRequest, exi
 		Primary:       req.Primary,
 		Need:          amount{CPUMillis: req.Need.CPUMillis, MemoryBytes: req.Need.MemoryBytes, DiskBytes: req.DiskBytes},
 		Oversubscribe: req.AllowOversubscription,
+		Prefer:        req.Prefer,
 	})
 	if miss != nil {
 		return standbyChoice{NoRoom: miss.envelope()}, nil
@@ -84,29 +90,28 @@ func (a *Adapter) anyDown(rooms []hostRoom, primary string) bool {
 // placeStandby is where ApplyStandby puts a bundle's standby (R-419): the
 // host it was on before, prefer, while that host still qualifies, so its
 // copies are not shipped again from nothing; otherwise the host the failover
-// reservation chooses (R-422). No room is returned as the notice's error, and
-// the app keeps running without a standby.
+// reservation chooses (R-422). Either way it is a placement the reservation
+// allows: prefer is kept only while the standby fits there past what that
+// host keeps for the loss of the app's host. The bundle's own standby is left
+// out of what is already placed, since this places it again. No room is
+// returned as the notice's error, and the app keeps running without a
+// standby.
 func (a *Adapter) placeStandby(ctx context.Context, home *host, prefer string, plan api.BundlePlan) (*host, error) {
-	if h := a.byName(prefer); h != nil && h != home && !h.cfg.NoPlacement {
-		return h, nil
-	}
 	if !a.otherOpenHost(home) {
 		return nil, errs.Newf(errs.AdapterUnavailable,
 			"No Docker host other than %s is open to new apps, so this app has nowhere to keep a standby.", home.cfg.Name).
 			WithRemedy("Open another host to new apps in the Docker hosts runtime's settings, or add one.")
 	}
-	var existing []standbyLoad
-	if a.standbys != nil {
-		var err error
-		if existing, err = a.standbys(ctx); err != nil {
-			return nil, err
-		}
+	existing, err := a.standbyLoads(ctx)
+	if err != nil {
+		return nil, err
 	}
-	n := need(plan)
+	existing = slices.DeleteFunc(existing, func(s standbyLoad) bool { return s.App == plan.BundleID })
 	choice, err := a.chooseStandbyHost(ctx, standbyRequest{
-		App: plan.BundleID, Primary: home.cfg.Name, Need: n,
+		App: plan.BundleID, Primary: home.cfg.Name, Need: need(plan),
 		DiskBytes:             standbyDisk(diskLimit(plan), 0),
 		AllowOversubscription: plan.Failover.AllowOversubscription,
+		Prefer:                prefer,
 	}, existing)
 	if err != nil {
 		return nil, err

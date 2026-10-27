@@ -9,7 +9,7 @@ vi.hoisted(() => {
 import { serverRender } from '../ui/testing';
 import type { PolicyPage } from '../app/route';
 import { PolicyPageView } from './PolicyPages';
-import { PolicyDraftContext, usePolicyDraft } from './policyDraft';
+import { PolicyDraftContext, changedFields, usePolicyDraft } from './policyDraft';
 
 function Harness({ page }: Readonly<{ page: PolicyPage }>) {
   const draft = usePolicyDraft(true, true);
@@ -122,6 +122,16 @@ describe('Apps (R-393, R-398, R-244, R-408)', () => {
     expect(switchOf(render('apps', { stop_orphaned_apps: true }), label)).toContain('checked=""');
     expect(switchOf(render('apps', { stop_orphaned_apps: false }), label)).not.toContain('checked=""');
     expect(render('apps', {})).toContain('Administrators are told either way.');
+  });
+});
+
+describe('Deployments, warm standby', () => {
+  it('keeps a standby when policy does not say, and not when it says false (R-419)', () => {
+    const label = 'Warm standby';
+    expect(switchOf(render('deployments', {}), label)).toContain('checked=""');
+    expect(switchOf(render('deployments', { standby: false }), label)).not.toContain('checked=""');
+    expect(changedFields({}, { standby: true })).toEqual([]);
+    expect(changedFields({}, { standby: false })).toEqual(['standby']);
   });
 });
 

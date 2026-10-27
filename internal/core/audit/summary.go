@@ -98,9 +98,10 @@ var summaries = map[string]string{
 	"oauth.approve":       "Approved an MCP client sign-in",
 	"oauth.denied":        "Refused an MCP client sign-in",
 
-	"cluster.failover":   "Started the standby of {app}",
-	"cluster.host.fence": "A host stopped its apps, cut off from the cluster",
-	"cluster.host.lost":  "Took a host for lost",
+	"cluster.failover":      "Started the standby of {app}",
+	"cluster.host.fence":    "A host stopped its apps, cut off from the cluster",
+	"cluster.host.lost":     "Took a host for lost",
+	"cluster.host.returned": "A lost host came back",
 
 	"deploy.approve":   "Approved a deployment of {app}",
 	"deploy.expire":    "A deployment request for {app} expired",

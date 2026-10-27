@@ -29,10 +29,20 @@ type Homes interface {
 	AppsHomedOn(ctx context.Context, hostID string) ([]HomedApp, error)
 }
 
+// Returns is what a lost host coming back needs (R-419): the apps failed
+// over away from it, whose copies it still holds, and removing each copy,
+// never restarting it (R-148 does not apply to a copy that was failed over).
+// The standby slice implements it, with Failover.
+type Returns interface {
+	AppsLeftOn(ctx context.Context, hostID string) ([]string, error)
+	RemoveStale(ctx context.Context, appID string) error
+}
+
 // Store is the slice of state.Cluster the service uses.
 type Store interface {
 	Host(ctx context.Context, hostID string) (state.Host, error)
 	MarkHostLost(ctx context.Context, hostID, by string) (bool, error)
+	ClearHostLost(ctx context.Context, hostID string) error
 	LostHosts(ctx context.Context) (map[string]bool, error)
 	RecordHostFence(ctx context.Context, hostID, fenceID string) (bool, error)
 }
@@ -101,6 +111,10 @@ type Service struct {
 	Logger   *zap.Logger
 	Homes    Homes
 	Failover Failover
+	// Returns removes a returned host's copies before its lost mark is
+	// cleared. Nil leaves a lost host marked: without it nothing would
+	// remove the copies, and a host still marked lost starts nothing.
+	Returns Returns
 
 	// Answering reports whether the host's agent answers a probe now. A
 	// host that answers is not gone, and is not marked lost by hand: its
@@ -150,6 +164,38 @@ func (s *Service) declare(ctx context.Context, hostID string) {
 	}
 	s.logger().Warn("a majority of the cluster's hosts has not reached a host; took it for lost",
 		zap.String("host_id", hostID), zap.Strings("started", out.Started), zap.Int("skipped", len(out.Skipped)))
+}
+
+// back is the leader finding a host marked lost reachable again (R-419):
+// the copies it holds of apps failed over away from it are removed, never
+// started, and only once every one is gone is its lost mark cleared, so a
+// removal that fails is tried again the next round. An app that was not
+// failed over (its promotion failed, or it had no standby) is not touched:
+// it is still homed there, and the reconciler starts it again (R-148).
+func (s *Service) back(ctx context.Context, hostID string) error {
+	if s.Returns == nil {
+		return nil
+	}
+	apps, err := s.Returns.AppsLeftOn(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	for _, app := range apps {
+		if err := s.Returns.RemoveStale(ctx, app); err != nil {
+			return err
+		}
+	}
+	if err := s.Store.ClearHostLost(ctx, hostID); err != nil {
+		return err
+	}
+	if apps == nil {
+		apps = []string{}
+	}
+	s.write(ctx, system, audit.Event{
+		Action: "cluster.host.returned", TargetKind: "host", TargetID: hostID,
+		Detail: map[string]any{"removed_copies": apps},
+	})
+	return nil
 }
 
 func (s *Service) lose(ctx context.Context, h state.Host, by Actor, trigger string) (HostLoss, error) {

@@ -3,6 +3,7 @@ package multidocker
 import (
 	"context"
 	"io"
+	"strconv"
 	"sync"
 	"time"
 
@@ -42,6 +43,7 @@ type standbyHost interface {
 	MarkHome(ctx context.Context, bundleID string, at time.Time) error
 	ClearHome(ctx context.Context, bundleID string) error
 	HomeMarks(ctx context.Context) (map[string]time.Time, error)
+	StandbyLoads(ctx context.Context) ([]docker.StandbyLoad, error)
 }
 
 var (
@@ -141,21 +143,27 @@ func (a *Adapter) ApplyStandby(ctx context.Context, req api.StandbyRequest) (api
 	if err := a.ensureAgent(ctx, target); err != nil {
 		return api.StandbyHandle{}, err
 	}
-	p := standbyPlan(req.Bundle)
+	p := standbyPlan(req.Bundle, home.cfg.Name)
 	if err := side.ApplyStopped(ctx, p); err != nil {
 		return api.StandbyHandle{}, err
 	}
-	return api.StandbyHandle{Host: target.cfg.Name}, nil
+	return api.StandbyHandle{Host: target.cfg.Name, Home: home.cfg.Name}, nil
 }
 
 // standbyPlan is the app's plan under the standby's bundle name, with its own
-// copy of the labels so the app's are not changed.
-func standbyPlan(p api.BundlePlan) api.BundlePlan {
-	labels := make(map[string]string, len(p.Labels)+1)
+// copy of the labels so the app's are not changed. The pando.standby* labels
+// are what the failover reservation reads back from the standby's containers
+// (listStandbys, R-422): the app, the host it runs on, its priority and the
+// disk its copies are counted at.
+func standbyPlan(p api.BundlePlan, primary string) api.BundlePlan {
+	labels := make(map[string]string, len(p.Labels)+4)
 	for k, v := range p.Labels {
 		labels[k] = v
 	}
 	labels["pando.standby"] = p.BundleID
+	labels["pando.standby.primary"] = primary
+	labels["pando.standby.priority"] = strconv.Itoa(p.Failover.Priority)
+	labels["pando.standby.disk"] = strconv.FormatInt(standbyDisk(diskLimit(p), 0), 10)
 	p.Labels = labels
 	p.BundleID = standbyBundle(p.BundleID)
 	p.FirstDeploy = false
@@ -224,6 +232,9 @@ func (a *Adapter) PromoteStandby(ctx context.Context, req api.PromoteRequest) (a
 	}
 	side, err := standbyOf(target)
 	if err != nil {
+		return api.PromoteResult{}, err
+	}
+	if err := a.roomToStart(ctx, target, req.Bundle); err != nil {
 		return api.PromoteResult{}, err
 	}
 	copies, attempts, err := a.promotionCopies(ctx, side, req.Bundle)

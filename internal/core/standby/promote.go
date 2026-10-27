@@ -1,6 +1,7 @@
 package standby
 
 import (
+	"cmp"
 	"context"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -45,8 +46,13 @@ func (s *Service) Promote(ctx context.Context, appID, by string) (api.PromoteRes
 		return got, err
 	}
 	now := s.now()
-	sb.StaleHost, sb.PromotedAt = got.FormerHost, &now
-	sb.Host, sb.SpecID, sb.Copies, sb.ShippedAt, sb.LastError = "", "", 0, nil, ""
+	// Where the app ran before holds a stale copy. The runtime says when it
+	// knows; the home recorded at the last ApplyStandby says otherwise, so a
+	// leader that restarted since still removes it when the host returns.
+	sb.StaleHost, sb.PromotedAt = cmp.Or(got.FormerHost, sb.Home), &now
+	sb.Home = cmp.Or(got.Host, sb.Host)
+	sb.Host, sb.SpecID, sb.Copies, sb.ShippedAt = "", "", 0, nil
+	cleared(&sb)
 	s.save(ctx, sb)
 	s.audit(ctx, "app.standby.promote", appID, by, map[string]any{
 		"host": got.Host, "former_host": got.FormerHost, "copy": got.Copy, "fell_back": got.FellBack, "healthy": got.Healthy,

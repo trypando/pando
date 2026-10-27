@@ -259,8 +259,7 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   the next tried.
 - **Capacity details** gain, per host row, `failover`: `kept_free_for` (lost host, CPU, memory and a
   sentence such as "b's failover needs 20.00 cores and 40.0 GB free on c."), `reserved_cpu_millis`,
-  `reserved_memory_bytes` and `standby_disk_bytes` (R-243), once the standby code sets
-  `Adapter.standbys`.
+  `reserved_memory_bytes` and `standby_disk_bytes` (R-243), from the standbys the hosts hold.
 - **Not yet:** a new app's own placement (`choose` in `placement.go`) does not subtract what a host
   keeps free for failover, so a new running app can take reserved room (O-67). Doing so would refuse a
   deploy for room kept for standbys, which R-422 does not say; left for a decision.
@@ -468,3 +467,53 @@ cluster counts one host fewer, which can only keep it under three, never cause a
   it: an app host runs no edge.
 - **Not verified on a real cluster yet**: Traefik's reading of a certificate file rewritten in its
   watched directory, and of the 0600 key under rootless Docker.
+
+### As built: wiring standby, capacity and fencing
+
+- **The reservation reads the standbys already placed (R-422).** `ApplyStandby` writes the standby's
+  plan labels `pando.standby` (the app), `pando.standby.primary` (the app's host then),
+  `pando.standby.priority` (`Failover.Priority`) and `pando.standby.disk` (what its copies are counted
+  at); the Docker adapter puts every `pando.standby*` plan label on the standby's containers as
+  `io.pando.standby*`, and a container whose standby labels differ from the plan's is made again.
+  `docker.StandbyLoads` lists one host's standbys from a container list (stopped ones included),
+  summing the `io.pando.limit.*` labels; `multidocker.listStandbys` joins every host's into the
+  reservation's `standbyLoad`s. A host that does not answer is left out: it takes no new standby, and
+  its standbys start nowhere while it is down. `Adapter.standbys` is now only a test override.
+- **Keeping a standby where it is** (`standbyAsk.Prefer`): the current host is kept while it is open,
+  is not the app's own, and has room for the standby past what it keeps for the app's host's loss,
+  the app's own standby not counted (it is being placed again). Otherwise the reservation chooses, as
+  for a new one. Keeping it is therefore always a placement the reservation allows, so it never breaks
+  the loss of any one host. This replaced keeping it whenever it was listed and open.
+- **Policy reaches placement.** The standby pass sets `Failover.AllowOversubscription` from host
+  policy on the plan it hands `ApplyStandby`; `Shape`, like the reconciler, sends false.
+- **No room is a notice (R-422).** Migration 000089 adds `app_standbys.last_error_code` and
+  `last_error_remedy` beside `last_error`. `standby.Service.Standby` (the notice's `Rooms`) returns
+  the message and remedy when the last placement failed with `CAPACITY_WOULD_OVERSUBSCRIBE` and the app
+  has no standby; an app that keeps an older standby because a refresh found no room is not told it
+  has none. Nothing is refused: the app runs as deployed.
+- **An app's home is recorded [P].** `api.StandbyHandle.Home` is where the bundle runs;
+  `app_standbys.home_host` keeps it, and a promotion sets it to the standby's host. It is how the
+  leader knows which apps a lost host held, in the runtime's host names, which are `cluster_hosts`
+  names (`hosts.Runtime.Sync`). Asking the runtime instead would fail exactly when it matters: a new
+  leader cannot see a lost host's bundles. An app with no standby row is not listed for a lost host;
+  one whose placement never succeeded has no home recorded. A promotion whose runtime did not name
+  the former host takes the recorded home as the stale one.
+- **Fencing calls standby (R-421).** `standby.Failover` implements `liveness.Homes`, `Failover` and
+  `Returns` over `*standby.Service`, `state.Standbys` and `state.Cluster`; `cmd/pando` sets all three on
+  the host-loss service. `AppsHomedOn` lists a host's apps highest `availability.priority` first, then
+  by app ID, the order `failoverOrder` uses, and the liveness pass promotes them one after another.
+  `multidocker.PromoteStandby` refuses (`CAPACITY_WOULD_OVERSUBSCRIBE`) a standby that does not fit
+  its host's free CPU and memory now, counting what the bundle already runs there, before touching
+  anything, so past the reservation the next app in order still starts. A failed app is skipped
+  (R-151).
+- **A returning host (R-419).** Each round the leader reads which hosts are lost (at any cluster size,
+  so a host marked lost by hand in a cluster of two comes back too). A lost host that answered the
+  probe, and that the majority no longer takes for lost, is back: `standby.Service.RemoveStale` runs
+  for each app whose `stale_host` it is, then `Cluster.ClearHostLost`, then `cluster.host.returned` is
+  audited with the apps whose copies went. A failure keeps the mark and is retried next round. Nothing
+  is started on it; an app that was not failed over is still homed there and the reconciler restarts
+  it (R-148). Without `Returns` wired a lost host stays marked.
+- **Console.** Host policy `standby` is the *Warm standby* switch on the Deployments policy page, on
+  when unset, beside *Failover oversubscription*.
+- **Migration number.** 000089 was the next free number on `cluster-design` when this was built; a
+  parallel slice adding its own 000089 renumbers one of them at merge.

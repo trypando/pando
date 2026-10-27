@@ -164,6 +164,13 @@ type standbyAsk struct {
 	// Oversubscribe is host policy allow_failover_oversubscription: CPU and
 	// memory may be placed past the reservation. Disk never is.
 	Oversubscribe bool
+
+	// Prefer is the host the standby is on now, kept while it still
+	// qualifies — open, not the app's own, and with room for the standby
+	// past what it keeps for the app's host's loss — so its copies are not
+	// shipped again from nothing. Keeping it is then a placement the
+	// reservation allows, so it never breaks R-422.
+	Prefer string
 }
 
 // option is one host's room for a standby.
@@ -206,8 +213,9 @@ func (n *noRoom) envelope() *errs.Error {
 		WithRemedy("Lower what the app asks for, stop or delete an app on another host, or add a host. Host policy allow_failover_oversubscription places standbys past the reservation.")
 }
 
-// chooseReserve picks the host for a new standby: one other than the app's
-// own, open, where it fits. Among those, the most room left (memory, then
+// chooseReserve picks the host for a new standby: the one it is on, while it
+// qualifies (Prefer); otherwise one other than the app's own, open, where it
+// fits. Among those, the most room left (memory, then
 // CPU), then the fewest standbys, then the order hosts are listed in. A
 // standby already placed is never moved or dropped to make room (R-422).
 func chooseReserve(r reservation, ask standbyAsk) (string, *noRoom) {
@@ -216,7 +224,11 @@ func chooseReserve(r reservation, ask standbyAsk) (string, *noRoom) {
 		if !g.Open || g.Name == ask.Primary {
 			continue
 		}
-		options = append(options, option{host: g, room: r.roomFor(ask.Primary, g), count: r.countOn(g.Name), order: i})
+		o := option{host: g, room: r.roomFor(ask.Primary, g), count: r.countOn(g.Name), order: i}
+		if g.Name == ask.Prefer && fits(ask.Need, o.room, g.Total, ask.Oversubscribe) {
+			return g.Name, nil
+		}
+		options = append(options, o)
 	}
 	slices.SortStableFunc(options, func(a, b option) int {
 		return cmp.Or(
