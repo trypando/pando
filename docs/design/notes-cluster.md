@@ -243,9 +243,9 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   the most room left for the app's host's loss (memory, then CPU), then fewer standbys, then host
   order. This spreads a large host's standbys rather than filling the roomiest host first.
 - **Disk:** every standby's copies are counted on its host always, at what the standby reports or
-  three times the app's disk limit [P], against the host's configured `total_disk_bytes`. The adapter
-  does not know what running apps hold on a host's disk, so copies are counted against the whole
-  total; a host that reports no disk total is not checked, as the planner does not check it.
+  three times the app's disk limit [P], against what is left of the host's configured
+  `total_disk_bytes` after its running apps' disk limits (`docker.CommittedDisk`, review fixes
+  below); a host that reports no disk total is not checked, as the planner does not check it.
 - **No room** is `standbyChoice.NoRoom`, an `errs.Error` (`CAPACITY_WOULD_OVERSUBSCRIBE`) whose message
   names the largest room any host has. It is never returned as an error and never blocks a deploy:
   the standby code records it, and `notice.Service.Standbys` raises it as notice `standby.no_room`.
@@ -365,11 +365,14 @@ host is watched").
   a hard-linked clone (`cp -al`) of the newest copy. A file whose mtime is in or after the second the
   last listing was taken is always sent. Owner changes alone are not detected. A file name holding a
   line break fails the ship with a message naming it. A ship with nothing changed makes no new copy.
+  A file removed between being listed and being read is left out, not an error (review fixes below).
 - **Promote** tries the newest copy, then older ones (up to three), each given
   `DefaultPromoteHealthTimeout` [P: 2 minutes] to be healthy on two looks in a row. When none is, the
   oldest tried is left running and reported `Healthy: false`. A standby with no copy of a volume is
-  refused, not started empty. The promoted host gets a home mark (a labeled volume), so a lost host that
-  returns still holding the bundle loses to it in placement, in a restarted process too.
+  refused, not started empty. The promoted host gets a home mark (a labeled volume), written before the
+  app's plan is first applied there, so a lost host that returns still holding the bundle loses to it
+  in placement, in a restarted process too. Once the app is healthy the staging volumes on that host
+  are removed (review fixes below).
 - **Core.** `internal/core/standby` is the leader's job (every minute; ships when the newest copy is
   five minutes old [P]). It makes or refreshes the standby when the pinned spec changes, from
   `reconciler.Shape` plus `Complete` (one definition of what an app starts with), and records it in
@@ -491,9 +494,10 @@ host is watched").
   has no standby; an app that keeps an older standby because a refresh found no room is not told it
   has none. Nothing is refused: the app runs as deployed.
 - **An app's home is recorded [P].** `api.StandbyHandle.Home` is where the bundle runs;
-  `app_standbys.home_host` keeps it, and a promotion sets it to the standby's host. It is how the
+  `app_standbys.home_host` keeps it, and a promotion sets it to the standby's host before the runtime
+  starts anything (written ahead, review fixes below). It is how the
   leader knows which apps a lost host held, in the runtime's host names, which are `cluster_hosts`
-  names (`hosts.Runtime.Sync`). Asking the runtime instead would fail exactly when it matters: a new
+  names (`hosts.Runtime.Sync`; the install's own machine included, review fixes below). Asking the runtime instead would fail exactly when it matters: a new
   leader cannot see a lost host's bundles. An app with no standby row is not listed for a lost host;
   one whose placement never succeeded has no home recorded. A promotion whose runtime did not name
   the former host takes the recorded home as the stale one.
@@ -551,8 +555,9 @@ host is watched").
 - **The first host (R-414).** At each start a control host that has not joined calls
   `hosts.RecordInstallHost`: `state.Cluster.RecordFirstHost` inserts it under an advisory lock unless
   a row with no join token exists, so replicas of one install record one host between them and a
-  restart records none. Name: the first label of the machine's hostname as a DNS label, else
-  `control`; roles control and app; address the advertise URL's host, else the external URL's, else
+  restart records none. Name: the first label of the machine's hostname as a DNS label, cut to the
+  40 characters the `docker-hosts` runtime takes, else `control`; the conversion names the runtime's
+  control entry the same (review fixes below); roles control and app; address the advertise URL's host, else the external URL's, else
   the machine's, with port 7443; `cert_sha256` 64 zeros [P], since nothing pins it (below). A failure
   is logged and startup goes on. **A host with no join token is the install's own** (`hosts.InstallHost`);
   join tokens are never deleted, so `joined_with` stays set on every joined host.
@@ -605,22 +610,103 @@ host that was cut off never fenced.
   authority at its first start and kept there, so its pin is the same across restarts. Either is
   issued again, and replaced, when missing, unreadable, for another name, or within 30 days [P] of
   its end, which also renews a joined control host's.
-- **Its row.** Each round `hosts.ControlPeers` sets the host's own `address` to the host it was
-  recorded with and the cluster listener's port (`hosts.PingAddress`), and `cert_sha256` to the
-  certificate it answers with (`state.Cluster.SetHostAgent`), when either differs. The first host's
-  placeholder pin (64 zeros) is replaced so, and a write that fails is made the next round. The
-  first host's row keeps its machine's name; only the port changes.
-- **The peer list.** `hosts.LivenessPeers` is now every row: the leader's `Watch`, `GET
-  /cluster/peers` and a control host's `Monitor` all include the first host. `RuntimeHosts` still
-  skips it (it is the runtime's `control` entry), and still skips control-only hosts.
+- **Its row.** Each round `hosts.ControlPeers` sets the host's own `ping_address` to the host it
+  was recorded with and the cluster listener's port (`hosts.PingAddress`), and `ping_cert_sha256` to
+  the certificate it answers with (`state.Cluster.SetHostPing`, migration 000091), when either
+  differs, and a write that fails is made the next round. `address` and `cert_sha256` stay the
+  agent's, which the runtime uses (review fixes below); the first host keeps its placeholder pin
+  there, which nothing pins.
+- **The peer list.** `hosts.LivenessPeers` is now every row, at its `ping_address` when it has one:
+  the leader's `Watch`, `GET /cluster/peers` and a control host's `Monitor` all include the first
+  host. `RuntimeHosts` still skips it (it is the runtime's control entry), and still skips
+  control-only hosts.
 - **Tests** (`cmd/pando/controlhost_test.go`): a first host, a joined control host and an app host,
   over TLS on loopback with real listeners, agents and `Monitor`s, only the network and clock
   simulated. All healthy for 10T: nobody unreached, nobody fences, nobody lost. Each cut off in
   turn (the leader's lease passing to the other control host when the first is cut): it alone fences
   after T, and it alone is taken for lost after 3T. Postgres away for 10T: nothing stops.
-- **Not done here.** A joined host with both roles is in the runtime's `agent://` entries at its
-  `address`, which now names its cluster listener, not an agent; such a host had no agent carrying
-  runtime calls before either (the `docker-hosts` runtime has one control host, above). Replicas of
+- **Not done here.** Replicas of
   the first host that do not share `server.cluster_dir` each keep their own certificate and rewrite
   its pin in turn; nothing pins it for liveness, so pings are unaffected. Under Kubernetes or Incus
   a control host has no app containers, and its fence logs that it cannot reach Docker.
+
+### As built: review fixes, standby and runtime
+
+Fixes from the review of #347, for what the standby, the reconciler and the runtime did wrong.
+
+- **A fence is not undone (R-148, R-421).** A host's agent given a `Fence` (`hostagent.Agent.Fence`,
+  its `liveness.Monitor`) serves each runtime stream call by call through an HTTP proxy and refuses
+  `POST …/containers/create` and `…/containers/<id>/start|restart|unpause` while the host is fenced,
+  answering 409 with Docker's `{"message": …}`, on a connection opened before the fence too. Stopping,
+  listing and everything else pass. An app host's agent takes its own Monitor; a host with both roles
+  takes the control host's. The leader records what each host's answer says of its fence
+  (`cluster_hosts.fenced_at`, migration 000091, written only when it changes, `cmd/pando`
+  `fenceRecorder` around the `Watch`'s probe), because every replica reconciles and only the leader
+  probes.
+- **The reconciler leaves a held app alone (R-153).** `reconciler.Holds` (`state.Standbys.Held`)
+  reads the app's standby row: a home host marked lost or fenced, or a promotion under way. Such an
+  app is not observed or corrected; it is recorded unobservable with why, which counts toward
+  nothing (R-151). A replica whose own control host is fenced (`Reconciler.LocalFenced`) reconciles
+  nothing, and its standby pass does nothing. Deploys from a fenced control host are not stopped by
+  this; only what Pando does by itself is.
+- **One writer per app's standby (R-153).** Every write is compare-and-set on the row as it was read
+  (`state.Standbys.SaveIf`: standby host, home, `promoted_at`, `promoting_at`), and one process
+  serializes the pass and promotions per app (`standby.Service` locks; the pass only tries). The pass
+  skips an app whose home is lost (`StandbyApp.HomeLost`) or whose promotion is under way, so a spec
+  change never moves the standby a promotion restores from, and a ship never drops a copy it may fall
+  back to. `Delete` keeps a row whose promotion is under way. The runtime guards the same in process:
+  `ApplyStandby`, `ShipVolumes` and `RemoveStandby` refuse a bundle being promoted.
+- **Promotions are written ahead (R-153, R-419).** Before the runtime starts anything core saves
+  `home_host` as the standby's host, `stale_host` as the host left, and `promoting_at`
+  (migration 000091). A runtime error that names no host (`PromoteResult.Host` empty) is a refusal,
+  and the row is put back; any error after it named one keeps the new home, with the error recorded.
+  `HomedOn` lists an app under way for the host it is leaving, so marking that host lost again
+  finishes it, and the pass finishes one under way for longer than a promotion takes
+  (`(DefaultStandbyCopies+1) × health timeout` [P]), for a process that stopped mid-promotion. A
+  returning host keeps its copy, and its lost mark, until the promotion is done.
+- **The runtime's point of no return is the first start.** `docker-hosts` `PromoteStandby` removes the
+  standby's own workloads, restores the newest copy and writes the home mark, and only then records
+  the app on the host and applies its plan. A failure before that removes what it restored and names
+  no host. A host that already holds the bundle's home mark had the app started there: nothing is
+  restored over the volume it runs on, and the promotion is reported done. Once healthy, the host's
+  staging volumes are removed. Placement never settles a bundle two hosts hold by their order: a
+  promotion or the newest home mark does, else the host this process had it on, else neither, and
+  `locate` reports the app unobservable (`placements.ambiguous`).
+- **Disk is counted whole (R-242, R-422).** Each app container carries its disk limit
+  (`io.pando.limit.disk`); `docker.CommittedDisk` sums it per running app, once. The reservation's
+  free disk is the total less that (`roomOf`); placement refuses a host without the app's disk limit
+  free beside its apps and the standby copies it keeps, naming the most any host has; and
+  `api.Capacity.HeldDiskBytes`, the copies on every host, is counted as allocated by the planner.
+  A container made before the label counts nothing until it is made again.
+- **A busy volume ships (R-420).** The list and read helpers fail only for an error other than a
+  file being gone (`vanishedOK`): a file removed between `find` and `stat`, or before `tar`, is left
+  out, and the next listing shows it removed. Busybox tar has no `--ignore-failed-read`; its "No such
+  file", "error exit delayed" and "empty archive" lines are filtered, and when every path went an
+  empty archive is written in its place.
+- **A host with both roles runs apps (R-416).** `cluster_hosts.address` and `cert_sha256` stay the
+  agent's; the cluster listener a control host answers pings on is `ping_address` and
+  `ping_cert_sha256` (above). `RuntimeHosts` lists the agent's, and a host joined with both roles
+  runs its agent beside its server (`startJoinedAgent`), so the runtime reaches its apps. `GET
+  /cluster/peers` accepts either pin. Marking a host lost by hand probes where it answers pings.
+- **The install's own machine has one name (R-421).** The conversion to `docker-hosts` names the
+  control entry as the machine's `cluster_hosts` row (`hosts.Runtime`'s `localName`; `LocalName`, else
+  `control`, only without a row), so the home the runtime reports is the name the liveness pass
+  finds the machine's apps by when it is lost. `RuntimeHosts` no longer drops a joined host named
+  as the control entry; the sync refuses the clash instead. A `docker-hosts` runtime an operator wrote
+  by hand keeps the names it has: its control entry must be named as the row for the install's own
+  machine's apps to fail over.
+- **A single-host install does no standby work.** The pass builds no app's plan when no runtime
+  adapter reports `SupportsStandby` (`Service.RuntimeRefs`), and still forgets rows left from before.
+- **Tests:** `TestR153_TheReconcilerNeverRestartsAFencedOrFailedOverCopy`,
+  `TestR421_AFencedHostsAgentStartsNothingTheControlPlaneAsks`,
+  `TestR153_AStandbyPassNeverPutsBackAPromotedAppsOldHome`,
+  `TestR153_AStandbyRowIsWrittenOnlyOverWhatWasRead`,
+  `TestR153_APromotionCutShortLeavesTheHomeOnTheNewHost`,
+  `TestR153_APromotionNeverRestoresOverARunningVolume`,
+  `TestR242_StandbyCopiesAndRunningDiskAreBothCounted`,
+  `TestR422_StagingVolumesAreRemovedAfterPromotion`,
+  `TestR420_ABusyVolumeWithVanishingFilesShips`,
+  `TestR416_AHostWithBothRolesRunsItsAppsThroughItsAgent`,
+  `TestR421_TheInstallsOwnMachinesAppsAreFailedOverWhenItIsLost`, among others.
+- **Not done here.** A file that shrinks while busybox tar reads it still fails that ship ("short
+  read"); the next ship tries again. Deploys are not refused on a fenced control host.
