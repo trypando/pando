@@ -482,6 +482,9 @@ func serve(ctx context.Context, configPath string) error {
 		return err
 	}
 	guardOwnAddresses(cfg, registry, apps)
+	// R-153: whether this control host runs apps of its own to fence, which
+	// decides whether it answers pings while its Docker is away.
+	controlPings.useRuntime(defaultRuntimeKind(registry))
 
 	// Secrets go through the configured secrets adapter. Core never encrypts —
 	// it stores what the adapter hands back (R-190, R-191).
@@ -2394,6 +2397,20 @@ func runtimeForTrial(registry *adapterapi.Registry) detect.TrialRunner {
 		return nil
 	}
 	return rt
+}
+
+// defaultRuntimeKind is the kind of the install's default runtime, "" for
+// none.
+func defaultRuntimeKind(registry *adapterapi.Registry) string {
+	ref, ok := registry.Default(adapterapi.CategoryRuntime)
+	if !ok {
+		return ""
+	}
+	a, ok := registry.Get(ref)
+	if !ok {
+		return ""
+	}
+	return a.Kind()
 }
 
 // runtimeMirrors reports the default runtime's Docker Hub mirrors, so Pando's

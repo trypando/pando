@@ -16,6 +16,8 @@ import (
 	"github.com/moby/moby/client"
 	"go.uber.org/zap"
 
+	dockerruntime "github.com/trypando/pando/internal/adapter/runtime/docker"
+	"github.com/trypando/pando/internal/adapter/runtime/multidocker"
 	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/core/state"
@@ -39,6 +41,69 @@ type controlPings struct {
 	// done is closed once start's Monitor has stopped, after its context
 	// ends: nothing of it writes to Dir after that.
 	done chan struct{}
+	// runtimeKind is the kind of the install's default runtime, once known
+	// (useRuntime), and dir where it is kept for the next start.
+	runtimeKind atomic.Pointer[string]
+	dir         string
+}
+
+// controlRuntimeFile, in server.cluster_dir, is the kind of the install's
+// runtime as this control host last heard it, so that the next start knows,
+// before the database is reached, whether apps run here (placesApps).
+const controlRuntimeFile = "control-runtime.json"
+
+// useRuntime records the kind of the install's default runtime, "" for
+// none, and keeps it for the next start. A write that fails costs only that
+// start refusing pings, as one that does not know yet does, until the
+// database is reached.
+func (c *controlPings) useRuntime(kind string) {
+	c.runtimeKind.Store(&kind)
+	if c.dir == "" {
+		return
+	}
+	if data, err := json.Marshal(map[string]string{"kind": kind}); err == nil {
+		_ = keyfile.Replace(filepath.Join(c.dir, controlRuntimeFile), data)
+	}
+}
+
+// loadRuntime reads the kind kept by useRuntime. Nothing kept leaves it
+// unknown.
+func (c *controlPings) loadRuntime() {
+	data, err := os.ReadFile(filepath.Join(c.dir, controlRuntimeFile)) // #nosec G304 -- the configured cluster directory
+	if err != nil {
+		return
+	}
+	var kept struct {
+		Kind *string `json:"kind"`
+	}
+	if json.Unmarshal(data, &kept) == nil && kept.Kind != nil {
+		c.runtimeKind.Store(kept.Kind)
+	}
+}
+
+// kind is the install's runtime's kind, and whether it is known.
+func (c *controlPings) kind() (string, bool) {
+	if k := c.runtimeKind.Load(); k != nil {
+		return *k, true
+	}
+	return "", false
+}
+
+// placesApps reports whether the install's runtime places apps on a control
+// host with roles, so that its Monitor has something of its own to fence
+// (R-153). Docker, on one host or many, runs apps on the install's own host
+// and on a host joined with the app role; Kubernetes and Incus place them
+// across their own machines and never on this one through its Docker, and
+// take no app-role join (hosts.CheckAppRoleJoin); with no runtime nothing is
+// placed anywhere. A host with the control role alone runs none. Not known
+// yet — the first start, before the database — is taken as placing them:
+// the host then refuses pings while its Docker is away, which is contact and
+// never makes it lost, rather than say it is well with apps it cannot stop.
+func placesApps(kind string, known bool, roles []string) bool {
+	if !slices.Contains(roles, state.HostRoleApp) {
+		return false
+	}
+	return !known || kind == dockerruntime.Kind || kind == multidocker.Kind
 }
 
 type storeRef struct{ hosts.HostPublisher }
@@ -74,6 +139,9 @@ func (c *controlPings) unreachedFor(hostID string) (time.Duration, bool) {
 type controlPing struct {
 	tls     *tls.Config
 	monitor *liveness.Monitor
+	// answer is monitor's view, given only while this host could stop its
+	// own apps (fenceGate, R-153).
+	answer hostagent.Liveness
 	// members is the cluster's hosts as this one last read them: a removed
 	// host's pings are refused (R-415).
 	members *hosts.Members
@@ -98,7 +166,7 @@ func (c *controlPings) configFor(hello *tls.ClientHelloInfo) (*tls.Config, error
 // serve answers a connection that negotiated PingProtocol.
 func (c *controlPings) serve(_ *http.Server, conn *tls.Conn, _ http.Handler) {
 	if p := c.current.Load(); p != nil {
-		hostagent.AnswerPing(conn, p.monitor, p.members.Admits)
+		hostagent.AnswerPing(conn, p.answer, p.members.Admits)
 	}
 }
 
@@ -133,8 +201,12 @@ type controlLiveness struct {
 	IsSelf func(state.Host) bool
 	// Joined is the join this host made, when it made one.
 	Joined *hosts.Joined
-	Docker hostagent.ContainerAPI
+	// Docker is the runtime this host's fence stops its apps through.
+	Docker runtimeAPI
 	Logger *zap.Logger
+	// kind is the install's runtime's kind, and whether it is known
+	// (controlPings.kind); nil is not known.
+	kind func() (string, bool)
 
 	// stores is where the database is found once it is reached; nil is
 	// Store.
@@ -157,7 +229,9 @@ func (c controlLiveness) store() hosts.HostPublisher {
 // returned pings are what the cluster listener answers with (attach), and
 // are given the database once it is reached (useStore).
 func (c controlLiveness) start(ctx context.Context) *controlPings {
-	pings := &controlPings{reached: make(chan struct{}, 1), done: make(chan struct{})}
+	pings := &controlPings{reached: make(chan struct{}, 1), done: make(chan struct{}), dir: c.Dir}
+	pings.loadRuntime()
+	c.kind = pings.kind
 	if c.Store != nil {
 		pings.useStore(c.Store)
 	}
@@ -208,7 +282,9 @@ func (c controlLiveness) setup(ctx context.Context) (*controlPing, error) {
 	peers := &controlPeers{self: self.HostID, port: c.Port, file: filepath.Join(c.Dir, hosts.PeersFile),
 		pinOf: func() string { return hostagent.Fingerprint256(cert.Current().Certificate[0]) },
 		store: c.store, members: members, logger: c.Logger}
+	monitor := newMonitor(self.HostID, members.Track(peers.Peers), probe.GetClientCertificate, as.Pool(), c.Docker, c.Logger)
 	return &controlPing{
+		answer: &fenceGate{liveness: monitor, reachable: c.fenceable(self.Roles), every: fenceGateEvery},
 		tls: &tls.Config{
 			MinVersion:     tls.VersionTLS13,
 			GetCertificate: cert.GetCertificate,
@@ -216,9 +292,25 @@ func (c controlLiveness) setup(ctx context.Context) (*controlPing, error) {
 			ClientCAs:      as.Pool(),
 			NextProtos:     []string{hostagent.PingProtocol},
 		},
-		monitor: newMonitor(self.HostID, members.Track(peers.Peers), probe.GetClientCertificate, as.Pool(), c.Docker, c.Logger),
+		monitor: monitor,
 		members: members,
 	}, nil
+}
+
+// fenceable is whether a control host with roles could stop its own apps:
+// nil when the install's runtime places none here (placesApps), else
+// whether its Docker answers.
+func (c controlLiveness) fenceable(roles []string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		kind, known := "", false
+		if c.kind != nil {
+			kind, known = c.kind()
+		}
+		if !placesApps(kind, known, roles) {
+			return nil
+		}
+		return c.Docker.Reachable(ctx)
+	}
 }
 
 // controlSelfFile, in server.cluster_dir, is who this control host is, kept
@@ -337,12 +429,13 @@ func startControlLiveness(ctx context.Context, dir string, port int, authority *
 	if hasJoined {
 		c.Joined = &joined
 	}
-	// The runtime's own Docker: what this host's app containers run on. One
-	// that cannot be reached still leaves the host answering pings, since
-	// a host that answers none would be taken for lost while it runs; its
-	// fence then fails, and says so, every round it is cut off.
+	// The runtime's own Docker: what this host's app containers run on.
+	// While it cannot be reached, a host it places apps on refuses pings
+	// (fenceGate): contact all the same, so it is not taken for lost while
+	// it can be reached, and it never says it is well with apps it could not
+	// stop (R-153).
 	cli, err := client.New(client.FromEnv)
-	c.Docker = cli
+	c.Docker = dockerRuntime{cli}
 	if err != nil {
 		c.Docker = unreachableRuntime{err: err}
 	}
