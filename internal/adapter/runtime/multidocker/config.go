@@ -77,6 +77,24 @@ type Credentials struct {
 	SSHKey string `json:"ssh_key,omitempty"`
 }
 
+// Machine is which machine the process running the adapter is on. Every
+// control host of a cluster reads the same host list (R-414), so the list
+// cannot say which entry is "here": the process is told, by the server that
+// starts it, and reaches its own entry's Docker directly and every other
+// machine's through that machine's agent (R-416).
+type Machine struct {
+	// Name is this machine's name in the host list. Empty is the install's
+	// own machine: the entry marked control. A name the list does not hold
+	// is a control host with no app role: no entry is this machine.
+	Name string
+
+	// Endpoint is this machine's own Docker API, used for its entry when the
+	// list reaches it through its agent, and for the edge, trial runs and
+	// self-upgrade when the list has no entry for it. Empty is the
+	// environment.
+	Endpoint string
+}
+
 // HostConfig is one Docker host.
 type HostConfig struct {
 	// Name is how the host is known in placement, the console, errors and
@@ -105,7 +123,10 @@ type HostConfig struct {
 	// host:port. Empty is the endpoint's host and the agent port.
 	AgentAddress string `json:"agent_address,omitempty"`
 
-	// Control marks the control host.
+	// Control marks the install's own machine: the host the install started
+	// on, whose agent the runtime keeps. In a cluster of several control
+	// hosts, each one runs the edge, trial runs and self-upgrade on its own
+	// machine (Machine), not on this one.
 	Control bool `json:"control,omitempty"`
 
 	// NoPlacement keeps new apps off the host; apps already on it stay
@@ -183,7 +204,7 @@ func validate(cfg Config, hosts []HostConfig) error {
 		}
 	}
 	if controls != 1 {
-		return fmt.Errorf("exactly one host must be the control host, the one Pando runs on; %d are", controls)
+		return fmt.Errorf("exactly one host must be the control host: the install's own machine, where Pando first ran; %d are", controls)
 	}
 	if err := docker.CheckNetworkPool(cfg.NetworkPool); err != nil {
 		return err
@@ -263,6 +284,36 @@ const schemeAgent = "agent"
 func isAgentEndpoint(h HostConfig) bool {
 	u, err := endpointURL(h.Endpoint)
 	return err == nil && u.Scheme == schemeAgent
+}
+
+// isLocalEndpoint reports whether h's endpoint names a Docker on the machine
+// reading it — the environment, a unix socket or a named pipe — rather than
+// an address: it means another Docker on every other machine.
+func isLocalEndpoint(h HostConfig) bool {
+	u, err := endpointURL(h.Endpoint)
+	if err != nil {
+		return false
+	}
+	switch u.Scheme {
+	case "env", "unix", "npipe":
+		return true
+	}
+	return false
+}
+
+// seenFrom is h as the process on machine reaches it (R-416): its own entry
+// directly, at Machine.Endpoint when the list reaches it through its agent;
+// another machine's local endpoint — the install's own machine, written as
+// its own socket — through that machine's agent at addr. Every other entry
+// is as written.
+func seenFrom(h HostConfig, self bool, machine Machine, addr string) HostConfig {
+	switch {
+	case self && isAgentEndpoint(h):
+		h.Endpoint = machine.Endpoint
+	case !self && isLocalEndpoint(h):
+		h.Endpoint = schemeAgent + "://" + addr
+	}
+	return h
 }
 
 // newClient makes the Docker client for one host. agentAddr and agentTLS are

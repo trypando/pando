@@ -166,7 +166,7 @@ func newTestAdapter(t *testing.T, hosts map[string]*fakeHost, order ...string) *
 	for i, name := range order {
 		h := &host{cfg: HostConfig{Name: name, Control: i == 0}, rt: hosts[name], agentAddr: name + ":7443"}
 		if i == 0 {
-			a.control = h
+			a.control, a.self = h, h
 		}
 		a.hosts = append(a.hosts, h)
 	}

@@ -478,7 +478,7 @@ func serve(ctx context.Context, configPath string) error {
 
 	notifications := state.NewNotifications(db)
 
-	registry, adapterCredentials, err := registerAdapters(ctx, db, adapters, notifications, cfg.Adapters, logger)
+	registry, adapterCredentials, err := registerAdaptersOn(ctx, db, adapters, notifications, cfg.Adapters, runtimeMachine(joined, hasJoined), logger)
 	if err != nil {
 		return err
 	}
@@ -864,7 +864,7 @@ func serve(ctx context.Context, configPath string) error {
 	replicas := state.NewReplicas(db)
 	wireClusterRuntime(clusterHosts, &hosts.Runtime{
 		Hosts: clusterHosts.Store, Adapters: adapters, Credentials: adapterCredentials,
-		Restart: replicas, Audit: auditor,
+		Restart: replicas, Audit: auditor, Joined: hasJoined,
 	}, cfg, logger)
 	hostname, _ := os.Hostname()
 	member := &cluster.Member{
@@ -1840,14 +1840,18 @@ func (a detectionAuditor) Write(ctx context.Context, e detection.AuditEvent) err
 	})
 }
 
-// registerAdapters configures the compiled-in adapters from adapter_configs,
+// registerAdaptersOn configures the compiled-in adapters from adapter_configs,
 // seeding the defaults on a fresh install.
 //
 // An adapter that fails to configure is logged and skipped rather than
 // preventing startup: one broken adapter should not take the whole install
 // offline, and the planner already refuses to plan against an adapter it cannot
 // reach (R-254).
-func registerAdapters(ctx context.Context, db *state.DB, store *state.Adapters, notifications *state.Notifications, declared []config.AdapterDecl, logger *zap.Logger) (*adapterapi.Registry, *state.AdapterCredentials, error) {
+//
+// machine is which of the Docker hosts runtime's hosts this process is on
+// (runtimeMachine, R-416).
+func registerAdaptersOn(ctx context.Context, db *state.DB, store *state.Adapters, notifications *state.Notifications, declared []config.AdapterDecl,
+	machine multidocker.Machine, logger *zap.Logger) (*adapterapi.Registry, *state.AdapterCredentials, error) {
 	if err := seedDefaultAdapters(ctx, store); err != nil {
 		return nil, nil, err
 	}
@@ -1941,7 +1945,7 @@ func registerAdapters(ctx context.Context, db *state.DB, store *state.Adapters, 
 			credentials = adapterCredentialsFor(db, registry)
 		}
 
-		adapter := newAdapter(c.Category, c.Kind, notifications)
+		adapter := newAdapterOn(c.Category, c.Kind, notifications, machine)
 		if adapter == nil {
 			logger.Warn("skipping adapter of unknown kind",
 				zap.String("id", c.ID), zap.String("category", c.Category), zap.String("kind", c.Kind))
@@ -2041,6 +2045,11 @@ func adapterNames(ctx context.Context, store *state.Adapters, decls []config.Ada
 // newAdapter is an unconfigured adapter of a category and kind this build can
 // run, or nil.
 func newAdapter(category, kind string, notifications *state.Notifications) adapterapi.Adapter {
+	return newAdapterOn(category, kind, notifications, multidocker.Machine{})
+}
+
+// newAdapterOn is newAdapter for a process on machine (runtimeMachine).
+func newAdapterOn(category, kind string, notifications *state.Notifications, machine multidocker.Machine) adapterapi.Adapter {
 	if category == string(adapterapi.CategorySource) {
 		// Only a source connection the configuration file declares is built
 		// at startup (registerAdapters); a nil interface must stay nil here.
@@ -2073,7 +2082,9 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 		// inside the cluster (deploy/kubernetes).
 		return kubernetesruntime.New()
 	case category == string(adapterapi.CategoryRuntime) && kind == multidocker.Kind:
-		return multidocker.New()
+		// Told which machine this is: every control host reads the same
+		// host list (R-414, R-416).
+		return multidocker.NewOn(machine)
 	case category == string(adapterapi.CategoryRuntime) && kind == incusruntime.Kind:
 		// Not seeded: it needs the Incus network and Pando's address on it
 		// (notes-incus-runtime.md).

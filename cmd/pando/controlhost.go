@@ -452,14 +452,44 @@ func startControlLiveness(ctx context.Context, dir string, port int, authority *
 // apps ran (R-153). The install's own host runs them on the runtime Pando
 // reads from its environment.
 func fenceClient(joined hosts.Joined, hasJoined bool) (*client.Client, error) {
-	if hasJoined && slices.Contains(joined.Roles, state.HostRoleApp) {
-		sock, err := appHostRuntimeSocket()
-		if err != nil {
-			return nil, err
-		}
-		return client.New(client.WithHost("unix://" + sock))
+	endpoint, err := ownRuntimeEndpoint(joined, hasJoined)
+	if err != nil {
+		return nil, err
 	}
-	return client.New(client.FromEnv)
+	if endpoint == "" {
+		return client.New(client.FromEnv)
+	}
+	return client.New(client.WithHost(endpoint))
+}
+
+// ownRuntimeEndpoint is the container runtime this host's apps run on, as a
+// Docker endpoint: a joined host with the app role's agent socket, else ""
+// for the environment's.
+func ownRuntimeEndpoint(joined hosts.Joined, hasJoined bool) (string, error) {
+	if !hasJoined || !slices.Contains(joined.Roles, state.HostRoleApp) {
+		return "", nil
+	}
+	sock, err := appHostRuntimeSocket()
+	if err != nil {
+		return "", err
+	}
+	return "unix://" + sock, nil
+}
+
+// runtimeMachine tells the Docker hosts runtime which machine this process
+// is on (multidocker.Machine): every control host reads one host list, and
+// each reaches its own entry directly and every other machine, the
+// install's own included, through that machine's agent (R-414, R-416). The
+// install's first host is the entry marked control; a joined host is the
+// entry of the name it joined with, reached on its own runtime.
+func runtimeMachine(joined hosts.Joined, hasJoined bool) multidocker.Machine {
+	if !hasJoined {
+		return multidocker.Machine{}
+	}
+	// A socket that cannot be named leaves the environment's, which the
+	// agent itself refuses to run without (appHostAgent).
+	endpoint, _ := ownRuntimeEndpoint(joined, hasJoined)
+	return multidocker.Machine{Name: joined.Name, Endpoint: endpoint}
 }
 
 // selfHost picks this host's row: the one it joined as, or else the

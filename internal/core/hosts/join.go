@@ -306,9 +306,9 @@ func (s *Service) issueJoin(ctx context.Context, req JoinRequest, t state.JoinTo
 }
 
 // admissible asks whether the cluster can take a host called name with roles
-// now: the cluster (Readiness, R-417), then the runtime for an app host
-// (R-418). Asked once the token is good, so that only a holder of one learns
-// what the runtime's host list holds.
+// now: the cluster (Readiness, R-417), then the runtime for an app host or a
+// second control host (R-418). Asked once the token is good, so that only a
+// holder of one learns what the runtime's host list holds.
 func (s *Service) admissible(ctx context.Context, name string, roles []string) error {
 	if s.Readiness != nil {
 		if err := s.Readiness.ReadyToJoin(ctx, roles); err != nil {

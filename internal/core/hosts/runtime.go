@@ -158,6 +158,12 @@ type Runtime struct {
 	// host:port: this machine's address and the agent port.
 	LocalAgentAddress string
 
+	// Joined is set on a control host that joined the cluster: it is not the
+	// install's own machine, so a conversion it makes takes that machine's
+	// agent address from the machine's cluster_hosts row, not from
+	// LocalAgentAddress (R-416).
+	Joined bool
+
 	// Declared reports whether the configuration file declares the adapter
 	// with this ID (R-271), which a stored row then does not override.
 	Declared func(id string) bool
@@ -230,7 +236,7 @@ func (r *Runtime) NetworkPool(ctx context.Context) string {
 // Sync.
 func (r *Runtime) CheckJoin(ctx context.Context, name string, roles []string) error {
 	if !slices.Contains(roles, state.HostRoleApp) {
-		return nil
+		return r.checkControlJoin(ctx, roles)
 	}
 	rt, err := r.defaultRuntime(ctx)
 	if err != nil {
@@ -253,22 +259,78 @@ func (r *Runtime) CheckJoin(ctx context.Context, name string, roles []string) er
 	return nil
 }
 
+// checkControlJoin refuses a control-role join the Docker runtime cannot
+// take: a second control host reaches the install's own machine through its
+// agent, so a single-host Docker runtime is turned into the Docker hosts one
+// when it joins (Sync, R-414, R-416), and refusals that conversion would make
+// are made before the host is let in. Any other runtime, or none, is not
+// this check's.
+func (r *Runtime) checkControlJoin(ctx context.Context, roles []string) error {
+	if !slices.Contains(roles, state.HostRoleControl) {
+		return nil
+	}
+	rt, err := r.defaultRuntime(ctx)
+	if err != nil || (rt.Kind != runtimeDocker && rt.Kind != runtimeDockerHosts) {
+		return nil //nolint:nilerr // No Docker runtime: nothing to convert, as before.
+	}
+	if err := r.checkWritable(rt); err != nil {
+		return err
+	}
+	if rt.Kind != runtimeDocker {
+		return nil
+	}
+	all, err := r.allHosts(ctx)
+	if err == nil {
+		_, err = r.convertDocker(rt.Config, all)
+	}
+	return err
+}
+
+// allHosts is the cluster's hosts, or none without a list to read.
+func (r *Runtime) allHosts(ctx context.Context) ([]state.Host, error) {
+	if r.Hosts == nil {
+		return nil, nil
+	}
+	return r.Hosts.Hosts(ctx)
+}
+
+// installAgentAddress is where the install's own machine's agent is
+// reached: this machine's (LocalAgentAddress) on that machine, and on a host
+// that joined the cluster, the address the machine's row records, since
+// LocalAgentAddress there is the joined host's own.
+func (r *Runtime) installAgentAddress(all []state.Host) string {
+	if !r.Joined {
+		return r.LocalAgentAddress
+	}
+	for _, h := range all {
+		if InstallHost(h) {
+			return h.Address
+		}
+	}
+	return ""
+}
+
+// otherControlHost reports whether a host other than the install's own
+// machine holds the control role: it reaches that machine's runtime through
+// the machine's agent, which only the Docker hosts runtime does (R-416).
+func otherControlHost(all []state.Host) bool {
+	return slices.ContainsFunc(all, func(h state.Host) bool {
+		return !InstallHost(h) && slices.Contains(h.Roles, state.HostRoleControl)
+	})
+}
+
 // writtenNames is the names in the runtime's host list that a join does not
 // write (mergeHosts keeps them): the operator's entries and the install's
 // own machine's, or, for a single-host docker runtime, the name the machine
 // takes when it is converted.
 func (r *Runtime) writtenNames(ctx context.Context, rt state.AdapterConfig) ([]string, error) {
 	if rt.Kind == runtimeDocker {
-		var all []state.Host
-		if r.Hosts != nil {
-			var err error
-			if all, err = r.Hosts.Hosts(ctx); err != nil {
-				return nil, err
-			}
+		all, err := r.allHosts(ctx)
+		if err != nil {
+			return nil, err
 		}
-		local := r.localName(all)
-		_, err := r.convertDocker(rt.Config, local)
-		return []string{local}, err
+		_, err = r.convertDocker(rt.Config, all)
+		return []string{r.localName(all)}, err
 	}
 	_, entries, err := hostList(rt.Config)
 	if err != nil {
@@ -313,11 +375,14 @@ func (r *Runtime) Sync(ctx context.Context) (SyncResult, error) {
 	var cfg json.RawMessage
 	switch rt.Kind {
 	case runtimeDocker:
-		if len(app) == 0 {
-			// A cluster of one behaves as before (R-414).
+		if len(app) == 0 && !otherControlHost(all) {
+			// A cluster of one behaves as before (R-414). A second control
+			// host, even without the app role, needs the host list: it
+			// reaches the install's own machine through that machine's
+			// agent, never as its own Docker (R-416).
 			return res, nil
 		}
-		cfg, err = r.convertDocker(rt.Config, r.localName(all))
+		cfg, err = r.convertDocker(rt.Config, all)
 		if err == nil {
 			cfg, _, err = mergeHosts(cfg, app)
 		}
@@ -408,7 +473,13 @@ type dockerHostsSettings struct {
 // whose one host is this machine, the control host (R-418). Its apps are
 // found there by their labeled networks and volumes, as on one host, so
 // nothing is re-created.
-func (r *Runtime) convertDocker(raw json.RawMessage, local string) (json.RawMessage, error) {
+//
+// all is the cluster's hosts: the install's own machine is named as its row
+// is (localName), and on a host that joined, reached at its row's address
+// (installAgentAddress), so a conversion made on any control host writes
+// the same list.
+func (r *Runtime) convertDocker(raw json.RawMessage, all []state.Host) (json.RawMessage, error) {
+	local, agentAddress := r.localName(all), r.installAgentAddress(all)
 	var d dockerSettings
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &d); err != nil {
@@ -420,14 +491,14 @@ func (r *Runtime) convertDocker(raw json.RawMessage, local string) (json.RawMess
 			`The Docker runtime's network_pool is "off", and apps on several hosts need it set: each host's agent forwards only into the app network range.`).
 			WithRemedy("Set network_pool on the Docker runtime to a private range such as 10.213.0.0/16, restart Pando, then join the host again.")
 	}
-	if r.LocalAgentAddress == "" {
+	if agentAddress == "" {
 		return nil, errs.New(errs.StateInvalid,
-			"Pando does not know the address other hosts reach this one at, so it cannot run apps on several hosts.").
-			WithRemedy("Set server.advertise_url to an address other hosts can reach this one at, restart Pando, then join the host again.")
+			"Pando does not know the address other hosts reach the install's first host at, so it cannot run the install on several hosts.").
+			WithRemedy("Set server.advertise_url on the install's first host to an address other hosts can reach it at, restart Pando there, then join the host again.")
 	}
 	out := dockerHostsSettings{
 		Hosts: []RuntimeHost{{
-			Name: local, Control: true, Endpoint: d.Host, AgentAddress: r.LocalAgentAddress,
+			Name: local, Control: true, Endpoint: d.Host, AgentAddress: agentAddress,
 			TotalCPUMillis: d.TotalCPUMillis, TotalMemoryBytes: d.TotalMemoryBytes, TotalDiskBytes: d.TotalDiskBytes,
 		}},
 		NetworkPool:      d.NetworkPool,

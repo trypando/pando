@@ -80,11 +80,20 @@ type Adapter struct {
 	config Config
 	hosts  []*host
 
-	// control is the control host, and local the Docker adapter on it that
-	// is joined as Pando's own container: for the edge, trial runs and
-	// self-upgrade, which run where Pando runs (O-47).
+	// machine is which machine this process runs on (Machine).
+	machine Machine
+
+	// control is the install's own machine's entry (HostConfig.Control).
+	// self is this machine's entry, nil for a control host with no app
+	// role, and local the Docker adapter on this machine that is joined as
+	// Pando's own container: for the edge, trial runs and self-upgrade, which
+	// run where this Pando runs (O-47). Every control host has its own.
 	control *host
+	self    *host
 	local   localRuntime
+	// unlisted is this machine when the list has no entry for it: only its
+	// edge's storage is found on it (EdgeVolumes, volumeHost).
+	unlisted *host
 
 	authorities hostagent.Authorities
 	clientCert  clientCert
@@ -106,8 +115,14 @@ type Adapter struct {
 	standby standbyState
 }
 
-// New builds an unconfigured adapter.
+// New builds an unconfigured adapter for the install's own machine.
 func New() *Adapter { return &Adapter{} }
+
+// NewOn builds an unconfigured adapter for a process on machine: a control
+// host that joined the cluster passes its name, so it reaches its own entry
+// directly and every other machine, the install's own included, through
+// that machine's agent (R-416).
+func NewOn(machine Machine) *Adapter { return &Adapter{machine: machine} }
 
 func (a *Adapter) Kind() string           { return Kind }
 func (a *Adapter) Category() api.Category { return api.CategoryRuntime }
@@ -144,55 +159,110 @@ func (a *Adapter) Configure(_ context.Context, raw json.RawMessage) error {
 	a.config = cfg
 	a.authorities = authorities
 	a.clientCert = clientCert{cert: client}
-	a.hosts = nil
-	pool, _ := networkPool(cfg)
+	a.hosts, a.control, a.self, a.local, a.unlisted = nil, nil, nil, nil, nil
 	for _, hc := range hosts {
-		addr, _ := agentAddress(hc, agentPort(cfg))
-		agentTLS := hostagent.PinnedClientTLS(authorities, client, hc.Name, hc.CertSHA256)
-		cli, err := newClient(hc, cfg.Credentials, addr, agentTLS)
+		h, err := a.configureHost(hc)
 		if err != nil {
-			return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not set up the connection to Docker on %s.", hc.Name), err)
-		}
-		h := &host{
-			cfg:       hc,
-			agentAddr: addr,
-			agentTLS:  agentTLS,
-		}
-		dcfg := docker.Config{
-			PidsLimit:          cfg.PidsLimit,
-			TotalCPUMillis:     hc.TotalCPUMillis,
-			TotalMemoryBytes:   hc.TotalMemoryBytes,
-			TotalDiskBytes:     hc.TotalDiskBytes,
-			ProxyContainer:     agentContainer,
-			NetworkPool:        pool.String(),
-			NetworkBlockBits:   cfg.NetworkBlockBits,
-			OCIRuntime:         cfg.OCIRuntime,
-			EgressGatewayImage: cfg.AgentImage,
-		}
-		h.rt = docker.NewWithClient(cli, dcfg)
-		// A host that joined the cluster runs its own agent, which is also
-		// how its runtime is reached (R-416): replacing it from here would
-		// cut the connection replacing it.
-		if !isAgentEndpoint(hc) {
-			h.agent = &agentKeeper{
-				cli: cli, host: hc.Name, port: agentPort(cfg), pool: pool,
-				authorities: authorities, image: a.agentImage,
-			}
-		}
-		if hc.Control {
-			a.control = h
-			local := dcfg
-			local.ProxyContainer = "" // Pando's own container, as on one host.
-			a.local = docker.NewWithClient(cli, local)
+			return err
 		}
 		a.hosts = append(a.hosts, h)
+	}
+	if a.self == nil {
+		// A control host with no app role: no entry is this machine, and
+		// its edge, trial runs and self-upgrade run on its own Docker.
+		cli, err := newClient(HostConfig{Name: a.machine.Name, Endpoint: a.machine.Endpoint}, cfg.Credentials, "", nil)
+		if err != nil {
+			return errs.Wrap(errs.AdapterFailed, "Could not set up the connection to Docker on this machine.", err)
+		}
+		local := docker.NewWithClient(cli, a.localConfig(HostConfig{}))
+		a.local = local
+		// Its edge's storage is named for this machine (EdgeVolumes).
+		a.unlisted = &host{cfg: HostConfig{Name: a.machine.Name, NoPlacement: true}, rt: local}
 	}
 	a.placement = placements{byBundle: map[string]string{}}
 	return nil
 }
 
+// isSelf reports whether hc is the machine this process runs on (Machine).
+func (a *Adapter) isSelf(hc HostConfig) bool {
+	if a.machine.Name == "" {
+		return hc.Control
+	}
+	return hc.Name == a.machine.Name
+}
+
+// configureHost makes one host's Docker client and adapter, as this machine
+// reaches it (seenFrom), and the agent the runtime keeps there, if it keeps
+// one.
+func (a *Adapter) configureHost(hc HostConfig) (*host, error) {
+	cfg := a.config
+	addr, _ := agentAddress(hc, agentPort(cfg))
+	agentTLS := hostagent.PinnedClientTLS(a.authorities, a.clientCert.cert, hc.Name, hc.CertSHA256)
+	self := a.isSelf(hc)
+	reached := seenFrom(hc, self, a.machine, addr)
+	cli, err := newClient(reached, cfg.Credentials, addr, agentTLS)
+	if err != nil {
+		return nil, errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not set up the connection to Docker on %s.", hc.Name), err)
+	}
+	h := &host{cfg: hc, agentAddr: addr, agentTLS: agentTLS}
+	dcfg := a.hostConfig(hc)
+	h.rt = docker.NewWithClient(cli, dcfg)
+	if hc.Control {
+		a.control = h
+	}
+	var local *docker.Adapter
+	if self {
+		local = docker.NewWithClient(cli, a.localConfig(hc))
+		a.self, a.local = h, local
+	}
+	// The runtime keeps no agent it reaches a host's runtime through: a host
+	// that joined the cluster runs its own, and replacing it from here would
+	// cut the connection replacing it (R-416). Nor one for a joined host's
+	// own entry seen from itself: that agent is this very process.
+	if isAgentEndpoint(hc) || isAgentEndpoint(reached) {
+		return h, nil
+	}
+	pool, _ := networkPool(cfg)
+	h.agent = &agentKeeper{
+		cli: cli, host: hc.Name, port: agentPort(cfg), pool: pool,
+		authorities: a.authorities, image: a.agentImage,
+	}
+	if local != nil {
+		// This machine's own agent: it carries the other control hosts'
+		// runtime calls to this machine's Docker (R-416).
+		h.agent.socket = local.OwnSocket
+	}
+	return h, nil
+}
+
+// hostConfig is the single-host Docker adapter's configuration for hc's
+// apps, joined to its agent in place of Pando's own container.
+func (a *Adapter) hostConfig(hc HostConfig) docker.Config {
+	pool, _ := networkPool(a.config)
+	return docker.Config{
+		PidsLimit:          a.config.PidsLimit,
+		TotalCPUMillis:     hc.TotalCPUMillis,
+		TotalMemoryBytes:   hc.TotalMemoryBytes,
+		TotalDiskBytes:     hc.TotalDiskBytes,
+		ProxyContainer:     agentContainer,
+		NetworkPool:        pool.String(),
+		NetworkBlockBits:   a.config.NetworkBlockBits,
+		OCIRuntime:         a.config.OCIRuntime,
+		EgressGatewayImage: a.config.AgentImage,
+	}
+}
+
+// localConfig is the configuration of the Docker adapter this machine's
+// edge, trial runs and self-upgrade use: joined as Pando's own container, as
+// on one host.
+func (a *Adapter) localConfig(hc HostConfig) docker.Config {
+	local := a.hostConfig(hc)
+	local.ProxyContainer = ""
+	return local
+}
+
 // agentImage is the image agents and egress gateways run: the configured
-// one, or the image Pando's own container on the control host was started
+// one, or the image Pando's own container on this machine was started
 // from, by the reference it was started with so other hosts can pull it.
 func (a *Adapter) agentImage(ctx context.Context) string {
 	if a.config.AgentImage != "" {
@@ -236,18 +306,23 @@ func (a *Adapter) eachHost(ctx context.Context, fn func(context.Context, *host) 
 	return out
 }
 
-// HealthCheck asks every host. The adapter is healthy while the control host
-// and at least one host open to new apps answer, and every answering host
-// runs the same platform; a host that does not answer makes its own apps
-// unobservable (Observe), not every app undeployable.
+// HealthCheck asks every host. The adapter is healthy while this machine's
+// Docker and at least one host open to new apps answer, and every answering
+// host runs the same platform; a host that does not answer makes its own apps
+// unobservable (Observe), not every app undeployable — the install's own
+// machine included, seen from another control host.
 func (a *Adapter) HealthCheck(ctx context.Context) error {
-	if a.control == nil {
+	if a.control == nil || (a.self == nil && a.local == nil) {
 		return errs.New(errs.AdapterUnavailable, "The Docker hosts runtime has not been set up.")
 	}
 	results := a.eachHost(ctx, func(ctx context.Context, h *host) error { return h.rt.HealthCheck(ctx) })
-	if err := results[a.control.cfg.Name]; err != nil {
-		return errs.Wrap(errs.AdapterUnavailable,
-			fmt.Sprintf("Docker on the control host, %s, is not responding.", a.control.cfg.Name), err)
+	if a.self != nil {
+		if err := results[a.self.cfg.Name]; err != nil {
+			return errs.Wrap(errs.AdapterUnavailable,
+				fmt.Sprintf("Docker on this control host, %s, is not responding.", a.self.cfg.Name), err)
+		}
+	} else if err := a.local.HealthCheck(ctx); err != nil {
+		return errs.Wrap(errs.AdapterUnavailable, "Docker on this control host is not responding.", err)
 	}
 	open := 0
 	var down []string
@@ -543,6 +618,9 @@ func (a *Adapter) volumeHost(handle string) (*host, api.VolumeHandle, error) {
 			"The storage %q does not say which Docker host it is on.", handle)
 	}
 	h := a.byName(name)
+	if h == nil && a.unlisted != nil && name == a.unlisted.cfg.Name {
+		h = a.unlisted
+	}
 	if h == nil {
 		return nil, api.VolumeHandle{}, errs.Newf(errs.AdapterFailed,
 			"The storage %q is on %s, which is no longer in the Docker hosts runtime's host list.", volume, name).
@@ -660,13 +738,13 @@ func (a *Adapter) Upstream(ctx context.Context, ref api.WorkloadRef, port int) (
 	}, nil
 }
 
-// Trial runs on the control host [P]: it is thrown away, so it needs no
-// placement.
+// Trial runs on the control host asking for it [P]: it is thrown away, so
+// it needs no placement.
 func (a *Adapter) Trial(ctx context.Context, req api.TrialRequest) (api.TrialResult, error) {
 	return a.local.Trial(ctx, req)
 }
 
-// The edge runs on the control host beside Pando's replicas, as on one host.
+// The edge runs on each control host beside its Pando, as on one host.
 func (a *Adapter) ApplyEdge(ctx context.Context, p api.EdgePlan) error {
 	return a.local.ApplyEdge(ctx, p)
 }
@@ -679,13 +757,17 @@ func (a *Adapter) RemoveEdge(ctx context.Context, name string) error {
 func (a *Adapter) Edges(ctx context.Context) ([]string, error) { return a.local.Edges(ctx) }
 func (a *Adapter) EdgeVolumes(ctx context.Context) ([]api.VolumeHandle, error) {
 	vols, err := a.local.EdgeVolumes(ctx)
+	here := a.self
+	if here == nil {
+		here = a.unlisted
+	}
 	for i := range vols {
-		vols[i].Handle = volumeHandle(a.control, vols[i].Handle)
+		vols[i].Handle = volumeHandle(here, vols[i].Handle)
 	}
 	return vols, err
 }
 
-// Self-upgrade replaces Pando's container on the control host, as on one
+// Self-upgrade replaces Pando's container on this control host, as on one
 // host (R-359); core allows it only with a single replica.
 func (a *Adapter) Self(ctx context.Context) (api.SelfWorkload, error) { return a.local.Self(ctx) }
 func (a *Adapter) PullImage(ctx context.Context, ref string) error {
