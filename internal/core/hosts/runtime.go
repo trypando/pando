@@ -54,13 +54,16 @@ type RuntimeHost struct {
 
 // RuntimeHosts is the cluster's app hosts as docker-hosts entries, in the
 // order they joined: each reached through its agent at the address it joined
-// with, which must present the certificate it joined with. The install's own
-// machine (InstallHost, or named local) is the control entry already in the
-// list and is left out.
-func RuntimeHosts(hosts []state.Host, local string) ([]RuntimeHost, error) {
+// with, which must present the certificate it joined with: the agent's
+// address and pin, never where a control host answers pings (R-416, R-421),
+// so a host with both roles runs apps through its agent. The install's own
+// machine (InstallHost) is the control entry already in the list and is left
+// out. A joined host is never left out for its name: one named as the
+// control entry is refused by mergeHosts, not dropped.
+func RuntimeHosts(hosts []state.Host) ([]RuntimeHost, error) {
 	var out []RuntimeHost
 	for _, h := range hosts {
-		if InstallHost(h) || h.Name == local || !slices.Contains(h.Roles, state.HostRoleApp) {
+		if InstallHost(h) || !slices.Contains(h.Roles, state.HostRoleApp) {
 			continue
 		}
 		if !runtimeHostName.MatchString(h.Name) {
@@ -145,7 +148,8 @@ type Runtime struct {
 	Authority *Authority
 
 	// LocalName is the name the install's own machine takes in the host list
-	// when it becomes the control host and first app host (R-418). Empty is
+	// when it becomes the control host and first app host (R-418), when it
+	// has no row in cluster_hosts to take it from (localName). Empty is
 	// "control". It names the machine's volumes from then on, so it does not
 	// change.
 	LocalName string
@@ -166,9 +170,21 @@ type SyncResult struct {
 	Changed   bool   `json:"changed"`
 }
 
-func (r *Runtime) localName() string {
+// localName is the install's own machine's name in the runtime's host list:
+// the name its cluster_hosts row has (InstallHost), so the runtime and the
+// cluster call the machine by one name. The runtime reports where an app runs
+// by it (api.StandbyHandle.Home), and the liveness pass finds a lost host's
+// apps by its row's name (standby.Failover); two names left the install's
+// own machine's apps never failed over (R-421). Without a usable row it is
+// LocalName, else "control".
+func (r *Runtime) localName(all []state.Host) string {
+	for _, h := range all {
+		if InstallHost(h) && runtimeHostName.MatchString(h.Name) {
+			return h.Name
+		}
+	}
 	if r.LocalName == "" {
-		return "control"
+		return installHostName
 	}
 	return r.LocalName
 }
@@ -225,7 +241,7 @@ func (r *Runtime) CheckJoin(ctx context.Context, roles []string) error {
 		return err
 	}
 	if rt.Kind == runtimeDocker {
-		_, err = r.convertDocker(rt.Config)
+		_, err = r.convertDocker(rt.Config, r.localName(nil))
 	}
 	return err
 }
@@ -253,7 +269,7 @@ func (r *Runtime) Sync(ctx context.Context) (SyncResult, error) {
 	if err != nil {
 		return res, err
 	}
-	app, err := RuntimeHosts(all, r.localName())
+	app, err := RuntimeHosts(all)
 	if err != nil {
 		return res, err
 	}
@@ -265,7 +281,7 @@ func (r *Runtime) Sync(ctx context.Context) (SyncResult, error) {
 			// A cluster of one behaves as before (R-414).
 			return res, nil
 		}
-		cfg, err = r.convertDocker(rt.Config)
+		cfg, err = r.convertDocker(rt.Config, r.localName(all))
 		if err == nil {
 			cfg, _, err = mergeHosts(cfg, app)
 		}
@@ -288,15 +304,15 @@ func (r *Runtime) Sync(ctx context.Context) (SyncResult, error) {
 		return res, err
 	}
 	res.Changed = true
-	return res, r.write(ctx, rt, cfg, app, res.Converted)
+	return res, r.write(ctx, rt, cfg, app, res.Converted, r.localName(all))
 }
 
 // write saves the runtime's new configuration with the cluster authority as
 // its agent authority, and signals the restart that makes it run.
-func (r *Runtime) write(ctx context.Context, rt state.AdapterConfig, cfg json.RawMessage, app []RuntimeHost, converted bool) error {
+func (r *Runtime) write(ctx context.Context, rt state.AdapterConfig, cfg json.RawMessage, app []RuntimeHost, converted bool, local string) error {
 	if converted {
 		names := make([]string, 0, len(app)+1)
-		names = append(names, r.localName())
+		names = append(names, local)
 		for _, h := range app {
 			names = append(names, h.Name)
 		}
@@ -304,7 +320,7 @@ func (r *Runtime) write(ctx context.Context, rt state.AdapterConfig, cfg json.Ra
 		if err := r.Audit.Write(ctx, audit.Event{
 			PrincipalKind: audit.KindSystem, PrincipalID: "cluster", Action: ConvertAction,
 			TargetKind: "adapter", TargetID: rt.ID,
-			Detail: map[string]any{"from": runtimeDocker, "to": runtimeDockerHosts, "hosts": names, "control_host": r.localName()},
+			Detail: map[string]any{"from": runtimeDocker, "to": runtimeDockerHosts, "hosts": names, "control_host": local},
 		}); err != nil {
 			return err
 		}
@@ -356,7 +372,7 @@ type dockerHostsSettings struct {
 // whose one host is this machine, the control host (R-418). Its apps are
 // found there by their labeled networks and volumes, as on one host, so
 // nothing is re-created.
-func (r *Runtime) convertDocker(raw json.RawMessage) (json.RawMessage, error) {
+func (r *Runtime) convertDocker(raw json.RawMessage, local string) (json.RawMessage, error) {
 	var d dockerSettings
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &d); err != nil {
@@ -375,7 +391,7 @@ func (r *Runtime) convertDocker(raw json.RawMessage) (json.RawMessage, error) {
 	}
 	out := dockerHostsSettings{
 		Hosts: []RuntimeHost{{
-			Name: r.localName(), Control: true, Endpoint: d.Host, AgentAddress: r.LocalAgentAddress,
+			Name: local, Control: true, Endpoint: d.Host, AgentAddress: r.LocalAgentAddress,
 			TotalCPUMillis: d.TotalCPUMillis, TotalMemoryBytes: d.TotalMemoryBytes, TotalDiskBytes: d.TotalDiskBytes,
 		}},
 		NetworkPool:      d.NetworkPool,

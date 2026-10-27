@@ -54,7 +54,9 @@ func RecordInstallHost(ctx context.Context, store InstallHostStore, info Install
 
 // InstallHostName is the first label of hostname, lower case, with anything a
 // DNS label cannot hold turned into a hyphen: "Build-01.example.com" is
-// build-01. A name that leaves nothing usable is "control".
+// build-01. It is cut to 40 characters, the most the docker-hosts runtime
+// takes, since the runtime names the machine as its row does (Runtime's
+// localName, R-421). A name that leaves nothing usable is "control".
 func InstallHostName(hostname string) string {
 	label, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(hostname)), ".")
 	label = strings.Map(func(r rune) rune {
@@ -63,8 +65,8 @@ func InstallHostName(hostname string) string {
 		}
 		return '-'
 	}, label)
-	if len(label) > 63 {
-		label = label[:63]
+	if len(label) > 40 {
+		label = label[:40]
 	}
 	label = strings.Trim(label, "-")
 	if CheckHostName(label) != nil {

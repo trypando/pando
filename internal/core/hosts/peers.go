@@ -1,6 +1,7 @@
 package hosts
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -46,12 +47,13 @@ func InstallHost(h state.Host) bool { return h.JoinedWith == "" }
 // LivenessPeers is the hosts that take part in the cluster's liveness checks:
 // every host, whatever its roles, the install's own first host included
 // (R-421). An app host answers on its agent; a control host on its cluster
-// listener (ControlPeers), so every host counted in the cluster's size is
-// also watched, and none is reported unreached for answering nowhere.
+// listener (ControlPeers, its row's ping address), so every host counted in
+// the cluster's size is also watched, and none is reported unreached for
+// answering nowhere.
 func LivenessPeers(list []state.Host) []Peer {
 	out := make([]Peer, 0, len(list))
 	for _, h := range list {
-		out = append(out, Peer{ID: h.ID, Name: h.Name, Address: h.Address})
+		out = append(out, Peer{ID: h.ID, Name: h.Name, Address: cmp.Or(h.PingAddress, h.Address)})
 	}
 	return out
 }
@@ -71,15 +73,16 @@ func PingAddress(address string, port int) string {
 // row current with.
 type HostPublisher interface {
 	HostLister
-	SetHostAgent(ctx context.Context, hostID, address, certSHA256 string) error
+	SetHostPing(ctx context.Context, hostID, address, certSHA256 string) error
 }
 
 // ControlPeers is a control host's peer list (R-421), read from the
 // database each round. Reading it also keeps the host's own row saying where
 // it answers pings, its cluster listener at Port, and the fingerprint of the
-// certificate it answers with, Pin: the first host was recorded with the
-// agent port and a placeholder pin (RecordInstallHost), and a joined control
-// host with its agent port. Written whenever it differs, so a write that
+// certificate it answers with, Pin, in the row's ping columns. The row's
+// address and pin stay the agent's, which the runtime reaches the host
+// through (R-416): a host with both roles runs apps through its agent and
+// answers pings on its listener. Written whenever it differs, so a write that
 // failed is made the next round.
 type ControlPeers struct {
 	Store  HostPublisher
@@ -100,17 +103,17 @@ func (c *ControlPeers) Peers(ctx context.Context) ([]Peer, error) {
 			continue
 		}
 		addr := PingAddress(h.Address, c.Port)
-		if addr == h.Address && h.CertSHA256 == c.Pin {
+		if addr == h.PingAddress && h.PingCertSHA256 == c.Pin {
 			break
 		}
-		if err := c.Store.SetHostAgent(ctx, h.ID, addr, c.Pin); err != nil {
+		if err := c.Store.SetHostPing(ctx, h.ID, addr, c.Pin); err != nil {
 			if c.Logger != nil {
 				c.Logger.Warn("could not record where this host answers the cluster's liveness checks; trying again next round",
 					zap.String("host_id", h.ID), zap.String("address", addr), zap.Error(err))
 			}
 			break
 		}
-		list[i].Address, list[i].CertSHA256 = addr, c.Pin
+		list[i].PingAddress, list[i].PingCertSHA256 = addr, c.Pin
 	}
 	return LivenessPeers(list), nil
 }
@@ -121,7 +124,8 @@ var errNotAHost = errs.New(errs.AuthInvalid, "This certificate is not one a host
 
 // Peers is the peer list, for the host whose verified certificate is
 // certDER: one a host of the cluster joined with (cluster_hosts.cert_sha256),
-// so a removed host no longer hears where the others are.
+// or the one a control host answers pings with (ping_cert_sha256), so a
+// removed host no longer hears where the others are.
 func (s *Service) Peers(ctx context.Context, certDER []byte) ([]Peer, error) {
 	if len(certDER) == 0 {
 		return nil, errNotAHost
@@ -132,7 +136,7 @@ func (s *Service) Peers(ctx context.Context, certDER []byte) ([]Peer, error) {
 	}
 	pin := hostagent.Fingerprint256(certDER)
 	for _, h := range list {
-		if h.CertSHA256 == pin {
+		if h.CertSHA256 == pin || h.PingCertSHA256 == pin {
 			return LivenessPeers(list), nil
 		}
 	}

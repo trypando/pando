@@ -76,12 +76,14 @@ func (c *Cluster) RecordHostFence(ctx context.Context, hostID, fenceID string) (
 	return tag.RowsAffected() == 1, nil
 }
 
-// SetHostAgent records where a host answers the cluster's liveness checks and
-// the fingerprint of the certificate it answers with (R-421): a control host
-// keeps its own row current with it (hosts.ControlPeers).
-func (c *Cluster) SetHostAgent(ctx context.Context, hostID, address, certSHA256 string) error {
+// SetHostPing records where a control host answers the cluster's liveness
+// checks, its cluster listener, and the fingerprint of the certificate it
+// answers with (R-421): a control host keeps its own row current with it
+// (hosts.ControlPeers). The agent's address and pin, which the runtime
+// reaches the host through (R-416), stay as the host joined with them.
+func (c *Cluster) SetHostPing(ctx context.Context, hostID, address, certSHA256 string) error {
 	tag, err := c.db.Exec(ctx, `
-		UPDATE cluster_hosts SET address = $2, cert_sha256 = $3, updated_at = now()
+		UPDATE cluster_hosts SET ping_address = $2, ping_cert_sha256 = $3, updated_at = now()
 		WHERE id = $1`, hostID, address, certSHA256)
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not record where the host answers the cluster's liveness checks.", err)

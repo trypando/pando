@@ -87,6 +87,66 @@ func appHost(name, address string, roles ...string) state.Host {
 	return state.Host{ID: "host_" + name, Name: name, Roles: roles, Address: address, CertSHA256: pin, JoinedWith: "jt_" + name}
 }
 
+// installRow is the install's own machine's row: no join token brought it in.
+func installRow(name, address string) state.Host {
+	return state.Host{ID: "host_" + name, Name: name, Roles: []string{state.HostRoleControl, state.HostRoleApp},
+		Address: address, CertSHA256: pin}
+}
+
+// TestR421_TheInstallsOwnMachineHasOneNameInTheRuntimeAndTheCluster asserts
+// R-421's precondition for failing over the install's own machine's apps:
+// the conversion names its control entry as the machine's cluster_hosts row
+// does, so the home the runtime reports is the name the liveness pass looks
+// the lost host's apps up by; and a joined host named as the control entry
+// is refused, never silently left out of the host list.
+func TestR421_TheInstallsOwnMachineHasOneNameInTheRuntimeAndTheCluster(t *testing.T) {
+	ctx := context.Background()
+	f := &runtimeFakes{adapters: []state.AdapterConfig{singleDocker(`{}`)}}
+	r := newRuntime(t, f)
+	f.hosts = []state.Host{installRow("3f9c2a1b7d4e", "10.0.0.5:7443"), appHost("app-1", "10.0.0.6:7443")}
+	_, err := r.Sync(ctx)
+	require.NoError(t, err)
+	var cfg struct {
+		Hosts []map[string]any `json:"hosts"`
+	}
+	require.NoError(t, json.Unmarshal(f.saves[0].Config, &cfg))
+	require.Equal(t, "3f9c2a1b7d4e", cfg.Hosts[0]["name"], "the row's name, not LocalName or control")
+	require.Equal(t, "3f9c2a1b7d4e", f.events[0].Detail["control_host"])
+
+	// Without a row the configured name is used.
+	f = &runtimeFakes{adapters: []state.AdapterConfig{singleDocker(`{}`)}, hosts: []state.Host{appHost("app-1", "10.0.0.6:7443")}}
+	_, err = newRuntime(t, f).Sync(ctx)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(f.saves[0].Config, &cfg))
+	require.Equal(t, "pando-1", cfg.Hosts[0]["name"])
+
+	// A joined host named "control" is listed, not dropped as the control
+	// entry; where that name is taken, the sync is refused with why.
+	list, err := hosts.RuntimeHosts([]state.Host{installRow("pando-1", "10.0.0.5:7443"), appHost("control", "10.0.0.7:7443")})
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.Equal(t, "control", list[0].Name)
+	f = &runtimeFakes{adapters: []state.AdapterConfig{{
+		ID: "rt_hosts", Category: "runtime", Kind: "docker-hosts", IsDefault: true, Enabled: true,
+		Config: json.RawMessage(`{"hosts":[{"name":"control","control":true,"agent_address":"10.0.0.5:7443"}]}`),
+	}}, hosts: []state.Host{appHost("control", "10.0.0.7:7443")}}
+	_, err = newRuntime(t, f).Sync(ctx)
+	require.ErrorContains(t, err, "already lists a host of that name")
+}
+
+// TestR416_AHostWithBothRolesIsReachedThroughItsAgent asserts R-416 for a
+// host that joined with the control and app roles: its runtime entry is its
+// agent's address and pin, never the cluster listener it answers pings on.
+func TestR416_AHostWithBothRolesIsReachedThroughItsAgent(t *testing.T) {
+	both := appHost("core-2", "10.0.0.8:7443", state.HostRoleControl, state.HostRoleApp)
+	both.PingAddress, both.PingCertSHA256 = "10.0.0.8:7444", strings.Repeat("e", 64)
+	list, err := hosts.RuntimeHosts([]state.Host{both})
+	require.NoError(t, err)
+	require.Equal(t, []hosts.RuntimeHost{{Name: "core-2", Endpoint: "agent://10.0.0.8:7443", CertSHA256: pin}}, list)
+	require.Equal(t, []hosts.Peer{{ID: both.ID, Name: "core-2", Address: "10.0.0.8:7444"}}, hosts.LivenessPeers([]state.Host{both}),
+		"pinged on its cluster listener (R-421)")
+}
+
 func singleDocker(config string) state.AdapterConfig {
 	return state.AdapterConfig{ID: "rt_docker", Category: "runtime", Kind: "docker", Name: "Docker",
 		IsDefault: true, Enabled: true, Config: json.RawMessage(config)}
@@ -236,7 +296,7 @@ func TestTheHostListFollowsTheClusterAndKeepsWhatTheOperatorWrote(t *testing.T) 
 	}}}
 	r := newRuntime(t, f)
 	r.LocalName = "control"
-	f.hosts = []state.Host{appHost("control", "10.0.0.5:7443"), appHost("app-2", "10.0.0.6:7443")}
+	f.hosts = []state.Host{installRow("control", "10.0.0.5:7443"), appHost("app-2", "10.0.0.6:7443")}
 
 	res, err := r.Sync(ctx)
 	require.NoError(t, err)

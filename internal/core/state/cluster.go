@@ -56,6 +56,15 @@ type Host struct {
 	JoinedWith string     `json:"joined_with,omitempty"`
 	JoinedAt   time.Time  `json:"joined_at"`
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+
+	// PingAddress and PingCertSHA256 are where a control host answers the
+	// cluster's liveness checks, its cluster listener, and the fingerprint
+	// of the certificate it answers with (R-421, migration 000091). Empty is
+	// the agent's Address and CertSHA256, which an app host answers on.
+	// Address and CertSHA256 stay the agent's: runtime calls go through it
+	// (R-416), so a host with both roles keeps running apps.
+	PingAddress    string `json:"-"`
+	PingCertSHA256 string `json:"-"`
 }
 
 // Cluster stores the cluster's hosts and its join tokens.
@@ -238,11 +247,13 @@ func (c *Cluster) Fresh(ctx context.Context) (accounts, apps bool, err error) {
 
 const msgRecordHost = "Could not record the host."
 
-const hostColumns = `id, name, roles, address, cert_sha256, platform, version, coalesce(joined_with, ''), joined_at, last_seen_at`
+const hostColumns = `id, name, roles, address, cert_sha256, platform, version, coalesce(joined_with, ''), joined_at, last_seen_at,
+	ping_address, ping_cert_sha256`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
-	err := row.Scan(&h.ID, &h.Name, &h.Roles, &h.Address, &h.CertSHA256, &h.Platform, &h.Version, &h.JoinedWith, &h.JoinedAt, &h.LastSeenAt)
+	err := row.Scan(&h.ID, &h.Name, &h.Roles, &h.Address, &h.CertSHA256, &h.Platform, &h.Version, &h.JoinedWith, &h.JoinedAt, &h.LastSeenAt,
+		&h.PingAddress, &h.PingCertSHA256)
 	return h, err
 }
 

@@ -88,13 +88,16 @@ func TestR421_AControlHostRecordsWhereItAnswersPingsInTheDatabase(t *testing.T) 
 	require.True(t, recorded)
 
 	pin := strings.Repeat("e", 64)
-	require.NoError(t, c.SetHostAgent(ctx, h.ID, "10.0.0.1:7444", pin))
+	require.NoError(t, c.SetHostPing(ctx, h.ID, "10.0.0.1:7444", pin))
 	got, err := c.Host(ctx, h.ID)
 	require.NoError(t, err)
-	require.Equal(t, "10.0.0.1:7444", got.Address)
-	require.Equal(t, pin, got.CertSHA256)
+	require.Equal(t, "10.0.0.1:7444", got.PingAddress)
+	require.Equal(t, pin, got.PingCertSHA256)
+	// R-416: the agent's address and pin, which the runtime uses, are kept.
+	require.Equal(t, "10.0.0.1:7443", got.Address)
+	require.Equal(t, strings.Repeat("0", 64), got.CertSHA256)
 
-	err = c.SetHostAgent(ctx, "host_nobody", "10.0.0.1:7444", pin)
+	err = c.SetHostPing(ctx, "host_nobody", "10.0.0.1:7444", pin)
 	require.Equal(t, errs.NotFound, errs.CodeOf(err))
-	require.Error(t, c.SetHostAgent(ctx, h.ID, "10.0.0.1:7444", "not-a-pin"), "the column holds fingerprints only")
+	require.Error(t, c.SetHostPing(ctx, h.ID, "10.0.0.1:7444", "not-a-pin"), "the column holds fingerprints only")
 }

@@ -33,14 +33,14 @@ func (p *publishStore) Hosts(context.Context) ([]state.Host, error) {
 	return out, p.err
 }
 
-func (p *publishStore) SetHostAgent(_ context.Context, id, address, pin string) error {
+func (p *publishStore) SetHostPing(_ context.Context, id, address, pin string) error {
 	p.sets++
 	if p.setErr != nil {
 		return p.setErr
 	}
 	for i := range p.hosts {
 		if p.hosts[i].ID == id {
-			p.hosts[i].Address, p.hosts[i].CertSHA256 = address, pin
+			p.hosts[i].PingAddress, p.hosts[i].PingCertSHA256 = address, pin
 		}
 	}
 	return nil
@@ -76,8 +76,11 @@ func TestR421_AControlHostRecordsWhereItAnswersPings(t *testing.T) {
 		{ID: "host_core2", Name: "core-2", Address: "10.0.0.2:7443"},
 		{ID: "host_app1", Name: "app-1", Address: "10.0.0.3:7443"},
 	}, got, "every host, whatever its roles")
-	require.Equal(t, "10.0.0.1:7444", store.hosts[0].Address)
-	require.Equal(t, pin, store.hosts[0].CertSHA256, "the placeholder pin is replaced")
+	require.Equal(t, "10.0.0.1:7444", store.hosts[0].PingAddress)
+	require.Equal(t, pin, store.hosts[0].PingCertSHA256, "it answers with this certificate")
+	// R-416: the agent's address and pin, which runtime calls use, are kept.
+	require.Equal(t, "10.0.0.1:7443", store.hosts[0].Address)
+	require.Equal(t, zeros, store.hosts[0].CertSHA256)
 	require.Equal(t, 1, store.sets)
 
 	_, err = peers.Peers(ctx)
@@ -86,7 +89,7 @@ func TestR421_AControlHostRecordsWhereItAnswersPings(t *testing.T) {
 
 	// A write that fails is logged, the list still returned, and made again
 	// the next round.
-	store.hosts[0].Address = "10.0.0.1:7443"
+	store.hosts[0].PingAddress = ""
 	store.setErr = errors.New("database away")
 	got, err = peers.Peers(ctx)
 	require.NoError(t, err)
@@ -95,10 +98,10 @@ func TestR421_AControlHostRecordsWhereItAnswersPings(t *testing.T) {
 	store.setErr = nil
 	_, err = peers.Peers(ctx)
 	require.NoError(t, err)
-	require.Equal(t, "10.0.0.1:7444", store.hosts[0].Address)
+	require.Equal(t, "10.0.0.1:7444", store.hosts[0].PingAddress)
 
 	// Without a logger a failed write is only tried again.
-	store.hosts[0].Address, store.setErr = "10.0.0.1:7443", errors.New("database away")
+	store.hosts[0].PingAddress, store.setErr = "", errors.New("database away")
 	quiet := &hosts.ControlPeers{Store: store, Self: "host_first", Port: 7444, Pin: pin}
 	_, err = quiet.Peers(ctx)
 	require.NoError(t, err)

@@ -72,12 +72,12 @@ func (r *rows) row(hostID string) (int, error) {
 	return i, nil
 }
 
-func (r *rows) SetHostAgent(_ context.Context, hostID, address, pin string) error {
+func (r *rows) SetHostPing(_ context.Context, hostID, address, pin string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	i, err := r.row(hostID)
 	if err == nil {
-		r.hosts[i].Address, r.hosts[i].CertSHA256 = address, pin
+		r.hosts[i].PingAddress, r.hosts[i].PingCertSHA256 = address, pin
 	}
 	return err
 }
@@ -396,8 +396,9 @@ func TestR421_EveryHostOfAHealthyClusterReachesEveryOther(t *testing.T) {
 	list, err := c.rows.Hosts(context.Background())
 	require.NoError(t, err)
 	for _, h := range list[:2] {
-		require.NotEqual(t, "127.0.0.1:7443", h.Address, "%s answers on its cluster listener", h.Name)
-		require.NotEqual(t, strings.Repeat("0", 64), h.CertSHA256)
+		require.NotEqual(t, "127.0.0.1:7443", h.PingAddress, "%s answers on its cluster listener", h.Name)
+		require.NotEqual(t, strings.Repeat("0", 64), h.PingCertSHA256)
+		require.Equal(t, "127.0.0.1:7443", h.Address, "%s keeps its agent's address (R-416)", h.Name)
 	}
 
 	// The listener still serves its HTTP to everything else.

@@ -301,7 +301,7 @@ func TestR414_TheFirstHostIsInTheClusterFromItsFirstStart(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 
-	app, err := hosts.RuntimeHosts(store.hosts, "control")
+	app, err := hosts.RuntimeHosts(store.hosts)
 	require.NoError(t, err)
 	require.Empty(t, app, "the first host is the runtime's control entry already")
 	require.Equal(t, []hosts.Peer{{ID: h.ID, Name: h.Name, Address: h.Address}}, hosts.LivenessPeers(store.hosts),
@@ -320,7 +320,7 @@ func TestTheFirstHostIsNamedByItsMachinesFirstLabel(t *testing.T) {
 		"":                     "control",
 		"...":                  "control",
 		"--":                   "control",
-		"a234567890123456789012345678901234567890123456789012345678901234567890": "a23456789012345678901234567890123456789012345678901234567890123",
+		"a234567890123456789012345678901234567890123456789012345678901234567890": "a234567890123456789012345678901234567890",
 	} {
 		require.Equal(t, want, hosts.InstallHostName(in), in)
 	}
