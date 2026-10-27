@@ -100,6 +100,12 @@ var (
 
 func TestMain(m *testing.M) {
 	enabled = os.Getenv("MH_TEST") == "1"
+	if enabled && os.Getenv("MH_CLUSTER") == "1" {
+		// The cluster topology (cluster_main_test.go) instead of this one:
+		// the tests below skip, the cluster's run.
+		enabled = false
+		os.Exit(clusterMain(m))
+	}
 	if !enabled {
 		os.Exit(m.Run())
 	}

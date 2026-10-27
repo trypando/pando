@@ -170,6 +170,25 @@ test-multihost: ## Run the multi-host Docker runtime on Docker-in-Docker hosts (
 	fi; \
 	exit $$status
 
+# The cluster end to end (#347, test/multihost/cluster_test.go): three DinD
+# machines, each running Pando built from this checkout, joined with join
+# tokens, then a host cut off, failed over and brought back. Everything is
+# named mh-test-cl-… and labeled mh-test-cl=1, and removed whether or not
+# anything failed, the image included; MH_KEEP=1 keeps it.
+.PHONY: test-cluster
+test-cluster: ## Run the cluster (#347) end to end on Docker-in-Docker machines
+	docker pull -q busybox:1.37 >/dev/null
+	docker pull -q versity/versitygw:latest >/dev/null
+	docker build -t $(MH_IMAGE) .
+	@status=0; \
+	MH_TEST=1 MH_CLUSTER=1 MH_IMAGE=$(MH_IMAGE) MH_KEEP=$(MH_KEEP) $(GO) test -count=1 -timeout=90m -tags=multihost -v -run 'TestR' ./test/multihost/ || status=1; \
+	if [ -z "$(MH_KEEP)" ]; then \
+		docker ps -aq --filter label=mh-test-cl=1 | xargs docker rm -f -v >/dev/null 2>&1 || true; \
+		docker network rm mh-test-cl-net >/dev/null 2>&1 || true; \
+		docker image rm $(MH_IMAGE) >/dev/null 2>&1 || true; \
+	fi; \
+	exit $$status
+
 # The Incus runtime against a real Incus server (notes-incus-runtime.md). Run
 # where Pando's proxy would run: somewhere that can route to INCUS_NETWORK,
 # because the proxy's path through each VM's agent is part of what is tested.
