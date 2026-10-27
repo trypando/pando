@@ -416,6 +416,10 @@ func serve(ctx context.Context, configPath string) error {
 	// pings on its cluster listener, and watches them, on every replica.
 	controlPings := startControlLiveness(ctx, cfg.Server.ClusterDir, clusterPort(cfg), clusterStore, clusterAuthority,
 		joined, hasJoined, logger)
+	// R-416: a host joined with both roles runs its apps through its agent.
+	if hasJoined {
+		startJoinedAgent(ctx, cfg.Server.ClusterDir, joined, controlPings, logger)
+	}
 	allocations := state.NewAllocations(db)
 	authzStore := state.NewAuthzStore(db)
 	grants := state.NewGrants(db)
@@ -510,6 +514,8 @@ func serve(ctx context.Context, configPath string) error {
 		Store: standbys, Runtimes: registry, Services: registry,
 		Policy: policyStore, Apps: standbys, Auditor: auditor,
 		Clock: clock.System{}, Logger: logger,
+		RuntimeRefs: func() []string { return registry.ByCategory(adapterapi.CategoryRuntime) },
+		LocalFenced: controlPings.fenced, // R-421
 	}
 	failover := &standby.Failover{Standbys: standbyService, Homes: standbys, Hosts: clusterStore}
 	hostLoss.Homes, hostLoss.Failover, hostLoss.Returns = failover, failover, failover
@@ -1285,6 +1291,13 @@ func serve(ctx context.Context, configPath string) error {
 		Logger:        logger,
 		Clock:         clock.System{},
 		ProxyUpstream: proxyUpstream,
+
+		// R-148 never undoes a fence or restarts a failed-over copy: an app
+		// whose host is lost or fenced, or whose standby is being promoted,
+		// is left alone, and nothing is reconciled while this host is
+		// fenced (R-153, R-421).
+		Holds:       standbys,
+		LocalFenced: controlPings.fenced,
 
 		// Replicas share the apps rather than each visiting every one.
 		MinRevisit: reconciler.DefaultMinRevisit,

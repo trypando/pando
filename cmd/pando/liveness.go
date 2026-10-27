@@ -58,11 +58,17 @@ func clusterLiveness(store clusterStore, authority *hosts.Authority, apps *state
 		}
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
-		_, err = probe(ctx, liveness.Peer{ID: h.ID, Name: h.Name, Address: h.Address})
+		_, err = probe(ctx, liveness.Peer(hosts.LivenessPeers([]state.Host{h})[0]))
 		return err == nil
 	}
 
-	return svc, &liveness.Watch{Hosts: peers, Probe: probe, Service: svc, Logger: logger.Named("liveness")}
+	// What each host says of its fence is recorded, so every replica's
+	// reconciler leaves a fenced host's apps stopped (R-421, clusterholds.go).
+	watchProbe := probe
+	if fences, ok := store.(hostFences); ok {
+		watchProbe = (&fenceRecorder{store: fences, logger: logger.Named("liveness")}).wrap(probe)
+	}
+	return svc, &liveness.Watch{Hosts: peers, Probe: watchProbe, Service: svc, Logger: logger.Named("liveness")}
 }
 
 // clusterStore is the slice of state.Cluster the liveness wiring reads.

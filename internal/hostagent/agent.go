@@ -86,6 +86,10 @@ type Agent struct {
 
 	// Liveness answers other hosts' pings (ping.go, R-421). Nil refuses them.
 	Liveness Liveness
+
+	// Fence, when set, refuses runtime calls that create or start a
+	// container while this host is fenced (runtime.go, R-421).
+	Fence Fence
 }
 
 // Serve accepts on ln, which must be a plain TCP listener: the agent does the

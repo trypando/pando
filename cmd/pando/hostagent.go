@@ -98,6 +98,10 @@ func serveAgent(ctx context.Context, agent *hostagent.Agent, monitor *liveness.M
 		zap.Bool("carries_runtime_calls", agent.RuntimeSocket != ""), zap.Bool("checks_hosts", monitor != nil))
 	if monitor != nil {
 		agent.Liveness = monitor
+		// R-421: a fenced host's agent starts nothing the control plane asks.
+		if agent.Fence == nil {
+			agent.Fence = monitor
+		}
 		go monitor.Run(ctx)
 	}
 	return agent.Serve(ctx, ln)
