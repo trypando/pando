@@ -1758,8 +1758,6 @@ func serve(ctx context.Context, configPath string) error {
 	return err
 }
 
-// startMetrics exports metrics as cfg says, and returns what stops it,
-// flushing the last of them. Nothing is exported with no endpoint configured.
 // edgeFollower is the edge pass of a control host that does not lead (R-417,
 // O-68): it runs this host's own edge with the certificates the leader's pass
 // issued, read from the database, and orders none. Without a secrets adapter
@@ -1777,6 +1775,8 @@ func edgeFollower(leaderPass *edge.Service, held *state.EdgeCertificates, leadin
 	return follower
 }
 
+// startMetrics exports metrics as cfg says, and returns what stops it,
+// flushing the last of them. Nothing is exported with no endpoint configured.
 func startMetrics(ctx context.Context, cfg config.Metrics, process telemetry.Process,
 	sources telemetry.Sources, logger *zap.Logger) (func(), error) {
 	stop, err := telemetry.Start(ctx, cfg, process, sources)

@@ -51,12 +51,11 @@ type UploadStore interface {
 	DeleteUpload(ctx context.Context, appID string) error
 }
 
-// isAppID reports whether an app ID can name a file in the upload
-// directory: not empty, not hidden, and no path separator.
-
 // uploadSuffix ends an uploaded source's file name under UploadDir.
 const uploadSuffix = ".tar.gz"
 
+// isAppID reports whether an app ID can name a file in the upload
+// directory: not empty, not hidden, and no path separator.
 func isAppID(appID string) bool {
 	return appID != "" && !strings.ContainsAny(appID, `/\`) && !strings.HasPrefix(appID, ".")
 }
