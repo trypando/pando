@@ -224,9 +224,11 @@ func (r *Runtime) NetworkPool(ctx context.Context) string {
 }
 
 // CheckJoin refuses an app-role join the runtime cannot take, before the
-// host is let in: a runtime spanning machines, or a Docker runtime that cannot
-// be turned into a multi-host one.
-func (r *Runtime) CheckJoin(ctx context.Context, roles []string) error {
+// host is let in: a runtime spanning machines, a Docker runtime that cannot
+// be turned into a multi-host one, or a name the runtime's host list already
+// gives a host Pando did not add (R-415, R-418), which would stop every later
+// Sync.
+func (r *Runtime) CheckJoin(ctx context.Context, name string, roles []string) error {
 	if !slices.Contains(roles, state.HostRoleApp) {
 		return nil
 	}
@@ -240,10 +242,44 @@ func (r *Runtime) CheckJoin(ctx context.Context, roles []string) error {
 	if err := r.checkWritable(rt); err != nil {
 		return err
 	}
-	if rt.Kind == runtimeDocker {
-		_, err = r.convertDocker(rt.Config, r.localName(nil))
+	taken, err := r.writtenNames(ctx, rt)
+	if err != nil {
+		return err
 	}
-	return err
+	if slices.Contains(taken, name) {
+		return errs.Newf(errs.ValidInvalid,
+			"The Docker hosts runtime already lists a host named %s, which Pando did not add, so a joining host cannot take that name. Valid answer: another name, such as app-host-2.", name)
+	}
+	return nil
+}
+
+// writtenNames is the names in the runtime's host list that a join does not
+// write (mergeHosts keeps them): the operator's entries and the install's
+// own machine's, or, for a single-host docker runtime, the name the machine
+// takes when it is converted.
+func (r *Runtime) writtenNames(ctx context.Context, rt state.AdapterConfig) ([]string, error) {
+	if rt.Kind == runtimeDocker {
+		var all []state.Host
+		if r.Hosts != nil {
+			var err error
+			if all, err = r.Hosts.Hosts(ctx); err != nil {
+				return nil, err
+			}
+		}
+		local := r.localName(all)
+		_, err := r.convertDocker(rt.Config, local)
+		return []string{local}, err
+	}
+	_, entries, err := hostList(rt.Config)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range keptEntries(entries) {
+		name, _ := e["name"].(string)
+		out = append(out, name)
+	}
+	return out, nil
 }
 
 func (r *Runtime) checkWritable(rt state.AdapterConfig) error {
@@ -407,23 +443,14 @@ func (r *Runtime) convertDocker(raw json.RawMessage, local string) (json.RawMess
 // with app, keeping every entry the operator wrote and every other setting as
 // it was, and reports whether the host list changed.
 func mergeHosts(raw json.RawMessage, app []RuntimeHost) (json.RawMessage, bool, error) {
-	cfg := map[string]json.RawMessage{}
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return nil, false, errs.Wrap(errs.StateInvalid, "The Docker hosts runtime's stored configuration could not be read, so Pando cannot add hosts to it.", err)
-		}
-	}
-	current, err := hostEntries(cfg["hosts"])
+	cfg, current, err := hostList(raw)
 	if err != nil {
 		return nil, false, err
 	}
 
 	next := make([]any, 0, len(current))
 	names := map[string]bool{}
-	for _, e := range current {
-		if endpoint, _ := e["endpoint"].(string); strings.HasPrefix(endpoint, agentScheme) {
-			continue
-		}
+	for _, e := range keptEntries(current) {
 		name, _ := e["name"].(string)
 		names[name] = true
 		next = append(next, e)
@@ -458,6 +485,30 @@ func mergeHosts(raw json.RawMessage, app []RuntimeHost) (json.RawMessage, bool, 
 		return nil, false, errs.Wrap(errs.Internal, "Could not encode the runtime's configuration.", err)
 	}
 	return out, true, nil
+}
+
+// hostList reads a docker-hosts configuration and its host list.
+func hostList(raw json.RawMessage) (map[string]json.RawMessage, []map[string]any, error) {
+	cfg := map[string]json.RawMessage{}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			return nil, nil, errs.Wrap(errs.StateInvalid, "The Docker hosts runtime's stored configuration could not be read, so Pando cannot add hosts to it.", err)
+		}
+	}
+	entries, err := hostEntries(cfg["hosts"])
+	return cfg, entries, err
+}
+
+// keptEntries is the entries of a host list the cluster does not write: every
+// one not reached through agentScheme.
+func keptEntries(entries []map[string]any) []map[string]any {
+	var out []map[string]any
+	for _, e := range entries {
+		if endpoint, _ := e["endpoint"].(string); !strings.HasPrefix(endpoint, agentScheme) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // hostEntries reads a host list: a JSON list, or a string holding one, which

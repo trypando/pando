@@ -244,8 +244,8 @@ func TestR418_KubernetesAndIncusTakeControlRoleJoinsOnly(t *testing.T) {
 	f := &runtimeFakes{adapters: []state.AdapterConfig{{ID: "rt_k8s", Category: "runtime", Kind: "kubernetes", IsDefault: true, Enabled: true}}}
 	r := newRuntime(t, f)
 	ctx := context.Background()
-	require.ErrorContains(t, r.CheckJoin(ctx, []string{state.HostRoleApp}), "Kubernetes")
-	require.NoError(t, r.CheckJoin(ctx, []string{state.HostRoleControl}))
+	require.ErrorContains(t, r.CheckJoin(ctx, "edge-2", []string{state.HostRoleApp}), "Kubernetes")
+	require.NoError(t, r.CheckJoin(ctx, "edge-2", []string{state.HostRoleControl}))
 
 	// And a Sync with an app host there writes nothing.
 	f.hosts = []state.Host{appHost("app-1", "10.0.0.6:7443")}
@@ -263,7 +263,7 @@ func TestR418_AJoinIsRefusedWhenDockerCannotBecomeSeveralHosts(t *testing.T) {
 
 	f := &runtimeFakes{adapters: []state.AdapterConfig{singleDocker(`{"network_pool":"off"}`)}}
 	r := newRuntime(t, f)
-	err := r.CheckJoin(ctx, app)
+	err := r.CheckJoin(ctx, "edge-2", app)
 	require.ErrorContains(t, err, "network_pool")
 	f.hosts = []state.Host{appHost("app-1", "10.0.0.6:7443")}
 	_, err = r.Sync(ctx)
@@ -273,17 +273,17 @@ func TestR418_AJoinIsRefusedWhenDockerCannotBecomeSeveralHosts(t *testing.T) {
 	f = &runtimeFakes{adapters: []state.AdapterConfig{singleDocker(`{}`)}}
 	r = newRuntime(t, f)
 	r.LocalAgentAddress = ""
-	require.Contains(t, errs.As(r.CheckJoin(ctx, app)).Remedy, "advertise_url")
+	require.Contains(t, errs.As(r.CheckJoin(ctx, "edge-2", app)).Remedy, "advertise_url")
 
 	r = newRuntime(t, f)
 	r.Declared = func(id string) bool { return id == "rt_docker" }
-	require.ErrorContains(t, r.CheckJoin(ctx, app), "configuration file")
-	require.NoError(t, r.CheckJoin(ctx, []string{state.HostRoleControl}))
+	require.ErrorContains(t, r.CheckJoin(ctx, "edge-2", app), "configuration file")
+	require.NoError(t, r.CheckJoin(ctx, "edge-2", []string{state.HostRoleControl}))
 
-	require.Error(t, newRuntime(t, &runtimeFakes{}).CheckJoin(ctx, app), "no runtime stored")
+	require.Error(t, newRuntime(t, &runtimeFakes{}).CheckJoin(ctx, "edge-2", app), "no runtime stored")
 	r = newRuntime(t, &runtimeFakes{adapters: []state.AdapterConfig{singleDocker(`not json`)}})
-	require.ErrorContains(t, r.CheckJoin(ctx, app), "could not be read")
-	require.NoError(t, newRuntime(t, f).CheckJoin(ctx, app))
+	require.ErrorContains(t, r.CheckJoin(ctx, "edge-2", app), "could not be read")
+	require.NoError(t, newRuntime(t, f).CheckJoin(ctx, "edge-2", app))
 }
 
 func TestTheHostListFollowsTheClusterAndKeepsWhatTheOperatorWrote(t *testing.T) {

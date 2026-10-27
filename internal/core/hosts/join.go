@@ -120,14 +120,19 @@ func (s *Service) controlKeys(ctx context.Context) (*ControlKeys, error) {
 	return k, nil
 }
 
-// hostName is what a host may be called: a DNS label, since it is the name
-// in the host's certificate.
-var hostName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
-
-// CheckHostName refuses a name a host cannot have.
+// CheckHostName refuses a name a host cannot have (R-415): one the Docker
+// hosts runtime would not take (runtimeHostName, its own rule), since a
+// joined app host is written into its host list under it and one bad name
+// stops every later sync of that list (R-418), or installHostName, which the
+// runtime's own entry for the install's machine may already have. Which
+// names the runtime's host list holds is checked once the token is
+// (Runtime.CheckJoin).
 func CheckHostName(name string) error {
-	if !hostName.MatchString(name) {
-		return errs.Newf(errs.ValidInvalid, "%s is not a host name Pando can use. Valid answer: lowercase letters, digits and hyphens, up to 63, such as app-host-2.", shortQuote(name))
+	if !runtimeHostName.MatchString(name) {
+		return errs.Newf(errs.ValidInvalid, "%s is not a host name Pando can use. Valid answer: lowercase letters, digits and hyphens, up to 40, starting and ending with a letter or digit, such as app-host-2.", shortQuote(name))
+	}
+	if name == installHostName {
+		return errs.Newf(errs.ValidInvalid, "%q is the name Pando keeps for the installation's first host. Valid answer: another name, such as app-host-2.", installHostName)
 	}
 	return nil
 }
@@ -198,7 +203,7 @@ const InvalidField = "(invalid)"
 // AuditDetail is what the audit log records of a join that was refused.
 func (req JoinRequest) AuditDetail() map[string]any {
 	name, version := req.Name, req.Version
-	if CheckHostName(name) != nil {
+	if !runtimeHostName.MatchString(name) {
 		name = InvalidField
 	}
 	if len(version) > maxVersionLen || !shown.MatchString(version) {
@@ -226,7 +231,7 @@ func (s *Service) Join(ctx context.Context, req JoinRequest) (JoinResult, error)
 				"This host runs Pando %s and the cluster runs %s. A host joins only at the cluster's version.", orUnknown(req.Version), orUnknown(s.Version)).
 				WithRemedy("Install Pando " + orUnknown(s.Version) + " on the joining host and start the join again.")
 		}
-		if err := s.admissible(ctx, t.Roles); err != nil {
+		if err := s.admissible(ctx, req.Name, t.Roles); err != nil {
 			return state.Host{}, err
 		}
 		hostID := id.New(id.Host)
@@ -260,16 +265,18 @@ func (s *Service) Join(ctx context.Context, req JoinRequest) (JoinResult, error)
 	return res, nil
 }
 
-// admissible asks whether the cluster can take a host with roles now: the
-// cluster (Readiness, R-417), then the runtime for an app host (R-418).
-func (s *Service) admissible(ctx context.Context, roles []string) error {
+// admissible asks whether the cluster can take a host called name with roles
+// now: the cluster (Readiness, R-417), then the runtime for an app host
+// (R-418). Asked once the token is good, so that only a holder of one learns
+// what the runtime's host list holds.
+func (s *Service) admissible(ctx context.Context, name string, roles []string) error {
 	if s.Readiness != nil {
 		if err := s.Readiness.ReadyToJoin(ctx, roles); err != nil {
 			return err
 		}
 	}
 	if s.Runtime != nil {
-		return s.Runtime.CheckJoin(ctx, roles)
+		return s.Runtime.CheckJoin(ctx, name, roles)
 	}
 	return nil
 }
