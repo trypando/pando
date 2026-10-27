@@ -71,6 +71,17 @@ type Host struct {
 	// apps.
 	PingAddress    string `json:"-"`
 	PingCertSHA256 string `json:"-"`
+
+	// Pending is a host whose join is recorded and that has not yet
+	// presented the certificate it was issued (migration 000093): it is not
+	// listed (Hosts) and takes no part in the cluster until it does
+	// (ConfirmJoin), and its row is removed after PendingJoinLifetime or when
+	// its name joins again (R-415).
+	Pending bool `json:"-"`
+	// NextCertPEM is the certificate the host's latest renewal answered
+	// with, until the host presents it (R-421): a renewal presenting the
+	// certificate before it, for the same key, is answered with it again.
+	NextCertPEM []byte `json:"-"`
 }
 
 // Pins is every certificate fingerprint that is the host's agent's now,
@@ -143,8 +154,12 @@ func (c *Cluster) CreateJoinToken(ctx context.Context, roles []string, maxUses i
 	return IssuedJoinToken{Token: t, Secret: secret.New(tokenID + "." + plaintext)}, nil
 }
 
-// JoinTokens lists every join token, newest first.
+// JoinTokens lists every join token, newest first, with the uses of joins
+// pending past their lifetime given back first (forgetPending).
 func (c *Cluster) JoinTokens(ctx context.Context) ([]JoinToken, error) {
+	if err := forgetPendingJoins(ctx, c.db, ""); err != nil {
+		return nil, err
+	}
 	rows, err := c.db.Query(ctx, `SELECT `+joinTokenColumns+` FROM join_tokens ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not read the join tokens.", err)
@@ -195,23 +210,38 @@ func (c *Cluster) RedeemJoinToken(ctx context.Context, presented secret.Value) (
 const msgCheckJoinToken = "Could not check the join token."
 
 func (c *Cluster) redeem(ctx context.Context, q querier, presented secret.Value) (JoinToken, error) {
+	tokenID, err := c.verify(ctx, q, presented)
+	if err != nil {
+		return JoinToken{}, err
+	}
+	return spend(ctx, q, tokenID)
+}
+
+// verify checks the presented "<id>.<secret>" token's secret against its
+// stored digest, and returns its ID. It reads nothing else and locks nothing.
+func (c *Cluster) verify(ctx context.Context, q querier, presented secret.Value) (string, error) {
 	tokenID, plaintext, ok := strings.Cut(presented.Reveal(), ".")
 	if !ok || !strings.HasPrefix(tokenID, string(id.JoinToken)+"_") || plaintext == "" {
-		return JoinToken{}, errJoinRefused
+		return "", errJoinRefused
 	}
-
 	var stored string
 	err := q.QueryRow(ctx, `SELECT hash FROM join_tokens WHERE id = $1`, tokenID).Scan(&stored)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return JoinToken{}, errJoinRefused
+		return "", errJoinRefused
 	}
 	if err != nil {
-		return JoinToken{}, errs.Wrap(errs.Internal, msgCheckJoinToken, err)
+		return "", errs.Wrap(errs.Internal, msgCheckJoinToken, err)
 	}
 	if subtle.ConstantTimeCompare([]byte(stored), []byte(c.digest(plaintext))) != 1 {
-		return JoinToken{}, errJoinRefused
+		return "", errJoinRefused
 	}
+	return tokenID, nil
+}
 
+// spend takes one use of a live token, in the statement that checks it is
+// live, so two hosts joining at once with a single-use token cannot both
+// succeed.
+func spend(ctx context.Context, q querier, tokenID string) (JoinToken, error) {
 	row := q.QueryRow(ctx, `
 		UPDATE join_tokens SET uses = uses + 1
 		WHERE id = $1 AND revoked_at IS NULL AND expires_at > now() AND uses < max_uses
@@ -226,35 +256,129 @@ func (c *Cluster) redeem(ctx context.Context, q querier, presented secret.Value)
 	return t, nil
 }
 
-// Join spends one use of the presented token and records the host admit
-// returns for it, in one transaction (R-415). admit sees the token, so the
-// host gets the token's roles and nothing the joining host asked for. When
-// admit or recording the host fails, the use is given back: a join refused
-// for a name already taken can be tried again with the same token.
-func (c *Cluster) Join(ctx context.Context, presented secret.Value, admit func(JoinToken) (Host, error)) (JoinToken, Host, error) {
+// CheckJoinToken checks the presented token without spending a use or
+// locking anything (R-415): its secret, and that it is neither revoked nor
+// expired. Whether a use is left is checked when Join spends one, after the
+// uses of pending joins past their lifetime are given back. A join makes
+// every slow check between the two, holding no connection meanwhile.
+func (c *Cluster) CheckJoinToken(ctx context.Context, presented secret.Value) (JoinToken, error) {
+	tokenID, err := c.verify(ctx, c.db, presented)
+	if err != nil {
+		return JoinToken{}, err
+	}
+	t, err := scanJoinToken(c.db.QueryRow(ctx, `
+		SELECT `+joinTokenColumns+` FROM join_tokens
+		WHERE id = $1 AND revoked_at IS NULL AND expires_at > now()`, tokenID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return JoinToken{}, errJoinRefused
+	}
+	if err != nil {
+		return JoinToken{}, errs.Wrap(errs.Internal, msgCheckJoinToken, err)
+	}
+	return t, nil
+}
+
+// PendingJoinLifetime is how long a host's join stays pending before it is
+// forgotten (R-415 [P]): the joining host confirms it as soon as it has
+// written what it was given (hosts.Joiner), so a join still pending this long
+// failed on the joining side.
+const PendingJoinLifetime = 10 * time.Minute
+
+// forgetPending removes the pending joins of the host named $1 and every one
+// older than $2 seconds (R-415): their certificates are revoked, so a joining
+// host that was slow cannot confirm one later, and the uses of their join
+// tokens are given back.
+const forgetPending = `
+	WITH gone AS (
+	    DELETE FROM cluster_hosts
+	    WHERE confirmed_at IS NULL AND (name = $1 OR joined_at < now() - make_interval(secs => $2))
+	    RETURNING id, joined_with, cert_sha256
+	), revoked AS (
+	    INSERT INTO cluster_revoked_certs (cert_sha256, host_id)
+	    SELECT cert_sha256, id FROM gone
+	    ON CONFLICT (cert_sha256) DO NOTHING
+	)
+	UPDATE join_tokens t SET uses = greatest(t.uses - g.n, 0)
+	FROM (SELECT joined_with, count(*)::int AS n FROM gone WHERE joined_with IS NOT NULL GROUP BY joined_with) g
+	WHERE t.id = g.joined_with`
+
+func forgetPendingJoins(ctx context.Context, q Execer, name string) error {
+	if _, err := q.Exec(ctx, forgetPending, name, PendingJoinLifetime.Seconds()); err != nil {
+		return errs.Wrap(errs.Internal, "Could not forget the joins that were never confirmed.", err)
+	}
+	return nil
+}
+
+// Join spends one use of the presented token and records h, pending, with
+// the token's roles, in one short transaction (R-415): whatever is slow — the
+// cluster's readiness, the runtime's checks, issuing the host's certificates
+// — is done before it (CheckJoinToken), so the token's row is locked only
+// for the spend and the insert. A pending join of the same name, or one past
+// PendingJoinLifetime, is forgotten first and its use given back, so a join
+// that failed on the joining side can be tried again under its name. When
+// recording the host fails, the use is given back too. The host is listed
+// once it confirms the join (ConfirmJoin).
+func (c *Cluster) Join(ctx context.Context, presented secret.Value, h Host) (JoinToken, Host, error) {
 	tx, err := c.db.Begin(ctx)
 	if err != nil {
 		return JoinToken{}, Host{}, errs.Wrap(errs.Internal, msgCheckJoinToken, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	t, err := c.redeem(ctx, tx, presented)
+	tokenID, err := c.verify(ctx, tx, presented)
 	if err != nil {
 		return JoinToken{}, Host{}, err
 	}
-	h, err := admit(t)
+	if err := forgetPendingJoins(ctx, tx, h.Name); err != nil {
+		return JoinToken{}, Host{}, err
+	}
+	t, err := spend(ctx, tx, tokenID)
 	if err != nil {
-		return t, Host{}, err
+		return JoinToken{}, Host{}, err
 	}
 	h.Roles = t.Roles
 	h.JoinedWith = t.ID
-	if h, err = addHost(ctx, tx, h); err != nil {
+	if h, err = addHost(ctx, tx, h, true); err != nil {
 		return t, Host{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return t, Host{}, errs.Wrap(errs.Internal, msgRecordHost, err)
 	}
 	return t, h, nil
+}
+
+// ConfirmJoin records that the host whose join is pending presented the
+// certificate its join issued (R-415): from here it is listed and takes part
+// in the cluster. It reports whether that changed anything.
+func (c *Cluster) ConfirmJoin(ctx context.Context, hostID string) (bool, error) {
+	tag, err := c.db.Exec(ctx, `
+		UPDATE cluster_hosts SET confirmed_at = now(), updated_at = now()
+		WHERE id = $1 AND confirmed_at IS NULL`, hostID)
+	if err != nil {
+		return false, errs.Wrap(errs.Internal, "Could not record that the host finished joining.", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// HostByCert is the host, pending or not, holding the certificate with
+// fingerprint sha: the one it joined or last renewed with, the one before it,
+// or the one a control host answers pings with. Whether sha is revoked is the
+// caller's to check (CertRevoked).
+func (c *Cluster) HostByCert(ctx context.Context, sha string) (Host, bool, error) {
+	if sha == "" {
+		return Host{}, false, nil
+	}
+	h, err := scanHost(c.db.QueryRow(ctx, `
+		SELECT `+hostColumns+` FROM cluster_hosts
+		WHERE cert_sha256 = $1 OR prev_cert_sha256 = $1 OR ping_cert_sha256 = $1
+		ORDER BY confirmed_at IS NULL LIMIT 1`, sha))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Host{}, false, nil
+	}
+	if err != nil {
+		return Host{}, false, errs.Wrap(errs.Internal, "Could not read which host holds the certificate.", err)
+	}
+	return h, true, nil
 }
 
 // Fresh reports whether this install has ever had an account or an app. A
@@ -271,18 +395,22 @@ func (c *Cluster) Fresh(ctx context.Context) (accounts, apps bool, err error) {
 const msgRecordHost = "Could not record the host."
 
 const hostColumns = `id, name, roles, address, cert_sha256, platform, version, coalesce(joined_with, ''), joined_at, last_seen_at, lost_at IS NOT NULL, coalesce(prev_cert_sha256, ''),
-	ping_address, ping_cert_sha256`
+	ping_address, ping_cert_sha256, confirmed_at IS NULL, coalesce(next_cert_pem, '')`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
+	var next string
 	err := row.Scan(&h.ID, &h.Name, &h.Roles, &h.Address, &h.CertSHA256, &h.Platform, &h.Version, &h.JoinedWith, &h.JoinedAt, &h.LastSeenAt, &h.Lost, &h.PrevCertSHA256,
-		&h.PingAddress, &h.PingCertSHA256)
+		&h.PingAddress, &h.PingCertSHA256, &h.Pending, &next)
+	if next != "" {
+		h.NextCertPEM = []byte(next)
+	}
 	return h, err
 }
 
-// AddHost records a host that has joined.
+// AddHost records a host that has joined, confirmed.
 func (c *Cluster) AddHost(ctx context.Context, h Host) (Host, error) {
-	return addHost(ctx, c.db, h)
+	return addHost(ctx, c.db, h, false)
 }
 
 // firstHostLock serializes recording the install's first host, so replicas
@@ -310,7 +438,7 @@ func (c *Cluster) RecordFirstHost(ctx context.Context, h Host) (Host, bool, erro
 		return Host{}, false, nil
 	}
 	h.JoinedWith = ""
-	if h, err = addHost(ctx, tx, h); err != nil {
+	if h, err = addHost(ctx, tx, h, false); err != nil {
 		return Host{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -319,15 +447,16 @@ func (c *Cluster) RecordFirstHost(ctx context.Context, h Host) (Host, bool, erro
 	return h, true, nil
 }
 
-func addHost(ctx context.Context, q querier, h Host) (Host, error) {
+// addHost records h, pending its confirmation (ConfirmJoin) or confirmed.
+func addHost(ctx context.Context, q querier, h Host, pending bool) (Host, error) {
 	if h.ID == "" {
 		h.ID = id.New(id.Host)
 	}
 	row := q.QueryRow(ctx, `
-		INSERT INTO cluster_hosts (id, name, roles, address, cert_sha256, platform, version, joined_with)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO cluster_hosts (id, name, roles, address, cert_sha256, platform, version, joined_with, confirmed_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $9 THEN NULL ELSE now() END)
 		RETURNING `+hostColumns,
-		h.ID, h.Name, h.Roles, h.Address, h.CertSHA256, h.Platform, h.Version, nullable(h.JoinedWith))
+		h.ID, h.Name, h.Roles, h.Address, h.CertSHA256, h.Platform, h.Version, nullable(h.JoinedWith), pending)
 	out, err := scanHost(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -339,9 +468,10 @@ func addHost(ctx context.Context, q querier, h Host) (Host, error) {
 	return out, nil
 }
 
-// Hosts lists the cluster's hosts, oldest first.
+// Hosts lists the cluster's hosts, oldest first: every one but those whose
+// join is pending (ConfirmJoin).
 func (c *Cluster) Hosts(ctx context.Context) ([]Host, error) {
-	rows, err := c.db.Query(ctx, `SELECT `+hostColumns+` FROM cluster_hosts ORDER BY joined_at, id`)
+	rows, err := c.db.Query(ctx, `SELECT `+hostColumns+` FROM cluster_hosts WHERE confirmed_at IS NOT NULL ORDER BY joined_at, id`)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, "Could not read the cluster's hosts.", err)
 	}
@@ -357,9 +487,9 @@ func (c *Cluster) Hosts(ctx context.Context) ([]Host, error) {
 	return out, rows.Err()
 }
 
-// Host reads one host.
+// Host reads one host whose join is not pending.
 func (c *Cluster) Host(ctx context.Context, hostID string) (Host, error) {
-	h, err := scanHost(c.db.QueryRow(ctx, `SELECT `+hostColumns+` FROM cluster_hosts WHERE id = $1`, hostID))
+	h, err := scanHost(c.db.QueryRow(ctx, `SELECT `+hostColumns+` FROM cluster_hosts WHERE id = $1 AND confirmed_at IS NOT NULL`, hostID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return h, errs.Newf(errs.NotFound, "There is no host %s in the cluster.", hostID)
 	}
@@ -454,24 +584,35 @@ func (c *Cluster) CertRevoked(ctx context.Context, sha string) (bool, error) {
 var errNotHostsCert = errs.New(errs.AuthInvalid, "This certificate is no longer this host's, so it cannot be renewed with.").
 	WithRemedy("Remove the host from the cluster and join it again with a new join token.")
 
-// RenewHostCert records that the host holding the certificate presented was
-// issued next (R-421). Both stay the host's until it presents next
-// (ConfirmHostCert): presented is kept as the one before, whichever of the
-// host's two it was, so a renewal whose answer never arrived leaves the host
-// with the certificate it still holds.
-func (c *Cluster) RenewHostCert(ctx context.Context, hostID, presented, next string) (Host, error) {
+// RenewHostCert records next, whose PEM is nextPEM, as the certificate of
+// the host that presented its current one (R-421). It is a compare-and-set on
+// presented: only the first renewal of a certificate is recorded, and keeps
+// presented as the one before until the host presents next
+// (ConfirmHostCert). A renewal that finds presented no longer current — one
+// that overlapped another, or was tried again after its answer was lost — is
+// told so (false) with the row as it is now, whose NextCertPEM is what the
+// first was answered with, so the pins always hold the certificate the host
+// ends up using.
+func (c *Cluster) RenewHostCert(ctx context.Context, hostID, presented, next string, nextPEM []byte) (Host, bool, error) {
 	h, err := scanHost(c.db.QueryRow(ctx, `
-		UPDATE cluster_hosts SET prev_cert_sha256 = $2, cert_sha256 = $3, updated_at = now()
-		WHERE id = $1 AND $2 IN (cert_sha256, prev_cert_sha256)
+		UPDATE cluster_hosts SET prev_cert_sha256 = $2, cert_sha256 = $3, next_cert_pem = $4, updated_at = now()
+		WHERE id = $1 AND cert_sha256 = $2 AND confirmed_at IS NOT NULL
 		  AND NOT EXISTS (SELECT 1 FROM cluster_revoked_certs WHERE cert_sha256 = $2)
-		RETURNING `+hostColumns, hostID, presented, next))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return h, errNotHostsCert
+		RETURNING `+hostColumns, hostID, presented, next, string(nextPEM)))
+	if err == nil {
+		return h, true, nil
 	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return h, false, errs.Wrap(errs.Internal, "Could not record the host's renewed certificate.", err)
+	}
+	h, found, err := c.HostByCert(ctx, presented)
 	if err != nil {
-		return h, errs.Wrap(errs.Internal, "Could not record the host's renewed certificate.", err)
+		return h, false, err
 	}
-	return h, nil
+	if !found || h.ID != hostID || h.Pending {
+		return h, false, errNotHostsCert
+	}
+	return h, false, nil
 }
 
 // ConfirmHostCert records that the host presented current, its newest
@@ -479,7 +620,7 @@ func (c *Cluster) RenewHostCert(ctx context.Context, hostID, presented, next str
 // that changed anything.
 func (c *Cluster) ConfirmHostCert(ctx context.Context, hostID, current string) (bool, error) {
 	tag, err := c.db.Exec(ctx, `
-		UPDATE cluster_hosts SET prev_cert_sha256 = NULL, updated_at = now()
+		UPDATE cluster_hosts SET prev_cert_sha256 = NULL, next_cert_pem = NULL, updated_at = now()
 		WHERE id = $1 AND cert_sha256 = $2 AND prev_cert_sha256 IS NOT NULL`, hostID, current)
 	if err != nil {
 		return false, errs.Wrap(errs.Internal, "Could not record that the host uses its renewed certificate.", err)

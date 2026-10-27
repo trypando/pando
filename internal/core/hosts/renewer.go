@@ -2,6 +2,10 @@ package hosts
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -10,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -81,7 +86,11 @@ func (r *HostRenewal) Renew(ctx context.Context, current tls.Certificate) (host,
 	if err != nil {
 		return host, probe, err
 	}
-	key, csr, err := newHostKey(r.Name)
+	key, err := r.nextKey(current)
+	if err != nil {
+		return host, probe, errs.Wrap(errs.Internal, "Pando could not make this host's next key.", err)
+	}
+	csr, err := hostCSR(key, r.Name)
 	if err != nil {
 		return host, probe, errs.Wrap(errs.Internal, "Pando could not make this host's next key.", err)
 	}
@@ -97,16 +106,78 @@ func (r *HostRenewal) Renew(ctx context.Context, current tls.Certificate) (host,
 	if probe, err = tls.X509KeyPair([]byte(wire.HostClientCert), []byte(wire.HostClientKey)); err != nil {
 		return host, probe, errs.Wrap(errs.Internal, "The cluster sent a probe certificate Pando cannot use.", err)
 	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	keyPEM, err := keyPEMOf(key)
 	if err != nil {
 		return host, probe, errs.Wrap(errs.Internal, "Pando could not keep this host's next key.", err)
 	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
 	if err := r.write(keyPEM, wire); err != nil {
 		return host, probe, err
 	}
+	// Answered and written: the next renewal asks for a key of its own.
+	_ = os.Remove(filepath.Join(r.Dir, HostNextKeyFile))
 	host, err = tls.X509KeyPair([]byte(wire.Certificate), keyPEM)
 	return host, probe, err
+}
+
+// nextKey is the key this host's renewal asks a certificate for (R-421):
+// the one kept in HostNextKeyFile by a renewal not yet answered and written,
+// or a new one, kept there before it is asked for. So a renewal tried again
+// after its answer was lost asks for the same key, and the cluster answers it
+// with the certificate it already issued rather than another
+// (Service.Renew). A kept key that is current's already is left over from a
+// renewal that finished, and is not used again.
+func (r *HostRenewal) nextKey(current tls.Certificate) (*ecdsa.PrivateKey, error) {
+	path := filepath.Join(r.Dir, HostNextKeyFile)
+	if key, err := readECKey(path); err == nil && !holds(current, key) {
+		return key, nil
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	keyPEM, err := keyPEMOf(key)
+	if err != nil {
+		return nil, err
+	}
+	if err := keyfile.Replace(path, keyPEM); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+// readECKey reads an EC key written by keyPEMOf.
+func readECKey(path string) (*ecdsa.PrivateKey, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- the host's own cluster directory
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, errors.New("not PEM")
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	key, ok := parsed.(*ecdsa.PrivateKey)
+	if !ok {
+		return nil, errors.New("not an EC key")
+	}
+	return key, nil
+}
+
+// holds reports whether cert is for key.
+func holds(cert tls.Certificate, key *ecdsa.PrivateKey) bool {
+	signer, ok := cert.PrivateKey.(crypto.Signer)
+	return ok && key.PublicKey.Equal(signer.Public())
+}
+
+func keyPEMOf(key *ecdsa.PrivateKey) ([]byte, error) {
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), nil
 }
 
 // write puts the renewed certificates over the ones the join left, each

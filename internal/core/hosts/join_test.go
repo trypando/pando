@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +30,9 @@ type cluster struct {
 	store *fakeStore
 	srv   *httptest.Server
 	keys  string
+	// peersDown makes the listener refuse the peer list, which a joining
+	// host confirms its join with.
+	peersDown *atomic.Bool
 }
 
 func newCluster(t *testing.T) *cluster {
@@ -56,7 +60,8 @@ func newClusterAt(t *testing.T, now func() time.Time) *cluster {
 		SecretsKeyPath: func(context.Context) string { return "/var/lib/pando/secrets.key" },
 	}
 
-	srv := httptest.NewUnstartedServer(listener(svc))
+	down := &atomic.Bool{}
+	srv := httptest.NewUnstartedServer(listener(svc, down))
 	tlsConfig, err := svc.Authority.ListenerTLS([]string{"127.0.0.1", "localhost"}, time.Now())
 	require.NoError(t, err)
 	tlsConfig.Time = now
@@ -64,22 +69,32 @@ func newClusterAt(t *testing.T, now func() time.Time) *cluster {
 	srv.StartTLS()
 	srv.TLS.Certificates = nil // httptest adds its own; the listener serves from GetCertificate
 	t.Cleanup(srv.Close)
-	return &cluster{svc: svc, store: store, srv: srv, keys: keys}
+	return &cluster{svc: svc, store: store, srv: srv, keys: keys, peersDown: down}
 }
 
 // listener stands in for httpapi's cluster routes: decode, Join or Renew,
 // answer.
-func listener(svc *hosts.Service) http.Handler {
+func listener(svc *hosts.Service, peersDown *atomic.Bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == hosts.PeersPath && peersDown.Load() {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		var out any
 		var err error
-		if r.URL.Path == hosts.RenewPath {
+		status := http.StatusCreated
+		switch r.URL.Path {
+		case hosts.PeersPath:
+			var list []hosts.Peer
+			list, err = svc.Peers(r.Context(), presented(r))
+			out, status = map[string]any{"hosts": list}, http.StatusOK
+		case hosts.RenewPath:
 			var req hosts.WireRenewRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			var res hosts.RenewResult
 			res, err = svc.Renew(r.Context(), presented(r), []byte(req.CSR))
 			out = res.Wire()
-		} else {
+		default:
 			var req hosts.WireJoinRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			var res hosts.JoinResult
@@ -93,7 +108,7 @@ func listener(svc *hosts.Service) http.Handler {
 			_ = json.NewEncoder(w).Encode(e)
 			return
 		}
-		w.WriteHeader(http.StatusCreated)
+		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(out)
 	})
 }
@@ -341,4 +356,70 @@ func TestAJoinNeedsAHostNamePandoCanUse(t *testing.T) {
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
 	_, err = c.svc.Join(context.Background(), hosts.JoinRequest{Version: "1.2.3", Name: "ok", Secret: secret.New("jt_01app.plain"), CSR: []byte("x")})
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), "a CSR that is not PEM")
+}
+
+// TestR415_AJoinThatFailsOnTheJoiningHostCanBeTriedAgain asserts R-415 for a
+// join answered by the cluster that the joining host cannot finish — its
+// files cannot be written, or it cannot confirm the join: the cluster lists
+// no such host, the same single-use token joins again under the same name,
+// and the host is listed once it confirms.
+func TestR415_AJoinThatFailsOnTheJoiningHostCanBeTriedAgain(t *testing.T) {
+	ctx := context.Background()
+	c := newCluster(t)
+	token := c.token("app")
+
+	// The files cannot be written: the cluster directory is read-only.
+	j := joiningHost(t)
+	require.NoError(t, os.MkdirAll(j.Files.Dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(j.Files.Dir, 0o700) })
+	_, err := j.Join(ctx, token, "edge-2")
+	require.Contains(t, errs.As(err).Message, "could not write")
+	list, err := c.svc.Hosts(ctx)
+	require.NoError(t, err)
+	require.Empty(t, list, "no ghost host is listed")
+
+	// The join cannot be confirmed: this Pando is left unjoined.
+	c.peersDown.Store(true)
+	j = joiningHost(t)
+	_, err = j.Join(ctx, token, "edge-2")
+	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err))
+	require.Contains(t, errs.As(err).Remedy, "same join token and name")
+	_, joined, err := j.Files.Read()
+	require.NoError(t, err)
+	require.False(t, joined, "this Pando can join again")
+	list, err = c.svc.Hosts(ctx)
+	require.NoError(t, err)
+	require.Empty(t, list)
+
+	c.peersDown.Store(false)
+	done, err := j.Join(ctx, token, "edge-2")
+	require.NoError(t, err, "the same token and name join again")
+	list, err = c.svc.Hosts(ctx)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.Equal(t, done.HostID, list[0].ID)
+	require.Len(t, c.store.revoked, 2, "the unfinished joins' certificates are refused")
+}
+
+// hung answers once its context ends.
+type hung struct{}
+
+func (hung) ReadyToJoin(ctx context.Context, _ []string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestR415_AJoinCheckThatNeverAnswersIsGivenUp asserts R-415: a check a join
+// makes before spending its token that never answers is given up on after
+// JoinCheckTimeout, the refusal says so, and the token's use is not spent.
+func TestR415_AJoinCheckThatNeverAnswersIsGivenUp(t *testing.T) {
+	c := newCluster(t)
+	c.svc.Readiness = hung{}
+	c.svc.JoinCheckTimeout = 10 * time.Millisecond
+	_, err := joiningHost(t).Join(context.Background(), c.token("app"), "edge-2")
+	require.Equal(t, errs.AdapterUnavailable, errs.CodeOf(err))
+	require.Contains(t, errs.As(err).Message, "did not finish within 10ms")
+	require.Contains(t, errs.As(err).Message, "not spent")
+	require.Zero(t, c.store.live["jt_01app.plain"].Uses)
+	require.Empty(t, c.store.hosts)
 }

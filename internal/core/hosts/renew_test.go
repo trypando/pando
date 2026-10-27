@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,10 +109,38 @@ func TestR421_CertificatesRenewBeforeExpiryAndA100DayClockLeavesTheClusterWorkin
 	require.Equal(t, certs.Host.Current().Certificate[0], onDisk.Certificate[0], "the renewed certificate is what the next start reads")
 }
 
+// lossy carries requests and, while drop is set, loses the next answer: the
+// request is made and the client is told the connection failed.
+type lossy struct {
+	base http.RoundTripper
+	drop bool
+}
+
+func (l *lossy) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := l.base.RoundTrip(req)
+	if err == nil && l.drop {
+		l.drop = false
+		_ = resp.Body.Close()
+		return nil, errors.New("connection reset by peer")
+	}
+	return resp, err
+}
+
+// losing makes r's renewals go through a lossy transport.
+func losing(r *hosts.HostRenewal) *lossy {
+	l := &lossy{}
+	r.HTTP = func(cfg *tls.Config) *http.Client {
+		l.base = &http.Transport{TLSClientConfig: cfg}
+		return &http.Client{Transport: l}
+	}
+	return l
+}
+
 // TestR421_ARenewedHostKeepsBothCertificatesUntilItUsesTheNewOne asserts
 // R-421's handover: after a renewal both certificates are the host's, so
-// one whose answer was lost keeps working with the one it holds, and once
-// the host presents the new one the old one is no longer its own.
+// one whose answer was lost keeps working with the one it holds and, renewing
+// again, is given the certificate already issued; once the host presents the
+// new one the old one is no longer its own.
 func TestR421_ARenewedHostKeepsBothCertificatesUntilItUsesTheNewOne(t *testing.T) {
 	clock := &testClock{now: time.Now()}
 	c := newClusterAt(t, clock.Now)
@@ -119,17 +150,21 @@ func TestR421_ARenewedHostKeepsBothCertificatesUntilItUsesTheNewOne(t *testing.T
 	oldPin := hostagent.Fingerprint256(old.Certificate[0])
 
 	clock.Advance(61 * 24 * time.Hour)
-	next, _, err := r.Renew(ctx, old)
-	require.NoError(t, err)
-	nextPin := hostagent.Fingerprint256(next.Certificate[0])
-	h := c.store.hosts[0]
-	require.Equal(t, nextPin+","+oldPin, h.Pins(), "the runtime pins both")
+	losing(r).drop = true
+	_, _, err := r.Renew(ctx, old)
+	require.Error(t, err, "the answer was lost")
+	issued := c.store.hosts[0].CertSHA256
+	require.Equal(t, issued+","+oldPin, c.store.hosts[0].Pins(), "the runtime pins both")
+	_, err = c.svc.Peers(ctx, old.Certificate[0])
+	require.NoError(t, err, "the one it holds is still its own")
 
-	// The answer was lost: the host renews again with the old one.
+	// The host renews again with the old one, and is given what was issued.
 	again, _, err := r.Renew(ctx, old)
 	require.NoError(t, err)
 	againPin := hostagent.Fingerprint256(again.Certificate[0])
-	require.Equal(t, againPin+","+oldPin, c.store.hosts[0].Pins(), "the one it holds stays its own")
+	require.Equal(t, issued, againPin, "the certificate already issued, not another")
+	require.Equal(t, againPin+","+oldPin, c.store.hosts[0].Pins())
+	require.NoFileExists(t, filepath.Join(r.Dir, hosts.HostNextKeyFile), "the next key is used up")
 
 	_, err = c.svc.Peers(ctx, again.Certificate[0])
 	require.NoError(t, err)
@@ -138,6 +173,39 @@ func TestR421_ARenewedHostKeepsBothCertificatesUntilItUsesTheNewOne(t *testing.T
 	require.Equal(t, errs.AuthInvalid, errs.CodeOf(err))
 	_, _, err = r.Renew(ctx, old)
 	require.Error(t, err, "and it renews nothing")
+}
+
+// TestR421_OverlappingRenewalsNeverLockAHostOut asserts R-421 for two
+// renewals presenting one certificate: only the first is issued a
+// certificate. A second asking for the same key — the host's own renewal
+// tried again, or made twice at once — is answered with that certificate,
+// and one asking for another key is refused. Whichever answer the host
+// installs, or none, the runtime pins the certificate it ends up with.
+func TestR421_OverlappingRenewalsNeverLockAHostOut(t *testing.T) {
+	clock := &testClock{now: time.Now()}
+	c := newClusterAt(t, clock.Now)
+	_, _, _, certs := joinedHost(t, c, clock)
+	ctx := context.Background()
+	old := certs.Host.Current()
+	oldPin := hostagent.Fingerprint256(old.Certificate[0])
+	clock.Advance(61 * 24 * time.Hour)
+
+	csr := csrFor(t, "edge-2")
+	first, err := c.svc.Renew(ctx, old.Certificate[0], csr)
+	require.NoError(t, err)
+	same, err := c.svc.Renew(ctx, old.Certificate[0], csr)
+	require.NoError(t, err)
+	require.Equal(t, first.Certificate, same.Certificate, "the same key is answered with the same certificate")
+
+	_, err = c.svc.Renew(ctx, old.Certificate[0], csrFor(t, "edge-2"))
+	require.Equal(t, errs.StateInvalid, errs.CodeOf(err), "another key is refused")
+	require.Contains(t, errs.As(err).Remedy, "Restart Pando on the host")
+
+	block, _ := pem.Decode(first.Certificate)
+	require.NotNil(t, block)
+	pins := strings.Split(c.store.hosts[0].Pins(), ",")
+	require.ElementsMatch(t, []string{hostagent.Fingerprint256(block.Bytes), oldPin}, pins,
+		"the pins hold the one the host was answered with and the one it holds")
 }
 
 // TestR415_ARemovedHostsCertificatesAreRefused asserts R-415's removal: a

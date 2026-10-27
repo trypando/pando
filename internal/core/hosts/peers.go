@@ -169,11 +169,19 @@ var errNotAHost = errs.New(errs.AuthInvalid, "This certificate is not one a host
 // the one before its latest renewal, or the one a control host answers pings
 // with), never a removed host's, so a removed host no longer hears where the
 // others are (R-415). A host presenting the certificate it renewed to is
-// using it, so the one before is no longer its own (R-421).
+// using it, so the one before is no longer its own (R-421). A host whose
+// join is pending presenting the certificate its join issued has finished
+// joining: it is listed from here on (R-415).
 func (s *Service) Peers(ctx context.Context, certDER []byte) ([]Peer, error) {
 	h, pin, err := s.hostByCert(ctx, certDER)
 	if err != nil {
 		return nil, err
+	}
+	if h.Pending {
+		if _, err := s.Store.ConfirmJoin(ctx, h.ID); err != nil {
+			return nil, err
+		}
+		s.Changed(ctx)
 	}
 	if pin == h.CertSHA256 && h.PrevCertSHA256 != "" {
 		if _, err := s.Store.ConfirmHostCert(ctx, h.ID, pin); err != nil {

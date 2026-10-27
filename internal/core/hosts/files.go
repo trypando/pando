@@ -30,6 +30,9 @@ const (
 	HostClientCertFile = "host-client.crt"
 	HostClientKeyFile  = "host-client.key"
 	PeersFile          = "peers.json"
+	// HostNextKeyFile is the key a renewal not yet answered and written asks
+	// a certificate for (HostRenewal.nextKey, R-421).
+	HostNextKeyFile = "host-next.key"
 )
 
 // JoinFiles is where a joining host writes what it was given.
@@ -82,6 +85,12 @@ func (f JoinFiles) Read() (Joined, bool, error) {
 			WithRemedy("Restore the file from a backup of this host, or remove the host from the cluster and join it again.")
 	}
 	return j, true, nil
+}
+
+// unmark removes joined.json, so this Pando is not joined and can join
+// again: what a join that could not be confirmed leaves (Joiner.confirm).
+func (f JoinFiles) unmark() {
+	_ = os.Remove(filepath.Join(f.Dir, JoinedFile))
 }
 
 type fileWrite struct {

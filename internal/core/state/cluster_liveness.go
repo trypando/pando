@@ -99,7 +99,7 @@ func (c *Cluster) SetHostFenced(ctx context.Context, hostID string, fenced bool)
 // next, when it is revoked, is refused.
 func (c *Cluster) RotateHostCert(ctx context.Context, hostID, next string) error {
 	tag, err := c.db.Exec(ctx, `
-		UPDATE cluster_hosts SET prev_cert_sha256 = cert_sha256, cert_sha256 = $2, updated_at = now()
+		UPDATE cluster_hosts SET prev_cert_sha256 = cert_sha256, cert_sha256 = $2, next_cert_pem = NULL, updated_at = now()
 		WHERE id = $1 AND cert_sha256 <> $2
 		  AND NOT EXISTS (SELECT 1 FROM cluster_revoked_certs WHERE cert_sha256 = $2)`, hostID, next)
 	if err != nil {

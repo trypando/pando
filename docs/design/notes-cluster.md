@@ -42,8 +42,8 @@ not offered.
    sending anything. A token is never used against an install whose CA it was not minted for.
 2. It sends the secret and a certificate request. Core checks the secret's keyed digest (as API tokens
    are stored, design 02 §2.1), the token's expiry, uses and role.
-3. Core signs the host's certificate from the cluster authority, records the host, and answers with
-   what the role needs:
+3. Core signs the host's certificate from the cluster authority, records the host pending until the
+   host presents that certificate, and answers with what the role needs:
    - **App role:** nothing beyond the certificate. An app host never receives the database URL, the
      secrets key or the token key.
    - **Control role:** the database URL, the secrets key and the token key, sent only on this mutually
@@ -431,11 +431,13 @@ host is watched").
   server's name is not checked: the pinned authority and the listener's identity are the trust, as
   in kubeadm. The joining host is authenticated by the token's secret; it has no certificate until
   the join issues one.
-- **One transaction.** `state.Cluster.Join` checks and spends the token's use, asks
-  `hosts.Service.Readiness` (a `hosts.JoinReadiness`; the server sets `hosts.Readiness`) and then
-  `Runtime.CheckJoin`, issues the certificate and records the host together, and `OnChange` runs after.
-  A refusal after the token checked out (a name taken, a cluster not ready) gives the use back. The
-  host gets the token's roles, never ones it asked for.
+- **Checks first, then one short transaction.** `hosts.Service.Join` checks the token without
+  spending it (`state.Cluster.CheckJoinToken`), then asks `hosts.Service.Readiness` (a
+  `hosts.JoinReadiness`; the server sets `hosts.Readiness`) and `Runtime.CheckJoin` and issues the
+  certificates, holding no connection, within `JoinCheckTimeout` [P: 30 s]. Only then does
+  `state.Cluster.Join` spend the use and record the host, pending, in one transaction (second review
+  fixes below). A refusal before it spends nothing; a name taken gives the use back. The host gets
+  the token's roles, never ones it asked for.
 - **Refused before the token is touched:** a name the `docker-hosts` runtime cannot take (its own
   rule: lower-case letters, digits and hyphens, up to 40, starting and ending with a letter or
   digit), and `control`, the name the install's own machine falls back to (`hosts.CheckHostName`).
@@ -802,7 +804,8 @@ kept working credentials. What changed:
     one statement that keeps the presented one as `prev_cert_sha256` (migration 000092). Both are
     the host's until it presents the new one on `GET /cluster/peers`, which clears the old
     (`ConfirmHostCert`), so a renewal whose answer was lost leaves the host working with what it
-    holds and able to renew again. The runtime's host list pins both meanwhile
+    holds and able to renew again. A certificate is renewed once (second review fixes below): a
+    renewal tried again is answered with the certificate already issued. The runtime's host list pins both meanwhile
     (`state.Host.Pins`, comma-separated, `hostagent.PinnedClientTLS`); renewing changes that list, so
     each renewal costs one runtime reload, about every 60 days per host. Audited as
     `cluster.host.renew`, refusals with a certificate as `cluster.host.renew.denied`; a renewal with
@@ -821,8 +824,8 @@ kept working credentials. What changed:
   DNS name or IP address (a bad one broke the runtime configuration for every host), and the
   platform and version as up to 64 printable characters. The audit keeps the name and version only
   when they pass, `(invalid)` otherwise, and no message echoes more than 64 characters of them. The
-  cluster's version is said only once the token is good: the check moved inside the join's
-  transaction, after the token is redeemed, so it still spends no use. Refused joins are limited per
+  cluster's version is said only once the token is good: it is checked after
+  `state.Cluster.CheckJoinToken`, which spends no use. Refused joins are limited per
   client address as wrong passwords are, on `POST /cluster/join` and `POST /setup/join`. A refusal
   that tested a secret (a join token wrong, expired, used up or revoked, `AUTH_TOKEN_INVALID`, or a
   wrong setup token, `AUTH_INVALID`) counts under `state.ClusterJoinAddrKey` [P: 20 in 15 minutes].
@@ -980,3 +983,42 @@ never taken for lost and never stops its apps (R-421).
   `TestR421_AnAppHostThatCannotStartItsAgentStillAnswersPings`,
   `TestR414_ASingleHostStartsWithoutItsClusterListener`. The last checks the listener decision and
   the configuration default as units; no test starts the whole server with the port taken.
+
+### As built: second review fixes
+
+The owner's second review of #347 found four races and one console gap. What changed:
+
+- **A promotion re-reads the app under its lock (R-151).** `standby.Service.Promote` read whether the
+  app had failed before taking the app's lock and never again, so an app that failed in that gap had
+  its standby started. The state is now read under the lock (`startable`, which `resume` goes
+  through too), and the write-ahead is conditional on the app being live and not failed
+  (`state.Standbys.SaveIfLive`), so one that fails between that read and the write is refused.
+- **A certificate is renewed once (R-421).** Two renewals presenting one certificate both
+  succeeded, and the second replaced the first's fingerprint, so a host that installed the first
+  answer held a certificate nothing pinned. `state.Cluster.RenewHostCert` is now a compare-and-set
+  on the presented fingerprint being the host's current one, and records the issued certificate's
+  PEM (`cluster_hosts.next_cert_pem`, migration 000093) until the host presents it. A renewal that
+  finds the presented certificate renewed already is answered with that certificate when it asks
+  for the same key, and refused (`STATE_INVALID`) otherwise. The joined host keeps the key it asks
+  for in `host-next.key` until the answer is written (`HostRenewal.nextKey`), so a renewal tried
+  again after its answer was lost asks for the same key and gets the same certificate. Whatever the
+  host ends up holding — the one it presented or the one it was answered with — is pinned.
+- **No slow work under the token's lock (R-415).** A join ran readiness, the runtime's checks and
+  certificate issuance inside the transaction that had locked the token's row, so one hung check
+  held a connection and kept every other join on that token waiting. They now run before it,
+  bounded by `hosts.Service.JoinCheckTimeout` [P: 30 s, `DefaultJoinCheckTimeout`]; the transaction
+  only spends the use and inserts the row. The token's uses are checked when spent, not before.
+- **A join is pending until the joining host confirms it (R-415).** The cluster recorded the host
+  before the joining side wrote its files, so a failed write left a listed host, a spent token and a
+  name that could not rejoin. The row is now inserted with `confirmed_at` empty (migration 000093):
+  `Hosts` and `Host` leave it out, so it takes part in nothing — runtime host list, liveness, size,
+  console. The joining host confirms by presenting its new certificate on `GET /cluster/peers`
+  right after writing its files (`Joiner.confirm`, three tries); `Service.Peers` then sets
+  `confirmed_at` and syncs the runtime. If it cannot confirm, it removes `joined.json`, so it can
+  join again. The next join of the same name, and any pending row older than
+  `state.PendingJoinLifetime` [P: 10 minutes], are deleted in that join's transaction (and before
+  the token list is read), their certificates revoked and their tokens' uses given back. Chosen over
+  a background sweep because a pending row is invisible, so it only matters to the next join and to
+  the uses shown. A pending host cannot renew.
+- **The setup join form no longer needs a host name (R-261).** Join is enabled without one, as the API takes
+  the machine's hostname when the name is empty; the field's placeholder says so.
