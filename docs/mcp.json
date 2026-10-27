@@ -1463,6 +1463,22 @@
       }
     },
     {
+      "name": "pando_mark_host_lost",
+      "description": "Say a host is gone and start the standby of each app homed on it. With three or more hosts Pando does this itself when most of them cannot reach the host; with fewer it never does. Refused while the host answers. A failed app is not failed over. Returns the apps started and the ones skipped, with why. Needs install.cluster.manage.",
+      "input_schema": {
+        "properties": {
+          "host_id": {
+            "description": "The host's ID, from pando_list_hosts.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "pando_mark_notifications_read",
       "description": "Mark one of your notifications read, by notification_id, or every one when it is omitted.",
       "input_schema": {

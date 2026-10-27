@@ -85,6 +85,15 @@ func hostAgentServeCmd() *cobra.Command {
 				TLS: tlsConfig, Pool: pool.Masked(), Logger: logger,
 				RuntimeSocket: os.Getenv(multidocker.EnvAgentRuntimeSocket),
 			}
+			// R-421: a joined host checks the others and fences itself.
+			monitor, err := agentLiveness([]byte(authorities), logger)
+			if err != nil {
+				return fmt.Errorf("the host agent did not start: %w", err)
+			}
+			if monitor != nil {
+				agent.Liveness = monitor
+				go monitor.Run(ctx)
+			}
 			return agent.Serve(ctx, ln)
 		},
 	}

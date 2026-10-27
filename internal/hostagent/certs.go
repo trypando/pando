@@ -365,8 +365,10 @@ func ServerTLS(certPEM, keyPEM, authoritiesPEM []byte) (*tls.Config, error) {
 			if len(chains) == 0 || len(chains[0]) == 0 {
 				return errors.New("no verified client certificate")
 			}
-			if chains[0][0].Subject.CommonName != ClientCommonName {
-				return fmt.Errorf("client certificate %q is not Pando's proxy", chains[0][0].Subject.CommonName)
+			// Pando's proxy, or a host checking this one, which may only
+			// ping (answerPing).
+			if cn := chains[0][0].Subject.CommonName; cn != ClientCommonName && cn != HostCommonName {
+				return fmt.Errorf("client certificate %q is not Pando's proxy or a host of its cluster", cn)
 			}
 			return nil
 		},

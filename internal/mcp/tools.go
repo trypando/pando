@@ -1604,14 +1604,17 @@ var toolList = []tool{
 	{
 		Name:        "pando_remove_host",
 		Description: "Remove a host from the cluster. Needs install.cluster.manage.",
-		Schema:      schema(map[string]any{"host_id": str("The host's ID, from pando_list_hosts.")}, "host_id"),
-		request: func(args map[string]any) (string, string, any, error) {
-			id, err := stringArg(args, "host_id", true)
-			if err != nil {
-				return "", "", nil, err
-			}
-			return "DELETE", "/cluster/hosts/" + url.PathEscape(id), nil, nil
-		},
+		Schema:      hostIDSchema,
+		request:     hostRequest("DELETE", ""),
+	},
+	{
+		Name: "pando_mark_host_lost",
+		Description: "Say a host is gone and start the standby of each app homed on it. With three or " +
+			"more hosts Pando does this itself when most of them cannot reach the host; with fewer it never does. " +
+			"Refused while the host answers. A failed app is not failed over. Returns the apps started and the " +
+			"ones skipped, with why. Needs install.cluster.manage.",
+		Schema:  hostIDSchema,
+		request: hostRequest("POST", "/lost"),
 	},
 	{
 		Name: "pando_list_join_tokens",
@@ -2245,3 +2248,17 @@ var toolsByName = func() map[string]tool {
 	}
 	return m
 }()
+
+// hostIDSchema is the input of a tool about one host.
+var hostIDSchema = schema(map[string]any{"host_id": str("The host's ID, from pando_list_hosts.")}, "host_id")
+
+// hostRequest is a tool's request to /cluster/hosts/<host_id><suffix>.
+func hostRequest(method, suffix string) func(map[string]any) (string, string, any, error) {
+	return func(args map[string]any) (string, string, any, error) {
+		id, err := stringArg(args, "host_id", true)
+		if err != nil {
+			return "", "", nil, err
+		}
+		return method, "/cluster/hosts/" + url.PathEscape(id) + suffix, nil, nil
+	}
+}

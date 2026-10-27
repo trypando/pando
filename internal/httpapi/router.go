@@ -37,6 +37,7 @@ import (
 	"github.com/trypando/pando/internal/core/idle"
 	"github.com/trypando/pando/internal/core/idp"
 	"github.com/trypando/pando/internal/core/imageregistry"
+	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/core/logstream"
 	"github.com/trypando/pando/internal/core/notice"
 	"github.com/trypando/pando/internal/core/notifyconn"
@@ -89,6 +90,10 @@ type Server struct {
 	// Hosts is the install's cluster: its hosts and join tokens (R-414,
 	// R-415). Nil leaves the cluster routes answering that it is not set up.
 	Hosts *hosts.Service
+
+	// HostLoss marks a host lost and starts its apps' standbys (R-421). Nil
+	// leaves the route answering that the cluster is not set up.
+	HostLoss *liveness.Service
 
 	// CLISignIn signs the CLI in through the browser (R-406). Nil leaves
 	// pando login --username, with a password, the only way.
@@ -845,6 +850,7 @@ func (s *Server) Routes() http.Handler {
 		// under install.cluster.manage.
 		r.Get("/cluster/hosts", s.handleListHosts)
 		r.Delete("/cluster/hosts/{hostID}", s.handleRemoveHost)
+		r.Post("/cluster/hosts/{hostID}/lost", s.handleMarkHostLost)
 		r.Get("/cluster/join-tokens", s.handleListJoinTokens)
 		r.Post("/cluster/join-tokens", s.handleCreateJoinToken)
 		r.Delete("/cluster/join-tokens/{tokenID}", s.handleRevokeJoinToken)

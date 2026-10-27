@@ -87,7 +87,51 @@ func clusterHostsCmd(client func() (*Client, error)) *cobra.Command {
 		},
 	})
 	cmd.AddCommand(deleteByID(client, "remove <host-id>", "Remove a host from the cluster", "/cluster/hosts/", "Removed the host."))
+	cmd.AddCommand(markHostLostCmd(client))
 	return cmd
+}
+
+// markHostLostCmd says a host is gone and starts its apps' standbys (R-421).
+func markHostLostCmd(client func() (*Client, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "lost <host-id>",
+		Short: "Say a host is gone, and start its apps' standbys",
+		Long: "Marks the host lost and starts the standby of each app homed on it. With three or more hosts " +
+			"Pando does this itself when most of them cannot reach the host; with fewer it never does. " +
+			"Refused while the host answers. A failed app is not failed over.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			var out struct {
+				Name    string   `json:"name"`
+				Started []string `json:"started"`
+				Skipped []struct {
+					AppID  string `json:"app_id"`
+					Reason string `json:"reason"`
+					Detail string `json:"detail"`
+				} `json:"skipped"`
+			}
+			if err := c.Do("POST", "/cluster/hosts/"+url.PathEscape(args[0])+"/lost", nil, &out); err != nil {
+				return err
+			}
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "Marked %s lost. Started %d standby(s).\n", out.Name, len(out.Started))
+			if len(out.Started)+len(out.Skipped) == 0 {
+				return nil
+			}
+			t := table(w, "APP", "RESULT", "DETAIL")
+			for _, a := range out.Started {
+				fmt.Fprintf(t, "%s\tstarted\t\n", a)
+			}
+			for _, a := range out.Skipped {
+				fmt.Fprintf(t, "%s\t%s\t%s\n", a.AppID, a.Reason, a.Detail)
+			}
+			return t.Flush()
+		},
+	}
 }
 
 func clusterTokensCmd(client func() (*Client, error)) *cobra.Command {

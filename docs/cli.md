@@ -1027,6 +1027,16 @@ List the cluster's hosts
 pando cluster hosts list
 ```
 
+##### `cluster hosts lost`
+
+Say a host is gone, and start its apps' standbys
+
+```
+pando cluster hosts lost <host-id>
+```
+
+Marks the host lost and starts the standby of each app homed on it. With three or more hosts Pando does this itself when most of them cannot reach the host; with fewer it never does. Refused while the host answers. A failed app is not failed over.
+
 ##### `cluster hosts remove`
 
 Remove a host from the cluster

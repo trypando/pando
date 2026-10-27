@@ -16,6 +16,7 @@ func TestR414_ClusterAsTools(t *testing.T) {
 	}{
 		{"pando_list_hosts", `{}`, "GET", "/cluster/hosts", nil},
 		{"pando_remove_host", `{"host_id":"host_1"}`, "DELETE", "/cluster/hosts/host_1", nil},
+		{"pando_mark_host_lost", `{"host_id":"host_1"}`, "POST", "/cluster/hosts/host_1/lost", nil},
 		{"pando_list_join_tokens", `{}`, "GET", "/cluster/join-tokens", nil},
 		{"pando_revoke_join_token", `{"token_id":"jt_1"}`, "DELETE", "/cluster/join-tokens/jt_1", nil},
 		{"pando_create_join_token", `{}`, "POST", "/cluster/join-tokens", map[string]any{}},
@@ -38,6 +39,7 @@ func TestR414_ClusterAsTools(t *testing.T) {
 func TestClusterToolsRefuseWhatTheyCannotSendWithoutCallingTheAPI(t *testing.T) {
 	for _, tc := range []struct{ tool, args, want string }{
 		{"pando_remove_host", `{}`, "host_id"},
+		{"pando_mark_host_lost", `{}`, "host_id"},
 		{"pando_revoke_join_token", `{}`, "token_id"},
 		{"pando_create_join_token", `{"max_uses":1.5}`, "max_uses"},
 		{"pando_create_join_token", `{"expires_hours":0}`, "expires_hours"},

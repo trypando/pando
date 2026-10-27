@@ -67,6 +67,9 @@ const (
 	// under way is recognized as nobody's.
 	Replica Kind = "rep"
 
+	// Fence is one time a cut-off host stopped its own apps (R-421).
+	Fence Kind = "fnc"
+
 	// Adapter configs are prefixed by category, so a log line naming one says
 	// which kind of adapter it is (design 02 §2.5).
 	AdapterRuntime  Kind = "rt"
