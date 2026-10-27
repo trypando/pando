@@ -434,12 +434,29 @@ func startControlLiveness(ctx context.Context, dir string, port int, authority *
 	// (fenceGate): contact all the same, so it is not taken for lost while
 	// it can be reached, and it never says it is well with apps it could not
 	// stop (R-153).
-	cli, err := client.New(client.FromEnv)
+	cli, err := fenceClient(joined, hasJoined)
 	c.Docker = dockerRuntime{cli}
 	if err != nil {
 		c.Docker = unreachableRuntime{err: err}
 	}
 	return c.start(ctx)
+}
+
+// fenceClient is the Docker a control host's fence stops apps through: the
+// one its apps run on. A joined host with the app role runs them through its
+// agent's rootless socket (appHostRuntimeSocket), which DOCKER_HOST need not
+// name; checking or fencing any other runtime would stop nothing while its
+// apps ran (R-153). The install's own host runs them on the runtime Pando
+// reads from its environment.
+func fenceClient(joined hosts.Joined, hasJoined bool) (*client.Client, error) {
+	if hasJoined && slices.Contains(joined.Roles, state.HostRoleApp) {
+		sock, err := appHostRuntimeSocket()
+		if err != nil {
+			return nil, err
+		}
+		return client.New(client.WithHost("unix://" + sock))
+	}
+	return client.New(client.FromEnv)
 }
 
 // selfHost picks this host's row: the one it joined as, or else the

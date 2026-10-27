@@ -977,7 +977,7 @@ never taken for lost and never stops its apps (R-421).
   policy, such apps exist only if Pando was restarted under a different runtime socket while they
   ran. The fallback does not renew its certificates; it lasts until Pando is restarted.
   **A control host is held to the same rule** (`controlPing.answer`, the same `fenceGate`): while
-  the Docker its fence stops apps through (`client.FromEnv`) does not answer, its cluster listener
+  the Docker its fence stops apps through (`fenceClient`: a joined app host's agent socket, otherwise `client.FromEnv`) does not answer, its cluster listener
   refuses every ping with the same reason, rechecked at most every probe interval, and answers again
   once Docker does. It used to answer and only log the fences that failed: cut off, it was taken for
   lost and its apps' standbys started beside its own copies. **The exception is a control host the
