@@ -29,6 +29,7 @@ type Store interface {
 	RenewHostCert(ctx context.Context, hostID, presented, next string) (state.Host, error)
 	ConfirmHostCert(ctx context.Context, hostID, current string) (bool, error)
 	CertRevoked(ctx context.Context, sha string) (bool, error)
+	Revoked(ctx context.Context) (state.Revoked, error)
 }
 
 // Join token limits (R-415).

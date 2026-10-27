@@ -184,6 +184,16 @@ type limited struct {
 // false. An unreadable count is an error, never a free attempt: the limit
 // fails closed.
 func (s *Server) reserveAttempt(w http.ResponseWriter, r *http.Request, refused func(), limits ...limited) (state.Reservation, bool) {
+	var over func(state.AttemptLimit)
+	if refused != nil {
+		over = func(state.AttemptLimit) { refused() }
+	}
+	return s.reserveLimited(w, r, over, limits...)
+}
+
+// reserveLimited is reserveAttempt, telling refused which limit the attempt
+// was over.
+func (s *Server) reserveLimited(w http.ResponseWriter, r *http.Request, refused func(over state.AttemptLimit), limits ...limited) (state.Reservation, bool) {
 	plain := make([]state.AttemptLimit, len(limits))
 	for i, l := range limits {
 		plain[i] = l.AttemptLimit
@@ -195,7 +205,7 @@ func (s *Server) reserveAttempt(w http.ResponseWriter, r *http.Request, refused 
 	}
 	if res.Refused() {
 		if refused != nil {
-			refused()
+			refused(plain[res.Over])
 		}
 		tooManyAttempts(w, r, res.Wait, limits[res.Over].what)
 		return res, false

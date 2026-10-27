@@ -403,7 +403,9 @@ const forgetStandbyHost = `
 
 // RemoveHost removes a host from the cluster, and revokes every certificate
 // it held, in one transaction, so that no host, listener or runtime takes
-// them again (R-415). The install's own first host is refused
+// them again (R-415): its current, previous and ping certificates by
+// fingerprint, and its probe certificates, which are never recorded, by its
+// ID on every row (Revoked). The install's own first host is refused
 // (ErrInstallHost).
 func (c *Cluster) RemoveHost(ctx context.Context, hostID string) (Host, error) {
 	tx, err := c.db.Begin(ctx)

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/hostagent"
 	"github.com/trypando/pando/internal/keyfile"
 )
 
@@ -76,6 +78,9 @@ func PingAddress(address string, port int) string {
 // row current with.
 type HostPublisher interface {
 	HostLister
+	// Revoked is every host removed from the cluster, whose pings a control
+	// host refuses (R-415, Members).
+	Revoked(ctx context.Context) (state.Revoked, error)
 	SetHostPing(ctx context.Context, hostID, address, certSHA256 string) error
 	RotateHostCert(ctx context.Context, hostID, next string) error
 }
@@ -187,6 +192,33 @@ func (s *Service) Peers(ctx context.Context, certDER []byte) ([]Peer, error) {
 	return LivenessPeers(list), nil
 }
 
+// PeerList is what GET /cluster/peers answers a host with: the hosts it
+// probes, and every host removed from the cluster, whose pings it refuses
+// from then on (R-415, Members).
+type PeerList struct {
+	Hosts   []Peer        `json:"hosts"`
+	Revoked state.Revoked `json:"revoked"`
+}
+
+// CertRevoked reports whether certDER belonged to a host removed from the
+// cluster (R-415), which nothing accepts again.
+func (s *Service) CertRevoked(ctx context.Context, certDER []byte) (bool, error) {
+	return s.Store.CertRevoked(ctx, hostagent.Fingerprint256(certDER))
+}
+
+// PeerList is Peers, with what is revoked.
+func (s *Service) PeerList(ctx context.Context, certDER []byte) (PeerList, error) {
+	list, err := s.Peers(ctx, certDER)
+	if err != nil {
+		return PeerList{}, err
+	}
+	revoked, err := s.Store.Revoked(ctx)
+	if err != nil {
+		return PeerList{}, err
+	}
+	return PeerList{Hosts: list, Revoked: revoked}, nil
+}
+
 // ReadPeers reads a peer list written by PeerSync.
 func ReadPeers(path string) ([]Peer, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- the host's own cluster directory
@@ -228,6 +260,9 @@ type PeerSync struct {
 	// HTTP is the client; nil is one with a short timeout, since a round
 	// waits for it.
 	HTTP *http.Client
+	// Members, when set, is given every host the list says was removed,
+	// and keeps them in RevokedFile beside File (R-415).
+	Members *Members
 }
 
 func (p *PeerSync) client() *http.Client {
@@ -240,14 +275,20 @@ func (p *PeerSync) client() *http.Client {
 // Peers is the peer list, fresh when a control host answers.
 func (p *PeerSync) Peers(ctx context.Context) ([]Peer, error) {
 	last, lerr := ReadPeers(p.File)
-	list, err := p.fetchAny(ctx, last)
+	got, err := p.fetchAny(ctx, last)
 	if err != nil {
 		if lerr != nil {
 			return nil, fmt.Errorf("the cluster's hosts could not be fetched (%w) and none are kept from before", err)
 		}
 		return last, nil
 	}
-	return list, WritePeers(p.File, list)
+	err = WritePeers(p.File, got.Hosts)
+	if p.Members != nil {
+		if rerr := p.Members.KeepRevoked(filepath.Join(filepath.Dir(p.File), RevokedFile), got.Revoked); rerr != nil && err == nil {
+			err = fmt.Errorf("the hosts removed from the cluster could not be kept beside %s: %w", p.File, rerr)
+		}
+	}
+	return got.Hosts, err
 }
 
 // WritePeers keeps list at path, for ReadPeers, replacing what it held: the
@@ -265,7 +306,7 @@ func WritePeers(path string, list []Peer) error {
 
 // fetchAny asks Address, then each control host in last, and returns the
 // first list one answers with, or the first error.
-func (p *PeerSync) fetchAny(ctx context.Context, last []Peer) ([]Peer, error) {
+func (p *PeerSync) fetchAny(ctx context.Context, last []Peer) (PeerList, error) {
 	list, first := p.fetch(ctx, p.Address)
 	if first == nil {
 		return list, nil
@@ -281,31 +322,29 @@ func (p *PeerSync) fetchAny(ctx context.Context, last []Peer) ([]Peer, error) {
 			return list, nil
 		}
 	}
-	return nil, first
+	return PeerList{}, first
 }
 
-func (p *PeerSync) fetch(ctx context.Context, address string) ([]Peer, error) {
+func (p *PeerSync) fetch(ctx context.Context, address string) (PeerList, error) {
+	var out PeerList
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(address, "/")+PeersPath, nil)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	resp, err := p.client().Do(req)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, refusal(address, resp.StatusCode, data)
-	}
-	var out struct {
-		Hosts []Peer `json:"hosts"`
+		return out, refusal(address, resp.StatusCode, data)
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("the cluster at %s answered with something Pando cannot read: %w", address, err)
+		return PeerList{}, fmt.Errorf("the cluster at %s answered with something Pando cannot read: %w", address, err)
 	}
-	return out.Hosts, nil
+	return out, nil
 }

@@ -386,3 +386,29 @@ func TestR421_AJoinedHostAsksTheOtherControlHostsWhenItsOwnIsGone(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, second, got)
 }
+
+// TestR415_ThePeerListSaysWhoWasRemoved asserts R-415's peer list: with the
+// hosts, every removed host's ID and certificate, for the hosts that answer
+// pings to refuse; and a removed host's certificate is reported revoked.
+func TestR415_ThePeerListSaysWhoWasRemoved(t *testing.T) {
+	gone, goneSHA := hostCert(t, newService(t, &fakeStore{}).Authority, "edge-9")
+	store := &fakeStore{revoked: map[string]bool{goneSHA: true}, revokedHosts: []string{"host_gone"}}
+	svc := newService(t, store)
+	ctx := context.Background()
+	cert, sha := hostCert(t, svc.Authority, "edge-1")
+	store.hosts = []state.Host{{ID: "host_edge1", Name: "edge-1", Address: "10.0.0.2:7443", CertSHA256: sha, JoinedWith: "jt_1"}}
+
+	list, err := svc.PeerList(ctx, cert.Certificate[0])
+	require.NoError(t, err)
+	require.Equal(t, []string{"host_gone"}, list.Revoked.Hosts)
+	require.Equal(t, []string{goneSHA}, list.Revoked.Certs)
+	_, err = svc.PeerList(ctx, nil)
+	require.Equal(t, errs.AuthInvalid, errs.CodeOf(err))
+
+	revoked, err := svc.CertRevoked(ctx, gone.Certificate[0])
+	require.NoError(t, err)
+	require.True(t, revoked)
+	revoked, err = svc.CertRevoked(ctx, cert.Certificate[0])
+	require.NoError(t, err)
+	require.False(t, revoked)
+}

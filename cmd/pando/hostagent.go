@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/adapter/runtime/multidocker"
+	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/hostagent"
 	"github.com/trypando/pando/internal/log"
@@ -78,9 +79,13 @@ func hostAgentServeCmd() *cobra.Command {
 				RuntimeSocket: os.Getenv(multidocker.EnvAgentRuntimeSocket),
 			}
 			// R-421: a joined host checks the others and fences itself.
-			monitor, err := agentLiveness([]byte(authorities), logger)
+			members := &hosts.Members{}
+			monitor, err := agentLiveness([]byte(authorities), members, logger)
 			if err != nil {
 				return fmt.Errorf("the host agent did not start: %w", err)
+			}
+			if monitor != nil {
+				agent.Member = members.Admits
 			}
 			return serveAgent(ctx, agent, monitor, listen)
 		},
@@ -97,7 +102,9 @@ func serveAgent(ctx context.Context, agent *hostagent.Agent, monitor *liveness.M
 	agent.Logger.Info("host agent listening", zap.String("addr", listen), zap.String("pool", agent.Pool.String()),
 		zap.Bool("carries_runtime_calls", agent.RuntimeSocket != ""), zap.Bool("checks_hosts", monitor != nil))
 	if monitor != nil {
-		agent.Liveness = monitor
+		if agent.Liveness == nil {
+			agent.Liveness = monitor
+		}
 		// R-421: a fenced host's agent starts nothing the control plane asks.
 		if agent.Fence == nil {
 			agent.Fence = monitor

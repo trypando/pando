@@ -48,6 +48,17 @@ type rows struct {
 	lost   map[string]bool
 	fences map[string]string
 	down   bool
+	// revoked is the hosts removed from the cluster.
+	revoked state.Revoked
+}
+
+func (r *rows) Revoked(context.Context) (state.Revoked, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.down {
+		return state.Revoked{}, errDatabaseAway
+	}
+	return r.revoked, nil
 }
 
 var errDatabaseAway = errors.New("the database is away")

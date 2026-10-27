@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -12,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/moby/moby/client"
@@ -30,20 +30,20 @@ import (
 // nothing here.
 //
 // An agent that cannot start in full — its runtime socket unknown, a file
-// missing — still answers the cluster's pings, when its own certificate can be
-// read, rather than exit: an app host whose Pando cannot start is not cut off,
-// and its apps may be running (R-421). It reports nothing it has not watched,
-// so it counts for nothing against the other hosts.
+// missing — runs appHostFallback rather than exit, when its own certificate
+// can be read: an app host whose Pando cannot start is not cut off, and its
+// apps may be running (R-421). Only a host without its own certificate exits.
 func runAppHost(ctx context.Context, dir string, joined hosts.Joined, logger *zap.Logger) error {
 	agent, monitor, certs, err := appHostAgent(dir, joined, logger)
 	if err != nil {
-		answerer, aerr := appHostAnswerer(dir, joined, logger)
-		if aerr != nil {
+		fallback, fmonitor, ferr := appHostFallback(dir, joined, logger)
+		if ferr != nil {
 			return err
 		}
-		logger.Error("this app host cannot run its agent; it only answers the cluster's liveness checks until this is fixed and Pando restarted",
+		logger.Error("this app host cannot run its agent; until this is fixed and Pando restarted it carries no runtime calls, "+
+			"and it still checks the other hosts and stops its own apps if it is cut off",
 			zap.String("host_id", joined.HostID), zap.Error(err))
-		if serr := serveAgent(ctx, answerer, nil, agentListen()); serr != nil {
+		if serr := serveAgent(ctx, fallback, fmonitor, agentListen()); serr != nil {
 			return serr
 		}
 		return err
@@ -95,8 +95,8 @@ func appHostAgent(dir string, joined hosts.Joined, logger *zap.Logger) (*hostage
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	members := &hosts.Members{}
-	agent := &hostagent.Agent{TLS: serverTLS, Pool: pool, Logger: logger, RuntimeSocket: socket, Member: members.Has}
+	members := appHostMembers(dir)
+	agent := &hostagent.Agent{TLS: serverTLS, Pool: pool, Logger: logger, RuntimeSocket: socket, Member: members.Admits}
 
 	clusterTLS, err := hosts.JoinedTLS(caPEM, host509)
 	if err != nil {
@@ -109,7 +109,7 @@ func appHostAgent(dir string, joined hosts.Joined, logger *zap.Logger) (*hostage
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("this app host could not reach its container runtime at %s, which it stops apps through when it is cut off: %w", socket, err)
 	}
-	sync := &hosts.PeerSync{Address: joined.Cluster, TLS: clusterTLS, File: filepath.Join(dir, hosts.PeersFile)}
+	sync := &hosts.PeerSync{Address: joined.Cluster, TLS: clusterTLS, File: filepath.Join(dir, hosts.PeersFile), Members: members}
 	return agent, newMonitor(joined.HostID, members.Track(sync.Peers), certs.Probe.GetClientCertificate, roots, docker, logger), certs, nil
 }
 
@@ -117,32 +117,137 @@ func appHostAgent(dir string, joined hosts.Joined, logger *zap.Logger) (*hostage
 // are due for renewal (hostagent.RenewBefore).
 const certRenewCheck = time.Hour
 
-// appHostAnswerer is an agent that answers pings, forwards as any agent does,
-// and carries no runtime calls: what an app host runs when its full agent
-// cannot start.
-func appHostAnswerer(dir string, joined hosts.Joined, logger *zap.Logger) (*hostagent.Agent, error) {
+// appHostMembers is the cluster's hosts as this one hears them, refusing
+// from the start every host it last heard was removed (R-415).
+func appHostMembers(dir string) *hosts.Members {
+	m := &hosts.Members{}
+	m.LoadRevoked(filepath.Join(dir, hosts.RevokedFile))
+	return m
+}
+
+// appHostFallback is what an app host runs when its full agent cannot
+// start: an agent that carries no runtime calls, and the host's Monitor, so
+// that a host that answers the cluster's pings is also one that stops its own
+// apps when it is cut off (R-153, R-421). Without the Monitor, a cut-off host
+// whose agent had failed was taken for lost and its standbys started while
+// its own copies kept running.
+//
+// It needs only the host's own certificate and the authority's. It probes
+// with its probe certificate or, when that cannot be read, with its own: the
+// other hosts refuse such a ping, and a refusal is still contact, which is
+// all fencing counts. It fences through the host's runtime at the socket
+// appHostRuntimeSocket names, and answers pings only while that runtime
+// answers (fenceGate): a host that could not stop its apps reports nothing.
+func appHostFallback(dir string, joined hosts.Joined, logger *zap.Logger) (*hostagent.Agent, *liveness.Monitor, error) {
 	files, err := readClusterFiles(dir, hosts.HostCertFile, hosts.HostKeyFile, hosts.AuthorityCertFile)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	serverTLS, err := hostagent.ServerTLS(files[0], files[1], files[2])
 	if err != nil {
-		return nil, err
+		return nil, nil, appHostError(dir, err)
+	}
+	host509, err := tls.X509KeyPair(files[0], files[1])
+	if err != nil {
+		return nil, nil, appHostError(dir, err)
+	}
+	clusterTLS, err := hosts.JoinedTLS(files[2], host509)
+	if err != nil {
+		return nil, nil, appHostError(dir, err)
 	}
 	pool, err := appHostPool(joined)
 	if err != nil {
 		pool = netip.MustParsePrefix(dockernet.DefaultPool)
 	}
-	return &hostagent.Agent{TLS: serverTLS, Pool: pool, Liveness: answerOnly{self: joined.HostID}, Logger: logger}, nil
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(files[2])
+	members := appHostMembers(dir)
+	sync := &hosts.PeerSync{Address: joined.Cluster, TLS: clusterTLS, File: filepath.Join(dir, hosts.PeersFile), Members: members}
+	runtime := localRuntime()
+	monitor := newMonitor(joined.HostID, members.Track(sync.Peers), staticCert(fallbackProbeCert(dir, host509)), roots, runtime, logger)
+	gate := &fenceGate{liveness: monitor, reachable: runtime.Reachable, every: fenceGateEvery}
+	return &hostagent.Agent{TLS: serverTLS, Pool: pool, Liveness: gate, Logger: logger, Member: members.Admits}, monitor, nil
 }
 
-// answerOnly answers a ping with a view that reports no peer: a host that is
-// not watching says nothing about the others (R-421).
-type answerOnly struct{ self string }
+// fallbackProbeCert is the probe certificate the join wrote, or host when it
+// cannot be read.
+func fallbackProbeCert(dir string, host tls.Certificate) tls.Certificate {
+	files, err := readClusterFiles(dir, hosts.HostClientCertFile, hosts.HostClientKeyFile)
+	if err != nil {
+		return host
+	}
+	probe, err := tls.X509KeyPair(files[0], files[1])
+	if err != nil {
+		return host
+	}
+	return probe
+}
 
-func (a answerOnly) Answer(string) []byte {
-	out, _ := json.Marshal(liveness.View{Host: a.self, UnreachedMS: map[string]int64{}})
-	return out
+// fenceGateEvery is how long a fenceGate takes the runtime's last answer
+// for: one probe interval [P].
+var fenceGateEvery = liveness.Config{}.Normalize().Interval
+
+// fenceGate answers pings with liveness's view only while this host's
+// runtime answers, so only while the host could stop its apps (R-153).
+// Otherwise the answer is nil, which the agent sends as a refusal: contact
+// all the same (R-421), so the host is never taken for lost while it can be
+// reached, and it says nothing of the others it could not act on.
+type fenceGate struct {
+	liveness  hostagent.Liveness
+	reachable func(context.Context) error
+	every     time.Duration
+
+	mu      sync.Mutex
+	checked time.Time
+	ok      bool
+}
+
+func (g *fenceGate) Answer(from string) []byte {
+	if !g.canFence() {
+		return nil
+	}
+	return g.liveness.Answer(from)
+}
+
+func (g *fenceGate) canFence() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.checked.IsZero() && time.Since(g.checked) < g.every {
+		return g.ok
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	g.ok, g.checked = g.reachable(ctx) == nil, time.Now()
+	return g.ok
+}
+
+// runtimeAPI is the host's container runtime as the fallback stops apps
+// through it.
+type runtimeAPI interface {
+	hostagent.ContainerAPI
+	Reachable(ctx context.Context) error
+}
+
+// localRuntime is the host's own runtime, at the socket appHostRuntimeSocket
+// names; when it names none, a runtime every call to which fails with why.
+func localRuntime() runtimeAPI {
+	socket, err := appHostRuntimeSocket()
+	if err != nil {
+		return unreachableRuntime{err: err}
+	}
+	docker, err := client.New(client.WithHost("unix://" + socket))
+	if err != nil {
+		return unreachableRuntime{err: err}
+	}
+	return dockerRuntime{docker}
+}
+
+// dockerRuntime is the Docker API at a socket, which may not answer.
+type dockerRuntime struct{ *client.Client }
+
+func (d dockerRuntime) Reachable(ctx context.Context) error {
+	_, err := d.Ping(ctx, client.PingOptions{})
+	return err
 }
 
 // readClusterFiles reads names from the cluster directory, in order.

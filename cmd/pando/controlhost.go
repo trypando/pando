@@ -98,7 +98,7 @@ func (c *controlPings) configFor(hello *tls.ClientHelloInfo) (*tls.Config, error
 // serve answers a connection that negotiated PingProtocol.
 func (c *controlPings) serve(_ *http.Server, conn *tls.Conn, _ http.Handler) {
 	if p := c.current.Load(); p != nil {
-		hostagent.AnswerPing(conn, p.monitor, p.members.Has)
+		hostagent.AnswerPing(conn, p.monitor, p.members.Admits)
 	}
 }
 
@@ -201,10 +201,13 @@ func (c controlLiveness) setup(ctx context.Context) (*controlPing, error) {
 		return nil, fmt.Errorf("could not issue the certificate this host checks the others with: %w", err)
 	}
 	probe := as.InMemory(probeCert)
+	// R-415: the hosts removed from the cluster are refused from the start,
+	// before any list is read, and from every list read after.
+	members := &hosts.Members{}
+	members.LoadRevoked(filepath.Join(c.Dir, hosts.RevokedFile))
 	peers := &controlPeers{self: self.HostID, port: c.Port, file: filepath.Join(c.Dir, hosts.PeersFile),
 		pinOf: func() string { return hostagent.Fingerprint256(cert.Current().Certificate[0]) },
-		store: c.store, logger: c.Logger}
-	members := &hosts.Members{}
+		store: c.store, members: members, logger: c.Logger}
 	return &controlPing{
 		tls: &tls.Config{
 			MinVersion:     tls.VersionTLS13,
@@ -284,10 +287,13 @@ type controlPeers struct {
 	port int
 	// pinOf is the fingerprint of the certificate the host answers with
 	// now, which is renewed while it runs (R-421).
-	pinOf  func() string
-	file   string
-	store  func() hosts.HostPublisher
-	logger *zap.Logger
+	pinOf func() string
+	file  string
+	store func() hosts.HostPublisher
+	// members is given the hosts removed from the cluster with each list
+	// read from the database (R-415).
+	members *hosts.Members
+	logger  *zap.Logger
 }
 
 func (c *controlPeers) Peers(ctx context.Context) ([]hosts.Peer, error) {
@@ -302,7 +308,24 @@ func (c *controlPeers) Peers(ctx context.Context) ([]hosts.Peer, error) {
 	if err := hosts.WritePeers(c.file, list); err != nil {
 		c.logger.Warn("could not keep the cluster's hosts for the next start", zap.Error(err))
 	}
+	c.keepRevoked(ctx, st)
 	return list, nil
+}
+
+// keepRevoked gives members the hosts removed from the cluster, and keeps
+// them for the next start (R-415). One that cannot be read now is read with
+// the next list; what was revoked before stays revoked meanwhile.
+func (c *controlPeers) keepRevoked(ctx context.Context, st hosts.HostPublisher) {
+	if c.members == nil {
+		return
+	}
+	revoked, err := st.Revoked(ctx)
+	if err == nil {
+		err = c.members.KeepRevoked(filepath.Join(filepath.Dir(c.file), hosts.RevokedFile), revoked)
+	}
+	if err != nil {
+		c.logger.Warn("could not read or keep the hosts removed from the cluster; trying again next round", zap.Error(err))
+	}
 }
 
 // startControlLiveness runs this control host's Monitor (R-421), before the
@@ -341,6 +364,10 @@ type unreachableRuntime struct{ err error }
 
 func (u unreachableRuntime) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
 	return client.ContainerListResult{}, fmt.Errorf("this host's container runtime could not be reached: %w", u.err)
+}
+
+func (u unreachableRuntime) Reachable(context.Context) error {
+	return fmt.Errorf("this host's container runtime could not be reached: %w", u.err)
 }
 
 func (u unreachableRuntime) ContainerStop(context.Context, string, client.ContainerStopOptions) (client.ContainerStopResult, error) {

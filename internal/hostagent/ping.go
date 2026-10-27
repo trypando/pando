@@ -135,9 +135,11 @@ func (a *Agent) answerPing(conn *tls.Conn, line string) bool {
 }
 
 // pong answers line when it is a ping, sent with the verified certificate
-// peer, and reports whether it was. A nil liveness refuses it; a nil member
-// takes any host the authority issued a probe certificate to.
-func pong(conn net.Conn, peer *x509.Certificate, line string, liveness Liveness, member func(hostID string) bool) bool {
+// peer, and reports whether it was. A nil liveness refuses it, and so does
+// an answer of nil: a host that cannot stop its own apps reports nothing
+// (R-153). A nil member takes any host the authority issued a probe
+// certificate to.
+func pong(conn net.Conn, peer *x509.Certificate, line string, liveness Liveness, member Member) bool {
 	fields := strings.Fields(line)
 	if len(fields) != 3 || fields[0] != protocolVersion || fields[1] != pingVerb {
 		return false
@@ -149,17 +151,27 @@ func pong(conn net.Conn, peer *x509.Certificate, line string, liveness Liveness,
 	case liveness == nil:
 		refuse(conn, "this agent takes no part in the cluster's liveness checks")
 	default:
-		_, _ = io.WriteString(conn, pongPrefix+strings.ReplaceAll(string(liveness.Answer(from)), "\n", " ")+"\n")
+		view := liveness.Answer(from)
+		if view == nil {
+			refuse(conn, "this host cannot stop its own apps if it is cut off, so it reports nothing")
+			return true
+		}
+		_, _ = io.WriteString(conn, pongPrefix+strings.ReplaceAll(string(view), "\n", " ")+"\n")
 	}
 	return true
 }
+
+// Member reports whether a ping from hostID, sent with the certificate whose
+// SHA-256 fingerprint is certSHA256, is answered: false for a host removed
+// from the cluster, and for any certificate revoked with it (R-415).
+type Member func(hostID, certSHA256 string) bool
 
 // AnswerPing answers the one ping sent on conn, a connection whose handshake
 // negotiated PingProtocol and verified the client's certificate against the
 // cluster authority: a control host's cluster listener hands it such
 // connections (R-421). Anything but a ping is refused, and so is a ping from a
 // host member does not take: one removed from the cluster.
-func AnswerPing(conn *tls.Conn, liveness Liveness, member func(hostID string) bool) {
+func AnswerPing(conn *tls.Conn, liveness Liveness, member Member) {
 	_ = conn.SetDeadline(time.Now().Add(headerTimeout))
 	if len(conn.ConnectionState().VerifiedChains) == 0 {
 		refuse(conn, "a ping needs a certificate from the cluster authority")
@@ -176,7 +188,7 @@ func AnswerPing(conn *tls.Conn, liveness Liveness, member func(hostID string) bo
 
 // pingSender is who a ping claiming to be from claimed is from: the host its
 // certificate was issued to, which must be the one it names (R-421).
-func pingSender(peer *x509.Certificate, claimed string, member func(string) bool) (string, error) {
+func pingSender(peer *x509.Certificate, claimed string, member Member) (string, error) {
 	from, ok := ProbeSender(peer)
 	if !ok {
 		return "", errors.New("this certificate was issued to no host of the cluster, so it sends no ping")
@@ -188,7 +200,7 @@ func pingSender(peer *x509.Certificate, claimed string, member func(string) bool
 	if claimed != want {
 		return "", fmt.Errorf("the ping names %q, and its certificate was issued to %q", claimed, want)
 	}
-	if from != "" && member != nil && !member(from) {
+	if from != "" && member != nil && !member(from, Fingerprint256(peer.Raw)) {
 		return "", fmt.Errorf("host %s is not in this cluster", from)
 	}
 	return from, nil

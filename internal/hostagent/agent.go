@@ -92,9 +92,10 @@ type Agent struct {
 	Fence Fence
 
 	// Member reports whether a host is in the cluster now; a ping from one
-	// that is not, such as a host removed from it, is refused (R-415). Nil
-	// takes any host the authority issued a probe certificate to.
-	Member func(hostID string) bool
+	// that is not, such as a host removed from it, or sent with a revoked
+	// certificate, is refused (R-415). Nil takes any host the authority
+	// issued a probe certificate to.
+	Member Member
 }
 
 // Serve accepts on ln, which must be a plain TCP listener: the agent does the

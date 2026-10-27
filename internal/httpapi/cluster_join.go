@@ -14,6 +14,7 @@ import (
 	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/hostagent"
 	"github.com/trypando/pando/internal/secret"
 )
 
@@ -56,23 +57,74 @@ func verifiedClient(r *http.Request) []byte {
 // nothing cannot fill the audit log (R-347).
 var errNoClientCert = errs.New(errs.AuthInvalid, "A renewal must present the certificate the host holds, issued by the cluster's authority.")
 
+// errRevokedCert refuses a renewal presented with a certificate of a host
+// removed from the cluster (R-415).
+var errRevokedCert = errs.New(errs.AuthInvalid, "This certificate belonged to a host removed from the cluster, so it renews nothing.").
+	WithRemedy("Join the host to the cluster again with a new join token.")
+
+// Refused renewals allowed per certificate and per client address before
+// renewing waits [P] (R-404 applied to R-421). A host renews about every 60
+// days and tries again hourly when an answer is lost, so a handful is
+// plenty; every refusal within them is audited, and none past them but one
+// cluster.host.renew.limited per window (R-347, R-348).
+const (
+	renewCertAttempts = 5
+	renewAddrAttempts = 20
+	renewWindow       = 15 * time.Minute
+)
+
 // handleClusterRenew issues a joined host new certificates, to the host
-// presenting the one it holds (R-421). Audited, with the host's ID.
+// presenting the one it holds (R-421). Audited, with the host's ID. A
+// removed host's certificate, which still chains to the authority, is refused
+// before anything else, and audited once per window however often it is
+// presented; other refusals are limited per certificate and per address
+// (R-347, R-404).
 func (s *Server) handleClusterRenew(w http.ResponseWriter, r *http.Request) {
 	if s.Hosts == nil {
 		Error(w, r, errClusterOff)
 		return
 	}
-	if verifiedClient(r) == nil {
+	der := verifiedClient(r)
+	if der == nil {
 		Error(w, r, errNoClientCert)
+		return
+	}
+	pin := hostagent.Fingerprint256(der)
+	revoked, err := s.Hosts.CertRevoked(r.Context(), der)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+	if revoked {
+		s.auditOnce(r, "cluster-renew|revoked|"+pin, renewWindow, audit.Event{
+			PrincipalKind: audit.KindAnonymous, Action: "cluster.host.renew.denied", TargetKind: "host",
+			Detail: map[string]any{"code": string(errs.AuthInvalid), "reason": "revoked", "cert_sha256": pin},
+		})
+		Error(w, r, errRevokedCert)
+		return
+	}
+	const what = "Too many refused renewals with this certificate or from this network address."
+	reservation, ok := s.reserveLimited(w, r, func(over state.AttemptLimit) {
+		s.auditOnce(r, over.Key+"|limited", renewWindow, audit.Event{
+			PrincipalKind: audit.KindAnonymous, Action: "cluster.host.renew.limited", TargetKind: "host",
+			Detail: map[string]any{"cert_sha256": pin, "window_seconds": int(renewWindow.Seconds())},
+		})
+	},
+		limited{state.AttemptLimit{Key: "cluster-renew|cert|" + pin, Max: renewCertAttempts, Window: renewWindow}, what},
+		limited{state.AttemptLimit{Key: "cluster-renew|addr|" + limitAddr(r), Max: renewAddrAttempts, Window: renewWindow}, what},
+	)
+	if !ok {
 		return
 	}
 	var req hosts.WireRenewRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJoinBody)).Decode(&req); err != nil {
-		Error(w, r, errs.New(errs.ValidInvalid, "The renewal request could not be read."))
+		err = errs.New(errs.ValidInvalid, "The renewal request could not be read.")
+		s.settleRefusal(r, reservation, err)
+		Error(w, r, err)
 		return
 	}
-	res, err := s.Hosts.Renew(r.Context(), verifiedClient(r), []byte(req.CSR))
+	res, err := s.Hosts.Renew(r.Context(), der, []byte(req.CSR))
+	s.settleRefusal(r, reservation, err)
 	if err != nil {
 		s.audit(r, audit.Event{
 			PrincipalKind: audit.KindAnonymous, Action: "cluster.host.renew.denied", TargetKind: "host",
@@ -98,12 +150,12 @@ func (s *Server) handleClusterPeers(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errClusterOff)
 		return
 	}
-	peers, err := s.Hosts.Peers(r.Context(), verifiedClient(r))
+	list, err := s.Hosts.PeerList(r.Context(), verifiedClient(r))
 	if err != nil {
 		Error(w, r, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"hosts": peers})
+	JSON(w, http.StatusOK, list)
 }
 
 // handleClusterAuthority is the authority's certificate, public: every host
@@ -138,14 +190,49 @@ const (
 func joinUnusableKey(addr string) string { return state.ClusterJoinAddrKey(addr) + "|unusable" }
 
 // reserveJoin counts a join from this client address before it is tried,
-// and refuses it, audited, over either limit (R-404, R-415).
+// and refuses it over either limit (R-404, R-415). The address's first
+// refusal for the limit in a window is audited as cluster.join.limited, and
+// no other: a caller over the limit adds no row however often it asks
+// (R-347, R-348).
 func (s *Server) reserveJoin(w http.ResponseWriter, r *http.Request) (state.Reservation, bool) {
 	const what = "Too many refused joins from this network address."
 	addr := limitAddr(r)
-	return s.reserveAttempt(w, r, func() { s.denyJoin(r, map[string]any{"reason": "rate_limited"}) },
+	return s.reserveLimited(w, r, func(state.AttemptLimit) {
+		s.auditOnce(r, state.ClusterJoinAddrKey(addr)+"|limited", joinWindow, audit.Event{
+			PrincipalKind: audit.KindAnonymous, Action: "cluster.join.limited", TargetKind: "host",
+			Detail: map[string]any{"window_seconds": int(joinWindow.Seconds())},
+		})
+	},
 		limited{state.AttemptLimit{Key: state.ClusterJoinAddrKey(addr), Max: joinAddrAttempts, Window: joinWindow}, what},
 		limited{state.AttemptLimit{Key: joinUnusableKey(addr), Max: joinAddrUnusable, Window: joinWindow}, what},
 	)
+}
+
+// auditOnce writes e the first time it is asked under key in a window, and
+// never again in it, counted in the store every replica shares: what a
+// caller that is refused again and again adds to the audit log, which keeps
+// every row for three months, is one row a window (R-347, R-348). A count
+// that cannot be read writes nothing; the refusal it records is still
+// answered.
+func (s *Server) auditOnce(r *http.Request, key string, window time.Duration, e audit.Event) {
+	res, err := s.failedAttempts().Reserve(r.Context(), state.AttemptLimit{Key: key, Max: 1, Window: window})
+	if err != nil || res.Refused() {
+		return
+	}
+	_ = s.failedAttempts().Fail(context.WithoutCancel(r.Context()), res)
+	s.audit(r, e)
+}
+
+// settleRefusal ends a reservation that counts every refusal (R-404): any
+// refusal Pando decided counts, and a success, or a refusal it could not
+// decide, does not.
+func (s *Server) settleRefusal(r *http.Request, res state.Reservation, err error) {
+	ctx := context.WithoutCancel(r.Context())
+	if err == nil || errs.CodeOf(err) == errs.Internal {
+		_ = s.failedAttempts().Release(ctx, res)
+		return
+	}
+	_ = s.failedAttempts().Fail(ctx, res)
 }
 
 // settleJoin ends a join's reservation (R-404). A refusal that tested a
@@ -186,8 +273,8 @@ func (s *Server) denyJoin(r *http.Request, detail map[string]any) {
 }
 
 // handleClusterJoin admits a host with a join token. Every join and every
-// refusal is audited (R-415), and refusals are limited per client address
-// (reserveJoin).
+// refusal within the limit is audited (R-415), and refusals are limited per
+// client address (reserveJoin).
 func (s *Server) handleClusterJoin(w http.ResponseWriter, r *http.Request) {
 	if s.Hosts == nil {
 		Error(w, r, errClusterOff)

@@ -30,6 +30,10 @@ type publishStore struct {
 	rotations int
 }
 
+func (p *publishStore) Revoked(context.Context) (state.Revoked, error) {
+	return state.Revoked{}, p.err
+}
+
 func (p *publishStore) Hosts(context.Context) ([]state.Host, error) {
 	out := append([]state.Host(nil), p.hosts...)
 	return out, p.err

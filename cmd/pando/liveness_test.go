@@ -67,19 +67,19 @@ func TestClusterLivenessProbesHostsWithAHostCertificate(t *testing.T) {
 func TestAgentLivenessTakesPartOnlyOnAJoinedHost(t *testing.T) {
 	logger := zap.NewNop()
 	t.Setenv(envHostID, "")
-	m, err := agentLiveness(nil, logger)
+	m, err := agentLiveness(nil, nil, logger)
 	require.NoError(t, err)
 	require.Nil(t, m, "a multi-host Docker forwarding agent takes no part")
 
 	t.Setenv(envHostID, "host_01HQ8ZZZZZZZZZZZZZZZZZZZZZ")
 	t.Setenv(envPeersFile, "")
-	_, err = agentLiveness(nil, logger)
+	_, err = agentLiveness(nil, nil, logger)
 	require.ErrorContains(t, err, envPeersFile)
 
 	peers := filepath.Join(t.TempDir(), "peers.json")
 	t.Setenv(envPeersFile, peers)
 	t.Setenv(envHostCert, "nope")
-	_, err = agentLiveness(nil, logger)
+	_, err = agentLiveness(nil, nil, logger)
 	require.ErrorContains(t, err, envHostCert)
 
 	caPEM, err := hostagent.NewAuthority()
@@ -92,10 +92,10 @@ func TestAgentLivenessTakesPartOnlyOnAJoinedHost(t *testing.T) {
 	require.NoError(t, err)
 	t.Setenv(envHostCert, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})))
 	t.Setenv(envHostKey, string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})))
-	_, err = agentLiveness([]byte("not pem"), logger)
+	_, err = agentLiveness([]byte("not pem"), nil, logger)
 	require.ErrorContains(t, err, "no authority")
 
-	m, err = agentLiveness(as.PoolPEM(), logger)
+	m, err = agentLiveness(as.PoolPEM(), nil, logger)
 	require.NoError(t, err)
 	require.NotNil(t, m)
 

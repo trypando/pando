@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/moby/moby/client"
 	"go.uber.org/zap"
@@ -38,8 +39,10 @@ const (
 // no part. It probes the other hosts with the host certificate, answers
 // their pings through agent.Liveness, and fences through the host's own
 // container runtime. It needs no database: Postgres being away changes
-// nothing here.
-func agentLiveness(authoritiesPEM []byte, logger *zap.Logger) (*liveness.Monitor, error) {
+// nothing here. members, when given, hears each peer list read, and the hosts
+// removed from the cluster kept beside it (hosts.RevokedFile), so that the
+// agent refuses a removed host's pings (R-415).
+func agentLiveness(authoritiesPEM []byte, members *hosts.Members, logger *zap.Logger) (*liveness.Monitor, error) {
 	self := os.Getenv(envHostID)
 	if self == "" {
 		return nil, nil
@@ -60,8 +63,17 @@ func agentLiveness(authoritiesPEM []byte, logger *zap.Logger) (*liveness.Monitor
 	if err != nil {
 		return nil, fmt.Errorf("the host agent could not reach this host's container runtime, which it stops apps through when the host is cut off: %w", err)
 	}
-	return newMonitor(self, func(context.Context) ([]hosts.Peer, error) { return hosts.ReadPeers(peersFile) },
-		staticCert(cert), roots, docker, logger), nil
+	peers := func(context.Context) ([]hosts.Peer, error) { return hosts.ReadPeers(peersFile) }
+	if members != nil {
+		revoked := filepath.Join(filepath.Dir(peersFile), hosts.RevokedFile)
+		members.LoadRevoked(revoked)
+		read := peers
+		peers = members.Track(func(ctx context.Context) ([]hosts.Peer, error) {
+			members.LoadRevoked(revoked)
+			return read(ctx)
+		})
+	}
+	return newMonitor(self, peers, staticCert(cert), roots, docker, logger), nil
 }
 
 // staticCert presents cert at every handshake: for an agent given its

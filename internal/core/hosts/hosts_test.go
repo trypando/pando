@@ -25,8 +25,10 @@ type fakeStore struct {
 	// spent as state.Cluster spends them: a refused admit gives the use back.
 	live map[string]*state.JoinToken
 
-	// revoked is the fingerprints of removed hosts' certificates.
-	revoked map[string]bool
+	// revoked is the fingerprints of removed hosts' certificates, and
+	// revokedHosts their IDs.
+	revoked      map[string]bool
+	revokedHosts []string
 }
 
 func (f *fakeStore) RenewHostCert(_ context.Context, hostID, presented, next string) (state.Host, error) {
@@ -51,6 +53,14 @@ func (f *fakeStore) ConfirmHostCert(_ context.Context, hostID, current string) (
 
 func (f *fakeStore) CertRevoked(_ context.Context, sha string) (bool, error) {
 	return f.revoked[sha], nil
+}
+
+func (f *fakeStore) Revoked(context.Context) (state.Revoked, error) {
+	out := state.Revoked{Hosts: f.revokedHosts, Certs: []string{}}
+	for sha := range f.revoked {
+		out.Certs = append(out.Certs, sha)
+	}
+	return out, nil
 }
 
 func (f *fakeStore) Join(_ context.Context, presented secret.Value, admit func(state.JoinToken) (state.Host, error)) (state.JoinToken, state.Host, error) {

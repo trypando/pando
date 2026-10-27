@@ -119,11 +119,13 @@ func TestR421_AControlHostAnswersPingsBeforeItReachesItsDatabase(t *testing.T) {
 	require.Error(t, err, "no peers kept yet")
 }
 
-// TestR421_AnAppHostThatCannotStartItsAgentStillAnswersPings asserts R-421
-// on an app host whose Pando cannot start its agent in full: it answers the
-// cluster's pings with a view that reports no peer, rather than exit, and
-// returns why it could not start once it is stopped.
-func TestR421_AnAppHostThatCannotStartItsAgentStillAnswersPings(t *testing.T) {
+// TestR421_AnAppHostThatCannotStartItsAgentIsStillContact asserts R-421 on
+// an app host whose Pando cannot start its agent in full, and knows no
+// runtime to stop its apps through: rather than exit, it refuses the
+// cluster's pings, which is contact, so it is never taken for lost while it
+// can be reached, and reports no view it could not act on (R-153); it returns
+// why it could not start once it is stopped.
+func TestR421_AnAppHostThatCannotStartItsAgentIsStillContact(t *testing.T) {
 	dir := t.TempDir()
 	authority, err := hosts.LoadOrCreateAuthority(filepath.Join(t.TempDir(), "ca.pem"))
 	require.NoError(t, err)
@@ -138,13 +140,12 @@ func TestR421_AnAppHostThatCannotStartItsAgentStillAnswersPings(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- runAppHost(ctx, dir, joined, zap.NewNop()) }()
-	var v liveness.View
 	require.Eventually(t, func() bool {
-		v, err = pingAs(t, authority, addr, "edge-1")
-		return err == nil
+		_, err = pingAs(t, authority, addr, "edge-1")
+		return err != nil && strings.Contains(err.Error(), "refused the ping")
 	}, 10*time.Second, 50*time.Millisecond)
-	require.Equal(t, appHostID, v.Host)
-	require.Empty(t, v.UnreachedMS, "it watches nobody, so it says nothing of anybody")
+	require.True(t, hostagent.Contacted(err), "a refusal is contact")
+	require.ErrorContains(t, err, "cannot stop its own apps")
 
 	cancel()
 	select {
