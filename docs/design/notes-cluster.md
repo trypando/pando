@@ -624,3 +624,36 @@ host that was cut off never fenced.
   the first host that do not share `server.cluster_dir` each keep their own certificate and rewrite
   its pin in turn; nothing pins it for liveness, so pings are unaffected. Under Kubernetes or Incus
   a control host has no app containers, and its fence logs that it cannot reach Docker.
+
+### As built: review fixes, routes and uploads
+
+- **One route request.** `api.RouteFor(appID, spec.Routing, upstream)` builds the `RouteRequest`
+  for the deploy, the reconciler's drift correction (`ensureRoute`) and `RouteSync`, TLS included:
+  enabled for every mode but `port`, for the spec's hostname. The reconciler and route sync used to
+  leave TLS out, so on a cluster every app's Traefik route lost its `tls:` block and its
+  `# pando-tls-hostname:` marker (and a Kubernetes Ingress its TLS annotation) each minute, and the
+  leader stopped ordering app certificates; on one host, a drift correction did the same (R-169,
+  R-174).
+- **An upload is spooled before it is stored.** `Sources.StoreUpload` copies the body to a hidden
+  temporary file under `server.work_dir` (bounded by the handler's `maxUploadBytes`), then copies
+  that into the database in one transaction, and removes the file. The transaction used to read the
+  request body, holding a pooled connection for as long as the client took; a few dozen slow
+  uploads held them all. A body that fails (over the limit) is returned as it failed, so the handler
+  still answers it with its own message.
+- **Moving an old upload file only fills an app with none.** `state.Uploads.AddUpload` inserts the
+  `app_uploads` row with `ON CONFLICT DO NOTHING` and writes the chunks under that row's lock; the
+  move from `/var/lib/pando/uploads` uses it at start and on first read, and reads the database's
+  upload afterwards either way. It used to check, then replace, so an upload stored between the two
+  was overwritten by the older file. A file whose app no longer exists (the foreign key refuses it)
+  is removed rather than tried again at every start.
+- **`atomicfile.WriteIfChanged`** writes through `os.CreateTemp(dir, "."+base+"-*")`, synced,
+  given its mode, then renamed, as `keyfile` does. With the fixed `path + ".tmp"`, route sync, the
+  reconciler and a deploy writing one route at once truncated each other's file, or renamed one
+  already moved.
+- **Tests:** `TestR169_EveryRouteAsksForTLSUnlessItIsAPort`, `TestR169_RouteSyncKeepsTLSOnEveryAppsRoute`,
+  `TestR169_ASingleHostDriftCorrectionKeepsTheAppsTLS` (integration),
+  `TestR417_AStalledUploadHoldsNoDatabaseConnection`, `TestR417_AnOldUploadFileNeverReplacesANewerUpload`,
+  `TestR417_AnOldUploadFileForADeletedAppIsDiscarded` (integration),
+  `TestR417_AnUploadReachesTheStoreOnlyOnceItHasArrived`, `TestR417_ABodyThatFailsIsSaidAsItFailed`,
+  `TestR417_AnOldUploadFileForADeletedAppIsRemoved`, `TestR417_ReadingAnOldFileKeepsANewerUpload`,
+  `TestR417_ConcurrentWritersNeverLeaveAPartialFile`.

@@ -8,26 +8,42 @@ package atomicfile
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 )
 
 // WriteIfChanged writes body to path through a temporary file renamed into
 // place, unless path already holds body. The directory is created if missing.
+//
+// The temporary file's name is its own (CreateTemp), as keyfile.place's is:
+// route sync, the reconciler and a deploy may write one route at once (R-417),
+// and with one fixed name a writer renamed another's half-written file into
+// place. It is hidden and has no .yml or .toml extension, so a watcher does
+// not load it.
 func WriteIfChanged(path string, body []byte, mode os.FileMode) error {
 	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, body) {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, body, mode); err != nil {
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	// Removed once renamed too, which finds nothing.
+	defer func() { _ = os.Remove(tmp.Name()) }()
+
+	_, werr := tmp.Write(body)
+	serr := tmp.Sync()
+	cerr := tmp.Close()
+	if err := errors.Join(werr, serr, cerr); err != nil {
 		return err
 	}
-	return nil
+	if err := os.Chmod(tmp.Name(), mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
