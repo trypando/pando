@@ -1236,7 +1236,10 @@ its own Docker and failed on port 7443.
   `TestR416_TheInstallMachinesAgentCarriesRuntimeCalls`; `hosts`:
   `TestR416_ASecondControlHostTurnsDockerIntoDockerHosts`,
   `TestR416_AConversionOnAJoinedControlHostNamesTheInstallsMachine`; `cmd/pando`:
-  `TestR416_EachControlHostTellsTheRuntimeWhichMachineItIs`.
+  `TestR416_EachControlHostTellsTheRuntimeWhichMachineItIs`. End to end (`make test-cluster`, h2 with
+  the control and app roles), h2 keeps its own Pando through the join, both control hosts' proxies
+  reach the app, and the failover, return, dead-Pando and removed-host steps pass; the volume ship
+  still fails on `tar: short read`, the agent stream's half-close, which is not this change's.
 - **Not done here.** The install machine's agent is not fenced: a runtime call from another control
   host to start a container there is not refused while the install's machine is fencing, as a joined
   host's agent refuses it (R-421). The machine's own replicas reconcile nothing while it fences, and
