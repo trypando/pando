@@ -303,7 +303,7 @@ func (c *simCluster) startControlHost(h *simHost, dir string, isSelf func(state.
 	t.Cleanup(func() { _ = srv.Close() })
 	h.stop = func() { _ = srv.Close() }
 
-	_, watch := clusterLiveness(c.rows, c.authority, nil, nil, pings.unreachedFor, zap.NewNop())
+	_, watch := clusterLiveness(c.rows, c.authority, nil, nil, pings.unreachedFor, liveness.Config{}, zap.NewNop())
 	probe := watch.Probe
 	watch.Probe = func(ctx context.Context, p liveness.Peer) ([]byte, error) {
 		if !c.reachable(h.id, p.ID) {
@@ -333,7 +333,7 @@ func (c *simCluster) startAppHost(h *simHost) (string, string) {
 		}
 		return hosts.LivenessPeers(list), nil
 	}
-	h.monitor = newMonitor(h.id, peers, staticCert(probeCert), as.Pool(), h.docker, zap.NewNop())
+	h.monitor = newMonitor(h.id, peers, staticCert(probeCert), as.Pool(), h.docker, liveness.Config{}, zap.NewNop())
 	c.throughNetwork(h)
 	agent := &hostagent.Agent{
 		TLS: &tls.Config{

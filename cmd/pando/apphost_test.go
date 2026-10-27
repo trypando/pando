@@ -24,6 +24,7 @@ import (
 	"github.com/trypando/pando/internal/adapter/runtime/multidocker"
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/hosts"
+	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/hostagent"
 )
@@ -86,7 +87,7 @@ func TestR416_AJoinedAppHostRunsItsAgent(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	joined := hosts.Joined{HostID: appHostID, Name: "edge-1", Roles: []string{"app"}, Cluster: srv.URL}
-	_, _, _, err = appHostAgent(dir, joined, zap.NewNop())
+	_, _, _, err = appHostAgent(dir, joined, liveness.Config{}, zap.NewNop())
 	require.ErrorContains(t, err, "server.cluster_dir", "nothing written yet")
 
 	writeJoinedFiles(t, dir, authority, "edge-1")
@@ -96,7 +97,7 @@ func TestR416_AJoinedAppHostRunsItsAgent(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runAppHost(ctx, dir, joined, zap.NewNop()) }()
+	go func() { done <- runAppHost(ctx, dir, joined, liveness.Config{}, zap.NewNop()) }()
 
 	as := hostagent.Authorities{{Cert: authority.Cert, Key: authority.Key}}
 	probe, err := as.IssueCollector()
@@ -135,16 +136,16 @@ func TestAnAppHostRefusesWhatItCannotUse(t *testing.T) {
 	t.Setenv(multidocker.EnvAgentRuntimeSocket, "/tmp/pando-agent-test.sock")
 
 	t.Setenv(multidocker.EnvAgentPool, "everywhere")
-	_, _, _, err = appHostAgent(dir, joined, zap.NewNop())
+	_, _, _, err = appHostAgent(dir, joined, liveness.Config{}, zap.NewNop())
 	require.ErrorContains(t, err, "is not an address range")
 	t.Setenv(multidocker.EnvAgentPool, "")
 
 	t.Setenv(multidocker.EnvAgentListen, "nowhere:at:all")
-	require.ErrorContains(t, runAppHost(context.Background(), dir, joined, zap.NewNop()), "could not listen")
+	require.ErrorContains(t, runAppHost(context.Background(), dir, joined, liveness.Config{}, zap.NewNop()), "could not listen")
 
 	for _, file := range []string{hosts.HostClientKeyFile, hosts.HostKeyFile, hosts.AuthorityCertFile} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, file), []byte("junk"), 0o600))
-		_, _, _, err = appHostAgent(dir, joined, zap.NewNop())
+		_, _, _, err = appHostAgent(dir, joined, liveness.Config{}, zap.NewNop())
 		require.ErrorContains(t, err, "server.cluster_dir", file)
 	}
 }

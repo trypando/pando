@@ -20,8 +20,9 @@ import (
 // control host (controlLiveness) answer through a fenceGate.
 
 // fenceGateEvery is how long a fenceGate takes the runtime's last answer
-// for: one probe interval [P].
-var fenceGateEvery = liveness.Config{}.Normalize().Interval
+// for: one probe interval of timing [P]. A variable so a test can make it
+// ask every time.
+var fenceGateEvery = func(timing liveness.Config) time.Duration { return timing.Normalize().Interval }
 
 // fenceGate answers pings with liveness's view only while this host's
 // runtime answers, so only while the host could stop its apps (R-153).

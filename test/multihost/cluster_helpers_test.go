@@ -19,11 +19,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The cluster's timing, as built (internal/core/liveness: T 30 s, probes
-// every T/6). Neither is configurable, so the run waits them out.
+// The cluster's timing, shortened so the run takes minutes (R-421, R-420):
+// every host is started with T clT (probes every T/6), a standby pass every
+// clStandbyEvery and a ship every clShipEvery (startPando).
 const (
-	clT         = 30 * time.Second
-	clLostAfter = 3 * clT
+	clT            = 15 * time.Second
+	clLostAfter    = 3 * clT
+	clStandbyEvery = 10 * time.Second
+	clShipEvery    = 30 * time.Second
 )
 
 func requireCluster(t *testing.T) *client {

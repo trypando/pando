@@ -15,8 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/liveness"
+	"github.com/trypando/pando/internal/core/standby"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/tokenkey"
 	"github.com/trypando/pando/internal/hostagent"
@@ -49,7 +51,7 @@ func TestClusterLivenessProbesHostsWithAHostCertificate(t *testing.T) {
 	as := hostagent.Authorities{{Cert: authority.Cert, Key: authority.Key}}
 	addr := livenessAgent(t, as, "app-1")
 
-	svc, watch := clusterLiveness(state.NewCluster(nil, make([]byte, tokenkey.Size)), authority, nil, nil, nil, zap.NewNop())
+	svc, watch := clusterLiveness(state.NewCluster(nil, make([]byte, tokenkey.Size)), authority, nil, nil, nil, liveness.Config{}, zap.NewNop())
 	require.NotNil(t, svc.Witness)
 	require.NotNil(t, watch)
 
@@ -67,19 +69,19 @@ func TestClusterLivenessProbesHostsWithAHostCertificate(t *testing.T) {
 func TestAgentLivenessTakesPartOnlyOnAJoinedHost(t *testing.T) {
 	logger := zap.NewNop()
 	t.Setenv(envHostID, "")
-	m, err := agentLiveness(nil, nil, logger)
+	m, err := agentLiveness(nil, nil, liveness.Config{}, logger)
 	require.NoError(t, err)
 	require.Nil(t, m, "a multi-host Docker forwarding agent takes no part")
 
 	t.Setenv(envHostID, "host_01HQ8ZZZZZZZZZZZZZZZZZZZZZ")
 	t.Setenv(envPeersFile, "")
-	_, err = agentLiveness(nil, nil, logger)
+	_, err = agentLiveness(nil, nil, liveness.Config{}, logger)
 	require.ErrorContains(t, err, envPeersFile)
 
 	peers := filepath.Join(t.TempDir(), "peers.json")
 	t.Setenv(envPeersFile, peers)
 	t.Setenv(envHostCert, "nope")
-	_, err = agentLiveness(nil, nil, logger)
+	_, err = agentLiveness(nil, nil, liveness.Config{}, logger)
 	require.ErrorContains(t, err, envHostCert)
 
 	caPEM, err := hostagent.NewAuthority()
@@ -92,12 +94,14 @@ func TestAgentLivenessTakesPartOnlyOnAJoinedHost(t *testing.T) {
 	require.NoError(t, err)
 	t.Setenv(envHostCert, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})))
 	t.Setenv(envHostKey, string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})))
-	_, err = agentLiveness([]byte("not pem"), nil, logger)
+	_, err = agentLiveness([]byte("not pem"), nil, liveness.Config{}, logger)
 	require.ErrorContains(t, err, "no authority")
 
-	m, err = agentLiveness(as.PoolPEM(), nil, logger)
+	timing := livenessTiming(config.Cluster{LivenessPeriod: 12 * time.Second})
+	m, err = agentLiveness(as.PoolPEM(), nil, timing, logger)
 	require.NoError(t, err)
 	require.NotNil(t, m)
+	require.Equal(t, timing, m.Config, "the agent's Monitor runs on the configured timing")
 
 	_, err = m.Peers(context.Background())
 	require.Error(t, err, "no file yet")
@@ -149,7 +153,7 @@ func TestClusterLivenessListsHostsAndAsksWhetherOneAnswers(t *testing.T) {
 		{ID: "host_up", Name: "app-1", Address: addr, JoinedWith: "jt_1"},
 		{ID: "host_down", Name: "app-2", Address: silent, JoinedWith: "jt_2"},
 	}}
-	_, watch := clusterLiveness(store, authority, nil, nil, nil, zap.NewNop())
+	_, watch := clusterLiveness(store, authority, nil, nil, nil, liveness.Config{}, zap.NewNop())
 	ctx := context.Background()
 
 	peers, err := watch.Hosts(ctx)
@@ -165,7 +169,22 @@ func TestClusterLivenessListsHostsAndAsksWhetherOneAnswers(t *testing.T) {
 	_, err = watch.Probe(ctx, peers[2])
 	require.ErrorIs(t, err, liveness.ErrContactOnly, "a machine that refuses the connection answered")
 
-	_, watch = clusterLiveness(wiringStore{err: errors.New("database away")}, authority, nil, nil, nil, zap.NewNop())
+	_, watch = clusterLiveness(wiringStore{err: errors.New("database away")}, authority, nil, nil, nil, liveness.Config{}, zap.NewNop())
 	_, err = watch.Hosts(ctx)
 	require.Error(t, err)
+}
+
+// TestR421_TheClustersTimingDefaultsAreTheRequirements asserts the startup
+// settings' defaults are core's own [P] values, and that a configured T sets
+// the probe interval with it (R-421, R-420).
+func TestR421_TheClustersTimingDefaultsAreTheRequirements(t *testing.T) {
+	require.Equal(t, liveness.DefaultPeriod, config.DefaultLivenessPeriod)
+	require.Equal(t, standby.DefaultEvery, config.DefaultStandbyEvery)
+	require.Equal(t, standby.DefaultShipEvery, config.DefaultShipEvery)
+
+	got := livenessTiming(config.Cluster{LivenessPeriod: 12 * time.Second})
+	require.Equal(t, 12*time.Second, got.Period)
+	require.Equal(t, 2*time.Second, got.Interval)
+	require.Equal(t, time.Second, livenessTiming(config.Cluster{LivenessPeriod: 12 * time.Second, LivenessInterval: time.Second}).Interval)
+	require.Equal(t, got.Interval, fenceGateEvery(got), "the fence gate trusts the runtime's answer for one probe interval")
 }

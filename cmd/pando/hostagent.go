@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/adapter/runtime/multidocker"
+	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/hostagent"
@@ -38,7 +39,8 @@ func hostAgentCmd() *cobra.Command {
 
 // hostAgentServeCmd runs the agent. Hidden: the runtime adapter starts it,
 // from Pando's own image, with everything it needs in its environment. It
-// needs no database and no container runtime socket.
+// needs no database and no container runtime socket. It reads the cluster's
+// timing (cluster.*) from its environment and the file --config names.
 func hostAgentServeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "serve",
@@ -62,6 +64,12 @@ func hostAgentServeCmd() *cobra.Command {
 				return fmt.Errorf("the host agent did not start: %s is not an address range: %w", multidocker.EnvAgentPool, err)
 			}
 			listen := agentListen()
+			// --config is the root's; a command built without it reads none.
+			configPath, _ := cmd.Flags().GetString("config")
+			timing, err := config.LoadCluster(configPath)
+			if err != nil {
+				return fmt.Errorf("the host agent did not start: %w", err)
+			}
 
 			logger, err := log.New("info", false)
 			if err != nil {
@@ -80,7 +88,7 @@ func hostAgentServeCmd() *cobra.Command {
 			}
 			// R-421: a joined host checks the others and fences itself.
 			members := &hosts.Members{}
-			monitor, err := agentLiveness([]byte(authorities), members, logger)
+			monitor, err := agentLiveness([]byte(authorities), members, livenessTiming(timing), logger)
 			if err != nil {
 				return fmt.Errorf("the host agent did not start: %w", err)
 			}

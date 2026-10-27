@@ -63,6 +63,7 @@ func TestR023_TheHostAgentRefusesToStartWithoutWhatItChecksWith(t *testing.T) {
 		"a bad key":      {env: multidocker.EnvAgentKey, value: "not a key", says: "did not start"},
 		"a bad range":    {env: multidocker.EnvAgentPool, value: "everywhere", says: "is not an address range"},
 		"a bad address":  {env: multidocker.EnvAgentListen, value: "nowhere:at:all", says: "could not listen"},
+		"a bad T":        {env: "PANDO_CLUSTER_LIVENESS_PERIOD", value: "1s", says: "PANDO_CLUSTER_LIVENESS_PERIOD is 1s"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			agentEnv(t, "127.0.0.1:0")

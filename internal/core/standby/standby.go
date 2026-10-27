@@ -40,7 +40,8 @@ import (
 )
 
 // DefaultEvery is how often the pass looks at every app, and DefaultShipEvery
-// how old an app's newest copy may get before another is shipped (R-420 [P]).
+// how old an app's newest copy may get before another is shipped (R-420 [P]):
+// cluster.standby_every's and cluster.ship_every's defaults.
 const (
 	DefaultEvery     = time.Minute
 	DefaultShipEvery = 5 * time.Minute

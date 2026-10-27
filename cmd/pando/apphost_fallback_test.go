@@ -79,12 +79,12 @@ func TestR153_AnAppHostWhoseAgentFailsToStartStillFencesWhenCutOff(t *testing.T)
 	t.Setenv(multidocker.EnvAgentPool, "everywhere") // the full agent cannot start
 	t.Setenv(multidocker.EnvAgentListen, agentAddr)
 	every := fenceGateEvery
-	fenceGateEvery = 0
+	fenceGateEvery = func(liveness.Config) time.Duration { return 0 }
 	t.Cleanup(func() { fenceGateEvery = every })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runAppHost(ctx, dir, joined, zap.NewNop()) }()
+	go func() { done <- runAppHost(ctx, dir, joined, liveness.Config{}, zap.NewNop()) }()
 	t.Cleanup(func() {
 		cancel()
 		<-done
@@ -109,7 +109,7 @@ func TestR153_AnAppHostWhoseAgentFailsToStartStillFencesWhenCutOff(t *testing.T)
 	require.NoError(t, hosts.WritePeers(filepath.Join(dir, hosts.PeersFile), []hosts.Peer{
 		{ID: appHostID, Name: "edge-1"}, {ID: "host_b", Name: "edge-2", Address: "10.0.0.2:7443"}, {ID: "host_c", Name: "edge-3", Address: "10.0.0.3:7443"},
 	}))
-	_, monitor, err := appHostFallback(dir, joined, zap.NewNop())
+	_, monitor, err := appHostFallback(dir, joined, liveness.Config{}, zap.NewNop())
 	require.NoError(t, err)
 	clk := clock.NewFake(time.Time{})
 	monitor.Clock = clk
@@ -131,7 +131,7 @@ func TestAnAppHostFallbackStartsFromItsOwnCertificateAlone(t *testing.T) {
 	authority, err := hosts.LoadOrCreateAuthority(filepath.Join(t.TempDir(), "ca.pem"))
 	require.NoError(t, err)
 	joined := hosts.Joined{HostID: appHostID, Name: "edge-1", Cluster: "https://127.0.0.1:1"}
-	_, _, err = appHostFallback(dir, joined, zap.NewNop())
+	_, _, err = appHostFallback(dir, joined, liveness.Config{}, zap.NewNop())
 	require.ErrorContains(t, err, "server.cluster_dir")
 
 	writeJoinedFiles(t, dir, authority, "edge-1")
@@ -139,7 +139,7 @@ func TestAnAppHostFallbackStartsFromItsOwnCertificateAlone(t *testing.T) {
 	t.Setenv(multidocker.EnvAgentRuntimeSocket, "")
 	t.Setenv("DOCKER_HOST", "")
 	t.Setenv("XDG_RUNTIME_DIR", "")
-	agent, monitor, err := appHostFallback(dir, joined, zap.NewNop())
+	agent, monitor, err := appHostFallback(dir, joined, liveness.Config{}, zap.NewNop())
 	require.NoError(t, err)
 	require.NotNil(t, monitor)
 	require.Nil(t, agent.Liveness.Answer(""), "no runtime known: it reports nothing")

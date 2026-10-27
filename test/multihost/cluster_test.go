@@ -180,9 +180,9 @@ func TestR419_AnAppWithAVolumeGetsAStoppedStandbyOnAnotherHostAndItsVolumeShips(
 	}
 	require.Equal(t, 5, clCount)
 	counted := mustPSQL(t, `SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')`)
-	// Ships are every five minutes [P], not configurable, and the first is
-	// due as soon as the standby exists: up to one interval and a pass.
-	deadline := time.Now().Add(8 * time.Minute)
+	// The first ship is due as soon as the standby exists, the next after
+	// clShipEvery: up to one interval and a pass, and the copy's time.
+	deadline := time.Now().Add(clShipEvery + clStandbyEvery + 2*time.Minute)
 	for time.Now().Before(deadline) {
 		out := mustPSQL(t, fmt.Sprintf(`SELECT copies FROM app_standbys WHERE app_id = '%s' AND shipped_at > '%s'`, clApp, counted))
 		if out != "" && out != "0" {
@@ -194,7 +194,7 @@ func TestR419_AnAppWithAVolumeGetsAStoppedStandbyOnAnotherHostAndItsVolumeShips(
 	if !clShipped {
 		// Not fatal: the failover tests go on with the app without volumes,
 		// and check the counter app is not started from no copy (R-420).
-		t.Errorf("no ship of the counter app's volume reached its standby within 8m; the standby's last error: %q",
+		t.Errorf("no ship of the counter app's volume reached its standby in time; the standby's last error: %q",
 			mustPSQL(t, fmt.Sprintf(`SELECT last_error FROM app_standbys WHERE app_id = '%s'`, clApp)))
 		return
 	}

@@ -326,7 +326,7 @@ func serve(ctx context.Context, configPath string) error {
 		return err
 	}
 	if hasJoined && joined.AppOnly() {
-		return runAppHost(ctx, cfg.Server.ClusterDir, joined, logger)
+		return runAppHost(ctx, cfg.Server.ClusterDir, joined, livenessTiming(cfg.Cluster), logger)
 	}
 
 	// R-421: this control host answers the cluster's pings, and watches the
@@ -338,11 +338,12 @@ func serve(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
-	controlPings := startControlLiveness(ctx, cfg.Server.ClusterDir, clusterPort(cfg), clusterAuthority, joined, hasJoined, logger)
+	timing := livenessTiming(cfg.Cluster) // R-421, the same on every host
+	controlPings := startControlLiveness(ctx, cfg.Server.ClusterDir, clusterPort(cfg), clusterAuthority, joined, hasJoined, timing, logger)
 	// R-416: a host joined with both roles runs its apps through its agent,
 	// started, like its pings, before the database is reached.
 	if hasJoined {
-		startJoinedAgent(ctx, cfg.Server.ClusterDir, joined, controlPings, logger)
+		startJoinedAgent(ctx, cfg.Server.ClusterDir, joined, controlPings, timing, logger)
 	}
 	clusterRoutes := &startingHandler{}
 	clusterListener, clusterListenErr := startClusterListener(cfg, clusterAuthority, clusterRoutes, controlPings, logger)
@@ -439,7 +440,7 @@ func serve(ctx context.Context, configPath string) error {
 	// reads its peers from the database from now on.
 	controlPings.useStore(clusterStore)
 	// R-421: taking a host for lost, and the leader job that decides it.
-	hostLoss, livenessWatch := clusterLiveness(clusterStore, clusterAuthority, apps, auditor, controlPings.unreachedFor, logger)
+	hostLoss, livenessWatch := clusterLiveness(clusterStore, clusterAuthority, apps, auditor, controlPings.unreachedFor, timing, logger)
 	allocations := state.NewAllocations(db)
 	authzStore := state.NewAuthzStore(db)
 	grants := state.NewGrants(db)
@@ -539,6 +540,8 @@ func serve(ctx context.Context, configPath string) error {
 		Clock: clock.System{}, Logger: logger,
 		RuntimeRefs: func() []string { return registry.ByCategory(adapterapi.CategoryRuntime) },
 		LocalFenced: controlPings.fenced, // R-421
+		Every:       cfg.Cluster.StandbyEvery,
+		ShipEvery:   cfg.Cluster.ShipEvery, // R-420
 	}
 	failover := &standby.Failover{Standbys: standbyService, Homes: standbys, Hosts: clusterStore}
 	hostLoss.Homes, hostLoss.Failover, hostLoss.Returns = failover, failover, failover

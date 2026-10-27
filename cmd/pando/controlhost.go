@@ -203,6 +203,9 @@ type controlLiveness struct {
 	Joined *hosts.Joined
 	// Docker is the runtime this host's fence stops its apps through.
 	Docker runtimeAPI
+	// Timing is the cluster's (cluster.liveness_period); zero is the
+	// default.
+	Timing liveness.Config
 	Logger *zap.Logger
 	// kind is the install's runtime's kind, and whether it is known
 	// (controlPings.kind); nil is not known.
@@ -282,9 +285,9 @@ func (c controlLiveness) setup(ctx context.Context) (*controlPing, error) {
 	peers := &controlPeers{self: self.HostID, port: c.Port, file: filepath.Join(c.Dir, hosts.PeersFile),
 		pinOf: func() string { return hostagent.Fingerprint256(cert.Current().Certificate[0]) },
 		store: c.store, members: members, logger: c.Logger}
-	monitor := newMonitor(self.HostID, members.Track(peers.Peers), probe.GetClientCertificate, as.Pool(), c.Docker, c.Logger)
+	monitor := newMonitor(self.HostID, members.Track(peers.Peers), probe.GetClientCertificate, as.Pool(), c.Docker, c.Timing, c.Logger)
 	return &controlPing{
-		answer: &fenceGate{liveness: monitor, reachable: c.fenceable(self.Roles), every: fenceGateEvery},
+		answer: &fenceGate{liveness: monitor, reachable: c.fenceable(self.Roles), every: fenceGateEvery(c.Timing)},
 		tls: &tls.Config{
 			MinVersion:     tls.VersionTLS13,
 			GetCertificate: cert.GetCertificate,
@@ -424,8 +427,8 @@ func (c *controlPeers) keepRevoked(ctx context.Context, st hosts.HostPublisher) 
 // database is reached when it can. joined is the join this host made, when it
 // made one; otherwise it is the install's first host.
 func startControlLiveness(ctx context.Context, dir string, port int, authority *hosts.Authority,
-	joined hosts.Joined, hasJoined bool, logger *zap.Logger) *controlPings {
-	c := controlLiveness{Authority: authority, Dir: dir, Port: port, IsSelf: selfHost(joined, hasJoined), Logger: logger.Named("liveness")}
+	joined hosts.Joined, hasJoined bool, timing liveness.Config, logger *zap.Logger) *controlPings {
+	c := controlLiveness{Authority: authority, Dir: dir, Port: port, IsSelf: selfHost(joined, hasJoined), Timing: timing, Logger: logger.Named("liveness")}
 	if hasJoined {
 		c.Joined = &joined
 	}

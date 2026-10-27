@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/core/hosts"
+	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/hostagent"
 	"github.com/trypando/pando/internal/id"
@@ -95,14 +96,14 @@ func TestStartControlLivenessPicksItsRowAndARuntime(t *testing.T) {
 
 	t.Setenv("DOCKER_HOST", "unix:///nowhere/docker.sock")
 	joined := startControlLiveness(ctx, filepath.Join(t.TempDir(), "cluster"), 7444, authority,
-		hosts.Joined{HostID: joinedID}, true, zap.NewNop())
+		hosts.Joined{HostID: joinedID}, true, liveness.Config{}, zap.NewNop())
 	joined.useStore(store)
 	require.Eventually(t, func() bool { return joined.current.Load() != nil }, 5*time.Second, 10*time.Millisecond)
 	require.Equal(t, joinedID, joined.current.Load().monitor.Self)
 
 	t.Setenv("DOCKER_HOST", "::not a host::")
 	first := startControlLiveness(ctx, filepath.Join(t.TempDir(), "cluster"), 7444, authority,
-		hosts.Joined{}, false, zap.NewNop())
+		hosts.Joined{}, false, liveness.Config{}, zap.NewNop())
 	first.useStore(store)
 	require.Eventually(t, func() bool { return first.current.Load() != nil }, 5*time.Second, 10*time.Millisecond)
 	require.Equal(t, firstID, first.current.Load().monitor.Self)

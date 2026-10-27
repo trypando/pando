@@ -139,7 +139,7 @@ func TestR421_AnAppHostThatCannotStartItsAgentIsStillContact(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runAppHost(ctx, dir, joined, zap.NewNop()) }()
+	go func() { done <- runAppHost(ctx, dir, joined, liveness.Config{}, zap.NewNop()) }()
 	require.Eventually(t, func() bool {
 		_, err = pingAs(t, authority, addr, "edge-1")
 		return err != nil && strings.Contains(err.Error(), "refused the ping")
@@ -157,7 +157,7 @@ func TestR421_AnAppHostThatCannotStartItsAgentIsStillContact(t *testing.T) {
 
 	// Without even its own certificate, there is nothing to answer with.
 	require.NoError(t, os.Remove(filepath.Join(dir, hosts.HostCertFile)))
-	require.ErrorContains(t, runAppHost(context.Background(), dir, joined, zap.NewNop()), "server.cluster_dir")
+	require.ErrorContains(t, runAppHost(context.Background(), dir, joined, liveness.Config{}, zap.NewNop()), "server.cluster_dir")
 }
 
 type sizer struct {

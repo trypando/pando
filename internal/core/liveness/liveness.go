@@ -35,7 +35,8 @@ import (
 	"github.com/trypando/pando/internal/core/clock"
 )
 
-// DefaultPeriod is T [P: 30 s] (R-421).
+// DefaultPeriod is T [P: 30 s] (R-421), and cluster.liveness_period's
+// default (config.DefaultLivenessPeriod).
 const DefaultPeriod = 30 * time.Second
 
 // MinHosts is the smallest cluster in which anything stops or fails over by

@@ -91,6 +91,42 @@
       "secret": true
     },
     {
+      "env": "PANDO_CLUSTER_LIVENESS_INTERVAL",
+      "key": "cluster.liveness_interval",
+      "type": "duration",
+      "default": "0s",
+      "description": "How often a host probes every other. 0 means a sixth of liveness_period, which is also the most it may be.",
+      "group": "cluster",
+      "secret": false
+    },
+    {
+      "env": "PANDO_CLUSTER_LIVENESS_PERIOD",
+      "key": "cluster.liveness_period",
+      "type": "duration",
+      "default": "30s",
+      "description": "T: how long a host may reach fewer than half the cluster before it stops its apps. Its standbys start after 3T. Every host of the cluster must have the same value. From 6s to 10m.",
+      "group": "cluster",
+      "secret": false
+    },
+    {
+      "env": "PANDO_CLUSTER_SHIP_EVERY",
+      "key": "cluster.ship_every",
+      "type": "duration",
+      "default": "5m0s",
+      "description": "How old an app's newest volume copy on its standby may get before another is shipped. At least standby_every, and at most a day.",
+      "group": "cluster",
+      "secret": false
+    },
+    {
+      "env": "PANDO_CLUSTER_STANDBY_EVERY",
+      "key": "cluster.standby_every",
+      "type": "duration",
+      "default": "1m0s",
+      "description": "How often the standby pass looks at every app: places, refreshes and ships its standby. From 5s to an hour.",
+      "group": "cluster",
+      "secret": false
+    },
+    {
       "env": "PANDO_DATABASE_CONNECT_TIMEOUT",
       "key": "database.connect_timeout",
       "type": "duration",

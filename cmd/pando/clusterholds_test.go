@@ -82,10 +82,10 @@ func TestR421_AControlHostThatHasNotStartedWatchingHasNotFenced(t *testing.T) {
 	require.False(t, pings.Fencing())
 
 	// The control role alone: nothing is read from the (empty) directory.
-	startJoinedAgent(context.Background(), t.TempDir(), hosts.Joined{Roles: []string{state.HostRoleControl}}, pings, zap.NewNop())
+	startJoinedAgent(context.Background(), t.TempDir(), hosts.Joined{Roles: []string{state.HostRoleControl}}, pings, liveness.Config{}, zap.NewNop())
 	// Both roles, nothing given at join: the agent is not started, and why
 	// is logged rather than stopping the server.
-	startJoinedAgent(context.Background(), t.TempDir(), hosts.Joined{Roles: []string{state.HostRoleControl, state.HostRoleApp}}, pings, zap.NewNop())
+	startJoinedAgent(context.Background(), t.TempDir(), hosts.Joined{Roles: []string{state.HostRoleControl, state.HostRoleApp}}, pings, liveness.Config{}, zap.NewNop())
 }
 
 // TestR416_AHostWithBothRolesRunsItsAppsThroughItsAgent asserts R-416 for a
@@ -117,7 +117,7 @@ func TestR416_AHostWithBothRolesRunsItsAppsThroughItsAgent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	joined := hosts.Joined{HostID: appHostID, Name: "core-2", Roles: []string{state.HostRoleControl, state.HostRoleApp}, Cluster: "https://127.0.0.1:1"}
-	startJoinedAgent(ctx, dir, joined, &controlPings{}, zap.NewNop())
+	startJoinedAgent(ctx, dir, joined, &controlPings{}, liveness.Config{}, zap.NewNop())
 
 	as := hostagent.Authorities{{Cert: authority.Cert, Key: authority.Key}}
 	control, err := as.IssueClient()

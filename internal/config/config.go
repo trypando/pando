@@ -32,6 +32,7 @@ type Config struct {
 	Registry   Registry   `mapstructure:"registry"`
 	ACME       ACME       `mapstructure:"acme"`
 	Metrics    Metrics    `mapstructure:"metrics"`
+	Cluster    Cluster    `mapstructure:"cluster"`
 
 	// File is the config file read at startup, or empty when there was none.
 	File string `mapstructure:"-"`
@@ -393,24 +394,9 @@ type Log struct {
 // Load reads configuration. Precedence, lowest to highest: defaults, config
 // file, environment, flags.
 func Load(path string) (*Config, error) {
-	v := viper.New()
-	setDefaults(v)
-
-	v.SetEnvPrefix("PANDO")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-
-	// Every key in boundEnv is bound explicitly — see there for why that is not
-	// belt-and-braces.
-	for key, env := range boundEnv {
-		_ = v.BindEnv(key, env)
-	}
-
-	if path != "" {
-		v.SetConfigFile(path)
-		if err := v.ReadInConfig(); err != nil {
-			return nil, fmt.Errorf("reading config file %s: %w", path, err)
-		}
+	v, err := newViper(path)
+	if err != nil {
+		return nil, err
 	}
 
 	var cfg Config
@@ -442,6 +428,31 @@ func Load(path string) (*Config, error) {
 	return &cfg, cfg.validate()
 }
 
+// newViper reads the defaults, the environment and the config file at path,
+// when there is one.
+func newViper(path string) (*viper.Viper, error) {
+	v := viper.New()
+	setDefaults(v)
+
+	v.SetEnvPrefix("PANDO")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	// Every key in boundEnv is bound explicitly — see there for why that is not
+	// belt-and-braces.
+	for key, env := range boundEnv {
+		_ = v.BindEnv(key, env)
+	}
+
+	if path != "" {
+		v.SetConfigFile(path)
+		if err := v.ReadInConfig(); err != nil {
+			return nil, fmt.Errorf("reading config file %s: %w", path, err)
+		}
+	}
+	return v, nil
+}
+
 // setDefaults gives every key its default, or registers it with a zero one.
 // Reference reads the same defaults, so the documented default is the one
 // Load starts from.
@@ -462,6 +473,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.cluster_dir", "/var/lib/pando/cluster") // hosts.DefaultClusterDir
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.development", false)
+	setClusterDefaults(v)
 
 	// Registering every key with a zero default, so Unmarshal can see it.
 	//
@@ -590,6 +602,9 @@ func (c *Config) validate() error {
 	if u, err := url.Parse(c.ACME.DirectoryURL); err != nil || u.Scheme != "https" || u.Host == "" {
 		return fmt.Errorf("PANDO_ACME_DIRECTORY_URL is %q, which is not an https URL; it is a certificate authority's ACME directory, such as %s",
 			c.ACME.DirectoryURL, LetsEncryptDirectory)
+	}
+	if err := c.Cluster.validate(); err != nil {
+		return err
 	}
 	return c.Metrics.validate()
 }

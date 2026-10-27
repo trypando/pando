@@ -288,6 +288,9 @@ func startPando(h *clHost, join string) error {
 		"-e", "PANDO_SERVER_PORT_RANGE_END=9109",
 		"-e", "PANDO_APPS_CPU_MILLIS=100",
 		"-e", "PANDO_APPS_MEMORY_BYTES=67108864",
+		"-e", "PANDO_CLUSTER_LIVENESS_PERIOD=" + clT.String(),
+		"-e", "PANDO_CLUSTER_STANDBY_EVERY=" + clStandbyEvery.String(),
+		"-e", "PANDO_CLUSTER_SHIP_EVERY=" + clShipEvery.String(),
 	}
 	if h.control {
 		args = append(args, "-p", "8080:8080", "-p", clAppPorts+":"+clAppPorts)

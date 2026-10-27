@@ -89,11 +89,11 @@ func (f *fenceRecorder) record(ctx context.Context, hostID string, raw []byte) {
 // are answered on the cluster listener (controlhost.go), so the agent answers
 // none, and it refuses to start containers while the control host's Monitor
 // is fencing (R-421). A host with the control role alone runs no agent.
-func startJoinedAgent(ctx context.Context, dir string, joined hosts.Joined, pings *controlPings, logger *zap.Logger) {
+func startJoinedAgent(ctx context.Context, dir string, joined hosts.Joined, pings *controlPings, timing liveness.Config, logger *zap.Logger) {
 	if !slices.Contains(joined.Roles, state.HostRoleApp) || joined.AppOnly() {
 		return
 	}
-	agent, _, certs, err := appHostAgent(dir, joined, logger)
+	agent, _, certs, err := appHostAgent(dir, joined, timing, logger)
 	if err != nil {
 		logger.Error("this host joined with the app role and cannot run its agent, so it runs no apps", zap.Error(err))
 		return

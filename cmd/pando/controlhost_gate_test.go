@@ -17,6 +17,7 @@ import (
 	kubernetesruntime "github.com/trypando/pando/internal/adapter/runtime/kubernetes"
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/hosts"
+	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/hostagent"
 	"github.com/trypando/pando/internal/id"
@@ -53,7 +54,7 @@ func TestR153_AControlHostThatCannotReachItsRuntimeIsNeverTakenForLost(t *testin
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	every := fenceGateEvery
-	fenceGateEvery = 0
+	fenceGateEvery = func(liveness.Config) time.Duration { return 0 }
 	t.Cleanup(func() { fenceGateEvery = every })
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

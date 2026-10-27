@@ -42,7 +42,7 @@ const (
 // nothing here. members, when given, hears each peer list read, and the hosts
 // removed from the cluster kept beside it (hosts.RevokedFile), so that the
 // agent refuses a removed host's pings (R-415).
-func agentLiveness(authoritiesPEM []byte, members *hosts.Members, logger *zap.Logger) (*liveness.Monitor, error) {
+func agentLiveness(authoritiesPEM []byte, members *hosts.Members, timing liveness.Config, logger *zap.Logger) (*liveness.Monitor, error) {
 	self := os.Getenv(envHostID)
 	if self == "" {
 		return nil, nil
@@ -73,7 +73,7 @@ func agentLiveness(authoritiesPEM []byte, members *hosts.Members, logger *zap.Lo
 			return read(ctx)
 		})
 	}
-	return newMonitor(self, peers, staticCert(cert), roots, docker, logger), nil
+	return newMonitor(self, peers, staticCert(cert), roots, docker, timing, logger), nil
 }
 
 // staticCert presents cert at every handshake: for an agent given its
@@ -85,12 +85,13 @@ func staticCert(cert tls.Certificate) func(*tls.CertificateRequestInfo) (*tls.Ce
 // newMonitor is a joined host's Monitor (R-421): it probes the hosts peers
 // lists with the certificate clientCert gives at each probe, which is renewed
 // while the host runs, checking each agent against roots and the name it
-// joined under, and fences through docker.
+// joined under, and fences through docker, on the cluster's timing.
 func newMonitor(self string, peers func(context.Context) ([]hosts.Peer, error),
 	clientCert func(*tls.CertificateRequestInfo) (*tls.Certificate, error),
-	roots *x509.CertPool, docker hostagent.ContainerAPI, logger *zap.Logger) *liveness.Monitor {
+	roots *x509.CertPool, docker hostagent.ContainerAPI, timing liveness.Config, logger *zap.Logger) *liveness.Monitor {
 	return &liveness.Monitor{
-		Self: self,
+		Self:   self,
+		Config: timing,
 		Peers: func(ctx context.Context) ([]liveness.Peer, error) {
 			list, err := peers(ctx)
 			return livenessPeers(list), err

@@ -8,6 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/liveness"
@@ -24,9 +25,10 @@ import (
 // which an agent answers with a ping and nothing else, and verified against
 // the name the host joined under. local is this control host's own Monitor's
 // word on a host (controlPings.unreachedFor), which a person marking a host
-// lost is checked against with the rest (liveness.Witness).
+// lost is checked against with the rest (liveness.Witness). timing is the
+// cluster's (cluster.liveness_period), the same on every host.
 func clusterLiveness(store clusterStore, authority *hosts.Authority, apps *state.Apps, auditor liveness.Auditor,
-	local func(string) (time.Duration, bool), logger *zap.Logger) (*liveness.Service, *liveness.Watch) {
+	local func(string) (time.Duration, bool), timing liveness.Config, logger *zap.Logger) (*liveness.Service, *liveness.Watch) {
 	svc := &liveness.Service{Store: store, Apps: apps, Audit: auditor, Logger: logger.Named("liveness")}
 
 	as := hostagent.Authorities{{Cert: authority.Cert, Key: authority.Key}}
@@ -52,7 +54,7 @@ func clusterLiveness(store clusterStore, authority *hosts.Authority, apps *state
 	}
 
 	// A host heard from lately is not gone, and is not marked lost by hand.
-	svc.Witness = &liveness.Witness{Hosts: peers, Probe: probe, Local: local}
+	svc.Witness = &liveness.Witness{Hosts: peers, Probe: probe, Local: local, Config: timing}
 
 	// What each host says of its fence is recorded, so every replica's
 	// reconciler leaves a fenced host's apps stopped (R-421, clusterholds.go).
@@ -60,7 +62,12 @@ func clusterLiveness(store clusterStore, authority *hosts.Authority, apps *state
 	if fences, ok := store.(hostFences); ok {
 		watchProbe = (&fenceRecorder{store: fences, logger: logger.Named("liveness")}).wrap(probe)
 	}
-	return svc, &liveness.Watch{Hosts: peers, Probe: watchProbe, Service: svc, Logger: logger.Named("liveness")}
+	return svc, &liveness.Watch{Hosts: peers, Probe: watchProbe, Service: svc, Config: timing, Logger: logger.Named("liveness")}
+}
+
+// livenessTiming is the cluster's timing as liveness reads it (R-421).
+func livenessTiming(c config.Cluster) liveness.Config {
+	return liveness.Config{Period: c.LivenessPeriod, Interval: c.LivenessInterval}.Normalize()
 }
 
 // probeResult is a ping's outcome as liveness reads it: a view, contact

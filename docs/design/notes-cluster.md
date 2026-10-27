@@ -36,7 +36,7 @@ candidate. The token's minter can choose either.
 account or an app cannot join: that would be merging two installs, two audit logs among them, and is
 not offered.
 
-**The token [D], kubeadm-style:** `pando-join.<control address>.<CA hash>.<secret>`.
+**The token [D], kubeadm-style:** `pj1.<base64url control address>.<CA hash>.<token id>.<secret>`.
 
 1. The joining host connects to the control address and checks the server's CA against the hash before
    sending anything. A token is never used against an install whose CA it was not minted for.
@@ -212,6 +212,11 @@ category for operator-supplied replicated storage), O-66 (whether clustering is 
   (`Authorities.IssueHost`: subject and DNS name `pando-agent.<name>.invalid`, the roles as
   organizational units, server and client usage) is never accepted, nor is an agent's server-only one.
   An agent without a socket carries no runtime calls, so agents the runtime starts itself are unchanged.
+  With a fence (R-421) the stream is served call by call through an HTTP proxy that refuses a create
+  or start while fencing; its two ends are a unix socket pair (`streamPair`), not `net.Pipe`, so a
+  helper container's stdin closed by the control host reaches Docker as end of input through an
+  upgraded attach or exec, and the helper's output still arrives. Over `net.Pipe` every volume ship,
+  backup and restore through a joined host ended in `tar: short read` (R-420).
 - **`agent://host:port` endpoints.** The `docker-hosts` runtime reaches such a host's Docker API with
   one agent stream per client connection, verifying the agent by name and by the pinned
   `cert_sha256`; the proxy reaches that host's apps with the same TLS configuration. The runtime does not
@@ -357,7 +362,10 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   `cluster.failover` (`trigger: resume`) first, and waits for the next pass without it.
   `app.standby.promote` records the outcome after the runtime has acted, so it gates nothing.
 
-Timings **[P]**: `T` 30 s, probes every `T/6` (5 s), each within half an interval.
+Timings **[P]**: `T` 30 s, probes every `T/6` (5 s), each within half an interval. Both are startup
+settings, `cluster.liveness_period` and `cluster.liveness_interval` (`PANDO_CLUSTER_*`), read by the
+server and by `host-agent serve`, defaults unchanged; `T` is held to 6 s – 10 min and must be the same
+on every host. The end-to-end cluster test runs with a short `T` so it finishes in minutes.
 
 The ping is `PANDO-AGENT/1 ping <host-id>` on the agent port (a control host's cluster port), answered `PONG <view>`. Hosts probe
 with a certificate whose subject is `pando-host`, issued from the cluster authority to that host
@@ -400,7 +408,8 @@ host is watched").
   in placement, in a restarted process too. Once the app is healthy the staging volumes on that host
   are removed (review fixes below).
 - **Core.** `internal/core/standby` is the leader's job (every minute; ships when the newest copy is
-  five minutes old [P]). It makes or refreshes the standby when the pinned spec changes, from
+  five minutes old [P]; `cluster.standby_every` and `cluster.ship_every`, the ship interval never
+  shorter than the pass). It makes or refreshes the standby when the pinned spec changes, from
   `reconciler.Shape` plus `Complete` (one definition of what an app starts with), and records it in
   `app_standbys` (migration 000087). `Promote` and `RemoveStale` are for the liveness pass (R-421) and a
   manual start; neither decides a host is lost. A failed app's standby is neither refreshed nor started

@@ -32,10 +32,10 @@ import (
 // missing — runs appHostFallback rather than exit, when its own certificate
 // can be read: an app host whose Pando cannot start is not cut off, and its
 // apps may be running (R-421). Only a host without its own certificate exits.
-func runAppHost(ctx context.Context, dir string, joined hosts.Joined, logger *zap.Logger) error {
-	agent, monitor, certs, err := appHostAgent(dir, joined, logger)
+func runAppHost(ctx context.Context, dir string, joined hosts.Joined, timing liveness.Config, logger *zap.Logger) error {
+	agent, monitor, certs, err := appHostAgent(dir, joined, timing, logger)
 	if err != nil {
-		fallback, fmonitor, ferr := appHostFallback(dir, joined, logger)
+		fallback, fmonitor, ferr := appHostFallback(dir, joined, timing, logger)
 		if ferr != nil {
 			return err
 		}
@@ -62,7 +62,7 @@ func runAppHost(ctx context.Context, dir string, joined hosts.Joined, logger *za
 // keeping its peer list current from the cluster listener (R-421). Both
 // certificates are renewed while it runs (the returned HostCerts), and each
 // handshake takes the ones held then.
-func appHostAgent(dir string, joined hosts.Joined, logger *zap.Logger) (*hostagent.Agent, *liveness.Monitor, *hosts.HostCerts, error) {
+func appHostAgent(dir string, joined hosts.Joined, timing liveness.Config, logger *zap.Logger) (*hostagent.Agent, *liveness.Monitor, *hosts.HostCerts, error) {
 	files, err := readClusterFiles(dir, hosts.HostCertFile, hosts.HostKeyFile, hosts.AuthorityCertFile,
 		hosts.HostClientCertFile, hosts.HostClientKeyFile)
 	if err != nil {
@@ -109,7 +109,7 @@ func appHostAgent(dir string, joined hosts.Joined, logger *zap.Logger) (*hostage
 		return nil, nil, nil, fmt.Errorf("this app host could not reach its container runtime at %s, which it stops apps through when it is cut off: %w", socket, err)
 	}
 	sync := &hosts.PeerSync{Address: joined.Cluster, TLS: clusterTLS, File: filepath.Join(dir, hosts.PeersFile), Members: members}
-	return agent, newMonitor(joined.HostID, members.Track(sync.Peers), certs.Probe.GetClientCertificate, roots, docker, logger), certs, nil
+	return agent, newMonitor(joined.HostID, members.Track(sync.Peers), certs.Probe.GetClientCertificate, roots, docker, timing, logger), certs, nil
 }
 
 // certRenewCheck is how often a joined host looks whether its certificates
@@ -137,7 +137,7 @@ func appHostMembers(dir string) *hosts.Members {
 // all fencing counts. It fences through the host's runtime at the socket
 // appHostRuntimeSocket names, and answers pings only while that runtime
 // answers (fenceGate): a host that could not stop its apps reports nothing.
-func appHostFallback(dir string, joined hosts.Joined, logger *zap.Logger) (*hostagent.Agent, *liveness.Monitor, error) {
+func appHostFallback(dir string, joined hosts.Joined, timing liveness.Config, logger *zap.Logger) (*hostagent.Agent, *liveness.Monitor, error) {
 	files, err := readClusterFiles(dir, hosts.HostCertFile, hosts.HostKeyFile, hosts.AuthorityCertFile)
 	if err != nil {
 		return nil, nil, err
@@ -163,8 +163,8 @@ func appHostFallback(dir string, joined hosts.Joined, logger *zap.Logger) (*host
 	members := appHostMembers(dir)
 	sync := &hosts.PeerSync{Address: joined.Cluster, TLS: clusterTLS, File: filepath.Join(dir, hosts.PeersFile), Members: members}
 	runtime := localRuntime()
-	monitor := newMonitor(joined.HostID, members.Track(sync.Peers), staticCert(fallbackProbeCert(dir, host509)), roots, runtime, logger)
-	gate := &fenceGate{liveness: monitor, reachable: runtime.Reachable, every: fenceGateEvery}
+	monitor := newMonitor(joined.HostID, members.Track(sync.Peers), staticCert(fallbackProbeCert(dir, host509)), roots, runtime, timing, logger)
+	gate := &fenceGate{liveness: monitor, reachable: runtime.Reachable, every: fenceGateEvery(timing)}
 	return &hostagent.Agent{TLS: serverTLS, Pool: pool, Liveness: gate, Logger: logger, Member: members.Admits}, monitor, nil
 }
 
