@@ -43,12 +43,21 @@ const controlSetupRetry = 5 * time.Second
 type controlPings struct {
 	current atomic.Pointer[controlPing]
 	store   atomic.Pointer[storeRef]
+	// reached wakes a setup waiting to try again: the database it may have
+	// been missing has just been given (useStore).
+	reached chan struct{}
 }
 
 type storeRef struct{ hosts.HostPublisher }
 
 // useStore gives the Monitor the database, once it is reached.
-func (c *controlPings) useStore(s hosts.HostPublisher) { c.store.Store(&storeRef{s}) }
+func (c *controlPings) useStore(s hosts.HostPublisher) {
+	c.store.Store(&storeRef{s})
+	select {
+	case c.reached <- struct{}{}:
+	default: // no setup is waiting, or one is already woken
+	}
+}
 
 func (c *controlPings) db() hosts.HostPublisher {
 	if r := c.store.Load(); r != nil {
@@ -147,7 +156,7 @@ func (c controlLiveness) store() hosts.HostPublisher {
 // returned pings are what the cluster listener answers with (attach), and
 // are given the database once it is reached (useStore).
 func (c controlLiveness) start(ctx context.Context) *controlPings {
-	pings := &controlPings{}
+	pings := &controlPings{reached: make(chan struct{}, 1)}
 	if c.Store != nil {
 		pings.useStore(c.Store)
 	}
@@ -164,6 +173,7 @@ func (c controlLiveness) start(ctx context.Context) *controlPings {
 			select {
 			case <-ctx.Done():
 				return
+			case <-pings.reached:
 			case <-time.After(controlSetupRetry):
 			}
 		}
