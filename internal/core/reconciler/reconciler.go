@@ -10,6 +10,7 @@ package reconciler
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -154,6 +155,16 @@ type Reconciler struct {
 	// an install with one host.
 	Holds Holds
 
+	// Hosts counts the cluster's hosts (hosts.Service.Count). While it is
+	// one, nothing can hold an app — no other host to be lost, fenced or
+	// promoted to — and Holds is not consulted (holds.go). Nil consults Holds
+	// whenever it is set.
+	Hosts func(ctx context.Context) (int, error)
+
+	// singleHost is that the latest pass found the install one host
+	// (noteHosts).
+	singleHost atomic.Bool
+
 	// LocalFenced reports whether this replica's own host is fenced (R-421).
 	// While it is, Tick does nothing: a host cut off from most of the
 	// cluster starts nothing. Nil is never.
@@ -222,6 +233,7 @@ func (r *Reconciler) Tick(ctx context.Context) {
 		r.Logger.Debug("this host is cut off from most of the cluster; reconciling nothing")
 		return
 	}
+	r.noteHosts(ctx)
 	cutoff, err := r.Reconciles.Cutoff(ctx, r.MinRevisit)
 	if err != nil {
 		r.Logger.Warn("could not list apps to reconcile", zap.Error(err))
@@ -514,8 +526,7 @@ func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) v
 
 	// R-148 does not restart a copy on a lost or fenced host, nor one a
 	// promotion is starting (holds.go).
-	if why := r.held(ctx, app.ID); why != "" {
-		r.unobservable(ctx, app, why)
+	if why, err := r.held(ctx, app.ID); r.heldCheck(ctx, app, why, err, &seen) {
 		return seen
 	}
 
@@ -527,8 +538,7 @@ func (r *Reconciler) reconcileOne(ctx context.Context, app state.Reconcilable) v
 	}
 	// R-151, R-421: an app the runtime found on a lost or fenced host is
 	// left alone too, standby or not; its host stopped it.
-	if why := r.heldOn(ctx, observed.Host); why != "" {
-		r.unobservable(ctx, app, why)
+	if why, err := r.heldOn(ctx, observed.Host); r.heldCheck(ctx, app, why, err, &seen) {
 		return seen
 	}
 	if app.UnobservableSince != nil {

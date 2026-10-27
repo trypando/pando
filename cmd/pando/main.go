@@ -1314,8 +1314,9 @@ func serve(ctx context.Context, configPath string) error {
 		// R-148 never undoes a fence or restarts a failed-over copy: an app
 		// whose host is lost or fenced, or whose standby is being promoted,
 		// is left alone, and nothing is reconciled while this host is
-		// fenced (R-153, R-421).
+		// fenced (R-153, R-421). An install of one host asks nothing.
 		Holds:       standbys,
+		Hosts:       clusterHosts.Count,
 		LocalFenced: controlPings.fenced,
 
 		// Replicas share the apps rather than each visiting every one.

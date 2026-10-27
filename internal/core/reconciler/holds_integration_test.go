@@ -4,15 +4,21 @@ package reconciler_test
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/reconciler"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/telemetry"
+	"github.com/trypando/pando/internal/telemetry/telemetrytest"
 )
 
 // TestR153_TheReconcilerNeverRestartsAFencedOrFailedOverCopy asserts R-153
@@ -73,6 +79,68 @@ func TestR153_TheReconcilerNeverRestartsAFencedOrFailedOverCopy(t *testing.T) {
 	h.rec.Tick(ctx)
 	_, applies, _ = h.runtime.counts()
 	require.Equal(t, 1, applies, "held by nothing, a missing workload is restored (R-148)")
+}
+
+// brokenHolds cannot read whether anything holds an app, and counts how
+// often it was asked.
+type brokenHolds struct{ asked *atomic.Int32 }
+
+func (b brokenHolds) Held(context.Context, string) (state.Hold, error) {
+	b.asked.Add(1)
+	return state.Hold{}, errors.New("database away")
+}
+
+func (b brokenHolds) HostHeld(context.Context, string) (state.Hold, error) {
+	b.asked.Add(1)
+	return state.Hold{}, errors.New("database away")
+}
+
+func hostCount(n int) func(context.Context) (int, error) {
+	return func(context.Context) (int, error) { return n, nil }
+}
+
+// TestR148_AHoldCheckErrorIsSaidAndNotTakenForAHold asserts R-148 against a
+// hold check that cannot read the database: the app is not quietly skipped as
+// if it were held — every app, drift never corrected, metrics healthy — but
+// said at error, counted as a failed reconcile in Pando's metrics (R-399), and
+// left for the next pass without counting toward failed (R-151).
+func TestR148_AHoldCheckErrorIsSaidAndNotTakenForAHold(t *testing.T) {
+	metrics := telemetrytest.Install(t, telemetry.Sources{})
+	ctx := context.Background()
+	h := newHarness(t, state.StateRunning)
+	asked := &atomic.Int32{}
+	h.rec.Holds, h.rec.Hosts = brokenHolds{asked}, hostCount(2)
+	core, logs := observer.New(zap.ErrorLevel)
+	h.rec.Logger = zap.New(core)
+
+	h.rec.Tick(ctx)
+	require.NotZero(t, asked.Load())
+	_, applies, _ := h.runtime.counts()
+	require.Zero(t, applies, "left for the next pass")
+	require.Equal(t, state.StateRunning, h.state(t), "counted toward nothing (R-151)")
+	require.Equal(t, 1, logs.FilterMessageSnippet("could not read whether").Len(), "said at error")
+	require.Equal(t, int64(1), metrics.Count("pando.reconcile.duration",
+		map[string]string{"pando.outcome": "failed"}), "a failed reconcile, not a quiet success")
+	var reason string
+	require.NoError(t, h.db.QueryRow(ctx, `SELECT coalesce(last_reconcile_error, '') FROM apps WHERE id = $1`, h.appID).Scan(&reason))
+	require.Contains(t, reason, "could not read")
+}
+
+// TestR148_ASingleHostInstallNeverConsultsHolds asserts that an install of one
+// host, where nothing can be lost, fenced or promoted, never asks what holds
+// an app, so a hold check that fails cannot stop its reconciling: a missing
+// workload is restored (R-148).
+func TestR148_ASingleHostInstallNeverConsultsHolds(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	h := newHarness(t, state.StateRunning)
+	asked := &atomic.Int32{}
+	h.rec.Holds, h.rec.Hosts = brokenHolds{asked}, hostCount(1)
+
+	h.rec.Tick(ctx)
+	require.Zero(t, asked.Load(), "holds are not consulted on one host")
+	_, applies, _ := h.runtime.counts()
+	require.Equal(t, 1, applies, "a missing workload is restored (R-148)")
 }
 
 // TestR151_AnAppWithoutAStandbyIsNotFailedWhileItsHostIsDown asserts R-151
