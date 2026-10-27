@@ -148,6 +148,7 @@ func TestR421_OnlyAHostOfTheClusterHearsWhereTheOthersAre(t *testing.T) {
 	peers, err := svc.Peers(ctx, cert.Certificate[0])
 	require.NoError(t, err)
 	require.Equal(t, []hosts.Peer{
+		{ID: "host_first", Name: "core-1", Address: "10.0.0.1:7443"},
 		{ID: "host_edge1", Name: "edge-1", Address: "10.0.0.2:7443"},
 		{ID: "host_edge2", Name: "edge-2", Address: "10.0.0.3:7443"},
 	}, peers)
@@ -303,7 +304,8 @@ func TestR414_TheFirstHostIsInTheClusterFromItsFirstStart(t *testing.T) {
 	app, err := hosts.RuntimeHosts(store.hosts, "control")
 	require.NoError(t, err)
 	require.Empty(t, app, "the first host is the runtime's control entry already")
-	require.Empty(t, hosts.LivenessPeers(store.hosts))
+	require.Equal(t, []hosts.Peer{{ID: h.ID, Name: h.Name, Address: h.Address}}, hosts.LivenessPeers(store.hosts),
+		"the first host is watched like any other (R-421)")
 
 	store.err = errors.New("database away")
 	_, _, err = hosts.RecordInstallHost(ctx, store, hosts.InstallHostInfo{})

@@ -11,10 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
@@ -40,17 +44,75 @@ type Peer struct {
 func InstallHost(h state.Host) bool { return h.JoinedWith == "" }
 
 // LivenessPeers is the hosts that take part in the cluster's liveness checks:
-// every host that joined. The install's own first host is left out: its agent
-// is the one the runtime starts, which answers no ping, and a host that never
-// answers would be taken for lost by the others (R-421).
+// every host, whatever its roles, the install's own first host included
+// (R-421). An app host answers on its agent; a control host on its cluster
+// listener (ControlPeers), so every host counted in the cluster's size is
+// also watched, and none is reported unreached for answering nowhere.
 func LivenessPeers(list []state.Host) []Peer {
 	out := make([]Peer, 0, len(list))
 	for _, h := range list {
-		if !InstallHost(h) {
-			out = append(out, Peer{ID: h.ID, Name: h.Name, Address: h.Address})
-		}
+		out = append(out, Peer{ID: h.ID, Name: h.Name, Address: h.Address})
 	}
 	return out
+}
+
+// PingAddress is address, host:port, with its port replaced by port:
+// where a control host answers pings, on its cluster listener, at the
+// machine it recorded. An address without a port is taken as a host.
+func PingAddress(address string, port int) string {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = strings.Trim(address, "[]")
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+// HostPublisher is the slice of state.Cluster a control host keeps its own
+// row current with.
+type HostPublisher interface {
+	HostLister
+	SetHostAgent(ctx context.Context, hostID, address, certSHA256 string) error
+}
+
+// ControlPeers is a control host's peer list (R-421), read from the
+// database each round. Reading it also keeps the host's own row saying where
+// it answers pings, its cluster listener at Port, and the fingerprint of the
+// certificate it answers with, Pin: the first host was recorded with the
+// agent port and a placeholder pin (RecordInstallHost), and a joined control
+// host with its agent port. Written whenever it differs, so a write that
+// failed is made the next round.
+type ControlPeers struct {
+	Store  HostPublisher
+	Self   string
+	Port   int
+	Pin    string
+	Logger *zap.Logger
+}
+
+// Peers lists every host, this one with where it answers now.
+func (c *ControlPeers) Peers(ctx context.Context) ([]Peer, error) {
+	list, err := c.Store.Hosts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i, h := range list {
+		if h.ID != c.Self {
+			continue
+		}
+		addr := PingAddress(h.Address, c.Port)
+		if addr == h.Address && h.CertSHA256 == c.Pin {
+			break
+		}
+		if err := c.Store.SetHostAgent(ctx, h.ID, addr, c.Pin); err != nil {
+			if c.Logger != nil {
+				c.Logger.Warn("could not record where this host answers the cluster's liveness checks; trying again next round",
+					zap.String("host_id", h.ID), zap.String("address", addr), zap.Error(err))
+			}
+			break
+		}
+		list[i].Address, list[i].CertSHA256 = addr, c.Pin
+	}
+	return LivenessPeers(list), nil
 }
 
 // errNotAHost refuses a certificate no host of the cluster joined with.

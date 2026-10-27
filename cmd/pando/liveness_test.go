@@ -153,8 +153,11 @@ func TestClusterLivenessListsHostsAndAsksWhetherOneAnswers(t *testing.T) {
 
 	peers, err := watch.Hosts(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []liveness.Peer{{ID: "host_up", Name: "app-1", Address: addr}, {ID: "host_down", Name: "app-2", Address: silent}}, peers,
-		"the install's first host, whose agent answers no ping, is not watched")
+	require.Equal(t, []liveness.Peer{
+		{ID: "host_first", Name: "core-1", Address: silent},
+		{ID: "host_up", Name: "app-1", Address: addr},
+		{ID: "host_down", Name: "app-2", Address: silent},
+	}, peers, "every host is watched, the install's first included (R-421)")
 
 	require.True(t, svc.Answering(ctx, "host_up"))
 	require.False(t, svc.Answering(ctx, "host_down"))

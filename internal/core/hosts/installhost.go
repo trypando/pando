@@ -15,10 +15,11 @@ import (
 // gives none Pando can use.
 const installHostName = "control"
 
-// unpinned stands in for the first host's certificate fingerprint. Its agent
-// is the one the runtime starts and pins itself, and the cluster reaches it
-// by no pin of its own: the runtime's host list leaves the first host out of
-// the agent:// entries (RuntimeHosts).
+// unpinned stands in for the first host's certificate fingerprint until the
+// host issues its own certificate (ControlHostCert) and records it, with
+// where it answers pings, in its first round of liveness checks
+// (ControlPeers, R-421). The runtime's host list leaves the first host out of
+// the agent:// entries either way (RuntimeHosts).
 var unpinned = strings.Repeat("0", 64)
 
 // InstallHostStore records the first host: state.Cluster.
