@@ -51,6 +51,10 @@ type UploadStore interface {
 
 // isAppID reports whether an app ID can name a file in the upload
 // directory: not empty, not hidden, and no path separator.
+
+// uploadSuffix ends an uploaded source's file name under UploadDir.
+const uploadSuffix = ".tar.gz"
+
 func isAppID(appID string) bool {
 	return appID != "" && !strings.ContainsAny(appID, `/\`) && !strings.HasPrefix(appID, ".")
 }
@@ -70,7 +74,7 @@ func (s Sources) uploadPath(appID string) (string, error) {
 	if !isAppID(appID) {
 		return "", notAnApp(appID)
 	}
-	return filepath.Join(s.UploadDir, appID+".tar.gz"), nil
+	return filepath.Join(s.UploadDir, appID+uploadSuffix), nil
 }
 
 // StoreUpload keeps an uploaded archive for an app.
@@ -155,7 +159,7 @@ func (s Sources) removeUploadFiles(appID string) error {
 	if s.UploadDir == "" {
 		return nil
 	}
-	final := filepath.Join(s.UploadDir, appID+".tar.gz")
+	final := filepath.Join(s.UploadDir, appID+uploadSuffix)
 	for _, p := range []string{final, final + ".partial"} {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			return errs.Wrap(errs.Internal, "Pando could not remove the app's uploaded source.", err)
@@ -170,7 +174,7 @@ func (s Sources) migrateUpload(ctx context.Context, appID string) (bool, error) 
 	if s.UploadDir == "" {
 		return false, nil
 	}
-	f, err := os.Open(filepath.Join(s.UploadDir, appID+".tar.gz"))
+	f, err := os.Open(filepath.Join(s.UploadDir, appID+uploadSuffix))
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -202,7 +206,7 @@ func (s Sources) MigrateUploads(ctx context.Context) (int, error) {
 	moved := 0
 	var first error
 	for _, e := range entries {
-		appID, ok := strings.CutSuffix(e.Name(), ".tar.gz")
+		appID, ok := strings.CutSuffix(e.Name(), uploadSuffix)
 		if !ok || !e.Type().IsRegular() || !isAppID(appID) {
 			continue
 		}

@@ -521,7 +521,7 @@ function JoinCluster({ other }: Readonly<{ other: React.ReactNode }>) {
     return (
       <Frame
         heading="Joined the cluster"
-        lede={`${roles.length > 0 ? `Roles: ${roleWords(roles)}. ` : ''}Pando is restarting into the cluster.`}
+        lede={(roles.length > 0 ? 'Roles: ' + roleWords(roles) + '. ' : '') + 'Pando is restarting into the cluster.'}
       >
         {null}
       </Frame>

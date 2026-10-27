@@ -35,6 +35,9 @@ type upload struct {
 	closed bool
 }
 
+// opWrite names a write in a failure message.
+const opWrite = "write to"
+
 func (u *upload) Write(p []byte) (int, error) {
 	if u.closed {
 		return 0, errs.New(errs.Internal, "The backup was written to after it was closed.")
@@ -69,7 +72,7 @@ func (u *upload) sendPart() error {
 			Bucket: aws.String(u.a.bucket), Key: aws.String(u.key),
 		})
 		if err != nil {
-			return u.a.failure("write to", err)
+			return u.a.failure(opWrite, err)
 		}
 		u.uploadID = aws.ToString(out.UploadId)
 	}
@@ -84,7 +87,7 @@ func (u *upload) sendPart() error {
 		PartNumber: aws.Int32(number), Body: bytes.NewReader(u.buf),
 	})
 	if err != nil {
-		return u.a.failure("write to", err)
+		return u.a.failure(opWrite, err)
 	}
 	u.parts = append(u.parts, types.CompletedPart{ETag: out.ETag, PartNumber: aws.Int32(number)})
 	u.buf = u.buf[:0]
@@ -115,7 +118,7 @@ func (u *upload) finish() error {
 		if _, err := u.a.client.PutObject(u.ctx, &awss3.PutObjectInput{
 			Bucket: aws.String(u.a.bucket), Key: aws.String(u.key), Body: bytes.NewReader(u.buf),
 		}); err != nil {
-			return u.a.failure("write to", err)
+			return u.a.failure(opWrite, err)
 		}
 		return nil
 	}
@@ -128,7 +131,7 @@ func (u *upload) finish() error {
 		Bucket: aws.String(u.a.bucket), Key: aws.String(u.key), UploadId: aws.String(u.uploadID),
 		MultipartUpload: &types.CompletedMultipartUpload{Parts: u.parts},
 	}); err != nil {
-		return u.a.failure("write to", err)
+		return u.a.failure(opWrite, err)
 	}
 	return nil
 }

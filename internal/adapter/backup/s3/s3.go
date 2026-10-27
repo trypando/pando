@@ -65,6 +65,10 @@ type Adapter struct {
 }
 
 // New returns an unconfigured adapter.
+
+// errNotConfigured is a call before Configure succeeded.
+const errNotConfigured = "The S3 backup destination is not configured."
+
 func New() *Adapter { return &Adapter{partSize: PartSize} }
 
 type config struct {
@@ -161,7 +165,7 @@ func normalPrefix(p string) string {
 // rather than during it.
 func (a *Adapter) HealthCheck(ctx context.Context) error {
 	if a.client == nil {
-		return errs.New(errs.Internal, "The S3 backup destination is not configured.")
+		return errs.New(errs.Internal, errNotConfigured)
 	}
 	key := a.prefix + probeName
 	if _, err := a.client.PutObject(ctx, &awss3.PutObjectInput{
@@ -219,7 +223,7 @@ func (a *Adapter) Reader(ctx context.Context, name string) (io.ReadCloser, error
 // names starting with a dot are not Pando's bundles.
 func (a *Adapter) List(ctx context.Context) ([]api.StoredBundle, error) {
 	if a.client == nil {
-		return nil, errs.New(errs.Internal, "The S3 backup destination is not configured.")
+		return nil, errs.New(errs.Internal, errNotConfigured)
 	}
 	var out []api.StoredBundle
 	p := awss3.NewListObjectsV2Paginator(a.client, &awss3.ListObjectsV2Input{
@@ -260,7 +264,7 @@ func (a *Adapter) Delete(ctx context.Context, name string) error {
 // for the same reason as the local destination's path check.
 func (a *Adapter) key(name string) (string, error) {
 	if a.client == nil {
-		return "", errs.New(errs.Internal, "The S3 backup destination is not configured.")
+		return "", errs.New(errs.Internal, errNotConfigured)
 	}
 	if name == "" || name != path.Base(name) || strings.HasPrefix(name, ".") || strings.Contains(name, `\`) {
 		return "", errs.New(errs.ValidInvalid, "That is not a valid backup name.")
