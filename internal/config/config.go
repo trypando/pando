@@ -454,7 +454,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.audit_archive_dir", "/var/lib/pando/audit-archives")
 	v.SetDefault("server.token_key_path", tokenkey.DefaultPath)
 	v.SetDefault("server.cluster_authority_path", "/var/lib/pando/cluster-ca.pem") // hosts.DefaultAuthorityPath
-	v.SetDefault("server.cluster_addr", ":7443")                                   // hosts.DefaultClusterPort
+	v.SetDefault("server.cluster_addr", ":7444")                                   // hosts.DefaultClusterPort
 	v.SetDefault("server.cluster_dir", "/var/lib/pando/cluster")                   // hosts.DefaultClusterDir
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.development", false)

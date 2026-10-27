@@ -102,7 +102,7 @@ func TestR415_AJoinTokenCarriesTheAddressAndTheAuthoritysHash(t *testing.T) {
 
 	d, err := hosts.Decode(minted.Join.Reveal())
 	require.NoError(t, err)
-	require.Equal(t, "https://pando.example.com:7443", d.Address, "the cluster listener's default port")
+	require.Equal(t, "https://pando.example.com:7444", d.Address, "the cluster listener's default port")
 	require.Equal(t, svc.Authority.Hash(), d.AuthorityHash)
 	require.Equal(t, "jt_01TEST.c2VjcmV0", d.Secret.Reveal())
 	require.Equal(t, "[redacted]", minted.Join.String())
@@ -119,7 +119,8 @@ func TestR415_AJoinTokenDefaultsToOneUseAndADay(t *testing.T) {
 }
 
 // TestR414_TheFirstThreeHostsTakeBothRoles asserts R-414's default: both roles
-// until the cluster has three hosts, then the app role.
+// until the cluster has three hosts, then the app role. The install's own
+// machine is the first of them, recorded or not yet.
 func TestR414_TheFirstThreeHostsTakeBothRoles(t *testing.T) {
 	store := &fakeStore{}
 	svc := newService(t, store)
@@ -129,12 +130,12 @@ func TestR414_TheFirstThreeHostsTakeBothRoles(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"control", "app"}, roles)
 
-	store.hosts = []state.Host{{ID: "host_1"}}
+	store.hosts = []state.Host{{ID: "host_1"}, {ID: "host_2", JoinedWith: "jt_1"}}
 	roles, err = svc.DefaultRoles(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"control", "app"}, roles)
 
-	store.hosts = []state.Host{{ID: "host_1"}, {ID: "host_2"}}
+	store.hosts = append(store.hosts, state.Host{ID: "host_3", JoinedWith: "jt_2"})
 	roles, err = svc.DefaultRoles(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"app"}, roles)
@@ -150,7 +151,7 @@ func TestMintRefusesWhatItCannotIssue(t *testing.T) {
 		"too long":      {ExpiresIn: 31 * 24 * time.Hour},
 		"too short":     {ExpiresIn: time.Second},
 		"bad address":   {Address: "pando.example.com"},
-		"plain http":    {Address: "http://pando.example.com:7443"},
+		"plain http":    {Address: "http://pando.example.com:7444"},
 		"with a path":   {Address: "https://pando.example.com/x"},
 	} {
 		t.Run(name, func(t *testing.T) {

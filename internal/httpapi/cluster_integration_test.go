@@ -44,7 +44,7 @@ func TestR415_AControlRoleJoinTokenNeedsEveryInstallVerb(t *testing.T) {
 	require.Equal(t, 2, out.Token.MaxUses)
 	d, err := corehosts.Decode(out.Join)
 	require.NoError(t, err)
-	require.Equal(t, "https://pando.example.com:7443", d.Address)
+	require.Equal(t, "https://pando.example.com:7444", d.Address)
 
 	// Listed without the token itself.
 	list := i.do(ops, http.MethodGet, "/cluster/join-tokens", nil)

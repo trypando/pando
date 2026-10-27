@@ -21,6 +21,7 @@ import (
 
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/secret"
 )
 
 // Joiner is the joining side of R-415: a fresh Pando taking a join token,
@@ -51,12 +52,32 @@ type Joiner struct {
 	// for the app role alone.
 	Restart func()
 
+	// SetupToken checks the setup token a join from the setup screen presents
+	// (state.Users.CheckSetupToken): the one POST /setup needs, so that being
+	// first to a fresh Pando is not enough to join it to a cluster of one's
+	// own (R-046, R-415). Nil refuses every such join.
+	SetupToken func(ctx context.Context, token secret.Value) error
+
 	Now func() time.Time
 }
 
-// Setup is the join a fresh Pando's setup makes (R-415): POST /setup/join and
-// PANDO_JOIN_TOKEN. It joins, then asks for the restart that takes this
-// Pando into the cluster.
+// SetupWithToken is the join POST /setup/join makes (R-415): refused unless
+// setupToken is this Pando's setup token, checked before anything else.
+func (j *Joiner) SetupWithToken(ctx context.Context, setupToken secret.Value, token, name string) (Joined, error) {
+	if j.SetupToken == nil {
+		return Joined{}, errs.New(errs.Internal, "This Pando cannot check its setup token, so it cannot join a cluster from the setup screen.").
+			WithRemedy("Join with PANDO_JOIN_TOKEN set where Pando runs instead.")
+	}
+	if err := j.SetupToken(ctx, setupToken); err != nil {
+		return Joined{}, err
+	}
+	return j.Setup(ctx, token, name)
+}
+
+// Setup is the join a fresh Pando's setup makes (R-415): SetupWithToken and
+// PANDO_JOIN_TOKEN, which needs no setup token, since setting it takes the
+// host already. It joins, then asks for the restart that takes this Pando
+// into the cluster.
 func (j *Joiner) Setup(ctx context.Context, token, name string) (Joined, error) {
 	if strings.TrimSpace(name) == "" {
 		name, _, _ = strings.Cut(strings.ToLower(j.DefaultName), ".")
@@ -116,7 +137,10 @@ func (j *Joiner) Join(ctx context.Context, token, name string) (Joined, error) {
 	if err != nil {
 		return Joined{}, errs.Wrap(errs.Internal, "Pando could not keep this host's key.", err)
 	}
-	joined := Joined{HostID: res.Host.ID, Name: res.Host.Name, Roles: res.Host.Roles, Cluster: d.Address, JoinedAt: j.now().UTC()}
+	joined := Joined{
+		HostID: res.Host.ID, Name: res.Host.Name, Roles: res.Host.Roles, Cluster: d.Address,
+		JoinedAt: j.now().UTC(), NetworkPool: res.NetworkPool,
+	}
 	if err := j.Files.write(joined, res, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})); err != nil {
 		return Joined{}, err
 	}

@@ -24,6 +24,12 @@ const (
 	HostCertFile      = "host.crt"
 	HostKeyFile       = "host.key"
 	AuthorityCertFile = "ca.crt"
+	// HostClientCertFile and HostClientKeyFile are what the host checks the
+	// others' agents with (R-421); PeersFile is the cluster's hosts as the
+	// host last heard them (PeerSync).
+	HostClientCertFile = "host-client.crt"
+	HostClientKeyFile  = "host-client.key"
+	PeersFile          = "peers.json"
 )
 
 // JoinFiles is where a joining host writes what it was given.
@@ -50,6 +56,9 @@ type Joined struct {
 	Roles    []string  `json:"roles"`
 	Cluster  string    `json:"cluster"`
 	JoinedAt time.Time `json:"joined_at"`
+	// NetworkPool is the runtime's app network range when the host joined,
+	// which its agent forwards into (R-416). Empty is the runtime's default.
+	NetworkPool string `json:"network_pool,omitempty"`
 }
 
 // AppOnly reports whether the host holds the app role and not the control
@@ -90,6 +99,11 @@ func (f JoinFiles) write(j Joined, res JoinResult, keyPEM []byte) error {
 		{filepath.Join(f.Dir, HostKeyFile), keyPEM},
 		{filepath.Join(f.Dir, HostCertFile), res.Certificate},
 		{filepath.Join(f.Dir, AuthorityCertFile), res.Authority},
+	}
+	if len(res.HostClientCert) > 0 && !res.HostClientKey.IsZero() {
+		writes = append(writes,
+			fileWrite{filepath.Join(f.Dir, HostClientCertFile), res.HostClientCert},
+			fileWrite{filepath.Join(f.Dir, HostClientKeyFile), []byte(res.HostClientKey.Reveal())})
 	}
 	if k := res.Keys; k != nil {
 		writes = append(writes,

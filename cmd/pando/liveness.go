@@ -40,9 +40,12 @@ func clusterLiveness(store clusterStore, authority *hosts.Authority, apps *state
 		if err != nil {
 			return nil, err
 		}
-		out := make([]liveness.Peer, len(list))
-		for i, h := range list {
-			out[i] = liveness.Peer{ID: h.ID, Name: h.Name, Address: h.Address}
+		// The hosts that take part: not the install's first, whose agent
+		// answers no ping (hosts.LivenessPeers).
+		joined := hosts.LivenessPeers(list)
+		out := make([]liveness.Peer, len(joined))
+		for i, p := range joined {
+			out[i] = liveness.Peer(p)
 		}
 		return out, nil
 	}

@@ -454,6 +454,30 @@ function SetupChoice({ onTaken }: Readonly<{ onTaken: (message: string) => Promi
   return joining ? <JoinCluster other={other} /> : <Setup onTaken={onTaken} other={other} />;
 }
 
+/**
+ * The setup token Pando printed to its log (R-046). Both ways of setting up a
+ * new installation ask for it, so being first to this page is not enough to
+ * become its administrator or to join it to a cluster.
+ */
+function SetupTokenInput({
+  value,
+  error,
+  onChange,
+}: Readonly<{ value: string; error: string | undefined; onChange: (value: string) => void }>) {
+  return (
+    <Input
+      label="Setup token"
+      value={value}
+      autoComplete="off"
+      spellCheck={false}
+      autoFocus
+      helper="Printed to Pando’s log at startup as setup_token. With Docker Compose, run docker compose logs pando."
+      error={error}
+      onChange={(e) => onChange(e.target.value.trim())}
+    />
+  );
+}
+
 /** What POST /setup/join answers once the host has joined (R-415). */
 interface Joined {
   roles: string[];
@@ -471,12 +495,21 @@ function roleWords(roles: string[]): string {
  * to sign in to until it has.
  */
 function JoinCluster({ other }: Readonly<{ other: React.ReactNode }>) {
+  const [setupToken, setSetupToken] = useState('');
   const [token, setToken] = useState('');
   const [name, setName] = useState('');
 
   const join = useMutation({
-    mutationFn: () => api.post<Joined>('/setup/join', { token, name }),
+    mutationFn: () => api.post<Joined>('/setup/join', { setup_token: setupToken, token, name }),
   });
+
+  // A refused setup token is shown on its field; every other refusal on the
+  // join token's, as before.
+  const setupRefused =
+    join.isError &&
+    join.error instanceof RequestFailed &&
+    join.error.code === 'AUTH_INVALID' &&
+    join.error.message.includes('setup token');
 
   const edit = (set: (v: string) => void) => (value: string) => {
     if (join.isError) join.reset();
@@ -504,17 +537,26 @@ function JoinCluster({ other }: Readonly<{ other: React.ReactNode }>) {
         }}
         style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
       >
+        <SetupTokenInput
+          value={setupToken}
+          error={setupRefused ? withRemedy(join.error) : undefined}
+          onChange={edit(setSetupToken)}
+        />
         <Input
           label="Join token"
           value={token}
           autoComplete="off"
           spellCheck={false}
-          autoFocus
-          error={join.isError ? withRemedy(join.error) : undefined}
+          error={join.isError && !setupRefused ? withRemedy(join.error) : undefined}
           onChange={(e) => edit(setToken)(e.target.value.trim())}
         />
         <Input label="Host name" value={name} autoComplete="off" onChange={(e) => edit(setName)(e.target.value)} />
-        <Button type="submit" variant="primary" fullWidth disabled={join.isPending || token === '' || name.trim() === ''}>
+        <Button
+          type="submit"
+          variant="primary"
+          fullWidth
+          disabled={join.isPending || setupToken === '' || token === '' || name.trim() === ''}
+        >
           {join.isPending ? 'Joining' : 'Join'}
         </Button>
         {other}
@@ -578,15 +620,10 @@ function Setup({
         }}
         style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}
       >
-        <Input
-          label="Setup token"
+        <SetupTokenInput
           value={token}
-          autoComplete="off"
-          spellCheck={false}
-          autoFocus
-          helper="Printed to Pando’s log at startup as setup_token. With Docker Compose, run docker compose logs pando."
           error={tokenRefused ? withRemedy(create.error) : undefined}
-          onChange={(e) => edit(setToken)(e.target.value.trim())}
+          onChange={edit(setToken)}
         />
         <Input
           label="Username"

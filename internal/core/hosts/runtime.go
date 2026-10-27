@@ -54,13 +54,13 @@ type RuntimeHost struct {
 
 // RuntimeHosts is the cluster's app hosts as docker-hosts entries, in the
 // order they joined: each reached through its agent at the address it joined
-// with, which must present the certificate it joined with. local, the
-// install's own machine, is the control entry already in the list and is
-// left out.
+// with, which must present the certificate it joined with. The install's own
+// machine (InstallHost, or named local) is the control entry already in the
+// list and is left out.
 func RuntimeHosts(hosts []state.Host, local string) ([]RuntimeHost, error) {
 	var out []RuntimeHost
 	for _, h := range hosts {
-		if h.Name == local || !slices.Contains(h.Roles, state.HostRoleApp) {
+		if InstallHost(h) || h.Name == local || !slices.Contains(h.Roles, state.HostRoleApp) {
 			continue
 		}
 		if !runtimeHostName.MatchString(h.Name) {
@@ -187,6 +187,24 @@ func (r *Runtime) defaultRuntime(ctx context.Context) (state.AdapterConfig, erro
 	return state.AdapterConfig{}, errs.New(errs.StateInvalid,
 		"This install has no default runtime adapter stored, so Pando cannot tell where a joined host would run apps.").
 		WithRemedy("Make a runtime adapter the default under System → Adapters, then join the host again.")
+}
+
+// NetworkPool is the default runtime's app network range (network_pool), the
+// range a joining app host's agent forwards into (R-416), or "" for the
+// runtime's own default, or when it cannot be read: the join that asks has
+// checked the runtime already (CheckJoin).
+func (r *Runtime) NetworkPool(ctx context.Context) string {
+	rt, err := r.defaultRuntime(ctx)
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		NetworkPool string `json:"network_pool"`
+	}
+	if json.Unmarshal(rt.Config, &cfg) != nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.NetworkPool)
 }
 
 // CheckJoin refuses an app-role join the runtime cannot take, before the

@@ -1,18 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
 	"github.com/trypando/pando/internal/adapter/runtime/multidocker"
+	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/hostagent"
 	"github.com/trypando/pando/internal/log"
 )
@@ -59,10 +60,7 @@ func hostAgentServeCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("the host agent did not start: %s is not an address range: %w", multidocker.EnvAgentPool, err)
 			}
-			listen := os.Getenv(multidocker.EnvAgentListen)
-			if listen == "" {
-				listen = ":" + strconv.Itoa(hostagent.DefaultPort)
-			}
+			listen := agentListen()
 
 			logger, err := log.New("info", false)
 			if err != nil {
@@ -73,12 +71,6 @@ func hostAgentServeCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			ln, err := net.Listen("tcp", listen)
-			if err != nil {
-				return fmt.Errorf("the host agent could not listen on %s: %w", listen, err)
-			}
-			logger.Info("host agent listening", zap.String("addr", listen), zap.String("pool", pool.String()),
-				zap.Bool("carries_runtime_calls", os.Getenv(multidocker.EnvAgentRuntimeSocket) != ""))
 			// On a joined host the agent is also the only way to its runtime
 			// (R-416): the socket is never published.
 			agent := &hostagent.Agent{
@@ -90,13 +82,25 @@ func hostAgentServeCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("the host agent did not start: %w", err)
 			}
-			if monitor != nil {
-				agent.Liveness = monitor
-				go monitor.Run(ctx)
-			}
-			return agent.Serve(ctx, ln)
+			return serveAgent(ctx, agent, monitor, listen)
 		},
 	}
+}
+
+// serveAgent listens on listen and serves agent until ctx is done, running
+// monitor beside it when the host takes part in liveness checks (R-421).
+func serveAgent(ctx context.Context, agent *hostagent.Agent, monitor *liveness.Monitor, listen string) error {
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		return fmt.Errorf("the host agent could not listen on %s: %w", listen, err)
+	}
+	agent.Logger.Info("host agent listening", zap.String("addr", listen), zap.String("pool", agent.Pool.String()),
+		zap.Bool("carries_runtime_calls", agent.RuntimeSocket != ""), zap.Bool("checks_hosts", monitor != nil))
+	if monitor != nil {
+		agent.Liveness = monitor
+		go monitor.Run(ctx)
+	}
+	return agent.Serve(ctx, ln)
 }
 
 // hostAgentAuthorityCmd prints a new certificate authority for the agents.

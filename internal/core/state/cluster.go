@@ -251,6 +251,40 @@ func (c *Cluster) AddHost(ctx context.Context, h Host) (Host, error) {
 	return addHost(ctx, c.db, h)
 }
 
+// firstHostLock serializes recording the install's first host, so replicas
+// starting together on one database record one host between them.
+const firstHostLock int64 = 0x70616e646f03
+
+// RecordFirstHost records h as the install's own first host (R-414) unless
+// one is recorded already: a host no join token brought in. It reports
+// whether it recorded h. Replicas of one install share the database and are
+// one host between them; a host that joined is never recorded here.
+func (c *Cluster) RecordFirstHost(ctx context.Context, h Host) (Host, bool, error) {
+	tx, err := c.db.Begin(ctx)
+	if err != nil {
+		return Host{}, false, errs.Wrap(errs.Internal, msgRecordHost, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, firstHostLock); err != nil {
+		return Host{}, false, errs.Wrap(errs.Internal, msgRecordHost, err)
+	}
+	var recorded bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM cluster_hosts WHERE joined_with IS NULL)`).Scan(&recorded); err != nil {
+		return Host{}, false, errs.Wrap(errs.Internal, msgRecordHost, err)
+	}
+	if recorded {
+		return Host{}, false, nil
+	}
+	h.JoinedWith = ""
+	if h, err = addHost(ctx, tx, h); err != nil {
+		return Host{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Host{}, false, errs.Wrap(errs.Internal, msgRecordHost, err)
+	}
+	return h, true, nil
+}
+
 func addHost(ctx context.Context, q querier, h Host) (Host, error) {
 	if h.ID == "" {
 		h.ID = id.New(id.Host)

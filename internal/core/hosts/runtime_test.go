@@ -84,7 +84,7 @@ func appHost(name, address string, roles ...string) state.Host {
 	if len(roles) == 0 {
 		roles = []string{state.HostRoleApp}
 	}
-	return state.Host{ID: "host_" + name, Name: name, Roles: roles, Address: address, CertSHA256: pin}
+	return state.Host{ID: "host_" + name, Name: name, Roles: roles, Address: address, CertSHA256: pin, JoinedWith: "jt_" + name}
 }
 
 func singleDocker(config string) state.AdapterConfig {

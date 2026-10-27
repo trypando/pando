@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -20,9 +19,9 @@ func TestTheClusterAddressNamesTheListener(t *testing.T) {
 	require.Equal(t, "https://pando.example.com:9443", clusterAddress(cfg))
 
 	cfg.Server = config.Server{ClusterAddr: "bogus", AdvertiseURL: "http://10.0.0.5:8080"}
-	require.Equal(t, "https://10.0.0.5:7443", clusterAddress(cfg), "the default port, and the advertise address's host")
+	require.Equal(t, "https://10.0.0.5:7444", clusterAddress(cfg), "the default port, and the advertise address's host")
 
-	cfg.Server = config.Server{ClusterAddr: ":7443"}
+	cfg.Server = config.Server{ClusterAddr: ":7444"}
 	name, _ := os.Hostname()
 	require.Equal(t, name, clusterHostname(cfg))
 }
@@ -72,10 +71,4 @@ func TestTheClusterListenerServesTLSFromTheAuthority(t *testing.T) {
 	cfg.Server.ClusterAddr = "256.0.0.1:1"
 	_, err = startClusterListener(cfg, authority, http.NotFoundHandler(), zap.NewNop())
 	require.ErrorContains(t, err, "server.cluster_addr")
-}
-
-func TestAnAppHostWaitsAsItsAgent(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	require.NoError(t, runAppHost(ctx, hosts.Joined{Name: "edge"}, zap.NewNop()))
 }

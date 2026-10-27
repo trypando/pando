@@ -111,12 +111,19 @@ func (u *Users) ReplaceSetupToken(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-// useSetupToken checks token against the installation's and removes it, in
-// ClaimFirst's transaction: a claim that fails after this rolls the removal
-// back with everything else, and one that succeeds leaves no token.
-func useSetupToken(ctx context.Context, tx pgx.Tx, token secret.Value) error {
+// CheckSetupToken reports whether token is the installation's setup token,
+// without using it up: POST /setup/join asks for it, as POST /setup does, so
+// that being first to a fresh Pando is not enough to join it to a cluster of
+// one's own (R-046, R-415). A join leaves this database behind when Pando
+// restarts into the cluster, so there is nothing for the token to keep shut
+// afterwards.
+func (u *Users) CheckSetupToken(ctx context.Context, token secret.Value) error {
+	return checkSetupToken(ctx, u.db, token)
+}
+
+func checkSetupToken(ctx context.Context, q querier, token secret.Value) error {
 	var want string
-	err := tx.QueryRow(ctx, `SELECT token_hash FROM setup_token WHERE id = 1`).Scan(&want)
+	err := q.QueryRow(ctx, `SELECT token_hash FROM setup_token WHERE id = 1`).Scan(&want)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrSetupTokenWrong
 	}
@@ -125,6 +132,16 @@ func useSetupToken(ctx context.Context, tx pgx.Tx, token secret.Value) error {
 	}
 	if subtle.ConstantTimeCompare([]byte(tokenHash(token.Reveal())), []byte(want)) != 1 {
 		return ErrSetupTokenWrong
+	}
+	return nil
+}
+
+// useSetupToken checks token against the installation's and removes it, in
+// ClaimFirst's transaction: a claim that fails after this rolls the removal
+// back with everything else, and one that succeeds leaves no token.
+func useSetupToken(ctx context.Context, tx pgx.Tx, token secret.Value) error {
+	if err := checkSetupToken(ctx, tx, token); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM setup_token`); err != nil {
 		return errs.Wrap(errs.Internal, "Could not set up the installation.", err)

@@ -156,7 +156,8 @@ func TestReadinessSaysWhatItCannotRead(t *testing.T) {
 	require.ErrorContains(t, hosts.NewReadiness(b, p, r).ReadyToJoin(ctx, nil), "registry unreadable")
 }
 
-// A cluster of one is this install, with no rows.
+// A cluster of one is this install: one row once it has recorded itself, and
+// one before it has.
 func TestR417_TheClusterCountIncludesThisHost(t *testing.T) {
 	ctx := context.Background()
 	store := &fakeStore{}
@@ -165,6 +166,11 @@ func TestR417_TheClusterCountIncludesThisHost(t *testing.T) {
 	require.Equal(t, 1, n)
 
 	store.hosts = []state.Host{{ID: "host_01A"}}
+	n, err = newService(t, store).Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	store.hosts = append(store.hosts, state.Host{ID: "host_01B", JoinedWith: "jt_1"})
 	n, err = newService(t, store).Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
