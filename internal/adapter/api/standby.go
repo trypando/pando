@@ -44,15 +44,28 @@ type StandbyRuntime interface {
 
 	// RemoveStandby removes the bundle's standby and every copy of its
 	// volumes, wherever they are. Removing one that does not exist is not an
-	// error.
+	// error. A host that does not answer is reported once every host that
+	// does has had its copy removed, so the caller tries again.
 	RemoveStandby(ctx context.Context, ref BundleRef) error
 
 	// RemoveStaleCopy removes what is left of the bundle on host, a host that
 	// was lost and has come back after the bundle's standby was promoted
-	// elsewhere: its workloads, its network and its volumes. Never restarted:
-	// R-148's restore does not apply to a copy that was failed over (R-419).
-	// Refused for the bundle's current home.
-	RemoveStaleCopy(ctx context.Context, ref BundleRef, host string) error
+	// elsewhere, or after the app was deleted: its workloads, its network
+	// and, unless opts keeps them, its volumes. Never restarted: R-148's
+	// restore does not apply to a copy that was failed over (R-419).
+	// Refused for the bundle's current home, unless the app is deleted.
+	RemoveStaleCopy(ctx context.Context, ref BundleRef, host string, opts StaleCopyOptions) error
+}
+
+// StaleCopyOptions is how a stale copy is removed.
+type StaleCopyOptions struct {
+	// AppDeleted says the app is deleted: no host is its home any more, so
+	// no copy is refused as the app itself.
+	AppDeleted bool
+	// KeepVolumes keeps the copy's volumes, as the delete chose for the
+	// app's storage (R-204). Only with AppDeleted: a live app's stale copy
+	// is out of date, and its volumes go with it.
+	KeepVolumes bool
 }
 
 // StandbyRequest asks for a bundle's standby.

@@ -16,7 +16,8 @@ import (
 // TestR421_TheAppsAHostHoldsAreReadFromTheirStandbys asserts migration
 // 000089: an app's home, and the stale copy a failover left, are recorded
 // with its standby, so the leader finds which apps a lost host held and
-// which copies a returned host still holds; a deleted app is in neither.
+// which copies a returned host still holds. A deleted app is not failed
+// over, and its stale copy is still removed (R-419).
 // The no-room code and remedy are kept beside the message (R-422).
 func TestR421_TheAppsAHostHoldsAreReadFromTheirStandbys(t *testing.T) {
 	t.Parallel()
@@ -48,8 +49,8 @@ func TestR421_TheAppsAHostHoldsAreReadFromTheirStandbys(t *testing.T) {
 
 	stale, err := standbys.LeftOn(ctx, left)
 	require.NoError(t, err)
-	require.Len(t, stale, 1)
-	require.Equal(t, b, stale[0].AppID)
+	require.Len(t, stale, 2)
+	require.ElementsMatch(t, []string{b, gone}, []string{stale[0].AppID, stale[1].AppID})
 
 	got, found, err := standbys.Get(ctx, b)
 	require.NoError(t, err)

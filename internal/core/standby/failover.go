@@ -73,6 +73,16 @@ func (f *Failover) PromoteStandby(ctx context.Context, appID string) error {
 // matter most take the room, and one that no longer fits is skipped for the
 // next (R-422, multidocker failoverOrder). An app has a standby when one is
 // placed on another host.
+//
+// The priority is read with the rows, from each app's pinned spec
+// (Standbys.HomedOn), not from a plan built per app, so a big host's
+// failover starts its first standby at once (R-421).
+//
+// The liveness pass starts apps in different queues side by side. Past the
+// reservation the standbys on one host share a queue, so they start in this
+// order, each into what the one before left; under it every standby fits,
+// and each app is a queue of its own. Host policy that cannot be read is
+// taken as past it.
 func (f *Failover) AppsHomedOn(ctx context.Context, hostID string) ([]liveness.HomedApp, error) {
 	h, err := f.Hosts.Host(ctx, hostID)
 	if err != nil {
@@ -82,35 +92,29 @@ func (f *Failover) AppsHomedOn(ctx context.Context, hostID string) ([]liveness.H
 	if err != nil {
 		return nil, err
 	}
-	type ranked struct {
-		app      liveness.HomedApp
-		priority int
-	}
-	list := make([]ranked, 0, len(rows))
-	for _, sb := range rows {
-		list = append(list, ranked{
-			app:      liveness.HomedApp{AppID: sb.AppID, HasStandby: sb.Host != "" && sb.Host != h.Name},
-			priority: f.priority(ctx, sb.AppID),
-		})
-	}
-	slices.SortStableFunc(list, func(a, b ranked) int {
-		return cmp.Or(cmp.Compare(b.priority, a.priority), cmp.Compare(a.app.AppID, b.app.AppID))
+	slices.SortStableFunc(rows, func(a, b state.Standby) int {
+		return cmp.Or(cmp.Compare(b.Priority, a.Priority), cmp.Compare(a.AppID, b.AppID))
 	})
-	out := make([]liveness.HomedApp, len(list))
-	for i, r := range list {
-		out[i] = r.app
+	byHost := f.queuesByHost(ctx)
+	out := make([]liveness.HomedApp, len(rows))
+	for i, sb := range rows {
+		queue := sb.AppID
+		if byHost {
+			queue = sb.Host
+		}
+		out[i] = liveness.HomedApp{AppID: sb.AppID, HasStandby: sb.Host != "" && sb.Host != h.Name, Queue: queue}
 	}
 	return out, nil
 }
 
-// priority is the app's availability.priority, 0 when its spec cannot be
-// read: the app is still failed over, after those that say more.
-func (f *Failover) priority(ctx context.Context, appID string) int {
-	_, sp, err := f.Standbys.Plans.Shape(ctx, appID)
-	if err != nil || sp == nil {
-		return 0
+// queuesByHost reports whether standbys on one host start one after another:
+// whenever host policy allows them past the reservation, or cannot be read.
+func (f *Failover) queuesByHost(ctx context.Context) bool {
+	if f.Standbys.Policy == nil {
+		return true
 	}
-	return sp.Availability.Priority
+	doc, err := f.Standbys.Policy.Load(ctx)
+	return err != nil || doc.AllowFailoverOversubscription
 }
 
 // AppsLeftOn is every app failed over away from the host, whose stale copy

@@ -47,6 +47,16 @@ type Standby struct {
 	// standby's host (R-153, R-419): while it is set the standby pass and the
 	// reconciler leave the app alone.
 	PromotingAt *time.Time `json:"promoting_at,omitempty"`
+
+	// Version is the row's version as read: every write to the row changes
+	// it, whoever makes it (migration 000094's trigger), and SaveIf writes
+	// only over the version it was given (R-153).
+	Version int64 `json:"-"`
+
+	// Priority is the app's availability.priority, read from its pinned
+	// spec by HomedOn alone, so a lost host's apps are ordered without
+	// building a plan for each (R-422). Not a column: never written.
+	Priority int `json:"-"`
 }
 
 // StandbyApp is an app the standby pass looks at: a live app with a pinned
@@ -66,15 +76,16 @@ type StandbyApp struct {
 }
 
 const standbyColumns = `s.app_id, s.runtime_ref, s.host, coalesce(s.spec_id, ''), s.volumes, s.copies, s.shipped_at,
-	s.unreplicated, s.last_error, s.stale_host, s.promoted_at, s.home_host, s.last_error_code, s.last_error_remedy, s.promoting_at`
+	s.unreplicated, s.last_error, s.stale_host, s.promoted_at, s.home_host, s.last_error_code, s.last_error_remedy, s.promoting_at,
+	s.version`
 
 func scanStandby(row pgx.Row, extra ...any) (Standby, error) {
 	var s Standby
-	dest := make([]any, 0, len(extra)+15)
+	dest := make([]any, 0, len(extra)+16)
 	dest = append(dest, extra...)
 	dest = append(dest, &s.AppID, &s.RuntimeRef, &s.Host, &s.SpecID, &s.Volumes, &s.Copies, &s.ShippedAt,
 		&s.Unreplicated, &s.LastError, &s.StaleHost, &s.PromotedAt, &s.Home, &s.LastErrorCode, &s.LastErrorRemedy,
-		&s.PromotingAt)
+		&s.PromotingAt, &s.Version)
 	err := row.Scan(dest...)
 	return s, err
 }
@@ -89,7 +100,7 @@ func (s *Standbys) Candidates(ctx context.Context) ([]StandbyApp, error) {
 		       coalesce(s.app_id, ''), coalesce(s.runtime_ref, ''), coalesce(s.host, ''), coalesce(s.spec_id, ''), coalesce(s.volumes, 0),
 		       coalesce(s.copies, 0), s.shipped_at, coalesce(s.unreplicated, '{}'), coalesce(s.last_error, ''),
 		       coalesce(s.stale_host, ''), s.promoted_at, coalesce(s.home_host, ''),
-		       coalesce(s.last_error_code, ''), coalesce(s.last_error_remedy, ''), s.promoting_at
+		       coalesce(s.last_error_code, ''), coalesce(s.last_error_remedy, ''), s.promoting_at, coalesce(s.version, 0)
 		FROM apps a
 		LEFT JOIN app_standbys s ON s.app_id = a.id
 		WHERE (a.deleted_at IS NULL AND a.pinned_spec_id IS NOT NULL) OR s.app_id IS NOT NULL
@@ -129,25 +140,28 @@ func (s *Standbys) Get(ctx context.Context, appID string) (Standby, bool, error)
 // Save writes one app's standby, whatever its row says now. The standby
 // pass and promotions write with SaveIf instead.
 func (s *Standbys) Save(ctx context.Context, sb Standby) error {
-	_, err := s.write(ctx, sb, `ON CONFLICT (app_id) DO UPDATE SET `+standbyUpdate)
+	_, err := s.write(ctx, `INSERT INTO app_standbys (app_id, `+standbyWritten+`)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		ON CONFLICT (app_id) DO UPDATE SET `+standbyUpdate, sb)
 	return err
 }
 
 // SaveIf writes one app's standby only if its row is still prev, as it was
-// read: the same standby host, home, promotion and promotion under way
-// (R-153). A nil prev writes only where the app has no row. It reports
-// whether it wrote. Two writers working from one reading — the standby pass
-// and a promotion — so never put back what the other changed: the one that
-// read first loses, and reads again on its next pass.
+// read: the same version, which every write to the row changes, whoever
+// makes it (R-153). Every column is covered, so two writers working from
+// one reading — the standby pass, a promotion, a returning host's stale
+// copy removed, a host removed from the cluster — never put back what the
+// other changed: the one that read first loses, and reads again on its next
+// pass. A nil prev writes only where the app has no row; a row forgotten
+// since prev was read is not written back. It reports whether it wrote.
 func (s *Standbys) SaveIf(ctx context.Context, sb Standby, prev *Standby) (bool, error) {
 	if prev == nil {
-		return s.write(ctx, sb, `ON CONFLICT (app_id) DO NOTHING`)
+		return s.write(ctx, `INSERT INTO app_standbys (app_id, `+standbyWritten+`)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			ON CONFLICT (app_id) DO NOTHING`, sb)
 	}
-	return s.write(ctx, sb, `ON CONFLICT (app_id) DO UPDATE SET `+standbyUpdate+`
-		WHERE app_standbys.host = $16 AND app_standbys.home_host = $17
-		  AND app_standbys.promoted_at IS NOT DISTINCT FROM $18::timestamptz
-		  AND app_standbys.promoting_at IS NOT DISTINCT FROM $19::timestamptz`,
-		prev.Host, prev.Home, prev.PromotedAt, prev.PromotingAt)
+	return s.write(ctx, `UPDATE app_standbys SET `+standbyUpdate+`
+		WHERE app_id = $1 AND version = $16`, sb, prev.Version)
 }
 
 // SaveIfLive is SaveIf over an existing row that also writes only while the
@@ -157,14 +171,17 @@ func (s *Standbys) SaveIfLive(ctx context.Context, sb Standby, prev *Standby) (b
 	if prev == nil {
 		return false, errs.New(errs.Internal, "A promotion's write-ahead needs the standby it was read from.")
 	}
-	return s.write(ctx, sb, `ON CONFLICT (app_id) DO UPDATE SET `+standbyUpdate+`
-		WHERE app_standbys.host = $16 AND app_standbys.home_host = $17
-		  AND app_standbys.promoted_at IS NOT DISTINCT FROM $18::timestamptz
-		  AND app_standbys.promoting_at IS NOT DISTINCT FROM $19::timestamptz
+	return s.write(ctx, `UPDATE app_standbys SET `+standbyUpdate+`
+		WHERE app_id = $1 AND version = $16
 		  AND EXISTS (SELECT 1 FROM apps a WHERE a.id = app_standbys.app_id
-		              AND a.deleted_at IS NULL AND a.state <> 'failed')`,
-		prev.Host, prev.Home, prev.PromotedAt, prev.PromotingAt)
+		              AND a.deleted_at IS NULL AND a.state <> 'failed')`, sb, prev.Version)
 }
+
+// standbyWritten is every column a write sets, after app_id, in the order
+// of write's arguments $2 to $15.
+const standbyWritten = `host, spec_id, volumes, copies, shipped_at, unreplicated,
+		                          last_error, stale_host, promoted_at, runtime_ref,
+		                          home_host, last_error_code, last_error_remedy, promoting_at`
 
 const standbyUpdate = `
 		    host = $2, spec_id = $3, volumes = $4, copies = $5, shipped_at = $6, unreplicated = $7,
@@ -172,7 +189,9 @@ const standbyUpdate = `
 		    home_host = $12, last_error_code = $13, last_error_remedy = $14, promoting_at = $15,
 		    updated_at = now()`
 
-func (s *Standbys) write(ctx context.Context, sb Standby, conflict string, expect ...any) (bool, error) {
+// write runs query with sb's columns as $1 to $15 and expect after them,
+// and reports whether it wrote a row.
+func (s *Standbys) write(ctx context.Context, query string, sb Standby, expect ...any) (bool, error) {
 	if sb.Unreplicated == nil {
 		sb.Unreplicated = []string{}
 	}
@@ -183,12 +202,7 @@ func (s *Standbys) write(ctx context.Context, sb Standby, conflict string, expec
 	args := append([]any{sb.AppID, sb.Host, specID, sb.Volumes, sb.Copies, sb.ShippedAt, sb.Unreplicated,
 		sb.LastError, sb.StaleHost, sb.PromotedAt, sb.RuntimeRef, sb.Home, sb.LastErrorCode, sb.LastErrorRemedy,
 		sb.PromotingAt}, expect...)
-	tag, err := s.db.Exec(ctx, `
-		INSERT INTO app_standbys (app_id, host, spec_id, volumes, copies, shipped_at, unreplicated,
-		                          last_error, stale_host, promoted_at, runtime_ref,
-		                          home_host, last_error_code, last_error_remedy, promoting_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-		`+conflict, args...)
+	tag, err := s.db.Exec(ctx, query, args...)
 	if err != nil {
 		return false, errs.Wrap(errs.Internal, "Could not record the app's standby.", err)
 	}
@@ -198,21 +212,27 @@ func (s *Standbys) write(ctx context.Context, sb Standby, conflict string, expec
 // HomedOn is the standby of every live app whose home is host, the runtime's
 // name for it, by app: the apps a lost host held (R-421). An app whose
 // promotion away from host began and did not end is one of them, so marking
-// the host lost again finishes it (R-153).
+// the host lost again finishes it (R-153). Each carries its pinned spec's
+// availability.priority (Standby.Priority), 0 when it says none, read here
+// so a lost host's apps are ordered without building their plans (R-422).
 func (s *Standbys) HomedOn(ctx context.Context, host string) ([]Standby, error) {
-	return s.listWhere(ctx, `(s.home_host = $1 AND s.promoting_at IS NULL) OR (s.promoting_at IS NOT NULL AND s.stale_host = $1)`,
+	return s.listWhere(ctx, `a.deleted_at IS NULL AND
+		((s.home_host = $1 AND s.promoting_at IS NULL) OR (s.promoting_at IS NOT NULL AND s.stale_host = $1))`,
 		host, "Could not list the apps on the host.")
 }
 
-// LeftOn is the standby of every live app failed over away from host, which
-// still holds the app's stale copy (R-419), by app.
+// LeftOn is the standby of every app failed over away from host, which
+// still holds the app's stale copy (R-419), by app. A deleted app is one of
+// them: its copy there is removed when the host returns too.
 func (s *Standbys) LeftOn(ctx context.Context, host string) ([]Standby, error) {
 	return s.listWhere(ctx, `s.stale_host = $1`, host, "Could not list the apps failed over from the host.")
 }
 
 func (s *Standbys) listWhere(ctx context.Context, where, host, message string) ([]Standby, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+standbyColumns+` FROM app_standbys s
-		JOIN apps a ON a.id = s.app_id AND a.deleted_at IS NULL
+	rows, err := s.db.Query(ctx, `SELECT coalesce((r.body->'availability'->>'priority')::integer, 0), `+standbyColumns+`
+		FROM app_standbys s
+		JOIN apps a ON a.id = s.app_id
+		LEFT JOIN spec_revisions r ON r.id = a.pinned_spec_id
 		WHERE `+where+` ORDER BY s.app_id`, host)
 	if err != nil {
 		return nil, errs.Wrap(errs.Internal, message, err)
@@ -220,7 +240,9 @@ func (s *Standbys) listWhere(ctx context.Context, where, host, message string) (
 	defer rows.Close()
 	var out []Standby
 	for rows.Next() {
-		sb, err := scanStandby(rows)
+		var priority int
+		sb, err := scanStandby(rows, &priority)
+		sb.Priority = priority
 		if err != nil {
 			return nil, errs.Wrap(errs.Internal, message, err)
 		}
@@ -284,6 +306,29 @@ func (s *Standbys) HostHeld(ctx context.Context, host string) (Hold, error) {
 		return Hold{}, errs.Wrap(errs.Internal, "Could not read whether the app's host is lost.", err)
 	}
 	return h, nil
+}
+
+// AppFate is whether an app is deleted, and whether its delete discarded its
+// storage (R-204).
+type AppFate struct {
+	Deleted        bool
+	DiscardStorage bool
+}
+
+// Fate reads whether the app is deleted, and what its delete said of its
+// storage: what a copy left on a returning host is removed with (R-204,
+// R-419). An app with no row is neither.
+func (s *Standbys) Fate(ctx context.Context, appID string) (AppFate, error) {
+	var f AppFate
+	err := s.db.QueryRow(ctx, `SELECT deleted_at IS NOT NULL, discard_storage FROM apps WHERE id = $1`, appID).
+		Scan(&f.Deleted, &f.DiscardStorage)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AppFate{}, nil
+	}
+	if err != nil {
+		return AppFate{}, errs.Wrap(errs.Internal, "Could not read whether the app is deleted.", err)
+	}
+	return f, nil
 }
 
 // AppState is a live app's state: false when there is no such app.

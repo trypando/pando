@@ -43,10 +43,13 @@ type standbyFake struct {
 	stopped   []string // ApplyStopped bundles
 	standbys  map[string]api.BundlePlan
 	destroyed []string
-	reads     [][]string // the paths each ReadVolumeFiles sent
-	restored  map[string]int
-	homes     map[string]time.Time
-	failStage error
+	// keptVolumes is each Destroy's KeepVolumes; onDestroy runs first.
+	keptVolumes []bool
+	onDestroy   func(bundle string)
+	reads       [][]string // the paths each ReadVolumeFiles sent
+	restored    map[string]int
+	homes       map[string]time.Time
+	failStage   error
 	// failRestore refuses every RestoreStandbyCopy; restores counts them.
 	failRestore error
 	restores    int
@@ -120,10 +123,14 @@ func (f *standbyFake) StandbyLoads(context.Context) ([]docker.StandbyLoad, error
 	return out, nil
 }
 
-func (f *standbyFake) Destroy(_ context.Context, ref api.BundleRef, _ api.DestroyOptions) error {
+func (f *standbyFake) Destroy(_ context.Context, ref api.BundleRef, opts api.DestroyOptions) error {
+	if f.onDestroy != nil {
+		f.onDestroy(ref.BundleID)
+	}
 	f.sm.Lock()
 	delete(f.standbys, ref.BundleID)
 	f.destroyed = append(f.destroyed, ref.BundleID)
+	f.keptVolumes = append(f.keptVolumes, opts.KeepVolumes)
 	f.sm.Unlock()
 	f.mu.Lock()
 	delete(f.bundles, ref.BundleID)
@@ -501,12 +508,34 @@ func TestR419_OneCopyRunsAtATimeAfterPromote(t *testing.T) {
 	require.Equal(t, "app-2", h.cfg.Name)
 
 	// Its home is not stale; the lost host's copy is, and is removed.
-	err = a.RemoveStaleCopy(ctx, api.BundleRef{BundleID: "app_a"}, "app-2")
+	err = a.RemoveStaleCopy(ctx, api.BundleRef{BundleID: "app_a"}, "app-2", api.StaleCopyOptions{})
 	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
-	require.NoError(t, a.RemoveStaleCopy(ctx, api.BundleRef{BundleID: "app_a"}, "app-1"))
+	require.NoError(t, a.RemoveStaleCopy(ctx, api.BundleRef{BundleID: "app_a"}, "app-1", api.StaleCopyOptions{KeepVolumes: true}))
+	require.Equal(t, []bool{false}, hosts["app-1"].keptVolumes, "a live app's stale copy keeps nothing")
 	require.Contains(t, hosts["app-1"].destroyed, "app_a")
 	require.Contains(t, hosts["app-1"].detached, "app_a")
 	require.Len(t, hosts["app-1"].applied, applied, "the lost host's copy is never started again")
+}
+
+// TestR204_ADeletedAppsStaleCopyKeepsItsVolumesAsTheDeleteSaid asserts that
+// a deleted app's copy on a returning host is removed even where placement
+// still has the app, which has no home once deleted, and keeps its volumes
+// only when the delete kept the app's storage (R-204, R-419).
+func TestR204_ADeletedAppsStaleCopyKeepsItsVolumesAsTheDeleteSaid(t *testing.T) {
+	ctx := context.Background()
+	hosts, a := threeHosts()
+	_, err := a.Apply(ctx, volumePlan("app_a"))
+	require.NoError(t, err)
+	h, err := a.locate(ctx, "app_a")
+	require.NoError(t, err)
+	at := h.cfg.Name
+
+	err = a.RemoveStaleCopy(ctx, api.BundleRef{BundleID: "app_a"}, at, api.StaleCopyOptions{KeepVolumes: true})
+	require.Equal(t, errs.ValidInvalid, errs.CodeOf(err), "a live app's home is not stale")
+	require.NoError(t, a.RemoveStaleCopy(ctx, api.BundleRef{BundleID: "app_a"}, at,
+		api.StaleCopyOptions{AppDeleted: true, KeepVolumes: true}))
+	require.Equal(t, []bool{true}, hosts[at].keptVolumes)
+	require.Contains(t, hosts[at].destroyed, "app_a")
 }
 
 func TestPromoteWithoutACopyOfTheStorageIsRefused(t *testing.T) {

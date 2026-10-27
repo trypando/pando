@@ -12,17 +12,30 @@ import (
 	"github.com/trypando/pando/internal/core/clock"
 	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/core/notice"
+	"github.com/trypando/pando/internal/core/policy"
+	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 )
 
 // homesOf reads the fake store's rows as state.Standbys does.
-type homesOf struct{ *fakeStore }
+type homesOf struct {
+	*fakeStore
+	pinned map[string]*spec.AppSpec
+}
 
+// HomedOn reads each app's priority from its pinned spec, as the query
+// does, never through Plans.
 func (h homesOf) HomedOn(_ context.Context, host string) ([]state.Standby, error) {
-	return h.where(func(sb state.Standby) bool {
+	out, err := h.where(func(sb state.Standby) bool {
 		return (sb.Home == host && sb.PromotingAt == nil) || (sb.PromotingAt != nil && sb.StaleHost == host)
 	})
+	for i := range out {
+		if s := h.pinned[out[i].AppID]; s != nil {
+			out[i].Priority = s.Availability.Priority
+		}
+	}
+	return out, err
 }
 
 func (h homesOf) LeftOn(_ context.Context, host string) ([]state.Standby, error) {
@@ -107,7 +120,7 @@ func newFailoverRig(t *testing.T) *failoverRig {
 	t.Helper()
 	h := newHarness(appSpec("", 1))
 	c := newCluster("app-1", "app-2", "app-3")
-	f := &Failover{Standbys: h.svc, Homes: homesOf{h.store}, Hosts: c}
+	f := &Failover{Standbys: h.svc, Homes: homesOf{h.store, h.plans.specs}, Hosts: c}
 	return &failoverRig{harness: h, cluster: c, loss: &liveness.Service{
 		Store: c, Apps: appsOf{h.store}, Audit: h.auditor, Homes: f, Failover: f, Returns: f,
 	}}
@@ -121,6 +134,28 @@ func (r *failoverRig) addApp(id string, priority int, st string) {
 	r.plans.specs[id] = s
 	r.store.apps = append(r.store.apps, state.StandbyApp{AppID: id, State: st, DesiredState: "running", PinnedSpecID: "spec_1"})
 	r.store.states[id] = st
+}
+
+// watch is the leader's liveness round over the rig's three hosts, each
+// answering while answering says so.
+func (r *failoverRig) watch(answering map[string]bool) *liveness.Watch {
+	return &liveness.Watch{
+		Hosts: func(context.Context) ([]liveness.Peer, error) {
+			var out []liveness.Peer
+			for _, n := range []string{"app-1", "app-2", "app-3"} {
+				h := r.cluster.hosts["host_"+n]
+				out = append(out, liveness.Peer{ID: h.ID, Name: h.Name, Address: h.Address})
+			}
+			return out, nil
+		},
+		Probe: func(_ context.Context, p liveness.Peer) ([]byte, error) {
+			if !answering[p.ID] {
+				return nil, errors.New("no route to host")
+			}
+			return json.Marshal(liveness.View{Host: p.ID})
+		},
+		Service: r.loss, Clock: clock.NewFake(r.clock.Now()),
+	}
 }
 
 // TestR422_AnAppWithNoRoomGetsTheNoticeAndStillDeploys asserts that an app
@@ -213,6 +248,8 @@ func TestR421_ALostHostsAppsArePromotedThroughStandby(t *testing.T) {
 	r.store.rows["app_elsewhere"] = state.Standby{AppID: "app_elsewhere", Home: "app-3", Host: "app-2", RuntimeRef: "rt_hosts"}
 	r.rt.promoteErr = map[string]error{"app_d": errs.New(errs.CapacityWouldOversubscribe, "This app's standby was not started on app-2.")}
 	r.rt.promoteOK = api.PromoteResult{Host: "app-2", Healthy: true}
+	// Past the reservation, the standbys on app-2 start one after another.
+	r.svc.Policy = staticPolicy{policy.Document{AllowFailoverOversubscription: true}}
 
 	out, err := r.loss.MarkLost(ctx, "host_app-1", liveness.Actor{ID: "usr_admin"})
 	require.NoError(t, err)
@@ -240,7 +277,7 @@ func TestR421_ALostHostsAppsArePromotedThroughStandby(t *testing.T) {
 	require.Contains(t, r.auditor.actions, "app.standby.promote")
 
 	// The lost host's apps are listed through the cluster's own host IDs.
-	_, err = (&Failover{Standbys: r.svc, Homes: homesOf{r.store}, Hosts: r.cluster}).AppsHomedOn(ctx, "host_none")
+	_, err = (&Failover{Standbys: r.svc, Homes: homesOf{r.store, r.plans.specs}, Hosts: r.cluster}).AppsHomedOn(ctx, "host_none")
 	require.Equal(t, errs.NotFound, errs.CodeOf(err))
 }
 
@@ -259,23 +296,7 @@ func TestR419_AReturningHostsCopyIsRemovedNeverRestartedAndItsLostMarkCleared(t 
 	require.True(t, r.cluster.lost["host_app-1"])
 
 	answering := map[string]bool{"host_app-2": true, "host_app-3": true}
-	w := &liveness.Watch{
-		Hosts: func(context.Context) ([]liveness.Peer, error) {
-			var out []liveness.Peer
-			for _, n := range []string{"app-1", "app-2", "app-3"} {
-				h := r.cluster.hosts["host_"+n]
-				out = append(out, liveness.Peer{ID: h.ID, Name: h.Name, Address: h.Address})
-			}
-			return out, nil
-		},
-		Probe: func(_ context.Context, p liveness.Peer) ([]byte, error) {
-			if !answering[p.ID] {
-				return nil, errors.New("no route to host")
-			}
-			return json.Marshal(liveness.View{Host: p.ID})
-		},
-		Service: r.loss, Clock: clock.NewFake(r.clock.Now()),
-	}
+	w := r.watch(answering)
 
 	// Still away: nothing is removed.
 	w.Round(ctx)
@@ -314,13 +335,13 @@ func TestR419_AReturningHostsCopyIsRemovedNeverRestartedAndItsLostMarkCleared(t 
 func TestFailoverReadsFailClosed(t *testing.T) {
 	ctx := context.Background()
 	r := newFailoverRig(t)
-	f := &Failover{Standbys: r.svc, Homes: homesOf{r.store}, Hosts: r.cluster}
+	f := &Failover{Standbys: r.svc, Homes: homesOf{r.store, r.plans.specs}, Hosts: r.cluster}
 	r.store.rows["app_unread"] = state.Standby{AppID: "app_unread", Home: "app-1", Host: "app-2"}
 	r.store.rows["app_a"] = state.Standby{AppID: "app_a", Home: "app-1", Host: "app-2"}
 	r.plans.specs["app_a"].Availability.Priority = 1
 	homed, err := f.AppsHomedOn(ctx, "host_app-1")
 	require.NoError(t, err)
-	require.Equal(t, []liveness.HomedApp{{AppID: "app_a", HasStandby: true}, {AppID: "app_unread", HasStandby: true}}, homed)
+	require.Equal(t, []liveness.HomedApp{{AppID: "app_a", HasStandby: true, Queue: "app_a"}, {AppID: "app_unread", HasStandby: true, Queue: "app_unread"}}, homed)
 
 	_, err = f.AppsLeftOn(ctx, "host_none")
 	require.Equal(t, errs.NotFound, errs.CodeOf(err))
@@ -351,4 +372,51 @@ func TestR421_TheInstallsOwnMachinesAppsAreFailedOverWhenItIsLost(t *testing.T) 
 	sb := r.store.rows["app_a"]
 	require.Equal(t, "app-2", sb.Home)
 	require.Equal(t, "3f9c2a1b7d4e", sb.StaleHost)
+}
+
+// TestR421_FailoverOrdersAppsWithoutBuildingTheirPlans asserts that the
+// apps a lost host held are ordered by the priority their pinned specs say,
+// highest first, then by app, without building any app's plan: a big host's
+// failover does not wait on one plan per app before its first standby
+// starts (R-421, R-422).
+func TestR421_FailoverOrdersAppsWithoutBuildingTheirPlans(t *testing.T) {
+	ctx := context.Background()
+	r := newFailoverRig(t)
+	r.store.apps = nil
+	r.addApp("app_a", 0, state.StateRunning)
+	r.addApp("app_b", 5, state.StateRunning)
+	r.addApp("app_c", 5, state.StateRunning)
+	r.addApp("app_d", 9, state.StateRunning)
+	r.svc.Once(ctx)
+	shaped := r.plans.shaped
+
+	f := &Failover{Standbys: r.svc, Homes: homesOf{r.store, r.plans.specs}, Hosts: r.cluster}
+	homed, err := f.AppsHomedOn(ctx, "host_app-1")
+	require.NoError(t, err)
+	var order []string
+	for _, a := range homed {
+		order = append(order, a.AppID)
+	}
+	require.Equal(t, []string{"app_d", "app_b", "app_c", "app_a"}, order)
+	require.Equal(t, shaped, r.plans.shaped, "no app's plan is built to order them")
+	for _, a := range homed {
+		require.Equal(t, a.AppID, a.Queue, "under the reservation every standby fits, so each starts on its own")
+	}
+
+	// Past it, the standbys on one host start in that order, each into what
+	// the one before left (R-422); so too when host policy cannot be read.
+	for _, p := range []PolicyLoader{staticPolicy{policy.Document{AllowFailoverOversubscription: true}}, brokenPolicy{}, nil} {
+		r.svc.Policy = p
+		homed, err = f.AppsHomedOn(ctx, "host_app-1")
+		require.NoError(t, err)
+		for _, a := range homed {
+			require.Equal(t, "app-2", a.Queue)
+		}
+	}
+}
+
+type brokenPolicy struct{}
+
+func (brokenPolicy) Load(context.Context) (policy.Document, error) {
+	return policy.Document{}, errors.New("database away")
 }

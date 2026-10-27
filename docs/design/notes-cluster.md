@@ -547,7 +547,9 @@ host is watched").
 - **Fencing calls standby (R-421).** `standby.Failover` implements `liveness.Homes`, `Failover` and
   `Returns` over `*standby.Service`, `state.Standbys` and `state.Cluster`; `cmd/pando` sets all three on
   the host-loss service. `AppsHomedOn` lists a host's apps highest `availability.priority` first, then
-  by app ID, the order `failoverOrder` uses, and the liveness pass promotes them one after another.
+  by app ID, the order `failoverOrder` uses, with the priority read from each app's pinned spec in the
+  same query (`state.Standbys.HomedOn`), and the liveness pass promotes them in queues side by side
+  (third review fixes below).
   `multidocker.PromoteStandby` refuses (`CAPACITY_WOULD_OVERSUBSCRIBE`) a standby that does not fit
   its host's free CPU and memory now, counting what the bundle already runs there, before touching
   anything, so past the reservation the next app in order still starts. A failed app is skipped
@@ -555,7 +557,7 @@ host is watched").
 - **A returning host (R-419).** Each round the leader reads which hosts are lost (at any cluster size,
   so a host marked lost by hand in a cluster of two comes back too). A lost host that answered the
   probe, and that the majority no longer takes for lost, is back: `standby.Service.RemoveStale` runs
-  for each app whose `stale_host` it is, then `Cluster.ClearHostLost`, then `cluster.host.returned` is
+  for each app whose `stale_host` it is, deleted apps included (third review fixes below), then `Cluster.ClearHostLost`, then `cluster.host.returned` is
   audited with the apps whose copies went. A failure keeps the mark and is retried next round. Nothing
   is started on it; an app that was not failed over is still homed there and the reconciler restarts
   it (R-148). Without `Returns` wired a lost host stays marked.
@@ -708,7 +710,7 @@ Fixes from the review of #347, for what the standby, the reconciler and the runt
   standby pass does nothing. Deploys from a fenced control host are not stopped by
   this; only what Pando does by itself is.
 - **One writer per app's standby (R-153).** Every write is compare-and-set on the row as it was read
-  (`state.Standbys.SaveIf`: standby host, home, `promoted_at`, `promoting_at`), and one process
+  (`state.Standbys.SaveIf`, on the row's version since the third review fixes), and one process
   serializes the pass and promotions per app (`standby.Service` locks; the pass only tries). The pass
   skips an app whose home is lost (`StandbyApp.HomeLost`) or whose promotion is under way, so a spec
   change never moves the standby a promotion restores from, and a ship never drops a copy it may fall
@@ -1086,3 +1088,41 @@ The owner's second review of #347 found four races and one console gap. What cha
   the uses shown. A pending host cannot renew.
 - **The setup join form no longer needs a host name (R-261).** Join is enabled without one, as the API takes
   the machine's hostname when the name is empty; the field's placeholder says so.
+
+### As built: third review fixes
+
+The owner's third review of #347 found three faults in the standby. What changed:
+
+- **A deleted app on a lost host is cleaned up (R-148, R-204, R-419).** The standby pass sent a
+  deleted app whose home was lost to the failover's branch, so its standby, and the copy a failover
+  had left on another lost host, stayed for good, holding room. A deleted app is now looked at before
+  that branch (`standby.Service.clearDeleted`): a promotion under way is left until it ends or is
+  taken for cut short; the standby is removed from every host that answers (`RemoveStandby` reports a
+  host that does not after removing the rest) and tried again each pass until every host has; a row
+  naming a `stale_host` is kept, with no standby, until that host returns. `state.Standbys.LeftOn` now
+  lists deleted apps, and `RemoveStale` removes a deleted app's copy with
+  `api.StaleCopyOptions{AppDeleted, KeepVolumes}`: no host is a deleted app's home, so none is refused
+  as one, and the copy keeps its volumes unless the delete discarded the app's storage
+  (`apps.discard_storage`, read by `state.Standbys.Fate`); then the row is forgotten. Nothing is
+  started on the returning host. A deleted app's own copy on its home, lost or not, stays the
+  reconciler's teardown (`GC.tearDownDeletedBundles`), which retries until the host answers.
+- **A standby write covers every column (R-153).** `SaveIf` compared the standby host, home and the
+  two promotion times, so a write from a reading taken before a returning host's `stale_host` was
+  cleared put it back, and the copy was removed twice. `app_standbys.version` (migration 000094) is
+  changed by a `BEFORE UPDATE` trigger on every write, whoever makes it (the pass, a promotion,
+  `RemoveStale`, `forgetStandbyHost` on a host's removal), and `SaveIf` and `SaveIfLive` are an
+  `UPDATE … WHERE version = $prev`. A row forgotten since it was read is no longer written back. A
+  promotion's write-ahead carries the version it wrote (one on) to the write that ends it.
+- **A big host's failover starts at once (R-421, R-422).** `AppsHomedOn` built a plan for every app on
+  the lost host, one at a time, to read its priority before any standby started. The priority is now
+  read from the pinned spec in `HomedOn`'s query. `liveness.HomedApp.Queue` says which apps start one
+  after another: the liveness pass runs queues side by side, up to `Service.FailoverConcurrency`
+  [P: 8, `DefaultFailoverConcurrency`], and the apps of one queue in order, reporting what started in
+  the list's order. Under the reservation every standby fits, so each app is its own queue; with
+  `allow_failover_oversubscription` (or host policy that cannot be read) the standbys on one host
+  share a queue, so `failoverOrder`'s semantics hold: highest priority first, each into what the one
+  before left, one that does not fit skipped for the next. Started side by side on one host,
+  `docker-hosts` `PromoteStandby` still checks that host's room one promotion at a time, from the
+  check through the first start (`standbyState.holdRoom`; the health wait is outside it), so two
+  never both take room only one fits, as when the policy is turned off over standbys placed past
+  the reservation.
