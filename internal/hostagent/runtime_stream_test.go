@@ -98,3 +98,9 @@ func TestR420_AStreamThroughAnAgentClosesItsInputWithoutLosingItsOutput(t *testi
 		}
 	}
 }
+
+func TestLogSafeDropsLineBreaks(t *testing.T) {
+	if got := logSafe("/v1.47/containers/x/start\nforged line\r"); got != "/v1.47/containers/x/startforged line" {
+		t.Fatalf("logSafe kept a line break: %q", got)
+	}
+}

@@ -103,7 +103,7 @@ func (a *Agent) fenceable(first net.Conn) (net.Conn, error) {
 	srv := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodPost && startCall.MatchString(r.URL.Path) && a.Fence.Fencing() {
-				a.logger().Info("refused a runtime call while this host is fencing", zap.String("path", r.URL.Path))
+				a.logger().Info("refused a runtime call while this host is fencing", zap.String("path", logSafe(r.URL.Path)))
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusConflict)
 				_, _ = w.Write([]byte(fencedMessage))
@@ -174,4 +174,10 @@ func (a *Agent) dialRuntime(ctx context.Context) (net.Conn, error) {
 // host's (IsControl). A Docker client dials one per connection it keeps.
 func DialRuntime(ctx context.Context, addr string, tlsConfig *tls.Config) (net.Conn, error) {
 	return dialAgent(ctx, addr, tlsConfig, protocolVersion+" "+runtimeTarget)
+}
+
+// logSafe is s with line breaks removed, for a log line: a runtime call's
+// path comes from the caller.
+func logSafe(s string) string {
+	return strings.NewReplacer("\n", "", "\r", "").Replace(s)
 }
