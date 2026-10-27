@@ -37,7 +37,8 @@ const couldNotStoreUpload = "Pando could not store the upload."
 // previous archive whole, never part of each. The app_uploads row is written
 // first, which locks it, so two uploads to one app take turns. The
 // transaction holds a connection until r ends, so r is a file already on disk
-// rather than a request body a client may send slowly (R-417).
+// rather than a request body a client may send slowly (R-417). An app that
+// is deleted is errs.NotFound (lockLiveApp).
 func (u *Uploads) PutUpload(ctx context.Context, appID string, r io.Reader) error {
 	_, err := u.put(ctx, appID, r, `
 		INSERT INTO app_uploads (app_id, sha256, size) VALUES ($1, repeat('0', 64), 0)
@@ -48,7 +49,8 @@ func (u *Uploads) PutUpload(ctx context.Context, appID string, r io.Reader) erro
 // AddUpload stores r as appID's uploaded archive only if the app has none,
 // and reports whether it did. It is how an archive file from before R-417 is
 // moved in: an upload stored meanwhile is newer, and is kept rather than
-// overwritten by the file. An app that no longer exists is errs.NotFound.
+// overwritten by the file. An app that is deleted, or was never created, is
+// errs.NotFound (lockLiveApp).
 func (u *Uploads) AddUpload(ctx context.Context, appID string, r io.Reader) (bool, error) {
 	return u.put(ctx, appID, r, `
 		INSERT INTO app_uploads (app_id, sha256, size) VALUES ($1, repeat('0', 64), 0)
@@ -68,9 +70,12 @@ func (u *Uploads) put(ctx context.Context, appID string, r io.Reader, claim stri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := lockLiveApp(ctx, tx, appID); err != nil {
+		return false, err
+	}
 	tag, err := tx.Exec(ctx, claim, appID)
 	if isForeignKeyViolation(err) {
-		return false, errs.Newf(errs.NotFound, "The app %s no longer exists, so its upload was not stored.", appID)
+		return false, errAppGone(appID)
 	}
 	if err != nil {
 		return false, errs.Wrap(errs.Internal, couldNotStoreUpload, err)
@@ -96,6 +101,27 @@ func (u *Uploads) put(ctx context.Context, appID string, r io.Reader, claim stri
 		return false, errs.Wrap(errs.Internal, couldNotStoreUpload, err)
 	}
 	return true, nil
+}
+
+func errAppGone(appID string) error {
+	return errs.Newf(errs.NotFound, "The app %s no longer exists, so its upload was not stored.", appID)
+}
+
+// lockLiveApp refuses an app that is deleted or was never created, and holds
+// its row until the transaction ends, so the app cannot be deleted while its
+// upload is stored (R-417, R-224). A deleted app's row is kept, so the
+// foreign key alone stores an upload for it that nothing removes, and every
+// backup carries; deleting the app removes its upload (migration 000095).
+func lockLiveApp(ctx context.Context, tx pgx.Tx, appID string) error {
+	var live bool
+	err := tx.QueryRow(ctx, `SELECT deleted_at IS NULL FROM apps WHERE id = $1 FOR SHARE`, appID).Scan(&live)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !live) {
+		return errAppGone(appID)
+	}
+	if err != nil {
+		return errs.Wrap(errs.Internal, couldNotStoreUpload, err)
+	}
+	return nil
 }
 
 // writeChunks copies r into the app's chunks and returns how many bytes it

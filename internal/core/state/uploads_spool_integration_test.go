@@ -15,6 +15,7 @@ import (
 
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/id"
 )
 
@@ -113,4 +114,63 @@ func TestR417_AnOldUploadFileForADeletedAppIsDiscarded(t *testing.T) {
 	moved, err = host.MigrateUploads(ctx)
 	require.NoError(t, err)
 	require.Zero(t, moved)
+}
+
+// TestR417_ADeletedAppsOldUploadIsDiscardedNotStored asserts that an archive
+// file from before R-417 whose app was deleted is removed, not moved into the
+// database. Apps are kept as rows once deleted, so the foreign key never
+// refused one: up to 256 MiB a deleted app was stored, never removed, and
+// carried in every backup (R-224, R-212). Nothing is stored for a deleted app
+// another way either.
+func TestR417_ADeletedAppsOldUploadIsDiscardedNotStored(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	appID := seedApp(t, db, seedUser(t, db, "ada").ID)
+	uploads := state.NewUploads(db)
+
+	dir := t.TempDir()
+	require.NoError(t, source.Sources{UploadDir: dir}.StoreUpload(ctx, appID, bytes.NewReader(uploadArchive(t, "a.txt", []byte("old")))))
+	require.NoError(t, state.NewApps(db).Archive(ctx, appID))
+
+	moved, err := source.Sources{Uploads: uploads, UploadDir: dir}.MigrateUploads(ctx)
+	require.NoError(t, err)
+	require.Zero(t, moved)
+	require.NoFileExists(t, filepath.Join(dir, appID+".tar.gz"), "the file is removed")
+	has, err := uploads.HasUpload(ctx, appID)
+	require.NoError(t, err)
+	require.False(t, has, "nothing is stored for a deleted app")
+
+	added, err := uploads.AddUpload(ctx, appID, bytes.NewReader(uploadArchive(t, "a.txt", []byte("x"))))
+	require.Equal(t, errs.NotFound, errs.CodeOf(err))
+	require.False(t, added)
+	require.Equal(t, errs.NotFound, errs.CodeOf(uploads.PutUpload(ctx, appID, bytes.NewReader(uploadArchive(t, "a.txt", []byte("x"))))))
+}
+
+// TestR417_DeletingAnAppRemovesItsUpload asserts that an app's stored upload
+// goes with the app, however the app is deleted (R-224): the row is kept, so
+// no foreign key removes it, and the GC's teardown, which removes it too, is
+// never run again for an app torn down already.
+func TestR417_DeletingAnAppRemovesItsUpload(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	owner := seedUser(t, db, "ada").ID
+	appID, kept := seedApp(t, db, owner), seedApp(t, db, owner)
+	uploads := state.NewUploads(db)
+	for _, app := range []string{appID, kept} {
+		require.NoError(t, uploads.PutUpload(ctx, app, bytes.NewReader(uploadArchive(t, "a.txt", []byte("x")))))
+	}
+
+	require.NoError(t, state.NewApps(db).Archive(ctx, appID))
+
+	has, err := uploads.HasUpload(ctx, appID)
+	require.NoError(t, err)
+	require.False(t, has, "the deleted app's upload is removed")
+	var chunks int
+	require.NoError(t, db.QueryRow(ctx, `SELECT count(*) FROM app_upload_chunks WHERE app_id = $1`, appID).Scan(&chunks))
+	require.Zero(t, chunks)
+	has, err = uploads.HasUpload(ctx, kept)
+	require.NoError(t, err)
+	require.True(t, has, "another app's is kept")
 }

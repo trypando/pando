@@ -238,7 +238,9 @@ func (s Sources) removeUploadFiles(appID string) error {
 // file when it writes the row, so a row beside a file is the newer, whether
 // it was there before or written by an upload while this ran, and the file
 // is removed without being stored. A file whose app was deleted is removed
-// too: it has no deploy to serve (R-206), and kept it would be tried again at
+// too, and not stored (AddUpload refuses a deleted app): it has no deploy to
+// serve (R-206), stored it would be kept and carried in every backup with
+// nothing to remove it (R-224), and kept as a file it would be tried again at
 // every start.
 func (s Sources) migrateUpload(ctx context.Context, appID string) (bool, error) {
 	if s.UploadDir == "" {
