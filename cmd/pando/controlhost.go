@@ -23,16 +23,6 @@ import (
 	"github.com/trypando/pando/internal/keyfile"
 )
 
-// A control host's half of R-421. Every host in cluster_hosts, whatever its
-// roles, is watched and watches: a control host runs the same
-// liveness.Monitor an app host's agent runs, in the Pando process, and
-// answers the other hosts' pings on its cluster listener
-// (server.cluster_addr), on connections that ask for
-// hostagent.PingProtocol. Its row records that address and the certificate
-// it answers with (hosts.ControlPeers), so the other hosts probe it there.
-// When it is the one cut off it stops its own app containers, and never
-// Pando or the edge (hostagent.DockerFencer).
-
 // controlSetupRetry is how long a control host waits before trying again to
 // take part in the liveness checks, when it could not.
 const controlSetupRetry = 5 * time.Second
@@ -115,7 +105,15 @@ func (c *controlPings) attach(srv *http.Server) {
 	srv.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){hostagent.PingProtocol: c.serve}
 }
 
-// controlLiveness is what a control host's Monitor is made from.
+// controlLiveness is what a control host's Monitor is made from: a control
+// host's half of R-421. Every host in cluster_hosts, whatever its roles, is
+// watched and watches: a control host runs the same liveness.Monitor an app
+// host's agent runs, in the Pando process, and answers the other hosts' pings
+// on its cluster listener (server.cluster_addr), on connections that ask for
+// hostagent.PingProtocol. Its row records that address and the certificate
+// it answers with (hosts.ControlPeers), so the other hosts probe it there.
+// When it is the one cut off it stops its own app containers, and never
+// Pando or the edge (hostagent.DockerFencer).
 type controlLiveness struct {
 	// Store is the database's view of the cluster's hosts; nil until the
 	// database is reached, when start's pings are given it (useStore).

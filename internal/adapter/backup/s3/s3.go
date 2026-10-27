@@ -341,7 +341,7 @@ func Info() api.KindInfo {
 			{Key: "prefix", Label: "Prefix", Type: "string",
 				Help: "Empty is the top of the bucket.", Placeholder: "pando/"},
 			{Key: "path_style", Label: "Path-style addresses", Type: "bool",
-				Help: "Needed by MinIO and most self-hosted stores."},
+				Help: "endpoint/bucket rather than bucket.endpoint."},
 			{Key: "access_key_id", Label: "Access key ID", Type: "string", Credential: true, Required: true,
 				Help: "A key that can list the bucket and put, get and delete objects in it."},
 			{Key: "secret_access_key", Label: "Secret access key", Type: "string", Credential: true, Required: true,

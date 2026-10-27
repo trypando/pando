@@ -3200,7 +3200,7 @@
             {
               "key": "path_style",
               "label": "Path-style addresses",
-              "help": "Needed by MinIO and most self-hosted stores.",
+              "help": "endpoint/bucket rather than bucket.endpoint.",
               "type": "bool"
             },
             {
