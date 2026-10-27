@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -17,6 +20,7 @@ import (
 	"github.com/trypando/pando/internal/core/liveness"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/hostagent"
+	"github.com/trypando/pando/internal/keyfile"
 )
 
 // A control host's half of R-421. Every host in cluster_hosts, whatever its
@@ -34,8 +38,34 @@ import (
 const controlSetupRetry = 5 * time.Second
 
 // controlPings answers pings on the cluster listener for this host's
-// Monitor, once it has one.
-type controlPings struct{ current atomic.Pointer[controlPing] }
+// Monitor, once it has one, and holds the database it reads its peers from,
+// once it is reached.
+type controlPings struct {
+	current atomic.Pointer[controlPing]
+	store   atomic.Pointer[storeRef]
+}
+
+type storeRef struct{ hosts.HostPublisher }
+
+// useStore gives the Monitor the database, once it is reached.
+func (c *controlPings) useStore(s hosts.HostPublisher) { c.store.Store(&storeRef{s}) }
+
+func (c *controlPings) db() hosts.HostPublisher {
+	if r := c.store.Load(); r != nil {
+		return r.HostPublisher
+	}
+	return nil
+}
+
+// unreachedFor is this host's Monitor's word on a peer, for a person marking
+// it lost (liveness.Witness): how long it has watched it without contact.
+func (c *controlPings) unreachedFor(hostID string) (time.Duration, bool) {
+	p := c.current.Load()
+	if p == nil {
+		return 0, false
+	}
+	return p.monitor.UnreachedFor(hostID)
+}
 
 // controlPing is the TLS a ping is answered with, and the Monitor that
 // answers it.
@@ -75,25 +105,50 @@ func (c *controlPings) attach(srv *http.Server) {
 
 // controlLiveness is what a control host's Monitor is made from.
 type controlLiveness struct {
+	// Store is the database's view of the cluster's hosts; nil until the
+	// database is reached, when start's pings are given it (useStore).
 	Store     hosts.HostPublisher
 	Authority *hosts.Authority
-	// Dir is server.cluster_dir, where the host's certificate is kept.
+	// Dir is server.cluster_dir, where the host's certificate is kept, and
+	// what it needs to answer pings before it reaches the database: who it
+	// is (controlSelfFile) and the peers it last read (hosts.PeersFile).
 	Dir string
 	// Port is the cluster listener's: where the host answers pings.
 	Port int
 	// IsSelf picks this host's row: the one it joined as, or the install's
 	// first host (hosts.InstallHost).
 	IsSelf func(state.Host) bool
+	// Joined is the join this host made, when it made one.
+	Joined *hosts.Joined
 	Docker hostagent.ContainerAPI
 	Logger *zap.Logger
+
+	// stores is where the database is found once it is reached; nil is
+	// Store.
+	stores func() hosts.HostPublisher
+}
+
+func (c controlLiveness) store() hosts.HostPublisher {
+	if c.stores != nil {
+		return c.stores()
+	}
+	return c.Store
 }
 
 // start makes this host's Monitor and runs it until ctx ends, trying again
 // every controlSetupRetry until it can: a control host that answers no ping
-// would be reported unreached by every other host. The returned pings are
-// what the cluster listener answers with (attach).
+// would be reported unreached by every other host. It needs no database when
+// it has started once before, or joined: who it is and the peers it last read
+// are kept in Dir, so a control host whose Pando waits for Postgres still
+// answers pings and still fences when it is the one cut off (R-421). The
+// returned pings are what the cluster listener answers with (attach), and
+// are given the database once it is reached (useStore).
 func (c controlLiveness) start(ctx context.Context) *controlPings {
 	pings := &controlPings{}
+	if c.Store != nil {
+		pings.useStore(c.Store)
+	}
+	c.stores = pings.db
 	go func() {
 		for {
 			p, err := c.setup(ctx)
@@ -102,7 +157,7 @@ func (c controlLiveness) start(ctx context.Context) *controlPings {
 				p.monitor.Run(ctx)
 				return
 			}
-			c.Logger.Error("this control host cannot take part in the cluster's liveness checks yet; trying again", zap.Error(err))
+			c.Logger.Warn("this control host cannot take part in the cluster's liveness checks yet; trying again", zap.Error(err))
 			select {
 			case <-ctx.Done():
 				return
@@ -113,18 +168,13 @@ func (c controlLiveness) start(ctx context.Context) *controlPings {
 	return pings
 }
 
-// setup finds this host's row, its certificate and the one it checks other
-// hosts with, and makes its Monitor, peers read from the database.
+// setup finds who this host is, its certificate and the one it checks other
+// hosts with, and makes its Monitor.
 func (c controlLiveness) setup(ctx context.Context) (*controlPing, error) {
-	list, err := c.Store.Hosts(ctx)
+	self, err := c.self(ctx)
 	if err != nil {
 		return nil, err
 	}
-	i := slices.IndexFunc(list, c.IsSelf)
-	if i < 0 {
-		return nil, errors.New("this host is not recorded in the cluster's hosts yet")
-	}
-	self := list[i]
 	cert, pin, err := hosts.ControlHostCert(c.Dir, c.Authority, self.Name, self.Roles, time.Now())
 	if err != nil {
 		return nil, err
@@ -134,7 +184,8 @@ func (c controlLiveness) setup(ctx context.Context) (*controlPing, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not issue the certificate this host checks the others with: %w", err)
 	}
-	peers := &hosts.ControlPeers{Store: c.Store, Self: self.ID, Port: c.Port, Pin: pin, Logger: c.Logger}
+	peers := &controlPeers{self: self.HostID, port: c.Port, pin: pin, file: filepath.Join(c.Dir, hosts.PeersFile),
+		store: c.store, logger: c.Logger}
 	return &controlPing{
 		tls: &tls.Config{
 			MinVersion:   tls.VersionTLS13,
@@ -143,32 +194,115 @@ func (c controlLiveness) setup(ctx context.Context) (*controlPing, error) {
 			ClientCAs:    as.Pool(),
 			NextProtos:   []string{hostagent.PingProtocol},
 		},
-		monitor: newMonitor(self.ID, peers.Peers, probeCert, as.Pool(), c.Docker, c.Logger),
+		monitor: newMonitor(self.HostID, peers.Peers, probeCert, as.Pool(), c.Docker, c.Logger),
 	}, nil
 }
 
-// startControlLiveness runs this control host's Monitor (R-421). joined is
-// the join this host made, when it made one; otherwise it is the install's
-// first host.
-func startControlLiveness(ctx context.Context, dir string, port int, store hosts.HostPublisher, authority *hosts.Authority,
+// controlSelfFile, in server.cluster_dir, is who this control host is, kept
+// from the database's row so that the next start can answer pings before the
+// database is reached.
+const controlSelfFile = "control-host.json"
+
+// controlSelf is who a control host is.
+type controlSelf struct {
+	HostID string   `json:"host_id"`
+	Name   string   `json:"name"`
+	Roles  []string `json:"roles"`
+}
+
+// self is this host's row, read from the database when it answers and kept;
+// else what the join recorded; else what was kept.
+func (c controlLiveness) self(ctx context.Context) (controlSelf, error) {
+	var dbErr error
+	if st := c.store(); st != nil {
+		list, err := st.Hosts(ctx)
+		if err == nil {
+			i := slices.IndexFunc(list, c.IsSelf)
+			if i < 0 {
+				return controlSelf{}, errors.New("this host is not recorded in the cluster's hosts yet")
+			}
+			self := controlSelf{HostID: list[i].ID, Name: list[i].Name, Roles: list[i].Roles}
+			c.keepSelf(self)
+			return self, nil
+		}
+		dbErr = err
+	}
+	if c.Joined != nil && c.Joined.Name != "" {
+		return controlSelf{HostID: c.Joined.HostID, Name: c.Joined.Name, Roles: c.Joined.Roles}, nil
+	}
+	var kept controlSelf
+	data, err := os.ReadFile(filepath.Join(c.Dir, controlSelfFile)) // #nosec G304 -- the configured cluster directory
+	if err == nil && json.Unmarshal(data, &kept) == nil && kept.HostID != "" && kept.Name != "" {
+		return kept, nil
+	}
+	if dbErr != nil {
+		return controlSelf{}, dbErr
+	}
+	return controlSelf{}, errors.New("this control host does not know which host of the cluster it is until it reaches the database")
+}
+
+// keepSelf writes who this host is for the next start. A write that fails
+// costs only that start waiting for the database.
+func (c controlLiveness) keepSelf(self controlSelf) {
+	data, err := json.Marshal(self)
+	if err == nil {
+		err = os.MkdirAll(c.Dir, 0o700)
+	}
+	if err == nil {
+		err = keyfile.Replace(filepath.Join(c.Dir, controlSelfFile), data)
+	}
+	if err != nil {
+		c.Logger.Warn("could not keep which host this is for the next start", zap.Error(err))
+	}
+}
+
+// controlPeers is a control host's peer list: read from the database once
+// it is reached (hosts.ControlPeers), and kept in file, which is read until
+// then.
+type controlPeers struct {
+	self   string
+	port   int
+	pin    string
+	file   string
+	store  func() hosts.HostPublisher
+	logger *zap.Logger
+}
+
+func (c *controlPeers) Peers(ctx context.Context) ([]hosts.Peer, error) {
+	st := c.store()
+	if st == nil {
+		return hosts.ReadPeers(c.file)
+	}
+	list, err := (&hosts.ControlPeers{Store: st, Self: c.self, Port: c.port, Pin: c.pin, Logger: c.logger}).Peers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := hosts.WritePeers(c.file, list); err != nil {
+		c.logger.Warn("could not keep the cluster's hosts for the next start", zap.Error(err))
+	}
+	return list, nil
+}
+
+// startControlLiveness runs this control host's Monitor (R-421), before the
+// database is reached when it can. joined is the join this host made, when it
+// made one; otherwise it is the install's first host.
+func startControlLiveness(ctx context.Context, dir string, port int, authority *hosts.Authority,
 	joined hosts.Joined, hasJoined bool, logger *zap.Logger) *controlPings {
-	isSelf := hosts.InstallHost
+	c := controlLiveness{Authority: authority, Dir: dir, Port: port, IsSelf: hosts.InstallHost, Logger: logger.Named("liveness")}
 	if hasJoined {
-		isSelf = func(h state.Host) bool { return h.ID == joined.HostID }
+		c.IsSelf = func(h state.Host) bool { return h.ID == joined.HostID }
+		c.Joined = &joined
 	}
 	// The runtime's own Docker: what this host's app containers run on. One
 	// that cannot be reached still leaves the host answering pings, since
 	// a host that answers none would be taken for lost while it runs; its
 	// fence then fails, and says so, every round it is cut off.
 	cli, err := client.New(client.FromEnv)
-	var docker hostagent.ContainerAPI = cli
+	c.Docker = cli
 	if err != nil {
-		docker = unreachableRuntime{err: err}
+		c.Docker = unreachableRuntime{err: err}
 	}
-	return controlLiveness{
-		Store: store, Authority: authority, Dir: dir, Port: port, IsSelf: isSelf, Docker: docker,
-		Logger: logger.Named("liveness"),
-	}.start(ctx)
+	return c.start(ctx)
 }
 
 // unreachableRuntime is a container runtime this host could not connect to:

@@ -225,16 +225,19 @@ func TestR421_MarkingAHostLostIsAudited(t *testing.T) {
 	require.Equal(t, true, r.audit.events[3].Detail["already_lost"])
 }
 
-func TestMarkLostRefusesAHostThatAnswers(t *testing.T) {
+type fakeWitness struct{ err error }
+
+func (f fakeWitness) Silent(context.Context, state.Host) error { return f.err }
+
+func TestMarkLostRefusesAHostHeardFromLately(t *testing.T) {
 	r := newServiceRig("x")
-	r.svc.Answering = func(context.Context, string) bool { return true }
+	r.svc.Witness = fakeWitness{err: errs.New(errs.StateInvalid, "Host x has been heard from in the last 30s, so it is not gone.")}
 	_, err := r.svc.MarkLost(context.Background(), "x", person)
 	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
-	require.Contains(t, errs.As(err).Message, "answers on its agent port")
 	require.Empty(t, r.store.lost)
 	require.Empty(t, r.failover.promoted)
 
-	r.svc.Answering = func(context.Context, string) bool { return false }
+	r.svc.Witness = fakeWitness{}
 	_, err = r.svc.MarkLost(context.Background(), "x", person)
 	require.NoError(t, err)
 }
@@ -321,6 +324,12 @@ func newWatchRig(ids ...string) *watchRig {
 	return r
 }
 
+// round is one of the leader's rounds, and the failovers it began.
+func (r *watchRig) round(ctx context.Context) {
+	r.watch.Round(ctx)
+	r.svc.Settle()
+}
+
 func (r *watchRig) say(observer string, unreached map[string]time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -344,17 +353,17 @@ func TestR421_TheLeaderFailsOverOnlyByMajorityAfter3T(t *testing.T) {
 	r.say("b", silentFor(3*tPeriod))
 	r.say("c", silentFor(3*tPeriod-time.Second))
 	r.say("d", silentFor(0))
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Empty(t, r.failover.promoted, "two of five is not a majority, and c is short of 3T")
 
 	r.say("c", silentFor(3*tPeriod))
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Equal(t, []string{"app_ok"}, r.failover.promoted)
 	require.Equal(t, "liveness", r.store.lost["x"])
 	require.Equal(t, audit.KindSystem, r.audit.events[0].PrincipalKind)
 	require.Equal(t, "majority", r.audit.events[0].Detail["trigger"])
 
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Equal(t, []string{"app_ok"}, r.failover.promoted, "once")
 }
 
@@ -368,11 +377,11 @@ func TestWatchTakesStaleOrBrokenReportsForNothing(t *testing.T) {
 	r.mu.Lock()
 	r.views["c"] = View{Host: "a", UnreachedMS: map[string]int64{"x": time.Hour.Milliseconds()}}
 	r.mu.Unlock()
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Empty(t, r.failover.promoted)
 
 	r.say("c", silent)
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Len(t, r.failover.promoted, 1)
 
 	// Now a and b stop answering: their reports go stale, and with them
@@ -382,14 +391,14 @@ func TestWatchTakesStaleOrBrokenReportsForNothing(t *testing.T) {
 		r2.say(o, silent)
 	}
 	r2.store.lostErr = errors.New("database away")
-	r2.watch.Round(ctx)
+	r2.round(ctx)
 	require.Empty(t, r2.failover.promoted, "nothing is decided without the database")
 	r2.store.lostErr = nil
 	r2.mu.Lock()
 	r2.views = map[string]View{}
 	r2.mu.Unlock()
 	r2.clk.Advance(time.Minute)
-	r2.watch.Round(ctx)
+	r2.round(ctx)
 	require.Empty(t, r2.failover.promoted, "stale reports say nothing")
 }
 
@@ -401,26 +410,26 @@ func TestWatchKeepsTheLastHostsAndForgetsRemovedOnes(t *testing.T) {
 		r.say(o, silent)
 	}
 	r.hostErr = errors.New("database away")
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Empty(t, r.watch.hosts, "no host list yet")
 
 	r.hostErr = nil
 	r.ids = []string{"a", "b", "c", "d", "e", "x"}
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Empty(t, r.failover.promoted, "three of six is not more than half")
 	r.ids = []string{"a", "b", "c", "x"}
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Len(t, r.failover.promoted, 1)
 
 	r.mu.Lock()
 	r.hostErr = errors.New("database away")
 	r.mu.Unlock()
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Len(t, r.watch.hosts, 4, "the last list is kept")
 
 	r.hostErr = nil
 	r.ids = []string{"a", "x"}
-	r.watch.Round(ctx)
+	r.round(ctx)
 	_, kept := r.watch.ledger.reports["b"]
 	require.False(t, kept, "a removed host's report is dropped")
 }
@@ -433,15 +442,15 @@ func TestR421_EveryFenceIsAuditedOnce(t *testing.T) {
 	ctx := context.Background()
 	r.views["a"] = View{Host: "a", Fenced: true, FenceID: "fnc_1", Stopped: 3}
 	r.views["b"] = View{Host: "b"}
-	r.watch.Round(ctx)
-	r.watch.Round(ctx)
+	r.round(ctx)
+	r.round(ctx)
 	require.Equal(t, []string{"cluster.host.fence"}, r.audit.actions())
 	e := r.audit.events[0]
 	require.Equal(t, "a", e.TargetID)
 	require.Equal(t, 3, e.Detail["stopped"])
 
 	r.views["a"] = View{Host: "a", FenceID: "fnc_2"}
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Equal(t, []string{"cluster.host.fence", "cluster.host.fence"}, r.audit.actions())
 }
 

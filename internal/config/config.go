@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -325,7 +326,7 @@ type Server struct {
 	// authority (R-415): every host's certificate is issued from it, and a
 	// joining host checks it against its join token's hash. Generated on first
 	// start; a control host is given a copy when it joins.
-	ClusterAuthorityPath string `mapstructure:"cluster_authority_path" desc:"The file holding the cluster's certificate authority, which hosts join and reach each other through. Made on first start. Every control host must read the same one."`
+	ClusterAuthorityPath string `mapstructure:"cluster_authority_path" desc:"The file holding the cluster's certificate authority, which hosts join and reach each other through. Made on first start. Every control host must read the same one. Empty is cluster-ca.pem beside server.token_key_path."`
 
 	// ClusterAddr is where the cluster listener answers joining hosts, over
 	// TLS from the cluster authority (R-415). Join tokens name its port.
@@ -417,6 +418,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing configuration: %w", err)
 	}
 	cfg.File = path
+	if cfg.Server.ClusterAuthorityPath == "" {
+		cfg.Server.ClusterAuthorityPath = filepath.Join(filepath.Dir(cfg.Server.TokenKeyPath), ClusterAuthorityFile)
+	}
 	if err := cfg.Database.joined(cfg.Server.ClusterDatabaseURLPath()); err != nil {
 		return nil, err
 	}
@@ -453,9 +457,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.work_dir", "/var/lib/pando/work")
 	v.SetDefault("server.audit_archive_dir", "/var/lib/pando/audit-archives")
 	v.SetDefault("server.token_key_path", tokenkey.DefaultPath)
-	v.SetDefault("server.cluster_authority_path", "/var/lib/pando/cluster-ca.pem") // hosts.DefaultAuthorityPath
-	v.SetDefault("server.cluster_addr", ":7444")                                   // hosts.DefaultClusterPort
-	v.SetDefault("server.cluster_dir", "/var/lib/pando/cluster")                   // hosts.DefaultClusterDir
+	v.SetDefault("server.cluster_authority_path", "")            // beside server.token_key_path (clusterAuthorityBeside)
+	v.SetDefault("server.cluster_addr", ":7444")                 // hosts.DefaultClusterPort
+	v.SetDefault("server.cluster_dir", "/var/lib/pando/cluster") // hosts.DefaultClusterDir
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.development", false)
 

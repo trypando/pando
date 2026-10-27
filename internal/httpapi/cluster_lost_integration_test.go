@@ -32,6 +32,17 @@ func (s *standbys) PromoteStandby(_ context.Context, appID string) error {
 	return nil
 }
 
+// answeringWitness refuses marking a host lost while answering is set, as
+// liveness.Witness does for a host heard from lately.
+type answeringWitness struct{ answering *bool }
+
+func (w answeringWitness) Silent(context.Context, state.Host) error {
+	if *w.answering {
+		return errs.New(errs.StateInvalid, "Host app-2 has been heard from in the last 30s, so it is not gone.")
+	}
+	return nil
+}
+
 // TestR421_APersonMarksAHostLostWithTheClusterVerb asserts R-421's manual
 // path: with install.cluster.manage a person says a host is gone and its
 // apps' standbys start, audited as them; without the verb nothing happens;
@@ -49,7 +60,7 @@ func TestR421_APersonMarksAHostLostWithTheClusterVerb(t *testing.T) {
 	i.Server.HostLoss = &liveness.Service{
 		Store: store, Apps: state.NewApps(i.db), Audit: audit.New(i.db.Pool), Logger: zap.NewNop(),
 		Homes: sb, Failover: sb,
-		Answering: func(context.Context, string) bool { return answering },
+		Witness: answeringWitness{answering: &answering},
 	}
 
 	viewer, _ := i.holding("viewer", authz.InstallView)
@@ -62,7 +73,7 @@ func TestR421_APersonMarksAHostLostWithTheClusterVerb(t *testing.T) {
 	ops, _ := i.holding("ops", authz.InstallClusterManage)
 	refused := i.do(ops, http.MethodPost, "/cluster/hosts/"+h.ID+"/lost", nil)
 	require.Equal(t, string(errs.StateInvalid), refused.ErrorCode(), refused.String())
-	require.Contains(t, refused.String(), "answers on its agent port")
+	require.Contains(t, refused.String(), "has been heard from")
 
 	answering = false
 	got := i.do(ops, http.MethodPost, "/cluster/hosts/"+h.ID+"/lost", nil)

@@ -2,7 +2,7 @@ package liveness
 
 import (
 	"context"
-	"encoding/json"
+	"slices"
 	"sync"
 	"time"
 
@@ -22,10 +22,11 @@ import (
 // fails over.
 type Watch struct {
 	// Hosts lists every host of the cluster, lost ones included: a lost
-	// host still counts toward the cluster's size until it is removed.
+	// host is still probed, to see it come back, but no longer counts
+	// toward the cluster's size.
 	Hosts func(ctx context.Context) ([]Peer, error)
 
-	// Probe asks a host's agent for its View, as JSON.
+	// Probe asks a host's agent for its View, as JSON; as Monitor.Probe.
 	Probe func(ctx context.Context, p Peer) ([]byte, error)
 
 	Service *Service
@@ -67,7 +68,12 @@ func (w *Watch) Run(ctx context.Context) {
 	}
 }
 
-// Round probes every host once and acts on what the Ledger then says.
+// Round probes every host once and acts on what the Ledger then says. A host
+// marked lost counts no more toward the cluster's size (R-421), as on every
+// host's side (Monitor); with fewer than three hosts left, nobody else is
+// taken for lost. A host whose machine answered the leader's own probe this
+// round is never taken for lost, whatever the others report: its apps may be
+// running.
 func (w *Watch) Round(ctx context.Context) {
 	w.init()
 	if fresh, err := w.Hosts(ctx); err != nil {
@@ -80,28 +86,37 @@ func (w *Watch) Round(ctx context.Context) {
 		return
 	}
 
-	views := w.collect(ctx)
+	contacted, views := probeAll(ctx, w.hosts, w.Config.Timeout, w.Probe)
 	now := w.now()
-	ids := make([]string, len(w.hosts))
-	for i, h := range w.hosts {
-		ids[i] = h.ID
-		if v, ok := views[h.ID]; ok {
-			w.ledger.Record(now, h.ID, v.Unreached())
-			w.Service.RecordFence(ctx, h.ID, v)
-		}
-	}
+	w.record(ctx, now, views)
 	lost, err := w.Service.Store.LostHosts(ctx)
 	if err != nil {
 		w.Logger.Warn("could not read which hosts are lost; deciding nothing this round", zap.Error(err))
 		return
 	}
-	w.welcomeBack(ctx, now, ids, lost, views)
-	if len(ids) < MinHosts {
+	counted := make([]string, 0, len(w.hosts))
+	for _, h := range w.hosts {
+		if !lost[h.ID] {
+			counted = append(counted, h.ID)
+		}
+	}
+	w.welcomeBack(ctx, now, counted, lost, views)
+	if len(counted) < MinHosts {
 		return
 	}
-	for _, x := range ids {
-		if !lost[x] && w.ledger.Lost(now, ids, x) {
+	for _, x := range counted {
+		if !slices.Contains(contacted, x) && w.ledger.Lost(now, counted, x) {
 			w.Service.declare(ctx, x)
+		}
+	}
+}
+
+// record keeps each View in the Ledger and audits the fence it reports.
+func (w *Watch) record(ctx context.Context, now time.Duration, views map[string]View) {
+	for _, h := range w.hosts {
+		if v, ok := views[h.ID]; ok {
+			w.ledger.Record(now, h.ID, v.Unreached())
+			w.Service.RecordFence(ctx, h.ID, v)
 		}
 	}
 }
@@ -110,10 +125,11 @@ func (w *Watch) Round(ctx context.Context) {
 // the majority no longer takes for lost, to Service.back (R-419). At any
 // cluster size: a host a person marked lost in a cluster of two comes back
 // the same way. The majority rule is asked too, so a host the leader alone
-// still reaches, while most of the cluster does not, stays lost.
-func (w *Watch) welcomeBack(ctx context.Context, now time.Duration, ids []string, lost map[string]bool, views map[string]View) {
-	for _, x := range ids {
-		if _, answered := views[x]; !answered || !lost[x] || w.ledger.Lost(now, ids, x) {
+// still reaches, while most of the cluster does not, stays lost. counted is
+// the hosts not marked lost, which the returning host is weighed among.
+func (w *Watch) welcomeBack(ctx context.Context, now time.Duration, counted []string, lost map[string]bool, views map[string]View) {
+	for x := range lost {
+		if _, answered := views[x]; !answered || w.ledger.Lost(now, append(slices.Clone(counted), x), x) {
 			continue
 		}
 		if err := w.Service.back(ctx, x); err != nil {
@@ -133,33 +149,4 @@ func (w *Watch) forgetGone(fresh []Peer) {
 			w.ledger.Forget(h.ID)
 		}
 	}
-}
-
-// collect probes every host at once and returns the Views that came back
-// whole. A View naming another host than the one probed is dropped.
-func (w *Watch) collect(ctx context.Context) map[string]View {
-	var mu sync.Mutex
-	out := map[string]View{}
-	var wg sync.WaitGroup
-	for _, h := range w.hosts {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			pctx, cancel := context.WithTimeout(ctx, w.Config.Timeout)
-			defer cancel()
-			raw, err := w.Probe(pctx, h)
-			if err != nil {
-				return
-			}
-			var v View
-			if json.Unmarshal(raw, &v) != nil || v.Host != h.ID {
-				return
-			}
-			mu.Lock()
-			out[h.ID] = v
-			mu.Unlock()
-		}()
-	}
-	wg.Wait()
-	return out
 }
