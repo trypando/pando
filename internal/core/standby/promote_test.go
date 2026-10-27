@@ -130,9 +130,8 @@ func TestR153_APromotionCutShortLeavesTheHomeOnTheNewHost(t *testing.T) {
 	// A row changed since it was read is not promoted over.
 	h = placed(t)
 	h.store.rows["app_a"] = func() state.Standby { sb := h.store.rows["app_a"]; sb.Home = "app-3"; return sb }()
-	stale := *h.svc
-	stale.Store = &staleReads{fakeStore: h.store, row: before}
-	_, err = stale.Promote(ctx, "app_a", "")
+	h.svc.Store = &staleReads{fakeStore: h.store, row: before}
+	_, err = h.svc.Promote(ctx, "app_a", "")
 	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
 	require.Empty(t, h.rt.promoted)
 }

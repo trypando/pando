@@ -3,6 +3,8 @@
 package docker_test
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"io"
 	"testing"
@@ -37,7 +39,9 @@ func TestR420_ABusyVolumeWithVanishingFilesShips(t *testing.T) {
 	})
 	time.Sleep(500 * time.Millisecond)
 
-	for range 8 {
+	t.Cleanup(func() { _ = a.RemoveStandbyStorage(context.Background(), id) })
+
+	for seq := 1; seq <= 8; seq++ {
 		listing, err := a.ListVolume(ctx, id, "vol_busy")
 		require.NoError(t, err, "a file gone between find and stat is not an error")
 		paths := make([]string, 0, len(listing.Entries))
@@ -46,7 +50,19 @@ func TestR420_ABusyVolumeWithVanishingFilesShips(t *testing.T) {
 				paths = append(paths, e.Path)
 			}
 		}
-		require.NoError(t, a.ReadVolumeFiles(ctx, id, "vol_busy", paths, io.Discard),
+		var archive bytes.Buffer
+		require.NoError(t, a.ReadVolumeFiles(ctx, id, "vol_busy", paths, &archive),
 			"a file gone before tar reads it is left out")
+		require.NoError(t, a.StageStandbyCopy(ctx, id, "vol_busy", nil, &archive), "what was read is a whole archive")
+		require.NoError(t, a.CommitStandbyCopy(ctx, id, "vol_busy", seq, listing, nil))
 	}
+	copies, err := a.StandbyCopies(ctx, id, "vol_busy")
+	require.NoError(t, err)
+	require.Len(t, copies.Seqs, 8, "every copy shipped")
+
+	// Every path gone by the time tar runs is still an archive.
+	var empty bytes.Buffer
+	require.NoError(t, a.ReadVolumeFiles(ctx, id, "vol_busy", []string{"./gone"}, &empty))
+	_, err = tar.NewReader(&empty).Next()
+	require.ErrorIs(t, err, io.EOF)
 }

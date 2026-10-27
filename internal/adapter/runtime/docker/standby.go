@@ -201,7 +201,7 @@ func stagingMount(bundleID, volumeID string, readOnly bool) mount.Mount {
 // what cmd said.
 func vanishedOK(cmd string) string {
 	return `{ err=$( { ` + cmd + `; } 2>&1 1>&3 3>&-); s=$?; } 3>&1; ` +
-		`if [ "$s" -ne 0 ] && printf '%s\n' "$err" | grep -v -e 'No such file or directory' -e 'error exit delayed from previous errors' >&2; then exit "$s"; fi`
+		`if [ "$s" -ne 0 ] && printf '%s\n' "$err" | grep -v -e 'No such file or directory' -e 'error exit delayed from previous errors' -e 'empty archive' >&2; then exit "$s"; fi`
 }
 
 // listScript prints the time, then every entry under /volume. -xdev keeps it
@@ -210,9 +210,12 @@ var listScript = `cd /volume || exit 1; echo "T $(date +%s)"; ` + vanishedOK(`fi
 
 // readScript archives the paths on stdin that still exist, each on its own:
 // a directory's entry carries its owner and mode, not its contents. One gone
-// by the time tar reaches it is left out (vanishedOK).
+// by the time tar reaches it is left out (vanishedOK); when every one is,
+// busybox tar writes nothing, and an empty archive is written in its place
+// so the standby's side has one to read.
 var readScript = `cd /volume || exit 1; ` +
-	vanishedOK(`while IFS= read -r p; do if [ -e "$p" ] || [ -L "$p" ]; then printf '%s\n' "$p"; fi; done | tar -cf - --no-recursion -T -`)
+	vanishedOK(`while IFS= read -r p; do if [ -e "$p" ] || [ -L "$p" ]; then printf '%s\n' "$p"; fi; done | tar -cf - --no-recursion -T -`) +
+	`; case "$err" in *'empty archive'*) exec head -c 1024 /dev/zero;; esac`
 
 // ListVolume lists what is in one of the bundle's volumes, live.
 func (a *Adapter) ListVolume(ctx context.Context, bundleID, volumeID string) (VolumeListing, error) {
