@@ -20,7 +20,9 @@ import (
 type homesOf struct{ *fakeStore }
 
 func (h homesOf) HomedOn(_ context.Context, host string) ([]state.Standby, error) {
-	return h.where(func(sb state.Standby) bool { return sb.Home == host })
+	return h.where(func(sb state.Standby) bool {
+		return (sb.Home == host && sb.PromotingAt == nil) || (sb.PromotingAt != nil && sb.StaleHost == host)
+	})
 }
 
 func (h homesOf) LeftOn(_ context.Context, host string) ([]state.Standby, error) {
@@ -327,4 +329,26 @@ func TestFailoverReadsFailClosed(t *testing.T) {
 	require.Error(t, err)
 	_, err = f.AppsLeftOn(ctx, "host_app-1")
 	require.Error(t, err)
+}
+
+// TestR421_TheInstallsOwnMachinesAppsAreFailedOverWhenItIsLost asserts R-421
+// for the machine the install started on: its row is named as the runtime
+// names it (hosts.Runtime, the conversion), so when it is lost the apps the
+// runtime reported homed there are found by its row and started on their
+// standbys' hosts.
+func TestR421_TheInstallsOwnMachinesAppsAreFailedOverWhenItIsLost(t *testing.T) {
+	ctx := context.Background()
+	r := newFailoverRig(t)
+	r.rt.homeName = "3f9c2a1b7d4e" // what the runtime calls the install's own machine
+	r.cluster.hosts["host_install"] = state.Host{ID: "host_install", Name: "3f9c2a1b7d4e", Address: "10.0.0.5:7443"}
+	r.svc.Once(ctx)
+	require.Equal(t, "3f9c2a1b7d4e", r.store.rows["app_a"].Home)
+	r.rt.promoteOK = api.PromoteResult{Host: "app-2", Healthy: true}
+
+	loss, err := r.loss.MarkLost(ctx, "host_install", liveness.Actor{ID: "usr_1"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"app_a"}, loss.Started)
+	sb := r.store.rows["app_a"]
+	require.Equal(t, "app-2", sb.Home)
+	require.Equal(t, "3f9c2a1b7d4e", sb.StaleHost)
 }

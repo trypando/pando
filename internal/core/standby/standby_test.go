@@ -1,6 +1,7 @@
 package standby
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"testing"
@@ -24,6 +25,8 @@ type fakeStore struct {
 	states  map[string]string
 	getErr  error
 	listErr error
+	// lost counts writes refused because the row changed since it was read.
+	lost int
 }
 
 func (f *fakeStore) Candidates(context.Context) ([]state.StandbyApp, error) {
@@ -46,12 +49,32 @@ func (f *fakeStore) Get(_ context.Context, appID string) (state.Standby, bool, e
 	return sb, ok, nil
 }
 
-func (f *fakeStore) Save(_ context.Context, sb state.Standby) error {
+func (f *fakeStore) SaveIf(_ context.Context, sb state.Standby, prev *state.Standby) (bool, error) {
+	if f.rows == nil {
+		f.rows = map[string]state.Standby{}
+	}
+	have, ok := f.rows[sb.AppID]
+	if (prev == nil && ok) || (prev != nil && (!ok || !sameRow(have, *prev))) {
+		f.lost++
+		return false, nil
+	}
 	f.rows[sb.AppID] = sb
-	return nil
+	return true, nil
+}
+
+// sameRow is what SaveIf compares, as state.Standbys does.
+func sameRow(a, b state.Standby) bool {
+	return a.Host == b.Host && a.Home == b.Home && sameTime(a.PromotedAt, b.PromotedAt) && sameTime(a.PromotingAt, b.PromotingAt)
+}
+
+func sameTime(a, b *time.Time) bool {
+	return (a == nil) == (b == nil) && (a == nil || a.Equal(*b))
 }
 
 func (f *fakeStore) Delete(_ context.Context, appID string) error {
+	if sb, ok := f.rows[appID]; ok && sb.PromotingAt != nil {
+		return nil
+	}
 	delete(f.rows, appID)
 	f.deleted = append(f.deleted, appID)
 	return nil
@@ -65,10 +88,12 @@ func (f *fakeStore) AppState(_ context.Context, appID string) (string, bool, err
 type fakePlans struct {
 	specs     map[string]*spec.AppSpec
 	completed int
+	shaped    int
 	err       error
 }
 
 func (f *fakePlans) Shape(_ context.Context, appID string) (api.BundlePlan, *spec.AppSpec, error) {
+	f.shaped++
 	s, ok := f.specs[appID]
 	if !ok {
 		return api.BundlePlan{}, nil, errs.New(errs.NotFound, "no app")
@@ -97,6 +122,13 @@ type fakeRuntime struct {
 	applyErr  error
 	shipErr   error
 	promoteOK api.PromoteResult
+	// onApply and onPromote run inside ApplyStandby and PromoteStandby, for
+	// what happens meanwhile; promoteFail is returned with promoteOK.
+	onApply     func()
+	onPromote   func()
+	promoteFail error
+	// homeName is where ApplyStandby says the app runs; empty is app-1.
+	homeName string
 	// promoteErr refuses the promotion of an app; staleErr every removal of
 	// a stale copy.
 	promoteErr map[string]error
@@ -109,10 +141,13 @@ func (f *fakeRuntime) Capabilities(context.Context) (api.RuntimeCapabilities, er
 
 func (f *fakeRuntime) ApplyStandby(_ context.Context, req api.StandbyRequest) (api.StandbyHandle, error) {
 	f.applied = append(f.applied, req)
+	if f.onApply != nil {
+		f.onApply()
+	}
 	if f.applyErr != nil {
 		return api.StandbyHandle{}, f.applyErr
 	}
-	return api.StandbyHandle{Host: "app-2", Home: "app-1"}, nil
+	return api.StandbyHandle{Host: "app-2", Home: cmp.Or(f.homeName, "app-1")}, nil
 }
 
 func (f *fakeRuntime) ShipVolumes(_ context.Context, req api.ShipRequest) (api.ShipResult, error) {
@@ -125,10 +160,13 @@ func (f *fakeRuntime) ShipVolumes(_ context.Context, req api.ShipRequest) (api.S
 
 func (f *fakeRuntime) PromoteStandby(_ context.Context, req api.PromoteRequest) (api.PromoteResult, error) {
 	f.promoted = append(f.promoted, req)
+	if f.onPromote != nil {
+		f.onPromote()
+	}
 	if err := f.promoteErr[req.Bundle.BundleID]; err != nil {
 		return api.PromoteResult{}, err
 	}
-	return f.promoteOK, nil
+	return f.promoteOK, f.promoteFail
 }
 
 func (f *fakeRuntime) RemoveStandby(_ context.Context, ref api.BundleRef) error {

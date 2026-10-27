@@ -76,6 +76,22 @@ func (c *Cluster) RecordHostFence(ctx context.Context, hostID, fenceID string) (
 	return tag.RowsAffected() == 1, nil
 }
 
+// SetHostFenced records whether the host says it is fenced: cut off from most
+// of the cluster, with its apps stopped (R-421). It reports whether that
+// changed. The leader calls it with what each host answers; every replica's
+// reconciler reads it (Standbys.Held) and leaves a fenced host's apps
+// stopped, so the control plane never undoes a fence.
+func (c *Cluster) SetHostFenced(ctx context.Context, hostID string, fenced bool) (bool, error) {
+	tag, err := c.db.Exec(ctx, `
+		UPDATE cluster_hosts
+		SET fenced_at = CASE WHEN $2 THEN now() ELSE NULL END, updated_at = now()
+		WHERE id = $1 AND (fenced_at IS NOT NULL) IS DISTINCT FROM $2`, hostID, fenced)
+	if err != nil {
+		return false, errs.Wrap(errs.Internal, "Could not record whether the host is fenced.", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // SetHostPing records where a control host answers the cluster's liveness
 // checks, its cluster listener, and the fingerprint of the certificate it
 // answers with (R-421): a control host keeps its own row current with it

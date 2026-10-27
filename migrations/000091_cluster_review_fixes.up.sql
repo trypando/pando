@@ -10,7 +10,13 @@
 ALTER TABLE cluster_hosts
     ADD COLUMN ping_address     text NOT NULL DEFAULT '',
     ADD COLUMN ping_cert_sha256 text NOT NULL DEFAULT ''
-        CHECK (ping_cert_sha256 = '' OR ping_cert_sha256 ~ '^[0-9a-f]{64}$');
+        CHECK (ping_cert_sha256 = '' OR ping_cert_sha256 ~ '^[0-9a-f]{64}$'),
+    -- Since when the host has said it is fenced: cut off from most of the
+    -- cluster, its apps stopped (R-421). The leader records what each host
+    -- answers; every replica's reconciler leaves the host's apps stopped
+    -- while it is set (R-148 does not undo a fence). Cleared when the host
+    -- says it is not.
+    ADD COLUMN fenced_at        timestamptz;
 
 -- A promotion is written ahead (R-153, R-419): before the standby is started
 -- the app's home is its standby's host, and promoting_at says the start has

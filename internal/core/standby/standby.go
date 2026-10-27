@@ -11,11 +11,19 @@
 //
 // A failed app is not failed over (R-151): Promote refuses it, and the pass
 // leaves its standby as it was rather than refreshing it.
+//
+// One app's standby has one writer at a time (R-153). In this process the
+// pass and a promotion take the app's lock (Service.lock); across processes
+// every write is conditional on the row being as it was read (SaveIf), so a
+// pass working from a reading taken before a promotion never puts the old
+// home back. The pass leaves alone an app whose home is lost or whose
+// promotion is under way: that standby is the failover's.
 package standby
 
 import (
 	"context"
 	"sort"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -40,7 +48,11 @@ const (
 type Store interface {
 	Candidates(ctx context.Context) ([]state.StandbyApp, error)
 	Get(ctx context.Context, appID string) (state.Standby, bool, error)
-	Save(ctx context.Context, sb state.Standby) error
+	// SaveIf writes sb only if the row is still prev (nil: no row), and
+	// reports whether it did.
+	SaveIf(ctx context.Context, sb state.Standby, prev *state.Standby) (bool, error)
+	// Delete forgets the app's standby, unless a promotion of it is under
+	// way.
 	Delete(ctx context.Context, appID string) error
 }
 
@@ -86,6 +98,16 @@ type Service struct {
 	Services Services
 	Auditor  Auditor
 
+	// RuntimeRefs lists the runtime adapters. When none of them can keep a
+	// standby, the pass builds no app's plan: a single-host install does no
+	// standby work at all. Nil asks each app's runtime.
+	RuntimeRefs func() []string
+
+	// LocalFenced reports whether this host is fenced (R-421): cut off from
+	// most of the cluster, so nothing here is placed, shipped or started.
+	// Nil is never.
+	LocalFenced func() bool
+
 	Clock  clock.Clock
 	Logger *zap.Logger
 
@@ -96,7 +118,32 @@ type Service struct {
 	ShipEvery     time.Duration
 	Keep          int
 	HealthTimeout time.Duration
+
+	locks sync.Map // app ID -> *sync.Mutex
 }
+
+// lock takes the app's standby for a promotion, waiting for the pass.
+func (s *Service) lock(appID string) func() {
+	mu := s.mutex(appID)
+	mu.Lock()
+	return mu.Unlock
+}
+
+// tryLock takes the app's standby for the pass unless a promotion has it.
+func (s *Service) tryLock(appID string) (func(), bool) {
+	mu := s.mutex(appID)
+	if !mu.TryLock() {
+		return nil, false
+	}
+	return mu.Unlock, true
+}
+
+func (s *Service) mutex(appID string) *sync.Mutex {
+	mu, _ := s.locks.LoadOrStore(appID, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
+
+func (s *Service) fenced() bool { return s.LocalFenced != nil && s.LocalFenced() }
 
 // Run passes until ctx is canceled.
 func (s *Service) Run(ctx context.Context) {
@@ -118,6 +165,9 @@ func (s *Service) Run(ctx context.Context) {
 
 // Once runs one pass.
 func (s *Service) Once(ctx context.Context) {
+	if s.fenced() {
+		return // R-421: a host cut off from most of the cluster changes nothing
+	}
 	apps, err := s.Store.Candidates(ctx)
 	if err != nil {
 		s.logger().Warn("could not list apps for the standby pass", zap.Error(err))
@@ -128,12 +178,30 @@ func (s *Service) Once(ctx context.Context) {
 		s.logger().Warn("could not read host policy for the standby pass", zap.Error(err))
 		return
 	}
+	possible := s.anyStandbyRuntime(ctx)
 	for _, app := range apps {
 		if ctx.Err() != nil {
 			return
 		}
+		if !possible && app.Standby == nil {
+			continue // no runtime keeps standbys, and nothing is left to clear
+		}
 		s.visit(ctx, app, doc)
 	}
+}
+
+// anyStandbyRuntime reports whether any runtime adapter can keep a standby;
+// true when RuntimeRefs is not set, so each app's runtime is asked.
+func (s *Service) anyStandbyRuntime(ctx context.Context) bool {
+	if s.RuntimeRefs == nil {
+		return true
+	}
+	for _, ref := range s.RuntimeRefs() {
+		if _, ok := s.standbyOf(ctx, ref); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // standbyOf is the app's runtime as a standby runtime, when it is one.
@@ -151,6 +219,17 @@ func (s *Service) standbyOf(ctx context.Context, ref string) (api.StandbyRuntime
 }
 
 func (s *Service) visit(ctx context.Context, app state.StandbyApp, doc policy.Document) {
+	if sb := app.Standby; sb != nil && (sb.PromotingAt != nil || app.HomeLost) {
+		// R-153: the failover's. Placing, shipping or removing this standby
+		// now could remove or overwrite what a promotion starts from.
+		s.resume(ctx, app)
+		return
+	}
+	unlock, ok := s.tryLock(app.AppID)
+	if !ok {
+		return // a promotion has it (R-153)
+	}
+	defer unlock()
 	if app.Deleted {
 		s.remove(ctx, app.AppID, app.Standby, "the app was deleted")
 		return
@@ -179,9 +258,9 @@ func (s *Service) visit(ctx context.Context, app state.StandbyApp, doc policy.Do
 		return // R-151: left as it is, and never started
 	}
 
-	sb := state.Standby{AppID: app.AppID}
-	if app.Standby != nil {
-		sb = *app.Standby
+	sb, prev := state.Standby{AppID: app.AppID}, app.Standby
+	if prev != nil {
+		sb = *prev
 	}
 	sb.RuntimeRef = ref
 	sb.Volumes = len(plan.Volumes)
@@ -192,14 +271,14 @@ func (s *Service) visit(ctx context.Context, app state.StandbyApp, doc policy.Do
 	plan.Failover.AllowOversubscription = doc.AllowFailoverOversubscription
 	if sb.Host == "" || sb.SpecID != app.PinnedSpecID {
 		if !s.apply(ctx, sr, plan, sp, app.PinnedSpecID, &sb) {
-			s.save(ctx, sb)
+			s.save(ctx, sb, prev)
 			return
 		}
 	}
 	if sb.Volumes > 0 && s.due(sb.ShippedAt) {
 		s.ship(ctx, sr, plan, &sb)
 	}
-	s.save(ctx, sb)
+	s.save(ctx, sb, prev)
 }
 
 // apply makes or refreshes the standby, and reports whether it now exists.
@@ -278,7 +357,8 @@ func (s *Service) unreplicated(sp *spec.AppSpec) []string {
 }
 
 // remove takes the standby off the runtime and forgets it. A runtime that
-// cannot be reached keeps the row, so the next pass tries again.
+// cannot be reached keeps the row, so the next pass tries again. Never
+// during a promotion: the pass does not reach here for one (visit).
 func (s *Service) remove(ctx context.Context, appID string, sb *state.Standby, why string) {
 	if sb == nil {
 		return
@@ -299,10 +379,19 @@ func (s *Service) forget(ctx context.Context, appID string) {
 	}
 }
 
-func (s *Service) save(ctx context.Context, sb state.Standby) {
-	if err := s.Store.Save(ctx, sb); err != nil {
+// save writes sb over prev, the row as it was read. A row changed meanwhile
+// — a promotion, by this process or another — is left as it now is, and the
+// next pass reads it again (R-153).
+func (s *Service) save(ctx context.Context, sb state.Standby, prev *state.Standby) bool {
+	ok, err := s.Store.SaveIf(ctx, sb, prev)
+	switch {
+	case err != nil:
 		s.logger().Warn("could not record an app's standby", zap.String("app_id", sb.AppID), zap.Error(err))
+	case !ok:
+		s.logger().Info("an app's standby changed while it was being kept; left as it now is",
+			zap.String("app_id", sb.AppID))
 	}
+	return ok && err == nil
 }
 
 func (s *Service) audit(ctx context.Context, action, appID, by string, detail map[string]any) {
@@ -319,11 +408,13 @@ func (s *Service) audit(ctx context.Context, action, appID, by string, detail ma
 	}
 }
 
+// now is the clock's time to the microsecond, as Postgres keeps it, so a row
+// written with it compares equal when read back (SaveIf).
 func (s *Service) now() time.Time {
 	if s.Clock == nil {
-		return time.Now().UTC()
+		return time.Now().UTC().Truncate(time.Microsecond)
 	}
-	return s.Clock.Now().UTC()
+	return s.Clock.Now().UTC().Truncate(time.Microsecond)
 }
 
 func (s *Service) logger() *zap.Logger {
