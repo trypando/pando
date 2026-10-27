@@ -680,7 +680,9 @@ func (p *Planner) checkCapacity(ctx context.Context, s *spec.AppSpec, runtime ap
 	}
 	// Disk is never oversubscribed, whatever policy says: it is not a share
 	// the kernel hands out, and a full disk stops every app and Pando too.
-	if err := over("disk space", requested.DiskBytes, allocated.DiskBytes, capacity.TotalDiskBytes, formatBytes); err != nil {
+	// What the runtime holds beside the apps, standbys' copies, is taken
+	// (R-422).
+	if err := over("disk space", requested.DiskBytes, allocated.DiskBytes+capacity.HeldDiskBytes, capacity.TotalDiskBytes, formatBytes); err != nil {
 		return err
 	}
 	return p.checkLargestFit(ctx, s, runtime, allowCPU, allowMemory)

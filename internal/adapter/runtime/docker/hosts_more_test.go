@@ -93,3 +93,31 @@ func TestDetachProxyReportsWhatDockerRefuses(t *testing.T) {
 	require.NoError(t, a.DetachProxy(context.Background(), "app_1"))
 	require.Equal(t, 1, f.called("DELETE /networks/n1"))
 }
+
+// TestR242_WhatRunningAppsHoldOfTheDiskIsCounted asserts CommittedDisk: each
+// running app's disk limit, once however many workloads carry it, so the
+// multi-host adapter counts it against the host's disk with its standbys'
+// copies (R-422).
+func TestR242_WhatRunningAppsHoldOfTheDiskIsCounted(t *testing.T) {
+	f, a := newFakeDaemon(t, nil)
+	f.on("GET /containers/json", respond(http.StatusOK, []map[string]any{
+		{"Id": "a", "Labels": map[string]string{labelBundle: "app_1", labelLimitCPU: "1", labelLimitMemory: "1", labelLimitDisk: "1073741824"}},
+		{"Id": "b", "Labels": map[string]string{labelBundle: "app_1", labelLimitCPU: "1", labelLimitMemory: "1", labelLimitDisk: "1073741824"}},
+		{"Id": "c", "Labels": map[string]string{labelBundle: "app_2", labelLimitCPU: "1", labelLimitMemory: "1", labelLimitDisk: "536870912"}},
+		{"Id": "d", "Labels": map[string]string{labelBundle: "app_3", labelLimitCPU: "1", labelLimitMemory: "1"}},
+	}))
+	disk, err := a.CommittedDisk(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 1<<30+512<<20, disk)
+
+	labels := map[string]string{}
+	diskLabel(labels, 0)
+	require.Empty(t, labels, "no limit, nothing recorded")
+	diskLabel(labels, 5)
+	require.Equal(t, "5", labels[labelLimitDisk])
+
+	f.on("GET /containers/json", respond(http.StatusInternalServerError, map[string]string{"message": "boom"}))
+	a.forgetCommitted()
+	_, err = a.CommittedDisk(context.Background())
+	require.Error(t, err)
+}

@@ -100,40 +100,89 @@ func (a *Adapter) listStandbys(ctx context.Context) ([]standbyLoad, error) {
 
 // roomOf is a host as the reservation sees it, from what its daemon
 // reported. Free CPU and memory are what is left after its running
-// containers' limits, which leave stopped standbys out. Free disk is the
-// configured total: the adapter does not know what a host's running apps
-// hold on disk, so standby copies are counted against the whole of it.
-func roomOf(h *host, c api.Capacity, answered bool) hostRoom {
+// containers' limits, which leave stopped standbys out. Free disk is what is
+// left of the total after its running apps' disk limits (diskUsed, R-242):
+// the reservation then counts the standbys' copies against that, never
+// against the whole disk (R-422).
+func roomOf(h *host, c api.Capacity, diskUsed int64, answered bool) hostRoom {
 	r := hostRoom{
 		Name:  h.cfg.Name,
 		Total: amount{CPUMillis: c.TotalCPUMillis, MemoryBytes: c.TotalMemoryBytes, DiskBytes: c.TotalDiskBytes},
 		Open:  answered && !h.cfg.NoPlacement,
 	}
 	r.Free = r.Total
+	r.Free.DiskBytes -= diskUsed
 	if c.LargestFit != nil {
 		r.Free.CPUMillis, r.Free.MemoryBytes = c.LargestFit.CPUMillis, c.LargestFit.MemoryBytes
 	}
 	return r
 }
 
+// reading is one host's capacity and the disk its running apps hold.
+type reading struct {
+	capacity api.Capacity
+	disk     int64
+}
+
+// readHosts asks every host for its capacity and the disk its running apps
+// hold, at once. A host missing from the map did not answer. skip leaves a
+// host out without asking it.
+func (a *Adapter) readHosts(ctx context.Context, skip func(*host) bool) map[string]reading {
+	var mu sync.Mutex
+	out := map[string]reading{}
+	a.eachHost(ctx, func(ctx context.Context, h *host) error {
+		if skip != nil && skip(h) {
+			return nil
+		}
+		c, err := h.rt.Capacity(ctx)
+		if err != nil {
+			return err
+		}
+		disk, err := h.rt.CommittedDisk(ctx)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		out[h.cfg.Name] = reading{capacity: c, disk: disk}
+		mu.Unlock()
+		return nil
+	})
+	return out
+}
+
+// heldDisk is the disk every standby's copies are counted at, on every host
+// that answers: what the runtime holds beside the apps (Capacity's
+// HeldDiskBytes, R-422).
+func (a *Adapter) heldDisk(ctx context.Context) int64 {
+	loads, err := a.standbyLoads(ctx)
+	if err != nil {
+		return 0
+	}
+	var out int64
+	for _, l := range loads {
+		out += l.Need.DiskBytes
+	}
+	return out
+}
+
+// copiesOn is the disk the standbys' copies on each host are counted at.
+func copiesOn(loads []standbyLoad) map[string]int64 {
+	out := map[string]int64{}
+	for _, l := range loads {
+		out[l.Host] += l.Need.DiskBytes
+	}
+	return out
+}
+
 // readRooms asks every host for its capacity, at once, and returns each as
 // the reservation sees it, in host order. A host that does not answer is
 // not open.
 func (a *Adapter) readRooms(ctx context.Context) []hostRoom {
-	var mu sync.Mutex
-	readings := map[string]api.Capacity{}
-	results := a.eachHost(ctx, func(ctx context.Context, h *host) error {
-		c, err := h.rt.Capacity(ctx)
-		if err == nil {
-			mu.Lock()
-			readings[h.cfg.Name] = c
-			mu.Unlock()
-		}
-		return err
-	})
+	readings := a.readHosts(ctx, nil)
 	rooms := make([]hostRoom, 0, len(a.hosts))
 	for _, h := range a.hosts {
-		rooms = append(rooms, roomOf(h, readings[h.cfg.Name], results[h.cfg.Name] == nil))
+		r, answered := readings[h.cfg.Name]
+		rooms = append(rooms, roomOf(h, r.capacity, r.disk, answered))
 	}
 	return rooms
 }

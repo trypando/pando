@@ -25,6 +25,10 @@ import (
 const (
 	labelLimitCPU    = "io.pando.limit.cpu"
 	labelLimitMemory = "io.pando.limit.memory"
+	// labelLimitDisk is the app's disk limit (R-240), which every workload
+	// of a bundle carries the same: what the bundle holds of the host's disk
+	// for R-242's count (CommittedDisk).
+	labelLimitDisk = "io.pando.limit.disk"
 )
 
 // committedTTL is how long a reading of committed limits is reused.
@@ -45,6 +49,9 @@ type committedCache struct {
 	at       time.Time
 	total    api.Fit
 	byBundle map[string]api.Fit
+	// disk is the disk limits of the bundles running, summed: each bundle's
+	// once.
+	disk int64
 }
 
 // Committed is the CPU and memory every running app container on this daemon
@@ -57,6 +64,19 @@ type committedCache struct {
 func (a *Adapter) Committed(ctx context.Context) (api.Fit, error) {
 	total, _, err := a.readCommitted(ctx)
 	return total, err
+}
+
+// CommittedDisk is the disk every running app on this daemon is limited to
+// (R-240), summed, each app once: what its containers and volumes may hold,
+// which R-242 counts as taken from the host's disk. An app whose containers
+// were made before the limit was recorded on them counts nothing.
+func (a *Adapter) CommittedDisk(ctx context.Context) (int64, error) {
+	if _, _, err := a.readCommitted(ctx); err != nil {
+		return 0, err
+	}
+	a.committed.mu.Lock()
+	defer a.committed.mu.Unlock()
+	return a.committed.disk, nil
 }
 
 // CommittedBy is what one bundle's running containers are limited to.
@@ -80,9 +100,13 @@ func (a *Adapter) readCommitted(ctx context.Context) (api.Fit, map[string]api.Fi
 	}
 	var total api.Fit
 	byBundle := map[string]api.Fit{}
+	diskBy := map[string]int64{}
 	for _, c := range list.Items {
 		if c.Labels[labelTrial] != "" {
 			continue
+		}
+		if d, err := strconv.ParseInt(c.Labels[labelLimitDisk], 10, 64); err == nil {
+			diskBy[c.Labels[labelBundle]] = max(diskBy[c.Labels[labelBundle]], d)
 		}
 		var used api.Fit
 		cpu, cpuOK := c.Labels[labelLimitCPU]
@@ -105,7 +129,11 @@ func (a *Adapter) readCommitted(ctx context.Context) (api.Fit, map[string]api.Fi
 		b.MemoryBytes += used.MemoryBytes
 		byBundle[c.Labels[labelBundle]] = b
 	}
-	a.committed.total, a.committed.byBundle, a.committed.at = total, byBundle, time.Now()
+	var disk int64
+	for _, d := range diskBy {
+		disk += d
+	}
+	a.committed.total, a.committed.byBundle, a.committed.disk, a.committed.at = total, byBundle, disk, time.Now()
 	return total, byBundle, nil
 }
 
@@ -121,6 +149,14 @@ func (a *Adapter) forgetCommitted() {
 func limitLabels(labels map[string]string, cpuMillis int, memoryBytes int64) {
 	labels[labelLimitCPU] = strconv.Itoa(cpuMillis)
 	labels[labelLimitMemory] = strconv.FormatInt(memoryBytes, 10)
+}
+
+// diskLabel records the app's disk limit on a workload's container, when it
+// has one.
+func diskLabel(labels map[string]string, diskBytes int64) {
+	if diskBytes > 0 {
+		labels[labelLimitDisk] = strconv.FormatInt(diskBytes, 10)
+	}
 }
 
 // Bundles names every bundle with a network or a volume on this daemon.

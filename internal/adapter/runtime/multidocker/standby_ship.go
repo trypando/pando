@@ -26,6 +26,9 @@ import (
 
 // ShipVolumes sends one copy of the bundle's volumes to its standby.
 func (a *Adapter) ShipVolumes(ctx context.Context, req api.ShipRequest) (api.ShipResult, error) {
+	if err := a.standby.busy(req.BundleID); err != nil {
+		return api.ShipResult{}, err
+	}
 	home, err := a.mustLocate(ctx, req.BundleID)
 	if err != nil {
 		return api.ShipResult{}, err

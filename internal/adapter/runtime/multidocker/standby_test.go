@@ -47,6 +47,9 @@ type standbyFake struct {
 	restored  map[string]int
 	homes     map[string]time.Time
 	failStage error
+	// failRestore refuses every RestoreStandbyCopy; restores counts them.
+	failRestore error
+	restores    int
 
 	// healthyFrom says whether the bundle comes up healthy from the copy
 	// restored into it, by seq. Nil is always.
@@ -235,6 +238,10 @@ func (f *standbyFake) CommitStandbyCopy(_ context.Context, bundle, volume string
 func (f *standbyFake) RestoreStandbyCopy(_ context.Context, bundle, volume string, seq int) error {
 	f.sm.Lock()
 	defer f.sm.Unlock()
+	f.restores++
+	if f.failRestore != nil {
+		return f.failRestore
+	}
 	f.restored[key(bundle, volume)] = seq
 	return nil
 }
@@ -424,14 +431,18 @@ func TestR420_TheStandbyKeepsThreeCopies(t *testing.T) {
 // does not come up healthy from it.
 func TestR420_PromoteFallsBackToThePreviousCopyWhenTheNewestIsUnhealthy(t *testing.T) {
 	ctx := context.Background()
-	hosts, a := threeHosts()
-	_, err := a.Apply(ctx, volumePlan("app_a"))
-	require.NoError(t, err)
-	for _, v := range []string{"good", "torn"} {
-		hosts["app-1"].write("app_a", "vol_1", "./db", v)
-		_, err := a.ShipVolumes(ctx, api.ShipRequest{BundleID: "app_a", Host: "app-2", VolumeIDs: []string{"vol_1"}})
+	shipped := func() (map[string]*standbyFake, *Adapter) {
+		hosts, a := threeHosts()
+		_, err := a.Apply(ctx, volumePlan("app_a"))
 		require.NoError(t, err)
+		for _, v := range []string{"good", "torn"} {
+			hosts["app-1"].write("app_a", "vol_1", "./db", v)
+			_, err := a.ShipVolumes(ctx, api.ShipRequest{BundleID: "app_a", Host: "app-2", VolumeIDs: []string{"vol_1"}})
+			require.NoError(t, err)
+		}
+		return hosts, a
 	}
+	hosts, a := shipped()
 	hosts["app-2"].healthyFrom = func(seq int) bool { return seq == 1 } // the newest, 2, is torn
 
 	got, err := a.PromoteStandby(ctx, api.PromoteRequest{Bundle: volumePlan("app_a"), Host: "app-2",
@@ -440,13 +451,16 @@ func TestR420_PromoteFallsBackToThePreviousCopyWhenTheNewestIsUnhealthy(t *testi
 	require.Equal(t, api.PromoteResult{Host: "app-2", FormerHost: "app-1", Copy: 1, FellBack: true, Healthy: true}, got)
 	require.Equal(t, 1, hosts["app-2"].restored["app_a/vol_1"])
 
-	// No copy comes up: the oldest tried is left, reported unhealthy.
+	// No copy comes up: the oldest tried is left, reported unhealthy, and
+	// its copies are kept.
+	hosts, a = shipped()
 	hosts["app-2"].healthyFrom = func(int) bool { return false }
 	got, err = a.PromoteStandby(ctx, api.PromoteRequest{Bundle: volumePlan("app_a"), Host: "app-2",
 		HealthTimeout: 10 * time.Millisecond, PollEvery: 2 * time.Millisecond})
 	require.NoError(t, err)
 	require.False(t, got.Healthy)
 	require.Equal(t, 1, got.Copy)
+	require.Len(t, hosts["app-2"].copies["app_a/vol_1"], 2)
 }
 
 // TestR419_OneCopyRunsAtATimeAfterPromote asserts that after a failover the

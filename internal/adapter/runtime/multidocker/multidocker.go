@@ -45,6 +45,7 @@ const agentContainer = "pando-agent"
 type hostRuntime interface {
 	api.RuntimeAdapter
 	Committed(ctx context.Context) (api.Fit, error)
+	CommittedDisk(ctx context.Context) (int64, error)
 	Bundles(ctx context.Context) (map[string]bool, error)
 	RejoinNetworks(ctx context.Context, owns func(string) bool) (int, error)
 	RoomFor(ctx context.Context, bundleID string) (*api.Fit, error)
@@ -381,6 +382,7 @@ func (a *Adapter) Capacity(ctx context.Context) (api.Capacity, error) {
 	if answered == 0 {
 		return api.Capacity{}, errs.New(errs.AdapterUnavailable, "None of the Docker hosts is responding.")
 	}
+	out.HeldDiskBytes = a.heldDisk(ctx)
 	a.failoverDetails(ctx, perHost)
 	out.Details["hosts"] = perHost
 	return out, nil

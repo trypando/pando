@@ -52,10 +52,51 @@ var (
 )
 
 // standbyState is the adapter's memory of promotions this process made,
-// which outrank what the hosts say until the lost host's copy is removed.
+// which outrank what the hosts say until the lost host's copy is removed,
+// and of the promotions it is making now.
 type standbyState struct {
 	mu    sync.Mutex
 	homes map[string]string // bundle -> host promoted to
+	// promoting are the bundles being promoted: nothing else touches their
+	// standby meanwhile (R-153, busy).
+	promoting map[string]bool
+}
+
+// begin marks the bundle as being promoted, and reports false when it
+// already is.
+func (s *standbyState) begin(bundle string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.promoting[bundle] {
+		return false
+	}
+	if s.promoting == nil {
+		s.promoting = map[string]bool{}
+	}
+	s.promoting[bundle] = true
+	return true
+}
+
+func (s *standbyState) end(bundle string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.promoting, bundle)
+}
+
+// busy refuses a change to the bundle's standby while it is being promoted:
+// moving it removes the copies the promotion restores from, and a ship's
+// commit drops the oldest copy, which the promotion may fall back to (R-153,
+// R-420). Core serializes these too (standby.Service); this is the runtime's
+// own guard.
+func (s *standbyState) busy(bundle string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.promoting[bundle] {
+		return nil
+	}
+	return errs.New(errs.StateInvalid,
+		"This app's standby is being started as the app, so it is not changed now.").
+		WithRemedy("Wait for the start to finish; the next standby pass makes the app a new standby.")
 }
 
 func (s *standbyState) set(bundle, host string) {
@@ -121,6 +162,9 @@ func (a *Adapter) hostNamed(name string) (*host, error) {
 // ApplyStandby creates or refreshes the bundle's stopped standby on a host
 // other than its own (R-419).
 func (a *Adapter) ApplyStandby(ctx context.Context, req api.StandbyRequest) (api.StandbyHandle, error) {
+	if err := a.standby.busy(req.Bundle.BundleID); err != nil {
+		return api.StandbyHandle{}, err
+	}
 	home, err := a.mustLocate(ctx, req.Bundle.BundleID)
 	if err != nil {
 		return api.StandbyHandle{}, err
@@ -185,6 +229,9 @@ func (a *Adapter) removeStandbyOn(ctx context.Context, h *host, bundleID string)
 // RemoveStandby removes the bundle's standby from every host. A host that does
 // not answer is reported, so the caller tries again.
 func (a *Adapter) RemoveStandby(ctx context.Context, ref api.BundleRef) error {
+	if err := a.standby.busy(ref.BundleID); err != nil {
+		return err
+	}
 	results := a.eachHost(ctx, func(ctx context.Context, h *host) error {
 		return a.removeStandbyOn(ctx, h, ref.BundleID)
 	})
@@ -221,61 +268,6 @@ func (a *Adapter) RemoveStaleCopy(ctx context.Context, ref api.BundleRef, hostNa
 	return nil
 }
 
-// PromoteStandby starts the standby as the app (R-419), from the newest copy
-// of its volumes, falling back to older ones while it does not come up
-// healthy (R-420).
-func (a *Adapter) PromoteStandby(ctx context.Context, req api.PromoteRequest) (api.PromoteResult, error) {
-	bundle := req.Bundle.BundleID
-	target, err := a.hostNamed(req.Host)
-	if err != nil {
-		return api.PromoteResult{}, err
-	}
-	side, err := standbyOf(target)
-	if err != nil {
-		return api.PromoteResult{}, err
-	}
-	if err := a.roomToStart(ctx, target, req.Bundle); err != nil {
-		return api.PromoteResult{}, err
-	}
-	copies, attempts, err := a.promotionCopies(ctx, side, req.Bundle)
-	if err != nil {
-		return api.PromoteResult{}, err
-	}
-
-	result := api.PromoteResult{Host: target.cfg.Name}
-	if former := a.cached(bundle); former != nil && former != target {
-		result.FormerHost = former.cfg.Name
-	}
-	// From here the app is on target, whatever the lost host says when it
-	// answers again: nothing below or after may start the copy there.
-	a.standby.set(bundle, target.cfg.Name)
-	a.placement.mu.Lock()
-	a.placement.byBundle[bundle] = target.cfg.Name
-	a.placement.mu.Unlock()
-
-	if err := target.rt.Destroy(ctx, api.BundleRef{BundleID: standbyBundle(bundle)}, api.DestroyOptions{}); err != nil {
-		return result, err
-	}
-	if err := a.ensureAgent(ctx, target); err != nil {
-		return result, err
-	}
-	for i := 0; i < attempts; i++ {
-		result.Copy, result.FellBack = i, i > 0
-		healthy, err := a.startFromCopy(ctx, target, side, req, copies, i)
-		if err != nil {
-			return result, err
-		}
-		if healthy {
-			result.Healthy = true
-			break
-		}
-	}
-	if err := side.MarkHome(ctx, bundle, time.Now()); err != nil {
-		return result, err
-	}
-	return result, nil
-}
-
 // promotionCopies is each volume's copies, oldest first, and how many starts
 // they allow: one per copy the volume with the most has. A volume with no
 // copy at all is refused, rather than started empty beside data it never got.
@@ -296,29 +288,6 @@ func (a *Adapter) promotionCopies(ctx context.Context, side standbyHost, p api.B
 		attempts = max(attempts, min(len(have.Seqs), api.DefaultStandbyCopies))
 	}
 	return copies, attempts, nil
-}
-
-// startFromCopy fills the app's volumes from copy i (0 the newest; a volume
-// with fewer copies uses its oldest), applies the app's plan and waits for
-// it to come up healthy.
-func (a *Adapter) startFromCopy(ctx context.Context, target *host, side standbyHost, req api.PromoteRequest, copies map[string][]int, i int) (bool, error) {
-	bundle := req.Bundle.BundleID
-	if i > 0 {
-		if err := target.rt.Stop(ctx, api.BundleRef{BundleID: bundle}); err != nil {
-			return false, err
-		}
-	}
-	for _, v := range req.Bundle.Volumes {
-		seqs := copies[v.VolumeID]
-		seq := seqs[max(len(seqs)-1-i, 0)]
-		if err := side.RestoreStandbyCopy(ctx, bundle, v.VolumeID, seq); err != nil {
-			return false, err
-		}
-	}
-	if _, err := target.rt.Apply(ctx, req.Bundle); err != nil {
-		return false, err
-	}
-	return a.waitHealthy(ctx, target, req)
 }
 
 // waitHealthy watches the promoted bundle until it has been healthy on two

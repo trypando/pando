@@ -686,7 +686,8 @@ func (a *Adapter) applyWorkload(ctx context.Context, p api.BundlePlan, w api.Wor
 		},
 	}
 	limitLabels(cfg.Labels, w.Resources.CPUMillis, w.Resources.MemoryBytes)
-	maps.Copy(cfg.Labels, standbyLabels(p)) // a standby's, for the reservation (standby_loads.go)
+	diskLabel(cfg.Labels, w.Resources.DiskBytes) // R-242: counted against the host's disk
+	maps.Copy(cfg.Labels, standbyLabels(p))      // a standby's, for the reservation (standby_loads.go)
 	if w.Health != nil {
 		cfg.Healthcheck = healthConfig(w.Health)
 	}

@@ -31,6 +31,10 @@ type fakeHost struct {
 	// own is what the one bundle on this host holds (RoomFor).
 	own      api.Fit
 	detached []string
+	// totalDisk is the host's disk, and diskUsed what its running apps'
+	// disk limits hold of it (CommittedDisk).
+	totalDisk int64
+	diskUsed  int64
 }
 
 var errDown = errors.New("connection refused")
@@ -50,6 +54,15 @@ func (f *fakeHost) Bundles(context.Context) (map[string]bool, error) {
 
 func (f *fakeHost) Committed(context.Context) (api.Fit, error) { return api.Fit{}, nil }
 
+func (f *fakeHost) CommittedDisk(context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down {
+		return 0, errDown
+	}
+	return f.diskUsed, nil
+}
+
 func (f *fakeHost) Capacity(context.Context) (api.Capacity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -57,7 +70,7 @@ func (f *fakeHost) Capacity(context.Context) (api.Capacity, error) {
 		return api.Capacity{}, errDown
 	}
 	free := f.free
-	return api.Capacity{TotalCPUMillis: f.total.CPUMillis, TotalMemoryBytes: f.total.MemoryBytes,
+	return api.Capacity{TotalCPUMillis: f.total.CPUMillis, TotalMemoryBytes: f.total.MemoryBytes, TotalDiskBytes: f.totalDisk,
 		RunningWorkloads: f.running, LargestFit: &free}, nil
 }
 

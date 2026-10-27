@@ -522,6 +522,26 @@ func TestR242_DiskIsNeverOversubscribed(t *testing.T) {
 	require.Equal(t, "disk space", errs.As(err).Details["resource"])
 }
 
+// TestR422_StandbyCopiesAreCountedAgainstTheDisk asserts R-422's disk half at
+// plan time: the disk a runtime holds for standbys' copies is taken, so a
+// deploy that fits beside the apps and not beside the copies is refused.
+func TestR422_StandbyCopiesAreCountedAgainstTheDisk(t *testing.T) {
+	s := plannableSpec()
+	s.Resources.DiskBytes = 100 << 30
+	rt := capableRuntime()
+	plan := func() error {
+		p := planner.New(registry(t, rt, capableRouting(), capableBuilder()), policy.Static(policy.Default()),
+			fixedAllocations{alloc: planner.Allocation{DiskBytes: 300 << 30}})
+		_, err := p.Check(context.Background(), s)
+		return err
+	}
+	require.NoError(t, plan(), "400 of 500 GB")
+	rt.capacity.HeldDiskBytes = 150 << 30
+	err := plan()
+	require.Equal(t, errs.CapacityWouldOversubscribe, errs.CodeOf(err))
+	require.Equal(t, "disk space", errs.As(err).Details["resource"])
+}
+
 // TestR242_AnUnreadablePolicyRefusesRatherThanOversubscribing asserts that
 // the planner never guesses at host policy: whichever of its reads fails —
 // the oversubscription allowance among them — the plan is refused with that

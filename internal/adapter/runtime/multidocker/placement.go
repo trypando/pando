@@ -3,6 +3,7 @@ package multidocker
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -38,6 +39,10 @@ type placements struct {
 	// any is, a bundle the map does not know might be on it.
 	unreachable []string
 	refreshed   time.Time
+	// ambiguous are bundles several hosts hold that nothing settles (no
+	// promotion, no home mark, not where this process had them): located
+	// nowhere, and reported, rather than guessed (R-153).
+	ambiguous map[string][]string
 
 	// refreshMu makes refreshes one at a time; placeMu makes placements
 	// one at a time in this process, so two deploys here never both take the
@@ -77,29 +82,23 @@ func (a *Adapter) refreshLocked(ctx context.Context) {
 
 	a.placement.mu.Lock()
 	defer a.placement.mu.Unlock()
-	next := map[string]string{}
+	holders := map[string][]string{}
 	var unreachable []string
 	for _, h := range a.hosts {
 		if results[h.cfg.Name] != nil {
 			unreachable = append(unreachable, h.cfg.Name)
 			for b, on := range a.placement.byBundle {
 				if on == h.cfg.Name {
-					next[b] = on
+					holders[b] = append(holders[b], on)
 				}
 			}
 			continue
 		}
 		for b := range found[h.cfg.Name] {
-			// A bundle on two hosts is not something placement makes; the
-			// first host listed wins, so the answer is at least stable.
-			if _, ok := next[b]; !ok {
-				next[b] = h.cfg.Name
-			}
+			holders[b] = append(holders[b], h.cfg.Name)
 		}
 	}
-	for b, on := range homes {
-		next[b] = on
-	}
+	next, ambiguous := a.settle(holders, homes)
 	// A bundle placed here and not yet visible on its host (its network is
 	// about to be made) is kept.
 	for b, on := range a.placement.byBundle {
@@ -108,8 +107,40 @@ func (a *Adapter) refreshLocked(ctx context.Context) {
 		}
 	}
 	a.placement.byBundle = next
+	a.placement.ambiguous = ambiguous
 	a.placement.unreachable = unreachable
 	a.placement.refreshed = time.Now()
+}
+
+// settle is where each bundle is from the hosts that hold it. One host is
+// the answer. Several are not something placement makes: a promotion this
+// process made or the newest home mark settles it (homes, preferHomes);
+// otherwise the host this process had it on, when that is one of them.
+// Anything else is ambiguous, never resolved by the order hosts are listed
+// in: guessing could start the stale copy a failover left (R-153, R-419).
+// Called with mu held.
+func (a *Adapter) settle(holders map[string][]string, homes map[string]string) (map[string]string, map[string][]string) {
+	next := map[string]string{}
+	ambiguous := map[string][]string{}
+	for b, on := range holders {
+		if home, ok := homes[b]; ok {
+			next[b] = home
+			continue
+		}
+		if len(on) == 1 {
+			next[b] = on[0]
+			continue
+		}
+		if prev, ok := a.placement.byBundle[b]; ok && slices.Contains(on, prev) {
+			next[b] = prev
+			continue
+		}
+		ambiguous[b] = on
+	}
+	for b, on := range homes {
+		next[b] = on
+	}
+	return next, ambiguous
 }
 
 // pending reports a bundle placed in the last minute, which its host may not
@@ -145,7 +176,14 @@ func (a *Adapter) locate(ctx context.Context, bundle string) (*host, error) {
 	}
 	a.placement.mu.RLock()
 	unreachable := append([]string(nil), a.placement.unreachable...)
+	several := a.placement.ambiguous[bundle]
 	a.placement.mu.RUnlock()
+	if len(several) > 0 {
+		return nil, errs.Newf(errs.AdapterUnavailable,
+			"This app is on %s, and nothing says which of them is where it runs now, so Pando does not start or change it on either.",
+			strings.Join(several, " and ")).
+			WithRemedy("Mark the host the app was failed over from lost again to start its standby, or remove the copy that is not the app's from that host.")
+	}
 	if len(unreachable) > 0 {
 		return nil, errs.Newf(errs.AdapterUnavailable,
 			"Pando cannot reach Docker on %s, so it cannot tell whether this app runs there.",
@@ -201,6 +239,11 @@ type candidate struct {
 	free  api.Fit
 	known bool // the host reported totals, so free means something
 	apps  int
+	// disk is what is left of the host's disk after its running apps' disk
+	// limits and its standbys' copies, when it reports a total (diskKnown).
+	// Disk is never oversubscribed (R-242, R-422).
+	disk      int64
+	diskKnown bool
 }
 
 // place chooses a host for a bundle no host has. Called only after locate
@@ -215,6 +258,8 @@ func (a *Adapter) place(ctx context.Context, p api.BundlePlan) (*host, error) {
 		return h, nil
 	}
 
+	loads, _ := a.standbyLoads(ctx) // never an error: a host that does not answer is left out
+	copies := copiesOn(loads)
 	var mu sync.Mutex
 	var candidates []candidate
 	results := a.eachHost(ctx, func(ctx context.Context, h *host) error {
@@ -229,9 +274,16 @@ func (a *Adapter) place(ctx context.Context, p api.BundlePlan) (*host, error) {
 		if err != nil {
 			return err
 		}
+		used, err := h.rt.CommittedDisk(ctx)
+		if err != nil {
+			return err
+		}
 		cand := candidate{host: h, apps: len(bundles)}
 		if c.LargestFit != nil {
 			cand.free, cand.known = *c.LargestFit, true
+		}
+		if c.TotalDiskBytes > 0 {
+			cand.disk, cand.diskKnown = c.TotalDiskBytes-used-copies[h.cfg.Name], true
 		}
 		mu.Lock()
 		candidates = append(candidates, cand)
@@ -254,7 +306,7 @@ func (a *Adapter) place(ctx context.Context, p api.BundlePlan) (*host, error) {
 			WithRemedy("Bring the host back, or remove it from the Docker hosts runtime's host list.")
 	}
 
-	chosen, err := choose(candidates, need(p), a.hosts)
+	chosen, err := choose(candidates, need(p), diskLimit(p), a.hosts)
 	if err != nil {
 		return nil, err
 	}
@@ -268,22 +320,26 @@ func (a *Adapter) place(ctx context.Context, p api.BundlePlan) (*host, error) {
 	return chosen, nil
 }
 
+// fitsIn reports whether a bundle needing n fits the candidate's CPU and
+// memory. A host that cannot say is not refused on a guess.
+func (c candidate) fitsIn(n api.Fit) bool {
+	return !c.known || (n.CPUMillis <= c.free.CPUMillis && n.MemoryBytes <= c.free.MemoryBytes)
+}
+
+// diskFor reports whether disk fits what is left of the candidate's disk.
+func (c candidate) diskFor(disk int64) bool { return !c.diskKnown || disk <= c.disk }
+
 // choose applies the rule: fits, then most free memory, then fewest apps,
-// then the order hosts are listed in.
-func choose(candidates []candidate, n api.Fit, order []*host) (*host, error) {
+// then the order hosts are listed in. Fitting counts the app's disk limit
+// against what is left of each host's disk (R-242).
+func choose(candidates []candidate, n api.Fit, disk int64, order []*host) (*host, error) {
 	rank := map[*host]int{}
 	for i, h := range order {
 		rank[h] = i
 	}
-	fits := func(c candidate) bool {
-		if !c.known {
-			return true // a host that cannot say is not refused on a guess
-		}
-		return n.CPUMillis <= c.free.CPUMillis && n.MemoryBytes <= c.free.MemoryBytes
-	}
 	var ok []candidate
 	for _, c := range candidates {
-		if fits(c) {
+		if c.fitsIn(n) && c.diskFor(disk) {
 			ok = append(ok, c)
 		}
 	}
@@ -291,6 +347,9 @@ func choose(candidates []candidate, n api.Fit, order []*host) (*host, error) {
 		if len(candidates) == 0 {
 			return nil, errs.New(errs.AdapterUnavailable, "No Docker host is open to new apps.").
 				WithRemedy("Open a host to new apps in the Docker hosts runtime's settings, or add one.")
+		}
+		if err := noDisk(candidates, n, disk); err != nil {
+			return nil, err
 		}
 		largest := candidates[0]
 		for _, c := range candidates[1:] {
@@ -316,6 +375,26 @@ func choose(candidates []candidate, n api.Fit, order []*host) (*host, error) {
 		return rank[a.host] < rank[b.host]
 	})
 	return ok[0].host, nil
+}
+
+// noDisk is the refusal when some host has the CPU and memory for the app
+// and none of those has the disk: disk is never oversubscribed (R-242).
+// Nil when no host has the CPU and memory either.
+func noDisk(candidates []candidate, n api.Fit, disk int64) error {
+	var best *candidate
+	for i, c := range candidates {
+		if c.fitsIn(n) && (best == nil || c.disk > best.disk) {
+			best = &candidates[i]
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	return errs.Newf(errs.CapacityWouldOversubscribe,
+		"No Docker host has the disk for this app: it may use %s, and the most any host with room for it has left is %s, on %s, after its apps and the standby copies it keeps.",
+		bytes(disk), bytes(max(best.disk, 0)), best.host.cfg.Name).
+		WithDetail("largest_free_disk_bytes", best.disk).
+		WithRemedy("Lower the app's disk limit, delete an app or its standby on a host, or add a host.")
 }
 
 func bytes(n int64) string {

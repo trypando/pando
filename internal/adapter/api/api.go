@@ -911,6 +911,11 @@ type Capacity struct {
 	TotalMemoryBytes int64
 	TotalDiskBytes   int64
 
+	// HeldDiskBytes is disk the runtime holds outside any app's own
+	// allocation — warm standbys' copies (R-422) — which the planner counts
+	// as allocated, since disk is never oversubscribed (R-242). Zero is none.
+	HeldDiskBytes int64
+
 	// RunningWorkloads is how many workloads are running now, Pando's or
 	// not; -1 when the runtime cannot say.
 	RunningWorkloads int
