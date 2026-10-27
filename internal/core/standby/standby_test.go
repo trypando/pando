@@ -193,9 +193,16 @@ type staticPolicy struct{ doc policy.Document }
 
 func (p staticPolicy) Load(context.Context) (policy.Document, error) { return p.doc, nil }
 
-type fakeAuditor struct{ actions []string }
+type fakeAuditor struct {
+	actions []string
+	// fail refuses every write, recording nothing.
+	fail bool
+}
 
 func (f *fakeAuditor) Write(_ context.Context, e audit.Event) error {
+	if f.fail {
+		return errors.New("audit log away")
+	}
 	f.actions = append(f.actions, e.Action)
 	return nil
 }

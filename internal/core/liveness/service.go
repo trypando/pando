@@ -2,6 +2,7 @@ package liveness
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"go.uber.org/zap"
@@ -83,6 +84,10 @@ const (
 	SkipGone       = "gone"
 	SkipNotWired   = "standbys_unavailable"
 	SkipPromoteErr = "promote_failed"
+	// SkipAuditErr is a failover whose audit event could not be written:
+	// it is not started without one (R-421, R-228), and the leader tries
+	// again each round until it is.
+	SkipAuditErr = "audit_unavailable"
 )
 
 // SkippedApp is an app on a lost host that was not started elsewhere.
@@ -128,6 +133,17 @@ type Service struct {
 	mu       sync.Mutex
 	inflight map[string]int
 	running  sync.WaitGroup
+
+	// retry is each lost host with an app whose failover was not audited,
+	// so not started, and who asked for it: the leader's next round tries
+	// it again (refail).
+	retry map[string]asked
+}
+
+// asked is who asked for a host's failover, and how.
+type asked struct {
+	by      Actor
+	trigger string
 }
 
 // Settle waits for the failovers under way to end.
@@ -182,7 +198,7 @@ func (s *Service) MarkLost(ctx context.Context, hostID string, by Actor) (HostLo
 	}
 	s.promoting(h.ID, 1)
 	defer s.promoting(h.ID, -1)
-	s.failover(ctx, h, by, triggerManual, &out)
+	s.failover(ctx, h, asked{by, triggerManual}, &out)
 	return out, nil
 }
 
@@ -204,15 +220,60 @@ func (s *Service) declare(ctx context.Context, hostID string) {
 	if !newly {
 		return
 	}
+	s.background(ctx, h, asked{system, triggerMajority}, out, "a majority of the cluster's hosts has not reached a host; took it for lost")
+}
+
+// background runs h's failover beside the leader's round, and logs what it
+// did.
+func (s *Service) background(ctx context.Context, h state.Host, a asked, out HostLoss, msg string) {
 	s.promoting(h.ID, 1)
 	s.running.Add(1)
 	go func() {
 		defer s.running.Done()
 		defer s.promoting(h.ID, -1)
-		s.failover(ctx, h, system, triggerMajority, &out)
-		s.logger().Warn("a majority of the cluster's hosts has not reached a host; took it for lost",
-			zap.String("host_id", hostID), zap.Strings("started", out.Started), zap.Int("skipped", len(out.Skipped)))
+		s.failover(ctx, h, a, &out)
+		s.logger().Warn(msg, zap.String("host_id", h.ID), zap.Strings("started", out.Started), zap.Int("skipped", len(out.Skipped)))
 	}()
+}
+
+// refail tries again, beside the leader's round, the failover of each host
+// still lost whose apps were not started for want of their audit event
+// (SkipAuditErr), as whoever asked for it.
+func (s *Service) refail(ctx context.Context, lost map[string]bool) {
+	s.mu.Lock()
+	again := make(map[string]asked, len(s.retry))
+	for hostID, a := range s.retry {
+		switch {
+		case !lost[hostID]:
+			delete(s.retry, hostID)
+		case s.inflight[hostID] == 0:
+			again[hostID] = a
+		}
+	}
+	s.mu.Unlock()
+	for hostID, a := range again {
+		h, err := s.Store.Host(ctx, hostID)
+		if err != nil {
+			s.logger().Warn("could not read a lost host to start its apps' standbys again", zap.String("host_id", hostID), zap.Error(err))
+			continue
+		}
+		out := HostLoss{HostID: h.ID, Name: h.Name, AlreadyLost: true, Started: []string{}, Skipped: []SkippedApp{}}
+		s.background(ctx, h, a, out, "tried again the failover of a lost host's apps, which could not be audited before")
+	}
+}
+
+// retryLater records whether h's failover is to be tried again, as a.
+func (s *Service) retryLater(hostID string, a asked, again bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !again {
+		delete(s.retry, hostID)
+		return
+	}
+	if s.retry == nil {
+		s.retry = map[string]asked{}
+	}
+	s.retry[hostID] = a
 }
 
 // back is the leader finding a host marked lost reachable again (R-419):
@@ -244,32 +305,46 @@ func (s *Service) back(ctx context.Context, hostID string) error {
 	if apps == nil {
 		apps = []string{}
 	}
-	s.write(ctx, system, audit.Event{
+	// The copies are removed and the mark cleared; an event that cannot be
+	// written now is logged, and changes nothing that was done.
+	_ = s.write(ctx, system, audit.Event{
 		Action: "cluster.host.returned", TargetKind: "host", TargetID: hostID,
 		Detail: map[string]any{"removed_copies": apps},
 	})
 	return nil
 }
 
-// mark records h lost and audits it, and reports whether it was not lost
-// before. The leader audits only a host newly lost; a person, every time.
+// mark audits h lost and records it, and reports whether it was not lost
+// before. The leader acts only on a host not lost when read; a person, every
+// time. The audit event is written first, and the host is not marked when it
+// cannot be (R-421, R-228): a loss the log does not show starts nothing. The
+// leader's next round tries again.
 func (s *Service) mark(ctx context.Context, h state.Host, by Actor, trigger string) (HostLoss, bool, error) {
+	out := HostLoss{HostID: h.ID, Name: h.Name, AlreadyLost: h.Lost, Started: []string{}, Skipped: []SkippedApp{}}
+	if h.Lost && trigger == triggerMajority {
+		return out, false, nil
+	}
+	if err := s.write(ctx, by, audit.Event{
+		Action: "cluster.host.lost", TargetKind: "host", TargetID: h.ID,
+		Detail: map[string]any{"name": h.Name, "trigger": trigger, "already_lost": h.Lost},
+	}); err != nil {
+		return HostLoss{}, false, errs.Wrap(errs.Internal, fmt.Sprintf(
+			"Pando could not write to the audit log that host %s (%s) is lost, so it did not mark the host lost or start any app elsewhere.", h.Name, h.ID), err).
+			WithRemedy("Check that the database accepts writes, then mark the host lost again.")
+	}
 	newly, err := s.Store.MarkHostLost(ctx, h.ID, by.ID)
 	if err != nil {
 		return HostLoss{}, false, err
 	}
-	out := HostLoss{HostID: h.ID, Name: h.Name, AlreadyLost: !newly, Started: []string{}, Skipped: []SkippedApp{}}
-	if !newly && trigger == triggerMajority {
-		return out, false, nil
-	}
-	s.write(ctx, by, audit.Event{
-		Action: "cluster.host.lost", TargetKind: "host", TargetID: h.ID,
-		Detail: map[string]any{"name": h.Name, "trigger": trigger, "already_lost": !newly},
-	})
+	out.AlreadyLost = !newly
 	return out, newly, nil
 }
 
-func (s *Service) failover(ctx context.Context, h state.Host, by Actor, trigger string, out *HostLoss) {
+// failover starts the standby of each app homed on h, each only once its
+// cluster.failover event is written (R-421, R-228). An app whose event
+// cannot be written is skipped, and the leader tries the host again next
+// round (refail).
+func (s *Service) failover(ctx context.Context, h state.Host, a asked, out *HostLoss) {
 	if s.Homes == nil || s.Failover == nil {
 		out.Skipped = append(out.Skipped, SkippedApp{Reason: SkipNotWired,
 			Detail: "This installation does not keep standbys yet, so no app was started elsewhere."})
@@ -280,23 +355,38 @@ func (s *Service) failover(ctx context.Context, h state.Host, by Actor, trigger 
 		out.Skipped = append(out.Skipped, SkippedApp{Reason: SkipPromoteErr, Detail: messageOf(err)})
 		return
 	}
-	for _, a := range homed {
-		reason, detail := s.skip(ctx, a)
-		if reason != "" {
-			out.Skipped = append(out.Skipped, SkippedApp{AppID: a.AppID, Reason: reason, Detail: detail})
-			continue
+	unaudited := false
+	for _, app := range homed {
+		reason, detail := s.skip(ctx, app)
+		if reason == "" {
+			reason, detail = s.start(ctx, h, a, app.AppID)
 		}
-		// Written before the standby starts (R-228).
-		s.write(ctx, by, audit.Event{
-			Action: "cluster.failover", AppID: a.AppID, TargetKind: "app", TargetID: a.AppID,
-			Detail: map[string]any{"from_host": h.ID, "from_host_name": h.Name, "trigger": trigger},
-		})
-		if err := s.Failover.PromoteStandby(ctx, a.AppID); err != nil {
-			out.Skipped = append(out.Skipped, SkippedApp{AppID: a.AppID, Reason: SkipPromoteErr, Detail: messageOf(err)})
-			continue
+		switch reason {
+		case "":
+			out.Started = append(out.Started, app.AppID)
+		case SkipAuditErr:
+			unaudited = true
+			fallthrough
+		default:
+			out.Skipped = append(out.Skipped, SkippedApp{AppID: app.AppID, Reason: reason, Detail: detail})
 		}
-		out.Started = append(out.Started, a.AppID)
 	}
+	s.retryLater(h.ID, a, unaudited)
+}
+
+// start audits one app's failover and then starts its standby, and says why
+// not when it did not. Nothing starts without its event (R-421, R-228).
+func (s *Service) start(ctx context.Context, h state.Host, a asked, appID string) (reason, detail string) {
+	if err := s.write(ctx, a.by, audit.Event{
+		Action: "cluster.failover", AppID: appID, TargetKind: "app", TargetID: appID,
+		Detail: map[string]any{"from_host": h.ID, "from_host_name": h.Name, "trigger": a.trigger},
+	}); err != nil {
+		return SkipAuditErr, "Pando could not write this failover to the audit log, so it did not start the standby. It tries again shortly."
+	}
+	if err := s.Failover.PromoteStandby(ctx, appID); err != nil {
+		return SkipPromoteErr, messageOf(err)
+	}
+	return "", ""
 }
 
 // skip says why app is not failed over, or "" when it is.
@@ -331,20 +421,24 @@ func (s *Service) RecordFence(ctx context.Context, hostID string, v View) {
 		}
 		return
 	}
-	s.write(ctx, system, audit.Event{
+	_ = s.write(ctx, system, audit.Event{
 		Action: "cluster.host.fence", TargetKind: "host", TargetID: hostID,
 		Detail: map[string]any{"fence_id": v.FenceID, "stopped": v.Stopped, "still_cut_off": v.Fenced},
 	})
 }
 
-func (s *Service) write(ctx context.Context, by Actor, e audit.Event) {
+// write audits e as by, and returns the error when it could not be written,
+// having logged it.
+func (s *Service) write(ctx context.Context, by Actor, e audit.Event) error {
 	if s.Audit == nil {
-		return
+		return nil
 	}
 	e.PrincipalKind, e.PrincipalID, e.OnBehalfOf, e.RequestID = by.Kind, by.ID, by.OnBehalfOf, by.RequestID
-	if err := s.Audit.Write(ctx, e); err != nil {
+	err := s.Audit.Write(ctx, e)
+	if err != nil {
 		s.logger().Error("audit write failed", zap.String("action", e.Action), zap.Error(err))
 	}
+	return err
 }
 
 // messageOf is err's message for a person: the envelope's, or a plain one

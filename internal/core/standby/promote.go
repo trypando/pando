@@ -66,7 +66,7 @@ func (s *Service) promoteLocked(ctx context.Context, appID, by string) (api.Prom
 	if err != nil && got.Host == "" {
 		// Refused before anything was started: the app is where it was.
 		s.putBack(ctx, sb, before)
-		s.audit(ctx, "app.standby.promote.failed", appID, by, map[string]any{"host": sb.Host, "error": message(err)})
+		_ = s.audit(ctx, "app.standby.promote.failed", appID, by, map[string]any{"host": sb.Host, "error": message(err)})
 		return got, err
 	}
 	// From here the app is on the standby's host, even when the runtime
@@ -92,7 +92,7 @@ func (s *Service) promoteLocked(ctx context.Context, appID, by string) (api.Prom
 	if err != nil {
 		detail["error"] = message(err)
 	}
-	s.audit(ctx, "app.standby.promote", appID, by, detail)
+	_ = s.audit(ctx, "app.standby.promote", appID, by, detail)
 	return got, err
 }
 
@@ -154,6 +154,14 @@ func (s *Service) resume(ctx context.Context, app state.StandbyApp) {
 		return
 	}
 	defer unlock()
+	// The liveness pass audits each failover it starts; finishing one cut
+	// short is a start of its own, written first, and not made without its
+	// event (R-421, R-228). The next pass tries again.
+	if err := s.audit(ctx, "cluster.failover", app.AppID, "", map[string]any{
+		"from_host_name": sb.StaleHost, "to_host_name": sb.Home, "trigger": "resume",
+	}); err != nil {
+		return
+	}
 	if _, err := s.promoteLocked(ctx, app.AppID, ""); err != nil {
 		s.logger().Warn("could not finish an app's promotion that was cut short; trying again next pass",
 			zap.String("app_id", app.AppID), zap.Error(err))
@@ -215,6 +223,6 @@ func (s *Service) RemoveStale(ctx context.Context, appID, by string) error {
 	}
 	sb.StaleHost = ""
 	s.save(ctx, sb, &prev)
-	s.audit(ctx, "app.standby.stale_removed", appID, by, map[string]any{"host": stale})
+	_ = s.audit(ctx, "app.standby.stale_removed", appID, by, map[string]any{"host": stale})
 	return nil
 }
