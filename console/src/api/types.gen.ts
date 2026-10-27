@@ -262,6 +262,7 @@ export interface PolicyDocument {
   idle_stop_days?: number;
   idle_delete_days?: number;
   stop_orphaned_apps?: boolean;
+  standby?: boolean;
   max_apps_per_user?: number;
   allow_cpu_oversubscription?: boolean;
   allow_memory_oversubscription?: boolean;
@@ -658,6 +659,7 @@ export interface Retention {
 }
 
 export interface Availability {
+  standby?: string;
   priority?: number;
 }
 

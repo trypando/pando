@@ -346,3 +346,40 @@ and nothing is started), clearing `lost_at` and removing the returned host's cop
 `Cluster.ClearHostLost`), and the join giving a host its ID, peer file and host certificate. The
 install's first host has no `cluster_hosts` row until the join slice records it; until then the
 cluster counts one host fewer, which can only keep it under three, never cause a fence.
+
+### As built: warm standby
+
+- **Runtime API.** `RuntimeCapabilities.SupportsStandby` and `api.StandbyRuntime`, asserted only after
+  the capability says yes, as `SelfUpgrader` is: `ApplyStandby`, `ShipVolumes`, `PromoteStandby`,
+  `RemoveStandby`, `RemoveStaleCopy` (`internal/adapter/api/standby.go`). A host is an opaque string the
+  runtime returns; core records and hands it back and never chooses one (R-256). `docker` does not
+  report the capability; `docker-hosts` does with two hosts open to new apps.
+- **The standby is the app's plan under its own bundle name**, `<bundle>-standby`, created and never
+  started (`docker.ApplyStopped`), without its egress gateway. Placement reads where an app runs from
+  its bundle label, so the standby's host is never mistaken for the app's. Promoting removes it and
+  applies the app's own plan on that host from a restored copy: the "created and stopped" containers
+  hold the image and prove the plan creates there; they are not renamed into the app.
+- **Volume copies** live in one staging volume per app volume on the standby's host, labeled
+  `io.pando.standby`, never `io.pando.bundle`. A ship lists the volume (`find` + `stat`: mode, size,
+  mtime), compares with the newest copy's listing, and streams a tar of what differs through Pando into
+  a hard-linked clone (`cp -al`) of the newest copy. A file whose mtime is in or after the second the
+  last listing was taken is always sent. Owner changes alone are not detected. A file name holding a
+  line break fails the ship with a message naming it. A ship with nothing changed makes no new copy.
+- **Promote** tries the newest copy, then older ones (up to three), each given
+  `DefaultPromoteHealthTimeout` [P: 2 minutes] to be healthy on two looks in a row. When none is, the
+  oldest tried is left running and reported `Healthy: false`. A standby with no copy of a volume is
+  refused, not started empty. The promoted host gets a home mark (a labeled volume), so a lost host that
+  returns still holding the bundle loses to it in placement, in a restarted process too.
+- **Core.** `internal/core/standby` is the leader's job (every minute; ships when the newest copy is
+  five minutes old [P]). It makes or refreshes the standby when the pinned spec changes, from
+  `reconciler.Shape` plus `Complete` (one definition of what an app starts with), and records it in
+  `app_standbys` (migration 000087). `Promote` and `RemoveStale` are for the liveness pass (R-421) and a
+  manual start; neither decides a host is lost. A failed app's standby is neither refreshed nor started
+  (R-151). After `RemoveStale`, the host that came back is where the next standby goes unless the app
+  already has one elsewhere.
+- **Provisioned services.** `ServicesCapabilities.ReplicaTypes` and `api.ReplicaServices` exist; no kind
+  implements them yet. Postgres streaming replication needs a running replica on the standby's host
+  reaching the primary across hosts, which the agent does not carry, so every provisioned service's
+  data travels in the volume copy, and the app's notice names its types.
+- **Notice** `standby.live_copy` on an app whose standby holds volume copies, fingerprinted on the host
+  and the unreplicated types, never on when a copy was taken. Never a blocker.

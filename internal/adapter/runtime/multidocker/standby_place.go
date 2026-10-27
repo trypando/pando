@@ -80,3 +80,60 @@ func (a *Adapter) anyDown(rooms []hostRoom, primary string) bool {
 	}
 	return false
 }
+
+// placeStandby is where ApplyStandby puts a bundle's standby (R-419): the
+// host it was on before, prefer, while that host still qualifies, so its
+// copies are not shipped again from nothing; otherwise the host the failover
+// reservation chooses (R-422). No room is returned as the notice's error, and
+// the app keeps running without a standby.
+func (a *Adapter) placeStandby(ctx context.Context, home *host, prefer string, plan api.BundlePlan) (*host, error) {
+	if h := a.byName(prefer); h != nil && h != home && !h.cfg.NoPlacement {
+		return h, nil
+	}
+	if !a.otherOpenHost(home) {
+		return nil, errs.Newf(errs.AdapterUnavailable,
+			"No Docker host other than %s is open to new apps, so this app has nowhere to keep a standby.", home.cfg.Name).
+			WithRemedy("Open another host to new apps in the Docker hosts runtime's settings, or add one.")
+	}
+	var existing []standbyLoad
+	if a.standbys != nil {
+		var err error
+		if existing, err = a.standbys(ctx); err != nil {
+			return nil, err
+		}
+	}
+	n := need(plan)
+	choice, err := a.chooseStandbyHost(ctx, standbyRequest{
+		App: plan.BundleID, Primary: home.cfg.Name, Need: n,
+		DiskBytes:             standbyDisk(diskLimit(plan), 0),
+		AllowOversubscription: plan.Failover.AllowOversubscription,
+	}, existing)
+	if err != nil {
+		return nil, err
+	}
+	if choice.Host == nil {
+		return nil, choice.NoRoom
+	}
+	return choice.Host, nil
+}
+
+// diskLimit is the app's disk limit, which every workload carries the same
+// (R-240): its standby's copies are counted from it (standbyDisk).
+func diskLimit(plan api.BundlePlan) int64 {
+	for _, w := range plan.Workloads {
+		if w.Resources.DiskBytes > 0 {
+			return w.Resources.DiskBytes
+		}
+	}
+	return 0
+}
+
+// otherOpenHost reports a host besides home that takes new apps.
+func (a *Adapter) otherOpenHost(home *host) bool {
+	for _, h := range a.hosts {
+		if h != home && !h.cfg.NoPlacement {
+			return true
+		}
+	}
+	return false
+}

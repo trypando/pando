@@ -892,6 +892,15 @@
       "secret": false
     },
     {
+      "env": "PANDO_POLICY_STANDBY",
+      "key": "policy.standby",
+      "type": "bool",
+      "default": "true",
+      "description": "Keep a stopped copy of each app on another host, with its storage copied every 5 minutes, and start it if the app's host is lost. On by default. An app can turn it on or off for itself. Only a runtime with more than one host keeps one.",
+      "group": "policy",
+      "secret": false
+    },
+    {
       "env": "PANDO_POLICY_STOP_ORPHANED_APPS",
       "key": "policy.stop_orphaned_apps",
       "type": "bool",

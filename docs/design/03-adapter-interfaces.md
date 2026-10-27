@@ -620,6 +620,19 @@ older value, does not match its plan, so an upgrade recreates every app once and
 apps already running, rather than waiting for each app's next deploy. Incus runs each app in its own VM
 (R-115), so none of these options apply there.
 
+### 2.6 Warm standby (R-419, R-420)
+
+A runtime that can keep a stopped copy of an app in a second place reports `SupportsStandby` and
+implements `StandbyRuntime` (`adapter/api/standby.go`): `ApplyStandby` creates or refreshes the copy
+without starting it, `ShipVolumes` copies the app's volumes to it live and incrementally keeping the
+last `Keep` copies, `PromoteStandby` starts it from the newest copy and falls back to older ones while
+it is not healthy, `RemoveStandby` removes it, and `RemoveStaleCopy` removes what a failed-over app left
+on the host it was lost from, never starting it. The place is the runtime's: it answers with a host
+name that core records and hands back, and core never chooses one (R-256). Deciding a host is lost is
+core's (R-421); the runtime only acts when told. A services adapter whose engine replicates a
+provisioned service natively lists the slot types in `ServicesCapabilities.ReplicaTypes` and implements
+`ReplicaServices`; any other type's data travels in the volume copy. As built: `notes-cluster.md`.
+
 ---
 
 ## 3. Builder

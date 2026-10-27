@@ -61,38 +61,17 @@ func (a *Adapter) SnapshotVolume(ctx context.Context, h api.VolumeHandle, dst io
 	if h.Handle == "" {
 		return errs.New(errs.ValidInvalid, "That volume has no handle to back up.")
 	}
-	if err := a.ensureImage(ctx, helperImage, imageClaim{}); err != nil {
-		return err
-	}
-
 	// Reading, so the mount is read-only. A tar that can write to the volume it
 	// is reading is a tar that can corrupt the thing being backed up.
-	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: &container.Config{
-			Image: helperImage,
-			// `.` rather than `/volume` so paths in the archive are relative,
-			// which is what lets restore extract into a different volume.
-			Cmd:             []string{"tar", "-cf", "-", "-C", snapshotMount, "."},
-			AttachStdout:    true,
-			AttachStderr:    true,
-			NetworkDisabled: true,
-		},
-		HostConfig: &container.HostConfig{
-			Mounts: []mount.Mount{{
-				Type: mount.TypeVolume, Source: h.Handle, Target: snapshotMount, ReadOnly: true,
-			}},
-			AutoRemove:  false, // removed below, after the exit code is read
-			CapDrop:     []string{"ALL"},
-			CapAdd:      snapshotCaps,
-			SecurityOpt: []string{"no-new-privileges"},
-		},
+	return a.runHelper(ctx, helperRun{
+		// `.` rather than `/volume` so paths in the archive are relative,
+		// which is what lets restore extract into a different volume.
+		Cmd:    []string{"tar", "-cf", "-", "-C", snapshotMount, "."},
+		Mounts: []mount.Mount{{Type: mount.TypeVolume, Source: h.Handle, Target: snapshotMount, ReadOnly: true}},
+		Caps:   snapshotCaps,
+		Stdout: dst,
+		Verb:   "back up",
 	})
-	if err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Could not start the storage backup.", err)
-	}
-	defer a.removeQuietly(ctx, created.ID)
-
-	return a.streamHelper(ctx, created.ID, dst, nil, "back up")
 }
 
 // RestoreVolume extracts a tar archive produced by SnapshotVolume into the
@@ -105,42 +84,71 @@ func (a *Adapter) RestoreVolume(ctx context.Context, h api.VolumeHandle, src io.
 	if h.Handle == "" {
 		return errs.New(errs.ValidInvalid, "That volume has no handle to restore into.")
 	}
+	return a.runHelper(ctx, helperRun{
+		// Empty, then extract. Both in one shell so the window where the
+		// volume is empty is as short as possible and never spans a
+		// container start.
+		Cmd:    []string{"sh", "-c", emptyDir(snapshotMount) + "; exec tar -xf - -C " + snapshotMount},
+		Mounts: []mount.Mount{{Type: mount.TypeVolume, Source: h.Handle, Target: snapshotMount}},
+		Caps:   restoreCaps,
+		Stdin:  src,
+		Verb:   "restore",
+	})
+}
+
+// emptyDir is the shell that removes everything in dir, dotfiles included.
+func emptyDir(dir string) string {
+	return fmt.Sprintf("rm -rf %s/..?* %s/.[!.]* %s/* 2>/dev/null", dir, dir, dir)
+}
+
+// helperRun is one throwaway helper container: busybox with the given
+// mounts, no network, every capability dropped but Caps, its stdio streamed.
+type helperRun struct {
+	Cmd    []string
+	Mounts []mount.Mount
+	Caps   []string
+	Stdin  io.Reader
+	Stdout io.Writer
+	// Verb completes "Could not %s this app's storage."
+	Verb string
+}
+
+// runHelper creates, runs and removes a helper container.
+func (a *Adapter) runHelper(ctx context.Context, run helperRun) error {
+	if run.Stdout == nil {
+		run.Stdout = io.Discard
+	}
+	if a.helperHook != nil {
+		return a.helperHook(ctx, run)
+	}
 	if err := a.ensureImage(ctx, helperImage, imageClaim{}); err != nil {
 		return err
 	}
-
+	stdin := run.Stdin != nil
 	created, err := a.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
-			Image: helperImage,
-			// Empty, then extract. Both in one shell so the window where the
-			// volume is empty is as short as possible and never spans a
-			// container start.
-			Cmd: []string{"sh", "-c",
-				fmt.Sprintf("rm -rf %s/..?* %s/.[!.]* %s/* 2>/dev/null; exec tar -xf - -C %s",
-					snapshotMount, snapshotMount, snapshotMount, snapshotMount)},
-			AttachStdin:     true,
+			Image:           helperImage,
+			Cmd:             run.Cmd,
+			AttachStdin:     stdin,
 			AttachStdout:    true,
 			AttachStderr:    true,
-			OpenStdin:       true,
-			StdinOnce:       true,
+			OpenStdin:       stdin,
+			StdinOnce:       stdin,
 			NetworkDisabled: true,
 		},
 		HostConfig: &container.HostConfig{
-			Mounts: []mount.Mount{{
-				Type: mount.TypeVolume, Source: h.Handle, Target: snapshotMount,
-			}},
-			AutoRemove:  false,
+			Mounts:      run.Mounts,
+			AutoRemove:  false, // removed below, after the exit code is read
 			CapDrop:     []string{"ALL"},
-			CapAdd:      restoreCaps,
+			CapAdd:      run.Caps,
 			SecurityOpt: []string{"no-new-privileges"},
 		},
 	})
 	if err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Could not start the storage restore.", err)
+		return errs.Wrap(errs.AdapterFailed, fmt.Sprintf("Could not start the helper to %s this app's storage.", run.Verb), err)
 	}
 	defer a.removeQuietly(ctx, created.ID)
-
-	return a.streamHelper(ctx, created.ID, io.Discard, src, "restore")
+	return a.streamHelper(ctx, created.ID, run.Stdout, run.Stdin, run.Verb)
 }
 
 // streamHelper attaches, starts, pumps, and reports the helper's exit code.

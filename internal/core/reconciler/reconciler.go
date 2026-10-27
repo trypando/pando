@@ -745,29 +745,9 @@ func (r *Reconciler) correct(ctx context.Context, app state.Reconcilable, runtim
 		}
 	}
 
-	// The credential is resolved here, for the one apply, rather than on every
-	// tick: for ECR it is minted by a call to AWS.
-	if r.BuiltImageAuth != nil {
-		for i := range want.Workloads {
-			if want.Workloads[i].PullAuth == nil {
-				want.Workloads[i].PullAuth = r.BuiltImageAuth(ctx, s, want.Workloads[i].Image)
-			}
-		}
-	}
-
-	// The shape was compared without environment; what is started needs it,
-	// or a re-created workload comes up with none (R-148).
-	if r.Environments != nil {
-		envs, err := r.Environments.Environments(ctx, s)
-		if err != nil {
-			r.attempt(ctx, app, runtime, "could not prepare the app's configuration: "+reason(err))
-			return
-		}
-		for i := range want.Workloads {
-			if env, ok := envs[want.Workloads[i].Name]; ok {
-				want.Workloads[i].Env = env
-			}
-		}
+	if err := r.Complete(ctx, &want, s); err != nil {
+		r.attempt(ctx, app, runtime, "could not prepare the app's configuration: "+reason(err))
+		return
 	}
 
 	if _, err := runtime.Apply(ctx, want); err != nil {
@@ -798,6 +778,35 @@ func (r *Reconciler) correct(ctx context.Context, app state.Reconcilable, runtim
 	// success. The next observation is the only thing entitled to say whether
 	// the correction held — and if it did, that is where the counter clears.
 	r.attempt(ctx, app, runtime, "corrected: "+drift.Describe())
+}
+
+// Complete adds what a plan needs to be started and not only compared: the
+// pull credential and each workload's environment.
+func (r *Reconciler) Complete(ctx context.Context, want *api.BundlePlan, s *spec.AppSpec) error {
+	// The credential is resolved here, for the one apply, rather than on every
+	// tick: for ECR it is minted by a call to AWS.
+	if r.BuiltImageAuth != nil {
+		for i := range want.Workloads {
+			if want.Workloads[i].PullAuth == nil {
+				want.Workloads[i].PullAuth = r.BuiltImageAuth(ctx, s, want.Workloads[i].Image)
+			}
+		}
+	}
+
+	// The shape was compared without environment; what is started needs it,
+	// or a re-created workload comes up with none (R-148).
+	if r.Environments != nil {
+		envs, err := r.Environments.Environments(ctx, s)
+		if err != nil {
+			return err
+		}
+		for i := range want.Workloads {
+			if env, ok := envs[want.Workloads[i].Name]; ok {
+				want.Workloads[i].Env = env
+			}
+		}
+	}
+	return nil
 }
 
 // ensureRoute re-points routing at Pando's proxy.

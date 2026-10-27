@@ -94,6 +94,7 @@ import (
 	"github.com/trypando/pando/internal/core/source"
 	"github.com/trypando/pando/internal/core/sourceconn"
 	"github.com/trypando/pando/internal/core/spec"
+	"github.com/trypando/pando/internal/core/standby"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/core/subscription"
 	"github.com/trypando/pando/internal/core/tokenkey"
@@ -463,6 +464,7 @@ func serve(ctx context.Context, configPath string) error {
 	// records (R-204).
 	backups := state.NewBackups(db)
 	bundleSource := state.NewBundleSource(db)
+	standbys := state.NewStandbys(db) // R-419, R-420
 	backupService := &backup.Service{
 		Registry:    registry,
 		DatabaseURL: secret.New(cfg.Database.URL),
@@ -1090,7 +1092,7 @@ func serve(ctx context.Context, configPath string) error {
 		// ignores of it (R-412).
 		Notices: &notice.Service{
 			Revisions: apps, Backups: backups, Security: securityService,
-			Ignores: state.NewNoticeIgnores(db),
+			Ignores: state.NewNoticeIgnores(db), Standbys: standbys,
 		},
 		Notifier: notifyRouter,
 		Logs:     logStore,
@@ -1584,6 +1586,16 @@ func serve(ctx context.Context, configPath string) error {
 	if livenessWatch != nil {
 		job("liveness", livenessWatch.Run)
 	}
+	// Warm standbys (R-419, R-420): made, refreshed and kept current on a
+	// runtime with a second host, and removed when turned off. Inert on a
+	// runtime with one place. Promote and RemoveStale are the liveness
+	// pass's to call (R-421).
+	standbyService := &standby.Service{
+		Store: standbys, Plans: loop, Runtimes: registry, Services: registry,
+		Policy: policyStore, Apps: standbys, Auditor: auditor,
+		Clock: clock.System{}, Logger: logger,
+	}
+	job("standby", standbyService.Run)
 
 	// Metrics about this process, pushed to the operator's collector (R-399).
 	// Stopped by a defer, so after the server has drained, and its last push

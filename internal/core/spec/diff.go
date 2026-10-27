@@ -327,6 +327,9 @@ func compareOperational(old, next *AppSpec, add func(Class, string, string, any,
 		add(Benign, "availability.priority", fmt.Sprintf("This app's failover priority is now %d.", next.Availability.Priority),
 			old.Availability.Priority, next.Availability.Priority)
 	}
+	if old.Availability.Standby != next.Availability.Standby {
+		add(Benign, "availability.standby", "Whether this app keeps a standby on another host changed.", old.Availability.Standby, next.Availability.Standby)
+	}
 }
 
 func modeOf(s Slot) ResolutionMode {

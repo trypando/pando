@@ -14125,6 +14125,9 @@
       "Availability": {
         "type": "object",
         "properties": {
+          "standby": {
+            "type": "string"
+          },
           "priority": {
             "type": "integer",
             "format": "int64"
@@ -17189,6 +17192,9 @@
             "format": "int64"
           },
           "stop_orphaned_apps": {
+            "type": "boolean"
+          },
+          "standby": {
             "type": "boolean"
           },
           "max_apps_per_user": {

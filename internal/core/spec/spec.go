@@ -44,7 +44,8 @@ type AppSpec struct {
 	Egress    Egress     `json:"egress"`
 	Retention Retention  `json:"retention"`
 
-	// Availability is how the app fails over in a cluster (R-422).
+	// Availability is how the app is kept running when its host is lost
+	// (R-419, R-422). Left out of an app that says nothing, which is most.
 	Availability Availability `json:"availability,omitzero"`
 
 	// Warnings are carried, not resolved. A warning is never a blocker —
@@ -715,13 +716,41 @@ type Retention struct {
 	SpecRevisions    int   `json:"spec_revisions"`
 }
 
-// Availability is how the app is treated when its host is lost (R-422).
+// StandbyMode is whether an app keeps a warm standby (R-419).
+type StandbyMode string
+
+const (
+	// StandbyDefault, or empty, is what host policy says ([P] on).
+	StandbyDefault StandbyMode = "default"
+	StandbyOn      StandbyMode = "on"
+	StandbyOff     StandbyMode = "off"
+)
+
+// Availability is how an app is kept running when its host is lost.
 type Availability struct {
+	// Standby overrides host policy's standby for this app (R-419). How an
+	// app runs is the spec's (R-020), so the override is here rather than a
+	// setting beside it.
+	Standby StandbyMode `json:"standby,omitempty"`
+
 	// Priority orders the apps a host starts at failover when host policy
 	// allow_failover_oversubscription let their standbys be placed past what
 	// it keeps free: higher first, then by app. 0 by default; negative is
-	// allowed, for an app that should start last.
+	// allowed, for an app that should start last (R-422).
 	Priority int `json:"priority,omitempty"`
+}
+
+// WantsStandby is whether the app keeps a standby, given host policy's
+// default.
+func (a Availability) WantsStandby(policyDefault bool) bool {
+	switch a.Standby {
+	case StandbyOn:
+		return true
+	case StandbyOff:
+		return false
+	default:
+		return policyDefault
+	}
 }
 
 // Warning codes that must exist (design 01 §2.8).
