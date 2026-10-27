@@ -66,14 +66,26 @@ func (a *Agent) openRuntime(ctx context.Context, cs tls.ConnectionState) (net.Co
 	if a.Fence == nil {
 		return conn, nil
 	}
-	return a.fenceable(conn), nil
+	ours, err := a.fenceable(conn)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return ours, nil
 }
 
 // fenceable serves the runtime calls of one stream through an HTTP proxy that
 // asks Fence before each one, and returns the stream's other end. first is a
 // connection to the runtime already made, used for the first call.
-func (a *Agent) fenceable(first net.Conn) net.Conn {
-	ours, theirs := net.Pipe()
+//
+// The two ends close for writing one direction at a time (streamPair), so
+// the end of a helper container's stdin reaches the runtime through an
+// upgraded attach or exec while its output is still to come (R-420).
+func (a *Agent) fenceable(first net.Conn) (net.Conn, error) {
+	ours, theirs, err := streamPair()
+	if err != nil {
+		return nil, err
+	}
 	var once sync.Once
 	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var c net.Conn
@@ -113,7 +125,7 @@ func (a *Agent) fenceable(first net.Conn) net.Conn {
 		once.Do(func() { _ = first.Close() })
 		transport.CloseIdleConnections()
 	}()
-	return ours
+	return ours, nil
 }
 
 // oneConn is a listener that accepts one connection, then waits until it is
