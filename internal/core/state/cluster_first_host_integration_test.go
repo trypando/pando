@@ -28,9 +28,9 @@ func TestR414_TheFirstHostIsInTheClusterFromItsFirstStart(t *testing.T) {
 
 	issued, err := c.CreateJoinToken(ctx, []string{"app"}, 1, "usr_ada", time.Now().Add(time.Hour))
 	require.NoError(t, err)
-	_, _, err = c.Join(ctx, issued.Secret, func(state.JoinToken) (state.Host, error) {
-		return state.Host{Name: "edge-1", Address: "10.0.0.2:7443", CertSHA256: strings.Repeat("b", 64)}, nil
-	})
+	_, joined, err := c.Join(ctx, issued.Secret, state.Host{Name: "edge-1", Address: "10.0.0.2:7443", CertSHA256: strings.Repeat("b", 64)})
+	require.NoError(t, err)
+	_, err = c.ConfirmJoin(ctx, joined.ID)
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup

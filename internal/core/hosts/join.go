@@ -1,6 +1,7 @@
 package hosts
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
@@ -212,57 +214,90 @@ func (req JoinRequest) AuditDetail() map[string]any {
 	return map[string]any{"name": name, "version": version}
 }
 
+// DefaultJoinCheckTimeout is how long a join's checks may take before the
+// join is refused (R-415 [P]).
+const DefaultJoinCheckTimeout = 30 * time.Second
+
 // Join admits a host (R-415). It refuses, spending no use of the token, a
 // request Pando cannot use, a host at another version, and whatever
-// Readiness refuses; otherwise it spends one use, issues the host's
-// certificates, records the host, and answers with what the token's roles
-// need — the keys only for the control role. The cluster's version is said
-// only to a host whose token is good: a caller without one learns nothing
-// about the cluster.
+// Readiness or the runtime refuses; otherwise it issues the host's
+// certificates, then spends one use and records the host, pending, and
+// answers with what the token's roles need — the keys only for the control
+// role. The cluster's version is said only to a host whose token is good: a
+// caller without one learns nothing about the cluster.
+//
+// Every slow step runs before the token is spent, with no database
+// connection held and within JoinCheckTimeout, so a check that hangs keeps no
+// other join waiting on the token's row and holds none of the pool; the
+// spend and the record are one short transaction (state.Cluster.Join). The
+// host is listed once it presents the certificate it was issued
+// (Service.Peers, which the joining host asks right after writing its files);
+// until then a join of the same name replaces it.
 func (s *Service) Join(ctx context.Context, req JoinRequest) (JoinResult, error) {
 	if err := CheckJoinRequest(req); err != nil {
 		return JoinResult{}, err
 	}
-
-	var res JoinResult
-	_, host, err := s.Store.Join(ctx, req.Secret, func(t state.JoinToken) (state.Host, error) {
-		if req.Version != s.Version {
-			return state.Host{}, errs.Newf(errs.StateInvalid,
-				"This host runs Pando %s and the cluster runs %s. A host joins only at the cluster's version.", orUnknown(req.Version), orUnknown(s.Version)).
-				WithRemedy("Install Pando " + orUnknown(s.Version) + " on the joining host and start the join again.")
-		}
-		if err := s.admissible(ctx, req.Name, t.Roles); err != nil {
-			return state.Host{}, err
-		}
-		hostID := id.New(id.Host)
-		cert, sha, err := s.Authority.IssueHost(req.CSR, req.Name, t.Roles, s.now())
-		if err != nil {
-			return state.Host{}, err
-		}
-		res.Certificate = cert
-		if res.HostClientCert, res.HostClientKey, err = s.Authority.IssueHostClient(hostID, s.now()); err != nil {
-			return state.Host{}, errs.Wrap(errs.Internal, "Pando could not issue the certificate the joining host checks other hosts with.", err)
-		}
-		if s.Runtime != nil && slices.Contains(t.Roles, state.HostRoleApp) {
-			res.NetworkPool = s.Runtime.NetworkPool(ctx)
-		}
-		if slices.Contains(t.Roles, state.HostRoleControl) {
-			if res.Keys, err = s.controlKeys(ctx); err != nil {
-				return state.Host{}, err
-			}
-		}
-		return state.Host{
-			ID: hostID, Name: req.Name, Address: req.Address, CertSHA256: sha,
-			Platform: req.Platform, Version: req.Version,
-		}, nil
-	})
+	t, err := s.Store.CheckJoinToken(ctx, req.Secret)
 	if err != nil {
 		return JoinResult{}, err
 	}
-	res.Host = host
+	if req.Version != s.Version {
+		return JoinResult{}, errs.Newf(errs.StateInvalid,
+			"This host runs Pando %s and the cluster runs %s. A host joins only at the cluster's version.", orUnknown(req.Version), orUnknown(s.Version)).
+			WithRemedy("Install Pando " + orUnknown(s.Version) + " on the joining host and start the join again.")
+	}
+	res, host, err := s.prepareJoin(ctx, req, t)
+	if err != nil {
+		return JoinResult{}, err
+	}
+	if _, res.Host, err = s.Store.Join(ctx, req.Secret, host); err != nil {
+		return JoinResult{}, err
+	}
 	res.Authority = s.Authority.CertPEM()
-	s.Changed(ctx)
 	return res, nil
+}
+
+// prepareJoin makes every check and issues everything a join needs before
+// the token is spent, within JoinCheckTimeout.
+func (s *Service) prepareJoin(ctx context.Context, req JoinRequest, t state.JoinToken) (JoinResult, state.Host, error) {
+	timeout := cmp.Or(s.JoinCheckTimeout, DefaultJoinCheckTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	res, host, err := s.issueJoin(ctx, req, t)
+	if err != nil && ctx.Err() != nil {
+		return res, host, errs.Wrap(errs.AdapterUnavailable,
+			fmt.Sprintf("The cluster's checks of the joining host did not finish within %s, so the join was refused. Its join token was not spent.", timeout), err).
+			WithRemedy("Check that the cluster's control hosts and its runtime are reachable, then start the join again.")
+	}
+	return res, host, err
+}
+
+func (s *Service) issueJoin(ctx context.Context, req JoinRequest, t state.JoinToken) (JoinResult, state.Host, error) {
+	var res JoinResult
+	if err := s.admissible(ctx, req.Name, t.Roles); err != nil {
+		return res, state.Host{}, err
+	}
+	hostID := id.New(id.Host)
+	cert, sha, err := s.Authority.IssueHost(req.CSR, req.Name, t.Roles, s.now())
+	if err != nil {
+		return res, state.Host{}, err
+	}
+	res.Certificate = cert
+	if res.HostClientCert, res.HostClientKey, err = s.Authority.IssueHostClient(hostID, s.now()); err != nil {
+		return res, state.Host{}, errs.Wrap(errs.Internal, "Pando could not issue the certificate the joining host checks other hosts with.", err)
+	}
+	if s.Runtime != nil && slices.Contains(t.Roles, state.HostRoleApp) {
+		res.NetworkPool = s.Runtime.NetworkPool(ctx)
+	}
+	if slices.Contains(t.Roles, state.HostRoleControl) {
+		if res.Keys, err = s.controlKeys(ctx); err != nil {
+			return res, state.Host{}, err
+		}
+	}
+	return res, state.Host{
+		ID: hostID, Name: req.Name, Address: req.Address, CertSHA256: sha,
+		Platform: req.Platform, Version: req.Version,
+	}, ctx.Err()
 }
 
 // admissible asks whether the cluster can take a host called name with roles

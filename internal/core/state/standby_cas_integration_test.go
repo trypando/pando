@@ -124,3 +124,41 @@ func TestR153_AStandbyRowIsWrittenOnlyOverWhatWasRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, state.Hold{}, none)
 }
+
+// TestR151_APromotionIsWrittenAheadOnlyForAnAppThatHasNotFailed asserts the
+// write-ahead's condition: a promotion read while the app ran is not written
+// once the app has failed, so its standby is never started (R-151).
+func TestR151_APromotionIsWrittenAheadOnlyForAnAppThatHasNotFailed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	alice := seedUser(t, db, "standby-live-alice")
+	apps := state.NewApps(db)
+	standbys := state.NewStandbys(db)
+	suffix := strings.ToLower(id.New(id.App)[4:14])
+	app, err := apps.Create(ctx, "live-"+suffix, "live-"+suffix, alice.ID, alice.ID, spec.Source{Type: spec.SourceGit, URL: "https://example.test/app"})
+	require.NoError(t, err)
+	read := state.Standby{AppID: app.ID, Host: "o-" + suffix, Home: "h-" + suffix}
+	ok, err := standbys.SaveIf(ctx, read, nil)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	ahead := read
+	ahead.Home, ahead.StaleHost, ahead.PromotedAt, ahead.PromotingAt = read.Host, read.Home, &at, &at
+	_, err = standbys.SaveIfLive(ctx, ahead, nil)
+	require.Error(t, err, "a write-ahead is made over the row it was read from")
+
+	require.NoError(t, apps.SetState(ctx, app.ID, state.StateFailed))
+	ok, err = standbys.SaveIfLive(ctx, ahead, &read)
+	require.NoError(t, err)
+	require.False(t, ok, "not written for a failed app")
+	got, _, err := standbys.Get(ctx, app.ID)
+	require.NoError(t, err)
+	require.Nil(t, got.PromotingAt)
+
+	require.NoError(t, apps.SetState(ctx, app.ID, state.StateRunning))
+	ok, err = standbys.SaveIfLive(ctx, ahead, &read)
+	require.NoError(t, err)
+	require.True(t, ok)
+}

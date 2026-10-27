@@ -150,6 +150,22 @@ func (s *Standbys) SaveIf(ctx context.Context, sb Standby, prev *Standby) (bool,
 		prev.Host, prev.Home, prev.PromotedAt, prev.PromotingAt)
 }
 
+// SaveIfLive is SaveIf over an existing row that also writes only while the
+// app is live and not failed: a promotion's write-ahead, so an app that fails
+// after the promotion read it is never started on another host (R-151).
+func (s *Standbys) SaveIfLive(ctx context.Context, sb Standby, prev *Standby) (bool, error) {
+	if prev == nil {
+		return false, errs.New(errs.Internal, "A promotion's write-ahead needs the standby it was read from.")
+	}
+	return s.write(ctx, sb, `ON CONFLICT (app_id) DO UPDATE SET `+standbyUpdate+`
+		WHERE app_standbys.host = $16 AND app_standbys.home_host = $17
+		  AND app_standbys.promoted_at IS NOT DISTINCT FROM $18::timestamptz
+		  AND app_standbys.promoting_at IS NOT DISTINCT FROM $19::timestamptz
+		  AND EXISTS (SELECT 1 FROM apps a WHERE a.id = app_standbys.app_id
+		              AND a.deleted_at IS NULL AND a.state <> 'failed')`,
+		prev.Host, prev.Home, prev.PromotedAt, prev.PromotingAt)
+}
+
 const standbyUpdate = `
 		    host = $2, spec_id = $3, volumes = $4, copies = $5, shipped_at = $6, unreplicated = $7,
 		    last_error = $8, stale_host = $9, promoted_at = $10, runtime_ref = $11,

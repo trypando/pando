@@ -53,8 +53,8 @@ func TestR404_FailedJoinsAreRateLimitedPerAddress(t *testing.T) {
 // is refused.
 type refusingStore struct{ corehosts.Store }
 
-func (refusingStore) Join(context.Context, secret.Value, func(state.JoinToken) (state.Host, error)) (state.JoinToken, state.Host, error) {
-	return state.JoinToken{}, state.Host{}, errs.New(errs.AuthTokenInvalid, "This join token is not valid.")
+func (refusingStore) CheckJoinToken(context.Context, secret.Value) (state.JoinToken, error) {
+	return state.JoinToken{}, errs.New(errs.AuthTokenInvalid, "This join token is not valid.")
 }
 
 // TestR404_OnlyARefusedSecretCountsAgainstAJoinAddress asserts R-404 applied

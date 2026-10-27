@@ -141,10 +141,43 @@ func (j *Joiner) Join(ctx context.Context, token, name string) (Joined, error) {
 		HostID: res.Host.ID, Name: res.Host.Name, Roles: res.Host.Roles, Cluster: d.Address,
 		JoinedAt: j.now().UTC(), NetworkPool: res.NetworkPool,
 	}
-	if err := j.Files.write(joined, res, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})); err != nil {
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	if err := j.Files.write(joined, res, keyPEM); err != nil {
+		return Joined{}, err
+	}
+	if err := j.confirm(ctx, d, res.Certificate, keyPEM); err != nil {
+		// Not joined: the cluster forgets the pending join, and the same
+		// token and name can join again (R-415).
+		j.Files.unmark()
 		return Joined{}, err
 	}
 	return joined, nil
+}
+
+// confirmTries is how many times a joined host asks the cluster listener to
+// confirm its join before it gives up.
+const confirmTries = 3
+
+// confirm presents the certificate the join issued to the cluster listener
+// (Service.Peers), once what the join gave this host is written: until then
+// the cluster holds the join pending, lists no such host, and lets the same
+// name join again (R-415). A confirmation whose answer was lost is asked
+// again; a confirmed join answers again.
+func (j *Joiner) confirm(ctx context.Context, d Decoded, certPEM, keyPEM []byte) error {
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not use the certificate the cluster issued this host.", err).WithRemedy(joinRemedy)
+	}
+	cfg := PinnedTLS(d.AuthorityHash)
+	cfg.Certificates = []tls.Certificate{cert}
+	sync := &PeerSync{Address: d.Address, HTTP: j.client(cfg)}
+	for range confirmTries {
+		if _, err = sync.fetch(ctx, d.Address); err == nil {
+			return nil
+		}
+	}
+	return errs.Wrap(errs.AdapterUnavailable, fmt.Sprintf("The cluster at %s answered the join, but this host could not confirm it, so it has not joined.", d.Address), err).
+		WithRemedy("Start the join again with the same join token and name. The unfinished join is replaced.")
 }
 
 func (j *Joiner) now() time.Time {
@@ -180,11 +213,17 @@ func newHostKey(name string) (*ecdsa.PrivateKey, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	csr, err := hostCSR(key, name)
+	return key, csr, err
+}
+
+// hostCSR is a certificate request for key, named name.
+func hostCSR(key *ecdsa.PrivateKey, name string) ([]byte, error) {
 	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: name}}, key)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return key, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), nil
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), nil
 }
 
 func (j *Joiner) client(cfg *tls.Config) *http.Client {

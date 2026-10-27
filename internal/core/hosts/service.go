@@ -23,10 +23,15 @@ type Store interface {
 	RevokeJoinToken(ctx context.Context, tokenID string) (state.JoinToken, error)
 	Hosts(ctx context.Context) ([]state.Host, error)
 	RemoveHost(ctx context.Context, hostID string) (state.Host, error)
-	Join(ctx context.Context, presented secret.Value, admit func(state.JoinToken) (state.Host, error)) (state.JoinToken, state.Host, error)
-	// The host's certificates (R-415, R-421): renewing them, and refusing a
-	// removed host's.
-	RenewHostCert(ctx context.Context, hostID, presented, next string) (state.Host, error)
+	// A join (R-415): the token checked without spending it, then spent
+	// with the host recorded pending, which the host confirms.
+	CheckJoinToken(ctx context.Context, presented secret.Value) (state.JoinToken, error)
+	Join(ctx context.Context, presented secret.Value, h state.Host) (state.JoinToken, state.Host, error)
+	ConfirmJoin(ctx context.Context, hostID string) (bool, error)
+	// The host's certificates (R-415, R-421): which host holds one, pending
+	// or not, renewing them, and refusing a removed host's.
+	HostByCert(ctx context.Context, sha string) (state.Host, bool, error)
+	RenewHostCert(ctx context.Context, hostID, presented, next string, nextPEM []byte) (state.Host, bool, error)
 	ConfirmHostCert(ctx context.Context, hostID, current string) (bool, error)
 	CertRevoked(ctx context.Context, sha string) (bool, error)
 	Revoked(ctx context.Context) (state.Revoked, error)
@@ -79,6 +84,11 @@ type Service struct {
 
 	// Readiness, when set, is asked before a join spends a use of its token.
 	Readiness JoinReadiness
+
+	// JoinCheckTimeout bounds the checks a join makes before it spends its
+	// token's use (readiness, the runtime, the keys); zero is
+	// DefaultJoinCheckTimeout.
+	JoinCheckTimeout time.Duration
 
 	// IsSelf picks the host serving this process's requests, which Remove
 	// refuses. Nil refuses none but the install's own first host.

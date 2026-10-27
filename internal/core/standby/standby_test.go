@@ -27,6 +27,8 @@ type fakeStore struct {
 	listErr error
 	// lost counts writes refused because the row changed since it was read.
 	lost int
+	// stateRead runs after each AppState, for what happens meanwhile.
+	stateRead func()
 }
 
 func (f *fakeStore) Candidates(context.Context) ([]state.StandbyApp, error) {
@@ -82,7 +84,20 @@ func (f *fakeStore) Delete(_ context.Context, appID string) error {
 
 func (f *fakeStore) AppState(_ context.Context, appID string) (string, bool, error) {
 	st, ok := f.states[appID]
+	if f.stateRead != nil {
+		f.stateRead()
+	}
 	return st, ok, nil
+}
+
+// SaveIfLive is SaveIf that also refuses a failed or deleted app, as
+// state.Standbys does.
+func (f *fakeStore) SaveIfLive(ctx context.Context, sb state.Standby, prev *state.Standby) (bool, error) {
+	if st, ok := f.states[sb.AppID]; !ok || st == state.StateFailed {
+		f.lost++
+		return false, nil
+	}
+	return f.SaveIf(ctx, sb, prev)
 }
 
 type fakePlans struct {

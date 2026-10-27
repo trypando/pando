@@ -17,9 +17,12 @@ import (
 func sha(c string) string { return strings.Repeat(c, 64) }
 
 // TestR421_ARenewedCertificateIsRecordedWithTheOneBefore asserts R-421
-// against the database: a renewal records the new certificate and keeps the
-// one presented as the host's, whichever of its two that was, until the host
-// presents the new one; a certificate that is not the host's renews nothing.
+// against the database: a renewal records the new certificate, with its PEM,
+// and keeps the one presented as the host's until the host presents the new
+// one. A certificate is renewed once: a second renewal presenting it, at the
+// same time or after the first's answer was lost, changes nothing and is
+// given the row with what the first was answered with; a certificate that is
+// not the host's renews nothing.
 func TestR421_ARenewedCertificateIsRecordedWithTheOneBefore(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -30,27 +33,31 @@ func TestR421_ARenewedCertificateIsRecordedWithTheOneBefore(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sha("a"), h.Pins())
 
-	h, err = c.RenewHostCert(ctx, h.ID, sha("a"), sha("b"))
+	h, won, err := c.RenewHostCert(ctx, h.ID, sha("a"), sha("b"), []byte("pem-b"))
 	require.NoError(t, err)
+	require.True(t, won)
 	require.Equal(t, sha("b")+","+sha("a"), h.Pins())
 
-	// The answer was lost: renewing again with the one held keeps it.
-	h, err = c.RenewHostCert(ctx, h.ID, sha("a"), sha("c"))
+	// Renewing the same one again records nothing: the first's answer stands.
+	h, won, err = c.RenewHostCert(ctx, h.ID, sha("a"), sha("c"), []byte("pem-c"))
 	require.NoError(t, err)
-	require.Equal(t, sha("c")+","+sha("a"), h.Pins())
+	require.False(t, won)
+	require.Equal(t, sha("b")+","+sha("a"), h.Pins())
+	require.Equal(t, []byte("pem-b"), h.NextCertPEM)
 
-	_, err = c.RenewHostCert(ctx, h.ID, sha("b"), sha("d"))
-	require.Equal(t, errs.AuthInvalid, errs.CodeOf(err), "the certificate it never received is not its own")
+	_, _, err = c.RenewHostCert(ctx, h.ID, sha("d"), sha("e"), nil)
+	require.Equal(t, errs.AuthInvalid, errs.CodeOf(err), "a certificate that is not its own")
 
 	changed, err := c.ConfirmHostCert(ctx, h.ID, sha("a"))
 	require.NoError(t, err)
 	require.False(t, changed, "the old one is not the newest")
-	changed, err = c.ConfirmHostCert(ctx, h.ID, sha("c"))
+	changed, err = c.ConfirmHostCert(ctx, h.ID, sha("b"))
 	require.NoError(t, err)
 	require.True(t, changed)
 	got, err := c.Host(ctx, h.ID)
 	require.NoError(t, err)
-	require.Equal(t, sha("c"), got.Pins())
+	require.Equal(t, sha("b"), got.Pins())
+	require.Empty(t, got.NextCertPEM)
 }
 
 // TestR415_ARemovedHostsCertificatesAreRevoked asserts R-415 against the
@@ -64,7 +71,7 @@ func TestR415_ARemovedHostsCertificatesAreRevoked(t *testing.T) {
 	require.NoError(t, err)
 	h, err := c.AddHost(ctx, state.Host{Name: "app-1", Roles: []string{"app"}, Address: "10.0.0.2:7443", CertSHA256: sha("1"), JoinedWith: issued.Token.ID})
 	require.NoError(t, err)
-	_, err = c.RenewHostCert(ctx, h.ID, sha("1"), sha("2"))
+	_, _, err = c.RenewHostCert(ctx, h.ID, sha("1"), sha("2"), nil)
 	require.NoError(t, err)
 
 	_, err = c.RemoveHost(ctx, h.ID)

@@ -31,20 +31,32 @@ type fakeStore struct {
 	revokedHosts []string
 }
 
-func (f *fakeStore) RenewHostCert(_ context.Context, hostID, presented, next string) (state.Host, error) {
-	for i, h := range f.hosts {
-		if h.ID == hostID && h.HoldsCert(presented) && !f.revoked[presented] {
-			f.hosts[i].PrevCertSHA256, f.hosts[i].CertSHA256 = presented, next
-			return f.hosts[i], nil
-		}
+func (f *fakeStore) Revoked(context.Context) (state.Revoked, error) {
+	out := state.Revoked{Hosts: f.revokedHosts, Certs: []string{}}
+	for sha := range f.revoked {
+		out.Certs = append(out.Certs, sha)
 	}
-	return state.Host{}, errs.New(errs.AuthInvalid, "This certificate is no longer this host's.")
+	return out, nil
+}
+
+func (f *fakeStore) RenewHostCert(_ context.Context, hostID, presented, next string, nextPEM []byte) (state.Host, bool, error) {
+	for i, h := range f.hosts {
+		if h.ID != hostID || h.Pending || !h.HoldsCert(presented) || f.revoked[presented] {
+			continue
+		}
+		if h.CertSHA256 != presented {
+			return h, false, nil
+		}
+		f.hosts[i].PrevCertSHA256, f.hosts[i].CertSHA256, f.hosts[i].NextCertPEM = presented, next, nextPEM
+		return f.hosts[i], true, nil
+	}
+	return state.Host{}, false, errs.New(errs.AuthInvalid, "This certificate is no longer this host's.")
 }
 
 func (f *fakeStore) ConfirmHostCert(_ context.Context, hostID, current string) (bool, error) {
 	for i, h := range f.hosts {
 		if h.ID == hostID && h.CertSHA256 == current && h.PrevCertSHA256 != "" {
-			f.hosts[i].PrevCertSHA256 = ""
+			f.hosts[i].PrevCertSHA256, f.hosts[i].NextCertPEM = "", nil
 			return true, nil
 		}
 	}
@@ -55,30 +67,84 @@ func (f *fakeStore) CertRevoked(_ context.Context, sha string) (bool, error) {
 	return f.revoked[sha], nil
 }
 
-func (f *fakeStore) Revoked(context.Context) (state.Revoked, error) {
-	out := state.Revoked{Hosts: f.revokedHosts, Certs: []string{}}
-	for sha := range f.revoked {
-		out.Certs = append(out.Certs, sha)
+func (f *fakeStore) HostByCert(_ context.Context, sha string) (state.Host, bool, error) {
+	for _, h := range f.hosts {
+		if h.HoldsCert(sha) {
+			return h, true, nil
+		}
 	}
-	return out, nil
+	return state.Host{}, false, nil
 }
 
-func (f *fakeStore) Join(_ context.Context, presented secret.Value, admit func(state.JoinToken) (state.Host, error)) (state.JoinToken, state.Host, error) {
+func (f *fakeStore) CheckJoinToken(_ context.Context, presented secret.Value) (state.JoinToken, error) {
 	t, ok := f.live[presented.Reveal()]
-	if !ok || t.Uses >= t.MaxUses {
+	if !ok {
+		return state.JoinToken{}, errs.New(errs.AuthTokenInvalid, "This join token is not valid.")
+	}
+	return *t, nil
+}
+
+// Join spends a use and records h pending, as state.Cluster.Join does: a
+// pending join of the same name is forgotten first, its certificate revoked
+// and its use given back.
+func (f *fakeStore) Join(ctx context.Context, presented secret.Value, h state.Host) (state.JoinToken, state.Host, error) {
+	t, err := f.CheckJoinToken(ctx, presented)
+	if err != nil {
+		return t, state.Host{}, err
+	}
+	f.forgetPending(h.Name)
+	live := f.live[presented.Reveal()]
+	if live.Uses >= live.MaxUses {
 		return state.JoinToken{}, state.Host{}, errs.New(errs.AuthTokenInvalid, "This join token is not valid.")
 	}
-	h, err := admit(*t)
-	if err != nil {
-		return *t, state.Host{}, err
+	for _, have := range f.hosts {
+		if have.Name == h.Name {
+			return *live, state.Host{}, errs.Newf(errs.StateInvalid, "A host named %q is already in the cluster.", h.Name)
+		}
 	}
-	t.Uses++
+	live.Uses++
 	if h.ID == "" {
 		h.ID = "host_01TEST"
 	}
-	h.Roles, h.JoinedWith = t.Roles, t.ID
+	h.Roles, h.JoinedWith, h.Pending = live.Roles, live.ID, true
 	f.hosts = append(f.hosts, h)
-	return *t, h, nil
+	return *live, h, nil
+}
+
+func (f *fakeStore) forgetPending(name string) {
+	kept := f.hosts[:0]
+	for _, h := range f.hosts {
+		if !h.Pending || h.Name != name {
+			kept = append(kept, h)
+			continue
+		}
+		f.revoke(h.CertSHA256)
+		for _, t := range f.live {
+			if t.ID == h.JoinedWith && t.Uses > 0 {
+				t.Uses--
+			}
+		}
+	}
+	f.hosts = kept
+}
+
+func (f *fakeStore) revoke(sha string) {
+	if f.revoked == nil {
+		f.revoked = map[string]bool{}
+	}
+	if sha != "" {
+		f.revoked[sha] = true
+	}
+}
+
+func (f *fakeStore) ConfirmJoin(_ context.Context, hostID string) (bool, error) {
+	for i, h := range f.hosts {
+		if h.ID == hostID && h.Pending {
+			f.hosts[i].Pending = false
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (f *fakeStore) CreateJoinToken(_ context.Context, roles []string, maxUses int, createdBy string, expiresAt time.Time) (state.IssuedJoinToken, error) {
@@ -93,7 +159,15 @@ func (f *fakeStore) RevokeJoinToken(_ context.Context, id string) (state.JoinTok
 	return state.JoinToken{ID: id}, nil
 }
 
-func (f *fakeStore) Hosts(context.Context) ([]state.Host, error) { return f.hosts, nil }
+func (f *fakeStore) Hosts(context.Context) ([]state.Host, error) {
+	out := []state.Host{}
+	for _, h := range f.hosts {
+		if !h.Pending {
+			out = append(out, h)
+		}
+	}
+	return out, nil
+}
 
 func (f *fakeStore) RemoveHost(_ context.Context, id string) (state.Host, error) {
 	for i, h := range f.hosts {
@@ -102,10 +176,8 @@ func (f *fakeStore) RemoveHost(_ context.Context, id string) (state.Host, error)
 				return h, state.ErrInstallHost
 			}
 			f.hosts = append(f.hosts[:i], f.hosts[i+1:]...)
-			if f.revoked == nil {
-				f.revoked = map[string]bool{}
-			}
-			f.revoked[h.CertSHA256], f.revoked[h.PrevCertSHA256] = true, h.PrevCertSHA256 != ""
+			f.revoke(h.CertSHA256)
+			f.revoke(h.PrevCertSHA256)
 			return h, nil
 		}
 	}

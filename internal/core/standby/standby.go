@@ -51,6 +51,9 @@ type Store interface {
 	// SaveIf writes sb only if the row is still prev (nil: no row), and
 	// reports whether it did.
 	SaveIf(ctx context.Context, sb state.Standby, prev *state.Standby) (bool, error)
+	// SaveIfLive is SaveIf that also writes only while the app is live and
+	// not failed: a promotion's write-ahead (R-151).
+	SaveIfLive(ctx context.Context, sb state.Standby, prev *state.Standby) (bool, error)
 	// Delete forgets the app's standby, unless a promotion of it is under
 	// way.
 	Delete(ctx context.Context, appID string) error

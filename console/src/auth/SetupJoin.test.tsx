@@ -6,7 +6,7 @@ import { Login } from './Login';
 
 // A new installation joins a cluster at setup, instead of creating its first
 // administrator (R-415): the setup token from its log (R-046), a join token
-// and a host name, posted to POST /setup/join.
+// and, optionally, a host name, posted to POST /setup/join.
 
 let screen: Mounted | undefined;
 let posted: Array<{ path: string; body: unknown }>;
@@ -98,6 +98,17 @@ describe('joining a cluster at setup (R-415)', () => {
     await screen!.fill('Host name', 'edge-2');
     await screen!.press('Join');
     expect(screen!.text()).toContain('That setup token is not the one this installation is waiting for.');
+  });
+
+  it("joins without a host name, which this machine's hostname stands in for (R-261)", async () => {
+    answer(() => reply({ roles: ['app'], status: 'joined' }, 202));
+    await openJoin();
+    expect(document.querySelector(`input[placeholder="This machine's hostname"]`)).not.toBeNull();
+    await screen!.fill('Setup token', 's3tup');
+    await screen!.fill('Join token', 'pj1.x');
+    await screen!.press('Join');
+    expect(posted).toEqual([{ path: '/api/v1/setup/join', body: { setup_token: 's3tup', token: 'pj1.x', name: '' } }]);
+    expect(screen!.text()).toContain('Joined the cluster');
   });
 
   it('cannot join without the setup token', async () => {
