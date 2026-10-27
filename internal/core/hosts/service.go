@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
@@ -46,10 +47,10 @@ const (
 // tokenPrefix marks a join token, and its version.
 const tokenPrefix = "pj1"
 
-// Service mints join tokens and lists and removes hosts. Authorization is the
-// caller's: httpapi checks install.cluster.manage, and every install verb for
-// a token carrying the control role (R-080a). ControlRoleNeedsEveryVerb says
-// which tokens those are, so the rule is written once.
+// Service mints join tokens and lists and removes hosts. The caller checks
+// install.cluster.manage; Mint itself checks every install verb for a token
+// carrying the control role (R-080a), so every surface that mints one holds
+// to it (R-261).
 type Service struct {
 	Store     Store
 	Authority *Authority
@@ -99,8 +100,17 @@ type MintRequest struct {
 	MaxUses   int
 	ExpiresIn time.Duration
 	Address   string
-	CreatedBy string
 }
+
+// EveryVerbChecker refuses a principal that does not hold every install verb
+// (authz.Authorizer.CheckHoldsEveryInstallVerb, R-080a).
+type EveryVerbChecker interface {
+	CheckHoldsEveryInstallVerb(ctx context.Context, p authz.Principal, act, because string) error
+}
+
+// keysHandedOver is why a control-role join token needs every install verb
+// (R-080a).
+const keysHandedOver = "a host joining with the control role is given every key this installation has"
 
 // Minted is a join token and the string a joining host is given. Join is
 // present exactly once, here.
@@ -145,16 +155,11 @@ func NormalizeRoles(roles []string) ([]string, error) {
 	return out, nil
 }
 
-// Mint creates a join token.
-func (s *Service) Mint(ctx context.Context, req MintRequest) (Minted, error) {
-	roles := req.Roles
-	if len(roles) == 0 {
-		var err error
-		if roles, err = s.DefaultRoles(ctx); err != nil {
-			return Minted{}, err
-		}
-	}
-	roles, err := NormalizeRoles(roles)
+// Mint creates a join token for p, who has install.cluster.manage. A token
+// for the control role also needs every install verb, which az checks
+// (R-415, R-080a); a nil az refuses one.
+func (s *Service) Mint(ctx context.Context, az EveryVerbChecker, p authz.Principal, req MintRequest) (Minted, error) {
+	roles, err := s.mintRoles(ctx, az, p, req.Roles)
 	if err != nil {
 		return Minted{}, err
 	}
@@ -184,7 +189,7 @@ func (s *Service) Mint(ctx context.Context, req MintRequest) (Minted, error) {
 		return Minted{}, err
 	}
 
-	issued, err := s.Store.CreateJoinToken(ctx, roles, uses, req.CreatedBy, s.now().Add(lifetime))
+	issued, err := s.Store.CreateJoinToken(ctx, roles, uses, p.ID, s.now().Add(lifetime))
 	if err != nil {
 		return Minted{}, err
 	}
@@ -192,6 +197,29 @@ func (s *Service) Mint(ctx context.Context, req MintRequest) (Minted, error) {
 		Token: issued.Token,
 		Join:  secret.New(Encode(address, s.Authority.Hash(), issued.Secret)),
 	}, nil
+}
+
+// mintRoles is the roles a token is minted for: those asked for, or the
+// defaults, checked, sorted and without repeats; refused when they carry the
+// control role and p lacks an install verb.
+func (s *Service) mintRoles(ctx context.Context, az EveryVerbChecker, p authz.Principal, roles []string) ([]string, error) {
+	if len(roles) == 0 {
+		var err error
+		if roles, err = s.DefaultRoles(ctx); err != nil {
+			return nil, err
+		}
+	}
+	roles, err := NormalizeRoles(roles)
+	if err != nil || !ControlRoleNeedsEveryVerb(roles) {
+		return roles, err
+	}
+	if az == nil {
+		return nil, errs.New(errs.Internal, "Pando cannot check this account's installation permissions, so it cannot create a join token for the control role.")
+	}
+	if err := az.CheckHoldsEveryInstallVerb(ctx, p, "create a join token for the control role", keysHandedOver); err != nil {
+		return nil, err
+	}
+	return roles, nil
 }
 
 func (s *Service) now() time.Time {

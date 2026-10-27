@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/trypando/pando/internal/core/authz"
 	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
@@ -140,7 +141,7 @@ func TestAnUnreadableAuthorityIsRefused(t *testing.T) {
 func TestR415_AJoinTokenCarriesTheAddressAndTheAuthoritysHash(t *testing.T) {
 	store := &fakeStore{}
 	svc := newService(t, store)
-	minted, err := svc.Mint(context.Background(), hosts.MintRequest{CreatedBy: "usr_1"})
+	minted, err := svc.Mint(context.Background(), everyVerb{}, admin, hosts.MintRequest{})
 	require.NoError(t, err)
 
 	d, err := hosts.Decode(minted.Join.Reveal())
@@ -155,7 +156,7 @@ func TestR415_AJoinTokenCarriesTheAddressAndTheAuthoritysHash(t *testing.T) {
 func TestR415_AJoinTokenDefaultsToOneUseAndADay(t *testing.T) {
 	store := &fakeStore{}
 	svc := newService(t, store)
-	minted, err := svc.Mint(context.Background(), hosts.MintRequest{})
+	minted, err := svc.Mint(context.Background(), everyVerb{}, admin, hosts.MintRequest{})
 	require.NoError(t, err)
 	require.Equal(t, 1, minted.Token.MaxUses)
 	require.Equal(t, svc.Now().Add(24*time.Hour), minted.Token.ExpiresAt)
@@ -198,7 +199,7 @@ func TestMintRefusesWhatItCannotIssue(t *testing.T) {
 		"with a path":   {Address: "https://pando.example.com/x"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := svc.Mint(ctx, req)
+			_, err := svc.Mint(ctx, everyVerb{}, admin, req)
 			require.Equal(t, errs.ValidInvalid, errs.CodeOf(err))
 		})
 	}
@@ -210,6 +211,48 @@ func TestRolesAreSortedWithoutRepeats(t *testing.T) {
 	require.Equal(t, []string{"app", "control"}, roles)
 	require.True(t, hosts.ControlRoleNeedsEveryVerb(roles))
 	require.False(t, hosts.ControlRoleNeedsEveryVerb([]string{"app"}))
+}
+
+// admin is who mints in these tests.
+var admin = authz.Principal{ID: "usr_1"}
+
+// everyVerb holds every install verb, or lacks one.
+type everyVerb struct{ lacking bool }
+
+func (e everyVerb) CheckHoldsEveryInstallVerb(_ context.Context, _ authz.Principal, act, because string) error {
+	if e.lacking {
+		return errs.Newf(errs.PermVerbRequired, "Pando refused to %s, because %s.", act, because)
+	}
+	return nil
+}
+
+// TestR080a_MintingAControlTokenNeedsEveryInstallVerb asserts R-080a and
+// R-415 in the service layer, where every surface that mints a join token
+// reaches it (R-261): a token for the control role, asked for or by default,
+// is refused to a principal lacking an install verb, and to a caller that
+// gives no way to check; one for the app role alone is not.
+func TestR080a_MintingAControlTokenNeedsEveryInstallVerb(t *testing.T) {
+	store := &fakeStore{}
+	svc := newService(t, store)
+	ctx := context.Background()
+
+	for name, roles := range map[string][]string{"asked for": {"control"}, "by default": nil} {
+		_, err := svc.Mint(ctx, everyVerb{lacking: true}, admin, hosts.MintRequest{Roles: roles})
+		require.Equal(t, errs.PermVerbRequired, errs.CodeOf(err), name)
+		require.Contains(t, errs.As(err).Message, "given every key this installation has", name)
+		_, err = svc.Mint(ctx, nil, admin, hosts.MintRequest{Roles: roles})
+		require.Error(t, err, name)
+	}
+	require.Empty(t, store.created, "nothing is minted")
+
+	minted, err := svc.Mint(ctx, everyVerb{lacking: true}, admin, hosts.MintRequest{Roles: []string{"app"}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"app"}, minted.Token.Roles)
+	require.Equal(t, "usr_1", minted.Token.CreatedBy)
+
+	minted, err = svc.Mint(ctx, everyVerb{}, admin, hosts.MintRequest{Roles: []string{"control", "app", "control"}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"app", "control"}, minted.Token.Roles)
 }
 
 func TestDecodeRefusesWhatIsNotAJoinToken(t *testing.T) {
@@ -238,7 +281,7 @@ func TestListRevokeAndRemovePassThrough(t *testing.T) {
 	tok, err := svc.Revoke(ctx, "jt_1")
 	require.NoError(t, err)
 	require.Equal(t, "jt_1", tok.ID)
-	_, err = svc.Mint(ctx, hosts.MintRequest{})
+	_, err = svc.Mint(ctx, everyVerb{}, admin, hosts.MintRequest{})
 	require.NoError(t, err)
 	toks, err := svc.Tokens(ctx)
 	require.NoError(t, err)

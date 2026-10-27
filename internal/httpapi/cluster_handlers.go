@@ -16,10 +16,6 @@ import (
 // The cluster: its hosts and the tokens they join with (R-414, R-415,
 // docs/design/notes-cluster.md).
 
-// keysHandedOver is why a control-role join token needs every install verb
-// (R-080a).
-const keysHandedOver = "a host joining with the control role is given every key this installation has"
-
 func (s *Server) requireCluster(w http.ResponseWriter, r *http.Request) (authz.Principal, bool) {
 	p, ok := s.requireInstall(w, r, authz.InstallClusterManage)
 	if !ok {
@@ -90,30 +86,9 @@ func (s *Server) handleCreateJoinToken(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
 		return
 	}
-
-	roles := req.Roles
-	if len(roles) == 0 {
-		var err error
-		if roles, err = s.Hosts.DefaultRoles(r.Context()); err != nil {
-			Error(w, r, err)
-			return
-		}
-	}
-	roles, err := hosts.NormalizeRoles(roles)
-	if err != nil {
-		Error(w, r, err)
-		return
-	}
-	if hosts.ControlRoleNeedsEveryVerb(roles) {
-		if err := s.Authz.CheckHoldsEveryInstallVerb(r.Context(), p, "create a join token for the control role", keysHandedOver); err != nil {
-			Error(w, r, err)
-			return
-		}
-	}
-
-	minted, err := s.Hosts.Mint(r.Context(), hosts.MintRequest{
-		Roles: roles, MaxUses: req.MaxUses, ExpiresIn: time.Duration(req.ExpiresHours) * time.Hour,
-		Address: req.Address, CreatedBy: p.ID,
+	minted, err := s.Hosts.Mint(r.Context(), s.Authz, p, hosts.MintRequest{
+		Roles: req.Roles, MaxUses: req.MaxUses, ExpiresIn: time.Duration(req.ExpiresHours) * time.Hour,
+		Address: req.Address,
 	})
 	if err != nil {
 		Error(w, r, err)
