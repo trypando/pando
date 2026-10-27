@@ -287,8 +287,12 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   reports false and `s3` true (O-69, below).
 - **The in-place upgrade** is refused while the cluster has more than one host (`upgrade.Service.Hosts`,
   `hosts.Service.Count`), as it is with more than one replica.
-- **The edge's routes** are written on every replica by `reconciler.RouteSync` once a minute [P],
-  from every live app's pinned spec, while the cluster has more than one host. The reconciler writes
+- **The edge's routes** are written by `reconciler.RouteSync` from every live app's pinned spec, on
+  one replica of each control host at a time (`state.Cluster.OnePerHost`), checked once a minute [P],
+  while more than one host holds the control role (`hosts.Service.ControlCount`; a cluster of one
+  control host and app hosts has one edge, the reconciler's). A route is written only when it differs
+  from the one that host last wrote, or was last written `RouteSyncRefresh` [P: an hour] ago, in
+  case its edge lost it (third review fixes, below). The reconciler writes
   a route only on the replica holding the app's lease, so without it a second control host's edge
   would never learn the route. Traefik's `Ensure` now leaves an unchanged file alone, since Traefik
   reloads on each write. A route left on a host for a deleted app still points at Pando's proxy,
@@ -700,7 +704,8 @@ Fixes from the review of #347, for what the standby, the reconciler and the runt
 - **The reconciler leaves a held app alone (R-153).** `reconciler.Holds` (`state.Standbys.Held`)
   reads the app's standby row: a home host marked lost or fenced, or a promotion under way. Such an
   app is not observed or corrected; it is recorded unobservable with why, which counts toward
-  nothing (R-151). **An app with no standby is held too:** a runtime with several hosts names the
+  nothing (R-151). A hold check that cannot read the database is not a hold, and an install of one
+  host asks none (third review fixes, below). **An app with no standby is held too:** a runtime with several hosts names the
   host it found a bundle on (`api.ObservedBundle.Host`, set by `multidocker.Observe`), and an app
   found on a lost or fenced host (`Holds.HostHeld`) is recorded unobservable the same way, until the
   host is back or a person acts. A host that does not answer was already an observation error. A
@@ -922,8 +927,8 @@ kept working credentials. What changed:
   `app_uploads` row with `ON CONFLICT DO NOTHING` and writes the chunks under that row's lock; the
   move from `/var/lib/pando/uploads` uses it at start and on first read, and reads the database's
   upload afterwards either way. It used to check, then replace, so an upload stored between the two
-  was overwritten by the older file. A file whose app no longer exists (the foreign key refuses it)
-  is removed rather than tried again at every start.
+  was overwritten by the older file. A file whose app is deleted or no longer exists is removed
+  rather than stored or tried again at every start (third review fixes, below).
 - **`atomicfile.WriteIfChanged`** writes through `os.CreateTemp(dir, "."+base+"-*")`, synced,
   given its mode, then renamed, as `keyfile` does. With the fixed `path + ".tmp"`, route sync, the
   reconciler and a deploy writing one route at once truncated each other's file, or renamed one
@@ -1079,10 +1084,56 @@ The owner's second review of #347 found four races and one console gap. What cha
   console. The joining host confirms by presenting its new certificate on `GET /cluster/peers`
   right after writing its files (`Joiner.confirm`, three tries); `Service.Peers` then sets
   `confirmed_at` and syncs the runtime. If it cannot confirm, it removes `joined.json`, so it can
-  join again. The next join of the same name, and any pending row older than
-  `state.PendingJoinLifetime` [P: 10 minutes], are deleted in that join's transaction (and before
-  the token list is read), their certificates revoked and their tokens' uses given back. Chosen over
+  join again. The next join of the same name with the same key (third review fixes, below), and any
+  pending row older than `state.PendingJoinLifetime` [P: 10 minutes], are deleted in that join's
+  transaction (and before the token list is read), their certificates revoked and their tokens'
+  uses given back. Chosen over
   a background sweep because a pending row is invisible, so it only matters to the next join and to
   the uses shown. A pending host cannot renew.
 - **The setup join form no longer needs a host name (R-261).** Join is enabled without one, as the API takes
   the machine's hostname when the name is empty; the field's placeholder says so.
+
+### As built: third review fixes
+
+The owner's third review of #347 found four. What changed:
+
+- **Two hosts joining under one name do not evict each other (R-415).** Cloned machines that both
+  default to one hostname, such as `ubuntu`, each deleted the other's pending join, back and forth.
+  A pending row is now replaced only by a join with the same key: `cluster_hosts.key_sha256`
+  (migration 000095), the SHA-256 of the public key in the join's certificate request. Another
+  machine's join of a name whose join is pending and within `PendingJoinLifetime` is refused
+  (`STATE_INVALID`, naming the clash and `--name`, `PANDO_JOIN_NAME` or the setup screen's host
+  name), and spends no use. The joining host keeps its key in `join.key` in the cluster directory,
+  written before the join is sent and removed once it is confirmed, so a join tried again asks with
+  the same key and replaces its own pending row.
+- **A deleted app keeps no upload (R-417, R-224).** Apps are kept as rows once deleted, so
+  `app_uploads`' foreign key never refused one: moving an old upload file in stored up to 256 MiB
+  for a deleted app, which nothing removed and every backup carried. `state.Uploads` now locks the
+  app's row (`FOR SHARE`) and refuses a deleted app (`NOT_FOUND`) before storing, so the move removes
+  the file and stores nothing, and an app cannot be deleted while its upload is written. Deleting an
+  app removes its upload whatever deletes it (trigger `apps_forget_upload_on_delete`, migration
+  000095), which also removed what earlier versions kept; the GC's teardown still discards it too.
+- **A hold check that fails is not a hold (R-148, R-151).** One that could not read the database
+  skipped every app as held: drift never corrected, metrics healthy, nothing alerting, on
+  single-host installs too. An install of one host now asks no holds (`Reconciler.Hosts`,
+  `hosts.Service.Count`, counted once a pass; a count that fails is logged at error and holds are
+  asked). A check that fails is logged at error, counted as a failed reconcile in
+  `pando.reconcile.duration` (R-399), recorded on the app as a database error rather than a hold,
+  and the app is left for the next pass, counting toward nothing.
+- **Route sync writes only what changed (R-417).** It rewrote every route every minute on every
+  replica of any cluster of two hosts, one control host included. It now runs only with more than
+  one control host, on one replica per host (`state.Cluster.OnePerHost`: a transaction's
+  `pg_try_advisory_xact_lock` on the host's join ID, or one name for the install's first host), and
+  writes a route only when its request differs from the one that host last wrote, kept in memory per
+  app, or after `RouteSyncRefresh` [P: an hour]. A replica that has not written a route yet writes it
+  once.
+- **Tests:** `TestR415_TwoHostsJoiningUnderOneNameDoNotEvictEachOther` (integration),
+  `TestR415_AJoinThatFailsOnTheJoiningHostCanBeTriedAgain`,
+  `TestR417_ADeletedAppsOldUploadIsDiscardedNotStored`, `TestR417_DeletingAnAppRemovesItsUpload`
+  (integration), `TestR148_AHoldCheckErrorIsSaidAndNotTakenForAHold`,
+  `TestR148_ASingleHostInstallNeverConsultsHolds` (integration),
+  `TestAHostCountThatCannotBeReadStillConsultsHolds`,
+  `TestR417_RouteSyncWritesNothingWhenRoutesAreCurrent`,
+  `TestR417_RouteSyncRunsOnlyWithMoreThanOneControlHost`, `TestR417_ControlHostsAreCountedByRole`,
+  `TestR417_OneReplicaOfAHostRunsItsPassAtATime` (integration),
+  `TestR417_ReplicasOfAHostShareOneRouteSyncPass`.
