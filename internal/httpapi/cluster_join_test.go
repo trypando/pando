@@ -81,6 +81,15 @@ func TestR404_OnlyARefusedSecretCountsAgainstAJoinAddress(t *testing.T) {
 	got := post(t, h, corehosts.JoinPath, "203.0.113.10:4000", `{"secret":"jt_1.x","name":"edge-2","address":"edge:7443"}`)
 	require.Equal(t, http.StatusUnauthorized, got.Code, "a token is still tried: %s", got.Body.String())
 
+	// They are bounded all the same, higher, so the audit log cannot be
+	// filled with them (R-347).
+	for i := 0; i < 50; i++ {
+		got = post(t, h, corehosts.JoinPath, "203.0.113.10:4000", "not json")
+		require.Equal(t, http.StatusBadRequest, got.Code, "attempt %d: %s", i, got.Body.String())
+	}
+	got = post(t, h, corehosts.JoinPath, "203.0.113.10:4000", "not json")
+	require.Equal(t, http.StatusTooManyRequests, got.Code, got.Body.String())
+
 	setup := &httpapi.Server{Logger: zap.NewNop(), Joiner: &corehosts.Joiner{
 		SetupToken: func(context.Context, secret.Value) error { return nil },
 	}}

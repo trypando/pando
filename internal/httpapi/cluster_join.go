@@ -122,36 +122,59 @@ var errClusterOff = errs.New(errs.Internal, "This installation's cluster is not 
 // Refused joins allowed from one client address before joining waits, as
 // wrong passwords are limited (R-404 applied to R-415) [P]. The listener
 // takes no session, so this is what keeps a caller without a token from
-// guessing at one, or from filling the audit log, which keeps every refusal
-// for at least three months (R-347, R-348).
+// guessing at one: joinAddrAttempts counts refusals that tested a secret.
+// joinAddrUnusable counts the rest, refusals that tested none (a name, an
+// address or a version Pando cannot use), and is higher, so that a host
+// fumbling its own request does not spend the address's guesses while a
+// caller still cannot fill the audit log, which keeps every refusal for at
+// least three months (R-347, R-348).
 const (
 	joinAddrAttempts = 20
+	joinAddrUnusable = 200
 	joinWindow       = 15 * time.Minute
 )
 
+// joinUnusableKey counts an address's joins refused without testing a secret.
+func joinUnusableKey(addr string) string { return state.ClusterJoinAddrKey(addr) + "|unusable" }
+
 // reserveJoin counts a join from this client address before it is tried,
-// and refuses it, audited, over joinAddrAttempts (R-404, R-415).
+// and refuses it, audited, over either limit (R-404, R-415).
 func (s *Server) reserveJoin(w http.ResponseWriter, r *http.Request) (state.Reservation, bool) {
-	limit := limited{
-		state.AttemptLimit{Key: state.ClusterJoinAddrKey(limitAddr(r)), Max: joinAddrAttempts, Window: joinWindow},
-		"Too many refused joins from this network address.",
-	}
-	return s.reserveAttempt(w, r, func() { s.denyJoin(r, map[string]any{"reason": "rate_limited"}) }, limit)
+	const what = "Too many refused joins from this network address."
+	addr := limitAddr(r)
+	return s.reserveAttempt(w, r, func() { s.denyJoin(r, map[string]any{"reason": "rate_limited"}) },
+		limited{state.AttemptLimit{Key: state.ClusterJoinAddrKey(addr), Max: joinAddrAttempts, Window: joinWindow}, what},
+		limited{state.AttemptLimit{Key: joinUnusableKey(addr), Max: joinAddrUnusable, Window: joinWindow}, what},
+	)
 }
 
-// settleJoin ends a join's reservation (R-404): a refusal that tested a
-// secret counts against the address — a join token that is wrong, expired,
-// used up or revoked (AUTH_TOKEN_INVALID), or a wrong setup token
-// (AUTH_INVALID). Anything else is taken back: a join that succeeded, and a
-// refusal for the request's shape, the version or the cluster's readiness,
-// which guesses at nothing.
+// settleJoin ends a join's reservation (R-404). A refusal that tested a
+// secret (a join token that is wrong, expired, used up or revoked,
+// AUTH_TOKEN_INVALID, or a wrong setup token, AUTH_INVALID) counts against
+// the address's guesses. Any other refusal, for the request's shape, the
+// version or the cluster's readiness, guesses at nothing and counts only
+// toward joinAddrUnusable. A join that succeeded, or one Pando could not
+// decide, counts toward neither.
 func (s *Server) settleJoin(r *http.Request, res state.Reservation, err error) {
-	ctx := context.WithoutCancel(r.Context())
-	if code := errs.CodeOf(err); err != nil && (code == errs.AuthTokenInvalid || code == errs.AuthInvalid) {
-		_ = s.failedAttempts().Fail(ctx, res)
-		return
+	counted := ""
+	switch code := errs.CodeOf(err); {
+	case err == nil || code == errs.Internal:
+	case code == errs.AuthTokenInvalid || code == errs.AuthInvalid:
+		counted = state.ClusterJoinAddrKey(limitAddr(r))
+	default:
+		counted = joinUnusableKey(limitAddr(r))
 	}
-	_ = s.failedAttempts().Release(ctx, res)
+	var fail, release state.Reservation
+	for _, h := range res.Held {
+		if h.Key == counted {
+			fail.Held = append(fail.Held, h)
+		} else {
+			release.Held = append(release.Held, h)
+		}
+	}
+	ctx := context.WithoutCancel(r.Context())
+	_ = s.failedAttempts().Fail(ctx, fail)
+	_ = s.failedAttempts().Release(ctx, release)
 }
 
 // denyJoin audits a refused join, with what the caller sent kept only where
