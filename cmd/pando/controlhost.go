@@ -36,6 +36,9 @@ type controlPings struct {
 	// reached wakes a setup waiting to try again: the database it may have
 	// been missing has just been given (useStore).
 	reached chan struct{}
+	// done is closed once start's Monitor has stopped, after its context
+	// ends: nothing of it writes to Dir after that.
+	done chan struct{}
 }
 
 type storeRef struct{ hosts.HostPublisher }
@@ -154,12 +157,13 @@ func (c controlLiveness) store() hosts.HostPublisher {
 // returned pings are what the cluster listener answers with (attach), and
 // are given the database once it is reached (useStore).
 func (c controlLiveness) start(ctx context.Context) *controlPings {
-	pings := &controlPings{reached: make(chan struct{}, 1)}
+	pings := &controlPings{reached: make(chan struct{}, 1), done: make(chan struct{})}
 	if c.Store != nil {
 		pings.useStore(c.Store)
 	}
 	c.stores = pings.db
 	go func() {
+		defer close(pings.done)
 		for {
 			p, err := c.setup(ctx)
 			if err == nil {

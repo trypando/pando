@@ -33,8 +33,14 @@ func TestR421_AControlHostTakesPartOnceItCan(t *testing.T) {
 	require.NoError(t, err)
 	store := newRows()
 	store.down = true
+	// Not under t.TempDir: a peer read the Monitor started may still write
+	// the kept peer list after the test stops it, and TempDir's cleanup
+	// fails on a directory that is not empty.
+	dir, err := os.MkdirTemp("", "pando-control-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	cl := controlLiveness{
-		Store: store, Authority: authority, Dir: filepath.Join(t.TempDir(), "cluster"), Port: 7444,
+		Store: store, Authority: authority, Dir: dir, Port: 7444,
 		IsSelf: hosts.InstallHost, Docker: &appDocker{}, Logger: zap.NewNop(),
 	}
 	ctx := context.Background()
@@ -63,6 +69,7 @@ func TestR421_AControlHostTakesPartOnceItCan(t *testing.T) {
 	started := cl.start(runCtx)
 	require.Eventually(t, func() bool { return started.current.Load() != nil }, 5*time.Second, 10*time.Millisecond)
 	cancel()
+	<-started.done
 
 	// A host that cannot take part yet keeps trying until it stops.
 	stopped, stop := context.WithCancel(ctx)
@@ -70,6 +77,7 @@ func TestR421_AControlHostTakesPartOnceItCan(t *testing.T) {
 	never.IsSelf = func(state.Host) bool { return false }
 	waiting := never.start(stopped)
 	stop()
+	<-waiting.done
 	require.Nil(t, waiting.current.Load())
 }
 
