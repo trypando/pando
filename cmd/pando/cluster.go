@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -17,7 +18,9 @@ import (
 	"github.com/trypando/pando/internal/config"
 	"github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/state"
+	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/hostagent"
+	"github.com/trypando/pando/internal/httpapi"
 )
 
 // Joining a cluster (R-415, docs/design/notes-cluster.md): the files a joined
@@ -138,4 +141,45 @@ func startClusterListener(cfg *config.Config, authority *hosts.Authority, handle
 		}
 	}()
 	return srv, nil
+}
+
+// startingHandler is the cluster listener's HTTP before the API is built: a
+// listener started early, to answer pings while Pando waits for its database
+// (R-421), refuses joins until set is called.
+type startingHandler struct{ h atomic.Pointer[http.Handler] }
+
+func (s *startingHandler) set(h http.Handler) { s.h.Store(&h) }
+
+func (s *startingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h := s.h.Load(); h != nil {
+		(*h).ServeHTTP(w, r)
+		return
+	}
+	httpapi.Error(w, r, errs.New(errs.Internal, "This control host is starting and cannot take a join yet.").
+		WithRemedy("Try again in a minute."))
+}
+
+// clusterSizer counts the cluster's hosts.
+type clusterSizer interface {
+	Count(ctx context.Context) (int, error)
+}
+
+// requireClusterListener decides what a cluster listener that could not
+// start means (R-414): nothing for a single host that never joined, which
+// needs it only to be joined by another, so it runs without it and says
+// so; for a host of a cluster, a stop, since the other hosts join and check
+// it there.
+func requireClusterListener(ctx context.Context, listenErr error, hasJoined bool, cluster clusterSizer, logger *zap.Logger) error {
+	if listenErr == nil {
+		return nil
+	}
+	if !hasJoined {
+		if n, err := cluster.Count(ctx); err == nil && n <= 1 {
+			logger.Warn("the cluster listener did not start; this single host runs without it, and no host can join it until it does",
+				zap.Error(listenErr),
+				zap.String("remedy", "free the port in server.cluster_addr, or set server.cluster_addr to a free one, then restart Pando"))
+			return nil
+		}
+	}
+	return listenErr
 }

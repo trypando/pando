@@ -170,6 +170,11 @@ would make two copies diverge.
 
 Durations are measured on each host's own monotonic clock; no host compares its clock to another's.
 
+**Any answer from a host's machine is contact [D]**: a connection refused or reset, a TLS alert, a
+refusal, a reply of any kind. Only silence is not. A host whose Pando process is down, restarting or
+waiting for Postgres is not cut off, and its apps may be running. A host marked lost no longer counts
+toward the cluster's size, on the leader and on every host alike.
+
 ### After a failover
 
 The app's home is the standby's host. When the lost host returns, its stopped copy is removed and never
@@ -309,7 +314,8 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   fewer than half for at least `2T`. A host fences when the cluster has three or more hosts, it
   reached fewer than half (itself included) in the last `T`, **and it has probed without a break for
   all of `T`**. A pause between its own rounds longer than three intervals (a suspended machine, a
-  stalled process) restarts the window rather than counting as silence.
+  stalled process) restarts the window rather than counting as silence; such a host learns it was
+  taken for lost from its peers' answers instead (see "review fixes, liveness").
 - **`Ledger`**, the leader's. A host is lost when the cluster has three or more hosts and more than
   half of them report having watched it without contact for `3T`, in a report the leader heard in
   the last three intervals. A host's report never claims longer than it has watched without a break,
@@ -317,8 +323,10 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
 - **`Monitor`** runs on every host: on an app host in its agent (`host-agent serve`, given
   `PANDO_HOST_ID`, `PANDO_CLUSTER_PEERS_FILE` and a host certificate), on a control host in the
   Pando process (see "every host is watched"). It needs no database: a peer list it cannot
-  read keeps the last. Its fence stops every running container labeled for an app through the
-  host's own runtime (`hostagent.DockerFencer`), every round while cut off; it never starts one.
+  read keeps the last, and the list is read beside the round, never in it. Hosts marked lost are
+  left out of it. Its fence stops every running container labeled for an app through the host's
+  own runtime (`hostagent.DockerFencer`), all at once and beside the round, every round while cut
+  off; it never starts one.
   App containers have no restart policy, so they stay stopped; starting them again is the control
   plane's (R-148), once the host is reached and was not taken for lost.
 - **`Watch`** is the leader job `liveness`. It probes every host's agent, and each answers with its
@@ -329,17 +337,21 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   gone. Migration 000088 keeps only outcomes: `cluster_hosts.lost_at`/`lost_by`, and
   `last_fence_id` so that each fence a host reports is audited once (`cluster.host.fence`).
 - **`Service`** marks a host lost and calls `Failover.PromoteStandby` for each app homed on it with
-  a standby, skipping a `failed` app (R-151). The manual path, `POST /cluster/hosts/{hostID}/lost`
-  (`install.cluster.manage`), works at any cluster size and **[P] is refused while the host answers
-  to a ping**, since a standby started beside running apps would be a second copy (R-153).
-  Audited: `cluster.host.lost`, and `cluster.failover` per app before its standby starts.
+  a standby, skipping a `failed` app (R-151); the leader's failovers run beside its round. The
+  manual path, `POST /cluster/hosts/{hostID}/lost` (`install.cluster.manage`), works at any cluster
+  size and **[P] is refused unless the host has gone unheard for `T`** (`liveness.Witness`), since a
+  standby started beside running apps would be a second copy (R-153). Audited:
+  `cluster.host.lost`, and `cluster.failover` per app before its standby starts.
 
 Timings **[P]**: `T` 30 s, probes every `T/6` (5 s), each within half an interval.
 
 The ping is `PANDO-AGENT/1 ping <host-id>` on the agent port (a control host's cluster port), answered `PONG <view>`. Hosts probe
-with a certificate whose subject is `pando-host`, issued from the cluster authority; an agent
-answers a ping from it and refuses anything else, so a host's certificate opens no connection to
-another host's apps (R-023).
+with a certificate whose subject is `pando-host`, issued from the cluster authority to that host
+alone: it carries the host's ID as its one URI, `pando-host:<host-id>`, and the leader's collector
+has its own, marked by the organizational unit `collector` (review fixes, below). The ping is taken
+to be from the host the certificate names, and one naming another host is refused. An agent answers
+a ping from such a certificate and refuses anything else, so a host's certificate opens no
+connection to another host's apps (R-023).
 
 Left to other slices: `Homes` and `Failover` (the standby slice; until set, a lost host is marked
 and nothing is started), clearing `lost_at` and removing the returned host's copies (R-419,
@@ -427,7 +439,8 @@ host is watched").
 - **`POST /setup/join`** needs the setup token, as `POST /setup` does (finishing the join), and is
   refused cross-site like sign-in.
 - **Audit:** the cluster writes `cluster.host.join` (principal: the join token) and
-  `cluster.join.denied`; the joining Pando writes `cluster.join` and `cluster.join.denied` in its own
+  `cluster.join.denied`, keeping of what a refused caller sent only a name and version that pass
+  the checks, `(invalid)` otherwise (review fixes, below); the joining Pando writes `cluster.join` and `cluster.join.denied` in its own
   log, which a control host leaves behind for the cluster's when it restarts.
 - **Ports.** The cluster listener's default is 7444, the host agent's (`hostagent.DefaultPort`) 7443,
   so a host holding both roles binds both.
@@ -531,8 +544,8 @@ host is watched").
   Join a cluster form and `pando join --setup-token` send it.
 - **Ports.** `server.cluster_addr` defaults to `:7444` (`hosts.DefaultClusterPort`), the agent stays
   on 7443; a token minted with an address without a port gets 7444.
-- **What an app host is given** besides its certificate: a `pando-host` client certificate and its
-  key (`host-client.crt`, `host-client.key`), issued by the control side at join because only a
+- **What an app host is given** besides its certificate: a `pando-host` client certificate
+  carrying its host ID, and its key (`host-client.crt`, `host-client.key`), issued by the control side at join because only a
   holder of the authority's key can issue one — it opens nothing but pings (R-421) — and the
   runtime's `network_pool`, kept in `joined.json` as `network_pool`. Every join gets the client
   certificate; the pool is sent for the app role.
@@ -542,12 +555,13 @@ host is watched").
   `joined.json`, else 10.213.0.0/16, and the runtime socket from `PANDO_AGENT_RUNTIME_SOCKET`, else
   `DOCKER_HOST` when it is `unix://`, else `$XDG_RUNTIME_DIR/docker.sock` (rootless, R-402, R-416);
   none of those found stops it with the variable to set. It listens on `PANDO_AGENT_LISTEN`, else
-  `:7443`. Its `liveness.Monitor` is its host ID from `joined.json`, probing with the `pando-host`
-  certificate and fencing through the same socket.
+  `:7443`. Its `liveness.Monitor` is its host ID from `joined.json`, probing with its probe
+  certificate and fencing through the same socket. Both certificates are renewed while it runs
+  (review fixes, below).
 - **The peer list** is `GET /cluster/peers` on the cluster listener, which now asks for a client
   certificate and checks one when given (`VerifyClientCertIfGiven`: a joining host has none). The
-  certificate must be one a host joined with — its fingerprint is a row's `cert_sha256` — so a
-  removed host hears nothing (`hosts.Service.Peers`, `AUTH_INVALID` otherwise). It answers
+  certificate must be one a host holds — its fingerprint is a row's `cert_sha256`, or
+  `prev_cert_sha256` during a renewal — and never a revoked one, so a removed host hears nothing (`hosts.Service.Peers`, `AUTH_INVALID` otherwise). It answers
   `{"hosts":[{id,name,address}]}`. `hosts.PeerSync` fetches it from the join token's address every
   round (2 s timeout), writes `peers.json` in the cluster directory, and when the listener cannot be
   reached returns what that file last held. The joined host connects trusting the authority in
@@ -560,7 +574,9 @@ host is watched").
   control entry the same (review fixes below); roles control and app; address the advertise URL's host, else the external URL's, else
   the machine's, with port 7443; `cert_sha256` 64 zeros [P], since nothing pins it (below). A failure
   is logged and startup goes on. **A host with no join token is the install's own** (`hosts.InstallHost`);
-  join tokens are never deleted, so `joined_with` stays set on every joined host.
+  a join token cannot be deleted while a host joined with it (`ON DELETE RESTRICT`, migration
+  000092), so `joined_with` stays set on every joined host. The first host cannot be removed
+  (`state.ErrInstallHost`).
 - **Counting.** The "+1" is gone: `hosts.Service.Count` is the rows, and never less than one, so a
   single-host install reports one host before and after its row is made; `DefaultRoles` reads
   `Count`.
@@ -596,26 +612,32 @@ host that was cut off never fenced.
   process on every control host (`startControlLiveness`, `cmd/pando/controlhost.go`), on every
   replica, not only the leader. Its peers come from the database (`hosts.ControlPeers`); a read that
   fails keeps the last list, so Postgres away stops nothing. It probes with a `pando-host`
-  certificate issued in memory at start, since a control host holds the authority. It fences
+  certificate carrying its host ID, issued in memory at start and again before it expires, since a
+  control host holds the authority. It fences
   through `hostagent.DockerFencer` on the Docker client `DOCKER_HOST` names (else the default
   socket): only containers labeled for an app, never Pando, the edge or the runtime's agent. A
   runtime it cannot reach still leaves it answering pings; its fence then fails and says so every
   round it is cut off.
 - **Who it is.** A joined control host is the row of its `joined.json` host ID; the install's own
-  host is the row with no join token (`hosts.InstallHost`). Until it finds its row, issues its
-  certificate and so on, it tries again every 5 s [P] and refuses pings by name meanwhile, because a
-  host that answers none would be reported unreached.
+  host is the row with no join token (`hosts.InstallHost`). Both are kept in `server.cluster_dir`
+  (`joined.json`, `control-host.json`), with the peers last read (`peers.json`), so a control host
+  answers pings and watches its peers before it reaches Postgres (see "review fixes, liveness").
+  Only the first start ever waits for the database; until then it tries again every 5 s [P] and
+  refuses pings by name.
 - **Its certificate** is `host.crt`/`host.key` in `server.cluster_dir` (`hosts.ControlHostCert`):
   for a joined control host, the one its join wrote; for the first host, one issued from the
   authority at its first start and kept there, so its pin is the same across restarts. Either is
   issued again, and replaced, when missing, unreadable, for another name, or within 30 days [P] of
-  its end, which also renews a joined control host's.
+  its end, at start and while the host runs (`hosts.RenewingControlHostCert`), which also renews a
+  joined control host's.
 - **Its row.** Each round `hosts.ControlPeers` sets the host's own `ping_address` to the host it
   was recorded with and the cluster listener's port (`hosts.PingAddress`), and `ping_cert_sha256` to
   the certificate it answers with (`state.Cluster.SetHostPing`, migration 000091), when either
   differs, and a write that fails is made the next round. `address` and `cert_sha256` stay the
-  agent's, which the runtime uses (review fixes below); the first host keeps its placeholder pin
-  there, which nothing pins.
+  agent's, which the runtime uses (review fixes, standby and runtime, below). A joined control host
+  answers with the certificate its join wrote, which its agent serves too, so a renewed one also
+  becomes its `cert_sha256`, the old one kept as `prev_cert_sha256` (`state.Cluster.RotateHostCert`);
+  the first host keeps its placeholder agent pin, which nothing pins.
 - **The peer list.** `hosts.LivenessPeers` is now every row, at its `ping_address` when it has one:
   the leader's `Watch`, `GET /cluster/peers` and a control host's `Monitor` all include the first
   host. `RuntimeHosts` still skips it (it is the runtime's control entry), and still skips
@@ -687,7 +709,7 @@ Fixes from the review of #347, for what the standby, the reconciler and the runt
   agent's; the cluster listener a control host answers pings on is `ping_address` and
   `ping_cert_sha256` (above). `RuntimeHosts` lists the agent's, and a host joined with both roles
   runs its agent beside its server (`startJoinedAgent`), so the runtime reaches its apps. `GET
-  /cluster/peers` accepts either pin. Marking a host lost by hand probes where it answers pings.
+  /cluster/peers` accepts either pin.
 - **The install's own machine has one name (R-421).** The conversion to `docker-hosts` names the
   control entry as the machine's `cluster_hosts` row (`hosts.Runtime`'s `localName`; `LocalName`, else
   `control`, only without a row), so the home the runtime reports is the name the liveness pass
@@ -710,3 +732,201 @@ Fixes from the review of #347, for what the standby, the reconciler and the runt
   `TestR421_TheInstallsOwnMachinesAppsAreFailedOverWhenItIsLost`, among others.
 - **Not done here.** A file that shrinks while busybox tar reads it still fails that ship ("short
   read"); the next ship tries again. Deploys are not refused on a fenced control host.
+- **Merged with the certificate and liveness fixes.** The agent's pins are `cert_sha256` and
+  `prev_cert_sha256` (`state.Host.Pins`, what `RuntimeHosts` writes); the ping columns are the
+  listener's. `HoldsCert`, so `GET /cluster/peers` and renewal, accepts the ping pin too, and
+  `RemoveHost` revokes it with the others. A host with both roles renews its agent's certificate as
+  an app host does (`hosts.HostRenewal`), and its agent starts before the database, as its pings
+  do. The manual-mark probe is the liveness slice's `liveness.Witness`, over the peer list.
+
+### As built: review fixes, certificates and security
+
+A security review of #347 found that no cluster certificate was ever renewed, that a ping's sender
+was not authenticated, that the join listener let anyone fill the audit log, and that a removed host
+kept working credentials. What changed:
+
+- **Every cluster certificate is renewed (R-421).** Leaf certificates are valid 90 days
+  (`hostagent.leafValidity`) and are issued again once 30 days or fewer are left
+  (`hostagent.RenewBefore` [P]); left alone, every host's would have lapsed within days of the
+  others' and the hosts would have fenced together. A running process takes the new one at its next
+  handshake through `tls.Config.GetCertificate`/`GetClientCertificate` (`hostagent.RenewingCert`),
+  never by restarting:
+  - **In memory, from the authority** (`Authorities.InMemory`, renewed on the handshake that finds
+    it due): Pando's proxy's client certificate (every `hostagent.ClientTLS` configuration made for
+    one certificate shares one renewal, so the runtime adapters needed no change), the leader's
+    collector's, a control host's probe certificate, and the cluster listener's own (365 days).
+  - **A control host's own** (`hosts.RenewingControlHostCert`): reissued into `host.crt`/`host.key`;
+    `hosts.ControlPeers.PinOf` writes the new fingerprint into its row the next round.
+  - **A joined host's own and its probe certificate** (`hosts.HostRenewal`, checked hourly off the
+    handshake): `POST /cluster/renew` on the cluster listener, presenting the certificate it holds,
+    with a certificate request for a new key. `hosts.Service.Renew` finds the host by that
+    certificate's fingerprint, issues a certificate for the new key with the same name and roles and
+    a new probe certificate, and records the new fingerprint with `state.Cluster.RenewHostCert`, in
+    one statement that keeps the presented one as `prev_cert_sha256` (migration 000092). Both are
+    the host's until it presents the new one on `GET /cluster/peers`, which clears the old
+    (`ConfirmHostCert`), so a renewal whose answer was lost leaves the host working with what it
+    holds and able to renew again. The runtime's host list pins both meanwhile
+    (`state.Host.Pins`, comma-separated, `hostagent.PinnedClientTLS`); renewing changes that list, so
+    each renewal costs one runtime reload, about every 60 days per host. Audited as
+    `cluster.host.renew`, refusals with a certificate as `cluster.host.renew.denied`; a renewal with
+    no certificate is refused and not audited. The files are written key first; a crash between the
+    four writes leaves a pair that does not match, which the next start reports.
+  - Not changed: the multi-host Docker runtime's own agents, given their certificate in the
+    environment, are re-created when it is due, as before (`labelAgentIssued`).
+- **A ping's sender is its certificate's (R-421).** Each host's probe certificate carries its ID
+  (`IssueHostClient(hostID)`), the collector's is marked `collector` (`IssueCollector`), and
+  `hostagent.ProbeSender` reads the sender from the verified leaf. A ping naming anyone else, a host
+  naming `-`, the collector naming a host, and any certificate naming no host (Pando's proxy's, or
+  the one shared `pando-host` certificate every host used to hold) are refused. Before, one host
+  could ping in every other host's name and keep a cut-off host from fencing.
+- **Joins are bounded (R-347, R-404, R-415).** `hosts.CheckJoinRequest` checks everything that needs
+  no token before the token: the name, the agent address as `host:port` with a numeric port and a
+  DNS name or IP address (a bad one broke the runtime configuration for every host), and the
+  platform and version as up to 64 printable characters. The audit keeps the name and version only
+  when they pass, `(invalid)` otherwise, and no message echoes more than 64 characters of them. The
+  cluster's version is said only once the token is good: the check moved inside the join's
+  transaction, after the token is redeemed, so it still spends no use. Refused joins are limited per
+  client address as wrong passwords are, `state.ClusterJoinAddrKey` [P: 20 in 15 minutes], on
+  `POST /cluster/join` and `POST /setup/join`; over the limit the answer is `RATE_LIMITED` with
+  `Retry-After`, audited with the reason only, as R-404 audits every refusal.
+  - **The listener stays on by default.** Considered and not done: starting it only once a join
+    token exists or a second host has joined. Tokens are minted on any replica and a join is expected
+    within minutes of minting, so every replica would have to watch for tokens; and once a second
+    host exists the listener answers pings and serves the peer list and renewal anyway. With the
+    bounds and the limit above, an unauthenticated caller can make one bounded audit row per refused
+    request, the same exposure sign-in has. A single-host install behaves as before.
+- **A removed host's credentials are refused (R-415).** `state.Cluster.RemoveHost` records the
+  host's current and previous fingerprints in `cluster_revoked_certs` in the same transaction as the
+  delete; `Service.Peers` and `Service.Renew` refuse a revoked certificate, and the runtime's host
+  list no longer has the host. Pings are refused by identity rather than by fingerprint: an agent
+  and a control host's listener refuse a ping from a host ID not in the peer list they last heard
+  (`hosts.Members`, `hostagent.Agent.Member`, `AnswerPing`'s `member`), which covers every probe
+  certificate a removed host was ever issued, since IDs are never reused. Before any list is heard a
+  host answers every ping, so a host that has just started is not reported unreached. A removed
+  control host held the authority's key and could issue itself anything: `DELETE
+  /cluster/hosts/{id}` now answers 200 with the host and, for a control host, `rotate` and `notice`
+  naming the secrets key, the API token key, the cluster certificate authority and the database
+  password to replace. The CLI prints the notice, MCP returns it, and the console shows it.
+- **The first host and this host cannot be removed (R-414).** `RemoveHost` refuses the row with no
+  join token (`ErrInstallHost`), and `hosts.Service.Remove` refuses the host serving the request
+  (`Service.IsSelf`); `GET /cluster/hosts` returns `this_host`, and the console offers no Remove on
+  either. Removing the first host used to be accepted, and its next start recorded it again under a
+  new ID, orphaning its apps' homes and its pin.
+- **`pando join` needs no secret on the command line (R-194).** The join token is the optional
+  argument, else `PANDO_JOIN_TOKEN`, else asked for without echo (or read from a pipe, one per
+  line); the setup token is `--setup-token`, else `PANDO_SETUP_TOKEN`, else asked for. Either given
+  as an argument is warned about.
+- **Not done here.** `multidocker`'s `cert_sha256` field comment still says "the certificate the
+  host joined with"; it now holds every certificate that is the host's (owned by the runtime slice).
+  Rotating the keys a removed control host held is by hand; Pando has no rotation for them yet.
+
+### As built: review fixes, routes and uploads
+
+- **One route request.** `api.RouteFor(appID, spec.Routing, upstream)` builds the `RouteRequest`
+  for the deploy, the reconciler's drift correction (`ensureRoute`) and `RouteSync`, TLS included:
+  enabled for every mode but `port`, for the spec's hostname. The reconciler and route sync used to
+  leave TLS out, so on a cluster every app's Traefik route lost its `tls:` block and its
+  `# pando-tls-hostname:` marker (and a Kubernetes Ingress its TLS annotation) each minute, and the
+  leader stopped ordering app certificates; on one host, a drift correction did the same (R-169,
+  R-174).
+- **An upload is spooled before it is stored.** `Sources.StoreUpload` copies the body to a hidden
+  temporary file under `server.work_dir` (bounded by the handler's `maxUploadBytes`), then copies
+  that into the database in one transaction, and removes the file. The transaction used to read the
+  request body, holding a pooled connection for as long as the client took; a few dozen slow
+  uploads held them all. A body that fails (over the limit) is returned as it failed, so the handler
+  still answers it with its own message.
+- **Moving an old upload file only fills an app with none.** `state.Uploads.AddUpload` inserts the
+  `app_uploads` row with `ON CONFLICT DO NOTHING` and writes the chunks under that row's lock; the
+  move from `/var/lib/pando/uploads` uses it at start and on first read, and reads the database's
+  upload afterwards either way. It used to check, then replace, so an upload stored between the two
+  was overwritten by the older file. A file whose app no longer exists (the foreign key refuses it)
+  is removed rather than tried again at every start.
+- **`atomicfile.WriteIfChanged`** writes through `os.CreateTemp(dir, "."+base+"-*")`, synced,
+  given its mode, then renamed, as `keyfile` does. With the fixed `path + ".tmp"`, route sync, the
+  reconciler and a deploy writing one route at once truncated each other's file, or renamed one
+  already moved.
+- **Tests:** `TestR169_EveryRouteAsksForTLSUnlessItIsAPort`, `TestR169_RouteSyncKeepsTLSOnEveryAppsRoute`,
+  `TestR169_ASingleHostDriftCorrectionKeepsTheAppsTLS` (integration),
+  `TestR417_AStalledUploadHoldsNoDatabaseConnection`, `TestR417_AnOldUploadFileNeverReplacesANewerUpload`,
+  `TestR417_AnOldUploadFileForADeletedAppIsDiscarded` (integration),
+  `TestR417_AnUploadReachesTheStoreOnlyOnceItHasArrived`, `TestR417_ABodyThatFailsIsSaidAsItFailed`,
+  `TestR417_AnOldUploadFileForADeletedAppIsRemoved`, `TestR417_ReadingAnOldFileKeepsANewerUpload`,
+  `TestR417_ConcurrentWritersNeverLeaveAPartialFile`.
+
+### As built: review fixes, liveness
+
+Fixes to the liveness slice after review of #347, all held to one rule: a host that is not cut off is
+never taken for lost and never stops its apps (R-421).
+
+- **Contact is any answer from the machine.** `hostagent.Ping` returns a `*PingError` whose
+  `Contact` says whether the machine answered: a dial refused or reset, and anything after the TCP
+  connection is made (a failed handshake, a certificate for another name, a `NO …` refusal, an odd
+  reply, even a read that times out on a connection the machine accepted). Only a dial that times
+  out or finds no route is silence. The wiring wraps such an error in `liveness.ErrContactOnly`, and
+  `Monitor`, `Watch` and `Witness` all count it as contact. A dead or restarting Pando on a running
+  machine is no longer reported unreached by anyone.
+- **The leader never takes for lost a host its own probe reached this round**, whatever the others
+  report (`Watch.Round`).
+- **A control host answers before its database.** `serve` loads the cluster authority, starts the
+  control host's `Monitor` (`startControlLiveness`) and binds the cluster listener before
+  `state.Connect`. The listener's HTTP is a `startingHandler` that refuses joins until the API is
+  built; pings are answered from the start. Who the host is comes from the database when it
+  answers, else `joined.json`, else `control-host.json` written at an earlier start; its peers come
+  from the database once given (`controlPings.useStore`), and are kept in `peers.json` for the next
+  start. **An app host whose agent cannot start in full** (its runtime socket unknown, a file
+  unreadable) serves an agent that answers pings with a view naming no peer (`answerOnly`), carries
+  no runtime calls, and returns the startup error when stopped; only a host without its own
+  certificate exits.
+- **The manual guard is sustained silence** (`liveness.Witness`): this control host's `Monitor` has
+  watched the host without contact for `T` (`Monitor.UnreachedFor`), a probe now gets no answer,
+  and no other host that answers reports contact with it within `T` (each host's `View`, read on
+  the spot, so any replica can decide, not only the leader). A host already marked lost is no
+  longer watched, and re-marking it (a retry) skips the first check. The remedy says to turn the
+  machine off or disconnect it, never to stop Pando while apps run.
+- **The peer list never waits on the database.** `Monitor` reads it in a goroutine, one read at a
+  time, waiting `PeerWait` [P: the smaller of the probe timeout and 2 s] before it probes the last
+  list; a read that comes back late is taken the next round. A cut-off control host whose Postgres
+  read hangs still fences after `T`.
+- **Fencing is bounded.** `DockerFencer` stops up to 32 [P] containers at once, each with a 3 s [P]
+  grace before Docker kills it (was 10 s, one after another), and the `Monitor` runs the fence
+  beside the round, under a bound of 20 s [P] (at most `T`), one at a time. Twenty slow containers
+  stop in about one grace.
+- **A suspended host learns it was lost.** Its monotonic clock stops while it sleeps, so its own
+  window restarts on waking and counts no silence. Each `View` now carries `silent_for_ms`: how long
+  the answering host had watched the sender without contact until its ping arrived. When more than
+  half the cluster (three hosts or more) answers with at least `3T`, the host fences at once, and
+  keeps fencing until its apps are stopped. **[P] `CLOCK_BOOTTIME` was not adopted**: a clock that
+  counts the sleep would only make the window restart visible, and the peers' answers decide this
+  without comparing clocks.
+- **Lost hosts leave the count.** `cluster_hosts.lost_at` now reaches `state.Host.Lost`, the peer
+  list (`hosts.Peer.Lost`, `lost` in `GET /cluster/peers`) and `liveness.Peer.Lost`. A `Monitor`
+  neither probes nor counts a lost host; `Watch` counts only hosts not marked lost, and weighs a
+  returning host among them. Below three counted hosts nothing fails over or fences by itself.
+  Hosts learn of a loss at their next peer read, and until then count one host more: the direction
+  that only delays a failover.
+- **Failovers run beside the leader's round.** `Service.declare` marks and audits the host, then
+  promotes in a goroutine; rounds go on probing, auditing fences and welcoming hosts back.
+  `Service.back` does not clear `lost_at` while a failover from that host runs in this process.
+  **Not done:** a manual `MarkLost` on one replica and `back()` on the leader replica are not
+  coordinated; the window is the length of one promotion.
+- **An app host's peer list survives its join address going away.** `hosts.Peer.Control` marks
+  control hosts; `PeerSync` asks the join token's address, then every control host in the list it
+  last kept, and keeps the first answer.
+- **Startup on upgrade.** `server.cluster_authority_path` empty (the default now) is `cluster-ca.pem`
+  beside `server.token_key_path`, so an install that moved its token key needs no new directory.
+  A cluster listener that cannot bind stops a host of a cluster but not a single host that never
+  joined: it logs, runs without it, and cannot be joined until it is restarted with a free port
+  (R-414).
+- **Tests.** `TestR421_AMachineThatRefusesTheProbeIsNotLost`,
+  `TestR421_ADeadPandoOnARunningMachineIsNotTakenForLost` (real listeners, each host's Pando stopped
+  in turn), `TestR421_AnyAnswerFromTheMachineIsContact`,
+  `TestR421_ACutOffHostWhosePeerListHangsStillFences`, `TestR421_ASlowFenceDoesNotStallProbing`,
+  `TestR421_ManySlowContainersFenceWithinTheBound`,
+  `TestR421_ASuspendedHostFencesWhenItWakesIfTheMajorityTookItForLost`,
+  `TestR421_AnAnswerSaysHowLongTheSenderWentUnreached`, `TestR421_LostHostsLeaveTheClusterSize`,
+  `TestR421_AFailoverDoesNotStallTheLeader`, `TestR421_MarkingAHostLostByHandNeedsSustainedSilence`,
+  `TestR421_AJoinedHostAsksTheOtherControlHostsWhenItsOwnIsGone`,
+  `TestR421_AControlHostAnswersPingsBeforeItReachesItsDatabase`,
+  `TestR421_AnAppHostThatCannotStartItsAgentStillAnswersPings`,
+  `TestR414_ASingleHostStartsWithoutItsClusterListener`. The last checks the listener decision and
+  the configuration default as units; no test starts the whole server with the port taken.

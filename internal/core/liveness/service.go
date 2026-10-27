@@ -2,6 +2,7 @@ package liveness
 
 import (
 	"context"
+	"sync"
 
 	"go.uber.org/zap"
 
@@ -116,11 +117,40 @@ type Service struct {
 	// remove the copies, and a host still marked lost starts nothing.
 	Returns Returns
 
-	// Answering reports whether the host's agent answers a probe now. A
-	// host that answers is not gone, and is not marked lost by hand: its
-	// apps may be running, and a standby started beside them would be a
-	// second copy (R-153). Nil skips the check.
-	Answering func(ctx context.Context, hostID string) bool
+	// Witness says whether a host has been heard from lately. A host that
+	// has is not gone, and is not marked lost by hand: its apps may be
+	// running, and a standby started beside them would be a second copy
+	// (R-153). Nil skips the check.
+	Witness interface {
+		Silent(ctx context.Context, h state.Host) error
+	}
+
+	mu       sync.Mutex
+	inflight map[string]int
+	running  sync.WaitGroup
+}
+
+// Settle waits for the failovers under way to end.
+func (s *Service) Settle() { s.running.Wait() }
+
+// promoting marks a failover from hostID begun, or ended with done.
+func (s *Service) promoting(hostID string, delta int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inflight == nil {
+		s.inflight = map[string]int{}
+	}
+	s.inflight[hostID] += delta
+	if s.inflight[hostID] <= 0 {
+		delete(s.inflight, hostID)
+	}
+}
+
+// failingOver reports whether a failover from hostID is under way here.
+func (s *Service) failingOver(hostID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inflight[hostID] > 0
 }
 
 func (s *Service) logger() *zap.Logger {
@@ -141,29 +171,48 @@ func (s *Service) MarkLost(ctx context.Context, hostID string, by Actor) (HostLo
 	if err != nil {
 		return HostLoss{}, err
 	}
-	if s.Answering != nil && s.Answering(ctx, h.ID) {
-		return HostLoss{}, errs.Newf(errs.StateInvalid,
-			"Host %s (%s) answers on its agent port, so it is not gone. Starting its apps' standbys now would run a second copy of each.", h.Name, h.ID).
-			WithRemedy("If the host is up but its apps are not, turn the host off or stop its Pando agent, then mark it lost again.")
+	if s.Witness != nil {
+		if err := s.Witness.Silent(ctx, h); err != nil {
+			return HostLoss{}, err
+		}
 	}
-	return s.lose(ctx, h, by, triggerManual)
+	out, _, err := s.mark(ctx, h, by, triggerManual)
+	if err != nil {
+		return HostLoss{}, err
+	}
+	s.promoting(h.ID, 1)
+	defer s.promoting(h.ID, -1)
+	s.failover(ctx, h, by, triggerManual, &out)
+	return out, nil
 }
 
 // declare is the leader taking a host for lost by the majority rule. Only
-// the first time: a host already lost has had its failover.
+// the first time: a host already lost has had its failover. The host is
+// marked here; its apps' standbys start beside the leader's round, which goes
+// on probing, auditing fences and welcoming hosts back meanwhile (R-421).
 func (s *Service) declare(ctx context.Context, hostID string) {
 	h, err := s.Store.Host(ctx, hostID)
 	if err != nil {
 		s.logger().Warn("could not read a host a majority has not reached", zap.String("host_id", hostID), zap.Error(err))
 		return
 	}
-	out, err := s.lose(ctx, h, system, triggerMajority)
+	out, newly, err := s.mark(ctx, h, system, triggerMajority)
 	if err != nil {
 		s.logger().Error("could not take a host for lost", zap.String("host_id", hostID), zap.Error(err))
 		return
 	}
-	s.logger().Warn("a majority of the cluster's hosts has not reached a host; took it for lost",
-		zap.String("host_id", hostID), zap.Strings("started", out.Started), zap.Int("skipped", len(out.Skipped)))
+	if !newly {
+		return
+	}
+	s.promoting(h.ID, 1)
+	s.running.Add(1)
+	go func() {
+		defer s.running.Done()
+		defer s.promoting(h.ID, -1)
+		s.failover(ctx, h, system, triggerMajority, &out)
+		s.logger().Warn("a majority of the cluster's hosts has not reached a host; took it for lost",
+			zap.String("host_id", hostID), zap.Strings("started", out.Started), zap.Int("skipped", len(out.Skipped)))
+	}()
 }
 
 // back is the leader finding a host marked lost reachable again (R-419):
@@ -172,8 +221,12 @@ func (s *Service) declare(ctx context.Context, hostID string) {
 // removal that fails is tried again the next round. An app that was not
 // failed over (its promotion failed, or it had no standby) is not touched:
 // it is still homed there, and the reconciler starts it again (R-148).
+//
+// Not while a failover from the host is under way: an app being promoted is
+// not yet among those left on it, and clearing the mark now would leave its
+// copy there for good. The next round tries again.
 func (s *Service) back(ctx context.Context, hostID string) error {
-	if s.Returns == nil {
+	if s.Returns == nil || s.failingOver(hostID) {
 		return nil
 	}
 	apps, err := s.Returns.AppsLeftOn(ctx, hostID)
@@ -198,21 +251,22 @@ func (s *Service) back(ctx context.Context, hostID string) error {
 	return nil
 }
 
-func (s *Service) lose(ctx context.Context, h state.Host, by Actor, trigger string) (HostLoss, error) {
+// mark records h lost and audits it, and reports whether it was not lost
+// before. The leader audits only a host newly lost; a person, every time.
+func (s *Service) mark(ctx context.Context, h state.Host, by Actor, trigger string) (HostLoss, bool, error) {
 	newly, err := s.Store.MarkHostLost(ctx, h.ID, by.ID)
 	if err != nil {
-		return HostLoss{}, err
+		return HostLoss{}, false, err
 	}
 	out := HostLoss{HostID: h.ID, Name: h.Name, AlreadyLost: !newly, Started: []string{}, Skipped: []SkippedApp{}}
 	if !newly && trigger == triggerMajority {
-		return out, nil
+		return out, false, nil
 	}
 	s.write(ctx, by, audit.Event{
 		Action: "cluster.host.lost", TargetKind: "host", TargetID: h.ID,
 		Detail: map[string]any{"name": h.Name, "trigger": trigger, "already_lost": !newly},
 	})
-	s.failover(ctx, h, by, trigger, &out)
-	return out, nil
+	return out, newly, nil
 }
 
 func (s *Service) failover(ctx context.Context, h state.Host, by Actor, trigger string, out *HostLoss) {

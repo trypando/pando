@@ -14,6 +14,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,7 +119,7 @@ func hostCert(t *testing.T, a *hosts.Authority, name string) (tls.Certificate, s
 	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
 	require.NoError(t, err)
 	csr := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
-	certPEM, sha, err := a.IssueHost(csr, name, []string{"app"})
+	certPEM, sha, err := a.IssueHost(csr, name, []string{"app"}, time.Now())
 	require.NoError(t, err)
 	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
 	require.NoError(t, err)
@@ -179,6 +182,7 @@ func peerServer(t *testing.T, svc *hosts.Service) *httptest.Server {
 	require.NoError(t, err)
 	srv.TLS = tlsConfig
 	srv.StartTLS()
+	srv.TLS.Certificates = nil // httptest adds its own; the listener serves from GetCertificate
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -304,7 +308,7 @@ func TestR414_TheFirstHostIsInTheClusterFromItsFirstStart(t *testing.T) {
 	app, err := hosts.RuntimeHosts(store.hosts)
 	require.NoError(t, err)
 	require.Empty(t, app, "the first host is the runtime's control entry already")
-	require.Equal(t, []hosts.Peer{{ID: h.ID, Name: h.Name, Address: h.Address}}, hosts.LivenessPeers(store.hosts),
+	require.Equal(t, []hosts.Peer{{ID: h.ID, Name: h.Name, Address: h.Address, Control: true}}, hosts.LivenessPeers(store.hosts),
 		"the first host is watched like any other (R-421)")
 
 	store.err = errors.New("database away")
@@ -335,4 +339,50 @@ func TestR415_TheClusterListenerChecksAHostsCertificateWhenOneIsGiven(t *testing
 	require.NoError(t, err)
 	require.Equal(t, tls.VerifyClientCertIfGiven, cfg.ClientAuth)
 	require.NotNil(t, cfg.ClientCAs)
+}
+
+// TestR421_AJoinedHostAsksTheOtherControlHostsWhenItsOwnIsGone asserts R-421's
+// peer list: when the control host in a host's join token goes away, the host
+// asks every control host in the list it last heard, and keeps hearing of the
+// cluster's changes. App hosts in the list are never asked.
+func TestR421_AJoinedHostAsksTheOtherControlHostsWhenItsOwnIsGone(t *testing.T) {
+	var appAsked atomic.Int32
+	app := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { appAsked.Add(1) }))
+	t.Cleanup(app.Close)
+	var second []hosts.Peer
+	core2 := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"hosts": second})
+	}))
+	t.Cleanup(core2.Close)
+	core2Addr := strings.TrimPrefix(core2.URL, "https://")
+	first := []hosts.Peer{
+		{ID: "host_core1", Name: "core-1", Address: "core-1:7444", Control: true},
+		{ID: "host_app1", Name: "app-1", Address: strings.TrimPrefix(app.URL, "https://")},
+		{ID: "host_core2", Name: "core-2", Address: core2Addr, Control: true},
+	}
+	second = append(slices.Clone(first), hosts.Peer{ID: "host_app2", Name: "app-2", Address: "10.0.0.9:7443"})
+	core1 := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"hosts": first})
+	}))
+	file := filepath.Join(t.TempDir(), hosts.PeersFile)
+	sync := &hosts.PeerSync{Address: core1.URL, File: file, HTTP: core1.Client()}
+	ctx := context.Background()
+	got, err := sync.Peers(ctx)
+	require.NoError(t, err)
+	require.Equal(t, first, got)
+
+	core1.Close()
+	got, err = sync.Peers(ctx)
+	require.NoError(t, err)
+	require.Equal(t, second, got, "heard from core-2")
+	kept, err := hosts.ReadPeers(file)
+	require.NoError(t, err)
+	require.Equal(t, second, kept)
+	require.Zero(t, appAsked.Load(), "an app host is not a cluster listener")
+
+	// Every control host away: the last list stands.
+	core2.Close()
+	got, err = sync.Peers(ctx)
+	require.NoError(t, err)
+	require.Equal(t, second, got)
 }

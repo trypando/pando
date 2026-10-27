@@ -840,14 +840,7 @@ func (r *Reconciler) ensureRoute(ctx context.Context, app state.Reconcilable, s 
 	if !ok {
 		return nil
 	}
-	_, err := routing.Ensure(ctx, api.RouteRequest{
-		AppID:         app.ID,
-		Mode:          s.Routing.Mode,
-		Hostname:      s.Routing.Hostname,
-		PathPrefix:    s.Routing.PathPrefix,
-		Port:          s.Routing.Port,
-		ProxyUpstream: r.ProxyUpstream,
-	})
+	_, err := routing.Ensure(ctx, api.RouteFor(app.ID, s.Routing, r.ProxyUpstream))
 	return err
 }
 

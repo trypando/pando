@@ -97,6 +97,16 @@ func TestR421_AControlHostRecordsWhereItAnswersPingsInTheDatabase(t *testing.T) 
 	require.Equal(t, "10.0.0.1:7443", got.Address)
 	require.Equal(t, strings.Repeat("0", 64), got.CertSHA256)
 
+	// A renewed certificate becomes the agent's, the old kept beside it.
+	renewed := strings.Repeat("f", 64)
+	require.NoError(t, c.RotateHostCert(ctx, h.ID, renewed))
+	require.NoError(t, c.RotateHostCert(ctx, h.ID, renewed), "again is no change")
+	got, err = c.Host(ctx, h.ID)
+	require.NoError(t, err)
+	require.Equal(t, renewed+","+strings.Repeat("0", 64), got.Pins())
+	require.True(t, got.HoldsCert(pin), "the ping pin is the host's too")
+	require.Equal(t, errs.NotFound, errs.CodeOf(c.RotateHostCert(ctx, "host_nobody", renewed)))
+
 	err = c.SetHostPing(ctx, "host_nobody", "10.0.0.1:7444", pin)
 	require.Equal(t, errs.NotFound, errs.CodeOf(err))
 	require.Error(t, c.SetHostPing(ctx, h.ID, "10.0.0.1:7444", "not-a-pin"), "the column holds fingerprints only")

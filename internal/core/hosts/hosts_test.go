@@ -23,6 +23,33 @@ type fakeStore struct {
 	// live is the join tokens a join can redeem, by their "<id>.<secret>",
 	// spent as state.Cluster spends them: a refused admit gives the use back.
 	live map[string]*state.JoinToken
+
+	// revoked is the fingerprints of removed hosts' certificates.
+	revoked map[string]bool
+}
+
+func (f *fakeStore) RenewHostCert(_ context.Context, hostID, presented, next string) (state.Host, error) {
+	for i, h := range f.hosts {
+		if h.ID == hostID && h.HoldsCert(presented) && !f.revoked[presented] {
+			f.hosts[i].PrevCertSHA256, f.hosts[i].CertSHA256 = presented, next
+			return f.hosts[i], nil
+		}
+	}
+	return state.Host{}, errs.New(errs.AuthInvalid, "This certificate is no longer this host's.")
+}
+
+func (f *fakeStore) ConfirmHostCert(_ context.Context, hostID, current string) (bool, error) {
+	for i, h := range f.hosts {
+		if h.ID == hostID && h.CertSHA256 == current && h.PrevCertSHA256 != "" {
+			f.hosts[i].PrevCertSHA256 = ""
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeStore) CertRevoked(_ context.Context, sha string) (bool, error) {
+	return f.revoked[sha], nil
 }
 
 func (f *fakeStore) Join(_ context.Context, presented secret.Value, admit func(state.JoinToken) (state.Host, error)) (state.JoinToken, state.Host, error) {
@@ -35,7 +62,10 @@ func (f *fakeStore) Join(_ context.Context, presented secret.Value, admit func(s
 		return *t, state.Host{}, err
 	}
 	t.Uses++
-	h.ID, h.Roles, h.JoinedWith = "host_01TEST", t.Roles, t.ID
+	if h.ID == "" {
+		h.ID = "host_01TEST"
+	}
+	h.Roles, h.JoinedWith = t.Roles, t.ID
 	f.hosts = append(f.hosts, h)
 	return *t, h, nil
 }
@@ -55,6 +85,19 @@ func (f *fakeStore) RevokeJoinToken(_ context.Context, id string) (state.JoinTok
 func (f *fakeStore) Hosts(context.Context) ([]state.Host, error) { return f.hosts, nil }
 
 func (f *fakeStore) RemoveHost(_ context.Context, id string) (state.Host, error) {
+	for i, h := range f.hosts {
+		if h.ID == id {
+			if h.JoinedWith == "" {
+				return h, state.ErrInstallHost
+			}
+			f.hosts = append(f.hosts[:i], f.hosts[i+1:]...)
+			if f.revoked == nil {
+				f.revoked = map[string]bool{}
+			}
+			f.revoked[h.CertSHA256], f.revoked[h.PrevCertSHA256] = true, h.PrevCertSHA256 != ""
+			return h, nil
+		}
+	}
 	return state.Host{ID: id}, nil
 }
 
@@ -180,7 +223,7 @@ func TestDecodeRefusesWhatIsNotAJoinToken(t *testing.T) {
 }
 
 func TestListRevokeAndRemovePassThrough(t *testing.T) {
-	store := &fakeStore{hosts: []state.Host{{ID: "host_1"}}}
+	store := &fakeStore{hosts: []state.Host{{ID: "host_1", JoinedWith: "jt_1"}}}
 	svc := newService(t, store)
 	ctx := context.Background()
 	list, err := svc.Hosts(ctx)
@@ -190,7 +233,7 @@ func TestListRevokeAndRemovePassThrough(t *testing.T) {
 	svc.OnChange = func(context.Context) { changes++ }
 	h, err := svc.Remove(ctx, "host_1")
 	require.NoError(t, err)
-	require.Equal(t, "host_1", h.ID)
+	require.Equal(t, "host_1", h.Host.ID)
 	require.Equal(t, 1, changes, "a removed host leaves the runtime's host list")
 	tok, err := svc.Revoke(ctx, "jt_1")
 	require.NoError(t, err)

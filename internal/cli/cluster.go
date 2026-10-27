@@ -86,9 +86,36 @@ func clusterHostsCmd(client func() (*Client, error)) *cobra.Command {
 			return t.Flush()
 		},
 	})
-	cmd.AddCommand(deleteByID(client, "remove <host-id>", "Remove a host from the cluster", "/cluster/hosts/", "Removed the host."))
+	cmd.AddCommand(removeHostCmd(client))
 	cmd.AddCommand(markHostLostCmd(client))
 	return cmd
+}
+
+// removeHostCmd removes a host (R-414), and says which keys to replace when
+// it held the control role (R-415).
+func removeHostCmd(client func() (*Client, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <host-id>",
+		Short: "Remove a host from the cluster",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := client()
+			if err != nil {
+				return err
+			}
+			var out struct {
+				Notice string `json:"notice"`
+			}
+			if err := c.Do("DELETE", "/cluster/hosts/"+url.PathEscape(args[0]), nil, &out); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Removed the host.")
+			if out.Notice != "" {
+				fmt.Fprintln(cmd.OutOrStdout(), out.Notice)
+			}
+			return nil
+		},
+	}
 }
 
 // markHostLostCmd says a host is gone and starts its apps' standbys (R-421).

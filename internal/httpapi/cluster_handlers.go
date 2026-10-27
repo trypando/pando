@@ -41,7 +41,7 @@ func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"hosts": list})
+	JSON(w, http.StatusOK, map[string]any{"hosts": list, "this_host": s.Hosts.ThisHost(list)})
 }
 
 func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
@@ -49,17 +49,18 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	h, err := s.Hosts.Remove(r.Context(), chi.URLParam(r, "hostID"))
+	removed, err := s.Hosts.Remove(r.Context(), chi.URLParam(r, "hostID"))
 	if err != nil {
 		Error(w, r, err)
 		return
 	}
+	h := removed.Host
 	s.audit(r, audit.Event{
 		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
 		Action: "cluster.host.remove", TargetKind: "host", TargetID: h.ID,
 		Detail: map[string]any{"name": h.Name, "roles": h.Roles},
 	})
-	w.WriteHeader(http.StatusNoContent)
+	JSON(w, http.StatusOK, removed)
 }
 
 func (s *Server) handleListJoinTokens(w http.ResponseWriter, r *http.Request) {

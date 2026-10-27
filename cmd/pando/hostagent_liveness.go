@@ -61,33 +61,36 @@ func agentLiveness(authoritiesPEM []byte, logger *zap.Logger) (*liveness.Monitor
 		return nil, fmt.Errorf("the host agent could not reach this host's container runtime, which it stops apps through when the host is cut off: %w", err)
 	}
 	return newMonitor(self, func(context.Context) ([]hosts.Peer, error) { return hosts.ReadPeers(peersFile) },
-		cert, roots, docker, logger), nil
+		staticCert(cert), roots, docker, logger), nil
+}
+
+// staticCert presents cert at every handshake: for an agent given its
+// certificate by whoever started it, which re-creates it to renew it.
+func staticCert(cert tls.Certificate) func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+	return func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &cert, nil }
 }
 
 // newMonitor is a joined host's Monitor (R-421): it probes the hosts peers
-// lists with cert, checking each agent against roots and the name it joined
-// under, and fences through docker.
-func newMonitor(self string, peers func(context.Context) ([]hosts.Peer, error), cert tls.Certificate,
+// lists with the certificate clientCert gives at each probe, which is renewed
+// while the host runs, checking each agent against roots and the name it
+// joined under, and fences through docker.
+func newMonitor(self string, peers func(context.Context) ([]hosts.Peer, error),
+	clientCert func(*tls.CertificateRequestInfo) (*tls.Certificate, error),
 	roots *x509.CertPool, docker hostagent.ContainerAPI, logger *zap.Logger) *liveness.Monitor {
 	return &liveness.Monitor{
 		Self: self,
 		Peers: func(ctx context.Context) ([]liveness.Peer, error) {
 			list, err := peers(ctx)
-			out := make([]liveness.Peer, len(list))
-			for i, p := range list {
-				out[i] = liveness.Peer(p)
-			}
-			return out, err
+			return livenessPeers(list), err
 		},
-		Probe: func(ctx context.Context, p liveness.Peer) error {
+		Probe: func(ctx context.Context, p liveness.Peer) ([]byte, error) {
 			cfg := &tls.Config{
-				MinVersion:   tls.VersionTLS13,
-				Certificates: []tls.Certificate{cert},
-				RootCAs:      roots,
-				ServerName:   hostagent.ServerName(p.Name),
+				MinVersion:           tls.VersionTLS13,
+				GetClientCertificate: clientCert,
+				RootCAs:              roots,
+				ServerName:           hostagent.ServerName(p.Name),
 			}
-			_, err := hostagent.Ping(ctx, p.Address, cfg, self)
-			return err
+			return probeResult(hostagent.Ping(ctx, p.Address, cfg, self))
 		},
 		Fencer: hostagent.DockerFencer{Docker: docker},
 		Logger: logger.Named("liveness"),

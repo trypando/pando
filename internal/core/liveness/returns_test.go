@@ -47,7 +47,7 @@ func TestR419_ALostHostThatAnswersAgainHasItsCopiesRemovedThenItsMarkCleared(t *
 	r.say("b", silent)
 	r.say("c", silent)
 	r.say("x", nil)
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Empty(t, returns.removed)
 	require.Contains(t, r.store.lost, "x")
 
@@ -56,17 +56,17 @@ func TestR419_ALostHostThatAnswersAgainHasItsCopiesRemovedThenItsMarkCleared(t *
 	r.say("b", nil)
 	r.say("c", nil)
 	returns.leftErr = errors.New("database away")
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Contains(t, r.store.lost, "x")
 	returns.leftErr, returns.removeErr = nil, errors.New("Docker on x did not answer")
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Contains(t, r.store.lost, "x")
 	returns.removeErr, r.store.clearErr = nil, errors.New("database away")
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Contains(t, r.store.lost, "x")
 
 	r.store.clearErr = nil
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.NotContains(t, r.store.lost, "x")
 	require.Equal(t, []string{"app_ok", "app_ok"}, returns.removed, "removed again, which is not an error")
 	last := r.audit.events[len(r.audit.events)-1]
@@ -83,11 +83,11 @@ func TestALostHostIsKeptLostWithoutAWayToRemoveItsCopies(t *testing.T) {
 	r := newWatchRig("a", "x")
 	r.store.lost["x"] = "usr_admin"
 	r.say("x", nil)
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.Contains(t, r.store.lost, "x", "nothing would remove its copies")
 
 	r.svc.Returns = &fakeReturns{}
-	r.watch.Round(ctx)
+	r.round(ctx)
 	require.NotContains(t, r.store.lost, "x")
 	require.Equal(t, []string{}, r.audit.events[len(r.audit.events)-1].Detail["removed_copies"])
 }

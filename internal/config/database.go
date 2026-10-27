@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+// ClusterAuthorityFile is the cluster's certificate authority's file name
+// when server.cluster_authority_path is empty: beside the API token key, in a
+// directory Pando already writes to at every start, so an install upgraded
+// from before clusters starts without a new directory to make (R-414).
+const ClusterAuthorityFile = "cluster-ca.pem"
+
 // ClusterDatabaseURLFile is the file in server.cluster_dir a control host
 // that joined a cluster keeps the cluster's database address in (R-415).
 const ClusterDatabaseURLFile = "database-url"

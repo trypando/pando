@@ -49,8 +49,8 @@ func TestClusterLivenessProbesHostsWithAHostCertificate(t *testing.T) {
 	as := hostagent.Authorities{{Cert: authority.Cert, Key: authority.Key}}
 	addr := livenessAgent(t, as, "app-1")
 
-	svc, watch := clusterLiveness(state.NewCluster(nil, make([]byte, tokenkey.Size)), authority, nil, nil, zap.NewNop())
-	require.NotNil(t, svc.Answering)
+	svc, watch := clusterLiveness(state.NewCluster(nil, make([]byte, tokenkey.Size)), authority, nil, nil, nil, zap.NewNop())
+	require.NotNil(t, svc.Witness)
 	require.NotNil(t, watch)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -86,7 +86,7 @@ func TestAgentLivenessTakesPartOnlyOnAJoinedHost(t *testing.T) {
 	require.NoError(t, err)
 	as, err := hostagent.ParseAuthorities(caPEM)
 	require.NoError(t, err)
-	cert, err := as.IssueHostClient()
+	cert, err := as.IssueHostClient(appHostID)
 	require.NoError(t, err)
 	keyDER, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
 	require.NoError(t, err)
@@ -112,7 +112,8 @@ func TestAgentLivenessTakesPartOnlyOnAJoinedHost(t *testing.T) {
 	require.Equal(t, []liveness.Peer{{ID: "host_a", Name: "app-1", Address: addr}}, list)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	require.NoError(t, m.Probe(ctx, list[0]))
+	_, err = m.Probe(ctx, list[0])
+	require.NoError(t, err)
 }
 
 type wiringStore struct {
@@ -148,7 +149,7 @@ func TestClusterLivenessListsHostsAndAsksWhetherOneAnswers(t *testing.T) {
 		{ID: "host_up", Name: "app-1", Address: addr, JoinedWith: "jt_1"},
 		{ID: "host_down", Name: "app-2", Address: silent, JoinedWith: "jt_2"},
 	}}
-	svc, watch := clusterLiveness(store, authority, nil, nil, zap.NewNop())
+	_, watch := clusterLiveness(store, authority, nil, nil, nil, zap.NewNop())
 	ctx := context.Background()
 
 	peers, err := watch.Hosts(ctx)
@@ -159,11 +160,12 @@ func TestClusterLivenessListsHostsAndAsksWhetherOneAnswers(t *testing.T) {
 		{ID: "host_down", Name: "app-2", Address: silent},
 	}, peers, "every host is watched, the install's first included (R-421)")
 
-	require.True(t, svc.Answering(ctx, "host_up"))
-	require.False(t, svc.Answering(ctx, "host_down"))
-	require.False(t, svc.Answering(ctx, "host_nobody"))
+	_, err = watch.Probe(ctx, peers[1])
+	require.NoError(t, err)
+	_, err = watch.Probe(ctx, peers[2])
+	require.ErrorIs(t, err, liveness.ErrContactOnly, "a machine that refuses the connection answered")
 
-	_, watch = clusterLiveness(wiringStore{err: errors.New("database away")}, authority, nil, nil, zap.NewNop())
+	_, watch = clusterLiveness(wiringStore{err: errors.New("database away")}, authority, nil, nil, nil, zap.NewNop())
 	_, err = watch.Hosts(ctx)
 	require.Error(t, err)
 }

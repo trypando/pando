@@ -95,6 +95,8 @@ var Actions = []string{
 	"cluster.host.join",
 	"cluster.host.lost",
 	"cluster.host.remove",
+	"cluster.host.renew",
+	"cluster.host.renew.denied",
 	"cluster.host.returned",
 	"cluster.join",
 	"cluster.join.denied",

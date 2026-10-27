@@ -42,11 +42,12 @@ type monitorRig struct {
 	fencer  *fakeFencer
 	mu      sync.Mutex
 	reach   map[string]bool
+	answers map[string][]byte
 	peerErr error
 }
 
 func newMonitorRig(peers ...string) *monitorRig {
-	r := &monitorRig{clk: clock.NewFake(time.Time{}), fencer: &fakeFencer{each: 2}, reach: map[string]bool{}}
+	r := &monitorRig{clk: clock.NewFake(time.Time{}), fencer: &fakeFencer{each: 2}, reach: map[string]bool{}, answers: map[string][]byte{}}
 	list := []Peer{{ID: "self"}}
 	for _, p := range peers {
 		list = append(list, Peer{ID: p, Address: p + ":7443"})
@@ -62,13 +63,13 @@ func newMonitorRig(peers ...string) *monitorRig {
 			}
 			return list, nil
 		},
-		Probe: func(_ context.Context, p Peer) error {
+		Probe: func(_ context.Context, p Peer) ([]byte, error) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			if r.reach[p.ID] {
-				return nil
+				return r.answers[p.ID], nil
 			}
-			return errors.New("no route to host")
+			return nil, errors.New("no route to host")
 		},
 		Fencer: r.fencer,
 		Clock:  r.clk,
@@ -88,6 +89,7 @@ func (r *monitorRig) set(reach bool, peers ...string) {
 func (r *monitorRig) rounds(n int) {
 	for range n {
 		r.mon.Round(context.Background())
+		r.mon.Settle()
 		r.clk.Advance(tInterval)
 	}
 }

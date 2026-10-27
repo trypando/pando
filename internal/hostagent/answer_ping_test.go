@@ -46,7 +46,7 @@ func pingListener(t *testing.T, live Liveness) (string, Authorities, chan string
 					return
 				}
 				negotiated <- conn.ConnectionState().NegotiatedProtocol
-				AnswerPing(conn, live)
+				AnswerPing(conn, live, nil)
 			}()
 		}
 	}()

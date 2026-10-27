@@ -1,15 +1,18 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/hosts"
+	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -35,7 +38,56 @@ func (s *Server) ClusterRoutes() http.Handler {
 	r.Get(hosts.AuthorityPath, s.handleClusterAuthority)
 	r.Post(hosts.JoinPath, s.handleClusterJoin)
 	r.Get(hosts.PeersPath, s.handleClusterPeers)
+	r.Post(hosts.RenewPath, s.handleClusterRenew)
 	return r
+}
+
+// verifiedClient is the certificate the client presented, verified against
+// the cluster authority by the listener, or nil.
+func verifiedClient(r *http.Request) []byte {
+	if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && len(r.TLS.VerifiedChains[0]) > 0 {
+		return r.TLS.VerifiedChains[0][0].Raw
+	}
+	return nil
+}
+
+// errNoClientCert refuses a renewal made without a certificate from the
+// cluster authority: it is no host's, and is not audited, so a caller with
+// nothing cannot fill the audit log (R-347).
+var errNoClientCert = errs.New(errs.AuthInvalid, "A renewal must present the certificate the host holds, issued by the cluster's authority.")
+
+// handleClusterRenew issues a joined host new certificates, to the host
+// presenting the one it holds (R-421). Audited, with the host's ID.
+func (s *Server) handleClusterRenew(w http.ResponseWriter, r *http.Request) {
+	if s.Hosts == nil {
+		Error(w, r, errClusterOff)
+		return
+	}
+	if verifiedClient(r) == nil {
+		Error(w, r, errNoClientCert)
+		return
+	}
+	var req hosts.WireRenewRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJoinBody)).Decode(&req); err != nil {
+		Error(w, r, errs.New(errs.ValidInvalid, "The renewal request could not be read."))
+		return
+	}
+	res, err := s.Hosts.Renew(r.Context(), verifiedClient(r), []byte(req.CSR))
+	if err != nil {
+		s.audit(r, audit.Event{
+			PrincipalKind: audit.KindAnonymous, Action: "cluster.host.renew.denied", TargetKind: "host",
+			Detail: map[string]any{"code": string(errs.CodeOf(err))},
+		})
+		Error(w, r, err)
+		return
+	}
+	s.audit(r, audit.Event{
+		PrincipalKind: audit.KindSystem, PrincipalID: res.Host.ID,
+		Action: "cluster.host.renew", TargetKind: "host", TargetID: res.Host.ID,
+		Detail: map[string]any{"name": res.Host.Name, "cert_sha256": res.Host.CertSHA256},
+	})
+	// The probe certificate's key, only over this connection (R-194).
+	JSON(w, http.StatusCreated, res.Wire())
 }
 
 // handleClusterPeers lists the cluster's hosts to a host that has joined it,
@@ -46,11 +98,7 @@ func (s *Server) handleClusterPeers(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errClusterOff)
 		return
 	}
-	var der []byte
-	if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && len(r.TLS.VerifiedChains[0]) > 0 {
-		der = r.TLS.VerifiedChains[0][0].Raw
-	}
-	peers, err := s.Hosts.Peers(r.Context(), der)
+	peers, err := s.Hosts.Peers(r.Context(), verifiedClient(r))
 	if err != nil {
 		Error(w, r, err)
 		return
@@ -71,24 +119,73 @@ func (s *Server) handleClusterAuthority(w http.ResponseWriter, r *http.Request) 
 
 var errClusterOff = errs.New(errs.Internal, "This installation's cluster is not set up, so no host can join it.")
 
+// Refused joins allowed from one client address before joining waits, as
+// wrong passwords are limited (R-404 applied to R-415) [P]. The listener
+// takes no session, so this is what keeps a caller without a token from
+// guessing at one, or from filling the audit log, which keeps every refusal
+// for at least three months (R-347, R-348).
+const (
+	joinAddrAttempts = 20
+	joinWindow       = 15 * time.Minute
+)
+
+// reserveJoin counts a join from this client address before it is tried,
+// and refuses it, audited, over joinAddrAttempts (R-404, R-415).
+func (s *Server) reserveJoin(w http.ResponseWriter, r *http.Request) (state.Reservation, bool) {
+	limit := limited{
+		state.AttemptLimit{Key: state.ClusterJoinAddrKey(limitAddr(r)), Max: joinAddrAttempts, Window: joinWindow},
+		"Too many refused joins from this network address.",
+	}
+	return s.reserveAttempt(w, r, func() { s.denyJoin(r, map[string]any{"reason": "rate_limited"}) }, limit)
+}
+
+// settleJoin ends a join's reservation: any refusal counts against the
+// address, except one Pando could not decide; a join that succeeded is
+// taken back.
+func (s *Server) settleJoin(r *http.Request, res state.Reservation, err error) {
+	ctx := context.WithoutCancel(r.Context())
+	if err != nil && errs.CodeOf(err) != errs.Internal {
+		_ = s.failedAttempts().Fail(ctx, res)
+		return
+	}
+	_ = s.failedAttempts().Release(ctx, res)
+}
+
+// denyJoin audits a refused join, with what the caller sent kept only where
+// it is bounded (hosts.JoinRequest.AuditDetail).
+func (s *Server) denyJoin(r *http.Request, detail map[string]any) {
+	s.audit(r, audit.Event{
+		PrincipalKind: audit.KindAnonymous, Action: "cluster.join.denied", TargetKind: "host", Detail: detail,
+	})
+}
+
 // handleClusterJoin admits a host with a join token. Every join and every
-// refusal is audited (R-415).
+// refusal is audited (R-415), and refusals are limited per client address
+// (reserveJoin).
 func (s *Server) handleClusterJoin(w http.ResponseWriter, r *http.Request) {
 	if s.Hosts == nil {
 		Error(w, r, errClusterOff)
 		return
 	}
-	var req hosts.WireJoinRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJoinBody)).Decode(&req); err != nil {
-		Error(w, r, errs.New(errs.ValidInvalid, "The join request could not be read."))
+	reservation, ok := s.reserveJoin(w, r)
+	if !ok {
 		return
 	}
-	res, err := s.Hosts.Join(r.Context(), req.Request())
+	var req hosts.WireJoinRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJoinBody)).Decode(&req); err != nil {
+		err = errs.New(errs.ValidInvalid, "The join request could not be read.")
+		s.settleJoin(r, reservation, err)
+		s.denyJoin(r, map[string]any{"code": string(errs.CodeOf(err))})
+		Error(w, r, err)
+		return
+	}
+	join := req.Request()
+	res, err := s.Hosts.Join(r.Context(), join)
+	s.settleJoin(r, reservation, err)
 	if err != nil {
-		s.audit(r, audit.Event{
-			PrincipalKind: audit.KindAnonymous, Action: "cluster.join.denied", TargetKind: "host",
-			Detail: map[string]any{"name": req.Name, "version": req.Version, "code": string(errs.CodeOf(err))},
-		})
+		detail := join.AuditDetail()
+		detail["code"] = string(errs.CodeOf(err))
+		s.denyJoin(r, detail)
 		Error(w, r, err)
 		return
 	}
@@ -114,21 +211,28 @@ func (s *Server) handlePostSetupJoin(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.Internal, "This Pando cannot join a cluster: joining is not set up."))
 		return
 	}
+	reservation, ok := s.reserveJoin(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		SetupToken string `json:"setup_token"`
 		Token      string `json:"token"`
 		Name       string `json:"name"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJoinBody)).Decode(&req); err != nil {
-		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
+		err := errUnreadableBody()
+		s.settleJoin(r, reservation, err)
+		Error(w, r, err)
 		return
 	}
 	joined, err := s.Joiner.SetupWithToken(r.Context(), secret.New(strings.TrimSpace(req.SetupToken)), strings.TrimSpace(req.Token), req.Name)
+	s.settleJoin(r, reservation, err)
 	if err != nil {
-		s.audit(r, audit.Event{
-			PrincipalKind: audit.KindAnonymous, Action: "cluster.join.denied", TargetKind: "host",
-			Detail: map[string]any{"name": req.Name, "code": string(errs.CodeOf(err))},
-		})
+		detail := hosts.JoinRequest{Name: strings.TrimSpace(req.Name)}.AuditDetail()
+		delete(detail, "version")
+		detail["code"] = string(errs.CodeOf(err))
+		s.denyJoin(r, detail)
 		Error(w, r, err)
 		return
 	}

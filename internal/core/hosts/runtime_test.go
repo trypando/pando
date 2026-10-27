@@ -143,7 +143,7 @@ func TestR416_AHostWithBothRolesIsReachedThroughItsAgent(t *testing.T) {
 	list, err := hosts.RuntimeHosts([]state.Host{both})
 	require.NoError(t, err)
 	require.Equal(t, []hosts.RuntimeHost{{Name: "core-2", Endpoint: "agent://10.0.0.8:7443", CertSHA256: pin}}, list)
-	require.Equal(t, []hosts.Peer{{ID: both.ID, Name: "core-2", Address: "10.0.0.8:7444"}}, hosts.LivenessPeers([]state.Host{both}),
+	require.Equal(t, []hosts.Peer{{ID: both.ID, Name: "core-2", Address: "10.0.0.8:7444", Control: true}}, hosts.LivenessPeers([]state.Host{both}),
 		"pinged on its cluster listener (R-421)")
 }
 

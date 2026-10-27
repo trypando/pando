@@ -121,7 +121,7 @@ func (j *Joiner) Join(ctx context.Context, token, name string) (Joined, error) {
 	if err != nil {
 		return Joined{}, err
 	}
-	if err := checkIssued(res, key, d.AuthorityHash); err != nil {
+	if err := checkIssued(res, key, d.AuthorityHash, j.now()); err != nil {
 		return Joined{}, err
 	}
 	// An app host never keeps a control host's keys, whatever it is sent
@@ -197,37 +197,46 @@ func (j *Joiner) client(cfg *tls.Config) *http.Client {
 // post sends the join over a connection pinned to the token's authority: the
 // secret goes nowhere else (R-415).
 func (j *Joiner) post(ctx context.Context, d Decoded, body WireJoinRequest) (JoinResult, error) {
-	payload, err := json.Marshal(body) //nolint:gosec // G117: the join token's secret, sent only over the pinned connection (R-415)
-	if err != nil {
-		return JoinResult{}, errs.Wrap(errs.Internal, "Pando could not make the join request.", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.Address+JoinPath, bytes.NewReader(payload))
-	if err != nil {
-		return JoinResult{}, errs.Wrap(errs.ValidInvalid, fmt.Sprintf("The join token's address %s is not one Pando can connect to.", d.Address), err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := j.client(PinnedTLS(d.AuthorityHash)).Do(req)
-	if err != nil {
-		return JoinResult{}, connectError(d.Address, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return JoinResult{}, errs.Wrap(errs.AdapterUnavailable, fmt.Sprintf("The connection to the cluster at %s ended during the join.", d.Address), err).
-			WithRemedy(joinRemedy)
-	}
-	if resp.StatusCode != http.StatusCreated {
-		return JoinResult{}, refusal(d.Address, resp.StatusCode, data)
-	}
 	var wire WireJoinResult
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return JoinResult{}, errs.Wrap(errs.Internal, fmt.Sprintf("The cluster at %s answered the join with something Pando cannot read.", d.Address), err)
+	if err := exchange(ctx, j.client(PinnedTLS(d.AuthorityHash)), d.Address, JoinPath, body, &wire); err != nil {
+		return JoinResult{}, err
 	}
 	res, err := wire.result()
 	if err != nil {
 		return JoinResult{}, errs.Wrap(errs.Internal, fmt.Sprintf("The cluster at %s sent keys Pando cannot read.", d.Address), err)
 	}
 	return res, nil
+}
+
+// exchange posts body to path on the cluster listener at address, as JSON,
+// and reads its 201 answer into out.
+func exchange(ctx context.Context, client *http.Client, address, path string, body, out any) error {
+	payload, err := json.Marshal(body) //nolint:gosec // G117: the join token's secret, sent only over the pinned connection (R-415)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not make the request to the cluster.", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, address+path, bytes.NewReader(payload))
+	if err != nil {
+		return errs.Wrap(errs.ValidInvalid, fmt.Sprintf("The cluster's address %s is not one Pando can connect to.", address), err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return connectError(address, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return errs.Wrap(errs.AdapterUnavailable, fmt.Sprintf("The connection to the cluster at %s ended before it answered.", address), err).
+			WithRemedy(joinRemedy)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return refusal(address, resp.StatusCode, data)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return errs.Wrap(errs.Internal, fmt.Sprintf("The cluster at %s answered with something Pando cannot read.", address), err)
+	}
+	return nil
 }
 
 // connectError says why the cluster could not be reached, and in particular
@@ -256,7 +265,7 @@ func refusal(address string, status int, body []byte) error {
 
 // checkIssued checks what the cluster issued: a certificate for this host's
 // own key, from the authority the token pins.
-func checkIssued(res JoinResult, key *ecdsa.PrivateKey, hash string) error {
+func checkIssued(res JoinResult, key *ecdsa.PrivateKey, hash string, at time.Time) error {
 	bad := func(what string) error {
 		return errs.Newf(errs.Internal, "The cluster sent a certificate Pando cannot use: %s.", what).WithRemedy(joinRemedy)
 	}
@@ -273,7 +282,7 @@ func checkIssued(res JoinResult, key *ecdsa.PrivateKey, hash string) error {
 	if err != nil {
 		return bad("it cannot be read")
 	}
-	if err := verifyPinned([]*x509.Certificate{cert, ca}, hash); err != nil {
+	if err := verifyPinned([]*x509.Certificate{cert, ca}, hash, at); err != nil {
 		// verifyPinned checks server authentication; a host certificate has
 		// it, so a failure here is a certificate from another authority.
 		return bad("it is not from the authority the join token names")

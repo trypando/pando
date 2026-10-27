@@ -26,11 +26,26 @@ type publishStore struct {
 	err    error
 	setErr error
 	sets   int
+	// rotations counts RotateHostCert.
+	rotations int
 }
 
 func (p *publishStore) Hosts(context.Context) ([]state.Host, error) {
 	out := append([]state.Host(nil), p.hosts...)
 	return out, p.err
+}
+
+func (p *publishStore) RotateHostCert(_ context.Context, id, next string) error {
+	p.rotations++
+	if p.setErr != nil {
+		return p.setErr
+	}
+	for i := range p.hosts {
+		if p.hosts[i].ID == id {
+			p.hosts[i].PrevCertSHA256, p.hosts[i].CertSHA256 = p.hosts[i].CertSHA256, next
+		}
+	}
+	return nil
 }
 
 func (p *publishStore) SetHostPing(_ context.Context, id, address, pin string) error {
@@ -115,6 +130,31 @@ func TestR421_AControlHostRecordsWhereItAnswersPings(t *testing.T) {
 // certificate a control host answers pings with is issued from the
 // authority once and kept, so its pin holds across restarts, and issued
 // again for another name or near its end.
+func TestR421_AJoinedControlHostsRenewedCertificateIsItsAgentsToo(t *testing.T) {
+	ctx := context.Background()
+	old, renewed := strings.Repeat("b", 64), strings.Repeat("d", 64)
+	store := &publishStore{hosts: []state.Host{
+		{ID: "host_core2", Name: "core-2", Roles: []string{state.HostRoleControl, state.HostRoleApp},
+			Address: "10.0.0.2:7443", CertSHA256: old, JoinedWith: "jt_1"},
+	}}
+	pin := old
+	peers := &hosts.ControlPeers{Store: store, Self: "host_core2", Port: 7444, PinOf: func() string { return pin }}
+	_, err := peers.Peers(ctx)
+	require.NoError(t, err)
+	require.Zero(t, store.rotations, "the join's certificate is the agent's already")
+
+	pin = renewed // ControlHostCert renewed host.crt, which the agent serves too
+	_, err = peers.Peers(ctx)
+	require.NoError(t, err)
+	h := store.hosts[0]
+	require.Equal(t, renewed, h.PingCertSHA256)
+	require.Equal(t, renewed+","+old, h.Pins(), "the runtime takes either until the agent serves the new one (R-416)")
+	require.Equal(t, "10.0.0.2:7443", h.Address)
+	_, err = peers.Peers(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, store.rotations)
+}
+
 func TestR421_AControlHostKeepsOneCertificateForItsPings(t *testing.T) {
 	a, err := hosts.LoadOrCreateAuthority(filepath.Join(t.TempDir(), "ca.pem"))
 	require.NoError(t, err)

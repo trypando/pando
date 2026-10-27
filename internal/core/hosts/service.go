@@ -23,6 +23,11 @@ type Store interface {
 	Hosts(ctx context.Context) ([]state.Host, error)
 	RemoveHost(ctx context.Context, hostID string) (state.Host, error)
 	Join(ctx context.Context, presented secret.Value, admit func(state.JoinToken) (state.Host, error)) (state.JoinToken, state.Host, error)
+	// The host's certificates (R-415, R-421): renewing them, and refusing a
+	// removed host's.
+	RenewHostCert(ctx context.Context, hostID, presented, next string) (state.Host, error)
+	ConfirmHostCert(ctx context.Context, hostID, current string) (bool, error)
+	CertRevoked(ctx context.Context, sha string) (bool, error)
 }
 
 // Join token limits (R-415).
@@ -72,6 +77,10 @@ type Service struct {
 
 	// Readiness, when set, is asked before a join spends a use of its token.
 	Readiness JoinReadiness
+
+	// IsSelf picks the host serving this process's requests, which Remove
+	// refuses. Nil refuses none but the install's own first host.
+	IsSelf func(state.Host) bool
 
 	Now func() time.Time
 }
@@ -253,16 +262,19 @@ func (s *Service) Revoke(ctx context.Context, tokenID string) (state.JoinToken, 
 	return s.Store.RevokeJoinToken(ctx, tokenID)
 }
 
+// ThisHost is the ID of the host serving this process's requests, among
+// list, or "" when it is not among them.
+func (s *Service) ThisHost(list []state.Host) string {
+	if s.IsSelf == nil {
+		return ""
+	}
+	if i := slices.IndexFunc(list, s.IsSelf); i >= 0 {
+		return list[i].ID
+	}
+	return ""
+}
+
 // Hosts lists the cluster's hosts.
 func (s *Service) Hosts(ctx context.Context) ([]state.Host, error) {
 	return s.Store.Hosts(ctx)
-}
-
-// Remove removes a host from the cluster.
-func (s *Service) Remove(ctx context.Context, hostID string) (state.Host, error) {
-	h, err := s.Store.RemoveHost(ctx, hostID)
-	if err == nil {
-		s.Changed(ctx)
-	}
-	return h, err
 }

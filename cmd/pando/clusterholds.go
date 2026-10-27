@@ -91,12 +91,16 @@ func startJoinedAgent(ctx context.Context, dir string, joined hosts.Joined, ping
 	if !slices.Contains(joined.Roles, state.HostRoleApp) || joined.AppOnly() {
 		return
 	}
-	agent, _, err := appHostAgent(dir, joined, logger)
+	agent, _, certs, err := appHostAgent(dir, joined, logger)
 	if err != nil {
 		logger.Error("this host joined with the app role and cannot run its agent, so it runs no apps", zap.Error(err))
 		return
 	}
 	agent.Fence = pings
+	// R-421: the agent's certificate is renewed as an app host's is; the
+	// control side records the one it answers pings with as the agent's too
+	// (hosts.ControlPeers), so the runtime accepts either meanwhile.
+	go certs.Host.Run(ctx, certRenewCheck)
 	go func() {
 		if err := serveAgent(ctx, agent, nil, agentListen()); err != nil {
 			logger.Error("this host's agent stopped, so it runs no apps", zap.Error(err))

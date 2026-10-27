@@ -92,6 +92,31 @@ func (c *Cluster) SetHostFenced(ctx context.Context, hostID string, fenced bool)
 	return tag.RowsAffected() == 1, nil
 }
 
+// RotateHostCert records next as the certificate the host's agent holds
+// now, the current one kept as the one before (prev_cert_sha256), so a
+// connection to the agent accepts either until it serves next (R-416,
+// R-421). A control host renews its own certificate (hosts.ControlPeers).
+// next, when it is revoked, is refused.
+func (c *Cluster) RotateHostCert(ctx context.Context, hostID, next string) error {
+	tag, err := c.db.Exec(ctx, `
+		UPDATE cluster_hosts SET prev_cert_sha256 = cert_sha256, cert_sha256 = $2, updated_at = now()
+		WHERE id = $1 AND cert_sha256 <> $2
+		  AND NOT EXISTS (SELECT 1 FROM cluster_revoked_certs WHERE cert_sha256 = $2)`, hostID, next)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not record the host's renewed certificate.", err)
+	}
+	if tag.RowsAffected() == 0 {
+		var exists bool
+		if err := c.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM cluster_hosts WHERE id = $1)`, hostID).Scan(&exists); err != nil {
+			return errs.Wrap(errs.Internal, "Could not record the host's renewed certificate.", err)
+		}
+		if !exists {
+			return errs.Newf(errs.NotFound, "There is no host %s in the cluster.", hostID)
+		}
+	}
+	return nil
+}
+
 // SetHostPing records where a control host answers the cluster's liveness
 // checks, its cluster listener, and the fingerprint of the certificate it
 // answers with (R-421): a control host keeps its own row current with it

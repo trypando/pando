@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"time"
 
 	"go.uber.org/zap"
@@ -21,19 +22,24 @@ import (
 //
 // Probes are made with a host certificate issued from the cluster authority,
 // which an agent answers with a ping and nothing else, and verified against
-// the name the host joined under.
-func clusterLiveness(store clusterStore, authority *hosts.Authority, apps *state.Apps, auditor liveness.Auditor, logger *zap.Logger) (*liveness.Service, *liveness.Watch) {
+// the name the host joined under. local is this control host's own Monitor's
+// word on a host (controlPings.unreachedFor), which a person marking a host
+// lost is checked against with the rest (liveness.Witness).
+func clusterLiveness(store clusterStore, authority *hosts.Authority, apps *state.Apps, auditor liveness.Auditor,
+	local func(string) (time.Duration, bool), logger *zap.Logger) (*liveness.Service, *liveness.Watch) {
 	svc := &liveness.Service{Store: store, Apps: apps, Audit: auditor, Logger: logger.Named("liveness")}
 
 	as := hostagent.Authorities{{Cert: authority.Cert, Key: authority.Key}}
-	cert, err := as.IssueHostClient()
+	// The collector's own certificate: it names no host, so its pings are
+	// recorded as no host's (hostagent.ProbeSender).
+	cert, err := as.IssueCollector()
 	if err != nil {
 		logger.Error("could not issue the certificate hosts are checked with; no host is watched", zap.Error(err))
 		return svc, nil
 	}
 	tlsFor := func(p liveness.Peer) *tls.Config { return hostagent.ClientTLS(as, cert, p.Name) }
 	probe := func(ctx context.Context, p liveness.Peer) ([]byte, error) {
-		return hostagent.Ping(ctx, p.Address, tlsFor(p), "")
+		return probeResult(hostagent.Ping(ctx, p.Address, tlsFor(p), ""))
 	}
 	peers := func(ctx context.Context) ([]liveness.Peer, error) {
 		list, err := store.Hosts(ctx)
@@ -42,25 +48,11 @@ func clusterLiveness(store clusterStore, authority *hosts.Authority, apps *state
 		}
 		// Every host, the install's first included: control hosts answer
 		// on their cluster listeners (controlhost.go).
-		all := hosts.LivenessPeers(list)
-		out := make([]liveness.Peer, len(all))
-		for i, p := range all {
-			out[i] = liveness.Peer(p)
-		}
-		return out, nil
+		return livenessPeers(hosts.LivenessPeers(list)), nil
 	}
 
-	// A host that answers is not gone, and is not marked lost by hand.
-	svc.Answering = func(ctx context.Context, hostID string) bool {
-		h, err := store.Host(ctx, hostID)
-		if err != nil {
-			return false
-		}
-		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		defer cancel()
-		_, err = probe(ctx, liveness.Peer(hosts.LivenessPeers([]state.Host{h})[0]))
-		return err == nil
-	}
+	// A host heard from lately is not gone, and is not marked lost by hand.
+	svc.Witness = &liveness.Witness{Hosts: peers, Probe: probe, Local: local}
 
 	// What each host says of its fence is recorded, so every replica's
 	// reconciler leaves a fenced host's apps stopped (R-421, clusterholds.go).
@@ -69,6 +61,25 @@ func clusterLiveness(store clusterStore, authority *hosts.Authority, apps *state
 		watchProbe = (&fenceRecorder{store: fences, logger: logger.Named("liveness")}).wrap(probe)
 	}
 	return svc, &liveness.Watch{Hosts: peers, Probe: watchProbe, Service: svc, Logger: logger.Named("liveness")}
+}
+
+// probeResult is a ping's outcome as liveness reads it: a view, contact
+// without one (the machine answered, though its Pando did not give a view),
+// or silence (R-421).
+func probeResult(view []byte, err error) ([]byte, error) {
+	if err != nil && hostagent.Contacted(err) {
+		return nil, fmt.Errorf("%w: %w", liveness.ErrContactOnly, err)
+	}
+	return view, err
+}
+
+// livenessPeers is list as liveness probes it.
+func livenessPeers(list []hosts.Peer) []liveness.Peer {
+	out := make([]liveness.Peer, len(list))
+	for i, p := range list {
+		out[i] = liveness.Peer{ID: p.ID, Name: p.Name, Address: p.Address, Lost: p.Lost}
+	}
+	return out
 }
 
 // clusterStore is the slice of state.Cluster the liveness wiring reads.

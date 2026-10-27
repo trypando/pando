@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"math/big"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -234,11 +235,17 @@ func (as Authorities) IssueServer(host string) (certPEM, keyPEM []byte, err erro
 }
 
 func (as Authorities) issue(subject pkix.Name, dnsNames []string, usage x509.ExtKeyUsage) (tls.Certificate, error) {
+	return as.issueAt(time.Now(), &x509.Certificate{Subject: subject, DNSNames: dnsNames}, usage)
+}
+
+// issueAt issues a certificate with tmpl's subject and names for a new key,
+// as of now.
+func (as Authorities) issueAt(now time.Time, tmpl *x509.Certificate, usages ...x509.ExtKeyUsage) (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	der, err := as.sign(subject, dnsNames, &key.PublicKey, usage)
+	der, err := as.signAt(now, tmpl, &key.PublicKey, usages...)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
@@ -249,8 +256,16 @@ func (as Authorities) issue(subject pkix.Name, dnsNames []string, usage x509.Ext
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, nil
 }
 
-// sign issues a certificate for pub from the first authority, as DER.
+// sign issues a certificate for pub from the first authority, as DER, as of
+// now.
 func (as Authorities) sign(subject pkix.Name, dnsNames []string, pub crypto.PublicKey, usages ...x509.ExtKeyUsage) ([]byte, error) {
+	return as.signAt(time.Now(), &x509.Certificate{Subject: subject, DNSNames: dnsNames}, pub, usages...)
+}
+
+// signAt issues a certificate for pub from the first authority, as DER: the
+// subject and names in tmpl, valid from now for leafValidity, or until the
+// authority expires if that is sooner.
+func (as Authorities) signAt(now time.Time, tmpl *x509.Certificate, pub crypto.PublicKey, usages ...x509.ExtKeyUsage) ([]byte, error) {
 	if len(as) == 0 {
 		return nil, errors.New("no agent authority is configured")
 	}
@@ -259,21 +274,22 @@ func (as Authorities) sign(subject pkix.Name, dnsNames []string, pub crypto.Publ
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
+	now = now.UTC()
 	notAfter := now.Add(leafValidity)
 	if notAfter.After(ca.Cert.NotAfter) {
 		notAfter = ca.Cert.NotAfter
 	}
-	tmpl := &x509.Certificate{
+	cert := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      subject,
-		DNSNames:     dnsNames,
+		Subject:      tmpl.Subject,
+		DNSNames:     tmpl.DNSNames,
+		URIs:         tmpl.URIs,
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  usages,
 	}
-	return x509.CreateCertificate(rand.Reader, tmpl, ca.Cert, pub, ca.Key)
+	return x509.CreateCertificate(rand.Reader, cert, ca.Cert, pub, ca.Key)
 }
 
 // IssueHost issues a joined host's certificate for its key pub, as DER: the
@@ -284,9 +300,15 @@ func (as Authorities) sign(subject pkix.Name, dnsNames []string, pub crypto.Publ
 // agent requires of every connection, so a host's own certificate opens
 // nothing through another host's agent.
 func (as Authorities) IssueHost(name string, roles []string, pub crypto.PublicKey) ([]byte, error) {
+	return as.IssueHostAt(time.Now(), name, roles, pub)
+}
+
+// IssueHostAt is IssueHost as of now: how a host's certificate is renewed
+// (R-421: a certificate left to expire would cut every host off at once).
+func (as Authorities) IssueHostAt(now time.Time, name string, roles []string, pub crypto.PublicKey) ([]byte, error) {
 	server := ServerName(name)
-	return as.sign(pkix.Name{CommonName: server, OrganizationalUnit: roles}, []string{server}, pub,
-		x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth)
+	tmpl := &x509.Certificate{Subject: pkix.Name{CommonName: server, OrganizationalUnit: roles}, DNSNames: []string{server}}
+	return as.signAt(now, tmpl, pub, x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth)
 }
 
 // IsControl reports whether a verified client certificate was issued for a
@@ -310,26 +332,39 @@ func serialNumber() (*big.Int, error) {
 
 // ClientTLS is the dialer's TLS configuration: Pando's client certificate,
 // and the agent's verified against the authorities and the host's name.
+//
+// The client certificate is issued again from the authorities before it
+// expires (sharedRenewal), so a process that runs past leafValidity keeps
+// connecting (R-421): every configuration made for one certificate shares
+// its renewal.
 func ClientTLS(as Authorities, client tls.Certificate, host string) *tls.Config {
-	return &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{client},
-		RootCAs:      as.Pool(),
-		ServerName:   ServerName(host),
+	cfg := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		RootCAs:    as.Pool(),
+		ServerName: ServerName(host),
 	}
+	if len(client.Certificate) == 0 || len(as) == 0 {
+		cfg.Certificates = []tls.Certificate{client}
+		return cfg
+	}
+	cfg.GetClientCertificate = sharedRenewal(as, client).GetClientCertificate
+	return cfg
 }
 
 // PinnedClientTLS is ClientTLS that also requires the agent's certificate to
 // be the one its host joined the cluster with (cluster_hosts.cert_sha256), so
 // a machine given another certificate under the host's name is not taken for
-// it. An empty pin is ClientTLS.
+// it. An empty pin is ClientTLS. pin may name several fingerprints, separated
+// by commas: while a host's certificate is renewed, the one it holds and the
+// one it was just issued are both its own (state.Host.Pins).
 func PinnedClientTLS(as Authorities, client tls.Certificate, host, pin string) *tls.Config {
 	cfg := ClientTLS(as, client, host)
 	if pin == "" {
 		return cfg
 	}
+	pins := strings.Split(pin, ",")
 	cfg.VerifyConnection = func(cs tls.ConnectionState) error {
-		if len(cs.PeerCertificates) == 0 || Fingerprint256(cs.PeerCertificates[0].Raw) != pin {
+		if len(cs.PeerCertificates) == 0 || !slices.Contains(pins, Fingerprint256(cs.PeerCertificates[0].Raw)) {
 			return fmt.Errorf("the agent's certificate is not the one host %s joined the cluster with", host)
 		}
 		return nil
@@ -345,14 +380,25 @@ func ServerTLS(certPEM, keyPEM, authoritiesPEM []byte) (*tls.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the agent's certificate could not be read: %w", err)
 	}
+	cfg, err := RenewingServerTLS(nil, authoritiesPEM)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Certificates = []tls.Certificate{cert}
+	return cfg, nil
+}
+
+// RenewingServerTLS is ServerTLS serving cert, which is renewed while the
+// agent runs (R-421): each handshake presents the certificate held then. A nil
+// cert leaves Certificates to the caller.
+func RenewingServerTLS(cert *RenewingCert, authoritiesPEM []byte) (*tls.Config, error) {
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(authoritiesPEM) {
 		return nil, errors.New("the agent was given no authority to check Pando's certificate against")
 	}
-	return &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{cert},
-		ClientCAs:    pool,
+	cfg := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		ClientCAs:  pool,
 		// Verified against ClientCAs, and Go checks the client-auth usage.
 		ClientAuth: tls.RequireAndVerifyClientCert,
 		// No resumption: every connection presents and proves the
@@ -372,5 +418,9 @@ func ServerTLS(certPEM, keyPEM, authoritiesPEM []byte) (*tls.Config, error) {
 			}
 			return nil
 		},
-	}, nil
+	}
+	if cert != nil {
+		cfg.GetCertificate = cert.GetCertificate
+	}
+	return cfg, nil
 }

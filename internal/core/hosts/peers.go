@@ -3,18 +3,14 @@ package hosts
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +19,6 @@ import (
 
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
-	"github.com/trypando/pando/internal/hostagent"
 	"github.com/trypando/pando/internal/keyfile"
 )
 
@@ -37,6 +32,13 @@ type Peer struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Address string `json:"address"`
+	// Control is that the host holds the control role, so its Address is
+	// a cluster listener: where an app host asks for this list again when
+	// the one in its join token is gone (PeerSync).
+	Control bool `json:"control,omitempty"`
+	// Lost is that the host is marked lost (R-421): it is left out of the
+	// cluster's size on every host, as it is on the leader.
+	Lost bool `json:"lost,omitempty"`
 }
 
 // InstallHost reports whether h is the install's own first host: the machine
@@ -53,7 +55,8 @@ func InstallHost(h state.Host) bool { return h.JoinedWith == "" }
 func LivenessPeers(list []state.Host) []Peer {
 	out := make([]Peer, 0, len(list))
 	for _, h := range list {
-		out = append(out, Peer{ID: h.ID, Name: h.Name, Address: cmp.Or(h.PingAddress, h.Address)})
+		out = append(out, Peer{ID: h.ID, Name: h.Name, Address: cmp.Or(h.PingAddress, h.Address),
+			Control: slices.Contains(h.Roles, state.HostRoleControl), Lost: h.Lost})
 	}
 	return out
 }
@@ -74,6 +77,7 @@ func PingAddress(address string, port int) string {
 type HostPublisher interface {
 	HostLister
 	SetHostPing(ctx context.Context, hostID, address, certSHA256 string) error
+	RotateHostCert(ctx context.Context, hostID, next string) error
 }
 
 // ControlPeers is a control host's peer list (R-421), read from the
@@ -84,12 +88,30 @@ type HostPublisher interface {
 // through (R-416): a host with both roles runs apps through its agent and
 // answers pings on its listener. Written whenever it differs, so a write that
 // failed is made the next round.
+//
+// A joined control host answers pings with the certificate its join wrote,
+// which its agent also serves when it holds the app role, and renews it
+// while it runs (ControlHostCert). So when that pin is not yet the row's
+// agent pin, it becomes it and the old one is kept as the one before
+// (RotateHostCert): the runtime accepts both (state.Host.Pins) until the
+// agent serves the new one. The install's own host has no agent of its own.
 type ControlPeers struct {
-	Store  HostPublisher
-	Self   string
-	Port   int
-	Pin    string
+	Store HostPublisher
+	Self  string
+	Port  int
+	Pin   string
+	// PinOf, when set, is the fingerprint of the certificate the host
+	// answers with now, in place of Pin: the certificate is renewed while
+	// the host runs (R-421).
+	PinOf  func() string
 	Logger *zap.Logger
+}
+
+func (c *ControlPeers) pin() string {
+	if c.PinOf != nil {
+		return c.PinOf()
+	}
+	return c.Pin
 }
 
 // Peers lists every host, this one with where it answers now.
@@ -102,20 +124,40 @@ func (c *ControlPeers) Peers(ctx context.Context) ([]Peer, error) {
 		if h.ID != c.Self {
 			continue
 		}
-		addr := PingAddress(h.Address, c.Port)
-		if addr == h.PingAddress && h.PingCertSHA256 == c.Pin {
+		addr, pin := PingAddress(h.Address, c.Port), c.pin()
+		if addr == h.PingAddress && h.PingCertSHA256 == pin && !c.agentCertBehind(h, pin) {
 			break
 		}
-		if err := c.Store.SetHostPing(ctx, h.ID, addr, c.Pin); err != nil {
+		if err := c.publish(ctx, h, addr, pin); err != nil {
 			if c.Logger != nil {
 				c.Logger.Warn("could not record where this host answers the cluster's liveness checks; trying again next round",
 					zap.String("host_id", h.ID), zap.String("address", addr), zap.Error(err))
 			}
 			break
 		}
-		list[i].PingAddress, list[i].PingCertSHA256 = addr, c.Pin
+		list[i].PingAddress, list[i].PingCertSHA256 = addr, pin
 	}
 	return LivenessPeers(list), nil
+}
+
+// agentCertBehind reports whether pin, the certificate h answers pings
+// with, is its agent's too and not yet recorded as such.
+func (c *ControlPeers) agentCertBehind(h state.Host, pin string) bool {
+	return !InstallHost(h) && pin != "" && pin != h.CertSHA256
+}
+
+// publish records where h answers pings and with what, and the renewed agent
+// certificate when it is behind.
+func (c *ControlPeers) publish(ctx context.Context, h state.Host, addr, pin string) error {
+	if c.agentCertBehind(h, pin) {
+		if err := c.Store.RotateHostCert(ctx, h.ID, pin); err != nil {
+			return err
+		}
+	}
+	if addr == h.PingAddress && pin == h.PingCertSHA256 {
+		return nil
+	}
+	return c.Store.SetHostPing(ctx, h.ID, addr, pin)
 }
 
 // errNotAHost refuses a certificate no host of the cluster joined with.
@@ -123,24 +165,26 @@ var errNotAHost = errs.New(errs.AuthInvalid, "This certificate is not one a host
 	WithRemedy("Join the host to the cluster with a new join token.")
 
 // Peers is the peer list, for the host whose verified certificate is
-// certDER: one a host of the cluster joined with (cluster_hosts.cert_sha256),
-// or the one a control host answers pings with (ping_cert_sha256), so a
-// removed host no longer hears where the others are.
+// certDER: one a host of the cluster holds (cluster_hosts.cert_sha256, or
+// the one before its latest renewal, or the one a control host answers pings
+// with), never a removed host's, so a removed host no longer hears where the
+// others are (R-415). A host presenting the certificate it renewed to is
+// using it, so the one before is no longer its own (R-421).
 func (s *Service) Peers(ctx context.Context, certDER []byte) ([]Peer, error) {
-	if len(certDER) == 0 {
-		return nil, errNotAHost
+	h, pin, err := s.hostByCert(ctx, certDER)
+	if err != nil {
+		return nil, err
+	}
+	if pin == h.CertSHA256 && h.PrevCertSHA256 != "" {
+		if _, err := s.Store.ConfirmHostCert(ctx, h.ID, pin); err != nil {
+			return nil, err
+		}
 	}
 	list, err := s.Store.Hosts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	pin := hostagent.Fingerprint256(certDER)
-	for _, h := range list {
-		if h.CertSHA256 == pin || h.PingCertSHA256 == pin {
-			return LivenessPeers(list), nil
-		}
-	}
-	return nil, errNotAHost
+	return LivenessPeers(list), nil
 }
 
 // ReadPeers reads a peer list written by PeerSync.
@@ -160,16 +204,11 @@ func ReadPeers(path string) ([]Peer, error) {
 // certificate, and the listener's checked against the cluster authority the
 // host was given (ca.crt), whatever name the join token's address uses.
 func JoinedTLS(authorityPEM []byte, cert tls.Certificate) (*tls.Config, error) {
-	block, _ := pem.Decode(authorityPEM)
-	if block == nil {
-		return nil, errors.New("the cluster authority's certificate is not PEM")
-	}
-	ca, err := x509.ParseCertificate(block.Bytes)
+	hash, err := authorityHash(authorityPEM)
 	if err != nil {
-		return nil, fmt.Errorf("the cluster authority's certificate cannot be read: %w", err)
+		return nil, err
 	}
-	sum := sha256.Sum256(ca.RawSubjectPublicKeyInfo)
-	cfg := PinnedTLS(hex.EncodeToString(sum[:]))
+	cfg := PinnedTLS(hash)
 	cfg.Certificates = []tls.Certificate{cert}
 	return cfg, nil
 }
@@ -177,7 +216,10 @@ func JoinedTLS(authorityPEM []byte, cert tls.Certificate) (*tls.Config, error) {
 // PeerSync keeps a joined host's peer list current: every call fetches it
 // from the cluster listener at Address and writes it to File, and when the
 // listener cannot be reached returns what File last held (R-421: the control
-// plane being away never stops an app).
+// plane being away never stops an app). When Address does not answer, every
+// control host in the list File holds is asked in turn, so a host whose join
+// token named a control host that has since gone still hears of the cluster's
+// changes.
 type PeerSync struct {
 	// Address is the cluster listener, https://host:port: the join token's.
 	Address string
@@ -195,28 +237,55 @@ func (p *PeerSync) client() *http.Client {
 	return &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{TLSClientConfig: p.TLS}}
 }
 
-// Peers is the peer list, fresh when the cluster answers.
+// Peers is the peer list, fresh when a control host answers.
 func (p *PeerSync) Peers(ctx context.Context) ([]Peer, error) {
-	list, err := p.fetch(ctx)
+	last, lerr := ReadPeers(p.File)
+	list, err := p.fetchAny(ctx, last)
 	if err != nil {
-		last, rerr := ReadPeers(p.File)
-		if rerr != nil {
+		if lerr != nil {
 			return nil, fmt.Errorf("the cluster's hosts could not be fetched (%w) and none are kept from before", err)
 		}
 		return last, nil
 	}
-	data, err := json.Marshal(list)
-	if err == nil {
-		err = keyfile.Replace(p.File, data)
-	}
-	if err != nil {
-		return list, fmt.Errorf("the cluster's hosts could not be kept at %s: %w", p.File, err)
-	}
-	return list, nil
+	return list, WritePeers(p.File, list)
 }
 
-func (p *PeerSync) fetch(ctx context.Context) ([]Peer, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(p.Address, "/")+PeersPath, nil)
+// WritePeers keeps list at path, for ReadPeers, replacing what it held: the
+// peer list a host probes when it cannot ask for a fresh one (R-421).
+func WritePeers(path string, list []Peer) error {
+	data, err := json.Marshal(list)
+	if err == nil {
+		err = keyfile.Replace(path, data)
+	}
+	if err != nil {
+		return fmt.Errorf("the cluster's hosts could not be kept at %s: %w", path, err)
+	}
+	return nil
+}
+
+// fetchAny asks Address, then each control host in last, and returns the
+// first list one answers with, or the first error.
+func (p *PeerSync) fetchAny(ctx context.Context, last []Peer) ([]Peer, error) {
+	list, first := p.fetch(ctx, p.Address)
+	if first == nil {
+		return list, nil
+	}
+	tried := map[string]bool{strings.TrimSuffix(p.Address, "/"): true}
+	for _, peer := range last {
+		addr := "https://" + peer.Address
+		if !peer.Control || tried[addr] || ctx.Err() != nil {
+			continue
+		}
+		tried[addr] = true
+		if list, err := p.fetch(ctx, addr); err == nil {
+			return list, nil
+		}
+	}
+	return nil, first
+}
+
+func (p *PeerSync) fetch(ctx context.Context, address string) ([]Peer, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(address, "/")+PeersPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -230,13 +299,13 @@ func (p *PeerSync) fetch(ctx context.Context) ([]Peer, error) {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, refusal(p.Address, resp.StatusCode, data)
+		return nil, refusal(address, resp.StatusCode, data)
 	}
 	var out struct {
 		Hosts []Peer `json:"hosts"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("the cluster at %s answered with something Pando cannot read: %w", p.Address, err)
+		return nil, fmt.Errorf("the cluster at %s answered with something Pando cannot read: %w", address, err)
 	}
 	return out.Hosts, nil
 }
