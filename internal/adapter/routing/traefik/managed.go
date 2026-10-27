@@ -1,7 +1,6 @@
 package traefik
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -289,6 +288,9 @@ func (a *Adapter) Edge(ctx context.Context, r api.EdgeRequest) (api.EdgePlan, bo
 	if a.viaAPI() {
 		return a.edgeKubernetes(ctx, r)
 	}
+	// Before the console route is written: in a cluster it is rendered for
+	// certificates Pando issues (shared.go).
+	a.clustered.Store(r.Clustered)
 	if !a.managed() {
 		if err := os.Remove(filepath.Join(a.config.Dir, consoleFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return api.EdgePlan{}, false, errs.Wrap(errs.AdapterFailed, "Pando could not remove its console route from Traefik's configuration.", err)
@@ -317,27 +319,26 @@ func (a *Adapter) Edge(ctx context.Context, r api.EdgeRequest) (api.EdgePlan, bo
 		{Path: containerRoutes, SharedWithPando: a.config.Dir, ReadOnly: true},
 	}
 
+	var issue *api.CertificateIssue
 	if a.tls() {
-		args = append(args,
-			"--entrypoints."+entryWebTLS+".address=:443",
-			"--entrypoints."+entryWeb+".http.redirections.entrypoint.to="+entryWebTLS,
-			"--entrypoints."+entryWeb+".http.redirections.entrypoint.scheme=https",
-			"--certificatesresolvers."+resolverPando+".acme.email="+a.config.ACMEEmail,
-			"--certificatesresolvers."+resolverPando+".acme.storage="+containerACME+"/acme.json",
-		)
-		if a.config.Certificates == CertsDNS {
-			args = append(args, "--certificatesresolvers."+resolverPando+".acme.dnschallenge.provider="+a.config.DNSProvider)
-		} else {
-			// The challenge is answered on :80 ahead of the redirect to HTTPS.
-			args = append(args, "--certificatesresolvers."+resolverPando+".acme.httpchallenge.entrypoint="+entryWeb)
-		}
 		ports = append(ports, api.EdgePort{Host: a.config.HTTPSPort, Container: 443})
-		mounts = append(mounts, api.EdgeMount{Path: containerACME, Volume: "acme"})
+		var err error
+		if args, mounts, issue, err = a.fileTLS(args, mounts); err != nil {
+			return api.EdgePlan{}, false, err
+		}
+	}
+	if err := a.writeCertificatesFile(issue); err != nil {
+		return api.EdgePlan{}, false, err
 	}
 
+	// The DNS provider's key goes only where certificates are ordered: to
+	// Pando's issuer through Issue when Pando orders them, never to every
+	// edge in a cluster (R-194).
 	env := make(map[string]secret.Value, len(a.dnsEnv))
-	for k, v := range a.dnsEnv {
-		env[k] = v
+	if issue == nil {
+		for k, v := range a.dnsEnv {
+			env[k] = v
+		}
 	}
 
 	return api.EdgePlan{
@@ -348,7 +349,43 @@ func (a *Adapter) Edge(ctx context.Context, r api.EdgeRequest) (api.EdgePlan, bo
 		Ports:      ports,
 		Mounts:     mounts,
 		ProxyAlias: hostOf(r.ProxyUpstream),
+		Issue:      issue,
+		// Where every control host's runtime writes what Pando issued, which
+		// Traefik reads through the routes mount (R-417).
+		CertificateDir: certificateDir(issue, a.config.Dir),
 	}, true, nil
+}
+
+// fileTLS adds HTTPS to a Traefik reading files. On one host it orders its own
+// certificates into its acme volume; in a cluster Pando orders them and every
+// edge serves them (shared.go), so it gets no resolver and no volume.
+func (a *Adapter) fileTLS(args []string, mounts []api.EdgeMount) ([]string, []api.EdgeMount, *api.CertificateIssue, error) {
+	args = append(args, "--entrypoints."+entryWebTLS+".address=:443")
+	if a.pandoIssues() {
+		issue, err := a.issueFromFiles()
+		return args, mounts, issue, err
+	}
+	args = append(args,
+		"--entrypoints."+entryWeb+".http.redirections.entrypoint.to="+entryWebTLS,
+		"--entrypoints."+entryWeb+".http.redirections.entrypoint.scheme=https",
+		"--certificatesresolvers."+resolverPando+".acme.email="+a.config.ACMEEmail,
+		"--certificatesresolvers."+resolverPando+".acme.storage="+containerACME+"/acme.json",
+	)
+	if a.config.Certificates == CertsDNS {
+		args = append(args, "--certificatesresolvers."+resolverPando+".acme.dnschallenge.provider="+a.config.DNSProvider)
+	} else {
+		// The challenge is answered on :80 ahead of the redirect to HTTPS.
+		args = append(args, "--certificatesresolvers."+resolverPando+".acme.httpchallenge.entrypoint="+entryWeb)
+	}
+	mounts = append(mounts, api.EdgeMount{Path: containerACME, Volume: "acme"})
+	return args, mounts, nil, nil
+}
+
+func certificateDir(issue *api.CertificateIssue, dir string) string {
+	if issue == nil {
+		return ""
+	}
+	return dir
 }
 
 // writeConsoleRoute sends every hostname that is not an app's to Pando.
@@ -358,25 +395,7 @@ func (a *Adapter) Edge(ctx context.Context, r api.EdgeRequest) (api.EdgePlan, bo
 // reach Pando at all. At the lowest priority, so an app's Host rule always
 // wins. Rewritten only when it changes: Traefik reloads on every write.
 func (a *Adapter) writeConsoleRoute(upstream string) error {
-	body := a.renderConsole(upstream)
-	path := filepath.Join(a.config.Dir, consoleFile)
-	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, []byte(body)) {
-		return nil
-	}
-	if err := os.MkdirAll(a.config.Dir, 0o755); err != nil {
-		return errs.Wrap(errs.AdapterFailed, "Pando could not write Traefik's configuration.", err)
-	}
-	tmp := path + ".tmp"
-	// G306: 0644 because Traefik reads it as its own user. A route, not a
-	// credential.
-	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil { //nolint:gosec
-		return errs.Wrap(errs.AdapterFailed, "Pando could not write Traefik's configuration.", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return errs.Wrap(errs.AdapterFailed, "Pando could not write Traefik's configuration.", err)
-	}
-	return nil
+	return writeIfChanged(a.config.Dir, consoleFile, a.renderConsole(upstream))
 }
 
 func (a *Adapter) renderConsole(upstream string) string {
@@ -394,15 +413,22 @@ func (a *Adapter) renderConsole(upstream string) string {
 		fmt.Fprintf(&b, "      entryPoints:\n        - %s\n", a.entryPoint())
 		b.WriteString("      service: pando-console\n")
 		if a.tls() {
-			fmt.Fprintf(&b, "      tls:\n        certResolver: %s\n", resolverPando)
+			b.WriteString(a.consoleTLS())
 		}
 	}
 
+	issued := a.pandoIssues()
+	if issued {
+		a.renderChallenge(&b)
+	}
 	b.WriteString("    pando-fallback:\n")
 	fmt.Fprintf(&b, "      rule: %q\n", "PathPrefix(`/`)")
 	b.WriteString("      priority: 1\n")
 	fmt.Fprintf(&b, "      entryPoints:\n        - %s\n", entryWeb)
 	b.WriteString("      service: pando-console\n")
+	if issued {
+		fmt.Fprintf(&b, "      middlewares:\n        - %s\n", redirectMiddleware)
+	}
 	if a.tls() {
 		// Any other hostname over HTTPS, with whatever certificate Traefik
 		// has. Asking for one here would ask Let's Encrypt for every name
@@ -421,6 +447,9 @@ func (a *Adapter) renderConsole(upstream string) string {
 	b.WriteString("        servers:\n")
 	fmt.Fprintf(&b, "          - url: %q\n", upstream)
 	b.WriteString("        passHostHeader: true\n")
+	if issued {
+		a.renderRedirect(&b)
+	}
 	return b.String()
 }
 

@@ -29,6 +29,7 @@ import (
 	sinkhttps "github.com/trypando/pando/internal/adapter/auditsink/https"
 	sinksyslog "github.com/trypando/pando/internal/adapter/auditsink/syslog"
 	backuplocal "github.com/trypando/pando/internal/adapter/backup/local"
+	backups3 "github.com/trypando/pando/internal/adapter/backup/s3"
 	buildkitadapter "github.com/trypando/pando/internal/adapter/builder/buildkit"
 	"github.com/trypando/pando/internal/adapter/identity/local"
 	oidcidentity "github.com/trypando/pando/internal/adapter/identity/oidc"
@@ -946,6 +947,10 @@ func serve(ctx context.Context, configPath string) error {
 		ProxyUpstream: proxyUpstream,
 		Logger:        logger,
 		Clock:         clock.System{},
+		// With a second host each control host runs its own edge, and an
+		// edge that would order its own certificates leaves that to the
+		// leader here (R-417, O-68).
+		Hosts: clusterHosts.Count,
 	}
 	if secretsAdapter != nil {
 		// The CA is a setting (O-49): Let's Encrypt by default, or an
@@ -1588,7 +1593,9 @@ func serve(ctx context.Context, configPath string) error {
 
 	// Whichever replica holds the leader lock runs the jobs above; with one
 	// replica, that is this one, a moment after it starts.
-	go (&cluster.Leader{Store: replicas, Jobs: jobs, Logger: logger}).Run(loopCtx)
+	leader := &cluster.Leader{Store: replicas, Jobs: jobs, Logger: logger}
+	go edgeFollower(edges, edgeCerts, leader.Leading).RunFollower(loopCtx, time.Minute)
+	go leader.Run(loopCtx)
 
 	// Heartbeat. It ends early when this replica should restart: a restart
 	// was asked for on any replica, or the install took this one for dead.
@@ -1637,6 +1644,23 @@ func serve(ctx context.Context, configPath string) error {
 
 // startMetrics exports metrics as cfg says, and returns what stops it,
 // flushing the last of them. Nothing is exported with no endpoint configured.
+// edgeFollower is the edge pass of a control host that does not lead (R-417,
+// O-68): it runs this host's own edge with the certificates the leader's pass
+// issued, read from the database, and orders none. Without a secrets adapter
+// there are none to read, and an edge that needs them is refused as on the
+// leader.
+func edgeFollower(leaderPass *edge.Service, held *state.EdgeCertificates, leading func() bool) *edge.Service {
+	follower := &edge.Service{
+		Registry: leaderPass.Registry, ProxyUpstream: leaderPass.ProxyUpstream,
+		Logger: leaderPass.Logger, Clock: leaderPass.Clock, Hosts: leaderPass.Hosts,
+		Follower: true, Leading: leading,
+	}
+	if leaderPass.Certificates != nil {
+		follower.Certificates = edgecert.Held{Store: held, Clock: leaderPass.Clock}
+	}
+	return follower
+}
+
 func startMetrics(ctx context.Context, cfg config.Metrics, process telemetry.Process,
 	sources telemetry.Sources, logger *zap.Logger) (func(), error) {
 	stop, err := telemetry.Start(ctx, cfg, process, sources)
@@ -1936,6 +1960,10 @@ func newAdapter(category, kind string, notifications *state.Notifications) adapt
 		return buildkitadapter.New()
 	case category == string(adapterapi.CategoryBackup) && kind == backuplocal.Kind:
 		return backuplocal.New()
+	case category == string(adapterapi.CategoryBackup) && kind == backups3.Kind:
+		// Not seeded: it needs a bucket and an access key. The destination a
+		// second host's join asks for (R-417).
+		return backups3.New()
 	case category == string(adapterapi.CategoryServices) && kind == servicesdocker.Kind:
 		return servicesdocker.New()
 	case category == string(adapterapi.CategoryRouting) && kind == traefik.Kind:
@@ -2605,6 +2633,7 @@ func adapterKinds() []adapterapi.KindInfo {
 		trivyscanner.Info(),
 		secretslocal.Info(),
 		backuplocal.Info(),
+		backups3.Info(),
 		servicesdocker.Info(),
 		notifyconsole.Info(),
 		notifysmtp.Info(),

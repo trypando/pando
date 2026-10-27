@@ -235,6 +235,15 @@ type RoutingCapabilities struct {
 	// outbound-tunnel adapter such as Cloudflare, where nothing on the host
 	// needs to be reachable from outside.
 	RequiresPublicReachability bool
+
+	// CertificatesPerEdge says the edge in front of each control host orders
+	// its own certificates and Pando cannot order them instead — a Traefik
+	// somebody else runs, with its own ACME resolver. Several such edges would
+	// each order every hostname's certificate, and an HTTP-01 challenge one
+	// asked for may reach another, so a second control host's join refuses it
+	// (R-417, O-68). An edge Pando issues for, or one that serves no
+	// certificate of its own, is false.
+	CertificatesPerEdge bool
 }
 
 // BuilderCapabilities describes what a builder adapter can do.

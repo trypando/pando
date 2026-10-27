@@ -74,6 +74,29 @@ func TestR190_TheDatabaseRefusesCredentialsInPlainConfiguration(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestR190_TheDatabaseRefusesAnS3KeyInPlainConfiguration asserts 000087: an
+// S3 backup destination's access key is a credential, refused as a setting by
+// a check constraint (R-190, O-69), and its other settings are accepted.
+func TestR190_TheDatabaseRefusesAnS3KeyInPlainConfiguration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	adapters := state.NewAdapters(connected(t))
+	for _, cfg := range []string{
+		`{"bucket":"b","secret_access_key":"plain"}`,
+		`{"bucket":"b","access_key_id":"AKIAEXAMPLE"}`,
+	} {
+		err := adapters.Upsert(ctx, state.AdapterConfig{
+			ID: "bkp_sneaky", Category: "backup", Kind: "s3", Name: "x", Enabled: true,
+			Config: json.RawMessage(cfg),
+		})
+		require.Error(t, err, cfg)
+	}
+	require.NoError(t, adapters.Upsert(ctx, state.AdapterConfig{
+		ID: "bkp_s3", Category: "backup", Kind: "s3", Name: "x", Enabled: true,
+		Config: json.RawMessage(`{"region":"us-east-1","bucket":"pando-backups","path_style":true}`),
+	}))
+}
+
 // TestR190_TheDatabaseRefusesARegistryAddressCarryingAPassword asserts the
 // mechanism 000051 had for the install registry, kept when it became an
 // adapter (issue #153): an image registry whose address carries a username

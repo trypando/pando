@@ -46,6 +46,22 @@ type Service struct {
 	Certificates CertificateIssuer
 	Clock        clock.Clock
 
+	// Hosts counts the cluster's hosts. With more than one, each control
+	// host runs an edge of its own and every edge is told so
+	// (EdgeRequest.Clustered), so one that would order its own certificates
+	// leaves that to Pando (R-417, O-68). Nil is one host.
+	Hosts func(ctx context.Context) (int, error)
+
+	// Follower makes this the pass a control host that does not lead runs
+	// for its own edge (RunFollower): Certificates then hands out what the
+	// leader issued (edgecert.Held) rather than ordering, and the pass is
+	// skipped for a runtime whose one edge serves every host.
+	Follower bool
+
+	// Leading reports whether this replica leads, for RunFollower: the
+	// leader's own pass applies its host's edge. Nil is never.
+	Leading func() bool
+
 	mu     sync.RWMutex
 	status map[string]Status
 }
@@ -79,6 +95,17 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		return err
 	}
 
+	// A follower's pass is for an edge per host. A runtime whose edge reads
+	// its routes from its own API runs one for every host, which the
+	// leader's pass applies.
+	if s.Follower && !api.Offers(caps.EdgeConfig, api.EdgeConfigSharedMount) {
+		return nil
+	}
+	clustered, err := s.clustered(ctx)
+	if err != nil {
+		return err
+	}
+
 	now := s.now()
 	results := map[string]Status{}
 	wanted := map[string]bool{}
@@ -98,7 +125,9 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		plan, needs, err := routing.Edge(ctx, api.EdgeRequest{Ref: ref, ProxyUpstream: s.ProxyUpstream, EdgeConfig: caps.EdgeConfig})
+		plan, needs, err := routing.Edge(ctx, api.EdgeRequest{
+			Ref: ref, ProxyUpstream: s.ProxyUpstream, EdgeConfig: caps.EdgeConfig, Clustered: clustered,
+		})
 		if err != nil {
 			fail(ref, err)
 			continue
@@ -194,6 +223,39 @@ func (s *Service) Run(ctx context.Context, interval time.Duration) {
 		case <-s.clock().After(interval):
 		}
 	}
+}
+
+// RunFollower reconciles this host's edge every interval until ctx ends,
+// while the cluster has more than one host and this replica does not lead
+// (R-417). The leader's "edges" job does the same for its own host and is
+// the one that orders certificates; this pass serves what it ordered.
+func (s *Service) RunFollower(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	for {
+		if s.Leading == nil || !s.Leading() {
+			if clustered, err := s.clustered(ctx); err == nil && clustered {
+				if err := s.Reconcile(ctx); err != nil && ctx.Err() == nil {
+					s.logger().Debug("this host's edge reconcile incomplete", zap.Error(err))
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.clock().After(interval):
+		}
+	}
+}
+
+// clustered reports whether the cluster has more than one host.
+func (s *Service) clustered(ctx context.Context) (bool, error) {
+	if s.Hosts == nil {
+		return false, nil
+	}
+	n, err := s.Hosts(ctx)
+	return n > 1, err
 }
 
 func (s *Service) runtime() (api.RuntimeAdapter, error) {

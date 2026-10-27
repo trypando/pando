@@ -442,11 +442,11 @@ func (a *Adapter) edgeKubernetes(ctx context.Context, r api.EdgeRequest) (api.Ed
 			return api.EdgePlan{}, false, err
 		}
 
-		issue, err := a.certificateIssue(ctx)
+		hosts, err := a.tlsHostsKubernetes(ctx)
 		if err != nil {
 			return api.EdgePlan{}, false, err
 		}
-		plan.Issue = issue
+		plan.Issue = a.certificateIssue(hosts)
 	} else if err := a.routes().Delete(ctx, consoleRouteTLS, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		return api.EdgePlan{}, false, errs.Wrap(errs.AdapterFailed, "Pando could not remove its HTTPS console route from Traefik.", err)
 	}
@@ -455,10 +455,26 @@ func (a *Adapter) edgeKubernetes(ctx context.Context, r api.EdgeRequest) (api.Ed
 	return plan, true, nil
 }
 
+// tlsHostsKubernetes is every hostname an app's IngressRoute serves over
+// HTTPS.
+func (a *Adapter) tlsHostsKubernetes(ctx context.Context) (map[string]bool, error) {
+	hosts := map[string]bool{}
+	list, err := a.routes().List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=pando"})
+	if err != nil {
+		return nil, errs.Wrap(errs.AdapterFailed, "Pando could not read Traefik's IngressRoutes.", err)
+	}
+	for _, obj := range list.Items {
+		if h := obj.GetAnnotations()[annoTLSHost]; h != "" {
+			hosts[h] = true
+		}
+	}
+	return hosts, nil
+}
+
 // certificateIssue is what Pando is asked to issue: a certificate for every
-// hostname an app route serves over HTTPS and for the console's, or, with
-// DNS-01, the base domain's wildcard and one for each hostname outside it.
-func (a *Adapter) certificateIssue(ctx context.Context) (*api.CertificateIssue, error) {
+// hostname in hosts and for the console's, or, with DNS-01, the base domain's
+// wildcard and one for each hostname outside it.
+func (a *Adapter) certificateIssue(hosts map[string]bool) *api.CertificateIssue {
 	issue := &api.CertificateIssue{Email: a.config.ACMEEmail, Challenge: api.ChallengeHTTP01}
 	if a.config.Certificates == CertsDNS {
 		issue.Challenge = api.ChallengeDNS01
@@ -469,18 +485,8 @@ func (a *Adapter) certificateIssue(ctx context.Context) (*api.CertificateIssue, 
 		}
 	}
 
-	hosts := map[string]bool{}
 	if h := a.config.ConsoleHostname; h != "" {
 		hosts[strings.ToLower(h)] = true
-	}
-	list, err := a.routes().List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=pando"})
-	if err != nil {
-		return nil, errs.Wrap(errs.AdapterFailed, "Pando could not read Traefik's IngressRoutes.", err)
-	}
-	for _, obj := range list.Items {
-		if h := obj.GetAnnotations()[annoTLSHost]; h != "" {
-			hosts[h] = true
-		}
 	}
 
 	orders := map[string]api.CertificateOrder{}
@@ -505,5 +511,5 @@ func (a *Adapter) certificateIssue(ctx context.Context) (*api.CertificateIssue, 
 	for _, n := range names {
 		issue.Orders = append(issue.Orders, orders[n])
 	}
-	return issue, nil
+	return issue
 }

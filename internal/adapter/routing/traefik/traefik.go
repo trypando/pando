@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"k8s.io/client-go/dynamic"
 
@@ -48,6 +49,10 @@ type Adapter struct {
 
 	// dyn writes IngressRoutes, with delivery kubernetes_api (kubernetes.go).
 	dyn dynamic.Interface
+
+	// clustered is the last edge request's: this Traefik is one of several,
+	// one per control host, so Pando issues its certificates (shared.go).
+	clustered atomic.Bool
 }
 
 // Config is the adapter's configuration.
@@ -247,6 +252,12 @@ func (a *Adapter) Capabilities(context.Context) (api.RoutingCapabilities, error)
 
 		// Traefik is an inbound edge: something has to reach it.
 		RequiresPublicReachability: true,
+
+		// A Traefik somebody else runs beside each control host, with its
+		// own resolver, orders its own certificates; Pando cannot order them
+		// for it (O-68). One Pando runs has Pando order them in a cluster,
+		// and on Kubernetes there is one edge, however many hosts.
+		CertificatesPerEdge: !a.managed() && !a.viaAPI() && a.config.CertResolver != "",
 	}, nil
 }
 
@@ -279,34 +290,15 @@ func (a *Adapter) Ensure(ctx context.Context, r api.RouteRequest) (api.RouteHand
 		return a.ensureKubernetes(ctx, r, rule)
 	}
 
-	if err := os.MkdirAll(a.config.Dir, 0o755); err != nil {
-		return api.RouteHandle{}, errs.Wrap(errs.AdapterFailed,
-			"Pando could not write Traefik's configuration.", err)
-	}
-
-	body := a.render(r, rule)
-	path := a.pathFor(r.AppID)
-
 	// Unchanged is left alone: Traefik reloads on every write, and every
-	// control host ensures every route once a minute (R-417).
-	if existing, err := os.ReadFile(path); err == nil && string(existing) == body {
-		return api.RouteHandle{AppID: r.AppID, Handle: path}, nil
-	}
-
-	// Written to a temporary file and renamed, because Traefik watches the
-	// directory and will read a half-written file the moment it appears.
-	tmp := path + ".tmp"
-	// G306: 0644 because Traefik runs as a different user and has to read it.
-	// Router rules, not credentials: Traefik never sees a secret, which is why
-	// the proxy and not the router makes the authorization decision (R-023).
-	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil { //nolint:gosec
-		return api.RouteHandle{}, errs.Wrap(errs.AdapterFailed,
-			"Pando could not write Traefik's configuration.", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return api.RouteHandle{}, errs.Wrap(errs.AdapterFailed,
-			"Pando could not write Traefik's configuration.", err)
+	// control host ensures every route once a minute (R-417). Written to a
+	// temporary file and renamed, because Traefik watches the directory and
+	// will read a half-written file the moment it appears. Router rules, not
+	// credentials: Traefik never sees a secret, which is why the proxy and
+	// not the router makes the authorization decision (R-023).
+	path := a.pathFor(r.AppID)
+	if err := writeIfChanged(a.config.Dir, filepath.Base(path), a.render(r, rule)); err != nil {
+		return api.RouteHandle{}, err
 	}
 	return api.RouteHandle{AppID: r.AppID, Handle: path}, nil
 }
@@ -402,6 +394,9 @@ func (a *Adapter) render(r api.RouteRequest, rule string) string {
 	b.WriteString("# The service below points at Pando's proxy, never at the app's container.\n")
 	b.WriteString("# Every request to every app goes through Pando so that authorization is\n")
 	b.WriteString("# applied exactly once, in one place (R-023).\n")
+	if r.TLS.Enabled && r.Hostname != "" && a.managed() && a.tls() {
+		b.WriteString(tlsHostMarker + strings.ToLower(r.Hostname) + "\n")
+	}
 	b.WriteString("http:\n")
 	b.WriteString("  routers:\n")
 	fmt.Fprintf(&b, "    %s:\n", name)
@@ -410,17 +405,7 @@ func (a *Adapter) render(r api.RouteRequest, rule string) string {
 	if ep := a.entryPoint(); ep != "" {
 		fmt.Fprintf(&b, "      entryPoints:\n        - %s\n", ep)
 	}
-	if resolver := a.resolver(); r.TLS.Enabled && resolver != "" {
-		b.WriteString("      tls:\n")
-		fmt.Fprintf(&b, "        certResolver: %s\n", resolver)
-		// One wildcard for every app under the base domain, issued before the
-		// first app exists, rather than one certificate per app (R-166).
-		if main, ok := a.wildcardFor(r.Hostname); ok {
-			b.WriteString("        domains:\n")
-			fmt.Fprintf(&b, "          - main: %q\n", main)
-			fmt.Fprintf(&b, "            sans:\n              - %q\n", "*."+main)
-		}
-	}
+	a.renderTLS(&b, r)
 	b.WriteString("  services:\n")
 	fmt.Fprintf(&b, "    %s:\n", name)
 	b.WriteString("      loadBalancer:\n")

@@ -67,6 +67,12 @@ func (a *Adapter) ApplyEdge(ctx context.Context, p api.EdgePlan) error {
 		return err
 	}
 
+	// Before the edge is looked at: a renewed certificate reaches a running
+	// edge through the directory it watches, with no restart.
+	if err := writeEdgeCertificates(p.CertificateDir, p.Certificates); err != nil {
+		return err
+	}
+
 	digest := edgeDigest(p, binds)
 	existing, err := a.findEdge(ctx, p.Name)
 	if err != nil {
