@@ -19,6 +19,9 @@ func TestR414_ClusterCommandsCallTheirEndpoints(t *testing.T) {
 		reply("GET /cluster/join-tokens", map[string]any{"tokens": []map[string]any{
 			{"id": "jt_1", "roles": []string{"app"}, "max_uses": 2, "uses": 1, "expires_at": "2026-10-27T12:00:00Z", "revoked_at": "2026-10-26T13:00:00Z"},
 		}}).
+		reply("POST /cluster/hosts/host_1/lost", map[string]any{"host_id": "host_1", "name": "app-1", "started": []string{}, "skipped": []any{}}).
+		reply("POST /cluster/hosts/host_2/lost", map[string]any{"host_id": "host_2", "name": "app-2", "started": []string{"app_1"},
+			"skipped": []map[string]any{{"app_id": "app_2", "reason": "failed", "detail": "A failed app is not failed over."}}}).
 		reply("POST /cluster/join-tokens", map[string]any{
 			"token": map[string]any{"id": "jt_2", "roles": []string{"app"}, "max_uses": 3, "expires_at": "2026-10-27T12:00:00Z"},
 			"join":  "pj1.aHR0cHM6Ly9wYW5kbw.hash.jt_2.secret",
@@ -47,6 +50,18 @@ func TestR414_ClusterCommandsCallTheirEndpoints(t *testing.T) {
 	require.Contains(t, got.out, "Removed the host.")
 	api.bodyFor("DELETE /cluster/hosts/host_1")
 
+	got = run(t, api, "", "cluster", "hosts", "lost", "host_1")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, got.out, "Marked app-1 lost. Started 0 standby(s).")
+	api.bodyFor("POST /cluster/hosts/host_1/lost")
+
+	got = run(t, api, "", "cluster", "hosts", "lost", "host_2")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, got.out, "Started 1 standby(s).")
+	require.Contains(t, got.out, "app_1")
+	require.Contains(t, got.out, "app_2")
+	require.Contains(t, got.out, "failed")
+
 	got = run(t, api, "", "cluster", "tokens", "revoke", "jt_1")
 	require.NoError(t, got.err, got.errOut)
 	require.Contains(t, got.out, "Revoked the join token.")
@@ -56,13 +71,13 @@ func TestR414_ClusterCommandsCallTheirEndpoints(t *testing.T) {
 func TestClusterCommandsReportTheServersRefusal(t *testing.T) {
 	api := newAPI(t)
 	for _, key := range []string{
-		"GET /cluster/hosts", "DELETE /cluster/hosts/host_1", "GET /cluster/join-tokens",
+		"GET /cluster/hosts", "DELETE /cluster/hosts/host_1", "POST /cluster/hosts/host_1/lost", "GET /cluster/join-tokens",
 		"POST /cluster/join-tokens", "DELETE /cluster/join-tokens/jt_1",
 	} {
 		api.fail(key, http.StatusForbidden, map[string]string{"code": "PERM_VERB_REQUIRED", "message": "You need install.cluster.manage."})
 	}
 	for _, args := range [][]string{
-		{"hosts", "list"}, {"hosts", "remove", "host_1"}, {"tokens", "list"}, {"tokens", "create"}, {"tokens", "revoke", "jt_1"},
+		{"hosts", "list"}, {"hosts", "remove", "host_1"}, {"hosts", "lost", "host_1"}, {"tokens", "list"}, {"tokens", "create"}, {"tokens", "revoke", "jt_1"},
 	} {
 		got := run(t, api, "", "cluster", args...)
 		require.Error(t, got.err, args)

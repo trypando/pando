@@ -3089,6 +3089,7 @@
       ],
       "subcommands": [
         "pando cluster hosts list",
+        "pando cluster hosts lost",
         "pando cluster hosts remove"
       ]
     },
@@ -3097,6 +3098,36 @@
       "use": "list",
       "short": "List the cluster's hosts",
       "long": "",
+      "example": "",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [],
+      "inherited_flags": [
+        {
+          "name": "config",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "path to a config file",
+          "required": false
+        },
+        {
+          "name": "server",
+          "shorthand": "",
+          "type": "string",
+          "default": "",
+          "usage": "Pando server URL (defaults to the one you logged in to)",
+          "required": false
+        }
+      ],
+      "subcommands": []
+    },
+    {
+      "path": "pando cluster hosts lost",
+      "use": "lost <host-id>",
+      "short": "Say a host is gone, and start its apps' standbys",
+      "long": "Marks the host lost and starts the standby of each app homed on it. With three or more hosts Pando does this itself when most of them cannot reach the host; with fewer it never does. Refused while the host answers. A failed app is not failed over.",
       "example": "",
       "aliases": [],
       "hidden": false,

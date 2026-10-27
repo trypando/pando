@@ -366,8 +366,9 @@ func serve(ctx context.Context, configPath string) error {
 		joinHostname, _ := os.Hostname()
 		joinAddress = cfg.Server.Advertise(joinHostname)
 	}
+	clusterStore := state.NewCluster(db, tokenKey)
 	clusterHosts := &hosts.Service{
-		Store: state.NewCluster(db, tokenKey), Authority: clusterAuthority,
+		Store: clusterStore, Authority: clusterAuthority,
 		Address: strings.TrimSuffix(joinAddress, "/"),
 	}
 	sessions := state.NewSessions(db, tokenKey)
@@ -376,6 +377,8 @@ func serve(ctx context.Context, configPath string) error {
 	}
 	apps := state.NewApps(db)
 	volumes := state.NewVolumes(db)
+	// R-421: taking a host for lost, and the leader job that decides it.
+	hostLoss, livenessWatch := clusterLiveness(clusterStore, clusterAuthority, apps, auditor, logger)
 	adapters := state.NewAdapters(db)
 	allocations := state.NewAllocations(db)
 	authzStore := state.NewAuthzStore(db)
@@ -1002,6 +1005,7 @@ func serve(ctx context.Context, configPath string) error {
 		Sessions:        sessions,
 		Tokens:          tokens,
 		Hosts:           clusterHosts,
+		HostLoss:        hostLoss,
 		Apps:            apps,
 		Volumes:         volumes,
 		Auditor:         auditor,
@@ -1548,6 +1552,13 @@ func serve(ctx context.Context, configPath string) error {
 	// Apps none of whose owners is active: stopped at once unless host policy
 	// says otherwise, and administrators told either way (R-407 – R-409).
 	job("orphans", orphanPass(db, policyStore, notifyRouter, auditor, logger).Run)
+
+	// R-421: probe every host, and take one for lost when more than half
+	// have not reached it for 3T. The leader's alone: one replica starts a
+	// standby. Nothing happens until the cluster has three hosts.
+	if livenessWatch != nil {
+		job("liveness", livenessWatch.Run)
+	}
 
 	// Metrics about this process, pushed to the operator's collector (R-399).
 	// Stopped by a defer, so after the server has drained, and its last push

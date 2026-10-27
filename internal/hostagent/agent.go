@@ -67,6 +67,9 @@ type Agent struct {
 	Dial func(ctx context.Context, addr string) (net.Conn, error)
 
 	Logger *zap.Logger
+
+	// Liveness answers other hosts' pings (ping.go, R-421). Nil refuses them.
+	Liveness Liveness
 }
 
 // Serve accepts on ln, which must be a plain TCP listener: the agent does the
@@ -126,6 +129,9 @@ func (a *Agent) handle(ctx context.Context, raw net.Conn) {
 	reader := bufio.NewReaderSize(conn, maxHeaderLine)
 	line, err := readLine(reader)
 	if err != nil {
+		return
+	}
+	if a.answerPing(conn, line) {
 		return
 	}
 	name, port, err := parseHeader(line)

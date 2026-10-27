@@ -196,3 +196,50 @@ Amended: R-010, R-013, R-080, R-080a, R-153, R-256. Added: R-414 – R-422.
 
 Open: O-64 (confirming a host is off through its management interface), O-65 (a storage adapter
 category for operator-supplied replicated storage), O-66 (whether clustering is in every edition).
+
+### As built: liveness and fencing
+
+`internal/core/liveness` (R-421). The rule is decided in two pure types and run by three:
+
+- **`Tracker`**, one host's own view. *Reached* is any contact with a peer in the last `T`, in either
+  direction: the host's probe was answered, or the peer's probe arrived. Counting both keeps the two
+  ends of a link in agreement, so a host the majority has not reached for `3T` has itself reached
+  fewer than half for at least `2T`. A host fences when the cluster has three or more hosts, it
+  reached fewer than half (itself included) in the last `T`, **and it has probed without a break for
+  all of `T`**. A pause between its own rounds longer than three intervals (a suspended machine, a
+  stalled process) restarts the window rather than counting as silence.
+- **`Ledger`**, the leader's. A host is lost when the cluster has three or more hosts and more than
+  half of them report having watched it without contact for `3T`, in a report the leader heard in
+  the last three intervals. A host's report never claims longer than it has watched without a break,
+  nor longer than it has known the peer.
+- **`Monitor`** runs on every joined host, in its agent (`host-agent serve`, given `PANDO_HOST_ID`,
+  `PANDO_CLUSTER_PEERS_FILE` and a host certificate). It needs no database: a peer list it cannot
+  read keeps the last. Its fence stops every running container labeled for an app through the
+  host's own runtime (`hostagent.DockerFencer`), every round while cut off; it never starts one.
+  App containers have no restart policy, so they stay stopped; starting them again is the control
+  plane's (R-148), once the host is reached and was not taken for lost.
+- **`Watch`** is the leader job `liveness`. It probes every host's agent, and each answers with its
+  own view (`liveness.View`), so the leader learns every host's view from the probes it makes anyway:
+  no reporting endpoint and no table of observations. **[P] The observations are kept in the
+  leader's memory**, not in Postgres: a decision needs only the last `3T` of them, a new leader that
+  starts empty only waits `3T` again, and the database stays off the path of deciding a host is
+  gone. Migration 000088 keeps only outcomes: `cluster_hosts.lost_at`/`lost_by`, and
+  `last_fence_id` so that each fence a host reports is audited once (`cluster.host.fence`).
+- **`Service`** marks a host lost and calls `Failover.PromoteStandby` for each app homed on it with
+  a standby, skipping a `failed` app (R-151). The manual path, `POST /cluster/hosts/{hostID}/lost`
+  (`install.cluster.manage`), works at any cluster size and **[P] is refused while the host answers
+  on its agent port**, since a standby started beside running apps would be a second copy (R-153).
+  Audited: `cluster.host.lost`, and `cluster.failover` per app before its standby starts.
+
+Timings **[P]**: `T` 30 s, probes every `T/6` (5 s), each within half an interval.
+
+The ping is `PANDO-AGENT/1 ping <host-id>` on the agent port, answered `PONG <view>`. Hosts probe
+with a certificate whose subject is `pando-host`, issued from the cluster authority; an agent
+answers a ping from it and refuses anything else, so a host's certificate opens no connection to
+another host's apps (R-023).
+
+Left to other slices: `Homes` and `Failover` (the standby slice; until set, a lost host is marked
+and nothing is started), clearing `lost_at` and removing the returned host's copies (R-419,
+`Cluster.ClearHostLost`), and the join giving a host its ID, peer file and host certificate. The
+install's first host has no `cluster_hosts` row until the join slice records it; until then the
+cluster counts one host fewer, which can only keep it under three, never cause a fence.
