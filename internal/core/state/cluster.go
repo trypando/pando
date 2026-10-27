@@ -377,6 +377,30 @@ var ErrInstallHost = errs.New(errs.StateInvalid, "This is the installation's own
 
 const msgRemoveHost = "Could not remove the host."
 
+// forgetStandbyHost clears a removed host, by name, from every app's standby
+// row (R-419), so nothing ships to it, promotes from it, removes a copy from
+// it or holds an app for it. Every CASE reads the row as it was:
+//
+//   - a standby on it is gone: the next standby pass places another;
+//   - an app homed on it has no home: its runtime no longer has the host, so
+//     the reconciler finds it absent and restores it (R-148);
+//   - a promotion onto it is over, and the app's home is the host it was
+//     leaving, as when a promotion is refused (standby.putBack);
+//   - a copy left on it is gone with it; a promotion away from it goes on.
+const forgetStandbyHost = `
+	UPDATE app_standbys SET
+	    home_host = CASE WHEN home_host = $1 AND promoting_at IS NOT NULL THEN stale_host
+	                     WHEN home_host = $1 THEN '' ELSE home_host END,
+	    stale_host = CASE WHEN stale_host = $1 OR (home_host = $1 AND promoting_at IS NOT NULL) THEN '' ELSE stale_host END,
+	    promoted_at = CASE WHEN home_host = $1 AND promoting_at IS NOT NULL THEN NULL ELSE promoted_at END,
+	    promoting_at = CASE WHEN home_host = $1 THEN NULL ELSE promoting_at END,
+	    host = CASE WHEN host = $1 THEN '' ELSE host END,
+	    spec_id = CASE WHEN host = $1 THEN NULL ELSE spec_id END,
+	    copies = CASE WHEN host = $1 THEN 0 ELSE copies END,
+	    shipped_at = CASE WHEN host = $1 THEN NULL ELSE shipped_at END,
+	    updated_at = now()
+	WHERE $1 IN (host, home_host, stale_host)`
+
 // RemoveHost removes a host from the cluster, and revokes every certificate
 // it held, in one transaction, so that no host, listener or runtime takes
 // them again (R-415). The install's own first host is refused
@@ -404,6 +428,9 @@ func (c *Cluster) RemoveHost(ctx context.Context, hostID string) (Host, error) {
 		INSERT INTO cluster_revoked_certs (cert_sha256, host_id)
 		SELECT sha, $1 FROM unnest($2::text[]) AS sha WHERE sha <> ''
 		ON CONFLICT (cert_sha256) DO NOTHING`, hostID, []string{h.CertSHA256, h.PrevCertSHA256, h.PingCertSHA256}); err != nil {
+		return h, errs.Wrap(errs.Internal, msgRemoveHost, err)
+	}
+	if _, err := tx.Exec(ctx, forgetStandbyHost, h.Name); err != nil {
 		return h, errs.Wrap(errs.Internal, msgRemoveHost, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
