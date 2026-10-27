@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	corehosts "github.com/trypando/pando/internal/core/hosts"
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/hostagent"
 	"github.com/trypando/pando/internal/secret"
 )
 
@@ -37,6 +39,7 @@ func clusterListener(t *testing.T, i *install) *httptest.Server {
 	require.NoError(t, err)
 	srv.TLS = tlsConfig
 	srv.StartTLS()
+	srv.TLS.Certificates = nil // httptest adds its own; the listener serves from GetCertificate
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -250,4 +253,85 @@ func TestR421_AJoinedHostReadsThePeerListWithItsCertificate(t *testing.T) {
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestR347_ARefusedJoinAuditsNoUnboundedName asserts R-347 with R-415 against
+// the database: a refused join is audited, and what the log keeps of what an
+// unauthenticated caller sent is bounded, since the row cannot be removed for
+// three months.
+func TestR347_ARefusedJoinAuditsNoUnboundedName(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	srv := clusterListener(t, i)
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: corehosts.PinnedTLS(i.Server.Hosts.Authority.Hash())}}
+	long := strings.Repeat("n", 20<<10)
+	body := `{"secret":"jt_1.x","name":"` + long + `","version":"` + long + `","address":"edge:7443"}`
+	resp, err := client.Post(srv.URL+corehosts.JoinPath, "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	audit := i.do(i.admin(), http.MethodGet, "/audit?action=cluster.join.denied", nil)
+	require.Contains(t, audit.String(), corehosts.InvalidField)
+	require.NotContains(t, audit.String(), long[:200])
+}
+
+// TestR421_AHostRenewsThroughTheClusterListener asserts R-421 end to end
+// against the database: a joined host renews its certificates presenting the
+// one it holds, the cluster records the new one, and once the host is
+// removed (R-415) its certificates renew nothing and list no peers.
+func TestR421_AHostRenewsThroughTheClusterListener(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	srv := clusterListener(t, i)
+	ctx := context.Background()
+	app := freshHost(t)
+	joined, err := app.Join(ctx, mintJoin(t, i, srv, "app"), "edge-1")
+	require.NoError(t, err)
+	dir := app.Files.Dir
+	host, err := tls.LoadX509KeyPair(filepath.Join(dir, corehosts.HostCertFile), filepath.Join(dir, corehosts.HostKeyFile))
+	require.NoError(t, err)
+	caPEM, err := os.ReadFile(filepath.Join(dir, corehosts.AuthorityCertFile))
+	require.NoError(t, err)
+	r := &corehosts.HostRenewal{Address: srv.URL, Dir: dir, Name: joined.Name, AuthorityPEM: caPEM}
+
+	next, probe, err := r.Renew(ctx, host)
+	require.NoError(t, err)
+	from, ok := hostagent.ProbeSender(probe.Leaf)
+	require.True(t, ok)
+	require.Equal(t, joined.HostID, from)
+	recorded, err := state.NewCluster(i.db, testTokenKey).Host(ctx, joined.HostID)
+	require.NoError(t, err)
+	require.Equal(t, hostagent.Fingerprint256(next.Certificate[0])+","+hostagent.Fingerprint256(host.Certificate[0]), recorded.Pins())
+
+	audit := i.do(i.admin(), http.MethodGet, "/audit?action=cluster.host.renew", nil)
+	require.Contains(t, audit.String(), joined.HostID)
+
+	removed := i.do(i.admin(), http.MethodDelete, "/cluster/hosts/"+joined.HostID, nil)
+	require.Equal(t, http.StatusOK, removed.Code, removed.String())
+	_, _, err = r.Renew(ctx, next)
+	require.Error(t, err, "a removed host renews nothing")
+	sync := &corehosts.PeerSync{Address: srv.URL, File: filepath.Join(t.TempDir(), "peers.json")}
+	sync.TLS, err = corehosts.JoinedTLS(caPEM, next)
+	require.NoError(t, err)
+	_, err = sync.Peers(ctx)
+	require.Error(t, err, "and hears no peers")
+}
+
+// TestR414_TheInstallsOwnHostCannotBeRemoved asserts R-414 through the API:
+// the installation's first host is listed, and removing it is refused.
+func TestR414_TheInstallsOwnHostCannotBeRemoved(t *testing.T) {
+	t.Parallel()
+	i := newInstall(t)
+	ctx := context.Background()
+	first, _, err := state.NewCluster(i.db, testTokenKey).RecordFirstHost(ctx, state.Host{
+		Name: "control", Roles: []string{"app", "control"}, Address: "10.0.0.1:7443", CertSHA256: strings.Repeat("0", 64),
+	})
+	require.NoError(t, err)
+	i.Server.Hosts.IsSelf = corehosts.InstallHost
+
+	listed := i.do(i.admin(), http.MethodGet, "/cluster/hosts", nil)
+	require.Contains(t, listed.String(), `"this_host":"`+first.ID+`"`)
+	got := i.do(i.admin(), http.MethodDelete, "/cluster/hosts/"+first.ID, nil)
+	require.Equal(t, string(errs.StateInvalid), got.ErrorCode(), got.String())
 }

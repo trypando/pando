@@ -6540,7 +6540,7 @@
       "get": {
         "operationId": "listHosts",
         "summary": "List hosts",
-        "description": "Every host that has joined this installation's cluster: `name`, `roles` (`control`, `app`), `address`, `version`, `platform`, `joined_at` and `last_seen_at`. A single-host installation lists none.\n\nNeeds `install.cluster.manage`.",
+        "description": "Every host of this installation's cluster, the installation's own first host included: `name`, `roles` (`control`, `app`), `address`, `version`, `platform`, `joined_with` (empty for the first host), `joined_at` and `last_seen_at`. `this_host` is the ID of the host serving the request.\n\nNeeds `install.cluster.manage`.",
         "tags": [
           "Cluster"
         ],
@@ -6560,10 +6560,14 @@
                       "items": {
                         "$ref": "#/components/schemas/Host"
                       }
+                    },
+                    "this_host": {
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "hosts"
+                    "hosts",
+                    "this_host"
                   ]
                 }
               }
@@ -6580,7 +6584,7 @@
       "delete": {
         "operationId": "removeHost",
         "summary": "Remove a host",
-        "description": "Remove a host from the cluster. It can no longer reach the installation, and the installation no longer reaches it.\n\nNeeds `install.cluster.manage`.",
+        "description": "Remove a host from the cluster. It can no longer reach the installation, the installation no longer reaches it, and every certificate it held is refused. The installation's first host and the host serving the request are refused. Returns `host`; for a host that held the control role, also `rotate`, the keys it was handed at its join, and `notice` saying to replace them.\n\nNeeds `install.cluster.manage`.",
         "tags": [
           "Cluster"
         ],
@@ -6595,8 +6599,15 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "Done. No body."
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Removed"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -11079,7 +11090,7 @@
       "post": {
         "operationId": "postSetupJoin",
         "summary": "Join a cluster",
-        "description": "Join this new Pando to a cluster as a host: `token`, a join token minted on a host already in the cluster, and `name`, this host's name (lowercase letters, digits and hyphens; default this machine's hostname). Pando checks the cluster's certificate authority against the token before sending anything, then restarts into the cluster. Answers 202 with `roles`, `host_id`, `name` and `status` `joined`. Public, but needs the one-time `setup_token` Pando printed to its log, as `POST /api/v1/setup` does, and refused once this Pando has any account or app.",
+        "description": "Join this new Pando to a cluster as a host: `token`, a join token minted on a host already in the cluster, and `name`, this host's name (lowercase letters, digits and hyphens; default this machine's hostname). Pando checks the cluster's certificate authority against the token before sending anything, then restarts into the cluster. Answers 202 with `roles`, `host_id`, `name` and `status` `joined`. Public, but needs the one-time `setup_token` Pando printed to its log, as `POST /api/v1/setup` does, and refused once this Pando has any account or app. Refused joins are limited per client address.",
         "tags": [
           "Session"
         ],
@@ -18001,6 +18012,26 @@
           "notes",
           "security",
           "breaking"
+        ]
+      },
+      "Removed": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "$ref": "#/components/schemas/Host"
+          },
+          "rotate": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notice": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "host"
         ]
       },
       "Repository": {

@@ -3,12 +3,16 @@ package hosts
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/hostagent"
+	"github.com/trypando/pando/internal/id"
 	"github.com/trypando/pando/internal/secret"
 )
 
@@ -123,37 +127,115 @@ var hostName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 // CheckHostName refuses a name a host cannot have.
 func CheckHostName(name string) error {
 	if !hostName.MatchString(name) {
-		return errs.Newf(errs.ValidInvalid, "%q is not a host name Pando can use. Valid answer: lowercase letters, digits and hyphens, up to 63, such as app-host-2.", name)
+		return errs.Newf(errs.ValidInvalid, "%s is not a host name Pando can use. Valid answer: lowercase letters, digits and hyphens, up to 63, such as app-host-2.", shortQuote(name))
 	}
 	return nil
 }
 
-// Join admits a host (R-415). It refuses, spending no use of the token, a
-// host at another version or with a name or request Pando cannot use, and
-// whatever Readiness refuses; otherwise it spends one use, issues the host's
-// certificate, records the host, and answers with what the token's roles
-// need — the keys only for the control role.
-func (s *Service) Join(ctx context.Context, req JoinRequest) (JoinResult, error) {
-	if req.Version != s.Version {
-		return JoinResult{}, errs.Newf(errs.StateInvalid,
-			"This host runs Pando %s and the cluster runs %s. A host joins only at the cluster's version.", orUnknown(req.Version), orUnknown(s.Version)).
-			WithRemedy("Install Pando " + orUnknown(s.Version) + " on the joining host and start the join again.")
+// Bounds on what a joining host says about itself (R-415): what is recorded
+// and audited is never longer.
+const (
+	maxPlatformLen = 64
+	maxVersionLen  = 64
+	maxAddressLen  = 260
+)
+
+// shown is what a joining host may say its platform and version are:
+// printable ASCII without spaces, such as linux/amd64 and 0.16.0.
+var shown = regexp.MustCompile(`^[\x21-\x7e]*$`)
+
+// addressHost is a DNS name an agent may be reached by.
+var addressHost = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
+
+// shortQuote quotes s for a message, cut short: a name a joining host sent
+// may be any length.
+func shortQuote(s string) string {
+	const most = 64
+	if len(s) > most {
+		return strconv.Quote(s[:most]) + "…"
 	}
+	return strconv.Quote(s)
+}
+
+// CheckAgentAddress refuses an agent address the runtime cannot dial (R-416):
+// it must be host:port, a DNS name or an IP address and a port number. One
+// that is not would break the runtime's host list for every host.
+func CheckAgentAddress(address string) error {
+	host, port, err := net.SplitHostPort(address)
+	n, perr := strconv.Atoi(port)
+	if len(address) > maxAddressLen || err != nil || perr != nil || n < 1 || n > 65535 ||
+		(net.ParseIP(host) == nil && !addressHost.MatchString(host)) {
+		return errs.Newf(errs.ValidInvalid, "%s is not an address the joining host's agent can be reached at. Valid answer: a host name or IP address and a port, such as app-host-2.example.com:%d.", shortQuote(address), hostagent.DefaultPort)
+	}
+	return nil
+}
+
+// CheckJoinRequest refuses what a joining host sent when Pando cannot record
+// or use it (R-415): every check that needs no token, so that a refusal says
+// nothing about the cluster.
+func CheckJoinRequest(req JoinRequest) error {
 	if err := CheckHostName(req.Name); err != nil {
+		return err
+	}
+	if err := CheckAgentAddress(req.Address); err != nil {
+		return err
+	}
+	if len(req.Platform) > maxPlatformLen || !shown.MatchString(req.Platform) {
+		return errs.Newf(errs.ValidInvalid, "The joining host's platform must be up to %d printable characters without spaces, such as linux/amd64.", maxPlatformLen)
+	}
+	if len(req.Version) > maxVersionLen || !shown.MatchString(req.Version) {
+		return errs.Newf(errs.ValidInvalid, "The joining host's version must be up to %d printable characters without spaces, such as 0.16.0.", maxVersionLen)
+	}
+	return nil
+}
+
+// InvalidField stands in for a name or version that failed CheckJoinRequest
+// in the audit log, which keeps what a caller who has not joined sent only
+// when it is something a host could be called (R-347: the log cannot be
+// trimmed for three months).
+const InvalidField = "(invalid)"
+
+// AuditDetail is what the audit log records of a join that was refused.
+func (req JoinRequest) AuditDetail() map[string]any {
+	name, version := req.Name, req.Version
+	if CheckHostName(name) != nil {
+		name = InvalidField
+	}
+	if len(version) > maxVersionLen || !shown.MatchString(version) {
+		version = InvalidField
+	}
+	return map[string]any{"name": name, "version": version}
+}
+
+// Join admits a host (R-415). It refuses, spending no use of the token, a
+// request Pando cannot use, a host at another version, and whatever
+// Readiness refuses; otherwise it spends one use, issues the host's
+// certificates, records the host, and answers with what the token's roles
+// need — the keys only for the control role. The cluster's version is said
+// only to a host whose token is good: a caller without one learns nothing
+// about the cluster.
+func (s *Service) Join(ctx context.Context, req JoinRequest) (JoinResult, error) {
+	if err := CheckJoinRequest(req); err != nil {
 		return JoinResult{}, err
 	}
 
 	var res JoinResult
 	_, host, err := s.Store.Join(ctx, req.Secret, func(t state.JoinToken) (state.Host, error) {
+		if req.Version != s.Version {
+			return state.Host{}, errs.Newf(errs.StateInvalid,
+				"This host runs Pando %s and the cluster runs %s. A host joins only at the cluster's version.", orUnknown(req.Version), orUnknown(s.Version)).
+				WithRemedy("Install Pando " + orUnknown(s.Version) + " on the joining host and start the join again.")
+		}
 		if err := s.admissible(ctx, t.Roles); err != nil {
 			return state.Host{}, err
 		}
-		cert, sha, err := s.Authority.IssueHost(req.CSR, req.Name, t.Roles)
+		hostID := id.New(id.Host)
+		cert, sha, err := s.Authority.IssueHost(req.CSR, req.Name, t.Roles, s.now())
 		if err != nil {
 			return state.Host{}, err
 		}
 		res.Certificate = cert
-		if res.HostClientCert, res.HostClientKey, err = s.Authority.IssueHostClient(); err != nil {
+		if res.HostClientCert, res.HostClientKey, err = s.Authority.IssueHostClient(hostID, s.now()); err != nil {
 			return state.Host{}, errs.Wrap(errs.Internal, "Pando could not issue the certificate the joining host checks other hosts with.", err)
 		}
 		if s.Runtime != nil && slices.Contains(t.Roles, state.HostRoleApp) {
@@ -165,7 +247,7 @@ func (s *Service) Join(ctx context.Context, req JoinRequest) (JoinResult, error)
 			}
 		}
 		return state.Host{
-			Name: req.Name, Address: req.Address, CertSHA256: sha,
+			ID: hostID, Name: req.Name, Address: req.Address, CertSHA256: sha,
 			Platform: req.Platform, Version: req.Version,
 		}, nil
 	})

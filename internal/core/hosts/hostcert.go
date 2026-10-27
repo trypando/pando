@@ -1,6 +1,7 @@
 package hosts
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -17,10 +18,6 @@ import (
 	"github.com/trypando/pando/internal/keyfile"
 )
 
-// hostCertRenewBefore is how long before it expires a control host's own
-// certificate is issued again, at its next start.
-const hostCertRenewBefore = 30 * 24 * time.Hour
-
 // ControlHostCert is the certificate a control host answers the cluster's
 // liveness checks with (R-421), and its fingerprint, which ControlPeers
 // records as the host's cert_sha256. It is host.crt and host.key in dir: what
@@ -34,24 +31,40 @@ func ControlHostCert(dir string, a *Authority, name string, roles []string, now 
 	if cert, ok := usableHostCert(certPath, keyPath, name, now); ok {
 		return cert, hostagent.Fingerprint256(cert.Certificate[0]), nil
 	}
-	if err := issueHostCert(dir, certPath, keyPath, a, name, roles); err != nil {
+	if err := issueHostCert(dir, certPath, keyPath, a, name, roles, now); err != nil {
 		return tls.Certificate{}, "", err
 	}
-	// Read back as of now: the authority issues by the real clock.
-	cert, ok := usableHostCert(certPath, keyPath, name, time.Now())
+	cert, ok := usableHostCert(certPath, keyPath, name, now)
 	if !ok {
 		return tls.Certificate{}, "", fmt.Errorf("the certificate written to %s cannot be read back", certPath)
 	}
 	return cert, hostagent.Fingerprint256(cert.Certificate[0]), nil
 }
 
-// issueHostCert issues the host's certificate for a new key and writes both.
-func issueHostCert(dir, certPath, keyPath string, a *Authority, name string, roles []string) error {
+// RenewingControlHostCert is ControlHostCert held by a running control host,
+// issued again, and written over the old one, once it is due (R-421): the
+// cluster listener answers pings with what it holds at each handshake.
+func RenewingControlHostCert(dir string, a *Authority, name string, roles []string, now func() time.Time) (*hostagent.RenewingCert, error) {
+	cert, _, err := ControlHostCert(dir, a, name, roles, now())
+	if err != nil {
+		return nil, err
+	}
+	r := hostagent.NewRenewingCert(cert, func(_ context.Context, at time.Time) (tls.Certificate, error) {
+		next, _, err := ControlHostCert(dir, a, name, roles, at)
+		return next, err
+	})
+	r.Now, r.OnHandshake = now, true
+	return r, nil
+}
+
+// issueHostCert issues the host's certificate for a new key, as of now, and
+// writes both.
+func issueHostCert(dir, certPath, keyPath string, a *Authority, name string, roles []string, now time.Time) error {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return err
 	}
-	der, err := hostagent.Authorities{{Cert: a.Cert, Key: a.Key}}.IssueHost(name, roles, &key.PublicKey)
+	der, err := a.Authorities().IssueHostAt(now, name, roles, &key.PublicKey)
 	if err != nil {
 		return fmt.Errorf("could not issue this host's certificate: %w", err)
 	}
@@ -86,7 +99,7 @@ func usableHostCert(certPath, keyPath, name string, now time.Time) (tls.Certific
 		return tls.Certificate{}, false
 	}
 	leaf, err := x509.ParseCertificate(cert.Certificate[0])
-	if err != nil || !slices.Contains(leaf.DNSNames, hostagent.ServerName(name)) || now.Add(hostCertRenewBefore).After(leaf.NotAfter) {
+	if err != nil || !slices.Contains(leaf.DNSNames, hostagent.ServerName(name)) || hostagent.DueForRenewal(leaf.NotAfter, now) {
 		return tls.Certificate{}, false
 	}
 	cert.Leaf = leaf

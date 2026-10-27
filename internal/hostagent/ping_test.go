@@ -66,9 +66,23 @@ func pingAgent(t *testing.T, live Liveness) (string, Authorities) {
 
 func hostTLS(t *testing.T, as Authorities) *tls.Config {
 	t.Helper()
-	cert, err := as.IssueHostClient()
+	return hostTLSFor(t, as, peerID)
+}
+
+// hostTLSFor is the probe configuration of the host hostID.
+func hostTLSFor(t *testing.T, as Authorities, hostID string) *tls.Config {
+	t.Helper()
+	cert, err := as.IssueHostClient(hostID)
 	require.NoError(t, err)
 	require.Equal(t, HostCommonName, cert.Leaf.Subject.CommonName)
+	return ClientTLS(as, cert, "host-1")
+}
+
+// collectorTLS is the leader's collector's probe configuration.
+func collectorTLS(t *testing.T, as Authorities) *tls.Config {
+	t.Helper()
+	cert, err := as.IssueCollector()
+	require.NoError(t, err)
 	return ClientTLS(as, cert, "host-1")
 }
 
@@ -88,15 +102,15 @@ func TestR421_HostsPingEachOtherOnTheAgentPort(t *testing.T) {
 	require.Equal(t, `{"host":"host_1", "fenced":false}`, string(view), "one line, whatever the view")
 
 	// The leader's collector names nobody.
-	_, err = Ping(context.Background(), addr, hostTLS(t, as), "")
+	_, err = Ping(context.Background(), addr, collectorTLS(t, as), "")
 	require.NoError(t, err)
 	require.Equal(t, []string{peerID, ""}, live.senders())
 
-	// Pando's proxy certificate may ping as well.
+	// Pando's proxy certificate names no host, so it sends no ping.
 	proxy, err := as.IssueClient()
 	require.NoError(t, err)
 	_, err = Ping(ctx, addr, ClientTLS(as, proxy, "host-1"), "")
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "issued to no host of the cluster")
 }
 
 // TestR023_AHostCertificateOpensNoConnectionToAnApp asserts R-023: the
@@ -116,6 +130,8 @@ func TestPingRefusals(t *testing.T) {
 
 	addr, as = pingAgent(t, &fakeLiveness{})
 	_, err = Ping(ctx, addr, hostTLS(t, as), "app_01HQ8ZZZZZZZZZZZZZZZZZZZZZ")
+	require.ErrorContains(t, err, "the ping names")
+	_, err = as.IssueHostClient("app_01HQ8ZZZZZZZZZZZZZZZZZZZZZ")
 	require.ErrorContains(t, err, "is not a host's ID")
 
 	// No certificate at all: the handshake fails.

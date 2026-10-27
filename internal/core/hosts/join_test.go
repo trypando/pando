@@ -33,8 +33,18 @@ type cluster struct {
 
 func newCluster(t *testing.T) *cluster {
 	t.Helper()
+	return newClusterAt(t, nil)
+}
+
+// newClusterAt is newCluster whose service and listener read the time from
+// now, when it is set.
+func newClusterAt(t *testing.T, now func() time.Time) *cluster {
+	t.Helper()
 	store := &fakeStore{live: map[string]*state.JoinToken{}}
 	svc := newService(t, store)
+	if now != nil {
+		svc.Now = now
+	}
 	svc.Version = "1.2.3"
 
 	keys := t.TempDir()
@@ -49,18 +59,33 @@ func newCluster(t *testing.T) *cluster {
 	srv := httptest.NewUnstartedServer(listener(svc))
 	tlsConfig, err := svc.Authority.ListenerTLS([]string{"127.0.0.1", "localhost"}, time.Now())
 	require.NoError(t, err)
+	tlsConfig.Time = now
 	srv.TLS = tlsConfig
 	srv.StartTLS()
+	srv.TLS.Certificates = nil // httptest adds its own; the listener serves from GetCertificate
 	t.Cleanup(srv.Close)
 	return &cluster{svc: svc, store: store, srv: srv, keys: keys}
 }
 
-// listener stands in for httpapi's cluster routes: decode, Join, answer.
+// listener stands in for httpapi's cluster routes: decode, Join or Renew,
+// answer.
 func listener(svc *hosts.Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req hosts.WireJoinRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		res, err := svc.Join(r.Context(), req.Request())
+		var out any
+		var err error
+		if r.URL.Path == hosts.RenewPath {
+			var req hosts.WireRenewRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			var res hosts.RenewResult
+			res, err = svc.Renew(r.Context(), presented(r), []byte(req.CSR))
+			out = res.Wire()
+		} else {
+			var req hosts.WireJoinRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			var res hosts.JoinResult
+			res, err = svc.Join(r.Context(), req.Request())
+			out = res.Wire()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if err != nil {
 			e := errs.As(err)
@@ -69,8 +94,17 @@ func listener(svc *hosts.Service) http.Handler {
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(res.Wire())
+		_ = json.NewEncoder(w).Encode(out)
 	})
+}
+
+// presented is the verified client certificate of r, as the cluster
+// listener takes it.
+func presented(r *http.Request) []byte {
+	if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 {
+		return nil
+	}
+	return r.TLS.VerifiedChains[0][0].Raw
 }
 
 // token mints a live token for roles and returns the string a host joins with.

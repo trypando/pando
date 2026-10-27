@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -29,11 +30,11 @@ func TestWhatTheClusterIssuedIsChecked(t *testing.T) {
 	other := testAuthority(t)
 	key, csr, err := newHostKey("edge-2")
 	require.NoError(t, err)
-	cert, _, err := a.IssueHost(csr, "edge-2", []string{"app"})
+	cert, _, err := a.IssueHost(csr, "edge-2", []string{"app"}, time.Now())
 	require.NoError(t, err)
 	otherKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 
-	require.NoError(t, checkIssued(JoinResult{Certificate: cert, Authority: a.CertPEM()}, key, a.Hash()))
+	require.NoError(t, checkIssued(JoinResult{Certificate: cert, Authority: a.CertPEM()}, key, a.Hash(), time.Now()))
 	for what, c := range map[string]struct {
 		res  JoinResult
 		key  *ecdsa.PrivateKey
@@ -45,9 +46,9 @@ func TestWhatTheClusterIssuedIsChecked(t *testing.T) {
 		"other authority": {JoinResult{Certificate: cert, Authority: a.CertPEM()}, key, other.Hash()},
 		"another key":     {JoinResult{Certificate: cert, Authority: a.CertPEM()}, otherKey, a.Hash()},
 	} {
-		require.Error(t, checkIssued(c.res, c.key, c.hash), what)
+		require.Error(t, checkIssued(c.res, c.key, c.hash, time.Now()), what)
 	}
-	require.ErrorIs(t, verifyPinned(nil, a.Hash()), errAuthorityMismatch)
+	require.ErrorIs(t, verifyPinned(nil, a.Hash(), time.Time{}), errAuthorityMismatch)
 }
 
 func TestARefusalIsPassedOnAsTheClusterSaidIt(t *testing.T) {

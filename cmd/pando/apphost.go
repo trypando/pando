@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/moby/moby/client"
 	"go.uber.org/zap"
@@ -27,10 +28,12 @@ import (
 // (R-416, R-421). It needs no database: the control plane being away changes
 // nothing here.
 func runAppHost(ctx context.Context, dir string, joined hosts.Joined, logger *zap.Logger) error {
-	agent, monitor, err := appHostAgent(dir, joined, logger)
+	agent, monitor, certs, err := appHostAgent(dir, joined, logger)
 	if err != nil {
 		return err
 	}
+	// R-421: renewed from the cluster listener before they expire.
+	go certs.Host.Run(ctx, certRenewCheck)
 	logger.Info("this host joined a cluster as an app host and runs its agent",
 		zap.String("host_id", joined.HostID), zap.String("name", joined.Name), zap.String("cluster", joined.Cluster))
 	return serveAgent(ctx, agent, monitor, agentListen())
@@ -40,50 +43,63 @@ func runAppHost(ctx context.Context, dir string, joined hosts.Joined, logger *za
 // with the host's own certificate, named hostagent.ServerName(<name>), checks
 // every connection against the cluster authority, and carries the control
 // plane's runtime calls to the host's rootless runtime (R-416). The Monitor
-// checks the other hosts with the pando-host certificate the join issued,
-// keeping its peer list current from the cluster listener (R-421).
-func appHostAgent(dir string, joined hosts.Joined, logger *zap.Logger) (*hostagent.Agent, *liveness.Monitor, error) {
+// checks the other hosts with the probe certificate the join issued it,
+// keeping its peer list current from the cluster listener (R-421). Both
+// certificates are renewed while it runs (the returned HostCerts), and each
+// handshake takes the ones held then.
+func appHostAgent(dir string, joined hosts.Joined, logger *zap.Logger) (*hostagent.Agent, *liveness.Monitor, *hosts.HostCerts, error) {
 	files, err := readClusterFiles(dir, hosts.HostCertFile, hosts.HostKeyFile, hosts.AuthorityCertFile,
 		hosts.HostClientCertFile, hosts.HostClientKeyFile)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	certPEM, keyPEM, caPEM := files[0], files[1], files[2]
-	serverTLS, err := hostagent.ServerTLS(certPEM, keyPEM, caPEM)
+	caPEM := files[2]
+	host509, err := tls.X509KeyPair(files[0], files[1])
 	if err != nil {
-		return nil, nil, appHostError(dir, err)
+		return nil, nil, nil, appHostError(dir, err)
+	}
+	client509, err := tls.X509KeyPair(files[3], files[4])
+	if err != nil {
+		return nil, nil, nil, appHostError(dir, err)
+	}
+	renewal := &hosts.HostRenewal{Address: joined.Cluster, Dir: dir, Name: joined.Name, AuthorityPEM: caPEM}
+	certs := renewal.Certs(host509, client509)
+	certs.Host.OnError = func(err error) {
+		logger.Warn("this host's certificates could not be renewed; trying again", zap.Error(err))
+	}
+	serverTLS, err := hostagent.RenewingServerTLS(certs.Host, caPEM)
+	if err != nil {
+		return nil, nil, nil, appHostError(dir, err)
 	}
 	pool, err := appHostPool(joined)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	socket, err := appHostRuntimeSocket()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	agent := &hostagent.Agent{TLS: serverTLS, Pool: pool, Logger: logger, RuntimeSocket: socket}
+	members := &hosts.Members{}
+	agent := &hostagent.Agent{TLS: serverTLS, Pool: pool, Logger: logger, RuntimeSocket: socket, Member: members.Has}
 
-	client509, err := tls.X509KeyPair(files[3], files[4])
-	if err != nil {
-		return nil, nil, appHostError(dir, err)
-	}
-	host509, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return nil, nil, appHostError(dir, err)
-	}
 	clusterTLS, err := hosts.JoinedTLS(caPEM, host509)
 	if err != nil {
-		return nil, nil, appHostError(dir, err)
+		return nil, nil, nil, appHostError(dir, err)
 	}
+	clusterTLS.Certificates, clusterTLS.GetClientCertificate = nil, certs.Host.GetClientCertificate
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(caPEM)
 	docker, err := client.New(client.WithHost("unix://" + socket))
 	if err != nil {
-		return nil, nil, fmt.Errorf("this app host could not reach its container runtime at %s, which it stops apps through when it is cut off: %w", socket, err)
+		return nil, nil, nil, fmt.Errorf("this app host could not reach its container runtime at %s, which it stops apps through when it is cut off: %w", socket, err)
 	}
 	sync := &hosts.PeerSync{Address: joined.Cluster, TLS: clusterTLS, File: filepath.Join(dir, hosts.PeersFile)}
-	return agent, newMonitor(joined.HostID, sync.Peers, client509, roots, docker, logger), nil
+	return agent, newMonitor(joined.HostID, members.Track(sync.Peers), certs.Probe.GetClientCertificate, roots, docker, logger), certs, nil
 }
+
+// certRenewCheck is how often a joined host looks whether its certificates
+// are due for renewal (hostagent.RenewBefore).
+const certRenewCheck = time.Hour
 
 // readClusterFiles reads names from the cluster directory, in order.
 func readClusterFiles(dir string, names ...string) ([][]byte, error) {

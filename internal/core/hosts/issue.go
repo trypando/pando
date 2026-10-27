@@ -1,6 +1,7 @@
 package hosts
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -21,8 +22,14 @@ import (
 )
 
 // listenerCertLifetime is how long the cluster listener's own certificate is
-// valid. It is issued again at every start.
+// valid. It is issued again at every start, and while the listener runs once
+// it is due (hostagent.RenewBefore).
 const listenerCertLifetime = 365 * 24 * time.Hour
+
+// Authorities is the authority as the host agent's package takes it.
+func (a *Authority) Authorities() hostagent.Authorities {
+	return hostagent.Authorities{{Cert: a.Cert, Key: a.Key}}
+}
 
 func serial() (*big.Int, error) {
 	return rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
@@ -49,30 +56,42 @@ func (a *Authority) sign(tmpl *x509.Certificate, pub any) ([]byte, error) {
 // agent expects a host's certificate (hostagent.Authorities.IssueHost, R-416):
 // named pando-agent.<name>.invalid, its roles as organizational units, for
 // server and client authentication. Only the request's key is taken from it;
-// every other field is the authority's choice.
-func (a *Authority) IssueHost(csrPEM []byte, name string, roles []string) (certPEM []byte, sha string, err error) {
+// every other field is the authority's choice. It is valid from now; a host
+// renews it before it expires (Service.Renew, R-421).
+func (a *Authority) IssueHost(csrPEM []byte, name string, roles []string, now time.Time) (certPEM []byte, sha string, err error) {
+	pub, err := csrKey(csrPEM)
+	if err != nil {
+		return nil, "", err
+	}
+	der, err := a.Authorities().IssueHostAt(now, name, roles, pub)
+	if err != nil {
+		return nil, "", errs.Wrap(errs.Internal, "Pando could not issue the host's certificate.", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), hostagent.Fingerprint256(der), nil
+}
+
+// csrKey is the key of a host's certificate request, whose signature proves
+// the host holds it.
+func csrKey(csrPEM []byte) (any, error) {
 	block, _ := pem.Decode(csrPEM)
 	if block == nil || block.Type != "CERTIFICATE REQUEST" {
-		return nil, "", errs.New(errs.ValidInvalid, "The joining host's certificate request is not a PEM certificate request.")
+		return nil, errs.New(errs.ValidInvalid, "The host's certificate request is not a PEM certificate request.")
 	}
 	csr, err := x509.ParseCertificateRequest(block.Bytes)
 	if err == nil {
 		err = csr.CheckSignature()
 	}
 	if err != nil {
-		return nil, "", errs.Wrap(errs.ValidInvalid, "The joining host's certificate request could not be read.", err)
+		return nil, errs.Wrap(errs.ValidInvalid, "The host's certificate request could not be read.", err)
 	}
-	der, err := hostagent.Authorities{{Cert: a.Cert, Key: a.Key}}.IssueHost(name, roles, csr.PublicKey)
-	if err != nil {
-		return nil, "", errs.Wrap(errs.Internal, "Pando could not issue the joining host's certificate.", err)
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), hostagent.Fingerprint256(der), nil
+	return csr.PublicKey, nil
 }
 
-// IssueHostClient issues the certificate a host checks the other hosts'
-// agents with (hostagent.Authorities.IssueHostClient, R-421), as PEM.
-func (a *Authority) IssueHostClient() (certPEM []byte, keyPEM secret.Value, err error) {
-	cert, err := hostagent.Authorities{{Cert: a.Cert, Key: a.Key}}.IssueHostClient()
+// IssueHostClient issues the certificate the host hostID checks the other
+// hosts with (hostagent.Authorities.IssueHostClient, R-421), as PEM: it
+// carries the host's ID, which is who its pings are from.
+func (a *Authority) IssueHostClient(hostID string, now time.Time) (certPEM []byte, keyPEM secret.Value, err error) {
+	cert, err := a.Authorities().IssueHostClientAt(now, hostID)
 	if err != nil {
 		return nil, secret.Value{}, err
 	}
@@ -89,11 +108,33 @@ func (a *Authority) IssueHostClient() (certPEM []byte, keyPEM secret.Value, err 
 // authority's own so a joining host can check the chain against its token's
 // hash before it sends anything. A client certificate is checked against the
 // authority when one is presented: a joining host has none yet, and a host
-// that has joined presents its own for the peer list (PeersPath).
+// that has joined presents its own for the peer list (PeersPath). The
+// certificate is issued again while the listener runs, before it expires.
 func (a *Authority) ListenerTLS(names []string, now time.Time) (*tls.Config, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	cert, err := a.listenerCert(names, now)
 	if err != nil {
 		return nil, err
+	}
+	renewing := hostagent.NewRenewingCert(cert, func(_ context.Context, now time.Time) (tls.Certificate, error) {
+		return a.listenerCert(names, now)
+	})
+	renewing.OnHandshake = true
+	pool := x509.NewCertPool()
+	pool.AddCert(a.Cert)
+	return &tls.Config{
+		MinVersion:     tls.VersionTLS13,
+		GetCertificate: renewing.GetCertificate,
+		ClientAuth:     tls.VerifyClientCertIfGiven,
+		ClientCAs:      pool,
+	}, nil
+}
+
+// listenerCert is the cluster listener's certificate for names, as of now,
+// sent with the authority's own.
+func (a *Authority) listenerCert(names []string, now time.Time) (tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, err
 	}
 	tmpl := &x509.Certificate{
 		Subject:     pkix.Name{CommonName: "pando-cluster-listener"},
@@ -111,19 +152,13 @@ func (a *Authority) ListenerTLS(names []string, now time.Time) (*tls.Config, err
 	}
 	der, err := a.sign(tmpl, &key.PublicKey)
 	if err != nil {
-		return nil, err
+		return tls.Certificate{}, err
 	}
-	pool := x509.NewCertPool()
-	pool.AddCert(a.Cert)
-	return &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		Certificates: []tls.Certificate{{
-			Certificate: [][]byte{der, a.Cert.Raw},
-			PrivateKey:  key,
-		}},
-		ClientAuth: tls.VerifyClientCertIfGiven,
-		ClientCAs:  pool,
-	}, nil
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.Certificate{Certificate: [][]byte{der, a.Cert.Raw}, PrivateKey: key, Leaf: leaf}, nil
 }
 
 // errAuthorityMismatch is a server whose authority is not the one the token
@@ -142,12 +177,12 @@ func PinnedTLS(hash string) *tls.Config {
 		// Verified by VerifyConnection instead, against the pinned authority.
 		InsecureSkipVerify: true, //nolint:gosec // G402: the chain is checked below, against the authority the join token pins.
 		VerifyConnection: func(cs tls.ConnectionState) error {
-			return verifyPinned(cs.PeerCertificates, hash)
+			return verifyPinned(cs.PeerCertificates, hash, time.Time{})
 		},
 	}
 }
 
-func verifyPinned(chain []*x509.Certificate, hash string) error {
+func verifyPinned(chain []*x509.Certificate, hash string, at time.Time) error {
 	if len(chain) == 0 {
 		return errAuthorityMismatch
 	}
@@ -164,8 +199,9 @@ func verifyPinned(chain []*x509.Certificate, hash string) error {
 		return errAuthorityMismatch
 	}
 	if _, err := chain[0].Verify(x509.VerifyOptions{
-		Roots:     roots,
-		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		Roots:       roots,
+		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		CurrentTime: at,
 	}); err != nil {
 		return errAuthorityMismatch
 	}

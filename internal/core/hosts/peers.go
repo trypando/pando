@@ -2,13 +2,8 @@ package hosts
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -22,7 +17,6 @@ import (
 
 	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
-	"github.com/trypando/pando/internal/hostagent"
 	"github.com/trypando/pando/internal/keyfile"
 )
 
@@ -82,11 +76,22 @@ type HostPublisher interface {
 // host with its agent port. Written whenever it differs, so a write that
 // failed is made the next round.
 type ControlPeers struct {
-	Store  HostPublisher
-	Self   string
-	Port   int
-	Pin    string
+	Store HostPublisher
+	Self  string
+	Port  int
+	Pin   string
+	// PinOf, when set, is the fingerprint of the certificate the host
+	// answers with now, in place of Pin: the certificate is renewed while
+	// the host runs (R-421).
+	PinOf  func() string
 	Logger *zap.Logger
+}
+
+func (c *ControlPeers) pin() string {
+	if c.PinOf != nil {
+		return c.PinOf()
+	}
+	return c.Pin
 }
 
 // Peers lists every host, this one with where it answers now.
@@ -99,18 +104,18 @@ func (c *ControlPeers) Peers(ctx context.Context) ([]Peer, error) {
 		if h.ID != c.Self {
 			continue
 		}
-		addr := PingAddress(h.Address, c.Port)
-		if addr == h.Address && h.CertSHA256 == c.Pin {
+		addr, pin := PingAddress(h.Address, c.Port), c.pin()
+		if addr == h.Address && h.CertSHA256 == pin {
 			break
 		}
-		if err := c.Store.SetHostAgent(ctx, h.ID, addr, c.Pin); err != nil {
+		if err := c.Store.SetHostAgent(ctx, h.ID, addr, pin); err != nil {
 			if c.Logger != nil {
 				c.Logger.Warn("could not record where this host answers the cluster's liveness checks; trying again next round",
 					zap.String("host_id", h.ID), zap.String("address", addr), zap.Error(err))
 			}
 			break
 		}
-		list[i].Address, list[i].CertSHA256 = addr, c.Pin
+		list[i].Address, list[i].CertSHA256 = addr, pin
 	}
 	return LivenessPeers(list), nil
 }
@@ -120,23 +125,26 @@ var errNotAHost = errs.New(errs.AuthInvalid, "This certificate is not one a host
 	WithRemedy("Join the host to the cluster with a new join token.")
 
 // Peers is the peer list, for the host whose verified certificate is
-// certDER: one a host of the cluster joined with (cluster_hosts.cert_sha256),
-// so a removed host no longer hears where the others are.
+// certDER: one a host of the cluster holds (cluster_hosts.cert_sha256, or
+// the one before its latest renewal), never a removed host's, so a removed
+// host no longer hears where the others are (R-415). A host presenting the
+// certificate it renewed to is using it, so the one before is no longer its
+// own (R-421).
 func (s *Service) Peers(ctx context.Context, certDER []byte) ([]Peer, error) {
-	if len(certDER) == 0 {
-		return nil, errNotAHost
+	h, pin, err := s.hostByCert(ctx, certDER)
+	if err != nil {
+		return nil, err
+	}
+	if pin == h.CertSHA256 && h.PrevCertSHA256 != "" {
+		if _, err := s.Store.ConfirmHostCert(ctx, h.ID, pin); err != nil {
+			return nil, err
+		}
 	}
 	list, err := s.Store.Hosts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	pin := hostagent.Fingerprint256(certDER)
-	for _, h := range list {
-		if h.CertSHA256 == pin {
-			return LivenessPeers(list), nil
-		}
-	}
-	return nil, errNotAHost
+	return LivenessPeers(list), nil
 }
 
 // ReadPeers reads a peer list written by PeerSync.
@@ -156,16 +164,11 @@ func ReadPeers(path string) ([]Peer, error) {
 // certificate, and the listener's checked against the cluster authority the
 // host was given (ca.crt), whatever name the join token's address uses.
 func JoinedTLS(authorityPEM []byte, cert tls.Certificate) (*tls.Config, error) {
-	block, _ := pem.Decode(authorityPEM)
-	if block == nil {
-		return nil, errors.New("the cluster authority's certificate is not PEM")
-	}
-	ca, err := x509.ParseCertificate(block.Bytes)
+	hash, err := authorityHash(authorityPEM)
 	if err != nil {
-		return nil, fmt.Errorf("the cluster authority's certificate cannot be read: %w", err)
+		return nil, err
 	}
-	sum := sha256.Sum256(ca.RawSubjectPublicKeyInfo)
-	cfg := PinnedTLS(hex.EncodeToString(sum[:]))
+	cfg := PinnedTLS(hash)
 	cfg.Certificates = []tls.Certificate{cert}
 	return cfg, nil
 }

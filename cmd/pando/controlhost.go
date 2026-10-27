@@ -42,6 +42,9 @@ type controlPings struct{ current atomic.Pointer[controlPing] }
 type controlPing struct {
 	tls     *tls.Config
 	monitor *liveness.Monitor
+	// members is the cluster's hosts as this one last read them: a removed
+	// host's pings are refused (R-415).
+	members *hosts.Members
 }
 
 var errNotWatching = errors.New("this control host is not answering the cluster's liveness checks yet")
@@ -63,7 +66,7 @@ func (c *controlPings) configFor(hello *tls.ClientHelloInfo) (*tls.Config, error
 // serve answers a connection that negotiated PingProtocol.
 func (c *controlPings) serve(_ *http.Server, conn *tls.Conn, _ http.Handler) {
 	if p := c.current.Load(); p != nil {
-		hostagent.AnswerPing(conn, p.monitor)
+		hostagent.AnswerPing(conn, p.monitor, p.members.Has)
 	}
 }
 
@@ -125,25 +128,32 @@ func (c controlLiveness) setup(ctx context.Context) (*controlPing, error) {
 		return nil, errors.New("this host is not recorded in the cluster's hosts yet")
 	}
 	self := list[i]
-	cert, pin, err := hosts.ControlHostCert(c.Dir, c.Authority, self.Name, self.Roles, time.Now())
+	// Both renewed while the host runs, before they expire (R-421).
+	cert, err := hosts.RenewingControlHostCert(c.Dir, c.Authority, self.Name, self.Roles, time.Now)
 	if err != nil {
 		return nil, err
 	}
-	as := hostagent.Authorities{{Cert: c.Authority.Cert, Key: c.Authority.Key}}
-	probeCert, err := as.IssueHostClient()
+	as := c.Authority.Authorities()
+	probeCert, err := as.IssueHostClient(self.ID)
 	if err != nil {
 		return nil, fmt.Errorf("could not issue the certificate this host checks the others with: %w", err)
 	}
-	peers := &hosts.ControlPeers{Store: c.Store, Self: self.ID, Port: c.Port, Pin: pin, Logger: c.Logger}
+	probe := as.InMemory(probeCert)
+	peers := &hosts.ControlPeers{
+		Store: c.Store, Self: self.ID, Port: c.Port, Logger: c.Logger,
+		PinOf: func() string { return hostagent.Fingerprint256(cert.Current().Certificate[0]) },
+	}
+	members := &hosts.Members{}
 	return &controlPing{
 		tls: &tls.Config{
-			MinVersion:   tls.VersionTLS13,
-			Certificates: []tls.Certificate{cert},
-			ClientAuth:   tls.RequireAndVerifyClientCert,
-			ClientCAs:    as.Pool(),
-			NextProtos:   []string{hostagent.PingProtocol},
+			MinVersion:     tls.VersionTLS13,
+			GetCertificate: cert.GetCertificate,
+			ClientAuth:     tls.RequireAndVerifyClientCert,
+			ClientCAs:      as.Pool(),
+			NextProtos:     []string{hostagent.PingProtocol},
 		},
-		monitor: newMonitor(self.ID, peers.Peers, probeCert, as.Pool(), c.Docker, c.Logger),
+		monitor: newMonitor(self.ID, members.Track(peers.Peers), probe.GetClientCertificate, as.Pool(), c.Docker, c.Logger),
+		members: members,
 	}, nil
 }
 
@@ -152,10 +162,7 @@ func (c controlLiveness) setup(ctx context.Context) (*controlPing, error) {
 // first host.
 func startControlLiveness(ctx context.Context, dir string, port int, store hosts.HostPublisher, authority *hosts.Authority,
 	joined hosts.Joined, hasJoined bool, logger *zap.Logger) *controlPings {
-	isSelf := hosts.InstallHost
-	if hasJoined {
-		isSelf = func(h state.Host) bool { return h.ID == joined.HostID }
-	}
+	isSelf := selfHost(joined, hasJoined)
 	// The runtime's own Docker: what this host's app containers run on. One
 	// that cannot be reached still leaves the host answering pings, since
 	// a host that answers none would be taken for lost while it runs; its
@@ -169,6 +176,15 @@ func startControlLiveness(ctx context.Context, dir string, port int, store hosts
 		Store: store, Authority: authority, Dir: dir, Port: port, IsSelf: isSelf, Docker: docker,
 		Logger: logger.Named("liveness"),
 	}.start(ctx)
+}
+
+// selfHost picks this host's row: the one it joined as, or else the
+// install's first host.
+func selfHost(joined hosts.Joined, hasJoined bool) func(state.Host) bool {
+	if hasJoined {
+		return func(h state.Host) bool { return h.ID == joined.HostID }
+	}
+	return hosts.InstallHost
 }
 
 // unreachableRuntime is a container runtime this host could not connect to:

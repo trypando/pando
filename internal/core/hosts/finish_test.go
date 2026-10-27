@@ -116,7 +116,7 @@ func hostCert(t *testing.T, a *hosts.Authority, name string) (tls.Certificate, s
 	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
 	require.NoError(t, err)
 	csr := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
-	certPEM, sha, err := a.IssueHost(csr, name, []string{"app"})
+	certPEM, sha, err := a.IssueHost(csr, name, []string{"app"}, time.Now())
 	require.NoError(t, err)
 	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
 	require.NoError(t, err)
@@ -179,6 +179,7 @@ func peerServer(t *testing.T, svc *hosts.Service) *httptest.Server {
 	require.NoError(t, err)
 	srv.TLS = tlsConfig
 	srv.StartTLS()
+	srv.TLS.Certificates = nil // httptest adds its own; the listener serves from GetCertificate
 	t.Cleanup(srv.Close)
 	return srv
 }

@@ -38,11 +38,11 @@ func writeJoinedFiles(t *testing.T, dir string, authority *hosts.Authority, name
 	require.NoError(t, err)
 	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
 	require.NoError(t, err)
-	certPEM, _, err := authority.IssueHost(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), name, []string{"app"})
+	certPEM, _, err := authority.IssueHost(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), name, []string{"app"}, time.Now())
 	require.NoError(t, err)
 	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
 	require.NoError(t, err)
-	clientCert, clientKey, err := authority.IssueHostClient()
+	clientCert, clientKey, err := authority.IssueHostClient(appHostID, time.Now())
 	require.NoError(t, err)
 	for file, data := range map[string][]byte{
 		hosts.HostCertFile:       certPEM,
@@ -82,10 +82,11 @@ func TestR416_AJoinedAppHostRunsItsAgent(t *testing.T) {
 	srv.TLS, err = authority.ListenerTLS([]string{"127.0.0.1"}, time.Now())
 	require.NoError(t, err)
 	srv.StartTLS()
+	srv.TLS.Certificates = nil // httptest adds its own; the listener serves from GetCertificate
 	t.Cleanup(srv.Close)
 
 	joined := hosts.Joined{HostID: appHostID, Name: "edge-1", Roles: []string{"app"}, Cluster: srv.URL}
-	_, _, err = appHostAgent(dir, joined, zap.NewNop())
+	_, _, _, err = appHostAgent(dir, joined, zap.NewNop())
 	require.ErrorContains(t, err, "server.cluster_dir", "nothing written yet")
 
 	writeJoinedFiles(t, dir, authority, "edge-1")
@@ -98,7 +99,7 @@ func TestR416_AJoinedAppHostRunsItsAgent(t *testing.T) {
 	go func() { done <- runAppHost(ctx, dir, joined, zap.NewNop()) }()
 
 	as := hostagent.Authorities{{Cert: authority.Cert, Key: authority.Key}}
-	probe, err := as.IssueHostClient()
+	probe, err := as.IssueCollector()
 	require.NoError(t, err)
 	cfg := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{probe}, RootCAs: as.Pool(), ServerName: hostagent.ServerName("edge-1")}
 	var view []byte
@@ -134,7 +135,7 @@ func TestAnAppHostRefusesWhatItCannotUse(t *testing.T) {
 	t.Setenv(multidocker.EnvAgentRuntimeSocket, "/tmp/pando-agent-test.sock")
 
 	t.Setenv(multidocker.EnvAgentPool, "everywhere")
-	_, _, err = appHostAgent(dir, joined, zap.NewNop())
+	_, _, _, err = appHostAgent(dir, joined, zap.NewNop())
 	require.ErrorContains(t, err, "is not an address range")
 	t.Setenv(multidocker.EnvAgentPool, "")
 
@@ -143,7 +144,7 @@ func TestAnAppHostRefusesWhatItCannotUse(t *testing.T) {
 
 	for _, file := range []string{hosts.HostClientKeyFile, hosts.HostKeyFile, hosts.AuthorityCertFile} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, file), []byte("junk"), 0o600))
-		_, _, err = appHostAgent(dir, joined, zap.NewNop())
+		_, _, _, err = appHostAgent(dir, joined, zap.NewNop())
 		require.ErrorContains(t, err, "server.cluster_dir", file)
 	}
 }

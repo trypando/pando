@@ -86,6 +86,11 @@ type Agent struct {
 
 	// Liveness answers other hosts' pings (ping.go, R-421). Nil refuses them.
 	Liveness Liveness
+
+	// Member reports whether a host is in the cluster now; a ping from one
+	// that is not, such as a host removed from it, is refused (R-415). Nil
+	// takes any host the authority issued a probe certificate to.
+	Member func(hostID string) bool
 }
 
 // Serve accepts on ln, which must be a plain TCP listener: the agent does the

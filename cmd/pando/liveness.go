@@ -26,7 +26,9 @@ func clusterLiveness(store clusterStore, authority *hosts.Authority, apps *state
 	svc := &liveness.Service{Store: store, Apps: apps, Audit: auditor, Logger: logger.Named("liveness")}
 
 	as := hostagent.Authorities{{Cert: authority.Cert, Key: authority.Key}}
-	cert, err := as.IssueHostClient()
+	// The collector's own certificate: it names no host, so its pings are
+	// recorded as no host's (hostagent.ProbeSender).
+	cert, err := as.IssueCollector()
 	if err != nil {
 		logger.Error("could not issue the certificate hosts are checked with; no host is watched", zap.Error(err))
 		return svc, nil

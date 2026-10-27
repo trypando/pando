@@ -86,7 +86,7 @@ func TestAgentLivenessTakesPartOnlyOnAJoinedHost(t *testing.T) {
 	require.NoError(t, err)
 	as, err := hostagent.ParseAuthorities(caPEM)
 	require.NoError(t, err)
-	cert, err := as.IssueHostClient()
+	cert, err := as.IssueHostClient(appHostID)
 	require.NoError(t, err)
 	keyDER, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
 	require.NoError(t, err)

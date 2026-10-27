@@ -1432,18 +1432,21 @@ pando identity-provider unlink <user-id> <provider-id> <external-id>
 Join a new Pando to a cluster with a join token
 
 ```
-pando join <token>
+pando join [token]
 ```
 
 Joins the Pando at --server, which must be new, with no account or app, to the
-cluster that minted the token (pando cluster tokens create). The Pando checks the
+cluster that minted the join token (pando cluster tokens create). The Pando checks the
 cluster's certificate authority against the token, joins, and restarts into the
-cluster. --setup-token is the setup_token that Pando printed to its log at startup.
+cluster. It also needs the setup_token that Pando printed to its log at startup.
+
+Each token is read from PANDO_JOIN_TOKEN and PANDO_SETUP_TOKEN, or asked for
+without echoing, or read from standard input one per line, join token first.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--name` |  | this host's name in the cluster (default: the machine's hostname) |
-| `--setup-token` |  | the setup token from the joining Pando's log (setup_token) |
+| `--setup-token` |  | the setup token from the joining Pando's log (setup_token); prefer PANDO_SETUP_TOKEN or the prompt |
 
 ### `login`
 

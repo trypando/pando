@@ -1603,7 +1603,7 @@ var toolList = []tool{
 	},
 	{
 		Name:        "pando_remove_host",
-		Description: "Remove a host from the cluster. Needs install.cluster.manage.",
+		Description: "Remove a host from the cluster. The installation's first host and the host serving the request cannot be removed. For a host that held the control role, the answer's `notice` and `rotate` name the keys to replace. Needs install.cluster.manage.",
 		Schema:      hostIDSchema,
 		request:     hostRequest("DELETE", ""),
 	},

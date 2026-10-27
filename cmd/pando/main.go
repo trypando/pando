@@ -392,6 +392,8 @@ func serve(ctx context.Context, configPath string) error {
 			TokenKeyPath:   cfg.Server.TokenKeyPath,
 			SecretsKeyPath: func(ctx context.Context) string { return secretsKeyPath(ctx, adapters, logger) },
 		},
+		// R-414: the host serving this process is never removed by it.
+		IsSelf: selfHost(joined, hasJoined),
 	}
 	joiner := newJoiner(cfg, clusterStore, func() {
 		select {

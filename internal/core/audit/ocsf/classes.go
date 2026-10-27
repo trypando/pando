@@ -176,6 +176,8 @@ var classes = map[string]Mapping{
 	"cluster.host.lost":                  apiUpdate,
 	"cluster.host.join":                  apiCreate,
 	"cluster.host.remove":                apiDelete,
+	"cluster.host.renew":                 apiUpdate,
+	"cluster.host.renew.denied":          apiUpdate,
 	"cluster.join":                       apiCreate,
 	"cluster.join.denied":                apiCreate,
 	"cluster.host.returned":              apiUpdate,

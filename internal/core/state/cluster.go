@@ -56,6 +56,25 @@ type Host struct {
 	JoinedWith string     `json:"joined_with,omitempty"`
 	JoinedAt   time.Time  `json:"joined_at"`
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+	// PrevCertSHA256 is the certificate the host held before its latest
+	// renewal, still its own until it presents the new one (R-421).
+	PrevCertSHA256 string `json:"-"`
+}
+
+// Pins is every certificate fingerprint that is the host's now, comma
+// separated, newest first: what a connection to its agent accepts
+// (hostagent.PinnedClientTLS).
+func (h Host) Pins() string {
+	if h.PrevCertSHA256 == "" || h.PrevCertSHA256 == h.CertSHA256 {
+		return h.CertSHA256
+	}
+	return h.CertSHA256 + "," + h.PrevCertSHA256
+}
+
+// HoldsCert reports whether the certificate with fingerprint sha is the
+// host's: the one it joined or last renewed with, or the one before it.
+func (h Host) HoldsCert(sha string) bool {
+	return sha != "" && (sha == h.CertSHA256 || sha == h.PrevCertSHA256)
 }
 
 // Cluster stores the cluster's hosts and its join tokens.
@@ -238,11 +257,11 @@ func (c *Cluster) Fresh(ctx context.Context) (accounts, apps bool, err error) {
 
 const msgRecordHost = "Could not record the host."
 
-const hostColumns = `id, name, roles, address, cert_sha256, platform, version, coalesce(joined_with, ''), joined_at, last_seen_at`
+const hostColumns = `id, name, roles, address, cert_sha256, platform, version, coalesce(joined_with, ''), joined_at, last_seen_at, coalesce(prev_cert_sha256, '')`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
-	err := row.Scan(&h.ID, &h.Name, &h.Roles, &h.Address, &h.CertSHA256, &h.Platform, &h.Version, &h.JoinedWith, &h.JoinedAt, &h.LastSeenAt)
+	err := row.Scan(&h.ID, &h.Name, &h.Roles, &h.Address, &h.CertSHA256, &h.Platform, &h.Version, &h.JoinedWith, &h.JoinedAt, &h.LastSeenAt, &h.PrevCertSHA256)
 	return h, err
 }
 
@@ -335,17 +354,100 @@ func (c *Cluster) Host(ctx context.Context, hostID string) (Host, error) {
 	return h, nil
 }
 
-// RemoveHost removes a host from the cluster.
+// ErrInstallHost refuses removing the install's own first host (R-414): it is
+// recorded again at its next start under a new ID, which would leave its apps'
+// homes and its history naming a host that no longer exists.
+var ErrInstallHost = errs.New(errs.StateInvalid, "This is the installation's own first host, which cannot be removed from the cluster. Every installation is a cluster of at least this host.").
+	WithRemedy("Remove the other hosts instead. To retire this machine, move the installation to another machine from a backup.")
+
+const msgRemoveHost = "Could not remove the host."
+
+// RemoveHost removes a host from the cluster, and revokes every certificate
+// it held, in one transaction, so that no host, listener or runtime takes
+// them again (R-415). The install's own first host is refused
+// (ErrInstallHost).
 func (c *Cluster) RemoveHost(ctx context.Context, hostID string) (Host, error) {
-	h, err := scanHost(c.db.QueryRow(ctx, `DELETE FROM cluster_hosts WHERE id = $1 RETURNING `+hostColumns, hostID))
+	tx, err := c.db.Begin(ctx)
+	if err != nil {
+		return Host{}, errs.Wrap(errs.Internal, msgRemoveHost, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	h, err := scanHost(tx.QueryRow(ctx, `SELECT `+hostColumns+` FROM cluster_hosts WHERE id = $1 FOR UPDATE`, hostID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return h, errs.Newf(errs.NotFound, "There is no host %s in the cluster.", hostID)
 	}
 	if err != nil {
-		return h, errs.Wrap(errs.Internal, "Could not remove the host.", err)
+		return h, errs.Wrap(errs.Internal, msgRemoveHost, err)
+	}
+	if h.JoinedWith == "" {
+		return h, ErrInstallHost
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM cluster_hosts WHERE id = $1`, hostID); err != nil {
+		return h, errs.Wrap(errs.Internal, msgRemoveHost, err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO cluster_revoked_certs (cert_sha256, host_id)
+		SELECT sha, $1 FROM unnest($2::text[]) AS sha WHERE sha <> ''
+		ON CONFLICT (cert_sha256) DO NOTHING`, hostID, []string{h.CertSHA256, h.PrevCertSHA256}); err != nil {
+		return h, errs.Wrap(errs.Internal, msgRemoveHost, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return h, errs.Wrap(errs.Internal, msgRemoveHost, err)
 	}
 	return h, nil
 }
+
+// CertRevoked reports whether the certificate with fingerprint sha belonged
+// to a host removed from the cluster (R-415).
+func (c *Cluster) CertRevoked(ctx context.Context, sha string) (bool, error) {
+	var revoked bool
+	if err := c.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM cluster_revoked_certs WHERE cert_sha256 = $1)`, sha).Scan(&revoked); err != nil {
+		return false, errs.Wrap(errs.Internal, "Could not check whether the certificate belongs to a removed host.", err)
+	}
+	return revoked, nil
+}
+
+// errNotHostsCert refuses a renewal presented with a certificate that is no
+// longer the host's.
+var errNotHostsCert = errs.New(errs.AuthInvalid, "This certificate is no longer this host's, so it cannot be renewed with.").
+	WithRemedy("Remove the host from the cluster and join it again with a new join token.")
+
+// RenewHostCert records that the host holding the certificate presented was
+// issued next (R-421). Both stay the host's until it presents next
+// (ConfirmHostCert): presented is kept as the one before, whichever of the
+// host's two it was, so a renewal whose answer never arrived leaves the host
+// with the certificate it still holds.
+func (c *Cluster) RenewHostCert(ctx context.Context, hostID, presented, next string) (Host, error) {
+	h, err := scanHost(c.db.QueryRow(ctx, `
+		UPDATE cluster_hosts SET prev_cert_sha256 = $2, cert_sha256 = $3, updated_at = now()
+		WHERE id = $1 AND $2 IN (cert_sha256, prev_cert_sha256)
+		  AND NOT EXISTS (SELECT 1 FROM cluster_revoked_certs WHERE cert_sha256 = $2)
+		RETURNING `+hostColumns, hostID, presented, next))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return h, errNotHostsCert
+	}
+	if err != nil {
+		return h, errs.Wrap(errs.Internal, "Could not record the host's renewed certificate.", err)
+	}
+	return h, nil
+}
+
+// ConfirmHostCert records that the host presented current, its newest
+// certificate: the one before it is no longer the host's. It reports whether
+// that changed anything.
+func (c *Cluster) ConfirmHostCert(ctx context.Context, hostID, current string) (bool, error) {
+	tag, err := c.db.Exec(ctx, `
+		UPDATE cluster_hosts SET prev_cert_sha256 = NULL, updated_at = now()
+		WHERE id = $1 AND cert_sha256 = $2 AND prev_cert_sha256 IS NOT NULL`, hostID, current)
+	if err != nil {
+		return false, errs.Wrap(errs.Internal, "Could not record that the host uses its renewed certificate.", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ClusterJoinAddrKey is the key refused joins from a client address are
+// counted under, as wrong passwords are (R-404 applied to R-415).
+func ClusterJoinAddrKey(addr string) string { return "cluster-join|addr|" + addr }
 
 // TouchHost records that a host was heard from.
 func (c *Cluster) TouchHost(ctx context.Context, hostID string) error {

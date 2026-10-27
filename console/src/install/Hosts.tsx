@@ -4,11 +4,13 @@
 // A join token is shown once, in the dialog that created it, which stays open
 // until closed: closing it takes the only copy with it, as a service token's
 // does (R-063). Revoking a token is one press, as a service token's is; removing
-// a host asks first, since the host is cut off at once.
+// a host asks first, since the host is cut off at once. The installation's first
+// host and the host serving the console offer no Remove: the API refuses both
+// (R-414). Removing a control host says which keys to replace (R-415).
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Dialog, Input, Select } from '@design';
+import { Banner, Button, Dialog, Input, Select } from '@design';
 
 import { api } from '@api/client';
 import type { Host, JoinToken } from '@api/types.gen';
@@ -47,11 +49,15 @@ export function Hosts() {
 function HostList() {
   const queries = useQueryClient();
   const [removing, setRemoving] = useState<Host | null>(null);
-  const hosts = useQuery({ queryKey: HOSTS, queryFn: () => api.get<{ hosts: Host[] | null }>('/cluster/hosts') });
+  const hosts = useQuery({
+    queryKey: HOSTS,
+    queryFn: () => api.get<{ hosts: Host[] | null; this_host?: string }>('/cluster/hosts'),
+  });
   const remove = useMutation({
-    mutationFn: (id: string) => api.del(`/cluster/hosts/${encodeURIComponent(id)}`),
+    mutationFn: (id: string) => api.del<{ notice?: string } | undefined>(`/cluster/hosts/${encodeURIComponent(id)}`),
     onSuccess: () => queries.invalidateQueries({ queryKey: HOSTS }),
   });
+  const removable = (row: Host) => Boolean(row.joined_with) && row.id !== hosts.data?.this_host;
 
   return (
     <>
@@ -77,16 +83,18 @@ function HostList() {
             header: '',
             width: '12ch',
             align: 'right',
-            render: (row: Host) => (
-              <Button variant="destructive" disabled={remove.isPending} onClick={() => setRemoving(row)}>
-                Remove
-              </Button>
-            ),
+            render: (row: Host) =>
+              removable(row) ? (
+                <Button variant="destructive" disabled={remove.isPending} onClick={() => setRemoving(row)}>
+                  Remove
+                </Button>
+              ) : null,
           },
         ]}
         rows={hosts.data?.hosts ?? []}
       />
       {remove.isError && <FailedBanner error={remove.error} remedy />}
+      {remove.data?.notice && <Banner tone="info">{remove.data.notice}</Banner>}
       {removing && (
         <Dialog
           open

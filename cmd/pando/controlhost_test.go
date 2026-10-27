@@ -296,7 +296,7 @@ func (c *simCluster) startAppHost(h *simHost) (string, string) {
 	require.NoError(t, err)
 	der, err := as.IssueHost(h.name, []string{state.HostRoleApp}, &key.PublicKey)
 	require.NoError(t, err)
-	probeCert, err := as.IssueHostClient()
+	probeCert, err := as.IssueHostClient(h.id)
 	require.NoError(t, err)
 	peers := func(ctx context.Context) ([]hosts.Peer, error) {
 		list, err := c.rows.Hosts(ctx)
@@ -305,7 +305,7 @@ func (c *simCluster) startAppHost(h *simHost) (string, string) {
 		}
 		return hosts.LivenessPeers(list), nil
 	}
-	h.monitor = newMonitor(h.id, peers, probeCert, as.Pool(), h.docker, zap.NewNop())
+	h.monitor = newMonitor(h.id, peers, staticCert(probeCert), as.Pool(), h.docker, zap.NewNop())
 	c.throughNetwork(h)
 	agent := &hostagent.Agent{
 		TLS: &tls.Config{

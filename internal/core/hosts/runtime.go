@@ -69,7 +69,7 @@ func RuntimeHosts(hosts []state.Host, local string) ([]RuntimeHost, error) {
 				WithRemedy("Remove the host and join it again under a name such as app-host-2.")
 		}
 		out = append(out, RuntimeHost{
-			Name: h.Name, Endpoint: agentScheme + h.Address, CertSHA256: h.CertSHA256,
+			Name: h.Name, Endpoint: agentScheme + h.Address, CertSHA256: h.Pins(),
 		})
 	}
 	return out, nil

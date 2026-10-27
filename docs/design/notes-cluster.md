@@ -337,9 +337,12 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
 Timings **[P]**: `T` 30 s, probes every `T/6` (5 s), each within half an interval.
 
 The ping is `PANDO-AGENT/1 ping <host-id>` on the agent port (a control host's cluster port), answered `PONG <view>`. Hosts probe
-with a certificate whose subject is `pando-host`, issued from the cluster authority; an agent
-answers a ping from it and refuses anything else, so a host's certificate opens no connection to
-another host's apps (R-023).
+with a certificate whose subject is `pando-host`, issued from the cluster authority to that host
+alone: it carries the host's ID as its one URI, `pando-host:<host-id>`, and the leader's collector
+has its own, marked by the organizational unit `collector` (review fixes, below). The ping is taken
+to be from the host the certificate names, and one naming another host is refused. An agent answers
+a ping from such a certificate and refuses anything else, so a host's certificate opens no
+connection to another host's apps (R-023).
 
 Left to other slices: `Homes` and `Failover` (the standby slice; until set, a lost host is marked
 and nothing is started), clearing `lost_at` and removing the returned host's copies (R-419,
@@ -424,7 +427,8 @@ host is watched").
 - **`POST /setup/join`** needs the setup token, as `POST /setup` does (finishing the join), and is
   refused cross-site like sign-in.
 - **Audit:** the cluster writes `cluster.host.join` (principal: the join token) and
-  `cluster.join.denied`; the joining Pando writes `cluster.join` and `cluster.join.denied` in its own
+  `cluster.join.denied`, keeping of what a refused caller sent only a name and version that pass
+  the checks, `(invalid)` otherwise (review fixes, below); the joining Pando writes `cluster.join` and `cluster.join.denied` in its own
   log, which a control host leaves behind for the cluster's when it restarts.
 - **Ports.** The cluster listener's default is 7444, the host agent's (`hostagent.DefaultPort`) 7443,
   so a host holding both roles binds both.
@@ -527,8 +531,8 @@ host is watched").
   Join a cluster form and `pando join --setup-token` send it.
 - **Ports.** `server.cluster_addr` defaults to `:7444` (`hosts.DefaultClusterPort`), the agent stays
   on 7443; a token minted with an address without a port gets 7444.
-- **What an app host is given** besides its certificate: a `pando-host` client certificate and its
-  key (`host-client.crt`, `host-client.key`), issued by the control side at join because only a
+- **What an app host is given** besides its certificate: a `pando-host` client certificate
+  carrying its host ID, and its key (`host-client.crt`, `host-client.key`), issued by the control side at join because only a
   holder of the authority's key can issue one — it opens nothing but pings (R-421) — and the
   runtime's `network_pool`, kept in `joined.json` as `network_pool`. Every join gets the client
   certificate; the pool is sent for the app role.
@@ -538,12 +542,13 @@ host is watched").
   `joined.json`, else 10.213.0.0/16, and the runtime socket from `PANDO_AGENT_RUNTIME_SOCKET`, else
   `DOCKER_HOST` when it is `unix://`, else `$XDG_RUNTIME_DIR/docker.sock` (rootless, R-402, R-416);
   none of those found stops it with the variable to set. It listens on `PANDO_AGENT_LISTEN`, else
-  `:7443`. Its `liveness.Monitor` is its host ID from `joined.json`, probing with the `pando-host`
-  certificate and fencing through the same socket.
+  `:7443`. Its `liveness.Monitor` is its host ID from `joined.json`, probing with its probe
+  certificate and fencing through the same socket. Both certificates are renewed while it runs
+  (review fixes, below).
 - **The peer list** is `GET /cluster/peers` on the cluster listener, which now asks for a client
   certificate and checks one when given (`VerifyClientCertIfGiven`: a joining host has none). The
-  certificate must be one a host joined with — its fingerprint is a row's `cert_sha256` — so a
-  removed host hears nothing (`hosts.Service.Peers`, `AUTH_INVALID` otherwise). It answers
+  certificate must be one a host holds — its fingerprint is a row's `cert_sha256`, or
+  `prev_cert_sha256` during a renewal — and never a revoked one, so a removed host hears nothing (`hosts.Service.Peers`, `AUTH_INVALID` otherwise). It answers
   `{"hosts":[{id,name,address}]}`. `hosts.PeerSync` fetches it from the join token's address every
   round (2 s timeout), writes `peers.json` in the cluster directory, and when the listener cannot be
   reached returns what that file last held. The joined host connects trusting the authority in
@@ -555,7 +560,9 @@ host is watched").
   `control`; roles control and app; address the advertise URL's host, else the external URL's, else
   the machine's, with port 7443; `cert_sha256` 64 zeros [P], since nothing pins it (below). A failure
   is logged and startup goes on. **A host with no join token is the install's own** (`hosts.InstallHost`);
-  join tokens are never deleted, so `joined_with` stays set on every joined host.
+  a join token cannot be deleted while a host joined with it (`ON DELETE RESTRICT`, migration
+  000092), so `joined_with` stays set on every joined host. The first host cannot be removed
+  (`state.ErrInstallHost`).
 - **Counting.** The "+1" is gone: `hosts.Service.Count` is the rows, and never less than one, so a
   single-host install reports one host before and after its row is made; `DefaultRoles` reads
   `Count`.
@@ -591,7 +598,8 @@ host that was cut off never fenced.
   process on every control host (`startControlLiveness`, `cmd/pando/controlhost.go`), on every
   replica, not only the leader. Its peers come from the database (`hosts.ControlPeers`); a read that
   fails keeps the last list, so Postgres away stops nothing. It probes with a `pando-host`
-  certificate issued in memory at start, since a control host holds the authority. It fences
+  certificate carrying its host ID, issued in memory at start and again before it expires, since a
+  control host holds the authority. It fences
   through `hostagent.DockerFencer` on the Docker client `DOCKER_HOST` names (else the default
   socket): only containers labeled for an app, never Pando, the edge or the runtime's agent. A
   runtime it cannot reach still leaves it answering pings; its fence then fails and says so every
@@ -604,7 +612,8 @@ host that was cut off never fenced.
   for a joined control host, the one its join wrote; for the first host, one issued from the
   authority at its first start and kept there, so its pin is the same across restarts. Either is
   issued again, and replaced, when missing, unreadable, for another name, or within 30 days [P] of
-  its end, which also renews a joined control host's.
+  its end, at start and while the host runs (`hosts.RenewingControlHostCert`), which also renews a
+  joined control host's.
 - **Its row.** Each round `hosts.ControlPeers` sets the host's own `address` to the host it was
   recorded with and the cluster listener's port (`hosts.PingAddress`), and `cert_sha256` to the
   certificate it answers with (`state.Cluster.SetHostAgent`), when either differs. The first host's
@@ -624,3 +633,84 @@ host that was cut off never fenced.
   the first host that do not share `server.cluster_dir` each keep their own certificate and rewrite
   its pin in turn; nothing pins it for liveness, so pings are unaffected. Under Kubernetes or Incus
   a control host has no app containers, and its fence logs that it cannot reach Docker.
+
+### As built: review fixes, certificates and security
+
+A security review of #347 found that no cluster certificate was ever renewed, that a ping's sender
+was not authenticated, that the join listener let anyone fill the audit log, and that a removed host
+kept working credentials. What changed:
+
+- **Every cluster certificate is renewed (R-421).** Leaf certificates are valid 90 days
+  (`hostagent.leafValidity`) and are issued again once 30 days or fewer are left
+  (`hostagent.RenewBefore` [P]); left alone, every host's would have lapsed within days of the
+  others' and the hosts would have fenced together. A running process takes the new one at its next
+  handshake through `tls.Config.GetCertificate`/`GetClientCertificate` (`hostagent.RenewingCert`),
+  never by restarting:
+  - **In memory, from the authority** (`Authorities.InMemory`, renewed on the handshake that finds
+    it due): Pando's proxy's client certificate (every `hostagent.ClientTLS` configuration made for
+    one certificate shares one renewal, so the runtime adapters needed no change), the leader's
+    collector's, a control host's probe certificate, and the cluster listener's own (365 days).
+  - **A control host's own** (`hosts.RenewingControlHostCert`): reissued into `host.crt`/`host.key`;
+    `hosts.ControlPeers.PinOf` writes the new fingerprint into its row the next round.
+  - **A joined host's own and its probe certificate** (`hosts.HostRenewal`, checked hourly off the
+    handshake): `POST /cluster/renew` on the cluster listener, presenting the certificate it holds,
+    with a certificate request for a new key. `hosts.Service.Renew` finds the host by that
+    certificate's fingerprint, issues a certificate for the new key with the same name and roles and
+    a new probe certificate, and records the new fingerprint with `state.Cluster.RenewHostCert`, in
+    one statement that keeps the presented one as `prev_cert_sha256` (migration 000092). Both are
+    the host's until it presents the new one on `GET /cluster/peers`, which clears the old
+    (`ConfirmHostCert`), so a renewal whose answer was lost leaves the host working with what it
+    holds and able to renew again. The runtime's host list pins both meanwhile
+    (`state.Host.Pins`, comma-separated, `hostagent.PinnedClientTLS`); renewing changes that list, so
+    each renewal costs one runtime reload, about every 60 days per host. Audited as
+    `cluster.host.renew`, refusals with a certificate as `cluster.host.renew.denied`; a renewal with
+    no certificate is refused and not audited. The files are written key first; a crash between the
+    four writes leaves a pair that does not match, which the next start reports.
+  - Not changed: the multi-host Docker runtime's own agents, given their certificate in the
+    environment, are re-created when it is due, as before (`labelAgentIssued`).
+- **A ping's sender is its certificate's (R-421).** Each host's probe certificate carries its ID
+  (`IssueHostClient(hostID)`), the collector's is marked `collector` (`IssueCollector`), and
+  `hostagent.ProbeSender` reads the sender from the verified leaf. A ping naming anyone else, a host
+  naming `-`, the collector naming a host, and any certificate naming no host (Pando's proxy's, or
+  the one shared `pando-host` certificate every host used to hold) are refused. Before, one host
+  could ping in every other host's name and keep a cut-off host from fencing.
+- **Joins are bounded (R-347, R-404, R-415).** `hosts.CheckJoinRequest` checks everything that needs
+  no token before the token: the name, the agent address as `host:port` with a numeric port and a
+  DNS name or IP address (a bad one broke the runtime configuration for every host), and the
+  platform and version as up to 64 printable characters. The audit keeps the name and version only
+  when they pass, `(invalid)` otherwise, and no message echoes more than 64 characters of them. The
+  cluster's version is said only once the token is good: the check moved inside the join's
+  transaction, after the token is redeemed, so it still spends no use. Refused joins are limited per
+  client address as wrong passwords are, `state.ClusterJoinAddrKey` [P: 20 in 15 minutes], on
+  `POST /cluster/join` and `POST /setup/join`; over the limit the answer is `RATE_LIMITED` with
+  `Retry-After`, audited with the reason only, as R-404 audits every refusal.
+  - **The listener stays on by default.** Considered and not done: starting it only once a join
+    token exists or a second host has joined. Tokens are minted on any replica and a join is expected
+    within minutes of minting, so every replica would have to watch for tokens; and once a second
+    host exists the listener answers pings and serves the peer list and renewal anyway. With the
+    bounds and the limit above, an unauthenticated caller can make one bounded audit row per refused
+    request, the same exposure sign-in has. A single-host install behaves as before.
+- **A removed host's credentials are refused (R-415).** `state.Cluster.RemoveHost` records the
+  host's current and previous fingerprints in `cluster_revoked_certs` in the same transaction as the
+  delete; `Service.Peers` and `Service.Renew` refuse a revoked certificate, and the runtime's host
+  list no longer has the host. Pings are refused by identity rather than by fingerprint: an agent
+  and a control host's listener refuse a ping from a host ID not in the peer list they last heard
+  (`hosts.Members`, `hostagent.Agent.Member`, `AnswerPing`'s `member`), which covers every probe
+  certificate a removed host was ever issued, since IDs are never reused. Before any list is heard a
+  host answers every ping, so a host that has just started is not reported unreached. A removed
+  control host held the authority's key and could issue itself anything: `DELETE
+  /cluster/hosts/{id}` now answers 200 with the host and, for a control host, `rotate` and `notice`
+  naming the secrets key, the API token key, the cluster certificate authority and the database
+  password to replace. The CLI prints the notice, MCP returns it, and the console shows it.
+- **The first host and this host cannot be removed (R-414).** `RemoveHost` refuses the row with no
+  join token (`ErrInstallHost`), and `hosts.Service.Remove` refuses the host serving the request
+  (`Service.IsSelf`); `GET /cluster/hosts` returns `this_host`, and the console offers no Remove on
+  either. Removing the first host used to be accepted, and its next start recorded it again under a
+  new ID, orphaning its apps' homes and its pin.
+- **`pando join` needs no secret on the command line (R-194).** The join token is the optional
+  argument, else `PANDO_JOIN_TOKEN`, else asked for without echo (or read from a pipe, one per
+  line); the setup token is `--setup-token`, else `PANDO_SETUP_TOKEN`, else asked for. Either given
+  as an argument is warned about.
+- **Not done here.** `multidocker`'s `cert_sha256` field comment still says "the certificate the
+  host joined with"; it now holds every certificate that is the host's (owned by the runtime slice).
+  Rotating the keys a removed control host held is by hand; Pando has no rotation for them yet.

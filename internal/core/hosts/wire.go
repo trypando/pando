@@ -19,7 +19,34 @@ const (
 	// PeersPath lists the cluster's hosts to a host that has joined, which
 	// presents its own certificate (Service.Peers, R-421).
 	PeersPath = "/cluster/peers"
+	// RenewPath issues a joined host new certificates before its own expire,
+	// to the host presenting the one it holds (Service.Renew, R-421).
+	RenewPath = "/cluster/renew"
 )
+
+// WireRenewRequest is POST /cluster/renew's body: a certificate request for
+// the host's next key.
+type WireRenewRequest struct {
+	CSR string `json:"csr"`
+}
+
+// WireRenewResult is POST /cluster/renew's answer. HostClientKey is the
+// probe certificate's key, sent only over the mutually authenticated
+// connection.
+type WireRenewResult struct {
+	Host           state.Host `json:"host"`
+	Certificate    string     `json:"certificate"`
+	HostClientCert string     `json:"host_client_certificate"`
+	HostClientKey  string     `json:"host_client_key"`
+}
+
+// Wire is the renewal as the listener sends it.
+func (r RenewResult) Wire() WireRenewResult {
+	return WireRenewResult{
+		Host: r.Host, Certificate: string(r.Certificate),
+		HostClientCert: string(r.HostClientCert), HostClientKey: r.HostClientKey.Reveal(),
+	}
+}
 
 // WireJoinRequest is POST /cluster/join's body.
 type WireJoinRequest struct {

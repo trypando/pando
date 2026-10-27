@@ -16,6 +16,7 @@ const host: Host = {
   roles: ['control', 'app'],
   address: '10.0.0.2:7443',
   cert_sha256: 'ab',
+  joined_with: 'jt_01',
   version: '0.17.0',
   joined_at: '2026-10-20T10:00:00Z',
   last_seen_at: '2026-10-26T09:00:00Z',
@@ -92,6 +93,29 @@ describe('the cluster’s hosts (R-414)', () => {
     expect(screen.text()).toContain('Remove edge-2');
     await screen.press('Remove host');
     expect(calls.find((c) => c.method === 'DELETE')?.path).toContain('/api/v1/cluster/hosts/host_01');
+  });
+
+  it('offers no Remove on the installation’s first host or the host serving the console (R-414)', () => {
+    recording(() => unanswered());
+    screen = mount(<Hosts />, [
+      [['cluster-hosts'], { hosts: [{ ...host, id: 'host_first', joined_with: undefined }, { ...host, id: 'host_self', name: 'core-2' }], this_host: 'host_self' }],
+      [['cluster-join-tokens'], { tokens: [] }],
+    ]);
+    const removes = [...document.querySelectorAll('button')].filter((b) => b.textContent === 'Remove');
+    expect(removes).toHaveLength(0);
+  });
+
+  it('says which keys to replace after removing a control host (R-415)', async () => {
+    recording((c) =>
+      c.method === 'DELETE'
+        ? reply({ host: host, rotate: ['secrets key'], notice: 'Host edge-2 held the control role. Replace its keys.' })
+        : reply({ hosts: [], tokens: [] }),
+    );
+    screen = mount(<Hosts />, seed([host], []));
+    await screen.press('Remove');
+    await screen.press('Remove host');
+    await screen.settle(() => {});
+    expect(screen.text()).toContain('Host edge-2 held the control role. Replace its keys.');
   });
 
   it('shows why a removal was refused', async () => {

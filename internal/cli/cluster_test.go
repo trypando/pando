@@ -19,6 +19,8 @@ func TestR414_ClusterCommandsCallTheirEndpoints(t *testing.T) {
 		reply("GET /cluster/join-tokens", map[string]any{"tokens": []map[string]any{
 			{"id": "jt_1", "roles": []string{"app"}, "max_uses": 2, "uses": 1, "expires_at": "2026-10-27T12:00:00Z", "revoked_at": "2026-10-26T13:00:00Z"},
 		}}).
+		reply("DELETE /cluster/hosts/host_2", map[string]any{"host": map[string]any{"id": "host_2"}, "rotate": []string{"secrets key"},
+			"notice": "Host app-2 held the control role, so it was handed the installation's secrets key."}).
 		reply("POST /cluster/hosts/host_1/lost", map[string]any{"host_id": "host_1", "name": "app-1", "started": []string{}, "skipped": []any{}}).
 		reply("POST /cluster/hosts/host_2/lost", map[string]any{"host_id": "host_2", "name": "app-2", "started": []string{"app_1"},
 			"skipped": []map[string]any{{"app_id": "app_2", "reason": "failed", "detail": "A failed app is not failed over."}}}).
@@ -49,6 +51,10 @@ func TestR414_ClusterCommandsCallTheirEndpoints(t *testing.T) {
 	require.NoError(t, got.err, got.errOut)
 	require.Contains(t, got.out, "Removed the host.")
 	api.bodyFor("DELETE /cluster/hosts/host_1")
+
+	got = run(t, api, "", "cluster", "hosts", "remove", "host_2")
+	require.NoError(t, got.err, got.errOut)
+	require.Contains(t, got.out, "Host app-2 held the control role", "removing a control host names the keys to replace")
 
 	got = run(t, api, "", "cluster", "hosts", "lost", "host_1")
 	require.NoError(t, got.err, got.errOut)

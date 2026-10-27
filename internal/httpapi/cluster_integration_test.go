@@ -78,7 +78,7 @@ func TestR414_TheClusterNeedsItsOwnVerb(t *testing.T) {
 
 	hostsList := i.do(i.admin(), http.MethodGet, "/cluster/hosts", nil)
 	require.Equal(t, http.StatusOK, hostsList.Code, hostsList.String())
-	require.JSONEq(t, `{"hosts":[]}`, hostsList.String())
+	require.JSONEq(t, `{"hosts":[],"this_host":""}`, hostsList.String())
 	gone := i.do(i.admin(), http.MethodDelete, "/cluster/hosts/host_nobody", nil)
 	require.Equal(t, string(errs.NotFound), gone.ErrorCode(), gone.String())
 }
