@@ -139,12 +139,15 @@ func (s *Server) reserveJoin(w http.ResponseWriter, r *http.Request) (state.Rese
 	return s.reserveAttempt(w, r, func() { s.denyJoin(r, map[string]any{"reason": "rate_limited"}) }, limit)
 }
 
-// settleJoin ends a join's reservation: any refusal counts against the
-// address, except one Pando could not decide; a join that succeeded is
-// taken back.
+// settleJoin ends a join's reservation (R-404): a refusal that tested a
+// secret counts against the address — a join token that is wrong, expired,
+// used up or revoked (AUTH_TOKEN_INVALID), or a wrong setup token
+// (AUTH_INVALID). Anything else is taken back: a join that succeeded, and a
+// refusal for the request's shape, the version or the cluster's readiness,
+// which guesses at nothing.
 func (s *Server) settleJoin(r *http.Request, res state.Reservation, err error) {
 	ctx := context.WithoutCancel(r.Context())
-	if err != nil && errs.CodeOf(err) != errs.Internal {
+	if code := errs.CodeOf(err); err != nil && (code == errs.AuthTokenInvalid || code == errs.AuthInvalid) {
 		_ = s.failedAttempts().Fail(ctx, res)
 		return
 	}
