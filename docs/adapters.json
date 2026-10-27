@@ -3160,6 +3160,131 @@
               ]
             }
           ]
+        },
+        {
+          "category": "backup",
+          "kind": "s3",
+          "name": "S3-compatible bucket",
+          "description": "Writes backups to a bucket in Amazon S3, Cloudflare R2, Backblaze B2, MinIO or another S3-compatible store.",
+          "fields": [
+            {
+              "key": "endpoint",
+              "label": "Endpoint",
+              "help": "Empty is Amazon S3.",
+              "type": "string",
+              "placeholder": "https://s3.us-west-002.backblazeb2.com"
+            },
+            {
+              "key": "region",
+              "label": "Region",
+              "help": "Cloudflare R2 uses auto.",
+              "type": "string",
+              "required": true,
+              "placeholder": "us-east-1"
+            },
+            {
+              "key": "bucket",
+              "label": "Bucket",
+              "help": "It has to exist already.",
+              "type": "string",
+              "required": true,
+              "placeholder": "pando-backups"
+            },
+            {
+              "key": "prefix",
+              "label": "Prefix",
+              "help": "Empty is the top of the bucket.",
+              "type": "string",
+              "placeholder": "pando/"
+            },
+            {
+              "key": "path_style",
+              "label": "Path-style addresses",
+              "help": "Needed by MinIO and most self-hosted stores.",
+              "type": "bool"
+            },
+            {
+              "key": "access_key_id",
+              "label": "Access key ID",
+              "help": "A key that can list the bucket and put, get and delete objects in it.",
+              "type": "string",
+              "required": true,
+              "credential": true
+            },
+            {
+              "key": "secret_access_key",
+              "label": "Secret access key",
+              "help": "Stored encrypted, and never shown again.",
+              "type": "string",
+              "required": true,
+              "credential": true
+            }
+          ],
+          "id_prefix": "bkp_",
+          "steps": [
+            {
+              "id": "bucket",
+              "label": "Bucket",
+              "title": "Create a bucket",
+              "do": [
+                {
+                  "text": "In the store's console, create a private bucket, such as `pando-backups`."
+                },
+                {
+                  "text": "Add a lifecycle rule that deletes incomplete multipart uploads after one day."
+                },
+                {
+                  "text": "Copy the bucket's region and, unless the store is Amazon S3, its S3 API endpoint."
+                }
+              ],
+              "fields": [
+                "endpoint",
+                "region",
+                "bucket",
+                "prefix",
+                "path_style"
+              ]
+            },
+            {
+              "id": "access_key",
+              "label": "Access key",
+              "title": "Create an access key",
+              "do": [
+                {
+                  "text": "Create an access key limited to the bucket, allowed these actions:",
+                  "table": {
+                    "columns": [
+                      "Action"
+                    ],
+                    "rows": [
+                      [
+                        "s3:ListBucket"
+                      ],
+                      [
+                        "s3:PutObject"
+                      ],
+                      [
+                        "s3:GetObject"
+                      ],
+                      [
+                        "s3:DeleteObject"
+                      ],
+                      [
+                        "s3:AbortMultipartUpload"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "text": "Copy the **Access key ID** and the **Secret access key**."
+                }
+              ],
+              "fields": [
+                "access_key_id",
+                "secret_access_key"
+              ]
+            }
+          ]
         }
       ]
     },

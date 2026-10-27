@@ -73,6 +73,7 @@ func TestNewAdapterBuildsEachShippedKind(t *testing.T) {
 		{"secrets", "local"},
 		{"builder", "buildkit"},
 		{"backup", "local"},
+		{"backup", "s3"},
 		{"services", "docker"},
 		{"scanner", "trivy"},
 		{"ai", "anthropic"},

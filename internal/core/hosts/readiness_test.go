@@ -169,3 +169,53 @@ func TestR417_TheClusterCountIncludesThisHost(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 }
+
+type fakeRouting struct {
+	api.RoutingAdapter
+	perEdge bool
+	err     error
+}
+
+func (f fakeRouting) Capabilities(context.Context) (api.RoutingCapabilities, error) {
+	return api.RoutingCapabilities{CertificatesPerEdge: f.perEdge}, f.err
+}
+
+type fakeRoutes map[string]fakeRouting
+
+func (f fakeRoutes) ByCategory(api.Category) []string {
+	refs := make([]string, 0, len(f)+1)
+	for ref := range f {
+		refs = append(refs, ref)
+	}
+	return append(refs, "rte_gone")
+}
+
+func (f fakeRoutes) Routing(ref string) (api.RoutingAdapter, bool) {
+	r, ok := f[ref]
+	return r, ok
+}
+
+// TestR417_AControlHostJoinsOnlyWhenItsEdgeCanShareCertificates asserts
+// O-68's refusal: a routing adapter whose edge orders its own certificates,
+// where Pando cannot order them for every host, refuses a control host's join
+// naming the fix, and leaves an app host's join alone, since an app host runs
+// no edge.
+func TestR417_AControlHostJoinsOnlyWhenItsEdgeCanShareCertificates(t *testing.T) {
+	ctx := context.Background()
+	b, p, r := ready()
+	check := hosts.NewReadiness(b, p, r)
+	check.Routing = fakeRoutes{"rte_traefik": {perEdge: false}}
+	require.NoError(t, check.ReadyToJoin(ctx, []string{"control"}))
+
+	check.Routing = fakeRoutes{"rte_traefik": {perEdge: false}, "rte_theirs": {perEdge: true}}
+	for _, roles := range [][]string{{"control"}, {"app", "control"}, nil} {
+		e := refusal(t, check.ReadyToJoin(ctx, roles))
+		require.Contains(t, e.Message, `"rte_theirs"`)
+		require.Contains(t, e.Message, "orders its own certificates")
+		require.Contains(t, e.Remedy, "Let Pando run Traefik")
+	}
+	require.NoError(t, check.ReadyToJoin(ctx, []string{"app"}))
+
+	check.Routing = fakeRoutes{"rte_traefik": {err: errors.New("capabilities unreadable")}}
+	require.ErrorContains(t, check.ReadyToJoin(ctx, []string{"control"}), "capabilities unreadable")
+}

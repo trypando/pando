@@ -1,0 +1,1 @@
+ALTER TABLE adapter_configs DROP CONSTRAINT IF EXISTS adapter_configs_no_inline_s3_keys;

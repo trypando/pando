@@ -28,6 +28,13 @@ type EdgeRequest struct {
 	// routes (RuntimeCapabilities.EdgeConfig). Empty means the runtime did not
 	// say, which is read as EdgeConfigSharedMount.
 	EdgeConfig []EdgeConfig
+
+	// Clustered says this edge is one of several, one in front of each
+	// control host (R-417). An edge that would order its own certificates
+	// asks Pando to instead (EdgePlan.Issue): Pando's leader orders each
+	// certificate once, keeps it in the database, and every edge serves it,
+	// and any control host answers the HTTP-01 challenge (O-68).
+	Clustered bool
 }
 
 // EdgeConfig is one way an edge receives its routes.
@@ -99,6 +106,14 @@ type EdgePlan struct {
 	// core from Issue before the plan reaches the runtime. The runtime
 	// stores them where the edge reads them, under each one's Name.
 	Certificates []EdgeCertificate
+
+	// CertificateDir is where a runtime that hands an edge its certificates
+	// as files writes them: a path in Pando's own filesystem, inside one of
+	// the plan's SharedWithPando mounts, holding each certificate as
+	// <Name>.crt and its key as <Name>.key. Any other .crt or .key file there
+	// is removed. Empty for a runtime that stores them some other way — on
+	// Kubernetes, as Secrets named for each.
+	CertificateDir string
 }
 
 // Challenge types an ACME order is proved with (R-169).

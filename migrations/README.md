@@ -18,6 +18,7 @@ miss the thing they catch. When you write a migration, these are not optional ex
 | `host_policy.id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1)` | R-015 — one install, one org |
 | `volumes.app_id … ON DELETE RESTRICT` | R-204 — volumes survive app deletion |
 | `CHECK (NOT (config ? 'credentials'))` on `adapter_configs` | R-190 — an adapter credential is never stored in the clear (O-20) |
+| `adapter_configs_no_inline_s3_keys` refusing `secret_access_key`, and an `s3` backup destination's `access_key_id` | R-190 — an access key is never stored in the clear (O-69) |
 | `identity_adapters_no_inline_credentials` refusing `credentials`, `client_secret`, `scim_token` | R-190 — an identity provider's secret is never stored in the clear |
 | `user_identities` primary key `(adapter_id, external_id)` | O-1 — one identity reaches exactly one account |
 | `users_alias_is_suspended` | O-1 — an account whose identities were moved away cannot be reactivated |

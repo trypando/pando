@@ -3,12 +3,15 @@ package hosts
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/trypando/pando/internal/adapter/api"
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/planner"
 	"github.com/trypando/pando/internal/core/policy"
+	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 )
 
@@ -28,11 +31,22 @@ type PolicyLoader interface {
 	Load(ctx context.Context) (policy.Document, error)
 }
 
+// RoutingAdapters is the slice of *api.Registry the certificate check reads.
+type RoutingAdapters interface {
+	ByCategory(c api.Category) []string
+	Routing(ref string) (api.RoutingAdapter, bool)
+}
+
 // Readiness checks an install is ready for a second host to join.
 type Readiness struct {
 	backups  BackupDestinations
 	policy   PolicyLoader
 	registry planner.InstallRegistries
+
+	// Routing is the adapter registry, for the check that a second control
+	// host's edge can share certificates with this one's (O-68). Nil skips
+	// it.
+	Routing RoutingAdapters
 }
 
 // NewReadiness returns the check. backups is the adapter registry, policy the
@@ -46,9 +60,10 @@ func NewReadiness(backups BackupDestinations, policy PolicyLoader, registry plan
 type problem struct{ message, remedy string }
 
 // ReadyToJoin refuses a join, whatever its roles, while backups, audit
-// archives or app images would stay on this host alone (R-417). Every reason
-// is said at once, so one round of changes is enough.
-func (r *Readiness) ReadyToJoin(ctx context.Context, _ []string) error {
+// archives or app images would stay on this host alone (R-417), and a
+// control host's while its edge could not share this one's certificates
+// (O-68). Every reason is said at once, so one round of changes is enough.
+func (r *Readiness) ReadyToJoin(ctx context.Context, roles []string) error {
 	var found []problem
 	add := func(p *problem) {
 		if p != nil {
@@ -74,7 +89,44 @@ func (r *Readiness) ReadyToJoin(ctx context.Context, _ []string) error {
 			remedy:  "Set PANDO_REGISTRY_URL, with PANDO_REGISTRY_USERNAME and PANDO_REGISTRY_PASSWORD, where Pando is deployed, or configure an image registry adapter.",
 		})
 	}
+	if len(roles) == 0 || slices.Contains(roles, state.HostRoleControl) {
+		edges, err := r.edgeCertificates(ctx)
+		if err != nil {
+			return err
+		}
+		found = append(found, edges...)
+	}
 	return notReady(found)
+}
+
+// edgeCertificates refuses a routing adapter whose edge orders its own
+// certificates where Pando cannot order them instead (R-254: a capability,
+// not a kind). A Traefik Pando runs is not one: in a cluster Pando's leader
+// orders each certificate once and every control host's edge serves it.
+func (r *Readiness) edgeCertificates(ctx context.Context) ([]problem, error) {
+	if r.Routing == nil {
+		return nil, nil
+	}
+	refs := r.Routing.ByCategory(api.CategoryRouting)
+	sort.Strings(refs)
+	var found []problem
+	for _, ref := range refs {
+		routing, ok := r.Routing.Routing(ref)
+		if !ok {
+			continue
+		}
+		caps, err := routing.Capabilities(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if caps.CertificatesPerEdge {
+			found = append(found, problem{
+				message: fmt.Sprintf("The routing adapter %q uses a Traefik that orders its own certificates, so each control host's Traefik would order every hostname's certificate and fail the challenges another host receives.", ref),
+				remedy:  fmt.Sprintf("Let Pando run Traefik for %q, so Pando orders each certificate once and every control host serves it, or clear its certificate resolver and supply certificates to Traefik yourself.", ref),
+			})
+		}
+	}
+	return found, nil
 }
 
 const onHostDisk = "keeps them on this host's disk, which is lost with the host"

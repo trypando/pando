@@ -275,6 +275,44 @@ func (s storeSolver) CleanUp(ctx context.Context, _, token string) error {
 	return s.store.DeleteChallenge(ctx, token)
 }
 
+// Held hands out the certificates the leader issued and orders none: what a
+// control host that does not lead serves, so every control host's edge serves
+// the one certificate issued for a hostname (R-417, O-68). Only the leader's
+// Issuer talks to the CA.
+type Held struct {
+	Store interface {
+		Certificate(ctx context.Context, name string) (state.EdgeCertificate, bool, error)
+	}
+	Clock clock.Clock
+}
+
+// Ensure returns every unexpired certificate held for the plan's orders. One
+// not issued yet is left out, and the edge serves what there is.
+func (h Held) Ensure(ctx context.Context, plan *api.CertificateIssue) ([]api.EdgeCertificate, error) {
+	if plan == nil {
+		return nil, nil
+	}
+	now := time.Now().UTC()
+	if h.Clock != nil {
+		now = h.Clock.Now().UTC()
+	}
+	var (
+		out      []api.EdgeCertificate
+		failures []error
+	)
+	for _, order := range plan.Orders {
+		held, found, err := h.Store.Certificate(ctx, order.Name)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if found && held.NotAfter.After(now) {
+			out = append(out, api.EdgeCertificate{Name: order.Name, CertPEM: held.CertPEM, KeyPEM: held.KeyPEM})
+		}
+	}
+	return out, errors.Join(failures...)
+}
+
 // Challenges answers HTTP-01 requests from the database, for the router.
 type Challenges struct {
 	Store interface {

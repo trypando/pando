@@ -280,7 +280,7 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   destination must keep backups off the host, `audit_archive` must be `export` (or `off`), an
   `audit_archive_destination` must be off the host too, and the install must have an image registry.
   "Off the host" is a capability, `BackupCapabilities.OffHost` (R-254), not the kind's name; `local`
-  reports false. No backup kind reports true yet (O-69).
+  reports false and `s3` true (O-69, below).
 - **The in-place upgrade** is refused while the cluster has more than one host (`upgrade.Service.Hosts`,
   `hosts.Service.Count`), as it is with more than one replica.
 - **The edge's routes** are written on every replica by `reconciler.RouteSync` once a minute [P],
@@ -431,3 +431,40 @@ cluster counts one host fewer, which can only keep it under three, never cause a
   host holding both roles cannot bind both; the agent slice decides whether the agent serves joins on
   its port or one moves.
 - The DR bundle carries the cluster authority as `cluster-ca.pem`, beside the token key (R-212).
+
+  | The edge's `acme` volume | Used only while the cluster is one host. Once it is more, Pando orders the edge's certificates and every edge serves them (O-68, below) |
+
+### As built: off-host backups and shared certificates
+
+- **An off-host backup destination** is the `s3` backup kind (`internal/adapter/backup/s3`, O-69): any
+  S3-compatible store, with endpoint (empty is Amazon S3), region, bucket, prefix and a path-style toggle
+  as settings, and the access key ID and secret access key as adapter credentials (R-190); migration
+  000087 refuses either key as a setting. It reports `OffHost: true`, which is what `ReadyToJoin` reads.
+  A bundle is a multipart upload sent a part at a time [P: 32 MiB], so one part is the most held in
+  memory, and nothing is in the bucket until `Close` completes the upload; a failed or cancelled write
+  aborts it. `MaxBundleBytes` is 10,000 parts. Retention stays Pando's (`OwnsRetention: false`): the
+  adapter cannot see a lifecycle rule. `HealthCheck` writes and deletes a probe object, so a key that may
+  read and not write is unhealthy before a backup needs it.
+- **Certificates once the cluster is more than one host** (O-68). The edge pass tells each routing
+  adapter so (`EdgeRequest.Clustered`, from `hosts.Service.Count`). A Traefik Pando runs with
+  certificates on then orders none itself: no resolver arguments, no `acme` volume, no DNS provider
+  credentials in its environment. It asks Pando to issue instead (`EdgePlan.Issue`): the console's
+  hostname and every app route's, which each route file now records on a `# pando-tls-hostname:` line, or
+  the base domain's wildcard with DNS-01. The leader's `edges` job orders each certificate once
+  (`edgecert.Issuer`). Every other control host runs its own edge pass (`edge.Service.RunFollower`,
+  skipped while it leads or the cluster is one host, and for a runtime whose one edge serves every host),
+  handing its edge what the leader holds and ordering nothing (`edgecert.Held`).
+- **How the edge gets them.** The Docker runtime writes each certificate into the plan's
+  `CertificateDir`, the routes directory Traefik already watches, as `<name>.crt` and `<name>.key` (the
+  key 0600, read by Traefik as root in its container), only when changed, removing any it no longer
+  holds. `pando-certificates.yml` there lists them for Traefik's certificate store, and app and console
+  routers carry `tls: {}`, so Traefik serves the stored certificate for the name asked. Port 80 has a
+  router for `/.well-known/acme-challenge/` to Pando's proxy ahead of a fallback that redirects to HTTPS,
+  replacing the entrypoint redirect, which would redirect the CA's request too. Any control host's proxy
+  answers the challenge from `edge_acme_challenges`.
+- **What cannot be shared is refused at join.** A Traefik somebody else runs beside each host, with its
+  own certificate resolver, reports `RoutingCapabilities.CertificatesPerEdge`, and `ReadyToJoin` refuses
+  a control host's join while one is configured, naming the fix. An app host's join is not refused for
+  it: an app host runs no edge.
+- **Not verified on a real cluster yet**: Traefik's reading of a certificate file rewritten in its
+  watched directory, and of the 0600 key under rootless Docker.
