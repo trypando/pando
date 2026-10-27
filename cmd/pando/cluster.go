@@ -114,9 +114,10 @@ func recordInstallHost(ctx context.Context, cfg *config.Config, store hosts.Inst
 }
 
 // startClusterListener serves the cluster listener on server.cluster_addr,
-// over TLS from the cluster authority (R-415). The returned server is shut
-// down with the API's.
-func startClusterListener(cfg *config.Config, authority *hosts.Authority, handler http.Handler, logger *zap.Logger) (*http.Server, error) {
+// over TLS from the cluster authority (R-415), answering the cluster's
+// liveness checks for this host with pings (R-421). The returned server is
+// shut down with the API's.
+func startClusterListener(cfg *config.Config, authority *hosts.Authority, handler http.Handler, pings *controlPings, logger *zap.Logger) (*http.Server, error) {
 	tlsConfig, err := authority.ListenerTLS([]string{clusterHostname(cfg), "localhost", "127.0.0.1", "::1"}, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("pando could not issue the cluster listener's certificate: %w", err)
@@ -125,6 +126,7 @@ func startClusterListener(cfg *config.Config, authority *hosts.Authority, handle
 		Addr: cfg.Server.ClusterAddr, Handler: handler, TLSConfig: tlsConfig,
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second,
 	}
+	pings.attach(srv)
 	ln, err := net.Listen("tcp", cfg.Server.ClusterAddr)
 	if err != nil {
 		return nil, fmt.Errorf("pando could not listen for joining hosts on %s (server.cluster_addr): %w", cfg.Server.ClusterAddr, err)

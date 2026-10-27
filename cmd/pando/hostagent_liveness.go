@@ -68,7 +68,7 @@ func agentLiveness(authoritiesPEM []byte, logger *zap.Logger) (*liveness.Monitor
 // lists with cert, checking each agent against roots and the name it joined
 // under, and fences through docker.
 func newMonitor(self string, peers func(context.Context) ([]hosts.Peer, error), cert tls.Certificate,
-	roots *x509.CertPool, docker *client.Client, logger *zap.Logger) *liveness.Monitor {
+	roots *x509.CertPool, docker hostagent.ContainerAPI, logger *zap.Logger) *liveness.Monitor {
 	return &liveness.Monitor{
 		Self: self,
 		Peers: func(ctx context.Context) ([]liveness.Peer, error) {

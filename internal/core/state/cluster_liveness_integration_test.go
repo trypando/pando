@@ -73,3 +73,28 @@ func TestR421_AHostIsMarkedLostOnceAndEachFenceRecordedOnce(t *testing.T) {
 	_, err = c.RecordHostFence(ctx, h.ID, "not-a-fence")
 	require.Error(t, err, "the column holds fence IDs only")
 }
+
+// TestR421_AControlHostRecordsWhereItAnswersPingsInTheDatabase asserts
+// R-421's record of where a control host answers pings: its address and the
+// pin that replaces the first host's placeholder.
+func TestR421_AControlHostRecordsWhereItAnswersPingsInTheDatabase(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c, _ := clusterStore(t)
+	h, recorded, err := c.RecordFirstHost(ctx, state.Host{
+		Name: "core-1", Roles: []string{"control", "app"}, Address: "10.0.0.1:7443", CertSHA256: strings.Repeat("0", 64),
+	})
+	require.NoError(t, err)
+	require.True(t, recorded)
+
+	pin := strings.Repeat("e", 64)
+	require.NoError(t, c.SetHostAgent(ctx, h.ID, "10.0.0.1:7444", pin))
+	got, err := c.Host(ctx, h.ID)
+	require.NoError(t, err)
+	require.Equal(t, "10.0.0.1:7444", got.Address)
+	require.Equal(t, pin, got.CertSHA256)
+
+	err = c.SetHostAgent(ctx, "host_nobody", "10.0.0.1:7444", pin)
+	require.Equal(t, errs.NotFound, errs.CodeOf(err))
+	require.Error(t, c.SetHostAgent(ctx, h.ID, "10.0.0.1:7444", "not-a-pin"), "the column holds fingerprints only")
+}

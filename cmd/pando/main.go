@@ -412,6 +412,10 @@ func serve(ctx context.Context, configPath string) error {
 	}
 	// R-421: taking a host for lost, and the leader job that decides it.
 	hostLoss, livenessWatch := clusterLiveness(clusterStore, clusterAuthority, apps, auditor, logger)
+	// R-421: this control host is watched like every other host, answering
+	// pings on its cluster listener, and watches them, on every replica.
+	controlPings := startControlLiveness(ctx, cfg.Server.ClusterDir, clusterPort(cfg), clusterStore, clusterAuthority,
+		joined, hasJoined, logger)
 	allocations := state.NewAllocations(db)
 	authzStore := state.NewAuthzStore(db)
 	grants := state.NewGrants(db)
@@ -1238,7 +1242,7 @@ func serve(ctx context.Context, configPath string) error {
 	apiHandler := apiServer.Routes()
 
 	// Where hosts join the cluster (R-415), over TLS from its authority.
-	clusterListener, err := startClusterListener(cfg, clusterAuthority, apiServer.ClusterRoutes(), logger)
+	clusterListener, err := startClusterListener(cfg, clusterAuthority, apiServer.ClusterRoutes(), controlPings, logger)
 	if err != nil {
 		return err
 	}

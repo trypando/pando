@@ -24,12 +24,20 @@ import (
 // monitor. The agent answers "PONG <view>\n", where the view is the JSON its
 // Liveness gives (liveness.View), and closes. The agent decides nothing about
 // it: what the view says, and what anyone does about it, is core's.
+//
+// A ping asks for PingProtocol by ALPN. An agent negotiates no protocol and
+// ignores it; a control host's cluster listener, which serves HTTP otherwise,
+// answers pings for its own host on a connection that negotiated it
+// (AnswerPing), so a control host is watched like any other (R-421).
 const (
 	pingVerb     = "ping"
 	pongPrefix   = "PONG "
 	noSender     = "-"
 	maxPongBytes = 1 << 20
 )
+
+// PingProtocol is the ALPN protocol a ping asks for.
+const PingProtocol = "pando-ping/1"
 
 // HostCommonName is the subject of the certificate a host presents when it
 // checks another (IssueHost). An agent takes a ping from it and nothing else:
@@ -58,17 +66,7 @@ func (as Authorities) IssueHostClient() (tls.Certificate, error) {
 // host's certificate. It reports whether it handled the connection; when it
 // did not, the line is a forward, for Pando's proxy only.
 func (a *Agent) answerPing(conn *tls.Conn, line string) bool {
-	fields := strings.Fields(line)
-	if len(fields) == 3 && fields[0] == protocolVersion && fields[1] == pingVerb {
-		from, err := pingSender(fields[2])
-		switch {
-		case err != nil:
-			refuse(conn, err.Error())
-		case a.Liveness == nil:
-			refuse(conn, "this agent takes no part in the cluster's liveness checks")
-		default:
-			_, _ = io.WriteString(conn, pongPrefix+strings.ReplaceAll(string(a.Liveness.Answer(from)), "\n", " ")+"\n")
-		}
+	if pong(conn, line, a.Liveness) {
 		return true
 	}
 	if peerName(conn) == HostCommonName {
@@ -76,6 +74,44 @@ func (a *Agent) answerPing(conn *tls.Conn, line string) bool {
 		return true
 	}
 	return false
+}
+
+// pong answers line when it is a ping, and reports whether it was. A nil
+// liveness refuses it.
+func pong(conn net.Conn, line string, liveness Liveness) bool {
+	fields := strings.Fields(line)
+	if len(fields) != 3 || fields[0] != protocolVersion || fields[1] != pingVerb {
+		return false
+	}
+	from, err := pingSender(fields[2])
+	switch {
+	case err != nil:
+		refuse(conn, err.Error())
+	case liveness == nil:
+		refuse(conn, "this agent takes no part in the cluster's liveness checks")
+	default:
+		_, _ = io.WriteString(conn, pongPrefix+strings.ReplaceAll(string(liveness.Answer(from)), "\n", " ")+"\n")
+	}
+	return true
+}
+
+// AnswerPing answers the one ping sent on conn, a connection whose handshake
+// negotiated PingProtocol and verified the client's certificate against the
+// cluster authority: a control host's cluster listener hands it such
+// connections (R-421). Anything but a ping is refused.
+func AnswerPing(conn *tls.Conn, liveness Liveness) {
+	_ = conn.SetDeadline(time.Now().Add(headerTimeout))
+	if len(conn.ConnectionState().VerifiedChains) == 0 {
+		refuse(conn, "a ping needs a certificate from the cluster authority")
+		return
+	}
+	line, err := readLine(bufio.NewReaderSize(conn, maxHeaderLine))
+	if err != nil {
+		return
+	}
+	if !pong(conn, line, liveness) {
+		refuse(conn, "this port answers pings and nothing else on "+PingProtocol)
+	}
 }
 
 func pingSender(s string) (string, error) {
@@ -103,7 +139,9 @@ func Ping(ctx context.Context, addr string, tlsConfig *tls.Config, from string) 
 	if from == "" {
 		from = noSender
 	}
-	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: headerTimeout}, Config: tlsConfig}
+	cfg := tlsConfig.Clone()
+	cfg.NextProtos = []string{PingProtocol}
+	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: headerTimeout}, Config: cfg}
 	raw, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("could not reach the host agent at %s: %w", addr, err)

@@ -147,7 +147,7 @@ decides how much everyone keeps free, and the console shows it.
 **A host that is only cut off must never be taken for dead, and a host that is not cut off must never
 stop its apps [D].** Both sides use one rule:
 
-- Every host checks every other on the agent port.
+- Every host checks every other: an app host on its agent port, a control host on its cluster port.
 - **A host stops its own apps** only when it has reached fewer than half the cluster's hosts for
   `T` **[P: 30 s]**.
 - **The leader starts a host's standbys** only when more than half the hosts have not reached it for
@@ -314,8 +314,9 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
   half of them report having watched it without contact for `3T`, in a report the leader heard in
   the last three intervals. A host's report never claims longer than it has watched without a break,
   nor longer than it has known the peer.
-- **`Monitor`** runs on every joined host, in its agent (`host-agent serve`, given `PANDO_HOST_ID`,
-  `PANDO_CLUSTER_PEERS_FILE` and a host certificate). It needs no database: a peer list it cannot
+- **`Monitor`** runs on every host: on an app host in its agent (`host-agent serve`, given
+  `PANDO_HOST_ID`, `PANDO_CLUSTER_PEERS_FILE` and a host certificate), on a control host in the
+  Pando process (see "every host is watched"). It needs no database: a peer list it cannot
   read keeps the last. Its fence stops every running container labeled for an app through the
   host's own runtime (`hostagent.DockerFencer`), every round while cut off; it never starts one.
   App containers have no restart policy, so they stay stopped; starting them again is the control
@@ -330,20 +331,21 @@ R-422, in `internal/adapter/runtime/multidocker/reserve.go` (pure) and `standby_
 - **`Service`** marks a host lost and calls `Failover.PromoteStandby` for each app homed on it with
   a standby, skipping a `failed` app (R-151). The manual path, `POST /cluster/hosts/{hostID}/lost`
   (`install.cluster.manage`), works at any cluster size and **[P] is refused while the host answers
-  on its agent port**, since a standby started beside running apps would be a second copy (R-153).
+  to a ping**, since a standby started beside running apps would be a second copy (R-153).
   Audited: `cluster.host.lost`, and `cluster.failover` per app before its standby starts.
 
 Timings **[P]**: `T` 30 s, probes every `T/6` (5 s), each within half an interval.
 
-The ping is `PANDO-AGENT/1 ping <host-id>` on the agent port, answered `PONG <view>`. Hosts probe
+The ping is `PANDO-AGENT/1 ping <host-id>` on the agent port (a control host's cluster port), answered `PONG <view>`. Hosts probe
 with a certificate whose subject is `pando-host`, issued from the cluster authority; an agent
 answers a ping from it and refuses anything else, so a host's certificate opens no connection to
 another host's apps (R-023).
 
 Left to other slices: `Homes` and `Failover` (the standby slice; until set, a lost host is marked
 and nothing is started), clearing `lost_at` and removing the returned host's copies (R-419,
-`Cluster.ClearHostLost`). The join now gives a host its ID, peer file and host certificate, and
-the install's first host is recorded; see "finishing the join" for why it is not yet watched.
+`Cluster.ClearHostLost`). The join now gives a host its ID, peer file and host certificate, the
+install's first host is recorded, and every host, control hosts included, is watched (see "every
+host is watched").
 
 ### As built: warm standby
 
@@ -387,7 +389,7 @@ the install's first host is recorded; see "finishing the join" for why it is not
 - **The cluster listener** is `server.cluster_addr` [P: `:7444`] on every control host, TLS 1.3 with a
   certificate issued from the cluster authority at each start and sent with the authority's own. It
   serves `GET /cluster/authority` (the authority's certificate, public) and `POST /cluster/join`, and
-  `GET /cluster/peers` (finishing the join), and nothing else; it is not under `/api/v1` and not in
+  `GET /cluster/peers` (finishing the join), pings on `pando-ping/1` (every host is watched), and nothing else; it is not under `/api/v1` and not in
   the API reference. A join token's address is this
   listener's, `https://<host>:<port>`: `https` only, and the default port is added when the minter
   gives none. Minted without one, it is the external URL's host (else the advertise URL's, else the
@@ -558,15 +560,67 @@ the install's first host is recorded; see "finishing the join" for why it is not
   single-host install reports one host before and after its row is made; `DefaultRoles` reads
   `Count`.
 - **What the first host is left out of, and why.** `RuntimeHosts` skips it, since it is the
-  runtime's `control` entry already, so a conversion is unchanged. `hosts.LivenessPeers` (the
-  leader's `Watch` and the peer list) skips it too: its agent is the one the runtime starts, which
-  takes no part in liveness and refuses pings, and a host that never answers would be taken for lost
-  by the joined hosts once the cluster has three. So the first host is counted in the cluster's
-  size and not watched, as before.
-- **Not done here.** Joined *control* hosts run no agent and no `Monitor` either, yet are watched:
-  with app-only hosts more than half the cluster, they would report a control host unreached. A
-  control host's agent taking part in liveness (and the first host's with it) is left to the
-  liveness slice. An app host's agent has to be on the host's app networks to reach its containers;
+  runtime's `control` entry already, so a conversion is unchanged. It was left out of
+  `hosts.LivenessPeers` too, until "every host is watched", which made every control host answer
+  pings; it is now watched like any other.
+- **Not done here.** An app host's agent has to be on the host's app networks to reach its containers;
   the per-host Docker adapter connects the container named `pando-agent`, so on an app host Pando's
   own container must be named `pando-agent` (install files not changed here). `peers.json` is
   rewritten every round even when unchanged.
+
+### As built: every host is watched
+
+Every row of `cluster_hosts`, whatever its roles, is watched and watching (R-421). Before this only
+joined app hosts answered pings and ran a `Monitor`: the first host was left out of the peer list,
+and joined control hosts were in it but answered nowhere, so with three or more hosts a healthy
+control host was reported unreached and could be taken for lost while its apps ran, and a control
+host that was cut off never fenced.
+
+- **A control host answers on its cluster listener [P]** (`server.cluster_addr`, 7444), not on an
+  agent. A ping asks for the ALPN protocol `pando-ping/1` (`hostagent.PingProtocol`, sent by every
+  `hostagent.Ping`); the listener's `GetConfigForClient` serves such a connection with the host's
+  own certificate and **requires** a client certificate from the cluster authority, and
+  `TLSNextProto` hands it to `hostagent.AnswerPing`, which answers one ping and refuses anything
+  else. Every other connection is the listener's HTTP as before (HTTP/2 is no longer offered there;
+  its clients use HTTP/1.1). An agent negotiates no protocol, so the ALPN offer changes nothing for
+  app hosts. Chosen over giving the agent the runtime starts on a control host a `Liveness`: that
+  agent is a separate container with no runtime socket, so its `Monitor` could not fence, and the
+  agent port on the first host is already its. The listener runs in the Pando process, which has the
+  host's Docker and the database, and is published on every control host already.
+- **The control host's `Monitor`** is the one app hosts run (`newMonitor`), started in the Pando
+  process on every control host (`startControlLiveness`, `cmd/pando/controlhost.go`), on every
+  replica, not only the leader. Its peers come from the database (`hosts.ControlPeers`); a read that
+  fails keeps the last list, so Postgres away stops nothing. It probes with a `pando-host`
+  certificate issued in memory at start, since a control host holds the authority. It fences
+  through `hostagent.DockerFencer` on the Docker client `DOCKER_HOST` names (else the default
+  socket): only containers labeled for an app, never Pando, the edge or the runtime's agent. A
+  runtime it cannot reach still leaves it answering pings; its fence then fails and says so every
+  round it is cut off.
+- **Who it is.** A joined control host is the row of its `joined.json` host ID; the install's own
+  host is the row with no join token (`hosts.InstallHost`). Until it finds its row, issues its
+  certificate and so on, it tries again every 5 s [P] and refuses pings by name meanwhile, because a
+  host that answers none would be reported unreached.
+- **Its certificate** is `host.crt`/`host.key` in `server.cluster_dir` (`hosts.ControlHostCert`):
+  for a joined control host, the one its join wrote; for the first host, one issued from the
+  authority at its first start and kept there, so its pin is the same across restarts. Either is
+  issued again, and replaced, when missing, unreadable, for another name, or within 30 days [P] of
+  its end, which also renews a joined control host's.
+- **Its row.** Each round `hosts.ControlPeers` sets the host's own `address` to the host it was
+  recorded with and the cluster listener's port (`hosts.PingAddress`), and `cert_sha256` to the
+  certificate it answers with (`state.Cluster.SetHostAgent`), when either differs. The first host's
+  placeholder pin (64 zeros) is replaced so, and a write that fails is made the next round. The
+  first host's row keeps its machine's name; only the port changes.
+- **The peer list.** `hosts.LivenessPeers` is now every row: the leader's `Watch`, `GET
+  /cluster/peers` and a control host's `Monitor` all include the first host. `RuntimeHosts` still
+  skips it (it is the runtime's `control` entry), and still skips control-only hosts.
+- **Tests** (`cmd/pando/controlhost_test.go`): a first host, a joined control host and an app host,
+  over TLS on loopback with real listeners, agents and `Monitor`s, only the network and clock
+  simulated. All healthy for 10T: nobody unreached, nobody fences, nobody lost. Each cut off in
+  turn (the leader's lease passing to the other control host when the first is cut): it alone fences
+  after T, and it alone is taken for lost after 3T. Postgres away for 10T: nothing stops.
+- **Not done here.** A joined host with both roles is in the runtime's `agent://` entries at its
+  `address`, which now names its cluster listener, not an agent; such a host had no agent carrying
+  runtime calls before either (the `docker-hosts` runtime has one control host, above). Replicas of
+  the first host that do not share `server.cluster_dir` each keep their own certificate and rewrite
+  its pin in turn; nothing pins it for liveness, so pings are unaffected. Under Kubernetes or Incus
+  a control host has no app containers, and its fence logs that it cannot reach Docker.

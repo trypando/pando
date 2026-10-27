@@ -75,3 +75,19 @@ func (c *Cluster) RecordHostFence(ctx context.Context, hostID, fenceID string) (
 	}
 	return tag.RowsAffected() == 1, nil
 }
+
+// SetHostAgent records where a host answers the cluster's liveness checks and
+// the fingerprint of the certificate it answers with (R-421): a control host
+// keeps its own row current with it (hosts.ControlPeers).
+func (c *Cluster) SetHostAgent(ctx context.Context, hostID, address, certSHA256 string) error {
+	tag, err := c.db.Exec(ctx, `
+		UPDATE cluster_hosts SET address = $2, cert_sha256 = $3, updated_at = now()
+		WHERE id = $1`, hostID, address, certSHA256)
+	if err != nil {
+		return errs.Wrap(errs.Internal, "Could not record where the host answers the cluster's liveness checks.", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errs.Newf(errs.NotFound, "There is no host %s in the cluster.", hostID)
+	}
+	return nil
+}

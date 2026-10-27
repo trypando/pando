@@ -64,11 +64,11 @@ func TestTheClusterListenerServesTLSFromTheAuthority(t *testing.T) {
 	cfg := joinCfg(t)
 	authority, err := hosts.LoadOrCreateAuthority(cfg.Server.ClusterAuthorityPath)
 	require.NoError(t, err)
-	srv, err := startClusterListener(cfg, authority, http.NotFoundHandler(), zap.NewNop())
+	srv, err := startClusterListener(cfg, authority, http.NotFoundHandler(), &controlPings{}, zap.NewNop())
 	require.NoError(t, err)
 	require.NoError(t, srv.Close())
 
 	cfg.Server.ClusterAddr = "256.0.0.1:1"
-	_, err = startClusterListener(cfg, authority, http.NotFoundHandler(), zap.NewNop())
+	_, err = startClusterListener(cfg, authority, http.NotFoundHandler(), &controlPings{}, zap.NewNop())
 	require.ErrorContains(t, err, "server.cluster_addr")
 }
