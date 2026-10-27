@@ -3,8 +3,10 @@ package hosts
 import (
 	"context"
 	"encoding/base64"
+	"net"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +22,7 @@ type Store interface {
 	RevokeJoinToken(ctx context.Context, tokenID string) (state.JoinToken, error)
 	Hosts(ctx context.Context) ([]state.Host, error)
 	RemoveHost(ctx context.Context, hostID string) (state.Host, error)
+	Join(ctx context.Context, presented secret.Value, admit func(state.JoinToken) (state.Host, error)) (state.JoinToken, state.Host, error)
 }
 
 // Join token limits (R-415).
@@ -46,8 +49,9 @@ type Service struct {
 	Store     Store
 	Authority *Authority
 
-	// Address is where a joining host reaches this install, used when a token
-	// is minted without one: the server's advertise address.
+	// Address is where a joining host reaches this install's cluster
+	// listener, used when a token is minted without one:
+	// https://<host>:<cluster port>.
 	Address string
 
 	// Runtime keeps the runtime adapter's host list in line with the
@@ -59,6 +63,15 @@ type Service struct {
 	// runtime's host list there (Runtime.Sync) and logs what fails, which
 	// does not undo the change. Nil does nothing.
 	OnChange func(ctx context.Context)
+
+	// Version is this server's, which a joining host must match (R-415 [P]).
+	Version string
+
+	// Keys are read for a host joining with the control role.
+	Keys KeySource
+
+	// Readiness, when set, is asked before a join spends a use of its token.
+	Readiness JoinReadiness
 
 	Now func() time.Time
 }
@@ -159,7 +172,8 @@ func (s *Service) Mint(ctx context.Context, req MintRequest) (Minted, error) {
 	if address == "" {
 		address = s.Address
 	}
-	if err := checkAddress(address); err != nil {
+	address, err = ListenerAddress(address)
+	if err != nil {
 		return Minted{}, err
 	}
 
@@ -180,12 +194,18 @@ func (s *Service) now() time.Time {
 	return time.Now()
 }
 
-func checkAddress(address string) error {
-	u, err := url.Parse(address)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return errs.Newf(errs.ValidInvalid, "%q is not an address a joining host can reach. Give the install's address, for example https://pando.example.com.", address)
+// ListenerAddress is address as a join token names it: the cluster
+// listener's, https://<host>:<port>, with the default port when it has none
+// (R-415). The listener serves TLS only, so plain http is refused.
+func ListenerAddress(address string) (string, error) {
+	u, err := url.Parse(strings.TrimSuffix(strings.TrimSpace(address), "/"))
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" {
+		return "", errs.Newf(errs.ValidInvalid, "%q is not an address a joining host can reach. Give this installation's cluster address, for example https://pando.example.com:%d.", address, DefaultClusterPort)
 	}
-	return nil
+	if u.Port() == "" {
+		u.Host = net.JoinHostPort(u.Hostname(), strconv.Itoa(DefaultClusterPort))
+	}
+	return "https://" + u.Host, nil
 }
 
 // Encode is the string a joining host is given:

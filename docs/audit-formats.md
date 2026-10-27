@@ -149,8 +149,11 @@ is encoded as 6003 API Activity, 99 Other.
 | `cli_sign_in.denied` | 3002 Authentication | 1 Logon | 300201 |
 | `cluster.failover` | 6002 Application Lifecycle | 3 Start | 600203 |
 | `cluster.host.fence` | 6002 Application Lifecycle | 4 Stop | 600204 |
+| `cluster.host.join` | 6003 API Activity | 1 Create | 600301 |
 | `cluster.host.lost` | 6003 API Activity | 3 Update | 600303 |
 | `cluster.host.remove` | 6003 API Activity | 4 Delete | 600304 |
+| `cluster.join` | 6003 API Activity | 1 Create | 600301 |
+| `cluster.join.denied` | 6003 API Activity | 1 Create | 600301 |
 | `cluster.join_token.create` | 6003 API Activity | 1 Create | 600301 |
 | `cluster.join_token.revoke` | 6003 API Activity | 4 Delete | 600304 |
 | `cluster.runtime.convert` | 6003 API Activity | 3 Update | 600303 |

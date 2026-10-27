@@ -157,12 +157,24 @@ func (s *Service) apply(ctx context.Context, bundle io.Reader, v Verified) (Rest
 			}
 
 		case header.Name == SecretsKey:
-			if err := s.restoreSecretsKey(tr); err != nil {
+			// Without it a restored install holds every app's ciphertext and
+			// nothing that opens it, which looks like a successful restore
+			// right up until an app starts.
+			if err := restoreKeyFile(tr, s.SecretsKeyPath, "secrets key"); err != nil {
 				return result, err
 			}
 
 		case header.Name == TokenKey:
-			if err := s.restoreTokenKey(tr); err != nil {
+			// The restored database holds every token as HMAC-SHA-256 under
+			// this key, and the check every replica makes at start
+			// (token_key_check) was made with it.
+			if err := restoreKeyFile(tr, s.TokenKeyPath, "API token key"); err != nil {
+				return result, err
+			}
+
+		case header.Name == ClusterAuthority:
+			// Every host's certificate chains to it (R-415).
+			if err := restoreKeyFile(tr, s.ClusterAuthorityPath, "cluster authority"); err != nil {
 				return result, err
 			}
 
@@ -310,41 +322,20 @@ func (c *commitIfClean) Read(p []byte) (int, error) {
 	return c.commit.Read(p)
 }
 
-// restoreSecretsKey writes the key back.
-//
-// Without it a restored install holds every app's ciphertext and nothing that
-// opens it — which looks like a successful restore right up until an app
-// starts. Written 0600 because it is the key to every secret in the install.
-func (s *Service) restoreSecretsKey(r io.Reader) error {
-	if s.SecretsKeyPath == "" {
+// restoreKeyFile writes a key file from the bundle back to path, 0600, since
+// each is a key to something the database holds (R-212). An empty path is a
+// key this install does not keep, such as the secrets key of one using an
+// external secrets adapter.
+func restoreKeyFile(r io.Reader, path, what string) error {
+	if path == "" {
 		return nil
 	}
 	body, err := io.ReadAll(r)
 	if err != nil {
-		return errs.Wrap(errs.Internal, "Pando could not read the secrets key from the backup.", err)
+		return errs.Wrap(errs.Internal, "Pando could not read the "+what+" from the backup.", err)
 	}
-	if err := os.WriteFile(s.SecretsKeyPath, body, 0o600); err != nil {
-		return errs.Wrap(errs.Internal, "Pando could not write the secrets key.", err)
-	}
-	return nil
-}
-
-// restoreTokenKey writes the API token key back.
-//
-// The restored database holds every token as HMAC-SHA-256 under this key, and
-// the check every replica makes at start (token_key_check) was made with it.
-// Without it every token is unusable and no replica starts. 0600, like the
-// secrets key.
-func (s *Service) restoreTokenKey(r io.Reader) error {
-	if s.TokenKeyPath == "" {
-		return nil
-	}
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return errs.Wrap(errs.Internal, "Pando could not read the API token key from the backup.", err)
-	}
-	if err := os.WriteFile(s.TokenKeyPath, body, 0o600); err != nil {
-		return errs.Wrap(errs.Internal, "Pando could not write the API token key.", err)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return errs.Wrap(errs.Internal, "Pando could not write the "+what+".", err)
 	}
 	return nil
 }

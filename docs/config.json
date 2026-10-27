@@ -73,6 +73,24 @@
       "secret": false
     },
     {
+      "env": "PANDO_JOIN_NAME",
+      "key": "bootstrap.join_name",
+      "type": "string",
+      "default": "",
+      "description": "This host's name in the cluster when it joins with join_token. Empty is the machine's hostname.",
+      "group": "bootstrap",
+      "secret": false
+    },
+    {
+      "env": "PANDO_JOIN_TOKEN",
+      "key": "bootstrap.join_token",
+      "type": "string",
+      "default": "",
+      "description": "A join token, which joins this new Pando to a cluster at its first start in place of setting it up. Ignored once it has joined; refused when it already has an account or an app.",
+      "group": "bootstrap",
+      "secret": true
+    },
+    {
       "env": "PANDO_DATABASE_CONNECT_TIMEOUT",
       "key": "database.connect_timeout",
       "type": "duration",
@@ -370,11 +388,29 @@
       "secret": false
     },
     {
+      "env": "PANDO_SERVER_CLUSTER_ADDR",
+      "key": "server.cluster_addr",
+      "type": "string",
+      "default": ":7443",
+      "description": "The address new hosts join the cluster on, as host:port, served over TLS. Join tokens name its port; it must be reachable from every host that joins.",
+      "group": "server",
+      "secret": false
+    },
+    {
       "env": "PANDO_SERVER_CLUSTER_AUTHORITY_PATH",
       "key": "server.cluster_authority_path",
       "type": "string",
       "default": "/var/lib/pando/cluster-ca.pem",
       "description": "The file holding the cluster's certificate authority, which hosts join and reach each other through. Made on first start. Every control host must read the same one.",
+      "group": "server",
+      "secret": false
+    },
+    {
+      "env": "PANDO_SERVER_CLUSTER_DIR",
+      "key": "server.cluster_dir",
+      "type": "string",
+      "default": "/var/lib/pando/cluster",
+      "description": "Where a host that joined a cluster keeps its certificate, the cluster's authority and, on a control host, the cluster's database address, which then takes the place of database.url.",
       "group": "server",
       "secret": false
     },

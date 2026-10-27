@@ -132,10 +132,14 @@ func (s *Server) onAppAddress(r *http.Request) bool {
 // sessionsPath is where a password sign-in is posted, and a session ended.
 const sessionsPath = "/api/v1/sessions"
 
+// setupJoinPath joins a fresh Pando to a cluster (R-415). Checked like sign-in:
+// a page on another site must not join a new Pando to a cluster of its own.
+const setupJoinPath = "/api/v1/setup/join"
+
 // signsIn reports whether a request starts a session from a password: sign-in
 // and first-run setup. The SSO flow has its own bind cookie (design 06 §3.2).
 func signsIn(r *http.Request) bool {
-	return r.Method == http.MethodPost && (r.URL.Path == sessionsPath || r.URL.Path == "/api/v1/setup")
+	return r.Method == http.MethodPost && (r.URL.Path == sessionsPath || r.URL.Path == "/api/v1/setup" || r.URL.Path == setupJoinPath)
 }
 
 // formContentType reports whether a request body is one an HTML form on

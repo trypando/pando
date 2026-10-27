@@ -39,6 +39,11 @@ type Service struct {
 	// out, which only a test does: every install has one.
 	TokenKeyPath string
 
+	// ClusterAuthorityPath is the cluster's certificate authority, certificate
+	// and key (R-415, R-212), carried beside the token key. Empty leaves it
+	// out, which only a test does; a file not there yet is left out too.
+	ClusterAuthorityPath string
+
 	// UploadDir is where uploaded source archives are kept
 	// (source.DefaultUploadDir). Each goes into the bundle and is put back by
 	// a restore (O-37). Empty leaves them out, which only a test does.
@@ -667,21 +672,28 @@ func pgEnv(dsn secret.Value) (env []string, dbname string, err error) {
 // bundle. A missing token key is not normal: Pando creates it at start, and a
 // bundle without it restores tokens nobody can use.
 func (s *Service) addKeys(b *Writer) error {
-	if s.SecretsKeyPath != "" {
-		switch _, statErr := os.Stat(s.SecretsKeyPath); {
-		case statErr == nil:
-			if err := addFile(b, SecretsKey, s.SecretsKeyPath); err != nil {
-				return err
-			}
-		case !os.IsNotExist(statErr):
-			return errs.Wrap(errs.Internal,
-				"Pando could not read the secrets key for the backup.", statErr)
-		}
+	if err := addIfPresent(b, SecretsKey, s.SecretsKeyPath, "secrets key"); err != nil {
+		return err
 	}
 	if s.TokenKeyPath != "" {
 		if err := addFile(b, TokenKey, s.TokenKeyPath); err != nil {
 			return err
 		}
+	}
+	return addIfPresent(b, ClusterAuthority, s.ClusterAuthorityPath, "cluster authority")
+}
+
+// addIfPresent adds the file at path, if there is one there.
+func addIfPresent(b *Writer, name, path, what string) error {
+	if path == "" {
+		return nil
+	}
+	switch _, statErr := os.Stat(path); {
+	case statErr == nil:
+		return addFile(b, name, path)
+	case !os.IsNotExist(statErr):
+		return errs.Wrap(errs.Internal,
+			"Pando could not read the "+what+" for the backup.", statErr)
 	}
 	return nil
 }

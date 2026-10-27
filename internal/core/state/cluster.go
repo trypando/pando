@@ -157,24 +157,30 @@ var errJoinRefused = errs.New(errs.AuthTokenInvalid, "This join token is not val
 // the token is live, so two hosts joining at once with a single-use token
 // cannot both succeed.
 func (c *Cluster) RedeemJoinToken(ctx context.Context, presented secret.Value) (JoinToken, error) {
+	return c.redeem(ctx, c.db, presented)
+}
+
+const msgCheckJoinToken = "Could not check the join token."
+
+func (c *Cluster) redeem(ctx context.Context, q querier, presented secret.Value) (JoinToken, error) {
 	tokenID, plaintext, ok := strings.Cut(presented.Reveal(), ".")
 	if !ok || !strings.HasPrefix(tokenID, string(id.JoinToken)+"_") || plaintext == "" {
 		return JoinToken{}, errJoinRefused
 	}
 
 	var stored string
-	err := c.db.QueryRow(ctx, `SELECT hash FROM join_tokens WHERE id = $1`, tokenID).Scan(&stored)
+	err := q.QueryRow(ctx, `SELECT hash FROM join_tokens WHERE id = $1`, tokenID).Scan(&stored)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return JoinToken{}, errJoinRefused
 	}
 	if err != nil {
-		return JoinToken{}, errs.Wrap(errs.Internal, "Could not check the join token.", err)
+		return JoinToken{}, errs.Wrap(errs.Internal, msgCheckJoinToken, err)
 	}
 	if subtle.ConstantTimeCompare([]byte(stored), []byte(c.digest(plaintext))) != 1 {
 		return JoinToken{}, errJoinRefused
 	}
 
-	row := c.db.QueryRow(ctx, `
+	row := q.QueryRow(ctx, `
 		UPDATE join_tokens SET uses = uses + 1
 		WHERE id = $1 AND revoked_at IS NULL AND expires_at > now() AND uses < max_uses
 		RETURNING `+joinTokenColumns, tokenID)
@@ -183,10 +189,54 @@ func (c *Cluster) RedeemJoinToken(ctx context.Context, presented secret.Value) (
 		return JoinToken{}, errJoinRefused
 	}
 	if err != nil {
-		return JoinToken{}, errs.Wrap(errs.Internal, "Could not check the join token.", err)
+		return JoinToken{}, errs.Wrap(errs.Internal, msgCheckJoinToken, err)
 	}
 	return t, nil
 }
+
+// Join spends one use of the presented token and records the host admit
+// returns for it, in one transaction (R-415). admit sees the token, so the
+// host gets the token's roles and nothing the joining host asked for. When
+// admit or recording the host fails, the use is given back: a join refused
+// for a name already taken can be tried again with the same token.
+func (c *Cluster) Join(ctx context.Context, presented secret.Value, admit func(JoinToken) (Host, error)) (JoinToken, Host, error) {
+	tx, err := c.db.Begin(ctx)
+	if err != nil {
+		return JoinToken{}, Host{}, errs.Wrap(errs.Internal, msgCheckJoinToken, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	t, err := c.redeem(ctx, tx, presented)
+	if err != nil {
+		return JoinToken{}, Host{}, err
+	}
+	h, err := admit(t)
+	if err != nil {
+		return t, Host{}, err
+	}
+	h.Roles = t.Roles
+	h.JoinedWith = t.ID
+	if h, err = addHost(ctx, tx, h); err != nil {
+		return t, Host{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return t, Host{}, errs.Wrap(errs.Internal, msgRecordHost, err)
+	}
+	return t, h, nil
+}
+
+// Fresh reports whether this install has ever had an account or an app. A
+// Pando that has either cannot join a cluster (R-415): that would be merging
+// two installs, and two audit logs with them. Deleted ones count.
+func (c *Cluster) Fresh(ctx context.Context) (accounts, apps bool, err error) {
+	err = c.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users), EXISTS (SELECT 1 FROM apps)`).Scan(&accounts, &apps)
+	if err != nil {
+		return false, false, errs.Wrap(errs.Internal, "Could not check whether this installation is new.", err)
+	}
+	return accounts, apps, nil
+}
+
+const msgRecordHost = "Could not record the host."
 
 const hostColumns = `id, name, roles, address, cert_sha256, platform, version, coalesce(joined_with, ''), joined_at, last_seen_at`
 
@@ -198,10 +248,14 @@ func scanHost(row pgx.Row) (Host, error) {
 
 // AddHost records a host that has joined.
 func (c *Cluster) AddHost(ctx context.Context, h Host) (Host, error) {
+	return addHost(ctx, c.db, h)
+}
+
+func addHost(ctx context.Context, q querier, h Host) (Host, error) {
 	if h.ID == "" {
 		h.ID = id.New(id.Host)
 	}
-	row := c.db.QueryRow(ctx, `
+	row := q.QueryRow(ctx, `
 		INSERT INTO cluster_hosts (id, name, roles, address, cert_sha256, platform, version, joined_with)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING `+hostColumns,
@@ -212,7 +266,7 @@ func (c *Cluster) AddHost(ctx context.Context, h Host) (Host, error) {
 			return out, errs.Newf(errs.StateInvalid, "A host named %q is already in the cluster.", h.Name).
 				WithRemedy("Give the joining host another name, or remove the old host first.")
 		}
-		return out, errs.Wrap(errs.Internal, "Could not record the host.", err)
+		return out, errs.Wrap(errs.Internal, msgRecordHost, err)
 	}
 	return out, nil
 }

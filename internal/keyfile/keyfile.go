@@ -22,6 +22,18 @@ import (
 // each use one the other cannot; the one that loses the link reads the
 // winner's instead (issue #72).
 func Create(path string, key []byte) error {
+	return place(path, key, os.Link)
+}
+
+// Replace writes key to path, 0600, in place of whatever is there, flushed as
+// Create's is. A host joining a cluster takes the cluster's keys in place of
+// the ones it made at its own first start (R-415); renamed into place, so a
+// crash leaves the old key or the new one, never half of either.
+func Replace(path string, key []byte) error {
+	return place(path, key, os.Rename)
+}
+
+func place(path string, key []byte, put func(from, to string) error) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
 	if err != nil {
@@ -38,7 +50,7 @@ func Create(path string, key []byte) error {
 	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
 		return err
 	}
-	if err := os.Link(tmp.Name(), path); err != nil {
+	if err := put(tmp.Name(), path); err != nil {
 		return err
 	}
 	return syncDir(dir)

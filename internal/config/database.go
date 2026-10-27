@@ -4,8 +4,41 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 )
+
+// ClusterDatabaseURLFile is the file in server.cluster_dir a control host
+// that joined a cluster keeps the cluster's database address in (R-415).
+const ClusterDatabaseURLFile = "database-url"
+
+// ClusterDatabaseURLPath is where a joined control host's database address
+// is kept.
+func (s Server) ClusterDatabaseURLPath() string {
+	return filepath.Join(s.ClusterDir, ClusterDatabaseURLFile)
+}
+
+// joined puts the cluster's database address in place of the configured one
+// when this host joined a cluster with the control role (R-415). It wins over
+// database.url and PANDO_DATABASE_URL: the join is later than the Compose
+// file that named this Pando's own first database, which it has left.
+func (d *Database) joined(path string) error {
+	if path == ClusterDatabaseURLFile { // no cluster_dir
+		return nil
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 -- the configured cluster directory
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%s holds this host's cluster database address and Pando could not read it: %w", path, err)
+	}
+	if u := strings.TrimSpace(string(raw)); u != "" {
+		d.URL = u
+		d.PasswordFile = ""
+	}
+	return nil
+}
 
 // withPasswordFile writes the password in PasswordFile into URL (issue #130).
 //

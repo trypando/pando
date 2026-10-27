@@ -51,3 +51,25 @@ func TestAMissingDirectoryIsReported(t *testing.T) {
 func TestSyncingAMissingDirectoryIsReported(t *testing.T) {
 	require.Error(t, syncDir(filepath.Join(t.TempDir(), "absent")))
 }
+
+// TestR415_AJoinReplacesAKeyWholeAndPrivate asserts R-415: a host joining a
+// cluster takes the cluster's key in place of its own, 0600, with no
+// temporary file left beside it.
+func TestR415_AJoinReplacesAKeyWholeAndPrivate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token.key")
+	require.NoError(t, os.WriteFile(path, []byte("first"), 0o644))
+
+	require.NoError(t, Replace(path, []byte("second")))
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, []byte("second"), got)
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	require.Error(t, Replace(filepath.Join(dir, "absent", "k"), []byte("x")))
+}

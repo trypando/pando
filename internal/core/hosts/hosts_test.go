@@ -19,6 +19,25 @@ import (
 type fakeStore struct {
 	hosts   []state.Host
 	created []state.JoinToken
+
+	// live is the join tokens a join can redeem, by their "<id>.<secret>",
+	// spent as state.Cluster spends them: a refused admit gives the use back.
+	live map[string]*state.JoinToken
+}
+
+func (f *fakeStore) Join(_ context.Context, presented secret.Value, admit func(state.JoinToken) (state.Host, error)) (state.JoinToken, state.Host, error) {
+	t, ok := f.live[presented.Reveal()]
+	if !ok || t.Uses >= t.MaxUses {
+		return state.JoinToken{}, state.Host{}, errs.New(errs.AuthTokenInvalid, "This join token is not valid.")
+	}
+	h, err := admit(*t)
+	if err != nil {
+		return *t, state.Host{}, err
+	}
+	t.Uses++
+	h.ID, h.Roles, h.JoinedWith = "host_01TEST", t.Roles, t.ID
+	f.hosts = append(f.hosts, h)
+	return *t, h, nil
 }
 
 func (f *fakeStore) CreateJoinToken(_ context.Context, roles []string, maxUses int, createdBy string, expiresAt time.Time) (state.IssuedJoinToken, error) {
@@ -83,7 +102,7 @@ func TestR415_AJoinTokenCarriesTheAddressAndTheAuthoritysHash(t *testing.T) {
 
 	d, err := hosts.Decode(minted.Join.Reveal())
 	require.NoError(t, err)
-	require.Equal(t, "https://pando.example.com", d.Address)
+	require.Equal(t, "https://pando.example.com:7443", d.Address, "the cluster listener's default port")
 	require.Equal(t, svc.Authority.Hash(), d.AuthorityHash)
 	require.Equal(t, "jt_01TEST.c2VjcmV0", d.Secret.Reveal())
 	require.Equal(t, "[redacted]", minted.Join.String())
@@ -131,6 +150,8 @@ func TestMintRefusesWhatItCannotIssue(t *testing.T) {
 		"too long":      {ExpiresIn: 31 * 24 * time.Hour},
 		"too short":     {ExpiresIn: time.Second},
 		"bad address":   {Address: "pando.example.com"},
+		"plain http":    {Address: "http://pando.example.com:7443"},
+		"with a path":   {Address: "https://pando.example.com/x"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := svc.Mint(ctx, req)

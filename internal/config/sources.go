@@ -55,6 +55,7 @@ const PolicyEnvPrefix = "PANDO_POLICY_"
 var secret = map[string]bool{
 	"database.url":             true,
 	"bootstrap.admin_password": true,
+	"bootstrap.join_token":     true,
 	"registry.password":        true,
 	"metrics.otlp_headers":     true,
 }
