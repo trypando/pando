@@ -34,24 +34,35 @@ type AppStates interface {
 // lost one. Only a refusal before anything was started (the runtime names no
 // host) puts the row back.
 func (s *Service) Promote(ctx context.Context, appID, by string) (api.PromoteResult, error) {
-	st, found, err := s.Apps.AppState(ctx, appID)
-	if err != nil {
-		return api.PromoteResult{}, err
-	}
-	if !found {
-		return api.PromoteResult{}, errs.New(errs.NotFound, "There is no such app.")
-	}
-	if st == state.StateFailed {
-		return api.PromoteResult{}, errs.New(errs.StateInvalid,
-			"This app has failed, and a failed app is not started on another host: it would fail there too.").
-			WithRemedy("Fix what made the app fail and deploy it again. Its standby is kept.")
-	}
 	unlock := s.lock(appID)
 	defer unlock()
 	return s.promoteLocked(ctx, appID, by)
 }
 
+// startable refuses an app that is gone or failed (R-151). It is read under
+// the app's lock, and the promotion's write-ahead is conditional on it still
+// being so (SaveIfLive): an app that fails while a promotion waits for the
+// lock, or after this read, is not started.
+func (s *Service) startable(ctx context.Context, appID string) error {
+	st, found, err := s.Apps.AppState(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errs.New(errs.NotFound, "There is no such app.")
+	}
+	if st == state.StateFailed {
+		return errs.New(errs.StateInvalid,
+			"This app has failed, and a failed app is not started on another host: it would fail there too.").
+			WithRemedy("Fix what made the app fail and deploy it again. Its standby is kept.")
+	}
+	return nil
+}
+
 func (s *Service) promoteLocked(ctx context.Context, appID, by string) (api.PromoteResult, error) {
+	if err := s.startable(ctx, appID); err != nil {
+		return api.PromoteResult{}, err
+	}
 	sb, sr, plan, err := s.standbyToStart(ctx, appID)
 	if err != nil {
 		return api.PromoteResult{}, err
@@ -98,17 +109,21 @@ func (s *Service) promoteLocked(ctx context.Context, appID, by string) (api.Prom
 
 // writeAhead records the promotion before the runtime starts anything: the
 // app's home is the standby's host, the host it was on holds the stale copy,
-// and a promotion is under way.
+// and a promotion is under way. It is written only while the app is live and
+// not failed (R-151).
 func (s *Service) writeAhead(ctx context.Context, sb state.Standby) (state.Standby, error) {
 	now := s.now()
 	ahead := sb
 	ahead.StaleHost = cmp.Or(sb.Home, sb.StaleHost)
 	ahead.Home, ahead.PromotedAt, ahead.PromotingAt = sb.Host, &now, &now
-	ok, err := s.Store.SaveIf(ctx, ahead, &sb)
+	ok, err := s.Store.SaveIfLive(ctx, ahead, &sb)
 	if err != nil {
 		return sb, err
 	}
 	if !ok {
+		if err := s.startable(ctx, sb.AppID); err != nil {
+			return sb, err
+		}
 		return sb, errs.New(errs.StateInvalid,
 			"This app's standby changed while Pando was starting it, so it was not started.").
 			WithRemedy("Mark the host lost again to start the standby as it now is.")

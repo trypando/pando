@@ -253,3 +253,23 @@ func TestR421_APromotionCutShortIsNotFinishedWithoutItsAuditEvent(t *testing.T) 
 	require.Len(t, h.rt.promoted, 1)
 	require.Contains(t, h.auditor.actions, "cluster.failover")
 }
+
+// TestR151_AnAppThatFailsWhileAPromotionWaitsIsNotPromoted asserts R-151 for
+// an app that fails just after Promote reads its state: while the promotion
+// waits for the app's lock, or between the read and the write-ahead. Its
+// standby is not started, the refusal says why, and the row is as it was.
+func TestR151_AnAppThatFailsWhileAPromotionWaitsIsNotPromoted(t *testing.T) {
+	ctx := context.Background()
+	h := placed(t)
+	before := h.store.rows["app_a"]
+	h.rt.promoteOK = api.PromoteResult{Host: "app-2", FormerHost: "app-1", Healthy: true}
+	h.store.stateRead = func() {
+		h.store.states["app_a"] = state.StateFailed
+		h.store.stateRead = nil
+	}
+	_, err := h.svc.Promote(ctx, "app_a", "")
+	require.Equal(t, errs.StateInvalid, errs.CodeOf(err))
+	require.Contains(t, err.Error(), "has failed")
+	require.Empty(t, h.rt.promoted)
+	require.Equal(t, before, h.store.rows["app_a"])
+}
