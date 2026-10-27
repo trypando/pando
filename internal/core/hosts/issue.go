@@ -14,6 +14,7 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"net/url"
 	"time"
 
 	"github.com/trypando/pando/internal/errs"
@@ -25,6 +26,18 @@ import (
 // valid. It is issued again at every start, and while the listener runs once
 // it is due (hostagent.RenewBefore).
 const listenerCertLifetime = 365 * 24 * time.Hour
+
+// ListenerCommonName and listenerURI name the cluster listener's certificate
+// (R-415). Every host holds a certificate from the same authority, so chaining
+// to it says only "a member of this cluster": a host that checked no more
+// would take any member, an app host included, for the listener, and hand it
+// a join token's secret. Only listenerCert issues a certificate carrying both,
+// and only a holder of the authority's key, a control host, can run it; a
+// host's own certificate is named for the host (hostagent.ServerName), and a
+// probe's, the collector's and the proxy's carry other subjects.
+const ListenerCommonName = "pando-cluster-listener"
+
+var listenerURI = &url.URL{Scheme: "urn", Opaque: "pando:cluster-listener"}
 
 // Authorities is the authority as the host agent's package takes it.
 func (a *Authority) Authorities() hostagent.Authorities {
@@ -137,7 +150,8 @@ func (a *Authority) listenerCert(names []string, now time.Time) (tls.Certificate
 		return tls.Certificate{}, err
 	}
 	tmpl := &x509.Certificate{
-		Subject:     pkix.Name{CommonName: "pando-cluster-listener"},
+		Subject:     pkix.Name{CommonName: ListenerCommonName},
+		URIs:        []*url.URL{listenerURI},
 		NotBefore:   now.Add(-time.Hour),
 		NotAfter:    now.Add(listenerCertLifetime),
 		KeyUsage:    x509.KeyUsageDigitalSignature,
@@ -165,23 +179,47 @@ func (a *Authority) listenerCert(names []string, now time.Time) (tls.Certificate
 // was minted for (R-415). Nothing has been sent to it.
 var errAuthorityMismatch = errors.New("the server's certificate authority does not match the join token")
 
-// PinnedTLS is the TLS configuration a joining host connects with (R-415). It
-// trusts exactly one authority, the one whose public key hashes to hash, and
-// refuses the server before anything is sent unless the server's certificate
-// chains to it. The server's name is not checked: the token's address may be
+// errNotTheListener is a server whose certificate is from the cluster's
+// authority but is not the cluster listener's: another host posing as it
+// (R-415). Nothing has been sent to it.
+var errNotTheListener = errors.New("the server's certificate is not the cluster listener's")
+
+// PinnedTLS is the TLS configuration a host connects to the cluster listener
+// with, joining or joined (R-415). It trusts exactly one authority, the one
+// whose public key hashes to hash, and refuses the server before anything is
+// sent unless the server's certificate chains to it and is the listener's
+// (isListener). The server's name is not checked: the token's address may be
 // an IP address or a name the listener's certificate does not carry, and the
-// pinned authority is the trust, as in kubeadm's discovery.
+// pinned authority with the listener's identity is the trust, as in kubeadm's
+// discovery.
 func PinnedTLS(hash string) *tls.Config {
 	return &tls.Config{
 		MinVersion: tls.VersionTLS13,
 		// Verified by VerifyConnection instead, against the pinned authority.
 		InsecureSkipVerify: true, //nolint:gosec // G402: the chain is checked below, against the authority the join token pins.
 		VerifyConnection: func(cs tls.ConnectionState) error {
-			return verifyPinned(cs.PeerCertificates, hash, time.Time{})
+			if err := verifyPinned(cs.PeerCertificates, hash, time.Time{}); err != nil {
+				return err
+			}
+			if !isListener(cs.PeerCertificates[0]) {
+				return errNotTheListener
+			}
+			return nil
 		},
 	}
 }
 
+// isListener reports whether a certificate that chains to the cluster's
+// authority is the cluster listener's: its subject and its only URI are
+// listenerCert's.
+func isListener(cert *x509.Certificate) bool {
+	return cert.Subject.CommonName == ListenerCommonName &&
+		len(cert.URIs) == 1 && cert.URIs[0].String() == listenerURI.String()
+}
+
+// verifyPinned checks that chain's first certificate chains, for server
+// authentication, to the authority whose public key hashes to hash. Whose
+// certificate it is, PinnedTLS checks.
 func verifyPinned(chain []*x509.Certificate, hash string, at time.Time) error {
 	if len(chain) == 0 {
 		return errAuthorityMismatch
