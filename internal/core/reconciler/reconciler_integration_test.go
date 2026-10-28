@@ -146,6 +146,7 @@ func (f *fakeRuntime) Logs(context.Context, api.WorkloadRef, api.LogOptions) (io
 func (f *fakeRuntime) Exec(context.Context, api.WorkloadRef, api.ExecRequest) (api.ExecSession, error) {
 	return nil, nil
 }
+func (f *fakeRuntime) Run(context.Context, api.WorkloadRef, api.RunRequest) error { return nil }
 func (f *fakeRuntime) Upstream(context.Context, api.WorkloadRef, int) (api.Upstream, error) {
 	return api.Upstream{}, nil
 }

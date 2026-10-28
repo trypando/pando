@@ -519,6 +519,8 @@ func (f *fakeInner) Exec(context.Context, api.WorkloadRef, api.ExecRequest) (api
 	return nil, nil
 }
 
+func (f *fakeInner) Run(context.Context, api.WorkloadRef, api.RunRequest) error { return nil }
+
 func (f *fakeInner) Usage(context.Context, api.BundleRef) (api.BundleUsage, error) {
 	return api.BundleUsage{Workloads: []api.WorkloadUsage{{Workload: "web", Running: true}}}, nil
 }

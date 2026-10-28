@@ -82,9 +82,11 @@ type BackupCreator interface {
 	CreateForApp(ctx context.Context, id string, req backup.AppCreateRequest) (backup.Created, error)
 }
 
-// VolumeResolver resolves an app's volumes to their runtime handles.
+// VolumeResolver resolves an app's volumes to their runtime handles, and its
+// provisioned services to their adapters.
 type VolumeResolver interface {
 	VolumesForApp(ctx context.Context, appID string) ([]backup.VolumeRef, error)
+	ServicesForApp(ctx context.Context, appID string) ([]backup.ServiceRef, error)
 }
 
 // PolicyLoader reads host policy.
@@ -266,6 +268,10 @@ func (s *Service) backUp(ctx context.Context, app state.App, actor audit.Event) 
 	if err != nil {
 		return "", err
 	}
+	services, err := s.BundleSource.ServicesForApp(ctx, app.ID)
+	if err != nil {
+		return "", err
+	}
 
 	var pinned json.RawMessage
 	if app.PinnedSpecID != "" {
@@ -287,10 +293,11 @@ func (s *Service) backUp(ctx context.Context, app state.App, actor audit.Event) 
 
 	id := s.Backups.NewID()
 	created, err := s.Backup.CreateForApp(ctx, id, backup.AppCreateRequest{
-		AppID:   app.ID,
-		Kind:    "on_delete",
-		Spec:    pinned,
-		Volumes: volumes,
+		AppID:    app.ID,
+		Kind:     "on_delete",
+		Spec:     pinned,
+		Volumes:  volumes,
+		Services: services,
 	})
 	if err != nil {
 		return "", err

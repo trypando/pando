@@ -226,6 +226,11 @@ type RuntimeAdapter interface {
     Logs(ctx context.Context, ref WorkloadRef, opts LogOptions) (io.ReadCloser, error)
     Exec(ctx context.Context, ref WorkloadRef, req ExecRequest) (ExecSession, error)
 
+    // A command run to completion in a running workload, no terminal: stdin
+    // in, stdout out, stderr only to explain a failure. Not running is
+    // errs.NotFound (R-423).
+    Run(ctx context.Context, ref WorkloadRef, req RunRequest) error
+
     // Where Pando's proxy sends a request for one port of one workload (R-023).
     // Called on every proxied request.
     Upstream(ctx context.Context, ref WorkloadRef, port int) (Upstream, error)
@@ -1188,6 +1193,16 @@ type ServicesAdapter interface {
     Destroy(ctx context.Context, h ServiceHandle) error
     Snapshot(ctx context.Context, h ServiceHandle, dst io.Writer) error
     Restore(ctx context.Context, h ServiceHandle, src io.Reader) error
+
+    // The engine's own dump and load, run in the service's workload (R-423).
+    // Pure, like Provision. False: none, and its volumes are copied.
+    Dump(h ServiceHandle, t SlotType) (DumpPlan, bool)
+}
+
+type DumpPlan struct {
+    Workload   string
+    Dump, Load []string  // argv; Dump writes stdout, Load reads stdin
+    Volumes    []string  // what the dump stands in for, so not copied too
 }
 
 type ServicesCapabilities struct {
@@ -1211,6 +1226,24 @@ type ProvisionResult struct {
 ```
 
 **[D]** A provisioned service returns workloads that join the app's private bundle. It is not exposed, not addressable from outside, and not shareable with another app (R-134).
+
+**[D] An app backup dumps a database rather than copying its files under it (R-423, #344).** A copy of
+a running database's files is not one moment in time, and a restore from it may not start. Pausing
+the app for every backup is not an option, and Pando does not change a host's filesystem to get
+snapshots (R-420), so the engine takes the copy: `Dump` says which commands do it, and core runs them
+through the runtime's `Run` in the service's own workload — the adapter that knows the engine never
+needs to reach the runtime, and the runtime never learns what a database is. The dump is
+`services/<id>.dump` in the bundle; its volume is left out. A service that is not running is copied
+with its volume instead, which nothing is writing. Every other volume is copied as before, and the
+manifest marks that entry `live` when any of the app's workloads was running; the scheduled attempt
+keeps the list, and the app's notice names it.
+
+**[P]** The Docker services adapter dumps Postgres (`pg_dump --format=custom`, loaded with
+`pg_restore --clean --single-transaction`, so an app connected during a restore sees the old data or
+the new) and MySQL (`mysqldump --single-transaction`, or `mariadb-dump`). Redis writes its dump file
+whole and renames it into place, so a copy holds its last save; MongoDB's tools are not in every image
+the adapter may run. Both are copied with their volumes. The whole-installation bundle (R-212) still
+copies volumes: a DR restore runs before any app does, with no database to load into.
 
 **[P]** `ProvisionResult.Volumes` — added in phase 9. A database workload with nowhere to put its files
 loses everything on the next deploy, and R-135 says a provisioned service's data follows the app's

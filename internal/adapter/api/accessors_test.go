@@ -64,6 +64,7 @@ func (stubRuntime) Logs(context.Context, api.WorkloadRef, api.LogOptions) (io.Re
 func (stubRuntime) Exec(context.Context, api.WorkloadRef, api.ExecRequest) (api.ExecSession, error) {
 	return nil, nil
 }
+func (stubRuntime) Run(context.Context, api.WorkloadRef, api.RunRequest) error { return nil }
 func (stubRuntime) Upstream(context.Context, api.WorkloadRef, int) (api.Upstream, error) {
 	return api.Upstream{}, nil
 }
@@ -105,6 +106,9 @@ func (stubServices) Provision(context.Context, api.ProvisionRequest) (api.Provis
 func (stubServices) Destroy(context.Context, api.ServiceHandle) error             { return nil }
 func (stubServices) Snapshot(context.Context, api.ServiceHandle, io.Writer) error { return nil }
 func (stubServices) Restore(context.Context, api.ServiceHandle, io.Reader) error  { return nil }
+func (stubServices) Dump(api.ServiceHandle, spec.SlotType) (api.DumpPlan, bool) {
+	return api.DumpPlan{}, false
+}
 
 type stubNotify struct{ base }
 

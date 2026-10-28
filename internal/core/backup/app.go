@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -54,6 +55,10 @@ type AppCreateRequest struct {
 	// Volumes are the app's volumes, resolved to their runtime and handle.
 	Volumes []VolumeRef
 
+	// Services are the app's provisioned services. One its adapter can dump
+	// is dumped, and the volumes the dump stands for are not copied (R-423).
+	Services []ServiceRef
+
 	DestinationRef string
 	RetainFor      time.Duration
 }
@@ -92,12 +97,42 @@ func (s *Service) CreateForApp(ctx context.Context, id string, req AppCreateRequ
 		return Created{}, err
 	}
 
+	volumes := make(map[string]VolumeRef, len(req.Volumes))
 	for _, v := range req.Volumes {
-		if err := s.addVolume(ctx, b, v, VolumesPrefix+v.VolumeID+".tar"); err != nil {
+		volumes[v.VolumeID] = v
+	}
+	dumped := map[string]bool{}
+	services := 0
+	for _, sv := range req.Services {
+		stands, err := s.addDump(ctx, b, req.AppID, sv, volumes)
+		if err != nil {
 			return Created{}, err
 		}
+		for _, id := range stands {
+			dumped[id] = true
+		}
+		if stands != nil {
+			services++
+		}
 	}
-	b.Count("volumes", len(req.Volumes))
+
+	live := s.appRunning(ctx, req.AppID, req.Volumes)
+	copied := 0
+	for _, v := range req.Volumes {
+		if dumped[v.VolumeID] {
+			continue
+		}
+		entry := VolumesPrefix + v.VolumeID + ".tar"
+		if err := s.addVolume(ctx, b, v, entry); err != nil {
+			return Created{}, err
+		}
+		if live {
+			b.MarkLive(entry)
+		}
+		copied++
+	}
+	b.Count("volumes", copied)
+	b.Count("services", services)
 
 	manifest, err := b.Finish()
 	if err != nil {
@@ -129,6 +164,95 @@ func (s *Service) CreateForApp(ctx context.Context, id string, req AppCreateRequ
 		out.RetainUntil = &until
 	}
 	return out, nil
+}
+
+// addDump dumps one provisioned service with its engine's own tool, run in
+// its workload (R-423), and returns the volumes the dump stands for. Nil, and
+// nothing added, when there is no dump to take: the adapter has none for the
+// type, or the service is not running — and then its files are not being
+// written, and copying them is consistent.
+func (s *Service) addDump(ctx context.Context, b *Writer, appID string, sv ServiceRef, volumes map[string]VolumeRef) ([]string, error) {
+	adapter, ok := s.Registry.Services(sv.AdapterRef)
+	if !ok {
+		return nil, nil
+	}
+	plan, ok := adapter.Dump(api.ServiceHandle{ServiceID: sv.ServiceID, Handle: sv.Handle}, sv.Type)
+	if !ok || len(plan.Volumes) == 0 {
+		return nil, nil
+	}
+	held, ok := volumes[plan.Volumes[0]]
+	if !ok {
+		return nil, nil
+	}
+	rt, ok := s.Registry.Runtime(held.AdapterRef)
+	if !ok {
+		return nil, nil
+	}
+
+	staged, err := os.CreateTemp(s.WorkDir, "pando-svc-*.dump")
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, msgStageService, err)
+	}
+	defer func() {
+		_ = staged.Close()
+		_ = os.Remove(staged.Name())
+	}()
+
+	err = rt.Run(ctx, api.WorkloadRef{BundleID: appID, Workload: plan.Workload},
+		api.RunRequest{Command: plan.Dump, Stdout: staged})
+	if errs.CodeOf(err) == errs.NotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, dumpFailed(sv.Type, err)
+	}
+	info, err := staged.Stat()
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, msgStageService, err)
+	}
+	if _, err := staged.Seek(0, io.SeekStart); err != nil {
+		return nil, errs.Wrap(errs.Internal, msgStageService, err)
+	}
+	if err := b.Add(ServicesPrefix+sv.ServiceID+".dump", info.Size(), staged); err != nil {
+		return nil, err
+	}
+	return plan.Volumes, nil
+}
+
+// dumpFailed says which database could not be dumped, in the runtime's words
+// for why.
+func dumpFailed(t spec.SlotType, err error) error {
+	why := "its dump tool failed."
+	if e := errs.As(err); e != nil && e.Message != "" {
+		why = e.Message
+	}
+	return errs.Newf(errs.AdapterFailed, "Pando could not dump this app's %s. %s", t.DisplayName(), why).
+		WithRemedy("Check that the database is running and healthy, then back up again.")
+}
+
+// appRunning is whether any of the app's workloads is running, so that a
+// volume copied now may be written to during the copy. Asked of the runtime
+// holding its storage; a runtime that cannot say is taken to mean yes, which
+// marks a copy that may be fine as live rather than one that may not be as
+// consistent.
+func (s *Service) appRunning(ctx context.Context, appID string, volumes []VolumeRef) bool {
+	if len(volumes) == 0 {
+		return false
+	}
+	rt, ok := s.Registry.Runtime(volumes[0].AdapterRef)
+	if !ok {
+		return true
+	}
+	observed, err := rt.Observe(ctx, api.BundleRef{BundleID: appID})
+	if err != nil {
+		return true
+	}
+	for _, w := range observed.Workloads {
+		if w.Running {
+			return true
+		}
+	}
+	return false
 }
 
 // installKey is the per-app backup key: the local secrets key, as a passphrase.
@@ -174,6 +298,10 @@ type AppRestoreRequest struct {
 	// Volumes are the app's volumes as they exist now, to restore into.
 	Volumes []VolumeRef
 
+	// Services are the app's provisioned services as they exist now, to load
+	// a dump into (R-423).
+	Services []ServiceRef
+
 	// Confirm is required. Restoring replaces the app's data with what was in
 	// the backup, and anything written since is gone.
 	Confirm bool
@@ -181,8 +309,9 @@ type AppRestoreRequest struct {
 
 // AppRestoreResult reports what was put back.
 type AppRestoreResult struct {
-	Manifest       Manifest
-	VolumesApplied int
+	Manifest        Manifest
+	VolumesApplied  int
+	ServicesApplied int
 }
 
 // RestoreApp puts one app's data back, in place (R-206).
@@ -253,12 +382,17 @@ func (s *Service) RestoreApp(ctx context.Context, req AppRestoreRequest) (AppRes
 		return AppRestoreResult{}, errs.Wrap(errs.Internal, "Pando could not read the staged restore.", err)
 	}
 
-	// Nothing has been touched until here.
-	result := AppRestoreResult{Manifest: v.Manifest}
 	byID := make(map[string]VolumeRef, len(req.Volumes))
 	for _, vol := range req.Volumes {
 		byID[vol.VolumeID] = vol
 	}
+	loads, err := s.planLoads(v.Manifest, req, byID)
+	if err != nil {
+		return AppRestoreResult{}, err
+	}
+
+	// Nothing has been touched until here.
+	result := AppRestoreResult{Manifest: v.Manifest}
 
 	tr := tar.NewReader(staged)
 	for {
@@ -269,7 +403,17 @@ func (s *Service) RestoreApp(ctx context.Context, req AppRestoreRequest) (AppRes
 		if err != nil {
 			return result, errs.Wrap(errs.Internal, "Pando could not read the backup while restoring.", err)
 		}
-		if header.Typeflag != tar.TypeReg || !strings.HasPrefix(header.Name, VolumesPrefix) {
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+		if load, ok := loads[header.Name]; ok {
+			if err := load.run(ctx, req.AppID, tr); err != nil {
+				return result, err
+			}
+			result.ServicesApplied++
+			continue
+		}
+		if !strings.HasPrefix(header.Name, VolumesPrefix) {
 			continue
 		}
 
@@ -297,4 +441,73 @@ func (s *Service) RestoreApp(ctx context.Context, req AppRestoreRequest) (AppRes
 		result.VolumesApplied++
 	}
 	return result, nil
+}
+
+// load is one database dump to put back, and where (R-423).
+type load struct {
+	rt   api.RuntimeAdapter
+	plan api.DumpPlan
+	kind spec.SlotType
+}
+
+func (l load) run(ctx context.Context, appID string, src io.Reader) error {
+	err := l.rt.Run(ctx, api.WorkloadRef{BundleID: appID, Workload: l.plan.Workload},
+		api.RunRequest{Command: l.plan.Load, Stdin: src})
+	if errs.CodeOf(err) == errs.NotFound {
+		return errs.Newf(errs.StateInvalid,
+			"This backup holds a dump of the app's %s, and loading one needs the database running.", l.kind.DisplayName()).
+			WithRemedy("Start the app, then restore again.")
+	}
+	if err != nil {
+		why := "its load tool failed."
+		if e := errs.As(err); e != nil && e.Message != "" {
+			why = e.Message
+		}
+		return errs.Newf(errs.AdapterFailed, "Pando could not load the backup into this app's %s. %s", l.kind.DisplayName(), why)
+	}
+	return nil
+}
+
+// planLoads resolves every dump in the backup to the service it loads into,
+// before anything is written: a restore that found out halfway that it could
+// not load the database would leave the volumes from the backup and the
+// database from now.
+func (s *Service) planLoads(m Manifest, req AppRestoreRequest, volumes map[string]VolumeRef) (map[string]load, error) {
+	services := make(map[string]ServiceRef, len(req.Services))
+	for _, sv := range req.Services {
+		services[sv.ServiceID] = sv
+	}
+	out := map[string]load{}
+	for _, e := range m.Entries {
+		if !strings.HasPrefix(e.Name, ServicesPrefix) || !strings.HasSuffix(e.Name, ".dump") {
+			continue
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(e.Name, ServicesPrefix), ".dump")
+		sv, ok := services[id]
+		if !ok {
+			return nil, errs.Newf(errs.StateInvalid,
+				"This backup holds a database dump for a service the app no longer has (%s).", id).
+				WithRemedy("Restore a backup taken since the app's databases last changed.")
+		}
+		adapter, ok := s.Registry.Services(sv.AdapterRef)
+		if !ok {
+			return nil, errs.Newf(errs.AdapterFailed,
+				"The provisioner holding %s is not configured, so its dump cannot be loaded.", id)
+		}
+		plan, ok := adapter.Dump(api.ServiceHandle{ServiceID: sv.ServiceID, Handle: sv.Handle}, sv.Type)
+		var held VolumeRef
+		if ok && len(plan.Volumes) > 0 {
+			held, ok = volumes[plan.Volumes[0]]
+		}
+		if !ok {
+			return nil, errs.Newf(errs.AdapterFailed,
+				"This app's %s can no longer be loaded from a dump.", sv.Type.DisplayName())
+		}
+		rt, ok := s.Registry.Runtime(held.AdapterRef)
+		if !ok {
+			return nil, errs.Newf(errs.AdapterFailed, "The runtime holding %s is not configured.", id)
+		}
+		out[e.Name] = load{rt: rt, plan: plan, kind: sv.Type}
+	}
+	return out, nil
 }

@@ -52,6 +52,19 @@ func (a *Adapter) Exec(ctx context.Context, ref api.WorkloadRef, req api.ExecReq
 	return v.rt.Exec(ctx, ref, req)
 }
 
+// Run runs a command through the Docker adapter inside the app's VM (R-423).
+// A stopped VM has nothing running in it, which Run reports as NotFound.
+func (a *Adapter) Run(ctx context.Context, ref api.WorkloadRef, req api.RunRequest) error {
+	if inst, _, err := a.api.Instance(ctx, instanceName(ref.BundleID)); err == nil && !strings.EqualFold(inst.Status, "Running") {
+		return errs.Newf(errs.NotFound, "There is nothing running called %q.", ref.Workload)
+	}
+	v, err := a.running(ctx, ref.BundleID)
+	if err != nil {
+		return err
+	}
+	return v.rt.Run(ctx, ref, req)
+}
+
 // Usage is the Docker adapter's reading inside the VM (R-245); the VM's own
 // overhead is not an app's usage. A stopped VM's workloads use nothing.
 func (a *Adapter) Usage(ctx context.Context, ref api.BundleRef) (api.BundleUsage, error) {

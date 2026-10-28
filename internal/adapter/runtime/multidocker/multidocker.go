@@ -703,6 +703,15 @@ func (a *Adapter) Exec(ctx context.Context, ref api.WorkloadRef, req api.ExecReq
 	return h.rt.Exec(ctx, ref, req)
 }
 
+// Run runs a command in a workload on whichever host has its app (R-423).
+func (a *Adapter) Run(ctx context.Context, ref api.WorkloadRef, req api.RunRequest) error {
+	h, err := a.mustLocate(ctx, ref.BundleID)
+	if err != nil {
+		return err
+	}
+	return h.rt.Run(ctx, ref, req)
+}
+
 // Upstream is the workload's container name on its host, as one host's
 // adapter answers, and a Dial through that host's agent (O-45). The proxy
 // decides the request before it calls Dial; the agent only carries it.

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -98,6 +99,10 @@ type ServiceRef struct {
 	AppID      string
 	AdapterRef string
 	Handle     string
+
+	// Type is the slot type, which decides how an app backup dumps it
+	// (R-423).
+	Type spec.SlotType
 }
 
 // VolumeRef names one volume and the adapter that can snapshot it.
@@ -338,6 +343,10 @@ func (s *Service) addServices(ctx context.Context, b *Writer) (total, captured i
 	return total, captured, nil
 }
 
+// msgStageService is what a backup says when a service's data could not be
+// written to its staging file.
+const msgStageService = "Pando could not stage the service's data."
+
 // addServiceSnapshot stages one service's snapshot and adds it to the bundle.
 //
 // Staged for the same reason volumes are: tar needs a size in the header and a
@@ -345,7 +354,7 @@ func (s *Service) addServices(ctx context.Context, b *Writer) (total, captured i
 func (s *Service) addServiceSnapshot(ctx context.Context, b *Writer, adapter api.ServicesAdapter, sv ServiceRef) error {
 	staged, err := os.CreateTemp(s.WorkDir, "pando-svc-*.dump")
 	if err != nil {
-		return errs.Wrap(errs.Internal, "Pando could not stage the service's data.", err)
+		return errs.Wrap(errs.Internal, msgStageService, err)
 	}
 	defer func() {
 		_ = staged.Close()
@@ -357,10 +366,10 @@ func (s *Service) addServiceSnapshot(ctx context.Context, b *Writer, adapter api
 	}
 	info, err := staged.Stat()
 	if err != nil {
-		return errs.Wrap(errs.Internal, "Pando could not stage the service's data.", err)
+		return errs.Wrap(errs.Internal, msgStageService, err)
 	}
 	if _, err := staged.Seek(0, io.SeekStart); err != nil {
-		return errs.Wrap(errs.Internal, "Pando could not stage the service's data.", err)
+		return errs.Wrap(errs.Internal, msgStageService, err)
 	}
 	return b.Add(ServicesPrefix+sv.ServiceID+".dump", info.Size(), staged)
 }

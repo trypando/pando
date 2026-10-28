@@ -107,6 +107,44 @@ func (a *Adapter) Exec(ctx context.Context, ref api.WorkloadRef, req api.ExecReq
 	return s, nil
 }
 
+// Run runs a command to completion in a workload's running pod (R-423):
+// stdout to the caller, stderr kept to explain a failure.
+func (a *Adapter) Run(ctx context.Context, ref api.WorkloadRef, req api.RunRequest) error {
+	ns := namespaceFor(ref.BundleID)
+	pods, err := a.workloadPods(ctx, ns, ref.Workload)
+	if err != nil {
+		return err
+	}
+	p := newest(pods)
+	if p == nil || p.Status.Phase != corev1.PodRunning || p.DeletionTimestamp != nil {
+		return errs.Newf(errs.NotFound, "There is nothing running called %q.", ref.Workload)
+	}
+	stdout := req.Stdout
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	var stderr bytes.Buffer
+	err = a.stream(ctx, ns, p.Name, appContainer, req.Command,
+		remotecommand.StreamOptions{Stdin: req.Stdin, Stdout: stdout, Stderr: &stderr})
+	if err != nil {
+		return errs.Wrap(errs.AdapterFailed,
+			fmt.Sprintf("A command Pando ran in %s failed: %s", ref.Workload, lastLine(stderr.String())), err)
+	}
+	return nil
+}
+
+// lastLine is a command's final complaint.
+func lastLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
+		s = s[i+1:]
+	}
+	if s == "" {
+		return "it printed nothing."
+	}
+	return strings.TrimSpace(s)
+}
+
 // execSession is an exec stream: stdin in, stdout (and stderr, without a TTY)
 // out.
 type execSession struct {

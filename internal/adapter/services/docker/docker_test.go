@@ -375,3 +375,29 @@ func TestAnImageSettingThatIsNotTextIsRefused(t *testing.T) {
 	err := servicesdocker.New().Configure(context.Background(), json.RawMessage(`{"mysql_image":8}`))
 	require.ErrorContains(t, err, "mysql_image")
 }
+
+// TestR423_DatabasesAreDumpedInTheirOwnWorkload asserts the plans R-423 runs:
+// Postgres and MySQL dumped and loaded in the workload Provision created,
+// standing for its volume, with no password in argv; nothing else dumped.
+func TestR423_DatabasesAreDumpedInTheirOwnWorkload(t *testing.T) {
+	a := configured(t)
+	for _, slot := range []spec.SlotType{spec.SlotPostgres, spec.SlotMySQL} {
+		res, err := a.Provision(context.Background(), api.ProvisionRequest{
+			AppID: "app_1", SlotKey: "DATABASE_URL", Type: slot, ServiceID: "svc_01ABC",
+		})
+		require.NoError(t, err)
+		plan, ok := a.Dump(res.Handle, slot)
+		require.True(t, ok, slot)
+		require.Equal(t, res.Workloads[0].Name, plan.Workload, slot)
+		require.Equal(t, []string{res.Volumes[0].VolumeID}, plan.Volumes, slot)
+		require.NotEmpty(t, plan.Dump, slot)
+		require.NotEmpty(t, plan.Load, slot)
+		password, _ := url.Parse(res.ConnectionSecret.Reveal())
+		pw, _ := password.User.Password()
+		require.NotContains(t, strings.Join(append(plan.Dump, plan.Load...), " "), pw, slot)
+	}
+	for _, slot := range []spec.SlotType{spec.SlotRedis, spec.SlotMongoDB, spec.SlotMemcached} {
+		_, ok := a.Dump(api.ServiceHandle{ServiceID: "svc_01ABC"}, slot)
+		require.False(t, ok, slot)
+	}
+}

@@ -118,8 +118,8 @@ how an app runs is the spec's (R-020).
 
 **Volumes are copied live, with no pause and no filesystem requirement [D].** Pausing every few minutes
 is not acceptable, and Pando does not change a host's filesystem. A copy of a volume that is written
-during the copy may not be consistent — a database file in a volume can be torn (the same gap rolling
-backups have, #344) — so:
+during the copy may not be consistent — a database file in a volume can be torn (app backups dump
+provisioned databases instead, R-423, #344) — so:
 
 - The app deploys and gets its standby. Its page carries a notice saying the standby's copy may be
   inconsistent. A notice, never a blocker.
