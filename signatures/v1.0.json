@@ -7,5 +7,14 @@
     "pull_request": 307,
     "agreement_version": "1.0",
     "agreement_blob": "002256d3c33c508da11545d3d0da51f75799b6da"
+  },
+  {
+    "login": "XRafik",
+    "id": 174913105,
+    "signed_at": "2026-10-28T16:13:30Z",
+    "comment": "https://github.com/trypando/pando/pull/351#issuecomment-6474273382",
+    "pull_request": 351,
+    "agreement_version": "1.0",
+    "agreement_blob": "002256d3c33c508da11545d3d0da51f75799b6da"
   }
 ]
