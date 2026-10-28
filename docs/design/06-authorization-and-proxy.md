@@ -287,6 +287,13 @@ the browser that started the flow. It is SameSite=Lax, which a top-level GET nav
 after a cross-site SAML POST, and in Pando's cookie namespace, so the proxy strips it from every
 request an app sees (R-173).
 
+**[D] The only way in starts by itself (R-172).** With password sign-in off and one provider on, the
+sign-in page goes to step 1 without a click (`soleProvider` in `console/src/auth/sso.ts`). A session is
+per hostname, so each app's hostname needs its own sign-in; this makes that a round of redirects when
+the provider still has the visitor signed in. It is the same flow a click starts, so nothing above
+changes. It does not start on a page carrying `sso_error`, which would loop on whatever failed, or in a
+tab that signed out, until a button is pressed there: the provider would sign them straight back in.
+
 **[D]** `return_origin` is a hostname Pando serves — its own, or an app's (`AppHosts`) — checked when the
 flow starts; a flow cannot be made to finish anywhere else. The callback never chooses where the
 browser goes from anything the provider sent.

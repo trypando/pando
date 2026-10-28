@@ -43,3 +43,35 @@ export function failedSignIn(search: string): string | null {
   const id = new URLSearchParams(search).get('sso_error');
   return id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
 }
+
+/** Set while this tab has signed out, and until it signs in with a button. */
+const signedOutKey = 'pando_signed_out';
+
+/** Remembers that this tab signed out, so the sign-in page waits for a click. */
+export function markSignedOut(): void {
+  window.sessionStorage?.setItem(signedOutKey, '1');
+}
+
+/** Forgets it: someone chose a way to sign in. */
+export function clearSignedOut(): void {
+  window.sessionStorage?.removeItem(signedOutKey);
+}
+
+/**
+ * The provider to start without a click: the only way to sign in here (R-172).
+ * Opening an app on its own hostname then costs a redirect, not a click, when
+ * the provider already has its visitor signed in. Not after a failed sign-in,
+ * which would send the browser straight back to what failed, and not after
+ * signing out in this tab, which the provider would undo at once.
+ */
+export function soleProvider(options: SignInOptions | undefined, search: string, signedOut: boolean): string | null {
+  const [only, ...others] = options?.providers ?? [];
+  if (options?.password_sign_in !== false || !only || others.length > 0) return null;
+  if (signedOut || new URLSearchParams(search).has('sso_error')) return null;
+  return only.id;
+}
+
+/** Whether this tab signed out and has not chosen a way back in yet. */
+export function hasSignedOut(): boolean {
+  return window.sessionStorage?.getItem(signedOutKey) === '1';
+}
