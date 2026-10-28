@@ -45,28 +45,50 @@ export function failedSignIn(search: string): string | null {
 }
 
 /**
- * Set while this tab has signed out here, and until it signs in with a button.
- * Per origin, like the session it outlives: signing out revokes this
- * hostname's session and no other, so another hostname has nothing to undo.
+ * Set once someone signs out here, until they sign in with a button. In
+ * localStorage, so every tab on this hostname sees it: signing out ends the
+ * hostname's session, and a second tab's sign-in page would otherwise start the
+ * provider and undo it. Per origin, like the session: another hostname's
+ * session is its own, and has nothing to undo. It outlasts the browser, so the
+ * next visit after signing out waits for a click too.
  */
 const signedOutKey = 'pando_signed_out';
 
-/** Remembers that this tab signed out, so the sign-in page waits for a click. */
+/**
+ * When this tab last started the provider without a click. A session cookie
+ * the browser never sends back returns it here with no error to show, and the
+ * provider would sign it in again, round after round.
+ */
+const startedKey = 'pando_sso_started';
+
+/** How long after starting the provider by itself the page waits for a click. */
+const startedHold = 30_000;
+
+/** Remembers that someone signed out here, so the sign-in page waits for a click. */
 export function markSignedOut(): void {
   try {
-    window.sessionStorage.setItem(signedOutKey, '1');
+    window.localStorage.setItem(signedOutKey, '1');
   } catch {
-    // A browser that refuses storage cannot remember it, and hasSignedOut
-    // then waits for a click anyway; sign-out must still finish.
+    // A browser that refuses storage cannot remember it, and held then waits
+    // for a click anyway; sign-out must still finish.
   }
 }
 
 /** Forgets it: someone chose a way to sign in. */
 export function clearSignedOut(): void {
   try {
-    window.sessionStorage.removeItem(signedOutKey);
+    window.localStorage.removeItem(signedOutKey);
   } catch {
     // Nothing was kept to forget.
+  }
+}
+
+/** Remembers that this tab is starting the provider without a click. */
+export function markStarted(now: number): void {
+  try {
+    window.sessionStorage.setItem(startedKey, String(now));
+  } catch {
+    // Unreachable in practice: held refuses to start when storage is refused.
   }
 }
 
@@ -74,24 +96,28 @@ export function clearSignedOut(): void {
  * The provider to start without a click: the only way to sign in here (R-172).
  * Opening an app on its own hostname then costs a redirect, not a click, when
  * the provider already has its visitor signed in. Not after a failed sign-in,
- * which would send the browser straight back to what failed, and not after
- * signing out in this tab, which the provider would undo at once.
+ * which would send the browser straight back to what failed, and not while the
+ * page is held for a click.
  */
-export function soleProvider(options: SignInOptions | undefined, search: string, signedOut: boolean): string | null {
+export function soleProvider(options: SignInOptions | undefined, search: string, waiting: boolean): string | null {
   const [only, ...others] = options?.providers ?? [];
   if (options?.password_sign_in !== false || !only || others.length > 0) return null;
-  if (signedOut || new URLSearchParams(search).has('sso_error')) return null;
+  if (waiting || new URLSearchParams(search).has('sso_error')) return null;
   return only.id;
 }
 
 /**
- * Whether this tab signed out and has not chosen a way back in yet. A browser
- * that refuses storage cannot say, so it counts as signed out: a click, never a
- * sign-in the person may have just undone.
+ * Whether the page waits for a click: someone signed out here and has not
+ * chosen a way back in, or this tab started the provider by itself moments
+ * ago and came back without a session. A browser that refuses storage cannot
+ * say either, so it waits: a click, never a sign-in the person may have just
+ * undone.
  */
-export function hasSignedOut(): boolean {
+export function held(now: number): boolean {
   try {
-    return window.sessionStorage.getItem(signedOutKey) === '1';
+    if (window.localStorage.getItem(signedOutKey) === '1') return true;
+    const started = Number(window.sessionStorage.getItem(startedKey));
+    return started > 0 && now - started < startedHold;
   } catch {
     return true;
   }

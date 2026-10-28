@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { clearSignedOut, failedSignIn, hasSignedOut, markSignedOut, providerStart, soleProvider } from './sso';
+import { clearSignedOut, failedSignIn, held, markSignedOut, markStarted, providerStart, soleProvider } from './sso';
 
 describe('providerStart', () => {
   it('carries where the person was going, under the reserved prefix', () => {
@@ -64,44 +64,79 @@ describe('soleProvider', () => {
   });
 });
 
+/** A storage area, as a browser keeps one. */
+function area() {
+  const kept = new Map<string, string>();
+  return {
+    getItem: (k: string) => kept.get(k) ?? null,
+    setItem: (k: string, v: string) => void kept.set(k, v),
+    removeItem: (k: string) => void kept.delete(k),
+  };
+}
+
+/** A tab on one hostname: its own sessionStorage, the hostname's localStorage. */
+function tab(localStorage: ReturnType<typeof area>) {
+  return { localStorage, sessionStorage: area() };
+}
+
 describe('signing out', () => {
-  it('is remembered in this tab until a way back in is chosen', () => {
-    const kept = new Map<string, string>();
-    vi.stubGlobal('window', {
-      sessionStorage: {
-        getItem: (k: string) => kept.get(k) ?? null,
-        setItem: (k: string, v: string) => kept.set(k, v),
-        removeItem: (k: string) => kept.delete(k),
-      },
-    });
-    try {
-      expect(hasSignedOut()).toBe(false);
-      markSignedOut();
-      expect(hasSignedOut()).toBe(true);
-      clearSignedOut();
-      expect(hasSignedOut()).toBe(false);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('holds every tab on the hostname until a way back in is chosen', () => {
+    const hostname = area();
+    const a = tab(hostname);
+    const b = tab(hostname);
+
+    vi.stubGlobal('window', a);
+    expect(held(0)).toBe(false);
+    markSignedOut();
+
+    vi.stubGlobal('window', b);
+    expect(held(0)).toBe(true);
+    clearSignedOut();
+
+    vi.stubGlobal('window', a);
+    expect(held(0)).toBe(false);
+  });
+});
+
+describe('starting the provider by itself', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('waits for a click when it comes back within 30 seconds', () => {
+    vi.stubGlobal('window', tab(area()));
+    markStarted(1_000);
+    expect(held(1_000 + 29_999)).toBe(true);
+    expect(held(1_000 + 30_000)).toBe(false);
+  });
+
+  it('holds only the tab that started it', () => {
+    const hostname = area();
+    vi.stubGlobal('window', tab(hostname));
+    markStarted(1_000);
+    vi.stubGlobal('window', tab(hostname));
+    expect(held(1_000)).toBe(false);
   });
 });
 
 describe('a browser that refuses storage', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it('waits for a click, and still signs out', () => {
     const refuse = () => {
       throw new DOMException('denied', 'SecurityError');
     };
     vi.stubGlobal('window', {
+      get localStorage() {
+        return refuse();
+      },
       get sessionStorage() {
         return refuse();
       },
     });
-    try {
-      expect(() => markSignedOut()).not.toThrow();
-      expect(() => clearSignedOut()).not.toThrow();
-      expect(hasSignedOut()).toBe(true);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    expect(() => markSignedOut()).not.toThrow();
+    expect(() => clearSignedOut()).not.toThrow();
+    expect(() => markStarted(0)).not.toThrow();
+    expect(held(0)).toBe(true);
   });
 });

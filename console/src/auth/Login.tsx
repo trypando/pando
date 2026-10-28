@@ -26,7 +26,7 @@ import { FieldSkeleton, HeadingSkeleton, LineSkeleton, Loading } from '../ui/Loa
 import { TopoMap } from '../ui/TopoBackground';
 import { signInInstead } from './passcode';
 import { returnTo } from './return-to';
-import { clearSignedOut, failedSignIn, hasSignedOut, providerStart, soleProvider } from './sso';
+import { clearSignedOut, failedSignIn, held, markStarted, providerStart, soleProvider } from './sso';
 import type { SignInOptions } from './sso';
 
 export function Login() {
@@ -101,9 +101,11 @@ function SignIn({ notice }: { notice?: string }) {
 
   // The only way in is one provider: go there without waiting for a click
   // (R-172). The button below stays, for a browser that does not follow.
-  const sole = soleProvider(options.data, window.location.search, hasSignedOut());
+  const sole = soleProvider(options.data, window.location.search, held(Date.now()));
   useEffect(() => {
-    if (sole) window.location.assign(providerStart(sole, window.location.search, window.location.href));
+    if (!sole) return;
+    markStarted(Date.now());
+    window.location.assign(providerStart(sole, window.location.search, window.location.href));
   }, [sole]);
 
   // Why a provider sign-in came back here, in the server's words.

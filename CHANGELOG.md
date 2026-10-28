@@ -28,8 +28,9 @@ No new advisories.
 - **Sign-in goes straight to the identity provider when it is the only way in.** With password
   sign-in off and one provider turned on, the sign-in page starts that provider without a click. An
   app on its own hostname needs its own sign-in, and this makes it a round of redirects when the
-  provider still has you signed in. It waits for a click after a failed sign-in, and after signing
-  out in that tab.
+  provider still has you signed in. It waits for a click after a failed sign-in, after you sign
+  out (in every tab, until you sign in again), and if it comes straight back without signing you
+  in.
 
 ### Fixed
 

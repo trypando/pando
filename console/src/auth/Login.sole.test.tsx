@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { mount, unanswered, type Mounted } from '../ui/testing';
 import { Login } from './Login';
-import { clearSignedOut, markSignedOut } from './sso';
+import { markSignedOut } from './sso';
 
 const only = { password_sign_in: false, providers: [{ id: 'idp_1', name: 'Okta', kind: 'oidc' }] };
 
@@ -12,7 +12,8 @@ let screen: Mounted | undefined;
 afterEach(() => {
   screen?.unmount();
   screen = undefined;
-  clearSignedOut();
+  localStorage.clear();
+  sessionStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -41,6 +42,12 @@ describe('the only way to sign in', () => {
     expect(assign).not.toHaveBeenCalled();
     await screen!.press('Sign in with Okta');
     expect(assign).toHaveBeenCalledWith('/.pando/api/v1/auth/providers/idp_1/start?next=%2F');
+  });
+
+  it('waits when it comes straight back without a session', () => {
+    expect(open('')).toHaveBeenCalledTimes(1);
+    screen!.unmount();
+    expect(open('')).not.toHaveBeenCalled();
   });
 
   it('waits after a failed sign-in', () => {

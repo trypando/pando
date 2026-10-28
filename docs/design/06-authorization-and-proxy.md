@@ -291,10 +291,16 @@ request an app sees (R-173).
 sign-in page goes to step 1 without a click (`soleProvider` in `console/src/auth/sso.ts`). A session is
 per hostname, so each app's hostname needs its own sign-in; this makes that a round of redirects when
 the provider still has the visitor signed in. It is the same flow a click starts, so nothing above
-changes. It does not start on a page carrying `sso_error`, which would loop on whatever failed, or in a
-tab that signed out on that hostname, until a button is pressed there: the provider would sign them
-straight back in. The mark is per origin, like the session: signing out revokes that hostname's session
-only, so another hostname has nothing to undo.
+changes. It does not start on a page carrying `sso_error`, which would loop on whatever failed. It does
+not start after someone signs out on that hostname, until a button is pressed: the provider would sign
+them straight back in. That mark is in `localStorage`, so a second tab, whose next request finds the
+session gone, waits too, and it outlasts the browser. It is per origin, like the session: signing out
+revokes that hostname's session only, so another hostname has nothing to undo. **[P]** And it does not
+start again within 30 seconds of starting by itself in that tab (`sessionStorage`). Every failure the
+server sees comes back with `sso_error`, but a session cookie the browser never sends back — a
+`__Host-` cookie on a plain-HTTP request, say — returns the visitor here with nothing to report, and the
+provider would sign them in again, round after round. A browser that refuses storage cannot be asked
+either question, so it always waits for a click.
 
 **[D]** `return_origin` is a hostname Pando serves — its own, or an app's (`AppHosts`) — checked when the
 flow starts; a flow cannot be made to finish anywhere else. The callback never chooses where the
