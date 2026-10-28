@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
 
@@ -44,6 +45,11 @@ func (a *Adapter) Run(ctx context.Context, ref api.WorkloadRef, req api.RunReque
 		AttachStdout: true,
 		AttachStderr: true,
 	})
+	if cerrdefs.IsConflict(err) || cerrdefs.IsNotFound(err) {
+		// Stopped or removed between the list and the exec: a container being
+		// stopped is still listed as running for a moment.
+		return errs.Newf(errs.NotFound, "There is nothing running called %q.", ref.Workload)
+	}
 	if err != nil {
 		return errs.Wrap(errs.AdapterFailed, "Pando could not run a command in "+ref.Workload+".", err)
 	}

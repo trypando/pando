@@ -471,11 +471,13 @@ func (a *Adapter) Dump(h api.ServiceHandle, t spec.SlotType) (api.DumpPlan, bool
 		plan.Load = []string{"pg_restore", "-U", "app", "-d", "app",
 			"--clean", "--if-exists", "--no-owner", "--single-transaction", "--exit-on-error"}
 	case spec.SlotMySQL:
-		// mysqldump, or mariadb-dump in an image that has only that.
+		// mysqldump, or mariadb-dump in an image that has only that. Over
+		// TCP to 127.0.0.1, as healthFor's ping is: under rootless Docker and
+		// Podman the server's socket was never reachable from an exec.
 		plan.Dump = []string{"sh", "-c", `d=$(command -v mysqldump || command -v mariadb-dump) && ` +
-			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec "$d" -uroot --single-transaction --routines --triggers --events app`}
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec "$d" -h 127.0.0.1 -uroot --single-transaction --routines --triggers --events app`}
 		plan.Load = []string{"sh", "-c", `c=$(command -v mysql || command -v mariadb) && ` +
-			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec "$c" -uroot app`}
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec "$c" -h 127.0.0.1 -uroot app`}
 	default:
 		return api.DumpPlan{}, false
 	}

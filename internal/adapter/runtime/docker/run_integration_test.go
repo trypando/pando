@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -67,7 +68,7 @@ func TestR423_AProvisionedDatabaseDumpsAndLoadsWhileItServes(t *testing.T) {
 			return []string{"psql", "-U", "app", "-d", "app", "-tAc", sql}
 		}},
 		{"mysql", spec.SlotMySQL, func(sql string) []string {
-			return []string{"sh", "-c", `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -N app -e "` + sql + `"`}
+			return []string{"sh", "-c", `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -h 127.0.0.1 -uroot -N app -e "` + sql + `"`}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,11 +106,16 @@ func TestR423_AProvisionedDatabaseDumpsAndLoadsWhileItServes(t *testing.T) {
 				return strings.TrimSpace(out.String())
 			}
 
-			// Healthy is a ping over TCP; the tools use the socket, which a
-			// slow host can be a moment behind on.
-			require.Eventually(t, func() bool {
-				return a.Run(ctx, ref, api.RunRequest{Command: tc.query("SELECT 1")}) == nil
+			// Healthy can be a moment ahead of accepting a login.
+			var last error
+			ready := assert.Eventually(t, func() bool {
+				last = a.Run(ctx, ref, api.RunRequest{Command: tc.query("SELECT 1")})
+				return last == nil
 			}, 2*time.Minute, time.Second)
+			if !ready {
+				logs, _ := dockerCLI("logs", "--tail", "40", "pando-"+id+"-"+dump.Workload)
+				t.Fatalf("the database never took a query: %v\n%s", last, logs)
+			}
 			sql("CREATE TABLE notes (body text); INSERT INTO notes VALUES ('kept')")
 			var saved bytes.Buffer
 			require.NoError(t, a.Run(ctx, ref, api.RunRequest{Command: dump.Dump, Stdout: &saved}))
