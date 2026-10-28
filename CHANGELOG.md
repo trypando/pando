@@ -23,6 +23,14 @@ Unreleased above it. -->
 
 No new advisories.
 
+### Added
+
+- **Sign-in goes straight to the identity provider when it is the only way in.** With password
+  sign-in off and one provider turned on, the sign-in page starts that provider without a click. An
+  app on its own hostname needs its own sign-in, and this makes it a round of redirects when the
+  provider still has you signed in. It waits for a click after a failed sign-in, and after signing
+  out in that tab.
+
 ### Fixed
 
 - **Copy buttons copy over plain HTTP** (#322). Browsers withhold the clipboard API from a page
