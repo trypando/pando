@@ -32,6 +32,12 @@ No new advisories.
   They now copy, and fall back to selecting the text only when the browser refuses every way to
   copy. Reported by [@realPhrojoe](https://github.com/realPhrojoe)
   in [#322](https://github.com/trypando/pando/issues/322).
+- **App backups dump their databases** (#344). A rolling or delete-time backup copied every volume
+  file by file while the app ran, so a database written to during the copy could be torn and fail
+  to start after a restore. A PostgreSQL or MySQL database Pando provisions is now dumped with
+  `pg_dump` or `mysqldump` and loaded back the same way; restoring one needs the app running. Other
+  volumes are still copied while the app runs: the backup's manifest marks each such copy `live`,
+  and the app shows a notice naming them. Backups of the whole installation are unchanged.
 
 ## [0.16.0] - 2026-10-25
 
