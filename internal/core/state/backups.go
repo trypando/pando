@@ -310,10 +310,21 @@ func (b *BundleSource) VolumesToSnapshot(ctx context.Context) ([]backup.VolumeRe
 func (b *BundleSource) ServicesToSnapshot(ctx context.Context) ([]backup.ServiceRef, error) {
 	return queryAll(ctx, b.db, "Could not read this installation's provisioned services.",
 		func(r pgx.CollectableRow) (v backup.ServiceRef, err error) {
-			return v, r.Scan(&v.ServiceID, &v.AppID, &v.AdapterRef, &v.Handle)
+			return v, r.Scan(&v.ServiceID, &v.AppID, &v.AdapterRef, &v.Handle, &v.Type)
 		}, `
-		SELECT id, app_id, adapter_ref, handle
+		SELECT id, app_id, adapter_ref, handle, slot_type
 		FROM service_instances ORDER BY id`)
+}
+
+// ServicesForApp lists one app's provisioned services, for a per-app backup
+// to dump with their engines' own tools (R-423).
+func (b *BundleSource) ServicesForApp(ctx context.Context, appID string) ([]backup.ServiceRef, error) {
+	return queryAll(ctx, b.db, "Could not read the app's provisioned services.",
+		func(r pgx.CollectableRow) (v backup.ServiceRef, err error) {
+			return v, r.Scan(&v.ServiceID, &v.AppID, &v.AdapterRef, &v.Handle, &v.Type)
+		}, `
+		SELECT id, app_id, adapter_ref, handle, slot_type
+		FROM service_instances WHERE app_id = $1 ORDER BY id`, appID)
 }
 
 // VolumesForApp lists one app's volumes, for a per-app backup (R-204).
@@ -362,6 +373,11 @@ type BackupAttempt struct {
 	BackupID    string    `json:"backup_id,omitempty"`
 	Message     string    `json:"message,omitempty"`
 	Remedy      string    `json:"remedy,omitempty"`
+
+	// LiveVolumes are the volumes a backup that was taken copied while the
+	// app was running, so a file written during the copy may be inconsistent
+	// in it (R-423). A database dumped by its engine is never one of them.
+	LiveVolumes []string `json:"live_volumes,omitempty"`
 }
 
 // Backup attempt outcomes.
@@ -374,13 +390,13 @@ const (
 // RecordAttempt replaces the app's last attempt with this one.
 func (b *Backups) RecordAttempt(ctx context.Context, a BackupAttempt) error {
 	_, err := b.db.Exec(ctx, `
-		INSERT INTO backup_attempts (app_id, attempted_at, outcome, backup_id, message, remedy)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO backup_attempts (app_id, attempted_at, outcome, backup_id, message, remedy, live_volumes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (app_id) DO UPDATE
 		  SET attempted_at = excluded.attempted_at, outcome = excluded.outcome,
 		      backup_id = excluded.backup_id, message = excluded.message,
-		      remedy = excluded.remedy`,
-		a.AppID, a.AttemptedAt, a.Outcome, nullable(a.BackupID), a.Message, a.Remedy)
+		      remedy = excluded.remedy, live_volumes = excluded.live_volumes`,
+		a.AppID, a.AttemptedAt, a.Outcome, nullable(a.BackupID), a.Message, a.Remedy, nonNil(a.LiveVolumes))
 	if err != nil {
 		return errs.Wrap(errs.Internal, "Could not record the backup attempt.", err)
 	}
@@ -397,7 +413,8 @@ func (b *Backups) Attempts(ctx context.Context, appID string, limit int) ([]Back
 		where, args = " AND t.app_id = $2", append(args, appID)
 	}
 	rows, err := b.db.Query(ctx, `
-		SELECT t.app_id, a.name, t.attempted_at, t.outcome, coalesce(t.backup_id, ''), t.message, t.remedy
+		SELECT t.app_id, a.name, t.attempted_at, t.outcome, coalesce(t.backup_id, ''), t.message, t.remedy,
+		       t.live_volumes
 		FROM backup_attempts t
 		JOIN apps a ON a.id = t.app_id
 		WHERE a.deleted_at IS NULL`+where+`
@@ -411,10 +428,18 @@ func (b *Backups) Attempts(ctx context.Context, appID string, limit int) ([]Back
 	out := make([]BackupAttempt, 0)
 	for rows.Next() {
 		var a BackupAttempt
-		if err := rows.Scan(&a.AppID, &a.AppName, &a.AttemptedAt, &a.Outcome, &a.BackupID, &a.Message, &a.Remedy); err != nil {
+		if err := rows.Scan(&a.AppID, &a.AppName, &a.AttemptedAt, &a.Outcome, &a.BackupID, &a.Message, &a.Remedy, &a.LiveVolumes); err != nil {
 			return nil, errs.Wrap(errs.Internal, "Could not read the backup attempts.", err)
 		}
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// nonNil is a list the database's NOT NULL array column takes: nil is NULL.
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

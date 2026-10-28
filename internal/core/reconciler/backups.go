@@ -161,12 +161,18 @@ func (g *RollingBackups) takeOne(ctx context.Context, app state.AppWithStorage) 
 		return attempt, nil
 	}
 
+	services, err := g.BundleSource.ServicesForApp(ctx, app.AppID)
+	if err != nil {
+		return failed(attempt, err), err
+	}
+
 	id := g.Backups.NewID()
 	created, err := g.Backup.CreateForApp(ctx, id, backup.AppCreateRequest{
-		AppID:   app.AppID,
-		Kind:    "rolling",
-		Spec:    app.Spec,
-		Volumes: volumes,
+		AppID:    app.AppID,
+		Kind:     "rolling",
+		Spec:     app.Spec,
+		Volumes:  volumes,
+		Services: services,
 
 		// Retained for as many days as the app asks to keep copies. R-211's
 		// count is a number of dailies, so the window is that many days — which
@@ -188,6 +194,7 @@ func (g *RollingBackups) takeOne(ctx context.Context, app state.AppWithStorage) 
 
 	attempt.Outcome = state.AttemptTaken
 	attempt.BackupID = id
+	attempt.LiveVolumes = created.Manifest.LiveVolumes()
 	return attempt, nil
 }
 

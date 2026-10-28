@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/core/spec"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/secret"
 )
@@ -98,6 +99,10 @@ type ServiceRef struct {
 	AppID      string
 	AdapterRef string
 	Handle     string
+
+	// Type is the slot type, which decides how an app backup dumps it
+	// (R-423).
+	Type spec.SlotType
 }
 
 // VolumeRef names one volume and the adapter that can snapshot it.

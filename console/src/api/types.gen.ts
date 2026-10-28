@@ -296,6 +296,7 @@ export interface BackupAttempt {
   backup_id?: string;
   message?: string;
   remedy?: string;
+  live_volumes?: (string[] | null);
 }
 
 export interface ProviderView {

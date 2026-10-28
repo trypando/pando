@@ -109,6 +109,11 @@ func (r *recHost) Exec(_ context.Context, ref api.WorkloadRef, _ api.ExecRequest
 	return nil, nil
 }
 
+func (r *recHost) Run(_ context.Context, ref api.WorkloadRef, _ api.RunRequest) error {
+	r.record("run " + ref.BundleID + "/" + ref.Workload)
+	return nil
+}
+
 func (r *recHost) RejoinNetworks(context.Context, func(string) bool) (int, error) {
 	r.record("rejoin")
 	return r.rejoinN, r.rejoinErr
@@ -331,8 +336,9 @@ func TestR256_EveryOperationOnAnAppRunsOnItsHost(t *testing.T) {
 	require.Equal(t, "a log line", string(b))
 	_, err = a.Exec(ctx, wref, api.ExecRequest{})
 	require.NoError(t, err)
+	require.NoError(t, a.Run(ctx, wref, api.RunRequest{}))
 
-	require.Equal(t, []string{"usage app_a", "stop app_a", "logs app_a/web", "exec app_a/web"}, hosts["app-1"].got())
+	require.Equal(t, []string{"usage app_a", "stop app_a", "logs app_a/web", "exec app_a/web", "run app_a/web"}, hosts["app-1"].got())
 	require.Empty(t, hosts["control"].got())
 
 	// An app on no host: there is nothing to read or stop.

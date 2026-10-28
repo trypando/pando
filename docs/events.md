@@ -86,7 +86,7 @@ A template is checked against a sample event when it is saved, and a JSON conten
 | `app.state_changed` | app | An app moved from one state to another: running, degraded, failed, stopped, deploying and the rest. A health change is a move between running and degraded. | `from` The state it was in.<br>`to` The state it is in now. |
 | `app.restarted` | app | Somebody restarted an app. |  |
 | `app.failed` | app | Pando stopped trying to bring an app back after repeated failures. It stays failed until somebody deploys it. | `reason` Why, in words a person can act on.<br>`failures` How many attempts failed.<br>`window` Over how long. |
-| `app.restored` | app | An app's data was restored from a backup. | `volumes` The volumes restored. |
+| `app.restored` | app | An app's data was restored from a backup. | `volumes` The volumes restored.<br>`databases` The databases loaded from a dump. |
 | `app.exec` | app | Somebody opened a shell in one of an app's workloads. The command is named; what was typed is not recorded. | `workload` The workload.<br>`command` The command the session started. |
 | `app.secret_written` | app | An app's secret was set or changed. The value is never in an event. | `key` The secret's name. |
 | `deploy.requested` | app | A deploy is waiting for approval. | `spec_revision` The revision to deploy.<br>`trigger` What started it.<br>`reasons` Why it needs approval.<br>`approvals_required` How many approvals it needs. |

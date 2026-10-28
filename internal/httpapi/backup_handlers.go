@@ -230,10 +230,16 @@ func (s *Server) createRollingBackup(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 
+	services, err := s.BundleSource.ServicesForApp(r.Context(), app.ID)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
+
 	p := PrincipalFrom(r.Context())
 	id := s.Backups.NewID()
 	created, err := s.Backup.CreateForApp(r.Context(), id, backup.AppCreateRequest{
-		AppID: app.ID, Kind: "rolling", Spec: appSpec, Volumes: volumes,
+		AppID: app.ID, Kind: "rolling", Spec: appSpec, Volumes: volumes, Services: services,
 		DestinationRef: req.DestinationRef,
 		RetainFor:      time.Duration(req.RetainDays) * 24 * time.Hour,
 	})
@@ -468,6 +474,11 @@ func (s *Server) handleRestoreAppBackup(w http.ResponseWriter, r *http.Request) 
 		Error(w, r, err)
 		return
 	}
+	services, err := s.BundleSource.ServicesForApp(r.Context(), app.ID)
+	if err != nil {
+		Error(w, r, err)
+		return
+	}
 
 	p := PrincipalFrom(r.Context())
 	s.audit(r, audit.Event{
@@ -477,7 +488,7 @@ func (s *Server) handleRestoreAppBackup(w http.ResponseWriter, r *http.Request) 
 
 	result, err := s.Backup.RestoreApp(r.Context(), backup.AppRestoreRequest{
 		AppID: app.ID, AdapterRef: rec.AdapterRef, ObjectName: rec.ObjectName,
-		Volumes: volumes, Confirm: req.Confirm,
+		Volumes: volumes, Services: services, Confirm: req.Confirm,
 	})
 	if err != nil {
 		Error(w, r, err)
@@ -487,10 +498,10 @@ func (s *Server) handleRestoreAppBackup(w http.ResponseWriter, r *http.Request) 
 	s.audit(r, audit.Event{
 		PrincipalKind: audit.PrincipalKind(p.Kind), PrincipalID: p.ID, OnBehalfOf: p.UserID,
 		Action: "app.restore", AppID: app.ID, TargetKind: "backup", TargetID: rec.ID,
-		Detail: map[string]any{"volumes": result.VolumesApplied},
+		Detail: map[string]any{"volumes": result.VolumesApplied, "databases": result.ServicesApplied},
 	})
 	JSON(w, http.StatusOK, map[string]any{
-		"restored": true, "volumes": result.VolumesApplied,
+		"restored": true, "volumes": result.VolumesApplied, "databases": result.ServicesApplied,
 		"note": "Restart the app so it reads the restored data.",
 	})
 }

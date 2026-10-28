@@ -298,6 +298,10 @@
         {
           "name": "volumes",
           "description": "The volumes restored."
+        },
+        {
+          "name": "databases",
+          "description": "The databases loaded from a dump."
         }
       ]
     },

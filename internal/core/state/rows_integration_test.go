@@ -5,6 +5,7 @@ package state_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -55,10 +56,47 @@ func TestR212_ProvisionedServicesAreListedForTheAppAndForABackup(t *testing.T) {
 		require.Equal(t, "svc_local", s.AdapterRef)
 	}
 
+	// And by app, with the type an app backup dumps by (R-423).
+	forBackup, err := state.NewBundleSource(db).ServicesForApp(ctx, appID)
+	require.NoError(t, err)
+	require.Len(t, forBackup, 2)
+	types := []spec.SlotType{forBackup[0].Type, forBackup[1].Type}
+	require.ElementsMatch(t, []spec.SlotType{spec.SlotPostgres, spec.SlotRedis}, types)
+	none2, err := state.NewBundleSource(db).ServicesForApp(ctx, other)
+	require.NoError(t, err)
+	require.Empty(t, none2)
+
 	gone, cancel := context.WithCancel(ctx)
 	cancel()
 	_, err = services.ForApp(gone, appID)
 	require.Error(t, err)
 	require.Equal(t, errs.Internal, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "Could not read this app's provisioned services.")
+}
+
+// TestR423_TheVolumesABackupCopiedLiveAreKeptWithTheAttempt asserts the
+// attempt carries what the app's notice names, and that an attempt with none
+// reads back as none.
+func TestR423_TheVolumesABackupCopiedLiveAreKeptWithTheAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := connected(t)
+	alice := seedUser(t, db, "alice")
+	appID := seedApp(t, db, alice.ID)
+	backups := state.NewBackups(db)
+
+	at := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, backups.RecordAttempt(ctx, state.BackupAttempt{
+		AppID: appID, AttemptedAt: at, Outcome: state.AttemptTaken, LiveVolumes: []string{"uploads", "cache"},
+	}))
+	got, err := backups.Attempts(ctx, appID, 1)
+	require.NoError(t, err)
+	require.Equal(t, []string{"uploads", "cache"}, got[0].LiveVolumes)
+
+	require.NoError(t, backups.RecordAttempt(ctx, state.BackupAttempt{
+		AppID: appID, AttemptedAt: at.Add(time.Hour), Outcome: state.AttemptFailed, Message: "x",
+	}))
+	got, err = backups.Attempts(ctx, appID, 1)
+	require.NoError(t, err)
+	require.Empty(t, got[0].LiveVolumes, "replaced, not merged")
 }

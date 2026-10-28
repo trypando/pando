@@ -16,11 +16,49 @@ import (
 	"github.com/trypando/pando/internal/errs"
 )
 
-// volumeRuntime keeps volumes in memory, by handle. Methods an app backup
-// never calls are the embedded interface's, and panic if reached.
+// volumeRuntime keeps volumes in memory, by handle, and runs a database's
+// dump and load against an in-memory database per workload. Methods an app
+// backup never calls are the embedded interface's, and panic if reached.
 type volumeRuntime struct {
 	api.RuntimeAdapter
 	volumes map[string][]byte
+
+	// running is whether the app's workloads are running; observeErr is
+	// what Observe fails with, when set.
+	running    bool
+	observeErr error
+
+	// databases is each running database workload's contents; one missing is
+	// not running. runErr is what Run fails with, when set.
+	databases map[string][]byte
+	runErr    error
+}
+
+func (r *volumeRuntime) Observe(context.Context, api.BundleRef) (api.ObservedBundle, error) {
+	if r.observeErr != nil {
+		return api.ObservedBundle{}, r.observeErr
+	}
+	return api.ObservedBundle{Exists: true, Workloads: []api.ObservedWorkload{{Name: "web", Present: true, Running: r.running}}}, nil
+}
+
+func (r *volumeRuntime) Run(_ context.Context, ref api.WorkloadRef, req api.RunRequest) error {
+	data, ok := r.databases[ref.Workload]
+	if !ok {
+		return errs.Newf(errs.NotFound, "There is nothing running called %q.", ref.Workload)
+	}
+	if r.runErr != nil {
+		return r.runErr
+	}
+	switch req.Command[0] {
+	case "dump":
+		_, err := req.Stdout.Write(data)
+		return err
+	case "load":
+		b, err := io.ReadAll(req.Stdin)
+		r.databases[ref.Workload] = b
+		return err
+	}
+	return errs.New(errs.Internal, "unknown command")
 }
 
 func (*volumeRuntime) Kind() string                                     { return "fake" }

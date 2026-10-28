@@ -147,6 +147,7 @@ func TestR148_ObserveReportsWhatRunsInARunningVM(t *testing.T) {
 	require.NoError(t, err)
 	_, err = a.Exec(ctx, api.WorkloadRef{BundleID: "app_1", Workload: "web"}, api.ExecRequest{})
 	require.NoError(t, err)
+	require.NoError(t, a.Run(ctx, api.WorkloadRef{BundleID: "app_1", Workload: "web"}, api.RunRequest{}))
 	u, err := a.Usage(ctx, api.BundleRef{BundleID: "app_1"})
 	require.NoError(t, err)
 	require.Equal(t, "web", u.Workloads[0].Workload)
@@ -158,6 +159,10 @@ func TestR148_ObserveReportsWhatRunsInARunningVM(t *testing.T) {
 	u, err = a.Usage(ctx, api.BundleRef{BundleID: "app_1"})
 	require.NoError(t, err)
 	require.Equal(t, int64(-1), u.Workloads[0].DiskBytes)
+	err = a.Run(ctx, api.WorkloadRef{BundleID: "app_1", Workload: "web"}, api.RunRequest{})
+	require.Equal(t, errs.NotFound, errs.CodeOf(err), "a stopped VM runs nothing (R-423)")
+	err = a.Run(ctx, api.WorkloadRef{BundleID: "app_none"}, api.RunRequest{})
+	require.Equal(t, errs.NotFound, errs.CodeOf(err))
 
 	_, err = a.Exec(ctx, api.WorkloadRef{BundleID: "app_none"}, api.ExecRequest{})
 	require.Equal(t, errs.NotFound, errs.As(err).Code)

@@ -361,6 +361,17 @@ type RuntimeAdapter interface {
 	Logs(ctx context.Context, ref WorkloadRef, opts LogOptions) (io.ReadCloser, error)
 	Exec(ctx context.Context, ref WorkloadRef, req ExecRequest) (ExecSession, error)
 
+	// Run runs a command to completion in a running workload, with no
+	// terminal: Stdin, when set, is its standard input to the end, and its
+	// standard output is written to Stdout and nothing else. A non-zero exit
+	// is an error carrying the command's last line of standard error. A
+	// workload that is not running is errs.NotFound, so a caller can tell
+	// "nothing to run it in" from a command that failed.
+	//
+	// Exec is a person's terminal; this is how core runs a service's own
+	// dump and load tools inside it (R-423).
+	Run(ctx context.Context, ref WorkloadRef, req RunRequest) error
+
 	// Upstream says where Pando's proxy sends a request for one port of one
 	// workload (R-023).
 	//
@@ -961,6 +972,13 @@ type ExecRequest struct {
 	Env     map[string]string
 }
 
+// RunRequest is a command Run takes to completion.
+type RunRequest struct {
+	Command []string
+	Stdin   io.Reader
+	Stdout  io.Writer
+}
+
 // ExecSession is an open exec session.
 type ExecSession interface {
 	io.ReadWriteCloser
@@ -1299,6 +1317,27 @@ type ServicesAdapter interface {
 	Destroy(ctx context.Context, h ServiceHandle) error
 	Snapshot(ctx context.Context, h ServiceHandle, dst io.Writer) error
 	Restore(ctx context.Context, h ServiceHandle, src io.Reader) error
+
+	// Dump says how the engine's own tools dump and load a provisioned
+	// service from inside its workload, for an app backup that does not copy
+	// a database's files while it writes them (R-423). Pure, like Provision:
+	// core runs the commands through the runtime. False when the adapter has
+	// none for the type, and the service's volumes are copied instead.
+	Dump(h ServiceHandle, t spec.SlotType) (DumpPlan, bool)
+}
+
+// DumpPlan is how one provisioned service is dumped and loaded (R-423).
+type DumpPlan struct {
+	// Workload is the workload both commands run in.
+	Workload string
+	// Dump writes a consistent copy of the service's data to standard output.
+	Dump []string
+	// Load reads what Dump wrote from standard input and replaces the
+	// service's data with it.
+	Load []string
+	// Volumes are the volumes the dump stands in for. An app backup holding
+	// the dump does not also copy them.
+	Volumes []string
 }
 
 // ServicesCapabilities is what a services adapter can do, as data (R-254).

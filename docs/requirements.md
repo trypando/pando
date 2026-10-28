@@ -795,6 +795,8 @@ Changes are classed by what they do to the install's rules, not by what they loo
 
 **R-211 [P]** Default: daily, 7 retained.
 
+**R-423 [D]** **An app backup never pauses the app, and says which of its data it copied while the app ran.** A provisioned database whose services adapter can dump it is dumped with the engine's own tool, inside its running workload, and loaded back the same way on restore; its volume is not also copied. Every other volume is copied file by file, and when the app was running the backup's record marks that copy live — a file written during it may be inconsistent — and the app carries a notice naming those volumes, never a blocker. A database that is not running is copied with its volume, which nothing is writing. *(Added by #344.)*
+
 **R-212 [D]** **Full-host DR bundle.** A complete backup of the Pando install — state database, encryption key, configuration, everything needed to reconstitute the host without pain.
 
 **R-213 [D]** The DR bundle is **encrypted under a separate passphrase or key supplied at backup time**, never one stored on the host. Rationale: bundling the encryption key with the encrypted database makes the bundle plaintext for anyone holding it — every secret for every app in one file. This is also structurally necessary, since a restore onto a fresh machine cannot unwrap keys held by the old machine.

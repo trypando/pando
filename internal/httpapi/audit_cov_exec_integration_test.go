@@ -41,6 +41,10 @@ func (f *execRuntime) Exec(context.Context, adapterapi.WorkloadRef, adapterapi.E
 	return f.open()
 }
 
+func (f *execRuntime) Run(context.Context, adapterapi.WorkloadRef, adapterapi.RunRequest) error {
+	return nil
+}
+
 // fakeExecSession prints output, then either ends by itself with an exit code
 // (the shell exiting) or waits until it is closed (the terminal going away).
 type fakeExecSession struct {

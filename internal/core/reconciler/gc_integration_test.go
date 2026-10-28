@@ -201,7 +201,12 @@ func (f *fakeBackups) CreateForApp(_ context.Context, id string, req backup.AppC
 		return backup.Created{}, f.fail
 	}
 	f.taken = append(f.taken, req)
-	return backup.Created{AdapterRef: "bk_fake", ObjectName: id}, nil
+	// Copied while the app ran, as a volume with no dump is (R-423).
+	m := backup.Manifest{}
+	for _, v := range req.Volumes {
+		m.Entries = append(m.Entries, backup.Entry{Name: backup.VolumesPrefix + v.VolumeID + ".tar", Live: true})
+	}
+	return backup.Created{AdapterRef: "bk_fake", ObjectName: id, Manifest: m}, nil
 }
 
 func (f *fakeBackups) Discard(context.Context, string, string) error { return nil }
@@ -275,6 +280,7 @@ func TestR211_ARollingBackupIsTakenAndRecorded(t *testing.T) {
 	attempt := lastAttempt(t, gc, appID)
 	require.Equal(t, state.AttemptTaken, attempt.Outcome)
 	require.NotEmpty(t, attempt.BackupID)
+	require.Equal(t, []string{runner.taken[0].Volumes[0].VolumeID}, attempt.LiveVolumes, "R-423: the notice names what was copied live")
 	require.Equal(t, 1, logs.FilterMessage("took a rolling backup").Len())
 
 	// Taken once a day, not once a pass: the job asks for what is due.

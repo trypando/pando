@@ -3796,6 +3796,10 @@
                       "type": "integer",
                       "format": "int64"
                     },
+                    "databases": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
                     "note": {
                       "type": "string"
                     }
@@ -3803,6 +3807,7 @@
                   "required": [
                     "restored",
                     "volumes",
+                    "databases",
                     "note"
                   ]
                 }
@@ -14389,6 +14394,12 @@
           },
           "remedy": {
             "type": "string"
+          },
+          "live_volumes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -15560,6 +15571,9 @@
           },
           "sha256": {
             "type": "string"
+          },
+          "live": {
+            "type": "boolean"
           }
         },
         "required": [

@@ -54,6 +54,10 @@ func (fakeBundles) VolumesForApp(context.Context, string) ([]backup.VolumeRef, e
 	return nil, nil
 }
 
+func (fakeBundles) ServicesForApp(context.Context, string) ([]backup.ServiceRef, error) {
+	return nil, nil
+}
+
 type fakePolicy struct{ doc policy.Document }
 
 func (p fakePolicy) Load(context.Context) (policy.Document, error) { return p.doc, nil }

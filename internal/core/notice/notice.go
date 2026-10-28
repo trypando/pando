@@ -36,6 +36,7 @@ const (
 	KeyUnshipped     = "config.unshipped"
 	KeyUnsetVars     = "variables.unset"
 	KeyBackup        = "backup.not_taken"
+	KeyBackupLive    = "backup.live_copy"
 	KeySecurity      = "security.below_threshold"
 	KeyNoStandby     = "standby.no_room"
 	KeyStandby       = "standby.live_copy"
@@ -319,6 +320,9 @@ func Compute(in Inputs) []Notice {
 	if n, ok := backupNotTaken(in.LastBackup); ok {
 		out = append(out, n)
 	}
+	if n, ok := backupLive(in.LastBackup); ok {
+		out = append(out, n)
+	}
 	if n, ok := noStandby(in.Room); ok {
 		out = append(out, n)
 	}
@@ -399,6 +403,32 @@ func backupNotTaken(attempt *state.BackupAttempt) (Notice, bool) {
 	}
 	return newNotice(KeyBackup, msg,
 		attempt.AttemptedAt.UTC().Format(time.RFC3339Nano), attempt.Outcome, attempt.Message, attempt.Remedy), true
+}
+
+// backupLive: the app's last backup copied volumes while the app ran, so a
+// file written during the copy may be inconsistent in it (R-423, #344). A
+// notice, never a blocker. Fingerprinted on which volumes, not on when, so it
+// does not come back after every daily backup.
+func backupLive(attempt *state.BackupAttempt) (Notice, bool) {
+	if attempt == nil || attempt.Outcome != state.AttemptTaken || len(attempt.LiveVolumes) == 0 {
+		return Notice{}, false
+	}
+	volumes := slices.Sorted(slices.Values(attempt.LiveVolumes))
+	noun := "volume"
+	if len(volumes) > 1 {
+		noun = "volumes"
+	}
+	msg := fmt.Sprintf("This app's last backup copied its %s %s while the app was running, so a file written during the copy may be inconsistent in the backup. "+
+		"A PostgreSQL or MySQL database Pando provisions is dumped instead.", noun, joinNames(volumes))
+	return newNotice(KeyBackupLive, msg, volumes...), true
+}
+
+// joinNames is "a", "a and b", or "a, b and c".
+func joinNames(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // noStandby: the app runs without the standby it should have, because no

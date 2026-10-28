@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/trypando/pando/internal/errs"
@@ -55,6 +56,24 @@ type Entry struct {
 	Name   string `json:"name"`
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
+
+	// Live is a volume copied file by file while the app was running, so a
+	// file written during the copy may be inconsistent in it (R-423). A
+	// database dump is never live: the engine took it in one transaction.
+	Live bool `json:"live,omitempty"`
+}
+
+// LiveVolumes are the volumes the bundle copied while their app was running
+// (R-423), by volume ID.
+func (m Manifest) LiveVolumes() []string {
+	var out []string
+	for _, e := range m.Entries {
+		if e.Live && strings.HasPrefix(e.Name, VolumesPrefix) {
+			_, volumeID := parseVolumeEntry(e.Name)
+			out = append(out, volumeID)
+		}
+	}
+	return out
 }
 
 // Named parts of a bundle. Fixed names because restore looks for them.
@@ -150,6 +169,16 @@ func (b *Writer) Add(name string, size int64, r io.Reader) error {
 
 	b.entries = append(b.entries, Entry{Name: name, Size: size, SHA256: hex.EncodeToString(sum.Sum(nil))})
 	return nil
+}
+
+// MarkLive records that the entry called name was copied while the app ran
+// (R-423).
+func (b *Writer) MarkLive(name string) {
+	for i := range b.entries {
+		if b.entries[i].Name == name {
+			b.entries[i].Live = true
+		}
+	}
 }
 
 // Count records an object count for the manifest.

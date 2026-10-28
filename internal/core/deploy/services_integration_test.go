@@ -45,6 +45,9 @@ func (*fakeServices) Snapshot(context.Context, api.ServiceHandle, io.Writer) err
 	return nil
 }
 func (*fakeServices) Restore(context.Context, api.ServiceHandle, io.Reader) error { return nil }
+func (*fakeServices) Dump(api.ServiceHandle, spec.SlotType) (api.DumpPlan, bool) {
+	return api.DumpPlan{}, false
+}
 func (f *fakeServices) Provision(_ context.Context, req api.ProvisionRequest) (api.ProvisionResult, error) {
 	f.calls = append(f.calls, req)
 	if f.failing {

@@ -120,7 +120,7 @@ var catalog = []Def{
 		Summary: "Pando stopped trying to bring an app back after repeated failures. It stays failed until somebody deploys it.",
 		Fields:  []Field{reason, f("failures", "How many attempts failed."), f("window", "Over how long.")}},
 	{Name: "app.restored", Scope: ScopeApp, Source: SourceAudit, Actions: []string{"app.restore"},
-		Summary: "An app's data was restored from a backup.", Fields: []Field{f("volumes", "The volumes restored.")}},
+		Summary: "An app's data was restored from a backup.", Fields: []Field{f("volumes", "The volumes restored."), f("databases", "The databases loaded from a dump.")}},
 	{Name: "app.exec", Scope: ScopeApp, Source: SourceAudit, Actions: []string{"app.exec"},
 		Summary: "Somebody opened a shell in one of an app's workloads. The command is named; what was typed is not recorded.",
 		Fields:  []Field{f("workload", "The workload."), f("command", "The command the session started.")}},

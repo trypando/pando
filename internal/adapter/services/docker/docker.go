@@ -189,11 +189,7 @@ func (a *Adapter) Provision(_ context.Context, req api.ProvisionRequest) (api.Pr
 		return api.ProvisionResult{}, errs.New(errs.Internal, "A service was provisioned without an identifier.")
 	}
 
-	// The workload and volume names carry the service ID, not the slot key. A
-	// slot key can be renamed in the spec; renaming it must not orphan a
-	// database the app is still using.
-	name := "svc-" + strings.ToLower(strings.TrimPrefix(req.ServiceID, "svc_"))
-	volumeID := "vol_" + strings.TrimPrefix(req.ServiceID, "svc_")
+	name, volumeID := names(req.ServiceID)
 
 	// Reuse the credentials this service was created with. See
 	// ProvisionRequest.ExistingSecret: a database sets its password at initdb
@@ -440,6 +436,50 @@ func (a *Adapter) Snapshot(_ context.Context, h api.ServiceHandle, _ io.Writer) 
 func (a *Adapter) Restore(_ context.Context, h api.ServiceHandle, _ io.Reader) error {
 	return errs.Newf(errs.Internal,
 		"The data for %s is restored with this app's storage, not separately.", h.ServiceID)
+}
+
+// names are a service's workload and volume. They carry the service ID, not
+// the slot key: a slot key can be renamed in the spec, and renaming it must not
+// orphan a database the app is still using.
+func names(serviceID string) (workload, volumeID string) {
+	return "svc-" + strings.ToLower(strings.TrimPrefix(serviceID, "svc_")),
+		"vol_" + strings.TrimPrefix(serviceID, "svc_")
+}
+
+// Dump is the engine's own dump and load for a database (R-423), run in the
+// service's workload while it serves: pg_dump and mysqldump each read one
+// transaction's view of the data, which a copy of the files under a running
+// server is not (#344).
+//
+// Load replaces what the dump holds, in one transaction where the engine has
+// one, so an app connected during a restore reads the old data or the new and
+// never half of each. Tables created since the dump are left alone.
+//
+// Redis and MongoDB are copied with their volumes. Redis writes its dump file
+// whole and renames it into place, so a copy holds its last save; MongoDB's
+// tools are not in every image this adapter may be configured to run.
+//
+// The password stays out of argv, which anything on the host can list:
+// Postgres trusts its own socket in the official image, and MySQL's client
+// reads MYSQL_PWD.
+func (a *Adapter) Dump(h api.ServiceHandle, t spec.SlotType) (api.DumpPlan, bool) {
+	workload, volumeID := names(h.ServiceID)
+	plan := api.DumpPlan{Workload: workload, Volumes: []string{volumeID}}
+	switch t {
+	case spec.SlotPostgres:
+		plan.Dump = []string{"pg_dump", "-U", "app", "-d", "app", "--format=custom"}
+		plan.Load = []string{"pg_restore", "-U", "app", "-d", "app",
+			"--clean", "--if-exists", "--no-owner", "--single-transaction", "--exit-on-error"}
+	case spec.SlotMySQL:
+		// mysqldump, or mariadb-dump in an image that has only that.
+		plan.Dump = []string{"sh", "-c", `d=$(command -v mysqldump || command -v mariadb-dump) && ` +
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec "$d" -uroot --single-transaction --routines --triggers --events app`}
+		plan.Load = []string{"sh", "-c", `c=$(command -v mysql || command -v mariadb) && ` +
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec "$c" -uroot app`}
+	default:
+		return api.DumpPlan{}, false
+	}
+	return plan, true
 }
 
 // passwordAlphabet excludes characters that need escaping in a URL, a shell

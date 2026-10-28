@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	utilexec "k8s.io/client-go/util/exec"
 
 	"github.com/trypando/pando/internal/adapter/api"
+	"github.com/trypando/pando/internal/errs"
 )
 
 const procNetTCP = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
@@ -92,6 +94,47 @@ func TestR084_ExecRunsInTheWorkloadsPodAndReportsItsExitCode(t *testing.T) {
 	require.Equal(t, pod.Name, gotPod)
 	require.Equal(t, []string{"env", "TERM=xterm", "sh"}, gotCmd)
 	require.NoError(t, s.Close())
+}
+
+// TestR423_RunTakesACommandToCompletionInTheWorkloadsPod asserts Run's
+// contract on this runtime: stdin in, stdout to the caller and stderr kept
+// apart to explain a failure, and NotFound when nothing is running.
+func TestR423_RunTakesACommandToCompletionInTheWorkloadsPod(t *testing.T) {
+	ctx := context.Background()
+	a, cs := testAdapter(t, nil)
+	ref := api.WorkloadRef{BundleID: testBundle, Workload: "web"}
+	require.Equal(t, errs.NotFound, errs.CodeOf(a.Run(ctx, ref, api.RunRequest{Command: []string{"true"}})))
+
+	_, err := a.Apply(ctx, webPlan())
+	require.NoError(t, err)
+	pod := listPods(t, cs, testNS, "web")[0]
+	setStatus(t, cs, pod, running(true))
+
+	var gotPod, gotContainer string
+	a.stream = func(_ context.Context, _, p, container string, cmd []string, opts remotecommand.StreamOptions) error {
+		gotPod, gotContainer = p, container
+		if opts.Stdin != nil {
+			_, _ = io.Copy(opts.Stdout, opts.Stdin)
+		}
+		_, _ = io.WriteString(opts.Stderr, "a warning\n")
+		return nil
+	}
+	var out bytes.Buffer
+	require.NoError(t, a.Run(ctx, ref, api.RunRequest{Command: []string{"cat"}, Stdin: strings.NewReader("dump"), Stdout: &out}))
+	require.Equal(t, "dump", out.String())
+	require.Equal(t, pod.Name, gotPod)
+	require.Equal(t, appContainer, gotContainer)
+	require.NoError(t, a.Run(ctx, ref, api.RunRequest{Command: []string{"cat"}}), "no stdout is discarded")
+
+	a.stream = func(_ context.Context, _, _, _ string, _ []string, opts remotecommand.StreamOptions) error {
+		_, _ = io.WriteString(opts.Stderr, "first\npg_dump: error\n")
+		return utilexec.CodeExitError{Code: 1}
+	}
+	require.ErrorContains(t, a.Run(ctx, ref, api.RunRequest{Command: []string{"pg_dump"}}), "pg_dump: error")
+	a.stream = func(context.Context, string, string, string, []string, remotecommand.StreamOptions) error {
+		return utilexec.CodeExitError{Code: 1}
+	}
+	require.ErrorContains(t, a.Run(ctx, ref, api.RunRequest{Command: []string{"false"}}), "printed nothing")
 }
 
 // TestR212_AVolumeIsBackedUpAndRestoredThroughAHelperBesideIt asserts the
