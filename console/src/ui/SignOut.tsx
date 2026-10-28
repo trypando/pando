@@ -11,12 +11,17 @@ import { Button } from '@design';
 
 import { api } from '@api/client';
 
+import { markSignedOut } from '../auth/sso';
+
 export function SignOut({ onSignedOut }: { onSignedOut?: () => void }) {
   const queries = useQueryClient();
 
   const signOut = useMutation({
     mutationFn: () => api.del<void>('/sessions'),
     onSuccess: () => {
+      // The sign-in page shown next would otherwise start the only provider,
+      // which still has them signed in, and undo this (R-172).
+      markSignedOut();
       onSignedOut?.();
       void queries.resetQueries();
     },
