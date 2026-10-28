@@ -191,7 +191,7 @@ func (s *Service) addDump(ctx context.Context, b *Writer, appID string, sv Servi
 
 	staged, err := os.CreateTemp(s.WorkDir, "pando-svc-*.dump")
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Pando could not stage the service's data.", err)
+		return nil, errs.Wrap(errs.Internal, msgStageService, err)
 	}
 	defer func() {
 		_ = staged.Close()
@@ -208,10 +208,10 @@ func (s *Service) addDump(ctx context.Context, b *Writer, appID string, sv Servi
 	}
 	info, err := staged.Stat()
 	if err != nil {
-		return nil, errs.Wrap(errs.Internal, "Pando could not stage the service's data.", err)
+		return nil, errs.Wrap(errs.Internal, msgStageService, err)
 	}
 	if _, err := staged.Seek(0, io.SeekStart); err != nil {
-		return nil, errs.Wrap(errs.Internal, "Pando could not stage the service's data.", err)
+		return nil, errs.Wrap(errs.Internal, msgStageService, err)
 	}
 	if err := b.Add(ServicesPrefix+sv.ServiceID+".dump", info.Size(), staged); err != nil {
 		return nil, err
