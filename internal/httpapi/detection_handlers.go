@@ -178,7 +178,8 @@ func (s *Server) handleRerunDetection(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusAccepted, s.detectionResponse(d))
 }
 
-// handleDetectionDiff compares the proposal against the pinned spec (R-022).
+// handleDetectionDiff compares what accepting the proposal would pin against
+// the pinned spec (R-022).
 //
 // The same machinery as every other diff (design 01 §4), so a re-detection that
 // would remove a volume is shown as destructive here exactly as it would be
@@ -220,13 +221,28 @@ func (s *Server) handleDetectionDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	changes := spec.Compare(rev.Body, &proposal.DraftSpec)
+	// Compared with what accepting would pin, not the raw proposal: the raw
+	// one has none of the decisions accepting carries over, so it reported
+	// them all as removed (issue #350).
+	draft := s.acceptedDraft(r, app, d, proposal, rev.Body)
+	changes := spec.Compare(rev.Body, &draft)
 	JSON(w, http.StatusOK, map[string]any{
 		"app_id":   app.ID,
 		"pinned":   rev.Revision,
 		"changes":  changes,
 		"is_first": false,
 	})
+}
+
+// acceptedDraft is detection.Accepted with this install's defaults: the spec
+// accepting would pin, before any values sent with the accept.
+func (s *Server) acceptedDraft(r *http.Request, app state.App, d state.Detection, p detect.Proposal, pinned *spec.AppSpec) spec.AppSpec {
+	var defaults *spec.Defaults
+	if s.Defaults != nil {
+		got := s.Defaults.Defaults(r.Context())
+		defaults = &got
+	}
+	return detection.Accepted(p, d.Answers, app.ID, app.Slug, defaults, pinned)
 }
 
 type answersRequest struct {
@@ -482,20 +498,6 @@ func (s *Server) handleAcceptDetection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	draft := proposal.WithAnswers(d.Answers)
-	draft.AppID = app.ID
-
-	// The install's defaults, applied to whatever draft this turned out to be.
-	//
-	// Detection applies them to the winning draft only. Answering the tie-break
-	// adopts a *different* candidate's draft, which never went through that —
-	// so accepting one produced a spec with no builder, no isolation floor and
-	// no timeout, and the next deploy failed on a builder named "". Found by
-	// deploying it, not by a test.
-	if s.Defaults != nil {
-		s.Defaults.Defaults(r.Context()).Apply(&draft, app.Slug)
-	}
-
 	// What a person decided outlives a re-detection (R-022).
 	//
 	// A proposal describes the repository, not the app: every slot arrives
@@ -503,14 +505,15 @@ func (s *Server) handleAcceptDetection(w http.ResponseWriter, r *http.Request) {
 	// it as-is meant that re-detecting after adding a Dockerfile — the ordinary
 	// thing to do — unfilled the database slot and dropped the variables, while
 	// the app kept running on the old spec and said nothing. The next deploy
-	// was the first sign.
+	// was the first sign. The diff builds the same spec, so it shows exactly
+	// this (issue #350).
 	var pinned *spec.AppSpec
 	if app.PinnedSpecID != "" {
 		if rev, found, revErr := s.Apps.RevisionByID(r.Context(), app.PinnedSpecID); revErr == nil && found {
 			pinned = rev.Body
-			draft = *spec.Carry(rev.Body, &draft)
 		}
 	}
+	draft := s.acceptedDraft(r, app, d, proposal, pinned)
 
 	// The values set during review. A secret goes to the secrets adapter first
 	// and the spec gets only its name, so the pinned spec is safe to export.
