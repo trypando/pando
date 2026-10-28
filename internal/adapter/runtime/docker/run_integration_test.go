@@ -105,6 +105,11 @@ func TestR423_AProvisionedDatabaseDumpsAndLoadsWhileItServes(t *testing.T) {
 				return strings.TrimSpace(out.String())
 			}
 
+			// Healthy is a ping over TCP; the tools use the socket, which a
+			// slow host can be a moment behind on.
+			require.Eventually(t, func() bool {
+				return a.Run(ctx, ref, api.RunRequest{Command: tc.query("SELECT 1")}) == nil
+			}, 2*time.Minute, time.Second)
 			sql("CREATE TABLE notes (body text); INSERT INTO notes VALUES ('kept')")
 			var saved bytes.Buffer
 			require.NoError(t, a.Run(ctx, ref, api.RunRequest{Command: dump.Dump, Stdout: &saved}))
