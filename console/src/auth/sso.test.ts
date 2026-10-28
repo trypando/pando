@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { failedSignIn, providerStart, soleProvider } from './sso';
+import { clearSignedOut, failedSignIn, hasSignedOut, markSignedOut, providerStart, soleProvider } from './sso';
 
 describe('providerStart', () => {
   it('carries where the person was going, under the reserved prefix', () => {
@@ -61,5 +61,47 @@ describe('soleProvider', () => {
 
   it('does not undo signing out', () => {
     expect(soleProvider(only, '', true)).toBeNull();
+  });
+});
+
+describe('signing out', () => {
+  it('is remembered in this tab until a way back in is chosen', () => {
+    const kept = new Map<string, string>();
+    vi.stubGlobal('window', {
+      sessionStorage: {
+        getItem: (k: string) => kept.get(k) ?? null,
+        setItem: (k: string, v: string) => kept.set(k, v),
+        removeItem: (k: string) => kept.delete(k),
+      },
+    });
+    try {
+      expect(hasSignedOut()).toBe(false);
+      markSignedOut();
+      expect(hasSignedOut()).toBe(true);
+      clearSignedOut();
+      expect(hasSignedOut()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('a browser that refuses storage', () => {
+  it('waits for a click, and still signs out', () => {
+    const refuse = () => {
+      throw new DOMException('denied', 'SecurityError');
+    };
+    vi.stubGlobal('window', {
+      get sessionStorage() {
+        return refuse();
+      },
+    });
+    try {
+      expect(() => markSignedOut()).not.toThrow();
+      expect(() => clearSignedOut()).not.toThrow();
+      expect(hasSignedOut()).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

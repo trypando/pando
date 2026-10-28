@@ -292,7 +292,9 @@ sign-in page goes to step 1 without a click (`soleProvider` in `console/src/auth
 per hostname, so each app's hostname needs its own sign-in; this makes that a round of redirects when
 the provider still has the visitor signed in. It is the same flow a click starts, so nothing above
 changes. It does not start on a page carrying `sso_error`, which would loop on whatever failed, or in a
-tab that signed out, until a button is pressed there: the provider would sign them straight back in.
+tab that signed out on that hostname, until a button is pressed there: the provider would sign them
+straight back in. The mark is per origin, like the session: signing out revokes that hostname's session
+only, so another hostname has nothing to undo.
 
 **[D]** `return_origin` is a hostname Pando serves — its own, or an app's (`AppHosts`) — checked when the
 flow starts; a flow cannot be made to finish anywhere else. The callback never chooses where the

@@ -44,17 +44,30 @@ export function failedSignIn(search: string): string | null {
   return id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
 }
 
-/** Set while this tab has signed out, and until it signs in with a button. */
+/**
+ * Set while this tab has signed out here, and until it signs in with a button.
+ * Per origin, like the session it outlives: signing out revokes this
+ * hostname's session and no other, so another hostname has nothing to undo.
+ */
 const signedOutKey = 'pando_signed_out';
 
 /** Remembers that this tab signed out, so the sign-in page waits for a click. */
 export function markSignedOut(): void {
-  window.sessionStorage?.setItem(signedOutKey, '1');
+  try {
+    window.sessionStorage.setItem(signedOutKey, '1');
+  } catch {
+    // A browser that refuses storage cannot remember it, and hasSignedOut
+    // then waits for a click anyway; sign-out must still finish.
+  }
 }
 
 /** Forgets it: someone chose a way to sign in. */
 export function clearSignedOut(): void {
-  window.sessionStorage?.removeItem(signedOutKey);
+  try {
+    window.sessionStorage.removeItem(signedOutKey);
+  } catch {
+    // Nothing was kept to forget.
+  }
 }
 
 /**
@@ -71,7 +84,15 @@ export function soleProvider(options: SignInOptions | undefined, search: string,
   return only.id;
 }
 
-/** Whether this tab signed out and has not chosen a way back in yet. */
+/**
+ * Whether this tab signed out and has not chosen a way back in yet. A browser
+ * that refuses storage cannot say, so it counts as signed out: a click, never a
+ * sign-in the person may have just undone.
+ */
 export function hasSignedOut(): boolean {
-  return window.sessionStorage?.getItem(signedOutKey) === '1';
+  try {
+    return window.sessionStorage.getItem(signedOutKey) === '1';
+  } catch {
+    return true;
+  }
 }
