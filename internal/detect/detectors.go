@@ -449,6 +449,20 @@ func (d StaticDetector) Bid(_ context.Context, src api.SourceView) (Candidate, e
 			confidence = 0.35
 			evidence = append(evidence, "package.json is also present, so this may need building first")
 
+		case dir == "public" && startsServer(src):
+			// public/ is where Express, Fastify and a hand-rolled http server
+			// keep the pages their start script serves, so a committed
+			// public/index.html beside a package.json that starts a server is
+			// the server's asset, not the whole site. Bidding high served the
+			// asset and dropped the API (issue #349), so bid low, as the
+			// root-with-build-script case does, and let buildpack win. Only
+			// public/ gets this demotion: a start script beside docs/ or dist/
+			// is a library entry point or a dev server, not a site-omitting
+			// server.
+			confidence = 0.2
+			evidence = append(evidence,
+				"package.json starts a server, so public/ holds its assets rather than the whole site")
+
 		case hasBuildScript(src):
 			// Committed output plus a build script is a genuine fork: serve what
 			// is in the repository, or run the build and serve what comes out.
@@ -1657,6 +1671,33 @@ func hasBuildScript(src api.SourceView) bool {
 		return false
 	}
 	return strings.TrimSpace(pkg.Scripts["build"]) != ""
+}
+
+// startsServer reports whether a root package.json declares something that runs
+// a long-lived server: a non-empty start script, or a main that points at a
+// file in the repository. A repository like that keeps its static assets in
+// public/ to serve from the server, so a committed public/index.html is the
+// server's asset, not the whole site (issue #349).
+func startsServer(src api.SourceView) bool {
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+		Main    string            `json:"main"`
+	}
+	if !readJSON(src, "package.json", &pkg) {
+		return false
+	}
+	if strings.TrimSpace(pkg.Scripts["start"]) != "" {
+		return true
+	}
+	// Normalize so "./server.js" and "server.js" read the same.
+	main := path.Clean(strings.TrimSpace(pkg.Main))
+	if main == "" || main == "." || path.IsAbs(main) || strings.HasPrefix(main, "..") {
+		return false
+	}
+	if info, err := src.Stat(main); err == nil && !info.IsDir {
+		return true
+	}
+	return false
 }
 
 var jekyllTheme = regexp.MustCompile(`(?m)^\s*(remote_)?theme\s*:`)
