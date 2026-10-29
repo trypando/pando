@@ -63,22 +63,25 @@ func (p *Ports) Allocate(ctx context.Context, adapterRef, appID string, from, to
 		return 0, errs.Wrap(errs.Internal, "Could not release the ports of deleted apps.", err)
 	}
 
-	var existing int
-	err := p.db.QueryRow(ctx,
-		`SELECT port FROM port_allocations WHERE adapter_ref = $1 AND app_id = $2`,
-		adapterRef, appID).Scan(&existing)
-	if err == nil {
-		return existing, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return 0, errs.Wrap(errs.Internal, "Could not read this app's port.", err)
-	}
-
 	for attempt := 0; attempt < allocateAttempts; attempt++ {
+		// Read on every pass: a conflict below can be this app's own port,
+		// claimed by a concurrent call for it.
+		var existing int
+		err := p.db.QueryRow(ctx,
+			`SELECT port FROM port_allocations WHERE adapter_ref = $1 AND app_id = $2`,
+			adapterRef, appID).Scan(&existing)
+		if err == nil {
+			return existing, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, errs.Wrap(errs.Internal, "Could not read this app's port.", err)
+		}
+
 		// One statement: choose and claim together. Two concurrent callers can
 		// still pick the same port, and then exactly one INSERT survives — the
 		// other returns no rows and tries again against a range it now sees
-		// correctly.
+		// correctly. Any unique conflict is that: the port's, the primary
+		// key's, or the app's own one port per adapter.
 		//
 		// Free means free on every adapter, and not the port of any live app:
 		// the proxy listens and resolves by number alone, so a port is one
@@ -86,7 +89,7 @@ func (p *Ports) Allocate(ctx context.Context, adapterRef, appID string, from, to
 		// claimed their port holds one with no allocation behind it (issue
 		// #348).
 		var port int
-		err := p.db.QueryRow(ctx, `
+		err = p.db.QueryRow(ctx, `
 			INSERT INTO port_allocations (adapter_ref, port, app_id)
 			SELECT $1, candidate, $2
 			FROM generate_series($3::int, $4::int) AS candidate
@@ -99,7 +102,7 @@ func (p *Ports) Allocate(ctx context.Context, adapterRef, appID string, from, to
 			)
 			ORDER BY candidate
 			LIMIT 1
-			ON CONFLICT (port) DO NOTHING
+			ON CONFLICT DO NOTHING
 			RETURNING port
 		`, adapterRef, appID, from, to).Scan(&port)
 
