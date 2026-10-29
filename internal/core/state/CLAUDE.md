@@ -28,6 +28,7 @@ a migration simpler.
 | Trigger protecting `roles` rows with `builtin = true` | R-081 — built-in roles change only by migration |
 | `host_policy.id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1)` | R-015 — one install, one org; nobody accidentally builds multi-tenancy |
 | `volumes.app_id … ON DELETE RESTRICT` | R-204 — an app cannot be deleted out from under its volumes |
+| Unique index on `port_allocations.port` | R-165 — one app per port on every routing adapter: the proxy listens and resolves by port number alone (issue #348) |
 | `UNIQUE (app_id, plane, principal_kind, principal_id)` on `grants` | Two planes stay two rows (R-073) |
 | `grants (role_id, role_scope) → roles (id, scope)` + `grants_install_has_no_app` | R-080 — an install role cannot be granted on one app and an app role cannot be granted install-wide; "no app" and "carries install verbs" cannot come apart |
 | `grants_data_plane_is_app_scoped` | R-070 — data-plane use is per-app and binary; there is no install-wide "use" |

@@ -55,42 +55,54 @@ func (p *Ports) Allocate(ctx context.Context, adapterRef, appID string, from, to
 	// no longer exist, and the next app was refused a port. Reclaimed here
 	// rather than only at deletion, so a range already full of them recovers
 	// without a migration. InUse has always ignored these rows, which is why
-	// nothing was listening on those ports either.
+	// nothing was listening on those ports either. On every adapter, since a
+	// port held on any of them is taken on all (migration 97).
 	if _, err := p.db.Exec(ctx, `
 		DELETE FROM port_allocations
-		WHERE adapter_ref = $1
-		  AND app_id IN (SELECT id FROM apps WHERE deleted_at IS NOT NULL)`, adapterRef); err != nil {
+		WHERE app_id IN (SELECT id FROM apps WHERE deleted_at IS NOT NULL)`); err != nil {
 		return 0, errs.Wrap(errs.Internal, "Could not release the ports of deleted apps.", err)
 	}
 
-	var existing int
-	err := p.db.QueryRow(ctx,
-		`SELECT port FROM port_allocations WHERE adapter_ref = $1 AND app_id = $2`,
-		adapterRef, appID).Scan(&existing)
-	if err == nil {
-		return existing, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return 0, errs.Wrap(errs.Internal, "Could not read this app's port.", err)
-	}
-
 	for attempt := 0; attempt < allocateAttempts; attempt++ {
+		// Read on every pass: a conflict below can be this app's own port,
+		// claimed by a concurrent call for it.
+		var existing int
+		err := p.db.QueryRow(ctx,
+			`SELECT port FROM port_allocations WHERE adapter_ref = $1 AND app_id = $2`,
+			adapterRef, appID).Scan(&existing)
+		if err == nil {
+			return existing, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, errs.Wrap(errs.Internal, "Could not read this app's port.", err)
+		}
+
 		// One statement: choose and claim together. Two concurrent callers can
 		// still pick the same port, and then exactly one INSERT survives — the
 		// other returns no rows and tries again against a range it now sees
-		// correctly.
+		// correctly. Any unique conflict is that: the port's, the primary
+		// key's, or the app's own one port per adapter.
+		//
+		// Free means free on every adapter, and not the port of any live app:
+		// the proxy listens and resolves by number alone, so a port is one
+		// app's on every adapter (migration 97), and an app pinned before pins
+		// claimed their port holds one with no allocation behind it (issue
+		// #348).
 		var port int
-		err := p.db.QueryRow(ctx, `
+		err = p.db.QueryRow(ctx, `
 			INSERT INTO port_allocations (adapter_ref, port, app_id)
 			SELECT $1, candidate, $2
 			FROM generate_series($3::int, $4::int) AS candidate
 			WHERE NOT EXISTS (
-				SELECT 1 FROM port_allocations existing
-				WHERE existing.adapter_ref = $1 AND existing.port = candidate
+				SELECT 1 FROM port_allocations existing WHERE existing.port = candidate
+			)
+			AND NOT EXISTS (
+				SELECT 1 FROM apps
+				WHERE apps.deleted_at IS NULL AND apps.id <> $2 AND apps.address_port = candidate
 			)
 			ORDER BY candidate
 			LIMIT 1
-			ON CONFLICT (adapter_ref, port) DO NOTHING
+			ON CONFLICT DO NOTHING
 			RETURNING port
 		`, adapterRef, appID, from, to).Scan(&port)
 

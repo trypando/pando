@@ -396,6 +396,7 @@ func serve(ctx context.Context, configPath string) error {
 		return err
 	}
 	apps := state.NewApps(db)
+	apps.PortRangeStart, apps.PortRangeEnd = cfg.Server.PortRangeStart, cfg.Server.PortRangeEnd
 	volumes := state.NewVolumes(db)
 	adapters := state.NewAdapters(db)
 

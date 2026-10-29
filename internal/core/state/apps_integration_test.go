@@ -20,7 +20,7 @@ func minimalSpec() *spec.AppSpec {
 		Source:        spec.Source{Type: spec.SourceGit, URL: "https://github.com/acme/notes", Ref: "main"},
 		Build:         spec.Build{Strategy: spec.BuildDockerfile, AdapterRef: "bld_buildkit"},
 		Workloads:     []spec.Workload{{Name: "web", Primary: true, Exposed: true}},
-		Routing:       spec.Routing{AdapterRef: "rte_loopback", Mode: spec.RoutingPort, Port: 8080},
+		Routing:       spec.Routing{AdapterRef: "rte_loopback", Mode: spec.RoutingPort, Port: testPort()},
 		Runtime:       spec.RuntimeRef{AdapterRef: "rt_docker", IsolationFloor: spec.IsolationContainer},
 		Deploy:        spec.Deploy{Strategy: spec.DeployRecreate},
 	}

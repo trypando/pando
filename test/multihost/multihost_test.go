@@ -28,17 +28,17 @@ import (
 // refused when its deploy is planned, rather than placed (R-243, R-242).
 func TestR243_CapacityIsSummedOverTheHostsWithTheLargestFit(t *testing.T) {
 	c := login(t)
-	cap := c.capacity(t)
+	reading := c.settledCapacity(t)
 
-	a, b, ctl := cap.Hosts["host-a"], cap.Hosts["host-b"], cap.Hosts["control"]
+	a, b, ctl := reading.Hosts["host-a"], reading.Hosts["host-b"], reading.Hosts["control"]
 	require.True(t, a.Reachable, "%+v", a)
 	require.True(t, b.Reachable, "%+v", b)
 	require.True(t, ctl.Reachable, "%+v", ctl)
 	require.False(t, ctl.Open, "the control host is closed to new apps in this topology")
 	require.Equal(t, int64(hostAMemory), a.TotalMem)
 	require.Equal(t, int64(hostBMemory), b.TotalMem)
-	require.Equal(t, int64(hostAMemory+hostBMemory), cap.TotalMem, "the hosts open to new apps, summed")
-	require.Equal(t, int64(2*hostCPU), cap.TotalCPU)
+	require.Equal(t, int64(hostAMemory+hostBMemory), reading.TotalMem, "the hosts open to new apps, summed")
+	require.Equal(t, int64(2*hostCPU), reading.TotalCPU)
 	require.Positive(t, a.FreeMem)
 	require.Positive(t, b.FreeMem)
 
@@ -69,15 +69,15 @@ func TestR243_CapacityIsSummedOverTheHostsWithTheLargestFit(t *testing.T) {
 // other host is roomier, the next new app goes there.
 func TestR256_ANewAppGoesToTheHostWithTheMostFreeMemory(t *testing.T) {
 	c := login(t)
-	cap := c.capacity(t)
-	want, other := cap.roomiest()
+	reading := c.settledCapacity(t)
+	want, other := reading.roomiest()
 
 	// Enough that afterwards the other host has more free memory.
-	fill := cap.Hosts[want].FreeMem - cap.Hosts[other].FreeMem + 128<<20
+	fill := reading.Hosts[want].FreeMem - reading.Hosts[other].FreeMem + 128<<20
 	first := c.deployEcho(t, "mh-place-1", fill)
 	requireOn(t, first, want)
 
-	after := c.capacity(t)
+	after := c.settledCapacity(t)
 	require.Less(t, after.Hosts[want].FreeMem, after.Hosts[other].FreeMem, "%+v", after.Hosts)
 	second := c.deployEcho(t, "mh-place-2", 128<<20)
 	requireOn(t, second, other)

@@ -901,6 +901,23 @@ own address instead of refusing the connection. Requests on those listeners take
 every other request: the port is one more way to resolve an app, not a second enforcement point
 (R-023).
 
+**[D] A port a spec names is claimed when the spec is pinned** (issue #348). `PUT /routing` is not
+the only way a port reaches a spec: a spec written whole, or imported, names one. Such a spec used to
+be pinned with no allocation behind it, so nothing listened on its port, and the port was never
+checked against other apps', so a spec naming another app's port was pinned too and the proxy
+answered that port with whichever app the database returned. `state.Apps.Pin` now makes the named
+port the app's allocation in the pin's transaction, releasing the app's previous port on that
+adapter, and refuses with `STATE_ADDRESS_TAKEN` a port another live app holds or is reached at, on
+any adapter, since the proxy listens and resolves by number alone. That is a unique index on
+`port_allocations.port` (migration 97) as well as a check, so two pins racing for one port on two
+adapters cannot both commit. A port outside the install's range is refused, as nothing publishes it,
+unless the app already holds it or is already reached at it. `Ports.Allocate` skips any port a live
+app is reached at, so an app pinned before this keeps its port. And the proxy resolves a port only to
+the app holding its allocation (`state.Apps.ByRouting`), so an install that already had two apps at
+one port when it upgraded — one pinned to another app's port, or one that lost a duplicate in
+migration 97 — serves the holder and not the other, which is served there again only once its own
+pin claims the port.
+
 **[P] In a containerized install the published range and the allocation range are the same range.**
 `docker-compose.yml` sets both from one pair of variables, defaulting to `9000-9019` rather than the
 shipped `9000-9999`: Docker publishes a range by opening every port in it, and a thousand is minutes

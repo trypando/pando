@@ -30,7 +30,7 @@ func specFor(appID string, image int, autoDeploy bool) *spec.AppSpec {
 		Source:        spec.Source{Type: spec.SourceGit, URL: "https://example.test/app", Ref: "main"},
 		Build:         spec.Build{Strategy: spec.BuildPrebuilt},
 		Workloads:     []spec.Workload{{Name: "web", Image: fmt.Sprintf("example/app:%d", image), Primary: true, Exposed: true}},
-		Routing:       spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: 9000},
+		Routing:       spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: testPort()},
 		Runtime:       spec.RuntimeRef{AdapterRef: "rt_fake", IsolationFloor: spec.IsolationContainer},
 		Deploy:        spec.Deploy{Strategy: spec.DeployRecreate, AutoDeploy: spec.AutoDeploy{Enabled: autoDeploy}},
 		Retention:     spec.Retention{SpecRevisions: 10},
@@ -383,10 +383,12 @@ func TestR264_TheLauncherPagesFavoritesFirstAndSaysWhatYouCanManage(t *testing.T
 	alice := seedUser(t, db, "alice")
 	bob := seedUser(t, db, "bob")
 
+	// The slug is the name's, not the ID's: the search matches either, and an
+	// ID is random enough to contain "ang" now and then.
 	named := func(name string) string {
 		appID := id.New(id.App)
-		_, err := db.Exec(ctx, `INSERT INTO apps (id, name, slug, owner_user_id, state) VALUES ($1, $2, $1, $3, 'draft')`,
-			appID, name, alice.ID)
+		_, err := db.Exec(ctx, `INSERT INTO apps (id, name, slug, owner_user_id, state) VALUES ($1, $2, $4, $3, 'draft')`,
+			appID, name, alice.ID, "launcher-"+name)
 		require.NoError(t, err)
 		grant(t, db, appID, "data", "user", bob.ID, nil)
 		return appID

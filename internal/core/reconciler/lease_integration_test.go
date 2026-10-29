@@ -104,7 +104,7 @@ func seedRunningApps(t *testing.T, db *state.DB, n int) []string {
 			Source:        spec.Source{Type: spec.SourceGit, URL: "https://example.test/app", Ref: "main"},
 			Build:         spec.Build{Strategy: spec.BuildPrebuilt},
 			Workloads:     []spec.Workload{{Name: "web", Image: "example/app:1", Primary: true, Exposed: true}},
-			Routing:       spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: 9000},
+			Routing:       spec.Routing{AdapterRef: "rte_fake", Mode: spec.RoutingPort, Port: testPort()},
 			Runtime:       spec.RuntimeRef{AdapterRef: "rt_fake", IsolationFloor: spec.IsolationContainer},
 			Deploy:        spec.Deploy{Strategy: spec.DeployRecreate},
 		}, spec.OriginDetected, "")
